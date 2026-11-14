@@ -176,7 +176,31 @@ fn next_listener_to_core(previous: Option<&ListenerToCore>) -> Option<ListenerTo
             detail: "a fault".to_owned(),
         },
         ListenerToCore::Fault { .. } => ListenerToCore::IdleAnswer { round: 1 },
-        ListenerToCore::IdleAnswer { .. } => return None,
+        ListenerToCore::IdleAnswer { .. } => ListenerToCore::Tell {
+            tell: Tell {
+                kind: TellKind::NameChange,
+                application: Pid(2),
+                window: 1,
+                id_object: -4,
+                id_child: 0,
+                thread: 3,
+                raised_at: 4,
+                facts: crate::WindowFacts {
+                    top_level: crate::WindowHandle(1),
+                    root_owner: crate::WindowHandle(1),
+                    topmost: false,
+                    under_active_window: None,
+                    in_foreground: false,
+                    foreground_window: crate::WindowHandle(5),
+                    class: String::new(),
+                    application: String::new(),
+                    alt_held: false,
+                    foreground_is_shell: false,
+                },
+            },
+            timing: timing(),
+        },
+        ListenerToCore::Tell { .. } => return None,
     })
 }
 
@@ -271,6 +295,7 @@ fn every_variant_has_its_reviewed_kind() {
             "Pong: Lifecycle",
             "Fault: Report",
             "IdleAnswer: Answer",
+            "Tell: Report",
         ]
     );
 }

@@ -1477,6 +1477,73 @@ pub enum ListenerToCore {
         /// The round answered.
         round: u64,
     },
+    /// Measurement prototype (branch `prototype/background-events`): one
+    /// MSAA event the listener heard desktop-wide, told to Core in the
+    /// shape ADR 0003 gives a tell. verbatim.exe's relay hands it on
+    /// unparsed, as an outpost's frame, and the reducer's thread parses it.
+    Tell {
+        /// What the event was, and the facts gathered with it.
+        tell: Tell,
+        /// When it was raised, observed, queued and written.
+        #[serde(default)]
+        timing: EventTiming,
+    },
+}
+
+/// Measurement prototype: which MSAA event a [`ListenerToCore::Tell`]
+/// reports.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum TellKind {
+    /// A focus change.
+    Focus,
+    /// A value change.
+    ValueChange,
+    /// A state change, or an item added to or removed from a selection.
+    StateChange,
+    /// A name change.
+    NameChange,
+    /// A description change.
+    DescriptionChange,
+    /// An item became the selection.
+    Selection,
+    /// A popup menu opened.
+    MenuPopupStart,
+    /// An alert.
+    Alert,
+    /// An object shown, from a tooltip window.
+    Show,
+    /// A window destroyed.
+    Destroy,
+    /// The system caret moved or was shown.
+    Caret,
+    /// A text control's selection or caret changed.
+    TextSelectionChange,
+}
+
+/// Measurement prototype: one event as the listener tells it (ADR 0003,
+/// "Readers tell, Core asks"): what happened, the application and window,
+/// when, the object's ids, the raising thread, and the window facts the
+/// acceptance test reads.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Tell {
+    /// What happened.
+    pub kind: TellKind,
+    /// The application the event belongs to: the window's owner, or a
+    /// console window's host.
+    pub application: Pid,
+    /// The event's window.
+    pub window: isize,
+    /// The event's object id.
+    pub id_object: i32,
+    /// The event's child id.
+    pub id_child: i32,
+    /// The thread that raised it.
+    pub thread: u32,
+    /// When Windows raised it, on the event clock.
+    pub raised_at: u32,
+    /// The window facts the acceptance test reads, gathered as the event
+    /// arrived.
+    pub facts: crate::WindowFacts,
 }
 
 impl OutpostToCore {
@@ -1860,7 +1927,8 @@ impl ListenerToCore {
             | ListenerToCore::MenuOrSwitchEnded { .. }
             | ListenerToCore::Desktop { .. }
             | ListenerToCore::Progress { .. }
-            | ListenerToCore::Foreground { .. } => Kind::Report,
+            | ListenerToCore::Foreground { .. }
+            | ListenerToCore::Tell { .. } => Kind::Report,
             ListenerToCore::Ready { .. }
             | ListenerToCore::Pong { .. }
             | ListenerToCore::ForwardingEnded { .. }
@@ -1878,7 +1946,8 @@ impl ListenerToCore {
             ListenerToCore::FocusFact { timing, .. }
             | ListenerToCore::MenuOrSwitchEnded { timing, .. }
             | ListenerToCore::Desktop { timing, .. }
-            | ListenerToCore::Progress { timing, .. } => {
+            | ListenerToCore::Progress { timing, .. }
+            | ListenerToCore::Tell { timing, .. } => {
                 timing.listener_written_at_us = at_us;
             }
             ListenerToCore::Pong { written_at_us, .. } => *written_at_us = at_us,

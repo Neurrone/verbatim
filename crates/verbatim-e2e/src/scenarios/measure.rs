@@ -1213,3 +1213,207 @@ pub(crate) fn body_keys_windows_terminal(scenario: &mut Scenario, state: &mut Sc
     let directory = directory(state);
     terminal_keys(scenario, &truth, (&title, "windows_terminal"), &directory);
 }
+
+/// Measurement prototype (branch `prototype/background-events`): the
+/// background workloads measure what ADR 0003's limit "Every background
+/// event reaches Core" costs while the Windows Forms text box in front
+/// takes paced caret keys, so the latency ledger's "hook to Core" stage
+/// measures a held key's way into Core while the background runs. How many
+/// rounds of caret keys each presses: each round is ten Down Arrows and ten
+/// Up Arrows 150 ms apart, a burst of [`BURST_KEYS`] Down Arrows
+/// [`BURST_INTERVAL_MS`] apart and ten Up Arrows 150 ms apart, about 4.8
+/// seconds, so six rounds are about 30 seconds of keys.
+const BACKGROUND_ROUNDS: usize = 6;
+
+/// How long a background load runs, in seconds: longer than the keys, so a
+/// trace window of 8 seconds fits inside both, away from their start and
+/// end.
+const BACKGROUND_LOAD_SECONDS: u32 = 40;
+
+/// The longest the end of a background load may take after the keys: a
+/// bound on a hang.
+const BACKGROUND_LOAD_END: std::time::Duration = std::time::Duration::from_secs(180);
+
+/// The text box of the background workloads, over [`arrow_text`].
+const BACKGROUND_BOX: &str = "m-bg-box";
+
+/// Opens the background workloads' text box, which takes the foreground,
+/// and returns its title.
+fn open_background_box(scenario: &mut Scenario) -> String {
+    text_box::open(scenario, BACKGROUND_BOX, BOX_NAME, &arrow_text()).expect("opens the text box");
+    harness_marker(BACKGROUND_BOX)
+}
+
+/// Presses `key` `count` times `interval_ms` apart in the window titled
+/// `title`, confirmed in front first, without waiting for Verbatim to be
+/// idle before or after, since a background load can keep it busy
+/// throughout; the keys are recorded in the ground truth.
+fn background_keys(
+    scenario: &mut Scenario,
+    truth: &Truth,
+    title: &str,
+    (key, count, interval_ms): (&str, usize, u32),
+) {
+    in_front(scenario, title);
+    let keys = vec![key; count];
+    let (first, last) = scenario
+        .send_keys_paced(&keys, interval_ms)
+        .expect("presses the caret keys");
+    truth.write(&serde_json::json!({
+        "step": "caret_keys", "key": key, "first": first, "last": last,
+        "interval_ms": interval_ms,
+    }));
+}
+
+/// The caret keys of a background workload in the text box titled
+/// `title`, from its top: [`BACKGROUND_ROUNDS`] rounds of Down and Up
+/// Arrow at 150 ms and a burst of Down Arrows 30 ms apart.
+fn background_caret_keys(scenario: &mut Scenario, truth: &Truth, title: &str) {
+    in_front(scenario, title);
+    scenario
+        .send_keys(&["control+home"])
+        .expect("presses control+home");
+    truth.write(&serde_json::json!({ "step": "top" }));
+    for round in 0..BACKGROUND_ROUNDS {
+        truth.write(&serde_json::json!({ "step": "round", "round": round }));
+        background_keys(scenario, truth, title, ("downarrow", 10, 150));
+        background_keys(scenario, truth, title, ("uparrow", 10, 150));
+        background_keys(
+            scenario,
+            truth,
+            title,
+            ("downarrow", BURST_KEYS, BURST_INTERVAL_MS),
+        );
+        background_keys(scenario, truth, title, ("uparrow", BURST_KEYS, 150));
+    }
+}
+
+/// `measure_background_idle_explorer`: a File Explorer folder window open
+/// behind the text box, no other load, during the caret keys.
+pub(crate) fn body_background_idle_explorer(scenario: &mut Scenario, _state: &mut ScenarioState) {
+    let truth = Truth {
+        name: "measure_background_idle_explorer",
+    };
+    let folder = scenario
+        .open_folder("m-bg-folder", &["alpha", "beta", "gamma"])
+        .expect("opens the folder window");
+    truth.write(&serde_json::json!({ "step": "folder_opened", "title": folder }));
+    let title = open_background_box(scenario);
+    truth.write(&serde_json::json!({ "step": "box_opened", "title": title }));
+    background_caret_keys(scenario, &truth, &title);
+    truth.drain(scenario, "after the keys");
+}
+
+/// The console host's background flood: prints numbered lines as fast as
+/// the shell can for [`BACKGROUND_LOAD_SECONDS`] seconds, then writes how
+/// many to `bgflood-done`, the evidence it has finished, under another
+/// name first so it never exists empty.
+fn background_flood_script() -> String {
+    format!(
+        "$watch = [Diagnostics.Stopwatch]::StartNew()\r\n\
+$line = 0\r\n\
+while ($watch.ElapsedMilliseconds -lt {}) {{ $line++; \"background flood line $line\" }}\r\n\
+[IO.File]::WriteAllText((Join-Path $PSScriptRoot 'bgflood-done.tmp'), [string]$line)\r\n\
+[IO.File]::Move((Join-Path $PSScriptRoot 'bgflood-done.tmp'), (Join-Path $PSScriptRoot 'bgflood-done'))\r\n",
+        BACKGROUND_LOAD_SECONDS * 1000
+    )
+}
+
+pub(crate) fn setup_background_console_flood(scenario: &mut Scenario) -> io::Result<ScenarioState> {
+    let script = background_flood_script();
+    terminal::open_console_host(scenario, "m-bg-flood", &[("bgflood.ps1", &script)])
+}
+
+/// `measure_background_console_flood`: a console host window behind the
+/// text box printing continuously during the caret keys. The flood is
+/// started in the console, then the text box is opened in front of it.
+pub(crate) fn body_background_console_flood(scenario: &mut Scenario, state: &mut ScenarioState) {
+    let truth = Truth {
+        name: "measure_background_console_flood",
+    };
+    let console = terminal::title(state).to_owned();
+    terminal::expect_prompt_read(
+        scenario,
+        state,
+        &[&format!("{console} window"), "terminal", "blank"],
+    );
+    let directory = directory(state);
+    ready(scenario, &truth, &console);
+    scenario
+        .type_text(r".\bgflood.ps1")
+        .expect("types the flood's command");
+    truth.drain(scenario, "after typing");
+    in_front(scenario, &console);
+    scenario.send_keys(&["enter"]).expect("presses enter");
+    truth.write(&serde_json::json!({ "step": "flood_started" }));
+    let title = open_background_box(scenario);
+    truth.write(&serde_json::json!({ "step": "box_opened", "title": title }));
+    background_caret_keys(scenario, &truth, &title);
+    let lines = scenario
+        .wait_for_agent_file(&format!(r"{directory}\bgflood-done"), BACKGROUND_LOAD_END)
+        .expect("the flood finishes");
+    truth.write(&serde_json::json!({
+        "step": "flood_done", "lines": String::from_utf8_lossy(&lines),
+    }));
+    truth.drain(scenario, "after the flood");
+}
+
+/// The MSAA flood's mockapp window: one focused button.
+const BACKGROUND_FLOOD_FIXTURE: &str = r#"{
+  "id": "root",
+  "role": "window",
+  "name": "{title}",
+  "children": [
+    {
+      "id": "go",
+      "role": "button",
+      "name": "Go",
+      "states": ["focusable", "focused"]
+    }
+  ]
+}
+"#;
+
+/// The MSAA flood workloads: mockapp's MSAA window, opened first, then the
+/// text box in front of it; mockapp's `flood` of value changes on a new
+/// object each time, the console's kind of flood, `rate` events a second
+/// for [`BACKGROUND_LOAD_SECONDS`] seconds, started before the caret keys,
+/// whose end is waited for after them.
+fn background_msaa_flood(scenario: &mut Scenario, name: &'static str, rate: u32) {
+    let truth = Truth { name };
+    let window = "m-bg-msaa";
+    let pid = open_msaa_mockapp(scenario, window, BACKGROUND_FLOOD_FIXTURE);
+    truth.write(&serde_json::json!({ "step": "mockapp_opened", "pid": pid }));
+    let title = open_background_box(scenario);
+    truth.write(&serde_json::json!({ "step": "box_opened", "title": title }));
+    let count = rate * BACKGROUND_LOAD_SECONDS;
+    let interval_ms = 1000.0 / f64::from(rate);
+    let command = format!("flood {count} {interval_ms} new-values");
+    send_to_mockapp(scenario, (window, pid), &command);
+    truth.write(&serde_json::json!({ "step": "flood_started", "command": command }));
+    background_caret_keys(scenario, &truth, &title);
+    scenario
+        .wait_for_event(
+            &format!("{}applied", line_events(window)),
+            pid,
+            BACKGROUND_LOAD_END,
+        )
+        .expect("mockapp's flood ends");
+    truth.write(&serde_json::json!({ "step": "flood_done" }));
+    truth.drain(scenario, "after the flood");
+}
+
+/// `measure_background_msaa_flood_4000`: about 4,000 MSAA events a second
+/// behind the text box ([`background_msaa_flood`]).
+pub(crate) fn body_background_msaa_flood_4000(scenario: &mut Scenario, _state: &mut ScenarioState) {
+    background_msaa_flood(scenario, "measure_background_msaa_flood_4000", 4_000);
+}
+
+/// `measure_background_msaa_flood_20000`: about 20,000 MSAA events a
+/// second behind the text box ([`background_msaa_flood`]).
+pub(crate) fn body_background_msaa_flood_20000(
+    scenario: &mut Scenario,
+    _state: &mut ScenarioState,
+) {
+    background_msaa_flood(scenario, "measure_background_msaa_flood_20000", 20_000);
+}

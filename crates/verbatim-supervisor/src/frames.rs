@@ -27,7 +27,7 @@ use verbatim_process::transport::OwnedFrame;
 use super::OutpostMessage;
 use super::owner::OwnerEvent;
 use super::relay::Mailbox;
-use verbatim_model::protocol::OutpostToCore;
+use verbatim_model::protocol::{ListenerToCore, OutpostToCore};
 use verbatim_process::message::decode_message;
 
 /// A frame from an outpost's pipe, read whole by the relay and not yet
@@ -63,6 +63,46 @@ impl std::fmt::Debug for Frame {
             .field("outpost", &self.outpost)
             .field("bytes", &parts.body.len())
             .field("raw", &parts.raw.map(<[u8]>::len))
+            .finish_non_exhaustive()
+    }
+}
+
+/// Measurement prototype: a tell from the focus listener's pipe, read
+/// whole by the relay and not yet parsed. Only the reducer's thread opens
+/// it ([`TellFrame::parse`]).
+pub struct TellFrame {
+    bytes: OwnedFrame,
+    /// When the relay read it, in microseconds since the Unix epoch.
+    read_at_us: u64,
+}
+
+impl TellFrame {
+    /// The tell the relay read at `read_at_us`.
+    pub(super) fn new(bytes: OwnedFrame, read_at_us: u64) -> Self {
+        Self { bytes, read_at_us }
+    }
+
+    /// When the relay read it.
+    #[must_use]
+    pub fn read_at_us(&self) -> u64 {
+        self.read_at_us
+    }
+
+    /// Parses the tell.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a frame that is not a listener's message.
+    pub fn parse(&self) -> io::Result<ListenerToCore> {
+        decode_message(self.bytes.parts())
+    }
+}
+
+impl std::fmt::Debug for TellFrame {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("TellFrame")
+            .field("bytes", &self.bytes.parts().body.len())
             .finish_non_exhaustive()
     }
 }

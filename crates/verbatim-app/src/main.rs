@@ -23,6 +23,7 @@ mod screen_reader_flag;
 mod single_instance;
 mod speech_events;
 mod speech_settings;
+mod tells;
 mod terminal_settings;
 mod themes;
 mod wanted;
@@ -1117,6 +1118,8 @@ struct ReducerThread<'a> {
     follow_ups: Vec<Input>,
     /// The right to speak, which only this thread holds.
     token: SpeakToken,
+    /// Measurement prototype: the focus listener's tells.
+    tells: tells::Tells,
 }
 
 impl ReducerThread<'_> {
@@ -1229,6 +1232,7 @@ impl ReducerThread<'_> {
             // `Frames` turns these into the messages they carry, before
             // anything reaches here.
             OutpostMessage::Frame(_) => {}
+            OutpostMessage::Tell(frame) => self.tells.take(&frame),
             OutpostMessage::NotWatched { target_pid, .. } => self.not_watched(target_pid),
         }
     }
@@ -2478,6 +2482,7 @@ fn reducer_loop(
         marks: idle::HeldMarks::default(),
         follow_ups: Vec::new(),
         token,
+        tells: tells::Tells::default(),
     };
     // The settings come first, before anything they govern.
     thread.apply(Input::Settings(settings));

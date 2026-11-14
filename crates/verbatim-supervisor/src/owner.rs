@@ -34,9 +34,9 @@ use verbatim_model::protocol::{
     OutpostToCore, WinEventStamp, hop_us,
 };
 use verbatim_process::clock::now_us;
-use verbatim_process::message::{Peeked, decode_message, peek};
+use verbatim_process::message::{Peeked, decode_message, message_kind, peek};
 
-use super::frames::Frame;
+use super::frames::{Frame, TellFrame};
 use super::generation::{Generation, Heartbeat, Next, Notice, Removed, Run};
 use super::policy::{
     Backoff, HeldFact, HeldFacts, Liveness, Parked, Spares, WedgeLimits, WedgeReason, due_starts,
@@ -505,6 +505,15 @@ impl Owner {
                 // When verbatim.exe took the message in, before it is
                 // parsed (`docs/design/communication.md`, section 10.1).
                 let received = received_now();
+                // Measurement prototype: a tell is handed on unparsed, as
+                // an outpost's frame is, for the reducer's thread to parse.
+                if message_kind(body.body) == Some("Tell") {
+                    self.outbox.send(OutpostMessage::Tell(TellFrame::new(
+                        body.into_owned(),
+                        received.at_us,
+                    )));
+                    return Ok(());
+                }
                 self.listener_message(outpost, received, decode_message(body)?);
                 Ok(())
             }
@@ -762,6 +771,8 @@ impl Owner {
                 tracing::warn!(detail, "focus listener fault");
                 return;
             }
+            // Prototype: `read_pipe` hands every tell on before decoding.
+            ListenerToCore::Tell { .. } => return tracing::error!("a tell reached the relay"),
         };
         self.handle(event);
     }

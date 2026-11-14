@@ -117,7 +117,7 @@
 //! machinery as the outposts.
 
 use std::cell::RefCell;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::convert::Infallible;
 use std::io;
 use std::os::windows::io::OwnedHandle;
@@ -139,7 +139,7 @@ use windows::Win32::UI::Accessibility::{
     UIA_Window_WindowOpenedEventId,
 };
 
-use verbatim_ia2::{LISTENER_SUBSCRIPTIONS, WinEvent, WinEventKind};
+use verbatim_ia2::{WinEvent, WinEventKind};
 use verbatim_model::{BarChange, Notification, OutpostId, Percent, Pid, Role, TraceId};
 use verbatim_process::scheduling::{ThreadPriority, prioritize_role};
 use verbatim_process::transport::{Backlog, ChildIo, SendError, Sender, Served, Serving};
@@ -165,7 +165,7 @@ use verbatim_listener_logic::schedule::{GraceEffect, GraceInput, GraceState, Que
 use verbatim_model::DesktopNews;
 use verbatim_model::protocol::{
     CoreToListener, DeliveredFact, EventTiming, FactKey, ListenerFact, ListenerToCore, Responder,
-    UiaSnapshotFact, WinEventStamp, hop_us,
+    Tell, TellKind, UiaSnapshotFact, WinEventStamp, hop_us,
 };
 use verbatim_process::clock::now_us;
 use verbatim_process::held::IgnoredProcesses;
@@ -191,6 +191,32 @@ const DESKTOP_RETURN_DELAY: Duration = Duration::from_millis(200);
 /// name is due, as NVDA calls `handlePossibleDesktopNameChange` 250 ms
 /// later (`eventHandler.py` 338 to 346).
 const DESKTOP_NAME_DUE: Duration = Duration::from_millis(250);
+
+/// Measurement prototype: the listener's own kinds
+/// (`verbatim_ia2::LISTENER_SUBSCRIPTIONS`) and the kinds an outpost hooks
+/// that it did not ([`crate::tells::ADDED_KINDS`]), all hooked desktop-wide.
+static PROTOTYPE_SUBSCRIPTIONS: [WinEventKind; 20] = [
+    WinEventKind::Focus,
+    WinEventKind::Foreground,
+    WinEventKind::ValueChange,
+    WinEventKind::MenuPopupStart,
+    WinEventKind::MenuEnd,
+    WinEventKind::SwitchEnd,
+    WinEventKind::Alert,
+    WinEventKind::Show,
+    WinEventKind::ShellForeground,
+    WinEventKind::ConsoleUpdate,
+    WinEventKind::ConsoleCaret,
+    WinEventKind::DesktopSwitch,
+    WinEventKind::DesktopName,
+    WinEventKind::StateChange,
+    WinEventKind::NameChange,
+    WinEventKind::DescriptionChange,
+    WinEventKind::Selection,
+    WinEventKind::Destroy,
+    WinEventKind::Caret,
+    WinEventKind::TextSelectionChange,
+];
 
 /// The priority of the listener's main thread, its I/O thread, which reads
 /// Core's pipe, handles each command, and finishes the writes to Core that
@@ -242,7 +268,16 @@ impl Default for Clock {
 #[derive(Default)]
 struct Waiting {
     urgent: VecDeque<ListenerToCore>,
-    facts: VecDeque<(Option<(Pid, FactKey)>, ListenerToCore)>,
+    /// Each with its place in the order of facts and tells.
+    facts: VecDeque<WaitingFact>,
+    /// Measurement prototype: the tells waiting, by their place in the
+    /// order of facts and tells, merged one per object, kind and raising
+    /// thread, the newest taking the back ([`TellKey`]).
+    tells: BTreeMap<u64, ListenerToCore>,
+    /// Where each object's waiting tell is.
+    tell_places: HashMap<TellKey, u64>,
+    /// The next place in the order of facts and tells.
+    next_place: u64,
     /// The end of a menu or of the Alt+Tab switcher whose grace has passed,
     /// sent once no fact waits.
     menu_end: Option<ListenerToCore>,
@@ -251,6 +286,10 @@ struct Waiting {
     /// facts is forwarded.
     hooked: HashMap<Pid, u32>,
 }
+
+/// A waiting fact: its place in the order of facts and tells, the key it
+/// is coalesced under, and the message.
+type WaitingFact = (u64, Option<(Pid, FactKey)>, ListenerToCore);
 
 /// One item the listener sends Core.
 enum Sent {
@@ -278,6 +317,43 @@ enum Sent {
     IdleAnswer(u64),
     /// A message taken from what waits, to be written.
     Message(ListenerToCore),
+    /// Measurement prototype: a tell, merged with a waiting one for the
+    /// same object, kind and raising thread.
+    Tell(TellKey, ListenerToCore),
+}
+
+/// Measurement prototype: what merges two waiting tells, the merge-only
+/// limiter's key (ADR 0003, "Flood limiters and the merge"): the object's
+/// window, object id and child id, the kind, and the raising thread.
+type TellKey = (isize, i32, i32, TellKind, u32);
+
+/// The merge key of `tell`.
+fn tell_key(tell: &Tell) -> TellKey {
+    (
+        tell.window,
+        tell.id_object,
+        tell.id_child,
+        tell.kind,
+        tell.thread,
+    )
+}
+
+impl Waiting {
+    /// The front waiting tell, taken out.
+    fn pop_tell(&mut self) -> Option<ListenerToCore> {
+        let (_, message) = self.tells.pop_first()?;
+        if let ListenerToCore::Tell { tell, .. } = &message {
+            self.tell_places.remove(&tell_key(tell));
+        }
+        Some(message)
+    }
+
+    /// The next place in the order of facts and tells.
+    fn place(&mut self) -> u64 {
+        let place = self.next_place;
+        self.next_place += 1;
+        place
+    }
 }
 
 impl Backlog for Waiting {
@@ -302,20 +378,28 @@ impl Backlog for Waiting {
                     let after_answer = self
                         .facts
                         .iter()
-                        .rposition(|(_, waiting)| {
+                        .rposition(|(_, _, waiting)| {
                             matches!(waiting, ListenerToCore::IdleAnswer { .. })
                         })
                         .map_or(0, |answer| answer + 1);
                     let mut index = after_answer;
                     while index < self.facts.len() {
-                        if self.facts[index].0.as_ref() == Some(key) {
+                        if self.facts[index].1.as_ref() == Some(key) {
                             self.facts.remove(index);
                         } else {
                             index += 1;
                         }
                     }
                 }
-                self.facts.push_back((key, message));
+                let place = self.place();
+                self.facts.push_back((place, key, message));
+            }
+            Sent::Tell(key, message) => {
+                let place = self.place();
+                if let Some(earlier) = self.tell_places.insert(key, place) {
+                    self.tells.remove(&earlier);
+                }
+                self.tells.insert(place, message);
             }
             Sent::ForwardingEnded {
                 pid,
@@ -323,7 +407,9 @@ impl Backlog for Waiting {
                 through,
             } => {
                 self.hooked.insert(pid, through);
+                let place = self.place();
                 self.facts.push_back((
+                    place,
                     None,
                     ListenerToCore::ForwardingEnded {
                         pid,
@@ -337,10 +423,12 @@ impl Backlog for Waiting {
                 // A menu end waiting for no fact goes ahead of the answer,
                 // as it was sent before it.
                 if let Some(end) = self.menu_end.take() {
-                    self.facts.push_back((None, end));
+                    let place = self.place();
+                    self.facts.push_back((place, None, end));
                 }
+                let place = self.place();
                 self.facts
-                    .push_back((None, ListenerToCore::IdleAnswer { round }));
+                    .push_back((place, None, ListenerToCore::IdleAnswer { round }));
             }
         }
         Ok(())
@@ -349,13 +437,26 @@ impl Backlog for Waiting {
     fn pop(&mut self) -> Option<Sent> {
         self.urgent
             .pop_front()
-            .or_else(|| self.facts.pop_front().map(|(_, message)| message))
+            .or_else(|| {
+                // Facts and tells in the order they were sent.
+                let fact = self.facts.front().map(|(place, _, _)| *place);
+                let tell = self.tells.first_key_value().map(|(place, _)| *place);
+                match (fact, tell) {
+                    (Some(fact), Some(tell)) if tell < fact => self.pop_tell(),
+                    (Some(_), _) => self.facts.pop_front().map(|(_, _, message)| message),
+                    (None, Some(_)) => self.pop_tell(),
+                    (None, None) => None,
+                }
+            })
             .or_else(|| self.menu_end.take())
             .map(Sent::Message)
     }
 
     fn is_empty(&self) -> bool {
-        self.urgent.is_empty() && self.facts.is_empty() && self.menu_end.is_none()
+        self.urgent.is_empty()
+            && self.facts.is_empty()
+            && self.tells.is_empty()
+            && self.menu_end.is_none()
     }
 
     fn encode(&mut self, item: Sent, buffer: &mut Vec<u8>) -> io::Result<()> {
@@ -363,6 +464,7 @@ impl Backlog for Waiting {
             Sent::Urgent(message)
             | Sent::Message(message)
             | Sent::Fact(_, message, _)
+            | Sent::Tell(_, message)
             | Sent::MenuEnd(message) => message,
             Sent::IdleAnswer(round) => ListenerToCore::IdleAnswer { round },
             Sent::ForwardingEnded {
@@ -897,6 +999,24 @@ impl Outgoing {
         )));
     }
 
+    /// Measurement prototype: tells Core of `tell`, raised `raised_ms_ago`
+    /// before it was observed at `observed_at_us`, merged with a waiting
+    /// tell for the same object, kind and raising thread.
+    fn tell(&self, tell: Tell, raised_ms_ago: u32, observed_at_us: u64) {
+        let timing = EventTiming {
+            raised_ms_ago: Some(raised_ms_ago),
+            observed_at_us,
+            listener_handled_at_us: self.now(),
+            ..EventTiming::default()
+        };
+        let key = tell_key(&tell);
+        sent(
+            &self
+                .sender
+                .send(Sent::Tell(key, ListenerToCore::Tell { tell, timing })),
+        );
+    }
+
     /// Answers the idle barrier's round `round`, behind every fact sent
     /// before, never merged and never ahead as urgent; behind a menu end
     /// still in its grace too, once that is sent.
@@ -1301,6 +1421,10 @@ impl Listener {
     ///
     /// Returns the error of creating the menu end's grace timer, or of
     /// starting the thread that installs the UIA subscriptions.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "measurement prototype: the tell beside today's handling"
+    )]
     fn start(
         sender: Sender<Waiting>,
         ignored: IgnoredProcesses,
@@ -1334,69 +1458,86 @@ impl Listener {
             // What the event thread knows of windows and objects, for its
             // value changes, on this thread alone.
             let knowledge = RefCell::new(ValueChangeKnowledge::new());
+            // Measurement prototype: what tells Core of each event.
+            let teller = crate::tells::Teller::from_environment();
+            let tell_outgoing = Arc::clone(&msaa_outgoing);
+            let today = move |event: WinEvent| {
+                if routed_elsewhere(&outgoing, &desktop_readers, &knowledge, event) {
+                    return;
+                }
+                if matches!(
+                    event.kind,
+                    WinEventKind::ConsoleUpdate | WinEventKind::ConsoleCaret
+                ) {
+                    let step =
+                        watch
+                            .borrow_mut()
+                            .console_event(event.hwnd, event.thread, outgoing.now());
+                    foreground_step(&outgoing, step);
+                    return;
+                }
+                // Program Manager or the taskbar in front: no foreground
+                // change to forward, as NVDA takes none, but a window
+                // that came to the foreground for Core.
+                if event.kind == WinEventKind::ShellForeground {
+                    let front = Front {
+                        window: event.hwnd,
+                        thread: event.thread,
+                        console: false,
+                        observed_at_us: outgoing.now(),
+                    };
+                    let step = watch.borrow_mut().foreground(front, in_front(front.window));
+                    foreground_step(&outgoing, step);
+                    return;
+                }
+                // Forwarded first, so the event's observation time is
+                // taken before anything else the callback does; its
+                // window's class, read to route it, tells a console.
+                let (kind, window, thread) = (event.kind, event.hwnd, event.thread);
+                let forwarded = forward_msaa_event(&outgoing, event);
+                if kind == WinEventKind::Foreground {
+                    let front = Front {
+                        window,
+                        thread,
+                        console: forwarded.console,
+                        observed_at_us: forwarded.observed_at_us,
+                    };
+                    let step = watch.borrow_mut().foreground(front, in_front(window));
+                    foreground_step(&outgoing, step);
+                    // A foreground change moves away from a reading
+                    // thread's last read of another window, for menu
+                    // currentness; it judges no read in flight.
+                    foreground_readers.foreground_changed(window);
+                } else if kind == WinEventKind::Focus && watch.borrow().has_pending() {
+                    // A window not in front at its foreground event is
+                    // sent once an event finds it there.
+                    let step = watch
+                        .borrow_mut()
+                        .event_seen(front_window(), forwarded.observed_at_us);
+                    foreground_step(&outgoing, step);
+                }
+                let focus_of = forwarded.focus_of;
+                // Another process's MSAA focus moves away from every
+                // other application's last read, for menu currentness.
+                if let Some(pid) = focus_of {
+                    foreground_readers.msaa_focus(pid);
+                }
+            };
             EventHandlers {
                 win_event: Box::new(move |event: WinEvent| {
-                    if routed_elsewhere(&outgoing, &desktop_readers, &knowledge, event) {
-                        return;
+                    // Measurement prototype: the kinds only it hooks skip
+                    // today's handling, so today's speech is unchanged;
+                    // every event of a told kind is offered to the teller
+                    // after today's handling.
+                    let observed_at_us = tell_outgoing.now();
+                    if !crate::tells::added(event.kind) {
+                        today(event);
                     }
-                    if matches!(
-                        event.kind,
-                        WinEventKind::ConsoleUpdate | WinEventKind::ConsoleCaret
-                    ) {
-                        let step = watch.borrow_mut().console_event(
-                            event.hwnd,
-                            event.thread,
-                            outgoing.now(),
-                        );
-                        foreground_step(&outgoing, step);
-                        return;
-                    }
-                    // Program Manager or the taskbar in front: no foreground
-                    // change to forward, as NVDA takes none, but a window
-                    // that came to the foreground for Core.
-                    if event.kind == WinEventKind::ShellForeground {
-                        let front = Front {
-                            window: event.hwnd,
-                            thread: event.thread,
-                            console: false,
-                            observed_at_us: outgoing.now(),
-                        };
-                        let step = watch.borrow_mut().foreground(front, in_front(front.window));
-                        foreground_step(&outgoing, step);
-                        return;
-                    }
-                    // Forwarded first, so the event's observation time is
-                    // taken before anything else the callback does; its
-                    // window's class, read to route it, tells a console.
-                    let (kind, window, thread) = (event.kind, event.hwnd, event.thread);
-                    let forwarded = forward_msaa_event(&outgoing, event);
-                    if kind == WinEventKind::Foreground {
-                        let front = Front {
-                            window,
-                            thread,
-                            console: forwarded.console,
-                            observed_at_us: forwarded.observed_at_us,
-                        };
-                        let step = watch.borrow_mut().foreground(front, in_front(window));
-                        foreground_step(&outgoing, step);
-                        // A foreground change moves away from a reading
-                        // thread's last read of another window, for menu
-                        // currentness; it judges no read in flight.
-                        foreground_readers.foreground_changed(window);
-                    } else if kind == WinEventKind::Focus && watch.borrow().has_pending() {
-                        // A window not in front at its foreground event is
-                        // sent once an event finds it there.
-                        let step = watch
-                            .borrow_mut()
-                            .event_seen(front_window(), forwarded.observed_at_us);
-                        foreground_step(&outgoing, step);
-                    }
-                    let focus_of = forwarded.focus_of;
-                    // Another process's MSAA focus moves away from every
-                    // other application's last read, for menu currentness.
-                    if let Some(pid) = focus_of {
-                        foreground_readers.msaa_focus(pid);
-                    }
+                    teller.offer(
+                        event,
+                        |pid| tell_outgoing.ignored.contains(pid),
+                        |tell| tell_outgoing.tell(tell, event.raised_ms_ago, observed_at_us),
+                    );
                 }),
                 // The idle barrier's query, its round in the first word:
                 // every event delivered before it has been handled, so the
@@ -1414,7 +1555,7 @@ impl Listener {
                 })),
             }
         });
-        let event_thread = EventThread::spawn(LISTENER_SUBSCRIPTIONS, make_handlers);
+        let event_thread = EventThread::spawn(&PROTOTYPE_SUBSCRIPTIONS, make_handlers);
         if let Err(error) = event_thread.hook(0) {
             tracing::warn!(error, "failed to install WinEvent hooks");
         }
@@ -2597,7 +2738,7 @@ fn log_unread_console_once(hwnd: isize, thread: u32) {
 /// The process `thread` belongs to, read with `GetProcessIdOfThread`, a
 /// local call; `None` when the thread cannot be opened, such as one that
 /// has ended.
-fn process_of_thread(thread: u32) -> Option<u32> {
+pub(crate) fn process_of_thread(thread: u32) -> Option<u32> {
     use windows::Win32::Foundation::CloseHandle;
     use windows::Win32::System::Threading::{
         GetProcessIdOfThread, OpenThread, THREAD_QUERY_LIMITED_INFORMATION,
@@ -2925,6 +3066,74 @@ mod tests {
             })
             .collect();
         assert_eq!(order, ["7 1000", "pong", "6 1000", "5 2000"]);
+    }
+
+    /// A tell for one object.
+    fn tell_of(window: isize, kind: TellKind, thread: u32) -> Tell {
+        Tell {
+            kind,
+            application: Pid(5),
+            window,
+            id_object: -4,
+            id_child: 0,
+            thread,
+            raised_at: 0,
+            facts: verbatim_model::WindowFacts {
+                top_level: verbatim_model::WindowHandle(1),
+                root_owner: verbatim_model::WindowHandle(1),
+                topmost: false,
+                under_active_window: None,
+                in_foreground: false,
+                foreground_window: verbatim_model::WindowHandle(2),
+                class: String::new(),
+                application: String::new(),
+                alt_held: false,
+                foreground_is_shell: false,
+            },
+        }
+    }
+
+    /// Measurement prototype: waiting tells merge one per object, kind and
+    /// raising thread, the newest taking the back, and keep their order
+    /// with the facts sent among them.
+    #[test]
+    fn waiting_tells_merge_one_per_object_kind_and_thread_in_order_with_facts() {
+        let (outgoing, mut reader) = outgoing_with(4096, IgnoredProcesses::default());
+        let mut large = uia_snapshot();
+        large.name = Some("x".repeat(20_000));
+        outgoing.fact(
+            Pid(7),
+            DeliveredFact::UiaSelection {
+                hwnd: 1,
+                focus_window: 0,
+                snapshot: large,
+            },
+            None,
+            None,
+            1_000,
+        );
+        outgoing.tell(tell_of(10, TellKind::NameChange, 3), 0, 1);
+        outgoing.tell(tell_of(10, TellKind::NameChange, 4), 0, 2);
+        outgoing.fact(Pid(6), msaa_focus(), None, None, 3);
+        outgoing.tell(tell_of(11, TellKind::NameChange, 3), 0, 4);
+        // Replaces the first, and goes behind the fact.
+        outgoing.tell(tell_of(10, TellKind::NameChange, 3), 0, 5);
+        let order: Vec<String> = sent(&outgoing, &mut reader)
+            .into_iter()
+            .map(|message| match message {
+                ListenerToCore::FocusFact { fact, timing, .. } => {
+                    format!("fact {} {}", fact.pid.0, timing.observed_at_us)
+                }
+                ListenerToCore::Tell { tell, timing } => {
+                    format!("tell {} {}", tell.window, timing.observed_at_us)
+                }
+                other => format!("{other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            order,
+            ["fact 7 1000", "tell 10 2", "fact 6 3", "tell 11 4", "tell 10 5"]
+        );
     }
 
     #[test]

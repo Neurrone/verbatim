@@ -68,7 +68,7 @@ use verbatim_process::port_queue::Poster;
 
 use verbatim_model::protocol::{CoreToListener, CoreToOutpost, OutpostToCore};
 
-pub use frames::{Frame, Frames};
+pub use frames::{Frame, Frames, TellFrame};
 pub use retire::ShutdownSummary;
 pub use verbatim_core::supervisor::EndReason;
 use verbatim_core::supervisor::generation::Lifecycle;
@@ -464,6 +464,11 @@ pub enum OutpostMessage {
     /// parsed: the app passes it through [`Frames`], which turns it into
     /// the [`OutpostMessage::Event`] it carries.
     Frame(Frame),
+    /// Measurement prototype (branch `prototype/background-events`): a
+    /// tell from the focus listener ([`verbatim_model::protocol::ListenerToCore::Tell`]),
+    /// read whole by the relay and handed on unparsed, as an outpost's
+    /// frame is, for the reducer's thread to parse.
+    Tell(TellFrame),
     /// The idle barrier's round `round` (`docs/design/communication.md`,
     /// section 6.7; [`Supervisor::query_idle`]): the listener has answered,
     /// or has gone, and every outpost in `outposts` is asked now, each

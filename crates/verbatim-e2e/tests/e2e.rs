@@ -180,6 +180,10 @@ const MEASURE_SET: &[&str] = scenario_tests! {
     measure_stale_caret_conhost
     measure_held_repeat_text_box
     measure_speech_real
+    measure_background_idle_explorer
+    measure_background_console_flood
+    measure_background_msaa_flood_4000
+    measure_background_msaa_flood_20000
 };
 
 /// The agent reports an interactive session on the default desktop: the
