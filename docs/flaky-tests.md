@@ -39,6 +39,7 @@ Scenarios: the `windows_terminal_` scenarios generally, for example `windows_ter
 - `settings_system_page` on GitHub's runner (run 42492633218, 2026-11-08)
 - `settings_system_page` on GitHub's runner (run 42514816068, 2026-11-09), the same failure
 - `settings_system_page` on GitHub's runner (run 42861051487, 2026-11-10), the same failure
+- `settings_system_page` on GitHub's runner (run 43556583340, 2026-11-14), the same failure
   - How: "Settings" was said for the frame, then nothing for 75 s; "Settings window" was never queued.
   - Cause: the page's `Windows.UI.Core.CoreWindow` (hwnd 328450, `SystemSettings.exe`) raised two MSAA focus events, which the outpost dropped because UI Automation owns the window, as NVDA drops them; UI Automation delivered no focus event for the page to the listener, whose handler had delivered the frame's focus two seconds before. A focus UI Automation never delivers is lost, as in NVDA ([ADR 0001](../books/dev/src/reference/adr/0001-focus.md), its limits).
   - Fix: none in Verbatim; passed on GitHub's runner in the two runs before it.
