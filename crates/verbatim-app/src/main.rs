@@ -138,22 +138,30 @@ fn main() -> ExitCode {
     // reported in a message box.
     load_locales(&exe_dir, &config);
 
+    // In a test world (prototype) nothing of the session is touched: no
+    // running instance is replaced, and the screen reader flag, which is
+    // the session's, is left alone.
+    let in_test_world = verbatim_process::test_world::world().is_some();
     // Replace a running instance before creating anything it might still own.
-    let instance = match single_instance::acquire_replacing() {
-        Ok(guard) => guard,
-        Err(error) => {
-            tracing::error!(%error, "single-instance startup failed");
-            report_error!("verbatim: {error}");
-            return ExitCode::FAILURE;
+    let instance = if in_test_world {
+        None
+    } else {
+        match single_instance::acquire_replacing() {
+            Ok(guard) => Some(guard),
+            Err(error) => {
+                tracing::error!(%error, "single-instance startup failed");
+                report_error!("verbatim: {error}");
+                return ExitCode::FAILURE;
+            }
         }
     };
 
     // Windows' screen reader flag, set while this instance runs and cleared
     // as it goes, before the startup mutex is released, so an instance
     // replacing this one sets it again after it is cleared.
-    let _screen_reader = screen_reader_flag::ScreenReaderFlag::raise();
+    let _screen_reader = (!in_test_world).then(screen_reader_flag::ScreenReaderFlag::raise);
 
-    match run(config, &instance) {
+    match run(config, instance.as_ref()) {
         Ok(()) => {
             tracing::info!("verbatim exiting");
             ExitCode::SUCCESS
@@ -193,7 +201,7 @@ fn check_interactive_session() -> Result<(), String> {
 )]
 fn run(
     config: ConfigStore,
-    instance: &single_instance::InstanceGuard,
+    instance: Option<&single_instance::InstanceGuard>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let own_pid = std::process::id();
 
@@ -396,7 +404,7 @@ fn run(
     )?;
 
     // Control plane.
-    let server = ControlServer::start(control_handlers(ControlHandlersConfig {
+    let handlers = control_handlers(ControlHandlersConfig {
         own_pid,
         settings_host: settings_host.clone(),
         outposts: Arc::clone(&outposts),
@@ -408,7 +416,13 @@ fn run(
         readiness: Arc::clone(&readiness),
         idle_line: Arc::clone(&idle_line),
         live_re_reads: Arc::clone(&live_re_reads),
-    }))?;
+    });
+    // A test world's own pipe (prototype), so a test's Verbatim never
+    // meets the session's.
+    let server = match verbatim_process::test_world::world() {
+        Some(world) => ControlServer::start_on(&world.control_pipe(), handlers)?,
+        None => ControlServer::start(handlers)?,
+    };
     server_slot
         .set(server)
         .map_err(|_| "control server slot set twice")?;
@@ -478,7 +492,7 @@ fn run(
     // The reducer decides what is heard of the exit; this thread waits
     // until it has been.
     let deadline = Instant::now() + EXIT_SOUND_TIMEOUT;
-    let replaced = instance.being_replaced();
+    let replaced = instance.is_some_and(single_instance::InstanceGuard::being_replaced);
     let (heard_tx, heard_rx) = crossbeam_channel::bounded(1);
     let _ = command_tx.send(ShellCommand::Exiting {
         replaced,
@@ -871,9 +885,7 @@ fn taskbar_process() -> Option<Pid> {
 /// own serves none of its console window. `pid` itself for any other
 /// window in front. Local calls only.
 fn focus_now_server(pid: Pid) -> Option<Pid> {
-    use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
-    // SAFETY: no preconditions.
-    let hwnd = unsafe { GetForegroundWindow() }.0 as isize;
+    let hwnd = verbatim_win32::window::foreground_window_handle();
     if window_pid(hwnd) != Some(pid) {
         return Some(pid);
     }
@@ -883,9 +895,9 @@ fn focus_now_server(pid: Pid) -> Option<Pid> {
 /// The application holding the system foreground right now, read with a
 /// local call.
 fn foreground_pid() -> Option<Pid> {
-    use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
-    // SAFETY: no preconditions.
-    let hwnd = unsafe { GetForegroundWindow() };
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
+    let hwnd = HWND(verbatim_win32::window::foreground_window_handle() as *mut _);
     let mut pid: u32 = 0;
     // SAFETY: tolerates any handle; `pid` is a local out-parameter.
     unsafe { GetWindowThreadProcessId(hwnd, Some(&raw mut pid)) };
@@ -919,9 +931,7 @@ impl WindowsLookup for WindowsNow {
     }
 
     fn foreground_window(&self) -> Option<isize> {
-        use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
-        // SAFETY: no preconditions.
-        let hwnd = unsafe { GetForegroundWindow() }.0 as isize;
+        let hwnd = verbatim_win32::window::foreground_window_handle();
         (hwnd != 0).then_some(hwnd)
     }
 

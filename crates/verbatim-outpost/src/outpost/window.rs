@@ -7,8 +7,8 @@ use std::ffi::c_void;
 
 use windows::Win32::Foundation::{CloseHandle, HWND};
 use windows::Win32::UI::WindowsAndMessaging::{
-    GA_PARENT, GA_ROOT, GA_ROOTOWNER, GWL_STYLE, GetAncestor, GetForegroundWindow,
-    GetWindowLongPtrW, WS_DISABLED, WS_SYSMENU,
+    GA_PARENT, GA_ROOT, GA_ROOTOWNER, GWL_STYLE, GetAncestor, GetWindowLongPtrW, WS_DISABLED,
+    WS_SYSMENU,
 };
 
 use verbatim_model::{Pid, WindowFacts, WindowHandle};
@@ -170,12 +170,11 @@ pub(super) use verbatim_win32::window::window_text;
 /// `GetForegroundWindow()` if it is `target_pid`'s ([`served_by`]), else
 /// `None`. Always a genuine top-level window when it returns `Some`.
 pub(super) fn foreground_window_of(target_pid: u32) -> Option<isize> {
-    // SAFETY: GetForegroundWindow has no preconditions.
-    let window = unsafe { GetForegroundWindow() };
-    if window.0.is_null() {
+    let window = verbatim_win32::window::foreground_window_handle();
+    if window == 0 {
         return None;
     }
-    served_by(window.0 as isize, target_pid).then_some(window.0 as isize)
+    served_by(window, target_pid).then_some(window)
 }
 
 /// The target's top-level window for a tree dump: its foreground window,

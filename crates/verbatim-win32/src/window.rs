@@ -268,6 +268,9 @@ pub fn window_belongs_to_hidden_frame(handle: isize) -> bool {
 /// The system's foreground window, or 0 when no window has the foreground.
 #[must_use]
 pub fn foreground_window_handle() -> isize {
+    if let Some(world) = verbatim_process::test_world::world() {
+        return world.foreground();
+    }
     // SAFETY: GetForegroundWindow has no preconditions.
     unsafe { GetForegroundWindow() }.0 as isize
 }
@@ -435,6 +438,9 @@ pub fn served_by(handle: isize, target_pid: u32) -> bool {
 /// window), whatever process it belongs to.
 #[must_use]
 pub fn focus_window() -> Option<isize> {
+    if let Some(world) = verbatim_process::test_world::world() {
+        return world.focus_window();
+    }
     // SAFETY: `info` has cbSize set before the call; the call fails safely.
     unsafe {
         let mut info = GUITHREADINFO {

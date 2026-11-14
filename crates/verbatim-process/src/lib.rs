@@ -43,6 +43,7 @@ pub mod overlapped;
 pub mod port_queue;
 pub mod scheduling;
 pub mod session;
+pub mod test_world;
 pub mod transport;
 
 use std::ffi::c_void;

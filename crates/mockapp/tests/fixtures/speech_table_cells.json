@@ -1,0 +1,42 @@
+{
+  "id": "root",
+  "role": "window",
+  "name": "Speech Level Table Cells",
+  "focus_on_activate": true,
+  "children": [
+    {
+      "id": "grid-a",
+      "role": "list",
+      "name": "Grid A",
+      "children": [
+        {
+          "id": "first", "role": "list_item", "name": "First",
+          "states": ["focusable", "focused"], "position_in_set": 2, "set_size": 6,
+          "cell": { "row": 0, "column": 1, "grid": "grid-a" }
+        },
+        {
+          "id": "second", "role": "list_item", "name": "Second",
+          "states": ["focusable"], "position_in_set": 3, "set_size": 6,
+          "cell": { "row": 0, "column": 2, "grid": "grid-a" }
+        },
+        {
+          "id": "third", "role": "list_item", "name": "Third",
+          "states": ["focusable"], "position_in_set": 6, "set_size": 6,
+          "cell": { "row": 1, "column": 2, "grid": "grid-a" }
+        }
+      ]
+    },
+    {
+      "id": "grid-b",
+      "role": "list",
+      "name": "Grid B",
+      "children": [
+        {
+          "id": "other", "role": "list_item", "name": "Other",
+          "states": ["focusable"], "position_in_set": 1, "set_size": 2,
+          "cell": { "row": 1, "column": 2, "grid": "grid-b" }
+        }
+      ]
+    }
+  ]
+}

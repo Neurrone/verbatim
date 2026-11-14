@@ -75,6 +75,18 @@ pub fn offset() -> u64 {
 /// Now, in microseconds since the Unix epoch on this run's clock.
 #[must_use]
 pub fn now_us() -> u64 {
+    // In a test world (prototype) the run's clock is the test's, moved on
+    // only by the test.
+    if let Some(world) = crate::test_world::world() {
+        return world.now_us();
+    }
+    offset().saturating_add(counter_us())
+}
+
+/// The system's reading of this run's clock, whatever the test world says:
+/// for the test world itself, which starts its clock from it.
+#[must_use]
+pub fn system_now_us() -> u64 {
     offset().saturating_add(counter_us())
 }
 

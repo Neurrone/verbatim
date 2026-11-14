@@ -1425,6 +1425,9 @@ impl Listener {
         nudger.nudge((0, NUDGE_FOREGROUND_START));
 
         let registering = install_on_its_thread(&outgoing, &readers, install)?;
+        if verbatim_process::test_world::world().is_some() {
+            told_focus_on_its_thread(&outgoing, &readers)?;
+        }
 
         Ok(Self {
             outgoing,
@@ -1599,6 +1602,58 @@ fn install_on_its_thread(
             });
             registration
         })
+}
+
+/// The test world's stand-in for UI Automation's delivery of focus events
+/// (prototype): each focus the test tells of, the element the told window's
+/// provider reports focused, filled as the focus subscription's cache
+/// fills a focus event's sender, is taken as the focus subscription's
+/// callback takes its sender ([`queue_for_reading`]), on a thread of its
+/// own in the multithreaded apartment, as UI Automation's callbacks run.
+fn told_focus_on_its_thread(
+    outgoing: &Arc<Outgoing>,
+    readers: &Arc<Readers<UiaFocusReading>>,
+) -> io::Result<()> {
+    let outgoing = Arc::clone(outgoing);
+    let readers = Arc::clone(readers);
+    let world = verbatim_process::test_world::world().expect("a test world");
+    std::thread::Builder::new()
+        .name("test world's focus events".to_owned())
+        .spawn(move || {
+            let uia = verbatim_uia::Uia::new().expect("a UIA client for told focuses");
+            let request = uia
+                .request_fixed::<ListenerEvent>()
+                .expect("the listener's cache request");
+            let condition = uia
+                .property_condition(
+                    windows::Win32::UI::Accessibility::UIA_HasKeyboardFocusPropertyId,
+                    &windows::Win32::System::Variant::VARIANT::from(true),
+                )
+                .expect("a condition");
+            loop {
+                let window = world.next_told_focus();
+                let root = uia.window_live(window).expect("the told window's element");
+                let sender = root
+                    .find_first(
+                        windows::Win32::UI::Accessibility::TreeScope_Descendants,
+                        &condition,
+                        &request,
+                    )
+                    .expect("the search for the told focus")
+                    .expect("the told window reports a focused element");
+                tracing::info!(window, "the test world told of a UIA focus");
+                queue_for_reading(
+                    &outgoing,
+                    &readers,
+                    &sender,
+                    &sender.read(),
+                    FocusEvent::Focus,
+                    None,
+                );
+                world.told_focus_taken();
+            }
+        })
+        .map(drop)
 }
 
 /// Answers the idle barrier's round `round` once no reading thread has an
@@ -2495,9 +2550,7 @@ const NUDGE_FOREGROUND_START: isize = 1;
 
 /// The system's foreground window now, read locally; 0 for none.
 fn front_window() -> isize {
-    use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
-    // SAFETY: a local read with no preconditions.
-    unsafe { GetForegroundWindow() }.0 as isize
+    verbatim_win32::window::foreground_window_handle()
 }
 
 /// Whether `window` is the system's foreground window now, the test a

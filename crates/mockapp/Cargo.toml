@@ -23,6 +23,7 @@ windows-core.workspace = true
 workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 [dev-dependencies]
+verbatim-control.workspace = true
 verbatim-core.workspace = true
 verbatim-ia2.workspace = true
 verbatim-listener.workspace = true
@@ -61,6 +62,12 @@ harness = false
 
 [[test]]
 name = "combo_box"
+harness = false
+
+# Prototype: the real verbatim.exe on the test's desktop, its speech read
+# on its control plane.
+[[test]]
+name = "speech_level"
 harness = false
 
 # Tells why a console's caret watch ended by the outpost's observation
