@@ -39,7 +39,7 @@ Scenarios: the `windows_terminal_` scenarios generally, for example `windows_ter
 - Scenarios: `settings_combo_box_expanded` (local only), 1 of 2 runs on 2026-11-14.
 - How: Alt+Down Arrow on Settings' "Show additional calendars in the taskbar" combo box says the first item without "expanded" first.
 - Cause: Settings raised the combo box's expand and collapse change (property 30070) about 5 ms after the list item's focus was observed. Today's outpost follows only the focused element, so by then it dropped the combo box's change unpublished. In the passing run the change came 10.9 ms before the focus. Neither order is guaranteed.
-- Fix: not yet established. Whether the event queue and focus build of [Readers tell, Core asks](roadmap.md#readers-tell-core-asks) hears the change depends on whether UI Automation delivers an ancestor's property change to a registration at element-and-ancestors scope, which is to be settled by experiment.
+- Fix: none planned. UI Automation delivers no ancestor's property change to a registration at the focus-and-ancestors scope (an experiment with mockapp, 2026-11-14), so [Readers tell, Core asks](roadmap.md#readers-tell-core-asks) does not hear this order either; NVDA registers expand and collapse changes the same way by default on Windows 11 22H2 and later, so it would likely miss it too. An NVDA capture of the late order decides whether the scenario's expectation is NVDA's.
 
 ## A description's first line wraps by the window's width
 

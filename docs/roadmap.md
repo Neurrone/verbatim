@@ -96,10 +96,14 @@ done on 2026-11-14; the build notes give their figures.
   branch prototype/core-form-trial: step functions in a reducer, async
   functions run on Core's thread, and a logic thread beside an inbox
   thread, each running the event queue with a focus and a caret key.
-- The smaller measurements the build notes list under "Measurements":
-  a listener reading thread's start, the property changes that
-  following the focus brings, and the lag between a focus and its
-  state changes across the two routes.
+- The smaller measurements, done on 2026-11-14 with tools on the branch
+  measure-tools: a fresh listener reading thread costs about 0.45 ms
+  more than a long-lived one; following the focus and its ancestors in
+  Settings brought 5 property changes over 51 focus changes; and a
+  focus and its state changes arrive in either order, a median 0.1 ms
+  apart. UI Automation delivers no ancestor's change to that
+  following, so a combo box's "expanded" raised after its item's focus
+  goes unsaid here, as it likely does in NVDA.
 - The event recorder, described under "Misc fixes" below, which the
   speech-level tests need.
 
