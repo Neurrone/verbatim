@@ -401,7 +401,9 @@ subscriptions".
   running Verbatim's handlers from UI Automation's own, which stay
   unnamed.
 - A `Scope` is nothing yet, the subtrees of given elements (`Subtrees`),
-  the whole desktop, or exactly given elements. The caller looks a
+  the whole desktop, exactly given elements, or given elements and their
+  ancestors (`ElementsAndAncestors`, the scope of NVDA's local group,
+  which only the `follow_counts` example uses). The caller looks a
   window's element up itself, so the registering thread makes no
   connection by handle.
 - A move (`retarget` gives the base group, `retarget_to` the group named,

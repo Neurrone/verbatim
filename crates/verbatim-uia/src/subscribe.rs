@@ -87,10 +87,11 @@ use windows::Win32::UI::Accessibility::{
     IUIAutomationFocusChangedEventHandler, IUIAutomationNotificationEventHandler,
     IUIAutomationPropertyChangedEventHandler, IUIAutomationStructureChangedEventHandler,
     IUIAutomationTextRange, NotificationKind, NotificationProcessing, StructureChangeType,
-    TreeScope, TreeScope_Element, TreeScope_Subtree, UIA_ControllerForPropertyId, UIA_EVENT_ID,
-    UIA_ExpandCollapseExpandCollapseStatePropertyId, UIA_HelpTextPropertyId,
-    UIA_IsEnabledPropertyId, UIA_NamePropertyId, UIA_PATTERN_ID, UIA_PROPERTY_ID,
-    UIA_RangeValueValuePropertyId, UIA_ToggleToggleStatePropertyId, UIA_ValueValuePropertyId,
+    TreeScope, TreeScope_Ancestors, TreeScope_Element, TreeScope_Subtree,
+    UIA_ControllerForPropertyId, UIA_EVENT_ID, UIA_ExpandCollapseExpandCollapseStatePropertyId,
+    UIA_HelpTextPropertyId, UIA_IsEnabledPropertyId, UIA_NamePropertyId, UIA_PATTERN_ID,
+    UIA_PROPERTY_ID, UIA_RangeValueValuePropertyId, UIA_ToggleToggleStatePropertyId,
+    UIA_ValueValuePropertyId,
 };
 use windows::core::AgileReference;
 use windows_core::Interface;
@@ -172,6 +173,25 @@ pub enum Scope {
     Desktop,
     /// Exactly these elements, not their descendants.
     Elements(Vec<AgileReference<IUIAutomationElement>>),
+    /// These elements and each of their ancestors, not their descendants
+    /// (`TreeScope_Element` with `TreeScope_Ancestors`), the scope NVDA
+    /// registers its local group over on the focus
+    /// (`_createLocalEventHandlerGroup`, `UIAHandler/__init__.py` 641 to
+    /// 679): for a measurement of what that scope delivers
+    /// (`verbatim-uia`'s `follow_counts` example).
+    ElementsAndAncestors(Vec<AgileReference<IUIAutomationElement>>),
+}
+
+impl Scope {
+    /// The tree scope a group registered on this scope's elements listens
+    /// over.
+    fn tree_scope(&self) -> TreeScope {
+        match self {
+            Self::Nothing | Self::Elements(_) => TreeScope_Element,
+            Self::Subtrees(_) | Self::Desktop => TreeScope_Subtree,
+            Self::ElementsAndAncestors(_) => TreeScope(TreeScope_Element.0 | TreeScope_Ancestors.0),
+        }
+    }
 }
 
 /// Which of a registration's event handler groups the elements of its
@@ -1534,35 +1554,25 @@ impl Follower {
         let Some(cache) = self.built.first().map(|built| &built.cache) else {
             return (Vec::new(), TreeScope_Element);
         };
-        match scope {
-            Scope::Nothing => (Vec::new(), TreeScope_Element),
-            Scope::Subtrees(elements) => (
-                elements
-                    .iter()
-                    .filter_map(|agile| agile.resolve().ok())
+        let elements = match scope {
+            Scope::Nothing => Vec::new(),
+            Scope::Subtrees(elements)
+            | Scope::Elements(elements)
+            | Scope::ElementsAndAncestors(elements) => elements
+                .iter()
+                .filter_map(|agile| agile.resolve().ok())
+                .collect(),
+            Scope::Desktop => match &self.desktop_root {
+                Some(root) => vec![root.clone()],
+                // SAFETY: `cache` is a live cache request owned by this
+                // thread.
+                None => unsafe { client.uia.client().GetRootElementBuildCache(cache) }
+                    .ok()
+                    .into_iter()
                     .collect(),
-                TreeScope_Subtree,
-            ),
-            Scope::Desktop => (
-                match &self.desktop_root {
-                    Some(root) => vec![root.clone()],
-                    // SAFETY: `cache` is a live cache request owned by this
-                    // thread.
-                    None => unsafe { client.uia.client().GetRootElementBuildCache(cache) }
-                        .ok()
-                        .into_iter()
-                        .collect(),
-                },
-                TreeScope_Subtree,
-            ),
-            Scope::Elements(elements) => (
-                elements
-                    .iter()
-                    .filter_map(|agile| agile.resolve().ok())
-                    .collect(),
-                TreeScope_Element,
-            ),
-        }
+            },
+        };
+        (elements, scope.tree_scope())
     }
 
     /// The event handler group for `group` over `tree_scope`, built on its
@@ -1625,6 +1635,9 @@ fn describe(scope: &Scope) -> String {
         Scope::Subtrees(elements) => format!("the subtrees of {} elements", elements.len()),
         Scope::Desktop => "the desktop".to_owned(),
         Scope::Elements(elements) => format!("{} elements", elements.len()),
+        Scope::ElementsAndAncestors(elements) => {
+            format!("{} elements and their ancestors", elements.len())
+        }
     }
 }
 
@@ -1796,6 +1809,23 @@ mod handlers {
 #[cfg(test)]
 mod tests {
     use super::{Alone, Command, Group, Scope, Target, plan_keep, superseded};
+    use windows::Win32::UI::Accessibility::{
+        TreeScope, TreeScope_Ancestors, TreeScope_Element, TreeScope_Subtree,
+    };
+
+    /// Each scope's groups listen over its own tree scope: an element and
+    /// its ancestors over both, as NVDA's local group does.
+    #[test]
+    fn each_scope_listens_over_its_tree_scope() {
+        assert_eq!(Scope::Nothing.tree_scope(), TreeScope_Element);
+        assert_eq!(Scope::Elements(Vec::new()).tree_scope(), TreeScope_Element);
+        assert_eq!(Scope::Subtrees(Vec::new()).tree_scope(), TreeScope_Subtree);
+        assert_eq!(Scope::Desktop.tree_scope(), TreeScope_Subtree);
+        assert_eq!(
+            Scope::ElementsAndAncestors(Vec::new()).tree_scope(),
+            TreeScope(TreeScope_Element.0 | TreeScope_Ancestors.0)
+        );
+    }
 
     /// Each group holds the parts it should, as (extended only, text
     /// events): the group without text events holds the base parts and the

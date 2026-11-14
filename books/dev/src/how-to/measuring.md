@@ -225,3 +225,18 @@ run, `cargo xtask trace stop`) can be read at each slow crossing with
 `--schedule`; its threads are named `crossing-core`, `crossing-relay`,
 `crossing-producer` and `crossing-io`, and its processes are both
 `crossing.exe`.
+
+### A reading thread's start and focus following: two UI Automation examples
+
+- `cargo run --release -p verbatim-uia --example reading_thread_start --
+  --process <name>` times a fresh thread doing the listener's
+  reading-thread setup (joining COM's multithreaded apartment, then a UI
+  Automation client) and the first read of a focus read on the process's
+  window, phase by phase, against the same read on one long-lived thread.
+- `cargo run --release -p verbatim-uia --example follow_counts --
+  --process <name> --seconds N` follows the process's UI Automation focus
+  as NVDA's local group does, over the focus and its ancestors, and counts
+  the property-change events that arrive per focus change, by property and
+  by whether the focus or an ancestor raised them.
+
+Each file's header lists its options.
