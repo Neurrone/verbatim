@@ -212,7 +212,7 @@ Each changes on a fact that has changed: no reader acts on an event itself, no r
 - Only focus events moved to the listener, the other MSAA events left in each outpost. Rejected: an application's focus and its other events would arrive by two routes with no order, so a state change raised before a focus could be handled after it and go unsaid.
 - A time limit on how long a key waits for a focus ahead of it. Rejected: NVDA has none, and a key pressed after a slow focus would act from the old position where NVDA acts from the new one.
 - A stored not-responding mark per application. Rejected: one hung window stopped requests to the application's other windows that still answer, the mark had no clean way to end, and NVDA checks each window live each time.
-- Core's sequences written as step functions in a reducer, each wait a named stage. Rejected: a chain of requests is split across several functions, where async functions read top to bottom like NVDA's, at half the size per feature.
+- Core's sequences written as step functions in a reducer, each wait a named stage. Rejected: a chain of requests is split across several functions, where async functions read top to bottom like NVDA's and keep a feature's handling in one place.
 - A logic thread waiting on each request beside an inbox thread. Rejected: it needs a thread inside the platform-neutral Core, which the determinism rule forbids, and each question about the queue becomes a round trip between threads.
 
 ## Limits accepted
