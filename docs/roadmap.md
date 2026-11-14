@@ -103,9 +103,10 @@ done on 2026-11-14; the build notes give their figures.
   more than a long-lived one; following the focus and its ancestors in
   Settings brought 5 property changes over 51 focus changes; and a
   focus and its state changes arrive in either order, a median 0.1 ms
-  apart. UI Automation delivers no ancestor's change to that
-  following, so a combo box's "expanded" raised after its item's focus
-  goes unsaid here, as it likely does in NVDA.
+  apart. UI Automation delivers no change of an ancestor that is not
+  itself followed; the old focus stays followed until Core commits the
+  new one, so a combo box's "expanded" raised just after its item's
+  focus is still heard.
 - The event recorder, described under "Misc fixes" below, which the
   speech-level tests need.
 

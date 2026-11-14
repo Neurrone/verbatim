@@ -36,7 +36,7 @@ Core holds every rule that decides what is spoken, written to read like NVDA's, 
 
 Reason: NVDA's rules are defined on one order, which only Core has ([ADR 0002](0002-no-screen-reader-per-outpost.md)).
 
-### Who holds what (Dickson, 2026-11-12; amended 2026-11-13)
+### Who holds what (Dickson, 2026-11-13)
 
 - The listener holds every desktop-wide registration: the UI Automation focus handler and global event group, and every WinEvent hook, desktop-wide, as NVDA hooks them in one process. Reason: one desktop-wide hook keeps Windows' order of events across applications and removes the hand-over between two routes.
 - An outpost holds no WinEvent hook, except a console host's outpost, which keeps the console's five events. It keeps a UI Automation subscription to property changes on the objects Core tells it to follow, at NVDA's scope of the element and its ancestors, and tells Core of those and of text and caret events. Reason: each kind of event has exactly one teller, so no event reaches Core twice by two routes with no order between them.
@@ -52,7 +52,7 @@ Reason: NVDA's rules are defined on one order, which only Core has ([ADR 0002](0
 
 Reason: today a new property touches about twenty files in five crates, and a new command adds a request variant with its dispatch; declared once, a property is one entry, and a command is its gesture and its handler.
 
-### Core's inbox and the event queue (Dickson, 2026-11-12; amended 2026-11-13)
+### Core's inbox and the event queue (Dickson, 2026-11-13)
 
 Everything enters Core's inbox in arrival order. Handled at once: answers, timers that come due, foreground changes, a desktop switch, a change of the lock state, progress facts, readers starting and ending, window destruction (passed on to the outpost), a terminal's "changed" tell, and the speech cut and failures from the speech side. Every other tell, every key and command, index marks, say-all's reads, and entries Core makes itself (the focus read at startup, the check after a menu ends) join the event queue and are handled in arrival order. Only the front entry may have a request out. Reason: this is NVDA's one queue, so keys and events are judged against the focus NVDA would have.
 
@@ -72,7 +72,7 @@ An entry is either waiting or asked. The rules that read the state:
 
 The reasons, with what Core does beyond taking the next: an answer other than a result, nothing more; Core gives up (hung report, due time or foreground change), cancel sent; the send finds the window hung, nothing sent; the reader ends, the new reader asked for the focus. A hung window plays the not-responding sound.
 
-### Keys and commands (Dickson, 2026-11-12; amended 2026-11-13)
+### Keys and commands (Dickson, 2026-11-13)
 
 - A key or command takes its place in the event queue behind what arrived before it and is handled in arrival order, with no time limit of its own. Reason: Verbatim matches NVDA; the escape is on the stuck read, not on the key.
 - A key's action is chosen at the moment of the press, against the focus Core has then, and run later in the queue's order; the key's report from the hook carries that choice. Only actions bound to the focused object use the node chosen at the press; a global command resolves its object when it runs. Reason: NVDA binds a script at the press, and a gesture swallowed at the press must run the command chosen then.
@@ -82,7 +82,7 @@ The reasons, with what Core does beyond taking the next: an answer other than a 
 - Selection keys are not held: Core speaks the difference the outpost reports between each caret answer's selection and the selection Core last spoke from. Reason: that is NVDA's rule for controls that detect selection changes.
 - A move by sentence is one request the outpost runs whole.
 
-### A frozen window (Dickson, 2026-11-12; amended 2026-11-13)
+### A frozen window (Dickson, 2026-11-13)
 
 - Only Core stops waiting. It keeps one due time per request, or one for a command's whole chain of requests: 11 seconds, 13 for a focus read, counted from the moment Core decides to ask, so time spent waiting for an outpost to start counts. Core gives a request up on its live hung check, at its due time, or when the foreground changes and the request's window is outside the new foreground window's tree or owner chain. The foreground test is by window, so it covers another window of the same application, and acts at once. Reason: a frozen application must not hold the user's keys, which wait behind the front entry, and attention and waiting are Core's facts. NVDA's watchdog recovers by a like test half a second after the foreground changes (`watchdog.py` 206 to 232).
 - One detector, live, as NVDA checks each time: Core's shell asks Windows whether a request's window is hung before sending it, and answers it "not responding" without sending if so; and asks again every half second while a request is out. There is no stored mark, so a hung window of one application does not stop requests to its other windows.
@@ -92,11 +92,11 @@ The reasons, with what Core does beyond taking the next: an answer other than a 
 - A request to a window that is slow but not reported hung waits out its due time, with no special case.
 - The not-responding sound plays once for each request Core refuses or gives up because its window is hung, while its application holds attention, with no record of having played.
 
-### The two versions of the focus (Dickson, 2026-11-12; amended 2026-11-13)
+### The two versions of the focus (Dickson, 2026-11-13)
 
 Core keeps the committed focus and the readers' last focus as separate facts, as NVDA keeps its focus object apart from its last queued focus, and every rule says which of the two it judges: the duplicate tests, the whole-window refusal, a run's refusals and the system caret's target judge the readers' last focus, as NVDA's judge its last queued focus; commands, the narrow rule and typed echo judge the committed focus. Core can also commit a focus itself, with no reader having read it: the sleeping focus while the secure desktop is up now, and later an expression being explored in maths, an object a module makes, or a recognition result. Reason: one mechanism, stated once, serves every feature that needs a focus no reader read.
 
-### Stop points and leaving a window (Dickson, 2026-11-12; amended 2026-11-13)
+### Stop points and leaving a window (Dickson, 2026-11-13)
 
 - The stop points of a focus walk are Core's committed focus's line, as NVDA walks until it meets its own focus line, and are sent only while the readers' last focus is set. There is no store of an earlier ancestry per application, so a return from another application walks to the top. Reason: nothing above the meeting point is reused, so no stale window title can be spoken.
 - When the foreground leaves for a top-level window unrelated to the committed focus, the readers' last focus is cleared, in arrival order; the committed focus stays for commands and typed echo. With no readers' last focus, the duplicate tests, the whole-window refusal and the stop points behave as with no earlier focus, so a return to an application that committed no focus while the user was away says the window's title and the focus, as the decision of 2026-11-08 chose. There is no separate mark. Reason: the three effects the mark had are what happens when there is no earlier focus, so one fact serves.
@@ -127,7 +127,7 @@ Reason: an outpost waiting on a host would let one extension hold an application
 
 The approved [progress-bar design](https://github.com/Neurrone/verbatim/blob/main/docs/design/progress-bars.md) stands as the one place a reader reads unasked: the listener reads a bar's role, percentage and place and reports facts, and Core judges them. Core's requests go ahead of bar reads on a reading thread. Reason: a bar's beep costs no request, and under the fallback that filters change events to the foreground's processes, this path is what keeps background progress bars heard. Revisited only if the measurement shows the fallback is not needed.
 
-### Flood limiters and the merge (Dickson, 2026-11-12; amended 2026-11-13)
+### Flood limiters and the merge (Dickson, 2026-11-13)
 
 The listener's limiter makes no guess about the focus: it merges only waiting events with the same object, kind and raising thread. NVDA's whole limiter (the newest ten per thread, the focused object's always, the newest four focus events) runs on the MSAA entries waiting in Core's event queue, where the focus is known; caps are added at the listener only if the measurement misses its budget. The outpost keeps a limiter for what it still hears. Core also merges waiting entries of the event queue for the same object and kind, the newest keeping its place, as NVDA's limiter does. Reason: a limiter that guessed the focus could drop the focused object's change, and the backlog behind a slow read builds in Core's queue, not on the listener's pipe.
 
@@ -136,7 +136,7 @@ The listener's limiter makes no guess about the focus: it merges only waiting ev
 - A switch to or from the secure desktop is handled at once, ahead of the event queue, as NVDA handles it before its queue. The tell carries whether the input desktop can be opened. On a switch away, Core cuts speech, commits the sleeping focus so every key passes to Windows, and asks the old application nothing. On a return, Core asks the application in front for its focus 200 ms later.
 - Core holds the session's lock state, from the shell's session notifications and a query at startup, an unknown answer counting as locked (security mitigation B3). Everything Core speaks, including what it speaks with no read, is checked against it, and an object below the lock screen is never spoken. Reason: the lock state is a fact every rule in a pure reducer reads, so Core holds it rather than calling Windows at each decision.
 
-### Messages that remain (Dickson, 2026-11-12; amended 2026-11-13)
+### Messages that remain (Dickson, 2026-11-13)
 
 - Reader to Core (12): the tell, the listener's foreground change, the listener's progress fact, the answer, and eight lifecycle messages (ready, pong, fault, target exited, spare ready, idle answer, exit handled, shutdown done).
 - Core to the listener (6): a request (read this focus event with stop points, answering a snapshot and the element's route; read this menu opening; read this toast's or alert's text; check a notification's sender; read the desktop's name), cancel, ping, shut down, application exited, idle query.
