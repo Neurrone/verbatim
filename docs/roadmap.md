@@ -73,32 +73,33 @@ and what each later milestone must not lose.
 
 ### Before the builds
 
-These change no state and may run side by side.
+These change no state and may run side by side. The first three were
+done on 2026-11-14; the build notes give their figures.
 
-- The latency of one crossing between the listener and Core over the
-  present pipes, each leg timed at the median and the 99th percentile,
-  idle, during speech and under a flood, and then what brings it down.
-  The aim is under 0.1 ms a crossing (Dickson, 2026-11-13); whether
-  that can be met is not known.
+- The latency of one crossing between the listener and Core, measured
+  with `crates/verbatim-process/examples/crossing.rs`: about 15 to 45
+  microseconds at the median, idle, during speech and under a flood.
+  Through the relay the 99th percentile into Core reached about 2 ms
+  under load, because a post to Core's port wakes it without a
+  priority boost. So Core's reducer thread runs at `Highest` from the
+  event queue and focus build, which brought it to 0.1 to 0.26 ms, and
+  the relay stays (Dickson, 2026-11-14).
 - The background events that reach Core once every WinEvent hook is in
-  the listener, desktop-wide: the listener's and Core's wake-ups and
-  processor time, and the delay from a held key's press to Core taking
-  it, idle with File Explorer open, under a background console flood
-  and under an MSAA flood. If the budget is missed, the listener
-  filters change events to the foreground's processes, and that is
-  measured before anything is built.
-- A trial of how Core's "ask, wait, continue" code is written, which
-  is not decided: step functions in a reducer, async functions run on
-  Core's thread, or a logic thread that waits on each request beside a
-  small inbox thread that owns the queue and the waiting. The trial
-  writes the event queue with a focus and a caret key in each form
-  against a fake reader, and is judged on how closely each reads
-  against NVDA's code, what a state dump shows in the middle of an
-  entry, whether replay stays exact, and its size. The choice is
-  Dickson's. An earlier prototype of the async form, written against
-  the reducer as it is today, is on the branch
-  prototype/core-async-driver, and the trial's async form can start
-  from its driver; the build notes give what it found.
+  the listener, measured with a prototype on the branch
+  prototype/background-events: 27 to 33 tells a second with File
+  Explorer idle, 3,000 to 4,000 under floods, Core keeping up at every
+  load, keys a millisecond slower at the median, and about 15 percent
+  of one processor added in a console flood. No count caps are needed.
+  The foreground filter, the ruled fallback, removes Core's added cost
+  but not the listener's.
+- A trial of how Core's "ask, wait, continue" code is written, on the
+  branch prototype/core-form-trial: step functions in a reducer, async
+  functions run on Core's thread, and a logic thread beside an inbox
+  thread, each running the event queue with a focus and a caret key.
+- The smaller measurements the build notes list under "Measurements":
+  a listener reading thread's start, the property changes that
+  following the focus brings, and the lag between a focus and its
+  state changes across the two routes.
 - The event recorder, described under "Misc fixes" below, which the
   speech-level tests need.
 
@@ -143,7 +144,9 @@ drag events and effects, layout invalidated for suggestion lists).
 ### Waiting for Dickson
 
 - The speech-level tests' design decisions.
-- The form of Core's code, after the trial.
+- The form of Core's code, from the trial's results.
+- Whether the processor time every background event adds fits the
+  budget, and so whether the foreground filter is needed.
 
 ### Found for later milestones
 
