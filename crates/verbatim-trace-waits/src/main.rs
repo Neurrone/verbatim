@@ -58,6 +58,14 @@
 //! overlaps the window, however short, as `--blocked` reports one, and each
 //! CPU sample of them in it with its stack, which together say whether a
 //! thread was waiting, and on what, or running, and in what.
+//! With `--schedule <from> <to>` (UTC times of day, as for `--timeline`)
+//! it reports every context switch and readying in that window, of any
+//! thread on any processor, in time order: for a switch, the thread leaving
+//! and the one taking the processor, their priorities, why the one leaving
+//! left, and the idle state the processor came out of; for a readying, the
+//! thread readied, the thread that readied it, and the priority boost it
+//! was given. Together they say why a thread that was readied did not run
+//! at once: what held its processor, or which processor had to wake.
 //! Names come from the thread events (`SetThreadDescription`,
 //! which Rust's named threads set); a process is named by the `.exe` image
 //! the trace saw loaded in it.
@@ -203,6 +211,135 @@ struct Waits {
     /// thread walked and the event's time as the walk gives it: the
     /// sample's index in `sample_stacks`.
     sample_user_part: HashMap<(u32, u64), usize>,
+    /// The window `--schedule` reports, as times of day (UTC) in
+    /// 100-nanosecond units, and every context switch and readying in it,
+    /// of any thread on any processor.
+    schedule_window: Option<(i64, i64)>,
+    scheduled: Vec<Scheduled>,
+}
+
+/// One scheduling event `--schedule` reports, at its time (the trace's
+/// 100-nanosecond units since 1601, UTC) on its processor.
+enum Scheduled {
+    /// A context switch (the kernel's `CSwitch`): the processor passes
+    /// from `old` to `new`, thread 0 being the idle thread.
+    Switch {
+        time: i64,
+        processor: u16,
+        new: ThreadKey,
+        old: ThreadKey,
+        new_priority: i8,
+        old_priority: i8,
+        /// The idle state the processor was in before the switch, 0 when
+        /// it was not idle.
+        previous_c_state: u8,
+        /// Why `old` left: its wait reason (`KWAIT_REASON`) and state
+        /// (`KTHREAD_STATE`).
+        wait_reason: i8,
+        old_state: i8,
+    },
+    /// A readying (the kernel's `ReadyThread`): `thread` becomes ready,
+    /// readied by `waker`, the thread running on the processor that logged
+    /// it, with the priority change applied (`AdjustReason`, and
+    /// `AdjustIncrement` for a boost) and the event's flags.
+    Ready {
+        time: i64,
+        processor: u16,
+        thread: ThreadKey,
+        waker: ThreadKey,
+        reason: i8,
+        increment: i8,
+        flag: i8,
+    },
+}
+
+impl Scheduled {
+    fn time(&self) -> i64 {
+        match self {
+            Self::Switch { time, .. } | Self::Ready { time, .. } => *time,
+        }
+    }
+}
+
+/// A `KWAIT_REASON`'s name, as the kernel's headers give it.
+fn wait_reason(reason: i8) -> String {
+    const NAMES: [&str; 39] = [
+        "Executive",
+        "FreePage",
+        "PageIn",
+        "PoolAllocation",
+        "DelayExecution",
+        "Suspended",
+        "UserRequest",
+        "WrExecutive",
+        "WrFreePage",
+        "WrPageIn",
+        "WrPoolAllocation",
+        "WrDelayExecution",
+        "WrSuspended",
+        "WrUserRequest",
+        "WrEventPair",
+        "WrQueue",
+        "WrLpcReceive",
+        "WrLpcReply",
+        "WrVirtualMemory",
+        "WrPageOut",
+        "WrRendezvous",
+        "WrKeyedEvent",
+        "WrTerminated",
+        "WrProcessInSwap",
+        "WrCpuRateControl",
+        "WrCalloutStack",
+        "WrKernel",
+        "WrResource",
+        "WrPushLock",
+        "WrMutex",
+        "WrQuantumEnd",
+        "WrDispatchInt",
+        "WrPreempted",
+        "WrYieldExecution",
+        "WrFastMutex",
+        "WrGuardedMutex",
+        "WrRundown",
+        "WrAlertByThreadId",
+        "WrDeferredPreempt",
+    ];
+    usize::try_from(reason)
+        .ok()
+        .and_then(|at| NAMES.get(at))
+        .map_or_else(
+            || format!("wait reason {reason}"),
+            |name| (*name).to_owned(),
+        )
+}
+
+/// A `KTHREAD_STATE`'s name, as the kernel's headers give it.
+fn thread_state(state: i8) -> String {
+    const NAMES: [&str; 8] = [
+        "Initialized",
+        "Ready",
+        "Running",
+        "Standby",
+        "Terminated",
+        "Waiting",
+        "Transition",
+        "DeferredReady",
+    ];
+    usize::try_from(state)
+        .ok()
+        .and_then(|at| NAMES.get(at))
+        .map_or_else(|| format!("state {state}"), |name| (*name).to_owned())
+}
+
+/// A readying's `AdjustReason`: whether the thread's priority was left
+/// alone, given the boost of a thread ending a wait, or boosted otherwise.
+fn adjust_reason(reason: i8) -> String {
+    match reason {
+        0 => "no priority change".to_owned(),
+        1 => "unwait boost".to_owned(),
+        2 => "boost".to_owned(),
+        other => format!("adjust reason {other}"),
+    }
 }
 
 /// One blocked wait, as long as `--blocked` asks or longer, of a thread it
@@ -264,6 +401,12 @@ impl Waits {
     /// A kernel thread event, with its opcode, payload, time and the
     /// processor that logged it.
     fn thread_event(&mut self, opcode: u8, data: &[u8], time: i64, processor: u16) {
+        if self
+            .schedule_window
+            .is_some_and(|(start, end)| (start..=end).contains(&of_day(time)))
+        {
+            self.schedule(opcode, data, time, processor);
+        }
         match opcode {
             CSWITCH => {
                 if let Some(new) = u32_at(data, 0) {
@@ -310,6 +453,47 @@ impl Waits {
                     if let Some(name) = wide_at(data, 8) {
                         self.names.insert(thread, name);
                     }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Keeps a context switch or readying in the `--schedule` window, with
+    /// the fields the kernel logs for it: a switch's at fixed offsets
+    /// (`CSwitch` version 4: the new and old thread ids, their priorities,
+    /// the previous idle state, then the old thread's wait reason, wait mode
+    /// and state), a readying's (`ReadyThread` version 2: the thread, then
+    /// the adjust reason, increment and flags).
+    fn schedule(&mut self, opcode: u8, data: &[u8], time: i64, processor: u16) {
+        let byte = |offset: usize| data.get(offset).copied().unwrap_or(0);
+        match opcode {
+            CSWITCH => {
+                if let (Some(new), Some(old)) = (u32_at(data, 0), u32_at(data, 4)) {
+                    self.scheduled.push(Scheduled::Switch {
+                        time,
+                        processor,
+                        new: self.key(new),
+                        old: self.key(old),
+                        new_priority: byte(8).cast_signed(),
+                        old_priority: byte(9).cast_signed(),
+                        previous_c_state: byte(10),
+                        wait_reason: byte(12).cast_signed(),
+                        old_state: byte(14).cast_signed(),
+                    });
+                }
+            }
+            READY_THREAD => {
+                if let Some(id) = u32_at(data, 0) {
+                    self.scheduled.push(Scheduled::Ready {
+                        time,
+                        processor,
+                        thread: self.key(id),
+                        waker: self.key(self.running.get(&processor).copied().unwrap_or(0)),
+                        reason: byte(4).cast_signed(),
+                        increment: byte(5).cast_signed(),
+                        flag: byte(6).cast_signed(),
+                    });
                 }
             }
             _ => {}
@@ -655,6 +839,12 @@ fn parse_clock(text: &str) -> Option<i64> {
     Some(((hours * 60 + minutes) * 60 + seconds) * 10_000_000 + digits.parse::<i64>().ok()?)
 }
 
+/// The window of the two times of day at `at` and the one after it in
+/// `args`, as the logs give them.
+fn clock_window(args: &[String], at: usize) -> Option<(i64, i64)> {
+    Some((parse_clock(args.get(at)?)?, parse_clock(args.get(at + 1)?)?))
+}
+
 /// The time of day (UTC) of a trace time to the microsecond, as the logs
 /// give it.
 fn clock(units: i64) -> String {
@@ -724,6 +914,7 @@ fn read(
     sample_target: Option<String>,
     blocked: Option<(String, i64)>,
     window: Option<(i64, i64)>,
+    schedule_window: Option<(i64, i64)>,
 ) -> Result<Waits, String> {
     let (blocked_target, blocked_ms) = blocked.map_or((None, 0), |(target, ms)| (Some(target), ms));
     let mut waits = Waits {
@@ -732,6 +923,7 @@ fn read(
         blocked_target,
         long_blocked: blocked_ms * 10_000,
         window,
+        schedule_window,
         ..Waits::default()
     };
     let mut name: Vec<u16> = path.encode_utf16().chain(std::iter::once(0)).collect();
@@ -1063,6 +1255,86 @@ fn report_timeline(waits: &Waits, mut symbols: symbols::Symbols) {
     }
 }
 
+/// Every context switch and readying in the `--schedule` window, in time
+/// order, each with its processor and the fields that say why a thread
+/// waited to run: the priorities on both sides of a switch, the idle state
+/// the processor left, why the old thread left, and the priority change a
+/// readying applied.
+fn report_schedule(waits: &Waits) {
+    let label = |thread: ThreadKey| {
+        if thread.0 == 0 {
+            return "idle".to_owned();
+        }
+        let process = waits.process_of.get(&thread).copied().unwrap_or(0);
+        let image = waits.images.get(&process).map_or("?", String::as_str);
+        let name = waits.names.get(&thread).map_or("", String::as_str);
+        format!("{image} {process} thread {} {name:?}", thread.0)
+    };
+    let mut order: Vec<&Scheduled> = waits.scheduled.iter().collect();
+    order.sort_by_key(|event| event.time());
+    for event in order {
+        match *event {
+            Scheduled::Switch {
+                time,
+                processor,
+                new,
+                old,
+                new_priority,
+                old_priority,
+                previous_c_state,
+                wait_reason: reason,
+                old_state,
+            } => {
+                let left = if old.0 == 0 {
+                    String::new()
+                } else if old_state == 5 {
+                    format!(", waiting, {}", wait_reason(reason))
+                } else {
+                    format!(", {}", thread_state(old_state))
+                };
+                let idle = if previous_c_state == 0 {
+                    String::new()
+                } else {
+                    format!(", processor leaving idle state C{previous_c_state}")
+                };
+                println!(
+                    "{} cpu {processor:>2} switch from {} (priority {old_priority}{left}) to {} (priority {new_priority}){idle}",
+                    clock(time),
+                    label(old),
+                    label(new),
+                );
+            }
+            Scheduled::Ready {
+                time,
+                processor,
+                thread,
+                waker,
+                reason,
+                increment,
+                flag,
+            } => {
+                let boost = if increment == 0 {
+                    String::new()
+                } else {
+                    format!(" of {increment}")
+                };
+                let flags = if flag == 0 {
+                    String::new()
+                } else {
+                    format!(", flags {flag:#x}")
+                };
+                println!(
+                    "{} cpu {processor:>2} ready {} by {}, {}{boost}{flags}",
+                    clock(time),
+                    label(thread),
+                    label(waker),
+                    adjust_reason(reason),
+                );
+            }
+        }
+    }
+}
+
 /// The readying stacks collected, each frame named as the function holding
 /// it, the most frequent first, the top ten.
 fn report_stacks(waits: &Waits, mut symbols: symbols::Symbols) {
@@ -1123,12 +1395,20 @@ fn symbol_options(args: &mut Vec<String>) -> (Vec<String>, Option<server::Server
     (symbol_folders, server)
 }
 
+/// The processes reported when none is named: Verbatim's.
+const DEFAULT_PROCESSES: [&str; 4] = [
+    "verbatim.exe",
+    "verbatim-outpost.exe",
+    "verbatim-listener.exe",
+    "verbatim-synth-host.exe",
+];
+
 fn main() -> ExitCode {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
     let (symbol_folders, server) = symbol_options(&mut args);
     let Some(path) = args.first() else {
         eprintln!(
-            "usage: verbatim-trace-waits <trace.etl> [--by-name | --wakers <thread> | --stacks <thread> | --samples <thread> | --blocked <thread> [<shortest ms>] | --timeline <thread> <from> <to>] [--symbols <folder>] [--symbol-server [--symbol-cache <folder>]] [process.exe ...], a <thread> being a thread name, <process.exe>:<thread name> or <process.exe>:#<thread id>"
+            "usage: verbatim-trace-waits <trace.etl> [--by-name | --wakers <thread> | --stacks <thread> | --samples <thread> | --blocked <thread> [<shortest ms>] | --timeline <thread> <from> <to> | --schedule <from> <to>] [--symbols <folder>] [--symbol-server [--symbol-cache <folder>]] [process.exe ...], a <thread> being a thread name, <process.exe>:<thread name> or <process.exe>:#<thread id>"
         );
         return ExitCode::from(2);
     };
@@ -1139,13 +1419,18 @@ fn main() -> ExitCode {
     let mut by_name = false;
     let mut blocked = None;
     let mut window = None;
+    let mut schedule_window = None;
     match rest.first().map(String::as_str) {
+        Some("--schedule") => {
+            let Some(span) = clock_window(rest, 1) else {
+                eprintln!("usage: --schedule <from HH:MM:SS.ffffff> <to HH:MM:SS.ffffff>");
+                return ExitCode::from(2);
+            };
+            schedule_window = Some(span);
+            rest = rest.get(3..).unwrap_or(&[]);
+        }
         Some("--timeline") => {
-            let (Some(target), Some(from), Some(to)) = (
-                rest.get(1),
-                rest.get(2).and_then(|text| parse_clock(text)),
-                rest.get(3).and_then(|text| parse_clock(text)),
-            ) else {
+            let (Some(target), Some((from, to))) = (rest.get(1), clock_window(rest, 2)) else {
                 eprintln!("usage: --timeline <thread> <from HH:MM:SS.ffffff> <to HH:MM:SS.ffffff>");
                 return ExitCode::from(2);
             };
@@ -1184,14 +1469,7 @@ fn main() -> ExitCode {
     }
     let mut processes: Vec<String> = rest.iter().map(|name| name.to_lowercase()).collect();
     if processes.is_empty() {
-        processes = [
-            "verbatim.exe",
-            "verbatim-outpost.exe",
-            "verbatim-listener.exe",
-            "verbatim-synth-host.exe",
-        ]
-        .map(str::to_owned)
-        .to_vec();
+        processes = DEFAULT_PROCESSES.map(str::to_owned).to_vec();
     }
     let symbols = || symbols::Symbols::new(symbol_folders.clone(), server);
     match read(
@@ -1200,9 +1478,11 @@ fn main() -> ExitCode {
         samples.clone(),
         blocked.clone(),
         window,
+        schedule_window,
     ) {
         Ok(waits) => {
             match (&wakers, &stacks, &samples) {
+                _ if schedule_window.is_some() => report_schedule(&waits),
                 _ if window.is_some() => report_timeline(&waits, symbols()),
                 _ if blocked.is_some() => report_blocked(&waits, symbols()),
                 (Some(target), _, _) => report_wakers(&waits, target),
@@ -1307,6 +1587,77 @@ mod tests {
         assert!(waits.in_window(at("21:37:09.438"), at("21:37:09.438")));
         assert!(!waits.in_window(at("21:37:09.400"), at("21:37:09.424")));
         assert!(!waits.in_window(at("21:37:09.440"), at("21:37:09.500")));
+    }
+
+    /// `--schedule` keeps every switch and readying in its window, of any
+    /// thread, with the fields at the offsets the kernel logs them, and
+    /// nothing outside it.
+    #[test]
+    fn a_schedule_keeps_the_switches_and_readyings_in_its_window() {
+        let mut waits = Waits {
+            schedule_window: parse_clock("10:00:00.001").zip(parse_clock("10:00:00.002")),
+            ..Waits::default()
+        };
+        let day = 154_237 * 864_000_000_000_i64;
+        let at = |clock: &str| day + parse_clock(clock).unwrap();
+        // Processor 3 leaves idle state C1 for thread 9, priority 15; the
+        // idle thread had priority 0. Thread 9 then readies thread 8 with
+        // an unwait boost of 2, and blocks on a queue at priority 15.
+        let mut switch_in = [9_u32.to_le_bytes(), 0_u32.to_le_bytes()].concat();
+        switch_in.extend([15, 0, 1, 0, 0, 0, 0, 0]);
+        let mut ready = 8_u32.to_le_bytes().to_vec();
+        ready.extend([1, 2, 0, 0]);
+        let mut switch_out = [0_u32.to_le_bytes(), 9_u32.to_le_bytes()].concat();
+        switch_out.extend([0, 15, 0, 0, 15, 1, 5, 0]);
+        waits.thread_event(CSWITCH, &switch_in, at("10:00:00.0010"), 3);
+        waits.thread_event(READY_THREAD, &ready, at("10:00:00.0012"), 3);
+        waits.thread_event(CSWITCH, &switch_out, at("10:00:00.0014"), 3);
+        waits.thread_event(READY_THREAD, &ready, at("10:00:00.0030"), 3);
+
+        let kept: Vec<String> = waits
+            .scheduled
+            .iter()
+            .map(|event| match *event {
+                Scheduled::Switch {
+                    processor,
+                    new,
+                    old,
+                    new_priority,
+                    old_priority,
+                    previous_c_state,
+                    wait_reason: reason,
+                    old_state,
+                    ..
+                } => format!(
+                    "{processor} {} {} {new_priority} {old_priority} C{previous_c_state} {} {}",
+                    old.0,
+                    new.0,
+                    wait_reason(reason),
+                    thread_state(old_state)
+                ),
+                Scheduled::Ready {
+                    processor,
+                    thread,
+                    waker,
+                    reason,
+                    increment,
+                    ..
+                } => format!(
+                    "{processor} ready {} by {} {} {increment}",
+                    thread.0,
+                    waker.0,
+                    adjust_reason(reason)
+                ),
+            })
+            .collect();
+        assert_eq!(
+            kept,
+            [
+                "3 0 9 15 0 C1 Executive Initialized",
+                "3 ready 8 by 9 unwait boost 2",
+                "3 9 0 0 15 C0 WrQueue Waiting",
+            ]
+        );
     }
 
     /// `<process.exe>:*` takes every thread of a process of that image,

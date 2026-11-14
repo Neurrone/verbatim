@@ -103,6 +103,21 @@ application's own work. A sample taken in kernel mode is walked in two
 parts, as a wait is, and the two are joined, so `--samples` also sees the
 user-mode frames under a kernel-mode sample.
 
+`--schedule <from> <to>` takes two UTC times of day as `--timeline` does
+and reports every context switch and readying between them, of any thread
+in any process on any processor, in time order, each with its time and
+processor. A switch names the thread leaving the processor and the one
+taking it, idle included, with their priorities; why the one leaving left
+(waiting, with its wait reason such as `WrQueue`, or still ready when
+pre-empted); and the idle state the processor came out of, when it was
+idle. A readying names the thread readied, the thread that readied it (the
+one running on the processor that logged it), and the priority change it
+was given: none, an unwait boost or a boost, with its size. Together they
+say why a thread readied at one moment ran only later: what held the
+processor it was given, or which processor had to leave idle first. The
+window is kept to a few milliseconds, since every thread's events are
+printed.
+
 `--symbol-server`, off by default, fetches the PDB of each image a report
 names a frame in, user-mode or the kernel's, from Microsoft's public symbol
 server, so system code is named by its real functions (`server.rs`). The
@@ -123,8 +138,10 @@ by its exports, and the run goes on. The download needs network access; a
 kernel PDB is about 11 MB.
 
 The event layouts it reads are the kernel's documented ones on 64-bit
-Windows: a context switch's new and old thread ids at offsets 0 and 4 and
-the old thread's state at 14; a ready thread's id at 0; a thread event's
+Windows: a context switch's new and old thread ids at offsets 0 and 4,
+their priorities at 8 and 9, the processor's previous idle state at 10,
+and the old thread's wait reason at 12 and state at 14; a ready thread's
+id at 0, its adjust reason at 4, increment at 5 and flags at 6; a thread event's
 process and thread ids at 0 and 4 and its name at 72; a name change's
 process and thread ids at 0 and 4 and its name at 8; an image event's
 process id at 16 and its file name at 56; a CPU sample's instruction

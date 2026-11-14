@@ -172,7 +172,7 @@ names it in `last-trace.txt` there; that folder is readable by your account,
 and he may delete what is in it. `cargo xtask trace waits <trace.etl>
 [report] [process.exe ...]` reads a trace with `verbatim-trace-waits`, any
 of its reports (`--by-name`, `--wakers`, `--stacks`, `--samples`,
-`--blocked`, `--timeline`, with `--symbols <folder>` for the PDBs of binaries run from a copy, such as the
+`--blocked`, `--timeline`, `--schedule`, with `--symbols <folder>` for the PDBs of binaries run from a copy, such as the
 end-to-end harness's `target\e2e-stage`). Stacks and samples name kernel
 frames by the kernel's exported functions; add `--symbol-server` to fetch
 the PDBs of the system images they pass through from Microsoft's public
@@ -199,3 +199,26 @@ it on an application's UI thread and on UI Automation's I/O thread in the
 application (the unnamed thread whose stacks hold
 `OverlappedIOManager::IoThreadProc`) to see how a UIA call from Verbatim
 was served there, and on the Verbatim thread that made the call.
+
+`--schedule <from> <to>` prints every context switch and readying of a
+window of a few milliseconds, on every processor, with priorities, boosts
+and idle states: use it when a thread was readied in time but ran late, to
+see what held its processor.
+
+### One crossing between processes: the crossing example
+
+`cargo run --release -p verbatim-process --example crossing -- --shape
+<floor|direct|relay>` times one crossing between two processes over the
+same pipes the supervisor makes, with nothing else of Verbatim's on the
+way: the parent plays Core and a contained child plays a reader, and each
+round is a tell, Core's request and the answer, each leg timed one way.
+`floor` uses the system's pipes and completion ports alone, `direct` adds
+the transport's framing and senders with Core reading the pipe itself, and
+`relay` adds a relay thread that posts each frame to Core's port queue, as
+verbatim.exe does today. The file's header lists the options. It prints
+each leg's percentiles and every crossing slower than `--slow-us` with its
+UTC times, so a trace taken around a run (`cargo xtask trace start`, the
+run, `cargo xtask trace stop`) can be read at each slow crossing with
+`--schedule`; its threads are named `crossing-core`, `crossing-relay`,
+`crossing-producer` and `crossing-io`, and its processes are both
+`crossing.exe`.
