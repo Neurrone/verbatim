@@ -18,6 +18,9 @@ workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 [dev-dependencies]
 verbatim-faults.workspace = true
+# The class verdict and acceptance test `follow_counts` judges a focus by,
+# as the listener does.
+verbatim-reader-rules.workspace = true
 
 [features]
 # The subscription's fault points, its observation point for a call ended

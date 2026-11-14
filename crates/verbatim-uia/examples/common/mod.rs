@@ -21,30 +21,11 @@ pub fn fail(example: &str, message: &str) -> ! {
 /// failure naming each when there is none or several.
 pub fn process_named(example: &str, name: &str) -> u32 {
     let stem = process_stem(name);
-    // SAFETY: a snapshot of the system's processes; closed below.
-    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) }
-        .unwrap_or_else(|error| fail(example, &format!("could not list the processes: {error}")));
-    let mut entry = PROCESSENTRY32W {
-        dwSize: u32::try_from(size_of::<PROCESSENTRY32W>()).unwrap_or(0),
-        ..Default::default()
-    };
-    let mut pids = Vec::new();
-    // SAFETY: `snapshot` is the live snapshot and `entry` has its size set.
-    let mut more = unsafe { Process32FirstW(snapshot, &raw mut entry) }.is_ok();
-    while more {
-        let length = entry
-            .szExeFile
-            .iter()
-            .position(|&c| c == 0)
-            .unwrap_or(entry.szExeFile.len());
-        if process_stem(&String::from_utf16_lossy(&entry.szExeFile[..length])) == stem {
-            pids.push(entry.th32ProcessID);
-        }
-        // SAFETY: as above.
-        more = unsafe { Process32NextW(snapshot, &raw mut entry) }.is_ok();
-    }
-    // SAFETY: the handle the snapshot call returned, closed once.
-    let _ = unsafe { CloseHandle(snapshot) };
+    let pids: Vec<u32> = processes(example)
+        .into_iter()
+        .filter(|(_, image)| *image == stem)
+        .map(|(pid, _)| pid)
+        .collect();
     match pids.as_slice() {
         [] => fail(example, &format!("no process is named {name}")),
         [pid] => *pid,
@@ -55,8 +36,39 @@ pub fn process_named(example: &str, name: &str) -> u32 {
     }
 }
 
+/// Every process there is, by id, with its image name as
+/// [`process_stem`] gives it.
+pub fn processes(example: &str) -> Vec<(u32, String)> {
+    // SAFETY: a snapshot of the system's processes; closed below.
+    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) }
+        .unwrap_or_else(|error| fail(example, &format!("could not list the processes: {error}")));
+    let mut entry = PROCESSENTRY32W {
+        dwSize: u32::try_from(size_of::<PROCESSENTRY32W>()).unwrap_or(0),
+        ..Default::default()
+    };
+    let mut found = Vec::new();
+    // SAFETY: `snapshot` is the live snapshot and `entry` has its size set.
+    let mut more = unsafe { Process32FirstW(snapshot, &raw mut entry) }.is_ok();
+    while more {
+        let length = entry
+            .szExeFile
+            .iter()
+            .position(|&c| c == 0)
+            .unwrap_or(entry.szExeFile.len());
+        found.push((
+            entry.th32ProcessID,
+            process_stem(&String::from_utf16_lossy(&entry.szExeFile[..length])),
+        ));
+        // SAFETY: as above.
+        more = unsafe { Process32NextW(snapshot, &raw mut entry) }.is_ok();
+    }
+    // SAFETY: the handle the snapshot call returned, closed once.
+    let _ = unsafe { CloseHandle(snapshot) };
+    found
+}
+
 /// `name` as process names are compared: lower case, without `.exe`.
-fn process_stem(name: &str) -> String {
+pub fn process_stem(name: &str) -> String {
     let lower = name.to_lowercase();
     match lower.strip_suffix(".exe") {
         Some(stem) => stem.to_owned(),

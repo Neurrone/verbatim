@@ -234,9 +234,16 @@ run, `cargo xtask trace stop`) can be read at each slow crossing with
   Automation client) and the first read of a focus read on the process's
   window, phase by phase, against the same read on one long-lived thread.
 - `cargo run --release -p verbatim-uia --example follow_counts --
-  --process <name> --seconds N` follows the process's UI Automation focus
-  as NVDA's local group does, over the focus and its ancestors, and counts
-  the property-change events that arrive per focus change, by property and
-  by whether the focus or an ancestor raised them.
+  --process <name> --seconds N` follows the UI Automation focus of every
+  process of that name, one started during the run included, as NVDA's
+  local group does, over the focus and its ancestors, and counts the
+  property-change events that arrive per focus change, by property and by
+  whether the focus, an ancestor or another element raised them. It judges
+  each focus in NVDA's order and counts each refusal: a focus in a window
+  NVDA reads through MSAA (File Explorer's shell and navigation tree, for
+  one) is not native UI Automation and is not followed. File Explorer's
+  folder windows can run in an `explorer.exe` apart from the shell's, which
+  is why every process of the name is followed. `--events` prints each
+  focus's judgement and each event as it happens.
 
 Each file's header lists its options.
