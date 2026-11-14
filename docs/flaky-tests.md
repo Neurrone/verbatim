@@ -34,6 +34,20 @@ Scenarios: the `windows_terminal_` scenarios generally, for example `windows_ter
 - Cause: Settings replaces the list's items as it opens, after raising the selection, so the selected element is in none of the elements the focus controls, and nothing is said, as `docs/parity/changes-and-selection.md` records.
 - Fix: none in Verbatim.
 
+## A combo box's "expanded" raised after its item's focus
+
+- Scenarios: `settings_combo_box_expanded` (local only), 1 of 2 runs on 2026-11-14.
+- How: Alt+Down Arrow on Settings' "Show additional calendars in the taskbar" combo box says the first item without "expanded" first.
+- Cause: Settings raised the combo box's expand and collapse change (property 30070) about 5 ms after the list item's focus was observed. Today's outpost follows only the focused element, so by then it dropped the combo box's change unpublished. In the passing run the change came 10.9 ms before the focus. Neither order is guaranteed.
+- Fix: the event queue and focus build of [Readers tell, Core asks](roadmap.md#readers-tell-core-asks): the outpost follows the focus and its ancestors, and Core judges the item's focus only after asking for it, so the change is waiting when the answer arrives and the narrow ordering rule speaks it first.
+
+## A description's first line wraps by the window's width
+
+- Scenarios: `theme_panel`, 2 of 2 runs locally on 2026-11-14, with the session parked on the console.
+- How: the Theme page's read-only multi-line Description field speaks "Everything spoken as NVDA speaks it, with NVDA's sounds " where the expectation has the whole sentence.
+- Cause: on focus, a multi-line edit speaks its current line, as NVDA does, and the field's first line ends where the edit control wraps it, which depends on its width in pixels under the session's display settings. The expectation holds only where the field is wide enough. The scenario depends on the display, which the testing standard forbids.
+- Fix: the scenario's expectation, or the field's text, made independent of the wrap; not yet planned.
+
 ## Settings' page focus never delivered by UI Automation
 
 - `settings_system_page` on GitHub's runner (run 42492633218, 2026-11-08)
