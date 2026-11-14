@@ -89,9 +89,9 @@ done on 2026-11-14; the build notes give their figures.
   prototype/background-events: 27 to 33 tells a second with File
   Explorer idle, 3,000 to 4,000 under floods, Core keeping up at every
   load, keys a millisecond slower at the median, and about 15 percent
-  of one processor added in a console flood. No count caps are needed.
-  The foreground filter, the ruled fallback, removes Core's added cost
-  but not the listener's.
+  of one processor added in a console flood. No count caps are needed,
+  and the foreground filter, the ruled fallback, is not built for now
+  (Dickson, 2026-11-14).
 - A trial of how Core's "ask, wait, continue" code is written, on the
   branch prototype/core-form-trial: step functions in a reducer, async
   functions run on Core's thread, and a logic thread beside an inbox
@@ -145,8 +145,8 @@ drag events and effects, layout invalidated for suggestion lists).
 
 - The speech-level tests' design decisions.
 - The form of Core's code, from the trial's results.
-- Whether the processor time every background event adds fits the
-  budget, and so whether the foreground filter is needed.
+- The progress-bar path, which ADR 0003 kept only while the foreground
+  filter might be needed and now says is to be revisited.
 
 ### Found for later milestones
 
