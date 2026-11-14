@@ -28,7 +28,7 @@ One build that changes state at a time, each leaving the product working. Measur
 
 ### Tests across the builds
 
-Decided (Dickson, 2026-11-14): no new speech-level test level is built; it was judged too much work. The builds are covered by the existing tests, used wherever they can be: Core's unit tests, which feed the reducer its inputs and assert its effects and speech, keep their expected speech while their inputs change shape to tells, requests and answers; mockapp's integration tests cover the outposts' and listener's reads of a real provider; and the end-to-end scenarios cover what users hear across processes. An experiment on the branch `prototype/speech-level-experiment` showed a speech-level test can run the real processes against mockapp (20 of 20 runs, about 4.4 seconds each); it is kept there for reference, not built on.
+Decided (Dickson, 2026-11-14): no new speech-level test level is built: it would be a lot of work to be a shadow of what the end-to-end scenarios already give. The builds are covered by the existing tests, used wherever they can be: Core's unit tests, which feed the reducer its inputs and assert its effects and speech, keep their expected speech while their inputs change shape to tells, requests and answers; mockapp's integration tests cover the outposts' and listener's reads of a real provider; and the end-to-end scenarios cover what users hear across processes. An experiment on the branch `prototype/speech-level-experiment` showed a speech-level test can run the real processes against mockapp (20 of 20 runs, about 4.4 seconds each); it is kept there for reference, not built on.
 
 ### Build 1: the event queue and focus
 
