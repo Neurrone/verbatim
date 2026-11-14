@@ -151,8 +151,6 @@ drag events and effects, layout invalidated for suggestion lists).
 ### Waiting for Dickson
 
 - The speech-level tests' design decisions.
-- The progress-bar path, which ADR 0003 kept only while the foreground
-  filter might be needed and now says is to be revisited.
 
 ### Found for later milestones
 

@@ -123,9 +123,9 @@ The listener's events and an outpost's UI Automation events come from two proces
 
 Reason: an outpost waiting on a host would let one extension hold an application's reads, and Core already has the order the hooks are judged in.
 
-### Progress bars (Dickson, 2026-11-09, kept 2026-11-12 and 2026-11-13)
+### Progress bars (Dickson, 2026-11-14)
 
-The approved [progress-bar design](https://github.com/Neurrone/verbatim/blob/main/docs/design/progress-bars.md) stands as the one place a reader reads unasked: the listener reads a bar's role, percentage and place and reports facts, and Core judges them. Core's requests go ahead of bar reads on a reading thread. Reason: a bar's beep costs no request, and under the fallback that filters change events to the foreground's processes, this path is what keeps background progress bars heard. Revisited only if the measurement shows the fallback is not needed.
+The approved [progress-bar design](https://github.com/Neurrone/verbatim/blob/main/docs/design/progress-bars.md) stands as the one place a reader reads unasked: the listener reads a bar's role, percentage and place and reports facts, and Core judges them. Core's requests go ahead of bar reads on a reading thread. Reason: a bar's beep costs no request and no round trip; a UI Automation bar's value usually comes with its event, an MSAA bar's read runs on the application's reading thread, where a hung application stalls only that thread, and progress facts are handled at once in Core, outside the event queue.
 
 ### Flood limiters and the merge (Dickson, 2026-11-13)
 
