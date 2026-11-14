@@ -1,6 +1,6 @@
 # ADR 0003: Readers tell, Core asks
 
-Status: decided, 2026-11-13, by Dickson; the model and every ruling in it are his. Nothing in it is built yet: the phase "Readers tell, Core asks" in [the roadmap](https://github.com/Neurrone/verbatim/blob/main/docs/roadmap.md) builds it, and until each build lands, [How focus works](../../explanation/design/focus.md) and the crate guides describe the code as it is.
+Status: decided, 2026-11-13, by Dickson; amended 2026-11-14 (Core's code as async functions); the model and every ruling in it are his. Nothing in it is built yet: the phase "Readers tell, Core asks" in [the roadmap](https://github.com/Neurrone/verbatim/blob/main/docs/roadmap.md) builds it, and until each build lands, [How focus works](../../explanation/design/focus.md) and the crate guides describe the code as it is.
 
 This record keeps why Verbatim's readers stop reading on their own and read only when Core asks: the problem, the decisions with their reasons, the options weighed, and the limits accepted. Every rule in full, with NVDA's source for each, the order of the builds and the measurements are in [the build notes](https://github.com/Neurrone/verbatim/blob/main/docs/design/readers-tell-core-asks.md).
 
@@ -212,7 +212,8 @@ Each changes on a fact that has changed: no reader acts on an event itself, no r
 - Only focus events moved to the listener, the other MSAA events left in each outpost. Rejected: an application's focus and its other events would arrive by two routes with no order, so a state change raised before a focus could be handled after it and go unsaid.
 - A time limit on how long a key waits for a focus ahead of it. Rejected: NVDA has none, and a key pressed after a slow focus would act from the old position where NVDA acts from the new one.
 - A stored not-responding mark per application. Rejected: one hung window stopped requests to the application's other windows that still answer, the mark had no clean way to end, and NVDA checks each window live each time.
-- Core's sequences written as async functions. Not taken in this record: a prototype gained only for chains of requests that nothing else reads, and the recorder of Core's inputs cannot take its checkpoint while a function is paused. Tried again under "To try".
+- Core's sequences written as step functions in a reducer, each wait a named stage. Rejected on 2026-11-14 (Dickson) after a trial of three forms: a chain of requests is split across several functions, where async functions read top to bottom like NVDA's, at half the size per feature.
+- A logic thread waiting on each request beside an inbox thread. Rejected on 2026-11-14: it needs a thread inside the platform-neutral Core, which the determinism rule forbids, and each question about the queue becomes a round trip between threads.
 
 ## Limits accepted
 
@@ -251,9 +252,12 @@ Still to be verified, before M8.7 relies on it: whether UIAccess reaches elevate
 - M12, M13, M14, M18: Remote's capture mode, applications' own object models and window-message text, where the maths engine runs, braille.
 - Their own milestones: whether report focus speaks the application's live focus or the committed focus, and the control protocol's next version.
 
+## Core's code is async functions (Dickson, 2026-11-14)
+
+Core's logic is written as async functions run on Core's thread, from the event queue and focus build, under five rules: only a request to a reader can be awaited; each request names the type of its answer, which the queue decodes once; every request gets exactly one outcome, so no paused function outlives its entry; the recorder's checkpoint is the state at the front entry's start plus the inputs since, so replay stays exact; and a state dump shows each entry, the answers it has had and the request out. Reason: a feature's handling reads top to bottom like NVDA's and keeps its code in one place, while the dumps and exact replay the project relies on are kept. Limits: a copied fact held across a wait is not caught by the compiler and is checked in review; the checkpoint copies Core's state at entry boundaries, whose cost grows with the application. The trial and its figures are in [the build notes](https://github.com/Neurrone/verbatim/blob/main/docs/design/readers-tell-core-asks.md).
+
 ## To try (Dickson, 2026-11-13)
 
-- Core's logic written as ordinary sequential code, tried in the first build that touches Core, on this model.
 - One recorded tape of an application's events and tree, replayed both to a simulator and to real Windows, so that NVDA is captured against the same application; for the design of the speech-level tests.
 
 ## Before the build, and the order of building

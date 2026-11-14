@@ -96,6 +96,8 @@ done on 2026-11-14; the build notes give their figures.
   branch prototype/core-form-trial: step functions in a reducer, async
   functions run on Core's thread, and a logic thread beside an inbox
   thread, each running the event queue with a focus and a caret key.
+  Core's logic is written as async functions on Core's thread, from
+  the event queue and focus build (Dickson, 2026-11-14).
 - The smaller measurements, done on 2026-11-14 with tools on the branch
   measure-tools: a fresh listener reading thread costs about 0.45 ms
   more than a long-lived one; following the focus and its ancestors in
@@ -148,7 +150,6 @@ drag events and effects, layout invalidated for suggestion lists).
 ### Waiting for Dickson
 
 - The speech-level tests' design decisions.
-- The form of Core's code, from the trial's results.
 - The progress-bar path, which ADR 0003 kept only while the foreground
   filter might be needed and now says is to be revisited.
 
