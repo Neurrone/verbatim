@@ -11,7 +11,7 @@ use verbatim_model::{
 
 use crate::entries::tests::{
     APP, GENERATION, Held, LISTENER, NOTHING, OUTPOST, SPOKEN_FOLLOWED, answer, asked_completion,
-    entry, feed_at, focus_read, node, ready, uia_tell,
+    entry, feed_at, focus_read, node, ready, ready_at, uia_tell,
 };
 use crate::event_queue::{Foreground, Input, Instance, Reader};
 use crate::focus::versions::{Committed, ReadBy};
@@ -100,7 +100,7 @@ fn the_committed_focus_read_again_after_its_outpost_ends_is_taken_silently() {
     );
     assert!(matches!(state.versions.committed, Committed::Ended(_)));
     assert_eq!(
-        feed_at(&mut state, 1_100, Input::ReaderReady(REPLACEMENT)),
+        ready_at(&mut state, 1_100, REPLACEMENT),
         ["send Outpost(Pid(40)) CurrentFocus"]
     );
     let read = minted_anew(focus_read(None));
@@ -125,7 +125,7 @@ fn the_committed_focus_read_again_after_its_outpost_ends_is_taken_silently() {
 fn a_different_focus_read_after_its_outpost_ends_is_spoken() {
     let mut state = started();
     feed_at(&mut state, 1_000, Input::ReaderEnded(OUTPOST));
-    feed_at(&mut state, 1_100, Input::ReaderReady(REPLACEMENT));
+    ready_at(&mut state, 1_100, REPLACEMENT);
     let mut read = minted_anew(focus_read(None));
     read.focus.read.values = crate::entries::tests::values("Cancel", verbatim_model::Role::Button);
     assert_eq!(
@@ -234,7 +234,7 @@ fn the_silent_retake_mints_the_baseline_in_the_new_generation_and_keeps_the_flag
         kept.selection.text_changed = true;
     }
     let _ = feed_at(&mut state, 1_000, Input::ReaderEnded(OUTPOST));
-    let _ = feed_at(&mut state, 1_100, Input::ReaderReady(REPLACEMENT));
+    let _ = ready_at(&mut state, 1_100, REPLACEMENT);
     let mut read = minted_anew(focus_read(None));
     read.caret = FocusCaret::Read(Box::new(FocusCaretRead {
         caret: CaretReport {

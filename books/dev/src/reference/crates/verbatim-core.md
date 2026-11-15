@@ -290,6 +290,37 @@ carries each outcome out (`requests::deliver`,
   `BTreeMap`, so the outcomes `outpost_ended` returns together come in the
   order the requests were made.
 
+## The outpost generation record
+
+(`docs/design/readers-tell-core-asks-build1.md`, "The outpost generation
+record", Table 5; `supervisor/record.rs`, applied by the event queue's
+driver in `event_queue/outposts.rs`.) Core's reducer owns one record per
+application: launching, starting, ready or waiting out a backoff, none
+being its absence. The owner thread reports its process facts as
+`QueueInput::Process` (`ProcessFact`): an outpost started, a launch
+failed (with whether the application is gone), each pong, the
+application's exit, the listener it is about to launch, the spares
+waiting, Verbatim's own process and the harness's retirement times; an
+outpost's `Ready` and its end arrive as `ReaderReady` and `ReaderEnded`.
+Core asks for an outpost (`QueueEffect::StartOutpost`) when a request
+waits for an application with none, or the listener's foreground report
+names one, and ends a generation (`QueueEffect::EndOutpost`) that passes
+9 seconds with no pong or is retired. A request waits through the
+launch and start and is sent at the generation's `Ready`; a first
+failure is replaced at once, a later one after today's backoff, which a
+foreground report resets and ends; a backoff that ends launches again
+only when a request waits or the application holds attention. The
+application's exit answers every request waiting or out "not there",
+drops its held ids and takes nothing again. Retirement is today's rule,
+checked every sweep while a ready outpost other than Verbatim's own is
+unattended, with a request waiting or out counting as holding. A frame of
+an instance that is not its reader's current one, a tell of an ended
+generation or of a listener other than the newest started, is dropped
+(`QueueEffect::StaleFrame`). `SrState::readiness` and `ready_outposts`
+give the test harness's readiness and the control plane's outpost list
+from the record. A process Core reads nothing from (`Logic::watched`) is
+never started, and a request for it is answered "not there".
+
 ## The flight recorder
 
 The `flight_recorder` module is the always-on, bounded recording of recent

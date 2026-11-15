@@ -864,6 +864,56 @@ pub enum QueueInput {
     /// The session's lock state, from a session notification or the
     /// query at startup.
     Lock(SessionLock),
+    /// A process fact the supervisor's owner thread reports for Core's
+    /// outpost generation record.
+    Process(ProcessFact),
+}
+
+/// A process fact the supervisor's owner thread reports for Core's outpost
+/// generation record (`docs/design/readers-tell-core-asks-build1.md`,
+/// Table 5): the owner judges no generation itself.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ProcessFact {
+    /// The owner thread started an outpost process for `process`, as
+    /// Core's [`QueueEffect::StartOutpost`] asked: a spare given or a
+    /// launch, which the owner chooses.
+    OutpostStarted {
+        /// The application.
+        process: Pid,
+        /// The new generation, never reused.
+        generation: u64,
+    },
+    /// The owner thread could not start an outpost for `process`.
+    LaunchFailed {
+        /// The application.
+        process: Pid,
+        /// Whether it failed because the application's process is gone.
+        application_gone: bool,
+    },
+    /// An outpost or the listener answered a ping.
+    Pong(Instance),
+    /// The application's own process exited, as the relay's held handle
+    /// tells it.
+    ApplicationExited(Pid),
+    /// The owner thread is about to launch a listener of this generation:
+    /// frames of any other listener are dropped from now on.
+    ListenerStarted(u64),
+    /// How many spare outposts wait, as the owner thread last counted
+    /// them: a fact for the test harness's readiness.
+    SparesReady(usize),
+    /// Verbatim's own process, at startup: its outpost is started at once
+    /// and never retired.
+    OwnProcess(Pid),
+    /// How long an application must go without attention before its
+    /// outpost is retired, and how often idle ones are looked for, in
+    /// microseconds: the end-to-end harness's shortening, given once at
+    /// startup.
+    Retirement {
+        /// The idle time.
+        idle_us: u64,
+        /// The check's interval.
+        sweep_us: u64,
+    },
 }
 
 /// A key or command as the hook reports it to the event queue (ADR 0003,
@@ -1028,6 +1078,15 @@ pub enum QueueEffect {
     /// Wake Core with [`QueueInput::Due`] at this time, in microseconds on
     /// the run's shared clock; `None` for no wake.
     WakeAt(Option<u64>),
+    /// Start an outpost for this application: give it a spare or launch
+    /// one, and report [`ProcessFact::OutpostStarted`] or
+    /// [`ProcessFact::LaunchFailed`].
+    StartOutpost(Pid),
+    /// End this outpost generation: it is stuck, or retired.
+    EndOutpost(Instance),
+    /// A frame of an instance that is not its reader's current one was
+    /// dropped: log it.
+    StaleFrame(Instance),
 }
 
 #[cfg(test)]

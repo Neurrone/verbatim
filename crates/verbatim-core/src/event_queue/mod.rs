@@ -32,6 +32,7 @@ mod inbox;
 mod limiter;
 #[cfg(test)]
 mod limiter_tests;
+mod outposts;
 pub(crate) mod pairs;
 mod request;
 mod table;
@@ -256,15 +257,29 @@ pub(crate) trait Logic: Sized + 'static {
 
     /// `instance` ended: what Core's facts keep of it change, what that
     /// says goes into `said`, and the entries returned join the back (the
-    /// re-take).
+    /// re-take, asked only with `retake`).
     fn reader_ended(
         facts: &mut Self::Facts,
         instance: Instance,
-        foreground: Option<Foreground>,
+        (foreground, retake): (Option<Foreground>, bool),
         said: &mut Vec<Self::Said>,
     ) -> Vec<Self::Entry> {
-        let _ = (facts, instance, foreground, said);
+        let _ = (facts, instance, foreground, retake, said);
         Vec::new()
+    }
+
+    /// Whether Core starts an outpost for `process`: not for a process
+    /// whose windows nothing is read from.
+    fn watched(facts: &Self::Facts, process: verbatim_model::Pid) -> bool {
+        let _ = (facts, process);
+        true
+    }
+
+    /// Whether Core's facts hold a node or anchor of the outpost
+    /// generation `generation`, which keeps it from retirement.
+    fn holds(facts: &Self::Facts, generation: verbatim_model::OutpostId) -> bool {
+        let _ = (facts, generation);
+        false
     }
 
     /// The entries Core's facts ask to join the back now, such as a

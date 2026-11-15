@@ -13,7 +13,8 @@ use verbatim_model::{
 
 use crate::entries::Entry;
 use crate::entries::tests::{
-    APP, Held, OUTPOST, answer, answer_outcome, feed_at, focus_read, node, ready, values, win,
+    APP, Held, OUTPOST, answer, answer_outcome, feed_at, focus_read, node, ready, ready_at, values,
+    win,
 };
 use crate::event_queue::{Effect, Foreground, Input, Timed};
 use crate::keys::entry::PressEntry;
@@ -514,7 +515,7 @@ fn ended_with(command: ReviewCommand) -> Vec<String> {
     let _ = feed_at(&mut state, 1_000, Input::ReaderEnded(OUTPOST));
     let _ = feed_at(&mut state, 1_100, press(1, command, 0));
     assert_eq!(
-        feed_at(&mut state, 1_200, Input::ReaderReady(REPLACEMENT)),
+        ready_at(&mut state, 1_200, REPLACEMENT),
         ["send Outpost(Pid(40)) CurrentFocus"]
     );
     feed_at(
@@ -549,7 +550,7 @@ fn after_the_navigators_outpost_ends_its_commands_say_there_is_none() {
 fn the_navigator_follows_a_focus_retaken_silently_from_a_replacement_outpost() {
     let mut state = committed();
     let _ = feed_at(&mut state, 1_000, Input::ReaderEnded(OUTPOST));
-    let _ = feed_at(&mut state, 1_100, Input::ReaderReady(REPLACEMENT));
+    let _ = ready_at(&mut state, 1_100, REPLACEMENT);
     let anew = |id: verbatim_model::NodeId| {
         verbatim_model::NodeId::in_outpost(
             verbatim_model::OutpostId(crate::entries::tests::GENERATION + 1),

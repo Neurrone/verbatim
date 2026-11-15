@@ -6,7 +6,7 @@
 //! here.
 
 use verbatim_model::request::{
-    Answer, Ask, Cancel, CancelReason, Reply, Request as Wire, RequestNumber,
+    Answer, Ask, Cancel, CancelReason, ProcessFact, Reply, Request as Wire, RequestNumber,
 };
 use verbatim_model::{Pid, WindowHandle};
 
@@ -40,10 +40,15 @@ pub(crate) enum Input<E> {
     },
     /// The listener's foreground report.
     Foreground(Foreground),
-    /// A reader's instance can take requests.
+    /// A reader's instance can take requests: the listener's
+    /// `ListenerReady`, or an outpost's `Ready` frame (Table 5, column D).
     ReaderReady(Instance),
-    /// A reader's instance ended.
+    /// A reader's instance ended: its pipe closed or its process exited
+    /// (Table 5, column E).
     ReaderEnded(Instance),
+    /// A process fact the owner thread reports for the outpost generation
+    /// record (Table 5).
+    Process(ProcessFact),
     /// A window was destroyed, its destruction raised by a thread of
     /// `process`.
     WindowDestroyed {
@@ -154,6 +159,13 @@ pub(crate) enum Effect<S> {
     Undecodable(RequestNumber),
     /// What an entry's function emitted.
     Said(S),
+    /// The owner thread starts an outpost for this application.
+    StartOutpost(Pid),
+    /// The owner thread ends this outpost generation.
+    EndOutpost(Instance),
+    /// A frame of an instance that is not its reader's current one was
+    /// dropped: logged.
+    StaleFrame(Instance),
 }
 
 impl<L: Logic> Core<L> {
@@ -178,7 +190,7 @@ impl<L: Logic> Core<L> {
             }
             Input::HangCheck { window, hung } => self.hang_check(window, hung),
             Input::Foreground(foreground) => self.foreground(foreground),
-            Input::ReaderReady(instance) => {
+            Input::ReaderReady(instance) if self.admit_ready(instance) => {
                 let mut shared = self.shared.borrow_mut();
                 shared.state.queue.readers.insert(instance.reader, instance);
                 let now_us = shared.state.queue.now_us;
@@ -190,7 +202,8 @@ impl<L: Logic> Core<L> {
                     .reader_ready(instance, &state.queue.backend, now_us, &mut orders);
                 Self::order(&mut shared, orders);
             }
-            Input::ReaderEnded(instance) => self.reader_ended(instance),
+            Input::ReaderEnded(instance) => self.instance_ended(instance),
+            Input::Process(fact) => self.process_fact(fact),
             Input::WindowDestroyed { window, process } => {
                 let mut shared = self.shared.borrow_mut();
                 shared.state.queue.table.unwatch(window);
@@ -246,10 +259,16 @@ impl<L: Logic> Core<L> {
                 }
             }
             Input::Tick => self.tick(),
-            // Settled by the step's end, as every input is.
-            Input::Settle => {}
+            // Settled by the step's end, as every input is; a `Ready` not
+            // admitted was logged by `admit_ready`.
+            Input::Settle | Input::ReaderReady(_) => {}
         }
-        self.take_next();
+        loop {
+            self.take_next();
+            if !self.want_outposts() {
+                break;
+            }
+        }
         self.finish_step()
     }
 
@@ -423,7 +442,7 @@ impl<L: Logic> Core<L> {
     }
 
     /// Delivers a request's ending to its owner, its probe unanswered.
-    fn deliver(&mut self, ended: Ended) {
+    pub(super) fn deliver(&mut self, ended: Ended) {
         self.deliver_probed(ended, false);
     }
 
@@ -484,6 +503,7 @@ impl<L: Logic> Core<L> {
     /// outside the queue are untouched. Recovering windows of applications
     /// that lost attention leave the set.
     fn foreground(&mut self, foreground: Foreground) {
+        self.attended(foreground.process);
         let stopped = {
             let mut shared = self.shared.borrow_mut();
             let first = shared.state.queue.foreground.is_none();
@@ -545,7 +565,10 @@ impl<L: Logic> Core<L> {
     /// `instance` ended: its requests out end "reader ended", its late ones
     /// are forgotten, and its application's recovering windows leave the
     /// set; requests waiting for its reader wait for the next instance.
-    fn reader_ended(&mut self, instance: Instance) {
+    /// With `retake`, Core's facts may ask the focus again (Table 5,
+    /// column E); an application's exit or its outpost's retirement takes
+    /// nothing again.
+    pub(super) fn reader_ended(&mut self, instance: Instance, retake: bool) {
         let ended = {
             let mut shared = self.shared.borrow_mut();
             if shared.state.queue.readers.get(&instance.reader) == Some(&instance) {
@@ -572,7 +595,9 @@ impl<L: Logic> Core<L> {
             });
             let foreground = state.queue.foreground;
             let mut said = Vec::new();
-            for entry in L::reader_ended(&mut state.facts, instance, foreground, &mut said) {
+            for entry in
+                L::reader_ended(&mut state.facts, instance, (foreground, retake), &mut said)
+            {
                 join::<L>(state, entry);
             }
             shared.effects.extend(said.into_iter().map(Effect::Said));
@@ -590,6 +615,7 @@ impl<L: Logic> Core<L> {
         for number in due {
             self.stop(number, CancelReason::DueTime);
         }
+        self.outpost_timers();
         let mut shared = self.shared.borrow_mut();
         if let Some(windows) = shared.state.queue.table.round(now_us) {
             shared.effects.push(Effect::CheckHung(windows));

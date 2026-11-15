@@ -568,7 +568,7 @@ impl Logic for Entries {
     fn reader_ended(
         facts: &mut SrState,
         instance: Instance,
-        foreground: Option<Foreground>,
+        (foreground, retake): (Option<Foreground>, bool),
         said: &mut Vec<Said>,
     ) -> Vec<Entry> {
         if let crate::event_queue::Reader::Outpost(process) = instance.reader {
@@ -596,10 +596,20 @@ impl Logic for Entries {
                 facts.start_marker = None;
             }
         }
-        crate::focus::retake::reader_ended(facts, instance, foreground)
+        let read = crate::focus::retake::reader_ended(facts, instance, foreground);
+        read.filter(|_| retake)
             .map(|read| Entry::CurrentFocus(Box::new(read)))
             .into_iter()
             .collect()
+    }
+
+    fn watched(facts: &SrState, process: verbatim_model::Pid) -> bool {
+        !facts.ignored.contains(&process)
+    }
+
+    fn holds(facts: &SrState, generation: verbatim_model::OutpostId) -> bool {
+        facts.held_nodes().contains_key(&generation)
+            || facts.held_anchors().contains_key(&generation)
     }
 
     fn window_destroyed(facts: &mut SrState, window: WindowHandle) {
@@ -904,6 +914,11 @@ pub(crate) fn route(
             };
             return desktop_switched(state, runtime, (trace_id, at_us), input_desktop_open);
         }
+        // Every frame of an instance that is not its reader's current one
+        // is dropped (design, "The outpost generation record").
+        QueueInput::Tell { from, .. } if !state.queue.admits(*from) => {
+            return vec![Said::Queue(QueueEffect::StaleFrame(*from))];
+        }
         QueueInput::Tell { from, tell } => match Entry::of_tell(*from, (**tell).clone()) {
             Some(entry) => Input::Entry(entry),
             None => return Vec::new(),
@@ -976,6 +991,7 @@ pub(crate) fn route(
             crate::input_desktop::lock(state, *lock);
             return Vec::new();
         }
+        QueueInput::Process(fact) => Input::Process(*fact),
     };
     run_input(state, runtime, (trace_id, at_us), input)
 }
@@ -1067,6 +1083,9 @@ fn run_input(
                 Said::Queue(QueueEffect::AnswerDropped { number, late })
             }
             Effect::Undecodable(number) => Said::Queue(QueueEffect::Undecodable(number)),
+            Effect::StartOutpost(process) => Said::Queue(QueueEffect::StartOutpost(process)),
+            Effect::EndOutpost(instance) => Said::Queue(QueueEffect::EndOutpost(instance)),
+            Effect::StaleFrame(instance) => Said::Queue(QueueEffect::StaleFrame(instance)),
             Effect::Said(said) => said,
             Effect::Answered { asker, outcome } => Said::Queue(QueueEffect::Answered {
                 asker: asker.0,

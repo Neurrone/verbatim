@@ -260,6 +260,11 @@ fn said_after(exempt: Option<i32>, entries: Vec<Entry>) -> Vec<String> {
         at_us += 1_000;
         core.feed(Timed { at_us, input })
     };
+    core.shared
+        .borrow_mut()
+        .state
+        .queue
+        .start_for_tests(OUTPOST);
     let _ = feed(&mut core, Input::ReaderReady(OUTPOST));
     let _ = feed(&mut core, Input::Foreground(IN_FRONT));
     let _ = feed(&mut core, Input::Entry(Entry::Hold));
@@ -327,6 +332,11 @@ fn no_merge_reaches_past_a_focus_kind_entry() {
 fn the_asked_entry_is_not_merged() {
     let mut core = Core::<Limited>::default();
     let feed = |core: &mut Core<Limited>, at_us, input| core.feed(Timed { at_us, input });
+    core.shared
+        .borrow_mut()
+        .state
+        .queue
+        .start_for_tests(OUTPOST);
     let _ = feed(&mut core, 0, Input::ReaderReady(OUTPOST));
     let _ = feed(&mut core, 0, Input::Entry(Entry::Hold));
     let _ = feed(&mut core, 1, Input::Entry(Entry::Hold));
@@ -568,6 +578,11 @@ fn a_foreground_change_ends_waiting_entries_outside_it_and_a_marker_joins_the_ba
     };
     let mut core = Core::<Limited>::default();
     let feed = |core: &mut Core<Limited>, at_us, input| core.feed(Timed { at_us, input });
+    core.shared
+        .borrow_mut()
+        .state
+        .queue
+        .start_for_tests(OUTPOST);
     let _ = feed(&mut core, 0, Input::ReaderReady(OUTPOST));
     let _ = feed(&mut core, 0, Input::Foreground(IN_FRONT));
     let _ = feed(&mut core, 1, Input::Entry(Entry::Hold));

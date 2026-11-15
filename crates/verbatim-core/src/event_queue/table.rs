@@ -342,6 +342,51 @@ impl Table {
             .collect()
     }
 
+    /// Every request waiting for `reader` or out to it ends answered
+    /// `outcome`, and its late requests are forgotten: its application
+    /// exited (Table 5, column J).
+    pub(crate) fn answer_all(&mut self, reader: Reader, outcome: &WireOutcome) -> Vec<Ended> {
+        self.late.retain(|_, instance| instance.reader != reader);
+        let numbers: Vec<RequestNumber> = self
+            .live
+            .iter()
+            .filter(|(_, live)| live.reader == reader)
+            .map(|(number, _)| *number)
+            .collect();
+        numbers
+            .into_iter()
+            .filter_map(|number| {
+                self.end(number, Ending::Answered(outcome.clone()), &mut Vec::new())
+            })
+            .collect()
+    }
+
+    /// Whether a request waits for `reader`.
+    pub(crate) fn waiting_for(&self, reader: Reader) -> bool {
+        self.live
+            .values()
+            .any(|live| live.reader == reader && live.stage == Stage::Waiting)
+    }
+
+    /// Whether a request waits for `reader` or is out to it, which holds
+    /// its outpost from retirement.
+    pub(crate) fn holds(&self, reader: Reader) -> bool {
+        self.live.values().any(|live| live.reader == reader)
+    }
+
+    /// The readers requests wait for, each once.
+    pub(crate) fn waiting_readers(&self) -> impl Iterator<Item = Reader> + '_ {
+        let mut readers: Vec<Reader> = self
+            .live
+            .values()
+            .filter(|live| live.stage == Stage::Waiting)
+            .map(|live| live.reader)
+            .collect();
+        readers.sort();
+        readers.dedup();
+        readers.into_iter()
+    }
+
     /// Adds `window` to the recovery set, to be watched every half second.
     pub(crate) fn watch(&mut self, window: RequestWindow, now_us: u64) {
         self.recovery.insert(window.handle.0, window);

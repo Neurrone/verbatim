@@ -288,8 +288,17 @@ pub(crate) fn answer_outcome(from: Instance, number: u64, outcome: WireOutcome) 
     }
 }
 
+/// `instance` made ready at `at_us`: its start set up as the owner thread
+/// reports it, then its `Ready`; what the step said.
+pub(crate) fn ready_at(held: &mut Held, at_us: u64, instance: Instance) -> Vec<String> {
+    held.state.queue.start_for_tests(instance);
+    feed_at(held, at_us, Input::ReaderReady(instance))
+}
+
 pub(crate) fn ready() -> Held {
     let mut state = Held::default();
+    state.queue.start_for_tests(LISTENER);
+    state.queue.start_for_tests(OUTPOST);
     assert_eq!(
         feed_at(&mut state, 0, Input::ReaderReady(LISTENER)),
         NOTHING
@@ -716,12 +725,19 @@ fn the_reducer_routes_a_tell_into_the_queue_and_asks_to_be_woken_at_its_due_time
         at_us: 1_000,
         input,
     };
+    held.state.queue.start_for_tests(LISTENER);
+    held.state.queue.start_for_tests(OUTPOST);
     let effects = crate::reduce(
         &mut held.state,
         &mut held.runtime,
         &queued(QueueInput::ReaderReady(OUTPOST)),
     );
-    assert_eq!(effects, [Said::Queue(QueueEffect::WakeAt(None))]);
+    // With no application in front, the ready outpost is looked at for
+    // retirement in 30 seconds (Table 5, column G).
+    assert_eq!(
+        effects,
+        [Said::Queue(QueueEffect::WakeAt(Some(1_000 + 30_000_000)))]
+    );
     let effects = crate::reduce(
         &mut held.state,
         &mut held.runtime,
@@ -877,6 +893,7 @@ fn taskbar_read(asker: u64) -> verbatim_model::request::QueueInput {
 fn taskbar_read_out() -> Held {
     use verbatim_model::request::QueueEffect;
     let mut held = Held::default();
+    held.state.queue.start_for_tests(EXPLORER);
     let _ = shell_feeds(
         &mut held,
         1_000,

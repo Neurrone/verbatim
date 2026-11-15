@@ -151,7 +151,7 @@ pub fn retirement_decision(
 /// the time it must stay up (`STAYED_UP`), and, for an application, when it comes
 /// to the foreground, which also ends a wait that runs
 /// ([`foreground`](Self::foreground)).
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Backoff {
     /// The failures counted since the count last started again.
     failures: u32,

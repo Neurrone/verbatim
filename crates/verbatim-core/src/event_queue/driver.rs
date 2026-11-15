@@ -114,6 +114,9 @@ pub(crate) struct Queue<E, F> {
     /// in the order they were made: the check after a menu or switcher
     /// ends.
     pub(super) timers: Vec<(u64, E)>,
+    /// The outpost generation record (Table 5).
+    #[serde(default)]
+    pub(crate) record: crate::supervisor::record::Record,
 }
 
 impl<E, F> Default for Queue<E, F> {
@@ -128,6 +131,7 @@ impl<E, F> Default for Queue<E, F> {
             backend: BackendCache::default(),
             checkpoint: None,
             timers: Vec::new(),
+            record: crate::supervisor::record::Record::default(),
         }
     }
 }
@@ -140,7 +144,49 @@ impl<E, F> Queue<E, F> {
             .next_due()
             .into_iter()
             .chain(self.timers.iter().map(|(at_us, _)| *at_us))
+            .chain(self.record.next_due())
             .min()
+    }
+
+    /// Sets up `instance` as its reader's current one, starting, so that
+    /// its `Ready` is taken: a test's setup, standing for the owner
+    /// thread's report (`ListenerStarted`, or an outpost launched and
+    /// started) and for a generation that answers every ping, its
+    /// liveness due at the clock's end.
+    #[cfg(test)]
+    pub(crate) fn start_for_tests(&mut self, instance: Instance) {
+        use crate::supervisor::record::{Running, Stage};
+        match instance.reader {
+            Reader::Listener => self.record.listener = Some(instance.generation),
+            Reader::Outpost(process) => {
+                if !self.record.applications.contains_key(&process) {
+                    self.record.launch(process, self.now_us);
+                }
+                if let Some(application) = self.record.applications.get_mut(&process) {
+                    application.stage = Stage::Starting(Running {
+                        generation: instance.generation,
+                        started_us: self.now_us,
+                        pong_us: u64::MAX - crate::supervisor::record::LIVENESS_US,
+                    });
+                }
+            }
+        }
+    }
+
+    /// Whether `reader` has an instance that takes requests.
+    pub(crate) fn ready(&self, reader: Reader) -> bool {
+        self.readers.contains_key(&reader)
+    }
+
+    /// Whether a frame of `instance` is its reader's current one's: the
+    /// newest listener the owner reported started, or an application's
+    /// starting or ready generation (design, "The outpost generation
+    /// record").
+    pub(crate) fn admits(&self, instance: Instance) -> bool {
+        match instance.reader {
+            Reader::Listener => self.record.listener == Some(instance.generation),
+            Reader::Outpost(process) => self.record.current(process, instance.generation),
+        }
     }
 
     /// The front entry and its request, while it has one out.

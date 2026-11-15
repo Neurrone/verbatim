@@ -11,6 +11,7 @@
 
 pub mod generation;
 pub mod policy;
+pub(crate) mod record;
 
 /// Why an outpost generation ended.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

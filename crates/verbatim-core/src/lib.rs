@@ -95,5 +95,5 @@ pub use flight_recorder::FlightRecorder;
 pub use focus_rules::is_selection_container;
 pub use recorder::{RecordedInput, ReducerRecorder, replay};
 pub use reduce::{SNAP_RESULTS_ACTIVITY, reduce};
-pub use state::SrState;
+pub use state::{Readiness, SrState};
 pub use terminal_model::{read_at, read_of, snapshot_of};

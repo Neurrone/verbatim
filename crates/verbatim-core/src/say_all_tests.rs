@@ -91,6 +91,8 @@ struct Step {
     display: Vec<bool>,
     /// Each answer dropped, by its request's number.
     dropped: Vec<u64>,
+    /// Each application whose outpost Core starts.
+    started: Vec<verbatim_model::Pid>,
 }
 
 /// One say-all utterance.
@@ -159,6 +161,7 @@ fn read_effect(step: &mut Step, effect: Effect<Said>) {
         },
         Effect::Cancel { cancel, .. } => step.cancelled.push(cancel),
         Effect::AnswerDropped { number, .. } => step.dropped.push(number.0),
+        Effect::StartOutpost(process) => step.started.push(process),
         Effect::Said(Said::KeepDisplayOn(on)) => step.display.push(on),
         Effect::Said(Said::Speak(utterance, key)) => {
             assert!(utterance.say_all, "{utterance:?} is read by say-all");
@@ -613,6 +616,8 @@ fn say_all_stops_when_its_outpost_generation_ends() {
     assert_eq!(read.sent.len(), 1, "{read:?}");
     let ended = step(&mut state, 1_200, Input::ReaderEnded(OUTPOST));
     assert_eq!(ended.display, [false]);
+    // Its first failure is replaced at once (Table 5, column E).
+    assert_eq!(ended.started, [crate::entries::tests::APP]);
     assert!(ended.said.is_empty() && ended.sent.is_empty(), "{ended:?}");
     assert!(state.say_all.is_none());
     let late = step(&mut state, 1_300, at_mark(read.said[1].marks[0]));

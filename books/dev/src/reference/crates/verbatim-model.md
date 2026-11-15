@@ -335,7 +335,12 @@ them yet.
   send in `QueueEffect::SendStrokes` (each a `SentTransition`) and, at
   `QueueInput::Exit`, the keys to release in `QueueEffect::ReleaseAtExit`.
   The session's lock state arrives as `QueueInput::Lock`, a
-  `SessionLock`: unlocked, locked or unknown.
+  `SessionLock`: unlocked, locked or unknown. The supervisor's owner
+  thread reports its process facts for Core's outpost generation record
+  as `QueueInput::Process`, a `ProcessFact`, and carries out
+  `QueueEffect::StartOutpost` and `QueueEffect::EndOutpost`;
+  `QueueEffect::StaleFrame` logs a frame of an instance that is not its
+  reader's current one.
   The `stroke` module holds `Stroke`, `HeldStroke` with its `Modifier`s,
   and `SentTransition`.
 - A caret key's text requests (`TextOp`): `StartingRead`, answered

@@ -636,6 +636,21 @@ pub struct SrState {
     pub(crate) queue: crate::event_queue::Queue<crate::entries::Entry, SrState>,
 }
 
+/// What the test harness's readiness reads of Core's outpost generation
+/// record (`docs/design/readers-tell-core-asks-build1.md`, "The outpost
+/// generation record"): the listener's readiness and Verbatim's own
+/// outpost's from the record, the spares' as the owner thread last
+/// counted them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Readiness {
+    /// How many spare outposts wait.
+    pub spares_ready: usize,
+    /// Whether the newest listener is ready.
+    pub listener_ready: bool,
+    /// Whether Verbatim's own outpost is ready.
+    pub own_outpost_ready: bool,
+}
+
 /// How many progress bars' last indications are remembered: more than are
 /// ever reporting at once.
 pub(crate) const PROGRESS_BARS_KEPT: usize = 32;
@@ -739,6 +754,42 @@ impl SrState {
                 .then_some(foreground.thread),
             desktop_switches: self.desktop.switches_away,
         })
+    }
+
+    /// What the test harness's readiness reads of the outpost generation
+    /// record.
+    #[must_use]
+    pub fn readiness(&self) -> Readiness {
+        let record = &self.queue.record;
+        Readiness {
+            spares_ready: record.spares_ready,
+            listener_ready: self.queue.ready(crate::event_queue::Reader::Listener),
+            own_outpost_ready: record.own.is_some_and(|own| {
+                record.applications.get(&own).is_some_and(|application| {
+                    matches!(
+                        application.stage,
+                        crate::supervisor::record::Stage::Ready(_)
+                    )
+                })
+            }),
+        }
+    }
+
+    /// The outpost generations ready now, by application: the control
+    /// plane's outpost list.
+    #[must_use]
+    pub fn ready_outposts(&self) -> Vec<(verbatim_model::Pid, OutpostId)> {
+        self.queue
+            .record
+            .applications
+            .iter()
+            .filter_map(|(process, application)| match application.stage {
+                crate::supervisor::record::Stage::Ready(running) => {
+                    Some((*process, OutpostId(running.generation)))
+                }
+                _ => None,
+            })
+            .collect()
     }
 
     /// Whether the session counts as locked: locked, or its lock state
