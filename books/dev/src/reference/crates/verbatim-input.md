@@ -51,7 +51,9 @@ Public API:
   announced, and `mask`, the places in line of a mask's press and release
   (below). For `Own` input it gives no speech effect, observed gesture
   or typing. `passed_on(place)` takes the line of keys held back up to a
-  key Core passed on, and changes nothing else; `has_outstanding()` and
+  key Core passed on, and changes nothing else; `desktop_switched()`
+  forgets every key down, the modifiers among them, and the line, after a
+  switch away from the user's input desktop whose releases never came; `has_outstanding()` and
   `deferred_transitions()` read the line, for the hook's permit and its
   translation of typed text. The config's `interrupt_for_characters` and
   `interrupt_for_enter` are NVDA's two speech interrupt settings, both on

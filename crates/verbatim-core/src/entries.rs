@@ -31,7 +31,9 @@ use verbatim_model::property::RuntimeId;
 use verbatim_model::request::{
     MsaaIds, OutsideOutcome, PressAction, Probe, QueueEffect, QueueInput, Request as Wire,
 };
-use verbatim_model::tell::{AcceptanceFacts, ElementToken, Event, EventObject, TellWindow};
+use verbatim_model::tell::{
+    AcceptanceFacts, ElementToken, Event, EventObject, Payload, TellWindow,
+};
 use verbatim_model::{Earcon, Effect as Said, SpeechMark, TraceId, WindowHandle};
 
 use crate::event_queue::Instance;
@@ -520,11 +522,25 @@ impl Logic for Entries {
     }
 
     fn due(facts: &SrState) -> Option<u64> {
-        facts.strokes.next_release()
+        facts
+            .strokes
+            .next_release()
+            .into_iter()
+            .chain(crate::input_desktop::due(facts))
+            .min()
     }
 
-    fn tick(facts: &mut SrState, now_us: u64, said: &mut Vec<Said>) {
+    fn tick(
+        facts: &mut SrState,
+        now_us: u64,
+        foreground: Option<Foreground>,
+        said: &mut Vec<Said>,
+    ) -> Vec<Entry> {
         said.extend(facts.strokes.release_due(now_us).map(Said::Queue));
+        crate::input_desktop::tick(facts, now_us, foreground.map(|front| front.window()))
+            .map(|read| Entry::CurrentFocus(Box::new(read)))
+            .into_iter()
+            .collect()
     }
 
     fn recovered(facts: &SrState, window: &RequestWindow) -> Option<Entry> {
@@ -881,6 +897,13 @@ pub(crate) fn route(
     input: &QueueInput,
 ) -> Vec<Said> {
     let input = match input {
+        QueueInput::Tell { tell, .. } if tell.kind == EventKind::DesktopSwitch => {
+            let Payload::DesktopSwitch { input_desktop_open } = tell.payload else {
+                // A switch without its payload is the listener's fault.
+                return Vec::new();
+            };
+            return desktop_switched(state, runtime, (trace_id, at_us), input_desktop_open);
+        }
         QueueInput::Tell { from, tell } => match Entry::of_tell(*from, (**tell).clone()) {
             Some(entry) => Input::Entry(entry),
             None => return Vec::new(),
@@ -949,8 +972,43 @@ pub(crate) fn route(
                 state.strokes.exit(),
             ))];
         }
+        QueueInput::Lock(lock) => {
+            crate::input_desktop::lock(state, *lock);
+            return Vec::new();
+        }
     };
     run_input(state, runtime, (trace_id, at_us), input)
+}
+
+/// A switch of the input desktop at `at_us`, handled at once in the inbox
+/// (Table 8): what it says first, then its `Follow`s sent as Core's own
+/// requests, and the queue settled, so that a starting read whose stroke
+/// was dropped is withdrawn.
+fn desktop_switched(
+    state: &mut SrState,
+    runtime: &mut Runtime,
+    (trace_id, at_us): (TraceId, u64),
+    open: bool,
+) -> Vec<Said> {
+    let switched = crate::input_desktop::switched(state, open, at_us);
+    let requests = switched
+        .follows
+        .into_iter()
+        .map(|follow| crate::event_queue::CoreRequest {
+            reader: Reader::Outpost(follow.process),
+            window: follow.window,
+            request: Wire::Follow(follow.follow),
+            due_after_us: OTHER_DUE_US,
+        })
+        .collect();
+    let mut said = switched.said;
+    said.extend(run_input(
+        state,
+        runtime,
+        (trace_id, at_us),
+        Input::Send(requests),
+    ));
+    said
 }
 
 /// Whether Core's facts, changed outside the queue, leave it to settle: a

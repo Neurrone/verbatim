@@ -69,12 +69,29 @@ pub(crate) enum Input<E> {
     },
     /// An asker outside the queue no longer needs its request.
     WithdrawOutside(Asker),
+    /// Requests Core sends outside the queue as it handles an input at
+    /// once, each awaiting no answer: its ending changes nothing in Core.
+    Send(Vec<CoreRequest>),
     /// Core's facts changed outside the queue: the entries they want join
     /// the back, and the front's request is withdrawn when it is no longer
     /// needed ([`Logic::joining`], [`Logic::unneeded`]).
     Settle,
     /// A timer came due.
     Tick,
+}
+
+/// A request Core sends outside the queue, in order with the queue's
+/// requests, awaiting no answer.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct CoreRequest {
+    /// The reader asked.
+    pub(crate) reader: Reader,
+    /// The window it names.
+    pub(crate) window: RequestWindow,
+    /// The request.
+    pub(crate) request: Wire,
+    /// How long Core waits for it.
+    pub(crate) due_after_us: u64,
 }
 
 /// An input with the time it carries, in microseconds on the run's shared
@@ -221,6 +238,7 @@ impl<L: Logic> Core<L> {
                 );
                 Self::order(&mut shared, orders);
             }
+            Input::Send(requests) => self.send_core(requests),
             Input::WithdrawOutside(asker) => {
                 let numbers = self.shared.borrow().state.queue.table.asked_by(asker);
                 for number in numbers {
@@ -233,6 +251,34 @@ impl<L: Logic> Core<L> {
         }
         self.take_next();
         self.finish_step()
+    }
+
+    /// Sends `requests` as Core's own, outside the queue, each awaiting no
+    /// answer.
+    fn send_core(&mut self, requests: Vec<CoreRequest>) {
+        let mut shared = self.shared.borrow_mut();
+        let now_us = shared.state.queue.now_us;
+        let mut orders = Vec::new();
+        for sent in requests {
+            let ready = shared.state.queue.readers.get(&sent.reader).copied();
+            let state = &mut shared.state;
+            state.queue.table.begin(
+                Live {
+                    reader: sent.reader,
+                    window: sent.window,
+                    due_us: now_us.saturating_add(sent.due_after_us),
+                    request: sent.request,
+                    owner: Owner::Core,
+                    stage: Stage::Waiting,
+                    probing: None,
+                },
+                ready,
+                &state.queue.backend,
+                now_us,
+                &mut orders,
+            );
+        }
+        Self::order(&mut shared, orders);
     }
 
     /// A reader's answer: the request it names ends with it, and the
@@ -549,9 +595,13 @@ impl<L: Logic> Core<L> {
             shared.effects.push(Effect::CheckHung(windows));
         }
         let mut said = Vec::new();
-        L::tick(&mut shared.state.facts, now_us, &mut said);
+        let foreground = shared.state.queue.foreground;
+        let joining = L::tick(&mut shared.state.facts, now_us, foreground, &mut said);
         shared.effects.extend(said.into_iter().map(Effect::Said));
         let state = &mut shared.state;
+        for entry in joining {
+            join::<L>(state, entry);
+        }
         let (due, later): (Vec<_>, Vec<_>) = std::mem::take(&mut state.queue.timers)
             .into_iter()
             .partition(|(at_us, _)| *at_us <= now_us);

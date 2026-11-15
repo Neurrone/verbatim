@@ -448,6 +448,7 @@ mod tests {
             holds_keys: true,
             focus_has_text: false,
             keyboard_thread: Some(100),
+            desktop_switches: 0,
         };
         assert_eq!(keyboard_thread(WindowHandle(10), Some(console)), Some(100));
         assert_eq!(
@@ -460,6 +461,7 @@ mod tests {
                 WindowHandle(10),
                 Some(HookForeground {
                     keyboard_thread: None,
+                    desktop_switches: 0,
                     ..console
                 })
             ),

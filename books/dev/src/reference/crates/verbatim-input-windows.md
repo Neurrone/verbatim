@@ -178,7 +178,11 @@ The permit: the app publishes Core's view after every input in
 for the window in front (`holds_keys`) and whether the focus has text
 (`focus_has_text`, from `SrState::holds_caret_keys`, true while the focus
 has text or may have, as for the caret keys whose evidence is watched).
-The hook makes one load of it per key, so it never waits. It reads the
+The hook makes one load of it per key, so it never waits. When the
+view's desktop part (`desktop_switches`) differs from the one it last
+read, a switch away from the user's input desktop came between, whose
+releases never reach the hook: the machine forgets every key down and
+its line (`DecisionMachine::desktop_switched`). It reads the
 window in front (`GetForegroundWindow`, a local read) only when the view
 lets keys be held and either the focus has text or a key waits in the
 machine's line, and the permit is `HoldAndDefer` or `Defer` only while

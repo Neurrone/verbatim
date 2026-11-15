@@ -447,7 +447,9 @@ code is in `reduce.rs` unless named.
   included, and published by the shell after each input: keys may be held
   only when the window's process integrity is known and no higher than
   Verbatim's, and a console host's keys are translated with the layout of
-  the thread its event named (architecture section 5).
+  the thread its event named (architecture section 5). Its desktop part
+  counts the switches away from the user's input desktop Core has handled
+  (below, "The secure desktop and the lock state").
 - Rules for particular applications' windows (`applications.rs`; decision
   D6 keeps them in Core until application modules run in the extension
   host). The shell's staging windows are taken as focus silently
@@ -1003,6 +1005,28 @@ selection.
 every anchor and node a request of the event queue names (a key's
 starting point while its watch or sentence move is out), and the node a
 waiting caret key was bound to.
+
+## The secure desktop and the lock state
+
+(`docs/design/readers-tell-core-asks-build1.md`, "The secure desktop and
+the lock state", Table 8; `input_desktop.rs`.) The listener's desktop
+switch tell is handled at once in the inbox, never queued
+(`entries::route`). A switch to an input desktop Verbatim cannot open
+cuts speech, commits the sleeping focus (`Versions::commit_own` with no
+source, the focus context emptied so that the next focus is spoken from
+the top with its window's title), sends `Follow` naming nothing to every
+outpost followed, as Core's own requests outside the queue
+(`event_queue::Input::Send`), drops the strokes Core holds, and counts
+the switch in the hook's view (`HookForeground::desktop_switches`), on
+which the hook forgets its modifiers and its line. A switch whose
+desktop opens arms a 200 ms timer (`InputDesktop::ReturnPending`), and
+when it comes due (`Logic::tick`) the read after the return joins the
+queue: the front application's current focus with none of the ancestors
+Core already knows and no duplicate test (`retake::Why::Returned`). A
+switch away while the return is pending cancels it. No re-take is made
+while the sleeping focus is committed. The lock state is recorded from
+`QueueInput::Lock`, unknown counting as locked
+(`SrState::session_locked`); nothing judges it before M8.7.
 
 ## Key numbers
 

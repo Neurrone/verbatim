@@ -626,6 +626,9 @@ pub struct SrState {
     /// (`crate::text_facts::edit_selection_repeated`).
     #[serde(default)]
     pub(crate) edit_selection: Option<verbatim_model::EditSelection>,
+    /// The input desktop and the lock state (`crate::input_desktop`).
+    #[serde(default)]
+    pub(crate) desktop: crate::input_desktop::Desktop,
     /// The event queue (`crate::entries`): its entries, its requests and
     /// the front entry's checkpoint, plain data. Empty while a step of the
     /// queue runs, when the driver holds it. The paused function sits
@@ -734,7 +737,16 @@ impl SrState {
             focus_has_text: self.holds_caret_keys(),
             keyboard_thread: (foreground.console && foreground.thread != 0)
                 .then_some(foreground.thread),
+            desktop_switches: self.desktop.switches_away,
         })
+    }
+
+    /// Whether the session counts as locked: locked, or its lock state
+    /// unknown (`docs/design/readers-tell-core-asks-build1.md`, "The
+    /// secure desktop and the lock state"; security mitigation B3).
+    #[must_use]
+    pub fn session_locked(&self) -> bool {
+        self.desktop.locked()
     }
 
     /// The caret of `node`'s text, while it is the focus's.

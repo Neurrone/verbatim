@@ -210,6 +210,13 @@ impl FocusState {
         self.object.as_mut()
     }
 
+    /// Core committed the sleeping focus, which no reader read and which
+    /// has no ancestors: commands find no focus object, and the next focus
+    /// is spoken from the top, its window's title included.
+    pub(crate) fn sleep(&mut self) {
+        self.object = None;
+    }
+
     /// The report that reached Core at input `arrival` was executed as
     /// `focus`: it is the focus object and the last queued focus.
     pub(crate) fn execute(&mut self, focus: FocusContext, arrival: u64) {

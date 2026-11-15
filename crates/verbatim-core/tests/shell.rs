@@ -437,6 +437,7 @@ fn a_console_window_takes_the_thread_its_event_named() {
             holds_keys: true,
             focus_has_text: false,
             keyboard_thread: Some(40),
+            desktop_switches: 0,
         })
     );
     assert_eq!(
@@ -446,6 +447,7 @@ fn a_console_window_takes_the_thread_its_event_named() {
             holds_keys: true,
             focus_has_text: false,
             keyboard_thread: None,
+            desktop_switches: 0,
         }),
         "a console whose thread no event has named yet"
     );
@@ -456,6 +458,7 @@ fn a_console_window_takes_the_thread_its_event_named() {
             holds_keys: true,
             focus_has_text: false,
             keyboard_thread: None,
+            desktop_switches: 0,
         })
     );
 }
@@ -494,6 +497,7 @@ fn the_latest_foreground_report_decides() {
             holds_keys: true,
             focus_has_text: false,
             keyboard_thread: None,
+            desktop_switches: 0,
         })
     );
 }

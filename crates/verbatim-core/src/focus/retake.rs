@@ -32,6 +32,8 @@ pub(crate) enum Why {
     Retake,
     /// A window Core stopped waiting on as hung answers again.
     Recovered,
+    /// The read after the user's input desktop returned.
+    Returned,
 }
 
 /// An entry reading an application's current focus.
@@ -111,6 +113,17 @@ pub(crate) fn startup(state: &SrState, foreground: &Foreground) -> CurrentFocus 
     CurrentFocus {
         why: Why::Startup,
         window: foreground.window(),
+        trace_id: state.queue_trace.0,
+        fence: crate::keys::entry::Fence::default(),
+    }
+}
+
+/// The read after the user's input desktop returned, of the application
+/// whose window `window` is in front (Table 8, column G).
+pub(crate) fn returned(state: &SrState, window: RequestWindow) -> CurrentFocus {
+    CurrentFocus {
+        why: Why::Returned,
+        window,
         trace_id: state.queue_trace.0,
         fence: crate::keys::entry::Fence::default(),
     }
@@ -207,7 +220,9 @@ pub(crate) async fn run(mut cx: Cx<Entries>, entry: CurrentFocus) {
     let executed = {
         let mut facts = cx.facts_mut();
         match entry.why {
-            Why::Startup => execute(&mut facts, &origin, &read, &Known::default(), read_by),
+            Why::Startup | Why::Returned => {
+                execute(&mut facts, &origin, &read, &Known::default(), read_by)
+            }
             Why::Recovered if recovered_duplicate(&facts, &read) => Executed::default(),
             Why::Retake | Why::Recovered => retake(&mut facts, &origin, &read, read_by).1,
         }

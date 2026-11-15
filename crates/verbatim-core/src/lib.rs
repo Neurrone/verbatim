@@ -63,6 +63,7 @@ mod focus;
 mod focus_queue;
 pub mod focus_rules;
 mod foreground;
+mod input_desktop;
 mod key_line;
 mod keys;
 mod live_reread;

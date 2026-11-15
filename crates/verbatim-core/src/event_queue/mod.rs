@@ -48,7 +48,7 @@ use verbatim_model::{Pid, WindowHandle};
 use crate::focus::backend::{Backend, BackendCache, JudgedWindow, WindowKey};
 
 pub(crate) use driver::{Core, Cx, Queue, ReplayMismatch, State};
-pub(crate) use inbox::{Effect, Input, Timed};
+pub(crate) use inbox::{CoreRequest, Effect, Input, Timed};
 pub(crate) use limiter::{MsaaClass, MsaaKey, Place};
 pub(crate) use request::{Outcome, Refused, Request};
 pub(crate) use table::Asker;
@@ -305,10 +305,17 @@ pub(crate) trait Logic: Sized + 'static {
         None
     }
 
-    /// A timer came due at `now_us`: what Core's facts keep for that time
-    /// happens, and what that says goes into `said`.
-    fn tick(facts: &mut Self::Facts, now_us: u64, said: &mut Vec<Self::Said>) {
-        let _ = (facts, now_us, said);
+    /// A timer came due at `now_us`, with `foreground` the foreground
+    /// record: what Core's facts keep for that time happens, what that
+    /// says goes into `said`, and the entries returned join the back.
+    fn tick(
+        facts: &mut Self::Facts,
+        now_us: u64,
+        foreground: Option<Foreground>,
+        said: &mut Vec<Self::Said>,
+    ) -> Vec<Self::Entry> {
+        let _ = (facts, now_us, foreground, said);
+        Vec::new()
     }
 
     /// Whether `arriving` is dropped at its arrival, judged against the

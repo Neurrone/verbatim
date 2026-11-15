@@ -644,6 +644,19 @@ impl DecisionMachine {
         }
     }
 
+    /// The input desktop switched away from the user's and Core dropped
+    /// the keys it held: no release will come for a key down before the
+    /// switch, so the machine forgets every key down, its modifiers among
+    /// them, and its line, as NVDA clears its recorded modifiers
+    /// (`docs/design/readers-tell-core-asks-build1.md`, "The secure
+    /// desktop and the lock state").
+    pub fn desktop_switched(&mut self) {
+        self.held_modifiers.clear();
+        self.keys_down.clear();
+        self.lone_modifier = LoneModifier::Idle;
+        self.line.clear();
+    }
+
     /// Whether a key transition waits in the line.
     #[must_use]
     pub fn has_outstanding(&self) -> bool {
@@ -1189,6 +1202,23 @@ mod tests {
             m.on_key(key(down(left_shift, false), t)).speech,
             Some(KeySpeechEffect::TogglePause)
         );
+    }
+
+    /// A Verbatim modifier down when the input desktop switched away gets
+    /// no release; once the machine is told, V alone types, forming no
+    /// gesture with it.
+    #[test]
+    fn a_switch_away_forgets_the_modifier_held_before_it() {
+        let mut m = machine(DecisionConfig::default(), &["kb:v+verbatim"]);
+        let t = START;
+        assert_eq!(
+            m.on_key(key(down(CAPS, false), t)).verdict,
+            Verdict::Swallow
+        );
+        m.desktop_switched();
+        let v_down = m.on_key(key(down(V, false), t));
+        assert_eq!(v_down.verdict, Verdict::Pass);
+        assert!(v_down.emitted.is_none());
     }
 
     #[test]

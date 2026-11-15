@@ -709,6 +709,21 @@ pub struct Answer {
     pub detail: String,
 }
 
+/// The session's lock state, as the shell's session notifications and
+/// its query at startup tell it (`docs/design/readers-tell-core-asks-build1.md`,
+/// "The secure desktop and the lock state"). Core counts unknown as
+/// locked.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum SessionLock {
+    /// Unlocked.
+    #[default]
+    Unlocked,
+    /// Locked.
+    Locked,
+    /// The query could not tell.
+    Unknown,
+}
+
 /// Why Core stopped waiting for a request, or withdrew it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum CancelReason {
@@ -846,6 +861,9 @@ pub enum QueueInput {
     /// The asker of a request outside the queue no longer needs it: its
     /// dialog closed or its client left.
     WithdrawOutside(u64),
+    /// The session's lock state, from a session notification or the
+    /// query at startup.
+    Lock(SessionLock),
 }
 
 /// A key or command as the hook reports it to the event queue (ADR 0003,

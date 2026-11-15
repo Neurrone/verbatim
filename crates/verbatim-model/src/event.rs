@@ -189,6 +189,14 @@ pub struct HookForeground {
     /// window's owner: a console host window's own thread
     /// (`books/dev/src/reference/crates/verbatim-input-windows.md`, "Typed text").
     pub keyboard_thread: Option<u32>,
+    /// The view's desktop part: how many times Core has handled a switch
+    /// away from the user's input desktop. The hook gets no release of a
+    /// key down before such a switch, so when the number changes it
+    /// clears its modifier record and its line, as Core drops its held
+    /// keys in the same step (`docs/design/readers-tell-core-asks-build1.md`,
+    /// "The secure desktop and the lock state").
+    #[serde(default)]
+    pub desktop_switches: u32,
 }
 
 /// Names one query Core's reducer asked, an outpost's or one Core answers

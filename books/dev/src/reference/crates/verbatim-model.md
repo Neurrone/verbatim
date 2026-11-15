@@ -49,7 +49,9 @@ recorder unchanged. What the reducer does with each type is in
   own, its process's integrity level and Verbatim's own), carried in
   `Input::Foreground`, the only report of one, from which Core takes
   attention and its foreground record, and what Core decides from it for
-  the keyboard hook: whether keys may be held back for that window and
+  the keyboard hook, with its desktop part (`desktop_switches`, the
+  switches away from the user's input desktop Core has handled): whether
+  keys may be held back for that window and
   which thread's keyboard layout translates its keys (architecture
   section 5).
 - `Backend`: `Uia` or `Msaa`, which client stack sourced a node or event;
@@ -332,6 +334,8 @@ them yet.
   the hook deferred arrives as `QueueInput::Deferred`; Core names what to
   send in `QueueEffect::SendStrokes` (each a `SentTransition`) and, at
   `QueueInput::Exit`, the keys to release in `QueueEffect::ReleaseAtExit`.
+  The session's lock state arrives as `QueueInput::Lock`, a
+  `SessionLock`: unlocked, locked or unknown.
   The `stroke` module holds `Stroke`, `HeldStroke` with its `Modifier`s,
   and `SentTransition`.
 - A caret key's text requests (`TextOp`): `StartingRead`, answered

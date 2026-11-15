@@ -49,6 +49,9 @@ pub(crate) struct HookState {
     /// Reads the window in front: `GetForegroundWindow`, a local read, or
     /// a fixed window in tests.
     front: fn() -> HWND,
+    /// The view's desktop part as last read: how many switches away from
+    /// the user's input desktop Core has handled.
+    desktop_switches: u32,
 }
 
 impl HookState {
@@ -69,6 +72,7 @@ impl HookState {
                 // SAFETY: a local read with no preconditions.
                 unsafe { GetForegroundWindow() }
             },
+            desktop_switches: 0,
         }
     }
 
@@ -248,6 +252,22 @@ fn report_mask(state: &HookState, mask: Option<(u32, u32)>) {
     }
 }
 
+/// Reads Core's view for a key. No release reaches the hook for a key
+/// down before a switch away from the user's input desktop: on the first
+/// key after Core handled one, as the view's desktop part counts them,
+/// the machine forgets its modifiers and its line, as Core dropped its
+/// held keys (NVDA: `winAPI/secureDesktop.py` 43 to 45).
+fn read_view(state: &mut HookState) -> Option<HookForeground> {
+    let view = state.foreground.get();
+    if let Some(view) = view
+        && view.desktop_switches != state.desktop_switches
+    {
+        state.desktop_switches = view.desktop_switches;
+        state.machine.desktop_switched();
+    }
+    view
+}
+
 /// Gathers one key transition's inputs, has the machine decide it, carries
 /// out its effect on speech, and reports what it caused, each report
 /// carrying the key's number; `scan_code` and `extra_info` are the key
@@ -277,7 +297,7 @@ pub(crate) fn decide(
     // The key's time, which the machine decides by. Only a passed key's
     // report reuses it; the other reports read the time again.
     let now_us = unix_us();
-    let view = state.foreground.get();
+    let view = read_view(state);
     let (permit, window) = permit(view, state.machine.has_outstanding(), state.front);
     let decision = state.machine.on_key(KeyInput {
         event,
@@ -442,6 +462,38 @@ mod tests {
         assert_eq!(described(&reports.lock().unwrap()), expected);
     }
 
+    /// The Verbatim modifier down when Core handles a switch away from
+    /// the user's input desktop gets no release: the first key after the
+    /// view counts the switch forms no gesture with it.
+    #[test]
+    fn a_switch_away_in_the_view_forgets_the_modifier_down_before_it() {
+        const CAPS: u16 = 0x14;
+        const V: u16 = 0x56;
+        let key = |vk| KeyEvent {
+            vk,
+            scan_code: 0,
+            extended: false,
+            injected: false,
+            pressed: true,
+        };
+        let map = GestureMap::new([GestureId::parse("kb:v+verbatim").expect("valid id")]);
+        let view = Arc::new(ForegroundView::new());
+        let mut state = HookState::new(
+            DecisionMachine::new(DecisionConfig::default(), map),
+            (Box::new(|_, _| {}), Box::new(|_| {}), Arc::clone(&view)),
+            typed::Typing::default(),
+        );
+        assert_eq!(decide(&mut state, key(CAPS), 0, 0), KeyDecision::Swallow);
+        view.set(Some(HookForeground {
+            window: WindowHandle(1),
+            holds_keys: false,
+            focus_has_text: false,
+            keyboard_thread: None,
+            desktop_switches: 1,
+        }));
+        assert_eq!(decide(&mut state, key(V), 0, 0), KeyDecision::Pass);
+    }
+
     /// A hook state observing Escape, holding Right Arrow, whose reports
     /// are collected in `reports`, with Core's view of the window in front
     /// letting keys be held and the focus having text.
@@ -481,6 +533,7 @@ mod tests {
         holds_keys: true,
         focus_has_text: true,
         keyboard_thread: None,
+        desktop_switches: 0,
     };
 
     /// The letter X, a key neither held nor observed, pressed or released.
