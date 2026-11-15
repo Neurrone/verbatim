@@ -4119,54 +4119,6 @@ fn every_navigation_direction_speaks_its_own_edge_message() {
     }
 }
 
-/// A focus that moves the navigator while a press reads withdraws the
-/// press's read, which says nothing, and the entries behind it run on the
-/// navigator as it then is.
-#[test]
-fn a_focus_ends_a_navigation_press_and_what_waits_runs_on_the_new_navigator() {
-    let source = Pid(1);
-    let button = node(10, Role::Button, Some("OK"), None, StateSet::new());
-    let state = focused(source, button);
-
-    let (state, effects) = reduce(
-        &state,
-        &command(TraceId::from_raw(133), ReviewCommand::Parent, 0),
-    );
-    let query = only_fetch(&effects);
-    // Another press waits behind it, arming the bound.
-    let (state, effects) = reduce(
-        &state,
-        &command(TraceId::from_raw(134), ReviewCommand::ReportObject, 0),
-    );
-    assert_eq!(
-        effects,
-        vec![Effect::BoundHeldKey(Some((TraceId::from_raw(133), 150)))],
-        "the first entry arms the press's bound"
-    );
-
-    let elsewhere = node(20, Role::Button, Some("Cancel"), None, StateSet::new());
-    let (state, effects) = reduce(
-        &state,
-        &focus_event(TraceId::from_raw(135), source, elsewhere),
-    );
-    assert!(
-        effects
-            .iter()
-            .any(|effect| matches!(effect, Effect::ForKey(_, inner) if matches!(**inner, Effect::Withdraw { .. }))),
-        "the navigation is withdrawn: {effects:?}"
-    );
-    assert_eq!(
-        said_last(&effects),
-        vec![UtteranceSegment::label("Cancel"), role(Role::Button)],
-        "the waiting report reads the new navigator"
-    );
-
-    // Its late answer runs nothing.
-    let parent = node(11, Role::Group, Some("Buttons"), None, StateSet::new());
-    let (_, effects) = reduce(&state, &fetched(136, &query, FetchResult::Node(parent)));
-    assert_eq!(effects, [], "no navigation after the focus");
-}
-
 /// A navigation pressed behind another waits its turn, in press order.
 #[test]
 fn a_second_navigation_waits_behind_the_first_press() {
@@ -4183,11 +4135,7 @@ fn a_second_navigation_waits_behind_the_first_press() {
         &state,
         &command(TraceId::from_raw(137), ReviewCommand::NextSibling, 0),
     );
-    assert_eq!(
-        effects,
-        vec![Effect::BoundHeldKey(Some((TraceId::from_raw(136), 150)))],
-        "the second waits, and arms the first's bound"
-    );
+    assert_eq!(effects, [], "the second waits");
 
     let parent = node(11, Role::Group, Some("Buttons"), None, StateSet::new());
     let (state, effects) = reduce(
@@ -4232,10 +4180,7 @@ fn to_focus_waits_behind_a_navigation_press() {
         &state,
         &command(TraceId::from_raw(141), ReviewCommand::ToFocus, 0),
     );
-    assert_eq!(
-        effects,
-        vec![Effect::BoundHeldKey(Some((TraceId::from_raw(140), 150)))]
-    );
+    assert_eq!(effects, []);
 
     let parent = node(11, Role::Group, Some("Buttons"), None, StateSet::new());
     let (_, effects) = reduce(&state, &fetched(142, &query, FetchResult::Node(parent)));
@@ -4354,46 +4299,6 @@ fn report_current_object_reads_the_object_live_and_says_nothing_unanswered() {
         &command(TraceId::from_raw(192), ReviewCommand::Parent, 0),
     );
     let _ = (next, only_fetch(&effects));
-}
-
-/// The press at the front with something behind it gives way at its
-/// bound: its read is withdrawn, it says nothing, and what waited runs.
-#[test]
-fn a_press_with_something_behind_it_gives_way_at_its_bound() {
-    let source = Pid(1);
-    let button = node(10, Role::Button, Some("OK"), None, StateSet::new());
-    let state = focused(source, button);
-
-    let press = TraceId::from_raw(193);
-    let (state, effects) = reduce(&state, &command(press, ReviewCommand::Parent, 0));
-    let _ = only_fetch(&effects);
-    let (state, effects) = reduce(
-        &state,
-        &command(TraceId::from_raw(194), ReviewCommand::ReportObject, 0),
-    );
-    assert_eq!(
-        effects,
-        vec![Effect::BoundHeldKey(Some((press, 150)))],
-        "the first entry behind it arms the press's bound"
-    );
-    let (_, effects) = reduce(
-        &state,
-        &Input::HeldKeyDue {
-            trace_id: press,
-            at_us: 5_000_000,
-        },
-    );
-    assert!(
-        effects
-            .iter()
-            .any(|effect| matches!(effect, Effect::ForKey(_, inner) if matches!(**inner, Effect::Withdraw { .. }))),
-        "{effects:?}"
-    );
-    assert_eq!(
-        said_last(&effects),
-        vec![UtteranceSegment::label("OK"), role(Role::Button)],
-        "the report that waited runs, on the navigator as it is"
-    );
 }
 
 /// An object's own row and column counts are said after its other

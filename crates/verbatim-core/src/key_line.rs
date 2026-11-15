@@ -98,8 +98,8 @@ enum CurrentKey {
     },
     /// A review or object-navigation press whose read is running: it stays
     /// current until the answer to its last read, so it cannot end before
-    /// its move. Anything behind it waits, with a time bound on the press
-    /// ([`HELD_READ_BOUND_MS`]).
+    /// its move. Anything behind it waits until it ends, as a command whose
+    /// request is out is left to finish (ADR 0003, "Keys and commands").
     Review(Press),
 }
 
@@ -541,24 +541,12 @@ pub(crate) fn command_arrived(state: &mut SrState, input: &Input) -> Vec<Effect>
     join(state, WaitingKey::Command(Box::new(input.clone())))
 }
 
-/// `item` joins the line behind the current key. The first entry behind a
-/// press arms the press's bound, so whatever waits behind it waits at most
-/// [`HELD_READ_BOUND_MS`].
+/// `item` joins the line behind the current key.
 fn join(state: &mut SrState, item: WaitingKey) -> Vec<Effect> {
-    let Some(busy) = state.busy_mut() else {
-        return Vec::new();
-    };
-    let arms = busy.waiting.is_empty();
-    busy.waiting.push_back(item);
-    match &busy.current {
-        CurrentKey::Review(press) if arms => vec![bound_of(press.review.trace_id)],
-        _ => Vec::new(),
+    if let Some(busy) = state.busy_mut() {
+        busy.waiting.push_back(item);
     }
-}
-
-/// The time bound on a press with something behind it.
-fn bound_of(trace_id: TraceId) -> Effect {
-    Effect::BoundHeldKey(Some((trace_id, HELD_READ_BOUND_MS)))
+    Vec::new()
 }
 
 /// When a command or script was pressed.
@@ -764,12 +752,6 @@ fn run_waiting(
                 (trace, crate::reduce::command_input(state, &input), true)
             }
         };
-        // Armed before the read, so a read the shell answers at once ends
-        // it.
-        if let Some(Some(trace_id)) = starts_key.then(|| press_with_entries(state, trace, &waiting))
-        {
-            effects.push(bound_of(trace_id));
-        }
         effects.extend(under(trace, own));
         if !starts_key {
             continue;
@@ -809,19 +791,6 @@ fn became_current(state: &SrState, trace: Option<TraceId>) -> Option<RunsAtPass>
         )
         | None => None,
     }
-}
-
-/// The trace of the press `trace` has just become current, when entries
-/// wait behind it.
-fn press_with_entries(
-    state: &SrState,
-    trace: Option<TraceId>,
-    waiting: &VecDeque<WaitingKey>,
-) -> Option<TraceId> {
-    let Some(CurrentKey::Review(press)) = state.current() else {
-        return None;
-    };
-    (Some(press.review.trace_id) == trace && !waiting.is_empty()).then_some(press.review.trace_id)
 }
 
 /// Whether the key that has just become current has reached its pass, so
@@ -1146,7 +1115,7 @@ pub(crate) fn deadline_passed(state: &mut SrState, trace_id: TraceId, at_us: u64
     match current {
         // Of a key no longer current, or one with no deadline.
         Some(key) if key.trace_id() != Some(trace_id) => Vec::new(),
-        None | Some(CurrentKey::FinalReading { .. }) => Vec::new(),
+        None | Some(CurrentKey::FinalReading { .. } | CurrentKey::Review(_)) => Vec::new(),
         Some(CurrentKey::Reading { query, node, key }) => {
             before_read_given_up(state, trace_id, (query, node, key), at_us)
         }
@@ -1154,25 +1123,7 @@ pub(crate) fn deadline_passed(state: &mut SrState, trace_id: TraceId, at_us: u64
         Some(CurrentKey::MovingBySentence { passed, step }) => {
             sentence_dropped(state, &passed, step.query())
         }
-        Some(CurrentKey::Review(press)) => press_gave_way(state, press),
     }
-}
-
-/// `press`'s read is withdrawn and it ends saying nothing, the review
-/// cursor staying where it was: its bound has passed, or a focus moved the
-/// navigator while it read.
-fn press_gave_way(state: &mut SrState, press: Press) -> Vec<Effect> {
-    let trace_id = press.review.trace_id;
-    let mut effects: Vec<Effect> = state
-        .queries
-        .withdraw_kept(press.query)
-        .into_iter()
-        .map(|effect| for_key(trace_id, effect))
-        .collect();
-    // Its answer, whenever it comes, runs nothing.
-    state.queries.forget_query(press.query);
-    effects.extend(end_press(state, press));
-    effects
 }
 
 /// Ends the press `press`: only a press with something behind it was bound,
@@ -1284,23 +1235,6 @@ pub(crate) fn press_without_read(state: &mut SrState) -> Vec<Effect> {
         return Vec::new();
     }
     end_press(state, press)
-}
-
-/// A focus or a controlled selection has moved the navigator: a press still
-/// reading says nothing and ends, its words would follow the focus's. What
-/// is behind it runs on the navigator as it then is.
-pub(crate) fn navigator_moved(state: &mut SrState) -> Vec<Effect> {
-    let Some(press) = current_press(state) else {
-        return Vec::new();
-    };
-    if state
-        .navigator
-        .as_ref()
-        .is_some_and(|navigator| navigator.object.id == press.node)
-    {
-        return Vec::new();
-    }
-    press_gave_way(state, press)
 }
 
 /// The current press's outpost has ended: its read's "gone" is not an

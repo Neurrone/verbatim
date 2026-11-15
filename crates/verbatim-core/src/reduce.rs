@@ -1483,7 +1483,6 @@ pub(crate) fn execute_report(
     let first = crate::key_line::before_focus(state, node);
     let mut effects = execute_focus(state, owned, (left, arrival), first);
     effects.extend(crate::key_line::focus_executed(state, node));
-    effects.extend(crate::key_line::navigator_moved(state));
     effects
 }
 
@@ -2963,7 +2962,6 @@ pub(crate) fn reduce_controlled_selection(
         None,
     )];
     effects.extend(crate::key_line::controlled_selection(state, controller));
-    effects.extend(crate::key_line::navigator_moved(state));
     effects
 }
 
