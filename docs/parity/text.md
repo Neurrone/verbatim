@@ -62,9 +62,18 @@ and what Delete left at the caret.
   `target/e2e-evidence/m42-text-captures-2026-10-23/`, items 4a to 4c).
 - Alt with Up or Down Arrow, NVDA's sentence keys, speak the line when
   the application moves the caret, as NVDA does.
-- A newer key supersedes a watched one and a focus change drops it,
-  NVDA's two short-circuits; a key's reply read after a later key was
-  pressed is not spoken for it, since it may show that key's effect.
+- A newer key supersedes a watched one and a focus change drops it; a
+  key's reply read after a later key was pressed is not spoken for it,
+  since it may show that key's effect. NVDA's two short-circuits are
+  narrower in one way and earlier in another: its wait ends silently
+  when a script is queued behind the key (`isScriptWaiting`,
+  `scriptHandler.py` 333 to 334, counted by `queueScript`, 240 to 244),
+  which a modifier alone never queues
+  and an unbound key, such as a typed letter, queues only while an
+  intercepted command's script has not finished (`inputCore.py` 629 to
+  630 and 644 to 648); and when a focus is pending, queued but not yet
+  handled, before the focus changes ("While a focus is pending" in
+  `docs/parity/focus-events.md`).
 - A line break a unit lands on is named as NVDA names it ("A line break
   as a character" in
   [Editable text and terminals](../nvda/editable-text-and-terminals.md)):

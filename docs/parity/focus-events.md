@@ -174,19 +174,82 @@ Verbatim: **matched (unverified)**; the `rapid_tabbing_in_settings` and
 
 NVDA: every event except UIA notifications must come from a window
 related to the system's foreground window at the moment NVDA processes
-it: a descendant of it, sharing its root owner, a topmost window or one
-whose root is topmost, or, for `Windows.UI.Core` windows, a descendant
-of the input thread's active window. Allowlisted tooltip and
-notification-bar windows, toast alerts, and, as an option, background
-progress bars are accepted from anywhere. UIA notifications are spoken
+it, or pass one of the exceptions before that relation is tested. The
+test (`shouldAcceptEvent`, `nvda/source/eventHandler.py` 481 to 599)
+takes the event's name and its window, and its rules run in this order,
+the first that decides ending it:
+
+1. An event with no window (a window handle of 0) is accepted, since
+   nothing can be tested (488 to 490).
+2. An event named in the table application support fills
+   (`requestEvents`), keyed by the event's name, the process that owns
+   its window, and its window's class, is accepted (492 to 498).
+3. A value change is accepted when background progress bars are
+   reported, an option off by default (499 to 503).
+4. A hide is refused (504 to 505).
+5. A show is accepted when its window's class is exactly one of
+   `Frame Notification Bar` (notification bars), `tooltips_class32`
+   (tooltips), `mscandui21.candidate`, `mscandui40.candidate`,
+   `MSCandUIWindow_Candidate` (input method candidate windows) and
+   `TTrayAlert` (a chat application's tray alert), and refused otherwise
+   (506 to 515).
+6. An alert whose window's parent (`GetAncestor` with `GA_PARENT`) has
+   the class `ToastChildWindowClass`, a toast, is accepted (516 to 522).
+7. A menu end, a switch end and a desktop switch are accepted from any
+   window (523 to 528); "menu end" here is NVDA's name for both the menu
+   end and the popup menu end `WinEvent`s
+   (`IAccessibleHandler/internalWinEventHandler.py` 39 to 41). A menu
+   start or popup start is not in this rule and is tested like any other
+   event.
+8. An event of the desktop window (`GetDesktopWindow`) is accepted, as
+   the cursor's events come from it (529 to 531).
+9. An event whose window's class begins with `Windows.UI.Core` (a
+   prefix, so `Windows.UI.Core.CoreWindow` matches) is accepted when its
+   window is the active window of the foreground thread
+   (`GetGUIThreadInfo(0)`'s `hwndActive`) or a descendant of it
+   (535 to 538); a `Windows.UI.Core` window failing this goes on to the
+   rules below.
+10. An event is accepted when its window's root owner (`GetAncestor`
+    with `GA_ROOTOWNER`) equals the foreground window's root owner
+    (544 to 548).
+11. An event is accepted when its window is the foreground window or a
+    descendant of it, or its window's root owner is the foreground
+    window or a descendant of it (549 to 555).
+12. An event is accepted when its window, or its window's root
+    (`GA_ROOT`), has the topmost extended style (`WS_EX_TOPMOST`), as
+    menus, combo box drop-downs and the task switching list have
+    (556 to 566).
+13. An event from a windowless Chromium document
+    (`Chrome_RenderWidgetHostHWND`) is accepted when the window with the
+    keyboard focus (the foreground thread's `hwndFocus`) has the class
+    `Chrome_WidgetWin_0` and a UIA tree walk normalizing the document's
+    root window's element to an element with that window handle finds
+    one, calls into the application (567 to 598).
+14. Anything else is refused (599).
+
+"Descendant" in rules 9 and 11 includes the window itself:
+`isDescendantWindow` is true when the two windows are equal or
+`IsChild` holds (`winUser.py` 553 to 557), and `IsChild` follows parents
+only, not owners. The window the test is given is the event's own window
+for MSAA events; for UIA, the sender's nearest window. The MSAA pump
+skips the test for a show or hide of the system caret (`OBJID_CARET`)
+while there is a last queued focus, asking that focus's own rule
+instead (`IAccessibleHandler/__init__.py` 1039 to 1055;
+`docs/parity/text.md`, "The system caret beside other caret events").
+UIA notifications are spoken
 only from the focus's application, with per-application opt-ins such as
-the shell's window-snap results. The test (`shouldAcceptEvent`) is made
+the shell's window-snap results. The test is made
 per event as NVDA processes it, before it creates the event's object,
 so a background window's event costs no call into its application, and
 not in the event callback, which lost the focus events of applications
-starting up (issue 4001). A foreground event is held for at most two
-core cycles until its window is the foreground (issue 3831), then
-dropped if it is not ([Event handling](../nvda/events.md), "Acceptance
+starting up (issue 4001). After a foreground `WinEvent`, the whole MSAA
+pump, every waiting `WinEvent` and not only the foreground one, is held
+for at most two core cycles until the event's window is the foreground
+window (issue 3831; `MAX_FOREGROUND_DEFERS`,
+`IAccessibleHandler/internalWinEventHandler.py` 30 and 233 to 263); then
+the pump runs, and the foreground event is dropped if its window is
+still not the foreground window (`processForegroundWinEvent`,
+`IAccessibleHandler/__init__.py` 835 to 841) ([Event handling](../nvda/events.md), "Acceptance
 filtering" and "Foreground windows"; [MSAA and winevent
 handling](../nvda/msaa.md), "Pump-time processing"; [The UIA
 client](../nvda/uia.md)).
@@ -295,11 +358,85 @@ foreground change in every outpost.
   and text events only their process, window, and class name, from which
   nothing is spoken; a difference in the provider's work only.
 
+### A WinEvent with no window or an invalid one
+
+NVDA's `WinEvent` callback rewrites an event's window before it queues
+the event for the pump (`IAccessibleHandler/internalWinEventHandler.py`
+112 to 136), after its drops by object id, of location changes other
+than the caret's, and of destroys, which it hands on at once (84 to
+103), and after taking an event on the window object (object id 0,
+child id 0) as one on the client object (104 to 111). A window of 0
+becomes the desktop window (`GetDesktopWindow`) for every event kind. A
+non-zero window that `IsWindow` says is no window becomes the desktop
+window for a switch start, a switch end, a menu end and a popup menu
+end; any other event with such a window is dropped there (130 to 136).
+NVDA hooks no switch start (`winEventIDsToNVDAEventNames`, 34 to 63), so
+that one never arrives. The desktop window then passes the acceptance
+test by its own rule ("Event acceptance", rule 8), and a menu end,
+popup end and switch end by theirs. Its later drops also judge the
+rewritten window: the IME candidate window's menu events
+and Program Manager's and the taskbar's foreground events by its class
+(155 to 172), and `MSNHiddenWindowClass`, a chat application's hidden
+window, whose events are all dropped (183 to 187).
+
+Verbatim: **partial** (`forward_msaa_event` in the focus listener). A
+menu end and a switch end are taken from any window, valid or not, and
+sent to Core, as NVDA accepts them. Any other `WinEvent` whose window is
+0, or whose window has no owning process, as an invalid window has
+none, is dropped; for an invalid non-zero window that is NVDA's drop,
+and for a window of 0 it differs from NVDA, which reads the event on
+the desktop window.
+
+### The focus after a menu or the switcher closes
+
+NVDA's MSAA pump keeps, of the menu ends, popup menu ends and switch
+ends it accepts in one flush, the last one as its fake focus event
+(`IAccessibleHandler/__init__.py` 1082 to 1084; the limiter's one menu
+slot, `orderedWinEventLimiter.py` 76 to 78, already keeps only the newest
+menu event of the four kinds). After the flush's loop, when no focus or
+foreground event of that flush was valid (`validFocus`, set when
+`processFocusWinEvent` or `processForegroundWinEvent` returns true), it
+calls `processFakeFocusWinEvent` (1093 to 1103), which schedules
+`_fakeFocus` 50 ms later with the focus NVDA has committed then
+(`api.getFocusObject()`, 976 to 988). A menu start or popup start in
+that slot is handled by `processMenuStartWinEvent` instead, valid focus
+or not.
+
+`_fakeFocus` (991 to 1002) does nothing when the committed focus is no
+longer the same object; otherwise it asks the desktop object for the
+object with the focus (`objectWithFocus`), does nothing when there is
+none, and passes it to `processFocusNVDAEvent` without `force` (760 to
+782). For an MSAA object that applies both of NVDA's MSAA focus tests:
+the duplicate test against the last focus queued, when that is an MSAA
+object (`isDuplicateIAccessibleEvent`, 774 to 777), and the focused-state
+test (`shouldAllowIAccessibleFocusEvent`, 778 to 781); a focus that
+passes is queued. An object of any other kind, such as a UIA object, is
+queued with neither test. A focus dropped as a duplicate still counts as
+valid for the flush's `validFocus`, since `processFocusNVDAEvent`
+returns true for it (777).
+
+Verbatim: **matched (unverified)** for the read and its tests. The
+focus listener tells Core of a menu end or switch end 50 ms after it
+observed it (`MENU_END_GRACE` in `crates/verbatim-listener/src/listener.rs`);
+Core then asks the application in front for its focus unless a focus
+observed since the end was applied (`menu_or_switch_ended`,
+`crates/verbatim-core/src/shell.rs`). The outpost answers an MSAA focus
+only when it or an ancestor has the focused state
+(`crates/verbatim-outpost/src/outpost/read.rs`), and Core judges the
+answer for repeats only when it was read through MSAA
+(`duplicate_rule_applies`, `crates/verbatim-core/src/reduce.rs`). The
+skip differs from NVDA's: NVDA skips for a valid focus anywhere in the
+same flush, one before the end included, and for an MSAA focus it
+dropped as a repeat, and otherwise judges only whether its committed
+focus changed in the 50 ms; Verbatim skips only for a focus observed
+after the end and applied ("How an outpost turns events into focus
+reports" in `docs/parity/backends.md`).
+
 ### Attention
 
-NVDA compares each event with the system's foreground window, and holds
-a foreground event for at most two core cycles until its window is the
-foreground ("Event acceptance", above), moving its foreground object
+NVDA compares each event with the system's foreground window, and after
+a foreground event holds its MSAA events for at most two core cycles
+until that event's window is the foreground ("Event acceptance", above), moving its foreground object
 with the next focus (`doPreGainFocus`). Verbatim: **different (D14)**:
 the reducer keeps a foreground record, fed only by the focus listener's
 foreground change (`Input::Foreground`), the one report that a window
@@ -462,6 +599,77 @@ is moving to it. By case:
   (`verbatim_win32::provider::provider_process`): a move between a console window and
   a window of its client's own on another thread is not a move within
   one application, and no read of either is abandoned for it.
+
+### While a focus is pending
+
+NVDA asks in several places whether a focus is pending:
+`eventHandler.isPendingEvents("gainFocus")` (`eventHandler.py` 90 to
+106) is true while at least one focus event has been queued and not yet
+run, from any backend and application. A focus is counted from when it
+is queued, so after `processFocusNVDAEvent` or the UIA focus handler has
+passed it, not while it waits in the MSAA limiter; a caret key's wait
+calls `api.processPendingEvents(False)` on each pass (`editableText.py`
+96), which runs
+the MSAA pump without running the queue (`api.py` 381 to 396), so a
+focus `WinEvent` raised during the wait becomes pending. The places
+that change what is spoken, from the pinned source:
+
+- A caret key's wait for evidence: the loop in `_hasCaretMoved`
+  (`editableText.py` 90 to 99) ends as soon as a focus is pending,
+  answering that the caret moved with no new caret read (`True, None`).
+  The speaking helper of the edit controls NVDA's objects use,
+  `behaviors.EditableText._caretScriptPostMovedHelper`
+  (`NVDAObjects/behaviors.py` 255 to 257), then returns before any read,
+  so the key says nothing; the base helper alone would read and speak
+  the caret (`editableText.py` 164 to 177).
+- A sentence key (Alt with Up or Down Arrow) where the application moves
+  nothing goes through the same wait (`_caretMoveBySentenceHelper`,
+  `editableText.py` 240 to 262): a pending focus ends it as a move, so
+  NVDA does not move by sentence itself, and the same helper says
+  nothing.
+- A selection key in a control without automatic selection detection
+  (`EditableTextWithoutAutoSelectDetection.script_caret_changeSelection`,
+  `editableText.py` 480 to 492) reports no selection change when a focus
+  is pending after it sends the key (487).
+- A caret event: the base object's caret event moves the review cursor
+  and braille only when the object is the committed focus and no focus
+  is pending (`NVDAObjects/__init__.py` 1424 to 1429); an edit control
+  with automatic selection detection detects a selection change only
+  under the same two conditions (`NVDAObjects/behaviors.py` 346 to 349);
+  a classic edit control's caret event (`NVDAObjects/window/edit.py`
+  1068 to 1081) first processes pending events with the queue, then
+  returns when the object is not the committed focus or a focus is
+  pending.
+- A UIA menu opening is dropped in the UIA callback when a focus is
+  pending, before any object is made (`UIAHandler/__init__.py` 772 to
+  777); see "Reads held behind an application's abandoned reads" below.
+- An MSAA menu item's focus (`MenuItem.event_gainFocus`,
+  `NVDAObjects/IAccessible/__init__.py` 2723 to 2726) and the taskbar's
+  (`Taskbar.event_gainFocus`, 2732 to 2737, which first runs the MSAA
+  pump without the queue) say nothing when another focus is pending. The
+  focus is still committed, since `doPreGainFocus` set it before the
+  object's own event ran (`eventHandler.py` 378 to 387).
+- An MSAA alert (`IAccessible.event_alert`,
+  `NVDAObjects/IAccessible/__init__.py` 2025 to 2040) is spoken only when
+  its role is alert and it has a name, a description or a child (2026 to
+  2031). Then, when a focus is pending, it runs the MSAA pump and the
+  whole event queue, every pending event and not only the focuses
+  (`api.processPendingEvents()`, 2033 to 2035), and it says nothing when
+  it is among the committed focus's ancestors (`api.getFocusAncestors()`,
+  which does not hold the focus itself; 2036 to 2037).
+- An input method candidate list: when the window of the focused
+  candidate item is destroyed (object id 0, child id 0), focus moves to
+  the item's container only when no focus is pending
+  (`processDestroyWinEvent`, `IAccessibleHandler/__init__.py` 924 to 937);
+  and a selected candidate is reported only when no focus is pending
+  (`reportSelectedCandidate`, `NVDAObjects/IAccessible/mscandui.py` 16).
+
+Verbatim: **partial**. Only the UIA menu opening is judged so, by the
+focus listener ("Reads held behind an application's abandoned reads").
+A caret key and a sentence key are dropped when the committed focus
+changes ("Caret keys and what each speaks" in `docs/parity/text.md`), not
+when a focus is waiting; the other places have no rule for a pending
+focus yet.
 
 ### Reads held behind an application's abandoned reads
 

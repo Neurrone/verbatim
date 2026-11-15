@@ -76,6 +76,87 @@ Verbatim: **not yet (M8.4 and M8.5)** for the focus highlight, screen curtain an
 OCR, and not yet for the secure desktop (M8.7); remote access is
 M12's.
 
+### Desktop switches
+
+NVDA takes `EVENT_SYSTEM_DESKTOPSWITCH` through its MSAA hook, accepts it
+from any window (`docs/parity/focus-events.md`, "Event acceptance", rule
+7) and handles it in the MSAA pump, in the flush's order, after the run
+of focus events before it has been processed
+(`IAccessibleHandler/__init__.py` 1069 to 1077); the MSAA pump runs
+before the event queue in each core cycle (`core.py` 1026 to 1027), so
+the switch is handled ahead of any event still queued.
+`processDesktopSwitchWinEvent` (796 to 806) calls `OpenInputDesktop`:
+
+- When it opens, the input desktop is the user's again: NVDA closes the
+  handle and 200 ms later (`core.callLater(200, _handleUserDesktop)`)
+  queues a focus for the desktop object's object with the focus
+  (`objectWithFocus`), straight onto the event queue with no duplicate
+  or focused-state test (809 to 813), and notifies that the secure
+  desktop has ended.
+- When it does not open, the input desktop is another, usually the
+  secure desktop (`_handleSecureDesktopChange`,
+  `winAPI/secureDesktop.py` 35 to 70): NVDA clears its record of the
+  modifiers held, since no key release will come for them (45); cancels
+  speech (50); speaks "Secure Desktop" at the highest priority (`NOW`,
+  53); and commits, at once and without queueing, a focus on an object
+  of its own tied to no window, whose sleep mode is full (55 to 70), so
+  every key passes to Windows and no event is spoken. The next focus
+  NVDA handles, normally the one queued 200 ms after the return,
+  replaces it (`doPreGainFocus`, `eventHandler.py` 378 to 387).
+
+Verbatim: **partial**. The focus listener tests each desktop switch as
+NVDA does, with `OpenInputDesktop`, and on a return to the user's
+desktop tells Core 200 ms later, which reads the focus with no duplicate
+test (`desktop_switched` in `crates/verbatim-listener/src/listener.rs`;
+the return's speech is "Different, deliberately" in
+`docs/parity/focus-context.md`). A switch away from the user's desktop is
+not yet handled (M8.7): no speech is cut, nothing is said, and no
+sleeping focus is committed.
+
+### The lock screen
+
+While Windows is locked, the user's desktop still runs beneath the lock
+screen, and NVDA keeps what is below it from being read. Lock-screen
+mode (`isLockScreenModeActive`, `winAPI/sessionTracking.py` 151 to 164)
+is on when NVDA is not running on the secure desktop and its session
+tracker says the session is locked; before NVDA's initialization has
+finished it counts as unlocked (136 to 148), and the session query it
+uses reads a failure or an unknown state as unlocked (167 to 182).
+
+An object is below the lock screen (`_isObjectBelowLockScreen`,
+`utils/security.py` 211 to 254) by these rules, in order: never when
+NVDA has no UIAccess, as it cannot read below the lock screen then
+(227 to 230); never when its process is the foreground window's process
+(232 to 235); never when it is an Alt+Tab switcher item (`TaskListIcon`,
+237 to 243), since the switcher never becomes the foreground process
+on the lock screen; never when it is not a window object, which has no
+window to test (247 to 252); otherwise by z-order, from its window's
+root (`GA_ROOT`, 254). The z-order test (258 to 289, with
+`_isWindowBelowWindowMatchesCond` 299 onward) walks the top-level
+windows from the bottom up to the first lock-screen window, one whose
+class is `LockScreenInputOcclusionFrame`,
+`LockScreenControllerProxyWindow` or `LockScreenBackstopFrame`
+(274 to 280): the object is below the lock screen when its root was
+passed on the way, once. When no lock-screen window is found, or the
+root is not found exactly once below it, the test fails open and the
+object counts as not below (282 to 289). Any error in the whole check
+also counts as not below (`objectBelowLockScreenAndWindowsIsLocked`,
+155 to 199).
+
+While lock-screen mode is on, an object below the lock screen is never
+recorded as the last focus queued (`eventHandler.py` 179 to 183), its
+events are not run (322 to 326), and it is never committed as the focus
+(379 to 383; `api.setFocusObject`, `api.py` 91); nor is it made the
+foreground object (71), the mouse object (216), the review position's
+object (271), or the navigator object (311, 330). Speech for it is empty
+(`speech/speech.py` 702 and 870), and say-all stops when it reaches one
+(`speech/sayAll.py` 307 to 313). Only the safe scripts run while
+lock-screen mode is on (`scriptHandler.findScript`, `scriptHandler.py`
+101 to 108; the list in `getSafeScripts`, `utils/security.py` 71 to 152).
+
+Verbatim: **not yet (M8.7)**: without UIAccess Verbatim cannot read
+below the lock screen, as NVDA cannot.
+
 ### Elevated applications on the user desktop
 
 Elevated applications on the user desktop (admin consoles,

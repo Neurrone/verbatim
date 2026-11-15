@@ -33,6 +33,61 @@ inside the screen reader's process that outposts cannot have.
 Application modules' own good and bad windows wait for extensions,
 except the Explorer shell rule above, which is core policy.
 
+### The class lists the per-window verdict reads
+
+The per-window verdict above is judged from the window's class, normalized first. These are NVDA's lists at the pin, written here so that Core can apply them to the class each event carries.
+
+Normalizing a class name (`Window.normalizeWindowClassName`, `NVDAObjects/window/__init__.py` 338 to 362): a name found in NVDA's class map is replaced by its target; otherwise a Windows Forms name of the form `WindowsForms` followed by digits, a dot, the inner name, `.app.` and anything after, or an `ATL:` name, is reduced to its inner name, which is then looked up in the map; otherwise the name is kept (25 to 26). The map (444 to 490), by target:
+
+- To `Edit`: `EDIT`, `TTntEdit.UnicodeClass`, `TMaskEdit`, `TTntMemo.UnicodeClass`, `TRichViewEdit`, `TInEdit.UnicodeClass`, `TInEdit`, `TEdit`, `TFilenameEdit`, `TSpinEdit`, `ThunderRT6TextBox`, `TMemo`, `TPasswordEdit`, `THppEdit.UnicodeClass`, `TUnicodeTextEdit.UnicodeClass`, `TTextEdit`, `TPropInspEdit`, `TFilterbarEdit.UnicodeClass`, `EditControl`, `TNavigableTntMemo.UnicodeClass`, `TNavigableTntEdit.UnicodeClass`, `TAltEdit.UnicodeClass`, `TAltEdit`, `TDefEdit`, `TAccessibleEdit`, `TNumEdit`.
+- To `RichEdit20`: `TRichEdit`, `WFMAINRE`, `RichEdit20A`, `RichEdit20W`, `TChatRichEdit`, `TskRichEdit.UnicodeClass`, `RichEdit20WPT`, `TChatRichEdit.UnicodeClass`, `TMyRichEdit`, `TExRichEdit`, `RichTextWndClass`, `TSRichEdit`, `TRxRichEdit`, `TAccessibleRichEdit`.
+- To `RichEdit`: `RICHEDIT`, `TRichEditViewer`.
+- To `RICHEDIT50W`: `RICHEDIT60W`, `RICHEDIT60W_WLXPRIVATE`.
+- To `Scintilla`: `ScintillaWindowImpl`.
+
+The verdict, in NVDA's order (`_isUIAWindowHelper`, `UIAHandler/__init__.py` 1206 onward): a window of NVDA's own process is not UI Automation (not carried, see above); a normalized class in the good list is UI Automation; an application module may then call it good; a normalized class in the bad list is not UI Automation; an application module may then call it bad; Office 2013 and older ribbons are not UI Automation (not carried); otherwise the window is probed.
+
+- Good (96 to 107): `RAIL_WINDOW`, `Microsoft.UI.Content.DesktopChildSiteBridge`, `CASCADIA_HOSTING_WINDOW_CLASS`.
+- Bad (109 to 132): `Microsoft.IME.CandidateWindow.View`, `SysTreeView32`, `WuDuiListView`, `ComboBox`, `msctls_progress32`, `msctls_trackbar32`, `Edit`, `CommonPlacesWrapperWndClass`, `SysMonthCal32`, `SUPERGRID`, `RichEdit`, `RichEdit20`, `RICHEDIT50W`, `Button`, `FoxitDocWnd`, `MozillaWindowClass`, `MozillaDropShadowWindowClass`, `MozillaDialogClass`, `MozillaContentWindowClass`.
+- The Explorer module's good windows on Windows 11 (`appModules/explorer.py` 453 to 480): a window whose root ancestor (`GA_ROOT`) has the class `Shell_TrayWnd`, `Shell_InputSwitchTopLevelWindow`, `XamlExplorerHostIslandWindow` or `TopLevelWindowForOverflowXamlIsland`, except a window of class `Start`; Verbatim applies this as core policy for every process, as above. The module's `ApplicationFrameWindow` rule, for the emoji panel, is not carried, since the probe answers those windows correctly.
+
+### Whether a UIA element is native
+
+NVDA handles a UIA focus or automation event only from an element it
+judges native (`isNativeUIAElement`, `UIAHandler/__init__.py` 1516 to
+1575; called by the focus handler at 887 and the automation event
+handler at 819 to 824; the notification handler, from 1063, does not
+call it). In order:
+
+- Not native when the element's cached process id cannot be read (1522
+  to 1527), or is NVDA's own process (1528 to 1533).
+- Otherwise its nearest window is found (`getNearestWindowHandle`, 1383
+  to 1460): a cached walk up to the nearest element with a native window
+  handle, its answer kept on the element; an element of Windows Defender
+  Application Guard takes the active window instead when that is the
+  Application Guard window of its process, and no window otherwise
+  (1407 to 1429). With no window, or when the walk fails, the element is
+  not native.
+- Native when that window is a UIA window (`isUIAWindow`, 1368 to 1381:
+  the per-window decision, "Dual-stack MSAA+UIA with per-window
+  arbitration" above, its verdict kept 0.5 s).
+- Otherwise native when the element is inside a NetUI container
+  (an ancestor of class `NetUIHWNDElement` with the same window)
+  embedded in a Word document window, such as Word's modern comments
+  pane, which only UIA exposes (1550 to 1555; `_isNetUIEmbeddedInWordDoc`,
+  1462 to 1489).
+- Otherwise native when it is in Internet Explorer 9's downloads list:
+  its window's class is `DirectUIHWND`, its provider description names
+  `IEFRAME.dll`, and its own class is `DownloadBox`, `accessiblebutton`,
+  `DUIToolbarButton` or `PushButton` (1556 to 1572).
+- Otherwise not native (1573 to 1575).
+
+Verbatim: **partial**. The focus listener drops a UIA event whose
+nearest window's lookup fails or finds none, and one whose window the
+arbitration judges MSAA (`docs/parity/focus-events.md`, "A focus UIA
+does not deliver"). The Word NetUI and Internet Explorer 9 exceptions
+are not built.
+
 ### The UIA provider probe
 
 NVDA asks `UiaHasServerSideProvider`, which connects to the window, and
@@ -288,7 +343,20 @@ Its limiter counts each thread by the thread id the WinEvent carries,
 keeps the newest 4 focus and foreground events of a flush, keeps a
 foreground event among both the focus events and its thread's other
 events, counts the focus's own events but always keeps them, and keeps
-only the newest menu event, outside both limits. A foreground event pops
+only the newest menu event, outside both limits. A flush is one pass of
+the MSAA pump, once per core cycle (`core.py` 1026) and again whenever
+code waiting on the main thread processes pending events
+(`api.processPendingEvents`, `api.py` 381 to 396, as a caret key's wait
+does), so the limits count the events that arrived since the last pass,
+not a span of time. A foreground event is
+stored in both caches, each copy with its own arrival counter
+(`addEvent`, 65 to 67 and then 79, with no return between), so it
+counts toward its thread's 10 and a flush returns it twice, the generic
+copy after the focus-cache one. The object whose events are always kept
+is the last focus NVDA queued (`eventHandler.lastQueuedFocusObject`),
+not the focus it has committed, and only when that is an MSAA object
+with an event object id; its window, object id and child id are matched
+(`IAccessibleHandler/__init__.py` 1025 to 1031). A foreground event pops
 a focus event waiting on its window's client object from the same thread
 (`orderedWinEventLimiter.py`, `addEvent`, 65 to 67). `pumpAll`
 (`IAccessibleHandler/__init__.py`) then walks the flushed events in
