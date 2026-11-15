@@ -309,7 +309,11 @@ them yet.
   of a `CandidateKind`, a focus, a foreground or a menu start, answered
   `RunRead` with each candidate `Tried`) and the current focus,
   each answered with a `FocusRead`, which carries what Core keeps with the
-  committed focus. A read's `RelationQuery` asks whether the object is one
+  committed focus and its `FocusCaret`: no text, text not read, or the
+  caret read (`FocusCaretRead`) with the selection baseline the outpost
+  minted and the difference from the baseline the request named, each
+  focus request naming the committed focus's baseline so that a repeated
+  focus can say what changed. A read's `RelationQuery` asks whether the object is one
   of the nodes Core names, inside an object the focus controls, or, for a
   selected item, either. `Follow` names the committed focus's node to its
   outpost (`Followed`, with its `FollowGroup` and an extra object), or
@@ -340,7 +344,9 @@ them yet.
   `SentenceMoved`, each answer with the selection baseline it minted and
   the caret's line. Each names its `TextProvider` and `TextDetails`.
 - A caret tell's read (`TextOp::ReadSelection`, a `SelectionRead` naming
-  the provider and Core's selection baseline, if any), answered
+  the provider, Core's selection baseline, if any, and the tell's element
+  for the outpost to adopt when the node's own answered it has no text
+  pattern), answered
   `TextReply::SelectionRead`: the caret, the next baseline the outpost
   minted, the `SelectionDifference` from the named baseline's range as it
   now is (what became selected and unselected, and the whole new

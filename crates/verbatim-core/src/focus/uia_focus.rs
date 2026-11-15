@@ -193,6 +193,7 @@ pub(crate) async fn run(mut cx: Cx<Entries>, focus: UiaFocus) {
             set: FOCUS_SET.to_vec(),
             known: known.sent.clone(),
             completes: CompletionFor::Focus,
+            baseline: known.baseline,
         },
     };
     let read = match cx.ask(complete, due_us).await {

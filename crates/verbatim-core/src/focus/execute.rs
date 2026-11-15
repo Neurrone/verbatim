@@ -9,11 +9,11 @@
 use std::sync::Arc;
 
 use verbatim_model::property::{PropertyId, PropertyValue, PropertyValues};
-use verbatim_model::request::{FocusAncestor, FocusNode, FocusRead, KnownAncestor};
+use verbatim_model::request::{FocusAncestor, FocusCaret, FocusNode, FocusRead, KnownAncestor};
 use verbatim_model::tell::{AcceptanceFacts, Event, Relation};
 use verbatim_model::{
-    Backend, EarlierElement, Effect, NodeDetails, NodeSnapshot, ObjectKey, Pid, Role, StateSet,
-    TraceId, WindowFacts, WindowHandle,
+    Backend, EarlierElement, Effect, FocusText, NodeDetails, NodeSnapshot, ObjectKey, Pid, Role,
+    StateSet, TextAnchor, TraceId, WindowFacts, WindowHandle,
 };
 
 use super::follow::FollowRequest;
@@ -28,21 +28,30 @@ use crate::state::SrState;
 
 /// The ancestors Core already knows, as a focus request sent them: each
 /// with the place, in the committed focus's kept ancestors, of the
-/// ancestor it names, so that the answer's meeting point is found again.
+/// ancestor it names, so that the answer's meeting point is found again;
+/// and the committed focus's selection baseline, which a repeated focus's
+/// caret is compared with.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Known {
     /// The list as sent.
     pub(crate) sent: Vec<KnownAncestor>,
     /// For each, the place of its ancestor, nearest first.
     pub(crate) places: Vec<usize>,
+    /// The selection baseline the request names.
+    pub(crate) baseline: Option<TextAnchor>,
 }
 
 impl Known {
     /// The ancestors Core already knows for a request to the outpost
-    /// generation `asked` (`None` for the listener).
+    /// generation `asked` (`None` for the listener), with the committed
+    /// focus's baseline when that generation holds it.
     pub(crate) fn of(state: &SrState, asked: Option<verbatim_model::OutpostId>) -> Self {
         let (places, sent) = state.versions.known_with_places(asked).into_iter().unzip();
-        Self { sent, places }
+        Self {
+            sent,
+            places,
+            baseline: crate::text_facts::named_in_focus_read(state, asked),
+        }
     }
 }
 
@@ -295,7 +304,7 @@ fn ready(
         node: node.clone(),
         ancestors: Arc::from(ancestors),
         selected_child: None,
-        text: None,
+        text: Some(focus_text(&read.caret)),
         earlier: read.runtime_id_reused.then_some(EarlierElement::Gone),
         group: None,
         alive: true,
@@ -331,6 +340,22 @@ fn ready(
     })
 }
 
+/// The text today's announcement code speaks of a focus whose answer
+/// carried `caret`: its line or selected text, its value when it has no
+/// text, or neither when its text could not be read.
+fn focus_text(caret: &FocusCaret) -> FocusText {
+    match caret {
+        FocusCaret::NoText => FocusText::NoText,
+        FocusCaret::NotRead => FocusText::NotRead,
+        FocusCaret::Read(read) => FocusText::Caret {
+            caret: read.caret.clone(),
+            selected_text: read.selected_text.clone(),
+            changes: verbatim_model::CaretChanges::default(),
+            facts: None,
+        },
+    }
+}
+
 /// Whether a focus of `origin` is dropped at its answer: its top-level
 /// window is an ignored process's (Verbatim-only: the test harness's rule,
 /// design "Focus and foreground").
@@ -344,9 +369,11 @@ fn ignored(state: &SrState, origin: &Origin) -> bool {
 /// none of the ancestors Core knows, the focus difference level is 1 or
 /// less, and the foreground object becomes the one the answer read for
 /// it, the top ancestor only if it could not be read (design, "Focus and
-/// foreground"). The answer carries no caret, so Core's caret baseline is
-/// cleared. A focus whose nodes the reader did not mint, or whose meeting
-/// point Core does not hold, ends unspoken: a reader's fault.
+/// foreground"). The answer's caret becomes Core's, with the selection
+/// baseline it minted; a repeated focus, on the committed focus's node,
+/// then says the change from the baseline its request named (Table 17,
+/// columns A to C). A focus whose nodes the reader did not mint, or whose
+/// meeting point Core does not hold, ends unspoken: a reader's fault.
 pub(crate) fn execute(
     state: &mut SrState,
     origin: &Origin,
@@ -357,10 +384,15 @@ pub(crate) fn execute(
     if ignored(state, origin) {
         return Executed::default();
     }
-    let Some(ready) = ready(state, origin, read, known, read_by) else {
+    let Some(mut ready) = ready(state, origin, read, known, read_by) else {
         return Executed::default();
     };
-    let said = crate::reduce::execute_report(state, &ready.report, false, 0);
+    let repeated = state
+        .versions
+        .committed_read()
+        .filter(|committed| committed.node == ready.kept.node)
+        .map(|committed| committed.selection);
+    let mut said = crate::reduce::execute_report(state, &ready.report, false, 0);
     if read.met.is_none()
         && let Some(foreground) = &ready.foreground
     {
@@ -368,7 +400,14 @@ pub(crate) fn execute(
             .foreground
             .apply(ForegroundFact::Object(ObjectKey::of(foreground)));
     }
-    state.forget_caret();
+    if !matches!(read.caret, FocusCaret::Read(_)) {
+        state.forget_caret();
+    }
+    let change =
+        crate::text_facts::focus_answered(&mut ready.kept.selection, &read.caret, repeated);
+    if !change.is_empty() {
+        said.push(crate::editing::speak(origin.trace_id, change));
+    }
     let follows = commit(state, origin, ready);
     Executed {
         said,
@@ -477,13 +516,20 @@ pub(crate) fn retake(
     if same {
         crate::reduce::take_silently(state, &ready.report);
         // The text-changed flag is the focus's and survives its reader's
-        // replacement; the old baseline's anchor ended with its generation
-        // (Table 17, column J).
+        // replacement; the old baseline's anchor ended with its generation,
+        // and the answer minted one in the new generation (Table 17,
+        // column J).
         let mut ready = ready;
-        ready.kept.selection.text_changed = state
-            .versions
-            .committed_kept()
-            .is_some_and(|kept| kept.selection.text_changed);
+        ready.kept.selection = crate::text_facts::SelectionFacts {
+            baseline: match &read.caret {
+                FocusCaret::Read(caret) => Some(caret.baseline),
+                FocusCaret::NoText | FocusCaret::NotRead => None,
+            },
+            text_changed: state
+                .versions
+                .committed_kept()
+                .is_some_and(|kept| kept.selection.text_changed),
+        };
         let follows = commit(state, origin, ready);
         return (
             Retaken::Silently,

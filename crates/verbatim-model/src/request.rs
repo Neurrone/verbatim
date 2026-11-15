@@ -16,7 +16,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::property::{PropertyId, PropertyValue, PropertyValues, RuntimeId};
 use crate::tell::ElementToken;
-use crate::{ActionName, NodeId, Pid, QueryKind, TextOp, TextReply, WindowHandle};
+use crate::{
+    ActionName, CaretReport, NodeId, Pid, QueryKind, SelectionDifference, TextAnchor, TextOp,
+    TextReply, WindowHandle,
+};
 
 /// A reader Core asks.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -251,6 +254,9 @@ pub enum Request {
         set: Vec<PropertyId>,
         /// The ancestors Core already knows.
         known: Vec<KnownAncestor>,
+        /// Core's selection baseline for the committed focus, which a
+        /// repeated focus's caret is compared with ([`FocusCaret`]).
+        baseline: Option<TextAnchor>,
     },
     /// A read or move in a node's text.
     Text {
@@ -437,6 +443,9 @@ pub struct CompleteUia {
     pub known: Vec<KnownAncestor>,
     /// What it is for.
     pub completes: CompletionFor,
+    /// Core's selection baseline for the committed focus, which a
+    /// repeated focus's caret is compared with ([`FocusCaret`]).
+    pub baseline: Option<TextAnchor>,
 }
 
 /// One MSAA focus or foreground candidate of a run, by the ids its event
@@ -475,6 +484,9 @@ pub struct MsaaRun {
     pub set: Vec<PropertyId>,
     /// The ancestors Core already knows.
     pub known: Vec<KnownAncestor>,
+    /// Core's selection baseline for the committed focus, which a
+    /// repeated focus's caret is compared with ([`FocusCaret`]).
+    pub baseline: Option<TextAnchor>,
 }
 
 /// How one run candidate was tried.
@@ -582,6 +594,45 @@ pub struct FocusRead {
     /// node keeps its id, and Core forgets what it kept of the earlier
     /// element's text.
     pub runtime_id_reused: bool,
+    /// The focus's caret, read after its states
+    /// (`docs/design/readers-tell-core-asks-build1.md`, Table 17, columns
+    /// A to C).
+    pub caret: FocusCaret,
+}
+
+/// A focus's caret, as its focus answer carries it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FocusCaret {
+    /// The node has no text the outpost can read (an MSAA object that is
+    /// not an edit control, a UI Automation element with no text
+    /// pattern): Core speaks its value, as NVDA speaks the value of an
+    /// object with no text interface.
+    NoText,
+    /// The node has text, or may have, but it could not be read now: Core
+    /// speaks neither its line nor its value, and holds no caret or
+    /// selection baseline for it.
+    NotRead,
+    /// The caret was read, and the outpost minted the next selection
+    /// baseline from the selection.
+    Read(Box<FocusCaretRead>),
+}
+
+/// A focus's caret read.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FocusCaretRead {
+    /// The line at the caret, with the caret at its offset, and the
+    /// selection.
+    pub caret: CaretReport,
+    /// The selected text, when something is selected and it could be
+    /// read; `None` otherwise, when the line is spoken instead.
+    pub selected_text: Option<String>,
+    /// The next selection baseline, minted from the selection read.
+    pub baseline: TextAnchor,
+    /// The difference from the baseline the request named, from the
+    /// baseline's range as it now is, when the request named one the
+    /// outpost holds in the focus's text: Core speaks it only for a
+    /// repeated focus.
+    pub difference: Option<SelectionDifference>,
 }
 
 /// A result: the first of the five outcomes, by request.

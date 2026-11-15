@@ -873,6 +873,12 @@ pub struct SelectionRead {
     /// The selection baseline to compare with, `None` when Core holds
     /// none.
     pub baseline: Option<TextAnchor>,
+    /// The element whose event the tell is, which the outpost adopts as
+    /// the node's when the node's own element answered it has no text
+    /// pattern, forgetting that answer, as only an element with text
+    /// raises a caret event; `None` for a tell with no element of the
+    /// outpost's (the system caret's).
+    pub adopt: Option<crate::tell::ElementToken>,
 }
 
 /// How the selection differs from the selection baseline's range as it

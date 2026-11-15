@@ -181,6 +181,7 @@ pub(crate) async fn run(mut cx: Cx<Entries>, candidates: Vec<Candidate>) {
                 candidates: listed,
                 set: FOCUS_SET.to_vec(),
                 known: known.sent.clone(),
+                baseline: known.baseline,
             },
         };
         let Outcome::Result(answered) = cx.ask(request, due_us).await else {

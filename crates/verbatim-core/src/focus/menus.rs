@@ -139,6 +139,7 @@ async fn start(cx: &mut Cx<Entries>, candidate: &Candidate, run_executed: bool) 
             }],
             set: FOCUS_SET.to_vec(),
             known: known.sent.clone(),
+            baseline: known.baseline,
         },
     };
     let due_us = cx.due_in(FOCUS_DUE_US);
@@ -198,6 +199,7 @@ pub(crate) async fn check(mut cx: Cx<Entries>, check: MenuCheck) {
     let request = CurrentFocusRead {
         window,
         known: known.sent.clone(),
+        baseline: known.baseline,
     };
     let Outcome::Result(read) = cx.ask(request, due_us).await else {
         cx.facts_mut().focus_read_failed();

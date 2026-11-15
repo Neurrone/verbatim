@@ -11,8 +11,8 @@
 //! None of them sends the ancestors Core already knows.
 
 use serde::{Deserialize, Serialize};
-use verbatim_model::TraceId;
 use verbatim_model::request::{FocusRead, KnownAncestor, Reply, Request as Wire};
+use verbatim_model::{TextAnchor, TraceId};
 
 use super::FOCUS_SET;
 use super::execute::{Executed, Known, Origin, execute, retake};
@@ -55,6 +55,9 @@ pub(crate) struct CurrentFocusRead {
     pub(crate) window: RequestWindow,
     /// The ancestors Core already knows.
     pub(crate) known: Vec<KnownAncestor>,
+    /// The committed focus's selection baseline, which a repeated focus's
+    /// caret is compared with.
+    pub(crate) baseline: Option<TextAnchor>,
 }
 
 impl Request for CurrentFocusRead {
@@ -72,6 +75,7 @@ impl Request for CurrentFocusRead {
         Wire::CurrentFocus {
             set: FOCUS_SET.to_vec(),
             known: self.known.clone(),
+            baseline: self.baseline,
         }
     }
 
@@ -184,9 +188,13 @@ fn recovered_duplicate(state: &SrState, read: &FocusRead) -> bool {
 /// caret baseline.
 pub(crate) async fn run(mut cx: Cx<Entries>, entry: CurrentFocus) {
     let due_us = cx.due_in(FOCUS_DUE_US);
+    let generation = cx
+        .instance(Reader::Outpost(entry.window.process))
+        .map(|instance| verbatim_model::OutpostId(instance.generation));
     let request = CurrentFocusRead {
         window: entry.window,
         known: Vec::new(),
+        baseline: crate::text_facts::named_in_focus_read(&cx.facts(), generation),
     };
     let Outcome::Result(read) = cx.ask(request, due_us).await else {
         cx.facts_mut().focus_read_failed();

@@ -7,9 +7,10 @@
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::{PropertyAnswer, PropertyId, PropertyValue};
 use verbatim_model::request::{
-    Outcome as WireOutcome, Refusal, Reply, Request as Wire, RunRead, Tried,
+    FocusCaret, FocusCaretRead, Outcome as WireOutcome, Refusal, Reply, Request as Wire, RunRead,
+    Tried,
 };
-use verbatim_model::tell::Payload;
+use verbatim_model::tell::{ElementToken, Payload};
 use verbatim_model::{
     CaretReport, CaretSelection, EditSelection, Effect as Said, Phrase, Role, SegmentContent,
     Selection, SelectionChange, SelectionDifference, SelectionRead, SelectionReadReply,
@@ -116,10 +117,22 @@ fn step(held: &mut Held, at_us: u64, input: Input<Entry>) -> Step {
     step
 }
 
+/// A caret tell's read through `provider` naming `baseline`, adopting the
+/// UI Automation tell's element (token 9) or, for the system caret's,
+/// none.
 fn read_naming(provider: TextProvider, baseline: Option<u64>) -> TextOp {
+    read_adopting(provider, baseline, Some(ElementToken(9)))
+}
+
+fn read_adopting(
+    provider: TextProvider,
+    baseline: Option<u64>,
+    adopt: Option<ElementToken>,
+) -> TextOp {
     TextOp::ReadSelection(SelectionRead {
         provider,
         baseline: baseline.map(TextAnchor),
+        adopt,
     })
 }
 
@@ -227,8 +240,12 @@ fn text_changed(held: &Held) -> bool {
 /// `held`'s committed field with baseline 70 minted by a first caret
 /// tell's read (request `number`), named by none.
 fn with_baseline(held: &mut Held, tell: Input<Entry>, provider: TextProvider, number: u64) {
+    let adopt = match &tell {
+        Input::Entry(Entry::Caret(caret)) => caret.adopted(),
+        _ => None,
+    };
     let asked = step(held, 1_000, tell);
-    assert_eq!(asked.text, [(number, read_naming(provider, None))]);
+    assert_eq!(asked.text, [(number, read_adopting(provider, None, adopt))]);
     let answered = step(
         held,
         1_100,
@@ -376,7 +393,7 @@ fn a_value_change_makes_the_next_difference_general_and_is_cleared_by_it() {
     let asked = step(&mut held, 2_000, system_caret());
     assert_eq!(
         asked.text,
-        [(3, read_naming(TextProvider::EditMessages, Some(70)))]
+        [(3, read_adopting(TextProvider::EditMessages, Some(70), None))]
     );
     let general = step(
         &mut held,
@@ -547,7 +564,10 @@ fn the_baseline_and_every_anchor_a_queued_request_names_are_held() {
 fn the_system_carets_tell_reads_the_committed_focus_through_its_provider() {
     let mut held = uia_field();
     let asked = step(&mut held, 1_000, system_caret());
-    assert_eq!(asked.text, [(3, read_naming(TextProvider::Uia, None))]);
+    assert_eq!(
+        asked.text,
+        [(3, read_adopting(TextProvider::Uia, None, None))]
+    );
 }
 
 /// Several caret tells waiting for one object merge into one entry, so
@@ -587,4 +607,160 @@ fn caret_tells_waiting_for_one_element_merge_into_one_read() {
     assert_eq!(merged.said, [phrase(Phrase::Selected(text("lp")))]);
     assert_eq!(merged.text, Vec::new());
     assert_eq!(held.state.queue.waiting_for_tests(), 0);
+}
+
+/// A focus answer's caret read: `caret`, baseline `baseline` minted, and
+/// the difference from the baseline the request named.
+fn focus_caret(
+    (caret, baseline): (CaretReport, u64),
+    difference: Option<SelectionDifference>,
+) -> FocusCaret {
+    FocusCaret::Read(Box::new(FocusCaretRead {
+        caret,
+        selected_text: None,
+        baseline: TextAnchor(baseline),
+        difference,
+    }))
+}
+
+/// An MSAA focus run in window 5 whose candidate is object `object`,
+/// answered as request `number` by the edit control "Name", node 2,
+/// carrying `caret`; what the step and the answer said.
+fn edit_focus(held: &mut Held, (object, number): (i32, u64), caret: FocusCaret) -> Vec<String> {
+    let mut sent = feed_at(held, 500 * number, entry(msaa_tell(object)));
+    let mut read = focus_read(Some(crate::entries::tests::held(object)));
+    read.focus.read.values = values("Name", Role::EditableText);
+    read.caret = caret;
+    let tried = RunRead {
+        tried: vec![Tried::Focus(Box::new(read))],
+    };
+    sent.extend(feed_at(
+        held,
+        500 * number + 100,
+        answer(OUTPOST, number, Reply::Run(tried)),
+    ));
+    sent
+}
+
+/// The baseline the step's focus request names.
+fn named_baseline(held: &mut Held, object: i32) -> Option<TextAnchor> {
+    let effects = feed(
+        &mut held.state,
+        &mut held.runtime,
+        Timed {
+            at_us: 10_000,
+            input: entry(msaa_tell(object)),
+        },
+    )
+    .unwrap();
+    effects.into_iter().find_map(|effect| match effect {
+        Effect::Send { ask, .. } => match ask.request {
+            Wire::MsaaRun(run) => Some(run.baseline),
+            _ => None,
+        },
+        _ => None,
+    })?
+}
+
+/// Table 17, column A: a new focus's caret becomes Core's, its line said
+/// with the focus, and its baseline minted with no change said, whatever
+/// the difference the answer carries.
+#[test]
+fn a_new_focus_says_its_line_and_mints_the_baseline_with_no_change() {
+    let mut held = ready();
+    let said = edit_focus(
+        &mut held,
+        (-4, 1),
+        focus_caret(
+            (caret(1, 0), 80),
+            Some(differing(vec![change(true, "a")], Some("a"))),
+        ),
+    );
+    assert_eq!(
+        said,
+        [
+            "send Outpost(Pid(40)) MsaaRun",
+            "Label(\"Editor\") Role(Window)",
+            "Label(\"Name\") Role(EditableText)",
+            "Text(\"alpha beta\")",
+        ]
+    );
+    assert_eq!(baseline(&held), Some(TextAnchor(80)));
+    assert!(!text_changed(&held));
+    let caret = held
+        .state
+        .focus_caret(node(2))
+        .expect("the caret is Core's");
+    assert_eq!(caret.line.offset, 1);
+}
+
+/// Table 17, column B in T3: a repeated focus's request names the
+/// baseline, and its answer's change from it is said in specific terms;
+/// the next baseline replaces it.
+#[test]
+fn a_repeated_focus_says_the_change_from_the_named_baseline() {
+    let mut held = ready();
+    let _ = edit_focus(&mut held, (-4, 1), focus_caret((caret(1, 0), 80), None));
+    let mut probe = held.clone();
+    assert_eq!(named_baseline(&mut probe, -8), Some(TextAnchor(80)));
+    let said = edit_focus(
+        &mut held,
+        (-8, 2),
+        focus_caret(
+            (caret(0, 1), 81),
+            Some(differing(vec![change(true, "a")], Some("a"))),
+        ),
+    );
+    assert_eq!(
+        said,
+        [
+            "send Outpost(Pid(40)) MsaaRun",
+            "Label(\"Name\") Role(EditableText)",
+            "Text(\"alpha beta\")",
+            "Phrase(Selected(Character(\"a\")))",
+        ]
+    );
+    assert_eq!(baseline(&held), Some(TextAnchor(81)));
+}
+
+/// Table 17, column B in T4: with the text-changed flag set, a repeated
+/// focus says the change in general terms and clears the flag.
+#[test]
+fn a_repeated_focus_after_a_value_change_says_the_change_in_general_terms() {
+    let mut held = ready();
+    let _ = edit_focus(&mut held, (-4, 1), focus_caret((caret(1, 0), 80), None));
+    let _ = step(&mut held, 800, value_change());
+    assert!(text_changed(&held));
+    let said = edit_focus(
+        &mut held,
+        (-8, 2),
+        focus_caret(
+            (caret(0, 3), 81),
+            Some(differing(vec![change(true, "alp")], Some("alp"))),
+        ),
+    );
+    assert_eq!(
+        said,
+        [
+            "send Outpost(Pid(40)) MsaaRun",
+            "Label(\"Name\") Role(EditableText)",
+            "Text(\"alpha beta\")",
+            "Phrase(Selected(Text(\"alp\")))",
+        ]
+    );
+    assert!(!text_changed(&held));
+    assert_eq!(baseline(&held), Some(TextAnchor(81)));
+}
+
+/// Table 17, column C: a focus answer with no caret lets the baseline go
+/// and clears the flag, and Core holds no caret.
+#[test]
+fn a_focus_answer_with_no_caret_clears_the_baseline_and_the_flag() {
+    let mut held = ready();
+    let _ = edit_focus(&mut held, (-4, 1), focus_caret((caret(1, 0), 80), None));
+    let _ = step(&mut held, 800, value_change());
+    let _ = edit_focus(&mut held, (-8, 2), FocusCaret::NotRead);
+    assert_eq!(baseline(&held), None);
+    assert!(!text_changed(&held));
+    assert_eq!(held.state.focus_caret(node(2)), None);
 }

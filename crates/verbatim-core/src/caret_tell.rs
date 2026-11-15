@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::RuntimeId;
 use verbatim_model::request::{MsaaIds, Reply, Request as Wire};
-use verbatim_model::tell::{Event, EventObject};
+use verbatim_model::tell::{ElementToken, Event, EventObject};
 use verbatim_model::{
     NodeId, OutpostId, SelectionRead, SelectionReadReply, TextOp, TextProvider, TextReply,
 };
@@ -83,6 +83,17 @@ impl CaretTell {
             target,
             fence: Fence::default(),
         })
+    }
+
+    /// The element the outpost adopts as the node's when the node's own
+    /// has no text pattern (design, "Selection and the caret's text
+    /// facts"): a UI Automation tell's, from the outpost following the
+    /// focus; the system caret's names none.
+    pub(crate) fn adopted(&self) -> Option<ElementToken> {
+        match (&self.target, &self.tell.object) {
+            (Target::Uia(_), EventObject::Uia { token, .. }) => Some(*token),
+            _ => None,
+        }
     }
 
     /// The window its request names, for the foreground test.
@@ -196,6 +207,7 @@ pub(crate) async fn run(mut cx: Cx<Entries>, tell: CaretTell) {
         read: SelectionRead {
             provider,
             baseline: kept.selection.baseline,
+            adopt: tell.adopted(),
         },
     };
     let due_us = cx.due_in(OTHER_DUE_US);

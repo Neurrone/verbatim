@@ -7,9 +7,9 @@ use verbatim_model::property::{
     PropertyAnswer, PropertyId, PropertyValue, PropertyValues, RuntimeId,
 };
 use verbatim_model::request::{
-    Answer, Ask, FocusAncestor, FocusNode, FocusRead, HeldIds, NodeRead, ObjectClass, ObjectRead,
-    Outcome as WireOutcome, Refusal, Reply, Request as Wire, RequestNumber, Route, RouteEnd,
-    RouteStep, RunRead, Tried,
+    Answer, Ask, FocusAncestor, FocusCaret, FocusNode, FocusRead, HeldIds, NodeRead, ObjectClass,
+    ObjectRead, Outcome as WireOutcome, Refusal, Reply, Request as Wire, RequestNumber, Route,
+    RouteEnd, RouteStep, RunRead, Tried,
 };
 use verbatim_model::tell::{
     AcceptanceFacts, Checked, ElementToken, Payload, Read, Relation, WindowFacet,
@@ -174,6 +174,7 @@ pub(crate) fn focus_read(msaa: Option<HeldIds>) -> FocusRead {
         value_from_selection: false,
         class: ObjectClass::Plain,
         runtime_id_reused: false,
+        caret: FocusCaret::NotRead,
     }
 }
 

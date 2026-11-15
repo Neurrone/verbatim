@@ -3,9 +3,11 @@
 //! (column F) and the read after a hung window answers again (Table 18,
 //! column B).
 
-use verbatim_model::request::{FocusRead, Reply, Request as Wire};
+use verbatim_model::request::{FocusCaret, FocusCaretRead, FocusRead, Reply, Request as Wire};
 use verbatim_model::tell::{ElementToken, Read};
-use verbatim_model::{NodeId, OutpostId, Pid, TraceId, WindowHandle};
+use verbatim_model::{
+    CaretReport, NodeId, OutpostId, Pid, TextAnchor, TextChunk, TextUnit, TraceId, WindowHandle,
+};
 
 use crate::entries::tests::{
     APP, GENERATION, Held, LISTENER, NOTHING, OUTPOST, SPOKEN_FOLLOWED, answer, asked_completion,
@@ -220,4 +222,56 @@ fn a_recovered_window_reads_the_focus_and_a_uia_focus_on_the_last_runtime_id_is_
         NOTHING
     );
     assert!(state.queue.front_for_tests().is_none());
+}
+
+/// Table 17, column J: the silent re-take mints the baseline in the new
+/// generation, says nothing of it, and keeps the focus's text-changed
+/// flag.
+#[test]
+fn the_silent_retake_mints_the_baseline_in_the_new_generation_and_keeps_the_flag() {
+    let mut state = started();
+    if let Committed::Read(kept) = &mut state.versions.committed {
+        kept.selection.text_changed = true;
+    }
+    let _ = feed_at(&mut state, 1_000, Input::ReaderEnded(OUTPOST));
+    let _ = feed_at(&mut state, 1_100, Input::ReaderReady(REPLACEMENT));
+    let mut read = minted_anew(focus_read(None));
+    read.caret = FocusCaret::Read(Box::new(FocusCaretRead {
+        caret: CaretReport {
+            line: TextChunk {
+                unit: TextUnit::Line,
+                text: "OK".to_owned(),
+                start: TextAnchor(12),
+                offset: 0,
+                languages: Vec::new(),
+                first: true,
+                last: true,
+                truncated: false,
+                formats: Vec::new(),
+            },
+            selection: None,
+            read_at_us: 0,
+        },
+        selected_text: None,
+        baseline: TextAnchor(90),
+        difference: None,
+    }));
+    assert_eq!(
+        feed_at(
+            &mut state,
+            1_200,
+            answer(REPLACEMENT, 3, Reply::Focus(Box::new(read)))
+        ),
+        ["send Outpost(Pid(40)) Follow"]
+    );
+    let Committed::Read(kept) = &state.versions.committed else {
+        panic!("the re-take is committed as a reader's focus");
+    };
+    assert_eq!(
+        kept.selection,
+        crate::text_facts::SelectionFacts {
+            baseline: Some(TextAnchor(90)),
+            text_changed: true,
+        }
+    );
 }
