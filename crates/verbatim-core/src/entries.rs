@@ -34,8 +34,8 @@ use verbatim_model::{Earcon, Effect as Said, SpeechMark, TraceId, WindowHandle};
 
 use crate::event_queue::Instance;
 use crate::event_queue::{
-    Core, Cx, Effect, Foreground, Function, Input, Logic, MsaaClass, MsaaKey, Outcome, Place,
-    Refused, ReplayMismatch, RequestWindow, State, Timed,
+    Asker, Core, Cx, Effect, Foreground, Function, Input, Logic, MsaaClass, MsaaKey, OTHER_DUE_US,
+    Outcome, Place, Reader, Refused, ReplayMismatch, RequestWindow, State, Timed,
 };
 use crate::focus::acceptance::{self, Accepted};
 use crate::focus::backend::{BackendCache, by_class};
@@ -750,6 +750,18 @@ pub(crate) fn route(
             (**press).clone(),
         )))),
         QueueInput::MarkReached(mark) => Input::Entry(Entry::Mark(*mark, Fence::default())),
+        QueueInput::AskOutside {
+            asker,
+            window,
+            request,
+        } => Input::AskOutside {
+            asker: Asker(*asker),
+            reader: Reader::Outpost(window.process),
+            window: RequestWindow::of_node(window),
+            request: request.clone(),
+            due_after_us: OTHER_DUE_US,
+        },
+        QueueInput::WithdrawOutside(asker) => Input::WithdrawOutside(Asker(*asker)),
         QueueInput::Ignored(processes) => {
             state.ignored.clone_from(processes);
             return Vec::new();

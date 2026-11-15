@@ -814,3 +814,199 @@ fn a_focus_on_a_shell_staging_window_is_taken_and_says_nothing() {
         assert_eq!(state.navigator.as_ref().unwrap().object.id, node(2));
     }
 }
+
+/// The reducer fed `input` from the shell at `at_us`, its effects but the
+/// wake.
+fn shell_feeds(
+    held: &mut Held,
+    at_us: u64,
+    input: verbatim_model::request::QueueInput,
+) -> Vec<Said> {
+    let mut effects = crate::reduce(
+        &mut held.state,
+        &mut held.runtime,
+        &verbatim_model::Input::Queue {
+            trace_id: verbatim_model::TraceId::from_raw(5),
+            at_us,
+            input,
+        },
+    );
+    effects.retain(|effect| {
+        !matches!(
+            effect,
+            Said::Queue(verbatim_model::request::QueueEffect::WakeAt(_))
+        )
+    });
+    effects
+}
+
+/// Explorer's taskbar, `Shell_TrayWnd`, window 90 of process 41's outpost.
+fn taskbar() -> verbatim_model::request::NodeWindow {
+    verbatim_model::request::NodeWindow {
+        handle: WindowHandle(90),
+        top_level: WindowHandle(90),
+        root_owner: WindowHandle(90),
+        process: Pid(41),
+        thread: 7,
+        desktop: false,
+    }
+}
+
+/// Explorer's outpost.
+const EXPLORER: Instance = Instance {
+    reader: Reader::Outpost(Pid(41)),
+    generation: 9,
+};
+
+/// The taskbar list's read of the taskbar's children, asked under
+/// `asker`.
+fn taskbar_read(asker: u64) -> verbatim_model::request::QueueInput {
+    verbatim_model::request::QueueInput::AskOutside {
+        asker,
+        window: taskbar(),
+        request: Wire::Properties {
+            node: node(1),
+            set: vec![PropertyId::Name],
+        },
+    }
+}
+
+/// [`taskbar_read`] asked under asker 5 with explorer's outpost ready,
+/// sent as request 1.
+fn taskbar_read_out() -> Held {
+    use verbatim_model::request::QueueEffect;
+    let mut held = Held::default();
+    let _ = shell_feeds(
+        &mut held,
+        1_000,
+        verbatim_model::request::QueueInput::ReaderReady(EXPLORER),
+    );
+    let effects = shell_feeds(&mut held, 2_000, taskbar_read(5));
+    let [Said::Queue(QueueEffect::Send { to, ask })] = effects.as_slice() else {
+        panic!("the request sent: {effects:?}");
+    };
+    assert_eq!(*to, EXPLORER);
+    assert_eq!(ask.window, WindowHandle(90));
+    assert_eq!(ask.number, RequestNumber(1));
+    held
+}
+
+/// A request from outside the queue goes to the outpost of its window's
+/// process, and its answer goes to its asker by its token.
+#[test]
+fn a_request_from_outside_the_queue_is_sent_to_its_windows_outpost_and_answered_to_its_asker() {
+    use verbatim_model::request::{OutsideOutcome, QueueEffect, QueueInput};
+    let mut held = taskbar_read_out();
+    let reply = Reply::Properties(values("Start", Role::Button));
+    assert_eq!(
+        shell_feeds(
+            &mut held,
+            3_000,
+            QueueInput::Answer {
+                from: EXPLORER,
+                answer: Answer {
+                    number: RequestNumber(1),
+                    outcome: WireOutcome::Result(reply.clone()),
+                    probes: Vec::new(),
+                    detail: String::new(),
+                },
+            }
+        ),
+        [Said::Queue(QueueEffect::Answered {
+            asker: 5,
+            outcome: OutsideOutcome::Result(reply),
+        })]
+    );
+}
+
+/// A foreground change, as the list dialog closing makes, does not stop
+/// a request from outside the queue.
+#[test]
+fn a_request_from_outside_the_queue_is_not_stopped_by_a_foreground_change() {
+    use verbatim_model::request::{ForegroundReport, QueueInput};
+    let mut held = taskbar_read_out();
+    let effects = shell_feeds(
+        &mut held,
+        3_000,
+        QueueInput::Foreground(ForegroundReport {
+            window: WindowHandle(70),
+            root_owner: WindowHandle(70),
+            process: Pid(50),
+            thread: 3,
+            class: "Notepad".to_owned(),
+        }),
+    );
+    assert!(
+        !effects.iter().any(|effect| matches!(
+            effect,
+            Said::Queue(verbatim_model::request::QueueEffect::Cancel { .. })
+        )),
+        "{effects:?}"
+    );
+    assert!(held.queue.table_for_tests().contains(&Wire::Properties {
+        node: node(1),
+        set: vec![PropertyId::Name],
+    }));
+}
+
+/// A request from outside the queue keeps the queue's due time: 11
+/// seconds after it was asked Core stops waiting and answers its asker.
+#[test]
+fn a_request_from_outside_the_queue_past_its_due_time_is_cancelled_and_answered() {
+    use verbatim_model::request::{Cancel, CancelReason, OutsideOutcome, QueueEffect, QueueInput};
+    let mut held = taskbar_read_out();
+    let due_us = 2_000 + crate::event_queue::OTHER_DUE_US;
+    let effects = shell_feeds(&mut held, due_us, QueueInput::Due);
+    assert!(
+        effects.contains(&Said::Queue(QueueEffect::Cancel {
+            to: EXPLORER,
+            cancel: Cancel {
+                number: RequestNumber(1),
+                reason: CancelReason::DueTime,
+            },
+        })),
+        "{effects:?}"
+    );
+    assert!(
+        effects.contains(&Said::Queue(QueueEffect::Answered {
+            asker: 5,
+            outcome: OutsideOutcome::NoLongerAwaited(CancelReason::DueTime),
+        })),
+        "{effects:?}"
+    );
+}
+
+/// A request from outside the queue keeps the live hang check while it
+/// is out: its window is checked each half second.
+#[test]
+fn a_request_from_outside_the_queue_has_its_window_checked_for_a_hang() {
+    use verbatim_model::request::{QueueEffect, QueueInput};
+    let mut held = taskbar_read_out();
+    let effects = shell_feeds(
+        &mut held,
+        2_000 + crate::event_queue::HANG_ROUND_US,
+        QueueInput::Due,
+    );
+    assert_eq!(
+        effects,
+        [Said::Queue(QueueEffect::CheckHung(vec![WindowHandle(90)]))]
+    );
+}
+
+/// Its asker gone, the request is cancelled as withdrawn.
+#[test]
+fn a_request_from_outside_the_queue_withdrawn_by_its_asker_is_cancelled() {
+    use verbatim_model::request::{Cancel, CancelReason, QueueEffect, QueueInput};
+    let mut held = taskbar_read_out();
+    let effects = shell_feeds(&mut held, 3_000, QueueInput::WithdrawOutside(5));
+    assert!(
+        effects.contains(&Said::Queue(QueueEffect::Cancel {
+            to: EXPLORER,
+            cancel: Cancel {
+                number: RequestNumber(1),
+                reason: CancelReason::Withdrawn,
+            },
+        })),
+        "{effects:?}"
+    );
+}

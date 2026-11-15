@@ -761,6 +761,25 @@ pub enum QueueInput {
     Press(Box<Press>),
     /// Playback reached an index mark Core placed in an utterance.
     MarkReached(crate::SpeechMark),
+    /// A request from outside the event queue: a read for one of
+    /// Verbatim's dialogs, the control plane, a tree dump, or either of
+    /// the taskbar list's two reads, which name `Shell_TrayWnd`. It holds
+    /// no key, has the queue's due time and live hang check, and Core
+    /// does not stop waiting for it when the foreground changes. Its end
+    /// is [`QueueEffect::Answered`] under `asker`.
+    AskOutside {
+        /// The token the shell keeps the asker's responder under.
+        asker: u64,
+        /// The window the request names, which its owning process's
+        /// outpost is asked about: the node's nearest window, the
+        /// target's main window for a tree dump.
+        window: NodeWindow,
+        /// The request, one of the shared list's.
+        request: Request,
+    },
+    /// The asker of a request outside the queue no longer needs it: its
+    /// dialog closed or its client left.
+    WithdrawOutside(u64),
 }
 
 /// A key or command as the hook reports it to the event queue (ADR 0003,

@@ -51,6 +51,7 @@ pub(crate) use driver::{Core, Cx, Queue, ReplayMismatch, State};
 pub(crate) use inbox::{Effect, Input, Timed};
 pub(crate) use limiter::{MsaaClass, MsaaKey, Place};
 pub(crate) use request::{Outcome, Refused, Request};
+pub(crate) use table::Asker;
 
 /// A focus read's due time: 13 seconds from the moment Core decides to
 /// ask, for its whole chain of requests (ADR 0003, "A frozen window").
