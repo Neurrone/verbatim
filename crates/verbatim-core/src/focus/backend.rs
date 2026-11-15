@@ -200,6 +200,7 @@ struct Probed {
 /// The kept probe verdicts.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct BackendCache {
+    #[serde(with = "crate::event_queue::pairs")]
     probed: BTreeMap<WindowKey, Probed>,
 }
 

@@ -156,7 +156,7 @@ impl Logic for Test {
         })
     }
 
-    fn exempt_from_foreground(entry: &Entry) -> bool {
+    fn exempt_from_foreground(entry: &Entry, _: &RequestWindow) -> bool {
         matches!(entry, Entry::Read { exempt: true, .. })
     }
 
@@ -1102,7 +1102,7 @@ fn an_ask_let_go_after_it_was_made_is_counted() {
         feed(&mut core, 1_000, Input::Entry(Entry::Key)),
         [said("key after 0 results, 0 waiting")]
     );
-    core.shared.borrow_mut().state.front = Some(super::driver::Front {
+    core.shared.borrow_mut().state.queue.front = Some(super::driver::Front {
         entry: Entry::Key,
         answers: Vec::new(),
         asked: None,
@@ -1294,7 +1294,7 @@ impl Logic for Probing {
         })
     }
 
-    fn exempt_from_foreground((): &()) -> bool {
+    fn exempt_from_foreground((): &(), _: &RequestWindow) -> bool {
         false
     }
 

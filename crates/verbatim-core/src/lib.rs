@@ -53,6 +53,7 @@ mod applications;
 mod desktop;
 pub mod dump;
 mod editing;
+mod entries;
 mod event_queue;
 pub mod flight_recorder;
 mod focus;

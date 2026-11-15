@@ -11,8 +11,6 @@
 //! instance ends.
 
 use std::collections::BTreeMap;
-use std::fmt;
-use std::rc::Rc;
 
 use serde::{Deserialize, Serialize};
 use verbatim_model::WindowHandle;
@@ -20,7 +18,6 @@ use verbatim_model::request::{
     Ask, CancelReason, Outcome as WireOutcome, Request as Wire, RequestNumber, WindowVerdict,
 };
 
-use super::driver::Slot;
 use super::{Instance, Reader, RequestWindow};
 use crate::focus::backend::BackendCache;
 
@@ -30,38 +27,17 @@ use crate::focus::backend::BackendCache;
 pub(crate) struct Asker(pub(crate) u64);
 
 /// Who gets a request's ending.
-#[derive(Clone)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum Owner {
-    /// The front entry's function, through the slot of its ask.
-    Queue(Rc<dyn Slot>),
+    /// The front entry's function, through the slot of its ask, which the
+    /// paused function keeps beside the state.
+    Queue,
     /// An asker outside the queue.
     Outside(Asker),
 }
 
-impl fmt::Debug for Owner {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Queue(_) => formatter.write_str("Queue"),
-            Self::Outside(asker) => write!(formatter, "Outside({})", asker.0),
-        }
-    }
-}
-
-/// Two owners are the same when they are of the same kind and, outside
-/// the queue, the same asker: a rebuilt instance has its own function,
-/// and so its own slot.
-impl PartialEq for Owner {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Self::Queue(_), Self::Queue(_)) => true,
-            (Self::Outside(one), Self::Outside(other)) => one == other,
-            (Self::Queue(_), Self::Outside(_)) | (Self::Outside(_), Self::Queue(_)) => false,
-        }
-    }
-}
-
 /// Where a live request is.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum Stage {
     /// Waiting for its reader to be able to take it.
     Waiting,
@@ -70,7 +46,7 @@ pub(crate) enum Stage {
 }
 
 /// A request waiting or out.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Live {
     /// The reader it goes to.
     pub(crate) reader: Reader,
@@ -117,7 +93,7 @@ impl Live {
 }
 
 /// How a live request ended.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum Ending {
     /// Its reader answered, or Core answered for it: "not responding"
     /// when the shell refused to send it to a hung window, "ended" when
@@ -130,8 +106,6 @@ pub(crate) enum Ending {
 /// One live request's ending, handed back to the caller to deliver.
 #[derive(Debug)]
 pub(crate) struct Ended {
-    /// The request.
-    pub(crate) number: RequestNumber,
     /// Its owner.
     pub(crate) owner: Owner,
     /// How it ended.
@@ -153,14 +127,16 @@ pub(crate) enum Order {
 }
 
 /// The request table, the recovery set and the half-second round.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Table {
     /// The last number given; numbers increase.
     last: u64,
     /// Requests waiting or out.
+    #[serde(with = "super::pairs")]
     live: BTreeMap<RequestNumber, Live>,
     /// Requests no longer awaited after they went out, with the instance
     /// they went to.
+    #[serde(with = "super::pairs")]
     late: BTreeMap<RequestNumber, Instance>,
     /// Windows Core stopped waiting on, or refused unsent, as hung while
     /// their application held attention, watched until they answer again
@@ -172,6 +148,15 @@ pub(crate) struct Table {
 }
 
 impl Table {
+    /// The requests waiting or out, as sent.
+    #[cfg(test)]
+    pub(crate) fn requests_for_tests(&self) -> Vec<Wire> {
+        self.live
+            .values()
+            .map(|live| live.request.clone())
+            .collect()
+    }
+
     /// Records a new request and returns its number; sends it at once to
     /// `ready`, the reader's running instance, if there is one.
     pub(crate) fn begin(
@@ -240,7 +225,6 @@ impl Table {
             self.late.insert(number, instance);
         }
         Some(Ended {
-            number,
             owner: live.owner,
             ending,
             window: live.window,

@@ -249,6 +249,19 @@ impl Versions {
     /// generation; for an own focus, its source's; none for a sourceless
     /// one. The listener mints no node, so `asked` is `None` for it.
     pub(crate) fn known_ancestors(&self, asked: Option<OutpostId>) -> Vec<KnownAncestor> {
+        self.known_with_places(asked)
+            .into_iter()
+            .map(|(_, known)| known)
+            .collect()
+    }
+
+    /// [`Versions::known_ancestors`], each with the place, among the kept
+    /// ancestors nearest first, of the ancestor it names, by which an
+    /// answer's meeting point is found again.
+    pub(crate) fn known_with_places(
+        &self,
+        asked: Option<OutpostId>,
+    ) -> Vec<(usize, KnownAncestor)> {
         if self.last.is_none() {
             return Vec::new();
         }
@@ -263,15 +276,15 @@ impl Versions {
         };
         let mine = asked == Some(kept.outpost);
         let mut known = Vec::new();
-        for ancestor in &kept.ancestors {
+        for (place, ancestor) in kept.ancestors.iter().enumerate() {
             if mine {
-                known.push(KnownAncestor::Node(ancestor.node));
+                known.push((place, KnownAncestor::Node(ancestor.node)));
             }
             if let Some(runtime_id) = &ancestor.runtime_id {
-                known.push(KnownAncestor::Uia(runtime_id.clone()));
+                known.push((place, KnownAncestor::Uia(runtime_id.clone())));
             }
             if let Some(window) = ancestor.window {
-                known.push(KnownAncestor::Window(window));
+                known.push((place, KnownAncestor::Window(window)));
             }
         }
         known

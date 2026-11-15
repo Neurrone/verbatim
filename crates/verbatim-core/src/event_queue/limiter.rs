@@ -13,6 +13,8 @@ use std::collections::{BTreeMap, VecDeque};
 use verbatim_model::WindowHandle;
 use verbatim_model::event_kind::EventKind;
 
+use serde::{Deserialize, Serialize};
+
 use super::Logic;
 
 /// How many focus and foreground candidates wait at most, the newest kept.
@@ -90,7 +92,7 @@ pub(crate) enum Place {
 }
 
 /// A waiting item of the queue.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum Item<E> {
     /// One entry.
     One(E),

@@ -860,7 +860,7 @@ impl CachedFrom {
 /// A focus's ancestors as Core takes them: as the event reports them, but
 /// none for an item whose containers an application's rule drops
 /// ([`crate::applications::drops_ancestry`]).
-fn focus_ancestors<'a>(
+pub(crate) fn focus_ancestors<'a>(
     window: Option<&WindowFacts>,
     node: &NodeSnapshot,
     ancestors: &'a [NodeSnapshot],
@@ -1434,7 +1434,12 @@ fn focus_reported(
 ///   title when its line does not already speak it ([`window_title`]).
 /// - A report judged left is executed as a focus from another top-level
 ///   window is (the left mark, `crate::focus_queue`).
-fn execute_report(state: &mut SrState, owned: &Report, left: bool, arrival: u64) -> Vec<Effect> {
+pub(crate) fn execute_report(
+    state: &mut SrState,
+    owned: &Report,
+    left: bool,
+    arrival: u64,
+) -> Vec<Effect> {
     let node = owned.node.id;
     let first = crate::key_line::before_focus(state, node);
     let mut effects = execute_focus(state, owned, (left, arrival), first);

@@ -10,9 +10,14 @@
 //! pause, that the function paused in an ask with its request live, and at
 //! every entry's end that each request it sent had its one outcome.
 //!
-//! The recorder keeps the state as it was when the front entry started,
-//! and every input since; a checkpoint is a fresh instance built from that
-//! state by running the entry's function again and replaying the inputs.
+//! Core's state, [`State`], is plain data that can be cloned, compared and
+//! written to a dump: Core's facts and the [`Queue`], which keeps the front
+//! entry's checkpoint, the state when it started with each request it
+//! asked and each ending it had. The paused function is not state: it sits
+//! in a [`Core`] beside the state, which is never cloned or written, and a
+//! clone, a restored dump or a replay rebuilds it by running the front
+//! entry's function again from its checkpoint with the recorded endings
+//! ([`Core::rebuild`]).
 
 use std::cell::{Cell, Ref, RefCell, RefMut};
 use std::collections::{BTreeMap, VecDeque};
@@ -23,7 +28,8 @@ use std::pin::Pin;
 use std::rc::Rc;
 use std::task::{Context, Poll, Waker};
 
-use verbatim_model::request::{Outcome as WireOutcome, Reply, RequestNumber};
+use serde::{Deserialize, Serialize};
+use verbatim_model::request::{Outcome as WireOutcome, Reply, Request as Wire, RequestNumber};
 
 use super::inbox::{Effect, Timed};
 use super::limiter::{self, Item};
@@ -32,14 +38,14 @@ use super::table::{Ending, Live, Order, Owner, Stage, Table};
 use super::{Foreground, Function, Instance, Logic, Reader};
 use crate::focus::backend::BackendCache;
 
-/// Core: its state, shared with the paused function, the function, and
-/// the recorder.
+/// Core: the front entry's paused function and what it shares with the
+/// driver. The state sits in it only while a step runs, or for good in the
+/// tests that drive the queue alone.
 pub(crate) struct Core<L: Logic> {
     pub(super) shared: Rc<RefCell<Shared<L>>>,
     /// The front entry's function, paused in its one ask; present exactly
     /// when the queue has a front.
     task: Option<Function>,
-    pub(super) record: Record<L>,
     /// Every entry that ended, with the outcome of each request it had: the
     /// tests' audit of the one-outcome rule, not Core's state.
     #[cfg(test)]
@@ -51,6 +57,8 @@ pub(crate) struct Shared<L: Logic> {
     pub(super) state: State<L::Entry, L::Facts>,
     /// What was done while a step ran, taken by the step at its end.
     pub(super) effects: Vec<Effect<L::Said>>,
+    /// The slot of the front's request, where its ending goes.
+    slot: Option<Rc<dyn Slot>>,
     /// Set by an [`Asking`] when it returns pending, cleared before each
     /// poll: a function that returns pending with this unset waited on
     /// something other than an ask.
@@ -60,14 +68,33 @@ pub(crate) struct Shared<L: Logic> {
     unanswered: u32,
 }
 
-/// Core's state: what a dump shows and a checkpoint copies.
-#[derive(Clone, Debug, PartialEq)]
+/// Core's state: its facts and its queue. Plain data, which a dump shows
+/// and a clone copies.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct State<E, F> {
+    /// Core's facts, the [`Logic`]'s.
+    pub(crate) facts: F,
+    /// The queue.
+    pub(crate) queue: Queue<E, F>,
+}
+
+impl<E, F: Default> Default for State<E, F> {
+    fn default() -> Self {
+        Self {
+            facts: F::default(),
+            queue: Queue::default(),
+        }
+    }
+}
+
+/// The event queue's state: the front, the waiting entries, the requests,
+/// the readers, the foreground record, the backend cache and the front's
+/// checkpoint.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct Queue<E, F> {
     /// The time of the input being handled, in microseconds on the run's
     /// shared clock.
     pub(super) now_us: u64,
-    /// Core's facts, the [`Logic`]'s.
-    pub(super) facts: F,
     /// The front entry.
     pub(super) front: Option<Front<E>>,
     /// The entries waiting behind it, in arrival order.
@@ -75,31 +102,74 @@ pub(crate) struct State<E, F> {
     /// The requests.
     pub(super) table: Table,
     /// The running instance of each reader that can take requests.
+    #[serde(with = "super::pairs")]
     pub(super) readers: BTreeMap<Reader, Instance>,
     /// The foreground record, `None` before the listener's first report.
     pub(super) foreground: Option<Foreground>,
     /// The backend verdicts of windows (Table 4).
     pub(super) backend: BackendCache,
+    /// The front entry's checkpoint, present exactly when there is a front.
+    pub(super) checkpoint: Option<Box<Checkpoint<E, F>>>,
 }
 
-impl<E, F: Default> Default for State<E, F> {
+impl<E, F> Default for Queue<E, F> {
     fn default() -> Self {
         Self {
             now_us: 0,
-            facts: F::default(),
             front: None,
             waiting: VecDeque::new(),
             table: Table::default(),
             readers: BTreeMap::new(),
             foreground: None,
             backend: BackendCache::default(),
+            checkpoint: None,
         }
     }
 }
 
+#[cfg(test)]
+impl<E, F> Queue<E, F> {
+    /// The requests waiting or out, as sent.
+    pub(crate) fn table_for_tests(&self) -> Vec<Wire> {
+        self.table.requests_for_tests()
+    }
+
+    /// The front's checkpoint, to change.
+    pub(crate) fn checkpoint_for_tests(&mut self) -> Option<&mut Checkpoint<E, F>> {
+        self.checkpoint.as_deref_mut()
+    }
+
+    /// The front entry, if any.
+    pub(crate) fn front_for_tests(&self) -> Option<&E> {
+        self.front.as_ref().map(|front| &front.entry)
+    }
+}
+
+#[cfg(test)]
+impl<E, F> Checkpoint<E, F> {
+    /// The requests recorded as asked, to change.
+    pub(crate) fn asked_for_tests(&mut self) -> &mut Vec<Wire> {
+        &mut self.asked
+    }
+}
+
+/// The front entry's checkpoint: the state when it started, each request
+/// its function asked and each ending it had, which rebuild its paused
+/// function.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct Checkpoint<E, F> {
+    /// The state when the entry started, with no checkpoint of its own.
+    base: State<E, F>,
+    /// Each request the function asked, in order.
+    asked: Vec<Wire>,
+    /// Each ending it had, in order, with the time of the input that
+    /// brought it.
+    answers: Vec<(u64, Ending)>,
+}
+
 /// The front entry, the outcome of each request it has had, and its
 /// request, absent only while its function runs between two requests.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Front<E> {
     /// The entry.
     pub(super) entry: E,
@@ -110,7 +180,7 @@ pub(crate) struct Front<E> {
 }
 
 /// An outcome as a dump writes it, decoded into its request's own type.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Shown(String);
 
 impl fmt::Debug for Shown {
@@ -119,27 +189,19 @@ impl fmt::Debug for Shown {
     }
 }
 
-/// The state when the front entry started, and every input since; no
-/// base while the queue has no front, when the state itself is the
-/// checkpoint.
-pub(super) struct Record<L: Logic> {
-    base: Option<State<L::Entry, L::Facts>>,
-    since: Vec<Timed<L::Entry>>,
-}
-
 /// A checkpoint whose replay did not reach the state it was taken from:
 /// replay is not exact, a fault of Core's.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ReplayMismatch {
-    /// The state replayed, as a dump writes it.
+    /// What the replay asked and had, as a dump writes it.
     pub(crate) replayed: String,
-    /// The state it was taken from.
+    /// What the state records.
     pub(crate) original: String,
 }
 
 #[expect(
     clippy::missing_fields_in_debug,
-    reason = "a dump shows Core's state; the function, the recorder and the tests' audit are not part of it"
+    reason = "a dump shows Core's state; the function and the tests' audit are not part of it"
 )]
 impl<L: Logic> fmt::Debug for Core<L> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -147,13 +209,13 @@ impl<L: Logic> fmt::Debug for Core<L> {
         let state = &shared.state;
         formatter
             .debug_struct("Core")
-            .field("now_us", &state.now_us)
-            .field("front", &state.front)
-            .field("waiting", &state.waiting)
-            .field("table", &state.table)
-            .field("readers", &state.readers)
-            .field("foreground", &state.foreground)
-            .field("backend", &state.backend)
+            .field("now_us", &state.queue.now_us)
+            .field("front", &state.queue.front)
+            .field("waiting", &state.queue.waiting)
+            .field("table", &state.queue.table)
+            .field("readers", &state.queue.readers)
+            .field("foreground", &state.queue.foreground)
+            .field("backend", &state.queue.backend)
             .field("facts", &state.facts)
             .finish()
     }
@@ -171,14 +233,11 @@ impl<L: Logic> Core<L> {
             shared: Rc::new(RefCell::new(Shared {
                 state,
                 effects: Vec::new(),
+                slot: None,
                 parked: false,
                 unanswered: 0,
             })),
             task: None,
-            record: Record {
-                base: None,
-                since: Vec::new(),
-            },
             #[cfg(test)]
             ended: Vec::new(),
         }
@@ -206,106 +265,168 @@ impl<L: Logic> Core<L> {
 
     /// The one time Core waits for, which the shell's timer is set to.
     pub(crate) fn next_due(&self) -> Option<u64> {
-        self.shared.borrow().state.table.next_due()
+        self.shared.borrow().state.queue.table.next_due()
     }
 
-    /// A fresh instance with this one's state, built from the recorder:
-    /// the state when the front entry started, its function run again to
-    /// its first request, and every input since replayed, their effects
-    /// dropped because they have already been made.
+    /// A fresh instance with a copy of this one's state, its function
+    /// rebuilt from the front's checkpoint ([`Core::rebuild`]).
     ///
     /// # Errors
     ///
-    /// [`ReplayMismatch`] when the replay does not reach this state.
+    /// [`ReplayMismatch`] when the rebuilt function does not ask and have
+    /// what the checkpoint records.
+    #[cfg(test)]
     pub(crate) fn checkpoint(&self) -> Result<Self, ReplayMismatch> {
-        let Some(base) = &self.record.base else {
-            return Ok(Self::from_state(self.shared.borrow().state.clone()));
+        let state = self.shared.borrow().state.clone();
+        let fresh = Self::rebuild(&state)?;
+        fresh.shared.borrow_mut().state = state;
+        Ok(fresh)
+    }
+
+    /// The paused function of `state`'s front, rebuilt: the function run
+    /// again from the checkpoint's state, given each recorded ending in
+    /// turn, its effects dropped because they have already been made. The
+    /// instance returned holds the checkpoint's state, worked on by the
+    /// rebuilt function, in place of `state`, which the caller lends it
+    /// for each step ([`Core::step`]).
+    ///
+    /// # Errors
+    ///
+    /// [`ReplayMismatch`] when the rebuilt function does not ask exactly
+    /// the requests the checkpoint records and pause in the last, or the
+    /// state has a front with no checkpoint.
+    pub(crate) fn rebuild(state: &State<L::Entry, L::Facts>) -> Result<Self, ReplayMismatch> {
+        let Some(front) = &state.queue.front else {
+            return Ok(Self::default());
         };
-        let mut fresh = Self::from_state(base.clone());
-        fresh.record.base = Some(base.clone());
-        let front = fresh.front_entry();
-        if let Some(entry) = front {
-            fresh.start(entry);
-        }
-        fresh.shared.borrow_mut().effects.clear();
-        for input in &self.record.since {
-            let _ = fresh.feed(input.clone());
+        let Some(checkpoint) = state.queue.checkpoint.as_deref() else {
+            return Err(ReplayMismatch {
+                replayed: String::from("no checkpoint"),
+                original: format!("{front:?}"),
+            });
+        };
+        let mut fresh = Self::from_state(checkpoint.base.clone());
+        fresh.shared.borrow_mut().state.queue.checkpoint = Some(Box::new(Checkpoint {
+            base: State::default(),
+            asked: Vec::new(),
+            answers: Vec::new(),
+        }));
+        fresh.start(front.entry.clone());
+        for (at_us, ending) in &checkpoint.answers {
+            if fresh.task.is_none() {
+                break;
+            }
+            fresh.shared.borrow_mut().state.queue.now_us = *at_us;
+            fresh.resume(ending.clone());
         }
         let mismatch = {
-            let replayed = &fresh.shared.borrow().state;
-            let original = &self.shared.borrow().state;
-            (replayed != original).then(|| ReplayMismatch {
-                replayed: format!("{replayed:?}"),
-                original: format!("{original:?}"),
+            let shared = fresh.shared.borrow();
+            let replayed = shared
+                .state
+                .queue
+                .checkpoint
+                .as_deref()
+                .map(|replayed| (&replayed.asked, &replayed.answers));
+            let paused = fresh.task.is_some() && shared.slot.is_some();
+            (replayed != Some((&checkpoint.asked, &checkpoint.answers)) || !paused).then(|| {
+                ReplayMismatch {
+                    replayed: format!("{replayed:?}, paused {paused}"),
+                    original: format!("{:?}", (&checkpoint.asked, &checkpoint.answers)),
+                }
             })
         };
-        match mismatch {
-            Some(mismatch) => Err(mismatch),
-            None => Ok(fresh),
+        if let Some(mismatch) = mismatch {
+            return Err(mismatch);
         }
+        {
+            let mut shared = fresh.shared.borrow_mut();
+            shared.effects.clear();
+            shared.state = State::default();
+        }
+        Ok(fresh)
     }
 
-    pub(super) fn note_input(&mut self, input: &Timed<L::Entry>) {
-        if self.record.base.is_some() {
-            self.record.since.push(input.clone());
-        }
+    /// Handles one input on `state`, lent to this instance for the step,
+    /// and returns what Core did. `paused` is the instance kept beside the
+    /// state, rebuilt from the state's checkpoint when there is none, as
+    /// after a clone, a restored dump or a replay.
+    ///
+    /// # Errors
+    ///
+    /// [`ReplayMismatch`] when the function cannot be rebuilt; the state is
+    /// left as it was.
+    pub(crate) fn step(
+        paused: &mut Option<Self>,
+        state: &mut State<L::Entry, L::Facts>,
+        input: Timed<L::Entry>,
+    ) -> Result<Vec<Effect<L::Said>>, ReplayMismatch> {
+        let mut core = match paused.take() {
+            Some(core) => core,
+            None => Self::rebuild(state)?,
+        };
+        std::mem::swap(&mut core.shared.borrow_mut().state, state);
+        let effects = core.feed(input);
+        std::mem::swap(&mut core.shared.borrow_mut().state, state);
+        *paused = Some(core);
+        Ok(effects)
     }
 
-    /// Ends the step: the recorder drops its base when the queue has no
-    /// front, and the step's effects are returned.
+    /// Ends the step: the round settles and the step's effects are
+    /// returned.
     pub(super) fn finish_step(&mut self) -> Vec<Effect<L::Said>> {
         self.check();
         let mut shared = self.shared.borrow_mut();
-        shared.state.table.settle_round();
-        if shared.state.front.is_none() {
-            self.record.base = None;
-            self.record.since.clear();
-        }
+        shared.state.queue.table.settle_round();
         std::mem::take(&mut shared.effects)
     }
 
     /// The driver's invariants between steps.
     fn check(&self) {
         let shared = self.shared.borrow();
+        let queue = &shared.state.queue;
         assert_eq!(
             self.task.is_some(),
-            shared.state.front.is_some(),
+            queue.front.is_some(),
             "a paused function exactly when there is a front entry"
         );
-        if let Some(front) = &shared.state.front {
+        assert_eq!(
+            queue.checkpoint.is_some(),
+            queue.front.is_some(),
+            "a checkpoint exactly when there is a front entry"
+        );
+        if let Some(front) = &queue.front {
             assert!(
                 front
                     .asked
-                    .is_some_and(|number| shared.state.table.live(number).is_some()),
+                    .is_some_and(|number| queue.table.live(number).is_some())
+                    && shared.slot.is_some(),
                 "a paused function has its one request live, whose ending resumes it"
             );
         }
     }
 
-    fn front_entry(&self) -> Option<L::Entry> {
-        let shared = self.shared.borrow();
-        shared.state.front.as_ref().map(|front| front.entry.clone())
-    }
-
     /// Takes the next waiting entries while there is no front, starting
-    /// each one's function.
+    /// each one's function from a checkpoint of the state it starts in.
     pub(super) fn take_next(&mut self) {
         while self.task.is_none() {
             let entry = {
                 let mut shared = self.shared.borrow_mut();
-                let Some(entry) = limiter::take::<L>(&mut shared.state.waiting) else {
+                let queue = &mut shared.state.queue;
+                let Some(entry) = limiter::take::<L>(&mut queue.waiting) else {
                     break;
                 };
-                shared.state.front = Some(Front {
+                queue.front = Some(Front {
                     entry: entry.clone(),
                     answers: Vec::new(),
                     asked: None,
                 });
+                let base = shared.state.clone();
+                shared.state.queue.checkpoint = Some(Box::new(Checkpoint {
+                    base,
+                    asked: Vec::new(),
+                    answers: Vec::new(),
+                }));
                 entry
-            };
-            self.record = Record {
-                base: Some(self.shared.borrow().state.clone()),
-                since: Vec::new(),
             };
             self.start(entry);
         }
@@ -321,16 +442,26 @@ impl<L: Logic> Core<L> {
         self.poll();
     }
 
-    /// Delivers a queue request's ending to its function and resumes it.
-    pub(super) fn resume(&mut self, number: RequestNumber, slot: &Rc<dyn Slot>, ending: Ending) {
-        let (shown, undecodable) = slot.deliver(ending);
+    /// Delivers the front's request's ending to its function, recorded in
+    /// the checkpoint, and resumes it.
+    pub(super) fn resume(&mut self, ending: Ending) {
+        let slot = self.shared.borrow_mut().slot.take();
+        let Some(slot) = slot else {
+            return;
+        };
+        let (shown, undecodable) = slot.deliver(ending.clone());
         {
             let mut shared = self.shared.borrow_mut();
-            if let Some(front) = shared.state.front.as_mut() {
+            let now_us = shared.state.queue.now_us;
+            let queue = &mut shared.state.queue;
+            let number = queue.front.as_mut().and_then(|front| {
                 front.answers.push(shown);
-                front.asked = None;
+                front.asked.take()
+            });
+            if let Some(checkpoint) = queue.checkpoint.as_mut() {
+                checkpoint.answers.push((now_us, ending));
             }
-            if undecodable {
+            if let (true, Some(number)) = (undecodable, number) {
                 shared.effects.push(Effect::Undecodable(number));
             }
         }
@@ -353,7 +484,8 @@ impl<L: Logic> Core<L> {
                 );
             }
             Poll::Ready(()) => {
-                let front = shared.state.front.take();
+                let front = shared.state.queue.front.take();
+                shared.state.queue.checkpoint = None;
                 assert!(
                     front.as_ref().is_some_and(|front| front.asked.is_none()),
                     "an entry's function ended with its request live"
@@ -469,12 +601,33 @@ impl<L: Logic> Cx<L> {
 
     /// The entries waiting behind this one, in arrival order.
     pub(crate) fn waiting(&self) -> Ref<'_, VecDeque<Item<L::Entry>>> {
-        Ref::map(self.shared.borrow(), |shared| &shared.state.waiting)
+        Ref::map(self.shared.borrow(), |shared| &shared.state.queue.waiting)
+    }
+
+    /// The backend verdicts of windows.
+    pub(crate) fn backend(&self) -> Ref<'_, BackendCache> {
+        Ref::map(self.shared.borrow(), |shared| &shared.state.queue.backend)
+    }
+
+    /// The foreground record, `None` before the listener's first report.
+    pub(crate) fn foreground(&self) -> Option<Foreground> {
+        self.shared.borrow().state.queue.foreground
+    }
+
+    /// The running instance of `reader`, if it can take requests.
+    pub(crate) fn instance(&self, reader: Reader) -> Option<Instance> {
+        self.shared
+            .borrow()
+            .state
+            .queue
+            .readers
+            .get(&reader)
+            .copied()
     }
 
     /// The time of the input being handled.
     pub(crate) fn now_us(&self) -> u64 {
-        self.shared.borrow().state.now_us
+        self.shared.borrow().state.queue.now_us
     }
 
     /// The due time of a request, or a chain of requests, Core decides to
@@ -525,27 +678,31 @@ impl<L: Logic, R: Request> Future for Asking<'_, L, R> {
                 });
                 let owner: Rc<dyn Slot> = slot.clone();
                 let reader = request.reader();
-                let ready = shared.state.readers.get(&reader).copied();
-                let now_us = shared.state.now_us;
+                let ready = shared.state.queue.readers.get(&reader).copied();
+                let now_us = shared.state.queue.now_us;
+                let wire = request.wire();
                 let mut orders = Vec::new();
                 let state = &mut shared.state;
-                let number = state.table.begin(
+                if let Some(checkpoint) = state.queue.checkpoint.as_mut() {
+                    checkpoint.asked.push(wire.clone());
+                }
+                let number = state.queue.table.begin(
                     Live {
                         reader,
                         window: request.window(),
                         due_us,
-                        request: request.wire(),
-                        owner: Owner::Queue(owner),
+                        request: wire,
+                        owner: Owner::Queue,
                         stage: Stage::Waiting,
                         probing: None,
                     },
                     ready,
-                    &state.backend,
+                    &state.queue.backend,
                     now_us,
                     &mut orders,
                 );
                 Core::<L>::order(&mut shared, orders);
-                let front = shared.state.front.as_mut();
+                let front = shared.state.queue.front.as_mut();
                 assert!(
                     front.as_ref().is_some_and(|front| front.asked.is_none()),
                     "only the front entry asks, one request at a time"
@@ -553,6 +710,7 @@ impl<L: Logic, R: Request> Future for Asking<'_, L, R> {
                 if let Some(front) = front {
                     front.asked = Some(number);
                 }
+                shared.slot = Some(owner);
                 this.stage = AskStage::Made(slot);
                 shared.parked = true;
                 Poll::Pending

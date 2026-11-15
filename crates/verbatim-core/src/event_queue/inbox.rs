@@ -124,42 +124,18 @@ pub(crate) enum Effect<S> {
 impl<L: Logic> Core<L> {
     /// Handles one input and returns what Core did, in order.
     pub(crate) fn feed(&mut self, timed: Timed<L::Entry>) -> Vec<Effect<L::Said>> {
-        self.note_input(&timed);
-        self.shared.borrow_mut().state.now_us = timed.at_us;
+        self.shared.borrow_mut().state.queue.now_us = timed.at_us;
         match timed.input {
             Input::Entry(entry) => self.arrive(entry),
-            Input::Answer { from, answer } => {
-                let answered = self.shared.borrow_mut().state.table.answer(
-                    from,
-                    answer.number,
-                    answer.outcome,
-                );
-                match answered {
-                    Ok(ended) => {
-                        let probed = {
-                            let backend = &mut self.shared.borrow_mut().state.backend;
-                            for probe in &answer.probes {
-                                backend.record(probe);
-                            }
-                            answer.probes.iter().any(|probe| {
-                                probe.window == ended.window.handle
-                                    && probe.thread == ended.window.thread
-                            })
-                        };
-                        self.deliver_probed(ended, probed);
-                    }
-                    Err(dropped) => self
-                        .shared
-                        .borrow_mut()
-                        .effects
-                        .push(Effect::AnswerDropped {
-                            number: answer.number,
-                            late: dropped == Dropped::Late,
-                        }),
-                }
-            }
+            Input::Answer { from, answer } => self.answered(from, answer),
             Input::RefusedHung(number) => {
-                let ended = self.shared.borrow_mut().state.table.refused_hung(number);
+                let ended = self
+                    .shared
+                    .borrow_mut()
+                    .state
+                    .queue
+                    .table
+                    .refused_hung(number);
                 if let Some(ended) = ended {
                     self.hung(&ended.window);
                     self.deliver(ended);
@@ -169,20 +145,21 @@ impl<L: Logic> Core<L> {
             Input::Foreground(foreground) => self.foreground(foreground),
             Input::ReaderReady(instance) => {
                 let mut shared = self.shared.borrow_mut();
-                shared.state.readers.insert(instance.reader, instance);
-                let now_us = shared.state.now_us;
+                shared.state.queue.readers.insert(instance.reader, instance);
+                let now_us = shared.state.queue.now_us;
                 let mut orders = Vec::new();
                 let state = &mut shared.state;
                 state
+                    .queue
                     .table
-                    .reader_ready(instance, &state.backend, now_us, &mut orders);
+                    .reader_ready(instance, &state.queue.backend, now_us, &mut orders);
                 Self::order(&mut shared, orders);
             }
             Input::ReaderEnded(instance) => self.reader_ended(instance),
             Input::WindowDestroyed(window) => {
                 let mut shared = self.shared.borrow_mut();
-                shared.state.table.unwatch(window);
-                shared.state.backend.destroyed(window);
+                shared.state.queue.table.unwatch(window);
+                shared.state.queue.backend.destroyed(window);
             }
             Input::AskOutside {
                 asker,
@@ -192,11 +169,11 @@ impl<L: Logic> Core<L> {
                 due_after_us,
             } => {
                 let mut shared = self.shared.borrow_mut();
-                let ready = shared.state.readers.get(&reader).copied();
-                let now_us = shared.state.now_us;
+                let ready = shared.state.queue.readers.get(&reader).copied();
+                let now_us = shared.state.queue.now_us;
                 let mut orders = Vec::new();
                 let state = &mut shared.state;
-                state.table.begin(
+                state.queue.table.begin(
                     Live {
                         reader,
                         window,
@@ -207,14 +184,14 @@ impl<L: Logic> Core<L> {
                         probing: None,
                     },
                     ready,
-                    &state.backend,
+                    &state.queue.backend,
                     now_us,
                     &mut orders,
                 );
                 Self::order(&mut shared, orders);
             }
             Input::WithdrawOutside(asker) => {
-                let numbers = self.shared.borrow().state.table.asked_by(asker);
+                let numbers = self.shared.borrow().state.queue.table.asked_by(asker);
                 for number in numbers {
                     self.stop(number, CancelReason::Withdrawn);
                 }
@@ -225,13 +202,48 @@ impl<L: Logic> Core<L> {
         self.finish_step()
     }
 
+    /// A reader's answer: the request it names ends with it, and the
+    /// probes it brings are recorded; a late answer, or one naming no
+    /// request out to its sender, is dropped.
+    fn answered(&mut self, from: Instance, answer: Answer) {
+        let answered =
+            self.shared
+                .borrow_mut()
+                .state
+                .queue
+                .table
+                .answer(from, answer.number, answer.outcome);
+        match answered {
+            Ok(ended) => {
+                let probed = {
+                    let backend = &mut self.shared.borrow_mut().state.queue.backend;
+                    for probe in &answer.probes {
+                        backend.record(probe);
+                    }
+                    answer.probes.iter().any(|probe| {
+                        probe.window == ended.window.handle && probe.thread == ended.window.thread
+                    })
+                };
+                self.deliver_probed(ended, probed);
+            }
+            Err(dropped) => self
+                .shared
+                .borrow_mut()
+                .effects
+                .push(Effect::AnswerDropped {
+                    number: answer.number,
+                    late: dropped == Dropped::Late,
+                }),
+        }
+    }
+
     /// `entry` joins the back; it withdraws the front's request when the
     /// logic says so.
     fn arrive(&mut self, entry: L::Entry) {
         let withdrawn = {
             let shared = self.shared.borrow();
             let state = &shared.state;
-            state.front.as_ref().and_then(|front| {
+            state.queue.front.as_ref().and_then(|front| {
                 front
                     .asked
                     .filter(|_| L::withdraws(&state.facts, &front.entry, &entry))
@@ -240,7 +252,10 @@ impl<L: Logic> Core<L> {
         {
             let mut shared = self.shared.borrow_mut();
             let state = &mut shared.state;
-            limiter::arrive::<L>(&state.facts, &mut state.waiting, entry);
+            if let Some(probe) = L::probe(&entry) {
+                state.queue.backend.record(&probe);
+            }
+            limiter::arrive::<L>(&state.facts, &mut state.queue.waiting, entry);
         }
         if let Some(number) = withdrawn {
             self.stop(number, CancelReason::Withdrawn);
@@ -253,7 +268,7 @@ impl<L: Logic> Core<L> {
         let ended = {
             let mut shared = self.shared.borrow_mut();
             let mut orders = Vec::new();
-            let ended = shared.state.table.stop(number, reason, &mut orders);
+            let ended = shared.state.queue.table.stop(number, reason, &mut orders);
             Self::order(&mut shared, orders);
             ended
         };
@@ -272,12 +287,13 @@ impl<L: Logic> Core<L> {
         let mut shared = self.shared.borrow_mut();
         let attended = shared
             .state
+            .queue
             .foreground
             .is_some_and(|foreground| foreground.attends(window));
         if attended {
             shared.effects.push(Effect::NotRespondingSound);
-            let now_us = shared.state.now_us;
-            shared.state.table.watch(*window, now_us);
+            let now_us = shared.state.queue.now_us;
+            shared.state.queue.table.watch(*window, now_us);
         }
     }
 
@@ -296,11 +312,12 @@ impl<L: Logic> Core<L> {
             self.shared
                 .borrow_mut()
                 .state
+                .queue
                 .backend
                 .unanswered(ended.window.judged().key, sent_us);
         }
         match ended.owner {
-            Owner::Queue(slot) => self.resume(ended.number, &slot, ended.ending),
+            Owner::Queue => self.resume(ended.ending),
             Owner::Outside(asker) => {
                 let outcome = match outcome_of(ended.ending) {
                     Ok(reply) => Outcome::Result(reply),
@@ -319,19 +336,19 @@ impl<L: Logic> Core<L> {
     /// the logic's entry for it joins the back.
     fn hang_check(&mut self, window: WindowHandle, hung: bool) {
         if hung {
-            let out = self.shared.borrow().state.table.out_on(window);
+            let out = self.shared.borrow().state.queue.table.out_on(window);
             for number in out {
                 self.stop(number, CancelReason::Hung);
             }
             return;
         }
         let mut shared = self.shared.borrow_mut();
-        let Some(recovered) = shared.state.table.unwatch(window) else {
+        let Some(recovered) = shared.state.queue.table.unwatch(window) else {
             return;
         };
         let state = &mut shared.state;
         if let Some(entry) = L::recovered(&state.facts, &recovered) {
-            limiter::arrive::<L>(&state.facts, &mut state.waiting, entry);
+            limiter::arrive::<L>(&state.facts, &mut state.queue.waiting, entry);
         }
     }
 
@@ -343,17 +360,19 @@ impl<L: Logic> Core<L> {
     fn foreground(&mut self, foreground: Foreground) {
         let stopped = {
             let mut shared = self.shared.borrow_mut();
-            shared.state.foreground = Some(foreground);
+            shared.state.queue.foreground = Some(foreground);
             shared
                 .state
+                .queue
                 .table
                 .unwatch_unless(|window| foreground.attends(window));
             let state = &shared.state;
-            state.front.as_ref().and_then(|front| {
+            state.queue.front.as_ref().and_then(|front| {
                 let number = front.asked?;
-                let live = state.table.live(number)?;
-                (!L::exempt_from_foreground(&front.entry) && !foreground.holds(&live.window))
-                    .then_some(number)
+                let live = state.queue.table.live(number)?;
+                (!L::exempt_from_foreground(&front.entry, &live.window)
+                    && !foreground.holds(&live.window))
+                .then_some(number)
             })
         };
         if let Some(number) = stopped {
@@ -362,7 +381,7 @@ impl<L: Logic> Core<L> {
         let mut shared = self.shared.borrow_mut();
         let state = &mut shared.state;
         let facts = &state.facts;
-        state.waiting.retain_mut(|item| match item {
+        state.queue.waiting.retain_mut(|item| match item {
             Item::One(entry) | Item::Menu { entry, .. } => {
                 !L::ends_at_foreground(facts, entry, &foreground)
             }
@@ -372,7 +391,7 @@ impl<L: Logic> Core<L> {
             }
         });
         if let Some(marker) = L::foreground_marker(&foreground) {
-            limiter::arrive::<L>(&state.facts, &mut state.waiting, marker);
+            limiter::arrive::<L>(&state.facts, &mut state.queue.waiting, marker);
         }
     }
 
@@ -382,16 +401,17 @@ impl<L: Logic> Core<L> {
     fn reader_ended(&mut self, instance: Instance) {
         let ended = {
             let mut shared = self.shared.borrow_mut();
-            if shared.state.readers.get(&instance.reader) == Some(&instance) {
-                shared.state.readers.remove(&instance.reader);
+            if shared.state.queue.readers.get(&instance.reader) == Some(&instance) {
+                shared.state.queue.readers.remove(&instance.reader);
             }
             if let Reader::Outpost(process) = instance.reader {
                 shared
                     .state
+                    .queue
                     .table
                     .unwatch_unless(|window| window.process != process);
             }
-            shared.state.table.reader_ended(instance)
+            shared.state.queue.table.reader_ended(instance)
         };
         for ended in ended {
             self.deliver(ended);
@@ -401,13 +421,13 @@ impl<L: Logic> Core<L> {
     /// A timer came due: requests past their due time stop; the hang round
     /// asks the shell to check its windows.
     fn tick(&mut self) {
-        let now_us = self.shared.borrow().state.now_us;
-        let due = self.shared.borrow().state.table.due(now_us);
+        let now_us = self.shared.borrow().state.queue.now_us;
+        let due = self.shared.borrow().state.queue.table.due(now_us);
         for number in due {
             self.stop(number, CancelReason::DueTime);
         }
         let mut shared = self.shared.borrow_mut();
-        if let Some(windows) = shared.state.table.round(now_us) {
+        if let Some(windows) = shared.state.queue.table.round(now_us) {
             shared.effects.push(Effect::CheckHung(windows));
         }
     }

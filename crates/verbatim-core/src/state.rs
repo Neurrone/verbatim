@@ -598,6 +598,17 @@ pub struct SrState {
     /// anything, so nothing is said after the exit sound, as NVDA says
     /// nothing once it has stopped its handlers.
     pub(crate) exiting: bool,
+    /// The two versions of the focus, the committed focus with what Core
+    /// keeps of its focus answer (`crate::focus::versions`).
+    pub(crate) versions: crate::focus::versions::Versions,
+    /// The event queue (`crate::entries`): its entries, its requests and
+    /// the front entry's checkpoint, plain data. Empty while a step of the
+    /// queue runs, when the driver holds it.
+    pub(crate) queue: crate::event_queue::Queue<crate::entries::Entry, SrState>,
+    /// The front entry's paused function, never cloned or written: rebuilt
+    /// from the queue's checkpoint when missing.
+    #[serde(skip)]
+    pub(crate) paused: crate::entries::Paused,
 }
 
 /// How many progress bars' last indications are remembered: more than are

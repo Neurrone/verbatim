@@ -32,6 +32,7 @@ mod inbox;
 mod limiter;
 #[cfg(test)]
 mod limiter_tests;
+pub(crate) mod pairs;
 mod request;
 mod table;
 #[cfg(test)]
@@ -46,8 +47,12 @@ use verbatim_model::{Pid, WindowHandle};
 
 use crate::focus::backend::{Backend, JudgedWindow, WindowKey};
 
-use driver::Cx;
-use limiter::{MsaaKey, Place};
+pub(crate) use driver::{Core, Cx, Queue, ReplayMismatch, State};
+#[cfg(test)]
+pub(crate) use inbox::Input;
+pub(crate) use inbox::{Effect, Timed};
+pub(crate) use limiter::{MsaaClass, MsaaKey, Place};
+pub(crate) use request::{Outcome, Request};
 
 /// A focus read's due time: 13 seconds from the moment Core decides to
 /// ask, for its whole chain of requests (ADR 0003, "A frozen window").
@@ -156,9 +161,10 @@ pub(crate) trait Logic: Sized + 'static {
     /// The function of `entry`, run when it reaches the front.
     fn run(cx: Cx<Self>, entry: Self::Entry) -> Function;
 
-    /// Whether `entry` was accepted by something other than the foreground
-    /// relation, which exempts its request from the foreground stop.
-    fn exempt_from_foreground(entry: &Self::Entry) -> bool;
+    /// Whether `entry`, whose request out names `window`, was accepted by
+    /// something other than the foreground relation, which exempts that
+    /// request from the foreground stop.
+    fn exempt_from_foreground(entry: &Self::Entry, window: &RequestWindow) -> bool;
 
     /// Whether `arriving`, joining the back, withdraws the request of the
     /// front entry `front`.
@@ -194,6 +200,13 @@ pub(crate) trait Logic: Sized + 'static {
         entry: &Self::Entry,
         foreground: &Foreground,
     ) -> bool;
+
+    /// The probe the tell of `entry` carries, recorded in the backend cache
+    /// when it arrives, so that a merge of the entry cannot lose it.
+    fn probe(entry: &Self::Entry) -> Option<verbatim_model::request::Probe> {
+        let _ = entry;
+        None
+    }
 
     /// The foreground marker joining the back when `foreground` comes in
     /// front, whose turn empties the readers' last focus when its window is

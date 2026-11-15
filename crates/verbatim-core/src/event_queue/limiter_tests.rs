@@ -149,7 +149,7 @@ impl Logic for Limited {
         })
     }
 
-    fn exempt_from_foreground(_: &Entry) -> bool {
+    fn exempt_from_foreground(_: &Entry, _: &RequestWindow) -> bool {
         false
     }
 
@@ -322,7 +322,7 @@ fn the_asked_entry_is_not_merged() {
     let _ = feed(&mut core, 0, Input::ReaderReady(OUTPOST));
     let _ = feed(&mut core, 0, Input::Entry(Entry::Hold));
     let _ = feed(&mut core, 1, Input::Entry(Entry::Hold));
-    assert_eq!(core.shared.borrow().state.waiting.len(), 1);
+    assert_eq!(core.shared.borrow().state.queue.waiting.len(), 1);
 }
 
 #[test]
