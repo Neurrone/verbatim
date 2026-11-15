@@ -1442,6 +1442,7 @@ fn reduced(
     event.assign_outpost(OutpostId(1));
     let effects = verbatim_core::reduce(
         state,
+        &mut verbatim_core::Runtime::default(),
         &Input::Event {
             trace_id: TraceId::mint(),
             observed_at_us: 0,
@@ -3655,7 +3656,7 @@ fn core_takes(
                 .unwrap_or_else(|| panic!("not a message Core takes as an input"))
         }
     };
-    let effects = verbatim_core::reduce(state, &input);
+    let effects = verbatim_core::reduce(state, &mut verbatim_core::Runtime::default(), &input);
     let spoken = effects
         .iter()
         .filter_map(|effect| match effect {

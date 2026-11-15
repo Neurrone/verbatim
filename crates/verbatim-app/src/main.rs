@@ -1067,6 +1067,8 @@ pub(crate) enum ShellCommand {
 struct ReducerThread<'a> {
     context: &'a ReducerContext,
     state: SrState,
+    /// The event queue's paused function, kept beside the state.
+    runtime: verbatim_core::Runtime,
     requests: RequestTable,
     /// Outpost generations that have started and not yet ended. A message
     /// from an outpost that has ended is dropped before the reducer sees it.
@@ -1799,7 +1801,7 @@ impl ReducerThread<'_> {
         {
             self.focus_reported.insert(node.id.outpost());
         }
-        let effects = reduce(&mut self.state, &input);
+        let effects = reduce(&mut self.state, &mut self.runtime, &input);
         if !self.focus_known && self.state.focused().is_some() {
             self.focus_known = true;
             self.context.readiness.focus_known();
@@ -2462,6 +2464,7 @@ fn reducer_loop(
     let mut thread = ReducerThread {
         context,
         state: SrState::new(),
+        runtime: verbatim_core::Runtime::default(),
         requests: RequestTable::default(),
         live: LiveOutposts::default(),
         wanted: wanted::Wanted::default(),
@@ -2822,10 +2825,18 @@ mod tests {
         live.started(OutpostId(3), Pid(40));
         live.started(OutpostId(4), Pid(41));
         let mut state = SrState::new();
-        assert_eq!(reduce(&mut state, &foreground(40, 0x100)), []);
         assert_eq!(
             reduce(
                 &mut state,
+                &mut verbatim_core::Runtime::default(),
+                &foreground(40, 0x100)
+            ),
+            []
+        );
+        assert_eq!(
+            reduce(
+                &mut state,
+                &mut verbatim_core::Runtime::default(),
                 &not_responding(&live, Pid(40), OutpostId(3), 0x100).expect("live")
             ),
             [Effect::PlayEarcon(Earcon::AppNotResponding)]
@@ -2833,6 +2844,7 @@ mod tests {
         assert_eq!(
             reduce(
                 &mut state,
+                &mut verbatim_core::Runtime::default(),
                 &not_responding(&live, Pid(41), OutpostId(4), 0x200).expect("live")
             ),
             []
@@ -2856,10 +2868,18 @@ mod tests {
         live.started(OutpostId(3), Pid(50));
         live.reports_for(OutpostId(3), Pid(40));
         let mut state = SrState::new();
-        assert_eq!(reduce(&mut state, &foreground(40, 0x100)), []);
         assert_eq!(
             reduce(
                 &mut state,
+                &mut verbatim_core::Runtime::default(),
+                &foreground(40, 0x100)
+            ),
+            []
+        );
+        assert_eq!(
+            reduce(
+                &mut state,
+                &mut verbatim_core::Runtime::default(),
                 &not_responding(&live, Pid(50), OutpostId(3), 0x100).expect("live")
             ),
             [Effect::PlayEarcon(Earcon::AppNotResponding)]
@@ -2871,8 +2891,22 @@ mod tests {
     #[test]
     fn an_abandoned_query_plays_nothing() {
         let mut state = SrState::new();
-        assert_eq!(reduce(&mut state, &foreground(40, 0x100)), []);
-        assert_eq!(reduce(&mut state, &abandoned(OutpostId(3))), []);
+        assert_eq!(
+            reduce(
+                &mut state,
+                &mut verbatim_core::Runtime::default(),
+                &foreground(40, 0x100)
+            ),
+            []
+        );
+        assert_eq!(
+            reduce(
+                &mut state,
+                &mut verbatim_core::Runtime::default(),
+                &abandoned(OutpostId(3))
+            ),
+            []
+        );
     }
 
     /// A hang met while its application is in the background is never
@@ -2884,16 +2918,38 @@ mod tests {
         let mut live = LiveOutposts::default();
         live.started(OutpostId(4), Pid(41));
         let mut state = SrState::new();
-        assert_eq!(reduce(&mut state, &foreground(40, 0x100)), []);
         assert_eq!(
             reduce(
                 &mut state,
+                &mut verbatim_core::Runtime::default(),
+                &foreground(40, 0x100)
+            ),
+            []
+        );
+        assert_eq!(
+            reduce(
+                &mut state,
+                &mut verbatim_core::Runtime::default(),
                 &not_responding(&live, Pid(41), OutpostId(4), 0x200).expect("live")
             ),
             []
         );
-        assert_eq!(reduce(&mut state, &foreground(41, 0x200)), []);
-        assert_eq!(reduce(&mut state, &abandoned(OutpostId(4))), []);
+        assert_eq!(
+            reduce(
+                &mut state,
+                &mut verbatim_core::Runtime::default(),
+                &foreground(41, 0x200)
+            ),
+            []
+        );
+        assert_eq!(
+            reduce(
+                &mut state,
+                &mut verbatim_core::Runtime::default(),
+                &abandoned(OutpostId(4))
+            ),
+            []
+        );
     }
 
     /// Giving up a tree dump finds the dump with that ticket and no other.

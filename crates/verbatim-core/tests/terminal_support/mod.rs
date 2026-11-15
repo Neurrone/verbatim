@@ -480,7 +480,11 @@ impl Session {
     /// One step of the reducer, logged, with the timer's due time read
     /// after it, as the shell reads it.
     fn step(&mut self, input: Input) -> Vec<Effect> {
-        let effects = reduce(&mut self.state, &input);
+        let effects = reduce(
+            &mut self.state,
+            &mut verbatim_core::Runtime::default(),
+            &input,
+        );
         self.log.push((input, effects.clone()));
         let due = self.state.terminal_timer_due();
         if due != self.armed {

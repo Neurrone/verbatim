@@ -83,6 +83,7 @@ pub use dump::{
     DUMP_FORMAT_VERSION, DumpContents, DumpHeader, DumpReadError, UNKNOWN_COMMIT, read_dump,
     write_dump,
 };
+pub use entries::Runtime;
 pub use flight_recorder::FlightRecorder;
 pub use focus_rules::is_selection_container;
 pub use recorder::{RecordedInput, ReducerRecorder, replay};

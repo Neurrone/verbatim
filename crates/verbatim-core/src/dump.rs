@@ -336,7 +336,11 @@ mod tests {
     /// A state with a focus, so the base state line carries something.
     fn sample_base() -> SrState {
         let mut state = SrState::new();
-        let _ = crate::reduce(&mut state, &sample_inputs()[0].input);
+        let _ = crate::reduce(
+            &mut state,
+            &mut crate::Runtime::default(),
+            &sample_inputs()[0].input,
+        );
         state
     }
 

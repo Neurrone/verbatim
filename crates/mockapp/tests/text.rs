@@ -1070,7 +1070,7 @@ fn say_all_step<S: TextSource>(
     let mut step = SayAllStep::default();
     let mut inputs = vec![input.clone()];
     while let Some(input) = inputs.pop() {
-        for effect in reduce(state, &input) {
+        for effect in reduce(state, &mut verbatim_core::Runtime::default(), &input) {
             match effect {
                 Effect::Speak(utterance, _) => {
                     assert!(utterance.say_all, "{utterance:?} is read by say-all");
@@ -1125,6 +1125,7 @@ fn focused_notes() -> SrState {
     let mut state = SrState::new();
     let _ = reduce(
         &mut state,
+        &mut verbatim_core::Runtime::default(),
         &Input::Event {
             trace_id: TraceId::mint(),
             observed_at_us: 0,

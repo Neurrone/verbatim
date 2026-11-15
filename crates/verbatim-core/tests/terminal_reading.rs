@@ -759,7 +759,11 @@ fn a_footer_written_just_before_the_command_is_the_one_read() {
 #[test]
 fn outside_a_terminal_no_status_line_is_found() {
     let mut state = SrState::new();
-    let effects = verbatim_core::reduce(&mut state, &command(STATUS_BAR));
+    let effects = verbatim_core::reduce(
+        &mut state,
+        &mut verbatim_core::Runtime::default(),
+        &command(STATUS_BAR),
+    );
     let [Effect::Speak(utterance, _)] = effects.as_slice() else {
         panic!("one utterance, not {effects:?}");
     };

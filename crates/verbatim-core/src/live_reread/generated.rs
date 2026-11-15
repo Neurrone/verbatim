@@ -454,7 +454,7 @@ impl World {
         // The user starts in the first window, with no focus taken.
         world.obs.insert(100, Obs::Change(0, Some(0)));
         let change = world.change(0, 100);
-        let effects = crate::reduce(&mut world.state, &change);
+        let effects = crate::reduce(&mut world.state, &mut crate::Runtime::default(), &change);
         world.take(&effects);
         world
     }
@@ -1447,7 +1447,8 @@ impl World {
         self.arrivals += 1;
         let effects = match msg {
             Msg::Change { seq, window, input } => {
-                let effects = crate::reduce(&mut self.state, &input);
+                let effects =
+                    crate::reduce(&mut self.state, &mut crate::Runtime::default(), &input);
                 self.core_front = (seq, window);
                 self.obs
                     .insert(seq, Obs::Change(window, Some(self.arrivals)));
@@ -1472,7 +1473,8 @@ impl World {
                     Status::Accepted
                 };
                 let status = rep.status;
-                let effects = crate::reduce(&mut self.state, &input);
+                let effects =
+                    crate::reduce(&mut self.state, &mut crate::Runtime::default(), &input);
                 let said = Self::said(&effects);
                 self.log.push(format!(
                     "  {seq} {element:?} reaches Core: {said}, {status:?}"
@@ -1483,6 +1485,7 @@ impl World {
                 self.now += 10;
                 let effects = crate::reduce(
                     &mut self.state,
+                    &mut crate::Runtime::default(),
                     &Input::OutpostEnded {
                         trace_id: TraceId::from_raw(self.now),
                         outpost: OutpostId(outpost),
@@ -1502,7 +1505,8 @@ impl World {
                 input,
                 names,
             } => {
-                let effects = crate::reduce(&mut self.state, &input);
+                let effects =
+                    crate::reduce(&mut self.state, &mut crate::Runtime::default(), &input);
                 let window = self.rep(seq).element.0;
                 let refused = self.background(seq, window);
                 self.ended(seq, request, |at| {
@@ -1526,6 +1530,7 @@ impl World {
             } => {
                 let effects = crate::reduce(
                     &mut self.state,
+                    &mut crate::Runtime::default(),
                     &Input::LiveRereadGone {
                         outpost: OutpostId(outpost),
                         request,
@@ -1543,7 +1548,11 @@ impl World {
 
     fn replace_listener(&mut self) {
         self.arrivals += 1;
-        let effects = crate::reduce(&mut self.state, &Input::ListenerReplaced);
+        let effects = crate::reduce(
+            &mut self.state,
+            &mut crate::Runtime::default(),
+            &Input::ListenerReplaced,
+        );
         self.reader_ended(|world, rep| world.wins[rep.element.0].uia);
         self.readers
             .retain(|(_, kind), _| *kind != FocusReaderKind::Listener);

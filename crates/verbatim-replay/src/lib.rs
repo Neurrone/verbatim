@@ -494,10 +494,11 @@ mod tests {
     /// the effect count reducing it gives, from a new state.
     fn replayed(inputs: Vec<Input>) -> Vec<Replayed> {
         let mut state = verbatim_core::SrState::new();
+        let mut runtime = verbatim_core::Runtime::default();
         let recorded: Vec<verbatim_core::RecordedInput> = inputs
             .into_iter()
             .map(|input| verbatim_core::RecordedInput {
-                effect_count: verbatim_core::reduce(&mut state, &input).len(),
+                effect_count: verbatim_core::reduce(&mut state, &mut runtime, &input).len(),
                 input,
             })
             .collect();

@@ -106,6 +106,7 @@ fn spoken_in(
     event.assign_outpost(OutpostId(1));
     verbatim_core::reduce(
         state,
+        &mut verbatim_core::Runtime::default(),
         &Input::Event {
             trace_id: TraceId::mint(),
             observed_at_us: 0,
@@ -334,6 +335,7 @@ fn said(state: &mut SrState, mut event: NormalizedEvent) -> Vec<Said> {
     event.assign_outpost(OutpostId(1));
     verbatim_core::reduce(
         state,
+        &mut verbatim_core::Runtime::default(),
         &Input::Event {
             trace_id: TraceId::mint(),
             observed_at_us: 0,
@@ -594,6 +596,7 @@ fn a_progress_bar_off_the_focus_indicates_its_percentage() {
         event.assign_outpost(OutpostId(1));
         verbatim_core::reduce(
             &mut state,
+            &mut verbatim_core::Runtime::default(),
             &Input::Event {
                 trace_id: TraceId::mint(),
                 observed_at_us: 0,

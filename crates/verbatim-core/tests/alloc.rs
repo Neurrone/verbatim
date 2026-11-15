@@ -122,6 +122,7 @@ fn state_with_chain(depth: u64) -> SrState {
     let mut state = SrState::new();
     let _ = reduce(
         &mut state,
+        &mut verbatim_core::Runtime::default(),
         &focus_event(node(1, Role::Button, "Previous"), ancestors),
     );
     state
@@ -145,8 +146,10 @@ fn a_focus_step_allocates_the_same_whatever_the_ancestor_chain() {
     let mut small = state_with_chain(SMALL_CHAIN);
     let mut large = state_with_chain(LARGE_CHAIN);
 
-    let (small_effects, small_bytes) = allocated_by(|| reduce(&mut small, &input));
-    let (large_effects, large_bytes) = allocated_by(|| reduce(&mut large, &input));
+    let (small_effects, small_bytes) =
+        allocated_by(|| reduce(&mut small, &mut verbatim_core::Runtime::default(), &input));
+    let (large_effects, large_bytes) =
+        allocated_by(|| reduce(&mut large, &mut verbatim_core::Runtime::default(), &input));
 
     assert_eq!(small_effects, large_effects);
     assert!(small_bytes > 0, "the step allocates its effects");
@@ -165,8 +168,10 @@ fn a_navigation_step_allocates_the_same_whatever_the_ancestor_chain() {
     let mut small = state_with_chain(SMALL_CHAIN);
     let mut large = state_with_chain(LARGE_CHAIN);
 
-    let (small_effects, small_bytes) = allocated_by(|| reduce(&mut small, &command));
-    let (large_effects, large_bytes) = allocated_by(|| reduce(&mut large, &command));
+    let (small_effects, small_bytes) =
+        allocated_by(|| reduce(&mut small, &mut verbatim_core::Runtime::default(), &command));
+    let (large_effects, large_bytes) =
+        allocated_by(|| reduce(&mut large, &mut verbatim_core::Runtime::default(), &command));
     assert_eq!(small_effects, large_effects);
     assert_eq!(small_bytes, large_bytes);
 
@@ -182,8 +187,20 @@ fn a_navigation_step_allocates_the_same_whatever_the_ancestor_chain() {
             verbatim_model::protocol::QueryResult::Navigated(Some(node(6, Role::Pane, "Toolbar"))),
         ),
     };
-    let (small_effects, small_bytes) = allocated_by(|| reduce(&mut small, &completion));
-    let (large_effects, large_bytes) = allocated_by(|| reduce(&mut large, &completion));
+    let (small_effects, small_bytes) = allocated_by(|| {
+        reduce(
+            &mut small,
+            &mut verbatim_core::Runtime::default(),
+            &completion,
+        )
+    });
+    let (large_effects, large_bytes) = allocated_by(|| {
+        reduce(
+            &mut large,
+            &mut verbatim_core::Runtime::default(),
+            &completion,
+        )
+    });
     assert_eq!(small_effects, large_effects);
     assert!(!small_effects.is_empty(), "the navigator moves and speaks");
     assert_eq!(small_bytes, large_bytes);
@@ -215,10 +232,15 @@ fn editing_with_chain(depth: u64) -> SrState {
     let mut state = SrState::new();
     let _ = reduce(
         &mut state,
+        &mut verbatim_core::Runtime::default(),
         &focus_event(node(1, Role::EditableText, "Body"), ancestors),
     );
     for observed_at_ms in 1..=10 {
-        let _ = reduce(&mut state, &caret_moved(long_line(10, 0), observed_at_ms));
+        let _ = reduce(
+            &mut state,
+            &mut verbatim_core::Runtime::default(),
+            &caret_moved(long_line(10, 0), observed_at_ms),
+        );
     }
     state
 }
@@ -251,8 +273,10 @@ fn text_steps_allocate_the_same_whatever_the_ancestor_chain() {
     let mut small = editing_with_chain(SMALL_CHAIN);
     let mut large = editing_with_chain(LARGE_CHAIN);
     let mut same = |input: &Input| {
-        let (small_effects, small_bytes) = allocated_by(|| reduce(&mut small, input));
-        let (large_effects, large_bytes) = allocated_by(|| reduce(&mut large, input));
+        let (small_effects, small_bytes) =
+            allocated_by(|| reduce(&mut small, &mut verbatim_core::Runtime::default(), input));
+        let (large_effects, large_bytes) =
+            allocated_by(|| reduce(&mut large, &mut verbatim_core::Runtime::default(), input));
         assert_eq!(small_effects, large_effects);
         assert_eq!(small_bytes, large_bytes, "{input:?}");
         small_effects
@@ -325,6 +349,7 @@ fn a_terminal_line_allocates_the_same_whatever_the_ancestor_chain() {
         let mut state = SrState::new();
         let _ = reduce(
             &mut state,
+            &mut verbatim_core::Runtime::default(),
             &focus_event(node(1, Role::Terminal, "Terminal"), ancestors),
         );
         state
@@ -349,12 +374,14 @@ fn a_terminal_line_allocates_the_same_whatever_the_ancestor_chain() {
     };
     outpost.sim.write(b"PS> ");
     let first = snapshot(&mut outpost, 100);
-    let _ = reduce(&mut small, &first);
-    let _ = reduce(&mut large, &first);
+    let _ = reduce(&mut small, &mut verbatim_core::Runtime::default(), &first);
+    let _ = reduce(&mut large, &mut verbatim_core::Runtime::default(), &first);
     outpost.sim.write(b"\r\ntotal 42\r\nPS> ");
     let output = snapshot(&mut outpost, 200);
-    let (small_effects, small_bytes) = allocated_by(|| reduce(&mut small, &output));
-    let (large_effects, large_bytes) = allocated_by(|| reduce(&mut large, &output));
+    let (small_effects, small_bytes) =
+        allocated_by(|| reduce(&mut small, &mut verbatim_core::Runtime::default(), &output));
+    let (large_effects, large_bytes) =
+        allocated_by(|| reduce(&mut large, &mut verbatim_core::Runtime::default(), &output));
     assert_eq!(small_effects, large_effects);
     assert!(!small_effects.is_empty(), "the line is spoken");
     assert_eq!(small_bytes, large_bytes);

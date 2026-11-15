@@ -66,6 +66,7 @@ fn spoken_in(state: &mut SrState, reported: &Reported) -> Vec<Vec<SegmentContent
     event.assign_outpost(OutpostId(1));
     let effects = verbatim_core::reduce(
         state,
+        &mut verbatim_core::Runtime::default(),
         &Input::Event {
             trace_id: TraceId::mint(),
             observed_at_us: 0,
@@ -437,6 +438,7 @@ fn bidirectional_marks_are_stripped_from_a_name() {
     );
     let effects = verbatim_core::reduce(
         &mut state,
+        &mut verbatim_core::Runtime::default(),
         &Input::Command {
             pressed_at_ms: 0,
             key_seq: verbatim_model::KeySeq::NONE_YET,
@@ -453,6 +455,7 @@ fn bidirectional_marks_are_stripped_from_a_name() {
     object.assign_outpost(OutpostId(1));
     let effects = verbatim_core::reduce(
         &mut state,
+        &mut verbatim_core::Runtime::default(),
         &Input::Answered {
             at_us: 0,
             trace_id: TraceId::mint(),
@@ -753,6 +756,7 @@ fn a_sensitive_slider_s_value_change_reaches_core_while_its_thumb_is_the_focus()
     change.assign_outpost(OutpostId(1));
     let effects = verbatim_core::reduce(
         &mut state,
+        &mut verbatim_core::Runtime::default(),
         &Input::Event {
             trace_id: TraceId::mint(),
             observed_at_us: 0,

@@ -168,7 +168,7 @@ fn held_key_passed_on_wired() -> (SrState, Wire) {
         },
         pressed_at_ms: 500,
     };
-    let effects = reduce(&mut state, &held);
+    let effects = reduce(&mut state, &mut crate::Runtime::default(), &held);
     wire.apply(&held, &effects);
     let asked = requests(&effects);
     let [(read, Some(op @ TextOp::ReadCaret(_)))] = &asked[..] else {
@@ -179,7 +179,7 @@ fn held_key_passed_on_wired() -> (SrState, Wire) {
         EDIT_OUTPOST,
         QueryOutcome::Done(fitting(EDIT_OUTPOST, &Asked::Text(op.clone()))),
     );
-    let effects = reduce(&mut state, &answer);
+    let effects = reduce(&mut state, &mut crate::Runtime::default(), &answer);
     wire.apply(&answer, &effects);
     assert!(state.holds_inputs_back(), "its watch is waited on");
     (state, wire)
@@ -191,7 +191,7 @@ fn started(inputs: &[Input]) -> (SrState, Wire) {
     let mut state = SrState::new();
     let mut wire = Wire::default();
     for input in inputs {
-        let effects = reduce(&mut state, input);
+        let effects = reduce(&mut state, &mut crate::Runtime::default(), input);
         wire.apply(input, &effects);
     }
     (state, wire)
@@ -613,7 +613,7 @@ fn enumerate(
             let mut wire = wire.clone();
             for input in &inputs {
                 let before = state.clone();
-                let effects = reduce(&mut state, input);
+                let effects = reduce(&mut state, &mut crate::Runtime::default(), input);
                 wire.apply(input, &effects);
                 visit(
                     path,
@@ -866,7 +866,7 @@ fn found_sequences_keep_the_query_tables_invariants() {
         for step in &sequence {
             for input in wire.inputs(outpost, step) {
                 let before = state.clone();
-                let effects = reduce(&mut state, &input);
+                let effects = reduce(&mut state, &mut crate::Runtime::default(), &input);
                 wire.apply(&input, &effects);
                 check(
                     &[],
@@ -930,7 +930,11 @@ pub(super) fn speaks(effects: &[Effect]) -> bool {
 
 /// A navigation from the text box, asked: its number.
 fn navigate(state: &mut SrState) -> QueryId {
-    let asked = requests(&reduce(state, &command(ReviewCommand::Parent)));
+    let asked = requests(&reduce(
+        state,
+        &mut crate::Runtime::default(),
+        &command(ReviewCommand::Parent),
+    ));
     let [(query_id, None)] = asked[..] else {
         panic!("one navigation, not {asked:?}");
     };
@@ -953,7 +957,11 @@ fn an_answer_runs_its_continuation_once_and_ends_its_query() {
     let mut state = text_box();
     let query = navigate(&mut state);
     assert_eq!(state.outstanding_queries(), 1);
-    let effects = reduce(&mut state, &answered(query, EDIT_OUTPOST, window_found()));
+    let effects = reduce(
+        &mut state,
+        &mut crate::Runtime::default(),
+        &answered(query, EDIT_OUTPOST, window_found()),
+    );
     assert!(speaks(&effects), "the window is announced: {effects:?}");
     assert_eq!(
         state
@@ -964,7 +972,11 @@ fn an_answer_runs_its_continuation_once_and_ends_its_query() {
     );
     assert_eq!(state.outstanding_queries(), 0);
     assert_eq!(
-        reduce(&mut state, &answered(query, EDIT_OUTPOST, window_found())),
+        reduce(
+            &mut state,
+            &mut crate::Runtime::default(),
+            &answered(query, EDIT_OUTPOST, window_found())
+        ),
         []
     );
 }
@@ -976,17 +988,29 @@ fn an_answer_runs_its_continuation_once_and_ends_its_query() {
 fn a_second_navigation_waits_behind_the_one_running() {
     let mut state = text_box();
     let first = navigate(&mut state);
-    let asked = requests(&reduce(&mut state, &command(ReviewCommand::Parent)));
+    let asked = requests(&reduce(
+        &mut state,
+        &mut crate::Runtime::default(),
+        &command(ReviewCommand::Parent),
+    ));
     assert_eq!(asked, [], "the second waits behind the first");
     assert_eq!(state.outstanding_queries(), 1);
-    let effects = reduce(&mut state, &answered(first, EDIT_OUTPOST, window_found()));
+    let effects = reduce(
+        &mut state,
+        &mut crate::Runtime::default(),
+        &answered(first, EDIT_OUTPOST, window_found()),
+    );
     assert!(speaks(&effects), "the first moves: {effects:?}");
     let asked = requests(&effects);
     let [(second, None)] = asked[..] else {
         panic!("the second's navigation, not {asked:?}");
     };
     assert_eq!(state.outstanding_queries(), 1);
-    let effects = reduce(&mut state, &answered(second, EDIT_OUTPOST, window_found()));
+    let effects = reduce(
+        &mut state,
+        &mut crate::Runtime::default(),
+        &answered(second, EDIT_OUTPOST, window_found()),
+    );
     assert!(speaks(&effects), "the second moves: {effects:?}");
     assert_eq!(state.outstanding_queries(), 0);
 }
@@ -998,11 +1022,19 @@ fn an_answer_from_another_outpost_leaves_its_query_open() {
     let mut state = text_box();
     let query = navigate(&mut state);
     assert_eq!(
-        reduce(&mut state, &answered(query, OutpostId(9), window_found())),
+        reduce(
+            &mut state,
+            &mut crate::Runtime::default(),
+            &answered(query, OutpostId(9), window_found())
+        ),
         []
     );
     assert_eq!(state.outstanding_queries(), 1);
-    let effects = reduce(&mut state, &answered(query, EDIT_OUTPOST, window_found()));
+    let effects = reduce(
+        &mut state,
+        &mut crate::Runtime::default(),
+        &answered(query, EDIT_OUTPOST, window_found()),
+    );
     assert!(speaks(&effects));
 }
 
@@ -1019,7 +1051,11 @@ fn an_unanswered_navigation_stays_silent_and_a_gone_node_says_the_edge() {
         let mut state = text_box();
         let query = navigate(&mut state);
         assert_eq!(
-            reduce(&mut state, &answered(query, EDIT_OUTPOST, outcome)),
+            reduce(
+                &mut state,
+                &mut crate::Runtime::default(),
+                &answered(query, EDIT_OUTPOST, outcome)
+            ),
             []
         );
     }
@@ -1027,6 +1063,7 @@ fn an_unanswered_navigation_stays_silent_and_a_gone_node_says_the_edge() {
     let query = navigate(&mut state);
     let effects = reduce(
         &mut state,
+        &mut crate::Runtime::default(),
         &answered(query, EDIT_OUTPOST, QueryOutcome::Gone),
     );
     assert!(speaks(&effects), "the edge is spoken: {effects:?}");
@@ -1045,12 +1082,17 @@ fn a_text_requests_failure_reads_as_unanswered() {
         let mut state = text_box();
         let asked = requests(&reduce(
             &mut state,
+            &mut crate::Runtime::default(),
             &command(ReviewCommand::ReviewCurrentLine),
         ));
         let [(query, Some(TextOp::Read(_)))] = asked[..] else {
             panic!("one read, not {asked:?}");
         };
-        let effects = reduce(&mut state, &answered(query, EDIT_OUTPOST, outcome));
+        let effects = reduce(
+            &mut state,
+            &mut crate::Runtime::default(),
+            &answered(query, EDIT_OUTPOST, outcome),
+        );
         assert!(!speaks(&effects), "{effects:?}");
         assert_eq!(state.outstanding_queries(), 0);
     }
@@ -1066,6 +1108,7 @@ fn a_console_review_answered_from_memory_is_never_waited_for() {
     let before = state.outstanding_queries();
     let asked = requests(&reduce(
         &mut state,
+        &mut crate::Runtime::default(),
         &command(ReviewCommand::ReviewCurrentLine),
     ));
     let [(fresh, Some(TextOp::TerminalReadNow(_)))] = asked[..] else {
@@ -1078,6 +1121,7 @@ fn a_console_review_answered_from_memory_is_never_waited_for() {
     );
     let effects = reduce(
         &mut state,
+        &mut crate::Runtime::default(),
         &answered(
             fresh,
             CONSOLE_OUTPOST,
@@ -1128,20 +1172,23 @@ fn a_dropped_models_review_ends_and_its_fresh_read_is_taken_by_no_model() {
         let mut state = console();
         let asked = requests(&reduce(
             &mut state,
+            &mut crate::Runtime::default(),
             &command(ReviewCommand::ReviewCurrentLine),
         ));
         let [(fresh, Some(_))] = asked[..] else {
             panic!("one fresh read, not {asked:?}");
         };
         for input in &drop_model {
-            let _ = reduce(&mut state, input);
+            let _ = reduce(&mut state, &mut crate::Runtime::default(), input);
         }
         let _ = reduce(
             &mut state,
+            &mut crate::Runtime::default(),
             &snapshot_event(NodeId::in_outpost(CONSOLE_OUTPOST, 5), 3, 30),
         );
         let asked = requests(&reduce(
             &mut state,
+            &mut crate::Runtime::default(),
             &command(ReviewCommand::ReviewCurrentLine),
         ));
         let [(own, Some(TextOp::TerminalReadNow(_)))] = asked[..] else {
@@ -1151,6 +1198,7 @@ fn a_dropped_models_review_ends_and_its_fresh_read_is_taken_by_no_model() {
         let before = state.outstanding_queries();
         let effects = reduce(
             &mut state,
+            &mut crate::Runtime::default(),
             &answered(
                 fresh,
                 CONSOLE_OUTPOST,
@@ -1170,7 +1218,11 @@ fn a_dropped_models_review_ends_and_its_fresh_read_is_taken_by_no_model() {
 fn the_open_queries_round_trip_with_the_state() {
     let mut state = text_box();
     let _ = navigate(&mut state);
-    let _ = reduce(&mut state, &command(ReviewCommand::ReviewCurrentLine));
+    let _ = reduce(
+        &mut state,
+        &mut crate::Runtime::default(),
+        &command(ReviewCommand::ReviewCurrentLine),
+    );
     let json = serde_json::to_string(&state).expect("the state serializes");
     let read: SrState = serde_json::from_str(&json).expect("the state reads");
     assert_eq!(read, state);

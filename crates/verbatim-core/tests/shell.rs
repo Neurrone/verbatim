@@ -31,7 +31,11 @@ fn said(trace_id: TraceId, priority: SpeechPriority, content: SegmentContent) ->
 }
 
 fn effects_of(input: &Input) -> Vec<Effect> {
-    reduce(&mut SrState::new(), input)
+    reduce(
+        &mut SrState::new(),
+        &mut verbatim_core::Runtime::default(),
+        input,
+    )
 }
 
 #[test]
@@ -53,13 +57,38 @@ fn the_start_and_error_sounds_play_their_earcons() {
 fn exiting_cancels_speech_then_plays_the_exit_sound_and_nothing_follows() {
     let mut state = SrState::new();
     assert_eq!(
-        reduce(&mut state, &Input::Exiting { replaced: false }),
+        reduce(
+            &mut state,
+            &mut verbatim_core::Runtime::default(),
+            &Input::Exiting { replaced: false }
+        ),
         [Effect::StopSpeech, Effect::PlayEarcon(Earcon::Exit)]
     );
-    assert_eq!(reduce(&mut state, &Input::ErrorLogged), []);
+    assert_eq!(
+        reduce(
+            &mut state,
+            &mut verbatim_core::Runtime::default(),
+            &Input::ErrorLogged
+        ),
+        []
+    );
     let mut state = SrState::new();
-    assert_eq!(reduce(&mut state, &Input::Exiting { replaced: true }), []);
-    assert_eq!(reduce(&mut state, &Input::ErrorLogged), []);
+    assert_eq!(
+        reduce(
+            &mut state,
+            &mut verbatim_core::Runtime::default(),
+            &Input::Exiting { replaced: true }
+        ),
+        []
+    );
+    assert_eq!(
+        reduce(
+            &mut state,
+            &mut verbatim_core::Runtime::default(),
+            &Input::ErrorLogged
+        ),
+        []
+    );
 }
 
 #[test]
@@ -207,6 +236,7 @@ fn a_menus_end_asks_for_the_foreground_focus_unless_a_later_focus_was_applied() 
     let mut state = SrState::new();
     let _ = reduce(
         &mut state,
+        &mut verbatim_core::Runtime::default(),
         &Input::Event {
             trace_id: TraceId::from_raw(7),
             observed_at_us: 1_000,
@@ -238,16 +268,28 @@ fn a_menus_end_asks_for_the_foreground_focus_unless_a_later_focus_was_applied() 
     assert_eq!(state.latest_focus_observed_at(), Some(1_000));
     // A focus observed after the close was applied: nothing more is asked.
     assert_eq!(
-        reduce(&mut state, &Input::MenuOrSwitchEnded { ended_at_us: 900 }),
+        reduce(
+            &mut state,
+            &mut verbatim_core::Runtime::default(),
+            &Input::MenuOrSwitchEnded { ended_at_us: 900 }
+        ),
         []
     );
     assert_eq!(
-        reduce(&mut state, &Input::MenuOrSwitchEnded { ended_at_us: 1_000 }),
+        reduce(
+            &mut state,
+            &mut verbatim_core::Runtime::default(),
+            &Input::MenuOrSwitchEnded { ended_at_us: 1_000 }
+        ),
         []
     );
     // None since: the application in front is asked for its focus.
     assert_eq!(
-        reduce(&mut state, &Input::MenuOrSwitchEnded { ended_at_us: 1_001 }),
+        reduce(
+            &mut state,
+            &mut verbatim_core::Runtime::default(),
+            &Input::MenuOrSwitchEnded { ended_at_us: 1_001 }
+        ),
         [Effect::ReadFocus(
             verbatim_model::protocol::FocusPurpose::Fake
         )]
@@ -308,15 +350,27 @@ fn focus_in_window(number: u64, foreground: bool, us: u64) -> Input {
 #[test]
 fn a_menus_end_is_compared_with_the_focus_taken_only() {
     let mut state = SrState::new();
-    let _ = reduce(&mut state, &focus_in_window(5, false, 1_000));
+    let _ = reduce(
+        &mut state,
+        &mut verbatim_core::Runtime::default(),
+        &focus_in_window(5, false, 1_000),
+    );
     assert_eq!(
-        reduce(&mut state, &focus_in_window(6, true, 2_000)),
+        reduce(
+            &mut state,
+            &mut verbatim_core::Runtime::default(),
+            &focus_in_window(6, true, 2_000)
+        ),
         [],
         "the focus is already in the window"
     );
     assert_eq!(state.latest_focus_observed_at(), Some(1_000));
     assert_eq!(
-        reduce(&mut state, &Input::MenuOrSwitchEnded { ended_at_us: 1_500 }),
+        reduce(
+            &mut state,
+            &mut verbatim_core::Runtime::default(),
+            &Input::MenuOrSwitchEnded { ended_at_us: 1_500 }
+        ),
         [Effect::ReadFocus(
             verbatim_model::protocol::FocusPurpose::Fake
         )]
@@ -343,7 +397,10 @@ fn foreground(console: bool, thread: u32, integrity: Option<u32>, own: Option<u3
 /// say nothing.
 fn hook_view_after(input: &Input) -> Option<HookForeground> {
     let mut state = SrState::new();
-    assert_eq!(reduce(&mut state, input), []);
+    assert_eq!(
+        reduce(&mut state, &mut verbatim_core::Runtime::default(), input),
+        []
+    );
     state.hook_foreground()
 }
 
@@ -408,7 +465,11 @@ fn a_console_window_takes_the_thread_its_event_named() {
 fn the_latest_foreground_report_decides() {
     let mut state = SrState::new();
     assert_eq!(
-        reduce(&mut state, &foreground(true, 40, Some(HIGH), Some(MEDIUM))),
+        reduce(
+            &mut state,
+            &mut verbatim_core::Runtime::default(),
+            &foreground(true, 40, Some(HIGH), Some(MEDIUM))
+        ),
         []
     );
     let next = Input::Foreground(ForegroundWindow {
@@ -422,7 +483,10 @@ fn the_latest_foreground_report_decides() {
         integrity: Some(MEDIUM),
         own_integrity: Some(MEDIUM),
     });
-    assert_eq!(reduce(&mut state, &next), []);
+    assert_eq!(
+        reduce(&mut state, &mut verbatim_core::Runtime::default(), &next),
+        []
+    );
     assert_eq!(
         state.hook_foreground(),
         Some(HookForeground {
@@ -440,14 +504,20 @@ fn a_lock_keys_announcement_is_heard_after_a_key_pressed_within_its_30_ms() {
     // A focus whose typing is echoed.
     let _ = reduce(
         &mut state,
+        &mut verbatim_core::Runtime::default(),
         &Input::Settings(verbatim_model::ReaderSettings {
             speak_typed_characters: verbatim_model::TypingEcho::Always,
             ..verbatim_model::ReaderSettings::default()
         }),
     );
-    let _ = reduce(&mut state, &focus_in_window(5, false, 500_000));
+    let _ = reduce(
+        &mut state,
+        &mut verbatim_core::Runtime::default(),
+        &focus_in_window(5, false, 500_000),
+    );
     let effects = reduce(
         &mut state,
+        &mut verbatim_core::Runtime::default(),
         &Input::ToggleKeyPressed {
             trace_id: TraceId::from_raw(9),
             key_seq: KeySeq::new(1),
@@ -465,6 +535,7 @@ fn a_lock_keys_announcement_is_heard_after_a_key_pressed_within_its_30_ms() {
     let letter = TraceId::from_raw(10);
     let effects = reduce(
         &mut state,
+        &mut verbatim_core::Runtime::default(),
         &Input::CharacterTyped {
             trace_id: letter,
             key_seq: KeySeq::new(2),
@@ -492,6 +563,7 @@ fn a_lock_keys_announcement_is_heard_after_a_key_pressed_within_its_30_ms() {
     assert_eq!(
         reduce(
             &mut state,
+            &mut verbatim_core::Runtime::default(),
             &Input::LockKeyToggled {
                 trace_id: toggled,
                 key: LockKey::ScrollLock,
@@ -528,11 +600,19 @@ fn a_hang_in_the_process_focused_inside_the_attention_window_plays_the_sound() {
         integrity: None,
         own_integrity: None,
     });
-    assert_eq!(reduce(&mut state, &frame), []);
-    let _ = reduce(&mut state, &focus_in_window(5, false, 1_000));
+    assert_eq!(
+        reduce(&mut state, &mut verbatim_core::Runtime::default(), &frame),
+        []
+    );
+    let _ = reduce(
+        &mut state,
+        &mut verbatim_core::Runtime::default(),
+        &focus_in_window(5, false, 1_000),
+    );
     assert_eq!(
         reduce(
             &mut state,
+            &mut verbatim_core::Runtime::default(),
             &Input::ApplicationNotResponding {
                 outpost: OutpostId(1),
                 process: Pid(1),
@@ -543,6 +623,7 @@ fn a_hang_in_the_process_focused_inside_the_attention_window_plays_the_sound() {
     assert_eq!(
         reduce(
             &mut state,
+            &mut verbatim_core::Runtime::default(),
             &Input::ApplicationNotResponding {
                 outpost: OutpostId(2),
                 process: Pid(2),
@@ -620,10 +701,12 @@ fn a_fake_focus_on_the_msaa_focus_core_holds_says_nothing() {
     let mut state = SrState::new();
     let _ = reduce(
         &mut state,
+        &mut verbatim_core::Runtime::default(),
         &button_focus((5, Backend::Msaa), Vec::new(), 1_000, None),
     );
     let effects = reduce(
         &mut state,
+        &mut verbatim_core::Runtime::default(),
         &button_focus(
             (5, Backend::Msaa),
             Vec::new(),
@@ -641,10 +724,12 @@ fn a_fake_focus_on_the_uia_focus_core_holds_is_spoken_again() {
     let mut state = SrState::new();
     let _ = reduce(
         &mut state,
+        &mut verbatim_core::Runtime::default(),
         &button_focus((5, Backend::Uia), Vec::new(), 1_000, None),
     );
     let effects = reduce(
         &mut state,
+        &mut verbatim_core::Runtime::default(),
         &button_focus(
             (5, Backend::Uia),
             Vec::new(),
@@ -675,10 +760,12 @@ fn a_desktop_return_s_focus_is_spoken_again_on_the_focus_core_holds() {
     let mut state = SrState::new();
     let _ = reduce(
         &mut state,
+        &mut verbatim_core::Runtime::default(),
         &button_focus((5, Backend::Msaa), Vec::new(), 1_000, None),
     );
     let effects = reduce(
         &mut state,
+        &mut verbatim_core::Runtime::default(),
         &button_focus(
             (5, Backend::Msaa),
             Vec::new(),
@@ -712,9 +799,13 @@ fn the_virtual_desktops_name_is_spoken_before_the_next_focuss_containers() {
         trace_id: TraceId::from_raw(9),
         news: DesktopNews::Name("Desktop 2".to_owned()),
     };
-    assert_eq!(reduce(&mut state, &name), []);
+    assert_eq!(
+        reduce(&mut state, &mut verbatim_core::Runtime::default(), &name),
+        []
+    );
     let effects = reduce(
         &mut state,
+        &mut verbatim_core::Runtime::default(),
         &button_focus((5, Backend::Uia), vec![list("Desktop")], 1_000, None),
     );
     let mut expected = vec![
@@ -728,7 +819,10 @@ fn the_virtual_desktops_name_is_spoken_before_the_next_focuss_containers() {
         trace_id: TraceId::from_raw(10),
         news: DesktopNews::NameDue,
     };
-    assert_eq!(reduce(&mut state, &due), []);
+    assert_eq!(
+        reduce(&mut state, &mut verbatim_core::Runtime::default(), &due),
+        []
+    );
 }
 
 /// A name no focus follows is spoken as a message at its due time,
@@ -744,9 +838,12 @@ fn the_virtual_desktops_name_is_spoken_when_no_focus_follows() {
         trace_id: TraceId::from_raw(10),
         news: DesktopNews::NameDue,
     };
-    assert_eq!(reduce(&mut state, &name), []);
     assert_eq!(
-        reduce(&mut state, &due),
+        reduce(&mut state, &mut verbatim_core::Runtime::default(), &name),
+        []
+    );
+    assert_eq!(
+        reduce(&mut state, &mut verbatim_core::Runtime::default(), &due),
         [Effect::Speak(
             Utterance {
                 trace_id: TraceId::from_raw(10),
@@ -759,7 +856,10 @@ fn the_virtual_desktops_name_is_spoken_when_no_focus_follows() {
             None,
         )]
     );
-    assert_eq!(reduce(&mut state, &due), []);
+    assert_eq!(
+        reduce(&mut state, &mut verbatim_core::Runtime::default(), &due),
+        []
+    );
 }
 
 /// A fake focus's answer carries the application's name and the Alt key's
@@ -787,7 +887,7 @@ fn the_alt_tab_rule_applies_to_a_fake_focus_answer() {
     node.role = Role::ListItem;
     node.name = Some("Notepad".to_owned());
     node.details.parent_automation_id = Some("SwitchItemListControl".to_owned());
-    let effects = reduce(&mut state, &item);
+    let effects = reduce(&mut state, &mut verbatim_core::Runtime::default(), &item);
     assert_eq!(
         spoken(&effects),
         [UtteranceSegment::label("Notepad")],

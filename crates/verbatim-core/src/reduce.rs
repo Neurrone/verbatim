@@ -46,14 +46,19 @@ use crate::{editing, review, review_text, say_all, shell, terminal, terminal_mod
 pub const SNAP_RESULTS_ACTIVITY: &str = "Windows.Shell.SnapComponent.SnapHotKeyResults";
 
 /// Advances `state` by one `input`, changing it in place, and returns the
-/// effects the imperative shell must execute.
+/// effects the imperative shell must execute. `runtime` is the event
+/// queue's paused function kept beside `state` by whoever runs the
+/// reducer; the queue's inputs, which the shell feeds in a later step of
+/// build 1, run with it, rebuilding it from the state's checkpoint when it
+/// has none.
 ///
 /// Deterministic: no I/O, no clocks, and no randomness, so the same state
 /// and input always produce the same new state and effects. The state is
 /// changed in place rather than copied, so a step costs nothing for the
 /// parts of the state it does not touch (architecture section 2).
 #[must_use]
-pub fn reduce(state: &mut SrState, input: &Input) -> Vec<Effect> {
+pub fn reduce(state: &mut SrState, runtime: &mut crate::Runtime, input: &Input) -> Vec<Effect> {
+    let _ = runtime;
     // Once Verbatim is exiting nothing more is said or asked.
     if state.exiting {
         return Vec::new();

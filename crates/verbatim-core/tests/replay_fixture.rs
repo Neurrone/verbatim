@@ -197,7 +197,7 @@ fn regenerate_fixture() {
     let mut state = SrState::new();
     let mut recorded = Vec::new();
     for input in scripted_inputs() {
-        let effects = reduce(&mut state, &input);
+        let effects = reduce(&mut state, &mut verbatim_core::Runtime::default(), &input);
         recorded.push(RecordedInput {
             input,
             effect_count: effects.len(),

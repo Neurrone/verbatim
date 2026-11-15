@@ -66,6 +66,7 @@ fn each_key_input_is_the_rules_key_and_a_clearing_key_forget_then_other() {
     let mut state = SrState::new();
     let _ = crate::reduce(
         &mut state,
+        &mut crate::Runtime::default(),
         &Input::Event {
             trace_id: TraceId::from_raw(1),
             observed_at_us: 0,
@@ -126,7 +127,7 @@ fn each_key_input_is_the_rules_key_and_a_clearing_key_forget_then_other() {
         },
         caret(CaretMotion::Other, 8),
     ] {
-        let _ = crate::reduce(&mut state, &input);
+        let _ = crate::reduce(&mut state, &mut crate::Runtime::default(), &input);
     }
     let kept: Vec<_> = state.terminals[0]
         .pending
@@ -216,6 +217,7 @@ fn a_replaced_element_forgets_its_nodes_caret_and_model(earlier: EarlierElement)
     };
     let _ = crate::reduce(
         &mut state,
+        &mut crate::Runtime::default(),
         &terminal_focus(
             node,
             Some(FocusText::Caret {
@@ -234,7 +236,11 @@ fn a_replaced_element_forgets_its_nodes_caret_and_model(earlier: EarlierElement)
         "the first element's caret and model are kept"
     );
 
-    let _ = crate::reduce(&mut state, &terminal_focus(node, None, Some(earlier)));
+    let _ = crate::reduce(
+        &mut state,
+        &mut crate::Runtime::default(),
+        &terminal_focus(node, None, Some(earlier)),
+    );
     assert_eq!(
         (state.focus_caret(node).is_some(), state.terminals.len(),),
         (false, 0)

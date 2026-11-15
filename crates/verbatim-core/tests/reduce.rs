@@ -25,7 +25,8 @@ fn reduce(state: &SrState, input: &Input) -> (SrState, Vec<Effect>) {
         event.assign_outpost(outpost_of(*source));
     }
     let mut next = state.clone();
-    let mut effects = verbatim_core::reduce(&mut next, &input);
+    let mut effects =
+        verbatim_core::reduce(&mut next, &mut verbatim_core::Runtime::default(), &input);
     answer_object_reads(&mut next, &mut effects);
     (next, effects)
 }
@@ -54,7 +55,8 @@ fn answer_object_reads(state: &mut SrState, effects: &mut Vec<Effect>) {
             outpost: node_id.outpost(),
             outcome: QueryOutcome::Done(QueryResult::Node(object)),
         };
-        let mut more = verbatim_core::reduce(state, &answer);
+        let mut more =
+            verbatim_core::reduce(state, &mut verbatim_core::Runtime::default(), &answer);
         answer_object_reads(state, &mut more);
         effects.splice(index..=index, more);
     }
@@ -1471,7 +1473,8 @@ fn flight_recorder_dump_replays_to_the_same_effects_as_live_reduction() {
 
     let mut live_effects = Vec::new();
     for input in &script {
-        let effects = verbatim_core::reduce(&mut state, input);
+        let effects =
+            verbatim_core::reduce(&mut state, &mut verbatim_core::Runtime::default(), input);
         recorder.record_input(input.clone(), effects.len(), &state);
         live_effects.push(effects);
     }
@@ -1498,7 +1501,8 @@ fn a_window_that_dropped_its_start_replays_from_its_checkpoint() {
     let mut state = SrState::new();
     let mut live_effects = Vec::new();
     for input in &script {
-        let effects = verbatim_core::reduce(&mut state, input);
+        let effects =
+            verbatim_core::reduce(&mut state, &mut verbatim_core::Runtime::default(), input);
         recorder.record_input(input.clone(), effects.len(), &state);
         live_effects.push(effects);
     }
@@ -4253,7 +4257,11 @@ fn to_focus_waits_behind_a_navigation_press() {
 /// the state and its request of the navigator object.
 fn asked_object_read(state: &SrState, cmd: ReviewCommand, repeat: u8) -> (SrState, Effect) {
     let mut state = state.clone();
-    let effects = verbatim_core::reduce(&mut state, &command(TraceId::from_raw(190), cmd, repeat));
+    let effects = verbatim_core::reduce(
+        &mut state,
+        &mut verbatim_core::Runtime::default(),
+        &command(TraceId::from_raw(190), cmd, repeat),
+    );
     let [read @ Effect::ReadNode { .. }] = effects.as_slice() else {
         panic!("the navigator's live read, not {effects:?}");
     };
@@ -4267,6 +4275,7 @@ fn object_read_answered(state: &mut SrState, read: &Effect, outcome: QueryOutcom
     };
     verbatim_core::reduce(
         state,
+        &mut verbatim_core::Runtime::default(),
         &Input::Answered {
             at_us: 0,
             trace_id: TraceId::from_raw(191),
@@ -5639,7 +5648,7 @@ fn reduce_from(state: &SrState, input: &Input, outpost: OutpostId) -> (SrState, 
         event.assign_outpost(outpost);
     }
     let mut next = state.clone();
-    let effects = verbatim_core::reduce(&mut next, &input);
+    let effects = verbatim_core::reduce(&mut next, &mut verbatim_core::Runtime::default(), &input);
     (next, effects)
 }
 

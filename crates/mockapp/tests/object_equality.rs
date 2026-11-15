@@ -56,6 +56,7 @@ fn spoken(state: &mut SrState, reported: &Reported) -> Vec<Vec<SegmentContent>> 
     event.assign_outpost(OutpostId(1));
     verbatim_core::reduce(
         state,
+        &mut verbatim_core::Runtime::default(),
         &Input::Event {
             trace_id: TraceId::mint(),
             observed_at_us: 0,

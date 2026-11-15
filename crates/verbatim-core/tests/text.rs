@@ -22,7 +22,7 @@ const OUTPOST: OutpostId = OutpostId(1);
 /// the review cursor is already on, which the tests below do not script, and
 /// a live read of the navigator object.
 fn reduce(state: &mut SrState, input: &Input) -> Vec<Effect> {
-    let mut effects = verbatim_core::reduce(state, input);
+    let mut effects = verbatim_core::reduce(state, &mut verbatim_core::Runtime::default(), input);
     settle_unchanged(state, input.trace_id(), &mut effects);
     effects
 }
@@ -43,7 +43,8 @@ fn settle_unchanged(state: &mut SrState, trace: Option<TraceId>, effects: &mut V
             outpost,
             outcome,
         };
-        let mut more = verbatim_core::reduce(state, &answer);
+        let mut more =
+            verbatim_core::reduce(state, &mut verbatim_core::Runtime::default(), &answer);
         settle_unchanged(state, trace, &mut more);
         effects.splice(index..=index, more);
     }

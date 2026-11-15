@@ -299,6 +299,7 @@ fn spoken(state: &mut SrState, mut event: NormalizedEvent) -> Vec<Said> {
     event.assign_outpost(OutpostId(1));
     verbatim_core::reduce(
         state,
+        &mut verbatim_core::Runtime::default(),
         &Input::Event {
             trace_id: TraceId::mint(),
             observed_at_us: 0,

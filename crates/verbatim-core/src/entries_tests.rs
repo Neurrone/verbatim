@@ -184,11 +184,48 @@ fn listener_answer() -> ObjectRead {
     }
 }
 
+/// A state with the runtime its test keeps beside it. A clone has no
+/// paused function, as a clone of the state has none.
+#[derive(Debug, Default)]
+struct Held {
+    state: SrState,
+    runtime: Runtime,
+}
+
+impl Clone for Held {
+    fn clone(&self) -> Self {
+        Self {
+            state: self.state.clone(),
+            runtime: Runtime::default(),
+        }
+    }
+}
+
+impl PartialEq for Held {
+    fn eq(&self, other: &Self) -> bool {
+        self.state == other.state
+    }
+}
+
+impl std::ops::Deref for Held {
+    type Target = SrState;
+
+    fn deref(&self) -> &SrState {
+        &self.state
+    }
+}
+
+impl std::ops::DerefMut for Held {
+    fn deref_mut(&mut self) -> &mut SrState {
+        &mut self.state
+    }
+}
+
 /// Feeds `input` at `at_us`, the step's effects as a test reads them:
 /// each request sent by its reader and kind, each utterance by its
 /// segments, every other effect left out.
-fn feed_at(state: &mut SrState, at_us: u64, input: Input<Entry>) -> Vec<String> {
-    feed(state, Timed { at_us, input })
+fn feed_at(held: &mut Held, at_us: u64, input: Input<Entry>) -> Vec<String> {
+    feed(&mut held.state, &mut held.runtime, Timed { at_us, input })
         .unwrap()
         .into_iter()
         .filter_map(|effect| match effect {
@@ -232,8 +269,8 @@ fn answer_outcome(from: Instance, number: u64, outcome: WireOutcome) -> Input<En
     }
 }
 
-fn ready() -> SrState {
-    let mut state = SrState::new();
+fn ready() -> Held {
+    let mut state = Held::default();
     assert_eq!(
         feed_at(&mut state, 0, Input::ReaderReady(LISTENER)),
         NOTHING
@@ -257,7 +294,7 @@ const SPOKEN: [&str; 2] = [
 
 /// A UI Automation focus asked of the listener, then completed by the
 /// outpost, up to the completion's answer.
-fn asked_completion() -> SrState {
+fn asked_completion() -> Held {
     let mut state = ready();
     assert_eq!(
         feed_at(&mut state, 1_000, entry(uia_tell(1, Vec::new()))),
@@ -350,32 +387,26 @@ fn a_clone_of_the_state_rebuilds_the_paused_function_and_goes_on_alike() {
     let straight = feed_at(&mut state, 3_000, reply.clone());
     assert_eq!(feed_at(&mut cloned, 3_000, reply), straight);
     assert_eq!(cloned, state);
-    assert_eq!(format!("{cloned:?}"), format!("{state:?}"));
+    assert_eq!(format!("{:?}", cloned.state), format!("{:?}", state.state));
 }
 
 #[test]
 fn a_dump_of_the_state_rebuilds_the_paused_function_and_goes_on_alike() {
     let mut state = asked_completion();
-    let json = serde_json::to_string(&state).unwrap();
-    let mut restored: SrState = serde_json::from_str(&json).unwrap();
+    let json = serde_json::to_string(&state.state).unwrap();
+    let mut restored = Held {
+        state: serde_json::from_str(&json).unwrap(),
+        runtime: Runtime::default(),
+    };
     assert_eq!(restored, state);
     let reply = answer(OUTPOST, 2, Reply::Focus(Box::new(focus_read(None))));
     let straight = feed_at(&mut state, 3_000, reply.clone());
     assert_eq!(feed_at(&mut restored, 3_000, reply), SPOKEN);
     assert_eq!(straight, SPOKEN);
-    assert_eq!(format!("{restored:?}"), format!("{state:?}"));
-}
-
-#[test]
-fn a_state_whose_function_is_not_in_its_threads_table_rebuilds_it() {
-    let mut state = asked_completion();
-    let mut copy = state.clone();
-    let reply = answer(OUTPOST, 2, Reply::Focus(Box::new(focus_read(None))));
-    let straight = feed_at(&mut copy, 3_000, reply.clone());
-    // As for a state moved to another thread: its key finds nothing.
-    forget_paused_for_tests();
-    assert_eq!(feed_at(&mut state, 3_000, reply), straight);
-    assert_eq!(state, copy);
+    assert_eq!(
+        format!("{:?}", restored.state),
+        format!("{:?}", state.state)
+    );
 }
 
 #[test]
@@ -387,7 +418,8 @@ fn a_checkpoint_that_does_not_replay_is_an_error_and_leaves_the_state() {
     let before = cloned.clone();
     assert!(
         feed(
-            &mut cloned,
+            &mut cloned.state,
+            &mut cloned.runtime,
             Timed {
                 at_us: 3_000,
                 input: answer(OUTPOST, 2, Reply::Focus(Box::new(focus_read(None)))),

@@ -63,7 +63,11 @@ fn event(event: NormalizedEvent) -> Input {
 /// (a key's colours, a review answered from its memory).
 fn unmodelled() -> SrState {
     let mut state = SrState::new();
-    let _ = reduce(&mut state, &terminal_focus(None));
+    let _ = reduce(
+        &mut state,
+        &mut crate::Runtime::default(),
+        &terminal_focus(None),
+    );
     state
 }
 
@@ -159,7 +163,7 @@ trait Fed {
 
 impl Fed for Input {
     fn fed(&self, state: &mut SrState, _: &mut Playback) -> Vec<Effect> {
-        reduce(state, self)
+        reduce(state, &mut crate::Runtime::default(), self)
     }
 }
 
@@ -331,7 +335,11 @@ impl Playback {
 
     /// Answers request `query_id` with `reply`.
     fn reply(&mut self, state: &mut SrState, query_id: QueryId, reply: TextReply) {
-        let effects = reduce(state, &answered(TraceId::from_raw(4), query_id, reply));
+        let effects = reduce(
+            state,
+            &mut crate::Runtime::default(),
+            &answered(TraceId::from_raw(4), query_id, reply),
+        );
         self.take(state, effects);
     }
 
@@ -517,10 +525,11 @@ fn a_read_answered_after_the_focus_moved_to_another_console_is_not_taken() {
         answers: None,
         first_cached_ancestor: None,
     });
-    let _ = reduce(&mut state, &other);
+    let _ = reduce(&mut state, &mut crate::Runtime::default(), &other);
     assert_eq!(
         reduce(
             &mut state,
+            &mut crate::Runtime::default(),
             &answered(TraceId::from_raw(4), read, TextReply::TerminalUnchanged)
         ),
         []
@@ -636,7 +645,11 @@ fn terminal_with_full_lines(full: u16) -> SrState {
     let mut state = terminal();
     let mut settings = state.settings();
     settings.terminal_full_lines = full;
-    let _ = reduce(&mut state, &Input::Settings(settings));
+    let _ = reduce(
+        &mut state,
+        &mut crate::Runtime::default(),
+        &Input::Settings(settings),
+    );
     state
 }
 
@@ -1041,7 +1054,7 @@ fn report_new_output_toggles_with_verbatim_5() {
     // Each press speaks its new value, then reports the settings, with the
     // toggle changed and nothing else, for the shell to save.
     let press = |state: &mut SrState, playback: &mut Playback, on: bool| {
-        let mut effects = reduce(state, &toggle);
+        let mut effects = reduce(state, &mut crate::Runtime::default(), &toggle);
         assert_eq!(
             effects.pop(),
             Some(Effect::SettingsChanged(ReaderSettings {
@@ -1230,8 +1243,12 @@ fn typing_the_terminal_showed_is_echoed_by_the_typing_echo_settings() {
     // terminal showing it says nothing more.
     let mut settings = state.settings();
     settings.speak_terminal_passwords = true;
-    let _ = reduce(&mut state, &Input::Settings(settings));
-    let effects = reduce(&mut state, &typed("p"));
+    let _ = reduce(
+        &mut state,
+        &mut crate::Runtime::default(),
+        &Input::Settings(settings),
+    );
+    let effects = reduce(&mut state, &mut crate::Runtime::default(), &typed("p"));
     assert_eq!(
         spoken(&effects[..1]),
         ["p"],
@@ -1247,6 +1264,7 @@ fn the_review_cursor_reads_at_the_caret_once_it_followed_it() {
     let review = |state: &mut SrState| {
         reduce(
             state,
+            &mut crate::Runtime::default(),
             &Input::Command {
                 pressed_at_ms: 0,
                 key_seq: verbatim_model::KeySeq::NONE_YET,
@@ -1287,6 +1305,7 @@ fn the_review_cursor_reads_at_the_caret_once_it_followed_it() {
     };
     let effects = reduce(
         &mut state,
+        &mut crate::Runtime::default(),
         &answered(
             TraceId::from_raw(8),
             request.query_id,
@@ -1309,6 +1328,7 @@ fn the_review_cursor_reads_at_the_caret_once_it_followed_it() {
     };
     let _ = reduce(
         &mut state,
+        &mut crate::Runtime::default(),
         &answered(
             TraceId::from_raw(8),
             request.query_id,
@@ -1328,7 +1348,11 @@ fn the_review_cursor_reads_at_the_caret_once_it_followed_it() {
 #[test]
 fn of_what_a_read_before_a_cut_said_only_the_answers_to_keys_are_spoken() {
     let mut state = terminal();
-    let _ = reduce(&mut state, &Input::SpeechCancelled { at_us: 5_000_000 });
+    let _ = reduce(
+        &mut state,
+        &mut crate::Runtime::default(),
+        &Input::SpeechCancelled { at_us: 5_000_000 },
+    );
     let speech = TerminalSpeech {
         items: vec![
             TerminalItem::Echo("a".to_owned()),

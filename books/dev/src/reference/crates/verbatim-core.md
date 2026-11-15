@@ -7,7 +7,11 @@ guide maps those behaviors onto the crate's types and modules.
 
 ## Public API
 
-- `reduce(&mut state, &input)`: deterministic, no I/O, no clocks; advances
+- `Runtime`: the event queue's paused function, kept beside the state by
+  whoever runs the reducer and never cloned or written to a dump; a new
+  one, as after a clone or a restored dump, rebuilds the function from the
+  state's checkpoint before the next input.
+- `reduce(&mut state, &mut runtime, &input)`: deterministic, no I/O, no clocks; advances
   the state in place, without copying it, and returns the effects to
   execute. Every `Speak` carries the triggering input's trace id, which
   is what makes end-to-end latency timelines possible, and the number of

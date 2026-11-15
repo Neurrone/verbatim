@@ -864,7 +864,7 @@ impl Run {
     )]
     fn input(&mut self, input: &Input) -> Vec<Effect> {
         let before = self.state.clone();
-        let effects = reduce(&mut self.state, input);
+        let effects = reduce(&mut self.state, &mut crate::Runtime::default(), input);
         self.log.push(format!("{effects:?}"));
         self.wire.apply(input, &effects);
         tests::check(

@@ -152,7 +152,11 @@ impl Session<'_> {
 
     /// Gives Core `input`, and handles what it does.
     fn input(&mut self, input: &Input) {
-        let effects = reduce(&mut self.state, input);
+        let effects = reduce(
+            &mut self.state,
+            &mut verbatim_core::Runtime::default(),
+            input,
+        );
         self.handle(effects);
     }
 
@@ -179,7 +183,13 @@ impl Session<'_> {
             }
             pending = inputs
                 .iter()
-                .flat_map(|input| reduce(&mut self.state, input))
+                .flat_map(|input| {
+                    reduce(
+                        &mut self.state,
+                        &mut verbatim_core::Runtime::default(),
+                        input,
+                    )
+                })
                 .collect();
         }
     }

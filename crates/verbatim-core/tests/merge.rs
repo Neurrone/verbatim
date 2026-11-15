@@ -138,7 +138,7 @@ fn caret(offset: u32, changes: &[(bool, &str)]) -> NormalizedEvent {
 
 /// Reduces `input` into `state`, returning what it said and played.
 fn reduce(state: &mut SrState, input: &Input) -> Vec<Effect> {
-    verbatim_core::reduce(state, input)
+    verbatim_core::reduce(state, &mut verbatim_core::Runtime::default(), input)
         .into_iter()
         .filter(|effect| matches!(effect, Effect::Speak(..) | Effect::PlayEarcon(_)))
         .collect()

@@ -192,9 +192,10 @@ fn chain_of_a() -> Vec<NodeSnapshot> {
 /// Core with the user in A, on F1 inside W and P.
 fn in_a() -> SrState {
     let mut state = SrState::new();
-    let _ = crate::reduce(&mut state, &change(A, 50));
+    let _ = crate::reduce(&mut state, &mut crate::Runtime::default(), &change(A, 50));
     let _ = crate::reduce(
         &mut state,
+        &mut crate::Runtime::default(),
         &Report::new(A, button(3, "One"), chain_of_a(), 100).input(),
     );
     state
@@ -203,9 +204,10 @@ fn in_a() -> SrState {
 /// Core with the user in X, on F0, after leaving A.
 fn in_x() -> SrState {
     let mut state = in_a();
-    let _ = crate::reduce(&mut state, &change(X, 200));
+    let _ = crate::reduce(&mut state, &mut crate::Runtime::default(), &change(X, 200));
     let _ = crate::reduce(
         &mut state,
+        &mut crate::Runtime::default(),
         &Report::new(X, button(9, "Other"), vec![window(8, "Elsewhere", X)], 300).input(),
     );
     state
@@ -256,7 +258,11 @@ fn cached_ancestors_above_the_lowest_common_ancestor_are_not_spoken() {
     let mut state = in_a();
     let report = Report::new(A, button(4, "Two"), chain_of_a(), 400).cached(1);
     assert_eq!(
-        heard(&crate::reduce(&mut state, &report.input())),
+        heard(&crate::reduce(
+            &mut state,
+            &mut crate::Runtime::default(),
+            &report.input()
+        )),
         [Heard::Expire(4), said("Two", Role::Button)]
     );
     assert_eq!(state.live_re_reads(), 0);
@@ -268,7 +274,11 @@ fn a_cached_ancestor_below_the_lowest_common_ancestor_needs_a_live_re_read() {
     let before = state.clone();
     let report = Report::new(A, button(4, "Two"), chain_of_a(), 400).cached(0);
     assert_eq!(
-        heard(&crate::reduce(&mut state, &report.input())),
+        heard(&crate::reduce(
+            &mut state,
+            &mut crate::Runtime::default(),
+            &report.input()
+        )),
         [reread(
             0,
             (4, 400),
@@ -308,12 +318,16 @@ fn a_cached_title_ancestor_needs_a_live_re_read() {
     // Through the reducer, the title entry W met at P says no title, and
     // no live re-read is asked for.
     let mut state = SrState::new();
-    let _ = crate::reduce(&mut state, &change(X, 50));
+    let _ = crate::reduce(&mut state, &mut crate::Runtime::default(), &change(X, 50));
     let mut first = Report::new(A, button(3, "One"), chain_of_a(), 100);
     first.foreground = X;
-    let _ = crate::reduce(&mut state, &first.input());
+    let _ = crate::reduce(&mut state, &mut crate::Runtime::default(), &first.input());
     assert_eq!(
-        heard(&crate::reduce(&mut state, &return_to_two().input())),
+        heard(&crate::reduce(
+            &mut state,
+            &mut crate::Runtime::default(),
+            &return_to_two().input()
+        )),
         [Heard::Expire(4), said("Two", Role::Button)]
     );
     assert_eq!(state.live_re_reads(), 0);
@@ -359,7 +373,11 @@ fn drops_ancestry_voids_first_cached_ancestor() {
         window.alt_held = true;
     }
     assert_eq!(
-        heard(&crate::reduce(&mut state, &input)),
+        heard(&crate::reduce(
+            &mut state,
+            &mut crate::Runtime::default(),
+            &input
+        )),
         [
             Heard::Expire(4),
             Heard::Stop,
@@ -375,7 +393,7 @@ fn a_report_needing_a_live_re_read_writes_its_queue_entry_stamp_and_group_rank()
     let before = state.clone();
     let mut report = return_to_two();
     report.group = Some(FocusGroup { number: 7, rank: 2 });
-    let _ = crate::reduce(&mut state, &report.input());
+    let _ = crate::reduce(&mut state, &mut crate::Runtime::default(), &report.input());
     assert_eq!(
         state.group_taken,
         Some((OutpostId(A), FocusGroup { number: 7, rank: 2 }))
@@ -389,11 +407,18 @@ fn a_live_re_read_ends_its_focus_group_for_older_entries() {
     let mut state = in_x();
     let mut report = return_to_two();
     report.group = Some(FocusGroup { number: 7, rank: 1 });
-    let _ = crate::reduce(&mut state, &report.input());
+    let _ = crate::reduce(&mut state, &mut crate::Runtime::default(), &report.input());
     let before = state.clone();
     let mut older = Report::new(A, button(5, "Older"), chain_of_a(), 390);
     older.group = Some(FocusGroup { number: 7, rank: 2 });
-    assert_eq!(heard(&crate::reduce(&mut state, &older.input())), []);
+    assert_eq!(
+        heard(&crate::reduce(
+            &mut state,
+            &mut crate::Runtime::default(),
+            &older.input()
+        )),
+        []
+    );
     assert_eq!(state, before);
 }
 
@@ -409,7 +434,14 @@ fn keep_newer_reading_skips_cached_ancestors() {
         400,
     )
     .cached(0);
-    assert_eq!(heard(&crate::reduce(&mut state, &repeat.input())), []);
+    assert_eq!(
+        heard(&crate::reduce(
+            &mut state,
+            &mut crate::Runtime::default(),
+            &repeat.input()
+        )),
+        []
+    );
     let ancestors = &state.focus.object().unwrap().ancestors;
     assert_eq!(ancestors[0].name.as_deref(), Some("Notes"));
     assert_eq!(ancestors[1].name.as_deref(), Some("Tools renamed"));
@@ -418,11 +450,19 @@ fn keep_newer_reading_skips_cached_ancestors() {
 #[test]
 fn a_live_re_read_answer_never_needs_another() {
     let mut state = in_x();
-    let _ = crate::reduce(&mut state, &return_to_two().input());
+    let _ = crate::reduce(
+        &mut state,
+        &mut crate::Runtime::default(),
+        &return_to_two().input(),
+    );
     let mut answer = Report::new(A, button(4, "Two"), chain_of_a(), 400).cached(0);
     answer.answers = Some(0);
     assert_eq!(
-        heard(&crate::reduce(&mut state, &answer.input())),
+        heard(&crate::reduce(
+            &mut state,
+            &mut crate::Runtime::default(),
+            &answer.input()
+        )),
         [
             Heard::Expire(4),
             Heard::Stop,
@@ -440,9 +480,20 @@ fn a_newer_focus_waits_behind_a_pending_live_re_read() {
     // X's report of F7, read live, is queued behind F2's, and is executed
     // after F2's answer, against F2, as NVDA executes its queue in order.
     let mut state = in_x();
-    let _ = crate::reduce(&mut state, &return_to_two().input());
+    let _ = crate::reduce(
+        &mut state,
+        &mut crate::Runtime::default(),
+        &return_to_two().input(),
+    );
     let newer = Report::new(X, button(7, "Newer"), vec![window(8, "Elsewhere", X)], 500);
-    assert_eq!(heard(&crate::reduce(&mut state, &newer.input())), []);
+    assert_eq!(
+        heard(&crate::reduce(
+            &mut state,
+            &mut crate::Runtime::default(),
+            &newer.input()
+        )),
+        []
+    );
     let mut answer = Report::new(A, button(4, "Two"), chain_of_a(), 400);
     answer.answers = Some(0);
     let mut expected = Vec::from(two_spoken());
@@ -452,7 +503,14 @@ fn a_newer_focus_waits_behind_a_pending_live_re_read() {
         said("Elsewhere", Role::Window),
         said("Newer", Role::Button),
     ]);
-    assert_eq!(heard(&crate::reduce(&mut state, &answer.input())), expected);
+    assert_eq!(
+        heard(&crate::reduce(
+            &mut state,
+            &mut crate::Runtime::default(),
+            &answer.input()
+        )),
+        expected
+    );
     assert_eq!(state.focus.rereading(), 0);
 }
 
@@ -464,7 +522,14 @@ fn a_second_live_re_read_waits_behind_the_first() {
     // spoken.
     let mut state = pending();
     let second = Report::new(X, button(7, "Newer"), vec![window(8, "Elsewhere", X)], 450).cached(0);
-    assert_eq!(heard(&crate::reduce(&mut state, &second.input())), []);
+    assert_eq!(
+        heard(&crate::reduce(
+            &mut state,
+            &mut crate::Runtime::default(),
+            &second.input()
+        )),
+        []
+    );
     let mut first = Report::new(A, button(4, "Two"), chain_of_a(), 400);
     first.answers = Some(0);
     let mut expected = Vec::from(two_spoken());
@@ -481,12 +546,23 @@ fn a_second_live_re_read_waits_behind_the_first() {
             reason: LiveRereadReason::Entered,
         },
     }));
-    assert_eq!(heard(&crate::reduce(&mut state, &first.input())), expected);
+    assert_eq!(
+        heard(&crate::reduce(
+            &mut state,
+            &mut crate::Runtime::default(),
+            &first.input()
+        )),
+        expected
+    );
     assert_eq!(state.focus.rereading(), 1);
     let mut answer = Report::new(X, button(7, "Newer"), vec![window(8, "Elsewhere", X)], 450);
     answer.answers = Some(1);
     assert_eq!(
-        heard(&crate::reduce(&mut state, &answer.input())),
+        heard(&crate::reduce(
+            &mut state,
+            &mut crate::Runtime::default(),
+            &answer.input()
+        )),
         [
             Heard::Expire(7),
             Heard::Stop,
@@ -500,7 +576,11 @@ fn a_second_live_re_read_waits_behind_the_first() {
 /// Core with a live re-read of F2 pending, and the state before its ending.
 fn pending() -> SrState {
     let mut state = in_x();
-    let _ = crate::reduce(&mut state, &return_to_two().input());
+    let _ = crate::reduce(
+        &mut state,
+        &mut crate::Runtime::default(),
+        &return_to_two().input(),
+    );
     state
 }
 
@@ -511,7 +591,14 @@ fn a_gone_live_re_read_says_nothing() {
         outpost: OutpostId(A),
         request: 0,
     };
-    assert_eq!(heard(&crate::reduce(&mut state, &gone)), []);
+    assert_eq!(
+        heard(&crate::reduce(
+            &mut state,
+            &mut crate::Runtime::default(),
+            &gone
+        )),
+        []
+    );
     assert_eq!(state.focus.rereading(), 0);
 }
 
@@ -522,7 +609,14 @@ fn a_live_re_read_ends_at_its_outpost_generations_end() {
         trace_id: TraceId::from_raw(1),
         outpost: OutpostId(A),
     };
-    assert_eq!(heard(&crate::reduce(&mut state, &ended)), []);
+    assert_eq!(
+        heard(&crate::reduce(
+            &mut state,
+            &mut crate::Runtime::default(),
+            &ended
+        )),
+        []
+    );
     assert_eq!(state.focus.rereading(), 0);
 }
 
@@ -530,7 +624,11 @@ fn a_live_re_read_ends_at_its_outpost_generations_end() {
 fn a_live_re_read_ends_when_the_listener_is_replaced() {
     let mut state = pending();
     assert_eq!(
-        heard(&crate::reduce(&mut state, &Input::ListenerReplaced)),
+        heard(&crate::reduce(
+            &mut state,
+            &mut crate::Runtime::default(),
+            &Input::ListenerReplaced
+        )),
         []
     );
     assert_eq!(state.focus.rereading(), 0);
@@ -544,7 +642,7 @@ fn a_pending_live_re_read_counts_for_the_barrier() {
         outpost: OutpostId(A),
         request: 0,
     };
-    let _ = crate::reduce(&mut state, &gone);
+    let _ = crate::reduce(&mut state, &mut crate::Runtime::default(), &gone);
     assert_eq!(state.outstanding_queries(), 0);
 }
 
@@ -554,13 +652,24 @@ fn a_menu_end_while_a_report_waits_asks_the_fake_focus_when_it_ends_unanswered()
     // the end, so the fake focus is asked then, in its turn.
     let mut state = pending();
     let ended = Input::MenuOrSwitchEnded { ended_at_us: 350 };
-    assert_eq!(heard(&crate::reduce(&mut state, &ended)), []);
+    assert_eq!(
+        heard(&crate::reduce(
+            &mut state,
+            &mut crate::Runtime::default(),
+            &ended
+        )),
+        []
+    );
     let gone = Input::LiveRereadGone {
         outpost: OutpostId(A),
         request: 0,
     };
     assert_eq!(
-        heard(&crate::reduce(&mut state, &gone)),
+        heard(&crate::reduce(
+            &mut state,
+            &mut crate::Runtime::default(),
+            &gone
+        )),
         [Heard::Other("ReadFocus(Fake)".to_owned())]
     );
 }
@@ -571,11 +680,22 @@ fn a_menu_end_while_a_report_waits_is_satisfied_by_its_answer() {
     // fake focus.
     let mut state = pending();
     let ended = Input::MenuOrSwitchEnded { ended_at_us: 350 };
-    assert_eq!(heard(&crate::reduce(&mut state, &ended)), []);
+    assert_eq!(
+        heard(&crate::reduce(
+            &mut state,
+            &mut crate::Runtime::default(),
+            &ended
+        )),
+        []
+    );
     let mut answer = Report::new(A, button(4, "Two"), chain_of_a(), 400);
     answer.answers = Some(0);
     assert_eq!(
-        heard(&crate::reduce(&mut state, &answer.input())),
+        heard(&crate::reduce(
+            &mut state,
+            &mut crate::Runtime::default(),
+            &answer.input()
+        )),
         two_spoken()
     );
 }
@@ -605,19 +725,37 @@ fn a_command_while_a_report_waits_acts_on_the_focus_executed_before_it() {
     // Pressed while F2 waits, the move to the focus runs after F2's answer,
     // on F2, under its own trace, as NVDA queues gestures with events.
     let mut state = pending();
-    assert_eq!(heard(&crate::reduce(&mut state, &to_focus(450))), []);
+    assert_eq!(
+        heard(&crate::reduce(
+            &mut state,
+            &mut crate::Runtime::default(),
+            &to_focus(450)
+        )),
+        []
+    );
     let mut answer = Report::new(A, button(4, "Two"), chain_of_a(), 400);
     answer.answers = Some(0);
     let mut expected = Vec::from(two_spoken());
     expected.push(Heard::ForKey(450, vec![moved_to("Two")]));
-    assert_eq!(heard(&crate::reduce(&mut state, &answer.input())), expected);
+    assert_eq!(
+        heard(&crate::reduce(
+            &mut state,
+            &mut crate::Runtime::default(),
+            &answer.input()
+        )),
+        expected
+    );
 }
 
 #[test]
 fn a_command_with_nothing_waiting_runs_at_once() {
     let mut state = in_x();
     assert_eq!(
-        heard(&crate::reduce(&mut state, &to_focus(450))),
+        heard(&crate::reduce(
+            &mut state,
+            &mut crate::Runtime::default(),
+            &to_focus(450)
+        )),
         [moved_to("Other")]
     );
 }
@@ -642,6 +780,7 @@ fn a_repeat_whose_earlier_element_still_has_the_focus_is_a_duplicate() {
     assert_eq!(
         heard(&crate::reduce(
             &mut state,
+            &mut crate::Runtime::default(),
             &with_earlier(repeat, verbatim_model::EarlierElement::Focused)
         )),
         []
@@ -657,6 +796,7 @@ fn a_repeat_whose_earlier_element_lost_the_focus_is_a_new_focus() {
     assert_eq!(
         heard(&crate::reduce(
             &mut state,
+            &mut crate::Runtime::default(),
             &with_earlier(repeat, verbatim_model::EarlierElement::NotFocused)
         )),
         [Heard::Expire(3), said("One", Role::Button)]
@@ -678,6 +818,7 @@ fn a_plain_focus_answer_is_judged_by_the_duplicate_rule() {
     assert_eq!(
         heard(&crate::reduce(
             &mut state,
+            &mut crate::Runtime::default(),
             &for_purpose(answer, verbatim_model::protocol::FocusPurpose::Plain)
         )),
         []
@@ -695,6 +836,7 @@ fn a_fake_focus_answer_read_through_ui_automation_waits_and_is_taken_in_its_turn
     assert_eq!(
         heard(&crate::reduce(
             &mut state,
+            &mut crate::Runtime::default(),
             &for_purpose(answer, verbatim_model::protocol::FocusPurpose::Fake)
         )),
         []
@@ -704,7 +846,11 @@ fn a_fake_focus_answer_read_through_ui_automation_waits_and_is_taken_in_its_turn
         request: 0,
     };
     assert_eq!(
-        heard(&crate::reduce(&mut state, &gone)),
+        heard(&crate::reduce(
+            &mut state,
+            &mut crate::Runtime::default(),
+            &gone
+        )),
         [Heard::Expire(3), said("One", Role::Button)]
     );
 }
@@ -719,6 +865,7 @@ fn a_report_focus_answer_is_not_taken_into_the_queue() {
     assert_eq!(
         heard(&crate::reduce(
             &mut state,
+            &mut crate::Runtime::default(),
             &for_purpose(answer, verbatim_model::protocol::FocusPurpose::Report)
         )),
         []
@@ -731,10 +878,14 @@ fn a_report_with_no_observation_time_takes_the_changes_before_it() {
     // A change that reached Core before a report of unknown time applies to
     // it: F1 again after the user went to X is spoken as the return.
     let mut state = in_a();
-    let _ = crate::reduce(&mut state, &change(X, 200));
+    let _ = crate::reduce(&mut state, &mut crate::Runtime::default(), &change(X, 200));
     let again = Report::new(A, button(3, "One"), chain_of_a(), 0).input();
     assert_eq!(
-        heard(&crate::reduce(&mut state, &again)),
+        heard(&crate::reduce(
+            &mut state,
+            &mut crate::Runtime::default(),
+            &again
+        )),
         [
             Heard::Expire(3),
             Heard::Stop,
@@ -754,13 +905,20 @@ fn a_focus_with_no_window_facts_is_never_left() {
     if let Input::Event { window, .. } = &mut two {
         *window = None;
     }
-    let _ = crate::reduce(&mut state, &two);
-    let _ = crate::reduce(&mut state, &change(X, 500));
+    let _ = crate::reduce(&mut state, &mut crate::Runtime::default(), &two);
+    let _ = crate::reduce(&mut state, &mut crate::Runtime::default(), &change(X, 500));
     let mut again = Report::new(A, button(4, "Two"), chain_of_a(), 600).input();
     if let Input::Event { window, .. } = &mut again {
         *window = None;
     }
-    assert_eq!(heard(&crate::reduce(&mut state, &again)), []);
+    assert_eq!(
+        heard(&crate::reduce(
+            &mut state,
+            &mut crate::Runtime::default(),
+            &again
+        )),
+        []
+    );
 }
 
 #[test]
@@ -769,13 +927,24 @@ fn each_live_re_read_is_counted_and_logged() {
     let mut logged = Vec::new();
     for (request, focus, at_us) in [(0, 4, 400), (1, 5, 410), (2, 6, 420)] {
         let report = Report::new(A, button(focus, "Two"), chain_of_a(), at_us).cached(1);
-        let effects = heard(&crate::reduce(&mut state, &report.input()));
+        let effects = heard(&crate::reduce(
+            &mut state,
+            &mut crate::Runtime::default(),
+            &report.input(),
+        ));
         // Each answered gone, so the next is planned against F0 again.
         let gone = Input::LiveRereadGone {
             outpost: OutpostId(A),
             request,
         };
-        assert_eq!(heard(&crate::reduce(&mut state, &gone)), []);
+        assert_eq!(
+            heard(&crate::reduce(
+                &mut state,
+                &mut crate::Runtime::default(),
+                &gone
+            )),
+            []
+        );
         assert_eq!(
             effects,
             [reread(
@@ -812,14 +981,25 @@ fn a_cached_repeat_while_a_live_re_read_waits_asks_a_new_one() {
     // own trace, the read its reader holds last.
     let mut state = pending();
     let repeat = Report::new(A, button(4, "Two"), chain_of_a(), 410).cached(1);
-    assert_eq!(heard(&crate::reduce(&mut state, &repeat.input())), []);
+    assert_eq!(
+        heard(&crate::reduce(
+            &mut state,
+            &mut crate::Runtime::default(),
+            &repeat.input()
+        )),
+        []
+    );
     assert_eq!(state.live_re_reads(), 1);
     let gone = Input::LiveRereadGone {
         outpost: OutpostId(A),
         request: 0,
     };
     assert_eq!(
-        heard(&crate::reduce(&mut state, &gone)),
+        heard(&crate::reduce(
+            &mut state,
+            &mut crate::Runtime::default(),
+            &gone
+        )),
         [reread(
             1,
             (4, 410),
@@ -833,7 +1013,11 @@ fn a_cached_repeat_while_a_live_re_read_waits_asks_a_new_one() {
     let mut answer = Report::new(A, button(4, "Two"), chain_of_a(), 410);
     answer.answers = Some(1);
     assert_eq!(
-        heard(&crate::reduce(&mut state, &answer.input())),
+        heard(&crate::reduce(
+            &mut state,
+            &mut crate::Runtime::default(),
+            &answer.input()
+        )),
         two_spoken()
     );
     assert_eq!(state.focus.rereading(), 0);
@@ -846,12 +1030,26 @@ fn a_live_repeat_while_a_live_re_read_waits_is_spoken_once_the_first_ends() {
     // again since, and the repeat is spoken.
     let mut state = pending();
     let repeat = Report::new(A, button(4, "Two"), chain_of_a(), 410);
-    assert_eq!(heard(&crate::reduce(&mut state, &repeat.input())), []);
+    assert_eq!(
+        heard(&crate::reduce(
+            &mut state,
+            &mut crate::Runtime::default(),
+            &repeat.input()
+        )),
+        []
+    );
     let gone = Input::LiveRereadGone {
         outpost: OutpostId(A),
         request: 0,
     };
-    assert_eq!(heard(&crate::reduce(&mut state, &gone)), two_spoken());
+    assert_eq!(
+        heard(&crate::reduce(
+            &mut state,
+            &mut crate::Runtime::default(),
+            &gone
+        )),
+        two_spoken()
+    );
     assert_eq!(state.focus.rereading(), 0);
 }
 
@@ -874,7 +1072,7 @@ fn whole_window(top: u64, node: NodeSnapshot, at_us: u64) -> Input {
 fn set_aside_in_x() -> SrState {
     let mut state = in_a();
     let report = Report::new(X, button(9, "Other"), vec![window(8, "Elsewhere", X)], 300).cached(0);
-    let effects = crate::reduce(&mut state, &report.input());
+    let effects = crate::reduce(&mut state, &mut crate::Runtime::default(), &report.input());
     assert!(matches!(heard(&effects).as_slice(), [Heard::Reread(_)]));
     state
 }
@@ -885,10 +1083,11 @@ fn a_whole_window_focus_of_the_window_a_set_aside_report_is_in_is_refused() {
     // NVDA drops it, as the last focus it queued, F2, is in that window, and
     // the answer says the whole return.
     let mut state = pending();
-    let _ = crate::reduce(&mut state, &change(A, 410));
+    let _ = crate::reduce(&mut state, &mut crate::Runtime::default(), &change(A, 410));
     assert_eq!(
         heard(&crate::reduce(
             &mut state,
+            &mut crate::Runtime::default(),
             &whole_window(A, window(1, "Notes", A), 420)
         )),
         []
@@ -897,7 +1096,11 @@ fn a_whole_window_focus_of_the_window_a_set_aside_report_is_in_is_refused() {
     let mut answer = Report::new(A, button(4, "Two"), chain_of_a(), 400);
     answer.answers = Some(0);
     assert_eq!(
-        heard(&crate::reduce(&mut state, &answer.input())),
+        heard(&crate::reduce(
+            &mut state,
+            &mut crate::Runtime::default(),
+            &answer.input()
+        )),
         two_spoken()
     );
     assert_eq!(state.focus.rereading(), 0);
@@ -911,12 +1114,17 @@ fn a_whole_window_focus_of_the_focus_window_waits_behind_a_set_aside_report_else
     assert_eq!(
         heard(&crate::reduce(
             &mut state,
+            &mut crate::Runtime::default(),
             &whole_window(A, window(1, "Notes", A), 400)
         )),
         []
     );
     assert_eq!(
-        heard(&crate::reduce(&mut state, &other_answer())),
+        heard(&crate::reduce(
+            &mut state,
+            &mut crate::Runtime::default(),
+            &other_answer()
+        )),
         [
             Heard::Expire(9),
             Heard::Stop,
@@ -943,9 +1151,20 @@ fn a_repeat_of_the_focus_after_a_set_aside_report_elsewhere_is_no_duplicate() {
     // behind F0 and executed after F0's answer, against F0's line.
     let mut state = set_aside_in_x();
     let repeat = Report::new(A, button(3, "One"), chain_of_a(), 400);
-    assert_eq!(heard(&crate::reduce(&mut state, &repeat.input())), []);
     assert_eq!(
-        heard(&crate::reduce(&mut state, &other_answer())),
+        heard(&crate::reduce(
+            &mut state,
+            &mut crate::Runtime::default(),
+            &repeat.input()
+        )),
+        []
+    );
+    assert_eq!(
+        heard(&crate::reduce(
+            &mut state,
+            &mut crate::Runtime::default(),
+            &other_answer()
+        )),
         [
             Heard::Expire(9),
             Heard::Stop,
@@ -967,11 +1186,12 @@ fn a_set_aside_report_left_for_another_window_lets_its_window_be_announced() {
     // A's whole-window focus is not refused. It waits behind F2 and is
     // spoken as a switch after F2's answer.
     let mut state = pending();
-    let _ = crate::reduce(&mut state, &change(X, 410));
-    let _ = crate::reduce(&mut state, &change(A, 420));
+    let _ = crate::reduce(&mut state, &mut crate::Runtime::default(), &change(X, 410));
+    let _ = crate::reduce(&mut state, &mut crate::Runtime::default(), &change(A, 420));
     assert_eq!(
         heard(&crate::reduce(
             &mut state,
+            &mut crate::Runtime::default(),
             &whole_window(A, window(1, "Notes", A), 430)
         )),
         []
@@ -980,7 +1200,14 @@ fn a_set_aside_report_left_for_another_window_lets_its_window_be_announced() {
     answer.answers = Some(0);
     let mut expected = Vec::from(two_spoken());
     expected.extend([Heard::Expire(1), Heard::Stop, said("Notes", Role::Window)]);
-    assert_eq!(heard(&crate::reduce(&mut state, &answer.input())), expected);
+    assert_eq!(
+        heard(&crate::reduce(
+            &mut state,
+            &mut crate::Runtime::default(),
+            &answer.input()
+        )),
+        expected
+    );
     assert_eq!(state.focus.rereading(), 0);
 }
 
@@ -989,13 +1216,24 @@ fn a_command_while_a_report_waits_runs_when_it_is_answered_gone() {
     // F2 ends unanswered, so the move to the focus acts on F0, the focus
     // executed before it.
     let mut state = pending();
-    assert_eq!(heard(&crate::reduce(&mut state, &to_focus(450))), []);
+    assert_eq!(
+        heard(&crate::reduce(
+            &mut state,
+            &mut crate::Runtime::default(),
+            &to_focus(450)
+        )),
+        []
+    );
     let gone = Input::LiveRereadGone {
         outpost: OutpostId(A),
         request: 0,
     };
     assert_eq!(
-        heard(&crate::reduce(&mut state, &gone)),
+        heard(&crate::reduce(
+            &mut state,
+            &mut crate::Runtime::default(),
+            &gone
+        )),
         [Heard::ForKey(450, vec![moved_to("Other")])]
     );
 }
@@ -1003,13 +1241,24 @@ fn a_command_while_a_report_waits_runs_when_it_is_answered_gone() {
 #[test]
 fn a_command_while_a_report_waits_runs_when_its_outpost_generation_ends() {
     let mut state = pending();
-    assert_eq!(heard(&crate::reduce(&mut state, &to_focus(450))), []);
+    assert_eq!(
+        heard(&crate::reduce(
+            &mut state,
+            &mut crate::Runtime::default(),
+            &to_focus(450)
+        )),
+        []
+    );
     let ended = Input::OutpostEnded {
         trace_id: TraceId::from_raw(460),
         outpost: OutpostId(A),
     };
     assert_eq!(
-        heard(&crate::reduce(&mut state, &ended)),
+        heard(&crate::reduce(
+            &mut state,
+            &mut crate::Runtime::default(),
+            &ended
+        )),
         [Heard::ForKey(450, vec![moved_to("Other")])]
     );
 }
@@ -1017,9 +1266,20 @@ fn a_command_while_a_report_waits_runs_when_its_outpost_generation_ends() {
 #[test]
 fn a_command_while_a_report_waits_runs_when_the_listener_is_replaced() {
     let mut state = pending();
-    assert_eq!(heard(&crate::reduce(&mut state, &to_focus(450))), []);
     assert_eq!(
-        heard(&crate::reduce(&mut state, &Input::ListenerReplaced)),
+        heard(&crate::reduce(
+            &mut state,
+            &mut crate::Runtime::default(),
+            &to_focus(450)
+        )),
+        []
+    );
+    assert_eq!(
+        heard(&crate::reduce(
+            &mut state,
+            &mut crate::Runtime::default(),
+            &Input::ListenerReplaced
+        )),
         [Heard::ForKey(450, vec![moved_to("Other")])]
     );
 }
@@ -1033,13 +1293,27 @@ fn a_command_after_the_focus_generation_ended_says_nothing() {
         trace_id: TraceId::from_raw(440),
         outpost: OutpostId(X),
     };
-    let _ = crate::reduce(&mut state, &ended);
-    assert_eq!(heard(&crate::reduce(&mut state, &to_focus(450))), []);
+    let _ = crate::reduce(&mut state, &mut crate::Runtime::default(), &ended);
+    assert_eq!(
+        heard(&crate::reduce(
+            &mut state,
+            &mut crate::Runtime::default(),
+            &to_focus(450)
+        )),
+        []
+    );
     let gone = Input::LiveRereadGone {
         outpost: OutpostId(A),
         request: 0,
     };
-    assert_eq!(heard(&crate::reduce(&mut state, &gone)), []);
+    assert_eq!(
+        heard(&crate::reduce(
+            &mut state,
+            &mut crate::Runtime::default(),
+            &gone
+        )),
+        []
+    );
 }
 
 /// `input`, a focus report, as read through MSAA.
@@ -1059,13 +1333,14 @@ fn through_msaa(mut input: Input) -> Input {
 #[test]
 fn a_fake_focus_through_msaa_repeating_the_last_queued_focus_is_dropped() {
     let mut state = SrState::new();
-    let _ = crate::reduce(&mut state, &change(A, 50));
+    let _ = crate::reduce(&mut state, &mut crate::Runtime::default(), &change(A, 50));
     let one = through_msaa(Report::new(A, button(3, "One"), chain_of_a(), 100).input());
-    let _ = crate::reduce(&mut state, &one);
+    let _ = crate::reduce(&mut state, &mut crate::Runtime::default(), &one);
     let fake = through_msaa(Report::new(A, button(3, "One"), chain_of_a(), 400).input());
     assert_eq!(
         heard(&crate::reduce(
             &mut state,
+            &mut crate::Runtime::default(),
             &for_purpose(fake, verbatim_model::protocol::FocusPurpose::Fake)
         )),
         []
@@ -1079,6 +1354,7 @@ fn a_fake_focus_through_ui_automation_repeating_the_focus_is_spoken() {
     assert_eq!(
         heard(&crate::reduce(
             &mut state,
+            &mut crate::Runtime::default(),
             &for_purpose(fake, verbatim_model::protocol::FocusPurpose::Fake)
         )),
         [Heard::Expire(3), said("One", Role::Button)]
@@ -1095,6 +1371,7 @@ fn a_fake_answer_observed_before_another_applications_report_is_stale() {
     assert_eq!(
         heard(&crate::reduce(
             &mut state,
+            &mut crate::Runtime::default(),
             &for_purpose(fake, verbatim_model::protocol::FocusPurpose::Fake)
         )),
         []
@@ -1117,12 +1394,19 @@ fn a_replacement_outposts_report_of_the_kept_focus_is_taken_silently() {
         trace_id: TraceId::from_raw(200),
         outpost: OutpostId(A),
     };
-    let _ = crate::reduce(&mut state, &ended);
+    let _ = crate::reduce(&mut state, &mut crate::Runtime::default(), &ended);
     let again = from_generation(
         Report::new(A, button(3, "One"), chain_of_a(), 300).input(),
         A + 1,
     );
-    assert_eq!(heard(&crate::reduce(&mut state, &again)), []);
+    assert_eq!(
+        heard(&crate::reduce(
+            &mut state,
+            &mut crate::Runtime::default(),
+            &again
+        )),
+        []
+    );
     assert_eq!(state.focused().map(|(_, node)| node.id), Some(id(A + 1, 3)));
 }
 
@@ -1133,15 +1417,19 @@ fn a_replacement_outposts_report_of_a_left_focus_is_announced() {
         trace_id: TraceId::from_raw(200),
         outpost: OutpostId(A),
     };
-    let _ = crate::reduce(&mut state, &ended);
-    let _ = crate::reduce(&mut state, &change(X, 250));
-    let _ = crate::reduce(&mut state, &change(A, 260));
+    let _ = crate::reduce(&mut state, &mut crate::Runtime::default(), &ended);
+    let _ = crate::reduce(&mut state, &mut crate::Runtime::default(), &change(X, 250));
+    let _ = crate::reduce(&mut state, &mut crate::Runtime::default(), &change(A, 260));
     let again = from_generation(
         Report::new(A, button(3, "One"), chain_of_a(), 300).input(),
         A + 1,
     );
     assert_eq!(
-        heard(&crate::reduce(&mut state, &again)),
+        heard(&crate::reduce(
+            &mut state,
+            &mut crate::Runtime::default(),
+            &again
+        )),
         [
             Heard::Expire(3),
             Heard::Stop,
@@ -1160,11 +1448,22 @@ fn a_repeat_from_the_other_reader_behind_an_answered_report_is_a_duplicate() {
     // report that ended unanswered carries the repeat exception.
     let mut state = pending();
     let repeat = through_msaa(Report::new(A, button(4, "Two"), chain_of_a(), 410).input());
-    assert_eq!(heard(&crate::reduce(&mut state, &repeat)), []);
+    assert_eq!(
+        heard(&crate::reduce(
+            &mut state,
+            &mut crate::Runtime::default(),
+            &repeat
+        )),
+        []
+    );
     let mut answer = Report::new(A, button(4, "Two"), chain_of_a(), 400);
     answer.answers = Some(0);
     assert_eq!(
-        heard(&crate::reduce(&mut state, &answer.input())),
+        heard(&crate::reduce(
+            &mut state,
+            &mut crate::Runtime::default(),
+            &answer.input()
+        )),
         two_spoken()
     );
 }
@@ -1205,12 +1504,26 @@ fn a_caret_key_while_a_report_waits_runs_after_the_command_before_it() {
     let field = || node(4, Role::EditableText, "Notes field");
     let mut state = in_x();
     let report = Report::new(A, field(), chain_of_a(), 400).cached(1);
-    let _ = crate::reduce(&mut state, &report.input());
-    assert_eq!(heard(&crate::reduce(&mut state, &to_focus(450))), []);
-    assert_eq!(heard(&crate::reduce(&mut state, &caret_key(460))), []);
+    let _ = crate::reduce(&mut state, &mut crate::Runtime::default(), &report.input());
+    assert_eq!(
+        heard(&crate::reduce(
+            &mut state,
+            &mut crate::Runtime::default(),
+            &to_focus(450)
+        )),
+        []
+    );
+    assert_eq!(
+        heard(&crate::reduce(
+            &mut state,
+            &mut crate::Runtime::default(),
+            &caret_key(460)
+        )),
+        []
+    );
     let mut answer = Report::new(A, field(), chain_of_a(), 400);
     answer.answers = Some(0);
-    let effects = crate::reduce(&mut state, &answer.input());
+    let effects = crate::reduce(&mut state, &mut crate::Runtime::default(), &answer.input());
     // Each key-tagged effect in order: its trace, and whether it asks the
     // field's caret watch.
     let keyed: Vec<(TraceId, bool)> = effects
@@ -1245,8 +1558,22 @@ fn a_held_key_while_a_report_waits_does_not_overtake_the_command_before_it() {
     // answer the command runs, then the held key is passed on, once, as
     // the focus has no caret to read.
     let mut state = pending();
-    assert_eq!(heard(&crate::reduce(&mut state, &to_focus(450))), []);
-    assert_eq!(heard(&crate::reduce(&mut state, &held_key(470))), []);
+    assert_eq!(
+        heard(&crate::reduce(
+            &mut state,
+            &mut crate::Runtime::default(),
+            &to_focus(450)
+        )),
+        []
+    );
+    assert_eq!(
+        heard(&crate::reduce(
+            &mut state,
+            &mut crate::Runtime::default(),
+            &held_key(470)
+        )),
+        []
+    );
     let mut answer = Report::new(A, button(4, "Two"), chain_of_a(), 400);
     answer.answers = Some(0);
     let mut expected = Vec::from(two_spoken());
@@ -1258,5 +1585,12 @@ fn a_held_key_while_a_report_waits_does_not_overtake_the_command_before_it() {
             Effect::PassHeldKey(TraceId::from_raw(470))
         ))],
     ));
-    assert_eq!(heard(&crate::reduce(&mut state, &answer.input())), expected);
+    assert_eq!(
+        heard(&crate::reduce(
+            &mut state,
+            &mut crate::Runtime::default(),
+            &answer.input()
+        )),
+        expected
+    );
 }

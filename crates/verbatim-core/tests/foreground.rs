@@ -60,7 +60,11 @@ impl Core {
         if let Input::Event { event, .. } = &mut input {
             event.assign_outpost(outpost);
         }
-        heard(&verbatim_core::reduce(&mut self.state, &input))
+        heard(&verbatim_core::reduce(
+            &mut self.state,
+            &mut verbatim_core::Runtime::default(),
+            &input,
+        ))
     }
 
     /// The number of the node Core holds as its focus.

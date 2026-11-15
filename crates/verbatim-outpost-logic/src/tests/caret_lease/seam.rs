@@ -546,7 +546,11 @@ impl Seam {
     /// `input` into Core, its effects followed: speech heard, keys passed
     /// on, requests given to the outpost.
     fn enter_core(&mut self, input: &CoreInput, seen: &mut Vec<Seen>) {
-        let effects = reduce(&mut self.core, input);
+        let effects = reduce(
+            &mut self.core,
+            &mut verbatim_core::Runtime::default(),
+            input,
+        );
         for effect in effects {
             self.core_effect(effect, seen);
         }

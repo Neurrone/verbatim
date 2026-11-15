@@ -347,9 +347,11 @@ impl ReducerRecorder {
 #[must_use]
 pub fn replay(initial: &SrState, inputs: &[Input]) -> Vec<Vec<Effect>> {
     let mut state = initial.clone();
+    // A clone has no paused function: the runtime rebuilds it.
+    let mut runtime = crate::Runtime::default();
     let mut all_effects = Vec::with_capacity(inputs.len());
     for input in inputs {
-        all_effects.push(reduce(&mut state, input));
+        all_effects.push(reduce(&mut state, &mut runtime, input));
     }
     all_effects
 }

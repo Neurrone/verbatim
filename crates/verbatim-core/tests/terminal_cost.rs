@@ -198,7 +198,7 @@ fn time(state: &mut verbatim_core::SrState, input: &Input, times: &mut Times) {
     times.rebuild.push(started.elapsed());
     drop(again);
     let started = Instant::now();
-    let effects = reduce(state, input);
+    let effects = reduce(state, &mut verbatim_core::Runtime::default(), input);
     times.reducer.push(started.elapsed());
     drop(effects);
 }
@@ -236,7 +236,7 @@ fn measure(case: &Case, flavor: Flavor) -> String {
             match reads.iter().position(|read| *read == at) {
                 Some(read) => time(&mut state, input, &mut times[read]),
                 None => {
-                    let _ = reduce(&mut state, input);
+                    let _ = reduce(&mut state, &mut verbatim_core::Runtime::default(), input);
                 }
             }
         }

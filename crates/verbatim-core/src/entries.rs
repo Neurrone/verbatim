@@ -6,9 +6,9 @@
 //! here.
 //!
 //! [`SrState`] holds the queue as plain data ([`SrState::queue`]); the
-//! front entry's paused function sits beside it in [`Paused`], which is
-//! never cloned or written to a dump, and is rebuilt from the front's
-//! checkpoint when it is missing ([`feed`]). The queue's functions share
+//! front entry's paused function sits beside it in a [`Runtime`], owned
+//! by whoever runs the reducer, never cloned or written to a dump, and
+//! rebuilt from the front's checkpoint when it is missing ([`feed`]). The queue's functions share
 //! the reducer's state, the focus announcement code included, until the
 //! old types are deleted.
 //!
@@ -23,10 +23,7 @@
     )
 )]
 
-use std::cell::RefCell;
-use std::collections::BTreeMap;
 use std::fmt;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::{Deserialize, Serialize};
 use verbatim_model::event_kind::EventKind;
@@ -353,80 +350,28 @@ impl Logic for Entries {
     }
 }
 
-/// The key of the front entry's paused function, kept beside the state:
-/// the function itself sits in its thread's table of paused functions
-/// ([`PAUSED`]), since it shares Core's state by reference and so cannot
-/// travel with a state sent to another thread. It is never cloned or
-/// written to a dump: a clone, a restored dump, a replay or a state moved
-/// to another thread finds none under its key and rebuilds it from the
-/// front's checkpoint.
+/// The front entry's paused function, kept beside the state by whoever
+/// runs the reducer (the reducer thread, the replay tool, a test) and
+/// passed to [`crate::reduce`] with it. It is never cloned or written: a
+/// runtime without the function, as after a clone or a restored dump,
+/// rebuilds it from the front's checkpoint before the next input.
 #[derive(Default)]
-pub(crate) struct Paused(Option<u64>);
+pub struct Runtime(Option<Core<Entries>>);
 
-thread_local! {
-    /// Each thread's paused functions, by the key of the state that holds
-    /// them.
-    static PAUSED: RefCell<BTreeMap<u64, Core<Entries>>> = const { RefCell::new(BTreeMap::new()) };
-}
-
-/// The next key, unique across threads, so that a state moved to another
-/// thread never finds another state's function under its key.
-static NEXT_KEY: AtomicU64 = AtomicU64::new(1);
-
-impl Paused {
-    /// Takes the paused function out of its thread's table.
-    fn take(&mut self) -> Option<Core<Entries>> {
-        let key = self.0.take()?;
-        PAUSED.with(|paused| paused.borrow_mut().remove(&key))
-    }
-
-    /// Keeps `core` in this thread's table under a new key.
-    fn keep(core: Core<Entries>) -> Self {
-        let key = NEXT_KEY.fetch_add(1, Ordering::Relaxed);
-        PAUSED.with(|paused| paused.borrow_mut().insert(key, core));
-        Self(Some(key))
-    }
-}
-
-/// Empties this thread's table, as a thread the states were moved to
-/// finds it.
-#[cfg(test)]
-pub(crate) fn forget_paused_for_tests() {
-    PAUSED.with(|paused| paused.borrow_mut().clear());
-}
-
-impl Drop for Paused {
-    fn drop(&mut self) {
-        if let Some(key) = self.0.take() {
-            // A thread's table may already be gone as the thread exits.
-            let _ = PAUSED.try_with(|paused| paused.borrow_mut().remove(&key));
-        }
-    }
-}
-
-impl Clone for Paused {
-    fn clone(&self) -> Self {
-        Self(None)
-    }
-}
-
-impl PartialEq for Paused {
-    fn eq(&self, _: &Self) -> bool {
-        true
-    }
-}
-
-impl Eq for Paused {}
-
-impl fmt::Debug for Paused {
+impl fmt::Debug for Runtime {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("Paused")
+        formatter.write_str(if self.0.is_some() {
+            "Runtime"
+        } else {
+            "Runtime(to rebuild)"
+        })
     }
 }
 
 /// Handles one queue input on `state` and returns what Core did: the
 /// queue's state and Core's facts are lent to the driver for the step,
-/// with the front's paused function, rebuilt when the state has none.
+/// with the front's paused function from `runtime`, rebuilt when it has
+/// none.
 ///
 /// # Errors
 ///
@@ -434,18 +379,17 @@ impl fmt::Debug for Paused {
 /// checkpoint; the state is left as it was.
 pub(crate) fn feed(
     state: &mut SrState,
+    runtime: &mut Runtime,
     input: Timed<Entry>,
 ) -> Result<Vec<Effect<Said>>, ReplayMismatch> {
-    let mut paused = state.paused.take();
     let queue = std::mem::take(&mut state.queue);
     let mut whole = State {
         facts: std::mem::take(state),
         queue,
     };
-    let effects = Core::step(&mut paused, &mut whole, input);
+    let effects = Core::step(&mut runtime.0, &mut whole, input);
     *state = whole.facts;
     state.queue = whole.queue;
-    state.paused = paused.map(Paused::keep).unwrap_or_default();
     effects
 }
 
