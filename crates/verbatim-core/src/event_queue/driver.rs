@@ -29,6 +29,7 @@ use super::inbox::{Effect, Timed};
 use super::request::{Outcome, Refused, Request};
 use super::table::{Ending, Live, Order, Owner, Stage, Table};
 use super::{Foreground, Function, Instance, Logic, Reader};
+use crate::focus::backend::BackendCache;
 
 /// Core: its state, shared with the paused function, the function, and
 /// the recorder.
@@ -76,6 +77,8 @@ pub(crate) struct State<E, F> {
     pub(super) readers: BTreeMap<Reader, Instance>,
     /// The foreground record, `None` before the listener's first report.
     pub(super) foreground: Option<Foreground>,
+    /// The backend verdicts of windows (Table 4).
+    pub(super) backend: BackendCache,
 }
 
 impl<E, F: Default> Default for State<E, F> {
@@ -88,6 +91,7 @@ impl<E, F: Default> Default for State<E, F> {
             table: Table::default(),
             readers: BTreeMap::new(),
             foreground: None,
+            backend: BackendCache::default(),
         }
     }
 }
@@ -148,6 +152,7 @@ impl<L: Logic> fmt::Debug for Core<L> {
             .field("table", &state.table)
             .field("readers", &state.readers)
             .field("foreground", &state.foreground)
+            .field("backend", &state.backend)
             .field("facts", &state.facts)
             .finish()
     }
@@ -522,7 +527,8 @@ impl<L: Logic, R: Request> Future for Asking<'_, L, R> {
                 let ready = shared.state.readers.get(&reader).copied();
                 let now_us = shared.state.now_us;
                 let mut orders = Vec::new();
-                let number = shared.state.table.begin(
+                let state = &mut shared.state;
+                let number = state.table.begin(
                     Live {
                         reader,
                         window: request.window(),
@@ -530,8 +536,10 @@ impl<L: Logic, R: Request> Future for Asking<'_, L, R> {
                         request: request.wire(),
                         owner: Owner::Queue(owner),
                         stage: Stage::Waiting,
+                        probing: None,
                     },
                     ready,
+                    &state.backend,
                     now_us,
                     &mut orders,
                 );

@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::event_kind::EventKind;
 use crate::property::{PropertyId, PropertyValue, PropertyValues, RuntimeId};
+use crate::request::Probe;
 use crate::{NotificationKind, NotificationProcessing, Pid, WindowHandle};
 
 /// A UI Automation element a reader keeps for a tell, behind the token
@@ -49,6 +50,8 @@ pub struct WindowFacet {
     /// The process that serves it: its owner, or for a console window the
     /// console host.
     pub process: Pid,
+    /// The thread that owns it, which keys its backend verdict with it.
+    pub thread: u32,
 }
 
 /// How a window stands to another, by `IsChild`.
@@ -131,9 +134,8 @@ pub enum Read<T> {
 /// delivery, making the calls NVDA's handler for that event makes.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Checked {
-    /// The provider probe of the nearest window, when the check probed it:
-    /// whether the window answered with a UI Automation provider.
-    pub probe: Option<Read<bool>>,
+    /// The provider probe of the nearest window, when the check probed it.
+    pub probe: Option<Probe>,
     /// Whether the element has the keyboard focus, when the event's
     /// handler reads it.
     pub keyboard_focus: Option<Read<bool>>,
@@ -212,6 +214,7 @@ mod tests {
             handle: WindowHandle(handle),
             class: class.to_owned(),
             process: Pid(40),
+            thread: 41,
         }
     }
 
@@ -249,7 +252,12 @@ mod tests {
                 hidden_frame: false,
             })),
             checked: Some(Checked {
-                probe: Some(Read::Answered(true)),
+                probe: Some(Probe {
+                    window: WindowHandle(5),
+                    thread: 41,
+                    provider: true,
+                    began_us: 900,
+                }),
                 keyboard_focus: Some(Read::Answered(true)),
                 kept: vec![(ElementToken(2), Read::Failed)],
                 previous_sibling: None,

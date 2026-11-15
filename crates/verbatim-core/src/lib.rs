@@ -55,6 +55,7 @@ pub mod dump;
 mod editing;
 mod event_queue;
 pub mod flight_recorder;
+mod focus;
 mod focus_queue;
 pub mod focus_rules;
 mod foreground;

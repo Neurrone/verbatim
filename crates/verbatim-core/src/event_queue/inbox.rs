@@ -134,7 +134,19 @@ impl<L: Logic> Core<L> {
                     answer.outcome,
                 );
                 match answered {
-                    Ok(ended) => self.deliver(ended),
+                    Ok(ended) => {
+                        let probed = {
+                            let backend = &mut self.shared.borrow_mut().state.backend;
+                            for probe in &answer.probes {
+                                backend.record(probe);
+                            }
+                            answer.probes.iter().any(|probe| {
+                                probe.window == ended.window.handle
+                                    && probe.thread == ended.window.thread
+                            })
+                        };
+                        self.deliver_probed(ended, probed);
+                    }
                     Err(dropped) => self
                         .shared
                         .borrow_mut()
@@ -159,15 +171,17 @@ impl<L: Logic> Core<L> {
                 shared.state.readers.insert(instance.reader, instance);
                 let now_us = shared.state.now_us;
                 let mut orders = Vec::new();
-                shared
-                    .state
+                let state = &mut shared.state;
+                state
                     .table
-                    .reader_ready(instance, now_us, &mut orders);
+                    .reader_ready(instance, &state.backend, now_us, &mut orders);
                 Self::order(&mut shared, orders);
             }
             Input::ReaderEnded(instance) => self.reader_ended(instance),
             Input::WindowDestroyed(window) => {
-                self.shared.borrow_mut().state.table.unwatch(window);
+                let mut shared = self.shared.borrow_mut();
+                shared.state.table.unwatch(window);
+                shared.state.backend.destroyed(window);
             }
             Input::AskOutside {
                 asker,
@@ -180,7 +194,8 @@ impl<L: Logic> Core<L> {
                 let ready = shared.state.readers.get(&reader).copied();
                 let now_us = shared.state.now_us;
                 let mut orders = Vec::new();
-                shared.state.table.begin(
+                let state = &mut shared.state;
+                state.table.begin(
                     Live {
                         reader,
                         window,
@@ -188,8 +203,10 @@ impl<L: Logic> Core<L> {
                         request,
                         owner: Owner::Outside(asker),
                         stage: Stage::Waiting,
+                        probing: None,
                     },
                     ready,
+                    &state.backend,
                     now_us,
                     &mut orders,
                 );
@@ -259,9 +276,24 @@ impl<L: Logic> Core<L> {
         }
     }
 
-    /// Delivers a request's ending to its owner: the front's function,
-    /// resumed, or the asker outside the queue.
+    /// Delivers a request's ending to its owner, its probe unanswered.
     fn deliver(&mut self, ended: Ended) {
+        self.deliver_probed(ended, false);
+    }
+
+    /// Delivers a request's ending to its owner: the front's function,
+    /// resumed, or the asker outside the queue. A request sent carrying
+    /// "probe first" whose answer brought no probe of its window counts as
+    /// a probe that timed out, begun when it was sent (Table 4, row "MSAA
+    /// in force").
+    fn deliver_probed(&mut self, ended: Ended, probed: bool) {
+        if let (Some(sent_us), false) = (ended.probing, probed) {
+            self.shared
+                .borrow_mut()
+                .state
+                .backend
+                .unanswered(ended.window.judged().key, sent_us);
+        }
         match ended.owner {
             Owner::Queue(slot) => self.resume(ended.number, &slot, ended.ending),
             Owner::Outside(asker) => {

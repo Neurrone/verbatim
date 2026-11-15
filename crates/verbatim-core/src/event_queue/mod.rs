@@ -41,6 +41,8 @@ use std::pin::Pin;
 use serde::{Deserialize, Serialize};
 use verbatim_model::{Pid, WindowHandle};
 
+use crate::focus::backend::{Backend, JudgedWindow, WindowKey};
+
 use driver::Cx;
 
 /// A focus read's due time: 13 seconds from the moment Core decides to
@@ -87,6 +89,24 @@ pub(crate) struct RequestWindow {
     pub(crate) root_owner: WindowHandle,
     /// The application it belongs to.
     pub(crate) process: Pid,
+    /// The thread that owns it, which keys its backend verdict.
+    pub(crate) thread: u32,
+    /// The backend its classes give, judged once at the tell's boundary;
+    /// `None` when they give none and probes decide.
+    pub(crate) by_class: Option<Backend>,
+}
+
+impl RequestWindow {
+    /// The window as the backend cache judges it.
+    pub(crate) fn judged(&self) -> JudgedWindow {
+        JudgedWindow {
+            key: WindowKey {
+                handle: self.handle.0,
+                thread: self.thread,
+            },
+            by_class: self.by_class,
+        }
+    }
 }
 
 /// The foreground record: the window the listener last reported in front.

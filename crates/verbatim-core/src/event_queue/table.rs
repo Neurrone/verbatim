@@ -17,11 +17,12 @@ use std::rc::Rc;
 use serde::{Deserialize, Serialize};
 use verbatim_model::WindowHandle;
 use verbatim_model::request::{
-    Ask, CancelReason, Outcome as WireOutcome, Request as Wire, RequestNumber,
+    Ask, CancelReason, Outcome as WireOutcome, Request as Wire, RequestNumber, WindowVerdict,
 };
 
 use super::driver::Slot;
 use super::{Instance, Reader, RequestWindow};
+use crate::focus::backend::BackendCache;
 
 /// Who asked a request outside the event queue, by the token the shell
 /// keeps its responder under.
@@ -83,17 +84,35 @@ pub(crate) struct Live {
     pub(crate) owner: Owner,
     /// Where it is.
     pub(crate) stage: Stage,
+    /// When it was sent carrying "probe first", whose probe's answer Core
+    /// records when it ends.
+    pub(crate) probing: Option<u64>,
 }
 
 impl Live {
-    /// The request as it is sent.
-    fn ask(&self, number: RequestNumber) -> Ask {
-        Ask {
-            number,
-            window: self.window.handle,
-            probe_first: false,
-            request: self.request.clone(),
+    /// Sends it to `instance` at `now_us`, carrying the verdict in force
+    /// for its window (Table 4, column D).
+    fn send(
+        &mut self,
+        number: RequestNumber,
+        instance: Instance,
+        backend: &BackendCache,
+        now_us: u64,
+    ) -> Order {
+        let verdict = backend.for_request(&self.window.judged(), now_us);
+        if verdict == WindowVerdict::ProbeFirst {
+            self.probing = Some(now_us);
         }
+        self.stage = Stage::Out(instance);
+        Order::Send(
+            instance,
+            Ask {
+                number,
+                window: self.window.handle,
+                verdict,
+                request: self.request.clone(),
+            },
+        )
     }
 }
 
@@ -119,6 +138,8 @@ pub(crate) struct Ended {
     pub(crate) ending: Ending,
     /// The window it named.
     pub(crate) window: RequestWindow,
+    /// When it was sent carrying "probe first".
+    pub(crate) probing: Option<u64>,
 }
 
 /// What the table asks the shell to do.
@@ -157,6 +178,7 @@ impl Table {
         &mut self,
         live: Live,
         ready: Option<Instance>,
+        backend: &BackendCache,
         now_us: u64,
         orders: &mut Vec<Order>,
     ) -> RequestNumber {
@@ -164,8 +186,7 @@ impl Table {
         let number = RequestNumber(self.last);
         let mut live = live;
         if let Some(instance) = ready {
-            live.stage = Stage::Out(instance);
-            orders.push(Order::Send(instance, live.ask(number)));
+            orders.push(live.send(number, instance, backend, now_us));
             self.arm_round(now_us);
         }
         self.live.insert(number, live);
@@ -182,14 +203,14 @@ impl Table {
     pub(crate) fn reader_ready(
         &mut self,
         instance: Instance,
+        backend: &BackendCache,
         now_us: u64,
         orders: &mut Vec<Order>,
     ) {
         let mut sent = false;
         for (number, live) in &mut self.live {
             if live.reader == instance.reader && live.stage == Stage::Waiting {
-                live.stage = Stage::Out(instance);
-                orders.push(Order::Send(instance, live.ask(*number)));
+                orders.push(live.send(*number, instance, backend, now_us));
                 sent = true;
             }
         }
@@ -223,6 +244,7 @@ impl Table {
             owner: live.owner,
             ending,
             window: live.window,
+            probing: live.probing,
         })
     }
 

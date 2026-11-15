@@ -10,7 +10,7 @@ use std::task::{Context, Waker};
 use verbatim_model::property::{PropertyId, PropertyValues};
 use verbatim_model::request::{
     Answer, Ask, Cancel, CancelReason, Outcome as WireOutcome, Refusal, Reply, Request as Wire,
-    RequestNumber,
+    RequestNumber, WindowVerdict,
 };
 use verbatim_model::{NodeId, Pid, WindowHandle};
 
@@ -22,6 +22,7 @@ use super::{
     FOCUS_DUE_US, Foreground, Function, HANG_ROUND_US, Instance, Logic, OTHER_DUE_US, Reader,
     RequestWindow,
 };
+use crate::focus::backend::Backend;
 
 /// The application of the tests' window.
 const APP: Pid = Pid(1);
@@ -31,6 +32,8 @@ const WINDOW: RequestWindow = RequestWindow {
     top_level: WindowHandle(10),
     root_owner: WindowHandle(10),
     process: APP,
+    thread: 3,
+    by_class: Some(Backend::Msaa),
 };
 /// The application's outpost.
 const OUTPOST: Instance = Instance {
@@ -180,7 +183,7 @@ fn send(number: u64) -> Effect<String> {
         ask: Ask {
             number: RequestNumber(number),
             window: WINDOW.handle,
-            probe_first: false,
+            verdict: WindowVerdict::Msaa,
             request: wire(),
         },
     }
@@ -204,6 +207,7 @@ fn answer(from: Instance, number: u64, outcome: WireOutcome) -> Input<Entry> {
         answer: Answer {
             number: RequestNumber(number),
             outcome,
+            probes: Vec::new(),
             detail: String::new(),
         },
     }
@@ -365,7 +369,7 @@ fn a_waiting_request_waits_on_when_a_starting_reader_fails() {
             ask: Ask {
                 number: RequestNumber(1),
                 window: WINDOW.handle,
-                probe_first: false,
+                verdict: WindowVerdict::Msaa,
                 request: wire(),
             },
         }]
@@ -1199,14 +1203,242 @@ fn a_dump_shows_the_front_entry_its_answers_and_its_request_out() {
             "waiting: [Read { reads: 1, exempt: false }], ",
             "table: Table { last: 3, live: {RequestNumber(3): Live { reader: Outpost(Pid(1)), ",
             "window: RequestWindow { handle: WindowHandle(11), top_level: WindowHandle(10), ",
-            "root_owner: WindowHandle(10), process: Pid(1) }, due_us: 11002000, ",
+            "root_owner: WindowHandle(10), process: Pid(1), thread: 3, by_class: Some(Msaa) }, ",
+            "due_us: 11002000, ",
             "request: Properties { node: NodeId { outpost: OutpostId(0), number: 1 }, set: [Name] }, ",
-            "owner: Queue, stage: Out(Instance { reader: Outpost(Pid(1)), generation: 1 }) }}, ",
+            "owner: Queue, stage: Out(Instance { reader: Outpost(Pid(1)), generation: 1 }), ",
+            "probing: None }}, ",
             "late: {RequestNumber(1): Instance { reader: Outpost(Pid(1)), generation: 1 }}, ",
             "recovery: {}, round_due_us: Some(502000) }, ",
             "readers: {Outpost(Pid(1)): Instance { reader: Outpost(Pid(1)), generation: 1 }}, ",
             "foreground: Some(Foreground { window: WindowHandle(10), root_owner: WindowHandle(10), ",
-            "process: Pid(1) }), facts: 1 }"
+            "process: Pid(1) }), backend: BackendCache { probed: {} }, facts: 1 }"
         )
+    );
+}
+
+// Table 4, column D, and the probes requests answer.
+
+/// A window of the tests' application whose classes give no verdict.
+const PROBED: RequestWindow = RequestWindow {
+    by_class: None,
+    ..WINDOW
+};
+
+/// A read of the window whose classes give no verdict.
+#[derive(Debug)]
+struct ReadProbed;
+
+impl Request for ReadProbed {
+    type Reply = PropertyValues;
+
+    fn reader(&self) -> Reader {
+        OUTPOST.reader
+    }
+
+    fn window(&self) -> RequestWindow {
+        PROBED
+    }
+
+    fn wire(&self) -> Wire {
+        wire()
+    }
+
+    fn decode(reply: Reply) -> Option<PropertyValues> {
+        ReadName::decode(reply)
+    }
+}
+
+/// The logic of the probe tests: each entry reads the probed window once.
+struct Probing;
+
+impl Logic for Probing {
+    type Entry = ();
+    type Facts = ();
+    type Said = String;
+
+    fn run(mut cx: Cx<Self>, (): ()) -> Function {
+        Box::pin(async move {
+            let due_us = cx.due_in(OTHER_DUE_US);
+            let outcome = cx.ask(ReadProbed, due_us).await;
+            cx.emit(format!("{outcome:?}"));
+        })
+    }
+
+    fn exempt_from_foreground((): &()) -> bool {
+        false
+    }
+
+    fn withdraws((): &(), (): &(), (): &()) -> bool {
+        false
+    }
+
+    fn recovered((): &(), _: &RequestWindow) -> Option<()> {
+        None
+    }
+}
+
+/// The send of request `number` to the probed window carrying `verdict`.
+fn send_probed(number: u64, verdict: WindowVerdict) -> Effect<String> {
+    Effect::Send {
+        to: OUTPOST,
+        ask: Ask {
+            number: RequestNumber(number),
+            window: PROBED.handle,
+            verdict,
+            request: wire(),
+        },
+    }
+}
+
+/// A probe of the probed window.
+fn probe(provider: bool, began_us: u64) -> verbatim_model::request::Probe {
+    verbatim_model::request::Probe {
+        window: PROBED.handle,
+        thread: PROBED.thread,
+        provider,
+        began_us,
+    }
+}
+
+/// A core of the probe tests with the outpost ready.
+fn probing_core() -> Core<Probing> {
+    let mut core = Core::<Probing>::default();
+    let _ = core.feed(Timed {
+        at_us: 0,
+        input: Input::ReaderReady(OUTPOST),
+    });
+    let _ = core.feed(Timed {
+        at_us: 0,
+        input: Input::Foreground(IN_FRONT),
+    });
+    core
+}
+
+/// Feeds `input` to a probe test's core at `at_us`.
+fn feed_probing(core: &mut Core<Probing>, at_us: u64, input: Input<()>) -> Vec<Effect<String>> {
+    core.feed(Timed { at_us, input })
+}
+
+/// The answer to request `number` with `probes`.
+fn answer_probed(number: u64, probes: Vec<verbatim_model::request::Probe>) -> Input<()> {
+    Input::Answer {
+        from: OUTPOST,
+        answer: Answer {
+            number: RequestNumber(number),
+            outcome: result(),
+            probes,
+            detail: String::new(),
+        },
+    }
+}
+
+#[test]
+fn a_request_to_a_window_with_no_verdict_carries_probe_first_and_its_probe_decides_the_next() {
+    let mut core = probing_core();
+    assert_eq!(
+        feed_probing(&mut core, 1_000, Input::Entry(())),
+        [send_probed(1, WindowVerdict::ProbeFirst)]
+    );
+    assert_eq!(
+        feed_probing(&mut core, 2_000, answer_probed(1, vec![probe(true, 1_100)])),
+        [said_result()]
+    );
+    assert_eq!(
+        feed_probing(&mut core, 3_000, Input::Entry(())),
+        [send_probed(2, WindowVerdict::Uia)]
+    );
+}
+
+#[test]
+fn a_probe_verdict_lapses_half_a_second_after_the_probe_began() {
+    let mut core = probing_core();
+    assert_eq!(
+        feed_probing(&mut core, 1_000, Input::Entry(())),
+        [send_probed(1, WindowVerdict::ProbeFirst)]
+    );
+    assert_eq!(
+        feed_probing(&mut core, 2_000, answer_probed(1, vec![probe(true, 1_100)])),
+        [said_result()]
+    );
+    assert_eq!(
+        feed_probing(&mut core, 601_100, Input::Entry(())),
+        [send_probed(2, WindowVerdict::ProbeFirst)]
+    );
+}
+
+#[test]
+fn a_probe_first_request_answered_with_no_probe_counts_as_one_that_timed_out() {
+    let mut core = probing_core();
+    assert_eq!(
+        feed_probing(&mut core, 1_000, Input::Entry(())),
+        [send_probed(1, WindowVerdict::ProbeFirst)]
+    );
+    assert_eq!(
+        feed_probing(&mut core, 2_000, answer_probed(1, Vec::new())),
+        [said_result()]
+    );
+    assert_eq!(
+        feed_probing(&mut core, 3_000, Input::Entry(())),
+        [send_probed(2, WindowVerdict::Msaa)]
+    );
+}
+
+#[test]
+fn a_probe_first_request_no_longer_awaited_counts_as_a_probe_that_timed_out_from_its_send() {
+    let mut core = probing_core();
+    assert_eq!(
+        feed_probing(&mut core, 1_000, Input::Entry(())),
+        [send_probed(1, WindowVerdict::ProbeFirst)]
+    );
+    assert_eq!(
+        feed_probing(&mut core, 2_000, Input::Foreground(SAME_APP_ELSEWHERE)),
+        [
+            Effect::Cancel {
+                to: OUTPOST,
+                cancel: Cancel {
+                    number: RequestNumber(1),
+                    reason: CancelReason::Foreground
+                }
+            },
+            said("NoLongerAwaited(Foreground)")
+        ]
+    );
+    assert_eq!(
+        feed_probing(&mut core, 3_000, Input::Foreground(IN_FRONT)),
+        []
+    );
+    assert_eq!(
+        feed_probing(&mut core, 4_000, Input::Entry(())),
+        [send_probed(2, WindowVerdict::Msaa)]
+    );
+    assert_eq!(
+        feed_probing(&mut core, 5_000, answer_probed(2, Vec::new())),
+        [said_result()]
+    );
+    assert_eq!(
+        feed_probing(&mut core, 501_001, Input::Entry(())),
+        [send_probed(3, WindowVerdict::ProbeFirst)]
+    );
+}
+
+#[test]
+fn a_destroyed_windows_probe_verdict_is_cleared() {
+    let mut core = probing_core();
+    assert_eq!(
+        feed_probing(&mut core, 1_000, Input::Entry(())),
+        [send_probed(1, WindowVerdict::ProbeFirst)]
+    );
+    assert_eq!(
+        feed_probing(&mut core, 2_000, answer_probed(1, vec![probe(true, 1_100)])),
+        [said_result()]
+    );
+    assert_eq!(
+        feed_probing(&mut core, 2_100, Input::WindowDestroyed(PROBED.handle)),
+        []
+    );
+    assert_eq!(
+        feed_probing(&mut core, 3_000, Input::Entry(())),
+        [send_probed(2, WindowVerdict::ProbeFirst)]
     );
 }

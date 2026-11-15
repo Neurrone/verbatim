@@ -37,11 +37,40 @@ pub struct Ask {
     /// The window it names, which Core's shell checks for a hang before
     /// sending it and the foreground rule tests.
     pub window: WindowHandle,
-    /// Whether the reader probes the window for a UI Automation provider
-    /// before the read, Core having no verdict in force for it.
-    pub probe_first: bool,
+    /// Core's backend verdict for the window as the request is sent, or
+    /// "probe first" when none is in force.
+    pub verdict: WindowVerdict,
     /// What is asked.
     pub request: Request,
+}
+
+/// Core's backend verdict for a request's window as it is sent
+/// (`docs/design/readers-tell-core-asks-build1.md`, Table 4, column D).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum WindowVerdict {
+    /// No verdict is in force: the reader probes the window for a UI
+    /// Automation provider before the read and returns the probe's answer.
+    ProbeFirst,
+    /// The window is read through UI Automation.
+    Uia,
+    /// The window is read through MSAA.
+    Msaa,
+}
+
+/// A probe of a window for a UI Automation provider: one raw
+/// `WM_GETOBJECT` for the UI Automation root object, waiting at most 3
+/// seconds (`docs/parity/backends.md`, "The UIA provider probe").
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct Probe {
+    /// The window.
+    pub window: WindowHandle,
+    /// The thread that owns it, which keys the verdict with the window.
+    pub thread: u32,
+    /// Whether it answered with a provider; a probe that timed out did
+    /// not.
+    pub provider: bool,
+    /// When the probe began, in microseconds on the run's shared clock.
+    pub began_us: u64,
 }
 
 /// The object a read names.
@@ -183,6 +212,17 @@ pub enum Request {
         /// The properties of each child.
         set: Vec<PropertyId>,
     },
+    /// The completion of a UI Automation read from the listener's route.
+    CompleteUia(Box<CompleteUia>),
+    /// One application's candidates of an MSAA run.
+    MsaaRun(MsaaRun),
+    /// The application's current focus, with NVDA's MSAA ids.
+    CurrentFocus {
+        /// The properties of each node.
+        set: Vec<PropertyId>,
+        /// The ancestors Core already knows.
+        known: Vec<KnownAncestor>,
+    },
     /// A read or move in a node's text.
     Text {
         /// The node.
@@ -224,6 +264,214 @@ pub struct ObjectRead {
     /// The place, in the request's list, of the known ancestor the walk
     /// met; `None` when it walked to the top.
     pub met: Option<u32>,
+    /// For the listener's read of a UI Automation element, the element's
+    /// route, from which the application's outpost completes the read.
+    pub route: Option<Route>,
+}
+
+/// One element of a route: a UI Automation element as the listener read
+/// it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RouteStep {
+    /// Its runtime id.
+    pub runtime_id: RuntimeId,
+    /// Its own native window, when it is a window's element.
+    pub window: Option<WindowHandle>,
+    /// Whether UI Automation counts it both a control and a content
+    /// element.
+    pub content: bool,
+}
+
+/// Where the chain above a route goes on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RouteEnd {
+    /// It met an ancestor Core already knows ([`ObjectRead::met`]), the
+    /// desktop root or the process boundary.
+    Top,
+    /// A step to a parent failed or found none below the root, or reached
+    /// a ghost's or a hung application's window: the chain goes on from
+    /// this window's own object.
+    ContinueFrom(WindowHandle),
+    /// The walk was cut by its depth limit: the chain goes on by plain
+    /// windows from this window, included.
+    PlainFrom(WindowHandle),
+}
+
+/// How the listener reached a UI Automation element, so that the
+/// application's outpost finds its own copy of it and of its ancestors:
+/// the element and each ancestor the listener read, nearest first, below
+/// the element's nearest window, and where the chain goes on.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Route {
+    /// The element's nearest window.
+    pub window: WindowHandle,
+    /// The element, then its ancestors, nearest first.
+    pub steps: Vec<RouteStep>,
+    /// Where the chain goes on above them.
+    pub end: RouteEnd,
+}
+
+/// What a UI Automation completion is for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CompletionFor {
+    /// A focus: the node's `Follow` registration is added before its
+    /// states are read.
+    Focus,
+    /// A selection's item, with its relation to the committed focus, read
+    /// live from the focus's controller-for relation.
+    SelectionItem {
+        /// The committed focus.
+        focus: NodeId,
+    },
+}
+
+/// The outpost completes the listener's read of a UI Automation element
+/// from its route: it mints node ids, reads the MSAA window above it and
+/// the chain above the process boundary.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CompleteUia {
+    /// The route the listener answered.
+    pub route: Route,
+    /// What the listener read of the element and each ancestor on the
+    /// route, nearest first, which the completion keeps.
+    pub read: Vec<PropertyValues>,
+    /// The properties of each node: the set the listener read.
+    pub set: Vec<PropertyId>,
+    /// The ancestors Core already knows.
+    pub known: Vec<KnownAncestor>,
+    /// What it is for.
+    pub completes: CompletionFor,
+}
+
+/// One MSAA focus or foreground candidate of a run, by the ids its event
+/// named, with its window's verdict.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunCandidate {
+    /// The ids its event named.
+    pub ids: MsaaIds,
+    /// Whether it is a foreground event's candidate.
+    pub foreground: bool,
+    /// Core's verdict for its window.
+    pub verdict: WindowVerdict,
+}
+
+/// The outpost reads one application's candidates of an MSAA run, newest
+/// first, and answers the first valid focus.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MsaaRun {
+    /// The candidates, newest first.
+    pub candidates: Vec<RunCandidate>,
+    /// The properties of each node.
+    pub set: Vec<PropertyId>,
+    /// The ancestors Core already knows.
+    pub known: Vec<KnownAncestor>,
+}
+
+/// How one run candidate was tried.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Tried {
+    /// Its window is read through UI Automation: skipped, the next older
+    /// candidate tried.
+    Skipped,
+    /// Refused, with the reason.
+    Refused(Refusal),
+    /// The object is not there.
+    NotThere,
+    /// The valid focus, whose read ends the run.
+    Focus(Box<FocusRead>),
+}
+
+/// The answer to [`MsaaRun`]: each candidate tried, newest first, up to
+/// and including the valid focus, if any.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunRead {
+    /// Each candidate tried, in the request's order.
+    pub tried: Vec<Tried>,
+}
+
+/// An MSAA object's ids.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct MsaaIds {
+    /// The window.
+    pub window: WindowHandle,
+    /// The object id.
+    pub object: i32,
+    /// The child id.
+    pub child: i32,
+}
+
+/// The MSAA ids a focus was read by, with the child id the outpost holds
+/// the object by.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct HeldIds {
+    /// The ids the event named; a focus read through `accFocus` carries no
+    /// object id of its own, as NVDA's.
+    pub event: MsaaIds,
+    /// The child id the outpost holds the object by.
+    pub held_child: i32,
+}
+
+/// The classes whose rules change how Core judges an object, such as the
+/// MSAA duplicate test. Word's, Outlook's and Internet Explorer's join with
+/// the milestones that read them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ObjectClass {
+    /// No class with rules of its own.
+    Plain,
+}
+
+/// One node of a focus answer.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FocusNode {
+    /// The node, its nearest window and its properties, by the request's
+    /// set.
+    pub read: NodeRead,
+    /// Its UI Automation runtime id, `None` for an MSAA node.
+    pub runtime_id: Option<RuntimeId>,
+}
+
+/// One ancestor of a focus answer.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FocusAncestor {
+    /// The node.
+    pub node: FocusNode,
+    /// Whether it is a simple child, never spoken as a state change's
+    /// ancestor.
+    pub simple_child: bool,
+    /// Its dialog text, when it is a dialog the walk read.
+    pub dialog_text: Option<String>,
+}
+
+/// A focus answer: what Core keeps with the committed focus, each carried
+/// here (`docs/design/readers-tell-core-asks-build1.md`, "The focus
+/// answers").
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FocusRead {
+    /// The focus; its rectangle, states, name and value come with its
+    /// properties.
+    pub focus: FocusNode,
+    /// The MSAA ids it was read by, `None` for a UI Automation focus.
+    pub msaa: Option<HeldIds>,
+    /// The focused child's ids, when the focus was reached by a redirect
+    /// from a list to its focused child.
+    pub redirected_to: Option<MsaaIds>,
+    /// Its ancestors, nearest first, up to the ancestor Core already knows
+    /// that the walk met, which is not among them.
+    pub ancestors: Vec<FocusAncestor>,
+    /// The place, in the request's list, of the known ancestor the walk
+    /// met; `None` when it walked to the top.
+    pub met: Option<u32>,
+    /// The foreground window it entered under, as the read found it;
+    /// `None` when it could not be read.
+    pub foreground: Option<FocusNode>,
+    /// Whether its value comes from its selection.
+    pub value_from_selection: bool,
+    /// Its class verdict.
+    pub class: ObjectClass,
+    /// Whether the event's runtime id named another element before: the
+    /// node keeps its id, and Core forgets what it kept of the earlier
+    /// element's text.
+    pub runtime_id_reused: bool,
 }
 
 /// A result: the first of the five outcomes, by request.
@@ -233,6 +481,10 @@ pub enum Reply {
     Object(Box<ObjectRead>),
     /// The answer to [`Request::Properties`].
     Properties(PropertyValues),
+    /// The answer to [`Request::CompleteUia`] and [`Request::CurrentFocus`].
+    Focus(Box<FocusRead>),
+    /// The answer to [`Request::MsaaRun`].
+    Run(RunRead),
     /// The answer to [`Request::Navigate`]: the node reached, `None` at a
     /// genuine edge of the tree.
     Navigated(Option<NodeRead>),
@@ -256,6 +508,9 @@ pub enum Refusal {
     /// The probe found the window read through UI Automation, so an MSAA
     /// read of it is not made.
     ReadThroughUia,
+    /// The probe found the window read through MSAA, so a UI Automation
+    /// completion of it is not made.
+    ReadThroughMsaa,
     /// The object does not support what was asked.
     Unsupported,
 }
@@ -282,6 +537,9 @@ pub struct Answer {
     pub number: RequestNumber,
     /// Its outcome.
     pub outcome: Outcome,
+    /// The probes the request made, each a verdict Core records.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub probes: Vec<Probe>,
     /// A diagnostic detail for the log, such as the failed call; empty
     /// when there is none. Core judges nothing by it.
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -340,7 +598,7 @@ mod tests {
         let ask = Ask {
             number: RequestNumber(7),
             window: WindowHandle(5),
-            probe_first: false,
+            verdict: WindowVerdict::ProbeFirst,
             request: Request::ReadObject(ReadObject {
                 object: ObjectRef::Kept(ElementToken(3)),
                 set: vec![PropertyId::Name, PropertyId::Role],
@@ -367,7 +625,9 @@ mod tests {
                 descendants: Vec::new(),
                 ancestors: Vec::new(),
                 met: Some(0),
+                route: None,
             }))),
+            probes: Vec::new(),
             detail: String::new(),
         };
         let json = serde_json::to_string(&answer).unwrap();

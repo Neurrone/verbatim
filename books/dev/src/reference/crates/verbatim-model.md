@@ -302,7 +302,14 @@ them yet.
   generic read of the object an event names (`ReadObject`, with its
   property set, relation to nodes Core names, descendants, the walk up to
   the ancestors Core already knows and its purpose), and the properties,
-  navigation, find, children, text and activate requests. `Answer` carries
+  navigation, find, children, text and activate requests, and the focus
+  requests: `CompleteUia` (the completion of a UI Automation read from the
+  listener's `Route`), `MsaaRun` (one application's `RunCandidate`s,
+  answered `RunRead` with each candidate `Tried`) and the current focus,
+  each answered with a `FocusRead`, which carries what Core keeps with the
+  committed focus. Each `Ask` carries its window's `WindowVerdict`, "probe
+  first" when Core has none in force, and each `Answer` the `Probe`s the
+  request made. `Answer` carries
   one of the five outcomes (`Outcome`: a `Reply`, `Refused` with a
   `Refusal`, not there, not responding, or the reader ended) and a
   diagnostic detail. `Cancel` carries a `CancelReason`: foreground, hung,
