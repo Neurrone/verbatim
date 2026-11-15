@@ -247,15 +247,32 @@ pub(crate) trait Logic: Sized + 'static {
         false
     }
 
-    /// `instance` ended: what Core's facts keep of it change, and the
-    /// entries returned join the back (the re-take).
+    /// `instance` ended: what Core's facts keep of it change, what that
+    /// says goes into `said`, and the entries returned join the back (the
+    /// re-take).
     fn reader_ended(
         facts: &mut Self::Facts,
         instance: Instance,
         foreground: Option<Foreground>,
+        said: &mut Vec<Self::Said>,
     ) -> Vec<Self::Entry> {
-        let _ = (facts, instance, foreground);
+        let _ = (facts, instance, foreground, said);
         Vec::new()
+    }
+
+    /// The entries Core's facts ask to join the back now, such as a
+    /// say-all's next read: taken after every input and every function's
+    /// step, so they join in the order they were wanted.
+    fn joining(facts: &mut Self::Facts) -> Vec<Self::Entry> {
+        let _ = facts;
+        Vec::new()
+    }
+
+    /// Whether the front entry `front` no longer needs its request out:
+    /// Core withdraws it, as when say-all stopped while its read was out.
+    fn unneeded(facts: &Self::Facts, front: &Self::Entry) -> bool {
+        let _ = (facts, front);
+        false
     }
 
     /// Whether `arriving` is dropped at its arrival, judged against the

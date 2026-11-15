@@ -6,10 +6,11 @@
 //!
 //! A press joins the queue behind what arrived before it and runs at its
 //! turn with no time limit of its own. Report focus, report caret
-//! location, the navigator's commands and the review commands over the
-//! navigator's text run as their own functions ([`crate::report_focus`],
-//! [`crate::caret_location`], [`crate::navigator`],
-//! [`crate::review_text`]), each holding the queue until its last answer;
+//! location, the navigator's commands, the review commands over the
+//! navigator's text and both say-alls run as their own functions
+//! ([`crate::report_focus`], [`crate::caret_location`],
+//! [`crate::navigator`], [`crate::review_text`], [`crate::say_all`]), each
+//! holding the queue until its last answer;
 //! every other action runs today's handling of the key or command at its
 //! turn, the caret key's included, until its own entry replaces it.
 
@@ -99,9 +100,11 @@ impl PressEntry {
 }
 
 /// Stamps every utterance of `said` with `fence`, inside a key's carried
-/// effects too.
+/// effects too, except say-all's, which carries its starting key's number
+/// whichever entry hands it to speech (`crate::say_all`).
 pub(crate) fn stamp(fence: Fence, said: &mut Effect) {
     match said {
+        Effect::Speak(utterance, _) if utterance.say_all => {}
         Effect::Speak(_, key) => *key = fence.key(),
         Effect::ForKey(_, inner) => stamp(fence, inner),
         _ => {}
@@ -111,7 +114,9 @@ pub(crate) fn stamp(fence: Fence, said: &mut Effect) {
 /// The press's function at its turn.
 pub(crate) async fn run(mut cx: Cx<Entries>, entry: PressEntry) {
     let PressEntry {
-        trace_id, press, ..
+        trace_id,
+        press,
+        fence,
     } = entry;
     let own = match press.action {
         PressAction::Command { command, .. } => Own::of(command, &cx.facts()),
@@ -137,11 +142,19 @@ pub(crate) async fn run(mut cx: Cx<Entries>, entry: PressEntry) {
             Own::Activate => crate::navigator::activate(cx, trace_id).await,
             Own::ReportObject => crate::navigator::report_object(cx, press).await,
             Own::ToFocus => crate::navigator::to_focus(cx, trace_id).await,
-            Own::ReviewText => crate::review_text::entry(cx, press).await,
+            Own::ReviewText => crate::review_text::entry(cx, press, fence).await,
+            Own::SayAllFromCaret => crate::say_all::from_caret(&mut cx, trace_id, fence),
+            Own::CommandMark => {}
         }
         return;
     }
     let Some(input) = today(trace_id, &press) else {
+        // A key passed with nothing more to do stops say-all at its turn,
+        // as any key does; today's handling stops it for every other.
+        let stopped = crate::say_all::stop(&mut cx.facts_mut());
+        for effect in stopped {
+            cx.emit(effect);
+        }
         return;
     };
     let effects = {
@@ -167,20 +180,32 @@ enum Own {
     ReportObject,
     ToFocus,
     ReviewText,
+    SayAllFromCaret,
+    /// A move between command marks in a terminal Core does not model,
+    /// which has none to move between: it says nothing.
+    CommandMark,
 }
 
 impl Own {
     /// The command's own function at its turn, `None` for one that runs
-    /// today's handling: a review command on a terminal Core models, which
-    /// its model answers until build 3's terminal requests.
+    /// today's handling: a review command or a move between command marks
+    /// on a terminal Core models, which its model answers from Core's
+    /// memory until build 3's terminal requests.
     fn of(command: ReviewCommand, state: &crate::state::SrState) -> Option<Self> {
+        let modelled = || {
+            state
+                .navigator
+                .as_ref()
+                .is_some_and(|navigator| crate::terminal_model::models(state, navigator.object.id))
+        };
         match command {
             command if crate::review_text::handles(command) => {
-                let modelled = state.navigator.as_ref().is_some_and(|navigator| {
-                    crate::terminal_model::models(state, navigator.object.id)
-                });
-                (!modelled).then_some(Self::ReviewText)
+                (!modelled()).then_some(Self::ReviewText)
             }
+            ReviewCommand::PreviousCommandMark | ReviewCommand::NextCommandMark => {
+                (!modelled()).then_some(Self::CommandMark)
+            }
+            ReviewCommand::SayAllFromCaret => Some(Self::SayAllFromCaret),
             ReviewCommand::ReportFocus => Some(Self::ReportFocus),
             ReviewCommand::ReportCaretLocation => Some(Self::CaretLocation),
             ReviewCommand::Parent => Some(Self::Navigate(verbatim_model::QueryKind::Parent)),
@@ -202,7 +227,7 @@ impl Own {
 }
 
 /// The input today's handling of `press` takes; `None` for a key passed
-/// that does nothing more at its turn than its press's cut did.
+/// that does nothing more at its turn than stop say-all.
 fn today(trace_id: TraceId, press: &Press) -> Option<Input> {
     let key_seq = press.key_seq;
     let pressed_at_ms = press.pressed_at_us / 1_000;

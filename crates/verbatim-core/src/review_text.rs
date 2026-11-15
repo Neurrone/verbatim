@@ -30,6 +30,7 @@ use crate::editing::{is_grid, may_have_text, selection_segments, speak, speak_ea
 use crate::entries::Entries;
 use crate::event_queue::{Cx, OTHER_DUE_US, Outcome};
 use crate::key_line::{self, ReviewPress};
+use crate::keys::entry::Fence;
 use crate::navigator::Found;
 use crate::proven;
 use crate::queries::{Ending, Then};
@@ -164,7 +165,7 @@ pub(crate) fn run(state: &mut SrState, press: ReviewPress) -> Vec<Effect> {
 /// answer, as NVDA runs its scripts on its queue. One due time covers the
 /// whole chain. An object not there reviews as empty flat text; any other
 /// outcome but a result says nothing.
-pub(crate) async fn entry(mut cx: Cx<Entries>, press: ReviewPress) {
+pub(crate) async fn entry(mut cx: Cx<Entries>, press: ReviewPress, fence: Fence) {
     let trace_id = press.trace_id;
     let found = crate::navigator::found(&cx.facts());
     let window = match found {
@@ -226,9 +227,12 @@ pub(crate) async fn entry(mut cx: Cx<Entries>, press: ReviewPress) {
                 };
                 Next::Said(object_read(&mut cx.facts_mut(), trace_id, press, read))
             }
-            Next::SayAll(node, at) => {
-                Next::Said(crate::say_all::start(&mut cx.facts_mut(), node, false, at))
-            }
+            Next::SayAll(node, at) => Next::Said(crate::say_all::start_in_queue(
+                &mut cx.facts_mut(),
+                (node, window),
+                (false, at),
+                (trace_id, fence),
+            )),
         };
     }
 }
@@ -239,7 +243,9 @@ fn asked_outside_queue(state: &mut SrState, press: ReviewPress, next: Next) -> V
         Next::Said(effects) => effects,
         Next::Text(node, op, then) => request(state, press, node, op, then),
         Next::ReadObject => read_object(state, press),
-        Next::SayAll(node, at) => crate::say_all::start(state, node, false, at),
+        Next::SayAll(node, at) => {
+            crate::say_all::start(state, node, (false, at), crate::say_all::SayAllBy::Queries)
+        }
     }
 }
 

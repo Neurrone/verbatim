@@ -69,6 +69,10 @@ pub(crate) enum Input<E> {
     },
     /// An asker outside the queue no longer needs its request.
     WithdrawOutside(Asker),
+    /// Core's facts changed outside the queue: the entries they want join
+    /// the back, and the front's request is withdrawn when it is no longer
+    /// needed ([`Logic::joining`], [`Logic::unneeded`]).
+    Settle,
     /// A timer came due.
     Tick,
 }
@@ -224,6 +228,8 @@ impl<L: Logic> Core<L> {
                 }
             }
             Input::Tick => self.tick(),
+            // Settled by the step's end, as every input is.
+            Input::Settle => {}
         }
         self.take_next();
         self.finish_step()
@@ -304,6 +310,26 @@ impl<L: Logic> Core<L> {
             }
         }
         if let Some(number) = withdrawn {
+            self.stop(number, CancelReason::Withdrawn);
+        }
+    }
+
+    /// The entries Core's facts want join the back, and the front's
+    /// request is withdrawn when its entry no longer needs it.
+    pub(super) fn settle(&mut self) {
+        let unneeded = {
+            let mut shared = self.shared.borrow_mut();
+            let state = &mut shared.state;
+            for entry in L::joining(&mut state.facts) {
+                join::<L>(state, entry);
+            }
+            state.queue.front.as_ref().and_then(|front| {
+                front
+                    .asked
+                    .filter(|_| L::unneeded(&state.facts, &front.entry))
+            })
+        };
+        if let Some(number) = unneeded {
             self.stop(number, CancelReason::Withdrawn);
         }
     }
@@ -476,9 +502,11 @@ impl<L: Logic> Core<L> {
                 }
             });
             let foreground = state.queue.foreground;
-            for entry in L::reader_ended(&mut state.facts, instance, foreground) {
+            let mut said = Vec::new();
+            for entry in L::reader_ended(&mut state.facts, instance, foreground, &mut said) {
                 join::<L>(state, entry);
             }
+            shared.effects.extend(said.into_iter().map(Effect::Said));
         }
         for ended in ended {
             self.deliver(ended);

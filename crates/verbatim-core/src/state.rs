@@ -458,6 +458,8 @@ pub(crate) struct SayAll {
     pub(crate) finished: bool,
     /// Whether the display was asked to stay on.
     pub(crate) display_held: bool,
+    /// How its reads and caret moves are made.
+    pub(crate) by: crate::say_all::SayAllBy,
 }
 
 /// The table, row and column last spoken of a cell, each valid alone

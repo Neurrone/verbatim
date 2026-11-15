@@ -137,6 +137,9 @@ pub(crate) enum Entry {
     Press(Box<PressEntry>),
     /// Playback reached an index mark, with its speech fence.
     Mark(SpeechMark, Fence),
+    /// The next read of the say-all started by the press of this trace,
+    /// with its speech fence.
+    SayAllRead(TraceId, Fence),
 }
 
 impl fmt::Debug for Entry {
@@ -192,6 +195,7 @@ impl fmt::Debug for Entry {
                 press.press.key_seq, press.press.action
             ),
             Self::Mark(mark, _) => write!(formatter, "Mark({})", mark.0),
+            Self::SayAllRead(run, _) => write!(formatter, "SayAllRead({run:?})"),
         }
     }
 }
@@ -309,7 +313,8 @@ impl Entry {
             | Self::MenuCheck(_)
             | Self::CurrentFocus(_)
             | Self::Press(_)
-            | Self::Mark(..) => None,
+            | Self::Mark(..)
+            | Self::SayAllRead(..) => None,
         }
     }
 
@@ -327,7 +332,9 @@ impl Entry {
             Self::CurrentFocus(read) => read.fence,
             Self::MsaaChange(change) => change.fence,
             Self::UiaChange(change) => change.fence,
-            Self::ForegroundMarker { fence, .. } | Self::Mark(_, fence) => *fence,
+            Self::ForegroundMarker { fence, .. }
+            | Self::Mark(_, fence)
+            | Self::SayAllRead(_, fence) => *fence,
             Self::Press(press) => press.fence,
         }
     }
@@ -346,7 +353,9 @@ impl Entry {
             Self::CurrentFocus(read) => read.fence = set,
             Self::MsaaChange(change) => change.fence = set,
             Self::UiaChange(change) => change.fence = set,
-            Self::ForegroundMarker { fence, .. } | Self::Mark(_, fence) => *fence = set,
+            Self::ForegroundMarker { fence, .. }
+            | Self::Mark(_, fence)
+            | Self::SayAllRead(_, fence) => *fence = set,
             Self::Press(press) => press.fence = set,
         }
     }
@@ -400,10 +409,8 @@ impl Logic for Entries {
                 crate::changes::uia(&mut cx, &change);
             }),
             Entry::Press(press) => Box::pin(crate::keys::entry::run(cx, *press)),
-            Entry::Mark(mark, _) => Box::pin(async move {
-                let mut cx = cx;
-                crate::say_all::mark_entry(&mut cx, mark);
-            }),
+            Entry::Mark(mark, _) => Box::pin(crate::say_all::mark_entry(cx, mark)),
+            Entry::SayAllRead(run, _) => Box::pin(crate::say_all::read_entry(cx, run)),
             Entry::ForegroundMarker {
                 window, root_owner, ..
             } => Box::pin(async move {
@@ -437,10 +444,23 @@ impl Logic for Entries {
         crate::keys::entry::stamp(entry.fence(), said);
     }
 
-    fn withdraws(_: &SrState, _: &Entry, _: &Entry) -> bool {
-        // Only a key withdraws a request, and keys join the queue in a
-        // later step of the build.
-        false
+    fn withdraws(_: &SrState, front: &Entry, arriving: &Entry) -> bool {
+        // Any key stops say-all, so a key arriving withdraws its read.
+        matches!((front, arriving), (Entry::SayAllRead(..), Entry::Press(_)))
+    }
+
+    fn joining(facts: &mut SrState) -> Vec<Entry> {
+        crate::say_all::joining(facts)
+            .map(|run| Entry::SayAllRead(run, Fence::default()))
+            .into_iter()
+            .collect()
+    }
+
+    fn unneeded(facts: &SrState, front: &Entry) -> bool {
+        match front {
+            Entry::SayAllRead(run, _) => crate::say_all::read_unneeded(facts, *run),
+            _ => false,
+        }
     }
 
     fn recovered(facts: &SrState, window: &RequestWindow) -> Option<Entry> {
@@ -469,10 +489,14 @@ impl Logic for Entries {
         facts: &mut SrState,
         instance: Instance,
         foreground: Option<Foreground>,
+        said: &mut Vec<Said>,
     ) -> Vec<Entry> {
         if let crate::event_queue::Reader::Outpost(process) = instance.reader {
             let outpost = verbatim_model::OutpostId(instance.generation);
             facts.follows.outpost_ended(process, outpost);
+            // Say-all's positions are anchors of the outpost's, which end
+            // with it: say-all stops, its read withdrawn.
+            said.extend(crate::say_all::outpost_ended(facts, outpost));
             // The navigator object is one of the outpost's held nodes,
             // which end with it (Table 5): its commands say there is
             // none until a focus is committed again.
@@ -563,13 +587,15 @@ impl Logic for Entries {
                 focus_kind: true,
                 ends_run: false,
             },
-            Entry::Run(_) | Entry::ForegroundMarker { .. } | Entry::Press(_) | Entry::Mark(..) => {
-                Place::Other {
-                    merges: false,
-                    focus_kind: false,
-                    ends_run: false,
-                }
-            }
+            Entry::Run(_)
+            | Entry::ForegroundMarker { .. }
+            | Entry::Press(_)
+            | Entry::Mark(..)
+            | Entry::SayAllRead(..) => Place::Other {
+                merges: false,
+                focus_kind: false,
+                ends_run: false,
+            },
         }
     }
 
@@ -630,7 +656,8 @@ impl Logic for Entries {
             | Entry::MenuCheck(_)
             | Entry::UiaChange(_)
             | Entry::Press(_)
-            | Entry::Mark(..) => None,
+            | Entry::Mark(..)
+            | Entry::SayAllRead(..) => None,
         };
         window.is_some_and(|window| {
             !foreground.holds(&window) && !entry.tell().is_some_and(accepted_apart_from_foreground)
@@ -649,7 +676,8 @@ impl Logic for Entries {
             | Entry::MsaaChange(_)
             | Entry::UiaChange(_)
             | Entry::Press(_)
-            | Entry::Mark(..) => None,
+            | Entry::Mark(..)
+            | Entry::SayAllRead(..) => None,
         }
     }
 
@@ -767,6 +795,41 @@ pub(crate) fn route(
             return Vec::new();
         }
     };
+    run_input(state, runtime, (trace_id, at_us), input)
+}
+
+/// Whether Core's facts, changed outside the queue, leave it to settle: a
+/// say-all wants its next read, or stopped while its read was out
+/// ([`settle`]).
+pub(crate) fn unsettled(state: &SrState) -> bool {
+    state.say_all.as_ref().is_some_and(|say_all| {
+        say_all
+            .by
+            .run()
+            .is_some_and(|run| run.read == crate::say_all::QueueRead::Wanted)
+    }) || state
+        .queue
+        .asking()
+        .is_some_and(|front| <Entries as Logic>::unneeded(state, front))
+}
+
+/// Settles the queue under `trace_id` after Core's facts changed outside
+/// it, as the speech side's cut or failure changes say-all until they
+/// reach the inbox in a later step of build 1: what they want joins the
+/// back, and a request no longer needed is withdrawn.
+pub(crate) fn settle(state: &mut SrState, runtime: &mut Runtime, trace_id: TraceId) -> Vec<Said> {
+    let at_us = state.queue.now_us();
+    run_input(state, runtime, (trace_id, at_us), Input::Settle)
+}
+
+/// Feeds `input` to the queue under `trace_id` at `at_us`, and returns
+/// what Core did as the shell's effects.
+fn run_input(
+    state: &mut SrState,
+    runtime: &mut Runtime,
+    (trace_id, at_us): (TraceId, u64),
+    input: Input<Entry>,
+) -> Vec<Said> {
     state.queue_trace = InputTrace(trace_id);
     let effects = match feed(state, runtime, Timed { at_us, input }) {
         Ok(effects) => effects,

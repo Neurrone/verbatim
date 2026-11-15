@@ -29,24 +29,36 @@
 //! together. Any key stops it, dropping the buffer and leaving the cursor
 //! at the start of the last unit playback reached, and the display is kept
 //! on while it reads.
+//!
+//! Started by a press at its turn in the event queue
+//! (`docs/design/readers-tell-core-asks-build1.md`, "The event queue"),
+//! each read is an entry of its own that joins the back when the read is
+//! wanted and asks the node's window as the queue's request, and each
+//! caret move is a request of the index mark's entry. Its speech carries
+//! its starting key's number. Stopping it withdraws a read out, and a read
+//! still waiting ends at its turn having asked nothing; the end of the
+//! outpost generation holding its positions stops it.
 
 use std::sync::Arc;
 
+use serde::{Deserialize, Serialize};
 use verbatim_model::{
-    Effect, NodeId, SayAllUnit, SegmentContent, SpeechMark, SpeechPriority, TextChunk,
-    TextMovement, TextOp, TextPoint, TextPosition, TextReadAhead, TextReply, TextUnit, TraceId,
-    Utterance, UtteranceSegment,
+    Effect, KeySeq, Message, NodeId, SayAllUnit, SegmentContent, SpeechMark, SpeechPriority,
+    TextChunk, TextMovement, TextOp, TextPoint, TextPosition, TextReadAhead, TextReply, TextUnit,
+    TraceId, Utterance, UtteranceSegment,
 };
 use verbatim_text::Segmenter;
 
 use crate::editing::is_grid;
 use crate::entries::Entries;
-use crate::event_queue::Cx;
+use crate::event_queue::{Cx, OTHER_DUE_US, Outcome, RequestWindow};
+use crate::keys::entry::Fence;
 use crate::queries::Then;
 use crate::state::{
     BufferedPiece, QueuedMark, ReviewText, SayAll, SharedChunk, SrState, UnitStart,
 };
 use crate::text;
+use crate::text_request::{CaretTarget, TextRequest};
 
 /// How many units each read asks for: a line or a sentence each, a batch
 /// lasts tens of seconds of speech, so a round trip is rare.
@@ -67,14 +79,71 @@ pub(crate) const LOW_WATER: usize = 10;
 /// pauses").
 pub(crate) const MAX_HELD: usize = 10;
 
+/// How a say-all makes its reads and caret moves.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) enum SayAllBy {
+    /// Started outside the event queue: the reducer's own queries, until
+    /// the shell feeds presses to the queue.
+    Queries,
+    /// Started by a press at its turn in the event queue: each read is an
+    /// entry of its own, and each caret move a request of the index mark's
+    /// entry.
+    Queue(QueueRun),
+}
+
+/// A say-all started in the event queue.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct QueueRun {
+    /// The trace of the press that started it, which names it: a read
+    /// entry of another say-all finds it is not its own.
+    pub(crate) trace: TraceId,
+    /// Its starting key's number, which all its speech carries, so a key
+    /// pressed after it fences off what it hands to speech later.
+    pub(crate) key: Option<KeySeq>,
+    /// The window of the node it reads, which its requests name.
+    pub(crate) window: RequestWindow,
+    /// Where its next read is.
+    pub(crate) read: QueueRead,
+}
+
+/// Where a say-all's next read is, in the event queue.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) enum QueueRead {
+    /// No read is wanted or waiting.
+    Idle,
+    /// A read is wanted: its entry joins the back at the end of the step.
+    Wanted,
+    /// Its entry is in the queue, waiting or asking.
+    Joined,
+}
+
+impl SayAllBy {
+    /// The say-all's run in the event queue, `None` outside it.
+    pub(crate) fn run(&self) -> Option<&QueueRun> {
+        match self {
+            Self::Queue(run) => Some(run),
+            Self::Queries => None,
+        }
+    }
+}
+
+/// A caret move playback reaching a unit asks: to `position` in `node`,
+/// whose line `line` becomes Core's caret line once it is made.
+#[derive(Debug)]
+struct CaretMove {
+    node: NodeId,
+    position: TextPosition,
+    line: TextChunk,
+}
+
 /// Starts reading `node` from `at`, moving the caret as it goes when
-/// `moves_caret`, the review cursor otherwise. Stops a say-all already
-/// running.
+/// `moves_caret`, the review cursor otherwise, its reads made `by` the
+/// reducer's queries or the event queue. Stops a say-all already running.
 pub(crate) fn start(
     state: &mut SrState,
     node: NodeId,
-    moves_caret: bool,
-    at: TextPoint,
+    (moves_caret, at): (bool, TextPoint),
+    by: SayAllBy,
 ) -> Vec<Effect> {
     let mut effects = stop(state);
     let grid = state
@@ -115,9 +184,128 @@ pub(crate) fn start(
         trace: None,
         finished: false,
         display_held,
+        by,
     });
     effects.extend(read_next(state));
     effects
+}
+
+/// Say-all from the focus's caret or the review cursor, pressed as
+/// `press` and started at its turn in the event queue: the starting point
+/// as the command finds it, its reads entries of their own
+/// ([`read_entry`]).
+pub(crate) fn start_in_queue(
+    state: &mut SrState,
+    (node, window): (NodeId, RequestWindow),
+    (moves_caret, at): (bool, TextPoint),
+    (trace, fence): (TraceId, Fence),
+) -> Vec<Effect> {
+    start(
+        state,
+        node,
+        (moves_caret, at),
+        SayAllBy::Queue(QueueRun {
+            trace,
+            key: fence.key(),
+            window,
+            read: QueueRead::Idle,
+        }),
+    )
+}
+
+/// Say-all from the caret, pressed under `trace_id` with the speech fence
+/// `fence`, at its turn in the event queue: from the committed focus's
+/// caret as the outpost finds it; "no caret" with no focus a reader holds,
+/// "not supported" on a focus that cannot have text.
+pub(crate) fn from_caret(cx: &mut Cx<Entries>, trace_id: TraceId, fence: Fence) {
+    let target = CaretTarget::of(&cx.facts());
+    let effects = match target {
+        CaretTarget::NoCaret => vec![crate::editing::speak(
+            trace_id,
+            crate::review_text::message(Message::NoCaret),
+        )],
+        CaretTarget::NoText => vec![crate::editing::speak(
+            trace_id,
+            crate::review_text::message(Message::NotSupported),
+        )],
+        CaretTarget::Text(text) => start_in_queue(
+            &mut cx.facts_mut(),
+            (text.node, text.window),
+            (true, TextPoint::Caret),
+            (trace_id, fence),
+        ),
+    };
+    for effect in effects {
+        cx.emit(effect);
+    }
+}
+
+/// The trace naming the say-all whose read entry is wanted, which then
+/// joins the back; `None` when no read is wanted.
+pub(crate) fn joining(state: &mut SrState) -> Option<TraceId> {
+    let run = match state.say_all.as_mut().map(|say_all| &mut say_all.by) {
+        Some(SayAllBy::Queue(run)) if run.read == QueueRead::Wanted => run,
+        _ => return None,
+    };
+    run.read = QueueRead::Joined;
+    Some(run.trace)
+}
+
+/// Whether the read entry of the say-all traced `run` is no longer needed:
+/// that say-all stopped. Its request out is withdrawn.
+pub(crate) fn read_unneeded(state: &SrState, run: TraceId) -> bool {
+    state
+        .say_all
+        .as_ref()
+        .and_then(|say_all| say_all.by.run())
+        .is_none_or(|own| own.trace != run)
+}
+
+/// A say-all read at its turn as an event-queue entry: the next batch of
+/// the say-all traced `run`, asked of its node's window as the queue's
+/// request. A say-all that stopped before its turn asks nothing; any
+/// outcome but a result or the text not there stops it, as a failed read
+/// does.
+pub(crate) async fn read_entry(mut cx: Cx<Entries>, run: TraceId) {
+    let request = {
+        let facts = cx.facts();
+        let Some(say_all) = facts.say_all.as_ref() else {
+            return;
+        };
+        let Some(own) = say_all.by.run().filter(|own| own.trace == run) else {
+            return;
+        };
+        TextRequest {
+            process: own.window.process,
+            window: own.window,
+            node: say_all.node,
+            op: next_op(say_all),
+        }
+    };
+    let due_us = cx.due_in(OTHER_DUE_US);
+    let outcome = cx.ask(request, due_us).await;
+    let effects = {
+        let mut facts = cx.facts_mut();
+        let Some(own) = facts
+            .say_all
+            .as_mut()
+            .and_then(|say_all| match &mut say_all.by {
+                SayAllBy::Queue(own) if own.trace == run => Some(own),
+                _ => None,
+            })
+        else {
+            return;
+        };
+        own.read = QueueRead::Idle;
+        match outcome {
+            Outcome::Result(answer) => reply(&mut facts, run, answer),
+            Outcome::NotThere => reply(&mut facts, run, TextReply::Gone),
+            _ => stop(&mut facts),
+        }
+    };
+    for effect in effects {
+        cx.emit(effect);
+    }
 }
 
 /// Stops say-all, if it is running, leaving the cursor where reading got
@@ -130,12 +318,9 @@ pub(crate) fn stop(state: &mut SrState) -> Vec<Effect> {
     }
 }
 
-/// Asks for the next batch: the first at the starting point, each later one
+/// The next batch's read: the first at the starting point, each later one
 /// a unit on from the last chunk read.
-fn read_next(state: &mut SrState) -> Vec<Effect> {
-    let Some(say_all) = state.say_all.as_ref() else {
-        return Vec::new();
-    };
+fn next_op(say_all: &SayAll) -> TextOp {
     let (at, movement) = match say_all.last_chunk {
         None => (say_all.start, None),
         Some((position, unit)) => (
@@ -143,12 +328,27 @@ fn read_next(state: &mut SrState) -> Vec<Effect> {
             Some(TextMovement { unit, count: 1 }),
         ),
     };
-    let op = TextOp::ReadAhead(TextReadAhead {
+    TextOp::ReadAhead(TextReadAhead {
         at,
         movement,
         unit: say_all.unit,
         count: READ_AHEAD,
-    });
+    })
+}
+
+/// Asks for the next batch: in the event queue, its entry is wanted and
+/// joins the back at the end of the step ([`joining`]).
+fn read_next(state: &mut SrState) -> Vec<Effect> {
+    let Some(say_all) = state.say_all.as_mut() else {
+        return Vec::new();
+    };
+    if let SayAllBy::Queue(run) = &mut say_all.by {
+        if run.read == QueueRead::Idle {
+            run.read = QueueRead::Wanted;
+        }
+        return Vec::new();
+    }
+    let op = next_op(say_all);
     let node = say_all.node;
     let (_, effect) = state
         .queries
@@ -317,7 +517,13 @@ fn hand_out(state: &mut SrState) -> Vec<Effect> {
             ));
         }
         // Read by say-all, so the theme's "play sounds during say all"
-        // setting applies to it.
+        // setting applies to it. In the event queue it carries its starting
+        // key's number, whichever entry hands it on.
+        let key = state
+            .say_all
+            .as_ref()
+            .and_then(|say_all| say_all.by.run())
+            .and_then(|run| run.key);
         effects.push(Effect::Speak(
             Utterance {
                 trace_id,
@@ -327,7 +533,7 @@ fn hand_out(state: &mut SrState) -> Vec<Effect> {
                 validity: None,
                 say_all: true,
             },
-            None,
+            key,
         ));
         if let Some(say_all) = state.say_all.as_mut() {
             say_all.queued.extend(marks);
@@ -338,9 +544,12 @@ fn hand_out(state: &mut SrState) -> Vec<Effect> {
 /// Ends say-all once everything is read and heard, or reads the next batch
 /// when fewer than [`LOW_WATER`] utterances are left to speak.
 fn read_on_or_end(state: &mut SrState) -> Vec<Effect> {
-    let reading = state.queries.has(|then| matches!(then, Then::SayAll));
     let Some(say_all) = &state.say_all else {
         return Vec::new();
+    };
+    let reading = match &say_all.by {
+        SayAllBy::Queries => state.queries.has(|then| matches!(then, Then::SayAll)),
+        SayAllBy::Queue(run) => run.read != QueueRead::Idle,
     };
     if say_all.finished {
         return end_if_done(state);
@@ -396,21 +605,71 @@ fn pieces(
 /// before that key's watch starts, and the outpost, having moved the
 /// caret, judges the key from Core's caret.
 pub(crate) fn mark_reached(state: &mut SrState, mark: SpeechMark) -> Vec<Effect> {
-    passed(state, mark, true)
+    let (said, moved) = passed(state, mark, true);
+    let mut effects: Vec<Effect> = moved
+        .map(|moved| {
+            let CaretMove {
+                node,
+                position,
+                line,
+            } = moved;
+            let (_, effect) = state.queries.ask(
+                crate::queries::Asking::Text(node, TextOp::MoveCaret(TextPoint::At(position))),
+                Then::MovedCaret { node, line },
+            );
+            effect
+        })
+        .into_iter()
+        .collect();
+    effects.extend(said);
+    effects
 }
 
 /// An index mark's entry at its turn: playback reached `mark`, which
 /// joined the event queue in arrival order (ADR 0003, "Core's inbox and
-/// the event queue"); say-all and terminal output take it as today.
-pub(crate) fn mark_entry(cx: &mut Cx<Entries>, mark: SpeechMark) {
-    let effects = {
+/// the event queue"); say-all and terminal output take it. A say-all
+/// started in the queue moves the caret as the entry's request on its
+/// node's window, holding the queue until it is made, as NVDA's say-all
+/// moves the caret on its queue; one started outside the queue moves it as
+/// today ([`mark_reached`]).
+pub(crate) async fn mark_entry(mut cx: Cx<Entries>, mark: SpeechMark) {
+    let window = cx
+        .facts()
+        .say_all
+        .as_ref()
+        .map(|say_all| say_all.by.run().map(|run| run.window));
+    let (effects, moved) = {
         let mut facts = cx.facts_mut();
-        let mut effects = mark_reached(&mut facts, mark);
+        let (mut effects, moved) = match window {
+            Some(Some(window)) => {
+                let (said, moved) = passed(&mut facts, mark, true);
+                (said, moved.map(|moved| (moved, window)))
+            }
+            _ => (mark_reached(&mut facts, mark), None),
+        };
         effects.extend(crate::terminal::mark_reached(&mut facts, mark));
-        effects
+        (effects, moved)
     };
     for effect in effects {
         cx.emit(effect);
+    }
+    let Some((moved, window)) = moved else {
+        return;
+    };
+    let request = TextRequest {
+        process: window.process,
+        window,
+        node: moved.node,
+        op: TextOp::MoveCaret(TextPoint::At(moved.position)),
+    };
+    let due_us = cx.due_in(OTHER_DUE_US);
+    if let Outcome::Result(TextReply::Moved { read_at_us }) = cx.ask(request, due_us).await {
+        crate::editing::caret_moved_by_core(
+            &mut cx.facts_mut(),
+            moved.node,
+            moved.line,
+            read_at_us,
+        );
     }
 }
 
@@ -420,20 +679,21 @@ pub(crate) fn mark_entry(cx: &mut Cx<Entries>, mark: SpeechMark) {
 /// review cursor, since none of it was heard.
 pub(crate) fn utterance_failed(state: &mut SrState, marks: &[SpeechMark]) -> Vec<Effect> {
     match marks.iter().max() {
-        Some(&last) => passed(state, last, false),
+        Some(&last) => passed(state, last, false).0,
         None => Vec::new(),
     }
 }
 
 /// Playback has gone past `mark`: the marks up to it are taken off, the
 /// cursor moved to the start of the last unit among them when `moves`,
-/// and the next utterance handed on.
-fn passed(state: &mut SrState, mark: SpeechMark, moves: bool) -> Vec<Effect> {
+/// and the next utterance handed on. A caret move is returned for the
+/// caller to ask.
+fn passed(state: &mut SrState, mark: SpeechMark, moves: bool) -> (Vec<Effect>, Option<CaretMove>) {
     let Some(say_all) = state.say_all.as_mut() else {
-        return Vec::new();
+        return (Vec::new(), None);
     };
     if !say_all.queued.iter().any(|queued| queued.mark == mark) {
-        return Vec::new();
+        return (Vec::new(), None);
     }
     let mut reached = None;
     while say_all
@@ -447,7 +707,7 @@ fn passed(state: &mut SrState, mark: SpeechMark, moves: bool) -> Vec<Effect> {
     }
     let node = say_all.node;
     let moves_caret = say_all.moves_caret;
-    let mut effects = Vec::new();
+    let mut caret_move = None;
     if let Some(unit) = reached.filter(|_| moves) {
         let position = unit.position();
         if moves_caret {
@@ -455,11 +715,11 @@ fn passed(state: &mut SrState, mark: SpeechMark, moves: bool) -> Vec<Effect> {
                 offset: unit.offset,
                 ..TextChunk::clone(&unit.chunk)
             };
-            let (_, effect) = state.queries.ask(
-                crate::queries::Asking::Text(node, TextOp::MoveCaret(TextPoint::At(position))),
-                Then::MovedCaret { node, line },
-            );
-            effects.push(effect);
+            caret_move = Some(CaretMove {
+                node,
+                position,
+                line,
+            });
         } else if let Some(navigator) = state
             .navigator
             .as_mut()
@@ -468,9 +728,26 @@ fn passed(state: &mut SrState, mark: SpeechMark, moves: bool) -> Vec<Effect> {
             navigator.text = ReviewText::Point(position);
         }
     }
-    effects.extend(hand_out(state));
+    let mut effects = hand_out(state);
     effects.extend(read_on_or_end(state));
-    effects
+    (effects, caret_move)
+}
+
+/// The outpost generation `outpost` ended: a say-all reading one of its
+/// nodes holds positions that ended with it, and stops.
+pub(crate) fn outpost_ended(
+    state: &mut SrState,
+    outpost: verbatim_model::OutpostId,
+) -> Vec<Effect> {
+    if state
+        .say_all
+        .as_ref()
+        .is_some_and(|say_all| say_all.node.outpost() == outpost)
+    {
+        stop(state)
+    } else {
+        Vec::new()
+    }
 }
 
 /// An utterance cut off before playback reached `marks`: when say-all
@@ -501,3 +778,7 @@ fn end_if_done(state: &mut SrState) -> Vec<Effect> {
         _ => Vec::new(),
     }
 }
+
+#[cfg(test)]
+#[path = "say_all_tests.rs"]
+mod tests;

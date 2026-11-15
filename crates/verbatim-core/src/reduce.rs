@@ -107,8 +107,15 @@ pub fn reduce(state: &mut SrState, runtime: &mut crate::Runtime, input: &Input) 
     state
         .queries
         .set_traces(first_query, &effects, input.trace_id());
-    // Speech caused by a key carries the key's number, last of all.
+    // Speech caused by a key carries the key's number.
     crate::keys::stamp(state, input, &mut effects);
+    // A say-all in the event queue changed by an input outside it, such as
+    // the speech side's cut: the queue settles, its entries stamping their
+    // own speech.
+    if !matches!(input, Input::Queue { .. }) && crate::entries::unsettled(state) {
+        let trace_id = input.trace_id().unwrap_or(state.queue_trace.0);
+        effects.extend(crate::entries::settle(state, runtime, trace_id));
+    }
     effects
 }
 
@@ -2013,13 +2020,7 @@ fn outpost_ended(state: &mut SrState, outpost: OutpostId) -> Vec<Effect> {
     state.focus.outpost_ended(outpost);
     let mut effects = run_queue(state);
     // Text positions die with the outpost that minted them.
-    if state
-        .say_all
-        .as_ref()
-        .is_some_and(|say_all| say_all.node.outpost() == outpost)
-    {
-        effects.extend(say_all::stop(state));
-    }
+    effects.extend(say_all::outpost_ended(state, outpost));
     if state
         .focus
         .object()
@@ -2383,7 +2384,12 @@ fn caret_command(state: &mut SrState, trace_id: TraceId) -> Vec<Effect> {
             review_text::message(Message::NotSupported),
         )];
     }
-    say_all::start(state, node, true, verbatim_model::TextPoint::Caret)
+    say_all::start(
+        state,
+        node,
+        (true, verbatim_model::TextPoint::Caret),
+        say_all::SayAllBy::Queries,
+    )
 }
 
 /// Runs a command on the navigator object and its review cursor.

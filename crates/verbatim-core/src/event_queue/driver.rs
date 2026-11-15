@@ -142,6 +142,19 @@ impl<E, F> Queue<E, F> {
             .chain(self.timers.iter().map(|(at_us, _)| *at_us))
             .min()
     }
+
+    /// The front entry while it has a request out.
+    pub(crate) fn asking(&self) -> Option<&E> {
+        self.front
+            .as_ref()
+            .filter(|front| front.asked.is_some())
+            .map(|front| &front.entry)
+    }
+
+    /// The time of the last input handled.
+    pub(crate) fn now_us(&self) -> u64 {
+        self.now_us
+    }
 }
 
 #[cfg(test)]
@@ -431,7 +444,11 @@ impl<L: Logic> Core<L> {
     /// Takes the next waiting entries while there is no front, starting
     /// each one's function from a checkpoint of the state it starts in.
     pub(super) fn take_next(&mut self) {
-        while self.task.is_none() {
+        loop {
+            self.settle();
+            if self.task.is_some() {
+                break;
+            }
             let entry = {
                 let mut shared = self.shared.borrow_mut();
                 let queue = &mut shared.state.queue;

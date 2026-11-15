@@ -246,7 +246,8 @@ pub(crate) fn opening_dropped(
             | Entry::CurrentFocus(_)
             | Entry::ForegroundMarker { .. }
             | Entry::Press(_)
-            | Entry::Mark(..) => Vec::new(),
+            | Entry::Mark(..)
+            | Entry::SayAllRead(..) => Vec::new(),
         })
         .any(|tell| {
             tell.at_us < opening.tell.at_us && counts_as_pending(tell, last, backend, now_us)
