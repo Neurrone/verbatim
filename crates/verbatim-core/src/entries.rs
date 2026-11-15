@@ -42,6 +42,7 @@ use crate::focus::backend::{BackendCache, by_class};
 use crate::focus::menus::MenuCheck;
 use crate::focus::retake::CurrentFocus;
 use crate::focus::versions::ReadBy;
+use crate::keys::entry::{Fence, PressEntry};
 use crate::state::SrState;
 
 /// The trace of the queue input being handled, which an entry Core makes
@@ -67,6 +68,8 @@ pub(crate) struct UiaFocus {
     pub(crate) runtime_id: RuntimeId,
     /// The generation of the listener that keeps the element.
     pub(crate) listener: u64,
+    /// Its speech fence, set when it joins the queue.
+    pub(crate) fence: Fence,
 }
 
 /// An MSAA focus or foreground tell, parsed: a run candidate, with the ids
@@ -81,6 +84,8 @@ pub(crate) struct Candidate {
     pub(crate) ids: MsaaIds,
     /// The window its request names.
     pub(crate) window: RequestWindow,
+    /// Its speech fence, set when it joins the queue.
+    pub(crate) fence: Fence,
 }
 
 impl Candidate {
@@ -124,7 +129,12 @@ pub(crate) enum Entry {
         window: WindowHandle,
         /// The top of its owner chain.
         root_owner: WindowHandle,
+        /// Its speech fence, set when it joins the queue; a marker says
+        /// nothing.
+        fence: Fence,
     },
+    /// A key or command, its action chosen at the press.
+    Press(Box<PressEntry>),
 }
 
 impl fmt::Debug for Entry {
@@ -148,7 +158,9 @@ impl fmt::Debug for Entry {
                         .map(|candidate| (candidate.tell.kind, candidate.ids)),
                 )
                 .finish(),
-            Self::ForegroundMarker { window, root_owner } => {
+            Self::ForegroundMarker {
+                window, root_owner, ..
+            } => {
                 write!(formatter, "ForegroundMarker({} {})", window.0, root_owner.0)
             }
             Self::Menu(candidate) => write!(
@@ -171,6 +183,11 @@ impl fmt::Debug for Entry {
                 formatter,
                 "CurrentFocus({:?} {} of {})",
                 read.why, read.window.handle.0, read.window.process.0
+            ),
+            Self::Press(press) => write!(
+                formatter,
+                "Press({:?} {:?})",
+                press.press.key_seq, press.press.action
             ),
         }
     }
@@ -213,6 +230,7 @@ impl Entry {
                     token,
                     runtime_id,
                     listener: from.generation,
+                    fence: Fence::default(),
                 })))
             }
             (
@@ -235,7 +253,12 @@ impl Entry {
                     child: *child,
                 };
                 let window = request_window(&tell)?;
-                let candidate = Box::new(Candidate { tell, ids, window });
+                let candidate = Box::new(Candidate {
+                    tell,
+                    ids,
+                    window,
+                    fence: Fence::default(),
+                });
                 Some(match kind {
                     EventKind::MsaaFocus | EventKind::Foreground => Self::Candidate(candidate),
                     _ => Self::Menu(candidate),
@@ -259,6 +282,7 @@ impl Entry {
                     tell,
                     ids,
                     window,
+                    fence: Fence::default(),
                 })))
             }
             (EventKind::UiaPropertyChanged, EventObject::Uia { runtime_id, .. }) => {
@@ -280,7 +304,46 @@ impl Entry {
             Self::Run(_)
             | Self::ForegroundMarker { .. }
             | Self::MenuCheck(_)
-            | Self::CurrentFocus(_) => None,
+            | Self::CurrentFocus(_)
+            | Self::Press(_) => None,
+        }
+    }
+
+    /// Its speech fence; a run's is its newest candidate's.
+    fn fence(&self) -> Fence {
+        match self {
+            Self::UiaFocus(focus) => focus.fence,
+            Self::Candidate(candidate) | Self::Menu(candidate) => candidate.fence,
+            Self::Run(candidates) => candidates
+                .iter()
+                .fold(Fence::default(), |fence, candidate| {
+                    fence.max(candidate.fence)
+                }),
+            Self::MenuCheck(check) => check.fence,
+            Self::CurrentFocus(read) => read.fence,
+            Self::MsaaChange(change) => change.fence,
+            Self::UiaChange(change) => change.fence,
+            Self::ForegroundMarker { fence, .. } => *fence,
+            Self::Press(press) => press.fence,
+        }
+    }
+
+    /// Sets its speech fence as it joins the queue.
+    fn set_fence(&mut self, set: Fence) {
+        match self {
+            Self::UiaFocus(focus) => focus.fence = set,
+            Self::Candidate(candidate) | Self::Menu(candidate) => candidate.fence = set,
+            Self::Run(candidates) => {
+                for candidate in candidates {
+                    candidate.fence = set;
+                }
+            }
+            Self::MenuCheck(check) => check.fence = set,
+            Self::CurrentFocus(read) => read.fence = set,
+            Self::MsaaChange(change) => change.fence = set,
+            Self::UiaChange(change) => change.fence = set,
+            Self::ForegroundMarker { fence, .. } => *fence = set,
+            Self::Press(press) => press.fence = set,
         }
     }
 }
@@ -332,7 +395,10 @@ impl Logic for Entries {
                 let mut cx = cx;
                 crate::changes::uia(&mut cx, &change);
             }),
-            Entry::ForegroundMarker { window, root_owner } => Box::pin(async move {
+            Entry::Press(press) => Box::pin(crate::keys::entry::run(cx, *press)),
+            Entry::ForegroundMarker {
+                window, root_owner, ..
+            } => Box::pin(async move {
                 let mut cx = cx;
                 cx.facts_mut()
                     .versions
@@ -350,6 +416,17 @@ impl Logic for Entries {
                 .is_some_and(|candidate| accepted_apart_from_foreground(&candidate.tell)),
             other => other.tell().is_some_and(accepted_apart_from_foreground),
         }
+    }
+
+    fn arrival(facts: &mut SrState, entry: &mut Entry) {
+        if let Entry::Press(press) = entry {
+            facts.arrivals.key_joined(press.press.key_seq);
+        }
+        entry.set_fence(facts.arrivals.fence());
+    }
+
+    fn stamp(entry: &Entry, said: &mut Said) {
+        crate::keys::entry::stamp(entry.fence(), said);
     }
 
     fn withdraws(_: &SrState, _: &Entry, _: &Entry) -> bool {
@@ -469,7 +546,7 @@ impl Logic for Entries {
                 focus_kind: true,
                 ends_run: false,
             },
-            Entry::Run(_) | Entry::ForegroundMarker { .. } => Place::Other {
+            Entry::Run(_) | Entry::ForegroundMarker { .. } | Entry::Press(_) => Place::Other {
                 merges: false,
                 focus_kind: false,
                 ends_run: false,
@@ -527,10 +604,13 @@ impl Logic for Entries {
             Entry::Candidate(candidate) | Entry::Menu(candidate) => Some(candidate.window),
             Entry::CurrentFocus(read) => Some(read.window),
             Entry::MsaaChange(change) => Some(change.window),
+            // A command resolves its object at its turn and is tested only
+            // when it asks.
             Entry::Run(_)
             | Entry::ForegroundMarker { .. }
             | Entry::MenuCheck(_)
-            | Entry::UiaChange(_) => None,
+            | Entry::UiaChange(_)
+            | Entry::Press(_) => None,
         };
         window.is_some_and(|window| {
             !foreground.holds(&window) && !entry.tell().is_some_and(accepted_apart_from_foreground)
@@ -547,7 +627,8 @@ impl Logic for Entries {
             | Entry::MenuCheck(_)
             | Entry::CurrentFocus(_)
             | Entry::MsaaChange(_)
-            | Entry::UiaChange(_) => None,
+            | Entry::UiaChange(_)
+            | Entry::Press(_) => None,
         }
     }
 
@@ -555,6 +636,7 @@ impl Logic for Entries {
         Some(Entry::ForegroundMarker {
             window: foreground.window,
             root_owner: foreground.root_owner,
+            fence: Fence::default(),
         })
     }
 }
@@ -642,6 +724,10 @@ pub(crate) fn route(
             process: *process,
         },
         QueueInput::Due => Input::Tick,
+        QueueInput::Press(press) => Input::Entry(Entry::Press(Box::new(PressEntry::new(
+            trace_id,
+            (**press).clone(),
+        )))),
         QueueInput::Ignored(processes) => {
             state.ignored.clone_from(processes);
             return Vec::new();

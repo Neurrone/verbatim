@@ -254,10 +254,6 @@ impl CaretContext {
 pub(crate) struct PendingText {
     pub(crate) node: NodeId,
     pub(crate) then: TextFollowUp,
-    /// The object whose text a navigator follow-up reads when it is
-    /// neither the navigator object nor the focus: Verbatim+Tab's answer,
-    /// which Core never takes (`crate::report_focus`).
-    pub(crate) about: Option<Box<NodeSnapshot>>,
 }
 
 /// What to do with the answer to a [`PendingText`] request.
@@ -525,9 +521,6 @@ pub struct SrState {
     /// The live re-reads Core waits for, one per focus reader, and how
     /// many it has asked for (`crate::live_reread`).
     pub(crate) live_rereads: crate::live_reread::LiveRereads,
-    /// Verbatim+Tab's press waiting for its live query's answer
-    /// (`crate::report_focus`).
-    pub(crate) report_press: Option<crate::report_focus::WaitingPress>,
     /// The virtual desktop's name, kept until the next focus Core takes
     /// or its due time (`crate::desktop`).
     pub(crate) desktop_name: Option<String>,
@@ -613,6 +606,10 @@ pub struct SrState {
     /// Whether the entry that ran last was a run that executed a focus,
     /// which the menu slot's entry judges (`crate::focus::menus`).
     pub(crate) run_executed: bool,
+    /// The keys that joined the event queue: the newest number, which
+    /// every arrival's fence and the caret keys' marks read
+    /// (`crate::keys::entry`).
+    pub(crate) arrivals: crate::keys::entry::Arrivals,
     /// The event queue (`crate::entries`): its entries, its requests and
     /// the front entry's checkpoint, plain data. Empty while a step of the
     /// queue runs, when the driver holds it. The paused function sits

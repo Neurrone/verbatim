@@ -51,6 +51,8 @@ pub(crate) struct MenuCheck {
     pub(crate) committed: Committed,
     /// The trace of the end's tell.
     pub(crate) trace_id: TraceId,
+    /// Its speech fence, set when it joins the queue.
+    pub(crate) fence: crate::keys::entry::Fence,
 }
 
 /// Whether `kind` is an end whose check NVDA makes when no valid focus
@@ -79,6 +81,7 @@ pub(crate) async fn slot(mut cx: Cx<Entries>, candidate: Candidate, run_executed
     let check = MenuCheck {
         committed: cx.facts().versions.committed.clone(),
         trace_id: candidate.tell.trace_id,
+        fence: crate::keys::entry::Fence::default(),
     };
     cx.append_after(CHECK_AFTER_US, Entry::MenuCheck(Box::new(check)));
 }
@@ -241,7 +244,8 @@ pub(crate) fn opening_dropped(
             | Entry::UiaChange(_)
             | Entry::MenuCheck(_)
             | Entry::CurrentFocus(_)
-            | Entry::ForegroundMarker { .. } => Vec::new(),
+            | Entry::ForegroundMarker { .. }
+            | Entry::Press(_) => Vec::new(),
         })
         .any(|tell| {
             tell.at_us < opening.tell.at_us && counts_as_pending(tell, last, backend, now_us)

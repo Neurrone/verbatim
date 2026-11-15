@@ -125,7 +125,7 @@ fn reduce_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
             event,
             purpose,
             ..
-        } => reduce_event_keeping_press(
+        } => reduce_event(
             state,
             (*trace_id, *purpose),
             *observed_at_us,
@@ -202,7 +202,6 @@ fn reduce_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
         Input::LiveRereadGone { .. } | Input::ListenerReplaced => {
             crate::live_reread::ended(state, input)
         }
-        Input::ReadFocusUnanswered { .. } => crate::report_focus::ended(state, input),
         // Playback will reach none of a cut utterance's marks it had not
         // reached: say-all stops, as on any cut, and terminal output drops
         // what waits, as anything that cuts speech off does.
@@ -275,9 +274,8 @@ pub(crate) fn command_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
             trace_id,
             command,
             repeat,
-            pressed_at_ms,
             ..
-        } => reduce_command(state, (*trace_id, *pressed_at_ms), *command, *repeat),
+        } => reduce_command(state, *trace_id, *command, *repeat),
         Input::Script { repeat, script, .. } => shell::script(*script, *repeat),
         _ => Vec::new(),
     }
@@ -753,7 +751,6 @@ fn older_than_taken(state: &SrState, outpost: OutpostId, group: FocusGroup) -> b
 /// (`crate::report_focus`).
 fn record_taken(state: &mut SrState, report: &FocusReport<'_>) {
     record_group(state, report);
-    crate::report_focus::focus_applied(state, report.observed_at_us);
 }
 
 /// Records `report`'s focus group as taken, which ends the group for its
@@ -1019,7 +1016,7 @@ fn command_arrived(state: &mut SrState, input: &Input) -> Vec<Effect> {
 /// executed before it, behind a held key if one waits then, its effects
 /// under its own trace; a menu's or the switcher's end judges the focus
 /// taken since it.
-fn waited_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
+pub(crate) fn waited_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
     match input {
         Input::Command { .. } | Input::Script { .. } => {
             under_key(input.trace_id(), command_arrived(state, input))
@@ -1148,38 +1145,6 @@ fn decide_report(
     }
 }
 
-/// [`reduce_event`], keeping a waiting Verbatim+Tab press across a focus
-/// query's answer. The answer is stamped with the time its read began, not
-/// when Core asked, so it cannot be placed against the press: only a focus
-/// event observed after the press ends it, as NVDA runs NVDA+Tab after the
-/// focus events queued before it and speaks both
-/// ([`crate::report_focus::focus_applied`]).
-fn reduce_event_keeping_press(
-    state: &mut SrState,
-    (trace_id, purpose): (TraceId, Option<FocusPurpose>),
-    observed_at_us: u64,
-    source: Pid,
-    window: Option<&WindowFacts>,
-    event: &NormalizedEvent,
-) -> Vec<Effect> {
-    let press = purpose
-        .is_some_and(|purpose| purpose != FocusPurpose::Report)
-        .then_some(state.report_press)
-        .flatten();
-    let effects = reduce_event(
-        state,
-        (trace_id, purpose),
-        observed_at_us,
-        source,
-        window,
-        event,
-    );
-    if press.is_some() && state.report_press.is_none() {
-        state.report_press = press;
-    }
-    effects
-}
-
 fn reduce_event(
     state: &mut SrState,
     (trace_id, purpose): (TraceId, Option<FocusPurpose>),
@@ -1188,9 +1153,11 @@ fn reduce_event(
     window: Option<&WindowFacts>,
     event: &NormalizedEvent,
 ) -> Vec<Effect> {
-    // Verbatim+Tab's answer is only spoken (`crate::report_focus`).
+    // Report focus reads the committed focus through the event queue
+    // (`crate::report_focus`) and asks no focus read of its own, so an
+    // answer for one is a shell's fault and is not taken as a focus.
     if purpose == Some(FocusPurpose::Report) {
-        return crate::report_focus::answered(state, trace_id, event);
+        return Vec::new();
     }
     if let NormalizedEvent::FocusChanged {
         answers: Some(_), ..
@@ -2337,7 +2304,7 @@ fn reduce_notification(trace_id: TraceId, notification: &Notification) -> Vec<Ef
 /// synchronous over state the reducer already holds.
 fn reduce_command(
     state: &mut SrState,
-    (trace_id, pressed_at_ms): (TraceId, u64),
+    trace_id: TraceId,
     command: ReviewCommand,
     repeat: u8,
 ) -> Vec<Effect> {
@@ -2352,9 +2319,8 @@ fn reduce_command(
         ReviewCommand::SayAllFromCaret | ReviewCommand::ReportCaretLocation => {
             caret_command(state, trace_id, command)
         }
-        ReviewCommand::ReportFocus => {
-            crate::report_focus::pressed(state, (trace_id, pressed_at_ms), repeat)
-        }
+        // Report focus runs as an event-queue entry (`crate::report_focus`).
+        ReviewCommand::ReportFocus => Vec::new(),
         ReviewCommand::ReportStatusBar => {
             terminal_model::report_status_bar(state, trace_id, repeat)
         }
@@ -2435,7 +2401,6 @@ fn caret_command(state: &mut SrState, trace_id: TraceId, command: ReviewCommand)
         Then::Text(PendingText {
             node,
             then: TextFollowUp::Location,
-            about: None,
         }),
     );
     vec![effect]

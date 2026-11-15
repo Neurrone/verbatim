@@ -732,6 +732,69 @@ pub enum QueueInput {
     /// The processes whose windows nothing is read from: the end-to-end
     /// harness's own, given once at startup; none for real users.
     Ignored(Vec<Pid>),
+    /// A key or command the hook reported, its action chosen at the press.
+    Press(Box<Press>),
+}
+
+/// A key or command as the hook reports it to the event queue (ADR 0003,
+/// "Keys and commands"): its number and time, and the action chosen at
+/// the press against the hook's view of the committed focus and the
+/// gesture map. A modifier alone is never reported.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Press {
+    /// The key's number, which its speech's fence and the marks compare.
+    pub key_seq: crate::KeySeq,
+    /// When the hook saw the key, in microseconds on the run's shared
+    /// clock.
+    pub pressed_at_us: u64,
+    /// What the press does, chosen at the press.
+    pub action: PressAction,
+}
+
+/// What a press does, chosen at the press. Only a focus-bound action names
+/// the node its press was bound to; a global command resolves its object
+/// at its turn.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PressAction {
+    /// A review, object-navigation or reader command: global.
+    Command {
+        /// Which command.
+        command: crate::ReviewCommand,
+        /// How many times it was pressed in quick succession, zero for the
+        /// first press.
+        repeat: u8,
+    },
+    /// A script that is not a review command: global.
+    Script {
+        /// Which script.
+        script: crate::Script,
+        /// As [`PressAction::Command`]'s.
+        repeat: u8,
+    },
+    /// A caret key, bound to the committed focus's node at its press.
+    CaretKey {
+        /// Which key.
+        key: crate::CaretKey,
+        /// Whether the hook held it back from the application.
+        held: bool,
+        /// The committed focus's node at the press, `None` when there was
+        /// none.
+        bound: Option<NodeId>,
+    },
+    /// Text typed: one character, or an input method's composition.
+    Typed {
+        /// The text, a tab as a tab character and Enter as a carriage
+        /// return.
+        text: String,
+    },
+    /// A key that ends or clears the command line being typed: Escape,
+    /// Control+C, Control+D or Control+Break.
+    Clearing,
+    /// An editing chord passed to the application: Control+Z, Control+Y,
+    /// Control+X, Control+V or Escape.
+    EditingChord,
+    /// Any other key passed to the application, which types no text.
+    Passed,
 }
 
 /// How a request from outside the event queue ended, as its asker learns:

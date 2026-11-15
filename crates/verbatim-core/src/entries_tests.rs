@@ -191,8 +191,8 @@ pub(crate) fn listener_answer() -> ObjectRead {
 /// paused function, as a clone of the state has none.
 #[derive(Debug, Default)]
 pub(crate) struct Held {
-    state: SrState,
-    runtime: Runtime,
+    pub(crate) state: SrState,
+    pub(crate) runtime: Runtime,
 }
 
 impl Clone for Held {

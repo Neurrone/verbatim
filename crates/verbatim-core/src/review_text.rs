@@ -692,11 +692,7 @@ pub(crate) fn press_answer(
     match then {
         TextFollowUp::NodeRead => object_read(state, trace_id, press, ending),
         TextFollowUp::NavigatorSelection(_) | TextFollowUp::NavigatorLine(_) => {
-            let pending = PendingText {
-                node,
-                then,
-                about: None,
-            };
+            let pending = PendingText { node, then };
             let reply = ending.reply();
             crate::editing::navigator_text_reply(state, trace_id, &pending, reply, Some(press))
         }
@@ -710,11 +706,7 @@ pub(crate) fn press_answer(
                     state,
                     trace_id,
                     press,
-                    PendingText {
-                        node,
-                        then,
-                        about: None,
-                    },
+                    PendingText { node, then },
                     TextReply::Gone,
                 ),
                 (_, TextReply::Gone) => crate::reduce::flat_review_command(
@@ -725,17 +717,7 @@ pub(crate) fn press_answer(
                     "",
                 ),
                 (_, TextReply::Unanswered) => Vec::new(),
-                (_, reply) => reply_to(
-                    state,
-                    trace_id,
-                    press,
-                    PendingText {
-                        node,
-                        then,
-                        about: None,
-                    },
-                    reply,
-                ),
+                (_, reply) => reply_to(state, trace_id, press, PendingText { node, then }, reply),
             }
         }
     }

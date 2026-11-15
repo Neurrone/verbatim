@@ -43,6 +43,8 @@ pub(crate) struct CurrentFocus {
     pub(crate) window: RequestWindow,
     /// The trace of the input that made it.
     pub(crate) trace_id: TraceId,
+    /// Its speech fence, set when it joins the queue.
+    pub(crate) fence: crate::keys::entry::Fence,
 }
 
 /// The request for an application's current focus, of the outpost of the
@@ -106,6 +108,7 @@ pub(crate) fn startup(state: &SrState, foreground: &Foreground) -> CurrentFocus 
         why: Why::Startup,
         window: foreground.window(),
         trace_id: state.queue_trace.0,
+        fence: crate::keys::entry::Fence::default(),
     }
 }
 
@@ -115,6 +118,7 @@ pub(crate) fn recovered(state: &SrState, window: &RequestWindow) -> CurrentFocus
         why: Why::Recovered,
         window: *window,
         trace_id: state.queue_trace.0,
+        fence: crate::keys::entry::Fence::default(),
     }
 }
 
@@ -158,6 +162,7 @@ pub(crate) fn reader_ended(
         why: Why::Retake,
         window,
         trace_id: state.queue_trace.0,
+        fence: crate::keys::entry::Fence::default(),
     })
 }
 

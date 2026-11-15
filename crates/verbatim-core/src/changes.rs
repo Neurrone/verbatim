@@ -49,6 +49,8 @@ pub(crate) struct MsaaChange {
     pub(crate) ids: MsaaIds,
     /// The window its request names: the event's.
     pub(crate) window: RequestWindow,
+    /// Its speech fence, set when it joins the queue.
+    pub(crate) fence: crate::keys::entry::Fence,
 }
 
 /// A UI Automation property change tell, parsed.
@@ -60,6 +62,8 @@ pub(crate) struct UiaChange {
     pub(crate) runtime_id: RuntimeId,
     /// The property.
     pub(crate) property: PropertyId,
+    /// Its speech fence, set when it joins the queue.
+    pub(crate) fence: crate::keys::entry::Fence,
     /// Its new value, as the tell carries it.
     pub(crate) value: Option<PropertyValue>,
 }
@@ -459,6 +463,7 @@ pub(crate) fn uia_of_tell(tell: Event, runtime_id: RuntimeId) -> Option<UiaChang
         runtime_id,
         property,
         value,
+        fence: crate::keys::entry::Fence::default(),
     })
 }
 

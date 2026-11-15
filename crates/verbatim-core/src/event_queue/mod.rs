@@ -248,6 +248,20 @@ pub(crate) trait Logic: Sized + 'static {
         let _ = (facts, window);
     }
 
+    /// `entry` joins the back of the queue: what Core's facts keep of the
+    /// arrivals changes, and the entry is stamped with what it needs of
+    /// them. Called for every entry that joins, before the limiter places
+    /// it; an entry dropped at its arrival never joins.
+    fn arrival(facts: &mut Self::Facts, entry: &mut Self::Entry) {
+        let _ = (facts, entry);
+    }
+
+    /// `said`, emitted by the front entry `entry`'s function, stamped with
+    /// what it carries of its entry.
+    fn stamp(entry: &Self::Entry, said: &mut Self::Said) {
+        let _ = (entry, said);
+    }
+
     /// The foreground marker joining the back when `foreground` comes in
     /// front, whose turn empties the readers' last focus when its window is
     /// unrelated to the committed focus.

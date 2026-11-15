@@ -2856,57 +2856,6 @@ fn a_name_change_after_a_repeat_carried_it_is_spoken() {
 }
 
 #[test]
-fn a_name_change_the_report_of_the_focus_spoke_is_silent() {
-    // A repeat carries the new name in; Verbatim+Tab's answer speaks it,
-    // which moves what was last spoken of the focus, so the name change's
-    // own event finds it already spoken.
-    let source = Pid(1);
-    let first = node(42, Role::Button, Some("Connect"), None, StateSet::new());
-    let (state, _) = reduce(
-        &SrState::new(),
-        &focus_event(TraceId::from_raw(97), source, first),
-    );
-    let renamed = node(42, Role::Button, Some("Disconnect"), None, StateSet::new());
-    let (state, _) = reduce(
-        &state,
-        &focus_event(TraceId::from_raw(98), source, renamed.clone()),
-    );
-    let (state, effects) = reduce(
-        &state,
-        &command(TraceId::from_raw(99), ReviewCommand::ReportFocus, 0),
-    );
-    assert_eq!(
-        effects,
-        [Effect::ReadFocus(
-            verbatim_model::protocol::FocusPurpose::Report
-        )]
-    );
-    let mut answer = focus_event(TraceId::from_raw(99), source, renamed);
-    if let Input::Event { purpose, .. } = &mut answer {
-        *purpose = Some(verbatim_model::protocol::FocusPurpose::Report);
-    }
-    let (state, effects) = reduce(&state, &answer);
-    assert_eq!(
-        heard(&effects),
-        vec![queued(vec![
-            UtteranceSegment::label("Disconnect"),
-            role(Role::Button),
-        ])]
-    );
-    let name_changed = event_in(
-        source,
-        None,
-        NormalizedEvent::PropertyChanged {
-            node_id: NodeId::new(42),
-            change: PropertyChange::Name(Some("Disconnect".to_string())),
-            child_count: None,
-        },
-    );
-    let (_, effects) = reduce(&state, &name_changed);
-    assert_eq!(heard(&effects), vec![]);
-}
-
-#[test]
 fn a_name_change_the_navigator_s_return_to_the_focus_spoke_is_silent() {
     // Moving the navigator to the focus announces the focus, which moves
     // what was last spoken of it.

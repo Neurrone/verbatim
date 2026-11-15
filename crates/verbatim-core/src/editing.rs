@@ -1111,29 +1111,6 @@ pub(crate) fn navigator_text(
     read: NavigatorRead,
     press: Option<ReviewPress>,
 ) -> Vec<Effect> {
-    text_of_object(state, trace_id, node, (read, false), press)
-}
-
-/// Reads the text of `node`, Verbatim+Tab's answer, which is neither the
-/// navigator object nor the focus Core holds, for its announcement, as
-/// [`navigator_text`] reads the navigator object's: its follow-ups carry
-/// the object (`PendingText::about`).
-pub(crate) fn reported_text(
-    state: &mut SrState,
-    trace_id: TraceId,
-    node: &NodeSnapshot,
-) -> Vec<Effect> {
-    text_of_object(state, trace_id, node, (NavigatorRead::Announce, true), None)
-}
-
-/// [`navigator_text`], its follow-ups carrying `node` when `carried`.
-fn text_of_object(
-    state: &mut SrState,
-    trace_id: TraceId,
-    node: &NodeSnapshot,
-    (read, carried): (NavigatorRead, bool),
-    press: Option<ReviewPress>,
-) -> Vec<Effect> {
     if !may_have_text(node.role) {
         return Vec::new();
     }
@@ -1157,7 +1134,7 @@ fn text_of_object(
     };
     navigator_request(
         state,
-        (node.id, carried.then(|| Box::new(node.clone()))),
+        node.id,
         TextOp::ReadRange {
             start,
             end,
@@ -1197,7 +1174,7 @@ fn named_text(
 /// newer text request supersedes.
 fn navigator_request(
     state: &mut SrState,
-    (node, about): (NodeId, Option<Box<NodeSnapshot>>),
+    node: NodeId,
     op: TextOp,
     then: TextFollowUp,
     press: Option<ReviewPress>,
@@ -1213,7 +1190,7 @@ fn navigator_request(
     state.queries.forget(|then| matches!(then, Then::Text(_)));
     let (_, effect) = state.queries.ask(
         Asking::Text(node, op),
-        Then::Text(PendingText { node, then, about }),
+        Then::Text(PendingText { node, then }),
     );
     vec![effect]
 }
@@ -1238,10 +1215,8 @@ pub(crate) fn navigator_text_reply(
         .object()
         .filter(|focus| focus.alive)
         .map(|focus| &focus.snapshot);
-    let carried = pending.about.as_deref();
-    let Some(object) = carried
+    let Some(object) = navigator
         .into_iter()
-        .chain(navigator)
         .chain(focus)
         .find(|object| object.id == pending.node)
         .cloned()
@@ -1255,7 +1230,7 @@ pub(crate) fn navigator_text_reply(
     let segments = match (&pending.then, reply) {
         (TextFollowUp::NavigatorSelection(_), TextReply::Range { text, .. }) => {
             if verbatim_text::graphemes(&text).is_empty() {
-                return navigator_line(state, (pending.node, pending.about.clone()), read, press);
+                return navigator_line(state, pending.node, read, press);
             }
             if read != NavigatorRead::Announce {
                 return named_text(trace_id, &object, read, &text);
@@ -1263,7 +1238,7 @@ pub(crate) fn navigator_text_reply(
             selected_segments(text).unwrap_or_default()
         }
         (TextFollowUp::NavigatorSelection(_), TextReply::Unsupported) => {
-            return navigator_line(state, (pending.node, pending.about.clone()), read, press);
+            return navigator_line(state, pending.node, read, press);
         }
         (TextFollowUp::NavigatorLine(_), TextReply::Read { chunk, .. }) => {
             let grid = is_grid(object.role);
@@ -1300,7 +1275,7 @@ pub(crate) fn navigator_text_reply(
 /// first line when it reports no caret, for `read`.
 fn navigator_line(
     state: &mut SrState,
-    node: (NodeId, Option<Box<NodeSnapshot>>),
+    node: NodeId,
     read: NavigatorRead,
     press: Option<ReviewPress>,
 ) -> Vec<Effect> {

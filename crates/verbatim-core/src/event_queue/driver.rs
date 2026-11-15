@@ -684,9 +684,13 @@ impl<L: Logic> Cx<L> {
         shared.state.queue.timers.push((at_us, entry));
     }
 
-    /// Emits `said`.
-    pub(crate) fn emit(&mut self, said: L::Said) {
-        self.shared.borrow_mut().effects.push(Effect::Said(said));
+    /// Emits `said`, stamped by its entry ([`Logic::stamp`]).
+    pub(crate) fn emit(&mut self, mut said: L::Said) {
+        let mut shared = self.shared.borrow_mut();
+        if let Some(front) = &shared.state.queue.front {
+            L::stamp(&front.entry, &mut said);
+        }
+        shared.effects.push(Effect::Said(said));
     }
 
     /// Sends `request` outside the event queue under the due time

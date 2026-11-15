@@ -63,6 +63,10 @@ pub enum PropertyId {
     Cell,
     /// A table's row and column counts.
     TableCounts,
+    /// What an object's text says of it: its selected text, or else the
+    /// line at its caret, or its first line when it has no caret, as
+    /// NVDA's object speech reads an object's text content.
+    TextSummary,
 }
 
 impl PropertyId {
@@ -90,6 +94,7 @@ impl PropertyId {
             Self::RangeValue => &RANGE_VALUE,
             Self::Cell => &CELL,
             Self::TableCounts => &TABLE_COUNTS,
+            Self::TextSummary => &TEXT_SUMMARY,
         }
     }
 
@@ -131,6 +136,8 @@ pub enum ValueKind {
     Cell,
     /// A [`TableCounts`].
     TableCounts,
+    /// A [`TextSummary`].
+    TextSummary,
 }
 
 /// How much a property costs to read, which the bulk-read gate judges: a
@@ -189,6 +196,10 @@ pub enum UiaConversion {
     Cell,
     /// The grid's row and column counts.
     TableCounts,
+    /// Read through the text pattern, none cached: the selection's text
+    /// when it is not empty, else the line at the caret, else the first
+    /// line.
+    TextSummary,
 }
 
 /// How MSAA reads a property: an `IAccessible` call, or a read of the
@@ -215,6 +226,9 @@ pub enum MsaaRead {
     WindowProcess,
     /// The class name of the object's window.
     WindowClass,
+    /// The text of an edit control's window, by its messages: the
+    /// selection's text when it is not empty, else the line at the caret.
+    TextSummary,
 }
 
 /// How `IAccessible2` reads a property. Empty until `IAccessible2` is read
@@ -549,6 +563,19 @@ const TABLE_COUNTS: PropertyEntry = PropertyEntry {
     cost: Cost::Alone,
 };
 
+const TEXT_SUMMARY: PropertyEntry = PropertyEntry {
+    id: PropertyId::TextSummary,
+    name: "text summary",
+    kind: ValueKind::TextSummary,
+    uia: Some(UiaRead {
+        cached: &[],
+        conversion: UiaConversion::TextSummary,
+    }),
+    msaa: Some(MsaaRead::TextSummary),
+    ia2: None,
+    cost: Cost::Alone,
+};
+
 /// The whole table, in [`PropertyId`] order.
 pub const PROPERTIES: &[PropertyEntry] = &[
     NAME,
@@ -571,6 +598,7 @@ pub const PROPERTIES: &[PropertyEntry] = &[
     RANGE_VALUE,
     CELL,
     TABLE_COUNTS,
+    TEXT_SUMMARY,
 ];
 
 /// A UI Automation runtime id.
@@ -620,6 +648,20 @@ pub enum PropertyValue {
     Cell(CellPosition),
     /// A table's counts.
     TableCounts(TableCounts),
+    /// What an object's text says of it.
+    TextSummary(TextSummary),
+}
+
+/// What an object's text says of it, as NVDA's object speech reads it
+/// (`docs/parity/focus-announcement.md`): its selected text when the
+/// selection is not empty, else one line.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TextSummary {
+    /// The selected text.
+    Selected(String),
+    /// The line at the caret, or the first line when the text has no
+    /// caret.
+    Line(String),
 }
 
 impl PropertyValue {
@@ -639,6 +681,7 @@ impl PropertyValue {
             Self::Number(_) => ValueKind::Number,
             Self::Cell(_) => ValueKind::Cell,
             Self::TableCounts(_) => ValueKind::TableCounts,
+            Self::TextSummary(_) => ValueKind::TextSummary,
         }
     }
 }
@@ -886,6 +929,10 @@ pub mod props {
     marker!(
         /// [`PropertyId::TableCounts`].
         TableCounts, crate::TableCounts, TableCounts
+    );
+    marker!(
+        /// [`PropertyId::TextSummary`].
+        TextSummary, super::TextSummary, TextSummary
     );
 }
 

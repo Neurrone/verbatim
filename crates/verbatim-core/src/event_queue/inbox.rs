@@ -10,7 +10,7 @@ use verbatim_model::request::{
 };
 use verbatim_model::{Pid, WindowHandle};
 
-use super::driver::{Core, outcome_of, widen};
+use super::driver::{Core, State, outcome_of, widen};
 use super::limiter::{self, Item};
 use super::request::Outcome;
 use super::table::{Asker, Dropped, Ended, Live, Owner, Stage};
@@ -300,7 +300,7 @@ impl<L: Logic> Core<L> {
                 state.queue.now_us,
             );
             if !dropped {
-                limiter::arrive::<L>(&state.facts, &mut state.queue.waiting, entry);
+                join::<L>(state, entry);
             }
         }
         if let Some(number) = withdrawn {
@@ -395,7 +395,7 @@ impl<L: Logic> Core<L> {
         };
         let state = &mut shared.state;
         if let Some(entry) = L::recovered(&state.facts, &recovered) {
-            limiter::arrive::<L>(&state.facts, &mut state.queue.waiting, entry);
+            join::<L>(state, entry);
         }
     }
 
@@ -411,7 +411,7 @@ impl<L: Logic> Core<L> {
             shared.state.queue.foreground = Some(foreground);
             if first && let Some(entry) = L::started(&shared.state.facts, &foreground) {
                 let state = &mut shared.state;
-                limiter::arrive::<L>(&state.facts, &mut state.queue.waiting, entry);
+                join::<L>(state, entry);
             }
             shared
                 .state
@@ -443,7 +443,7 @@ impl<L: Logic> Core<L> {
             }
         });
         if let Some(marker) = L::foreground_marker(&foreground) {
-            limiter::arrive::<L>(&state.facts, &mut state.queue.waiting, marker);
+            join::<L>(state, marker);
         }
     }
 
@@ -477,7 +477,7 @@ impl<L: Logic> Core<L> {
             });
             let foreground = state.queue.foreground;
             for entry in L::reader_ended(&mut state.facts, instance, foreground) {
-                limiter::arrive::<L>(&state.facts, &mut state.queue.waiting, entry);
+                join::<L>(state, entry);
             }
         }
         for ended in ended {
@@ -503,7 +503,14 @@ impl<L: Logic> Core<L> {
             .partition(|(at_us, _)| *at_us <= now_us);
         state.queue.timers = later;
         for (_, entry) in due {
-            limiter::arrive::<L>(&state.facts, &mut state.queue.waiting, entry);
+            join::<L>(state, entry);
         }
     }
+}
+
+/// `entry` joins the back of the queue: the logic sees it arrive, then the
+/// limiter places it.
+fn join<L: Logic>(state: &mut State<L::Entry, L::Facts>, mut entry: L::Entry) {
+    L::arrival(&mut state.facts, &mut entry);
+    limiter::arrive::<L>(&state.facts, &mut state.queue.waiting, entry);
 }

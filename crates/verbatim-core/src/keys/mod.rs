@@ -5,6 +5,8 @@
 //! that caused it, so a later key's cancel fences it off in the speech
 //! queue.
 
+pub(crate) mod entry;
+
 use std::collections::VecDeque;
 
 use serde::{Deserialize, Serialize};
@@ -88,6 +90,11 @@ pub(crate) fn record(state: &mut SrState, input: &Input) {
 /// trace of the innermost `ForKey` around it, or else of the input's
 /// trace; failing that, the key of the utterance's own trace.
 pub(crate) fn stamp(state: &SrState, input: &Input, effects: &mut [Effect]) {
+    // The event queue's entries carry their own fences, stamped as they
+    // speak (`entry::stamp`).
+    if matches!(input, Input::Queue { .. }) {
+        return;
+    }
     let trace = input.trace_id();
     for effect in effects {
         stamp_one(&state.key_origins, trace, effect);
