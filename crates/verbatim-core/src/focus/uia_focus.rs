@@ -172,7 +172,7 @@ pub(crate) async fn run(mut cx: Cx<Entries>, focus: UiaFocus) {
         },
     };
     let Outcome::Result(object) = cx.ask(read, due_us).await else {
-        cx.facts_mut().forget_caret();
+        cx.facts_mut().focus_read_failed();
         return;
     };
     // A focus read without its route is the listener's fault.
@@ -200,14 +200,14 @@ pub(crate) async fn run(mut cx: Cx<Entries>, focus: UiaFocus) {
         // The outpost ended: its registrations went with it (Table 10,
         // column F).
         Outcome::ReaderEnded => {
-            cx.facts_mut().forget_caret();
+            cx.facts_mut().focus_read_failed();
             return;
         }
         Outcome::Refused(_)
         | Outcome::NotThere
         | Outcome::NotResponding
         | Outcome::NoLongerAwaited(_) => {
-            cx.facts_mut().forget_caret();
+            cx.facts_mut().focus_read_failed();
             unexecuted(&mut cx, window);
             return;
         }

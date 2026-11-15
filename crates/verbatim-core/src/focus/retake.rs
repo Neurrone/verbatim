@@ -189,7 +189,7 @@ pub(crate) async fn run(mut cx: Cx<Entries>, entry: CurrentFocus) {
         known: Vec::new(),
     };
     let Outcome::Result(read) = cx.ask(request, due_us).await else {
-        cx.facts_mut().forget_caret();
+        cx.facts_mut().focus_read_failed();
         return;
     };
     let Some(read_by) = read_by(&read) else {

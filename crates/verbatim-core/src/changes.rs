@@ -250,9 +250,24 @@ fn passes(cx: &Cx<Entries>, change: &MsaaChange) -> bool {
     ) != Judgement::Drop
 }
 
+/// A value change of the committed focus, editable text with automatic
+/// selection detection, sets its text-changed flag and says nothing
+/// (Table 17, column G); `true` when `change` is one. One a caret tell's
+/// answer took as counted no longer waits.
+fn sets_text_changed(facts: &mut SrState, change: &MsaaChange) -> bool {
+    let crate::focus::versions::Committed::Read(committed) = &mut facts.versions.committed else {
+        return false;
+    };
+    if !crate::caret_tell::sets_text_changed(committed, change) {
+        return false;
+    }
+    crate::text_facts::value_changed(committed);
+    true
+}
+
 /// The function of an MSAA change entry.
 pub(crate) async fn msaa(mut cx: Cx<Entries>, change: MsaaChange) {
-    if !passes(&cx, &change) {
+    if !passes(&cx, &change) || sets_text_changed(&mut cx.facts_mut(), &change) {
         return;
     }
     let Some(process) = cx
@@ -449,6 +464,21 @@ pub(crate) fn uia_changed(facts: &mut SrState, change: &UiaChange) -> Vec<verbat
     let Some(node) = node_of(kept, &change.runtime_id) else {
         return Vec::new();
     };
+    // A value change of an element with a text pattern says nothing; only
+    // Word's and a terminal's text changes set the text-changed flag.
+    // NVDA: `NVDAObjects/UIA/__init__.py` 2514 to 2516.
+    if change.property == PropertyId::Value
+        && matches!(
+            change
+                .tell
+                .cached
+                .answer(PropertyId::HasTextPattern)
+                .and_then(|answer| answer.value.as_ref()),
+            Some(PropertyValue::Flag(true))
+        )
+    {
+        return Vec::new();
+    }
     let Some(property) = uia_change(change.property, change.value.as_ref()) else {
         return Vec::new();
     };

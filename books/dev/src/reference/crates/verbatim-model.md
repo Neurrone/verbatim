@@ -337,7 +337,19 @@ them yet.
   Automation event within 60 ms counts as the effect, the bound and the
   `WatchFinalRead`, answered `Watched` (the effect or the bound, with a
   `WatchedRead`, or the bound unread); and `SentenceMove`, answered
-  `SentenceMoved`. Each names its `TextProvider` and `TextDetails`.
+  `SentenceMoved`, each answer with the selection baseline it minted and
+  the caret's line. Each names its `TextProvider` and `TextDetails`.
+- A caret tell's read (`TextOp::ReadSelection`, a `SelectionRead` naming
+  the provider and Core's selection baseline, if any), answered
+  `TextReply::SelectionRead`: the caret, the next baseline the outpost
+  minted, the `SelectionDifference` from the named baseline's range as it
+  now is (what became selected and unselected, and the whole new
+  selection, so that Core can speak it in specific or general terms), or
+  none when no baseline was named or the outpost no longer holds it, and,
+  through an edit control's messages, the selection's `EditSelection`
+  offsets. `MoveCaret` and `Select` asked by an event-queue entry are
+  answered `TextReply::CaretPlaced` and `TextReply::SelectionPlaced`, each
+  with the baseline it minted.
 
 ## Time limits
 

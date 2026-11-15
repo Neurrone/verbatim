@@ -317,6 +317,11 @@ async fn watching(
         motion: press.key.motion,
         passed_at_us,
         poll_us: POLL_US,
+        // NVDA's `caretMovementDetectionUsesEvents` holds for every UI
+        // Automation field but a terminal, whose keys this entry does not
+        // run: a caret or text-change event of the node within 60 ms of
+        // the pass is the key's effect (Dickson, 2026-11-16). A node no
+        // longer the committed focus has no `Follow` to hear them.
         events: binding.provider == TextProvider::Uia && committed(&cx.facts(), binding.node),
         bound_us: BOUND_US,
         final_read: if moves_by_sentence(press, binding) {
@@ -386,23 +391,36 @@ async fn sentence(
     let Outcome::Result(moved) = cx.ask(request, due_us).await else {
         return;
     };
+    // The answer mints the next selection baseline, as Verbatim's own move,
+    // whether or not the key speaks (Table 17, column F).
+    let (line, words, baseline) = match moved {
+        SentenceMoved::Moved {
+            sentence,
+            line,
+            baseline,
+        }
+        | SentenceMoved::StayedAtStart {
+            sentence,
+            line,
+            baseline,
+        } => {
+            let words = editing::sentence_words(&line, &sentence);
+            (line, words, baseline)
+        }
+        SentenceMoved::End { line, baseline } => {
+            (line, crate::text::character_segments(None, None), baseline)
+        }
+    };
+    crate::text_facts::minted(&mut cx.facts_mut(), binding.node, baseline);
     if marked(cx, press) {
         return;
     }
     let read_at_us = cx.now_us();
-    let words = {
+    {
         let mut facts = cx.facts_mut();
         facts.typed_word.clear();
-        match moved {
-            SentenceMoved::Moved { sentence, line, .. }
-            | SentenceMoved::StayedAtStart { sentence, line, .. } => {
-                let words = editing::sentence_words(&line, &sentence);
-                editing::caret_moved_by_core(&mut facts, binding.node, line, read_at_us);
-                words
-            }
-            SentenceMoved::End { .. } => crate::text::character_segments(None, None),
-        }
-    };
+        editing::caret_placed(&mut facts, binding.node, line, read_at_us);
+    }
     say(cx, press, words);
 }
 
@@ -423,7 +441,7 @@ fn finish(
     {
         let mut facts = cx.facts_mut();
         facts.typed_word.clear();
-        editing::update_caret(&mut facts, binding.node, read.caret);
+        editing::take_caret(&mut facts, binding.node, read.caret);
     }
     say(cx, press, words);
 }
@@ -463,7 +481,7 @@ fn marked(cx: &Cx<Entries>, press: &CaretPress) -> bool {
 }
 
 /// Whether a focus waiting behind the key counts as pending, judged now.
-fn focus_pending(cx: &Cx<Entries>) -> bool {
+pub(crate) fn focus_pending(cx: &Cx<Entries>) -> bool {
     let facts = cx.facts();
     let backend = cx.backend();
     let now_us = cx.now_us();

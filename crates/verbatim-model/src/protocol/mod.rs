@@ -1697,12 +1697,20 @@ impl Named {
             },
             TextReply::Sentence(moved) => match &**moved {
                 crate::SentenceMoved::Moved { line, baseline, .. }
-                | crate::SentenceMoved::StayedAtStart { line, baseline, .. } => {
+                | crate::SentenceMoved::StayedAtStart { line, baseline, .. }
+                | crate::SentenceMoved::End { line, baseline } => {
                     self.chunk(line);
                     self.anchors.push(*baseline);
                 }
-                crate::SentenceMoved::End { baseline } => self.anchors.push(*baseline),
             },
+            TextReply::SelectionRead(read) => {
+                self.caret(&read.caret);
+                self.anchors.push(read.baseline);
+            }
+            TextReply::CaretPlaced { baseline, .. }
+            | TextReply::SelectionPlaced { baseline, .. } => {
+                self.anchors.push(*baseline);
+            }
             TextReply::Chunks { chunks, .. } => {
                 for chunk in chunks {
                     self.chunk(chunk);

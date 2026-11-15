@@ -143,7 +143,7 @@ async fn start(cx: &mut Cx<Entries>, candidate: &Candidate, run_executed: bool) 
     };
     let due_us = cx.due_in(FOCUS_DUE_US);
     let Outcome::Result(answered) = cx.ask(request, due_us).await else {
-        cx.facts_mut().forget_caret();
+        cx.facts_mut().focus_read_failed();
         return;
     };
     let Some(Tried::Focus(read)) = answered.tried.into_iter().next() else {
@@ -200,7 +200,7 @@ pub(crate) async fn check(mut cx: Cx<Entries>, check: MenuCheck) {
         known: known.sent.clone(),
     };
     let Outcome::Result(read) = cx.ask(request, due_us).await else {
-        cx.facts_mut().forget_caret();
+        cx.facts_mut().focus_read_failed();
         return;
     };
     if let Some(held) = &read.msaa
@@ -242,6 +242,7 @@ pub(crate) fn opening_dropped(
             Entry::Menu(_)
             | Entry::MsaaChange(_)
             | Entry::UiaChange(_)
+            | Entry::Caret(_)
             | Entry::MenuCheck(_)
             | Entry::CurrentFocus(_)
             | Entry::ForegroundMarker { .. }

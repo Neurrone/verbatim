@@ -914,11 +914,22 @@ fn alt_down_at_the_texts_end_says_blank_and_at_its_start_the_first_sentence() {
         moved(
             5,
             SentenceMoved::End {
+                line: line("Three.", 12, 6),
                 baseline: TextAnchor(13),
             },
         ),
     );
     assert_eq!(end.said, [vec![BLANK.to_owned()]]);
+    // Core's caret is at the text's end, and the move minted the baseline.
+    let caret = held
+        .state
+        .focus_caret(node(2))
+        .expect("the caret is Core's");
+    assert_eq!((caret.line.text.as_str(), caret.line.offset), ("Three.", 6));
+    assert_eq!(
+        crate::text_facts::held(&held.state),
+        Some((node(2), TextAnchor(13)))
+    );
 
     let (mut held, _) = sentence_watching();
     let _ = step(&mut held, 105_000, watched(4, Watched::BoundUnread));
@@ -1108,4 +1119,35 @@ fn a_caret_key_binds_to_a_committed_field_and_not_to_a_button() {
         answer(OUTPOST, 1, Reply::Focus(Box::new(focus_read(None)))),
     );
     assert_eq!(caret_key::binding(&button.state), None);
+}
+
+/// The starting point is an anchor the outpost holds for Core: while the
+/// watch naming it is out, `NodesHeld` names it (design, "Held anchors").
+/// The key's reads compare no selection and leave the baseline alone.
+#[test]
+fn the_starting_point_is_held_while_its_watch_is_out_and_no_baseline_is_minted() {
+    let mut held = watching(
+        CaretMotion::NextCharacter,
+        line("line 01", 7, 0),
+        unit(TextUnit::Character, "l", 8),
+    );
+    let anchors = held.state.held_anchors();
+    assert_eq!(
+        anchors
+            .get(&OutpostId(crate::entries::tests::GENERATION))
+            .map(|anchors| anchors.iter().copied().collect::<Vec<_>>()),
+        Some(vec![TextAnchor(50)])
+    );
+    let _ = step(
+        &mut held,
+        20_000,
+        watched(
+            4,
+            Watched::Effect(read(
+                line("line 01", 7, 1),
+                unit(TextUnit::Character, "i", 8),
+            )),
+        ),
+    );
+    assert_eq!(crate::text_facts::held(&held.state), None);
 }

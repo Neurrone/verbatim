@@ -51,6 +51,7 @@
 
 mod applications;
 mod caret_location;
+mod caret_tell;
 mod changes;
 mod desktop;
 pub mod dump;
@@ -81,6 +82,7 @@ pub mod supervisor;
 mod terminal;
 mod terminal_model;
 mod text;
+mod text_facts;
 mod text_request;
 
 pub use dump::{

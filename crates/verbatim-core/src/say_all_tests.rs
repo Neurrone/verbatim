@@ -227,6 +227,14 @@ fn caret_to(anchor: u64) -> TextOp {
     TextOp::MoveCaret(TextPoint::At(TextPosition::at(TextAnchor(anchor))))
 }
 
+/// A caret move begun at `read_at_us`, minting baseline 60.
+fn placed(read_at_us: u64) -> TextReply {
+    TextReply::CaretPlaced {
+        read_at_us,
+        baseline: TextAnchor(60),
+    }
+}
+
 /// The answer to request `number`.
 fn text_answer(number: u64, reply: TextReply) -> Input<Entry> {
     answer(OUTPOST, number, Reply::Text(reply))
@@ -306,21 +314,13 @@ fn say_all_hands_out_a_batch_a_piece_at_a_time_and_ends_after_the_last() {
     assert_eq!(reached_first.texts(), [["Three."]]);
     assert_eq!(reached_first.one_sent(), (5, caret_to(100)));
     let third = reached_first.said[0].marks[0];
-    let moved = step(
-        &mut state,
-        1_310,
-        text_answer(5, TextReply::Moved { read_at_us: 1_300 }),
-    );
+    let moved = step(&mut state, 1_310, text_answer(5, placed(1_300)));
     assert!(moved.sent.is_empty() && moved.said.is_empty(), "{moved:?}");
     // Reaching the second moves the caret on.
     let reached_second = step(&mut state, 1_400, at_mark(second));
     assert_eq!(reached_second.one_sent(), (6, caret_to(101)));
     assert!(reached_second.said.is_empty(), "{reached_second:?}");
-    let _ = step(
-        &mut state,
-        1_410,
-        text_answer(6, TextReply::Moved { read_at_us: 1_400 }),
-    );
+    let _ = step(&mut state, 1_410, text_answer(6, placed(1_400)));
     // The last piece reached: the caret moves to it and say-all ends.
     let reached_last = step(&mut state, 1_500, at_mark(third));
     assert_eq!(reached_last.one_sent(), (7, caret_to(102)));
@@ -356,11 +356,7 @@ fn say_all_reads_the_next_batch_when_fewer_than_ten_pieces_are_left() {
         marks.extend(reached.said.iter().map(|said| said.marks[0]));
         let (number, op) = reached.one_sent();
         assert!(matches!(op, TextOp::MoveCaret(_)), "{reached:?}");
-        let moved = step(
-            state,
-            at_us + 10,
-            text_answer(number, TextReply::Moved { read_at_us: at_us }),
-        );
+        let moved = step(state, at_us + 10, text_answer(number, placed(at_us)));
         reads(&moved)
     };
     // Each line reached leaves one fewer: eleven, then ten, then nine, when
@@ -574,14 +570,15 @@ fn a_caret_move_say_all_made_is_cores_caret() {
     let first = step(&mut state, 1_300, at_mark(read.said[0].marks[0]));
     let (number, op) = first.one_sent();
     assert_eq!(op, caret_to(100));
-    let _ = step(
-        &mut state,
-        1_310,
-        text_answer(number, TextReply::Moved { read_at_us: 1_300 }),
-    );
+    let _ = step(&mut state, 1_310, text_answer(number, placed(1_300)));
     let caret = state.focus_caret(node(2)).expect("Core holds the caret");
     assert_eq!(caret.line.start, TextAnchor(100));
     assert_eq!(caret.read_at_us, 1_300);
+    // The move minted the next selection baseline (Table 17, column F).
+    assert_eq!(
+        crate::text_facts::held(&state.state),
+        Some((node(2), TextAnchor(60)))
+    );
 }
 
 /// Every utterance say-all hands to speech carries its starting key's
@@ -753,22 +750,14 @@ fn say_all_splits_lines_at_their_last_sentence_end_and_joins_a_sentence_across_l
     assert_eq!(reached.texts(), [["A last ", "line."]]);
     let third = reached.said[0].marks.clone();
     assert_eq!(third.len(), 2);
-    let _ = step(
-        &mut state,
-        1_310,
-        text_answer(5, TextReply::Moved { read_at_us: 0 }),
-    );
+    let _ = step(&mut state, 1_310, text_answer(5, placed(0)));
     // The rest of the first line: the caret stays on the first line.
     let rest = step(&mut state, 1_400, at_mark(second.marks[0]));
     assert!(rest.sent.is_empty() && rest.said.is_empty(), "{rest:?}");
     // The second line's text starts: the caret moves to its start.
     let next = step(&mut state, 1_500, at_mark(second.marks[1]));
     assert_eq!(next.one_sent(), (6, caret_to(101)));
-    let _ = step(
-        &mut state,
-        1_510,
-        text_answer(6, TextReply::Moved { read_at_us: 0 }),
-    );
+    let _ = step(&mut state, 1_510, text_answer(6, placed(0)));
     // The last utterance starts with the rest of the second line: the
     // caret stays there, and a key stops say-all with it there.
     let held = step(&mut state, 1_600, at_mark(third[0]));

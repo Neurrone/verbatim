@@ -123,6 +123,9 @@ pub(crate) enum Entry {
     MsaaChange(Box<crate::changes::MsaaChange>),
     /// A UI Automation property change.
     UiaChange(Box<crate::changes::UiaChange>),
+    /// A caret tell: the system caret's, or a UI Automation text-selection
+    /// change.
+    Caret(Box<crate::caret_tell::CaretTell>),
     /// The foreground record changed to this window: at its turn the
     /// readers' last focus is emptied when the window is a top-level
     /// window unrelated to the committed focus.
@@ -185,6 +188,11 @@ impl fmt::Debug for Entry {
                 formatter,
                 "UiaChange({:?} {:?} of {})",
                 change.property, change.runtime_id, change.tell.process.0
+            ),
+            Self::Caret(caret) => write!(
+                formatter,
+                "Caret({:?} {:?} of {})",
+                caret.tell.kind, caret.target, caret.tell.process.0
             ),
             Self::CurrentFocus(read) => write!(
                 formatter,
@@ -294,6 +302,10 @@ impl Entry {
                     fence: Fence::default(),
                 })))
             }
+            (EventKind::SystemCaret | EventKind::UiaTextSelectionChanged, _) => {
+                crate::caret_tell::CaretTell::of_tell(tell)
+                    .map(|caret| Self::Caret(Box::new(caret)))
+            }
             (EventKind::UiaPropertyChanged, EventObject::Uia { runtime_id, .. }) => {
                 let runtime_id = runtime_id.clone();
                 crate::changes::uia_of_tell(tell, runtime_id)
@@ -310,6 +322,7 @@ impl Entry {
             Self::Candidate(candidate) | Self::Menu(candidate) => Some(&candidate.tell),
             Self::MsaaChange(change) => Some(&change.tell),
             Self::UiaChange(change) => Some(&change.tell),
+            Self::Caret(caret) => Some(&caret.tell),
             Self::Run(_)
             | Self::ForegroundMarker { .. }
             | Self::MenuCheck(_)
@@ -334,6 +347,7 @@ impl Entry {
             Self::CurrentFocus(read) => read.fence,
             Self::MsaaChange(change) => change.fence,
             Self::UiaChange(change) => change.fence,
+            Self::Caret(caret) => caret.fence,
             Self::ForegroundMarker { fence, .. }
             | Self::Mark(_, fence)
             | Self::SayAllRead(_, fence) => *fence,
@@ -355,6 +369,7 @@ impl Entry {
             Self::CurrentFocus(read) => read.fence = set,
             Self::MsaaChange(change) => change.fence = set,
             Self::UiaChange(change) => change.fence = set,
+            Self::Caret(caret) => caret.fence = set,
             Self::ForegroundMarker { fence, .. }
             | Self::Mark(_, fence)
             | Self::SayAllRead(_, fence) => *fence = set,
@@ -410,6 +425,7 @@ impl Logic for Entries {
                 let mut cx = cx;
                 crate::changes::uia(&mut cx, &change);
             }),
+            Entry::Caret(caret) => Box::pin(crate::caret_tell::run(cx, *caret)),
             Entry::Press(press) => Box::pin(crate::keys::entry::run(cx, *press)),
             Entry::Mark(mark, _) => Box::pin(crate::say_all::mark_entry(cx, mark)),
             Entry::SayAllRead(run, _) => Box::pin(crate::say_all::read_entry(cx, run)),
@@ -555,6 +571,14 @@ impl Logic for Entries {
             {
                 facts.navigator = None;
             }
+            // The review start marker's anchors ended with the generation
+            // that minted them (design, "Held anchors").
+            if facts
+                .start_marker
+                .is_some_and(|marker| marker.node().outpost() == outpost)
+            {
+                facts.start_marker = None;
+            }
         }
         crate::focus::retake::reader_ended(facts, instance, foreground)
             .map(|read| Entry::CurrentFocus(Box::new(read)))
@@ -625,6 +649,25 @@ impl Logic for Entries {
                 focus_kind: true,
                 ends_run: false,
             },
+            Entry::Caret(caret) => match &caret.target {
+                crate::caret_tell::Target::System(ids) => Place::Msaa {
+                    key: MsaaKey {
+                        kind: caret.tell.kind,
+                        window: ids.window,
+                        object: ids.object,
+                        child: ids.child,
+                        thread: caret.tell.thread,
+                    },
+                    class: MsaaClass::Other,
+                    accepted: acceptance::accept(caret.tell.kind, window_facts(&caret.tell), false)
+                        .is_ok(),
+                },
+                crate::caret_tell::Target::Uia(_) => Place::Other {
+                    merges: true,
+                    focus_kind: false,
+                    ends_run: false,
+                },
+            },
             Entry::UiaChange(_) => Place::Other {
                 merges: true,
                 focus_kind: false,
@@ -656,6 +699,9 @@ impl Logic for Entries {
                         &arriving.runtime_id,
                         arriving.tell.thread,
                     )
+            }
+            (Entry::Caret(waiting), Entry::Caret(arriving)) => {
+                crate::caret_tell::merges(waiting, arriving)
             }
             (Entry::UiaChange(waiting), Entry::UiaChange(arriving)) => {
                 (&waiting.runtime_id, waiting.property, waiting.tell.thread)
@@ -708,6 +754,7 @@ impl Logic for Entries {
             Entry::Candidate(candidate) | Entry::Menu(candidate) => Some(candidate.window),
             Entry::CurrentFocus(read) => Some(read.window),
             Entry::MsaaChange(change) => Some(change.window),
+            Entry::Caret(caret) => caret.window(),
             // A command resolves its object at its turn and is tested only
             // when it asks.
             Entry::Run(_)
@@ -734,6 +781,7 @@ impl Logic for Entries {
             | Entry::CurrentFocus(_)
             | Entry::MsaaChange(_)
             | Entry::UiaChange(_)
+            | Entry::Caret(_)
             | Entry::Press(_)
             | Entry::Mark(..)
             | Entry::SayAllRead(..) => None,
@@ -770,6 +818,7 @@ pub(crate) fn pending_focus(
         | Entry::CurrentFocus(_)
         | Entry::MsaaChange(_)
         | Entry::UiaChange(_)
+        | Entry::Caret(_)
         | Entry::ForegroundMarker { .. }
         | Entry::Press(_)
         | Entry::Mark(..)

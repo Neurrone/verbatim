@@ -154,6 +154,25 @@ impl<E, F> Queue<E, F> {
     pub(crate) fn now_us(&self) -> u64 {
         self.now_us
     }
+
+    /// Every request waiting or out, as sent: the ids each names stay held
+    /// (design, "Held anchors").
+    pub(crate) fn requests(&self) -> impl Iterator<Item = &verbatim_model::request::Request> {
+        self.table.requests()
+    }
+
+    /// The front entry and every entry waiting behind it, a run's
+    /// candidates and the menu slot's included: the ids each names stay
+    /// held.
+    pub(crate) fn entries(&self) -> impl Iterator<Item = &E> {
+        self.front
+            .iter()
+            .map(|front| &front.entry)
+            .chain(self.waiting.iter().flat_map(|item| match item {
+                Item::One(entry) | Item::Menu { entry, .. } => std::slice::from_ref(entry),
+                Item::Run(candidates) => candidates.as_slice(),
+            }))
+    }
 }
 
 #[cfg(test)]

@@ -184,7 +184,7 @@ pub(crate) async fn run(mut cx: Cx<Entries>, candidates: Vec<Candidate>) {
             },
         };
         let Outcome::Result(answered) = cx.ask(request, due_us).await else {
-            cx.facts_mut().forget_caret();
+            cx.facts_mut().focus_read_failed();
             return;
         };
         let valid =

@@ -843,6 +843,8 @@ pub enum SentenceMoved {
     },
     /// The caret moved to the text's end, past its last sentence.
     End {
+        /// The line the caret is now on, with the caret at its offset.
+        line: TextChunk,
         /// The selection baseline the move minted.
         baseline: TextAnchor,
     },
@@ -856,6 +858,62 @@ pub enum SentenceMoved {
         /// The selection baseline the move minted.
         baseline: TextAnchor,
     },
+}
+
+/// A caret tell's read (`docs/design/readers-tell-core-asks-build1.md`,
+/// "Selection and the caret's text facts"): the caret, and the selection
+/// compared with the selection baseline Core names, against the
+/// baseline's range as it now is, its ends where the provider has moved
+/// them with the edits. The outpost mints the next baseline from the
+/// selection it read.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SelectionRead {
+    /// How the node's text is read.
+    pub provider: TextProvider,
+    /// The selection baseline to compare with, `None` when Core holds
+    /// none.
+    pub baseline: Option<TextAnchor>,
+}
+
+/// How the selection differs from the selection baseline's range as it
+/// now is, in both the terms Core may speak it in: Core chooses at the
+/// answer, by its text-changed flag and the value changes waiting.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SelectionDifference {
+    /// What became selected and unselected, each part's text what its
+    /// range now holds, by the rule [`CaretReply`] describes for its
+    /// `selection_changes`; empty when the old range and the new selection
+    /// are both empty.
+    pub changes: Vec<SelectionChange>,
+    /// The whole new selection's text, its `selected` true; `None` when
+    /// nothing is selected.
+    pub new_selection: Option<SelectionChange>,
+}
+
+/// An edit control's selection, by its character offsets as the control
+/// gives them (`EM_GETSEL` or `EM_EXGETSEL`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EditSelection {
+    /// The start's offset.
+    pub start: u32,
+    /// The end's offset.
+    pub end: u32,
+}
+
+/// The answer to [`TextOp::ReadSelection`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SelectionReadReply {
+    /// The caret as it is now: the line at it, with the caret at its
+    /// offset, and the selection.
+    pub caret: CaretReport,
+    /// The next selection baseline, minted from the selection read.
+    pub baseline: TextAnchor,
+    /// The difference from the named baseline; `None` when the request
+    /// named none, or one the outpost no longer holds ("no baseline").
+    pub difference: Option<SelectionDifference>,
+    /// The selection's offsets, read through an edit control's messages;
+    /// `None` through any other provider.
+    pub edit_selection: Option<EditSelection>,
 }
 
 /// One operation Core asks an outpost to perform on a node's text.
@@ -874,6 +932,9 @@ pub enum TextOp {
     /// A sentence key's move from its starting point: answered
     /// [`TextReply::Sentence`].
     MoveBySentence(SentenceMove),
+    /// A caret tell's read, compared with the selection baseline: answered
+    /// [`TextReply::SelectionRead`].
+    ReadSelection(SelectionRead),
     /// Read one unit: answered [`TextReply::Read`].
     Read(TextRead),
     /// Read the text between two points, in document order whichever comes
@@ -1012,6 +1073,8 @@ pub enum TextReply {
     Watched(Box<Watched>),
     /// The answer to [`TextOp::MoveBySentence`].
     Sentence(Box<SentenceMoved>),
+    /// The answer to [`TextOp::ReadSelection`].
+    SelectionRead(Box<SelectionReadReply>),
     /// The answer to [`TextOp::Read`]: `moved` is how many units the
     /// movement really went, which is less than asked (and zero for a
     /// movement that could not start) at the document's ends; movement
@@ -1054,6 +1117,26 @@ pub enum TextReply {
     /// caret when nothing was selected) to the one it read just after, by
     /// the rule [`CaretReply`] describes for its `selection_changes`.
     Selected(Vec<SelectionChange>),
+    /// A [`TextOp::MoveCaret`] asked by an event-queue entry was done: the
+    /// move begun at `read_at_us`, as [`TextReply::Moved`], with the
+    /// selection baseline it minted (`docs/design/readers-tell-core-asks-build1.md`,
+    /// "Selection and the caret's text facts").
+    CaretPlaced {
+        /// When the move began, in microseconds on the clock every process
+        /// of a run shares.
+        read_at_us: u64,
+        /// The selection baseline the move minted.
+        baseline: TextAnchor,
+    },
+    /// The answer to a [`TextOp::Select`] asked by an event-queue entry:
+    /// how the selection changed, as [`TextReply::Selected`], with the
+    /// selection baseline the selection made minted.
+    SelectionPlaced {
+        /// How the selection changed.
+        changes: Vec<SelectionChange>,
+        /// The selection baseline the selection minted.
+        baseline: TextAnchor,
+    },
     /// A read of a terminal: the answer to [`TextOp::TerminalReadNow`], to
     /// [`TextOp::TerminalRead`] and [`TextOp::TerminalCancel`], and to
     /// [`TextOp::ReadCaret`] in a terminal, the read before a held key, whose

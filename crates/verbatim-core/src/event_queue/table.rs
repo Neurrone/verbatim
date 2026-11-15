@@ -161,6 +161,11 @@ impl Table {
             .collect()
     }
 
+    /// The requests waiting or out, as sent.
+    pub(crate) fn requests(&self) -> impl Iterator<Item = &Wire> {
+        self.live.values().map(|live| &live.request)
+    }
+
     /// Records a new request and returns its number; sends it at once to
     /// `ready`, the reader's running instance, if there is one.
     pub(crate) fn begin(

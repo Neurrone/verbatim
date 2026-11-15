@@ -917,7 +917,6 @@ pub(crate) fn update_caret(state: &mut SrState, node: NodeId, caret: verbatim_mo
     if !state.focus_matches(node) {
         return;
     }
-    let line = Arc::new(caret.line);
     let read_at_us = caret.read_at_us;
     if let Some(known) = state
         .focus
@@ -927,14 +926,29 @@ pub(crate) fn update_caret(state: &mut SrState, node: NodeId, caret: verbatim_mo
     {
         // The older report still shows the kind of line break the text uses.
         if known.line_break.is_none() {
-            known.line_break = text::line_break(&line.text).map(str::to_owned);
+            known.line_break = text::line_break(&caret.line.text).map(str::to_owned);
         }
+        return;
+    }
+    take_caret(state, node, caret);
+}
+
+/// Takes `caret`, read of the focus `node`, as Core's caret, and moves the
+/// review cursor to it when the review cursor follows the caret and the
+/// navigator is on that node. An event-queue entry's answers are taken in
+/// arrival order, as one worker answers the queue's requests one at a
+/// time and an abandoned worker's commits are refused
+/// (`docs/design/readers-tell-core-asks-build1.md`, "Selection and the
+/// caret's text facts").
+pub(crate) fn take_caret(state: &mut SrState, node: NodeId, caret: verbatim_model::CaretReport) {
+    if !state.focus_matches(node) {
         return;
     }
     follow_caret(state, node);
     let Some(focus) = state.focus.object_mut() else {
         return;
     };
+    let line = Arc::new(caret.line);
     let line_break = text::line_break(&line.text)
         .map(str::to_owned)
         .or_else(|| focus.caret.take().and_then(|caret| caret.line_break));
@@ -942,8 +956,23 @@ pub(crate) fn update_caret(state: &mut SrState, node: NodeId, caret: verbatim_mo
         line,
         selection: caret.selection,
         line_break,
-        read_at_us,
+        read_at_us: caret.read_at_us,
     });
+}
+
+/// Takes a caret Core itself moved `node`'s caret to, `line` with the caret
+/// at its offset and nothing selected, as the focus's caret, in arrival
+/// order ([`take_caret`]).
+pub(crate) fn caret_placed(state: &mut SrState, node: NodeId, line: TextChunk, read_at_us: u64) {
+    take_caret(
+        state,
+        node,
+        verbatim_model::CaretReport {
+            line,
+            selection: None,
+            read_at_us,
+        },
+    );
 }
 
 /// Takes a caret Core itself moved `node`'s caret to, `line` with the caret

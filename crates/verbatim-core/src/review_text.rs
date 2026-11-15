@@ -191,6 +191,13 @@ pub(crate) async fn entry(mut cx: Cx<Entries>, press: ReviewPress, fence: Fence)
                     op,
                 };
                 let reply = match cx.ask(request, due_us).await {
+                    // A selection made on the focused text mints the next
+                    // selection baseline, and is said as any selection the
+                    // command makes (Table 17, column F).
+                    Outcome::Result(TextReply::SelectionPlaced { changes, baseline }) => {
+                        crate::text_facts::minted(&mut cx.facts_mut(), node, baseline);
+                        TextReply::Selected(changes)
+                    }
                     Outcome::Result(reply) => reply,
                     Outcome::NotThere => TextReply::Gone,
                     _ => return,

@@ -322,6 +322,7 @@ fn ready(
         value_from_selection: read.value_from_selection,
         class: read.class,
         role: node.role,
+        selection: crate::text_facts::SelectionFacts::default(),
     };
     Some(Ready {
         report,
@@ -475,6 +476,14 @@ pub(crate) fn retake(
         });
     if same {
         crate::reduce::take_silently(state, &ready.report);
+        // The text-changed flag is the focus's and survives its reader's
+        // replacement; the old baseline's anchor ended with its generation
+        // (Table 17, column J).
+        let mut ready = ready;
+        ready.kept.selection.text_changed = state
+            .versions
+            .committed_kept()
+            .is_some_and(|kept| kept.selection.text_changed);
         let follows = commit(state, origin, ready);
         return (
             Retaken::Silently,

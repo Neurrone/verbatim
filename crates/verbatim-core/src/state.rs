@@ -621,6 +621,11 @@ pub struct SrState {
     /// The key transitions the hook held or deferred that Core has not yet
     /// sent (`crate::keys::strokes`).
     pub(crate) strokes: crate::keys::strokes::StrokeLine,
+    /// The selection offsets of the last caret tell's answer read through
+    /// an edit control's messages, which the next one is compared with
+    /// (`crate::text_facts::edit_selection_repeated`).
+    #[serde(default)]
+    pub(crate) edit_selection: Option<verbatim_model::EditSelection>,
     /// The event queue (`crate::entries`): its entries, its requests and
     /// the front entry's checkpoint, plain data. Empty while a step of the
     /// queue runs, when the driver holds it. The paused function sits
@@ -747,6 +752,16 @@ impl SrState {
             .object()
             .and_then(|focus| focus.caret.as_ref())
             .map(|caret| caret.line.offset)
+    }
+
+    /// A focus read failed: Core forgets the focus's caret, and the
+    /// committed focus's selection baseline and text-changed flag (Table
+    /// 17, column C). NVDA: `editableText.py` 421 to 424.
+    pub(crate) fn focus_read_failed(&mut self) {
+        self.forget_caret();
+        if let crate::focus::versions::Committed::Read(kept) = &mut self.versions.committed {
+            kept.selection = crate::text_facts::SelectionFacts::default();
+        }
     }
 
     /// Forgets the focus's caret.
@@ -884,6 +899,19 @@ impl SrState {
         if let Some(say_all) = &self.say_all {
             insert(say_all.node);
         }
+        // The nodes the event queue's requests and entries name: a request
+        // waiting or out, and a caret key bound at its press to a node that
+        // may no longer be the focus (design, "Held anchors").
+        for request in self.queue.requests() {
+            if let Some((node, _)) = crate::text_facts::named_by(request) {
+                insert(node);
+            }
+        }
+        for entry in self.queue.entries() {
+            if let Some(bound) = crate::keys::caret_key::of_entry(entry).and_then(|key| key.bound) {
+                insert(bound.node);
+            }
+        }
         held
     }
 
@@ -946,6 +974,19 @@ impl SrState {
             }
             for piece in say_all.buffer.iter().flatten().chain(&say_all.held) {
                 insert(say_all.node, TextPosition::at(piece.chunk.start));
+            }
+        }
+        // The selection baseline, and every anchor a request of the event
+        // queue names, a caret key's starting point among them (design,
+        // "Held anchors").
+        if let Some((node, baseline)) = crate::text_facts::held(self) {
+            insert(node, TextPosition::at(baseline));
+        }
+        for request in self.queue.requests() {
+            if let Some((node, anchors)) = crate::text_facts::named_by(request) {
+                for anchor in anchors {
+                    insert(node, TextPosition::at(anchor));
+                }
             }
         }
         held

@@ -54,6 +54,7 @@ pub(crate) fn kept(top_level: u64) -> Kept {
         value_from_selection: false,
         class: ObjectClass::Plain,
         role: verbatim_model::Role::Button,
+        selection: crate::text_facts::SelectionFacts::default(),
     }
 }
 

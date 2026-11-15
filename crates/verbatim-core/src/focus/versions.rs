@@ -112,6 +112,9 @@ pub(crate) struct Kept {
     pub(crate) class: ObjectClass,
     /// Its role, as the answer read it.
     pub(crate) role: Role,
+    /// Its selection baseline and text-changed flag (Table 17).
+    #[serde(default)]
+    pub(crate) selection: crate::text_facts::SelectionFacts,
 }
 
 /// One ancestor of a committed focus, as Core keeps it.
@@ -223,7 +226,8 @@ impl Versions {
     /// `outpost`, ended (column F).
     pub(crate) fn outpost_ended(&mut self, outpost: OutpostId) -> ReaderEnd {
         match std::mem::take(&mut self.committed) {
-            Committed::Read(kept) | Committed::Ended(kept) if kept.outpost == outpost => {
+            Committed::Read(mut kept) | Committed::Ended(mut kept) if kept.outpost == outpost => {
+                crate::text_facts::outpost_ended(&mut kept, outpost);
                 self.committed = Committed::Ended(kept);
                 ReaderEnd::Retake
             }

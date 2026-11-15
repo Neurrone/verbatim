@@ -966,6 +966,36 @@ unsent, leaving a dropped mark for each held key's turn, and withdraws
 the front's starting read; at `QueueInput::Exit` Core names the keys
 whose last transition in line is a release (`QueueEffect::ReleaseAtExit`).
 
+### Caret tells and Core's text facts
+
+(`docs/design/readers-tell-core-asks-build1.md`, "Selection and the
+caret's text facts", "Held anchors", Table 17.) The committed focus's
+record (`Kept`) carries its `SelectionFacts` (`text_facts.rs`): the
+selection baseline, an anchor its outpost generation holds, and the
+text-changed flag. A caret tell (`caret_tell.rs`), the system caret's
+for the readers' last focus or a UI Automation text-selection change of
+the committed focus's element, asks at its turn, with no focus pending,
+one `ReadSelection` naming the baseline, and takes the caret it reads in
+arrival order. With no baseline named the answer only mints the next;
+otherwise Core speaks the difference in general terms when the flag is
+set or, in an edit control, when a value change of the focus waits in
+the queue (taken out as counted), else in specific terms, then clears the
+flag and takes the new baseline. An edit control's answer whose
+selection offsets equal the last caret tell's (`SrState::edit_selection`)
+changes nothing. A value change of an edit control that is the committed
+focus sets the flag and says nothing; a UI Automation value change of an
+element with a text pattern says nothing. Answers to `MoveCaret`, a
+sentence move and `Select` on the focused text mint the next baseline; a
+failed focus read clears the baseline and the flag; the end of the
+focus's outpost generation drops the baseline, and the silent re-take
+keeps the flag. A caret key's starting and final reads compare no
+selection.
+
+`SrState::held_anchors` and `held_nodes` name, besides the baseline,
+every anchor and node a request of the event queue names (a key's
+starting point while its watch or sentence move is out), and the node a
+waiting caret key was bound to.
+
 ## Key numbers
 
 (`books/dev/src/explanation/design/ownership.md`.) Every user input carries the number the keyboard hook's thread
