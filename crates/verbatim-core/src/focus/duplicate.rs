@@ -158,6 +158,7 @@ mod tests {
             },
             place: place(3),
             class: ObjectClass::Plain,
+            role: verbatim_model::Role::Button,
         }
     }
 
@@ -169,6 +170,7 @@ mod tests {
             },
             place: place(3),
             class: ObjectClass::Plain,
+            role: verbatim_model::Role::Button,
         }
     }
 

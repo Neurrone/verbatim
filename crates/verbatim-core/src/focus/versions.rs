@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use verbatim_model::property::RuntimeId;
 use verbatim_model::request::{KnownAncestor, MsaaIds, ObjectClass};
 use verbatim_model::tell::ElementToken;
-use verbatim_model::{NodeId, OutpostId, Pid, WindowHandle};
+use verbatim_model::{NodeId, OutpostId, Pid, Role, WindowHandle};
 
 /// How a reader's focus is named, which the duplicate tests compare.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -77,6 +77,8 @@ pub(crate) struct LastFocus {
     pub(crate) place: Place,
     /// Its class verdict, which may change the duplicate test.
     pub(crate) class: ObjectClass,
+    /// Its role, which the menu-start rule judges.
+    pub(crate) role: Role,
 }
 
 /// What Core keeps with a committed focus a reader read, each from its
@@ -108,6 +110,8 @@ pub(crate) struct Kept {
     pub(crate) value_from_selection: bool,
     /// Its class verdict.
     pub(crate) class: ObjectClass,
+    /// Its role, as the answer read it.
+    pub(crate) role: Role,
 }
 
 /// One ancestor of a committed focus, as Core keeps it.
@@ -133,6 +137,7 @@ impl Kept {
             read_by: self.read_by.clone(),
             place: self.place.clone(),
             class: self.class,
+            role: self.role,
         }
     }
 }

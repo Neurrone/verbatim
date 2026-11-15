@@ -113,6 +113,7 @@ fn last_msaa(object: i32) -> LastFocus {
             ancestor_windows: Vec::new(),
         },
         class: ObjectClass::Plain,
+        role: verbatim_model::Role::Button,
     }
 }
 

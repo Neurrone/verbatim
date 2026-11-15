@@ -317,10 +317,9 @@ impl Logic for Entries {
         // a focus; every other entry starts with none executed.
         let run_executed = std::mem::take(&mut cx.facts_mut().run_executed);
         match entry {
-            Entry::Menu(candidate) => Box::pin(async move {
-                let mut cx = cx;
-                crate::focus::menus::slot(&mut cx, &candidate, run_executed);
-            }),
+            Entry::Menu(candidate) => {
+                Box::pin(crate::focus::menus::slot(cx, *candidate, run_executed))
+            }
             Entry::MenuCheck(check) => Box::pin(crate::focus::menus::check(cx, *check)),
             Entry::CurrentFocus(read) => Box::pin(crate::focus::retake::run(cx, *read)),
             Entry::UiaFocus(focus) => Box::pin(crate::focus::uia_focus::run(cx, *focus)),

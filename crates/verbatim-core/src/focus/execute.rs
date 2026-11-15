@@ -320,6 +320,7 @@ fn ready(
         foreground: read.foreground.as_ref().and_then(|node| node.read.node),
         value_from_selection: read.value_from_selection,
         class: read.class,
+        role: node.role,
     };
     Some(Ready {
         report,

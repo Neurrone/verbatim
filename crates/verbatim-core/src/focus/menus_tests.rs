@@ -161,3 +161,119 @@ fn a_menu_opening_on_the_committed_focus_executes_it_again() {
     assert!(state.queue.front_for_tests().is_none());
     assert_eq!(again, ["Label(\"OK\") Role(Button)"]);
 }
+
+/// An MSAA menu start tell on window 5.
+fn menu_start() -> Input<crate::entries::Entry> {
+    let mut tell = msaa_tell(-4);
+    tell.kind = EventKind::MenuStart;
+    entry(tell)
+}
+
+/// A focus answer of `role`, named "Context".
+fn read_as(role: verbatim_model::Role) -> Reply {
+    let mut read = focus_read(Some(held(-4)));
+    read.focus.read.values = crate::entries::tests::values("Context", role);
+    Reply::Run(RunRead {
+        tried: vec![Tried::Focus(Box::new(read))],
+    })
+}
+
+/// The run candidates' kinds of the request out.
+fn asked_kinds(state: &Held) -> Vec<verbatim_model::request::CandidateKind> {
+    state
+        .queue
+        .table_for_tests()
+        .into_iter()
+        .flat_map(|request| match request {
+            verbatim_model::request::Request::MsaaRun(run) => run
+                .candidates
+                .into_iter()
+                .map(|candidate| candidate.kind)
+                .collect(),
+            _ => Vec::new(),
+        })
+        .collect()
+}
+
+#[test]
+fn a_menu_start_reads_its_object_and_a_menu_popup_executes_as_a_focus() {
+    let mut state = ready();
+    assert_eq!(
+        feed_at(&mut state, 1_000, menu_start()),
+        ["send Outpost(Pid(40)) MsaaRun"]
+    );
+    assert_eq!(
+        asked_kinds(&state),
+        [verbatim_model::request::CandidateKind::MenuStart]
+    );
+    assert_eq!(
+        feed_at(
+            &mut state,
+            2_000,
+            answer(OUTPOST, 1, read_as(verbatim_model::Role::Menu))
+        ),
+        [
+            "Label(\"Editor\") Role(Window)",
+            "Label(\"Context\") Role(Menu)"
+        ]
+    );
+}
+
+#[test]
+fn a_menu_start_on_anything_but_a_menu_popup_says_nothing() {
+    let mut state = ready();
+    feed_at(&mut state, 1_000, menu_start());
+    assert_eq!(
+        feed_at(
+            &mut state,
+            2_000,
+            answer(OUTPOST, 1, read_as(verbatim_model::Role::Button))
+        ),
+        NOTHING
+    );
+    assert!(state.focus.object().is_none());
+}
+
+/// A focus run asked, a menu start waiting behind it, and the run's
+/// answer executing a focus of `role`: what was sent and said.
+fn start_after_a_run(role: verbatim_model::Role) -> Vec<String> {
+    let mut state = ready();
+    assert_eq!(
+        feed_at(&mut state, 1_000, entry(msaa_tell(-4))),
+        ["send Outpost(Pid(40)) MsaaRun"]
+    );
+    assert_eq!(feed_at(&mut state, 1_100, menu_start()), NOTHING);
+    let mut read = focus_read(Some(held(-4)));
+    read.focus.read.values = crate::entries::tests::values("File", role);
+    feed_at(
+        &mut state,
+        2_000,
+        answer(
+            OUTPOST,
+            1,
+            Reply::Run(RunRead {
+                tried: vec![Tried::Focus(Box::new(read))],
+            }),
+        ),
+    )
+}
+
+#[test]
+fn a_menu_start_after_a_run_that_executed_an_msaa_menu_item_is_dropped() {
+    assert_eq!(
+        start_after_a_run(verbatim_model::Role::MenuItem),
+        ["Label(\"Editor\") Role(Window)", "Label(\"File\")"]
+    );
+}
+
+#[test]
+fn a_menu_start_after_a_run_that_executed_another_focus_reads_its_object() {
+    assert_eq!(
+        start_after_a_run(verbatim_model::Role::Button),
+        [
+            "Label(\"Editor\") Role(Window)",
+            "Label(\"File\") Role(Button)",
+            "send Outpost(Pid(40)) MsaaRun"
+        ]
+    );
+}

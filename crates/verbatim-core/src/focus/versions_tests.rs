@@ -53,6 +53,7 @@ pub(crate) fn kept(top_level: u64) -> Kept {
         foreground: None,
         value_from_selection: false,
         class: ObjectClass::Plain,
+        role: verbatim_model::Role::Button,
     }
 }
 

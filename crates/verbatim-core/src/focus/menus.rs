@@ -24,15 +24,21 @@ use verbatim_model::property::{PropertyId, PropertyValue};
 use verbatim_model::request::FocusRead;
 use verbatim_model::{OutpostId, State, TraceId};
 
+use super::FOCUS_SET;
+use super::acceptance;
 use super::backend::BackendCache;
+use super::backend::{Judged, Judgement};
 use super::duplicate::msaa_duplicate;
 use super::execute::{Known, Origin, execute};
+use super::msaa_run::RunRequest;
 use super::pending::counts_as_pending;
 use super::retake::{CurrentFocusRead, read_by};
-use super::versions::Committed;
+use super::versions::{Committed, LastFocus, ReadBy};
 use crate::entries::{Candidate, Entries, Entry};
 use crate::event_queue::{Cx, FOCUS_DUE_US, Outcome, Reader};
 use crate::state::SrState;
+use verbatim_model::Role;
+use verbatim_model::request::{CandidateKind, MsaaRun, RunCandidate, Tried};
 
 /// How long after a menu or switcher end Core appends its check: NVDA's
 /// 50 ms (`IAccessibleHandler/__init__.py` 976 to 991).
@@ -56,10 +62,17 @@ fn ends(kind: EventKind) -> bool {
     )
 }
 
-/// The menu slot's entry `candidate`, judged at once with no request: an
-/// end after a run that executed no focus appends the check 50 ms later. A menu or popup
-/// start's own rule is not built in this step.
-pub(crate) fn slot(cx: &mut Cx<Entries>, candidate: &Candidate, run_executed: bool) {
+/// The function of the menu slot's entry `candidate`: a menu or popup
+/// start by the menu-start rule ([`start`]); an end after a run that
+/// executed no focus appends the check 50 ms later, with no request.
+pub(crate) async fn slot(mut cx: Cx<Entries>, candidate: Candidate, run_executed: bool) {
+    if matches!(
+        candidate.tell.kind,
+        EventKind::MenuStart | EventKind::PopupStart
+    ) {
+        start(&mut cx, &candidate, run_executed).await;
+        return;
+    }
     if !ends(candidate.tell.kind) || run_executed {
         return;
     }
@@ -68,6 +81,89 @@ pub(crate) fn slot(cx: &mut Cx<Entries>, candidate: &Candidate, run_executed: bo
         trace_id: candidate.tell.trace_id,
     };
     cx.append_after(CHECK_AFTER_US, Entry::MenuCheck(Box::new(check)));
+}
+
+/// Whether the readers' last focus is an MSAA menu popup or menu item.
+fn last_is_msaa_menu(last: Option<&LastFocus>) -> bool {
+    last.is_some_and(|last| {
+        matches!(last.read_by, ReadBy::Msaa { .. })
+            && matches!(last.role, Role::Menu | Role::MenuItem)
+    })
+}
+
+/// The menu-start rule (design, "Focus and foreground"; NVDA:
+/// `IAccessibleHandler/__init__.py` 942 to 973, 1082 to 1103): a menu or
+/// popup start is dropped when the run before it just executed a focus
+/// and the readers' last focus is an MSAA menu popup or menu item, since
+/// the focus is already on the menu. Otherwise, passing acceptance and the
+/// verdict on its tell's facts, its object is read as a focus with neither
+/// the duplicate test nor the focused-state test; it executes as a focus
+/// when it is a menu popup, a start on anything else saying nothing.
+async fn start(cx: &mut Cx<Entries>, candidate: &Candidate, run_executed: bool) {
+    if run_executed && last_is_msaa_menu(cx.facts().versions.last.as_ref()) {
+        return;
+    }
+    if acceptance::accept(candidate.tell.kind, candidate.facts(), false).is_err() {
+        return;
+    }
+    let verdict = {
+        let backend = cx.backend();
+        let now_us = cx.now_us();
+        if backend.judge(
+            Judged::Msaa,
+            &candidate.window.judged(),
+            candidate.tell.at_us,
+            now_us,
+        ) == Judgement::Drop
+        {
+            return;
+        }
+        backend.for_request(&candidate.window.judged(), now_us)
+    };
+    let process = candidate.tell.process;
+    let generation = cx
+        .instance(Reader::Outpost(process))
+        .map(|instance| OutpostId(instance.generation));
+    let known = Known::of(&cx.facts(), generation);
+    let request = RunRequest {
+        window: candidate.window,
+        process,
+        run: MsaaRun {
+            candidates: vec![RunCandidate {
+                ids: candidate.ids,
+                kind: CandidateKind::MenuStart,
+                verdict,
+            }],
+            set: FOCUS_SET.to_vec(),
+            known: known.sent.clone(),
+        },
+    };
+    let due_us = cx.due_in(FOCUS_DUE_US);
+    let Outcome::Result(answered) = cx.ask(request, due_us).await else {
+        cx.facts_mut().forget_caret();
+        return;
+    };
+    let Some(Tried::Focus(read)) = answered.tried.into_iter().next() else {
+        return;
+    };
+    let popup = matches!(
+        read.focus
+            .read
+            .values
+            .answer(PropertyId::Role)
+            .and_then(|answer| answer.value.as_ref()),
+        Some(PropertyValue::Role(Role::Menu))
+    );
+    let (true, Some(held)) = (popup, read.msaa) else {
+        return;
+    };
+    let read_by = ReadBy::Msaa {
+        event: Some(held.event),
+        held_child: held.held_child,
+    };
+    let origin = Origin::of_tell(&candidate.tell, candidate.window);
+    let executed = execute(&mut cx.facts_mut(), &origin, &read, &known, read_by);
+    executed.deliver(cx);
 }
 
 /// Whether `read`'s object or one of its ancestors has the focused state.

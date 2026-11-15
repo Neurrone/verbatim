@@ -530,6 +530,7 @@ fn an_msaa_duplicate_of_the_readers_last_focus_ends_the_run_with_no_read() {
             ancestor_windows: Vec::new(),
         },
         class: ObjectClass::Plain,
+        role: verbatim_model::Role::Button,
     });
     assert_eq!(feed_at(&mut state, 1_000, entry(msaa_tell(-4))), NOTHING);
     assert!(state.queue.front_for_tests().is_none());
