@@ -627,6 +627,23 @@ impl<L: Logic> Cx<L> {
         Ref::map(self.shared.borrow(), |shared| &shared.state.queue.waiting)
     }
 
+    /// Takes out of the queue the waiting single entries `pick` chooses, in
+    /// their order, for the front's function to judge before its own.
+    pub(crate) fn take_waiting(&mut self, pick: impl Fn(&L::Entry) -> bool) -> Vec<L::Entry> {
+        let mut shared = self.shared.borrow_mut();
+        let waiting = &mut shared.state.queue.waiting;
+        let mut taken = Vec::new();
+        let mut kept = VecDeque::with_capacity(waiting.len());
+        for item in waiting.drain(..) {
+            match item {
+                Item::One(entry) if pick(&entry) => taken.push(entry),
+                other => kept.push_back(other),
+            }
+        }
+        *waiting = kept;
+        taken
+    }
+
     /// The backend verdicts of windows.
     pub(crate) fn backend(&self) -> Ref<'_, BackendCache> {
         Ref::map(self.shared.borrow(), |shared| &shared.state.queue.backend)

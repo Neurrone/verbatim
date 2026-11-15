@@ -217,6 +217,7 @@ pub(crate) async fn run(mut cx: Cx<Entries>, focus: UiaFocus) {
         runtime_id: focus.runtime_id.clone(),
         token: Some(focus.token),
     };
+    super::narrow::judge_ahead(&mut cx, &read);
     let origin = Origin::of_tell(&focus.tell, window);
     let executed = execute(&mut cx.facts_mut(), &origin, &read, &known, read_by);
     if !executed.committed {

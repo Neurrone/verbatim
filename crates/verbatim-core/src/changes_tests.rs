@@ -253,3 +253,137 @@ fn a_uia_state_change_on_the_focus_speaks_the_states_its_tell_carries_with_no_re
         ["State(Disabled)"]
     );
 }
+
+fn uia_states(runtime: i32, states: StateSet) -> Event {
+    Event {
+        kind: EventKind::UiaPropertyChanged,
+        object: EventObject::Uia {
+            token: ElementToken(12),
+            runtime_id: RuntimeId(vec![42, runtime]),
+        },
+        payload: Payload::PropertyChanged {
+            property: PropertyId::States,
+            value: Some(PropertyValue::States(states)),
+        },
+        ..msaa_change(EventKind::UiaPropertyChanged, 5)
+    }
+}
+
+#[test]
+fn a_focus_under_the_committed_focus_judges_its_waiting_state_tells_first() {
+    use verbatim_model::request::{FocusAncestor, FocusNode};
+    let mut state = committed();
+    assert_eq!(
+        feed_at(
+            &mut state,
+            4_000,
+            entry(crate::entries::tests::uia_tell(3, Vec::new()))
+        ),
+        ["send Listener ReadObject"]
+    );
+    let mut expanded = StateSet::default();
+    expanded.insert(State::Expanded);
+    let name = Event {
+        payload: Payload::PropertyChanged {
+            property: PropertyId::Name,
+            value: Some(PropertyValue::Text("Saved".to_owned())),
+        },
+        ..uia_states(1, StateSet::default())
+    };
+    for tell in [uia_states(1, expanded), name] {
+        assert_eq!(
+            feed_at(
+                &mut state,
+                4_100,
+                Input::Entry(crate::entries::Entry::of_tell(LISTENER, tell).unwrap())
+            ),
+            NOTHING
+        );
+    }
+    let mut listened = crate::entries::tests::listener_answer();
+    if let Some(route) = listened.route.as_mut() {
+        route.steps[0].runtime_id = RuntimeId(vec![42, 3]);
+    }
+    assert_eq!(
+        feed_at(
+            &mut state,
+            4_200,
+            answer(LISTENER, 4, Reply::Object(Box::new(listened)))
+        ),
+        ["send Outpost(Pid(40)) CompleteUia"]
+    );
+    let mut read = focus_read(None);
+    read.focus.read.node = Some(node(3));
+    read.focus.read.values = values("Paris", Role::ListItem);
+    read.focus.runtime_id = Some(RuntimeId(vec![42, 3]));
+    let combo = FocusAncestor {
+        node: FocusNode {
+            read: NodeRead {
+                node: Some(node(2)),
+                window: WindowHandle(5),
+                values: values("OK", Role::Button),
+            },
+            runtime_id: Some(RuntimeId(vec![42, 1])),
+        },
+        simple_child: false,
+        dialog_text: None,
+    };
+    read.ancestors.insert(0, combo);
+    let said = feed_at(
+        &mut state,
+        4_300,
+        answer(OUTPOST, 5, Reply::Focus(Box::new(read))),
+    );
+    // "expanded" on the committed combo box first, then the focus; the
+    // name change is not moved, so it is judged after the commit, on an
+    // ancestor, and says nothing (were it moved, "Saved" would be said).
+    assert_eq!(
+        said,
+        [
+            "State(Expanded)",
+            "Label(\"Paris\")",
+            "send Outpost(Pid(40)) Follow"
+        ]
+    );
+    assert!(state.queue.front_for_tests().is_none());
+}
+
+#[test]
+fn a_focus_not_under_the_committed_focus_leaves_its_state_tells_waiting() {
+    let mut state = committed();
+    feed_at(
+        &mut state,
+        4_000,
+        entry(crate::entries::tests::uia_tell(3, Vec::new())),
+    );
+    let mut expanded = StateSet::default();
+    expanded.insert(State::Expanded);
+    feed_at(
+        &mut state,
+        4_100,
+        Input::Entry(crate::entries::Entry::of_tell(LISTENER, uia_states(1, expanded)).unwrap()),
+    );
+    feed_at(
+        &mut state,
+        4_200,
+        answer(
+            LISTENER,
+            4,
+            Reply::Object(Box::new(crate::entries::tests::listener_answer())),
+        ),
+    );
+    let mut read = focus_read(None);
+    read.focus.read.node = Some(node(3));
+    read.focus.read.values = values("Paris", Role::ListItem);
+    read.focus.runtime_id = Some(RuntimeId(vec![42, 3]));
+    // The state change is judged after the commit, on a node that is no
+    // longer the focus or its ancestor: nothing is said of it.
+    assert_eq!(
+        feed_at(
+            &mut state,
+            4_300,
+            answer(OUTPOST, 5, Reply::Focus(Box::new(read)))
+        ),
+        ["Label(\"Paris\")", "send Outpost(Pid(40)) Follow"]
+    );
+}

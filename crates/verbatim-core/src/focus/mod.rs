@@ -18,6 +18,7 @@ pub(crate) mod execute;
 pub(crate) mod follow;
 pub(crate) mod menus;
 pub(crate) mod msaa_run;
+pub(crate) mod narrow;
 pub(crate) mod pending;
 pub(crate) mod retake;
 pub(crate) mod uia_focus;
