@@ -13,3 +13,6 @@
 
 pub(crate) mod acceptance;
 pub(crate) mod backend;
+pub(crate) mod duplicate;
+pub(crate) mod pending;
+pub(crate) mod versions;
