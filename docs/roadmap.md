@@ -124,12 +124,13 @@ build, used wherever they can be (Dickson, 2026-11-14).
   life, from M6.2; each property and event kind declared once, and one
   list of requests shared with extensions. The marker, the hand-over
   of an application's first events, the live re-read and the readers'
-  ancestry caches go. Keys are handled as today in this build. It
-  replaces the ancestry cache build that was planned.
+  ancestry caches go. Keys and commands join the event queue in this
+  build, caret keys keeping the outpost's note and poll until keys and
+  text (Dickson, 2026-11-15). It replaces the ancestry cache build that
+  was planned.
 - Changes and announcements: state, name and value changes,
   selections, menus, notifications and toasts.
-- Keys and text: keys take their place in the event queue, with a
-  key's action chosen at its press; the caret watch in the outpost;
+- Keys and text: the caret watch in the outpost;
   selection; the sentence move as one request; text positions held by
   the outpost; the shell's copy of the line of held keys removed.
 - Terminals: told once, read when Core asks.
@@ -364,12 +365,6 @@ Recorded here so their designs start from them:
 - M7: one owner, Core, for the mode a key is in and the position in
   the document, with the outpost running each search as one request
   and one answer.
-
-### Waiting for Dickson
-
-Which thread owns the single record of an outpost generation's life,
-which the event queue and focus build of "Readers tell, Core asks" now
-builds.
 
 ## M4 — Text, editing, and terminals
 
@@ -1085,8 +1080,9 @@ inside UIA (`books/dev/src/explanation/design/listener-without-connections.md`).
   how an outpost ends.
 - One record of an outpost generation's life: today the relay thread
   and the reducer thread each keep one, kept in step by ten kinds of
-  notice; which thread owns the single record is decided with the owner
-  thread's state machine below.
+  notice; Core's reducer owns the single record, the owner thread
+  reporting process facts as inputs and carrying out Core's effects
+  (Dickson, 2026-11-15), built with the event queue and focus build.
 - The supervisor checks an application's exit twice, from the outpost's
   report and by polling the process; M6.2's single child record keeps
   one (the reducers' simplification study).

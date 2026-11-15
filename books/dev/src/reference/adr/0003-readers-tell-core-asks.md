@@ -56,7 +56,7 @@ Reason: today a new property touches about twenty files in five crates, and a ne
 
 Everything enters Core's inbox in arrival order. Handled at once: answers, timers that come due, foreground changes, a desktop switch, a change of the lock state, progress facts, readers starting and ending, window destruction (passed on to the outpost), a terminal's "changed" tell, and the speech cut and failures from the speech side. Every other tell, every key and command, index marks, say-all's reads, and entries Core makes itself (the focus read at startup, the check after a menu ends) join the event queue and are handled in arrival order. Only the front entry may have a request out. Reason: this is NVDA's one queue, so keys and events are judged against the focus NVDA would have.
 
-Requests from Verbatim's own dialogs, the control plane and an extension host's reads stay outside the event queue, answered in the inbox and holding no key. Reason: a stuck tray list or a tool must not hold the keyboard, and a host's read must not wait behind the entry whose hook asked it.
+Requests from Verbatim's own dialogs, the control plane and an extension host's reads stay outside the event queue, answered in the inbox and holding no key. They keep their due time and the live hung check but are not given up when the foreground changes (Dickson, 2026-11-15). Reason: a stuck tray list or a tool must not hold the keyboard, a host's read must not wait behind the entry whose hook asked it, and the notification-area list sends its click-position read as its dialog closes, after which Windows activates another window, so a foreground give-up would always stop the click.
 
 An entry is either waiting or asked. The rules that read the state:
 
