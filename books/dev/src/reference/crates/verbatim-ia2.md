@@ -43,8 +43,11 @@ Public API:
   classes other than the tooltip's (`WinEventKind::OtherShow`,
   `OTHER_SHOW_CLASSES`). It holds focus (`EVENT_OBJECT_FOCUS`), foreground
   (`EVENT_SYSTEM_FOREGROUND`), the changes of name, value, state,
-  description and selection, menu-popup opens
-  (`EVENT_SYSTEM_MENUPOPUPSTART`), the end of a menu or of the Alt+Tab
+  description and selection, menu mode's start and menu-popup opens
+  (`WinEventKind::MenuStart`, `EVENT_SYSTEM_MENUSTART`, which only the
+  listener hooks, and `EVENT_SYSTEM_MENUPOPUPSTART`), an object hidden
+  (`WinEventKind::Hide`, `EVENT_OBJECT_HIDE`, the listener's alone, which
+  Core's acceptance refuses as NVDA's does), the end of a menu or of the Alt+Tab
   switcher (`WinEventKind::MenuEnd` and `WinEventKind::SwitchEnd`),
   destruction, alerts, the system caret's events, and a tooltip window
   shown (`WinEventKind::Show`:

@@ -28,6 +28,9 @@ pub enum WinKind {
     Selection,
     /// `EVENT_SYSTEM_MENUPOPUPSTART`: a popup menu opened.
     MenuPopupStart,
+    /// `EVENT_SYSTEM_MENUSTART`: menu mode began; only the focus listener
+    /// takes it.
+    MenuStart,
     /// A popup menu closed, or menu mode ended.
     MenuEnd,
     /// The Alt+Tab switcher closed.
@@ -42,6 +45,9 @@ pub enum WinKind {
     TextSelectionChange,
     /// `EVENT_OBJECT_SHOW` from a tooltip window.
     Show,
+    /// `EVENT_OBJECT_HIDE`: an object was hidden; only the focus listener
+    /// takes it.
+    Hide,
     /// The console host's text changed, scrolled, or was laid out anew.
     ConsoleUpdate,
     /// A foreground event on Program Manager's or the taskbar's window.

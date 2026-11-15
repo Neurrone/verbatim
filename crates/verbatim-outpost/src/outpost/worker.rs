@@ -525,6 +525,7 @@ pub(super) fn win_event_kind(kind: WinKind) -> WinEventKind {
         WinKind::DescriptionChange => WinEventKind::DescriptionChange,
         WinKind::Selection => WinEventKind::Selection,
         WinKind::MenuPopupStart => WinEventKind::MenuPopupStart,
+        WinKind::MenuStart => WinEventKind::MenuStart,
         WinKind::MenuEnd => WinEventKind::MenuEnd,
         WinKind::SwitchEnd => WinEventKind::SwitchEnd,
         WinKind::Destroy => WinEventKind::Destroy,
@@ -532,6 +533,7 @@ pub(super) fn win_event_kind(kind: WinKind) -> WinEventKind {
         WinKind::Caret => WinEventKind::Caret,
         WinKind::TextSelectionChange => WinEventKind::TextSelectionChange,
         WinKind::Show => WinEventKind::Show,
+        WinKind::Hide => WinEventKind::Hide,
         WinKind::ConsoleUpdate => WinEventKind::ConsoleUpdate,
         WinKind::ShellForeground => WinEventKind::ShellForeground,
         WinKind::ConsoleCaret => WinEventKind::ConsoleCaret,
@@ -551,6 +553,7 @@ pub(super) fn win_kind(kind: WinEventKind) -> WinKind {
         WinEventKind::DescriptionChange => WinKind::DescriptionChange,
         WinEventKind::Selection => WinKind::Selection,
         WinEventKind::MenuPopupStart => WinKind::MenuPopupStart,
+        WinEventKind::MenuStart => WinKind::MenuStart,
         WinEventKind::MenuEnd => WinKind::MenuEnd,
         WinEventKind::SwitchEnd => WinKind::SwitchEnd,
         WinEventKind::Destroy => WinKind::Destroy,
@@ -559,6 +562,7 @@ pub(super) fn win_kind(kind: WinEventKind) -> WinKind {
         WinEventKind::TextSelectionChange => WinKind::TextSelectionChange,
         // Another show class's, which only the listener hooks, is a show too.
         WinEventKind::Show | WinEventKind::OtherShow => WinKind::Show,
+        WinEventKind::Hide => WinKind::Hide,
         WinEventKind::ConsoleUpdate => WinKind::ConsoleUpdate,
         WinEventKind::ShellForeground => WinKind::ShellForeground,
         WinEventKind::ConsoleCaret => WinKind::ConsoleCaret,
@@ -627,7 +631,7 @@ fn terminal_event_of(op: &TextOp) -> Option<Event> {
 fn event_name_of(kind: WinEventKind) -> Option<EventName> {
     Some(match kind {
         WinEventKind::Focus | WinEventKind::Foreground => EventName::GainFocus,
-        WinEventKind::MenuPopupStart => EventName::MenuStart,
+        WinEventKind::MenuPopupStart | WinEventKind::MenuStart => EventName::MenuStart,
         WinEventKind::MenuEnd => EventName::MenuEnd,
         WinEventKind::SwitchEnd => EventName::SwitchEnd,
         WinEventKind::Show | WinEventKind::OtherShow => EventName::Show,
@@ -638,7 +642,10 @@ fn event_name_of(kind: WinEventKind) -> Option<EventName> {
         WinEventKind::DescriptionChange => EventName::DescriptionChange,
         WinEventKind::Selection => EventName::Selection,
         WinEventKind::Caret => EventName::LocationChange,
+        // Only the focus listener hooks a hide, which Core's acceptance
+        // refuses.
         WinEventKind::Destroy
+        | WinEventKind::Hide
         | WinEventKind::TextSelectionChange
         | WinEventKind::ConsoleUpdate
         | WinEventKind::ConsoleCaret

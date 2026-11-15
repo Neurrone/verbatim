@@ -43,13 +43,13 @@ use windows::Win32::UI::Accessibility::{
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DestroyWindow, EVENT_AIA_START, EVENT_CONSOLE_CARET, EVENT_CONSOLE_LAYOUT,
     EVENT_CONSOLE_UPDATE_REGION, EVENT_CONSOLE_UPDATE_SCROLL, EVENT_CONSOLE_UPDATE_SIMPLE,
-    EVENT_OBJECT_DESCRIPTIONCHANGE, EVENT_OBJECT_DESTROY, EVENT_OBJECT_FOCUS,
+    EVENT_OBJECT_DESCRIPTIONCHANGE, EVENT_OBJECT_DESTROY, EVENT_OBJECT_FOCUS, EVENT_OBJECT_HIDE,
     EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_NAMECHANGE, EVENT_OBJECT_SELECTION,
     EVENT_OBJECT_SELECTIONADD, EVENT_OBJECT_SELECTIONREMOVE, EVENT_OBJECT_SELECTIONWITHIN,
     EVENT_OBJECT_SHOW, EVENT_OBJECT_STATECHANGE, EVENT_OBJECT_TEXTSELECTIONCHANGED,
     EVENT_OBJECT_VALUECHANGE, EVENT_SYSTEM_ALERT, EVENT_SYSTEM_DESKTOPSWITCH,
     EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_MENUEND, EVENT_SYSTEM_MENUPOPUPEND,
-    EVENT_SYSTEM_MENUPOPUPSTART, EVENT_SYSTEM_SWITCHEND, GetDesktopWindow,
+    EVENT_SYSTEM_MENUPOPUPSTART, EVENT_SYSTEM_MENUSTART, EVENT_SYSTEM_SWITCHEND, GetDesktopWindow,
     GetWindowThreadProcessId, HWND_MESSAGE, OBJID_ALERT, OBJID_CARET, OBJID_CLIENT, OBJID_MENU,
     OBJID_SYSMENU, OBJID_WINDOW, WINDOW_EX_STYLE, WINDOW_STYLE, WINEVENT_OUTOFCONTEXT,
 };
@@ -82,6 +82,16 @@ pub enum WinEventKind {
     /// foreground-change retry loop, measured live) leaves a noticeable
     /// pause between opening a menu and hearing it.
     MenuPopupStart,
+    /// `EVENT_SYSTEM_MENUSTART`: menu mode began, as a menu bar or the
+    /// system menu is entered. Only the focus listener hooks it, to tell
+    /// Core, as NVDA hooks it (`IAccessibleHandler/internalWinEventHandler.py`
+    /// 38).
+    MenuStart,
+    /// `EVENT_OBJECT_HIDE`: an object was hidden. Only the focus listener
+    /// hooks it, to tell Core, as NVDA hooks it
+    /// (`IAccessibleHandler/internalWinEventHandler.py` 47); Core's
+    /// acceptance refuses it, as NVDA's does.
+    Hide,
     /// `EVENT_SYSTEM_MENUPOPUPEND` or `EVENT_SYSTEM_MENUEND` — a popup menu
     /// closed, or menu mode ended. The focus listener forwards it to Core,
     /// which reads the real focus of the foreground application if no focus
@@ -161,7 +171,7 @@ pub enum WinEventKind {
 /// to the one kind, so a caller that wants state changes also gets the
 /// selection add, remove, and within hooks. Each raw id appears once,
 /// checked as the crate compiles.
-const SUBSCRIPTIONS: [(u32, WinEventKind); 25] = [
+const SUBSCRIPTIONS: [(u32, WinEventKind); 27] = [
     (EVENT_OBJECT_FOCUS, WinEventKind::Focus),
     (EVENT_SYSTEM_FOREGROUND, WinEventKind::Foreground),
     (EVENT_OBJECT_VALUECHANGE, WinEventKind::ValueChange),
@@ -179,12 +189,14 @@ const SUBSCRIPTIONS: [(u32, WinEventKind); 25] = [
     (EVENT_OBJECT_SELECTIONREMOVE, WinEventKind::StateChange),
     (EVENT_OBJECT_SELECTIONWITHIN, WinEventKind::StateChange),
     (EVENT_SYSTEM_MENUPOPUPSTART, WinEventKind::MenuPopupStart),
+    (EVENT_SYSTEM_MENUSTART, WinEventKind::MenuStart),
     (EVENT_SYSTEM_MENUPOPUPEND, WinEventKind::MenuEnd),
     (EVENT_SYSTEM_MENUEND, WinEventKind::MenuEnd),
     (EVENT_SYSTEM_SWITCHEND, WinEventKind::SwitchEnd),
     (EVENT_OBJECT_DESTROY, WinEventKind::Destroy),
     (EVENT_SYSTEM_ALERT, WinEventKind::Alert),
     (EVENT_OBJECT_SHOW, WinEventKind::Show),
+    (EVENT_OBJECT_HIDE, WinEventKind::Hide),
     (EVENT_OBJECT_LOCATIONCHANGE, WinEventKind::Caret),
     (
         EVENT_OBJECT_TEXTSELECTIONCHANGED,
@@ -248,6 +260,7 @@ pub const LISTENER_SUBSCRIPTIONS: &[WinEventKind] = &[
     WinEventKind::NameChange,
     WinEventKind::DescriptionChange,
     WinEventKind::Selection,
+    WinEventKind::MenuStart,
     WinEventKind::MenuPopupStart,
     WinEventKind::MenuEnd,
     WinEventKind::SwitchEnd,
@@ -255,6 +268,7 @@ pub const LISTENER_SUBSCRIPTIONS: &[WinEventKind] = &[
     WinEventKind::Alert,
     WinEventKind::Show,
     WinEventKind::OtherShow,
+    WinEventKind::Hide,
     WinEventKind::Caret,
     WinEventKind::ShellForeground,
     WinEventKind::ConsoleUpdate,
@@ -792,6 +806,7 @@ pub fn tell_kind(event: &WinEvent) -> Option<verbatim_model::event_kind::EventKi
         WinEventKind::NameChange => EventKind::NameChange,
         WinEventKind::DescriptionChange => EventKind::DescriptionChange,
         WinEventKind::Selection => EventKind::Selection,
+        WinEventKind::MenuStart => EventKind::MenuStart,
         WinEventKind::MenuPopupStart => EventKind::PopupStart,
         WinEventKind::MenuEnd if event.event == EVENT_SYSTEM_MENUPOPUPEND => EventKind::PopupEnd,
         WinEventKind::MenuEnd => EventKind::MenuEnd,
@@ -799,6 +814,7 @@ pub fn tell_kind(event: &WinEvent) -> Option<verbatim_model::event_kind::EventKi
         WinEventKind::Destroy => EventKind::Destroy,
         WinEventKind::Alert => EventKind::Alert,
         WinEventKind::Show | WinEventKind::OtherShow => EventKind::Show,
+        WinEventKind::Hide => EventKind::Hide,
         WinEventKind::Caret => EventKind::SystemCaret,
         WinEventKind::DesktopSwitch => EventKind::DesktopSwitch,
         WinEventKind::TextSelectionChange
@@ -920,7 +936,7 @@ fn is_wanted(
     }
     match kind {
         WinEventKind::Foreground => !is_shell_foreground_class(&class()),
-        WinEventKind::MenuPopupStart | WinEventKind::MenuEnd => {
+        WinEventKind::MenuStart | WinEventKind::MenuPopupStart | WinEventKind::MenuEnd => {
             &*class() != "Microsoft.IME.UIManager.CandidateWindow.Host"
         }
         // NVDA accepts a show event only from a few window classes, of
@@ -1218,6 +1234,12 @@ mod tests {
                 EventKind::PopupStart,
             ),
             (
+                WinEventKind::MenuStart,
+                EVENT_SYSTEM_MENUSTART,
+                EventKind::MenuStart,
+            ),
+            (WinEventKind::Hide, EVENT_OBJECT_HIDE, EventKind::Hide),
+            (
                 WinEventKind::SwitchEnd,
                 EVENT_SYSTEM_SWITCHEND,
                 EventKind::SwitchEnd,
@@ -1321,6 +1343,37 @@ mod tests {
             );
             assert_eq!(hooked, told || console, "{kind:?} {event:#x}");
         }
+    }
+
+    /// The input method's candidate window's menu events are not menus,
+    /// menu mode's start among them, as NVDA drops every menu event of it
+    /// (`IAccessibleHandler/internalWinEventHandler.py` 155 to 162); a
+    /// menu start of any other window and a hide are the listener's.
+    #[test]
+    fn the_listener_takes_a_menu_start_and_a_hide_but_not_the_input_methods_menus() {
+        let kind = |event: u32, class: &'static str| {
+            wanted_kind(
+                (event, 42, OBJID_CLIENT.0, CHILDID_SELF),
+                LISTENER_SUBSCRIPTIONS,
+                move |_| class.to_owned(),
+            )
+        };
+        let ime = "Microsoft.IME.UIManager.CandidateWindow.Host";
+        assert_eq!(kind(EVENT_SYSTEM_MENUSTART, ime), None);
+        assert_eq!(kind(EVENT_SYSTEM_MENUPOPUPSTART, ime), None);
+        assert_eq!(
+            kind(EVENT_SYSTEM_MENUSTART, "Notepad"),
+            Some(WinEventKind::MenuStart)
+        );
+        assert_eq!(kind(EVENT_OBJECT_HIDE, "Notepad"), Some(WinEventKind::Hide));
+        assert_eq!(
+            wanted_kind(
+                (EVENT_SYSTEM_MENUSTART, 42, OBJID_CLIENT.0, CHILDID_SELF),
+                APP_SUBSCRIPTIONS,
+                |_| "Notepad".to_owned(),
+            ),
+            None
+        );
     }
 
     /// Program Manager's or the taskbar's foreground event is never a
