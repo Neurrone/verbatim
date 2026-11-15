@@ -95,6 +95,7 @@ impl RequestWindow {
             root_owner: self.root_owner,
             process: self.process,
             thread: self.thread,
+            desktop: false,
         }
     }
 

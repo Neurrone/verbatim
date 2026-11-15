@@ -285,3 +285,82 @@ fn an_index_mark_waits_its_turn_behind_a_press() {
     assert_eq!(state.queue.waiting_for_tests(), 0);
     assert_eq!(state.queue.front_for_tests(), None);
 }
+
+/// The focus's properties as read live: `name` of `role`.
+fn named(name: Option<&str>, role: Role) -> Input<Entry> {
+    let mut values = vec![PropertyAnswer {
+        id: PropertyId::Role,
+        value: Some(PropertyValue::Role(role)),
+    }];
+    if let Some(name) = name {
+        values.push(PropertyAnswer {
+            id: PropertyId::Name,
+            value: Some(PropertyValue::Text(name.to_owned())),
+        });
+    }
+    answer(OUTPOST, 3, Reply::Properties(PropertyValues(values)))
+}
+
+/// A third press within the interval spells the name with each
+/// character's description.
+#[test]
+fn a_third_press_describes_each_character_of_the_name() {
+    let mut state = committed();
+    let _ = feed_at(&mut state, 1_000, press(1, 2));
+    assert_eq!(
+        feed_at(&mut state, 2_000, named(Some("Ab"), Role::EditableText)),
+        ["CharacterDescription(\"A\") CharacterDescription(\"b\")"]
+    );
+}
+
+#[test]
+fn a_repeat_on_a_focus_with_no_name_says_blank() {
+    let mut state = committed();
+    let _ = feed_at(&mut state, 1_000, press(1, 1));
+    assert_eq!(
+        feed_at(&mut state, 2_000, named(None, Role::EditableText)),
+        ["Message(Blank)"]
+    );
+}
+
+/// Report focus speaks the focus and leaves the navigator where it is.
+#[test]
+fn it_leaves_the_navigator_where_it_is() {
+    let mut state = committed();
+    let parent = Input::Entry(Entry::Press(Box::new(PressEntry::new(
+        TraceId::from_raw(80),
+        Press {
+            key_seq: KeySeq::new(1),
+            pressed_at_us: 0,
+            action: PressAction::Command {
+                command: ReviewCommand::Parent,
+                repeat: 0,
+            },
+        },
+    ))));
+    let _ = feed_at(&mut state, 1_000, parent);
+    let group = verbatim_model::request::NodeRead {
+        node: Some(node(7)),
+        window: crate::entries::tests::win(6),
+        values: crate::entries::tests::values("Buttons", Role::Group),
+    };
+    let _ = feed_at(
+        &mut state,
+        1_100,
+        answer(OUTPOST, 3, Reply::Navigated(Some(group))),
+    );
+    let _ = feed_at(&mut state, 2_000, press(2, 0));
+    assert_eq!(
+        feed_at(
+            &mut state,
+            2_100,
+            answer(
+                OUTPOST,
+                4,
+                Reply::Properties(crate::entries::tests::values("OK", Role::Button))
+            )
+        ),
+        ["Label(\"OK\") Role(Button)"]
+    );
+    assert_eq!(state.navigator.as_ref().unwrap().object.id, node(7));
+}

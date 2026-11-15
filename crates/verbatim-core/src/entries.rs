@@ -471,9 +471,18 @@ impl Logic for Entries {
         foreground: Option<Foreground>,
     ) -> Vec<Entry> {
         if let crate::event_queue::Reader::Outpost(process) = instance.reader {
-            facts
-                .follows
-                .outpost_ended(process, verbatim_model::OutpostId(instance.generation));
+            let outpost = verbatim_model::OutpostId(instance.generation);
+            facts.follows.outpost_ended(process, outpost);
+            // The navigator object is one of the outpost's held nodes,
+            // which end with it (Table 5): its commands say there is
+            // none until a focus is committed again.
+            if facts
+                .navigator
+                .as_ref()
+                .is_some_and(|navigator| navigator.object.id.outpost() == outpost)
+            {
+                facts.navigator = None;
+            }
         }
         crate::focus::retake::reader_ended(facts, instance, foreground)
             .map(|read| Entry::CurrentFocus(Box::new(read)))

@@ -110,6 +110,7 @@ pub(crate) fn snapshot(node: &FocusNode, backend: Backend) -> Option<NodeSnapsho
                 _ => None,
             },
             window: own_window(values),
+            desktop_window: node.read.window.desktop,
             ..NodeDetails::default()
         },
     })

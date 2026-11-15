@@ -324,6 +324,13 @@ pub struct NodeWindow {
     /// The thread that owns it, read by the same call as its process,
     /// which keys its backend verdict.
     pub thread: u32,
+    /// Whether the window is the desktop window (`GetDesktopWindow`), so
+    /// the node is the desktop's own, which Core names itself as NVDA
+    /// names its desktop object (`docs/parity/review.md`, "Dead
+    /// objects"). Every other node lies inside a top-level window. Left
+    /// out of the message when `false`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub desktop: bool,
 }
 
 /// A node an answer read, minted by the outpost that read it, with its
@@ -941,6 +948,7 @@ mod tests {
                         root_owner: WindowHandle(5),
                         process: Pid(1),
                         thread: 2,
+                        desktop: false,
                     },
                     values: PropertyValues::default(),
                 },

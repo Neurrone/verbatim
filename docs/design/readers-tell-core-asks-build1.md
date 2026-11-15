@@ -995,3 +995,65 @@ Nothing found makes the ADR's design unworkable.
 ## What build 2 builds
 
 The keys-and-text design's caret key, stroke line, watch, held anchors, selection baseline and text-changed flag, sentence move, recordings, rulings, speech, tests and removals are in this design. What remains, none of it needed for this build to work, is build 2 (`docs/design/readers-tell-core-asks-build2.md`): text requests naming the provider and the details per request, with `CoreToOutpost::Fetches`, the theme broadcast and `fetches_sent` removed; the formatting last spoken and the kind of line break kept on each focus record a key or entry names; and control fields compared by the provider's identity, when built. Until build 2 the outpost chooses the provider by window class and reads the details `Fetches` names, as today, and Core sends `Fetches` as an effect ("The outpost generation record").
+
+## Appendix: tests removed in build 1
+
+Each test removed from `verbatim-core` since `55555530`, with where its expected speech is now pinned or the mechanism it pinned that the design removes. Ported tests keep their expected speech; a port that failed found a defect, fixed with it.
+
+- `a_caret_key_while_a_report_waits_runs_after_the_command_before_it` (`live_reread`): removed with the live re-read; a caret key is now bound at its press to the committed node ("Keys and commands in this build"), so it no longer runs on a focus executed after it.
+- `a_command_while_a_report_waits_acts_on_the_focus_executed_before_it` (`live_reread`): ported, `navigator_tests.rs` `moving_to_the_focus_while_a_focus_is_read_runs_on_that_focus`.
+- `a_command_while_a_report_waits_runs_when_it_is_answered_gone` (`live_reread`): ported, `moving_to_the_focus_behind_a_focus_not_there_runs_on_the_focus_before`.
+- `a_command_while_a_report_waits_runs_when_its_outpost_generation_ends` (`live_reread`): ported as a reader's end, which the queue answers as one outcome, `moving_to_the_focus_behind_a_focus_whose_reader_ended_runs_on_the_focus_before`.
+- `a_command_while_a_report_waits_runs_when_the_listener_is_replaced` (`live_reread`): ported, the same test.
+- `a_command_with_nothing_waiting_runs_at_once` (`live_reread`): pinned by `moving_to_the_focus_says_so_then_the_focus`.
+- `a_held_key_while_a_report_waits_does_not_overtake_the_command_before_it` (`live_reread`): its order, a held key passed at its turn behind the command ahead, is Table 13's and is ported with step 5b's stroke line, which replaces the hook's held-key pass.
+- `a_second_navigation_waits_behind_the_one_running` (`queries`): pinned by `a_second_navigation_runs_from_where_the_first_moved_the_navigator`.
+- `an_answer_from_another_outpost_leaves_its_query_open` (`queries`): removed with the query table; pinned by the queue's `an_answer_from_an_instance_the_request_did_not_go_to_is_dropped`.
+- `an_answer_runs_its_continuation_once_and_ends_its_query` (`queries`): removed with the query continuations; pinned by the queue's `an_answered_request_takes_nothing_more`.
+- `an_unanswered_navigation_stays_silent_and_a_gone_node_says_the_edge` (`queries`): ported, `a_navigation_not_answered_says_nothing_and_leaves_the_navigator_put` and `every_direction_from_an_object_not_there_says_its_edge`.
+- `the_open_queries_round_trip_with_the_state` (`queries`): removed with the query table; the queue's checkpoint and dump tests pin the round trip.
+- `a_navigation_step_allocates_the_same_whatever_the_ancestor_chain` (`tests/alloc.rs`): removed with the ancestry cache whose cost it pinned.
+- `a_dead_object_reviews_as_empty_flat_text_and_reports_nothing` (`tests/reduce.rs`): the report is pinned by `a_report_of_an_object_not_there_says_nothing`; the review commands' words are ported with step 5a's review text commands.
+- `a_focus_ends_a_navigation_press_and_what_waits_runs_on_the_new_navigator` (`tests/reduce.rs`): ported as "What users hear" has it, the press then the focus, `a_focus_behind_a_navigation_and_a_report_is_executed_after_them`.
+- `a_focus_or_foreground_on_a_shell_staging_window_cuts_speech_and_says_nothing` (`tests/reduce.rs`): ported, `entries_tests.rs` `a_focus_on_a_shell_staging_window_is_taken_and_says_nothing`; a foreground tell executes through the same rule.
+- `a_gone_navigation_says_the_direction_edge_and_the_navigator_stays` (`tests/reduce.rs`): ported, `every_direction_from_an_object_not_there_says_its_edge`.
+- `a_name_change_a_report_of_a_fetched_copy_of_the_focus_spoke_is_spoken` (`tests/reduce.rs`): ported, `changes_tests.rs`.
+- `a_name_change_the_navigator_s_return_to_the_focus_spoke_is_silent` (`tests/reduce.rs`): ported, `changes_tests.rs` `a_name_change_the_navigators_return_to_the_focus_spoke_is_silent`.
+- `a_name_change_the_report_of_the_focus_spoke_is_silent` (`tests/reduce.rs`): ported, `changes_tests.rs`.
+- `a_navigation_the_application_did_not_answer_leaves_the_navigator_put` (`tests/reduce.rs`): ported, `a_navigation_not_answered_says_nothing_and_leaves_the_navigator_put`.
+- `a_pending_navigation_to_an_ended_outpost_is_dropped` (`tests/reduce.rs`): pinned by `a_gone_object_says_the_edge_and_an_ended_reader_nothing` and the queue's `a_late_answer_is_dropped_by_number`.
+- `a_press_with_something_behind_it_gives_way_at_its_bound` (`tests/reduce.rs`): removed with the review press's 150 ms give-way.
+- `a_replacement_outpost_reporting_the_same_focus_is_taken_silently` (`tests/reduce.rs`): the silent re-take is pinned by `retake_tests.rs`; the navigator following it is ported, `the_navigator_follows_a_focus_retaken_silently_from_a_replacement_outpost`.
+- `a_result_selected_in_the_list_the_focus_controls_is_spoken_as_a_focus` (`tests/reduce.rs`): the speech is pinned by `changes_tests.rs` `a_plain_selection_of_an_item_the_focus_controls_is_spoken_as_a_focus`; the navigator's move is ported, `a_controlled_selection_moves_the_navigator_to_the_item`, which found the navigator left with no window to name.
+- `a_second_navigation_waits_behind_the_first_press` (`tests/reduce.rs`): pinned by `a_second_navigation_runs_from_where_the_first_moved_the_navigator`.
+- `a_state_change_the_report_of_the_object_on_the_focus_spoke_is_silent` (`tests/reduce.rs`): ported, `changes_tests.rs`, which found report object moving what was last spoken of the focus only when the live read equalled the focus's reading.
+- `activate_emits_activate_for_the_navigator_object` (`tests/reduce.rs`): pinned by `an_activation_says_its_action_activate_or_no_action`.
+- `an_ended_outposts_focus_is_dead_and_navigation_does_nothing` (`tests/reduce.rs`): ported, `after_the_navigators_outpost_ends_its_commands_say_there_is_none`, which found the navigator kept past its outpost's end.
+- `commands_with_no_navigator_yet_say_so` (`tests/reduce.rs`): ported, `with_no_navigator_each_navigator_command_says_so`.
+- `navigate_at_a_tree_edge_speaks_the_edge_message_and_stays_put` (`tests/reduce.rs`): pinned by `every_navigation_direction_speaks_its_own_edge_message`.
+- `navigate_to_parent_fetches_then_moves_and_announces` (`tests/reduce.rs`): pinned by `a_navigation_moves_the_navigator_and_announces_the_node_reached`.
+- `navigator_follows_focus_and_returns_to_focus` (`tests/reduce.rs`): pinned by `a_focus_behind_a_navigation_and_a_report_is_executed_after_them` and `moving_to_the_focus_says_so_then_the_focus`.
+- `report_current_object_on_the_desktop_window_keeps_its_name` (`tests/reduce.rs`): ported, `the_desktop_window_is_named_by_core_and_keeps_its_name_when_reported`, with `NodeWindow`'s `desktop` carrying the fact.
+- `report_current_object_reads_the_object_live_and_says_nothing_unanswered` (`tests/reduce.rs`): pinned by `reporting_the_object_reads_it_live_then_announces_spells_and_copies` and `a_report_of_an_object_not_there_says_nothing`.
+- `report_current_object_says_a_tables_counts_and_forgets_the_table` (`tests/reduce.rs`): ported, `reporting_a_table_says_its_counts_and_forgets_the_table`.
+- `report_object_announces_spells_then_copies` (`tests/reduce.rs`): ported, `reporting_an_object_with_a_value_spells_then_copies_its_name_and_value`.
+- `reporting_the_object_after_a_change_reads_the_object_as_it_is_now` (`tests/reduce.rs`): pinned by `reporting_the_object_reads_it_live_then_announces_spells_and_copies`.
+- `reporting_the_object_speaks_selected_read_only_and_focused` (`tests/reduce.rs`): ported, `reporting_the_object_speaks_its_focused_selected_and_read_only_states`.
+- `reporting_the_object_speaks_the_role_and_navigating_to_it_does_not` (`tests/reduce.rs`): ported, `reporting_the_object_speaks_its_role_and_navigating_to_it_does_not`.
+- `the_desktop_window_is_named_by_core` (`tests/reduce.rs`): ported, with the desktop report above.
+- `to_focus_waits_behind_a_navigation_press` (`tests/reduce.rs`): ported, `moving_to_the_focus_behind_a_navigation_speaks_after_it`.
+- `a_focus_observed_before_a_waiting_verbatim_tab_keeps_its_press` (`tests/text.rs`): removed with the ordering stamps and the waiting press.
+- `a_navigator_edit_field_without_text_says_its_value_and_a_late_answer_is_dropped` (`tests/text.rs`): the value is pinned by `a_navigation_to_an_edit_field_reads_its_text_in_place_of_its_value`; the late answer's drop was the continuation's, now the queue's drop by number.
+- `a_plain_query_answer_read_after_a_waiting_press_keeps_the_press` (`tests/text.rs`): removed with the ordering stamps and the waiting press.
+- `a_second_verbatim_tab_while_waiting_speaks_the_object_then_spells` (`tests/text.rs`): ported, `report_focus_tests.rs` `a_third_press_describes_each_character_of_the_name` and `a_repeat_on_a_focus_with_no_name_says_blank`, beside `each_press_waits_its_turn_and_is_spoken` and `a_repeat_spells_the_name`.
+- `a_verbatim_tab_answer_after_a_newer_focus_is_dropped` (`tests/text.rs`): removed with the live read of the application's focus; report focus reads the committed node at its turn.
+- `caret_location_asks_for_the_carets_place_and_says_it` (`tests/text.rs`): pinned by `caret_location_tests.rs` `it_asks_for_the_carets_place_and_says_it`.
+- `navigating_to_a_protected_edit_field_reads_its_masked_selection` (`tests/text.rs`): ported, `a_navigation_to_a_protected_edit_field_reads_its_masked_selection`.
+- `navigating_to_an_edit_field_reads_the_caret_line_in_place_of_its_value` (`tests/text.rs`): ported, `a_navigation_to_an_edit_field_with_nothing_selected_says_its_caret_line`.
+- `navigating_to_an_edit_field_with_a_selection_says_it_is_selected` (`tests/text.rs`): ported, `a_navigation_to_an_edit_field_with_a_selection_says_it_is_selected`.
+- `reporting_an_edit_field_again_spells_then_copies_its_name_and_caret_line` (`tests/text.rs`): ported, `reporting_an_edit_field_again_spells_its_name_and_caret_line` and the two third-press tests.
+- `reporting_the_focused_edit_field_reads_its_known_caret_line` (`tests/text.rs`): the speech is ported, `reporting_an_edit_field_says_its_name_and_role_then_its_caret_line`; the caret Core holds without asking returns with step 5b's text facts.
+- `verbatim_tab_abandoned_says_nothing` (`tests/text.rs`): pinned by `a_node_not_there_says_nothing` and `a_hung_window_plays_the_sound_and_says_nothing`.
+- `verbatim_tab_never_moves_cores_focus` (`tests/text.rs`): removed with the live read of the application's focus; `it_reads_the_committed_node_live_and_speaks_it_with_its_line` pins the focus kept.
+- `verbatim_tab_speaks_the_answer_alone_then_its_line` (`tests/text.rs`): pinned by `it_reads_the_committed_node_live_and_speaks_it_with_its_line` and `a_selection_is_spoken_as_selected_text`; the navigator kept is ported, `it_leaves_the_navigator_where_it_is`.
+- `verbatim_tab_with_nothing_to_ask_says_no_focus` (`tests/text.rs`): pinned by `with_nothing_committed_it_says_no_focus_and_asks_nothing`.

@@ -2479,6 +2479,21 @@ pub(crate) fn navigator_utterance(
 
 /// When `object` is the focus's reading, what was last spoken of the
 /// focus becomes what is spoken now ([`announce_focus_object`]).
+/// Moves what was last spoken of the focus to `object`, a live read of
+/// the focus's own node just spoken, as NVDA's property cache of its one
+/// focus object takes whatever is spoken of it
+/// (`docs/parity/changes-and-selection.md`, "Name change on the focus").
+pub(crate) fn focus_read_spoken(state: &mut SrState, object: &NodeSnapshot) {
+    if let Some(focus) = state
+        .focus
+        .object_mut()
+        .filter(|focus| focus.snapshot.id == object.id)
+    {
+        let ancestors = Arc::clone(&focus.spoken().ancestors);
+        focus.spoken = SpokenRecord::of(object, ancestors);
+    }
+}
+
 pub(crate) fn focus_spoken_now(state: &mut SrState, object: &NodeSnapshot) {
     if let Some(focus) = state
         .focus
@@ -2590,14 +2605,7 @@ pub(crate) fn announce_query(
     trace_id: TraceId,
     object: &NodeSnapshot,
 ) -> Utterance {
-    if let Some(focus) = state
-        .focus
-        .object_mut()
-        .filter(|focus| focus.snapshot.id == object.id)
-    {
-        let ancestors = Arc::clone(&focus.spoken().ancestors);
-        focus.spoken = SpokenRecord::of(object, ancestors);
-    }
+    focus_read_spoken(state, object);
     let levels = (
         Reason::Query,
         &mut state.last_tree_level,

@@ -136,6 +136,7 @@ pub(crate) fn win(handle: u64) -> verbatim_model::request::NodeWindow {
         root_owner: WindowHandle(4),
         process: APP,
         thread: 41,
+        desktop: false,
     }
 }
 
@@ -773,4 +774,43 @@ fn a_failed_focus_read_clears_cores_caret_baseline() {
         NOTHING
     );
     assert_eq!(state.focus.object().unwrap().caret, None);
+}
+
+/// A focus on one of the shell's staging windows is taken like any other,
+/// so the focus and the navigator move to it, but nothing is said for it
+/// (`docs/parity/windows-and-processes.md`, "The shell's staging
+/// windows").
+#[test]
+fn a_focus_on_a_shell_staging_window_is_taken_and_says_nothing() {
+    for class in [
+        "ForegroundStaging",
+        "LauncherTipWnd",
+        "ApplicationManager_DesktopShellWindow",
+    ] {
+        let mut state = ready();
+        let mut tell = uia_tell(1, Vec::new());
+        tell.window = TellWindow::Found(Box::new(facts(class)));
+        assert_eq!(
+            feed_at(&mut state, 1_000, entry(tell)),
+            ["send Listener ReadObject"]
+        );
+        feed_at(
+            &mut state,
+            2_000,
+            answer(LISTENER, 1, Reply::Object(Box::new(listener_answer()))),
+        );
+        let mut read = focus_read(None);
+        read.focus.read.values = values("Staging", Role::Pane);
+        assert_eq!(
+            feed_at(
+                &mut state,
+                3_000,
+                answer(OUTPOST, 2, Reply::Focus(Box::new(read)))
+            ),
+            ["send Outpost(Pid(40)) Follow"],
+            "{class}"
+        );
+        assert_eq!(state.focus.object().unwrap().snapshot.id, node(2));
+        assert_eq!(state.navigator.as_ref().unwrap().object.id, node(2));
+    }
 }

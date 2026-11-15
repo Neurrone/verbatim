@@ -331,8 +331,14 @@ pub(crate) async fn report_object(mut cx: Cx<Entries>, press: ReviewPress) {
     let Some(live) = snapshot(read, &on.object) else {
         return;
     };
-    let object = {
+    let (object, of_focus) = {
         let mut facts = cx.facts_mut();
+        // The navigator is the focus's own object when it is the focus's
+        // reading, not a copy a navigation fetched of the same node.
+        let of_focus = match (facts.focus.object(), facts.navigator.as_ref()) {
+            (Some(focus), Some(navigator)) => focus.snapshot == navigator.object,
+            _ => false,
+        };
         let Some(navigator) = facts.navigator.as_mut() else {
             return;
         };
@@ -345,12 +351,14 @@ pub(crate) async fn report_object(mut cx: Cx<Entries>, press: ReviewPress) {
         if !flat.is_char_boundary(navigator.review_offset) {
             navigator.review_offset = 0;
         }
-        navigator.object.clone()
+        (navigator.object.clone(), of_focus)
     };
     let has_text = editing::may_have_text(object.role);
     match press.repeat {
         0 => {
-            reduce::focus_spoken_now(&mut cx.facts_mut(), &object);
+            if of_focus {
+                reduce::focus_read_spoken(&mut cx.facts_mut(), &object);
+            }
             announce(&mut cx, trace_id, (&object, on.window), Reason::Query).await;
         }
         1 | 2 if has_text => {

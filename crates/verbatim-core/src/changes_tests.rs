@@ -387,3 +387,253 @@ fn a_focus_not_under_the_committed_focus_leaves_its_state_tells_waiting() {
         ["Label(\"Paris\")", "send Outpost(Pid(40)) Follow"]
     );
 }
+
+/// `command` pressed as key `key`.
+fn press(key: u64, command: verbatim_model::ReviewCommand) -> Input<crate::entries::Entry> {
+    use verbatim_model::request::{Press, PressAction};
+    Input::Entry(crate::entries::Entry::Press(Box::new(
+        crate::keys::entry::PressEntry::new(
+            verbatim_model::TraceId::from_raw(70 + key),
+            Press {
+                key_seq: verbatim_model::KeySeq::new(key),
+                pressed_at_us: 0,
+                action: PressAction::Command { command, repeat: 0 },
+            },
+        ),
+    )))
+}
+
+/// The focus's name read as `name` by the name change's request `number`.
+fn named(state: &mut Held, number: u64, name: &str) -> Vec<String> {
+    assert_eq!(
+        feed_at(state, 8_000, entry(msaa_change(EventKind::NameChange, 5))),
+        ["send Outpost(Pid(40)) ReadObject"]
+    );
+    feed_at(
+        state,
+        9_000,
+        answer(
+            OUTPOST,
+            number,
+            read(
+                RelationFound::Is(0),
+                one(PropertyId::Name, PropertyValue::Text(name.to_owned())),
+            ),
+        ),
+    )
+}
+
+/// Reporting the current object on the focus speaks its name as read now,
+/// so the name change's event finds it already spoken, as NVDA's
+/// property cache of the one object does.
+#[test]
+fn a_name_change_the_report_of_the_object_on_the_focus_spoke_is_silent() {
+    let mut state = committed();
+    let _ = feed_at(
+        &mut state,
+        4_000,
+        press(1, verbatim_model::ReviewCommand::ReportObject),
+    );
+    assert_eq!(
+        feed_at(
+            &mut state,
+            5_000,
+            answer(OUTPOST, 4, Reply::Properties(values("Save", Role::Button)))
+        ),
+        ["Label(\"Save\") Role(Button)"]
+    );
+    assert_eq!(named(&mut state, 5, "Save"), NOTHING);
+}
+
+/// Report focus speaks the focus's name as read now, so the name change's
+/// event finds it already spoken.
+#[test]
+fn a_name_change_the_report_of_the_focus_spoke_is_silent() {
+    let mut state = committed();
+    let _ = feed_at(
+        &mut state,
+        4_000,
+        press(1, verbatim_model::ReviewCommand::ReportFocus),
+    );
+    assert_eq!(
+        feed_at(
+            &mut state,
+            5_000,
+            answer(OUTPOST, 4, Reply::Properties(values("Save", Role::Button)))
+        ),
+        ["Label(\"Save\") Role(Button)"]
+    );
+    assert_eq!(named(&mut state, 5, "Save"), NOTHING);
+}
+
+/// Moving the navigator to the focus announces the focus, which is then
+/// what was last spoken of it, so a name change to that name is silent.
+#[test]
+fn a_name_change_the_navigators_return_to_the_focus_spoke_is_silent() {
+    let mut state = committed();
+    assert_eq!(
+        feed_at(
+            &mut state,
+            4_000,
+            press(1, verbatim_model::ReviewCommand::ToFocus)
+        ),
+        ["Message(MoveToFocus) Label(\"OK\") Role(Button)"]
+    );
+    assert_eq!(named(&mut state, 4, "OK"), NOTHING);
+}
+
+/// Navigating away and back reads the focus's node afresh, a separate
+/// object: reporting it leaves what was spoken of the focus alone, so the
+/// name change's own event is still spoken.
+#[test]
+fn a_name_change_a_report_of_a_fetched_copy_of_the_focus_spoke_is_spoken() {
+    let mut state = committed();
+    let _ = feed_at(
+        &mut state,
+        4_000,
+        press(1, verbatim_model::ReviewCommand::Parent),
+    );
+    let _ = feed_at(
+        &mut state,
+        4_100,
+        answer(
+            OUTPOST,
+            4,
+            Reply::Navigated(Some(NodeRead {
+                node: Some(node(1)),
+                window: win(4),
+                values: values("Editor", Role::Window),
+            })),
+        ),
+    );
+    let _ = feed_at(
+        &mut state,
+        4_200,
+        press(2, verbatim_model::ReviewCommand::FirstChild),
+    );
+    assert_eq!(
+        feed_at(
+            &mut state,
+            4_300,
+            answer(
+                OUTPOST,
+                5,
+                Reply::Navigated(Some(NodeRead {
+                    node: Some(node(2)),
+                    window: win(5),
+                    values: values("Save", Role::Button),
+                })),
+            ),
+        ),
+        ["Label(\"Save\") Role(Button)"]
+    );
+    let _ = feed_at(
+        &mut state,
+        4_400,
+        press(3, verbatim_model::ReviewCommand::ReportObject),
+    );
+    assert_eq!(
+        feed_at(
+            &mut state,
+            4_500,
+            answer(OUTPOST, 6, Reply::Properties(values("Save", Role::Button)))
+        ),
+        ["Label(\"Save\") Role(Button)"]
+    );
+    assert_eq!(named(&mut state, 7, "Save"), ["Label(\"Save\")"]);
+}
+
+/// Reporting the current object on the focus speaks its states as read
+/// now, so the state change's event finds them already spoken.
+#[test]
+fn a_state_change_the_report_of_the_object_on_the_focus_spoke_is_silent() {
+    let mut checked = StateSet::default();
+    checked.insert(State::Checked);
+    let mut check_box = values("OK", Role::CheckBox);
+    check_box.0.push(PropertyAnswer {
+        id: PropertyId::States,
+        value: Some(PropertyValue::States(checked)),
+    });
+    let mut state = committed();
+    let _ = feed_at(
+        &mut state,
+        4_000,
+        press(1, verbatim_model::ReviewCommand::ReportObject),
+    );
+    assert_eq!(
+        feed_at(
+            &mut state,
+            5_000,
+            answer(OUTPOST, 4, Reply::Properties(check_box))
+        ),
+        ["Label(\"OK\") Role(CheckBox) State(Checked)"]
+    );
+    assert_eq!(
+        feed_at(
+            &mut state,
+            8_000,
+            entry(msaa_change(EventKind::StateChange, 5))
+        ),
+        ["send Outpost(Pid(40)) ReadObject"]
+    );
+    assert_eq!(
+        feed_at(
+            &mut state,
+            9_000,
+            answer(
+                OUTPOST,
+                5,
+                read(
+                    RelationFound::Is(0),
+                    one(PropertyId::States, PropertyValue::States(checked))
+                )
+            )
+        ),
+        NOTHING
+    );
+}
+
+/// A result selected in the list the focus controls is spoken as a focus
+/// and moves the navigator to it; the focus stays.
+#[test]
+fn a_controlled_selection_moves_the_navigator_to_the_item() {
+    let mut state = committed();
+    feed_at(
+        &mut state,
+        4_000,
+        entry(msaa_change(EventKind::Selection, 9)),
+    );
+    let mut item = values("Paris", Role::ListItem);
+    let mut selected = StateSet::default();
+    selected.insert(State::Selected);
+    item.0.push(PropertyAnswer {
+        id: PropertyId::States,
+        value: Some(PropertyValue::States(selected)),
+    });
+    feed_at(
+        &mut state,
+        5_000,
+        answer(OUTPOST, 4, read(RelationFound::Controlled, item.clone())),
+    );
+    let _ = feed_at(
+        &mut state,
+        6_000,
+        press(1, verbatim_model::ReviewCommand::ReportObject),
+    );
+    assert_eq!(
+        state.queue.table_for_tests().last(),
+        Some(&Wire::Properties {
+            node: node(7),
+            set: crate::report_focus::ANNOUNCED_SET.to_vec(),
+        })
+    );
+    assert_eq!(
+        feed_at(
+            &mut state,
+            7_000,
+            answer(OUTPOST, 5, Reply::Properties(item))
+        ),
+        ["Label(\"Paris\") Role(ListItem) State(Selected)"]
+    );
+    assert_eq!(state.focus.object().unwrap().snapshot.id, node(2));
+}

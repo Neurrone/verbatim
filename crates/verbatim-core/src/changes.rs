@@ -358,6 +358,7 @@ pub(crate) async fn msaa(mut cx: Cx<Entries>, change: MsaaChange) {
 /// `focus` controls or inside one: it is spoken as a focus, the navigator
 /// moved to it.
 fn controlled_selection(cx: &mut Cx<Entries>, trace_id: TraceId, focus: NodeId, item: NodeRead) {
+    let window = RequestWindow::of_node(&item.window);
     let item = FocusNode {
         read: item,
         runtime_id: None,
@@ -365,8 +366,20 @@ fn controlled_selection(cx: &mut Cx<Entries>, trace_id: TraceId, focus: NodeId, 
     let Some(item) = crate::focus::execute::snapshot(&item, Backend::Msaa) else {
         return;
     };
-    let said =
-        crate::reduce::reduce_controlled_selection(&mut cx.facts_mut(), trace_id, focus, &item);
+    let said = {
+        let mut facts = cx.facts_mut();
+        let said = crate::reduce::reduce_controlled_selection(&mut facts, trace_id, focus, &item);
+        // The navigator moved to the item names the window its read
+        // found, so the navigator's commands can ask it.
+        if let Some(navigator) = facts
+            .navigator
+            .as_mut()
+            .filter(|navigator| navigator.object.id == item.id)
+        {
+            navigator.window = Some(window);
+        }
+        said
+    };
     for said in said {
         cx.emit(said);
     }
