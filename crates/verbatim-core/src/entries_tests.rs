@@ -59,6 +59,7 @@ pub(crate) fn facts(class: &str) -> AcceptanceFacts {
         window_to_active: Relation::Under,
         desktop: false,
         hidden_frame: false,
+        hidden_frame_owned: false,
     }
 }
 
@@ -585,6 +586,53 @@ fn a_focus_on_the_hidden_frames_own_object_is_dropped() {
     }
     assert_eq!(feed_at(&mut state, 1_000, entry(tell)), NOTHING);
     assert!(state.queue.front_for_tests().is_none());
+}
+
+#[test]
+fn a_focus_in_a_window_the_hidden_frame_owns_takes_the_frame_as_its_foreground() {
+    let mut state = ready();
+    let mut tell = msaa_tell(-4);
+    // Verbatim's menu, window 6, owned by the frame, window 8, which is in
+    // front.
+    tell.window = TellWindow::Found(Box::new(AcceptanceFacts {
+        window: facet(6, "#32768"),
+        root: facet(6, "#32768"),
+        root_owner: facet(8, "wxWindowNR"),
+        foreground: WindowHandle(8),
+        foreground_root_owner: WindowHandle(8),
+        window_to_foreground: Relation::Outside,
+        root_owner_to_foreground: Relation::Equal,
+        hidden_frame_owned: true,
+        ..facts("#32768")
+    }));
+    assert_eq!(
+        feed_at(&mut state, 1_000, entry(tell)),
+        ["send Outpost(Pid(40)) MsaaRun"]
+    );
+    let mut read = focus_read(Some(held(-4)));
+    read.focus.read.values = values("Settings...", Role::MenuItem);
+    read.focus.read.window = WindowHandle(6);
+    read.ancestors.clear();
+    let mut frame = values("Verbatim", Role::Window);
+    frame.0.push(PropertyAnswer {
+        id: PropertyId::NativeWindow,
+        value: Some(PropertyValue::Window(WindowHandle(8))),
+    });
+    read.foreground = Some(FocusNode {
+        read: NodeRead {
+            node: Some(node(1)),
+            window: WindowHandle(8),
+            values: frame,
+        },
+        runtime_id: None,
+    });
+    let tried = RunRead {
+        tried: vec![Tried::Focus(Box::new(read))],
+    };
+    assert_eq!(
+        feed_at(&mut state, 2_000, answer(OUTPOST, 1, Reply::Run(tried))),
+        ["Label(\"Verbatim\") Role(Window)", "Label(\"Settings...\")",]
+    );
 }
 
 #[test]

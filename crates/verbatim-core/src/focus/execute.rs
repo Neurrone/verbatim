@@ -113,13 +113,21 @@ fn snapshot(node: &FocusNode, backend: Backend) -> Option<NodeSnapshot> {
 }
 
 /// The window facts today's announcement code reads, from the facts the
-/// tell carries.
+/// tell carries. A window owned by Verbatim's hidden frame, as Verbatim's
+/// menu is, takes the frame, the top of its owner chain, as its top-level
+/// window, so that the focus enters the frame and says its title,
+/// "Verbatim" (Verbatim-only, design "Focus and foreground").
 fn window_of(tell: &Event, facts: &AcceptanceFacts) -> WindowFacts {
     let in_foreground = facts.window_to_foreground != Relation::Outside
         || facts.root_owner_to_foreground != Relation::Outside
         || facts.root_owner_is_foregrounds;
+    let top_level = if facts.hidden_frame_owned {
+        facts.root_owner.handle
+    } else {
+        facts.root.handle
+    };
     WindowFacts {
-        top_level: facts.root.handle,
+        top_level,
         root_owner: facts.root_owner.handle,
         topmost: facts.window_topmost || facts.root_topmost,
         under_active_window: facts
@@ -194,6 +202,9 @@ pub(crate) struct Origin {
     pub(crate) top_process: Pid,
     /// The window its read named.
     pub(crate) asked: RequestWindow,
+    /// Whether the tell's window is owned by Verbatim's hidden frame, whose
+    /// focus takes the frame as its foreground.
+    pub(crate) frame_owned: bool,
 }
 
 impl Origin {
@@ -208,6 +219,7 @@ impl Origin {
             whole_window: tell.kind == verbatim_model::event_kind::EventKind::Foreground,
             top_process: facts.map_or(asked.process, |facts| facts.root.process),
             asked,
+            frame_owned: facts.is_some_and(|facts| facts.hidden_frame_owned),
         }
     }
 
@@ -221,6 +233,7 @@ impl Origin {
             whole_window: false,
             top_process: asked.process,
             asked,
+            frame_owned: false,
         }
     }
 }
@@ -254,6 +267,15 @@ fn ready(
         None => None,
     };
     let mut ancestors = nearest_first;
+    // A focus in a window Verbatim's hidden frame owns takes the frame,
+    // which the answer read as its foreground, as its outermost ancestor,
+    // so that it enters the frame and says its title.
+    if origin.frame_owned
+        && let Some(frame) = &read_foreground
+        && !ancestors.iter().any(|ancestor| ancestor.id == frame.id)
+    {
+        ancestors.push(frame.clone());
+    }
     ancestors.reverse();
     let ancestors =
         crate::reduce::focus_ancestors(origin.window.as_ref(), &node, &ancestors).to_vec();

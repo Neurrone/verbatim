@@ -104,6 +104,11 @@ pub struct AcceptanceFacts {
     pub desktop: bool,
     /// Whether the window is Verbatim's hidden frame.
     pub hidden_frame: bool,
+    /// Whether the window is owned by Verbatim's hidden frame through its
+    /// owner chain, as Verbatim's own menu is, so that a focus in it takes
+    /// the frame as its foreground: read by the listener from Windows with
+    /// no call into the application. False for the frame itself.
+    pub hidden_frame_owned: bool,
 }
 
 /// The window a tell is judged by, parsed at the boundary: found with its
@@ -261,6 +266,7 @@ mod tests {
                 window_to_active: Relation::Under,
                 desktop: false,
                 hidden_frame: false,
+                hidden_frame_owned: false,
             })),
             checked: Some(Checked {
                 probe: Some(Probe {

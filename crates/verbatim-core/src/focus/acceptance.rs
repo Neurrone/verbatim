@@ -154,6 +154,7 @@ mod tests {
             window_to_active: Relation::Outside,
             desktop: false,
             hidden_frame: false,
+            hidden_frame_owned: false,
         }
     }
 

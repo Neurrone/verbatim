@@ -243,6 +243,11 @@ pub(crate) trait Logic: Sized + 'static {
         false
     }
 
+    /// `window` was destroyed: what Core's facts keep of it change.
+    fn window_destroyed(facts: &mut Self::Facts, window: WindowHandle) {
+        let _ = (facts, window);
+    }
+
     /// The foreground marker joining the back when `foreground` comes in
     /// front, whose turn empties the readers' last focus when its window is
     /// unrelated to the committed focus.

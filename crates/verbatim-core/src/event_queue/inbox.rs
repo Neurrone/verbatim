@@ -5,10 +5,10 @@
 //! destruction; an entry joins the back of the event queue. Nothing waits
 //! here.
 
-use verbatim_model::WindowHandle;
 use verbatim_model::request::{
     Answer, Ask, Cancel, CancelReason, Reply, Request as Wire, RequestNumber,
 };
+use verbatim_model::{Pid, WindowHandle};
 
 use super::driver::{Core, outcome_of, widen};
 use super::limiter::{self, Item};
@@ -44,8 +44,14 @@ pub(crate) enum Input<E> {
     ReaderReady(Instance),
     /// A reader's instance ended.
     ReaderEnded(Instance),
-    /// A window was destroyed.
-    WindowDestroyed(WindowHandle),
+    /// A window was destroyed, its destruction raised by a thread of
+    /// `process`.
+    WindowDestroyed {
+        /// The window.
+        window: WindowHandle,
+        /// The raising thread's process.
+        process: Pid,
+    },
     /// A request from outside the event queue: Verbatim's dialogs, the
     /// control plane, the tree dump. It holds no key, and Core does not
     /// stop waiting for it when the foreground changes.
@@ -100,6 +106,14 @@ pub(crate) enum Effect<S> {
     CheckHung(Vec<WindowHandle>),
     /// The not-responding sound.
     NotRespondingSound,
+    /// The instance, the outpost of the process that raised a window's
+    /// destruction, forgets that window.
+    WindowDestroyed {
+        /// The instance.
+        to: Instance,
+        /// The window.
+        window: WindowHandle,
+    },
     /// A request outside the queue ended, for its asker.
     Answered {
         /// The asker.
@@ -156,10 +170,23 @@ impl<L: Logic> Core<L> {
                 Self::order(&mut shared, orders);
             }
             Input::ReaderEnded(instance) => self.reader_ended(instance),
-            Input::WindowDestroyed(window) => {
+            Input::WindowDestroyed { window, process } => {
                 let mut shared = self.shared.borrow_mut();
                 shared.state.queue.table.unwatch(window);
                 shared.state.queue.backend.destroyed(window);
+                L::window_destroyed(&mut shared.state.facts, window);
+                // Routed by the raising thread's process, since a destroyed
+                // window can no longer be read for its owner; an outpost
+                // not running holds nothing of it.
+                let to = shared
+                    .state
+                    .queue
+                    .readers
+                    .get(&Reader::Outpost(process))
+                    .copied();
+                if let Some(to) = to {
+                    shared.effects.push(Effect::WindowDestroyed { to, window });
+                }
             }
             Input::AskOutside {
                 asker,

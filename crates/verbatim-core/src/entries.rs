@@ -547,7 +547,10 @@ pub(crate) fn route(
         }),
         QueueInput::ReaderReady(instance) => Input::ReaderReady(*instance),
         QueueInput::ReaderEnded(instance) => Input::ReaderEnded(*instance),
-        QueueInput::WindowDestroyed(window) => Input::WindowDestroyed(*window),
+        QueueInput::WindowDestroyed { window, process } => Input::WindowDestroyed {
+            window: *window,
+            process: *process,
+        },
         QueueInput::Due => Input::Tick,
         QueueInput::Ignored(processes) => {
             state.ignored.clone_from(processes);
@@ -571,6 +574,9 @@ pub(crate) fn route(
             Effect::Cancel { to, cancel } => Said::Queue(QueueEffect::Cancel { to, cancel }),
             Effect::CheckHung(windows) => Said::Queue(QueueEffect::CheckHung(windows)),
             Effect::NotRespondingSound => Said::PlayEarcon(Earcon::AppNotResponding),
+            Effect::WindowDestroyed { to, window } => {
+                Said::Queue(QueueEffect::WindowDestroyed { to, window })
+            }
             Effect::AnswerDropped { number, late } => {
                 Said::Queue(QueueEffect::AnswerDropped { number, late })
             }

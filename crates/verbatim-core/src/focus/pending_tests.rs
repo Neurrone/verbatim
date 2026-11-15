@@ -37,6 +37,7 @@ fn facts(class: &str) -> AcceptanceFacts {
         window_to_active: Relation::Under,
         desktop: false,
         hidden_frame: false,
+        hidden_frame_owned: false,
     }
 }
 

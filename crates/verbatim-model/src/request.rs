@@ -131,6 +131,16 @@ pub enum RelationQuery {
     /// Whether the object is, or is inside, an object the focus controls,
     /// read live from the focus's controller-for relation.
     ControlledBy(NodeId),
+    /// A selected item: whether it is, or is inside, an object the focus
+    /// controls, read live as [`RelationQuery::ControlledBy`] reads it;
+    /// failing that, whether it is one of these nodes, as
+    /// [`RelationQuery::OneOf`] tells.
+    Selection {
+        /// The committed focus.
+        focus: NodeId,
+        /// The nodes, in the order [`RelationFound::Is`] counts them.
+        nodes: Vec<NodeId>,
+    },
 }
 
 /// The object's relation, as a read found it.
@@ -254,6 +264,48 @@ pub enum Request {
         /// The node.
         node: NodeId,
     },
+    /// Follow the committed focus's node for its changes, or nothing.
+    Follow(Follow),
+}
+
+/// The events a followed node's registration takes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum FollowGroup {
+    /// The base group: property changes and selection.
+    Base,
+    /// The extended group, adding text and caret events, for a node that
+    /// may have text.
+    Extended,
+    /// A terminal: the extended group, but a console host's terminal
+    /// without its text and caret events, which its console's own events
+    /// tell.
+    Terminal {
+        /// Whether its window is a console host's.
+        console: bool,
+    },
+}
+
+/// The node `Follow` names: the outpost keeps its registration, adding it
+/// when absent, and removes every other.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Followed {
+    /// The committed focus's node.
+    pub node: NodeId,
+    /// Its event group.
+    pub group: FollowGroup,
+    /// An extra object followed for its value changes alone: the focus's
+    /// parent when it is a slider that focuses its thumb.
+    pub extra: Option<NodeId>,
+}
+
+/// Core's request that the committed focus's outpost follow its node, or
+/// nothing (`docs/design/readers-tell-core-asks-build1.md`, Table 10). It
+/// is answered with one of the five outcomes; a newer `Follow` replaces it,
+/// which answers it "ended or stopped".
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Follow {
+    /// The node followed; `None` removes every registration.
+    pub node: Option<Followed>,
 }
 
 /// A node an answer read, minted by the outpost that read it, with its
@@ -368,10 +420,24 @@ pub struct CompleteUia {
 pub struct RunCandidate {
     /// The ids its event named.
     pub ids: MsaaIds,
-    /// Whether it is a foreground event's candidate.
-    pub foreground: bool,
+    /// What kind of event named it.
+    pub kind: CandidateKind,
     /// Core's verdict for its window.
     pub verdict: WindowVerdict,
+}
+
+/// What kind of event named a run candidate, which decides what the
+/// outpost tests inside its read.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum CandidateKind {
+    /// A focus event: the object or an ancestor must have the focused
+    /// state.
+    Focus,
+    /// A foreground event.
+    Foreground,
+    /// A menu start or popup start, read as a focus with neither the
+    /// duplicate test nor the focused-state test; Core judges its role.
+    MenuStart,
 }
 
 /// The outpost reads one application's candidates of an MSAA run, newest
@@ -517,6 +583,8 @@ pub enum Reply {
     /// The answer to [`Request::Activate`]: the action's name, when it has
     /// one.
     Activated(Option<ActionName>),
+    /// The answer to [`Request::Follow`]: applied, with no read.
+    Followed,
 }
 
 /// Why a reader refused a request.
@@ -652,7 +720,13 @@ pub enum QueueInput {
     /// A reader's instance ended.
     ReaderEnded(Instance),
     /// A window was destroyed.
-    WindowDestroyed(WindowHandle),
+    WindowDestroyed {
+        /// The window.
+        window: WindowHandle,
+        /// The process of the thread that raised its destruction, whose
+        /// outpost forgets what it holds of it.
+        process: Pid,
+    },
     /// The time Core last asked to be woken at came.
     Due,
     /// The processes whose windows nothing is read from: the end-to-end
@@ -709,6 +783,15 @@ pub enum QueueEffect {
     },
     /// Check these windows for a hang ([`QueueInput::HangCheck`]).
     CheckHung(Vec<WindowHandle>),
+    /// Tell the instance a window was destroyed: it forgets that window's
+    /// MSAA nodes and text facts, and answers its queued requests on it
+    /// "not there".
+    WindowDestroyed {
+        /// The outpost instance of the process that raised it.
+        to: Instance,
+        /// The window.
+        window: WindowHandle,
+    },
     /// An answer was dropped: log it.
     AnswerDropped {
         /// The request it named.

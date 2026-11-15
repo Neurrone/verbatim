@@ -9,7 +9,8 @@
 //! the same due time. The valid focus an outpost answers is executed.
 
 use verbatim_model::request::{
-    FocusRead, MsaaIds, MsaaRun, Reply, Request as Wire, RunCandidate, RunRead, Tried,
+    CandidateKind, FocusRead, MsaaIds, MsaaRun, Reply, Request as Wire, RunCandidate, RunRead,
+    Tried,
 };
 use verbatim_model::{OutpostId, Pid};
 
@@ -164,7 +165,11 @@ pub(crate) async fn run(mut cx: Cx<Entries>, candidates: Vec<Candidate>) {
                 .iter()
                 .map(|candidate| RunCandidate {
                     ids: candidate.ids,
-                    foreground: candidate.foreground(),
+                    kind: if candidate.foreground() {
+                        CandidateKind::Foreground
+                    } else {
+                        CandidateKind::Focus
+                    },
                     verdict: backend.for_request(&candidate.window.judged(), now_us),
                 })
                 .collect()
