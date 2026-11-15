@@ -30,13 +30,13 @@ use crate::text_request::TextRequest;
 
 /// The navigator object and its window, as a command finds them at its
 /// turn.
-struct On {
-    object: NodeSnapshot,
-    window: RequestWindow,
+pub(crate) struct On {
+    pub(crate) object: NodeSnapshot,
+    pub(crate) window: RequestWindow,
 }
 
 /// What a command finds of the navigator at its turn.
-enum Found {
+pub(crate) enum Found {
     /// No navigator object: "No navigator object".
     Nothing,
     /// An object with no window to name: nothing is asked or said.
@@ -45,7 +45,7 @@ enum Found {
     On(Box<On>),
 }
 
-fn found(state: &SrState) -> Found {
+pub(crate) fn found(state: &SrState) -> Found {
     let Some(navigator) = state.navigator.as_ref() else {
         return Found::Nothing;
     };
@@ -130,9 +130,9 @@ impl Request for Activate {
 
 /// A node's properties, read live.
 #[derive(Debug)]
-struct Properties {
-    window: RequestWindow,
-    node: NodeId,
+pub(crate) struct Properties {
+    pub(crate) window: RequestWindow,
+    pub(crate) node: NodeId,
 }
 
 impl Request for Properties {
@@ -163,7 +163,7 @@ impl Request for Properties {
 
 /// `read` as the snapshot the announcement code speaks, read through the
 /// backend of `like`, the object it was reached from.
-fn snapshot(read: NodeRead, like: &NodeSnapshot) -> Option<NodeSnapshot> {
+pub(crate) fn snapshot(read: NodeRead, like: &NodeSnapshot) -> Option<NodeSnapshot> {
     crate::focus::execute::snapshot(
         &FocusNode {
             read,
@@ -181,7 +181,7 @@ fn emit_all(cx: &mut Cx<Entries>, effects: Vec<Effect>) {
 }
 
 /// Says "No navigator object".
-fn no_navigator(cx: &mut Cx<Entries>, trace_id: TraceId) {
+pub(crate) fn no_navigator(cx: &mut Cx<Entries>, trace_id: TraceId) {
     cx.emit(editing::speak(
         trace_id,
         vec![UtteranceSegment::new(SegmentContent::Message(

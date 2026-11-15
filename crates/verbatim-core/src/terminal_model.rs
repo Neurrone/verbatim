@@ -452,6 +452,12 @@ fn model_mut(state: &mut SrState, node: NodeId) -> Option<&mut TerminalModel> {
     state.terminals.iter_mut().find(|model| model.node == node)
 }
 
+/// Whether Core models terminal `node`, so its model answers review
+/// commands on it.
+pub(crate) fn models(state: &SrState, node: NodeId) -> bool {
+    model_of(state, node).is_some()
+}
+
 fn model_of(state: &SrState, node: NodeId) -> Option<&TerminalModel> {
     state.terminals.iter().find(|model| model.node == node)
 }

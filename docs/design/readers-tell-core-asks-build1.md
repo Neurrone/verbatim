@@ -1013,7 +1013,7 @@ Each test removed from `verbatim-core` since `55555530`, with where its expected
 - `an_unanswered_navigation_stays_silent_and_a_gone_node_says_the_edge` (`queries`): ported, `a_navigation_not_answered_says_nothing_and_leaves_the_navigator_put` and `every_direction_from_an_object_not_there_says_its_edge`.
 - `the_open_queries_round_trip_with_the_state` (`queries`): removed with the query table; the queue's checkpoint and dump tests pin the round trip.
 - `a_navigation_step_allocates_the_same_whatever_the_ancestor_chain` (`tests/alloc.rs`): removed with the ancestry cache whose cost it pinned.
-- `a_dead_object_reviews_as_empty_flat_text_and_reports_nothing` (`tests/reduce.rs`): the report is pinned by `a_report_of_an_object_not_there_says_nothing`; the review commands' words are ported with step 5a's review text commands.
+- `a_dead_object_reviews_as_empty_flat_text_and_reports_nothing` (`tests/reduce.rs`): the report is pinned by `a_report_of_an_object_not_there_says_nothing`; the review commands' words are ported, `review_text_tests.rs` `a_dead_object_reviews_as_empty_flat_text`.
 - `a_focus_ends_a_navigation_press_and_what_waits_runs_on_the_new_navigator` (`tests/reduce.rs`): ported as "What users hear" has it, the press then the focus, `a_focus_behind_a_navigation_and_a_report_is_executed_after_them`.
 - `a_focus_or_foreground_on_a_shell_staging_window_cuts_speech_and_says_nothing` (`tests/reduce.rs`): ported, `entries_tests.rs` `a_focus_on_a_shell_staging_window_is_taken_and_says_nothing`; a foreground tell executes through the same rule.
 - `a_gone_navigation_says_the_direction_edge_and_the_navigator_stays` (`tests/reduce.rs`): ported, `every_direction_from_an_object_not_there_says_its_edge`.

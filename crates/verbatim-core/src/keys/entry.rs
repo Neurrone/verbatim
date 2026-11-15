@@ -5,12 +5,13 @@
 //! fence every entry carries.
 //!
 //! A press joins the queue behind what arrived before it and runs at its
-//! turn with no time limit of its own. Report focus and report caret
-//! location run as their own functions ([`crate::report_focus`],
-//! [`crate::caret_location`]), each holding the queue until its answer;
-//! every other action runs today's
-//! handling of the key or command at its turn, the caret key's included,
-//! until the caret key's own entry replaces it.
+//! turn with no time limit of its own. Report focus, report caret
+//! location, the navigator's commands and the review commands over the
+//! navigator's text run as their own functions ([`crate::report_focus`],
+//! [`crate::caret_location`], [`crate::navigator`],
+//! [`crate::review_text`]), each holding the queue until its last answer;
+//! every other action runs today's handling of the key or command at its
+//! turn, the caret key's included, until its own entry replaces it.
 
 use serde::{Deserialize, Serialize};
 use verbatim_model::request::{Press, PressAction};
@@ -112,8 +113,12 @@ pub(crate) async fn run(mut cx: Cx<Entries>, entry: PressEntry) {
     let PressEntry {
         trace_id, press, ..
     } = entry;
+    let own = match press.action {
+        PressAction::Command { command, .. } => Own::of(command, &cx.facts()),
+        _ => None,
+    };
     if let PressAction::Command { command, repeat } = press.action
-        && let Some(own) = Own::of(command)
+        && let Some(own) = own
     {
         // Any command stops say-all, as any key does in NVDA.
         let stopped = crate::say_all::stop(&mut cx.facts_mut());
@@ -132,6 +137,7 @@ pub(crate) async fn run(mut cx: Cx<Entries>, entry: PressEntry) {
             Own::Activate => crate::navigator::activate(cx, trace_id).await,
             Own::ReportObject => crate::navigator::report_object(cx, press).await,
             Own::ToFocus => crate::navigator::to_focus(cx, trace_id).await,
+            Own::ReviewText => crate::review_text::entry(cx, press).await,
         }
         return;
     }
@@ -160,11 +166,21 @@ enum Own {
     Activate,
     ReportObject,
     ToFocus,
+    ReviewText,
 }
 
 impl Own {
-    fn of(command: ReviewCommand) -> Option<Self> {
+    /// The command's own function at its turn, `None` for one that runs
+    /// today's handling: a review command on a terminal Core models, which
+    /// its model answers until build 3's terminal requests.
+    fn of(command: ReviewCommand, state: &crate::state::SrState) -> Option<Self> {
         match command {
+            command if crate::review_text::handles(command) => {
+                let modelled = state.navigator.as_ref().is_some_and(|navigator| {
+                    crate::terminal_model::models(state, navigator.object.id)
+                });
+                (!modelled).then_some(Self::ReviewText)
+            }
             ReviewCommand::ReportFocus => Some(Self::ReportFocus),
             ReviewCommand::ReportCaretLocation => Some(Self::CaretLocation),
             ReviewCommand::Parent => Some(Self::Navigate(verbatim_model::QueryKind::Parent)),
