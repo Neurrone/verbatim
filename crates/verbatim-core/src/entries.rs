@@ -28,18 +28,32 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::RuntimeId;
-use verbatim_model::request::{MsaaIds, Probe};
+use verbatim_model::request::{MsaaIds, OutsideOutcome, Probe, QueueEffect, QueueInput};
 use verbatim_model::tell::{AcceptanceFacts, ElementToken, Event, EventObject, TellWindow};
-use verbatim_model::{Effect as Said, WindowHandle};
+use verbatim_model::{Earcon, Effect as Said, TraceId, WindowHandle};
 
+use crate::event_queue::Instance;
 use crate::event_queue::{
-    Core, Cx, Effect, Foreground, Function, Logic, MsaaClass, MsaaKey, Place, ReplayMismatch,
-    RequestWindow, State, Timed,
+    Core, Cx, Effect, Foreground, Function, Input, Logic, MsaaClass, MsaaKey, Outcome, Place,
+    Refused, ReplayMismatch, RequestWindow, State, Timed,
 };
 use crate::focus::acceptance::{self, Accepted};
-use crate::focus::backend::by_class;
+use crate::focus::backend::{BackendCache, by_class};
+use crate::focus::menus::MenuCheck;
+use crate::focus::retake::CurrentFocus;
 use crate::focus::versions::ReadBy;
 use crate::state::SrState;
+
+/// The trace of the queue input being handled, which an entry Core makes
+/// itself runs under; the raw 0 before the first.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct InputTrace(pub(crate) TraceId);
+
+impl Default for InputTrace {
+    fn default() -> Self {
+        Self(TraceId::from_raw(0))
+    }
+}
 
 /// A UI Automation focus tell, parsed: its element's token and runtime id,
 /// and the window its check found, if any.
@@ -51,6 +65,8 @@ pub(crate) struct UiaFocus {
     pub(crate) token: ElementToken,
     /// The element's runtime id, from the event's cache.
     pub(crate) runtime_id: RuntimeId,
+    /// The generation of the listener that keeps the element.
+    pub(crate) listener: u64,
 }
 
 /// An MSAA focus or foreground tell, parsed: a run candidate, with the ids
@@ -88,6 +104,13 @@ pub(crate) enum Entry {
     Candidate(Box<Candidate>),
     /// A run of candidates at the front, oldest first.
     Run(Vec<Candidate>),
+    /// An MSAA menu start or end, popup start or end, or switch end: the
+    /// menu slot's entry.
+    Menu(Box<Candidate>),
+    /// The check after a menu or switcher ended with no valid focus.
+    MenuCheck(Box<MenuCheck>),
+    /// A read of an application's current focus that Core makes itself.
+    CurrentFocus(Box<CurrentFocus>),
     /// The foreground record changed to this window: at its turn the
     /// readers' last focus is emptied when the window is a top-level
     /// window unrelated to the committed focus.
@@ -123,6 +146,17 @@ impl fmt::Debug for Entry {
             Self::ForegroundMarker { window, root_owner } => {
                 write!(formatter, "ForegroundMarker({} {})", window.0, root_owner.0)
             }
+            Self::Menu(candidate) => write!(
+                formatter,
+                "Menu({:?} {:?} of {})",
+                candidate.tell.kind, candidate.ids, candidate.tell.process.0
+            ),
+            Self::MenuCheck(_) => formatter.write_str("MenuCheck"),
+            Self::CurrentFocus(read) => write!(
+                formatter,
+                "CurrentFocus({:?} {} of {})",
+                read.why, read.window.handle.0, read.window.process.0
+            ),
         }
     }
 }
@@ -149,21 +183,31 @@ pub(crate) fn request_window(tell: &Event) -> Option<RequestWindow> {
 }
 
 impl Entry {
-    /// The entry `tell` becomes, `None` for a kind whose entry a later
-    /// step of the build adds, and for a tell whose object does not fit
-    /// its kind, a reader's fault.
-    pub(crate) fn of_tell(tell: Event) -> Option<Self> {
+    /// The entry `tell`, told by `from`, becomes, `None` for a kind whose
+    /// entry a later step of the build adds, and for a tell whose object
+    /// does not fit its kind, a reader's fault.
+    pub(crate) fn of_tell(from: Instance, tell: Event) -> Option<Self> {
         match (tell.kind, &tell.object) {
-            (EventKind::UiaFocus, EventObject::Uia { token, runtime_id }) => {
+            (
+                EventKind::UiaFocus | EventKind::UiaMenuOpened,
+                EventObject::Uia { token, runtime_id },
+            ) => {
                 let (token, runtime_id) = (*token, runtime_id.clone());
                 Some(Self::UiaFocus(Box::new(UiaFocus {
                     tell,
                     token,
                     runtime_id,
+                    listener: from.generation,
                 })))
             }
             (
-                EventKind::MsaaFocus | EventKind::Foreground,
+                kind @ (EventKind::MsaaFocus
+                | EventKind::Foreground
+                | EventKind::MenuStart
+                | EventKind::MenuEnd
+                | EventKind::PopupStart
+                | EventKind::PopupEnd
+                | EventKind::SwitchEnd),
                 EventObject::Msaa {
                     window,
                     object,
@@ -176,7 +220,11 @@ impl Entry {
                     child: *child,
                 };
                 let window = request_window(&tell)?;
-                Some(Self::Candidate(Box::new(Candidate { tell, ids, window })))
+                let candidate = Box::new(Candidate { tell, ids, window });
+                Some(match kind {
+                    EventKind::MsaaFocus | EventKind::Foreground => Self::Candidate(candidate),
+                    _ => Self::Menu(candidate),
+                })
             }
             _ => None,
         }
@@ -186,8 +234,11 @@ impl Entry {
     fn tell(&self) -> Option<&Event> {
         match self {
             Self::UiaFocus(focus) => Some(&focus.tell),
-            Self::Candidate(candidate) => Some(&candidate.tell),
-            Self::Run(_) | Self::ForegroundMarker { .. } => None,
+            Self::Candidate(candidate) | Self::Menu(candidate) => Some(&candidate.tell),
+            Self::Run(_)
+            | Self::ForegroundMarker { .. }
+            | Self::MenuCheck(_)
+            | Self::CurrentFocus(_) => None,
         }
     }
 }
@@ -219,8 +270,17 @@ impl Logic for Entries {
     type Facts = SrState;
     type Said = Said;
 
-    fn run(cx: Cx<Self>, entry: Entry) -> Function {
+    fn run(mut cx: Cx<Self>, entry: Entry) -> Function {
+        // The menu slot's entry judges whether the run before it executed
+        // a focus; every other entry starts with none executed.
+        let run_executed = std::mem::take(&mut cx.facts_mut().run_executed);
         match entry {
+            Entry::Menu(candidate) => Box::pin(async move {
+                let mut cx = cx;
+                crate::focus::menus::slot(&mut cx, &candidate, run_executed);
+            }),
+            Entry::MenuCheck(check) => Box::pin(crate::focus::menus::check(cx, *check)),
+            Entry::CurrentFocus(read) => Box::pin(crate::focus::retake::run(cx, *read)),
             Entry::UiaFocus(focus) => Box::pin(crate::focus::uia_focus::run(cx, *focus)),
             Entry::Run(candidates) => Box::pin(crate::focus::msaa_run::run(cx, candidates)),
             Entry::Candidate(candidate) => {
@@ -252,10 +312,47 @@ impl Logic for Entries {
         false
     }
 
-    fn recovered(_: &SrState, _: &RequestWindow) -> Option<Entry> {
-        // The read of the focus after a window answers again comes with the
-        // re-take, in a later step of the build.
-        None
+    fn recovered(facts: &SrState, window: &RequestWindow) -> Option<Entry> {
+        Some(Entry::CurrentFocus(Box::new(
+            crate::focus::retake::recovered(facts, window),
+        )))
+    }
+
+    fn started(facts: &SrState, foreground: &Foreground) -> Option<Entry> {
+        Some(Entry::CurrentFocus(Box::new(
+            crate::focus::retake::startup(facts, foreground),
+        )))
+    }
+
+    fn kept_by(entry: &Entry, instance: Instance) -> bool {
+        match entry {
+            Entry::UiaFocus(focus) => {
+                instance.reader == crate::event_queue::Reader::Listener
+                    && focus.listener == instance.generation
+            }
+            _ => false,
+        }
+    }
+
+    fn reader_ended(
+        facts: &mut SrState,
+        instance: Instance,
+        foreground: Option<Foreground>,
+    ) -> Vec<Entry> {
+        crate::focus::retake::reader_ended(facts, instance, foreground)
+            .map(|read| Entry::CurrentFocus(Box::new(read)))
+            .into_iter()
+            .collect()
+    }
+
+    fn dropped_at_arrival(
+        facts: &SrState,
+        ahead: &[&Entry],
+        arriving: &Entry,
+        backend: &BackendCache,
+        now_us: u64,
+    ) -> bool {
+        crate::focus::menus::opening_dropped(facts, ahead, arriving, backend, now_us)
     }
 
     fn place(_: &SrState, entry: &Entry) -> Place {
@@ -275,8 +372,24 @@ impl Logic for Entries {
                 },
                 accepted: acceptance::accept(candidate.tell.kind, candidate.facts(), false).is_ok(),
             },
+            Entry::Menu(candidate) => Place::Msaa {
+                key: MsaaKey {
+                    kind: candidate.tell.kind,
+                    window: candidate.ids.window,
+                    object: candidate.ids.object,
+                    child: candidate.ids.child,
+                    thread: candidate.tell.thread,
+                },
+                class: MsaaClass::Menu,
+                accepted: acceptance::accept(candidate.tell.kind, candidate.facts(), false).is_ok(),
+            },
             Entry::UiaFocus(_) => Place::Other {
                 merges: true,
+                focus_kind: true,
+                ends_run: false,
+            },
+            Entry::CurrentFocus(_) | Entry::MenuCheck(_) => Place::Other {
+                merges: false,
                 focus_kind: true,
                 ends_run: false,
             },
@@ -327,8 +440,9 @@ impl Logic for Entries {
     fn ends_at_foreground(_: &SrState, entry: &Entry, foreground: &Foreground) -> bool {
         let window = match entry {
             Entry::UiaFocus(focus) => request_window(&focus.tell),
-            Entry::Candidate(candidate) => Some(candidate.window),
-            Entry::Run(_) | Entry::ForegroundMarker { .. } => None,
+            Entry::Candidate(candidate) | Entry::Menu(candidate) => Some(candidate.window),
+            Entry::CurrentFocus(read) => Some(read.window),
+            Entry::Run(_) | Entry::ForegroundMarker { .. } | Entry::MenuCheck(_) => None,
         };
         window.is_some_and(|window| {
             !foreground.holds(&window) && !entry.tell().is_some_and(accepted_apart_from_foreground)
@@ -338,7 +452,12 @@ impl Logic for Entries {
     fn probe(entry: &Entry) -> Option<Probe> {
         match entry {
             Entry::UiaFocus(focus) => focus.tell.checked.as_ref()?.probe,
-            Entry::Candidate(_) | Entry::Run(_) | Entry::ForegroundMarker { .. } => None,
+            Entry::Candidate(_)
+            | Entry::Run(_)
+            | Entry::ForegroundMarker { .. }
+            | Entry::Menu(_)
+            | Entry::MenuCheck(_)
+            | Entry::CurrentFocus(_) => None,
         }
     }
 
@@ -393,6 +512,88 @@ pub(crate) fn feed(
     effects
 }
 
+/// Routes one queue input from the shell (`Input::Queue`) into the event
+/// queue under `trace_id` at `at_us`, and returns what Core did as the
+/// shell's effects: requests, cancels, hang checks and the sound, what
+/// the entries' functions said, and the time Core next waits for. A tell
+/// of a kind whose entry a later step of the build adds is not taken.
+pub(crate) fn route(
+    state: &mut SrState,
+    runtime: &mut Runtime,
+    (trace_id, at_us): (TraceId, u64),
+    input: &QueueInput,
+) -> Vec<Said> {
+    let input = match input {
+        QueueInput::Tell { from, tell } => match Entry::of_tell(*from, (**tell).clone()) {
+            Some(entry) => Input::Entry(entry),
+            None => return Vec::new(),
+        },
+        QueueInput::Answer { from, answer } => Input::Answer {
+            from: *from,
+            answer: answer.clone(),
+        },
+        QueueInput::RefusedHung(number) => Input::RefusedHung(*number),
+        QueueInput::HangCheck { window, hung } => Input::HangCheck {
+            window: *window,
+            hung: *hung,
+        },
+        QueueInput::Foreground(report) => Input::Foreground(Foreground {
+            window: report.window,
+            root_owner: report.root_owner,
+            process: report.process,
+            thread: report.thread,
+            // The foreground window is top-level: its own root.
+            by_class: by_class(&report.class, &report.class),
+        }),
+        QueueInput::ReaderReady(instance) => Input::ReaderReady(*instance),
+        QueueInput::ReaderEnded(instance) => Input::ReaderEnded(*instance),
+        QueueInput::WindowDestroyed(window) => Input::WindowDestroyed(*window),
+        QueueInput::Due => Input::Tick,
+        QueueInput::Ignored(processes) => {
+            state.ignored.clone_from(processes);
+            return Vec::new();
+        }
+    };
+    state.queue_trace = InputTrace(trace_id);
+    let effects = match feed(state, runtime, Timed { at_us, input }) {
+        Ok(effects) => effects,
+        Err(mismatch) => {
+            return vec![Said::Queue(QueueEffect::Mismatch {
+                replayed: mismatch.replayed,
+                original: mismatch.original,
+            })];
+        }
+    };
+    let mut said: Vec<Said> = effects
+        .into_iter()
+        .map(|effect| match effect {
+            Effect::Send { to, ask } => Said::Queue(QueueEffect::Send { to, ask }),
+            Effect::Cancel { to, cancel } => Said::Queue(QueueEffect::Cancel { to, cancel }),
+            Effect::CheckHung(windows) => Said::Queue(QueueEffect::CheckHung(windows)),
+            Effect::NotRespondingSound => Said::PlayEarcon(Earcon::AppNotResponding),
+            Effect::AnswerDropped { number, late } => {
+                Said::Queue(QueueEffect::AnswerDropped { number, late })
+            }
+            Effect::Undecodable(number) => Said::Queue(QueueEffect::Undecodable(number)),
+            Effect::Said(said) => said,
+            Effect::Answered { asker, outcome } => Said::Queue(QueueEffect::Answered {
+                asker: asker.0,
+                outcome: match outcome {
+                    Outcome::Result(reply) => OutsideOutcome::Result(reply),
+                    Outcome::Refused(Refused::Reader(refusal)) => OutsideOutcome::Refused(refusal),
+                    Outcome::Refused(Refused::Undecodable) => OutsideOutcome::Undecodable,
+                    Outcome::NotThere => OutsideOutcome::NotThere,
+                    Outcome::NotResponding => OutsideOutcome::NotResponding,
+                    Outcome::ReaderEnded => OutsideOutcome::ReaderEnded,
+                    Outcome::NoLongerAwaited(reason) => OutsideOutcome::NoLongerAwaited(reason),
+                },
+            }),
+        })
+        .collect();
+    said.push(Said::Queue(QueueEffect::WakeAt(state.queue.next_due())));
+    said
+}
+
 #[cfg(test)]
 #[path = "entries_tests.rs"]
-mod tests;
+pub(crate) mod tests;

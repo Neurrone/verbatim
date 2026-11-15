@@ -49,6 +49,7 @@ fn value(id: PropertyId, value: PropertyValue) -> PropertyAnswer {
 
 fn uia_focus(cached: Vec<PropertyAnswer>, window_class: &str, checked: Checked) -> Event {
     Event {
+        trace_id: verbatim_model::TraceId::from_raw(7),
         kind: EventKind::UiaFocus,
         process: Pid(40),
         application: "app".to_owned(),
@@ -76,6 +77,7 @@ fn focused(keyboard_focus: Read<bool>) -> Checked {
 
 fn msaa_focus(kind: EventKind, object: i32) -> Event {
     Event {
+        trace_id: verbatim_model::TraceId::from_raw(7),
         kind,
         process: Pid(40),
         application: "app".to_owned(),

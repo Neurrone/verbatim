@@ -48,9 +48,9 @@ pub const SNAP_RESULTS_ACTIVITY: &str = "Windows.Shell.SnapComponent.SnapHotKeyR
 /// Advances `state` by one `input`, changing it in place, and returns the
 /// effects the imperative shell must execute. `runtime` is the event
 /// queue's paused function kept beside `state` by whoever runs the
-/// reducer; the queue's inputs, which the shell feeds in a later step of
-/// build 1, run with it, rebuilding it from the state's checkpoint when it
-/// has none.
+/// reducer; the queue's inputs (`Input::Queue`) run with it, rebuilding it
+/// from the state's checkpoint when it has none, beside today's inputs
+/// until each moves to the queue in its step of build 1.
 ///
 /// Deterministic: no I/O, no clocks, and no randomness, so the same state
 /// and input always produce the same new state and effects. The state is
@@ -58,7 +58,6 @@ pub const SNAP_RESULTS_ACTIVITY: &str = "Windows.Shell.SnapComponent.SnapHotKeyR
 /// parts of the state it does not touch (architecture section 2).
 #[must_use]
 pub fn reduce(state: &mut SrState, runtime: &mut crate::Runtime, input: &Input) -> Vec<Effect> {
-    let _ = runtime;
     // Once Verbatim is exiting nothing more is said or asked.
     if state.exiting {
         return Vec::new();
@@ -69,7 +68,14 @@ pub fn reduce(state: &mut SrState, runtime: &mut crate::Runtime, input: &Input) 
     // A user input's number, recorded by its trace before anything it
     // causes is spoken (`crate::keys`).
     crate::keys::record(state, input);
-    let mut effects = reduce_input(state, input);
+    let mut effects = match input {
+        Input::Queue {
+            trace_id,
+            at_us,
+            input,
+        } => crate::entries::route(state, runtime, (*trace_id, *at_us), input),
+        _ => reduce_input(state, input),
+    };
     // The terminals Core reads (`terminal_model`): told when the focus
     // reaches or leaves them, given the settings, and their text answered
     // from their memory.
@@ -1412,6 +1418,34 @@ fn focus_reported(
     run_queue(state)
 }
 
+/// Takes `owned`'s focus silently in place of a focus that reads the same:
+/// its new ids are taken, the navigator moved only if there is none, and
+/// the caret baseline kept (the silent re-take, `crate::focus::retake`).
+pub(crate) fn take_silently(state: &mut SrState, owned: &Report) {
+    let report = &owned.view(None);
+    let window = owned.window.as_ref();
+    let found = state
+        .focus
+        .object()
+        .cloned()
+        .map(|focus| Line { focus, left: false });
+    let line = focus_ancestry(found.as_ref(), window, report);
+    let previous = found.as_ref().map(|found| &found.focus);
+    let mut new_focus = focus_context(
+        (owned.trace_id, owned.source),
+        window,
+        report,
+        (previous, Arc::clone(&line.ancestors)),
+    );
+    new_focus.alive = owned.alive;
+    state.focus.execute(new_focus, 0);
+    record_taken(state, report);
+    if state.navigator.is_none() {
+        state.navigator = Some(Navigator::on(report.node.clone()));
+    }
+    editing::keep_focus_caret(state, report.node.id, report.text);
+}
+
 /// Executes `report`, judged `left` or not, against the focus object, as
 /// NVDA executes a focus against the one before it
 /// (`docs/parity/focus-announcement.md`, "Focus announcement content and
@@ -1981,9 +2015,19 @@ fn has_text(text: Option<&str>) -> bool {
 /// "Recovery after an outpost is replaced"); a report of the ended
 /// generation itself, waiting when it ended, is no replacement's.
 fn reads_the_same(focus: &FocusContext, node: &NodeSnapshot, ancestors: &[NodeSnapshot]) -> bool {
+    focus.snapshot.id.outpost() != node.id.outpost() && same_reading(focus, node, ancestors)
+}
+
+/// Whether `node`, under `ancestors`, reads the same as the focus `focus`
+/// Core holds: role, name, value, and states, and the ancestors' names and
+/// roles, whatever their ids.
+pub(crate) fn same_reading(
+    focus: &FocusContext,
+    node: &NodeSnapshot,
+    ancestors: &[NodeSnapshot],
+) -> bool {
     let kept = &focus.snapshot;
-    kept.id.outpost() != node.id.outpost()
-        && kept.role == node.role
+    kept.role == node.role
         && kept.name == node.name
         && kept.value == node.value
         && kept.states == node.states

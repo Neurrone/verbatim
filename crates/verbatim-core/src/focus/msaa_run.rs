@@ -9,7 +9,7 @@
 //! the same due time. The valid focus an outpost answers is executed.
 
 use verbatim_model::request::{
-    FocusRead, MsaaRun, Reply, Request as Wire, RunCandidate, RunRead, Tried,
+    FocusRead, MsaaIds, MsaaRun, Reply, Request as Wire, RunCandidate, RunRead, Tried,
 };
 use verbatim_model::{OutpostId, Pid};
 
@@ -17,7 +17,7 @@ use super::FOCUS_SET;
 use super::acceptance;
 use super::backend::{Judged, Judgement};
 use super::duplicate::{RunJudgement, judge_candidate};
-use super::execute::{Known, execute};
+use super::execute::{Known, Origin, execute};
 use super::versions::ReadBy;
 use crate::entries::{Candidate, Entries};
 use crate::event_queue::{Cx, FOCUS_DUE_US, Outcome, Reader, Request, RequestWindow};
@@ -58,9 +58,10 @@ impl Request for RunRequest {
 
 /// The candidates `candidates`, oldest first, that are tried, newest
 /// first: those that pass acceptance and the verdict and are not refused
-/// by ids, up to an MSAA duplicate of the readers' last focus, which ends
-/// the run.
-fn to_try(cx: &Cx<Entries>, candidates: Vec<Candidate>) -> Vec<Candidate> {
+/// by ids, up to an MSAA duplicate of the readers' last focus or the child a
+/// redirect reached, which ends the run as its valid focus; and whether
+/// one did.
+fn to_try(cx: &Cx<Entries>, candidates: Vec<Candidate>) -> (Vec<Candidate>, bool) {
     let facts = cx.facts();
     let backend = cx.backend();
     let now_us = cx.now_us();
@@ -77,16 +78,45 @@ fn to_try(cx: &Cx<Entries>, candidates: Vec<Candidate>) -> Vec<Candidate> {
             candidate.tell.at_us,
             now_us,
         );
-        if judged == Judgement::Drop {
+        if judged == Judgement::Drop || on_hidden_frame(&candidate) {
             continue;
+        }
+        if redirected_to(&facts.versions, &candidate.ids) {
+            return (tried, true);
         }
         match judge_candidate(last, &candidate.ids, candidate.foreground(), in_front) {
             RunJudgement::Refused(_) => {}
-            RunJudgement::Duplicate => break,
+            RunJudgement::Duplicate => return (tried, true),
             RunJudgement::Try => tried.push(candidate),
         }
     }
-    tried
+    (tried, false)
+}
+
+/// Whether `candidate` names Verbatim's hidden frame's own object, which
+/// is dropped (Verbatim-only, design "Focus and foreground").
+fn on_hidden_frame(candidate: &Candidate) -> bool {
+    candidate.facts().is_some_and(|facts| {
+        facts.hidden_frame
+            && candidate.ids.window == facts.window.handle
+            && matches!(candidate.ids.object, OBJID_WINDOW | OBJID_CLIENT)
+            && candidate.ids.child == 0
+    })
+}
+
+/// The object id of a window itself.
+const OBJID_WINDOW: i32 = 0;
+/// The object id of a window's client area.
+const OBJID_CLIENT: i32 = -4;
+
+/// Whether `ids` are the focused child a redirect from a list reached for
+/// the committed focus, with no focus executed since: such a focus ends
+/// the run without a read (Verbatim-only, design "Focus and foreground";
+/// pinned by `theme_panel`).
+fn redirected_to(versions: &super::versions::Versions, ids: &MsaaIds) -> bool {
+    versions
+        .committed_read()
+        .is_some_and(|kept| kept.redirected_to.as_ref() == Some(ids))
 }
 
 /// `tried`, newest first, by application, in the order of each
@@ -112,7 +142,12 @@ fn by_application(tried: Vec<Candidate>) -> Vec<Vec<Candidate>> {
 /// candidates are not tried (a limit).
 pub(crate) async fn run(mut cx: Cx<Entries>, candidates: Vec<Candidate>) {
     let due_us = cx.due_in(FOCUS_DUE_US);
-    let tried = to_try(&cx, candidates);
+    let (tried, ended) = to_try(&cx, candidates);
+    // A duplicate or the redirect's child ends the run as its valid focus,
+    // which the menu slot's entry after it judges.
+    if ended {
+        cx.facts_mut().run_executed = true;
+    }
     for group in by_application(tried) {
         let Some(newest) = group.first() else {
             continue;
@@ -144,6 +179,7 @@ pub(crate) async fn run(mut cx: Cx<Entries>, candidates: Vec<Candidate>) {
             },
         };
         let Outcome::Result(answered) = cx.ask(request, due_us).await else {
+            cx.facts_mut().forget_caret();
             return;
         };
         let valid =
@@ -172,13 +208,13 @@ fn executed(cx: &mut Cx<Entries>, candidate: &Candidate, read: &FocusRead, known
         event: Some(held.event),
         held_child: held.held_child,
     };
-    let said = execute(
-        &mut cx.facts_mut(),
-        (&candidate.tell, &candidate.window),
-        read,
-        known,
-        read_by,
-    );
+    let origin = Origin::of_tell(&candidate.tell, candidate.window);
+    let said = {
+        let mut facts = cx.facts_mut();
+        let said = execute(&mut facts, &origin, read, known, read_by);
+        facts.run_executed = true;
+        said
+    };
     for said in said {
         cx.emit(said);
     }

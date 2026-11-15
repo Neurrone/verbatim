@@ -45,14 +45,12 @@ use std::pin::Pin;
 use serde::{Deserialize, Serialize};
 use verbatim_model::{Pid, WindowHandle};
 
-use crate::focus::backend::{Backend, JudgedWindow, WindowKey};
+use crate::focus::backend::{Backend, BackendCache, JudgedWindow, WindowKey};
 
 pub(crate) use driver::{Core, Cx, Queue, ReplayMismatch, State};
-#[cfg(test)]
-pub(crate) use inbox::Input;
-pub(crate) use inbox::{Effect, Timed};
+pub(crate) use inbox::{Effect, Input, Timed};
 pub(crate) use limiter::{MsaaClass, MsaaKey, Place};
-pub(crate) use request::{Outcome, Request};
+pub(crate) use request::{Outcome, Refused, Request};
 
 /// A focus read's due time: 13 seconds from the moment Core decides to
 /// ask, for its whole chain of requests (ADR 0003, "A frozen window").
@@ -66,24 +64,7 @@ pub(crate) const HANG_ROUND_US: u64 = 500_000;
 const _: () = assert!(verbatim_model::FOCUS_READ_DEADLINE.as_micros() == 13_000_000);
 const _: () = assert!(verbatim_model::HANDLING_DEADLINE.as_micros() == 11_000_000);
 
-/// A reader Core asks.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-pub(crate) enum Reader {
-    /// The focus listener.
-    Listener,
-    /// The outpost of one application, by its process.
-    Outpost(Pid),
-}
-
-/// One running instance of a reader: a request out goes to one instance,
-/// and only that instance's answer or ending ends it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-pub(crate) struct Instance {
-    /// The reader.
-    pub(crate) reader: Reader,
-    /// Its generation, never reused.
-    pub(crate) generation: u64,
-}
+pub(crate) use verbatim_model::request::{Instance, Reader};
 
 /// The window a request names, with what the foreground test and the
 /// hang sound read of it: its top-level window and root owner, and the
@@ -127,6 +108,10 @@ pub(crate) struct Foreground {
     pub(crate) root_owner: WindowHandle,
     /// The application holding attention.
     pub(crate) process: Pid,
+    /// The thread that owns the window.
+    pub(crate) thread: u32,
+    /// The backend its class gives, `None` when probes decide.
+    pub(crate) by_class: Option<Backend>,
 }
 
 impl Foreground {
@@ -137,6 +122,18 @@ impl Foreground {
         [window.top_level, window.root_owner]
             .iter()
             .any(|handle| *handle == self.window || *handle == self.root_owner)
+    }
+
+    /// The foreground window as a request names it.
+    pub(crate) fn window(&self) -> RequestWindow {
+        RequestWindow {
+            handle: self.window,
+            top_level: self.window,
+            root_owner: self.root_owner,
+            process: self.process,
+            thread: self.thread,
+            by_class: self.by_class,
+        }
     }
 
     /// Whether `window`'s application holds attention.
@@ -206,6 +203,44 @@ pub(crate) trait Logic: Sized + 'static {
     fn probe(entry: &Self::Entry) -> Option<verbatim_model::request::Probe> {
         let _ = entry;
         None
+    }
+
+    /// The entry Core appends at the listener's first foreground report,
+    /// `foreground`: the read of the focus at startup.
+    fn started(facts: &Self::Facts, foreground: &Foreground) -> Option<Self::Entry> {
+        let _ = (facts, foreground);
+        None
+    }
+
+    /// Whether the waiting `entry` is dropped because `instance`, which
+    /// ended, kept its element.
+    fn kept_by(entry: &Self::Entry, instance: Instance) -> bool {
+        let _ = (entry, instance);
+        false
+    }
+
+    /// `instance` ended: what Core's facts keep of it change, and the
+    /// entries returned join the back (the re-take).
+    fn reader_ended(
+        facts: &mut Self::Facts,
+        instance: Instance,
+        foreground: Option<Foreground>,
+    ) -> Vec<Self::Entry> {
+        let _ = (facts, instance, foreground);
+        Vec::new()
+    }
+
+    /// Whether `arriving` is dropped at its arrival, judged against the
+    /// entries `ahead` of it, the front first.
+    fn dropped_at_arrival(
+        facts: &Self::Facts,
+        ahead: &[&Self::Entry],
+        arriving: &Self::Entry,
+        backend: &BackendCache,
+        now_us: u64,
+    ) -> bool {
+        let _ = (facts, ahead, arriving, backend, now_us);
+        false
     }
 
     /// The foreground marker joining the back when `foreground` comes in

@@ -8,14 +8,16 @@
 use std::iter;
 
 use verbatim_model::OutpostId;
+use verbatim_model::event_kind::EventKind;
+use verbatim_model::property::{PropertyId, PropertyValue};
 use verbatim_model::request::{
     CompleteUia, CompletionFor, FocusRead, ObjectRead, ObjectRef, Purpose, ReadObject, Reply,
     Request as Wire,
 };
-use verbatim_model::tell::ElementToken;
+use verbatim_model::tell::{ElementToken, TellWindow};
 
 use super::FOCUS_SET;
-use super::execute::{Known, execute};
+use super::execute::{Known, Origin, again, execute};
 use super::pending::counts_as_pending;
 use super::versions::ReadBy;
 use crate::entries::{Entries, UiaFocus, request_window};
@@ -95,11 +97,52 @@ fn kept_token(cx: &Cx<Entries>) -> Option<ElementToken> {
     }
 }
 
-/// The function of a UI Automation focus entry: the native-element test
-/// with the verdict, the overrides, acceptance, the keyboard-focus answer
-/// and the duplicate test on its tell's facts; then the two reads; then
-/// execution. Any outcome but a result ends it unspoken.
+/// Whether `focus` is a menu opening on the committed focus's runtime id.
+fn opens_on_committed(cx: &Cx<Entries>, focus: &UiaFocus) -> bool {
+    focus.tell.kind == EventKind::UiaMenuOpened
+        && cx
+            .facts()
+            .versions
+            .committed_read()
+            .is_some_and(|kept| {
+                matches!(&kept.read_by, ReadBy::Uia { runtime_id, .. } if *runtime_id == focus.runtime_id)
+            })
+}
+
+/// Whether `focus` names Verbatim's hidden frame's own element, which is
+/// dropped (Verbatim-only, design "Focus and foreground").
+fn on_hidden_frame(focus: &UiaFocus) -> bool {
+    let TellWindow::Found(facts) = &focus.tell.window else {
+        return false;
+    };
+    facts.hidden_frame
+        && matches!(
+            focus
+                .tell
+                .cached
+                .answer(PropertyId::NativeWindow)
+                .and_then(|answer| answer.value.as_ref()),
+            Some(PropertyValue::Window(window)) if *window == facts.window.handle
+        )
+}
+
+/// The function of a UI Automation focus entry, or of a menu opening: a
+/// menu opening on the committed focus executes it again; otherwise the
+/// native-element test with the verdict, the overrides, acceptance, the
+/// keyboard-focus answer and the duplicate test on its tell's facts; then
+/// the two reads; then execution. Any outcome but a result ends it
+/// unspoken and clears Core's caret baseline.
 pub(crate) async fn run(mut cx: Cx<Entries>, focus: UiaFocus) {
+    if opens_on_committed(&cx, &focus) {
+        let said = again(&mut cx.facts_mut(), focus.tell.trace_id);
+        for said in said {
+            cx.emit(said);
+        }
+        return;
+    }
+    if on_hidden_frame(&focus) {
+        return;
+    }
     let passes = {
         let facts = cx.facts();
         let backend = cx.backend();
@@ -129,6 +172,7 @@ pub(crate) async fn run(mut cx: Cx<Entries>, focus: UiaFocus) {
         },
     };
     let Outcome::Result(object) = cx.ask(read, due_us).await else {
+        cx.facts_mut().forget_caret();
         return;
     };
     // A focus read without its route is the listener's fault.
@@ -152,19 +196,16 @@ pub(crate) async fn run(mut cx: Cx<Entries>, focus: UiaFocus) {
         },
     };
     let Outcome::Result(read) = cx.ask(complete, due_us).await else {
+        cx.facts_mut().forget_caret();
         return;
     };
+
     let read_by = ReadBy::Uia {
         runtime_id: focus.runtime_id.clone(),
         token: Some(focus.token),
     };
-    let said = execute(
-        &mut cx.facts_mut(),
-        (&focus.tell, &window),
-        &read,
-        &known,
-        read_by,
-    );
+    let origin = Origin::of_tell(&focus.tell, window);
+    let said = execute(&mut cx.facts_mut(), &origin, &read, &known, read_by);
     for said in said {
         cx.emit(said);
     }

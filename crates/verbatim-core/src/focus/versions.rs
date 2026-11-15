@@ -93,6 +93,9 @@ pub(crate) struct Kept {
     pub(crate) read_by: ReadBy,
     /// Where it is.
     pub(crate) place: Place,
+    /// The window the read that found it named, which a re-take of its
+    /// application names.
+    pub(crate) window: crate::event_queue::RequestWindow,
     /// Its ancestors as the next focus read's walk meets them, nearest
     /// first: each node, its runtime id for a UI Automation node, and its
     /// own window for a window object.
@@ -223,6 +226,15 @@ impl Versions {
                 self.committed = other;
                 ReaderEnd::Nothing
             }
+        }
+    }
+
+    /// What Core keeps of the committed focus when it is a reader's focus
+    /// whose reader lives.
+    pub(crate) fn committed_read(&self) -> Option<&Kept> {
+        match &self.committed {
+            Committed::Read(kept) => Some(kept),
+            Committed::Ended(_) | Committed::Own { .. } | Committed::Nothing => None,
         }
     }
 

@@ -181,6 +181,8 @@ pub enum Payload {
 /// A tell: an event a reader heard, in one shape for both readers.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Event {
+    /// The trace minted when the reader heard it.
+    pub trace_id: crate::TraceId,
     /// What happened.
     pub kind: EventKind,
     /// The application: the process that serves the object, a console
@@ -228,6 +230,7 @@ mod tests {
     #[test]
     fn a_uia_focus_tell_travels_as_json_and_back() {
         let tell = Event {
+            trace_id: crate::TraceId::from_raw(9),
             kind: EventKind::UiaFocus,
             process: Pid(40),
             application: "explorer".to_owned(),

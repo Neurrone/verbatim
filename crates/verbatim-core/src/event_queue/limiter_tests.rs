@@ -26,6 +26,8 @@ const IN_FRONT: Foreground = Foreground {
     window: WindowHandle(10),
     root_owner: WindowHandle(10),
     process: APP,
+    thread: 0,
+    by_class: None,
 };
 /// The window whose entries end when the foreground changes.
 const ELSEWHERE: u64 = 99;

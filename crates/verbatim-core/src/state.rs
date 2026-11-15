@@ -601,6 +601,15 @@ pub struct SrState {
     /// The two versions of the focus, the committed focus with what Core
     /// keeps of its focus answer (`crate::focus::versions`).
     pub(crate) versions: crate::focus::versions::Versions,
+    /// The processes whose focus is dropped at its answer: the end-to-end
+    /// harness's own, none for real users (`crate::focus::execute`).
+    pub(crate) ignored: Vec<verbatim_model::Pid>,
+    /// The trace of the queue input being handled, which an entry Core
+    /// makes itself runs under.
+    pub(crate) queue_trace: crate::entries::InputTrace,
+    /// Whether the entry that ran last was a run that executed a focus,
+    /// which the menu slot's entry judges (`crate::focus::menus`).
+    pub(crate) run_executed: bool,
     /// The event queue (`crate::entries`): its entries, its requests and
     /// the front entry's checkpoint, plain data. Empty while a step of the
     /// queue runs, when the driver holds it. The paused function sits

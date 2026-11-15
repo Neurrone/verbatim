@@ -863,6 +863,17 @@ pub enum Input {
         /// Milliseconds on the run's shared clock when the hook saw it.
         pressed_at_ms: u64,
     },
+    /// An input to the event queue (ADR 0003), with the trace it runs
+    /// under and its time on the run's shared clock.
+    Queue {
+        /// The trace minted where it was observed, or by the shell for
+        /// its own inputs.
+        trace_id: TraceId,
+        /// When, in microseconds on the run's shared clock.
+        at_us: u64,
+        /// The input.
+        input: crate::request::QueueInput,
+    },
     /// Periodic timer tick, for time-based policies. Unused by M1 logic but
     /// part of the frozen vocabulary so adding policies is not a breaking
     /// change.
@@ -1340,7 +1351,8 @@ impl Input {
             | Self::PreviewSpeech { trace_id, .. }
             | Self::ReadFocusUnanswered { trace_id, .. }
             | Self::Desktop { trace_id, .. }
-            | Self::Progress { trace_id, .. } => Some(*trace_id),
+            | Self::Progress { trace_id, .. }
+            | Self::Queue { trace_id, .. } => Some(*trace_id),
             _ => None,
         }
     }
@@ -1508,6 +1520,8 @@ pub enum Effect {
     Speak(Utterance, Option<KeySeq>),
     /// Cancel current and queued speech.
     StopSpeech,
+    /// What Core's event queue asks of the shell.
+    Queue(crate::request::QueueEffect),
     /// The focus has changed: stop focus speech being spoken that is no
     /// longer valid ([`crate::FocusValidity`]), and judge waiting focus
     /// speech against this focus when its turn comes.

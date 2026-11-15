@@ -51,6 +51,8 @@ const IN_FRONT: Foreground = Foreground {
     window: WindowHandle(10),
     root_owner: WindowHandle(10),
     process: APP,
+    thread: 0,
+    by_class: None,
 };
 /// Another window of the same application in front, outside the request
 /// window's tree.
@@ -58,12 +60,16 @@ const SAME_APP_ELSEWHERE: Foreground = Foreground {
     window: WindowHandle(30),
     root_owner: WindowHandle(30),
     process: APP,
+    thread: 0,
+    by_class: None,
 };
 /// Another application in front.
 const ELSEWHERE: Foreground = Foreground {
     window: WindowHandle(20),
     root_owner: WindowHandle(20),
     process: Pid(2),
+    thread: 0,
+    by_class: None,
 };
 /// An asker outside the queue.
 const ASKER: Asker = Asker(5);
@@ -1229,7 +1235,7 @@ fn a_dump_shows_the_front_entry_its_answers_and_its_request_out() {
             "Core { now_us: 3100, ",
             "front: Some(Front { entry: Read { reads: 2, exempt: false }, ",
             "answers: [Result(PropertyValues([]))], asked: Some(RequestNumber(3)) }), ",
-            "waiting: [One(Read { reads: 1, exempt: false })], ",
+            "waiting: [One(Read { reads: 1, exempt: false })], timers: [], ",
             "table: Table { last: 3, live: {RequestNumber(3): Live { reader: Outpost(Pid(1)), ",
             "window: RequestWindow { handle: WindowHandle(11), top_level: WindowHandle(10), ",
             "root_owner: WindowHandle(10), process: Pid(1), thread: 3, by_class: Some(Msaa) }, ",
@@ -1241,7 +1247,7 @@ fn a_dump_shows_the_front_entry_its_answers_and_its_request_out() {
             "recovery: {}, round_due_us: Some(502000) }, ",
             "readers: {Outpost(Pid(1)): Instance { reader: Outpost(Pid(1)), generation: 1 }}, ",
             "foreground: Some(Foreground { window: WindowHandle(10), root_owner: WindowHandle(10), ",
-            "process: Pid(1) }), backend: BackendCache { probed: {} }, facts: 1 }"
+            "process: Pid(1), thread: 0, by_class: None }), backend: BackendCache { probed: {} }, facts: 1 }"
         )
     );
 }

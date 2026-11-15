@@ -20,18 +20,18 @@ use super::*;
 use crate::event_queue::{Input, Instance, Reader};
 use crate::focus::versions::{Committed, LastFocus};
 
-const APP: Pid = Pid(40);
-const GENERATION: u64 = 3;
-const LISTENER: Instance = Instance {
+pub(crate) const APP: Pid = Pid(40);
+pub(crate) const GENERATION: u64 = 3;
+pub(crate) const LISTENER: Instance = Instance {
     reader: Reader::Listener,
     generation: 1,
 };
-const OUTPOST: Instance = Instance {
+pub(crate) const OUTPOST: Instance = Instance {
     reader: Reader::Outpost(APP),
     generation: GENERATION,
 };
 
-fn facet(handle: u64, class: &str) -> WindowFacet {
+pub(crate) fn facet(handle: u64, class: &str) -> WindowFacet {
     WindowFacet {
         handle: WindowHandle(handle),
         class: class.to_owned(),
@@ -42,7 +42,7 @@ fn facet(handle: u64, class: &str) -> WindowFacet {
 
 /// Window 5, of `class`, under the foreground window 4, so acceptance
 /// passes by the foreground relation.
-fn facts(class: &str) -> AcceptanceFacts {
+pub(crate) fn facts(class: &str) -> AcceptanceFacts {
     AcceptanceFacts {
         window: facet(5, class),
         parent_class: String::new(),
@@ -62,8 +62,9 @@ fn facts(class: &str) -> AcceptanceFacts {
     }
 }
 
-fn uia_tell(runtime: i32, kept: Vec<(ElementToken, Read<bool>)>) -> Event {
+pub(crate) fn uia_tell(runtime: i32, kept: Vec<(ElementToken, Read<bool>)>) -> Event {
     Event {
+        trace_id: verbatim_model::TraceId::from_raw(7),
         kind: EventKind::UiaFocus,
         process: APP,
         application: "app".to_owned(),
@@ -92,8 +93,9 @@ fn uia_tell(runtime: i32, kept: Vec<(ElementToken, Read<bool>)>) -> Event {
     }
 }
 
-fn msaa_tell(object: i32) -> Event {
+pub(crate) fn msaa_tell(object: i32) -> Event {
     Event {
+        trace_id: verbatim_model::TraceId::from_raw(7),
         kind: EventKind::MsaaFocus,
         process: APP,
         application: "app".to_owned(),
@@ -111,7 +113,7 @@ fn msaa_tell(object: i32) -> Event {
     }
 }
 
-fn values(name: &str, role: Role) -> PropertyValues {
+pub(crate) fn values(name: &str, role: Role) -> PropertyValues {
     PropertyValues(vec![
         PropertyAnswer {
             id: PropertyId::Name,
@@ -124,12 +126,12 @@ fn values(name: &str, role: Role) -> PropertyValues {
     ])
 }
 
-fn node(number: u64) -> NodeId {
+pub(crate) fn node(number: u64) -> NodeId {
     NodeId::in_outpost(OutpostId(GENERATION), number)
 }
 
 /// A focus answer: the button "OK" in the frame "Editor".
-fn focus_read(msaa: Option<HeldIds>) -> FocusRead {
+pub(crate) fn focus_read(msaa: Option<HeldIds>) -> FocusRead {
     FocusRead {
         focus: FocusNode {
             read: NodeRead {
@@ -161,7 +163,7 @@ fn focus_read(msaa: Option<HeldIds>) -> FocusRead {
     }
 }
 
-fn listener_answer() -> ObjectRead {
+pub(crate) fn listener_answer() -> ObjectRead {
     ObjectRead {
         object: NodeRead {
             node: None,
@@ -187,7 +189,7 @@ fn listener_answer() -> ObjectRead {
 /// A state with the runtime its test keeps beside it. A clone has no
 /// paused function, as a clone of the state has none.
 #[derive(Debug, Default)]
-struct Held {
+pub(crate) struct Held {
     state: SrState,
     runtime: Runtime,
 }
@@ -224,7 +226,7 @@ impl std::ops::DerefMut for Held {
 /// Feeds `input` at `at_us`, the step's effects as a test reads them:
 /// each request sent by its reader and kind, each utterance by its
 /// segments, every other effect left out.
-fn feed_at(held: &mut Held, at_us: u64, input: Input<Entry>) -> Vec<String> {
+pub(crate) fn feed_at(held: &mut Held, at_us: u64, input: Input<Entry>) -> Vec<String> {
     feed(&mut held.state, &mut held.runtime, Timed { at_us, input })
         .unwrap()
         .into_iter()
@@ -244,20 +246,21 @@ fn feed_at(held: &mut Held, at_us: u64, input: Input<Entry>) -> Vec<String> {
         .collect()
 }
 
-fn kind(ask: &Ask) -> &'static str {
+pub(crate) fn kind(ask: &Ask) -> &'static str {
     match &ask.request {
         Wire::ReadObject(_) => "ReadObject",
         Wire::CompleteUia(_) => "CompleteUia",
         Wire::MsaaRun(_) => "MsaaRun",
+        Wire::CurrentFocus { .. } => "CurrentFocus",
         _ => "other",
     }
 }
 
-fn answer(from: Instance, number: u64, reply: Reply) -> Input<Entry> {
+pub(crate) fn answer(from: Instance, number: u64, reply: Reply) -> Input<Entry> {
     answer_outcome(from, number, WireOutcome::Result(reply))
 }
 
-fn answer_outcome(from: Instance, number: u64, outcome: WireOutcome) -> Input<Entry> {
+pub(crate) fn answer_outcome(from: Instance, number: u64, outcome: WireOutcome) -> Input<Entry> {
     Input::Answer {
         from,
         answer: Answer {
@@ -269,7 +272,7 @@ fn answer_outcome(from: Instance, number: u64, outcome: WireOutcome) -> Input<En
     }
 }
 
-fn ready() -> Held {
+pub(crate) fn ready() -> Held {
     let mut state = Held::default();
     assert_eq!(
         feed_at(&mut state, 0, Input::ReaderReady(LISTENER)),
@@ -279,22 +282,22 @@ fn ready() -> Held {
     state
 }
 
-fn entry(tell: Event) -> Input<Entry> {
-    Input::Entry(Entry::of_tell(tell).unwrap())
+pub(crate) fn entry(tell: Event) -> Input<Entry> {
+    Input::Entry(Entry::of_tell(LISTENER, tell).unwrap())
 }
 
 /// Nothing sent or said.
-const NOTHING: [&str; 0] = [];
+pub(crate) const NOTHING: [&str; 0] = [];
 
 /// The window's title, then the focus.
-const SPOKEN: [&str; 2] = [
+pub(crate) const SPOKEN: [&str; 2] = [
     "Label(\"Editor\") Role(Window)",
     "Label(\"OK\") Role(Button)",
 ];
 
 /// A UI Automation focus asked of the listener, then completed by the
 /// outpost, up to the completion's answer.
-fn asked_completion() -> Held {
+pub(crate) fn asked_completion() -> Held {
     let mut state = ready();
     assert_eq!(
         feed_at(&mut state, 1_000, entry(uia_tell(1, Vec::new()))),
@@ -431,7 +434,7 @@ fn a_checkpoint_that_does_not_replay_is_an_error_and_leaves_the_state() {
 }
 
 /// The run's held ids for the candidate of object `object`.
-fn held(object: i32) -> HeldIds {
+pub(crate) fn held(object: i32) -> HeldIds {
     HeldIds {
         event: MsaaIds {
             window: WindowHandle(5),
@@ -539,10 +542,153 @@ fn a_foreground_marker_empties_the_last_focus_for_an_unrelated_window() {
         window: WindowHandle(70),
         root_owner: WindowHandle(70),
         process: Pid(41),
+        thread: 0,
+        by_class: None,
     };
+    // The first foreground report appends the startup read, of an
+    // application whose outpost has not started; the marker waits behind
+    // it until Core stops waiting for it.
     assert_eq!(
         feed_at(&mut state, 4_000, Input::Foreground(foreground)),
         NOTHING
     );
+    assert!(state.versions.last.is_some());
+    assert_eq!(feed_at(&mut state, 13_004_000, Input::Tick), NOTHING);
     assert_eq!(state.versions.last, None);
+}
+
+// The rules judged at a run's turn and at execution.
+
+#[test]
+fn a_focus_on_the_child_a_redirect_reached_ends_the_run_with_no_read() {
+    let mut state = ready();
+    feed_at(&mut state, 1_000, entry(msaa_tell(-4)));
+    let mut read = focus_read(Some(held(-4)));
+    read.redirected_to = Some(held(-5).event);
+    let tried = RunRead {
+        tried: vec![Tried::Focus(Box::new(read))],
+    };
+    assert_eq!(
+        feed_at(&mut state, 2_000, answer(OUTPOST, 1, Reply::Run(tried))),
+        SPOKEN
+    );
+    assert_eq!(feed_at(&mut state, 3_000, entry(msaa_tell(-5))), NOTHING);
+    assert!(state.queue.front_for_tests().is_none());
+}
+
+#[test]
+fn a_focus_on_the_hidden_frames_own_object_is_dropped() {
+    let mut state = ready();
+    let mut tell = msaa_tell(-4);
+    if let TellWindow::Found(facts) = &mut tell.window {
+        facts.hidden_frame = true;
+    }
+    assert_eq!(feed_at(&mut state, 1_000, entry(tell)), NOTHING);
+    assert!(state.queue.front_for_tests().is_none());
+}
+
+#[test]
+fn a_focus_whose_top_level_window_is_an_ignored_processs_is_dropped_at_its_answer() {
+    let mut state = asked_completion();
+    state.ignored = vec![APP];
+    assert_eq!(
+        feed_at(
+            &mut state,
+            3_000,
+            answer(OUTPOST, 2, Reply::Focus(Box::new(focus_read(None))))
+        ),
+        NOTHING
+    );
+    assert_eq!(state.versions.last, None);
+    assert!(state.focus.object().is_none());
+}
+
+#[test]
+fn an_executed_focus_runs_under_its_tells_trace_and_takes_its_top_ancestor_as_foreground() {
+    let mut state = asked_completion();
+    feed_at(
+        &mut state,
+        3_000,
+        answer(OUTPOST, 2, Reply::Focus(Box::new(focus_read(None)))),
+    );
+    let focus = state.focus.object().unwrap();
+    assert_eq!(focus.trace_id, Some(verbatim_model::TraceId::from_raw(7)));
+    // The walk met no ancestor Core knew and the answer read no
+    // foreground object: the top ancestor, the frame, stands for it.
+    let frame = focus.ancestors.first().unwrap();
+    assert_eq!(frame.id, node(1));
+    assert_eq!(
+        state.foreground.object(),
+        Some(verbatim_model::ObjectKey::of(frame))
+    );
+}
+
+#[test]
+fn the_reducer_routes_a_tell_into_the_queue_and_asks_to_be_woken_at_its_due_time() {
+    use verbatim_model::request::{QueueEffect, QueueInput};
+    let mut held = Held::default();
+    let queued = |input| verbatim_model::Input::Queue {
+        trace_id: verbatim_model::TraceId::from_raw(5),
+        at_us: 1_000,
+        input,
+    };
+    let effects = crate::reduce(
+        &mut held.state,
+        &mut held.runtime,
+        &queued(QueueInput::ReaderReady(OUTPOST)),
+    );
+    assert_eq!(effects, [Said::Queue(QueueEffect::WakeAt(None))]);
+    let effects = crate::reduce(
+        &mut held.state,
+        &mut held.runtime,
+        &queued(QueueInput::Tell {
+            from: LISTENER,
+            tell: Box::new(msaa_tell(-4)),
+        }),
+    );
+    let [
+        Said::Queue(QueueEffect::Send { to, ask }),
+        Said::Queue(QueueEffect::WakeAt(wake)),
+    ] = effects.as_slice()
+    else {
+        panic!("one request and the wake: {effects:?}");
+    };
+    assert_eq!((*to, kind(ask)), (OUTPOST, "MsaaRun"));
+    assert_eq!(*wake, Some(1_000 + crate::event_queue::HANG_ROUND_US));
+}
+
+#[test]
+fn a_failed_focus_read_clears_cores_caret_baseline() {
+    let mut state = asked_completion();
+    feed_at(
+        &mut state,
+        3_000,
+        answer(OUTPOST, 2, Reply::Focus(Box::new(focus_read(None)))),
+    );
+    state.focus.object_mut().unwrap().caret = Some(crate::state::CaretContext {
+        line: std::sync::Arc::new(verbatim_model::TextChunk {
+            unit: verbatim_model::TextUnit::Line,
+            text: "text".to_owned(),
+            start: verbatim_model::TextAnchor(1),
+            offset: 0,
+            languages: Vec::new(),
+            first: true,
+            last: true,
+            truncated: false,
+            formats: Vec::new(),
+        }),
+        selection: None,
+        line_break: None,
+        read_at_us: 0,
+    });
+    feed_at(&mut state, 4_000, entry(uia_tell(2, Vec::new())));
+    assert_eq!(
+        feed_at(
+            &mut state,
+            5_000,
+            answer_outcome(LISTENER, 3, WireOutcome::NotThere)
+        ),
+        NOTHING
+    );
+    assert_eq!(state.focus.object().unwrap().caret, None);
 }

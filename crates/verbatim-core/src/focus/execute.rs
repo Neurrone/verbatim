@@ -12,14 +12,15 @@ use verbatim_model::property::{PropertyId, PropertyValue, PropertyValues};
 use verbatim_model::request::{FocusAncestor, FocusNode, FocusRead, KnownAncestor};
 use verbatim_model::tell::{AcceptanceFacts, Event, Relation};
 use verbatim_model::{
-    Backend, EarlierElement, Effect, NodeDetails, NodeSnapshot, Role, StateSet, TraceId,
-    WindowFacts, WindowHandle,
+    Backend, EarlierElement, Effect, NodeDetails, NodeSnapshot, ObjectKey, Pid, Role, StateSet,
+    TraceId, WindowFacts, WindowHandle,
 };
 
 use super::versions::{Kept, KeptAncestor, Place, ReadBy};
 use crate::entries::window_facts;
 use crate::event_queue::RequestWindow;
 use crate::focus_queue::Report;
+use crate::foreground::ForegroundFact;
 use crate::state::SrState;
 
 /// The ancestors Core already knows, as a focus request sent them: each
@@ -173,41 +174,98 @@ fn chain(
     Some((snapshots, kept))
 }
 
-/// Executes the focus `read` answered for `tell`, judged by `in_window`
-/// and asked with `known`: the
-/// focus is spoken by today's announcement code against the committed
-/// focus, and both versions of the focus become it. A focus whose nodes
-/// the reader did not mint, or whose meeting point Core does not hold,
-/// ends unspoken: a reader's fault.
-pub(crate) fn execute(
-    state: &mut SrState,
-    (tell, in_window): (&Event, &RequestWindow),
+/// Where a focus answer came from: the trace it runs under, the
+/// application it belongs to, when the event was heard, the window facts
+/// today's announcement code reads, and the window its read named.
+#[derive(Clone, Debug)]
+pub(crate) struct Origin {
+    /// The trace: the tell's, or the input's that made Core's own entry.
+    pub(crate) trace_id: TraceId,
+    /// The application.
+    pub(crate) source: Pid,
+    /// When the reader heard the event; 0 for a read Core made itself.
+    pub(crate) observed_at_us: u64,
+    /// The window facts the tell carried, `None` for a read Core made
+    /// itself.
+    pub(crate) window: Option<WindowFacts>,
+    /// Whether it is a foreground tell's.
+    pub(crate) whole_window: bool,
+    /// The process of the focus's top-level window.
+    pub(crate) top_process: Pid,
+    /// The window its read named.
+    pub(crate) asked: RequestWindow,
+}
+
+impl Origin {
+    /// The origin of a focus a tell named, read on `asked`.
+    pub(crate) fn of_tell(tell: &Event, asked: RequestWindow) -> Self {
+        let facts = window_facts(tell);
+        Self {
+            trace_id: tell.trace_id,
+            source: tell.process,
+            observed_at_us: tell.at_us,
+            window: facts.map(|facts| window_of(tell, facts)),
+            whole_window: tell.kind == verbatim_model::event_kind::EventKind::Foreground,
+            top_process: facts.map_or(asked.process, |facts| facts.root.process),
+            asked,
+        }
+    }
+
+    /// The origin of a focus Core read itself on `asked`, under `trace_id`.
+    pub(crate) fn of_read(trace_id: TraceId, asked: RequestWindow) -> Self {
+        Self {
+            trace_id,
+            source: asked.process,
+            observed_at_us: 0,
+            window: None,
+            whole_window: false,
+            top_process: asked.process,
+            asked,
+        }
+    }
+}
+
+/// A focus answer made ready to execute: the report today's announcement
+/// code speaks, what Core keeps of it, and the snapshot of the foreground
+/// object it read, or of its top ancestor when it could not read one.
+struct Ready {
+    report: Report,
+    kept: Kept,
+    foreground: Option<NodeSnapshot>,
+}
+
+/// `read` made ready to execute, or `None` when its nodes were not minted
+/// or its meeting point is not held, a reader's fault.
+fn ready(
+    state: &SrState,
+    origin: &Origin,
     read: &FocusRead,
     known: &Known,
     read_by: ReadBy,
-) -> Vec<Effect> {
+) -> Option<Ready> {
     let backend = match read_by {
         ReadBy::Uia { .. } => Backend::Uia,
         ReadBy::Msaa { .. } => Backend::Msaa,
     };
-    let Some(node) = snapshot(&read.focus, backend) else {
-        return Vec::new();
+    let node = snapshot(&read.focus, backend)?;
+    let (nearest_first, kept_ancestors) = chain(state, &read.ancestors, read.met, known, backend)?;
+    let read_foreground = match &read.foreground {
+        Some(foreground) => Some(snapshot(foreground, backend)?),
+        None => None,
     };
-    let Some((nearest_first, kept_ancestors)) =
-        chain(state, &read.ancestors, read.met, known, backend)
-    else {
-        return Vec::new();
-    };
-    let window = window_facts(tell).map(|facts| window_of(tell, facts));
     let mut ancestors = nearest_first;
     ancestors.reverse();
-    let ancestors = crate::reduce::focus_ancestors(window.as_ref(), &node, &ancestors).to_vec();
+    let ancestors =
+        crate::reduce::focus_ancestors(origin.window.as_ref(), &node, &ancestors).to_vec();
+    // The top ancestor stands for the foreground object only when the
+    // answer could not read it.
+    let foreground = read_foreground.or_else(|| ancestors.first().cloned());
     let report = Report {
-        trace_id: TraceId::from_raw(0),
-        source: tell.process,
-        observed_at_us: tell.at_us,
-        window,
-        whole_window: tell.kind == verbatim_model::event_kind::EventKind::Foreground,
+        trace_id: origin.trace_id,
+        source: origin.source,
+        observed_at_us: origin.observed_at_us,
+        window: origin.window.clone(),
+        whole_window: origin.whole_window,
         node: node.clone(),
         ancestors: Arc::from(ancestors),
         selected_child: None,
@@ -216,27 +274,143 @@ pub(crate) fn execute(
         group: None,
         alive: true,
     };
-    let effects = crate::reduce::execute_report(state, &report, false, 0);
     let place = Place {
         window: read.focus.read.window,
-        top_level: in_window.top_level,
-        root_owner: in_window.root_owner,
+        top_level: origin.asked.top_level,
+        root_owner: origin.asked.root_owner,
         ancestor_windows: kept_ancestors
             .iter()
             .filter_map(|ancestor| ancestor.window)
             .collect(),
     };
-    state.versions.execute(Kept {
-        source: tell.process,
+    let kept = Kept {
+        source: origin.source,
         outpost: node.id.outpost(),
         node: node.id,
         read_by,
         place,
+        window: origin.asked,
         ancestors: kept_ancestors,
         redirected_to: read.redirected_to,
         foreground: read.foreground.as_ref().and_then(|node| node.read.node),
         value_from_selection: read.value_from_selection,
         class: read.class,
-    });
+    };
+    Some(Ready {
+        report,
+        kept,
+        foreground,
+    })
+}
+
+/// Whether a focus of `origin` is dropped at its answer: its top-level
+/// window is an ignored process's (Verbatim-only: the test harness's rule,
+/// design "Focus and foreground").
+fn ignored(state: &SrState, origin: &Origin) -> bool {
+    state.ignored.contains(&origin.top_process)
+}
+
+/// Executes the focus `read` answered for `origin`, asked with `known`:
+/// the focus is spoken by today's announcement code against the committed
+/// focus, and both versions of the focus become it. When the walk met
+/// none of the ancestors Core knows, the focus difference level is 1 or
+/// less, and the foreground object becomes the one the answer read for
+/// it, the top ancestor only if it could not be read (design, "Focus and
+/// foreground"). The answer carries no caret, so Core's caret baseline is
+/// cleared. A focus whose nodes the reader did not mint, or whose meeting
+/// point Core does not hold, ends unspoken: a reader's fault.
+pub(crate) fn execute(
+    state: &mut SrState,
+    origin: &Origin,
+    read: &FocusRead,
+    known: &Known,
+    read_by: ReadBy,
+) -> Vec<Effect> {
+    if ignored(state, origin) {
+        return Vec::new();
+    }
+    let Some(ready) = ready(state, origin, read, known, read_by) else {
+        return Vec::new();
+    };
+    let effects = crate::reduce::execute_report(state, &ready.report, false, 0);
+    if read.met.is_none()
+        && let Some(foreground) = &ready.foreground
+    {
+        state
+            .foreground
+            .apply(ForegroundFact::Object(ObjectKey::of(foreground)));
+    }
+    state.forget_caret();
+    state.versions.execute(ready.kept);
     effects
+}
+
+/// Executes the committed focus again, as a UI Automation menu opening on
+/// it does (design, "Focus and foreground"; NVDA:
+/// `UIAHandler/__init__.py` 856 to 868), under `trace_id`. Nothing with
+/// nothing committed.
+pub(crate) fn again(state: &mut SrState, trace_id: TraceId) -> Vec<Effect> {
+    let Some(focus) = state.focus.object() else {
+        return Vec::new();
+    };
+    let report = Report {
+        trace_id,
+        source: focus.source,
+        observed_at_us: 0,
+        window: focus.window.clone(),
+        whole_window: false,
+        node: focus.snapshot.clone(),
+        ancestors: Arc::clone(&focus.ancestors),
+        selected_child: None,
+        text: None,
+        earlier: None,
+        group: None,
+        alive: focus.alive,
+    };
+    crate::reduce::execute_report(state, &report, false, 0)
+}
+
+/// How a re-take's answer ended (design, "Focus and foreground", the
+/// re-take after a reader's replacement).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Retaken {
+    /// It read the same as the focus Core holds, and was taken silently.
+    Silently,
+    /// It differed, and was executed.
+    Executed,
+    /// It was dropped: an ignored process's, or a reader's fault.
+    Dropped,
+}
+
+/// Judges a re-take's `read` against the focus Core holds: one that reads
+/// the same is taken silently with its new ids, the navigator moved only
+/// if there is none and the caret baseline kept; a different one is
+/// executed. With the readers' last focus empty it is executed and spoken
+/// (an accepted corner, Table 3).
+pub(crate) fn retake(
+    state: &mut SrState,
+    origin: &Origin,
+    read: &FocusRead,
+    read_by: ReadBy,
+) -> (Retaken, Vec<Effect>) {
+    if ignored(state, origin) {
+        return (Retaken::Dropped, Vec::new());
+    }
+    let known = Known::default();
+    let Some(ready) = ready(state, origin, read, &known, read_by.clone()) else {
+        return (Retaken::Dropped, Vec::new());
+    };
+    let same = state.versions.last.is_some()
+        && state.focus.object().is_some_and(|focus| {
+            crate::reduce::same_reading(focus, &ready.report.node, &ready.report.ancestors)
+        });
+    if same {
+        crate::reduce::take_silently(state, &ready.report);
+        state.versions.execute(ready.kept);
+        return (Retaken::Silently, Vec::new());
+    }
+    (
+        Retaken::Executed,
+        execute(state, origin, read, &known, read_by),
+    )
 }

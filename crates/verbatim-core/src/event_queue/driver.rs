@@ -110,6 +110,10 @@ pub(crate) struct Queue<E, F> {
     pub(super) backend: BackendCache,
     /// The front entry's checkpoint, present exactly when there is a front.
     pub(super) checkpoint: Option<Box<Checkpoint<E, F>>>,
+    /// Entries Core appends later, each with the time it joins the back,
+    /// in the order they were made: the check after a menu or switcher
+    /// ends.
+    pub(super) timers: Vec<(u64, E)>,
 }
 
 impl<E, F> Default for Queue<E, F> {
@@ -123,12 +127,30 @@ impl<E, F> Default for Queue<E, F> {
             foreground: None,
             backend: BackendCache::default(),
             checkpoint: None,
+            timers: Vec::new(),
         }
+    }
+}
+
+impl<E, F> Queue<E, F> {
+    /// The one time Core waits for: the nearest due time, hang round or
+    /// entry Core appends later.
+    pub(crate) fn next_due(&self) -> Option<u64> {
+        self.table
+            .next_due()
+            .into_iter()
+            .chain(self.timers.iter().map(|(at_us, _)| *at_us))
+            .min()
     }
 }
 
 #[cfg(test)]
 impl<E, F> Queue<E, F> {
+    /// How many items wait behind the front.
+    pub(crate) fn waiting_for_tests(&self) -> usize {
+        self.waiting.len()
+    }
+
     /// The requests waiting or out, as sent.
     pub(crate) fn table_for_tests(&self) -> Vec<Wire> {
         self.table.requests_for_tests()
@@ -212,6 +234,7 @@ impl<L: Logic> fmt::Debug for Core<L> {
             .field("now_us", &state.queue.now_us)
             .field("front", &state.queue.front)
             .field("waiting", &state.queue.waiting)
+            .field("timers", &state.queue.timers)
             .field("table", &state.queue.table)
             .field("readers", &state.queue.readers)
             .field("foreground", &state.queue.foreground)
@@ -265,7 +288,7 @@ impl<L: Logic> Core<L> {
 
     /// The one time Core waits for, which the shell's timer is set to.
     pub(crate) fn next_due(&self) -> Option<u64> {
-        self.shared.borrow().state.queue.table.next_due()
+        self.shared.borrow().state.queue.next_due()
     }
 
     /// A fresh instance with a copy of this one's state, its function
@@ -635,6 +658,13 @@ impl<L: Logic> Cx<L> {
     /// [`super::OTHER_DUE_US`]).
     pub(crate) fn due_in(&self, after_us: u64) -> u64 {
         self.now_us().saturating_add(after_us)
+    }
+
+    /// Appends `entry` to the back of the queue `after_us` from now.
+    pub(crate) fn append_after(&mut self, after_us: u64, entry: L::Entry) {
+        let mut shared = self.shared.borrow_mut();
+        let at_us = shared.state.queue.now_us.saturating_add(after_us);
+        shared.state.queue.timers.push((at_us, entry));
     }
 
     /// Emits `said`.

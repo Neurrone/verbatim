@@ -255,7 +255,26 @@ impl<L: Logic> Core<L> {
             if let Some(probe) = L::probe(&entry) {
                 state.queue.backend.record(&probe);
             }
-            limiter::arrive::<L>(&state.facts, &mut state.queue.waiting, entry);
+            let ahead = state
+                .queue
+                .front
+                .iter()
+                .map(|front| &front.entry)
+                .chain(state.queue.waiting.iter().flat_map(|item| match item {
+                    Item::One(entry) | Item::Menu { entry, .. } => std::slice::from_ref(entry),
+                    Item::Run(candidates) => candidates.as_slice(),
+                }))
+                .collect::<Vec<_>>();
+            let dropped = L::dropped_at_arrival(
+                &state.facts,
+                &ahead,
+                &entry,
+                &state.queue.backend,
+                state.queue.now_us,
+            );
+            if !dropped {
+                limiter::arrive::<L>(&state.facts, &mut state.queue.waiting, entry);
+            }
         }
         if let Some(number) = withdrawn {
             self.stop(number, CancelReason::Withdrawn);
@@ -360,7 +379,12 @@ impl<L: Logic> Core<L> {
     fn foreground(&mut self, foreground: Foreground) {
         let stopped = {
             let mut shared = self.shared.borrow_mut();
+            let first = shared.state.queue.foreground.is_none();
             shared.state.queue.foreground = Some(foreground);
+            if first && let Some(entry) = L::started(&shared.state.facts, &foreground) {
+                let state = &mut shared.state;
+                limiter::arrive::<L>(&state.facts, &mut state.queue.waiting, entry);
+            }
             shared
                 .state
                 .queue
@@ -413,6 +437,21 @@ impl<L: Logic> Core<L> {
             }
             shared.state.queue.table.reader_ended(instance)
         };
+        {
+            let mut shared = self.shared.borrow_mut();
+            let state = &mut shared.state;
+            state.queue.waiting.retain_mut(|item| match item {
+                Item::One(entry) | Item::Menu { entry, .. } => !L::kept_by(entry, instance),
+                Item::Run(candidates) => {
+                    candidates.retain(|entry| !L::kept_by(entry, instance));
+                    !candidates.is_empty()
+                }
+            });
+            let foreground = state.queue.foreground;
+            for entry in L::reader_ended(&mut state.facts, instance, foreground) {
+                limiter::arrive::<L>(&state.facts, &mut state.queue.waiting, entry);
+            }
+        }
         for ended in ended {
             self.deliver(ended);
         }
@@ -429,6 +468,14 @@ impl<L: Logic> Core<L> {
         let mut shared = self.shared.borrow_mut();
         if let Some(windows) = shared.state.queue.table.round(now_us) {
             shared.effects.push(Effect::CheckHung(windows));
+        }
+        let state = &mut shared.state;
+        let (due, later): (Vec<_>, Vec<_>) = std::mem::take(&mut state.queue.timers)
+            .into_iter()
+            .partition(|(at_us, _)| *at_us <= now_us);
+        state.queue.timers = later;
+        for (_, entry) in due {
+            limiter::arrive::<L>(&state.facts, &mut state.queue.waiting, entry);
         }
     }
 }

@@ -16,7 +16,26 @@ use serde::{Deserialize, Serialize};
 
 use crate::property::{PropertyId, PropertyValue, PropertyValues, RuntimeId};
 use crate::tell::ElementToken;
-use crate::{ActionName, NodeId, QueryKind, TextOp, TextReply, WindowHandle};
+use crate::{ActionName, NodeId, Pid, QueryKind, TextOp, TextReply, WindowHandle};
+
+/// A reader Core asks.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum Reader {
+    /// The focus listener.
+    Listener,
+    /// The outpost of one application, by its process.
+    Outpost(Pid),
+}
+
+/// One running instance of a reader: a request out goes to one instance,
+/// and only that instance's answer or ending ends it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct Instance {
+    /// The reader.
+    pub reader: Reader,
+    /// Its generation, never reused.
+    pub generation: u64,
+}
 
 /// Core's number for one request, unique for the run, by which its answer
 /// is routed and a late answer dropped.
@@ -579,6 +598,138 @@ pub struct Cancel {
     pub number: RequestNumber,
     /// Why.
     pub reason: CancelReason,
+}
+
+/// The foreground record as the listener reports it to the event queue:
+/// the window `GetForegroundWindow` names, once it names it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ForegroundReport {
+    /// The window.
+    pub window: WindowHandle,
+    /// The top of its owner chain.
+    pub root_owner: WindowHandle,
+    /// The application holding attention: the window's owner, or for a
+    /// console window its console host.
+    pub process: Pid,
+    /// The thread that owns the window, which keys its backend verdict.
+    pub thread: u32,
+    /// Its class.
+    pub class: String,
+}
+
+/// An input to Core's event queue (ADR 0003, "Core's inbox and the event
+/// queue").
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum QueueInput {
+    /// A reader's tell.
+    Tell {
+        /// The instance that told it.
+        from: Instance,
+        /// The tell.
+        tell: Box<crate::tell::Event>,
+    },
+    /// A reader's answer.
+    Answer {
+        /// The instance that answered.
+        from: Instance,
+        /// The answer.
+        answer: Answer,
+    },
+    /// The shell found the request's window hung before sending it, and
+    /// answers it "not responding" unsent.
+    RefusedHung(RequestNumber),
+    /// The shell's half-second check of a window.
+    HangCheck {
+        /// The window.
+        window: WindowHandle,
+        /// Whether Windows reports it hung.
+        hung: bool,
+    },
+    /// The listener's foreground report.
+    Foreground(ForegroundReport),
+    /// A reader's instance can take requests.
+    ReaderReady(Instance),
+    /// A reader's instance ended.
+    ReaderEnded(Instance),
+    /// A window was destroyed.
+    WindowDestroyed(WindowHandle),
+    /// The time Core last asked to be woken at came.
+    Due,
+    /// The processes whose windows nothing is read from: the end-to-end
+    /// harness's own, given once at startup; none for real users.
+    Ignored(Vec<Pid>),
+}
+
+/// How a request from outside the event queue ended, as its asker learns:
+/// the five outcomes, a result that did not decode, or Core no longer
+/// awaiting it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum OutsideOutcome {
+    /// A result.
+    Result(Reply),
+    /// Refused by the reader, with its reason.
+    Refused(Refusal),
+    /// A result that did not decode as the request's reply.
+    Undecodable,
+    /// The object is not there.
+    NotThere,
+    /// Not responding.
+    NotResponding,
+    /// The reader ended or stopped.
+    ReaderEnded,
+    /// Core no longer awaits it, for this reason.
+    NoLongerAwaited(CancelReason),
+}
+
+/// What Core's event queue asks of the shell.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum QueueEffect {
+    /// Check the request's window for a hang, then send it to the
+    /// instance, or answer it "not responding" unsent
+    /// ([`QueueInput::RefusedHung`]).
+    Send {
+        /// The instance.
+        to: Instance,
+        /// The request.
+        ask: Ask,
+    },
+    /// Tell the instance to cancel a request.
+    Cancel {
+        /// The instance.
+        to: Instance,
+        /// The cancel.
+        cancel: Cancel,
+    },
+    /// A request from outside the event queue ended: answer its asker.
+    Answered {
+        /// The token the shell keeps the asker's responder under.
+        asker: u64,
+        /// How it ended.
+        outcome: OutsideOutcome,
+    },
+    /// Check these windows for a hang ([`QueueInput::HangCheck`]).
+    CheckHung(Vec<WindowHandle>),
+    /// An answer was dropped: log it.
+    AnswerDropped {
+        /// The request it named.
+        number: RequestNumber,
+        /// Whether it was late or named no request out to its sender.
+        late: bool,
+    },
+    /// A result did not decode as its request's reply: log it as the
+    /// reader's fault.
+    Undecodable(RequestNumber),
+    /// The front entry's paused function could not be rebuilt from its
+    /// checkpoint, a defect in Core: log it; the input was not handled.
+    Mismatch {
+        /// What the rebuilt function asked and had.
+        replayed: String,
+        /// What the checkpoint records.
+        original: String,
+    },
+    /// Wake Core with [`QueueInput::Due`] at this time, in microseconds on
+    /// the run's shared clock; `None` for no wake.
+    WakeAt(Option<u64>),
 }
 
 #[cfg(test)]
