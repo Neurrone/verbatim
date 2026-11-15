@@ -112,28 +112,35 @@ done on 2026-11-14; the build notes give their figures.
 
 ### The builds, in order
 
-One build that changes state is in flight at a time. Each has its own
+The three builds' designs were approved by Dickson on 2026-11-16; the
+builds are built in number order and pushed together. Each has its own
 design with a state table, one adversarial review, an implementation
 review and its related scenarios. No new test level is built for the
 phase: the existing unit tests and end-to-end scenarios cover each
 build, used wherever they can be (Dickson, 2026-11-14).
 
-- The event queue and focus: the listener takes every hook; a focus is
-  told, then read by two requests; acceptance is judged in Core; the
-  frozen-window rule; the single record of an outpost generation's
-  life, from M6.2; each property and event kind declared once, and one
-  list of requests shared with extensions. The marker, the hand-over
-  of an application's first events, the live re-read and the readers'
-  ancestry caches go. Keys and commands join the event queue in this
-  build, caret keys keeping the outpost's note and poll until keys and
-  text (Dickson, 2026-11-15). It replaces the ancestry cache build that
-  was planned.
-- Changes and announcements: state, name and value changes,
-  selections, menus, notifications and toasts.
-- Keys and text: the caret watch in the outpost;
-  selection; the sentence move as one request; text positions held by
-  the outpost; the shell's copy of the line of held keys removed.
-- Terminals: told once, read when Core asks.
+- Build 1, the event queue, focus and announcements: the listener
+  takes every hook; a focus is told, then read by two requests;
+  acceptance is judged in Core; the frozen-window rule; the single
+  record of an outpost generation's life, from M6.2; each property and
+  event kind declared once, and one list of requests shared with
+  extensions; state, name and value changes, selections, menus,
+  notifications and toasts; keys and commands in the event queue, with
+  the caret watch in the outpost, selection, the sentence move as one
+  request, text positions held by the outpost and the shell's copy of
+  the line of held keys removed (Dickson, 2026-11-15 and 2026-11-16).
+  The marker, the hand-over of an application's first events, the live
+  re-read and the readers' ancestry caches go. It replaces the ancestry
+  cache build that was planned. Design:
+  `docs/design/readers-tell-core-asks-build1.md`.
+- Build 2: Core names the text provider and the details to fetch in
+  each request, and `Fetches` goes; the formatting memory is kept on
+  each focus record; control fields when built. Design:
+  `docs/design/readers-tell-core-asks-build2.md`.
+- Build 3, terminals: every change told, reads asked outside the event
+  queue, and the start of every read named by Core, which takes in
+  M6.4's first item. Design:
+  `docs/design/readers-tell-core-asks-build3.md`.
 - Clearing up: the messages and code nothing uses are deleted, the
   explanation pages and crate guides describe what is built, and
   wake-ups and processor time are measured for the phase.
@@ -1253,7 +1260,8 @@ remains, in order:
 
 - Every terminal read names the read its start was counted from, so
   that Core and the outpost agree on the last read without each
-  tracking it unnamed (the retrospective of 2026-11-10).
+  tracking it unnamed (the retrospective of 2026-11-10). Taken into
+  build 3 of "Readers tell, Core asks" (Dickson, 2026-11-16).
 - Generated invariant tests for the terminal's line comparison, if it is pure: the comparison of an old and a new screen must give back the new one exactly.
 - Pi's regular mode in the moving-by-command and "Report status bar"
   scenarios, once Pi is installed on the test machine.

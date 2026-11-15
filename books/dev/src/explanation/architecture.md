@@ -100,8 +100,13 @@ screen reader in both rendered and source form.
 - **D13, the focus listener.** One permanent listener process holds
   every desktop-wide registration: the UIA focus handler and global
   event group, and every WinEvent hook but a console host's five
-  events, which its outpost keeps. Its callbacks make no cross-process
-  call; it tells Core of each event, and reads a UIA focus only when
+  events, which its outpost keeps; a transient hook of those five,
+  held until a foreground event names the console host's thread, only
+  names that thread for the keyboard hook and tells nothing. Its
+  callbacks make no cross-process call; a check thread per application
+  makes, as each UIA event is delivered and before its tell, the calls
+  NVDA's handler for that event makes, and Core judges their results;
+  it tells Core of each event, and reads a UIA focus only when
   Core asks, on a thread per application, with no remote operation or
   connection; with its answer Core asks the application's outpost to
   complete the read ([ADR 0003](../reference/adr/0003-readers-tell-core-asks.md), "Who holds what" and "A UI
@@ -112,7 +117,9 @@ screen reader in both rendered and source form.
   every UIA event of the process with the focus registration; one
   desktop-wide hook keeps Windows' order of events across applications;
   one sender of the fact that a window came to the foreground needs no
-  event from a held application. Limitation, a known
+  event from a held application; checks made inside the asked read would
+  run behind the previous read and miss focuses in a burst, and a hung
+  application stalls only its own check thread. Limitation, a known
   cost: while a window's thread in an application is busy, a new
   connection that the application's own outpost leaves pending there can
   hold the listener's reads into that application for up to one
@@ -125,7 +132,9 @@ screen reader in both rendered and source form.
   listener's foreground change, never on a focus or an outpost's report,
   and the foreground is announced, never a gate. Each event rule is
   defined once and judged in Core, the acceptance test included; a
-  reader judges nothing but NVDA's local drops, which cannot hang; Core
+  reader judges nothing but NVDA's local drops, which cannot hang, and
+  the listener's drops on an event's own cached class and automation
+  id, which make no call; Core
   orders events, keys and commands by arrival in its one event queue;
   and facts Core carries in a request are used only inside that
   request's answer ([ADR 0003](../reference/adr/0003-readers-tell-core-asks.md); section 2). Why: a foreground gate failed broker-hosted

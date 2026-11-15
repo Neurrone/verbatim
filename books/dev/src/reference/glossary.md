@@ -68,6 +68,7 @@ their NVDA meanings and are documented in [docs/nvda](https://github.com/Neurron
   are accepted or dropped against it, while a focus is judged against
   the real foreground window as its outpost read it (D14).
   [verbatim-core](crates/verbatim-core.md).
+- **Check thread** — the listener's thread, one per application whose UI Automation events it hears, that makes at each event's delivery, before its tell is sent, the calls NVDA's handler for that event makes, so that Core judges their results. ADR 0003's term, not yet built.
 - **Cold case** — a window arbitration has never seen: the first event
   for it resolves a real verdict with a provider probe on the worker.
   [verbatim-outpost](crates/verbatim-outpost.md).
@@ -117,7 +118,7 @@ their NVDA meanings and are documented in [docs/nvda](https://github.com/Neurron
 - **Focus reader** — one source of focus reports for an application, its
   outpost generation paired with a kind: the listener's reading thread,
   or the outpost's own reads. [How focus works](../explanation/design/focus.md).
-- **Give up** — Core stops waiting for a request: it answers the request in its own table, takes the next entry and tells the reader to cancel. ADR 0003's term, not yet built.
+- **Stop waiting** — Core no longer waits for a request's answer: it records in its own table that it no longer waits for the request and takes the next entry; whether the reader is told to cancel, and what a late answer does, depends on the reason. ADR 0003's term, not yet built.
   [ADR 0003](adr/0003-readers-tell-core-asks.md).
 - **Golden image** — the Packer-built Windows VM baseline the Hyper-V
   harness imports, deploys to, and checkpoints. [The VM harness](../how-to/vm.md).
@@ -214,9 +215,9 @@ their NVDA meanings and are documented in [docs/nvda](https://github.com/Neurron
   under: the newest key given to the reading rules whose window holds
   the read, so a later key's cut treats that speech as the key's.
   [verbatim-core](crates/verbatim-core.md), "Core's terminal model".
-- **Stop points** — the committed focus's line of ancestors, sent with a focus request, where the reader's walk up the tree stops. ADR 0003's term, not yet built.
+- **Ancestors Core already knows** — the committed focus's ancestors, sent with a focus request. The reader's walk reads up the ancestor chain until it reaches one of them. ADR 0003's term, not yet built.
   [ADR 0003](adr/0003-readers-tell-core-asks.md).
-- **Tell** — a message a reader sends Core when an event arrives, carrying only what came with the event and reads of Windows' own state that cannot hang; it makes no call into the application. ADR 0003's term, not yet built.
+- **Tell** — a message a reader sends Core when an event arrives, carrying what came with the event and reads of Windows' own state that cannot hang; a UI Automation event's tell also carries the results of its check thread's calls, and no other tell makes a call into the application. ADR 0003's term, not yet built.
   [ADR 0003](adr/0003-readers-tell-core-asks.md).
 - **Terminal snapshot** — one read of a terminal as its outpost sends it
   to Core (`TerminalSnapshot`): the text from where the read started to
