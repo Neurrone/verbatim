@@ -26,6 +26,7 @@ use std::task::{Context, Poll, Waker};
 use verbatim_model::request::{Outcome as WireOutcome, Reply, RequestNumber};
 
 use super::inbox::{Effect, Timed};
+use super::limiter::{self, Item};
 use super::request::{Outcome, Refused, Request};
 use super::table::{Ending, Live, Order, Owner, Stage, Table};
 use super::{Foreground, Function, Instance, Logic, Reader};
@@ -70,7 +71,7 @@ pub(crate) struct State<E, F> {
     /// The front entry.
     pub(super) front: Option<Front<E>>,
     /// The entries waiting behind it, in arrival order.
-    pub(super) waiting: VecDeque<E>,
+    pub(super) waiting: VecDeque<Item<E>>,
     /// The requests.
     pub(super) table: Table,
     /// The running instance of each reader that can take requests.
@@ -292,7 +293,7 @@ impl<L: Logic> Core<L> {
         while self.task.is_none() {
             let entry = {
                 let mut shared = self.shared.borrow_mut();
-                let Some(entry) = shared.state.waiting.pop_front() else {
+                let Some(entry) = limiter::take::<L>(&mut shared.state.waiting) else {
                     break;
                 };
                 shared.state.front = Some(Front {
@@ -467,7 +468,7 @@ impl<L: Logic> Cx<L> {
     }
 
     /// The entries waiting behind this one, in arrival order.
-    pub(crate) fn waiting(&self) -> Ref<'_, VecDeque<L::Entry>> {
+    pub(crate) fn waiting(&self) -> Ref<'_, VecDeque<Item<L::Entry>>> {
         Ref::map(self.shared.borrow(), |shared| &shared.state.waiting)
     }
 

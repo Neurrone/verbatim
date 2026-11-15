@@ -16,6 +16,7 @@ use verbatim_model::{NodeId, Pid, WindowHandle};
 
 use super::driver::{Core, Cx};
 use super::inbox::{Effect, Input, Timed};
+use super::limiter::{MsaaKey, Place};
 use super::request::{Outcome, Request};
 use super::table::Asker;
 use super::{
@@ -165,6 +166,34 @@ impl Logic for Test {
 
     fn recovered(_: &u32, window: &RequestWindow) -> Option<Entry> {
         Some(Entry::Recovered(window.handle))
+    }
+
+    fn place(_: &u32, _: &Entry) -> Place {
+        Place::Other {
+            merges: false,
+            focus_kind: false,
+            ends_run: true,
+        }
+    }
+
+    fn merges(_: &u32, _: &Entry, _: &Entry) -> bool {
+        false
+    }
+
+    fn exempt_from_cap(_: &u32, _: &MsaaKey) -> bool {
+        false
+    }
+
+    fn run_entry(_: Vec<Entry>) -> Entry {
+        unreachable!("the tests' entries make no run")
+    }
+
+    fn ends_at_foreground(_: &u32, _: &Entry, _: &Foreground) -> bool {
+        false
+    }
+
+    fn foreground_marker(_: &Foreground) -> Option<Entry> {
+        None
     }
 }
 
@@ -1200,7 +1229,7 @@ fn a_dump_shows_the_front_entry_its_answers_and_its_request_out() {
             "Core { now_us: 3100, ",
             "front: Some(Front { entry: Read { reads: 2, exempt: false }, ",
             "answers: [Result(PropertyValues([]))], asked: Some(RequestNumber(3)) }), ",
-            "waiting: [Read { reads: 1, exempt: false }], ",
+            "waiting: [One(Read { reads: 1, exempt: false })], ",
             "table: Table { last: 3, live: {RequestNumber(3): Live { reader: Outpost(Pid(1)), ",
             "window: RequestWindow { handle: WindowHandle(11), top_level: WindowHandle(10), ",
             "root_owner: WindowHandle(10), process: Pid(1), thread: 3, by_class: Some(Msaa) }, ",
@@ -1274,6 +1303,32 @@ impl Logic for Probing {
     }
 
     fn recovered((): &(), _: &RequestWindow) -> Option<()> {
+        None
+    }
+
+    fn place((): &(), (): &()) -> Place {
+        Place::Other {
+            merges: false,
+            focus_kind: false,
+            ends_run: true,
+        }
+    }
+
+    fn merges((): &(), (): &(), (): &()) -> bool {
+        false
+    }
+
+    fn exempt_from_cap((): &(), _: &MsaaKey) -> bool {
+        false
+    }
+
+    fn run_entry(_: Vec<()>) {}
+
+    fn ends_at_foreground((): &(), (): &(), _: &Foreground) -> bool {
+        false
+    }
+
+    fn foreground_marker(_: &Foreground) -> Option<()> {
         None
     }
 }

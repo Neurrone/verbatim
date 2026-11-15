@@ -29,6 +29,9 @@
 
 mod driver;
 mod inbox;
+mod limiter;
+#[cfg(test)]
+mod limiter_tests;
 mod request;
 mod table;
 #[cfg(test)]
@@ -44,6 +47,7 @@ use verbatim_model::{Pid, WindowHandle};
 use crate::focus::backend::{Backend, JudgedWindow, WindowKey};
 
 use driver::Cx;
+use limiter::{MsaaKey, Place};
 
 /// A focus read's due time: 13 seconds from the moment Core decides to
 /// ask, for its whole chain of requests (ADR 0003, "A frozen window").
@@ -163,4 +167,36 @@ pub(crate) trait Logic: Sized + 'static {
     /// The entry appended when `window`, in the recovery set, answers
     /// again.
     fn recovered(facts: &Self::Facts, window: &RequestWindow) -> Option<Self::Entry>;
+
+    /// How `entry` waits: its part in the limiter, judged on its tell's
+    /// facts.
+    fn place(facts: &Self::Facts, entry: &Self::Entry) -> Place;
+
+    /// Whether the waiting entry `waiting` is the same as `arriving` for
+    /// the merge: the same object, kind and raising thread, and for UI
+    /// Automation the property or the notification's kind, processing
+    /// and activity.
+    fn merges(facts: &Self::Facts, waiting: &Self::Entry, arriving: &Self::Entry) -> bool;
+
+    /// Whether an MSAA entry of `key` is exempt from its thread's cap: it
+    /// is on the readers' last focus's ids.
+    fn exempt_from_cap(facts: &Self::Facts, key: &MsaaKey) -> bool;
+
+    /// The entry a run of MSAA focus and foreground candidates, oldest
+    /// first, runs as when it reaches the front.
+    fn run_entry(candidates: Vec<Self::Entry>) -> Self::Entry;
+
+    /// Whether the waiting entry `entry` ends when `foreground` comes in
+    /// front: its request would name a window outside the foreground's
+    /// tree and owner chain, and it is not exempt.
+    fn ends_at_foreground(
+        facts: &Self::Facts,
+        entry: &Self::Entry,
+        foreground: &Foreground,
+    ) -> bool;
+
+    /// The foreground marker joining the back when `foreground` comes in
+    /// front, whose turn empties the readers' last focus when its window is
+    /// unrelated to the committed focus.
+    fn foreground_marker(foreground: &Foreground) -> Option<Self::Entry>;
 }

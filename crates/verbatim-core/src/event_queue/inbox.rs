@@ -11,6 +11,7 @@ use verbatim_model::request::{
 };
 
 use super::driver::{Core, outcome_of, widen};
+use super::limiter::{self, Item};
 use super::request::Outcome;
 use super::table::{Asker, Dropped, Ended, Live, Owner, Stage};
 use super::{Foreground, Instance, Logic, Reader, RequestWindow};
@@ -236,7 +237,11 @@ impl<L: Logic> Core<L> {
                     .filter(|_| L::withdraws(&state.facts, &front.entry, &entry))
             })
         };
-        self.shared.borrow_mut().state.waiting.push_back(entry);
+        {
+            let mut shared = self.shared.borrow_mut();
+            let state = &mut shared.state;
+            limiter::arrive::<L>(&state.facts, &mut state.waiting, entry);
+        }
         if let Some(number) = withdrawn {
             self.stop(number, CancelReason::Withdrawn);
         }
@@ -324,8 +329,9 @@ impl<L: Logic> Core<L> {
         let Some(recovered) = shared.state.table.unwatch(window) else {
             return;
         };
-        if let Some(entry) = L::recovered(&shared.state.facts, &recovered) {
-            shared.state.waiting.push_back(entry);
+        let state = &mut shared.state;
+        if let Some(entry) = L::recovered(&state.facts, &recovered) {
+            limiter::arrive::<L>(&state.facts, &mut state.waiting, entry);
         }
     }
 
@@ -352,6 +358,21 @@ impl<L: Logic> Core<L> {
         };
         if let Some(number) = stopped {
             self.stop(number, CancelReason::Foreground);
+        }
+        let mut shared = self.shared.borrow_mut();
+        let state = &mut shared.state;
+        let facts = &state.facts;
+        state.waiting.retain_mut(|item| match item {
+            Item::One(entry) | Item::Menu { entry, .. } => {
+                !L::ends_at_foreground(facts, entry, &foreground)
+            }
+            Item::Run(candidates) => {
+                candidates.retain(|entry| !L::ends_at_foreground(facts, entry, &foreground));
+                !candidates.is_empty()
+            }
+        });
+        if let Some(marker) = L::foreground_marker(&foreground) {
+            limiter::arrive::<L>(&state.facts, &mut state.waiting, marker);
         }
     }
 
