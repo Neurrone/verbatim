@@ -15,6 +15,9 @@ use super::backend::{BackendCache, Judged, JudgedWindow, Judgement, WindowKey, b
 use super::duplicate::{msaa_duplicate, uia_duplicate};
 use super::versions::LastFocus;
 
+/// File Explorer, by its executable name.
+const FILE_EXPLORER: &str = "explorer";
+
 /// What an override makes of a UI Automation focus.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Override {
@@ -47,8 +50,8 @@ fn role(values: &PropertyValues) -> Option<Role> {
 /// NVDA's focus overrides for a UI Automation focus `tell`, from its
 /// cached automation id, class name and role and its nearest window's
 /// class: the console window's own element, Excel's `EXCEL6` pane and an
-/// unnamed first `NetUITWMenuItem`. File Explorer's switcher panes need
-/// the application's name, which the tell does not carry yet.
+/// unnamed first `NetUITWMenuItem`; and File Explorer's task switcher
+/// frame, by the tell's application name.
 pub(crate) fn focus_override(tell: &Event) -> Override {
     let values = &tell.cached;
     let window_class = match &tell.window {
@@ -62,6 +65,18 @@ pub(crate) fn focus_override(tell: &Event) -> Override {
         return Override::Refused;
     }
     if window_class == Some("EXCEL6") && role == Some(Role::Pane) {
+        return Override::Refused;
+    }
+    if tell.application == FILE_EXPLORER
+        && matches!(
+            (class_name, role),
+            (Some("MultitaskingViewFrame"), Some(Role::Window))
+                | (
+                    Some("Windows.UI.Input.InputSite.WindowClass"),
+                    Some(Role::Pane)
+                )
+        )
+    {
         return Override::Refused;
     }
     let unnamed = text(values, PropertyId::Name).is_none_or(str::is_empty);

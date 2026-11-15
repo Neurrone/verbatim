@@ -186,6 +186,13 @@ pub struct Event {
     /// The application: the process that serves the object, a console
     /// window's being its console host.
     pub process: Pid,
+    /// The executable name of the process that sent the event, such as
+    /// `explorer`, without its folder or extension: read by the listener
+    /// once per process generation with `QueryFullProcessImageNameW`, a
+    /// call to Windows and not into the application, and kept on its
+    /// record of the application. Core's rules for an application's
+    /// elements read it, as NVDA's application modules match by it.
+    pub application: String,
     /// The thread that raised the event, by which the limiter counts it.
     pub thread: u32,
     /// When the reader's callback received it, in microseconds on the
@@ -223,6 +230,7 @@ mod tests {
         let tell = Event {
             kind: EventKind::UiaFocus,
             process: Pid(40),
+            application: "explorer".to_owned(),
             thread: 41,
             at_us: 1_000,
             object: EventObject::Uia {

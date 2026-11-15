@@ -51,6 +51,7 @@ fn uia_focus(cached: Vec<PropertyAnswer>, window_class: &str, checked: Checked) 
     Event {
         kind: EventKind::UiaFocus,
         process: Pid(40),
+        application: "app".to_owned(),
         thread: 41,
         at_us: 1_000,
         object: EventObject::Uia {
@@ -77,6 +78,7 @@ fn msaa_focus(kind: EventKind, object: i32) -> Event {
     Event {
         kind,
         process: Pid(40),
+        application: "app".to_owned(),
         thread: 41,
         at_us: 1_000,
         object: EventObject::Msaa {
@@ -277,4 +279,37 @@ fn a_foreground_tell_counts_and_other_kinds_do_not() {
         &cache,
         2_000
     ));
+}
+
+#[test]
+fn file_explorers_switcher_frames_are_refused_and_only_there() {
+    for (class, role) in [
+        ("MultitaskingViewFrame", Role::Window),
+        ("Windows.UI.Input.InputSite.WindowClass", Role::Pane),
+    ] {
+        let cached = vec![
+            value(PropertyId::ClassName, PropertyValue::Text(class.to_owned())),
+            value(PropertyId::Role, PropertyValue::Role(role)),
+        ];
+        let mut tell = uia_focus(cached, "UiaHost", focused(Read::Answered(true)));
+        assert_eq!(focus_override(&tell), Override::None);
+        tell.application = "explorer".to_owned();
+        assert_eq!(focus_override(&tell), Override::Refused);
+        assert!(!counts_as_pending(
+            &tell,
+            None,
+            &BackendCache::default(),
+            2_000
+        ));
+    }
+    let cached = vec![
+        value(
+            PropertyId::ClassName,
+            PropertyValue::Text("Windows.UI.Input.InputSite.WindowClass".to_owned()),
+        ),
+        value(PropertyId::Role, PropertyValue::Role(Role::Window)),
+    ];
+    let mut other_role = uia_focus(cached, "UiaHost", focused(Read::Answered(true)));
+    other_role.application = "explorer".to_owned();
+    assert_eq!(focus_override(&other_role), Override::None);
 }
