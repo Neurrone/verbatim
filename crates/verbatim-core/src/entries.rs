@@ -111,6 +111,11 @@ pub(crate) enum Entry {
     MenuCheck(Box<MenuCheck>),
     /// A read of an application's current focus that Core makes itself.
     CurrentFocus(Box<CurrentFocus>),
+    /// An MSAA name, value, state or description change, or a selection
+    /// kind.
+    MsaaChange(Box<crate::changes::MsaaChange>),
+    /// A UI Automation property change.
+    UiaChange(Box<crate::changes::UiaChange>),
     /// The foreground record changed to this window: at its turn the
     /// readers' last focus is emptied when the window is a top-level
     /// window unrelated to the committed focus.
@@ -152,6 +157,16 @@ impl fmt::Debug for Entry {
                 candidate.tell.kind, candidate.ids, candidate.tell.process.0
             ),
             Self::MenuCheck(_) => formatter.write_str("MenuCheck"),
+            Self::MsaaChange(change) => write!(
+                formatter,
+                "MsaaChange({:?} {:?} of {})",
+                change.tell.kind, change.ids, change.tell.process.0
+            ),
+            Self::UiaChange(change) => write!(
+                formatter,
+                "UiaChange({:?} {:?} of {})",
+                change.property, change.runtime_id, change.tell.process.0
+            ),
             Self::CurrentFocus(read) => write!(
                 formatter,
                 "CurrentFocus({:?} {} of {})",
@@ -226,6 +241,31 @@ impl Entry {
                     _ => Self::Menu(candidate),
                 })
             }
+            (
+                kind,
+                EventObject::Msaa {
+                    window,
+                    object,
+                    child,
+                },
+            ) if crate::changes::is_msaa_change(kind) => {
+                let ids = MsaaIds {
+                    window: *window,
+                    object: *object,
+                    child: *child,
+                };
+                let window = request_window(&tell)?;
+                Some(Self::MsaaChange(Box::new(crate::changes::MsaaChange {
+                    tell,
+                    ids,
+                    window,
+                })))
+            }
+            (EventKind::UiaPropertyChanged, EventObject::Uia { runtime_id, .. }) => {
+                let runtime_id = runtime_id.clone();
+                crate::changes::uia_of_tell(tell, runtime_id)
+                    .map(|change| Self::UiaChange(Box::new(change)))
+            }
             _ => None,
         }
     }
@@ -235,6 +275,8 @@ impl Entry {
         match self {
             Self::UiaFocus(focus) => Some(&focus.tell),
             Self::Candidate(candidate) | Self::Menu(candidate) => Some(&candidate.tell),
+            Self::MsaaChange(change) => Some(&change.tell),
+            Self::UiaChange(change) => Some(&change.tell),
             Self::Run(_)
             | Self::ForegroundMarker { .. }
             | Self::MenuCheck(_)
@@ -286,6 +328,11 @@ impl Logic for Entries {
             Entry::Candidate(candidate) => {
                 Box::pin(crate::focus::msaa_run::run(cx, vec![*candidate]))
             }
+            Entry::MsaaChange(change) => Box::pin(crate::changes::msaa(cx, *change)),
+            Entry::UiaChange(change) => Box::pin(async move {
+                let mut cx = cx;
+                crate::changes::uia(&mut cx, &change);
+            }),
             Entry::ForegroundMarker { window, root_owner } => Box::pin(async move {
                 let mut cx = cx;
                 cx.facts_mut()
@@ -364,7 +411,7 @@ impl Logic for Entries {
         crate::focus::menus::opening_dropped(facts, ahead, arriving, backend, now_us)
     }
 
-    fn place(_: &SrState, entry: &Entry) -> Place {
+    fn place(facts: &SrState, entry: &Entry) -> Place {
         match entry {
             Entry::Candidate(candidate) => Place::Msaa {
                 key: MsaaKey {
@@ -392,9 +439,30 @@ impl Logic for Entries {
                 class: MsaaClass::Menu,
                 accepted: acceptance::accept(candidate.tell.kind, candidate.facts(), false).is_ok(),
             },
+            Entry::MsaaChange(change) => Place::Msaa {
+                key: MsaaKey {
+                    kind: change.tell.kind,
+                    window: change.ids.window,
+                    object: change.ids.object,
+                    child: change.ids.child,
+                    thread: change.tell.thread,
+                },
+                class: MsaaClass::Other,
+                accepted: acceptance::accept(
+                    change.tell.kind,
+                    window_facts(&change.tell),
+                    facts.settings.report_background_progress_bars,
+                )
+                .is_ok(),
+            },
             Entry::UiaFocus(_) => Place::Other {
                 merges: true,
                 focus_kind: true,
+                ends_run: false,
+            },
+            Entry::UiaChange(_) => Place::Other {
+                merges: true,
+                focus_kind: false,
                 ends_run: false,
             },
             Entry::CurrentFocus(_) | Entry::MenuCheck(_) => Place::Other {
@@ -417,6 +485,14 @@ impl Logic for Entries {
                     == (
                         arriving.tell.kind,
                         &arriving.runtime_id,
+                        arriving.tell.thread,
+                    )
+            }
+            (Entry::UiaChange(waiting), Entry::UiaChange(arriving)) => {
+                (&waiting.runtime_id, waiting.property, waiting.tell.thread)
+                    == (
+                        &arriving.runtime_id,
+                        arriving.property,
                         arriving.tell.thread,
                     )
             }
@@ -451,7 +527,11 @@ impl Logic for Entries {
             Entry::UiaFocus(focus) => request_window(&focus.tell),
             Entry::Candidate(candidate) | Entry::Menu(candidate) => Some(candidate.window),
             Entry::CurrentFocus(read) => Some(read.window),
-            Entry::Run(_) | Entry::ForegroundMarker { .. } | Entry::MenuCheck(_) => None,
+            Entry::MsaaChange(change) => Some(change.window),
+            Entry::Run(_)
+            | Entry::ForegroundMarker { .. }
+            | Entry::MenuCheck(_)
+            | Entry::UiaChange(_) => None,
         };
         window.is_some_and(|window| {
             !foreground.holds(&window) && !entry.tell().is_some_and(accepted_apart_from_foreground)
@@ -466,7 +546,9 @@ impl Logic for Entries {
             | Entry::ForegroundMarker { .. }
             | Entry::Menu(_)
             | Entry::MenuCheck(_)
-            | Entry::CurrentFocus(_) => None,
+            | Entry::CurrentFocus(_)
+            | Entry::MsaaChange(_)
+            | Entry::UiaChange(_) => None,
         }
     }
 

@@ -50,6 +50,7 @@
 )]
 
 mod applications;
+mod changes;
 mod desktop;
 pub mod dump;
 mod editing;

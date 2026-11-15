@@ -141,6 +141,8 @@ pub(crate) fn opening_dropped(
             Entry::Candidate(candidate) => vec![&candidate.tell],
             Entry::Run(candidates) => candidates.iter().map(|candidate| &candidate.tell).collect(),
             Entry::Menu(_)
+            | Entry::MsaaChange(_)
+            | Entry::UiaChange(_)
             | Entry::MenuCheck(_)
             | Entry::CurrentFocus(_)
             | Entry::ForegroundMarker { .. } => Vec::new(),

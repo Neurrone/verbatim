@@ -75,7 +75,7 @@ fn own_window(values: &PropertyValues) -> Option<WindowHandle> {
 /// The snapshot today's announcement code speaks of `node`, read through
 /// `backend`; `None` when the reader minted no node for it, a reader's
 /// fault.
-fn snapshot(node: &FocusNode, backend: Backend) -> Option<NodeSnapshot> {
+pub(crate) fn snapshot(node: &FocusNode, backend: Backend) -> Option<NodeSnapshot> {
     let values = &node.read.values;
     Some(NodeSnapshot {
         id: node.read.node?,

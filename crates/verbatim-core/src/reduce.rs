@@ -2090,6 +2090,37 @@ fn outpost_ended(state: &mut SrState, outpost: OutpostId) -> Vec<Effect> {
 
 /// A state change of `node_id`, spoken on the focus or an ancestor
 /// ([`change_on`]), and on nothing else.
+/// A change of `node_id`'s property, judged by today's rules against the
+/// committed focus and its ancestors, the navigator's copy of the focus
+/// kept current: the event queue's change entries
+/// (`crate::changes`) speak through this until the announcement code is
+/// rewritten.
+pub(crate) fn property_changed(
+    state: &mut SrState,
+    trace_id: TraceId,
+    node_id: NodeId,
+    change: &PropertyChange,
+    child_count: Option<u32>,
+) -> Vec<Effect> {
+    let effects = match change {
+        PropertyChange::Name(name) => reduce_name_changed(state, trace_id, node_id, name.as_ref()),
+        PropertyChange::Value(value) => {
+            reduce_value_changed(state, trace_id, node_id, value.clone())
+        }
+        PropertyChange::States(new_states) => {
+            states_event(state, trace_id, node_id, *new_states, child_count)
+        }
+        PropertyChange::Description(description) => {
+            reduce_description_changed(state, trace_id, node_id, description.as_ref())
+        }
+        PropertyChange::Suggestions(open) => reduce_suggestions(state, node_id, *open),
+        // `PropertyChange` is `#[non_exhaustive]`.
+        _ => Vec::new(),
+    };
+    sync_navigator_with_focus(state);
+    effects
+}
+
 fn states_event(
     state: &mut SrState,
     trace_id: TraceId,
@@ -2904,7 +2935,7 @@ fn reduce_selection_changed(
 /// list the focus controls" in `docs/nvda/events.md`): spoken as a focus,
 /// interrupting, with the navigator moved to it, while `controller` is
 /// still the live focus. The focus itself does not move.
-fn reduce_controlled_selection(
+pub(crate) fn reduce_controlled_selection(
     state: &mut SrState,
     trace_id: TraceId,
     controller: NodeId,
