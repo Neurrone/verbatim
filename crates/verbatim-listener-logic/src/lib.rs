@@ -6,6 +6,11 @@
 //!
 //! - [`checks`]: what a focus event goes through before its read, NVDA's
 //!   checks in their order, as a pure step function.
+//! - [`check`]: the calls a UI Automation event's check makes at delivery
+//!   on its application's check thread, as a pure step function.
+//! - [`check_threads`]: the check threads' records, one per application,
+//!   and the idle barrier's wait for them.
+//! - [`kept`]: the UI Automation elements the listener keeps for its tells.
 //! - [`focus`]: the vocabulary a focus event is judged and scheduled in,
 //!   and the reasons an event is dropped.
 //! - [`schedule`]: the read scheduler, which reading thread reads which
@@ -54,8 +59,11 @@
     )
 )]
 
+pub mod check;
+pub mod check_threads;
 pub mod checks;
 pub mod focus;
 pub mod foreground;
+pub mod kept;
 pub mod schedule;
 pub mod tell;
