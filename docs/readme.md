@@ -79,6 +79,12 @@ harness, NVDA captures and troubleshooting.
     scope, code, state tables and messages, Core's rules with NVDA's
     source, the behaviours the deleted code carries, the measurements,
     and what later milestones must keep.
+  - [readers-tell-core-asks-build1.md](design/readers-tell-core-asks-build1.md),
+    [readers-tell-core-asks-build2.md](design/readers-tell-core-asks-build2.md)
+    and [readers-tell-core-asks-build3.md](design/readers-tell-core-asks-build3.md)
+    — the approved designs of its three builds: the event queue, focus
+    and announcements, with keys and text; Core naming the text provider
+    and the details, with the formatting memory; and terminals.
   - [communication.md](design/communication.md) — every pipe and thread
     from an event or a key to sound; published once its audio step is
     built.
