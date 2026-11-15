@@ -65,6 +65,7 @@ mod foreground;
 mod key_line;
 mod keys;
 mod live_reread;
+mod navigator;
 mod proven;
 mod queries;
 mod recorder;

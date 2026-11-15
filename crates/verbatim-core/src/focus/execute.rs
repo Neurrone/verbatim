@@ -300,7 +300,7 @@ fn ready(
         alive: true,
     };
     let place = Place {
-        window: read.focus.read.window,
+        window: read.focus.read.window.handle,
         top_level: origin.asked.top_level,
         root_owner: origin.asked.root_owner,
         ancestor_windows: kept_ancestors

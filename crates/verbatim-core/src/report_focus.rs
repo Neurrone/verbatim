@@ -22,9 +22,9 @@ use crate::event_queue::{Cx, OTHER_DUE_US, Outcome, Reader, Request, RequestWind
 use crate::focus::versions::{Committed, ReadBy};
 use crate::{editing, review_text, text};
 
-/// The properties report focus reads: everything the focus announcement
-/// speaks, and the text summary.
-const REPORT_SET: &[PropertyId] = &[
+/// The properties a node's announcement speaks, which a read of a node
+/// for its announcement asks.
+pub(crate) const ANNOUNCED_SET: [PropertyId; 15] = [
     PropertyId::Name,
     PropertyId::Role,
     PropertyId::Value,
@@ -40,8 +40,15 @@ const REPORT_SET: &[PropertyId] = &[
     PropertyId::RangeValue,
     PropertyId::Cell,
     PropertyId::TableCounts,
-    PropertyId::TextSummary,
 ];
+
+/// The properties report focus reads: everything the focus announcement
+/// speaks, and the text summary.
+fn report_set() -> Vec<PropertyId> {
+    let mut set = ANNOUNCED_SET.to_vec();
+    set.push(PropertyId::TextSummary);
+    set
+}
 
 /// The read of the committed focus's node, of its application's outpost.
 #[derive(Debug)]
@@ -65,7 +72,7 @@ impl Request for FocusProperties {
     fn wire(&self) -> Wire {
         Wire::Properties {
             node: self.node,
-            set: REPORT_SET.to_vec(),
+            set: report_set(),
         }
     }
 
@@ -117,7 +124,7 @@ pub(crate) async fn run(mut cx: Cx<Entries>, trace_id: TraceId, repeat: u8) {
         Target::Unread => return,
         Target::Read(request, backend) => (request, backend),
     };
-    let (node, window) = (request.node, request.window.handle);
+    let (node, window) = (request.node, request.window.node_window());
     let due_us = cx.due_in(OTHER_DUE_US);
     let Outcome::Result(values) = cx.ask(request, due_us).await else {
         return;

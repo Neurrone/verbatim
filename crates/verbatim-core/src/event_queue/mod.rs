@@ -87,6 +87,32 @@ pub(crate) struct RequestWindow {
 }
 
 impl RequestWindow {
+    /// The window as an answer reports a node's nearest window.
+    pub(crate) fn node_window(&self) -> verbatim_model::request::NodeWindow {
+        verbatim_model::request::NodeWindow {
+            handle: self.handle,
+            top_level: self.top_level,
+            root_owner: self.root_owner,
+            process: self.process,
+            thread: self.thread,
+        }
+    }
+
+    /// The window a request on a node an answer read names: the node's
+    /// nearest window with the facts the reader read of it. Its classes are
+    /// not read, so probes decide its backend; a request on a node an
+    /// outpost holds is read through that node's own backend.
+    pub(crate) fn of_node(window: &verbatim_model::request::NodeWindow) -> Self {
+        Self {
+            handle: window.handle,
+            top_level: window.top_level,
+            root_owner: window.root_owner,
+            process: window.process,
+            thread: window.thread,
+            by_class: None,
+        }
+    }
+
     /// The window as the backend cache judges it.
     pub(crate) fn judged(&self) -> JudgedWindow {
         JudgedWindow {

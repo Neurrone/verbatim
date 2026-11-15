@@ -9,10 +9,10 @@ use std::collections::VecDeque;
 
 use serde::{Deserialize, Serialize};
 use verbatim_model::{
-    CaretKey, CaretMotion, CaretRead, CaretReply, CaretReport, Change, Effect, FetchResult, Input,
-    KeyFetch, NodeId, NoteRequest, QueryId, QueryKind, ReadFacts, ReadPurpose, ReviewCommand,
-    SelectionChange, TextChunk, TextMovement, TextOp, TextPoint, TextPosition, TextRead, TextReply,
-    TextUnit, TraceId, UtteranceSegment, had_effect,
+    CaretKey, CaretMotion, CaretRead, CaretReply, CaretReport, Change, Effect, Input, KeyFetch,
+    NodeId, NoteRequest, QueryId, ReadFacts, ReadPurpose, ReviewCommand, SelectionChange,
+    TextChunk, TextMovement, TextOp, TextPoint, TextPosition, TextRead, TextReply, TextUnit,
+    TraceId, UtteranceSegment, had_effect,
 };
 
 use crate::editing::{self, is_grid, text_focus};
@@ -1195,23 +1195,6 @@ pub(crate) fn press_answered(
     };
     let mut effects =
         crate::review_text::press_answer(state, trace_id, press.node, press.review, then, ending);
-    effects.extend(end_unless_followed(state, query, press));
-    effects
-}
-
-/// The answer to a press's object navigation `query`.
-pub(crate) fn navigation_answered(
-    state: &mut SrState,
-    trace_id: TraceId,
-    query: QueryId,
-    kind: QueryKind,
-    result: &FetchResult,
-) -> Vec<Effect> {
-    let Some(press) = press_of(state, query) else {
-        return Vec::new();
-    };
-    let mut effects =
-        crate::reduce::navigate_completed(state, trace_id, press.review, kind, result);
     effects.extend(end_unless_followed(state, query, press));
     effects
 }

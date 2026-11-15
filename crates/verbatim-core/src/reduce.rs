@@ -2045,9 +2045,6 @@ fn outpost_ended(state: &mut SrState, outpost: OutpostId) -> Vec<Effect> {
     {
         state.navigator = None;
     }
-    state
-        .queries
-        .forget(|then| matches!(then, Then::Navigation { from, .. } if from.outpost() == outpost));
     crate::key_line::forget_press_read(state, outpost);
     effects
 }
@@ -2396,18 +2393,19 @@ fn navigator_command(
     command: ReviewCommand,
     repeat: u8,
 ) -> Vec<Effect> {
-    // "To focus" is meaningful even with the navigator already on focus;
-    // handle it before the navigator-present guard so it can seed one.
-    if command == ReviewCommand::ToFocus {
-        // NVDA says "Move to focus" before the object.
-        let mut effects = navigator_to_focus(state, trace_id);
-        if let Some(Effect::Speak(utterance, _)) = effects.first_mut() {
-            utterance.segments.insert(
-                0,
-                UtteranceSegment::new(SegmentContent::Message(Message::MoveToFocus)),
-            );
-        }
-        return effects;
+    // Move to focus, object navigation, activate and report the current
+    // object run as event-queue entries (`crate::navigator`).
+    if matches!(
+        command,
+        ReviewCommand::ToFocus
+            | ReviewCommand::ReportObject
+            | ReviewCommand::Activate
+            | ReviewCommand::Parent
+            | ReviewCommand::NextSibling
+            | ReviewCommand::PreviousSibling
+            | ReviewCommand::FirstChild
+    ) {
+        return Vec::new();
     }
     let Some(navigator) = state.navigator.as_ref() else {
         return vec![Effect::Speak(
@@ -2430,38 +2428,12 @@ fn navigator_command(
         command,
         repeat,
     };
-    match command {
-        #[expect(clippy::unreachable, reason = "moving to the focus returned above")]
-        ReviewCommand::ToFocus => unreachable!("handled above"),
-        ReviewCommand::ReportObject => review_text::read_object(state, press),
-        ReviewCommand::Activate => {
-            let node = navigator.object.id;
-            vec![
-                state
-                    .queries
-                    .ask(crate::queries::Asking::Activate(node), Then::Activation)
-                    .1,
-            ]
-        }
-        ReviewCommand::Parent => navigate(state, press, QueryKind::Parent),
-        ReviewCommand::NextSibling => navigate(state, press, QueryKind::NextSibling),
-        ReviewCommand::PreviousSibling => navigate(state, press, QueryKind::PreviousSibling),
-        ReviewCommand::FirstChild => navigate(state, press, QueryKind::FirstChild),
-        command if review_text::handles(command) => review_text::run(state, press),
-        _ => Vec::new(),
+    let _ = navigator;
+    if review_text::handles(command) {
+        review_text::run(state, press)
+    } else {
+        Vec::new()
     }
-}
-
-/// Snaps the navigator (and review cursor) back to the current focus and
-/// reports it. Does nothing else with nothing focused, or with a focus
-/// whose outpost has ended.
-fn navigator_to_focus(state: &mut SrState, trace_id: TraceId) -> Vec<Effect> {
-    let Some(focus) = state.focus.object().filter(|focus| focus.alive) else {
-        return Vec::new();
-    };
-    let object = focus.snapshot.clone();
-    state.navigator = Some(Navigator::on(object.clone()));
-    announce_focus_object(state, trace_id, &object, Reason::Focus, None)
 }
 
 /// Announces the navigator object `object` after object navigation or on
@@ -2475,15 +2447,7 @@ fn announce_navigator(
     reason: Reason,
     press: Option<ReviewPress>,
 ) -> Vec<Effect> {
-    let levels = (reason, &mut state.last_tree_level, &mut state.cell_memory);
-    let utterance = if editing::may_have_text(object.role) && object.value.is_some() {
-        let mut announced = object.clone();
-        announced.value = None;
-        announce_node(trace_id, SpeechPriority::Queued, &announced, levels)
-    } else {
-        announce_node(trace_id, SpeechPriority::Queued, object, levels)
-    };
-    let mut effects = vec![Effect::Speak(utterance, None)];
+    let mut effects = vec![navigator_utterance(state, trace_id, object, reason)];
     effects.extend(editing::navigator_text(
         state,
         trace_id,
@@ -2492,6 +2456,38 @@ fn announce_navigator(
         press,
     ));
     effects
+}
+
+/// The navigator object `object` announced, without its text: an object
+/// that may have text leaves its value out, its text said after the rest.
+pub(crate) fn navigator_utterance(
+    state: &mut SrState,
+    trace_id: TraceId,
+    object: &NodeSnapshot,
+    reason: Reason,
+) -> Effect {
+    let levels = (reason, &mut state.last_tree_level, &mut state.cell_memory);
+    let utterance = if editing::may_have_text(object.role) && object.value.is_some() {
+        let mut announced = object.clone();
+        announced.value = None;
+        announce_node(trace_id, SpeechPriority::Queued, &announced, levels)
+    } else {
+        announce_node(trace_id, SpeechPriority::Queued, object, levels)
+    };
+    Effect::Speak(utterance, None)
+}
+
+/// When `object` is the focus's reading, what was last spoken of the
+/// focus becomes what is spoken now ([`announce_focus_object`]).
+pub(crate) fn focus_spoken_now(state: &mut SrState, object: &NodeSnapshot) {
+    if let Some(focus) = state
+        .focus
+        .object_mut()
+        .filter(|focus| focus.snapshot == *object)
+    {
+        let ancestors = Arc::clone(&focus.spoken().ancestors);
+        focus.spoken = SpokenRecord::of(object, ancestors);
+    }
 }
 
 /// Announces `object` as [`announce_navigator`] does and, when it is the
@@ -2517,14 +2513,7 @@ fn announce_focus_object(
     reason: Reason,
     press: Option<ReviewPress>,
 ) -> Vec<Effect> {
-    if let Some(focus) = state
-        .focus
-        .object_mut()
-        .filter(|focus| focus.snapshot == *object)
-    {
-        let ancestors = Arc::clone(&focus.spoken().ancestors);
-        focus.spoken = SpokenRecord::of(object, ancestors);
-    }
+    focus_spoken_now(state, object);
     announce_navigator(state, trace_id, object, reason, press)
 }
 
@@ -2635,24 +2624,6 @@ pub(crate) fn clipboard_text(node: &NodeSnapshot) -> String {
         parts.push(value.clone());
     }
     parts.join(" ")
-}
-
-/// Emits a navigation fetch for the navigator object's neighbor in the
-/// direction `kind` names; its answer ([`navigate_completed`]) moves the
-/// navigator and announces the result, or reports the edge when there is no
-/// such neighbor. The press stays current until the answer.
-fn navigate(state: &mut SrState, press: ReviewPress, kind: QueryKind) -> Vec<Effect> {
-    let Some(navigator) = state.navigator.as_ref() else {
-        return Vec::new();
-    };
-    let from = navigator.object.id;
-    let (query, effect) = state.queries.ask(
-        crate::queries::Asking::Navigate(from, kind),
-        Then::Navigation { from, kind },
-    );
-    let mut effects = crate::key_line::press_read(state, from, query, press);
-    effects.push(effect);
-    effects
 }
 
 /// `text` spelled character by character, a space spoken as "space".
@@ -3319,7 +3290,7 @@ pub(crate) fn navigate_completed(
 
 /// The edge message a navigation `QueryKind` speaks when there is no
 /// neighbor in its direction — NVDA's messages, one per command.
-fn edge_message_of(kind: QueryKind) -> Option<verbatim_model::Message> {
+pub(crate) fn edge_message_of(kind: QueryKind) -> Option<verbatim_model::Message> {
     use verbatim_model::Message;
     match kind {
         QueryKind::Parent => Some(Message::NoContainingObject),
@@ -3562,7 +3533,7 @@ fn unremembered_segments(node: &NodeSnapshot, reason: Reason) -> Vec<UtteranceSe
 /// Why a node is being spoken, which decides whether its role is
 /// ("When the role is spoken" in `docs/nvda/speech.md`).
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Reason {
+pub(crate) enum Reason {
     /// Focus moved to it, it was selected in a list the focus controls, it
     /// is a toast, or object navigation moved the navigator to it.
     Focus,

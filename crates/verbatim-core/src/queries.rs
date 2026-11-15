@@ -21,8 +21,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use verbatim_model::protocol::{QueryOutcome, QueryResult};
 use verbatim_model::{
-    Effect, FetchResult, NodeId, OutpostId, Query, QueryId, QueryKind, TextChunk, TextOp,
-    TextReply, TextRequest, TraceId,
+    Effect, NodeId, OutpostId, Query, QueryId, TextChunk, TextOp, TextReply, TextRequest, TraceId,
 };
 
 use crate::state::{PendingText, SrState};
@@ -39,10 +38,6 @@ pub(crate) enum Asked {
 /// What the answer to a query continues.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum Then {
-    /// A navigation of the navigator object from `from`.
-    Navigation { from: NodeId, kind: QueryKind },
-    /// An activation of the navigator object, whose outcome is spoken.
-    Activation,
     /// A caret key's one request (`crate::key_line`), on `node`.
     Key { node: NodeId },
     /// A move of the caret Core made, whose answer gives the stamp of the
@@ -117,12 +112,8 @@ pub(crate) struct Open {
 
 /// What a query asks of its node.
 pub(crate) enum Asking {
-    /// A navigation step from the node.
-    Navigate(NodeId, QueryKind),
     /// A request about the node's text.
     Text(NodeId, TextOp),
-    /// An activation of the node.
-    Activate(NodeId),
     /// A live read of the node.
     ReadNode(NodeId),
 }
@@ -142,15 +133,6 @@ impl Queries {
         let query_id = QueryId(self.next);
         self.next = self.next.saturating_add(1);
         let (node_id, asked, effect) = match asking {
-            Asking::Navigate(node_id, kind) => (
-                node_id,
-                Asked::Read,
-                Effect::Fetch(Query {
-                    query_id,
-                    node_id,
-                    kind,
-                }),
-            ),
             Asking::Text(node_id, op) => (
                 node_id,
                 Asked::Read,
@@ -160,9 +142,6 @@ impl Queries {
                     op,
                 }),
             ),
-            Asking::Activate(node_id) => {
-                (node_id, Asked::Read, Effect::Activate { query_id, node_id })
-            }
             Asking::ReadNode(node_id) => {
                 (node_id, Asked::Read, Effect::ReadNode { query_id, node_id })
             }
@@ -477,31 +456,6 @@ pub(crate) fn ended(
     at_us: u64,
 ) -> Vec<Effect> {
     match then {
-        Then::Navigation { kind, .. } => {
-            let result = match ending {
-                Ending::Outcome(QueryOutcome::Done(QueryResult::Navigated(Some(node)))) => {
-                    FetchResult::Node(node)
-                }
-                Ending::Outcome(QueryOutcome::Done(QueryResult::Navigated(None))) => {
-                    FetchResult::NoNeighbor
-                }
-                Ending::Outcome(QueryOutcome::Gone) => FetchResult::Gone,
-                _ => FetchResult::Unanswered,
-            };
-            crate::key_line::navigation_answered(state, trace_id, query_id, kind, &result)
-        }
-        Then::Activation => match ending {
-            Ending::Outcome(QueryOutcome::Done(QueryResult::Activated(action))) => {
-                crate::reduce::activation_completed(trace_id, true, action.as_ref())
-            }
-            // The activation was abandoned, at its deadline or with its
-            // window judged hung, or refused because its window is hung:
-            // whether it happened is unknown, so nothing is said either
-            // way. Whatever it caused, such as a dialog taking focus,
-            // announces itself.
-            Ending::Outcome(QueryOutcome::Abandoned) => Vec::new(),
-            _ => crate::reduce::activation_completed(trace_id, false, None),
-        },
         Then::Key { node } => {
             let reply = ending.reply();
             // In a terminal Core reads, the read before a key is a read of

@@ -120,9 +120,18 @@ pub(crate) async fn run(mut cx: Cx<Entries>, entry: PressEntry) {
         for effect in stopped {
             cx.emit(effect);
         }
+        let press = crate::key_line::ReviewPress {
+            trace_id,
+            command,
+            repeat,
+        };
         match own {
             Own::ReportFocus => crate::report_focus::run(cx, trace_id, repeat).await,
             Own::CaretLocation => crate::caret_location::run(cx, trace_id).await,
+            Own::Navigate(kind) => crate::navigator::navigate(cx, press, kind).await,
+            Own::Activate => crate::navigator::activate(cx, trace_id).await,
+            Own::ReportObject => crate::navigator::report_object(cx, press).await,
+            Own::ToFocus => crate::navigator::to_focus(cx, trace_id).await,
         }
         return;
     }
@@ -147,6 +156,10 @@ pub(crate) async fn run(mut cx: Cx<Entries>, entry: PressEntry) {
 enum Own {
     ReportFocus,
     CaretLocation,
+    Navigate(verbatim_model::QueryKind),
+    Activate,
+    ReportObject,
+    ToFocus,
 }
 
 impl Own {
@@ -154,6 +167,19 @@ impl Own {
         match command {
             ReviewCommand::ReportFocus => Some(Self::ReportFocus),
             ReviewCommand::ReportCaretLocation => Some(Self::CaretLocation),
+            ReviewCommand::Parent => Some(Self::Navigate(verbatim_model::QueryKind::Parent)),
+            ReviewCommand::NextSibling => {
+                Some(Self::Navigate(verbatim_model::QueryKind::NextSibling))
+            }
+            ReviewCommand::PreviousSibling => {
+                Some(Self::Navigate(verbatim_model::QueryKind::PreviousSibling))
+            }
+            ReviewCommand::FirstChild => {
+                Some(Self::Navigate(verbatim_model::QueryKind::FirstChild))
+            }
+            ReviewCommand::Activate => Some(Self::Activate),
+            ReviewCommand::ReportObject => Some(Self::ReportObject),
+            ReviewCommand::ToFocus => Some(Self::ToFocus),
             _ => None,
         }
     }

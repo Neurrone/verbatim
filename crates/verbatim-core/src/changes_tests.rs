@@ -15,7 +15,7 @@ use verbatim_model::{Role, State, StateSet, WindowHandle};
 
 use crate::entries::tests::{
     APP, Held, LISTENER, NOTHING, OUTPOST, SPOKEN_FOLLOWED, answer, answer_outcome,
-    asked_completion, entry, facts, feed_at, focus_read, node, values,
+    asked_completion, entry, facts, feed_at, focus_read, node, values, win,
 };
 use crate::event_queue::Input;
 
@@ -57,7 +57,7 @@ fn read(relation: RelationFound, values: PropertyValues) -> Reply {
     Reply::Object(Box::new(ObjectRead {
         object: NodeRead {
             node: Some(node(7)),
-            window: WindowHandle(5),
+            window: win(5),
             values,
         },
         relation: Some(relation),
@@ -320,7 +320,7 @@ fn a_focus_under_the_committed_focus_judges_its_waiting_state_tells_first() {
         node: FocusNode {
             read: NodeRead {
                 node: Some(node(2)),
-                window: WindowHandle(5),
+                window: win(5),
                 values: values("OK", Role::Button),
             },
             runtime_id: Some(RuntimeId(vec![42, 1])),

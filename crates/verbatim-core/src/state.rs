@@ -159,6 +159,11 @@ pub(crate) struct Navigator {
     pub(crate) review_offset: usize,
     /// How the review cursor reviews the object's text (milestone M4).
     pub(crate) text: ReviewText,
+    /// The object's window, as the navigation answer that reached it read
+    /// it; `None` for an object the navigator was put on otherwise, whose
+    /// window is the committed focus's when it is that focus's node
+    /// (`crate::navigator`).
+    pub(crate) window: Option<crate::event_queue::RequestWindow>,
 }
 
 impl Navigator {
@@ -169,6 +174,7 @@ impl Navigator {
             object,
             review_offset: 0,
             text: ReviewText::Unknown,
+            window: None,
         }
     }
 }
@@ -859,7 +865,6 @@ impl SrState {
         }
         for then in self.queries.continuations() {
             match then {
-                Then::Navigation { from, .. } => insert(*from),
                 Then::Key { node } | Then::Text(PendingText { node, .. }) => insert(*node),
                 _ => {}
             }

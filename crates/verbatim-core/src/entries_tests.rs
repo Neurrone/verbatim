@@ -127,6 +127,18 @@ pub(crate) fn values(name: &str, role: Role) -> PropertyValues {
     ])
 }
 
+/// Window `handle` of the application, inside its top-level window 4, as
+/// an answer reports a node's nearest window.
+pub(crate) fn win(handle: u64) -> verbatim_model::request::NodeWindow {
+    verbatim_model::request::NodeWindow {
+        handle: WindowHandle(handle),
+        top_level: WindowHandle(4),
+        root_owner: WindowHandle(4),
+        process: APP,
+        thread: 41,
+    }
+}
+
 pub(crate) fn node(number: u64) -> NodeId {
     NodeId::in_outpost(OutpostId(GENERATION), number)
 }
@@ -137,7 +149,7 @@ pub(crate) fn focus_read(msaa: Option<HeldIds>) -> FocusRead {
         focus: FocusNode {
             read: NodeRead {
                 node: Some(node(2)),
-                window: WindowHandle(5),
+                window: win(5),
                 values: values("OK", Role::Button),
             },
             runtime_id: msaa.is_none().then(|| RuntimeId(vec![42, 1])),
@@ -148,7 +160,7 @@ pub(crate) fn focus_read(msaa: Option<HeldIds>) -> FocusRead {
             node: FocusNode {
                 read: NodeRead {
                     node: Some(node(1)),
-                    window: WindowHandle(4),
+                    window: win(4),
                     values: values("Editor", Role::Window),
                 },
                 runtime_id: None,
@@ -168,7 +180,7 @@ pub(crate) fn listener_answer() -> ObjectRead {
     ObjectRead {
         object: NodeRead {
             node: None,
-            window: WindowHandle(5),
+            window: win(5),
             values: values("OK", Role::Button),
         },
         relation: None,
@@ -631,7 +643,7 @@ fn a_focus_in_a_window_the_hidden_frame_owns_takes_the_frame_as_its_foreground()
     );
     let mut read = focus_read(Some(held(-4)));
     read.focus.read.values = values("Settings...", Role::MenuItem);
-    read.focus.read.window = WindowHandle(6);
+    read.focus.read.window = win(6);
     read.ancestors.clear();
     let mut frame = values("Verbatim", Role::Window);
     frame.0.push(PropertyAnswer {
@@ -641,7 +653,7 @@ fn a_focus_in_a_window_the_hidden_frame_owns_takes_the_frame_as_its_foreground()
     read.foreground = Some(FocusNode {
         read: NodeRead {
             node: Some(node(1)),
-            window: WindowHandle(8),
+            window: win(8),
             values: frame,
         },
         runtime_id: None,

@@ -156,56 +156,6 @@ fn a_focus_step_allocates_the_same_whatever_the_ancestor_chain() {
     assert_eq!(small_bytes, large_bytes);
 }
 
-#[test]
-fn a_navigation_step_allocates_the_same_whatever_the_ancestor_chain() {
-    let command = Input::Command {
-        pressed_at_ms: 0,
-        key_seq: verbatim_model::KeySeq::NONE_YET,
-        trace_id: TraceId::from_raw(2),
-        command: ReviewCommand::Parent,
-        repeat: 0,
-    };
-    let mut small = state_with_chain(SMALL_CHAIN);
-    let mut large = state_with_chain(LARGE_CHAIN);
-
-    let (small_effects, small_bytes) =
-        allocated_by(|| reduce(&mut small, &mut verbatim_core::Runtime::default(), &command));
-    let (large_effects, large_bytes) =
-        allocated_by(|| reduce(&mut large, &mut verbatim_core::Runtime::default(), &command));
-    assert_eq!(small_effects, large_effects);
-    assert_eq!(small_bytes, large_bytes);
-
-    let Some(Effect::Fetch(query)) = small_effects.first() else {
-        panic!("expected a navigation fetch, got {small_effects:?}");
-    };
-    let completion = Input::Answered {
-        at_us: 0,
-        trace_id: TraceId::from_raw(3),
-        query_id: query.query_id,
-        outpost: query.node_id.outpost(),
-        outcome: verbatim_model::protocol::QueryOutcome::Done(
-            verbatim_model::protocol::QueryResult::Navigated(Some(node(6, Role::Pane, "Toolbar"))),
-        ),
-    };
-    let (small_effects, small_bytes) = allocated_by(|| {
-        reduce(
-            &mut small,
-            &mut verbatim_core::Runtime::default(),
-            &completion,
-        )
-    });
-    let (large_effects, large_bytes) = allocated_by(|| {
-        reduce(
-            &mut large,
-            &mut verbatim_core::Runtime::default(),
-            &completion,
-        )
-    });
-    assert_eq!(small_effects, large_effects);
-    assert!(!small_effects.is_empty(), "the navigator moves and speaks");
-    assert_eq!(small_bytes, large_bytes);
-}
-
 /// A long line of text, as the outpost sends the caret's line: just under
 /// the 64 KB a chunk may carry.
 fn long_line(anchor: u64, offset: u32) -> TextChunk {

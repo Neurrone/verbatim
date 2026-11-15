@@ -664,7 +664,6 @@ fn nodes_held(state: &SrState) -> BTreeMap<OutpostId, std::collections::BTreeSet
     }
     for (_, open) in state.queries.entries() {
         match &open.then {
-            Then::Navigation { from, .. } => insert(*from),
             Then::Key { node } => insert(*node),
             Then::Text(pending) => insert(pending.node),
             _ => {}
@@ -682,7 +681,6 @@ fn insert_key_line(state: &SrState, insert: &mut impl FnMut(NodeId)) {
 /// each is open: `None` for those of which several may be.
 fn one_of(then: &Then) -> Option<String> {
     match then {
-        Then::Navigation { .. } => Some("navigation".to_owned()),
         Then::Text(_) => Some("text".to_owned()),
         Then::SayAll => Some("say-all".to_owned()),
         Then::Terminal(ask) => Some(format!("terminal {ask:?}")),
@@ -699,11 +697,7 @@ fn one_of(then: &Then) -> Option<String> {
                 ModelAsk::Find { .. } => "find",
             }
         )),
-        Then::Activation
-        | Then::Key { .. }
-        | Then::MovedCaret { .. }
-        | Then::Review(_)
-        | Then::Nothing => None,
+        Then::Key { .. } | Then::MovedCaret { .. } | Then::Review(_) | Then::Nothing => None,
     }
 }
 
@@ -928,147 +922,6 @@ pub(super) fn speaks(effects: &[Effect]) -> bool {
     })
 }
 
-/// A navigation from the text box, asked: its number.
-fn navigate(state: &mut SrState) -> QueryId {
-    let asked = requests(&reduce(
-        state,
-        &mut crate::Runtime::default(),
-        &command(ReviewCommand::Parent),
-    ));
-    let [(query_id, None)] = asked[..] else {
-        panic!("one navigation, not {asked:?}");
-    };
-    query_id
-}
-
-fn window_found() -> QueryOutcome {
-    QueryOutcome::Done(QueryResult::Navigated(Some(node(
-        EDIT_OUTPOST,
-        1,
-        Role::Window,
-        "Window",
-    ))))
-}
-
-/// An answer runs what its query continues and ends it: the navigator
-/// moves, and the same answer again finds nothing and does nothing.
-#[test]
-fn an_answer_runs_its_continuation_once_and_ends_its_query() {
-    let mut state = text_box();
-    let query = navigate(&mut state);
-    assert_eq!(state.outstanding_queries(), 1);
-    let effects = reduce(
-        &mut state,
-        &mut crate::Runtime::default(),
-        &answered(query, EDIT_OUTPOST, window_found()),
-    );
-    assert!(speaks(&effects), "the window is announced: {effects:?}");
-    assert_eq!(
-        state
-            .navigator
-            .as_ref()
-            .map(|navigator| navigator.object.id),
-        Some(NodeId::in_outpost(EDIT_OUTPOST, 1))
-    );
-    assert_eq!(state.outstanding_queries(), 0);
-    assert_eq!(
-        reduce(
-            &mut state,
-            &mut crate::Runtime::default(),
-            &answered(query, EDIT_OUTPOST, window_found())
-        ),
-        []
-    );
-}
-
-/// A navigation pressed while one is running waits behind it, and its
-/// own read is asked once the first has answered: the two run in press
-/// order, each moving the navigator.
-#[test]
-fn a_second_navigation_waits_behind_the_one_running() {
-    let mut state = text_box();
-    let first = navigate(&mut state);
-    let asked = requests(&reduce(
-        &mut state,
-        &mut crate::Runtime::default(),
-        &command(ReviewCommand::Parent),
-    ));
-    assert_eq!(asked, [], "the second waits behind the first");
-    assert_eq!(state.outstanding_queries(), 1);
-    let effects = reduce(
-        &mut state,
-        &mut crate::Runtime::default(),
-        &answered(first, EDIT_OUTPOST, window_found()),
-    );
-    assert!(speaks(&effects), "the first moves: {effects:?}");
-    let asked = requests(&effects);
-    let [(second, None)] = asked[..] else {
-        panic!("the second's navigation, not {asked:?}");
-    };
-    assert_eq!(state.outstanding_queries(), 1);
-    let effects = reduce(
-        &mut state,
-        &mut crate::Runtime::default(),
-        &answered(second, EDIT_OUTPOST, window_found()),
-    );
-    assert!(speaks(&effects), "the second moves: {effects:?}");
-    assert_eq!(state.outstanding_queries(), 0);
-}
-
-/// An answer from another outpost than the one asked is dropped, and the
-/// query still waits for its own.
-#[test]
-fn an_answer_from_another_outpost_leaves_its_query_open() {
-    let mut state = text_box();
-    let query = navigate(&mut state);
-    assert_eq!(
-        reduce(
-            &mut state,
-            &mut crate::Runtime::default(),
-            &answered(query, OutpostId(9), window_found())
-        ),
-        []
-    );
-    assert_eq!(state.outstanding_queries(), 1);
-    let effects = reduce(
-        &mut state,
-        &mut crate::Runtime::default(),
-        &answered(query, EDIT_OUTPOST, window_found()),
-    );
-    assert!(speaks(&effects));
-}
-
-/// A navigation's outcome other than an answer reads as unanswered, which
-/// leaves the navigator where it is, and only a gone node as gone, whose
-/// edge is spoken with the navigator staying.
-#[test]
-fn an_unanswered_navigation_stays_silent_and_a_gone_node_says_the_edge() {
-    for outcome in [
-        QueryOutcome::Abandoned,
-        QueryOutcome::NotStarted,
-        QueryOutcome::Failed("the read failed".to_owned()),
-    ] {
-        let mut state = text_box();
-        let query = navigate(&mut state);
-        assert_eq!(
-            reduce(
-                &mut state,
-                &mut crate::Runtime::default(),
-                &answered(query, EDIT_OUTPOST, outcome)
-            ),
-            []
-        );
-    }
-    let mut state = text_box();
-    let query = navigate(&mut state);
-    let effects = reduce(
-        &mut state,
-        &mut crate::Runtime::default(),
-        &answered(query, EDIT_OUTPOST, QueryOutcome::Gone),
-    );
-    assert!(speaks(&effects), "the edge is spoken: {effects:?}");
-}
-
 /// A text request's outcome other than an answer or a gone node reads as
 /// unanswered: a review command's read of the caret's line says nothing
 /// for it.
@@ -1210,21 +1063,4 @@ fn a_dropped_models_review_ends_and_its_fresh_read_is_taken_by_no_model() {
         assert!(!speaks(&effects), "{effects:?}");
         assert_eq!(state.outstanding_queries(), before - 1);
     }
-}
-
-/// Core's open queries are kept with the rest of its state, so a dump
-/// replays them.
-#[test]
-fn the_open_queries_round_trip_with_the_state() {
-    let mut state = text_box();
-    let _ = navigate(&mut state);
-    let _ = reduce(
-        &mut state,
-        &mut crate::Runtime::default(),
-        &command(ReviewCommand::ReviewCurrentLine),
-    );
-    let json = serde_json::to_string(&state).expect("the state serializes");
-    let read: SrState = serde_json::from_str(&json).expect("the state reads");
-    assert_eq!(read, state);
-    assert_eq!(read.outstanding_queries(), 1, "the press behind waits");
 }

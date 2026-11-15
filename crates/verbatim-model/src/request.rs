@@ -308,14 +308,32 @@ pub struct Follow {
     pub node: Option<Followed>,
 }
 
+/// The nearest window of a node an answer read, with the facts a request
+/// on the node names it by: the reader reads them from Windows, with no
+/// call into the application.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct NodeWindow {
+    /// The node's own window or its nearest ancestor's.
+    pub handle: WindowHandle,
+    /// Its top-level window (`GA_ROOT`).
+    pub top_level: WindowHandle,
+    /// The top of its owner chain (`GA_ROOTOWNER`).
+    pub root_owner: WindowHandle,
+    /// The process that owns it.
+    pub process: Pid,
+    /// The thread that owns it, read by the same call as its process,
+    /// which keys its backend verdict.
+    pub thread: u32,
+}
+
 /// A node an answer read, minted by the outpost that read it, with its
 /// nearest window, which a request on the node names.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NodeRead {
     /// The node, `None` when the reader mints no node (the listener).
     pub node: Option<NodeId>,
-    /// Its own window or its nearest ancestor's.
-    pub window: WindowHandle,
+    /// Its own window or its nearest ancestor's, with that window's facts.
+    pub window: NodeWindow,
     /// The properties read.
     pub values: PropertyValues,
 }
@@ -917,7 +935,13 @@ mod tests {
             outcome: Outcome::Result(Reply::Object(Box::new(ObjectRead {
                 object: NodeRead {
                     node: None,
-                    window: WindowHandle(5),
+                    window: NodeWindow {
+                        handle: WindowHandle(5),
+                        top_level: WindowHandle(5),
+                        root_owner: WindowHandle(5),
+                        process: Pid(1),
+                        thread: 2,
+                    },
                     values: PropertyValues::default(),
                 },
                 relation: Some(RelationFound::Unrelated),
