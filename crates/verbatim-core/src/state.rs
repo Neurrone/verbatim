@@ -618,6 +618,9 @@ pub struct SrState {
     /// every arrival's fence and the caret keys' marks read
     /// (`crate::keys::entry`).
     pub(crate) arrivals: crate::keys::entry::Arrivals,
+    /// The key transitions the hook held or deferred that Core has not yet
+    /// sent (`crate::keys::strokes`).
+    pub(crate) strokes: crate::keys::strokes::StrokeLine,
     /// The event queue (`crate::entries`): its entries, its requests and
     /// the front entry's checkpoint, plain data. Empty while a step of the
     /// queue runs, when the driver holds it. The paused function sits

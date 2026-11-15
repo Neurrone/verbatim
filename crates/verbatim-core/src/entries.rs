@@ -28,7 +28,9 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::RuntimeId;
-use verbatim_model::request::{MsaaIds, OutsideOutcome, Probe, QueueEffect, QueueInput};
+use verbatim_model::request::{
+    MsaaIds, OutsideOutcome, PressAction, Probe, QueueEffect, QueueInput, Request as Wire,
+};
 use verbatim_model::tell::{AcceptanceFacts, ElementToken, Event, EventObject, TellWindow};
 use verbatim_model::{Earcon, Effect as Said, SpeechMark, TraceId, WindowHandle};
 
@@ -436,6 +438,18 @@ impl Logic for Entries {
     fn arrival(facts: &mut SrState, entry: &mut Entry) {
         if let Entry::Press(press) = entry {
             facts.arrivals.key_joined(press.press.key_seq);
+            // A held key's stroke joins the stroke line as its report
+            // arrives, in the hook's order.
+            if let PressAction::CaretKey {
+                held: Some(stroke), ..
+            } = &press.press.action
+            {
+                facts.strokes.hold(
+                    press.press.key_seq,
+                    stroke.clone(),
+                    Some(press.press.pressed_at_us),
+                );
+            }
         }
         entry.set_fence(facts.arrivals.fence());
     }
@@ -444,7 +458,22 @@ impl Logic for Entries {
         crate::keys::entry::stamp(entry.fence(), said);
     }
 
-    fn withdraws(_: &SrState, front: &Entry, arriving: &Entry) -> bool {
+    fn withdraws(
+        facts: &SrState,
+        (front, request): (&Entry, &Wire),
+        arriving: &Entry,
+        backend: &BackendCache,
+        now_us: u64,
+    ) -> bool {
+        if let Some(caret) = crate::keys::caret_key::of_entry(front) {
+            let arriving_key = matches!(arriving, Entry::Press(_));
+            let arriving_focus = pending_focus(facts, arriving, backend, now_us);
+            return crate::keys::caret_key::withdrawn_by(
+                &caret,
+                request,
+                (arriving_key, arriving_focus),
+            );
+        }
         // Any key stops say-all, so a key arriving withdraws its read.
         matches!((front, arriving), (Entry::SayAllRead(..), Entry::Press(_)))
     }
@@ -456,11 +485,30 @@ impl Logic for Entries {
             .collect()
     }
 
-    fn unneeded(facts: &SrState, front: &Entry) -> bool {
+    fn unneeded(facts: &SrState, front: &Entry, request: &Wire) -> bool {
+        if let Some(caret) = crate::keys::caret_key::of_entry(front) {
+            return crate::keys::caret_key::unneeded(facts, &caret, request);
+        }
         match front {
             Entry::SayAllRead(run, _) => crate::say_all::read_unneeded(facts, *run),
             _ => false,
         }
+    }
+
+    fn ended_at_foreground(facts: &mut SrState, entry: &Entry, said: &mut Vec<Said>) {
+        // A held key ended so says nothing; its key passes, its stroke
+        // sent in press order (Table 13, column A).
+        if let Some(caret) = crate::keys::caret_key::of_entry(entry) {
+            said.extend(facts.strokes.pass(caret.key_seq).map(Said::Queue));
+        }
+    }
+
+    fn due(facts: &SrState) -> Option<u64> {
+        facts.strokes.next_release()
+    }
+
+    fn tick(facts: &mut SrState, now_us: u64, said: &mut Vec<Said>) {
+        said.extend(facts.strokes.release_due(now_us).map(Said::Queue));
     }
 
     fn recovered(facts: &SrState, window: &RequestWindow) -> Option<Entry> {
@@ -643,7 +691,18 @@ impl Logic for Entries {
         )
     }
 
-    fn ends_at_foreground(_: &SrState, entry: &Entry, foreground: &Foreground) -> bool {
+    fn ends_at_foreground(facts: &SrState, entry: &Entry, foreground: &Foreground) -> bool {
+        // A held key bound at its press to a node ends when that node's
+        // window is outside the new foreground window's tree or owner
+        // chain; once its stroke is sent it makes no request, and stays.
+        if let Some(caret) = crate::keys::caret_key::of_entry(entry) {
+            return caret.held
+                && facts.strokes.status(caret.key_seq)
+                    == crate::keys::strokes::StrokeStatus::Unsent
+                && caret.bound.as_ref().is_some_and(|bound| {
+                    !foreground.holds(&RequestWindow::of_node(&bound.window))
+                });
+        }
         let window = match entry {
             Entry::UiaFocus(focus) => request_window(&focus.tell),
             Entry::Candidate(candidate) | Entry::Menu(candidate) => Some(candidate.window),
@@ -687,6 +746,34 @@ impl Logic for Entries {
             root_owner: foreground.root_owner,
             fence: Fence::default(),
         })
+    }
+}
+
+/// Whether `entry`, waiting behind the front or arriving, is a focus that
+/// counts as pending, judged now on its tell's facts with no read
+/// (design, "A focus is pending").
+pub(crate) fn pending_focus(
+    facts: &SrState,
+    entry: &Entry,
+    backend: &BackendCache,
+    now_us: u64,
+) -> bool {
+    let last = facts.versions.last.as_ref();
+    let pending =
+        |tell: &Event| crate::focus::pending::counts_as_pending(tell, last, backend, now_us);
+    match entry {
+        Entry::UiaFocus(focus) => pending(&focus.tell),
+        Entry::Candidate(candidate) => pending(&candidate.tell),
+        Entry::Run(candidates) => candidates.iter().any(|candidate| pending(&candidate.tell)),
+        Entry::Menu(_)
+        | Entry::MenuCheck(_)
+        | Entry::CurrentFocus(_)
+        | Entry::MsaaChange(_)
+        | Entry::UiaChange(_)
+        | Entry::ForegroundMarker { .. }
+        | Entry::Press(_)
+        | Entry::Mark(..)
+        | Entry::SayAllRead(..) => false,
     }
 }
 
@@ -794,6 +881,25 @@ pub(crate) fn route(
             state.ignored.clone_from(processes);
             return Vec::new();
         }
+        QueueInput::Deferred { stroke, pressed } => {
+            return state
+                .strokes
+                .defer(*stroke, *pressed)
+                .map(Said::Queue)
+                .into_iter()
+                .collect();
+        }
+        QueueInput::StrokesReset => {
+            // The front's starting read, its stroke now dropped, is
+            // withdrawn as the queue settles.
+            state.strokes.drop_unsent();
+            Input::Settle
+        }
+        QueueInput::Exit => {
+            return vec![Said::Queue(QueueEffect::ReleaseAtExit(
+                state.strokes.exit(),
+            ))];
+        }
     };
     run_input(state, runtime, (trace_id, at_us), input)
 }
@@ -810,7 +916,7 @@ pub(crate) fn unsettled(state: &SrState) -> bool {
     }) || state
         .queue
         .asking()
-        .is_some_and(|front| <Entries as Logic>::unneeded(state, front))
+        .is_some_and(|(front, request)| <Entries as Logic>::unneeded(state, front, request))
 }
 
 /// Settles the queue under `trace_id` after Core's facts changed outside
@@ -869,7 +975,13 @@ fn run_input(
             }),
         })
         .collect();
-    said.push(Said::Queue(QueueEffect::WakeAt(state.queue.next_due())));
+    let wake = state
+        .queue
+        .next_due()
+        .into_iter()
+        .chain(<Entries as Logic>::due(state))
+        .min();
+    said.push(Said::Queue(QueueEffect::WakeAt(wake)));
     said
 }
 

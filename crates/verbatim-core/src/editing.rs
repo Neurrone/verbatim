@@ -273,7 +273,23 @@ pub(crate) fn before_of_read(
     motion: CaretMotion,
     reply: &CaretReply,
 ) -> BeforeRead {
-    let line = &reply.caret.line;
+    before_of_caret(
+        state,
+        node,
+        motion,
+        (&reply.caret, reply.facts.unit.as_ref()),
+    )
+}
+
+/// [`before_of_read`] from a read's `caret` and the key's `unit` read with
+/// it, the line where it fetched none: a caret key's starting read.
+pub(crate) fn before_of_caret(
+    state: &SrState,
+    node: NodeId,
+    motion: CaretMotion,
+    (caret, unit): (&verbatim_model::CaretReport, Option<&TextChunk>),
+) -> BeforeRead {
+    let line = &caret.line;
     let grid = state
         .focus
         .object()
@@ -283,7 +299,7 @@ pub(crate) fn before_of_read(
         .and_then(|caret| caret.line_break.as_deref())
         .or_else(|| text::line_break(&line.text));
     let removed = motion.deletes_back().then_some(()).and_then(|()| {
-        let start = selection_start(line, reply.caret.selection.as_ref());
+        let start = selection_start(line, caret.selection.as_ref());
         let (start_line, offset) = match start {
             Some(Some(found)) => found,
             Some(None) => return None,
@@ -293,7 +309,7 @@ pub(crate) fn before_of_read(
     });
     // Backspace's words if the focus moves first start from the selection's
     // start, NVDA's caret.
-    let start_line = match selection_start(line, reply.caret.selection.as_ref()) {
+    let start_line = match selection_start(line, caret.selection.as_ref()) {
         Some(Some((found, offset))) if motion.deletes_back() => TextChunk {
             offset,
             ..found.clone()
@@ -301,7 +317,7 @@ pub(crate) fn before_of_read(
         _ => line.clone(),
     };
     BeforeRead {
-        unit: reply.facts.unit.clone().unwrap_or_else(|| line.clone()),
+        unit: unit.cloned().unwrap_or_else(|| line.clone()),
         line: start_line,
         removed,
     }
@@ -442,7 +458,7 @@ pub(crate) fn focus_first_words(
 }
 
 /// The unit of a key at a read, its formatting spoken as it changes.
-fn unit_of(
+pub(crate) fn unit_of(
     state: &mut SrState,
     node: NodeId,
     motion: CaretMotion,

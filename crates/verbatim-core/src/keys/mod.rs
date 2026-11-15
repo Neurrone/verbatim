@@ -5,7 +5,9 @@
 //! that caused it, so a later key's cancel fences it off in the speech
 //! queue.
 
+pub(crate) mod caret_key;
 pub(crate) mod entry;
+pub(crate) mod strokes;
 
 use std::collections::VecDeque;
 

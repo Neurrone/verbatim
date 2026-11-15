@@ -320,6 +320,24 @@ them yet.
   `Refusal`, not there, not responding, or the reader ended) and a
   diagnostic detail. `Cancel` carries a `CancelReason`: foreground, hung,
   due time or withdrawn; only the first abandons a running call.
+- The event queue's inputs and effects (`QueueInput`, `QueueEffect`). A
+  key or command arrives as a `Press`, its action chosen at the press; a
+  caret key's `PressAction::CaretKey` carries the `HeldStroke` the hook
+  held, if it held one, and the `CaretBinding` it was bound to: the
+  committed focus's node, window, role and `TextProvider`. A transition
+  the hook deferred arrives as `QueueInput::Deferred`; Core names what to
+  send in `QueueEffect::SendStrokes` (each a `SentTransition`) and, at
+  `QueueInput::Exit`, the keys to release in `QueueEffect::ReleaseAtExit`.
+  The `stroke` module holds `Stroke`, `HeldStroke` with its `Modifier`s,
+  and `SentTransition`.
+- A caret key's text requests (`TextOp`): `StartingRead`, answered
+  `Started` with the starting point the outpost holds, the caret, the
+  key's unit and, for Delete, the word; `Watch`, naming the starting
+  point, the key's motion, the pass time, the poll interval, whether a UI
+  Automation event within 60 ms counts as the effect, the bound and the
+  `WatchFinalRead`, answered `Watched` (the effect or the bound, with a
+  `WatchedRead`, or the bound unread); and `SentenceMove`, answered
+  `SentenceMoved`. Each names its `TextProvider` and `TextDetails`.
 
 ## Time limits
 

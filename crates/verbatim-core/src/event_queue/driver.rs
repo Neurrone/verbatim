@@ -143,12 +143,11 @@ impl<E, F> Queue<E, F> {
             .min()
     }
 
-    /// The front entry while it has a request out.
-    pub(crate) fn asking(&self) -> Option<&E> {
-        self.front
-            .as_ref()
-            .filter(|front| front.asked.is_some())
-            .map(|front| &front.entry)
+    /// The front entry and its request, while it has one out.
+    pub(crate) fn asking(&self) -> Option<(&E, &verbatim_model::request::Request)> {
+        let front = self.front.as_ref()?;
+        let live = self.table.live(front.asked?)?;
+        Some((&front.entry, &live.request))
     }
 
     /// The time of the last input handled.
@@ -301,7 +300,14 @@ impl<L: Logic> Core<L> {
 
     /// The one time Core waits for, which the shell's timer is set to.
     pub(crate) fn next_due(&self) -> Option<u64> {
-        self.shared.borrow().state.queue.next_due()
+        let shared = self.shared.borrow();
+        let state = &shared.state;
+        state
+            .queue
+            .next_due()
+            .into_iter()
+            .chain(L::due(&state.facts))
+            .min()
     }
 
     /// A fresh instance with a copy of this one's state, its function
@@ -642,6 +648,21 @@ impl<L: Logic> Cx<L> {
     /// The entries waiting behind this one, in arrival order.
     pub(crate) fn waiting(&self) -> Ref<'_, VecDeque<Item<L::Entry>>> {
         Ref::map(self.shared.borrow(), |shared| &shared.state.queue.waiting)
+    }
+
+    /// Whether any entry waiting behind this one, a run's candidates and
+    /// the menu slot's included, is one `pick` chooses.
+    pub(crate) fn any_waiting(&self, pick: impl Fn(&L::Entry) -> bool) -> bool {
+        self.shared
+            .borrow()
+            .state
+            .queue
+            .waiting
+            .iter()
+            .any(|item| match item {
+                Item::One(entry) | Item::Menu { entry, .. } => pick(entry),
+                Item::Run(candidates) => candidates.iter().any(&pick),
+            })
     }
 
     /// Takes out of the queue the waiting single entries `pick` chooses, in

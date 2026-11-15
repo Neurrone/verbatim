@@ -58,6 +58,7 @@ pub mod request;
 mod settings;
 mod shell;
 mod speech;
+pub mod stroke;
 pub mod tell;
 mod terminal;
 mod text;
@@ -92,8 +93,10 @@ pub use text::{
     CaretSelection, Change, Compared, FocusText, FormatRun, HeldAnchors, KeyFetch, LanguageRun,
     LineStyle, MAX_CHUNK_BYTES, MAX_RANGE_BYTES, MAX_READ_AHEAD, MAX_READ_AHEAD_TEXT,
     MAX_SELECTION_TEXT_BYTES, NoteRequest, ReadFacts, ReadPurpose, Selection, SelectionChange,
-    TextAnchor, TextAttributes, TextChunk, TextMovement, TextOp, TextPoint, TextPosition, TextRead,
-    TextReadAhead, TextReply, TextRequest, TextThrough, TextUnit, had_effect,
+    SentenceMove, SentenceMoved, Started, StartingRead, TextAnchor, TextAttributes, TextChunk,
+    TextDetails, TextMovement, TextOp, TextPoint, TextPosition, TextProvider, TextRead,
+    TextReadAhead, TextReply, TextRequest, TextThrough, TextUnit, Watch, WatchFinalRead, Watched,
+    WatchedRead, had_effect,
 };
 pub use theme::{
     DEFAULT_GAIN, Fetches, Indication, IndicationCategory, IndicationSetting, MAX_GAIN,

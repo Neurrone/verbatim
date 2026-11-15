@@ -155,7 +155,13 @@ impl Logic for Limited {
         false
     }
 
-    fn withdraws(_: &Option<i32>, _: &Entry, _: &Entry) -> bool {
+    fn withdraws(
+        _: &Option<i32>,
+        _: (&Entry, &verbatim_model::request::Request),
+        _: &Entry,
+        _: &crate::focus::backend::BackendCache,
+        _: u64,
+    ) -> bool {
         false
     }
 

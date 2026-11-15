@@ -24,6 +24,7 @@ use super::{
     RequestWindow,
 };
 use crate::focus::backend::Backend;
+use crate::focus::backend::BackendCache;
 
 /// The application of the tests' window.
 const APP: Pid = Pid(1);
@@ -166,7 +167,13 @@ impl Logic for Test {
         matches!(entry, Entry::Read { exempt: true, .. })
     }
 
-    fn withdraws(_: &u32, front: &Entry, arriving: &Entry) -> bool {
+    fn withdraws(
+        _: &u32,
+        (front, _): (&Entry, &verbatim_model::request::Request),
+        arriving: &Entry,
+        _: &BackendCache,
+        _: u64,
+    ) -> bool {
         matches!(front, Entry::Read { .. }) && *arriving == Entry::Key
     }
 
@@ -1315,7 +1322,13 @@ impl Logic for Probing {
         false
     }
 
-    fn withdraws((): &(), (): &(), (): &()) -> bool {
+    fn withdraws(
+        (): &(),
+        _: (&(), &verbatim_model::request::Request),
+        (): &(),
+        _: &BackendCache,
+        _: u64,
+    ) -> bool {
         false
     }
 

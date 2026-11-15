@@ -277,9 +277,16 @@ impl<L: Logic> Core<L> {
             let shared = self.shared.borrow();
             let state = &shared.state;
             state.queue.front.as_ref().and_then(|front| {
-                front
-                    .asked
-                    .filter(|_| L::withdraws(&state.facts, &front.entry, &entry))
+                let number = front.asked?;
+                let live = state.queue.table.live(number)?;
+                L::withdraws(
+                    &state.facts,
+                    (&front.entry, &live.request),
+                    &entry,
+                    &state.queue.backend,
+                    state.queue.now_us,
+                )
+                .then_some(number)
             })
         };
         {
@@ -324,9 +331,9 @@ impl<L: Logic> Core<L> {
                 join::<L>(state, entry);
             }
             state.queue.front.as_ref().and_then(|front| {
-                front
-                    .asked
-                    .filter(|_| L::unneeded(&state.facts, &front.entry))
+                let number = front.asked?;
+                let live = state.queue.table.live(number)?;
+                L::unneeded(&state.facts, &front.entry, &live.request).then_some(number)
             })
         };
         if let Some(number) = unneeded {
@@ -459,18 +466,34 @@ impl<L: Logic> Core<L> {
         let mut shared = self.shared.borrow_mut();
         let state = &mut shared.state;
         let facts = &state.facts;
+        let mut ended = Vec::new();
         state.queue.waiting.retain_mut(|item| match item {
             Item::One(entry) | Item::Menu { entry, .. } => {
-                !L::ends_at_foreground(facts, entry, &foreground)
+                let ends = L::ends_at_foreground(facts, entry, &foreground);
+                if ends {
+                    ended.push(entry.clone());
+                }
+                !ends
             }
             Item::Run(candidates) => {
-                candidates.retain(|entry| !L::ends_at_foreground(facts, entry, &foreground));
+                candidates.retain(|entry| {
+                    let ends = L::ends_at_foreground(facts, entry, &foreground);
+                    if ends {
+                        ended.push(entry.clone());
+                    }
+                    !ends
+                });
                 !candidates.is_empty()
             }
         });
+        let mut said = Vec::new();
+        for entry in &ended {
+            L::ended_at_foreground(&mut state.facts, entry, &mut said);
+        }
         if let Some(marker) = L::foreground_marker(&foreground) {
             join::<L>(state, marker);
         }
+        shared.effects.extend(said.into_iter().map(Effect::Said));
     }
 
     /// `instance` ended: its requests out end "reader ended", its late ones
@@ -525,6 +548,9 @@ impl<L: Logic> Core<L> {
         if let Some(windows) = shared.state.queue.table.round(now_us) {
             shared.effects.push(Effect::CheckHung(windows));
         }
+        let mut said = Vec::new();
+        L::tick(&mut shared.state.facts, now_us, &mut said);
+        shared.effects.extend(said.into_iter().map(Effect::Said));
         let state = &mut shared.state;
         let (due, later): (Vec<_>, Vec<_>) = std::mem::take(&mut state.queue.timers)
             .into_iter()

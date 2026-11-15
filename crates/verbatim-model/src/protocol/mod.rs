@@ -1680,6 +1680,29 @@ impl Named {
                 self.facts(&reply.facts);
             }
             TextReply::Read { chunk, .. } => self.chunk(chunk),
+            TextReply::Started(started) => {
+                self.anchors.push(started.point);
+                self.caret(&started.caret);
+                self.chunk(&started.unit);
+                if let Some(word) = &started.word {
+                    self.chunk(word);
+                }
+            }
+            TextReply::Watched(watched) => match &**watched {
+                crate::Watched::Effect(read) | crate::Watched::Bound(read) => {
+                    self.caret(&read.caret);
+                    self.chunk(&read.unit);
+                }
+                crate::Watched::BoundUnread => {}
+            },
+            TextReply::Sentence(moved) => match &**moved {
+                crate::SentenceMoved::Moved { line, baseline, .. }
+                | crate::SentenceMoved::StayedAtStart { line, baseline, .. } => {
+                    self.chunk(line);
+                    self.anchors.push(*baseline);
+                }
+                crate::SentenceMoved::End { baseline } => self.anchors.push(*baseline),
+            },
             TextReply::Chunks { chunks, .. } => {
                 for chunk in chunks {
                     self.chunk(chunk);

@@ -191,9 +191,16 @@ pub(crate) trait Logic: Sized + 'static {
     /// request from the foreground stop.
     fn exempt_from_foreground(entry: &Self::Entry, window: &RequestWindow) -> bool;
 
-    /// Whether `arriving`, joining the back, withdraws the request of the
-    /// front entry `front`.
-    fn withdraws(facts: &Self::Facts, front: &Self::Entry, arriving: &Self::Entry) -> bool;
+    /// Whether `arriving`, joining the back, withdraws `request`, the
+    /// request out of the front entry `front`, judged with the backend
+    /// verdicts at `now_us`.
+    fn withdraws(
+        facts: &Self::Facts,
+        front: (&Self::Entry, &verbatim_model::request::Request),
+        arriving: &Self::Entry,
+        backend: &BackendCache,
+        now_us: u64,
+    ) -> bool;
 
     /// The entry appended when `window`, in the recovery set, answers
     /// again.
@@ -268,11 +275,40 @@ pub(crate) trait Logic: Sized + 'static {
         Vec::new()
     }
 
-    /// Whether the front entry `front` no longer needs its request out:
-    /// Core withdraws it, as when say-all stopped while its read was out.
-    fn unneeded(facts: &Self::Facts, front: &Self::Entry) -> bool {
-        let _ = (facts, front);
+    /// Whether the front entry `front` no longer needs `request`, its
+    /// request out: Core withdraws it, as when say-all stopped while its
+    /// read was out.
+    fn unneeded(
+        facts: &Self::Facts,
+        front: &Self::Entry,
+        request: &verbatim_model::request::Request,
+    ) -> bool {
+        let _ = (facts, front, request);
         false
+    }
+
+    /// The waiting `entry` ended because the foreground changed
+    /// ([`Logic::ends_at_foreground`]): what Core's facts keep of it
+    /// change, and what that says goes into `said`.
+    fn ended_at_foreground(
+        facts: &mut Self::Facts,
+        entry: &Self::Entry,
+        said: &mut Vec<Self::Said>,
+    ) {
+        let _ = (facts, entry, said);
+    }
+
+    /// The earliest time Core's facts want a wake at, such as a held key's
+    /// release.
+    fn due(facts: &Self::Facts) -> Option<u64> {
+        let _ = facts;
+        None
+    }
+
+    /// A timer came due at `now_us`: what Core's facts keep for that time
+    /// happens, and what that says goes into `said`.
+    fn tick(facts: &mut Self::Facts, now_us: u64, said: &mut Vec<Self::Said>) {
+        let _ = (facts, now_us, said);
     }
 
     /// Whether `arriving` is dropped at its arrival, judged against the

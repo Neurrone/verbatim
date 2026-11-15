@@ -12,7 +12,9 @@
 //! [`crate::navigator`], [`crate::review_text`], [`crate::say_all`]), each
 //! holding the queue until its last answer;
 //! every other action runs today's handling of the key or command at its
-//! turn, the caret key's included, until its own entry replaces it.
+//! turn, and a caret key runs its own entry ([`crate::keys::caret_key`]),
+//! but one bound to a terminal, which runs today's handling until
+//! terminals' keys take the watch.
 
 use serde::{Deserialize, Serialize};
 use verbatim_model::request::{Press, PressAction};
@@ -64,13 +66,6 @@ impl Arrivals {
     /// entry, so a key at the front is marked by the same arrival as one
     /// waiting. NVDA: a script waiting silences the caret script ahead of
     /// it (`docs/parity/text.md`).
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "the caret key's own entry reads it in step 5b of build 1"
-        )
-    )]
     pub(crate) fn marks(self, key: KeySeq) -> bool {
         self.newest > key
     }
@@ -113,6 +108,10 @@ pub(crate) fn stamp(fence: Fence, said: &mut Effect) {
 
 /// The press's function at its turn.
 pub(crate) async fn run(mut cx: Cx<Entries>, entry: PressEntry) {
+    if let Some(caret) = crate::keys::caret_key::CaretPress::of(&entry) {
+        crate::keys::caret_key::run(cx, caret).await;
+        return;
+    }
     let PressEntry {
         trace_id,
         press,
@@ -159,10 +158,19 @@ pub(crate) async fn run(mut cx: Cx<Entries>, entry: PressEntry) {
     };
     let effects = {
         let mut facts = cx.facts_mut();
+        // A key bound to a terminal runs today's handling until terminals'
+        // keys take the watch: its held stroke is sent at its turn.
+        let mut effects: Vec<Effect> = facts
+            .strokes
+            .pass(press.key_seq)
+            .map(Effect::Queue)
+            .into_iter()
+            .collect();
         // What its handling asks outside the queue answers under its
         // trace, whose speech then carries its number.
         facts.key_origins.record(trace_id, press.key_seq);
-        crate::reduce::waited_input(&mut facts, &input)
+        effects.extend(crate::reduce::waited_input(&mut facts, &input));
+        effects
     };
     for effect in effects {
         cx.emit(effect);
@@ -247,7 +255,7 @@ fn today(trace_id: TraceId, press: &Press) -> Option<Input> {
             pressed_at_ms,
         },
         PressAction::CaretKey {
-            key, held: true, ..
+            key, held: Some(_), ..
         } => Input::HeldKey {
             trace_id,
             key_seq,
@@ -255,7 +263,7 @@ fn today(trace_id: TraceId, press: &Press) -> Option<Input> {
             pressed_at_ms,
         },
         PressAction::CaretKey {
-            key, held: false, ..
+            key, held: None, ..
         } => Input::CaretKey {
             trace_id,
             key_seq,

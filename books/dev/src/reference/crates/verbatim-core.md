@@ -938,6 +938,34 @@ said too, before the focus. An outpost that
 ends leaves a key with no answer, which says nothing but what it heard. At
 exit every key still held is passed on in press order.
 
+### The caret key on the event queue
+
+(`docs/design/readers-tell-core-asks-build1.md`, Tables 7 and 13; built
+beside the key line until the shell feeds presses to the queue.) A caret
+key's `Press` runs `keys/caret_key.rs` at its turn, on the node it was
+bound to at its press (`CaretBinding`), even when the focus has moved on;
+a key bound to a terminal runs today's handling until terminals' keys
+take the watch. A held key asks its starting read, then sends its stroke
+(the pass) and asks the watch, then says its unit by its script; at the
+bound a sentence key in text with a sentence unit moves by sentence from
+its starting point. A later key withdraws the watch, a focus pending
+withdraws the starting read (but Backspace's), the watch and the sentence
+move, and the key says nothing, except Backspace and Control+Backspace,
+which say what they deleted from the starting read. Whether a key is
+marked is read from `SrState::arrivals`, never stored.
+
+`keys/strokes.rs` is Core's stroke line (`SrState::strokes`): each held
+stroke, from the press's arrival, and each deferred transition
+(`QueueInput::Deferred`), in the hook's order. A held stroke goes when its
+key passes, at its turn, by its 150 ms release from its press
+(`Logic::due` and `Logic::tick`), or when a foreground change ends its
+waiting entry (`Logic::ended_at_foreground`), with what is deferred behind
+it up to the next unsent held stroke, as one `QueueEffect::SendStrokes`.
+A reset of the hook's line (`QueueInput::StrokesReset`) drops what is
+unsent, leaving a dropped mark for each held key's turn, and withdraws
+the front's starting read; at `QueueInput::Exit` Core names the keys
+whose last transition in line is a release (`QueueEffect::ReleaseAtExit`).
+
 ## Key numbers
 
 (`books/dev/src/explanation/design/ownership.md`.) Every user input carries the number the keyboard hook's thread

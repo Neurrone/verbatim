@@ -761,6 +761,21 @@ pub enum QueueInput {
     Press(Box<Press>),
     /// Playback reached an index mark Core placed in an utterance.
     MarkReached(crate::SpeechMark),
+    /// A key transition the hook deferred behind a held key, joining
+    /// Core's stroke line at once.
+    Deferred {
+        /// The key.
+        stroke: crate::stroke::Stroke,
+        /// A press, or else a release.
+        pressed: bool,
+    },
+    /// The hook's line was reset (its reinstall): every stroke not yet
+    /// sent is dropped.
+    StrokesReset,
+    /// Verbatim is exiting and the hook is gone: Core names the keys whose
+    /// last transition in line is a release
+    /// ([`QueueEffect::ReleaseAtExit`]), and the line is dropped.
+    Exit,
     /// A request from outside the event queue: a read for one of
     /// Verbatim's dialogs, the control plane, a tree dump, or either of
     /// the taskbar list's two reads, which name `Shell_TrayWnd`. It holds
@@ -817,15 +832,16 @@ pub enum PressAction {
         /// As [`PressAction::Command`]'s.
         repeat: u8,
     },
-    /// A caret key, bound to the committed focus's node at its press.
+    /// A caret key, bound to the committed focus's record at its press.
     CaretKey {
         /// Which key.
         key: crate::CaretKey,
-        /// Whether the hook held it back from the application.
-        held: bool,
-        /// The committed focus's node at the press, `None` when there was
-        /// none.
-        bound: Option<NodeId>,
+        /// The stroke the hook held back from the application, `None` when
+        /// it passed the key at once.
+        held: Option<crate::stroke::HeldStroke>,
+        /// The committed focus's record at the press, `None` when there was
+        /// none or it has no text.
+        bound: Option<Box<CaretBinding>>,
     },
     /// Text typed: one character, or an input method's composition.
     Typed {
@@ -841,6 +857,22 @@ pub enum PressAction {
     EditingChord,
     /// Any other key passed to the application, which types no text.
     Passed,
+}
+
+/// The committed focus's record a caret key is bound to at its press, as
+/// the hook's view publishes it: the node with its window, its role and how
+/// its text is read. The key runs on this node at its turn even when the
+/// focus has moved on (Dickson, 2026-11-16).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CaretBinding {
+    /// The node.
+    pub node: NodeId,
+    /// Its nearest window.
+    pub window: NodeWindow,
+    /// Its role, by which Core alone judges a terminal.
+    pub role: crate::Role,
+    /// How its text is read.
+    pub provider: crate::TextProvider,
 }
 
 /// How a request from outside the event queue ended, as its asker learns:
@@ -892,6 +924,11 @@ pub enum QueueEffect {
     },
     /// Check these windows for a hang ([`QueueInput::HangCheck`]).
     CheckHung(Vec<WindowHandle>),
+    /// Send these transitions, in order, with one `SendInput`.
+    SendStrokes(Vec<crate::stroke::SentTransition>),
+    /// At exit, release each of these keys that Windows still has down, in
+    /// order, and send nothing else.
+    ReleaseAtExit(Vec<crate::stroke::Stroke>),
     /// Tell the instance a window was destroyed: it forgets that window's
     /// MSAA nodes and text facts, and answers its queued requests on it
     /// "not there".

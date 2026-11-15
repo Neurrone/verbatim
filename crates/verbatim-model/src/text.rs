@@ -674,6 +674,190 @@ pub struct TextThrough {
     pub end: TextPoint,
 }
 
+/// How the outpost reads a node's text, which Core names in each caret
+/// key's request (`docs/design/readers-tell-core-asks-build1.md`, "Terms").
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TextProvider {
+    /// UI Automation's text pattern.
+    Uia,
+    /// An edit control's window messages. Of the providers Verbatim reads,
+    /// only this one has a sentence unit, found by Unicode's rules.
+    EditMessages,
+}
+
+impl TextProvider {
+    /// Whether the provider has a sentence unit: UI Automation has none.
+    #[must_use]
+    pub const fn has_sentences(self) -> bool {
+        matches!(self, Self::EditMessages)
+    }
+}
+
+/// What a text read fetches beyond the text.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TextDetails {
+    /// Formatting attributes.
+    pub formatting: bool,
+    /// Spelling errors.
+    pub spelling_errors: bool,
+    /// Links.
+    pub links: bool,
+}
+
+impl TextDetails {
+    /// Every detail, as a caret key's words speak them as they change.
+    pub const ALL: Self = Self {
+        formatting: true,
+        spelling_errors: true,
+        links: true,
+    };
+}
+
+/// A held caret key's starting read, asked at its turn before Core sends
+/// the key on: the caret and the selection's ends, held by the outpost as
+/// the starting point, with the key's unit at the caret, the line at the
+/// caret and, for Delete and Control+Delete, the word at the caret. It
+/// compares no selection.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StartingRead {
+    /// How the node's text is read.
+    pub provider: TextProvider,
+    /// What the read fetches beyond the text.
+    pub details: TextDetails,
+    /// The key's unit.
+    pub unit: TextUnit,
+    /// Whether the word at the caret is read, for Delete and
+    /// Control+Delete, whose watch compares it.
+    pub word: bool,
+}
+
+/// The answer to [`TextOp::StartingRead`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Started {
+    /// The starting point the outpost holds, which the key's watch and
+    /// sentence move name.
+    pub point: TextAnchor,
+    /// The caret: the line at it, with the caret at its offset, and the
+    /// selection.
+    pub caret: CaretReport,
+    /// The key's unit at the caret, the line where the text has no such
+    /// unit.
+    pub unit: TextChunk,
+    /// The word at the caret, when the request asked for it.
+    #[serde(default)]
+    pub word: Option<TextChunk>,
+}
+
+/// What a watch reads once it ends.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WatchFinalRead {
+    /// The caret, its line and the key's unit, at the effect or the bound.
+    Unit {
+        /// The key's unit.
+        unit: TextUnit,
+        /// What the read fetches beyond the text.
+        details: TextDetails,
+    },
+    /// The same, but only at the effect: at the bound nothing is read,
+    /// since Core moves by sentence from the starting point instead (a
+    /// sentence key in text with a sentence unit).
+    UnitAtEffect {
+        /// The key's unit.
+        unit: TextUnit,
+        /// What the read fetches beyond the text.
+        details: TextDetails,
+    },
+}
+
+/// Look for a key's effect: compare the application's caret with the
+/// starting point about every `poll_us` from the pass until `bound_us`
+/// after it, and end with the final read.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Watch {
+    /// How the node's text is read.
+    pub provider: TextProvider,
+    /// The starting point, minted by the key's starting read.
+    pub point: TextAnchor,
+    /// The key's motion, which selects the effect test.
+    pub motion: CaretMotion,
+    /// When Core sent the key, in microseconds on the run's shared clock.
+    pub passed_at_us: u64,
+    /// How often a check runs.
+    pub poll_us: u32,
+    /// Whether a UI Automation caret or text-change event of the node
+    /// heard within 60 ms of the pass is the key's effect.
+    pub events: bool,
+    /// How long after the pass the watch looks.
+    pub bound_us: u32,
+    /// What it reads once it ends.
+    pub final_read: WatchFinalRead,
+}
+
+/// A watch's final read.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WatchedRead {
+    /// The caret as it is now.
+    pub caret: CaretReport,
+    /// The key's unit at the caret, the line where the text has no such
+    /// unit.
+    pub unit: TextChunk,
+}
+
+/// The answer to [`TextOp::Watch`]: how it ended, with its final read.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Watched {
+    /// The key's effect was seen.
+    Effect(WatchedRead),
+    /// The bound passed with no effect seen.
+    Bound(WatchedRead),
+    /// The bound passed with no effect seen, and nothing was read
+    /// ([`WatchFinalRead::UnitAtEffect`]).
+    BoundUnread,
+}
+
+/// Move the caret by sentence from a key's starting point, in text whose
+/// provider has a sentence unit.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SentenceMove {
+    /// How the node's text is read.
+    pub provider: TextProvider,
+    /// The starting point.
+    pub point: TextAnchor,
+    /// Forward, or else back.
+    pub forward: bool,
+    /// What the read fetches beyond the text.
+    pub details: TextDetails,
+}
+
+/// The answer to [`TextOp::MoveBySentence`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SentenceMoved {
+    /// The caret moved to this sentence, in this line.
+    Moved {
+        /// The sentence.
+        sentence: String,
+        /// The line the caret is now on, with the caret at its offset.
+        line: TextChunk,
+        /// The selection baseline the move minted.
+        baseline: TextAnchor,
+    },
+    /// The caret moved to the text's end, past its last sentence.
+    End {
+        /// The selection baseline the move minted.
+        baseline: TextAnchor,
+    },
+    /// The caret stayed at the text's start, whose first sentence this
+    /// is.
+    StayedAtStart {
+        /// The first sentence.
+        sentence: String,
+        /// The line the caret is on, with the caret at its offset.
+        line: TextChunk,
+        /// The selection baseline the move minted.
+        baseline: TextAnchor,
+    },
+}
+
 /// One operation Core asks an outpost to perform on a node's text.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
@@ -683,6 +867,13 @@ pub enum TextOp {
     /// read in a terminal, whose caret answers it, or
     /// [`TextReply::Unanswered`] when the read failed.
     ReadCaret(CaretRead),
+    /// A held caret key's starting read: answered [`TextReply::Started`].
+    StartingRead(StartingRead),
+    /// A caret key's watch: answered [`TextReply::Watched`].
+    Watch(Watch),
+    /// A sentence key's move from its starting point: answered
+    /// [`TextReply::Sentence`].
+    MoveBySentence(SentenceMove),
     /// Read one unit: answered [`TextReply::Read`].
     Read(TextRead),
     /// Read the text between two points, in document order whichever comes
@@ -815,6 +1006,12 @@ pub struct TextRequest {
 pub enum TextReply {
     /// The answer to [`TextOp::ReadCaret`].
     Caret(Box<CaretReply>),
+    /// The answer to [`TextOp::StartingRead`].
+    Started(Box<Started>),
+    /// The answer to [`TextOp::Watch`].
+    Watched(Box<Watched>),
+    /// The answer to [`TextOp::MoveBySentence`].
+    Sentence(Box<SentenceMoved>),
     /// The answer to [`TextOp::Read`]: `moved` is how many units the
     /// movement really went, which is less than asked (and zero for a
     /// movement that could not start) at the document's ends; movement
