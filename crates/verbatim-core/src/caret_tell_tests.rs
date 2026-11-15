@@ -549,3 +549,42 @@ fn the_system_carets_tell_reads_the_committed_focus_through_its_provider() {
     let asked = step(&mut held, 1_000, system_caret());
     assert_eq!(asked.text, [(3, read_naming(TextProvider::Uia, None))]);
 }
+
+/// Several caret tells waiting for one object merge into one entry, so
+/// one comparison says what changed since the baseline (NVDA:
+/// `IAccessibleHandler/orderedWinEventLimiter.py` 79). Needs capture for
+/// Shift+Right three times faster than the application reports: written
+/// to the design's derived speech, awaiting NVDA's capture.
+#[test]
+fn caret_tells_waiting_for_one_element_merge_into_one_read() {
+    let mut held = uia_field();
+    with_baseline(&mut held, uia_caret(1), TextProvider::Uia, 3);
+    let _ = step(&mut held, 2_000, uia_caret(1));
+    let _ = step(&mut held, 2_010, uia_caret(1));
+    let _ = step(&mut held, 2_020, uia_caret(1));
+    let first = step(
+        &mut held,
+        2_100,
+        selection_read(
+            4,
+            (caret(0, 1), 71),
+            Some(differing(vec![change(true, "a")], Some("a"))),
+            None,
+        ),
+    );
+    assert_eq!(first.said, [phrase(Phrase::Selected(character("a")))]);
+    assert_eq!(first.text, [(5, read_naming(TextProvider::Uia, Some(71)))]);
+    let merged = step(
+        &mut held,
+        2_200,
+        selection_read(
+            5,
+            (caret(0, 3), 72),
+            Some(differing(vec![change(true, "lp")], Some("alp"))),
+            None,
+        ),
+    );
+    assert_eq!(merged.said, [phrase(Phrase::Selected(text("lp")))]);
+    assert_eq!(merged.text, Vec::new());
+    assert_eq!(held.state.queue.waiting_for_tests(), 0);
+}

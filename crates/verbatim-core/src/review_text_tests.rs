@@ -390,6 +390,77 @@ fn a_start_marker_set_then_copied_copies_the_range_read() {
     assert_eq!(state.start_marker, None);
 }
 
+/// Select then copy's first press selects from the start marker on the
+/// focused text: the selection it made is said, and the answer mints the
+/// next selection baseline, Verbatim's own selection not being spoken as a
+/// change (Table 17, column F).
+#[test]
+fn a_selection_made_on_the_focused_text_is_said_and_mints_the_baseline() {
+    let mut state = reviewing();
+    let _ = feed_at(
+        &mut state,
+        2_000,
+        press(2, ReviewCommand::SetStartMarker, 0),
+    );
+    let _ = feed_at(
+        &mut state,
+        2_100,
+        read(
+            4,
+            0,
+            line(
+                "one two
+", 100, 0,
+            ),
+        ),
+    );
+    let _ = feed_at(
+        &mut state,
+        3_000,
+        press(3, ReviewCommand::SelectThenCopy, 0),
+    );
+    let _ = feed_at(
+        &mut state,
+        3_100,
+        read(
+            5,
+            0,
+            line(
+                "one two
+", 100, 0,
+            ),
+        ),
+    );
+    assert!(matches!(
+        asked(&state),
+        Wire::Text {
+            op: TextOp::Select { .. },
+            ..
+        }
+    ));
+    let said = feed_at(
+        &mut state,
+        3_200,
+        answer(
+            OUTPOST,
+            6,
+            Reply::Text(TextReply::SelectionPlaced {
+                changes: vec![verbatim_model::SelectionChange {
+                    selected: true,
+                    text: "o".to_owned(),
+                    characters: 1,
+                }],
+                baseline: TextAnchor(80),
+            }),
+        ),
+    );
+    assert_eq!(said, ["Phrase(Selected(Character(\"o\")))"]);
+    assert_eq!(
+        crate::text_facts::held(&state.state),
+        Some((node(2), TextAnchor(80)))
+    );
+}
+
 /// The review cursor's location is asked of the application and said.
 #[test]
 fn the_review_cursors_location_is_asked_and_said() {
