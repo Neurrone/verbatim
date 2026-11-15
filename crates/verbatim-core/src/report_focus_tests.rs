@@ -262,3 +262,26 @@ fn the_reducer_routes_a_press_into_the_queue_and_keeps_its_fence() {
         crate::review_text::message(verbatim_model::Message::NoFocus)
     );
 }
+
+/// An index mark joins the queue in arrival order: it waits behind the
+/// press whose request is out, and is taken after it.
+#[test]
+fn an_index_mark_waits_its_turn_behind_a_press() {
+    let mut state = committed();
+    let _ = feed_at(&mut state, 1_000, press(1, 0));
+    assert_eq!(
+        feed_at(
+            &mut state,
+            1_100,
+            Input::Entry(Entry::Mark(
+                verbatim_model::SpeechMark(7),
+                crate::keys::entry::Fence::default()
+            ))
+        ),
+        Vec::<String>::new()
+    );
+    assert_eq!(state.queue.waiting_for_tests(), 1);
+    let _ = feed_at(&mut state, 2_000, field(TextSummary::Line("a".to_owned())));
+    assert_eq!(state.queue.waiting_for_tests(), 0);
+    assert_eq!(state.queue.front_for_tests(), None);
+}

@@ -734,6 +734,8 @@ pub enum QueueInput {
     Ignored(Vec<Pid>),
     /// A key or command the hook reported, its action chosen at the press.
     Press(Box<Press>),
+    /// Playback reached an index mark Core placed in an utterance.
+    MarkReached(crate::SpeechMark),
 }
 
 /// A key or command as the hook reports it to the event queue (ADR 0003,

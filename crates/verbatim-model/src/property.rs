@@ -196,9 +196,9 @@ pub enum UiaConversion {
     Cell,
     /// The grid's row and column counts.
     TableCounts,
-    /// Read through the text pattern, none cached: the selection's text
-    /// when it is not empty, else the line at the caret, else the first
-    /// line.
+    /// Read through the text pattern when the cached availability says
+    /// it has one, absent otherwise: the selection's text when it is not
+    /// empty, else the line at the caret, else the first line.
     TextSummary,
 }
 
@@ -568,7 +568,7 @@ const TEXT_SUMMARY: PropertyEntry = PropertyEntry {
     name: "text summary",
     kind: ValueKind::TextSummary,
     uia: Some(UiaRead {
-        cached: &[],
+        cached: &[uia::IS_TEXT_PATTERN_AVAILABLE],
         conversion: UiaConversion::TextSummary,
     }),
     msaa: Some(MsaaRead::TextSummary),
@@ -1060,7 +1060,7 @@ mod tests {
                 1
             );
         }
-        assert_eq!(PROPERTIES.len(), 20);
+        assert_eq!(PROPERTIES.len(), 21);
     }
 
     #[test]

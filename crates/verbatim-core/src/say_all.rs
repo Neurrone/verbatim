@@ -40,6 +40,8 @@ use verbatim_model::{
 use verbatim_text::Segmenter;
 
 use crate::editing::is_grid;
+use crate::entries::Entries;
+use crate::event_queue::Cx;
 use crate::queries::Then;
 use crate::state::{
     BufferedPiece, QueuedMark, ReviewText, SayAll, SharedChunk, SrState, UnitStart,
@@ -395,6 +397,21 @@ fn pieces(
 /// caret, judges the key from Core's caret.
 pub(crate) fn mark_reached(state: &mut SrState, mark: SpeechMark) -> Vec<Effect> {
     passed(state, mark, true)
+}
+
+/// An index mark's entry at its turn: playback reached `mark`, which
+/// joined the event queue in arrival order (ADR 0003, "Core's inbox and
+/// the event queue"); say-all and terminal output take it as today.
+pub(crate) fn mark_entry(cx: &mut Cx<Entries>, mark: SpeechMark) {
+    let effects = {
+        let mut facts = cx.facts_mut();
+        let mut effects = mark_reached(&mut facts, mark);
+        effects.extend(crate::terminal::mark_reached(&mut facts, mark));
+        effects
+    };
+    for effect in effects {
+        cx.emit(effect);
+    }
 }
 
 /// An utterance failed before playback reached `marks`: it counts as

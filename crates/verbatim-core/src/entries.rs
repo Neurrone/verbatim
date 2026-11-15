@@ -30,7 +30,7 @@ use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::RuntimeId;
 use verbatim_model::request::{MsaaIds, OutsideOutcome, Probe, QueueEffect, QueueInput};
 use verbatim_model::tell::{AcceptanceFacts, ElementToken, Event, EventObject, TellWindow};
-use verbatim_model::{Earcon, Effect as Said, TraceId, WindowHandle};
+use verbatim_model::{Earcon, Effect as Said, SpeechMark, TraceId, WindowHandle};
 
 use crate::event_queue::Instance;
 use crate::event_queue::{
@@ -135,6 +135,8 @@ pub(crate) enum Entry {
     },
     /// A key or command, its action chosen at the press.
     Press(Box<PressEntry>),
+    /// Playback reached an index mark, with its speech fence.
+    Mark(SpeechMark, Fence),
 }
 
 impl fmt::Debug for Entry {
@@ -189,6 +191,7 @@ impl fmt::Debug for Entry {
                 "Press({:?} {:?})",
                 press.press.key_seq, press.press.action
             ),
+            Self::Mark(mark, _) => write!(formatter, "Mark({})", mark.0),
         }
     }
 }
@@ -305,7 +308,8 @@ impl Entry {
             | Self::ForegroundMarker { .. }
             | Self::MenuCheck(_)
             | Self::CurrentFocus(_)
-            | Self::Press(_) => None,
+            | Self::Press(_)
+            | Self::Mark(..) => None,
         }
     }
 
@@ -323,7 +327,7 @@ impl Entry {
             Self::CurrentFocus(read) => read.fence,
             Self::MsaaChange(change) => change.fence,
             Self::UiaChange(change) => change.fence,
-            Self::ForegroundMarker { fence, .. } => *fence,
+            Self::ForegroundMarker { fence, .. } | Self::Mark(_, fence) => *fence,
             Self::Press(press) => press.fence,
         }
     }
@@ -342,7 +346,7 @@ impl Entry {
             Self::CurrentFocus(read) => read.fence = set,
             Self::MsaaChange(change) => change.fence = set,
             Self::UiaChange(change) => change.fence = set,
-            Self::ForegroundMarker { fence, .. } => *fence = set,
+            Self::ForegroundMarker { fence, .. } | Self::Mark(_, fence) => *fence = set,
             Self::Press(press) => press.fence = set,
         }
     }
@@ -396,6 +400,10 @@ impl Logic for Entries {
                 crate::changes::uia(&mut cx, &change);
             }),
             Entry::Press(press) => Box::pin(crate::keys::entry::run(cx, *press)),
+            Entry::Mark(mark, _) => Box::pin(async move {
+                let mut cx = cx;
+                crate::say_all::mark_entry(&mut cx, mark);
+            }),
             Entry::ForegroundMarker {
                 window, root_owner, ..
             } => Box::pin(async move {
@@ -546,11 +554,13 @@ impl Logic for Entries {
                 focus_kind: true,
                 ends_run: false,
             },
-            Entry::Run(_) | Entry::ForegroundMarker { .. } | Entry::Press(_) => Place::Other {
-                merges: false,
-                focus_kind: false,
-                ends_run: false,
-            },
+            Entry::Run(_) | Entry::ForegroundMarker { .. } | Entry::Press(_) | Entry::Mark(..) => {
+                Place::Other {
+                    merges: false,
+                    focus_kind: false,
+                    ends_run: false,
+                }
+            }
         }
     }
 
@@ -610,7 +620,8 @@ impl Logic for Entries {
             | Entry::ForegroundMarker { .. }
             | Entry::MenuCheck(_)
             | Entry::UiaChange(_)
-            | Entry::Press(_) => None,
+            | Entry::Press(_)
+            | Entry::Mark(..) => None,
         };
         window.is_some_and(|window| {
             !foreground.holds(&window) && !entry.tell().is_some_and(accepted_apart_from_foreground)
@@ -628,7 +639,8 @@ impl Logic for Entries {
             | Entry::CurrentFocus(_)
             | Entry::MsaaChange(_)
             | Entry::UiaChange(_)
-            | Entry::Press(_) => None,
+            | Entry::Press(_)
+            | Entry::Mark(..) => None,
         }
     }
 
@@ -728,6 +740,7 @@ pub(crate) fn route(
             trace_id,
             (**press).clone(),
         )))),
+        QueueInput::MarkReached(mark) => Input::Entry(Entry::Mark(*mark, Fence::default())),
         QueueInput::Ignored(processes) => {
             state.ignored.clone_from(processes);
             return Vec::new();
