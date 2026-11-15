@@ -295,8 +295,9 @@ them yet.
   raising thread, callback time, object (`EventObject`, a kept element's
   `ElementToken` with its runtime id, or MSAA ids), cached properties, a
   kind's `Payload`, the window it is judged by (`TellWindow`, found with
-  its `AcceptanceFacts`, none, or failed) and what the listener's check
-  thread found at delivery (`Checked`).
+  its `AcceptanceFacts`, none, or failed; the facts mark Verbatim's
+  hidden frame and a window it owns through its owner chain) and what the
+  listener's check thread found at delivery (`Checked`).
 - `request`: the shared request list. `Ask` is a request as Core sends it,
   numbered (`RequestNumber`) and naming its window; `Request` holds the
   generic read of the object an event names (`ReadObject`, with its
@@ -304,10 +305,15 @@ them yet.
   the ancestors Core already knows and its purpose), and the properties,
   navigation, find, children, text and activate requests, and the focus
   requests: `CompleteUia` (the completion of a UI Automation read from the
-  listener's `Route`), `MsaaRun` (one application's `RunCandidate`s,
-  answered `RunRead` with each candidate `Tried`) and the current focus,
+  listener's `Route`), `MsaaRun` (one application's `RunCandidate`s, each
+  of a `CandidateKind`, a focus, a foreground or a menu start, answered
+  `RunRead` with each candidate `Tried`) and the current focus,
   each answered with a `FocusRead`, which carries what Core keeps with the
-  committed focus. Each `Ask` carries its window's `WindowVerdict`, "probe
+  committed focus. A read's `RelationQuery` asks whether the object is one
+  of the nodes Core names, inside an object the focus controls, or, for a
+  selected item, either. `Follow` names the committed focus's node to its
+  outpost (`Followed`, with its `FollowGroup` and an extra object), or
+  nothing, answered `Followed`. Each `Ask` carries its window's `WindowVerdict`, "probe
   first" when Core has none in force, and each `Answer` the `Probe`s the
   request made. `Answer` carries
   one of the five outcomes (`Outcome`: a `Reply`, `Refused` with a
