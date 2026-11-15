@@ -601,6 +601,9 @@ pub struct SrState {
     /// The two versions of the focus, the committed focus with what Core
     /// keeps of its focus answer (`crate::focus::versions`).
     pub(crate) versions: crate::focus::versions::Versions,
+    /// The node Core last named in `Follow` per outpost
+    /// (`crate::focus::follow`, Table 10).
+    pub(crate) follows: crate::focus::follow::Follows,
     /// The processes whose focus is dropped at its answer: the end-to-end
     /// harness's own, none for real users (`crate::focus::execute`).
     pub(crate) ignored: Vec<verbatim_model::Pid>,

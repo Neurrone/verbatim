@@ -15,7 +15,7 @@ use verbatim_model::TraceId;
 use verbatim_model::request::{FocusRead, KnownAncestor, Reply, Request as Wire};
 
 use super::FOCUS_SET;
-use super::execute::{Known, Origin, execute, retake};
+use super::execute::{Executed, Known, Origin, execute, retake};
 use super::versions::{Committed, ReadBy};
 use crate::entries::Entries;
 use crate::event_queue::{
@@ -191,17 +191,15 @@ pub(crate) async fn run(mut cx: Cx<Entries>, entry: CurrentFocus) {
         return;
     };
     let origin = Origin::of_read(entry.trace_id, entry.window);
-    let said = {
+    let executed = {
         let mut facts = cx.facts_mut();
         match entry.why {
             Why::Startup => execute(&mut facts, &origin, &read, &Known::default(), read_by),
-            Why::Recovered if recovered_duplicate(&facts, &read) => Vec::new(),
+            Why::Recovered if recovered_duplicate(&facts, &read) => Executed::default(),
             Why::Retake | Why::Recovered => retake(&mut facts, &origin, &read, read_by).1,
         }
     };
-    for said in said {
-        cx.emit(said);
-    }
+    executed.deliver(&mut cx);
 }
 
 #[cfg(test)]

@@ -672,6 +672,35 @@ impl<L: Logic> Cx<L> {
         self.shared.borrow_mut().effects.push(Effect::Said(said));
     }
 
+    /// Sends `request` outside the event queue under the due time
+    /// `due_us`, in order with the queue's requests, awaiting no answer:
+    /// its ending changes nothing in Core. A rebuilt function's sends are
+    /// not made again, since its state is let go.
+    pub(crate) fn send<R: Request>(&mut self, request: &R, due_us: u64) {
+        let mut shared = self.shared.borrow_mut();
+        let reader = request.reader();
+        let ready = shared.state.queue.readers.get(&reader).copied();
+        let now_us = shared.state.queue.now_us;
+        let mut orders = Vec::new();
+        let state = &mut shared.state;
+        state.queue.table.begin(
+            Live {
+                reader,
+                window: request.window(),
+                due_us,
+                request: request.wire(),
+                owner: Owner::Core,
+                stage: Stage::Waiting,
+                probing: None,
+            },
+            ready,
+            &state.queue.backend,
+            now_us,
+            &mut orders,
+        );
+        Core::<L>::order(&mut shared, orders);
+    }
+
     /// Asks `request` under the due time `due_us` and waits for its one
     /// outcome.
     pub(crate) fn ask<R: Request>(&mut self, request: R, due_us: u64) -> Asking<'_, L, R> {

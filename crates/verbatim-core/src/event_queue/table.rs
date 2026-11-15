@@ -34,6 +34,10 @@ pub(crate) enum Owner {
     Queue,
     /// An asker outside the queue.
     Outside(Asker),
+    /// Core itself, which awaits no answer: a request outside the queue
+    /// whose ending changes nothing in Core, such as `Follow`, answered
+    /// only for the test harness's idle.
+    Core,
 }
 
 /// Where a live request is.

@@ -214,13 +214,11 @@ fn executed(cx: &mut Cx<Entries>, candidate: &Candidate, read: &FocusRead, known
         held_child: held.held_child,
     };
     let origin = Origin::of_tell(&candidate.tell, candidate.window);
-    let said = {
+    let executed = {
         let mut facts = cx.facts_mut();
-        let said = execute(&mut facts, &origin, read, known, read_by);
+        let executed = execute(&mut facts, &origin, read, known, read_by);
         facts.run_executed = true;
-        said
+        executed
     };
-    for said in said {
-        cx.emit(said);
-    }
+    executed.deliver(cx);
 }

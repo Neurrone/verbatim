@@ -16,8 +16,11 @@ use verbatim_model::{
     TraceId, WindowFacts, WindowHandle,
 };
 
+use super::follow::FollowRequest;
 use super::versions::{Kept, KeptAncestor, Place, ReadBy};
+use crate::entries::Entries;
 use crate::entries::window_facts;
+use crate::event_queue::Cx;
 use crate::event_queue::RequestWindow;
 use crate::focus_queue::Report;
 use crate::foreground::ForegroundFact;
@@ -347,14 +350,14 @@ pub(crate) fn execute(
     read: &FocusRead,
     known: &Known,
     read_by: ReadBy,
-) -> Vec<Effect> {
+) -> Executed {
     if ignored(state, origin) {
-        return Vec::new();
+        return Executed::default();
     }
     let Some(ready) = ready(state, origin, read, known, read_by) else {
-        return Vec::new();
+        return Executed::default();
     };
-    let effects = crate::reduce::execute_report(state, &ready.report, false, 0);
+    let said = crate::reduce::execute_report(state, &ready.report, false, 0);
     if read.met.is_none()
         && let Some(foreground) = &ready.foreground
     {
@@ -363,8 +366,50 @@ pub(crate) fn execute(
             .apply(ForegroundFact::Object(ObjectKey::of(foreground)));
     }
     state.forget_caret();
+    let follows = commit(state, origin, ready);
+    Executed {
+        said,
+        follows,
+        committed: true,
+    }
+}
+
+/// What executing a focus answer did: what it said, the `Follow`s its
+/// commit sends, and whether it committed the focus.
+#[derive(Debug, Default)]
+pub(crate) struct Executed {
+    /// What it said.
+    pub(crate) said: Vec<Effect>,
+    /// The `Follow`s the commit sends.
+    pub(crate) follows: Vec<FollowRequest>,
+    /// Whether the focus was committed.
+    pub(crate) committed: bool,
+}
+
+impl Executed {
+    /// Emits what it said and sends its `Follow`s.
+    pub(crate) fn deliver(self, cx: &mut Cx<Entries>) {
+        for said in self.said {
+            cx.emit(said);
+        }
+        super::follow::send(cx, self.follows);
+    }
+}
+
+/// Commits `ready`: both versions of the focus become it, and the
+/// `Follow`s the commit sends are returned (Table 10, columns A and B).
+fn commit(state: &mut SrState, origin: &Origin, ready: Ready) -> Vec<FollowRequest> {
+    let class = origin.window.as_ref().map(|window| window.class.as_str());
+    let follows = state.follows.committed(
+        Some((
+            &ready.kept,
+            &ready.report.node,
+            ready.report.ancestors.last(),
+        )),
+        class,
+    );
     state.versions.execute(ready.kept);
-    effects
+    follows
 }
 
 /// Executes the committed focus again, as a UI Automation menu opening on
@@ -414,13 +459,13 @@ pub(crate) fn retake(
     origin: &Origin,
     read: &FocusRead,
     read_by: ReadBy,
-) -> (Retaken, Vec<Effect>) {
+) -> (Retaken, Executed) {
     if ignored(state, origin) {
-        return (Retaken::Dropped, Vec::new());
+        return (Retaken::Dropped, Executed::default());
     }
     let known = Known::default();
     let Some(ready) = ready(state, origin, read, &known, read_by.clone()) else {
-        return (Retaken::Dropped, Vec::new());
+        return (Retaken::Dropped, Executed::default());
     };
     let same = state.versions.last.is_some()
         && state.focus.object().is_some_and(|focus| {
@@ -428,8 +473,15 @@ pub(crate) fn retake(
         });
     if same {
         crate::reduce::take_silently(state, &ready.report);
-        state.versions.execute(ready.kept);
-        return (Retaken::Silently, Vec::new());
+        let follows = commit(state, origin, ready);
+        return (
+            Retaken::Silently,
+            Executed {
+                said: Vec::new(),
+                follows,
+                committed: true,
+            },
+        );
     }
     (
         Retaken::Executed,

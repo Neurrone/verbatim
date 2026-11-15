@@ -195,9 +195,22 @@ pub(crate) async fn run(mut cx: Cx<Entries>, focus: UiaFocus) {
             completes: CompletionFor::Focus,
         },
     };
-    let Outcome::Result(read) = cx.ask(complete, due_us).await else {
-        cx.facts_mut().forget_caret();
-        return;
+    let read = match cx.ask(complete, due_us).await {
+        Outcome::Result(read) => read,
+        // The outpost ended: its registrations went with it (Table 10,
+        // column F).
+        Outcome::ReaderEnded => {
+            cx.facts_mut().forget_caret();
+            return;
+        }
+        Outcome::Refused(_)
+        | Outcome::NotThere
+        | Outcome::NotResponding
+        | Outcome::NoLongerAwaited(_) => {
+            cx.facts_mut().forget_caret();
+            unexecuted(&mut cx, window);
+            return;
+        }
     };
 
     let read_by = ReadBy::Uia {
@@ -205,8 +218,18 @@ pub(crate) async fn run(mut cx: Cx<Entries>, focus: UiaFocus) {
         token: Some(focus.token),
     };
     let origin = Origin::of_tell(&focus.tell, window);
-    let said = execute(&mut cx.facts_mut(), &origin, &read, &known, read_by);
-    for said in said {
-        cx.emit(said);
+    let executed = execute(&mut cx.facts_mut(), &origin, &read, &known, read_by);
+    if !executed.committed {
+        unexecuted(&mut cx, window);
     }
+    executed.deliver(&mut cx);
+}
+
+/// A completion the outpost of `window`'s application answered, or Core
+/// stopped waiting for, ended without its focus executed: a `Follow`
+/// naming what Core names there removes the completion's registration
+/// (Table 10, column C).
+fn unexecuted(cx: &mut Cx<Entries>, window: RequestWindow) {
+    let request = cx.facts().follows.unexecuted(window.process, window);
+    super::follow::send(cx, vec![request]);
 }

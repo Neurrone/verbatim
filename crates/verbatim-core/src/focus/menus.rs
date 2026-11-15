@@ -113,10 +113,8 @@ pub(crate) async fn check(mut cx: Cx<Entries>, check: MenuCheck) {
         return;
     };
     let origin = Origin::of_read(check.trace_id, window);
-    let said = execute(&mut cx.facts_mut(), &origin, &read, &known, read_by);
-    for said in said {
-        cx.emit(said);
-    }
+    let executed = execute(&mut cx.facts_mut(), &origin, &read, &known, read_by);
+    executed.deliver(&mut cx);
 }
 
 /// Whether the UI Automation menu opening `arriving` is dropped at its

@@ -8,8 +8,8 @@ use verbatim_model::tell::{ElementToken, Read};
 use verbatim_model::{NodeId, OutpostId, Pid, TraceId, WindowHandle};
 
 use crate::entries::tests::{
-    APP, GENERATION, Held, LISTENER, NOTHING, OUTPOST, SPOKEN, answer, asked_completion, entry,
-    feed_at, focus_read, node, ready, uia_tell,
+    APP, GENERATION, Held, LISTENER, NOTHING, OUTPOST, SPOKEN_FOLLOWED, answer, asked_completion,
+    entry, feed_at, focus_read, node, ready, uia_tell,
 };
 use crate::event_queue::{Foreground, Input, Instance, Reader};
 use crate::focus::versions::{Committed, ReadBy};
@@ -54,7 +54,7 @@ fn started() -> Held {
             600,
             answer(OUTPOST, 1, Reply::Focus(Box::new(focus_read(None))))
         ),
-        SPOKEN
+        SPOKEN_FOLLOWED
     );
     state
 }
@@ -106,9 +106,10 @@ fn the_committed_focus_read_again_after_its_outpost_ends_is_taken_silently() {
         feed_at(
             &mut state,
             1_200,
-            answer(REPLACEMENT, 2, Reply::Focus(Box::new(read)))
+            answer(REPLACEMENT, 3, Reply::Focus(Box::new(read)))
         ),
-        NOTHING
+        // Taken silently, and named to the replacement generation.
+        ["send Outpost(Pid(40)) Follow"]
     );
     let new_id = NodeId::in_outpost(OutpostId(GENERATION + 1), 2);
     assert_eq!(state.focus.object().unwrap().snapshot.id, new_id);
@@ -129,13 +130,14 @@ fn a_different_focus_read_after_its_outpost_ends_is_spoken() {
         feed_at(
             &mut state,
             1_200,
-            answer(REPLACEMENT, 2, Reply::Focus(Box::new(read)))
+            answer(REPLACEMENT, 3, Reply::Focus(Box::new(read)))
         ),
         // None of the ended generation's ancestors is sent as known, so
         // the walk goes to the top and the window is said again.
         [
             "Label(\"Editor\") Role(Window)",
-            "Label(\"Cancel\") Role(Button)"
+            "Label(\"Cancel\") Role(Button)",
+            "send Outpost(Pid(40)) Follow",
         ]
     );
 }
@@ -156,7 +158,7 @@ fn the_listeners_end_clears_its_token_and_reads_the_attended_applications_focus(
     feed_at(
         &mut state,
         3_200,
-        answer(OUTPOST, 3, Reply::Focus(Box::new(focus_read(None)))),
+        answer(OUTPOST, 4, Reply::Focus(Box::new(focus_read(None)))),
     );
     // A later focus of the listener's waits behind the re-take and is
     // dropped with the listener's element.
@@ -213,7 +215,7 @@ fn a_recovered_window_reads_the_focus_and_a_uia_focus_on_the_last_runtime_id_is_
         feed_at(
             &mut state,
             1_700,
-            answer(OUTPOST, 3, Reply::Focus(Box::new(focus_read(None))))
+            answer(OUTPOST, 4, Reply::Focus(Box::new(focus_read(None))))
         ),
         NOTHING
     );

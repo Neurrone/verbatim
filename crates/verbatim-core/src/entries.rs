@@ -339,10 +339,19 @@ impl Logic for Entries {
         instance: Instance,
         foreground: Option<Foreground>,
     ) -> Vec<Entry> {
+        if let crate::event_queue::Reader::Outpost(process) = instance.reader {
+            facts
+                .follows
+                .outpost_ended(process, verbatim_model::OutpostId(instance.generation));
+        }
         crate::focus::retake::reader_ended(facts, instance, foreground)
             .map(|read| Entry::CurrentFocus(Box::new(read)))
             .into_iter()
             .collect()
+    }
+
+    fn window_destroyed(facts: &mut SrState, window: WindowHandle) {
+        facts.follows.window_destroyed(window);
     }
 
     fn dropped_at_arrival(

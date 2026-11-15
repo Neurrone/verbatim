@@ -364,6 +364,7 @@ impl<L: Logic> Core<L> {
         }
         match ended.owner {
             Owner::Queue => self.resume(ended.ending),
+            Owner::Core => {}
             Owner::Outside(asker) => {
                 let outcome = match outcome_of(ended.ending) {
                     Ok(reply) => Outcome::Result(reply),

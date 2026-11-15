@@ -10,7 +10,7 @@ use super::*;
 
 const OUTPOST: OutpostId = OutpostId(7);
 
-fn kept(top_level: u64) -> Kept {
+pub(crate) fn kept(top_level: u64) -> Kept {
     Kept {
         source: Pid(40),
         outpost: OUTPOST,

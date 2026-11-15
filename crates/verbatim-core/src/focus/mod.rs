@@ -15,6 +15,7 @@ pub(crate) mod acceptance;
 pub(crate) mod backend;
 pub(crate) mod duplicate;
 pub(crate) mod execute;
+pub(crate) mod follow;
 pub(crate) mod menus;
 pub(crate) mod msaa_run;
 pub(crate) mod pending;

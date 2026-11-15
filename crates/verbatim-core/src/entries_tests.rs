@@ -253,6 +253,7 @@ pub(crate) fn kind(ask: &Ask) -> &'static str {
         Wire::CompleteUia(_) => "CompleteUia",
         Wire::MsaaRun(_) => "MsaaRun",
         Wire::CurrentFocus { .. } => "CurrentFocus",
+        Wire::Follow(_) => "Follow",
         _ => "other",
     }
 }
@@ -296,6 +297,13 @@ pub(crate) const SPOKEN: [&str; 2] = [
     "Label(\"OK\") Role(Button)",
 ];
 
+/// [`SPOKEN`], then the `Follow` naming the UI Automation focus.
+pub(crate) const SPOKEN_FOLLOWED: [&str; 3] = [
+    "Label(\"Editor\") Role(Window)",
+    "Label(\"OK\") Role(Button)",
+    "send Outpost(Pid(40)) Follow",
+];
+
 /// A UI Automation focus asked of the listener, then completed by the
 /// outpost, up to the completion's answer.
 pub(crate) fn asked_completion() -> Held {
@@ -324,7 +332,7 @@ fn a_uia_focus_is_read_in_two_requests_and_executed() {
             3_000,
             answer(OUTPOST, 2, Reply::Focus(Box::new(focus_read(None))))
         ),
-        SPOKEN
+        SPOKEN_FOLLOWED
     );
     assert_eq!(state.focus.object().unwrap().snapshot.id, node(2));
     let Committed::Read(kept) = &state.versions.committed else {
@@ -340,7 +348,17 @@ fn a_uia_focus_is_read_in_two_requests_and_executed() {
         })
     );
     assert_eq!(state.queue.front_for_tests(), None);
-    assert_eq!(state.queue.table_for_tests(), Vec::new());
+    // Only the commit's `Follow` is out, outside the queue.
+    assert_eq!(
+        state.queue.table_for_tests(),
+        [Wire::Follow(verbatim_model::request::Follow {
+            node: Some(verbatim_model::request::Followed {
+                node: node(2),
+                group: verbatim_model::request::FollowGroup::Base,
+                extra: None,
+            }),
+        })]
+    );
 }
 
 #[test]
@@ -376,7 +394,8 @@ fn a_refused_completion_ends_the_focus_unspoken() {
             3_000,
             answer_outcome(OUTPOST, 2, WireOutcome::Refused(Refusal::ReadThroughMsaa))
         ),
-        NOTHING
+        // Naming nothing, which removes the completion's registration.
+        ["send Outpost(Pid(40)) Follow"]
     );
     assert!(state.focus.object().is_none());
     assert_eq!(state.versions.committed, Committed::Nothing);
@@ -405,8 +424,8 @@ fn a_dump_of_the_state_rebuilds_the_paused_function_and_goes_on_alike() {
     assert_eq!(restored, state);
     let reply = answer(OUTPOST, 2, Reply::Focus(Box::new(focus_read(None))));
     let straight = feed_at(&mut state, 3_000, reply.clone());
-    assert_eq!(feed_at(&mut restored, 3_000, reply), SPOKEN);
-    assert_eq!(straight, SPOKEN);
+    assert_eq!(feed_at(&mut restored, 3_000, reply), SPOKEN_FOLLOWED);
+    assert_eq!(straight, SPOKEN_FOLLOWED);
     assert_eq!(
         format!("{:?}", restored.state),
         format!("{:?}", state.state)
@@ -645,7 +664,9 @@ fn a_focus_whose_top_level_window_is_an_ignored_processs_is_dropped_at_its_answe
             3_000,
             answer(OUTPOST, 2, Reply::Focus(Box::new(focus_read(None))))
         ),
-        NOTHING
+        // Not executed: naming nothing removes the completion's
+        // registration.
+        ["send Outpost(Pid(40)) Follow"]
     );
     assert_eq!(state.versions.last, None);
     assert!(state.focus.object().is_none());
@@ -734,7 +755,7 @@ fn a_failed_focus_read_clears_cores_caret_baseline() {
         feed_at(
             &mut state,
             5_000,
-            answer_outcome(LISTENER, 3, WireOutcome::NotThere)
+            answer_outcome(LISTENER, 4, WireOutcome::NotThere)
         ),
         NOTHING
     );

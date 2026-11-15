@@ -316,4 +316,4 @@ impl Versions {
 
 #[cfg(test)]
 #[path = "versions_tests.rs"]
-mod tests;
+pub(crate) mod tests;
