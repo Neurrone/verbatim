@@ -268,6 +268,46 @@ recorder unchanged. What the reducer does with each type is in
   [verbatim-uia](verbatim-uia.md) and [verbatim-ia2](verbatim-ia2.md)
   count them.
 
+## Tells, requests and the tables (built beside today's protocol)
+
+The types of [ADR 0003](../adr/0003-readers-tell-core-asks.md), "Readers
+tell, Core asks", built beside the protocol below; no reader or Core uses
+them yet.
+
+- `property`: the property table. `PropertyId` names each property once,
+  and `PropertyId::entry` gives its `PropertyEntry`: its name, its value
+  type (`ValueKind`), how UI Automation reads it (`UiaRead`: the property
+  ids cached and their `UiaConversion`), how MSAA reads it (`MsaaRead`),
+  how `IAccessible2` reads it (`Ia2Read`, empty until M7), and its `Cost`
+  for the bulk-read gate. `PropertyId::named` finds an entry by name, for
+  extensions. A read names a set fixed at compile time: the
+  `property_set!` macro declares a struct with one field per property,
+  typed by the property's marker in `props`, and its `PropertySet`
+  implementation, whose `parse` turns an answer's `PropertyValues` into
+  the struct once, at the boundary, refusing (`SetMismatch`) a missing,
+  repeated, unasked or mistyped property.
+- `event_kind`: the event-kind table. `EventKind::entry` gives each kind's
+  `EventKindEntry`: its name, its `Teller` (the listener's hook, focus
+  handler or global group, an outpost's `Follow` group, or the console
+  host), its `Source` (the `WinEvent` constant or UI Automation event id)
+  and the properties its tell carries from the event's cache.
+- `tell`: `Event`, the one tell for both readers: its kind, process,
+  raising thread, callback time, object (`EventObject`, a kept element's
+  `ElementToken` with its runtime id, or MSAA ids), cached properties, a
+  kind's `Payload`, the window it is judged by (`TellWindow`, found with
+  its `AcceptanceFacts`, none, or failed) and what the listener's check
+  thread found at delivery (`Checked`).
+- `request`: the shared request list. `Ask` is a request as Core sends it,
+  numbered (`RequestNumber`) and naming its window; `Request` holds the
+  generic read of the object an event names (`ReadObject`, with its
+  property set, relation to nodes Core names, descendants, the walk up to
+  the ancestors Core already knows and its purpose), and the properties,
+  navigation, find, children, text and activate requests. `Answer` carries
+  one of the five outcomes (`Outcome`: a `Reply`, `Refused` with a
+  `Refusal`, not there, not responding, or the reader ended) and a
+  diagnostic detail. `Cancel` carries a `CancelReason`: foreground, hung,
+  due time or withdrawn; only the first abandons a running call.
+
 ## Time limits
 
 The limits a slow application is waited for by, in one place for the

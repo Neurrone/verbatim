@@ -48,13 +48,17 @@
 
 mod calls;
 mod event;
+pub mod event_kind;
 mod gesture;
 mod key_seq;
 mod limits;
+pub mod property;
 pub mod protocol;
+pub mod request;
 mod settings;
 mod shell;
 mod speech;
+pub mod tell;
 mod terminal;
 mod text;
 mod theme;
