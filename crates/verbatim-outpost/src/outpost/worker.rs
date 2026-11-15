@@ -557,7 +557,8 @@ pub(super) fn win_kind(kind: WinEventKind) -> WinKind {
         WinEventKind::Alert => WinKind::Alert,
         WinEventKind::Caret => WinKind::Caret,
         WinEventKind::TextSelectionChange => WinKind::TextSelectionChange,
-        WinEventKind::Show => WinKind::Show,
+        // Another show class's, which only the listener hooks, is a show too.
+        WinEventKind::Show | WinEventKind::OtherShow => WinKind::Show,
         WinEventKind::ConsoleUpdate => WinKind::ConsoleUpdate,
         WinEventKind::ShellForeground => WinKind::ShellForeground,
         WinEventKind::ConsoleCaret => WinKind::ConsoleCaret,
@@ -629,7 +630,7 @@ fn event_name_of(kind: WinEventKind) -> Option<EventName> {
         WinEventKind::MenuPopupStart => EventName::MenuStart,
         WinEventKind::MenuEnd => EventName::MenuEnd,
         WinEventKind::SwitchEnd => EventName::SwitchEnd,
-        WinEventKind::Show => EventName::Show,
+        WinEventKind::Show | WinEventKind::OtherShow => EventName::Show,
         WinEventKind::Alert => EventName::Alert,
         WinEventKind::ValueChange => EventName::ValueChange,
         WinEventKind::StateChange => EventName::StateChange,

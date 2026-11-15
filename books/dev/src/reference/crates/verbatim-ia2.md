@@ -30,21 +30,26 @@ Public API:
   and text selection changes (`WinEventKind::TextSelectionChange`,
   `EVENT_OBJECT_TEXTSELECTIONCHANGED`); and
   `LISTENER_SUBSCRIPTIONS`, what the focus listener installs
-  globally, forwarding an application's events only until its outpost's
-  own hook is in (its console events are hooked from the install until
-  the listener's start, and afterwards only while a console window in
-  front has not named its thread; Program Manager's and the taskbar's
+  globally: every kind it tells Core of (ADR 0003), each event mapped to
+  the kind its tell names by `tell_kind`, which tells apart by the raw id
+  (`WinEvent::event`) the events one kind stands for, a menu's end and a
+  popup menu's, a selection added, removed or within. Its console events
+  are hooked from the install until the listener's start, and afterwards
+  only while a console window in front has not named its thread, and are
+  told as nothing, since the console host's outpost keeps them; a text
+  selection change is not hooked. Program Manager's and the taskbar's
   foreground events come to it alone, as `WinEventKind::ShellForeground`,
-  never a foreground change) — focus (`EVENT_OBJECT_FOCUS`), foreground
-  (`EVENT_SYSTEM_FOREGROUND`, the `WinEventKind::Foreground` variant that
-  absorbs Core's old foreground trigger), menu-popup opens
-  (`EVENT_SYSTEM_MENUPOPUPSTART`), and the end of a menu or of the Alt+Tab
-  switcher (`WinEventKind::MenuEnd` and `WinEventKind::SwitchEnd`), which
-  is global because focus returns to whichever application is then in
-  front, and a tooltip window shown (`WinEventKind::Show`:
+  never a foreground change, and so do the shows of NVDA's five show
+  classes other than the tooltip's (`WinEventKind::OtherShow`,
+  `OTHER_SHOW_CLASSES`). It holds focus (`EVENT_OBJECT_FOCUS`), foreground
+  (`EVENT_SYSTEM_FOREGROUND`), the changes of name, value, state,
+  description and selection, menu-popup opens
+  (`EVENT_SYSTEM_MENUPOPUPSTART`), the end of a menu or of the Alt+Tab
+  switcher (`WinEventKind::MenuEnd` and `WinEventKind::SwitchEnd`),
+  destruction, alerts, the system caret's events, and a tooltip window
+  shown (`WinEventKind::Show`:
   `EVENT_OBJECT_SHOW` from a `tooltips_class32` window on its client or a
-  custom object, every other show event dropped at the hook, as NVDA
-  accepts no others from a standard control), the input desktop's switch
+  custom object, an outpost's only show), the input desktop's switch
   (`WinEventKind::DesktopSwitch`, `EVENT_SYSTEM_DESKTOPSWITCH`), and the
   desktop window's name change (`WinEventKind::DesktopName`,
   `EVENT_OBJECT_NAMECHANGE` on `GetDesktopWindow()`), which the set

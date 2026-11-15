@@ -424,7 +424,9 @@ that carries them on the pipes, `Message`, is
   - `ListenerToCore`: `Ready`, `FocusFact` (a `ListenerFact`, a pid and
     the `DeliveredFact` routed to that pid's outpost), `ForwardingEnded`,
     `ExitHandled`, `MenuOrSwitchEnded`, `Desktop` (a `DesktopNews`, with its timing),
-    `ForegroundWindow`, `Pong`, `Fault` and `IdleAnswer`.
+    `ForegroundWindow`, `Tell` (a tell, `tell::Event`, which the
+    supervisor does not yet carry to Core), `Pong`, `Fault` and
+    `IdleAnswer`.
 - Every variant has a `Kind` (`kind()`, an exhaustive match): `Ask`,
   `Answer`, `Report`, `Release`, `Lifecycle`, `Routed` or
   `Configuration`. The module denies wildcard matches over its enums, and

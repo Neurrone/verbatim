@@ -145,6 +145,13 @@ pub enum WinEventKind {
     /// name"); every other
     /// window's is dropped at the hook. It is never [`WinEventKind::NameChange`].
     DesktopName,
+    /// `EVENT_OBJECT_SHOW` from a window of one of NVDA's show classes
+    /// other than the tooltip's ([`OTHER_SHOW_CLASSES`]), for a client or
+    /// custom object: only an install that asks for this kind receives
+    /// it, as this kind, so that the focus listener tells Core every show
+    /// NVDA accepts (`eventHandler.py` 506 to 515), while an outpost's
+    /// [`WinEventKind::Show`] stays the tooltip's alone.
+    OtherShow,
 }
 
 /// Every raw `WinEvent` id Verbatim subscribes to, paired with its normalized
@@ -219,31 +226,36 @@ pub const APP_SUBSCRIPTIONS: &[WinEventKind] = &[
     WinEventKind::ConsoleCaret,
 ];
 
-/// The focus listener's subscription set (decisions D13 and D14), installed
-/// with `idProcess` zero: the focus, foreground, menu opening, alert, and
-/// tooltip events, which it forwards for an application whose outpost's own
-/// hook is not yet in, and the end of a menu or of the Alt+Tab switcher,
-/// which is global because focus returns to whichever application is then
-/// in front, usually not the one that owned the menu. The console's events
-/// are in the set too, for the keyboard hook's view of the foreground
-/// (architecture section 5), but the listener keeps them unhooked
-/// ([`suspend_kinds`]) except while a console window in front has not yet
-/// named its thread through one of them. The desktop's switch and the
-/// desktop window's name change are there for Core: the second is hooked
-/// scoped to csrss's process ([`WinEventKind::DesktopName`]). A value change
-/// is the listener's for every progress bar, foreground or background
-/// (`docs/design/progress-bars.md`), judged by its window's class and
-/// read on its application's reading thread; an outpost's own hook keeps the
-/// same event for text.
+/// The focus listener's subscription set (ADR 0003, "Who holds what": the
+/// listener holds every desktop-wide registration), installed with
+/// `idProcess` zero: every kind it tells Core of, each event a tell
+/// ([`tell_kind`]), the shows of every class NVDA accepts and the system
+/// caret's show among them. The console host's five events are in the set
+/// only for the keyboard hook's view of the foreground (architecture
+/// section 5): the listener keeps them unhooked ([`suspend_kinds`]) except
+/// while a console window in front has not yet named its thread through
+/// one of them, and tells none of them, since the console host's outpost
+/// keeps them. The desktop window's name change is hooked again scoped to
+/// csrss's process ([`WinEventKind::DesktopName`]) for today's news of the
+/// desktop. A text selection change, which NVDA takes from no `WinEvent`,
+/// is not hooked. A value change is also the listener's for every progress
+/// bar, foreground or background (`docs/design/progress-bars.md`).
 pub const LISTENER_SUBSCRIPTIONS: &[WinEventKind] = &[
     WinEventKind::Focus,
     WinEventKind::Foreground,
     WinEventKind::ValueChange,
+    WinEventKind::StateChange,
+    WinEventKind::NameChange,
+    WinEventKind::DescriptionChange,
+    WinEventKind::Selection,
     WinEventKind::MenuPopupStart,
     WinEventKind::MenuEnd,
     WinEventKind::SwitchEnd,
+    WinEventKind::Destroy,
     WinEventKind::Alert,
     WinEventKind::Show,
+    WinEventKind::OtherShow,
+    WinEventKind::Caret,
     WinEventKind::ShellForeground,
     WinEventKind::ConsoleUpdate,
     WinEventKind::ConsoleCaret,
@@ -263,6 +275,9 @@ pub const LISTENER_SUBSCRIPTIONS: &[WinEventKind] = &[
 pub struct WinEvent {
     /// What it reports.
     pub kind: WinEventKind,
+    /// Its raw event id, which tells apart the events one kind stands for,
+    /// such as a menu's end and a popup menu's.
+    pub event: u32,
     /// Its window, `hwnd`.
     pub hwnd: isize,
     /// Its `idObject`; a window object stands for its client area, as NVDA
@@ -744,6 +759,55 @@ pub fn is_shell_foreground_class(class: &str) -> bool {
 /// The window class of a standard tooltip, help balloons included.
 pub const TOOLTIP_CLASS: &str = "tooltips_class32";
 
+/// NVDA's show classes other than the tooltip's, whose shows it accepts
+/// (`eventHandler.py` 506 to 515): [`WinEventKind::OtherShow`].
+pub const OTHER_SHOW_CLASSES: [&str; 5] = [
+    "Frame Notification Bar",
+    "mscandui21.candidate",
+    "mscandui40.candidate",
+    "MSCandUIWindow_Candidate",
+    "TTrayAlert",
+];
+
+/// The kind a tell of `event` names to Core (ADR 0003, "Properties, event
+/// kinds and requests"), from its normalized kind and its raw id: `None`
+/// for the kinds the listener tells nothing of, the console host's five,
+/// which its outpost keeps, a text selection change, and the desktop
+/// window's name change hooked for today's news of the desktop, which the
+/// desktop-wide name change tells.
+#[must_use]
+pub fn tell_kind(event: &WinEvent) -> Option<verbatim_model::event_kind::EventKind> {
+    use verbatim_model::event_kind::EventKind;
+    Some(match event.kind {
+        WinEventKind::Focus => EventKind::MsaaFocus,
+        WinEventKind::Foreground => EventKind::Foreground,
+        WinEventKind::ShellForeground => EventKind::ShellForeground,
+        WinEventKind::ValueChange => EventKind::ValueChange,
+        WinEventKind::StateChange => match event.event {
+            EVENT_OBJECT_SELECTIONADD => EventKind::SelectionAdd,
+            EVENT_OBJECT_SELECTIONREMOVE => EventKind::SelectionRemove,
+            EVENT_OBJECT_SELECTIONWITHIN => EventKind::SelectionWithin,
+            _ => EventKind::StateChange,
+        },
+        WinEventKind::NameChange => EventKind::NameChange,
+        WinEventKind::DescriptionChange => EventKind::DescriptionChange,
+        WinEventKind::Selection => EventKind::Selection,
+        WinEventKind::MenuPopupStart => EventKind::PopupStart,
+        WinEventKind::MenuEnd if event.event == EVENT_SYSTEM_MENUPOPUPEND => EventKind::PopupEnd,
+        WinEventKind::MenuEnd => EventKind::MenuEnd,
+        WinEventKind::SwitchEnd => EventKind::SwitchEnd,
+        WinEventKind::Destroy => EventKind::Destroy,
+        WinEventKind::Alert => EventKind::Alert,
+        WinEventKind::Show | WinEventKind::OtherShow => EventKind::Show,
+        WinEventKind::Caret => EventKind::SystemCaret,
+        WinEventKind::DesktopSwitch => EventKind::DesktopSwitch,
+        WinEventKind::TextSelectionChange
+        | WinEventKind::ConsoleUpdate
+        | WinEventKind::ConsoleCaret
+        | WinEventKind::DesktopName => return None,
+    })
+}
+
 // Each raw event id appears once in `SUBSCRIPTIONS`, so it has one kind.
 const _: () = {
     let mut at = 0;
@@ -787,6 +851,16 @@ fn wanted_kind(
         && is_shell_foreground_class(&class())
     {
         return Some(WinEventKind::ShellForeground);
+    }
+    // A show of one of NVDA's other show classes, for an install that asks
+    // for it, as its own kind, for a client or custom object as a
+    // tooltip's show is kept.
+    if event == EVENT_OBJECT_SHOW
+        && kinds.contains(&WinEventKind::OtherShow)
+        && (id_object == OBJID_CLIENT.0 || id_object == OBJID_WINDOW.0 || id_object > 0)
+        && OTHER_SHOW_CLASSES.contains(&class().as_str())
+    {
+        return Some(WinEventKind::OtherShow);
     }
     kind_among(event, kinds).filter(|&kind| is_wanted(kind, id_object, id_child, &mut class))
 }
@@ -932,6 +1006,7 @@ unsafe extern "system" fn win_event_proc(
         );
         let delivered = WinEvent {
             kind,
+            event,
             hwnd: hwnd.0 as isize,
             id_object,
             id_child,
@@ -1034,22 +1109,218 @@ mod tests {
     }
 
     #[test]
-    fn the_carets_show_is_a_caret_event_for_an_outpost_only() {
+    fn the_carets_show_is_a_caret_event_for_an_outpost_and_the_listener() {
         let reads = Cell::new(0);
         assert_eq!(
             outpost_kinds(EVENT_OBJECT_SHOW, OBJID_CARET.0, &reads),
             [WinEventKind::Caret]
         );
         assert_eq!(reads.get(), 0, "no class is read for the caret");
-        // The listener hooks shows for tooltips, not the caret.
+        // The listener tells the caret's show for Core's caret rule.
         assert_eq!(
             wanted_kind(
                 (EVENT_OBJECT_SHOW, 42, OBJID_CARET.0, CHILDID_SELF),
                 LISTENER_SUBSCRIPTIONS,
                 |_| "Edit".to_owned(),
             ),
-            None
+            Some(WinEventKind::Caret)
         );
+    }
+
+    /// The listener hears the shows of all six of NVDA's show classes, an
+    /// outpost the tooltip's alone; a show of any other class reaches
+    /// neither.
+    #[test]
+    fn the_listener_hears_every_show_class_and_an_outpost_the_tooltips() {
+        let kind = |kinds: &[WinEventKind], class: &'static str, object: i32| {
+            wanted_kind(
+                (EVENT_OBJECT_SHOW, 42, object, CHILDID_SELF),
+                kinds,
+                move |_| class.to_owned(),
+            )
+        };
+        let client = OBJID_CLIENT.0;
+        assert_eq!(
+            kind(LISTENER_SUBSCRIPTIONS, TOOLTIP_CLASS, client),
+            Some(WinEventKind::Show)
+        );
+        assert_eq!(
+            kind(APP_SUBSCRIPTIONS, TOOLTIP_CLASS, client),
+            Some(WinEventKind::Show)
+        );
+        for class in OTHER_SHOW_CLASSES {
+            assert_eq!(
+                kind(LISTENER_SUBSCRIPTIONS, class, client),
+                Some(WinEventKind::OtherShow),
+                "{class}"
+            );
+            assert_eq!(
+                kind(LISTENER_SUBSCRIPTIONS, class, 3),
+                Some(WinEventKind::OtherShow),
+                "{class}"
+            );
+            // The title bar, neither a client nor a custom object.
+            assert_eq!(kind(LISTENER_SUBSCRIPTIONS, class, -2), None, "{class}");
+            assert_eq!(kind(APP_SUBSCRIPTIONS, class, client), None, "{class}");
+        }
+        assert_eq!(kind(LISTENER_SUBSCRIPTIONS, "Button", client), None);
+    }
+
+    fn delivered(kind: WinEventKind, event: u32) -> WinEvent {
+        WinEvent {
+            kind,
+            event,
+            hwnd: 42,
+            id_object: OBJID_CLIENT.0,
+            id_child: CHILDID_SELF,
+            thread: 7,
+            time: 0,
+            raised_ms_ago: 0,
+        }
+    }
+
+    /// Each raw event the listener hooks is told as its own kind: the
+    /// kinds one normalized kind stands for are told apart by the raw id.
+    #[test]
+    #[expect(clippy::too_many_lines, reason = "one table, a row per kind")]
+    fn each_hooked_event_is_told_as_its_own_kind() {
+        use verbatim_model::event_kind::EventKind;
+        let told = |kind, event| tell_kind(&delivered(kind, event));
+        for (kind, event, told_as) in [
+            (
+                WinEventKind::Focus,
+                EVENT_OBJECT_FOCUS,
+                EventKind::MsaaFocus,
+            ),
+            (
+                WinEventKind::Foreground,
+                EVENT_SYSTEM_FOREGROUND,
+                EventKind::Foreground,
+            ),
+            (
+                WinEventKind::ShellForeground,
+                EVENT_SYSTEM_FOREGROUND,
+                EventKind::ShellForeground,
+            ),
+            (
+                WinEventKind::MenuEnd,
+                EVENT_SYSTEM_MENUEND,
+                EventKind::MenuEnd,
+            ),
+            (
+                WinEventKind::MenuEnd,
+                EVENT_SYSTEM_MENUPOPUPEND,
+                EventKind::PopupEnd,
+            ),
+            (
+                WinEventKind::MenuPopupStart,
+                EVENT_SYSTEM_MENUPOPUPSTART,
+                EventKind::PopupStart,
+            ),
+            (
+                WinEventKind::SwitchEnd,
+                EVENT_SYSTEM_SWITCHEND,
+                EventKind::SwitchEnd,
+            ),
+            (
+                WinEventKind::StateChange,
+                EVENT_OBJECT_STATECHANGE,
+                EventKind::StateChange,
+            ),
+            (
+                WinEventKind::StateChange,
+                EVENT_OBJECT_SELECTIONADD,
+                EventKind::SelectionAdd,
+            ),
+            (
+                WinEventKind::StateChange,
+                EVENT_OBJECT_SELECTIONREMOVE,
+                EventKind::SelectionRemove,
+            ),
+            (
+                WinEventKind::StateChange,
+                EVENT_OBJECT_SELECTIONWITHIN,
+                EventKind::SelectionWithin,
+            ),
+            (
+                WinEventKind::Selection,
+                EVENT_OBJECT_SELECTION,
+                EventKind::Selection,
+            ),
+            (
+                WinEventKind::NameChange,
+                EVENT_OBJECT_NAMECHANGE,
+                EventKind::NameChange,
+            ),
+            (
+                WinEventKind::ValueChange,
+                EVENT_OBJECT_VALUECHANGE,
+                EventKind::ValueChange,
+            ),
+            (
+                WinEventKind::DescriptionChange,
+                EVENT_OBJECT_DESCRIPTIONCHANGE,
+                EventKind::DescriptionChange,
+            ),
+            (
+                WinEventKind::Destroy,
+                EVENT_OBJECT_DESTROY,
+                EventKind::Destroy,
+            ),
+            (WinEventKind::Alert, EVENT_SYSTEM_ALERT, EventKind::Alert),
+            (WinEventKind::Show, EVENT_OBJECT_SHOW, EventKind::Show),
+            (WinEventKind::OtherShow, EVENT_OBJECT_SHOW, EventKind::Show),
+            (
+                WinEventKind::Caret,
+                EVENT_OBJECT_LOCATIONCHANGE,
+                EventKind::SystemCaret,
+            ),
+            (
+                WinEventKind::Caret,
+                EVENT_OBJECT_SHOW,
+                EventKind::SystemCaret,
+            ),
+            (
+                WinEventKind::DesktopSwitch,
+                EVENT_SYSTEM_DESKTOPSWITCH,
+                EventKind::DesktopSwitch,
+            ),
+        ] {
+            assert_eq!(told(kind, event), Some(told_as), "{kind:?} {event:#x}");
+        }
+    }
+
+    /// The console's five, the text selection change and the csrss-scoped
+    /// name change are told as nothing.
+    #[test]
+    fn the_consoles_events_and_the_desktops_name_hook_are_told_as_nothing() {
+        let told = |kind, event| tell_kind(&delivered(kind, event));
+        for (kind, event) in [
+            (WinEventKind::ConsoleUpdate, EVENT_CONSOLE_UPDATE_REGION),
+            (WinEventKind::ConsoleCaret, EVENT_CONSOLE_CARET),
+            (WinEventKind::DesktopName, EVENT_OBJECT_NAMECHANGE),
+            (
+                WinEventKind::TextSelectionChange,
+                EVENT_OBJECT_TEXTSELECTIONCHANGED,
+            ),
+        ] {
+            assert_eq!(told(kind, event), None, "{kind:?}");
+        }
+    }
+
+    /// The listener hooks every raw event a tell is made of, and none of
+    /// the console host's five but for the keyboard hook's view.
+    #[test]
+    fn the_listener_hooks_every_kind_it_tells() {
+        for (event, kind) in SUBSCRIPTIONS {
+            let hooked = LISTENER_SUBSCRIPTIONS.contains(&kind);
+            let told = tell_kind(&delivered(kind, event)).is_some();
+            let console = matches!(
+                kind,
+                WinEventKind::ConsoleUpdate | WinEventKind::ConsoleCaret
+            );
+            assert_eq!(hooked, told || console, "{kind:?} {event:#x}");
+        }
     }
 
     /// Program Manager's or the taskbar's foreground event is never a

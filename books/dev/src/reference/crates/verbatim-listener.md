@@ -326,10 +326,29 @@ section 6.3).
 - Its main thread is its I/O thread (completion port,
   `THREAD_PRIORITY_HIGHEST`); every thread that produces a fact writes it
   itself, encoded into the sender's one buffer.
-- It installs the global MSAA hooks (`LISTENER_SUBSCRIPTIONS`: focus,
-  foreground, menu-popup, menu and switcher end, alert, tooltip shown,
-  forwarded as `DeliveredFact::Show`, and the desktop's switch, with the
-  desktop window's name change hooked scoped to csrss) and, through one `Registration`, the
+- It installs the global MSAA hooks (`LISTENER_SUBSCRIPTIONS`: every kind
+  it tells Core of, with the desktop window's name change hooked again
+  scoped to csrss for today's news of the desktop). Every event becomes a
+  tell (`ListenerToCore::Tell`, the module `listener::tells`) unless
+  NVDA's local drops take it (`verbatim_listener_logic::tell`): the
+  window of 0 or an invalid one mapped or dropped, a destruction of
+  anything but a window, Windows Live Messenger's hidden window, a show of
+  neither a client nor a custom object, and a hung or ghosted window. A
+  tell carries the event's object, its raising thread, the process that
+  serves the window (a console window's and a destroyed window's the
+  process of that thread), that process's executable name, read once per
+  process held open (`Applications`), the input desktop's openness for a
+  switch, and acceptance's window facts, the window's own read as the
+  event arrives and the foreground's as the tell is placed. Every tell,
+  and the idle barrier's answer, is placed under one lock (`Tells`),
+  behind a foreground event whose window `GetForegroundWindow` does not
+  yet name until it names it or 20 ms pass, on a threadpool timer armed
+  only while the hold keeps tells; waiting tells merge one per object,
+  kind and raising thread. Today's routing goes on beside the tells: of
+  the kinds hooked, focus, foreground, menu-popup, menu and switcher end,
+  alert and tooltip shown are forwarded as before (a tooltip as
+  `DeliveredFact::Show`), and the desktop's switch is told by its news.
+  Through one `Registration`, the
   focus handler (`Subscription::Focus`) then element selected, menu opened,
   notifications and window openings, kept only for a Windows toast by
   NVDA's rule (`verbatim_uia::map::is_toast_candidate`, and the class of its nearest window on the reading thread), as one group on the desktop root, and says `Ready` only

@@ -1634,6 +1634,7 @@ mod hook_stamp_tests {
         let clock = Cell::new(7_000_000);
         let event = WinEvent {
             kind: WinEventKind::Focus,
+            event: 0x8005,
             hwnd: 0x10,
             id_object: -4,
             id_child: 0,

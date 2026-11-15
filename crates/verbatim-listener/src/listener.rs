@@ -154,7 +154,11 @@ use verbatim_uia::{
 };
 
 use crate::focus_read::{FocusReader, Readers, Reading, WatchedRead};
+
+mod tells;
+
 use crate::value_change::{Found, Judgement, ValueChange, ValueChangeKnowledge, probed_of};
+use tells::{Applications, Held, TellKey, Tells, tell_win_event};
 use verbatim_ia2::event_thread::{EventHandlers, EventThread, MakeHandlers, Nudger};
 use verbatim_listener_logic::focus::{
     BAR_READ, BarObject, BarRaiser, BarVerdict, ClassicBarRead, FocusEvent, Judged, Meta,
@@ -214,12 +218,15 @@ struct Outgoing {
     uia_installed: AtomicBool,
     /// The clock the facts' stamps are read from.
     clock: Clock,
+    /// The listener's order of tells and its foreground hold.
+    tells: Arc<Tells>,
     /// The end of a menu or of the Alt+Tab switcher waiting for its grace.
     menu_end: Arc<MenuEnd>,
-    /// The threadpool timer that ends the grace, kept until the listener
-    /// is dropped, which closes it; none in a test that fires the grace by
-    /// hand ([`Outgoing::with_manual_grace`]).
-    _grace: Option<GraceTimer>,
+    /// The threadpool timers that end the grace and the foreground hold,
+    /// kept until the listener is dropped, which closes them; none in a
+    /// test that fires the grace by hand ([`Outgoing::with_manual_grace`]),
+    /// whose hold ends only by the foreground or a later tell.
+    _timers: Option<(PoolTimer<MenuEnd>, PoolTimer<Tells>)>,
 }
 
 /// The clock the listener's stamps are read from: the shared clock,
@@ -242,7 +249,7 @@ impl Default for Clock {
 #[derive(Default)]
 struct Waiting {
     urgent: VecDeque<ListenerToCore>,
-    facts: VecDeque<(Option<(Pid, FactKey)>, ListenerToCore)>,
+    facts: VecDeque<(Option<Merge>, ListenerToCore)>,
     /// The end of a menu or of the Alt+Tab switcher whose grace has passed,
     /// sent once no fact waits.
     menu_end: Option<ListenerToCore>,
@@ -252,11 +259,24 @@ struct Waiting {
     hooked: HashMap<Pid, u32>,
 }
 
+/// What a waiting message is merged by: a newer message with the same key
+/// replaces it and goes to the back.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Merge {
+    /// A routed fact, by its application and key.
+    Fact(Pid, FactKey),
+    /// A tell, by its object, kind and raising thread, NVDA's limiter's
+    /// key (`orderedWinEventLimiter.py` 63, 79).
+    Tell(TellKey),
+}
+
 /// One item the listener sends Core.
 enum Sent {
     /// A message that goes ahead of everything waiting: a pong, `Ready`,
     /// or a fault.
     Urgent(ListenerToCore),
+    /// A tell, with the key it is merged under.
+    Tell(TellKey, ListenerToCore),
     /// A fact, with the key it is coalesced under, and, for a `WinEvent`'s,
     /// the application and the event's stamp.
     Fact(
@@ -287,6 +307,7 @@ impl Backlog for Waiting {
     fn push(&mut self, item: Sent) -> Result<(), Infallible> {
         match item {
             Sent::Urgent(message) | Sent::Message(message) => self.urgent.push_back(message),
+            Sent::Tell(key, message) => self.merged(Some(Merge::Tell(key)), message),
             Sent::Fact(key, message, win_event) => {
                 // Judged under the lock that queues "forwarding ended", so
                 // no fact raised after its tick is ever queued behind it.
@@ -296,26 +317,7 @@ impl Backlog for Waiting {
                 {
                     return Ok(());
                 }
-                if let Some(key) = &key {
-                    // Never across the idle barrier's answer: the fact
-                    // replaced would move behind it.
-                    let after_answer = self
-                        .facts
-                        .iter()
-                        .rposition(|(_, waiting)| {
-                            matches!(waiting, ListenerToCore::IdleAnswer { .. })
-                        })
-                        .map_or(0, |answer| answer + 1);
-                    let mut index = after_answer;
-                    while index < self.facts.len() {
-                        if self.facts[index].0.as_ref() == Some(key) {
-                            self.facts.remove(index);
-                        } else {
-                            index += 1;
-                        }
-                    }
-                }
-                self.facts.push_back((key, message));
+                self.merged(key.map(|(pid, key)| Merge::Fact(pid, key)), message);
             }
             Sent::ForwardingEnded {
                 pid,
@@ -362,6 +364,7 @@ impl Backlog for Waiting {
         let mut message = match item {
             Sent::Urgent(message)
             | Sent::Message(message)
+            | Sent::Tell(_, message)
             | Sent::Fact(_, message, _)
             | Sent::MenuEnd(message) => message,
             Sent::IdleAnswer(round) => ListenerToCore::IdleAnswer { round },
@@ -383,6 +386,30 @@ impl Backlog for Waiting {
     }
 }
 
+impl Waiting {
+    /// Queues `message` behind every fact and tell waiting, replacing any
+    /// waiting one merged by the same `key`, but never across the idle
+    /// barrier's answer, which the one replaced would move behind.
+    fn merged(&mut self, key: Option<Merge>, message: ListenerToCore) {
+        if let Some(key) = &key {
+            let after_answer = self
+                .facts
+                .iter()
+                .rposition(|(_, waiting)| matches!(waiting, ListenerToCore::IdleAnswer { .. }))
+                .map_or(0, |answer| answer + 1);
+            let mut index = after_answer;
+            while index < self.facts.len() {
+                if self.facts[index].0.as_ref() == Some(key) {
+                    self.facts.remove(index);
+                } else {
+                    index += 1;
+                }
+            }
+        }
+        self.facts.push_back((key, message));
+    }
+}
+
 /// The end of a menu or of the Alt+Tab switcher, waiting for its grace:
 /// when it ended, in microseconds since the Unix epoch for Core, and its
 /// observed and handled stamps. NVDA fakes a focus from such an end only
@@ -397,6 +424,10 @@ struct MenuEnd {
     /// was made, or a test's clock.
     clock: GraceClock,
     sender: Sender<Waiting>,
+    /// The listener's order of tells, through which the idle barrier's
+    /// answers go, so that one waits behind every tell the foreground
+    /// hold keeps.
+    tells: Arc<Tells>,
     /// What sets the timer that ends the grace to go off after a time, set
     /// once the timer is made, which the callback sets again when it runs
     /// before the end's grace is over; a test's records the time instead.
@@ -417,21 +448,54 @@ impl TimerHandle {
     fn set(&self, after: Duration) {
         set_timer(self.0, after);
     }
+
+    /// Stops the timer: it goes off no more until it is set again.
+    fn stop(&self) {
+        // SAFETY: the timer is open until its `PoolTimer` is dropped.
+        unsafe { SetThreadpoolTimer(self.0, None, 0, None) };
+    }
 }
 
 // SAFETY: a threadpool timer may be set from any thread, its own callback
-// included; the handle stays open until `GraceTimer::drop`, which stops
-// the callback setting it first (`GraceInput::Close`).
+// included; the handle stays open until `PoolTimer::drop`, which stops
+// the callback setting it first (`Timed::closing`).
 unsafe impl Send for TimerHandle {}
 // SAFETY: as above.
 unsafe impl Sync for TimerHandle {}
 
+/// What a [`PoolTimer`] goes off for: it is given the timer's handle once,
+/// before the timer can go off, and is told when it goes off and when the
+/// timer is being closed, after which it sets the timer no more.
+trait Timed: Send + Sync {
+    /// The timer's handle, given once, before any callback.
+    fn take_timer(&self, timer: TimerHandle);
+    /// The timer went off, on a threadpool thread.
+    fn fired(&self);
+    /// The timer is being closed: it is set no more.
+    fn closing(&self);
+}
+
+impl Timed for MenuEnd {
+    fn take_timer(&self, timer: TimerHandle) {
+        let _ = self.timer.set(Box::new(move |after| timer.set(after)));
+    }
+
+    fn fired(&self) {
+        self.grace_ended();
+    }
+
+    fn closing(&self) {
+        self.step(GraceInput::Close);
+    }
+}
+
 impl MenuEnd {
-    fn new(sender: Sender<Waiting>, clock: GraceClock) -> Self {
+    fn new(sender: Sender<Waiting>, tells: Arc<Tells>, clock: GraceClock) -> Self {
         Self {
             waiting: Mutex::new(GraceState::default()),
             clock,
             sender,
+            tells,
             timer: OnceLock::new(),
         }
     }
@@ -477,7 +541,7 @@ impl MenuEnd {
                     None,
                 ))),
                 GraceEffect::SendIdleAnswer(round) => {
-                    sent(&self.sender.send(Sent::IdleAnswer(round)));
+                    self.tells.place(Held::IdleAnswer(round));
                 }
                 GraceEffect::SetTimer(after) => {
                     if let Some(timer) = self.timer.get() {
@@ -509,55 +573,53 @@ fn sent(sent: &Result<(), SendError<Infallible>>) {
     }
 }
 
-/// A threadpool timer that ends a menu end's grace
-/// (`docs/design/communication.md`, section 4.7): no thread of the
-/// listener's waits for it, and its callback sends the end itself.
-struct GraceTimer {
+/// A threadpool timer (`docs/design/communication.md`, section 4.7): no
+/// thread of the listener's waits for it, and its callback acts itself, on
+/// what it was made for: a menu end's grace ([`MenuEnd`]) or the
+/// foreground hold ([`Tells`]).
+struct PoolTimer<T: Timed> {
     timer: PTP_TIMER,
-    /// The end the callback is given, kept alive until the timer is closed.
-    end: *const MenuEnd,
+    /// What the callback is given, kept alive until the timer is closed.
+    owner: *const T,
 }
 
 // SAFETY: a threadpool timer may be set and closed from any thread, and
-// the end it points to is shared, `Sync` data kept alive by the timer.
-unsafe impl Send for GraceTimer {}
-// SAFETY: as above; `arm` only sets the timer, which the threadpool allows
-// from any thread at any time.
-unsafe impl Sync for GraceTimer {}
+// what it points to is shared, `Sync` data kept alive by the timer.
+unsafe impl<T: Timed> Send for PoolTimer<T> {}
+// SAFETY: as above.
+unsafe impl<T: Timed> Sync for PoolTimer<T> {}
 
-impl GraceTimer {
-    fn new(end: &Arc<MenuEnd>) -> io::Result<Self> {
-        let end = Arc::into_raw(Arc::clone(end));
-        // SAFETY: the callback is given `end`, which stays alive until the
-        // timer is closed in `drop`, after its callbacks have finished.
+impl<T: Timed> PoolTimer<T> {
+    fn new(owner: &Arc<T>) -> io::Result<Self> {
+        let owner = Arc::into_raw(Arc::clone(owner));
+        // SAFETY: the callback is given `owner`, which stays alive until
+        // the timer is closed in `drop`, after its callbacks have finished.
         let timer =
-            unsafe { CreateThreadpoolTimer(Some(grace_ended), Some(end.cast_mut().cast()), None) };
+            unsafe { CreateThreadpoolTimer(Some(fired::<T>), Some(owner.cast_mut().cast()), None) };
         match timer {
             Ok(timer) => {
-                // Set before the timer is first set, so before any callback.
-                let handle = TimerHandle(timer);
-                let _ = end_of(end)
-                    .timer
-                    .set(Box::new(move |after| handle.set(after)));
-                Ok(Self { timer, end })
+                // Given before the timer is first set, so before any
+                // callback.
+                owner_of(owner).take_timer(TimerHandle(timer));
+                Ok(Self { timer, owner })
             }
             Err(error) => {
                 // SAFETY: from `Arc::into_raw` above, never given out.
-                drop(unsafe { Arc::from_raw(end) });
+                drop(unsafe { Arc::from_raw(owner) });
                 Err(io::Error::other(error))
             }
         }
     }
 }
 
-/// The [`MenuEnd`] a [`GraceTimer`] was made with.
-fn end_of<'a>(end: *const MenuEnd) -> &'a MenuEnd {
-    // SAFETY: from `Arc::into_raw` in `GraceTimer::new`, released only in
-    // `GraceTimer::drop`, after the last use.
-    unsafe { &*end }
+/// What a [`PoolTimer`] was made with.
+fn owner_of<'a, T>(owner: *const T) -> &'a T {
+    // SAFETY: from `Arc::into_raw` in `PoolTimer::new`, released only in
+    // `PoolTimer::drop`, after the last use.
+    unsafe { &*owner }
 }
 
-/// Sets `timer`, open until its [`GraceTimer`] is dropped, to fire once
+/// Sets `timer`, open until its [`PoolTimer`] is dropped, to fire once
 /// `after` from now, in place of any time it was set for.
 fn set_timer(timer: PTP_TIMER, after: Duration) {
     // Relative, in 100-nanosecond units.
@@ -571,12 +633,12 @@ fn set_timer(timer: PTP_TIMER, after: Duration) {
     unsafe { SetThreadpoolTimer(timer, Some(&raw const due), 0, Some(0)) };
 }
 
-impl Drop for GraceTimer {
+impl<T: Timed> Drop for PoolTimer<T> {
     fn drop(&mut self) {
         // The callback sets the timer no more; then the timer is stopped,
         // its callbacks waited for or cancelled, and only then closed and
-        // its end released.
-        end_of(self.end).step(GraceInput::Close);
+        // what it points to released.
+        owner_of(self.owner).closing();
         // SAFETY: the timer is open.
         unsafe { SetThreadpoolTimer(self.timer, None, 0, None) };
         // SAFETY: as above.
@@ -585,20 +647,20 @@ impl Drop for GraceTimer {
         unsafe { CloseThreadpoolTimer(self.timer) };
         // SAFETY: from `Arc::into_raw` in `new`, released once, here, with
         // no callback left to use it.
-        drop(unsafe { Arc::from_raw(self.end) });
+        drop(unsafe { Arc::from_raw(self.owner) });
     }
 }
 
-/// The grace timer's callback, on a threadpool thread.
-unsafe extern "system" fn grace_ended(
+/// A pool timer's callback, on a threadpool thread.
+unsafe extern "system" fn fired<T: Timed>(
     _instance: PTP_CALLBACK_INSTANCE,
-    end: *mut core::ffi::c_void,
+    owner: *mut core::ffi::c_void,
     _timer: PTP_TIMER,
 ) {
-    // SAFETY: the timer was created with its `MenuEnd`, which outlives
-    // every callback (`GraceTimer::drop`).
-    let end = unsafe { &*end.cast_const().cast::<MenuEnd>() };
-    end.grace_ended();
+    // SAFETY: the timer was created with its owner, which outlives every
+    // callback (`PoolTimer::drop`).
+    let owner = unsafe { &*owner.cast_const().cast::<T>() };
+    owner.fired();
 }
 
 impl Outgoing {
@@ -610,12 +672,20 @@ impl Outgoing {
     /// Returns the error of creating the menu end's grace timer.
     fn new(sender: Sender<Waiting>, ignored: IgnoredProcesses) -> io::Result<Self> {
         let origin = Instant::now();
+        let tells = Arc::new(Tells::new(sender.clone()));
+        let hold = PoolTimer::new(&tells)?;
         let menu_end = Arc::new(MenuEnd::new(
             sender.clone(),
+            Arc::clone(&tells),
             Box::new(move || u64::try_from(origin.elapsed().as_micros()).unwrap_or(u64::MAX)),
         ));
-        let grace = GraceTimer::new(&menu_end)?;
-        Ok(Self::with_menu_end(sender, ignored, menu_end, Some(grace)))
+        let grace = PoolTimer::new(&menu_end)?;
+        Ok(Self::with_menu_end(
+            sender,
+            ignored,
+            (tells, menu_end),
+            Some((grace, hold)),
+        ))
     }
 
     /// [`new`](Self::new) with the grace read from `clock` and its timer
@@ -629,16 +699,17 @@ impl Outgoing {
         clock: GraceClock,
         timer: SetGraceTimer,
     ) -> Self {
-        let menu_end = Arc::new(MenuEnd::new(sender.clone(), clock));
+        let tells = Arc::new(Tells::new(sender.clone()));
+        let menu_end = Arc::new(MenuEnd::new(sender.clone(), Arc::clone(&tells), clock));
         let _ = menu_end.timer.set(timer);
-        Self::with_menu_end(sender, ignored, menu_end, None)
+        Self::with_menu_end(sender, ignored, (tells, menu_end), None)
     }
 
     fn with_menu_end(
         sender: Sender<Waiting>,
         ignored: IgnoredProcesses,
-        menu_end: Arc<MenuEnd>,
-        grace: Option<GraceTimer>,
+        (tells, menu_end): (Arc<Tells>, Arc<MenuEnd>),
+        timers: Option<(PoolTimer<MenuEnd>, PoolTimer<Tells>)>,
     ) -> Self {
         Self {
             sender,
@@ -646,8 +717,9 @@ impl Outgoing {
             markers: AtomicU64::new(0),
             uia_installed: AtomicBool::new(false),
             clock: Clock::default(),
+            tells,
             menu_end,
-            _grace: grace,
+            _timers: timers,
         }
     }
 
@@ -1325,78 +1397,29 @@ impl Listener {
             let outgoing = Arc::clone(&msaa_outgoing);
             let idle_outgoing = Arc::clone(&msaa_outgoing);
             let readers = Arc::clone(&idle_readers);
-            let foreground_readers = Arc::clone(&readers);
+            let event_readers = Arc::clone(&readers);
             // The window in front, for the keyboard hook's view of it,
             // kept on this thread by both handlers.
             let watch = Rc::new(RefCell::new(ForegroundWatch::default()));
             let start_watch = Rc::clone(&watch);
-            let desktop_readers = Arc::clone(&readers);
             // What the event thread knows of windows and objects, for its
             // value changes, on this thread alone.
             let knowledge = RefCell::new(ValueChangeKnowledge::new());
+            // The executable name of each application that raised an
+            // event, for its tells, on this thread alone.
+            let applications = RefCell::new(Applications::default());
             EventHandlers {
                 win_event: Box::new(move |event: WinEvent| {
-                    if routed_elsewhere(&outgoing, &desktop_readers, &knowledge, event) {
-                        return;
-                    }
-                    if matches!(
-                        event.kind,
-                        WinEventKind::ConsoleUpdate | WinEventKind::ConsoleCaret
-                    ) {
-                        let step = watch.borrow_mut().console_event(
-                            event.hwnd,
-                            event.thread,
-                            outgoing.now(),
-                        );
-                        foreground_step(&outgoing, step);
-                        return;
-                    }
-                    // Program Manager or the taskbar in front: no foreground
-                    // change to forward, as NVDA takes none, but a window
-                    // that came to the foreground for Core.
-                    if event.kind == WinEventKind::ShellForeground {
-                        let front = Front {
-                            window: event.hwnd,
-                            thread: event.thread,
-                            console: false,
-                            observed_at_us: outgoing.now(),
-                        };
-                        let step = watch.borrow_mut().foreground(front, in_front(front.window));
-                        foreground_step(&outgoing, step);
-                        return;
-                    }
-                    // Forwarded first, so the event's observation time is
-                    // taken before anything else the callback does; its
-                    // window's class, read to route it, tells a console.
-                    let (kind, window, thread) = (event.kind, event.hwnd, event.thread);
-                    let forwarded = forward_msaa_event(&outgoing, event);
-                    if kind == WinEventKind::Foreground {
-                        let front = Front {
-                            window,
-                            thread,
-                            console: forwarded.console,
-                            observed_at_us: forwarded.observed_at_us,
-                        };
-                        let step = watch.borrow_mut().foreground(front, in_front(window));
-                        foreground_step(&outgoing, step);
-                        // A foreground change moves away from a reading
-                        // thread's last read of another window, for menu
-                        // currentness; it judges no read in flight.
-                        foreground_readers.foreground_changed(window);
-                    } else if kind == WinEventKind::Focus && watch.borrow().has_pending() {
-                        // A window not in front at its foreground event is
-                        // sent once an event finds it there.
-                        let step = watch
-                            .borrow_mut()
-                            .event_seen(front_window(), forwarded.observed_at_us);
-                        foreground_step(&outgoing, step);
-                    }
-                    let focus_of = forwarded.focus_of;
-                    // Another process's MSAA focus moves away from every
-                    // other application's last read, for menu currentness.
-                    if let Some(pid) = focus_of {
-                        foreground_readers.msaa_focus(pid);
-                    }
+                    // Every event is told first, its arrival the time the
+                    // callback received it; today's routing follows, beside
+                    // it, until the build removes it.
+                    tell_win_event(
+                        &outgoing.tells,
+                        &mut applications.borrow_mut(),
+                        event,
+                        outgoing.now(),
+                    );
+                    route_win_event(&outgoing, &event_readers, &knowledge, &watch, event);
                 }),
                 // The idle barrier's query, its round in the first word:
                 // every event delivered before it has been handled, so the
@@ -1561,6 +1584,94 @@ impl Listener {
         if !posted {
             answer_when_reads_are_done(&self.readers, &self.outgoing, round);
         }
+    }
+}
+
+/// Today's routing of a `WinEvent`, beside its tell until the build
+/// removes it: a value change or one of the desktop's events by its own
+/// path; a console's event and the shell's foreground for the watch of the
+/// window in front; and the kinds today's routing forwards, as facts to
+/// their application's outpost, a foreground event reported to Core once
+/// its window is in front.
+fn route_win_event(
+    outgoing: &Arc<Outgoing>,
+    readers: &Arc<Readers<UiaFocusReading>>,
+    knowledge: &RefCell<ValueChangeKnowledge>,
+    watch: &RefCell<ForegroundWatch>,
+    event: WinEvent,
+) {
+    if routed_elsewhere(outgoing, readers, knowledge, event) {
+        return;
+    }
+    if matches!(
+        event.kind,
+        WinEventKind::ConsoleUpdate | WinEventKind::ConsoleCaret
+    ) {
+        let step = watch
+            .borrow_mut()
+            .console_event(event.hwnd, event.thread, outgoing.now());
+        foreground_step(outgoing, step);
+        return;
+    }
+    // Program Manager or the taskbar in front: no foreground
+    // change to forward, as NVDA takes none, but a window
+    // that came to the foreground for Core.
+    if event.kind == WinEventKind::ShellForeground {
+        let front = Front {
+            window: event.hwnd,
+            thread: event.thread,
+            console: false,
+            observed_at_us: outgoing.now(),
+        };
+        let step = watch.borrow_mut().foreground(front, in_front(front.window));
+        foreground_step(outgoing, step);
+        return;
+    }
+    // Only the kinds today's routing forwards: the rest are
+    // told and nothing more.
+    if !matches!(
+        event.kind,
+        WinEventKind::Focus
+            | WinEventKind::Foreground
+            | WinEventKind::MenuPopupStart
+            | WinEventKind::MenuEnd
+            | WinEventKind::SwitchEnd
+            | WinEventKind::Alert
+            | WinEventKind::Show
+    ) {
+        return;
+    }
+    let (kind, window, thread) = (event.kind, event.hwnd, event.thread);
+    if kind == WinEventKind::Focus && watch.borrow().has_pending() {
+        // A window not in front at its foreground event is
+        // sent once an event finds it there, before the
+        // focus that found it.
+        let step = watch
+            .borrow_mut()
+            .event_seen(front_window(), outgoing.now());
+        foreground_step(outgoing, step);
+    }
+    // Its window's class, read to route it, tells a console.
+    let forwarded = forward_msaa_event(outgoing, event);
+    if kind == WinEventKind::Foreground {
+        let front = Front {
+            window,
+            thread,
+            console: forwarded.console,
+            observed_at_us: forwarded.observed_at_us,
+        };
+        let step = watch.borrow_mut().foreground(front, in_front(window));
+        foreground_step(outgoing, step);
+        // A foreground change moves away from a reading
+        // thread's last read of another window, for menu
+        // currentness; it judges no read in flight.
+        readers.foreground_changed(window);
+    }
+    let focus_of = forwarded.focus_of;
+    // Another process's MSAA focus moves away from every
+    // other application's last read, for menu currentness.
+    if let Some(pid) = focus_of {
+        readers.msaa_focus(pid);
     }
 }
 
@@ -2351,6 +2462,7 @@ fn forward_msaa_event(outgoing: &Outgoing, event: WinEvent) -> Forwarded {
         thread,
         time,
         raised_ms_ago,
+        ..
     } = event;
     if matches!(kind, WinEventKind::MenuEnd | WinEventKind::SwitchEnd) {
         // Not routed to an outpost: if no focus event follows, Core reads
@@ -3187,6 +3299,7 @@ mod tests {
     fn value_change(hwnd: isize) -> WinEvent {
         WinEvent {
             kind: WinEventKind::ValueChange,
+            event: windows::Win32::UI::WindowsAndMessaging::EVENT_OBJECT_VALUECHANGE,
             hwnd,
             id_object: windows::Win32::UI::WindowsAndMessaging::OBJID_CLIENT.0,
             id_child: 0,
@@ -3255,6 +3368,7 @@ mod tests {
             &readers,
             WinEvent {
                 kind: WinEventKind::DesktopName,
+                event: windows::Win32::UI::WindowsAndMessaging::EVENT_OBJECT_NAMECHANGE,
                 hwnd: desktop_window(),
                 id_object: windows::Win32::UI::WindowsAndMessaging::OBJID_CLIENT.0,
                 id_child: 0,

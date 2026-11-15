@@ -1457,6 +1457,12 @@ pub enum ListenerToCore {
         /// `None` when it cannot be read.
         integrity: Option<u32>,
     },
+    /// A tell (ADR 0003, "Readers tell, Core asks"): an event the
+    /// listener heard, with what arrived with it and the facts it gathered
+    /// with calls to Windows only, after its local drops, its merge and its
+    /// foreground hold. Today's routed facts are sent beside it until the
+    /// build removes them.
+    Tell(Box<crate::tell::Event>),
     /// Answer to [`CoreToListener::Ping`].
     Pong {
         /// Always 0: the listener abandons no workers.
@@ -1891,7 +1897,8 @@ impl ListenerToCore {
             | ListenerToCore::MenuOrSwitchEnded { .. }
             | ListenerToCore::Desktop { .. }
             | ListenerToCore::Progress { .. }
-            | ListenerToCore::Foreground { .. } => Kind::Report,
+            | ListenerToCore::Foreground { .. }
+            | ListenerToCore::Tell(_) => Kind::Report,
             ListenerToCore::Ready { .. }
             | ListenerToCore::Pong { .. }
             | ListenerToCore::ForwardingEnded { .. }
@@ -1917,6 +1924,7 @@ impl ListenerToCore {
             | ListenerToCore::ForwardingEnded { .. }
             | ListenerToCore::ExitHandled { .. }
             | ListenerToCore::Foreground { .. }
+            | ListenerToCore::Tell(_)
             | ListenerToCore::Fault { .. }
             | ListenerToCore::IdleAnswer { .. } => {}
         }

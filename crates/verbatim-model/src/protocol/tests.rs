@@ -168,7 +168,24 @@ fn next_listener_to_core(previous: Option<&ListenerToCore>) -> Option<ListenerTo
             console: false,
             integrity: None,
         },
-        ListenerToCore::Foreground { .. } => ListenerToCore::Pong {
+        ListenerToCore::Foreground { .. } => ListenerToCore::Tell(Box::new(crate::tell::Event {
+            trace_id: TraceId::from_raw(5),
+            kind: crate::event_kind::EventKind::MsaaFocus,
+            process: Pid(2),
+            application: "notepad".to_owned(),
+            thread: 3,
+            at_us: 1,
+            object: crate::tell::EventObject::Msaa {
+                window: crate::WindowHandle(1),
+                object: -4,
+                child: 0,
+            },
+            cached: crate::property::PropertyValues(Vec::new()),
+            payload: crate::tell::Payload::None,
+            window: crate::tell::TellWindow::NoWindow,
+            checked: None,
+        })),
+        ListenerToCore::Tell(_) => ListenerToCore::Pong {
             parked_count: 0,
             written_at_us: 0,
         },
@@ -268,6 +285,7 @@ fn every_variant_has_its_reviewed_kind() {
             "Desktop: Report",
             "Progress: Report",
             "Foreground: Report",
+            "Tell: Report",
             "Pong: Lifecycle",
             "Fault: Report",
             "IdleAnswer: Answer",

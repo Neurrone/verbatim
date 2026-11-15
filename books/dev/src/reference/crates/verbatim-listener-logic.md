@@ -127,6 +127,24 @@ Public API:
   before, until a later event finds it in front or a newer foreground
   event replaces it; none sent replaces another.
 
+- `tell` — what the listener decides of a `WinEvent` before it tells
+  Core of it: `tell_window`, NVDA's mapping of a window of 0 to the
+  desktop window, and of an invalid one to it for the end of a menu, a
+  popup menu or the task switcher, dropping any other event of an invalid
+  window, and a window's destruction told only for the window's own
+  object; `dropped_by_class`, Windows Live Messenger's hidden window and a
+  show of neither a client nor a custom object; `WindowPart`, acceptance's
+  window facts over the `WindowReads` trait, the window's own part read
+  as the event arrives and the foreground's part
+  (`WindowPart::with_foreground`) as the tell is placed, a console
+  window's process the console host the event's thread names; and
+  `ForegroundHold`, which keeps every item placed behind a foreground
+  event whose window `GetForegroundWindow` does not name until it does or
+  `FOREGROUND_HOLD_US` (20 ms) pass, a newer foreground awaiting its own
+  window and counting its time again, a dropped foreground's window still
+  awaited, and answers what to send, in order, and how its one timer
+  changes.
+
 `cargo xtask ci` reads `schedule.rs` by the pure rule
 (`xtask/src/ownership.rs`).
 

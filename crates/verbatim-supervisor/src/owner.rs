@@ -750,6 +750,9 @@ impl Owner {
                 integrity,
             }),
             ListenerToCore::Ready { .. } => OwnerEvent::Ready(outpost),
+            // Not yet carried to Core's event queue: today's routed facts,
+            // sent beside the tells, are what Core hears until then.
+            ListenerToCore::Tell(_) => return,
             ListenerToCore::IdleAnswer { round } => {
                 self.listener_idle(outpost, round);
                 return;
