@@ -5,8 +5,10 @@
 //! fence every entry carries.
 //!
 //! A press joins the queue behind what arrived before it and runs at its
-//! turn with no time limit of its own. Report focus runs as its own
-//! request ([`crate::report_focus`]); every other action runs today's
+//! turn with no time limit of its own. Report focus and report caret
+//! location run as their own functions ([`crate::report_focus`],
+//! [`crate::caret_location`]), each holding the queue until its answer;
+//! every other action runs today's
 //! handling of the key or command at its turn, the caret key's included,
 //! until the caret key's own entry replaces it.
 
@@ -110,12 +112,18 @@ pub(crate) async fn run(mut cx: Cx<Entries>, entry: PressEntry) {
     let PressEntry {
         trace_id, press, ..
     } = entry;
-    if let PressAction::Command {
-        command: ReviewCommand::ReportFocus,
-        repeat,
-    } = press.action
+    if let PressAction::Command { command, repeat } = press.action
+        && let Some(own) = Own::of(command)
     {
-        crate::report_focus::run(cx, trace_id, repeat).await;
+        // Any command stops say-all, as any key does in NVDA.
+        let stopped = crate::say_all::stop(&mut cx.facts_mut());
+        for effect in stopped {
+            cx.emit(effect);
+        }
+        match own {
+            Own::ReportFocus => crate::report_focus::run(cx, trace_id, repeat).await,
+            Own::CaretLocation => crate::caret_location::run(cx, trace_id).await,
+        }
         return;
     }
     let Some(input) = today(trace_id, &press) else {
@@ -130,6 +138,24 @@ pub(crate) async fn run(mut cx: Cx<Entries>, entry: PressEntry) {
     };
     for effect in effects {
         cx.emit(effect);
+    }
+}
+
+/// A command that runs as its own function on the queue, making its reads
+/// as the queue's requests.
+#[derive(Clone, Copy)]
+enum Own {
+    ReportFocus,
+    CaretLocation,
+}
+
+impl Own {
+    fn of(command: ReviewCommand) -> Option<Self> {
+        match command {
+            ReviewCommand::ReportFocus => Some(Self::ReportFocus),
+            ReviewCommand::ReportCaretLocation => Some(Self::CaretLocation),
+            _ => None,
+        }
     }
 }
 

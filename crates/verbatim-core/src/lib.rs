@@ -50,6 +50,7 @@
 )]
 
 mod applications;
+mod caret_location;
 mod changes;
 mod desktop;
 pub mod dump;
@@ -79,6 +80,7 @@ pub mod supervisor;
 mod terminal;
 mod terminal_model;
 mod text;
+mod text_request;
 
 pub use dump::{
     DUMP_FORMAT_VERSION, DumpContents, DumpHeader, DumpReadError, UNKNOWN_COMMIT, read_dump,

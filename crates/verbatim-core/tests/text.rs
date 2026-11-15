@@ -2760,59 +2760,6 @@ fn previous_word_crosses_a_line_start_and_stops_at_the_top() {
     );
 }
 
-/// The caret's location is asked of the focus's caret and said as NVDA
-/// says it (`docs/parity/review.md`, "Review cursor line/word/character
-/// over object text").
-#[test]
-fn caret_location_asks_for_the_carets_place_and_says_it() {
-    let mut state = editing("abc\n", 1);
-    let effects = reduce(&mut state, &command(ReviewCommand::ReportCaretLocation, 0));
-    let asked = only_request(&effects);
-    assert_eq!(asked.op, TextOp::Location(TextPoint::Caret));
-    let effects = reduce(
-        &mut state,
-        &completed(asked.query_id, TextReply::Location { x: 108, y: 200 }),
-    );
-    assert_eq!(
-        effects,
-        said(
-            4,
-            vec![UtteranceSegment::new(SegmentContent::Phrase(
-                Phrase::Positioned { x: 108, y: 200 }
-            ))]
-        )
-    );
-}
-
-/// In text measured by character offsets the caret's location is said as
-/// how far through the text it is, then its place on the screen.
-#[test]
-fn an_offset_measured_location_says_the_percentage_and_the_place() {
-    let mut state = editing("abc\n", 1);
-    let effects = reduce(&mut state, &command(ReviewCommand::ReportCaretLocation, 0));
-    let asked = only_request(&effects);
-    assert_eq!(asked.op, TextOp::Location(TextPoint::Caret));
-    let reply = TextReply::OffsetLocation {
-        offset: 1,
-        length: 4,
-        point: Some((108, 200)),
-    };
-    let effects = reduce(&mut state, &completed(asked.query_id, reply));
-    assert_eq!(
-        effects,
-        said(
-            4,
-            vec![UtteranceSegment::new(SegmentContent::Phrase(
-                Phrase::OffsetPositioned {
-                    offset: 1,
-                    length: 4,
-                    point: Some((108, 200)),
-                }
-            ))]
-        )
-    );
-}
-
 /// The review cursor's location is asked at the review cursor, not the
 /// caret, and said the same way.
 #[test]

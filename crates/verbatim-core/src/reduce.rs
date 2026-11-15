@@ -35,9 +35,7 @@ use crate::foreground::{Attention, ForegroundFact, LatestFocus};
 use crate::key_line::ReviewPress;
 use crate::queries::Then;
 use crate::state::PendingText;
-use crate::state::{
-    CellMemory, FocusContext, Navigator, NavigatorRead, SpokenRecord, SrState, TextFollowUp,
-};
+use crate::state::{CellMemory, FocusContext, Navigator, NavigatorRead, SpokenRecord, SrState};
 use crate::{editing, review, review_text, say_all, shell, terminal, terminal_model, text};
 
 /// The activity id of the shell's window-snap results notification, the one
@@ -2316,11 +2314,10 @@ fn reduce_command(
         | ReviewCommand::ToggleTypedCharacters
         | ReviewCommand::ToggleTypedWords => toggle_setting(state, trace_id, command),
         ReviewCommand::ToggleReportNewOutput => terminal::toggle(state, trace_id),
-        ReviewCommand::SayAllFromCaret | ReviewCommand::ReportCaretLocation => {
-            caret_command(state, trace_id, command)
-        }
-        // Report focus runs as an event-queue entry (`crate::report_focus`).
-        ReviewCommand::ReportFocus => Vec::new(),
+        ReviewCommand::SayAllFromCaret => caret_command(state, trace_id),
+        // Report focus and the caret's location run as event-queue entries
+        // (`crate::report_focus`, `crate::caret_location`).
+        ReviewCommand::ReportFocus | ReviewCommand::ReportCaretLocation => Vec::new(),
         ReviewCommand::ReportStatusBar => {
             terminal_model::report_status_bar(state, trace_id, repeat)
         }
@@ -2372,9 +2369,9 @@ fn toggle_setting(state: &mut SrState, trace_id: TraceId, command: ReviewCommand
     ]
 }
 
-/// Runs a command on the focus's caret: say-all from the caret, or the
-/// caret's location. A focus that cannot have text has no caret.
-fn caret_command(state: &mut SrState, trace_id: TraceId, command: ReviewCommand) -> Vec<Effect> {
+/// Runs say-all from the focus's caret. A focus that cannot have text
+/// has no caret.
+fn caret_command(state: &mut SrState, trace_id: TraceId) -> Vec<Effect> {
     let Some(focus) = state.focus.object().filter(|focus| focus.alive) else {
         return vec![editing::speak(
             trace_id,
@@ -2389,21 +2386,7 @@ fn caret_command(state: &mut SrState, trace_id: TraceId, command: ReviewCommand)
             review_text::message(Message::NotSupported),
         )];
     }
-    if command == ReviewCommand::SayAllFromCaret {
-        return say_all::start(state, node, true, verbatim_model::TextPoint::Caret);
-    }
-    state.queries.forget(|then| matches!(then, Then::Text(_)));
-    let (_, effect) = state.queries.ask(
-        crate::queries::Asking::Text(
-            node,
-            verbatim_model::TextOp::Location(verbatim_model::TextPoint::Caret),
-        ),
-        Then::Text(PendingText {
-            node,
-            then: TextFollowUp::Location,
-        }),
-    );
-    vec![effect]
+    say_all::start(state, node, true, verbatim_model::TextPoint::Caret)
 }
 
 /// Runs a command on the navigator object and its review cursor.
