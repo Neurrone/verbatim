@@ -371,7 +371,7 @@ pub(crate) fn notepad_body(scenario: &mut Scenario, _state: &mut ScenarioState) 
     press(scenario, "downarrow", &[FIRST]);
     press(scenario, "home", &["a"]);
     press(scenario, "shift+end", &["alpha beta gamma  selected"]);
-    press(scenario, "enter", &["carriage return  unselected"]);
+    press(scenario, "enter", &["carriage return unselected"]);
     press(scenario, "downarrow", &["kiwi"]);
 
     // The two-line paste is `text_box_caret_keys`' step: here the save that

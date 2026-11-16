@@ -312,7 +312,7 @@ pub(crate) fn notepad_body(scenario: &mut Scenario, _state: &mut ScenarioState) 
     press(scenario, "downarrow", &[LINE]);
     press(scenario, "home", &["a"]);
     press(scenario, "shift+control+rightarrow", &["alpha  selected"]);
-    press(scenario, "enter", &["carriage return   unselected"]);
+    press(scenario, "enter", &["carriage return unselected"]);
     scenario
         .save_document(NAME, WINDOW_TIMEOUT)
         .expect("saves the document");
