@@ -29,6 +29,23 @@ Public API:
   replaced (`Effect::Abandon`), its later answer refused; for any other
   reason it runs on and its answer is sent. At the close the queued
   requests are dropped unanswered.
+- A caret key's watch (`Watches`, the `watch` module; the design's "The
+  watch" and Table 15): an `Input::Ask` naming `TextOp::Watch` waits in
+  the table instead of the queue, its first check due at once, then one
+  a poll after each check began, the check due at the bound the last.
+  Each check or final read is a `Work::Watch` (`WatchProgram`, its
+  `WatchWork` a `Check` with whether to compare the word and whether it
+  is the last, or the `Final` read), dispatched ahead of every other
+  program, the final read ahead of a check, on the shell's timer
+  (`Reducer::next_timer`). A program that ends the watch answers through
+  `Input::Answered`; a check that answers nothing showed no effect, or
+  failed, and the watch goes on; a last check or final read that answers
+  nothing is answered failed. Where the watch names the event rule, a UI
+  Automation caret or text-change entry within `EVENT_WINDOW_US` of the
+  pass, or one heard while the key's starting read was out, makes the
+  final read next. Cancel, window destruction, `NodesHeld` (whose
+  release spares the watches' starting points) and the close follow
+  Table 15.
 - `Reducer` with `input(input, now)`, which takes one `Input` in
   mailbox order, given the time (`Now`: the shell's monotonic clock, the
   observation clock and the shared clock), and returns the `Effect`s in
@@ -130,7 +147,9 @@ Tests: the reducer's unit tests drive it through `input` and `tick`
 (`crates/verbatim-outpost-logic/src/tests.rs`, and each
 module's own), so every ordering of inputs is a replay; Core's requests
 through the reducer are `src/tests/asked.rs`'s, and their queue's own
-cells (Table 14) `waiting.rs`'s.
+cells (Table 14) `waiting.rs`'s; the watch's cells (Table 15) are
+`watch.rs`'s, and the watch across Core and the outpost is the generated
+test `tests/caret_watch.rs`.
 
 The worker's choice between adopting and following again is
 pinned by the outpost's `a_focus_now_answer_is_followed_again_only_on_the_followed_focus`.
