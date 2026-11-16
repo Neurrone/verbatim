@@ -289,6 +289,22 @@ pub fn foreground_window_handle() -> isize {
     unsafe { GetForegroundWindow() }.0 as isize
 }
 
+/// `target_pid`'s top-level window for a tree dump: the foreground window
+/// when it serves ([`served_by`]) and is not Core's hidden frame, else its
+/// first visible top-level window, skipping the hidden frame. Local calls
+/// only.
+#[must_use]
+pub fn main_window_of(target_pid: u32) -> Option<isize> {
+    let front = foreground_window_handle();
+    (front != 0 && served_by(front, target_pid) && !window_is_hidden_frame(front))
+        .then_some(front)
+        .or_else(|| {
+            top_level_windows(target_pid)
+                .into_iter()
+                .find(|&window| !window_is_hidden_frame(window) && window_is_visible(window))
+        })
+}
+
 /// `handle`'s top-level window (`GetAncestor` with `GA_ROOT`), or 0 for an
 /// invalid handle.
 #[must_use]

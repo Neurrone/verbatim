@@ -7,7 +7,9 @@
 //! Windows with no call into the application.
 //!
 //! - The shared list: a node's properties, one navigation step, a find, a
-//!   node's children, a text request and an activation.
+//!   node's children, a text request and an activation; and, from outside
+//!   the event queue, the control plane's tree dump and the taskbar's two
+//!   reads for the notification area list.
 //! - The generic read of the object an event names, for an MSAA object at
 //!   an event's address or a node the outpost holds: its properties, its
 //!   relation to nodes Core names, and its ancestors up to one Core
@@ -132,6 +134,22 @@ pub(super) fn answer(context: &RequestContext<'_>, client: &mut Client, ask: &As
             }
         }
         Request::Follow(follow) => super::followed::follow(context, client, follow),
+        Request::DumpTree { locations } => match read::dump_tree(context, client, *locations) {
+            Ok(dumped) => Outcome::Result(Reply::Tree(Box::new(dumped))),
+            Err(error) => failed(&error),
+        },
+        Request::ShellItems { kind } => {
+            match super::shell_items::shell_items(context, client, *kind) {
+                Ok(items) => Outcome::Result(Reply::ShellItems(items)),
+                Err(error) => failed(&error),
+            }
+        }
+        Request::ShellItemPosition { kind, item } => {
+            match super::shell_items::shell_item_position(context, client, (*kind, item)) {
+                Ok(found) => Outcome::Result(Reply::ShellItemPosition(found)),
+                Err(error) => failed(&error),
+            }
+        }
     };
     Answer {
         number: ask.number,

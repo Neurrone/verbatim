@@ -14,10 +14,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use verbatim_model::{Pid, WindowFacts, WindowHandle};
 
 use verbatim_reader_rules::CONSOLE_WINDOW_CLASS;
-use verbatim_win32::window::{
-    served_by, top_level_of, top_level_windows, window_class_name, window_is_hidden_frame,
-    window_is_visible, window_owner,
-};
+use verbatim_win32::window::{served_by, top_level_of, window_class_name, window_owner};
 
 /// The observation `timing` holds, in microseconds on the run's shared
 /// clock; now, when `timing` holds none.
@@ -170,17 +167,7 @@ pub(super) fn foreground_window_of(target_pid: u32) -> Option<isize> {
     served_by(window.0 as isize, target_pid).then_some(window.0 as isize)
 }
 
-/// The target's top-level window for a tree dump: its foreground window,
-/// else its first visible top-level window, skipping Core's hidden frame.
-pub(super) fn main_window_of(target_pid: u32) -> Option<isize> {
-    foreground_window_of(target_pid)
-        .filter(|&window| !window_is_hidden_frame(window))
-        .or_else(|| {
-            top_level_windows(target_pid)
-                .into_iter()
-                .find(|&window| !window_is_hidden_frame(window) && window_is_visible(window))
-        })
-}
+pub(super) use verbatim_win32::window::main_window_of;
 
 /// Waits, for as long as it takes, for process `pid` to exit, and says
 /// whether it did: true once it has exited, or when no process has that

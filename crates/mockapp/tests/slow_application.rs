@@ -30,7 +30,7 @@ use std::time::Duration;
 
 use verbatim_ia2::{WinEvent, WinEventHook, WinEventKind};
 use verbatim_model::protocol::{OutpostToCore, Query, QueryOutcome, QueryResult, RequestId};
-use verbatim_model::request::MsaaIds;
+use verbatim_model::request::{MsaaIds, Outcome, Reply, Request, WindowVerdict};
 use verbatim_model::{CallCounts, NodeId, QueryKind, Role, ShellItem, ShellItemKind, WindowHandle};
 use verbatim_process::arguments::OutpostOptions;
 use verbatim_uia::Uia;
@@ -239,8 +239,9 @@ fn a_slow_dialog_text_is_reported_with_the_focus() {
     app.quit();
 }
 
-/// The taskbar's items, asked of the outpost of a mockapp window of the
-/// taskbar's class, whose walk mockapp holds while the outpost's frozen
+/// The taskbar's items, asked as Core asks them from outside the event
+/// queue of the outpost of a mockapp window of the taskbar's class, its
+/// verdict in force, whose walk mockapp holds while the outpost's frozen
 /// clock passes the walk's old budget of two seconds, are answered in full
 /// once mockapp answers: the walk has no budget of its own. The window has
 /// no frame, as the real taskbar has none, so the walk meets no title bar,
@@ -251,24 +252,26 @@ fn a_slow_shell_items_walk_answers_the_whole_list() {
     common::init_com();
     let title = common::unique_title("mockapp-slow-taskbar");
     let mut app = common::spawn("taskbar.json", "uia", &title);
-    let mut outpost = OutpostUnderTest::new(&app);
+    let window = common::find_window(&title);
+    let outpost = OutpostUnderTest::new(&app);
 
     app.hold();
-    let answer_by_us = common::now_us()
-        + u64::try_from(verbatim_model::HANDLING_DEADLINE.as_micros()).expect("small");
-    let request_id = outpost.ask(Query::ShellItems {
-        kind: ShellItemKind::Taskbar,
-        answer_by_us,
-    });
+    let number = outpost.request_with(
+        window,
+        WindowVerdict::Uia,
+        Request::ShellItems {
+            kind: ShellItemKind::Taskbar,
+        },
+    );
     app.held();
     outpost.pass_time(Duration::from_secs(3));
     app.release();
-    let names = match reply_to(&outpost, request_id) {
-        QueryOutcome::Done(QueryResult::ShellItems(items)) => items
+    let names = match outpost.answer(number).outcome {
+        Outcome::Result(Reply::ShellItems(items)) => items
             .into_iter()
             .map(|ShellItem { name, .. }| name)
             .collect::<Vec<_>>(),
-        other => panic!("the query answered {other:?}, not the taskbar's items"),
+        other => panic!("the request answered {other:?}, not the taskbar's items"),
     };
     assert_eq!(names, ["Mail", "Files", "Music"]);
     outpost.settled();
@@ -276,11 +279,12 @@ fn a_slow_shell_items_walk_answers_the_whole_list() {
     app.quit();
 }
 
-/// The taskbar's items, asked of the outpost of a mockapp window of the
-/// taskbar's class while mockapp's window thread is stalled past UIA's
-/// connection timeout, which ends the window's lookup with UIA's timeout
-/// error: the query fails whole, rather than answering the buttons read by
-/// then, none, as the list. The stall's end, which mockapp prints, is the
+/// The taskbar's items, asked as Core asks them of the outpost of a
+/// mockapp window of the taskbar's class, its verdict in force, while
+/// mockapp's window thread is stalled past UIA's connection timeout, which
+/// ends the window's lookup with UIA's timeout error: the request fails
+/// whole, answered "ended or stopped", rather than answering the buttons
+/// read by then, none, as the list. The stall's end, which mockapp prints, is the
 /// evidence that the timeout passed; it is one and a half times the
 /// timeout, under the five seconds after which Windows judges the window
 /// hung.
@@ -288,21 +292,20 @@ fn a_shell_items_walk_whose_lookup_times_out_fails_whole() {
     common::init_com();
     let title = common::unique_title("mockapp-timed-out-taskbar");
     let mut app = common::spawn("taskbar.json", "uia", &title);
-    let mut outpost = OutpostUnderTest::new(&app);
+    let window = common::find_window(&title);
+    let outpost = OutpostUnderTest::new(&app);
 
     let stall = verbatim_uia::UIA_CONNECTION_TIMEOUT * 3 / 2;
     app.stall(stall);
-    let answer_by_us = common::now_us()
-        + u64::try_from(verbatim_model::HANDLING_DEADLINE.as_micros()).expect("small");
-    let request_id = outpost.ask(Query::ShellItems {
-        kind: ShellItemKind::Taskbar,
-        answer_by_us,
-    });
-    app.stall_ended(stall);
-    assert_eq!(
-        reply_to(&outpost, request_id),
-        QueryOutcome::Failed("the shell walk could not read every item".to_owned())
+    let number = outpost.request_with(
+        window,
+        WindowVerdict::Uia,
+        Request::ShellItems {
+            kind: ShellItemKind::Taskbar,
+        },
     );
+    app.stall_ended(stall);
+    assert_eq!(outpost.answer(number).outcome, Outcome::Ended);
     outpost.settled();
     drop(outpost);
     app.quit();

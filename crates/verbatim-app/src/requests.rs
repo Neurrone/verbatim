@@ -1,20 +1,23 @@
-//! Who asks the shell's own queries of outposts, and where each outcome
-//! goes (`books/dev/src/reference/crates/verbatim-app.md`, `requests`).
+//! Who asks Core's requests from outside the event queue, and where each
+//! outcome goes (`books/dev/src/reference/crates/verbatim-app.md`,
+//! `requests`): the control plane's tree dump and the notification area
+//! list's two reads of the taskbar
+//! (`docs/design/readers-tell-core-asks-build1.md`, "Requests in Core").
+//! Core keeps each request's due time, hang check and outpost, and answers
+//! it once, under the token the shell keeps its asker by
+//! (`QueueEffect::Answered`); [`Outside`] holds each [`Asker`] by its token
+//! until then, and [`deliver`] carries the outcome out, into a
+//! control-plane reply or a dialog's responder.
 //!
-//! A reply is routed by its request id's asker ([`reply_input`]): one to a
-//! query of Core's reducer, which records its own queries, re-enters the
-//! reducer as `Input::Answered`; one to a query of the shell's goes to the
-//! request table, `verbatim-core`'s
-//! [`verbatim_core::requests::RequestTable`], the one owner of each of the
-//! shell's queries' outcome. It holds each [`Asker`] as a token and hands
-//! it back with its one outcome, and [`deliver`] carries that outcome out,
-//! into the reducer's inputs, a control-plane reply or a dialog's
-//! responder.
+//! A reply to a query of Core's reducer, the queries it still sends
+//! itself, re-enters the reducer as `Input::Answered` ([`reply_input`]).
 
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crossbeam_channel::Sender;
-use verbatim_model::protocol::{QueryOutcome, QueryResult, RequestId, Requester, Responder};
+use verbatim_model::protocol::{QueryOutcome, RequestId, Requester, Responder};
+use verbatim_model::request::{OutsideOutcome, Reply};
 use verbatim_model::{Input, OutpostId, QueryId, TraceId, TreeNode};
 
 /// The answer a tree-dump request waits for: the walked tree and whether the
@@ -34,10 +37,6 @@ impl DumpTicket {
         Self(NEXT.fetch_add(1, Ordering::Relaxed))
     }
 }
-
-/// The request table, holding who asked each query
-/// ([`verbatim_core::requests::RequestTable`]).
-pub(crate) type RequestTable = verbatim_core::requests::RequestTable<Asker>;
 
 /// Who in the shell asked, and therefore where the outcome goes.
 pub(crate) enum Asker {
@@ -66,57 +65,76 @@ pub(crate) enum Asker {
     },
 }
 
-/// Where a reply goes, by its request id's asker.
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) enum Routed {
-    /// To Core's reducer, which records its own queries.
-    Reducer(Input),
-    /// To the shell's request table, with its outcome.
-    Shell(QueryOutcome),
-    /// To no asker this shell knows.
-    Nobody,
+/// The askers of Core's requests from outside the event queue, each by
+/// the token Core answers it under, from its request until its one
+/// answer.
+#[derive(Default)]
+pub(crate) struct Outside {
+    /// The next token, never reused.
+    next: u64,
+    /// Each asker waiting, by its token.
+    waiting: BTreeMap<u64, Asker>,
 }
 
-/// Routes the outcome of query `id`, traced `trace_id`, from `outpost`, by
-/// its asker: a query of Core's reducer re-enters it as `Input::Answered`
-/// under the reply's trace, a failed outcome logged first, since Core does
-/// no logging; one of the shell's goes to its request table.
+impl Outside {
+    /// Keeps `asker` and returns the token its request is asked under.
+    pub(crate) fn begin(&mut self, asker: Asker) -> u64 {
+        self.next += 1;
+        self.waiting.insert(self.next, asker);
+        self.next
+    }
+
+    /// The asker of the request asked under `token`, taken: its one
+    /// answer has come. `None` for a token no asker waits under.
+    pub(crate) fn answered(&mut self, token: u64) -> Option<Asker> {
+        self.waiting.remove(&token)
+    }
+
+    /// The token the tree dump named `ticket` is asked under, while its
+    /// asker waits.
+    pub(crate) fn dump(&self, ticket: DumpTicket) -> Option<u64> {
+        self.waiting
+            .iter()
+            .find(|(_, asker)| matches!(asker, Asker::DumpTree { ticket: asked, .. } if *asked == ticket))
+            .map(|(token, _)| *token)
+    }
+}
+
+/// The reducer input for the outcome of query `id`, traced `trace_id`,
+/// from `outpost`: a query of Core's reducer re-enters it as
+/// `Input::Answered` under the reply's trace, a failed outcome logged
+/// first, since Core does no logging. The shell asks no query of its own,
+/// so a reply to any other asker is dropped, `None`.
 pub(crate) fn reply_input(
     trace_id: TraceId,
     id: RequestId,
     outpost: OutpostId,
     outcome: QueryOutcome,
     at_us: u64,
-) -> Routed {
-    match id.asker {
-        Requester::Reducer => {
-            if !matches!(outcome, QueryOutcome::Done(_)) {
-                tracing::debug!(
-                    reason = describe(&outcome),
-                    %id,
-                    %outpost,
-                    "a query of Core's was not answered"
-                );
-            }
-            Routed::Reducer(Input::Answered {
-                trace_id,
-                query_id: QueryId(id.number),
-                outpost,
-                outcome,
-                at_us,
-            })
-        }
-        Requester::Shell => Routed::Shell(outcome),
-        _ => {
-            tracing::warn!(%id, "a reply to an asker the shell does not know is dropped");
-            Routed::Nobody
-        }
+) -> Option<Input> {
+    if !matches!(id.asker, Requester::Reducer) {
+        tracing::warn!(%id, "a reply to an asker the shell does not know is dropped");
+        return None;
     }
+    if !matches!(outcome, QueryOutcome::Done(_)) {
+        tracing::debug!(
+            reason = describe_query(&outcome),
+            %id,
+            %outpost,
+            "a query of Core's was not answered"
+        );
+    }
+    Some(Input::Answered {
+        trace_id,
+        query_id: QueryId(id.number),
+        outpost,
+        outcome,
+        at_us,
+    })
 }
 
-/// A short description of an outcome other than success, for logs and
-/// control-plane errors.
-fn describe(outcome: &QueryOutcome) -> String {
+/// A short description of a query's outcome other than success, for logs.
+fn describe_query(outcome: &QueryOutcome) -> String {
     match outcome {
         QueryOutcome::Gone => "the node or its outpost is gone".to_owned(),
         QueryOutcome::Failed(reason) => reason.clone(),
@@ -126,16 +144,49 @@ fn describe(outcome: &QueryOutcome) -> String {
     }
 }
 
-/// Hands a shell item position query's outcome to the list dialog's
-/// `deliver`: the buttons that may be the item, or `None` for any failure.
-/// Nothing re-enters the reducer.
-fn deliver_shell_item_position(
-    deliver: Responder<verbatim_model::ShellCandidates>,
-    outcome: QueryOutcome,
-) {
+/// A short description of an outcome other than the reply wanted, for logs
+/// and control-plane errors.
+fn describe(outcome: &OutsideOutcome) -> String {
     match outcome {
-        QueryOutcome::Done(QueryResult::ShellItemPosition(found)) => deliver.answer(found),
-        other => {
+        OutsideOutcome::Result(_) => "the request returned an unexpected answer".to_owned(),
+        OutsideOutcome::Refused(refusal) => format!("the reader refused the request: {refusal:?}"),
+        OutsideOutcome::Undecodable => "the answer did not decode".to_owned(),
+        OutsideOutcome::NotThere => "the object is not there".to_owned(),
+        OutsideOutcome::NotResponding => "the application is not responding".to_owned(),
+        OutsideOutcome::ReaderEnded => "its outpost ended or the read failed".to_owned(),
+        OutsideOutcome::NoLongerAwaited(reason) => {
+            format!("Core no longer awaited it: {reason:?}")
+        }
+    }
+}
+
+/// Hands one outcome to its asker: a dialog or the control plane. Nothing
+/// re-enters the reducer.
+pub(crate) fn deliver(asker: Asker, outcome: OutsideOutcome) {
+    match (asker, outcome) {
+        (Asker::DumpTree { reply, .. }, OutsideOutcome::Result(Reply::Tree(dumped))) => {
+            // The requester may have timed out and dropped its receiver.
+            let _ = reply.try_send(Ok((dumped.root, dumped.truncated)));
+        }
+        (Asker::DumpTree { reply, .. }, other) => {
+            let _ = reply.try_send(Err(describe(&other)));
+        }
+        (Asker::ShellItems { deliver }, OutsideOutcome::Result(Reply::ShellItems(items))) => {
+            deliver.answer(items);
+        }
+        (
+            Asker::ShellItemPosition { deliver },
+            OutsideOutcome::Result(Reply::ShellItemPosition(found)),
+        ) => deliver.answer(found),
+        (Asker::ShellItems { deliver }, other) => {
+            tracing::warn!(
+                reason = describe(&other),
+                "the shell's items were not listed"
+            );
+            // Dropped unanswered: the dialog is handed nothing.
+            drop(deliver);
+        }
+        (Asker::ShellItemPosition { deliver }, other) => {
             tracing::warn!(
                 reason = describe(&other),
                 "the shell item's position was not read"
@@ -146,57 +197,19 @@ fn deliver_shell_item_position(
     }
 }
 
-/// Hands a shell items query's outcome to the list dialog's `deliver`:
-/// the items, or `None` for any failure. Nothing re-enters the reducer.
-fn deliver_shell_items(deliver: Responder<Vec<verbatim_gui::ShellItem>>, outcome: QueryOutcome) {
-    match outcome {
-        QueryOutcome::Done(QueryResult::ShellItems(items)) => deliver.answer(items),
-        other => {
-            tracing::warn!(
-                reason = describe(&other),
-                "the shell's items were not listed"
-            );
-            // Dropped unanswered: the dialog is handed nothing.
-            drop(deliver);
-        }
-    }
-}
-
-/// Hands one outcome to its asker: a dialog or the control plane.
-pub(crate) fn deliver(asker: Asker, outcome: QueryOutcome) {
-    match asker {
-        Asker::DumpTree { reply, .. } => {
-            let answer = match outcome {
-                QueryOutcome::Done(QueryResult::Tree(dumped)) => {
-                    Ok((dumped.root, dumped.truncated))
-                }
-                other => Err(describe(&other)),
-            };
-            // The requester may have timed out and dropped its receiver.
-            let _ = reply.try_send(answer);
-        }
-        Asker::ShellItems { deliver } => deliver_shell_items(deliver, outcome),
-        Asker::ShellItemPosition { deliver } => deliver_shell_item_position(deliver, outcome),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use crossbeam_channel::bounded;
     use verbatim_model::protocol::DumpedTree;
+    use verbatim_model::request::CancelReason;
     use verbatim_model::{Backend, NodeDetails, NodeId, NodeSnapshot, OutpostId, Role, StateSet};
 
     use super::*;
 
-    /// Ends request `id` of `table` with `outcome`, from `outpost`, and
-    /// carries the outcome out, as the reducer thread does.
-    fn finish(
-        table: &mut RequestTable,
-        id: verbatim_model::protocol::RequestId,
-        outpost: OutpostId,
-        outcome: QueryOutcome,
-    ) {
-        if let Some((asker, outcome)) = table.finish(id, outpost, outcome) {
+    /// Answers the request asked under `token` of `outside` with
+    /// `outcome`, as the reducer thread does at `QueueEffect::Answered`.
+    fn answer(outside: &mut Outside, token: u64, outcome: OutsideOutcome) {
+        if let Some(asker) = outside.answered(token) {
             deliver(asker, outcome);
         }
     }
@@ -220,23 +233,20 @@ mod tests {
         }
     }
 
-    /// A shell items outcome reaches the dialog, and a request its outpost
-    /// ended with, answered gone, gives it nothing.
+    /// A shell items outcome reaches the dialog, and a request whose
+    /// outpost ended, answered "reader ended", gives it nothing.
     #[test]
     fn a_shell_items_answer_reaches_the_dialog_and_an_ended_outpost_gives_none() {
         let outcomes = std::sync::Arc::default();
-        let mut table = RequestTable::default();
-        let answered = table.begin(OutpostId(1), shell_items(&outcomes));
-        table.begin(OutpostId(1), shell_items(&outcomes));
-        finish(
-            &mut table,
+        let mut outside = Outside::default();
+        let answered = outside.begin(shell_items(&outcomes));
+        let ended = outside.begin(shell_items(&outcomes));
+        answer(
+            &mut outside,
             answered,
-            OutpostId(1),
-            QueryOutcome::Done(QueryResult::ShellItems(Vec::new())),
+            OutsideOutcome::Result(Reply::ShellItems(Vec::new())),
         );
-        for (asker, outcome) in table.outpost_ended(OutpostId(1)) {
-            deliver(asker, outcome);
-        }
+        answer(&mut outside, ended, OutsideOutcome::ReaderEnded);
         assert_eq!(
             *outcomes.lock().expect("outcomes"),
             vec![Some(Vec::new()), None]
@@ -258,7 +268,7 @@ mod tests {
         let outcomes: std::sync::Arc<
             std::sync::Mutex<Vec<Option<verbatim_model::ShellCandidates>>>,
         > = std::sync::Arc::default();
-        let mut table = RequestTable::default();
+        let mut outside = Outside::default();
         let asker = |outcomes: &std::sync::Arc<std::sync::Mutex<Vec<_>>>| {
             let kept = std::sync::Arc::clone(outcomes);
             Asker::ShellItemPosition {
@@ -283,29 +293,23 @@ mod tests {
             }],
             complete: true,
         };
-        let answered = table.begin(OutpostId(1), asker(&outcomes));
-        let failed = table.begin(OutpostId(1), asker(&outcomes));
-        finish(
-            &mut table,
+        let answered = outside.begin(asker(&outcomes));
+        let failed = outside.begin(asker(&outcomes));
+        answer(
+            &mut outside,
             answered,
-            OutpostId(1),
-            QueryOutcome::Done(QueryResult::ShellItemPosition(found.clone())),
+            OutsideOutcome::Result(Reply::ShellItemPosition(found.clone())),
         );
-        finish(
-            &mut table,
-            failed,
-            OutpostId(1),
-            QueryOutcome::Failed("no client".into()),
-        );
+        answer(&mut outside, failed, OutsideOutcome::NotResponding);
         assert_eq!(*outcomes.lock().expect("outcomes"), vec![Some(found), None]);
-        assert!(table.is_empty());
+        assert!(outside.answered(answered).is_none(), "answered once");
     }
 
     /// A reply to a query of Core's reducer re-enters it as its answer,
     /// under the reply's trace and the reducer's own number; one to a query
-    /// of the shell's goes to the request table.
+    /// of the shell's, which asks none, goes nowhere.
     #[test]
-    fn a_reducer_reply_goes_to_the_reducer_and_a_shell_reply_to_the_table() {
+    fn a_reducer_reply_goes_to_the_reducer_and_a_shell_reply_nowhere() {
         let trace_id = TraceId::from_raw(9);
         assert_eq!(
             reply_input(
@@ -315,7 +319,7 @@ mod tests {
                 QueryOutcome::Gone,
                 5
             ),
-            Routed::Reducer(Input::Answered {
+            Some(Input::Answered {
                 trace_id,
                 query_id: QueryId(7),
                 outpost: OutpostId(2),
@@ -331,26 +335,25 @@ mod tests {
                 QueryOutcome::Gone,
                 5
             ),
-            Routed::Shell(QueryOutcome::Gone)
+            None
         );
     }
 
     #[test]
-    fn an_old_dump_reply_never_satisfies_a_newer_request() {
-        let mut table = RequestTable::default();
+    fn an_old_dump_answer_never_satisfies_a_newer_request() {
+        let mut outside = Outside::default();
         let (old_tx, old_rx) = bounded(1);
-        let old = table.begin(OutpostId(1), dump(old_tx));
+        let old = outside.begin(dump(old_tx));
         // The first requester timed out and went away; a second asks.
         drop(old_rx);
         let (new_tx, new_rx) = bounded(1);
-        let new = table.begin(OutpostId(1), dump(new_tx));
+        let new = outside.begin(dump(new_tx));
 
-        // The old request's late reply arrives first.
-        finish(
-            &mut table,
+        // The old request's late answer arrives first.
+        answer(
+            &mut outside,
             old,
-            OutpostId(1),
-            QueryOutcome::Failed("old".to_owned()),
+            OutsideOutcome::NoLongerAwaited(CancelReason::Withdrawn),
         );
         assert!(new_rx.try_recv().is_err(), "the newer request is untouched");
 
@@ -362,13 +365,23 @@ mod tests {
             truncated: false,
             locations: false,
         };
-        finish(
-            &mut table,
+        answer(
+            &mut outside,
             new,
-            OutpostId(1),
-            QueryOutcome::Done(QueryResult::Tree(tree)),
+            OutsideOutcome::Result(Reply::Tree(Box::new(tree))),
         );
         let (root, _) = new_rx.try_recv().expect("answered").expect("a tree");
         assert_eq!(root.snapshot.name.as_deref(), Some("new"));
+    }
+
+    /// Giving up a tree dump finds the dump with that ticket and no other.
+    #[test]
+    fn a_dump_given_up_matches_only_its_ticket() {
+        let mut outside = Outside::default();
+        let (reply, _answer) = bounded(1);
+        let ticket = DumpTicket::mint();
+        let token = outside.begin(Asker::DumpTree { ticket, reply });
+        assert_eq!(outside.dump(ticket), Some(token));
+        assert_eq!(outside.dump(DumpTicket::mint()), None);
     }
 }

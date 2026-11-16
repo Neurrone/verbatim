@@ -27,7 +27,6 @@ mod speech_settings;
 mod strokes;
 mod terminal_settings;
 mod themes;
-mod wanted;
 
 use std::collections::{BTreeSet, HashMap};
 use std::path::PathBuf;
@@ -69,7 +68,7 @@ use verbatim_synth_capture::CaptureSynth;
 
 use latency::LatencyLedger;
 use live::LiveOutposts;
-use requests::{Asker, DumpTicket, DumpTreeResult, RequestTable};
+use requests::{Asker, DumpTicket, DumpTreeResult};
 
 /// The one binding not carried by the keyboard layout's own script table:
 /// Verbatim+V opens the menu. The review, object-navigation, time, and
@@ -790,16 +789,6 @@ fn keep_display_on(on: bool) {
     }
 }
 
-/// The process owning the window `hwnd`, read with a local call.
-fn window_pid(hwnd: isize) -> Option<Pid> {
-    use windows::Win32::Foundation::HWND;
-    use windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
-    let mut pid: u32 = 0;
-    // SAFETY: tolerates any handle; `pid` is a local out-parameter.
-    unsafe { GetWindowThreadProcessId(HWND(hwnd as *mut _), Some(&raw mut pid)) };
-    (pid != 0).then_some(Pid(pid))
-}
-
 /// The list dialogs' way to the shell's items and a clicked item's
 /// position: a request on the reducer thread's port, answered by the
 /// taskbar process's outpost.
@@ -821,10 +810,10 @@ impl verbatim_gui::ShellItemsHost for AppShellItemsHost {
     }
 }
 
-/// The process that owns the taskbar window (`Shell_TrayWnd`), whose
-/// outpost answers the shell items query; `None` when there is no taskbar.
-/// Local calls.
-fn taskbar_process() -> Option<Pid> {
+/// The taskbar window (`Shell_TrayWnd`), which the shell items requests
+/// name, so its process's outpost answers them; `None` when there is no
+/// taskbar. Local calls.
+fn taskbar_window() -> Option<isize> {
     use windows::Win32::UI::WindowsAndMessaging::FindWindowW;
     // SAFETY: FindWindowW reads window state only.
     let taskbar = unsafe {
@@ -835,7 +824,7 @@ fn taskbar_process() -> Option<Pid> {
     }
     .ok()
     .filter(|hwnd| !hwnd.is_invalid())?;
-    window_pid(taskbar.0 as isize)
+    Some(taskbar.0 as isize)
 }
 
 /// The application holding the system foreground right now, read with a
@@ -937,13 +926,12 @@ struct ReducerThread<'a> {
     state: SrState,
     /// The event queue's paused function, kept beside the state.
     runtime: verbatim_core::Runtime,
-    requests: RequestTable,
+    /// The askers of Core's requests from outside the event queue, each by
+    /// the token Core answers it under.
+    outside: requests::Outside,
     /// Outpost generations that have started and not yet ended. A message
     /// from an outpost that has ended is dropped before the reducer sees it.
     live: LiveOutposts,
-    /// The shell's items the list dialogs want of the taskbar's process,
-    /// waiting for its outpost to be ready.
-    wanted: wanted::Wanted,
     /// The outposts a focus report of which was handled since the views
     /// were last sent, which are written the nodes Core holds in them
     /// ([`send_views`](Self::send_views)).
@@ -1204,10 +1192,8 @@ impl ReducerThread<'_> {
     }
 
     /// No outpost will serve `target_pid` now: Core hears its launch failed,
-    /// what the list dialogs wanted of it is answered with nothing, and a
-    /// status entry only waiting for its outpost is removed.
+    /// and a status entry only waiting for its outpost is removed.
     fn launch_failed(&mut self, target_pid: Pid, application_gone: bool) {
-        self.wanted.not_watched(target_pid);
         self.queue(QueueInput::Process(ProcessFact::LaunchFailed {
             process: target_pid,
             application_gone,
@@ -1296,9 +1282,6 @@ impl ReducerThread<'_> {
             } => {
                 tracing::info!(%outpost, %outpost_pid, %target_pid, "outpost ready");
                 self.live.mark_ready(outpost);
-                for wanted in self.wanted.ready(target_pid, now_us()) {
-                    self.ask_shell_items(outpost, wanted.kind, wanted.ask, wanted.times);
-                }
                 self.context.outposts.lock().expect("outposts lock").insert(
                     target_pid,
                     OutpostStatus {
@@ -1455,7 +1438,7 @@ impl ReducerThread<'_> {
         if let Some(round) = self.barrier.start(self.handled_input, clear) {
             self.context.supervisor.query_idle(round);
         }
-        let requests = self.requests.outstanding() + self.state.outstanding_queries();
+        let requests = self.state.outstanding_queries();
         let starting = self.live.starting();
         let standing = match self.barrier.standing() {
             idle::Standing::NoRound => "no round under way".to_owned(),
@@ -1499,7 +1482,6 @@ impl ReducerThread<'_> {
     /// due).
     fn idle_conditions_clear(&self) -> bool {
         self.state.queue_idle()
-            && self.requests.outstanding() == 0
             && self.state.outstanding_queries() == 0
             && !self.state.holds_inputs_back()
             && !self.state.announces_toggle_key()
@@ -1518,8 +1500,7 @@ impl ReducerThread<'_> {
     }
 
     /// Delivers a query's outcome, traced `trace_id`, by its request id's
-    /// asker: to the reducer as `Input::Answered`, or through the request
-    /// table, applying the reducer input it produces, if any.
+    /// asker: to the reducer as `Input::Answered`.
     fn finish(
         &mut self,
         trace_id: TraceId,
@@ -1527,14 +1508,8 @@ impl ReducerThread<'_> {
         outpost: OutpostId,
         outcome: QueryOutcome,
     ) {
-        match requests::reply_input(trace_id, id, outpost, outcome, now_us()) {
-            requests::Routed::Reducer(input) => self.apply(input),
-            requests::Routed::Shell(outcome) => {
-                if let Some((asker, outcome)) = self.requests.finish(id, outpost, outcome) {
-                    requests::deliver(asker, outcome);
-                }
-            }
-            requests::Routed::Nobody => {}
+        if let Some(input) = requests::reply_input(trace_id, id, outpost, outcome, now_us()) {
+            self.apply(input);
         }
     }
 
@@ -1816,11 +1791,15 @@ impl ReducerThread<'_> {
                 }
             },
             QueueEffect::Answered { asker, outcome } => {
-                tracing::warn!(
-                    asker,
-                    ?outcome,
-                    "a request outside the queue ended with no asker"
-                );
+                if let Some(waiting) = self.outside.answered(asker) {
+                    requests::deliver(waiting, outcome);
+                } else {
+                    tracing::warn!(
+                        asker,
+                        ?outcome,
+                        "a request outside the queue ended with no asker"
+                    );
+                }
             }
             QueueEffect::CheckHung(windows) => {
                 for window in windows {
@@ -2010,94 +1989,71 @@ impl ReducerThread<'_> {
         }
     }
 
-    /// Starts a control-plane tree dump of the application holding attention,
-    /// each element's location read only with `locations`. The answer goes
-    /// to `reply`; the requester waits on it with its own timeout, and a
-    /// late answer to a request it gave up on is dropped.
+    /// Starts a control-plane tree dump of the application holding
+    /// attention, each element's location read only with `locations`: a
+    /// request of Core's from outside the event queue, naming the
+    /// application's main window, with the queue's due time and hang check
+    /// (`docs/design/readers-tell-core-asks-build1.md`, "Requests in
+    /// Core"). The answer goes to `reply`; the requester waits on it with
+    /// its own timeout, and a late answer to a request it gave up on is
+    /// dropped.
     fn dump_tree(&mut self, ticket: DumpTicket, locations: bool, reply: Sender<DumpTreeResult>) {
         let Some(pid) = self.state.attention() else {
             let _ = reply.try_send(Err("no application holds attention yet".to_owned()));
             return;
         };
-        let Some(outpost) = self.live.newest(pid) else {
-            let _ = reply.try_send(Err(format!("no outpost is watching pid {pid}")));
+        let Some(main) = verbatim_win32::window::main_window_of(pid.0) else {
+            let _ = reply.try_send(Err(format!("pid {pid} has no top-level window")));
             return;
         };
-        let id = self
-            .requests
-            .begin(outpost, Asker::DumpTree { ticket, reply });
-        let trace_id = TraceId::mint();
-        let command = CoreToOutpost::Query {
-            trace_id,
-            request_id: id,
-            query: Query::DumpTree { locations },
-            timing: EventTiming::default(),
-        };
-        self.send(trace_id, outpost, id, command);
+        let asker = self.outside.begin(Asker::DumpTree { ticket, reply });
+        self.queue(QueueInput::AskOutside {
+            asker,
+            window: verbatim_win32::window_facts::node_window(
+                &verbatim_win32::window_facts::SystemReads,
+                main,
+            ),
+            request: verbatim_model::request::Request::DumpTree { locations },
+        });
     }
 
     /// Asks the outpost of the process that owns the taskbar `ask` of the
-    /// shell's surface `kind`, its items or where a clicked item is,
-    /// starting one when there is none, so verbatim.exe makes no UIA
-    /// connection into the shell's windows
-    /// (`books/dev/src/explanation/design/listener-without-connections.md`, decision 9). The
-    /// outcome goes to `ask`'s callback, exactly once, by the outpost's
-    /// deadline for the query, [`wanted::SHELL_ITEMS_WAIT`] from now, or at
-    /// the outpost's end; `None` when there is no taskbar, when its process
-    /// gets no outpost or none is ready before that deadline, or when the
-    /// outpost answers with nothing or abandoned.
+    /// shell's surface `kind`, its items or where a clicked item is, so
+    /// verbatim.exe makes no UIA connection into the shell's windows
+    /// (`books/dev/src/explanation/design/listener-without-connections.md`,
+    /// decision 9): a request of Core's from outside the event queue,
+    /// naming `Shell_TrayWnd`, which Core sends once the taskbar's outpost
+    /// is ready, starting one when there is none, with the queue's due time
+    /// and hang check and no stop at a foreground change, so the click's
+    /// read survives the dialog's closing (Dickson, 2026-11-15). The outcome
+    /// goes to `ask`'s callback exactly once; `None` when there is no
+    /// taskbar or for any failure.
     fn shell_items(&mut self, kind: ShellItemKind, ask: verbatim_gui::ShellAsk) {
-        let Some(pid) = taskbar_process() else {
+        let Some(taskbar) = taskbar_window() else {
             // Dropped, the request is answered "nothing".
             tracing::warn!(?kind, "the taskbar window was not found");
             drop(ask);
             return;
         };
-        let times = wanted::ShellTimes { asked_us: now_us() };
-        if let Some(outpost) = self.live.ready(pid) {
-            self.ask_shell_items(outpost, kind, ask, times);
-        } else {
-            self.wanted.want_shell_items(pid, kind, ask, times);
-            self.context.supervisor.start_outpost(pid);
-        }
-    }
-
-    /// Sends `outpost` the shell items query or the position query `ask`
-    /// says, with the outpost's deadline from `times`
-    /// ([`wanted::ShellTimes::answer_by_us`]), by which the outpost answers
-    /// it; the request table answers it at the outpost's end, the one other
-    /// path.
-    fn ask_shell_items(
-        &mut self,
-        outpost: OutpostId,
-        kind: ShellItemKind,
-        ask: verbatim_gui::ShellAsk,
-        times: wanted::ShellTimes,
-    ) {
-        let answer_by_us = times.answer_by_us();
-        let (asker, query) = match ask {
+        let (asker, request) = match ask {
             verbatim_gui::ShellAsk::Items(deliver) => (
                 Asker::ShellItems { deliver },
-                Query::ShellItems { kind, answer_by_us },
+                verbatim_model::request::Request::ShellItems { kind },
             ),
             verbatim_gui::ShellAsk::Position(item, deliver) => (
                 Asker::ShellItemPosition { deliver },
-                Query::ShellItemPosition {
-                    kind,
-                    item,
-                    answer_by_us,
-                },
+                verbatim_model::request::Request::ShellItemPosition { kind, item },
             ),
         };
-        let id = self.requests.begin(outpost, asker);
-        let trace_id = TraceId::mint();
-        let command = CoreToOutpost::Query {
-            trace_id,
-            request_id: id,
-            query,
-            timing: EventTiming::default(),
-        };
-        self.send(trace_id, outpost, id, command);
+        let asker = self.outside.begin(asker);
+        self.queue(QueueInput::AskOutside {
+            asker,
+            window: verbatim_win32::window_facts::node_window(
+                &verbatim_win32::window_facts::SystemReads,
+                taskbar,
+            ),
+            request,
+        });
     }
 
     /// Handles the end of `outpost`, which watched `target_pid`, for
@@ -2128,9 +2084,6 @@ impl ReducerThread<'_> {
             trace_id: TraceId::mint(),
             outpost,
         });
-        for (asker, outcome) in self.requests.outpost_ended(outpost) {
-            requests::deliver(asker, outcome);
-        }
         if let Some(server) = self.context.server_slot.get() {
             server.broadcast_outpost_ended(target_pid, reason.to_string());
         }
@@ -2189,17 +2142,13 @@ impl ReducerThread<'_> {
     }
 
     /// Withdraws the tree dump named `ticket`, whose caller stopped
-    /// waiting. The outpost answers "not started" if the dump was still
-    /// queued; a dump already running finishes, within its own walk budget.
-    /// Either way the request keeps its one outcome, which goes nowhere.
+    /// waiting: Core stops waiting for it, with the reason "withdrawn", and
+    /// its outpost drops it if it has not started; a dump already running
+    /// finishes, within its own walk budget. Either way the request keeps
+    /// its one answer, which goes to a receiver dropped.
     fn dump_tree_given_up(&mut self, ticket: DumpTicket) {
-        let Some((id, outpost)) = self.requests.find(|asker| asks_dump(asker, ticket)) else {
-            return;
-        };
-        let command = CoreToOutpost::CancelQuery { request_id: id };
-        if let Err(error) = self.context.supervisor.send_to_outpost(outpost, command) {
-            // The outpost is going away; its end answers the request.
-            tracing::debug!(%error, %outpost, "a tree dump could not be withdrawn");
+        if let Some(asker) = self.outside.dump(ticket) {
+            self.queue(QueueInput::WithdrawOutside(asker));
         }
     }
 }
@@ -2232,11 +2181,6 @@ fn listener_instance(listener: OutpostId) -> Instance {
 /// The window `window` names, as the Windows calls take it.
 fn window_handle(window: WindowHandle) -> isize {
     isize::from_ne_bytes(window.0.to_ne_bytes())
-}
-
-/// Whether `who` is the tree dump named `ticket`.
-fn asks_dump(who: &Asker, ticket: DumpTicket) -> bool {
-    matches!(who, Asker::DumpTree { ticket: asked, .. } if *asked == ticket)
 }
 
 /// The reducer input for `outpost`'s report that `window`, in `target`, the
@@ -2286,9 +2230,8 @@ fn reducer_loop(
         context,
         state: SrState::new(),
         runtime: verbatim_core::Runtime::default(),
-        requests: RequestTable::default(),
+        outside: requests::Outside::default(),
         live: LiveOutposts::default(),
-        wanted: wanted::Wanted::default(),
         focus_reported: BTreeSet::new(),
         focus_known: false,
         handled_input: 0,
@@ -2627,7 +2570,7 @@ mod tests {
     /// An answer to Core's query 7 from `outpost`, abandoned, routed as the
     /// reducer thread routes it.
     fn abandoned(outpost: OutpostId) -> Input {
-        let requests::Routed::Reducer(input) = requests::reply_input(
+        let Some(input) = requests::reply_input(
             TraceId::from_raw(9),
             RequestId::reducer(7),
             outpost,
@@ -2772,16 +2715,6 @@ mod tests {
             ),
             []
         );
-    }
-
-    /// Giving up a tree dump finds the dump with that ticket and no other.
-    #[test]
-    fn a_dump_given_up_matches_only_its_ticket() {
-        let (reply, _answer) = crossbeam_channel::bounded(1);
-        let ticket = DumpTicket::mint();
-        let asker = Asker::DumpTree { ticket, reply };
-        assert!(asks_dump(&asker, ticket));
-        assert!(!asks_dump(&asker, DumpTicket::mint()));
     }
 
     /// A wait for a deadline that runs out with no command wakes the

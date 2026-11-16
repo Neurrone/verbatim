@@ -231,8 +231,7 @@ Milestone M4's text protocol is wired here (`books/dev/src/reference/crates/verb
   reducer thread's other deadlines (`next_deadline`); when it passes, the
   thread enters `QueueInput::HeldKeyDue` under the key's trace ID.
   `Effect::Withdraw` sends the outpost of a query Core gave up on, and
-  no longer records, `CoreToOutpost::Cancel`, as a tree dump's give-up
-  does.
+  no longer records, `CoreToOutpost::Cancel`.
   The focused terminal's quiet-period timer is another of those
   deadlines, read from the state after each step
   (`SrState::terminal_timer_due`), never kept here, so a terminal model
@@ -376,7 +375,8 @@ knowing for review:
   carry this, since wxWidgets' loop ends on it without keeping its
   parameters. `ChangeWindowMessageFilter` lets a future
   lower-integrity replacer's quit message through.
-- `ReducerThread` — owns the reducer state, the shell's request table, and the
+- `ReducerThread` — owns the reducer state, the askers of Core's requests
+  from outside the event queue, and the
   live-outpost set, and is the only thread that touches them. It takes
   every input from its port (`Commands`, a `port_queue::Poster` of
   `ShellCommand`s, is what every other thread posts through), first in,
@@ -442,30 +442,31 @@ knowing for review:
   (copied for the control plane only while one is subscribed);
   replies are routed by their request id's asker (`requests::reply_input`):
   one to a query of the reducer's re-enters it as `Input::Answered` under
-  the reply's trace, a failed outcome logged first, and one to a query of
-  the shell's goes through the request table. The idle condition counts
-  both tables' outstanding queries. The thread never waits on a
+  the reply's trace, a failed outcome logged first; the shell asks no
+  query of its own. The idle condition counts the reducer's outstanding
+  queries, and Core's event queue counts its requests from outside the
+  queue among its own. The thread never waits on a
   handoff: speech and control-plane sends never block, and a command for an
   outpost is queued on that outpost's writer, failing at once if the queue
   is full.
-- `requests` — who asks the shell's own queries of outposts, and where
-  each outcome goes. The request table is `verbatim-core`'s
-  `RequestTable<Asker>` ([verbatim-core](verbatim-core.md), "The request
-  table"), the single owner of "exactly one outcome per
-  query" (`books/dev/src/explanation/architecture.md`, section 1); it hands each `Asker` back
-  with its outcome, and `requests::deliver` carries the outcome out, at
-  the reducer thread's three places an outcome comes: an outpost's reply,
-  an outpost's end, and a deadline passed. Every query the shell sends an
-  outpost for itself (a tree dump and the shell item
-  queries) is recorded with a fresh `RequestId` tagged
-  `Requester::Shell` and the outpost generation it went to, and sent as a
-  `Query` carrying that id; the outpost's one `Reply` echoes it with one
-  of five outcomes. The first outcome removes the entry and goes to the
-  asker: a tree dump's is sent on its reply channel, and a shell items
-  query's to its dialog. The list dialogs' shell items requests wait for
-  the taskbar's outpost in `wanted::Wanted`, keyed by its process, each
-  ended exactly once, at that outpost's `Ready`, where it is sent, at
-  `NotWatched`, or at its deadline. `LiveOutposts` keeps each live
+- `requests` — who asks Core's requests from outside the event queue,
+  and where each outcome goes (`docs/design/readers-tell-core-asks-build1.md`,
+  "Requests in Core"): the control plane's tree dump
+  (`Request::DumpTree`, naming the attention application's main window,
+  `verbatim_win32::window::main_window_of`) and the notification area
+  list's two reads (`Request::ShellItems` and
+  `Request::ShellItemPosition`, naming `Shell_TrayWnd`). Each is entered
+  into Core's event queue as `QueueInput::AskOutside` under a token
+  `requests::Outside` keeps its `Asker` by; Core sends it to the outpost
+  of its window's process once that outpost is ready, starting one when
+  there is none, with the queue's due time and live hang check, never
+  stopped by a foreground change, so the click's read survives the
+  dialog's closing (Dickson, 2026-11-15), and answers it once
+  (`QueueEffect::Answered`), which `requests::deliver` carries out: a
+  tree dump's on its reply channel, a shell read's to its dialog, `None`
+  for any failure. A dump given up is withdrawn
+  (`QueueInput::WithdrawOutside`), its one answer going to a receiver
+  dropped. `LiveOutposts` keeps each live
   generation as `Starting` or `Ready`; `mark_ready` consumes the starting
   one, and `reports_for` records that a console host's outpost serves a
   console's client.
@@ -594,10 +595,10 @@ knowing for review:
   injected handlers (`dump_tree` hands a `ShellCommand::DumpTree` with a
   `DumpTicket`, whether locations are read, and a one-answer reply
   channel to the reducer thread and
-  waits five seconds for the answer, then sends
+  waits for the answer, then sends
   `ShellCommand::DumpTreeGivenUp` with the ticket, and the reducer thread
-  sends the outpost a `Cancel`, which withdraws the dump if it has not
-  started; `dump_recorder` calls `flight_dump::dump_now` directly, no
+  withdraws the request from Core, whose cancel drops the dump if it has
+  not started; `dump_recorder` calls `flight_dump::dump_now` directly, no
   outpost round trip needed; `open_menu` sends the GUI
   `GuiCommand::ShowMenu`, as a click on the tray icon does, with no key
   number, or answers "the GUI is not up"), the startup announcement, and
@@ -612,30 +613,14 @@ knowing for review:
   `shell_list_kind` maps it to the listed surface. The list dialog's items, and the position of the item
   a click button acts on, come through `AppShellItemsHost`, which posts
   `ShellCommand::ShellItems` with the dialog's `ShellAsk` to the reducer
-  thread: it finds the taskbar's process (`Shell_TrayWnd`'s owner, a
-  local call), sends that process's ready outpost `Query::ShellItems`
-  under `Asker::ShellItems`, or `Query::ShellItemPosition` under
-  `Asker::ShellItemPosition`, or starts an outpost for it and sends the
-  query once it is ready, and hands the outcome to the dialog's delivery
-  callback, exactly once, through its responder: the items or the
-  candidates, or `None` for any failure. The request has one clock: the
-  outpost's deadline for the query, `wanted::SHELL_ITEMS_WAIT` (63
-  seconds, four focus read deadlines and one program's, so the longest a
-  listener read's marker holds the query in an `explorer.exe` shared by
-  the taskbar and a folder window, and the query's own program, end
-  before it; Dickson, 2026-11-07) after the dialog asks, fixed on the
-  run's shared clock (`wanted::ShellTimes`) and carried in the query
-  (`answer_by_us`), by which the outpost answers it, with its answer,
-  with nothing or abandoned. The answer is `None` when the process gets
-  no outpost (`NotWatched`), when its outpost is not ready before that
-  deadline (`Wanted::ready`), when the outpost answers with nothing,
-  abandoned, or ends (the request table's `outpost_ended`), or when the
-  request is dropped anywhere on its way. The requests still waiting
-  for an outpost are `wanted::Wanted`'s, each ended by its outpost's
-  `Ready` or its application's `NotWatched`, one of which ends every
-  start, so no timer of the app's ends one; a request sent is the request
-  table's (`RequestTable::begin`), with no deadline of Core's, which could
-  answer a request its outpost then answers too. The reducer thread
+  thread: it finds the taskbar window (`Shell_TrayWnd`, a local call) and
+  asks Core for `Request::ShellItems` under `Asker::ShellItems`, or
+  `Request::ShellItemPosition` under `Asker::ShellItemPosition`, from
+  outside the event queue (`requests`, above), and hands the outcome to
+  the dialog's delivery callback, exactly once, through its responder:
+  the items or the candidates, or `None` for any failure, no taskbar
+  among them.
+  The reducer thread
   turns its own timers into a moment on the monotonic clock for its
   wait, erring a microsecond late (`instant_at`), and waits for its next
   command only until the earliest (`recv_timeout`), and without one when

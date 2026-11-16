@@ -280,6 +280,34 @@ pub enum Request {
     },
     /// Follow the committed focus's node for its changes, or nothing.
     Follow(Follow),
+    /// The application's tree from its top-level window, capped at a
+    /// depth of 64 and 4096 nodes, for the control plane: a request from
+    /// outside the event queue, naming the target's main window.
+    DumpTree {
+        /// Whether each element's location and whether it is off the
+        /// screen are read ([`crate::protocol::DumpedTree::locations`]).
+        locations: bool,
+    },
+    /// The shell's tray icons or taskbar buttons, for the notification
+    /// area list dialog, read within the taskbar's own process
+    /// (`books/dev/src/explanation/design/listener-without-connections.md`,
+    /// decision 9): a request from outside the event queue, naming
+    /// `Shell_TrayWnd`.
+    ShellItems {
+        /// Which shell surface.
+        kind: crate::ShellItemKind,
+    },
+    /// Where one item [`Request::ShellItems`] listed may be on the screen
+    /// now, for a click on it: the surface walked again and the position
+    /// read of every button whose runtime id or name is the item's. Which
+    /// of them is clicked, if any, the dialog decides. A request from
+    /// outside the event queue, naming `Shell_TrayWnd`.
+    ShellItemPosition {
+        /// Which shell surface the item was listed from.
+        kind: crate::ShellItemKind,
+        /// The item chosen.
+        item: crate::ShellItem,
+    },
 }
 
 /// The events a followed node's registration takes.
@@ -681,6 +709,13 @@ pub enum Reply {
     Activated(Option<ActionName>),
     /// The answer to [`Request::Follow`]: applied, with no read.
     Followed,
+    /// The answer to [`Request::DumpTree`].
+    Tree(Box<crate::protocol::DumpedTree>),
+    /// The answer to [`Request::ShellItems`], in the shell's order.
+    ShellItems(Vec<crate::ShellItem>),
+    /// The answer to [`Request::ShellItemPosition`]: the buttons that may
+    /// be the item.
+    ShellItemPosition(crate::ShellCandidates),
 }
 
 /// Why a reader refused a request.
@@ -783,6 +818,9 @@ impl Ask {
                     }
                 }
             }
+            Request::DumpTree { .. }
+            | Request::ShellItems { .. }
+            | Request::ShellItemPosition { .. } => {}
         }
     }
 }
@@ -834,7 +872,10 @@ impl Answer {
                 | Reply::Children(_)
                 | Reply::Text(_)
                 | Reply::Activated(_)
-                | Reply::Followed => {}
+                | Reply::Followed
+                | Reply::Tree(_)
+                | Reply::ShellItems(_)
+                | Reply::ShellItemPosition(_) => {}
             }
         }
         (nodes, anchors)
@@ -845,6 +886,12 @@ impl Answer {
         fn read(read: &mut NodeRead, visit: &mut dyn FnMut(&mut NodeId)) {
             if let Some(node) = &mut read.node {
                 visit(node);
+            }
+        }
+        fn tree(node: &mut crate::TreeNode, visit: &mut dyn FnMut(&mut NodeId)) {
+            visit(&mut node.snapshot.id);
+            for child in &mut node.children {
+                tree(child, visit);
             }
         }
         fn focus(focus: &mut FocusRead, visit: &mut dyn FnMut(&mut NodeId)) {
@@ -884,12 +931,15 @@ impl Answer {
                     read(child, visit);
                 }
             }
+            Reply::Tree(dumped) => tree(&mut dumped.root, visit),
             Reply::Navigated(None)
             | Reply::Found(None)
             | Reply::Properties(_)
             | Reply::Text(_)
             | Reply::Activated(_)
-            | Reply::Followed => {}
+            | Reply::Followed
+            | Reply::ShellItems(_)
+            | Reply::ShellItemPosition(_) => {}
         }
     }
 }

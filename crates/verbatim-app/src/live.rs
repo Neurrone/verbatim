@@ -185,34 +185,6 @@ impl LiveOutposts {
             .map(|generation| generation.live().target_pid)
     }
 
-    /// The newest live generation serving the application `pid`, ready or
-    /// not.
-    pub(crate) fn newest(&self, pid: Pid) -> Option<OutpostId> {
-        self.of(pid, false)
-    }
-
-    /// The newest ready generation serving the application `pid`.
-    pub(crate) fn ready(&self, pid: Pid) -> Option<OutpostId> {
-        self.of(pid, true)
-    }
-
-    /// A generation serving `pid`: one whose events name `pid` as their
-    /// application, a console host's for its console's client, else one
-    /// watching `pid` itself; the newest of them.
-    fn of(&self, pid: Pid, must_be_ready: bool) -> Option<OutpostId> {
-        let newest = |serves: &dyn Fn(&Live) -> bool| {
-            self.outposts
-                .iter()
-                .filter(|(_, generation)| {
-                    serves(generation.live()) && (generation.is_ready() || !must_be_ready)
-                })
-                .map(|(outpost, _)| *outpost)
-                .max()
-        };
-        newest(&|live| live.application == Some(pid))
-            .or_else(|| newest(&|live| live.target_pid == pid))
-    }
-
     /// Every live generation, for sending the nodes held in each.
     pub(crate) fn iter_mut(&mut self) -> impl Iterator<Item = (&OutpostId, &mut Live)> {
         self.outposts
@@ -243,27 +215,6 @@ mod tests {
     }
 
     #[test]
-    fn the_ready_outpost_is_the_newest_ready_generation() {
-        let mut live = LiveOutposts::default();
-        live.started(OutpostId(3), Pid(40));
-        live.mark_ready(OutpostId(3));
-        live.started(OutpostId(5), Pid(41));
-        live.mark_ready(OutpostId(5));
-        assert_eq!(live.ready(Pid(40)), Some(OutpostId(3)));
-
-        live.ended(OutpostId(3));
-        live.started(OutpostId(6), Pid(40));
-        assert_eq!(
-            live.ready(Pid(40)),
-            None,
-            "the replacement is still starting"
-        );
-        assert_eq!(live.newest(Pid(40)), Some(OutpostId(6)));
-        live.mark_ready(OutpostId(6));
-        assert_eq!(live.ready(Pid(40)), Some(OutpostId(6)));
-    }
-
-    #[test]
     fn a_console_hosts_outpost_serves_its_consoles_client() {
         // The console host, 30, hosts the console of the client, 20, which
         // also has an outpost of its own.
@@ -272,11 +223,13 @@ mod tests {
         live.mark_ready(OutpostId(3));
         live.started(OutpostId(4), Pid(20));
         live.mark_ready(OutpostId(4));
-        assert_eq!(live.ready(Pid(20)), Some(OutpostId(4)), "not yet known");
+        assert_eq!(
+            live.application_of(OutpostId(3)),
+            Some(Pid(30)),
+            "not yet known"
+        );
 
         live.reports_for(OutpostId(3), Pid(20));
-        assert_eq!(live.ready(Pid(20)), Some(OutpostId(3)));
-        assert_eq!(live.newest(Pid(20)), Some(OutpostId(3)));
         assert_eq!(live.application_of(OutpostId(3)), Some(Pid(20)));
         assert_eq!(live.application_of(OutpostId(4)), Some(Pid(20)));
     }

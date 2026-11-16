@@ -319,7 +319,11 @@ them yet.
   of the nodes Core names, inside an object the focus controls, or, for a
   selected item, either. `Follow` names the committed focus's node to its
   outpost (`Followed`, with its `FollowGroup` and an extra object), or
-  nothing, answered `Followed`. Each `Ask` carries its window's `WindowVerdict`, "probe
+  nothing, answered `Followed`. From outside the event queue only,
+  `DumpTree` reads the application's tree from the main window it names,
+  answered `Tree`, and `ShellItems` and `ShellItemPosition` read the
+  taskbar's tray icons or buttons and where a chosen one is, naming
+  `Shell_TrayWnd`, answered `ShellItems` and `ShellItemPosition`. Each `Ask` carries its window's `WindowVerdict`, "probe
   first" when Core has none in force, and each `Answer` the `Probe`s the
   request made. `Answer` carries
   one of the five outcomes (`Outcome`: a `Reply`, `Refused` with a

@@ -992,15 +992,14 @@ const EXPLORER: Instance = Instance {
     generation: 9,
 };
 
-/// The taskbar list's read of the taskbar's children, asked under
-/// `asker`.
+/// The notification area list's read of the tray's items, asked under
+/// `asker`, naming `Shell_TrayWnd`.
 fn taskbar_read(asker: u64) -> verbatim_model::request::QueueInput {
     verbatim_model::request::QueueInput::AskOutside {
         asker,
         window: taskbar(),
-        request: Wire::Properties {
-            node: node(1),
-            set: vec![PropertyId::Name],
+        request: Wire::ShellItems {
+            kind: verbatim_model::ShellItemKind::SystemTray,
         },
     }
 }
@@ -1032,7 +1031,10 @@ fn taskbar_read_out() -> Held {
 fn a_request_from_outside_the_queue_is_sent_to_its_windows_outpost_and_answered_to_its_asker() {
     use verbatim_model::request::{OutsideOutcome, QueueEffect, QueueInput};
     let mut held = taskbar_read_out();
-    let reply = Reply::Properties(values("Start", Role::Button));
+    let reply = Reply::ShellItems(vec![verbatim_model::ShellItem {
+        name: "Clock".to_owned(),
+        runtime_id: vec![42, 1],
+    }]);
     assert_eq!(
         shell_feeds(
             &mut held,
@@ -1078,9 +1080,8 @@ fn a_request_from_outside_the_queue_is_not_stopped_by_a_foreground_change() {
         )),
         "{effects:?}"
     );
-    assert!(held.queue.table_for_tests().contains(&Wire::Properties {
-        node: node(1),
-        set: vec![PropertyId::Name],
+    assert!(held.queue.table_for_tests().contains(&Wire::ShellItems {
+        kind: verbatim_model::ShellItemKind::SystemTray,
     }));
 }
 
