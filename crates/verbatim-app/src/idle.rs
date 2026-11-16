@@ -120,24 +120,6 @@ impl<W> IdleBarrier<W> {
         }
     }
 
-    /// `outpost`, a spare given to an application, failed before its
-    /// `Ready`, and the generation `next` holds what was held for it
-    /// ([`verbatim_supervisor::OutpostMessage::Regenerated`]): in a round
-    /// asking `outpost` that it has not answered, `next` answers in its
-    /// place, so `outpost`'s end, which follows, does not end the round
-    /// before the facts held for it are handled.
-    pub(crate) fn handed_on(&mut self, outpost: OutpostId, next: OutpostId) {
-        if let Some(unanswered) = self
-            .round
-            .as_mut()
-            .filter(|current| !current.clearing)
-            .and_then(|current| current.unanswered.as_mut())
-            && unanswered.remove(&outpost)
-        {
-            unanswered.insert(next);
-        }
-    }
-
     /// Whether every outpost asked in the round under way has answered or
     /// ended: the reducer takes in what is already queued for it, then
     /// [`finish`](Self::finish)es the round.
@@ -365,25 +347,6 @@ mod tests {
         barrier.answered(1, A);
         barrier.ended(B);
         assert!(barrier.all_answered());
-        assert_eq!(barrier.finish(true), ["w"]);
-    }
-
-    /// A spare that failed before its `Ready` hands its place in the round
-    /// to the generation that holds its facts: its end, which follows,
-    /// does not end the round, the next generation's answer does.
-    #[test]
-    fn a_failed_spares_place_in_a_round_goes_to_its_next_generation() {
-        const NEXT: OutpostId = OutpostId(3);
-        let mut barrier = asking(&[A, B]);
-        barrier.answered(1, A);
-        barrier.handed_on(B, NEXT);
-        barrier.ended(B);
-        assert!(!barrier.all_answered());
-        assert_eq!(
-            barrier.standing(),
-            Standing::AwaitingOutposts(1, vec![NEXT])
-        );
-        barrier.answered(1, NEXT);
         assert_eq!(barrier.finish(true), ["w"]);
     }
 

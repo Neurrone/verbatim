@@ -418,8 +418,9 @@ that carries them on the pipes, `Message`, is
     of the outpost's application destroyed, whose MSAA nodes, text facts
     and followed registration the outpost forgets, and whose queued
     requests it answers "not there").
-  - `CoreToListener`: `HookInstalled`, `HookRemoved`, `ApplicationExited`
-    (answered by `ExitHandled`), `Ping`, `IdleQuery` and `Shutdown`.
+  - `CoreToListener`: `ApplicationExited` (answered by `ExitHandled`),
+    `Ping`, `IdleQuery`, `Shutdown`, `LiveReread`, `Request` and
+    `Cancel`.
   - `OutpostToCore`: `Ready`, `SpareReady`, `Event` (trace id,
     observation time in microseconds, backend, `WindowFacts`, the
     normalized event, and the application it belongs to when not the
@@ -433,12 +434,10 @@ that carries them on the pipes, `Message`, is
     ids are stamped by `Answer::assign_outpost`, named by `Answer::named`,
     and it counts toward `NodesHeld`'s positions when it carries a
     result).
-  - `ListenerToCore`: `Ready`, `FocusFact` (a `ListenerFact`, a pid and
-    the `DeliveredFact` routed to that pid's outpost), `ForwardingEnded`,
-    `ExitHandled`, `MenuOrSwitchEnded`, `Desktop` (a `DesktopNews`, with its timing),
-    `ForegroundWindow`, `Tell` (a tell, `tell::Event`, which the
-    supervisor does not yet carry to Core), `Pong`, `Fault` and
-    `IdleAnswer`.
+  - `ListenerToCore`: `Ready`, `ExitHandled`, `MenuOrSwitchEnded`,
+    `Desktop` (a `DesktopNews`, with its timing), `Progress`,
+    `Foreground`, `Tell` (a tell, `tell::Event`, which the supervisor
+    hands to Core), `Answer`, `Pong`, `Fault` and `IdleAnswer`.
 - Every variant has a `Kind` (`kind()`, an exhaustive match): `Ask`,
   `Answer`, `Report`, `Release`, `Lifecycle`, `Routed` or
   `Configuration`. The module denies wildcard matches over its enums, and

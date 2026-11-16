@@ -4,11 +4,15 @@ Core's side of starting, watching and ending its children
 (architecture section 1, decisions D9 and D13): the outposts
 ([verbatim-outpost](verbatim-outpost.md)) and the focus listener
 ([verbatim-listener](verbatim-listener.md)), a library `verbatim-app`
-uses. It routes the listener's facts to the right outpost, keeps two spare
-outposts waiting, and ends children that crash, hang, or are no longer
-needed. Its pure decisions, the generations' typestates and the policy,
-are `verbatim_core::supervisor`'s ([verbatim-core](verbatim-core.md)); the
-message layer, the launch arguments and the held processes are
+uses. It is reduced to process facts and their effects
+(`docs/design/readers-tell-core-asks-build1.md`, "The outpost generation
+record"): it launches children, watches their liveness by pings, sees
+pipes close and processes exit, reports these to Core, and carries out
+Core's start, end and shutdown effects. Core's reducer owns the outpost
+generation record and judges every generation, its replacement, backoff
+and missed pings among it (`verbatim_core::supervisor`,
+[verbatim-core](verbatim-core.md)). It keeps two spare outposts waiting.
+The message layer, the launch arguments and the held processes are
 [verbatim-process](verbatim-process.md)'s.
 
 ## Public API
@@ -24,23 +28,24 @@ message layer, the launch arguments and the held processes are
   (`Executables::both`), telling the roles apart by the listener's first
   argument, `--listener`. Both take the `OutpostOptions` every outpost
   gets.
-- `Timings` holds the ping interval (3 seconds), the pings that may be
-  missed (three) and the backoff's first wait and limit (1 and 30
-  seconds). `Timings::default` is Verbatim's; `new` and
+- `Timings` holds the ping interval (3 seconds), the pings the listener
+  and a spare may miss (three) and the spares' backoff's first wait and
+  limit (1 and 30 seconds). `Timings::default` is Verbatim's; `new` and
   `with_executables` use it unchanged, since a stand-in judged by a
-  shorter ping interval is ended as stuck when its start is slow; a test of the backoff moves the clock the
-  backoffs are judged by instead (`set_backoff_clock`). No setting
-  reaches them.
+  shorter ping interval is ended as stuck when its start is slow; a test
+  of the spares' backoff moves the clock it is judged by instead
+  (`set_backoff_clock`). No setting reaches them.
 - `shutdown()` shuts every child down and returns a `ShutdownSummary`: how
   many children ended cleanly, had exited, exited with an error, were killed
   at their time limit, or were killed because ending them failed.
-- `ensure_spawned(pid)` starts an outpost, from a spare when one waits,
-  as Core's generation record asks (`QueueEffect::StartOutpost`); asked for
-  an application whose generation already runs, it reports that one
-  (`Running`), so Core's record takes it.
+- `start_outpost(pid)` carries out Core's effect
+  (`QueueEffect::StartOutpost`): it gives the application the oldest spare
+  waiting, or launches one for it; asked for an application whose
+  generation already runs, it reports that one (`Running`), so Core's
+  record takes it.
 - `end_outpost(outpost)` ends a generation as Core's record asks: it
-  stopped answering pings. No outpost is ended for being idle (Dickson,
-  2026-11-10 and 2026-11-16).
+  missed its pings, or its application exited before it was ready. No
+  outpost is ended for being idle (Dickson, 2026-11-10 and 2026-11-16).
 - `send_to_listener(command)` sends the listener a request or cancel of
   Core's event queue, behind every command sent to it before.
 - `send_to_outpost(outpost, command)` queues a command without waiting,
@@ -50,36 +55,34 @@ message layer, the launch arguments and the held processes are
   writer's slot for the next command), `send_nodes_held` (written behind
   what waits, in place of a list left), `query_idle(round)`, `is_ignored`,
   and `frames`.
-- `set_backoff_clock(clock)` has the failures' backoffs set and ended by a
+- `set_backoff_clock(clock)` has the spares' backoff set and ended by a
   test's clock in place of the run's shared one, so a test decides when a
   backoff ends, after what it waits for has happened.
 - `SPARES` is two; Verbatim's readiness waits for them.
 
 The app hears through `OutpostMessage`: `ListenerStarted` (before the
 listener's launch, so Core keeps its first tells), `ListenerReady`,
-`ListenerEnded`, `Listener` (the listener's tells and answers, which Core's
-event queue judges), `Pong` (each child's answer to a ping, for Core's
-liveness), `SpareReady`, `Regenerated`, `IdleQueried`, `NotWatched`,
-`Foreground`, `Progress` (a progress bar's change from the listener),
-`Running`, and per
-generation `Started`, its messages as unparsed `Frame`s, and `Ended` with a
-reason (exited, killed, target exited) and whether a next
-generation follows (`follows`), the supervisor's decision as it ended it.
-Every removal of a record, at an end Core asks or a target exit, one waiting
-for a failure's backoff among them, sends `NotWatched` after the `Ended` of
-every generation the app heard started, so nothing waits for an outpost
-that will not come. The lifecycle notices (`Started`, `Ended`,
-`Regenerated`, `NotWatched`, `SpareReady`, `ListenerReady`,
-`IdleQueried`) carry a `Sealed` that only the supervisor makes, so no other
-code announces a generation: the generations' typestates, in
-`verbatim_core::supervisor::generation`, return a plain `Lifecycle` notice,
-which only the owner turns into its sealed message; the `lifecycle-for-tests` feature adds
-`Sealed::for_tests` for the app's tests. `Frames::arrived` (from
+`ListenerEnded`, `Listener` (the current listener's tells and answers,
+which Core's event queue judges), `Pong` (each child's answer to a ping,
+for Core's liveness), `SpareReady`, `IdleQueried`, `Foreground`,
+`Progress` (a progress bar's change from the listener), `Running`,
+`LaunchFailed` (Core asked for an outpost and none started, saying
+whether the application is gone: exited, not holdable, or ignored),
+`ApplicationExited` (a held process exited, after its outpost's `Ended`
+when one ran), and per generation `Started` (once its process runs), its
+messages as unparsed `Frame`s, and `Ended` with a reason (exited, killed,
+target exited). What follows an end is Core's decision. The lifecycle
+notices (`Started`, `Ended`, `LaunchFailed`, `ApplicationExited`,
+`SpareReady`, `ListenerReady`, `IdleQueried`) carry a `Sealed` that only
+the supervisor makes, so no other code announces a generation; the
+`lifecycle-for-tests` feature adds `Sealed::for_tests` for the app's
+tests. `Frames::arrived` (from
 `Supervisor::frames()`, on the reducer's thread) turns a frame into
 `Event(pid, outpost_id, position, message)`, the payload boxed: it parses
 each frame, stamps node ids with the outpost's id, records when the relay
 read it, and numbers the messages that carry node ids
-(`docs/design/communication.md`, section 4.8). A frame that is not a message
+(`docs/design/communication.md`, section 4.8), the position `NodesHeld`
+acknowledges. A frame that is not a message
 ends its outpost: `Frames` drops that outpost's later frames at once,
 handing on only its end, and the relay drops every frame from an outpost
 it has already ended. Messages go through the `EventSink` given to `new` (a
@@ -101,87 +104,60 @@ heartbeat.
 How it works:
 
 - The owner and relay (`owner`, `relay`) is one thread, `verbatim-relay`,
-  that makes every lifecycle decision and owns the records
-  (`docs/design/communication.md`, section 6.2). It waits only on one
-  completion port, timing out at the next heartbeat (3 s) or sweep (30 s).
-  It reads every child's pipe (`transport::PortReader`) and handles each
-  frame in the pass that read it: a listener's frame decodes as a
-  `ListenerToCore`, matched exhaustively, and its fact is routed and
-  written to its outpost there and then; an outpost's frame is read only
-  for its kind (`verbatim_process::message::peek`), a pong and `TargetExited` handled,
-  `Ready` handled and passed on, anything else handed on whole
-  (a copy of its lent parts, `transport::Parts::into_owned`). Helpers report through `relay::Mailbox`: a queue
+  that launches and ends every child (`docs/design/communication.md`,
+  section 6.2). It waits only on one completion port, timing out at the
+  next heartbeat (3 s) or the end of the spares' backoff. It reads every
+  child's pipe (`transport::PortReader`) and handles each frame in the
+  pass that read it: a listener's frame decodes as a `ListenerToCore`,
+  matched exhaustively, every frame of a listener other than the current
+  one dropped, and its tells and answers handed on; an outpost's frame is
+  read only for its kind (`verbatim_process::message::peek`), a pong and
+  `TargetExited` handled, `Ready` handled and passed on, anything else
+  handed on whole (a copy of its lent parts, `transport::Parts::into_owned`).
+  Helpers report through `relay::Mailbox`: a queue
   and a `closed` mark under one lock, where a send into an empty queue
   posts the relay's wake after unlocking, the relay takes the whole queue
   at each wake and each heartbeat, and the `Inbox`'s drop, however the
   owner thread ends, sets `closed` so a later send gets `OwnerGone`. A
   wake the port refuses leaves the item for the heartbeat's take. It never blocks:
   launches and retirements run on threads of their own.
-- Each application's record keeps what belongs to the application (its
-  held facts, held idle round, attention time and backoff) and its
-  generation's state (`verbatim_core::supervisor::generation::Generation`): `Launching`,
-  `SpareGiven`, `Starting`, `Ready`, or `Waiting` for a failure's backoff
-  with no generation, the one that failed before its `Ready` kept to be
-  replaced. Each transition (`given`, `launched`, `assigned`, `ready`,
-  `failed`, `removed`) consumes the state and returns the next with its
-  notices in order, which the owner applies (`Owner::apply`): the
-  listener's hand-over messages, a spare's `Assign`, a launch, and the
-  app's messages. Leaving `Ready` always removes the listener's hook in the
-  same step, and the listener's "forwarding ended" is relayed only to the
-  `Ready` generation it names. The listener and the spares waiting, with
-  no generations, are `Run::Launching` or `Run::Running`.
+- Each application's generation, from Core's start effect until it ends,
+  is one state (`owner::Generation`): `Launching` (a launch at work, or a
+  spare given whose launch has not reported), `Starting` (its process
+  runs, with a given spare's last fault and the idle round held for its
+  `Ready`), or `Ready`, each with the workers its last pong reported
+  parked. The listener and the spares waiting are `Run::Launching` or
+  `Run::Running`.
 - Each child's commands go through a `transport::Sender` (`writer`), of
   the commands its kind of child takes (`WriterHandle<M>` over
-  `ToChild`, whose routed fact for the listener is uninhabited, so the
-  listener's writer cannot be given one): the
-  sending thread writes when nothing is in flight or waiting, and otherwise
-  the command waits in a queue of 64, written by the relay as writes
-  complete (`relay::CommandPipes`). When the queue is full a ping, the
-  hand-over's messages, and a UIA focus's parts still get through, never
-  merged (`Outgoing::delivered`); a routed fact replaces a waiting one for
-  the same object and kind (and thread, for an MSAA event but a menu
-  opening) or the oldest fact makes room; anything else fails at once.
-- Facts for a starting outpost are held, merged by the same rule, and
-  released on `Ready` (`verbatim_core::supervisor::policy::HeldFacts`, which
-  keeps the time the owner reads at each hold only for an application's
-  first held fact); then the listener gets `HookInstalled`,
-  and later `HookRemoved`, through `Owner::tell_listener`. `HookRemoved`
-  also goes when a record is removed before its generation's `Ready`
-  (`Generation::removed` emits it from every stage) and when the owner
-  declines to watch an application (`Owner::not_watched`), so a reading
-  thread the listener started for the application's events before any
-  hook was in is released.
+  `ToChild`): the sending thread writes when nothing is in flight or
+  waiting, and otherwise the command waits in a queue of 64, written by
+  the relay as writes complete (`relay::CommandPipes`). When the queue is
+  full a ping, the shutdown message, a spare's `Assign`, every command to
+  the listener, and the idle round's query still get through, behind what
+  waits; anything else fails at once.
 - Each application is identified by a process held open
-  (`verbatim_process::held::Target`)
-  while it has a record. Nothing is started for an application that exited
-  or cannot be opened; the app hears `NotWatched`. A replacement waiting
-  out a failure's backoff is decided when the backoff ends
-  (`Owner::start_due`), which reads whether the application has exited
-  then and ends its record as its exit instead of giving it a generation,
-  so no spare is used up and no outpost launched for a process that is
-  gone (`crates/verbatim-supervisor/tests/target_gone.rs`).
-- `Owner::forget_app`, the one place the owner learns a held process has
-  exited, tells a running listener (`ApplicationExited`) and keeps the
-  process's handle in the listener's record (`exits_told`) until
+  (`verbatim_process::held::Target`) from the first tell that names it
+  (a lookup per tell) or Core's start of its outpost, until it exits.
+  Nothing is started for an application that exited or cannot be opened;
+  Core hears `LaunchFailed`. The heartbeat checks every held process: one
+  that exited ends its outpost, if one runs, as its exit, and Core hears
+  `ApplicationExited`; the listener is told (`ApplicationExited`) and the
+  handle stays in the listener's record (`exits_told`) until
   `ExitHandled`, so no process can take the id before the listener has
   moved its record. With no listener running, or one still launching, the
   handle closes at once and nothing is sent; a listener that ends drops
-  the map with its record. An application first seen through facts that
-  start no outpost is held from its first fact (`route_fact`), so the
-  sweep finds its exit; one that cannot be held has `HookRemoved` sent.
+  the map with its record.
 - An outpost whose pipe closes is ended once everything it wrote is handed
-  on: with its target if the application exited, otherwise by the failure
-  path (`crates/verbatim-supervisor/tests/spares.rs`). Every child is pinged
-  every three seconds, and nine seconds without a pong ends it
-  (`Timings`); eight workers parked on windows the outpost did not judge
-  hung end an outpost (the pong's `parked_count`; its `parked_on_hung`
-  never counts, since the outpost is the one judge of a hung window),
-  judged by the generation's `heartbeat` and, for the listener and the
-  spares, by their `Liveness`, all on the run's shared clock. The sweep,
-  every 30 seconds (`SWEEP_INTERVAL`), only closes the books of
-  applications that have exited. An
-  outpost says `TargetExited` when its application exits, and the heartbeat
-  also checks every held application.
+  on: as its application's exit if the application exited, otherwise as
+  exited (`crates/verbatim-supervisor/tests/spares.rs`). Every child is
+  pinged every three seconds. Core judges an outpost's missed pings by its
+  own due time and ends it through `end_outpost`; the owner judges the
+  listener's and the spares' by their `Liveness`, nine seconds without a
+  pong ending one, and ends an outpost whose pong reports eight workers
+  parked on windows the outpost did not judge hung (its `parked_on_hung`
+  never counts), all on the run's shared clock. An outpost says
+  `TargetExited` when its application exits.
 - Every ending is a clean shutdown (`retire`, under "Shutting down"); an
   outpost ended for any reason but its pipe's end has `Ended` sent at once,
   and the app drops what it wrote after.
@@ -192,17 +168,16 @@ How it works:
   `verbatim_process::arguments`' `OutpostArguments` and
   `ListenerArguments`, and launching is
   [verbatim-process](verbatim-process.md)'s.
-- The relay stamps each fact as it reads it from the listener
-  (`verbatim_core::supervisor::Received`, read on both clocks by
-  `writer::received_now`), and its relay times as it writes it
-  (`writer::stamp`).
+- The relay stamps each request with its relay times as it writes it
+  (`writer::received_now`, `writer::stamp`).
 
 ## Ignored processes
 
 The processes Verbatim ignores are `verbatim_process::held::IgnoredProcesses`
 ([verbatim-process](verbatim-process.md)): no outpost starts for one
-(`ensure_spawned` answers `NotWatched`), none of its facts is routed, and
-the listener, given `--ignore-pids`, drops them before queuing.
+(`start_outpost` answers `LaunchFailed`, the application counted as
+gone), no tell of one holds its process, and the listener, given
+`--ignore-pids`, drops their events before queuing.
 `Supervisor::is_ignored` lets the app pass them over.
 
 ## Implementation notes

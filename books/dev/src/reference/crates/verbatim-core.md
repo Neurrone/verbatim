@@ -108,33 +108,22 @@ guide maps those behaviors onto the crate's types and modules.
   `DumpReadError`, `write_dump` and `read_dump`; see "The dump format".
 - `read_of(&TerminalSnapshot)`, `snapshot_of(&Read, waited, colours)` and
   `read_at(&TerminalSnapshot)`: see "Core's terminal model".
-- `supervisor`: Core's supervisor's pure decisions, which
-  [verbatim-supervisor](verbatim-supervisor.md)'s owner carries out.
-  `generation::Generation` is one application's outpost generation as
-  typestates (`Launching`, `SpareGiven`, `Starting`, `Ready`, `Waiting`),
-  each transition consuming the state and returning the next with its
-  `Notice`s in order; the app's notices among them are a plain
-  `Lifecycle` (`Started`, `Ended`, `Regenerated`, `NotWatched`), which only
-  the supervisor's owner turns into the sealed message the app takes as
-  the supervisor's own. A running generation's liveness (`Live`) is
-  private and changed and judged only by its transitions: `ponged`, which
-  keeps the pong's time and its `policy::Parked` counts, and
-  `heartbeat(now_us, limits)`, which answers `Heartbeat::Ping` or
-  `Wedged(reason)`. `policy` decides when an outpost is wedged
-  (`wedge_decision` under `WedgeLimits`, which counts only the workers
-  parked on windows the outpost did not judge hung, `Parked::other`, the
-  outpost being the one judge of a hung window; and `Liveness` for the
-  listener and the spares, which report no parked workers), how long a failed outpost's
-  replacement waits (`Backoff`), in which order the applications whose
-  waits ended start (`due_starts`: in the order the waits ended, then by
-  process id), how facts that arrive during a start are held and merged
-  (`HeldFacts`, which keeps the time it is given with the first fact
-  held; `docs/parity/backends.md`, "MSAA winevent flood control"), which
-  facts may start an outpost (`may_start_outpost`;
-  `docs/parity/focus-events.md`, "Background events"), and which spares
-  are kept and given (`Spares`). Every time these take is in
-  microseconds on the run's shared clock. `EndReason` is why a generation
-  ended; `Received` is when verbatim.exe read a fact.
+- `supervisor`: Core's supervisor's pure decisions. The outpost
+  generation record Core's reducer owns (`record`, crate-private, applied
+  by the event queue's driver; Table 5 of
+  `docs/design/readers-tell-core-asks-build1.md`) judges every
+  application's generation; [verbatim-supervisor](verbatim-supervisor.md)'s
+  owner only reports process facts and carries out the record's effects.
+  `policy` decides when a child is wedged (`wedge_decision` under
+  `WedgeLimits`, which counts only the workers parked on windows the
+  outpost did not judge hung, `Parked::other`, the outpost being the one
+  judge of a hung window; and `Liveness` for the listener and the spares,
+  which report no parked workers), how long a failed outpost's
+  replacement waits (`Backoff`, which Core's record and the spares use),
+  and which spares are kept and given (`Spares`). Every time these take
+  is in microseconds on the run's shared clock. `EndReason` is why a
+  generation ended; `Received` is when verbatim.exe took in a request it
+  relays.
 - `requests::RequestTable<A>`: the one owner of each query the shell
   sends an outpost for its own askers and of its one outcome, generic over
   who asked (below, "The request table"). `SrState::outstanding_queries`

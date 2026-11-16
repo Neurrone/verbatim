@@ -1,21 +1,18 @@
 //! A process Verbatim ignores entirely (`IgnoredProcesses`, which the
 //! end-to-end harness names in `VERBATIM_IGNORE_PIDS`: the owner's own
-//! Windows Terminal) gets no outpost: the listener is told its pid, a focus
-//! fact from it is routed nowhere, a request to start an outpost for it
-//! starts none and says so (`NotWatched`), releasing the listener's reading
-//! thread for it (`HookRemoved`), and a fact from another application,
-//! routed after it, is delivered as usual.
+//! Windows Terminal) gets no outpost: the listener is told its pid, and
+//! Core's start of an outpost for it starts none and says so
+//! (`LaunchFailed`, the application counted as gone), while a start for
+//! another application, after it, starts one as usual.
 //!
 //! This test binary runs itself four ways: as two applications, processes
 //! with no windows that run until their standard input closes, one of them
 //! ignored; as a stand-in for the focus listener, which checks it was told
-//! the ignored pid, says it is ready, sends a focus fact from the ignored
-//! application and then one from the other, and shuts down cleanly only if
-//! it was told the ignored application's release; and as a stand-in for
-//! the outpost binary, which says it is ready, answers pings, and shuts
-//! down when asked. Nothing makes a UI Automation or `WinEvent` call, so the
-//! test touches nothing on the desktop. Its own `main` recognizes each
-//! command line.
+//! the ignored pid, says it is ready, answers pings and shuts down when
+//! asked; and as a stand-in for the outpost binary, which says it is
+//! ready, answers pings, and shuts down when asked. Nothing makes a UI
+//! Automation or `WinEvent` call, so the test touches nothing on the
+//! desktop. Its own `main` recognizes each command line.
 
 use std::io::{BufReader, Read as _};
 use std::process::{Child, Command, Stdio};
@@ -27,11 +24,8 @@ use crossbeam_channel::unbounded;
 
 mod common;
 use common::Delivered;
-use verbatim_model::protocol::{
-    CoreToListener, CoreToOutpost, DeliveredFact, EventTiming, ListenerFact, ListenerToCore,
-    OutpostToCore,
-};
-use verbatim_model::{Pid, TraceId};
+use verbatim_model::Pid;
+use verbatim_model::protocol::{CoreToListener, CoreToOutpost, ListenerToCore, OutpostToCore};
 use verbatim_process::arguments::OutpostOptions;
 use verbatim_process::held::IgnoredProcesses;
 use verbatim_process::message::{read_message, write_message};
@@ -39,10 +33,6 @@ use verbatim_supervisor::{Executables, OutpostMessage, ShutdownSummary, Supervis
 
 /// An application's argument.
 const APPLICATION: &str = "--stand-in-application";
-
-/// The environment variable that tells the stand-in listener the pid of
-/// the application that is not ignored.
-const OTHER_APPLICATION: &str = "VERBATIM_TEST_OTHER_APPLICATION";
 
 /// How long a child has to exit after the shutdown message.
 const LIMIT: Duration = Duration::from_secs(5);
@@ -58,26 +48,9 @@ fn value(args: &[String], name: &str) -> Option<String> {
         .cloned()
 }
 
-/// A focus fact from `pid`, as the listener forwards one.
-fn focus_fact(pid: u32) -> ListenerToCore {
-    ListenerToCore::FocusFact {
-        trace_id: TraceId::mint(),
-        timing: EventTiming::default(),
-        fact: ListenerFact {
-            pid: Pid(pid),
-            fact: DeliveredFact::MsaaFocus {
-                hwnd: 1,
-                id_object: -4,
-                id_child: 0,
-            },
-        },
-        win_event: None,
-    }
-}
-
-/// A stand-in child: the listener sends its facts after `Ready`; both
-/// answer pings and exit cleanly for the shutdown message or the end of the
-/// command pipe.
+/// A stand-in child: both answer pings and exit cleanly for the shutdown
+/// message or the end of the command pipe; the listener only once it was
+/// told the processes to ignore.
 fn stand_in(args: &[String]) -> ! {
     let handle = |name| {
         value(args, name)
@@ -106,33 +79,15 @@ fn stand_in(args: &[String]) -> ! {
             outpost_pid: Pid(std::process::id()),
             target_pid: Pid(0),
         });
-        let ignored =
-            value(args, "--ignore-pids").expect("the listener is told the pids to ignore");
-        let other: u32 = std::env::var(OTHER_APPLICATION)
-            .ok()
-            .and_then(|pid| pid.parse().ok())
-            .expect("the test names the other application");
-        for pid in ignored.split(',') {
-            send(&focus_fact(pid.parse().expect("a pid")));
-        }
-        send(&focus_fact(other));
-        // Whether the supervisor, declining to watch the ignored
-        // application, released its reading thread: the listener shuts
-        // down cleanly only then, so the test's summary counts it.
-        let mut released = false;
+        let told = value(args, "--ignore-pids").is_some();
         loop {
             match read_message::<_, CoreToListener>(&mut commands) {
                 Ok(Some(CoreToListener::Ping { .. })) => send(&ListenerToCore::Pong {
                     parked_count: 0,
                     written_at_us: 0,
                 }),
-                Ok(Some(CoreToListener::HookRemoved { pid, .. })) => {
-                    released |= ignored
-                        .split(',')
-                        .any(|ignored| ignored == pid.0.to_string());
-                }
                 Ok(Some(CoreToListener::Shutdown) | None) => {
-                    std::process::exit(if released { 0 } else { 3 })
+                    std::process::exit(if told { 0 } else { 3 })
                 }
                 Ok(Some(_)) => {}
                 Err(error) => panic!("the command pipe failed: {error}"),
@@ -187,16 +142,12 @@ fn end(mut application: Child) {
     assert!(status.success(), "the application exited with {status}");
 }
 
-fn an_ignored_process_gets_no_outpost_and_its_facts_go_nowhere() {
+fn an_ignored_process_gets_no_outpost() {
     let exe = std::env::current_exe().expect("this test binary's path");
     let ignored_application = application(&exe);
     let other_application = application(&exe);
     let ignored_pid = Pid(ignored_application.id());
     let other_pid = Pid(other_application.id());
-    // SAFETY: set before the supervisor starts its first child, and read
-    // only by those children; no other thread reads the environment.
-    unsafe { std::env::set_var(OTHER_APPLICATION, other_pid.0.to_string()) };
-
     let (events_tx, events) = unbounded();
     let supervisor = Supervisor::with_executables(
         events_tx,
@@ -215,8 +166,16 @@ fn an_ignored_process_gets_no_outpost_and_its_facts_go_nowhere() {
         } => {}
         other => panic!("the supervisor said {other:?} before the listener was ready"),
     }
-    // The ignored application's fact came first: an outpost started for it
-    // would be announced before the other's.
+    supervisor.start_outpost(ignored_pid);
+    match next(&events) {
+        OutpostMessage::LaunchFailed {
+            target_pid,
+            application_gone: true,
+            ..
+        } if target_pid == ignored_pid => {}
+        other => panic!("the supervisor said {other:?}, not that it started no outpost"),
+    }
+    supervisor.start_outpost(other_pid);
     match next(&events) {
         OutpostMessage::Started { target_pid, .. } if target_pid == other_pid => {}
         other => panic!("the supervisor said {other:?}, not that the other's outpost started"),
@@ -227,12 +186,6 @@ fn an_ignored_process_gets_no_outpost_and_its_facts_go_nowhere() {
         other => panic!("the supervisor said {other:?}, not that the other's outpost was ready"),
     }
 
-    supervisor.ensure_spawned(ignored_pid);
-    match next(&events) {
-        OutpostMessage::NotWatched { target_pid, .. } if target_pid == ignored_pid => {}
-        other => panic!("the supervisor said {other:?}, not that it started no outpost"),
-    }
-
     assert_eq!(
         supervisor.shutdown(),
         ShutdownSummary {
@@ -241,7 +194,7 @@ fn an_ignored_process_gets_no_outpost_and_its_facts_go_nowhere() {
             killed: 0,
             killed_on_failure: 0,
         },
-        "the listener, told the ignored application's release, and the other application's outpost shut down cleanly"
+        "the listener, told the ignored application, and the other application's outpost shut down cleanly"
     );
     let rest: Vec<OutpostMessage> = events.try_iter().collect();
     assert!(
@@ -269,8 +222,8 @@ fn main() -> std::process::ExitCode {
     let mut arguments = libtest_mimic::Arguments::from_args();
     arguments.test_threads = Some(1);
     let tests: [(&str, fn()); 1] = [(
-        "an_ignored_process_gets_no_outpost_and_its_facts_go_nowhere",
-        an_ignored_process_gets_no_outpost_and_its_facts_go_nowhere,
+        "an_ignored_process_gets_no_outpost",
+        an_ignored_process_gets_no_outpost,
     )];
     let trials = tests
         .into_iter()

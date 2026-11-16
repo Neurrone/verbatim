@@ -7,8 +7,8 @@ telling Core of every event it hears and answering Core's requests on what
 it kept (`docs/design/readers-tell-core-asks-build1.md`, "The listener in
 this build"). Core's supervisor ([verbatim-supervisor](verbatim-supervisor.md))
 starts it with `--listener` and its arguments
-(`verbatim_process::arguments::ListenerArguments`; `--hooks-in` is read and
-not used), and replaces it when it ends. What it decides without a call,
+(`verbatim_process::arguments::ListenerArguments`), and replaces it when
+it ends. What it decides without a call,
 its check threads' calls, its kept elements, the reading threads'
 schedule, the tells' drops and the foreground watch, is
 [verbatim-listener-logic](verbatim-listener-logic.md); the class verdict
@@ -204,9 +204,7 @@ section 6.3).
 - It handles `Ping`, `ApplicationExited` (which ends the application's
   check thread and moves its reading record to the exited generations,
   then answers `ExitHandled`), `IdleQuery`, `Request`, `Cancel` and
-  `Shutdown`; `HookInstalled`, `HookRemoved` and `LiveReread` change
-  nothing, as no application's events are handed over and no unasked read
-  is kept. It makes no remote operation, so takes no `--classic-uia`.
+  `Shutdown`; `LiveReread` changes nothing, as no unasked read is kept. It makes no remote operation, so takes no `--classic-uia`.
 - The idle barrier's answer goes behind every event delivered to the
   `WinEvent` thread before it, every job queued for the reading threads,
   every event handed to the check threads, and every tell placed before

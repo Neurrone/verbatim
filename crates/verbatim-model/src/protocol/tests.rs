@@ -100,18 +100,9 @@ fn next_core_to_outpost(previous: Option<&CoreToOutpost>) -> Option<CoreToOutpos
 /// One sample of each [`CoreToListener`] variant, after `previous`.
 fn next_core_to_listener(previous: Option<&CoreToListener>) -> Option<CoreToListener> {
     let Some(previous) = previous else {
-        return Some(CoreToListener::HookInstalled {
-            pid: Pid(1),
-            outpost: OutpostId(1),
-            sent_at_us: 0,
-        });
+        return Some(CoreToListener::ApplicationExited { pid: Pid(1) });
     };
     Some(match previous {
-        CoreToListener::HookInstalled { .. } => CoreToListener::HookRemoved {
-            pid: Pid(1),
-            sent_at_us: 0,
-        },
-        CoreToListener::HookRemoved { .. } => CoreToListener::ApplicationExited { pid: Pid(1) },
         CoreToListener::ApplicationExited { .. } => CoreToListener::Ping { sent_at_us: 0 },
         CoreToListener::Ping { .. } => CoreToListener::IdleQuery { round: 1 },
         CoreToListener::IdleQuery { .. } => CoreToListener::Shutdown,
@@ -163,21 +154,7 @@ fn next_listener_to_core(previous: Option<&ListenerToCore>) -> Option<ListenerTo
         });
     };
     Some(match previous {
-        ListenerToCore::Ready { .. } => ListenerToCore::FocusFact {
-            trace_id: TraceId::from_raw(4),
-            timing: timing(),
-            fact: ListenerFact {
-                pid: Pid(2),
-                fact: DeliveredFact::Foreground { hwnd: 1 },
-            },
-            win_event: None,
-        },
-        ListenerToCore::FocusFact { .. } => ListenerToCore::ForwardingEnded {
-            pid: Pid(2),
-            outpost: OutpostId(1),
-            through: 1,
-        },
-        ListenerToCore::ForwardingEnded { .. } => ListenerToCore::ExitHandled { pid: Pid(1) },
+        ListenerToCore::Ready { .. } => ListenerToCore::ExitHandled { pid: Pid(1) },
         ListenerToCore::ExitHandled { .. } => ListenerToCore::MenuOrSwitchEnded {
             ended_at_us: 1,
             timing: timing(),
@@ -283,8 +260,6 @@ fn every_variant_has_its_reviewed_kind() {
                 .collect()
         ),
         [
-            "HookInstalled: Lifecycle",
-            "HookRemoved: Lifecycle",
             "ApplicationExited: Lifecycle",
             "Ping: Lifecycle",
             "IdleQuery: Ask",
@@ -325,8 +300,6 @@ fn every_variant_has_its_reviewed_kind() {
         ),
         [
             "Ready: Lifecycle",
-            "FocusFact: Routed",
-            "ForwardingEnded: Lifecycle",
             "ExitHandled: Lifecycle",
             "MenuOrSwitchEnded: Report",
             "Desktop: Report",

@@ -17,12 +17,14 @@
 //! sends it, the script that request number names (`script`), with
 //! blocking writes, so it gets past a frame only once the pipe has taken
 //! it; for requests 8 and 9 it first writes a frame that is not a message,
-//! and after request 9 it writes one more frame when Core shuts it down. The stand-in listener says it is ready, answers pings, and sets a
-//! named event each time Core tells it an outpost's hook is in, which Core
-//! does as the relay handles that outpost's `Ready`: since the relay reads
-//! an outpost's pipe in order, the event is the evidence that the relay
-//! has read every frame the outpost wrote before `Ready`, with the reducer
-//! held.
+//! and after request 9 it writes one more frame when Core shuts it down;
+//! and it sets a named event when it is asked for an idle round, which the
+//! relay asks of a starting outpost only once it has handled that
+//! outpost's `Ready`: since the relay reads an outpost's pipe in order, the
+//! event is the evidence that the relay has read every frame the outpost
+//! wrote before `Ready`, with the reducer held. The stand-in listener says
+//! it is ready, answers pings, and answers each idle round, so the relay
+//! goes on to ask the outposts.
 
 use std::collections::HashMap;
 use std::io::{BufReader, Read as _, Write as _};
@@ -131,6 +133,12 @@ fn script(request: u64, ready: &OutpostToCore) -> Vec<Option<OutpostToCore>> {
     }
 }
 
+/// Sets `event`, an event handle this process holds.
+fn set(event: HANDLE) {
+    // SAFETY: an event handle this process holds.
+    unsafe { SetEvent(event) }.expect("the event is set");
+}
+
 /// Writes `message` to Core.
 fn send(messages: &mut BlockingWriter, message: &OutpostToCore) {
     write_message(messages, message).expect("a message is written");
@@ -175,7 +183,6 @@ fn stand_in(args: &[String]) -> ! {
     let listener = args.iter().any(|arg| arg == "--listener");
     let mut commands = BufReader::new(commands);
     if listener {
-        let signal = open_event(SIGNAL_ENV);
         write_message(
             &mut messages,
             &ListenerToCore::Ready {
@@ -200,9 +207,9 @@ fn stand_in(args: &[String]) -> ! {
                 )
                 .expect("a message is written"),
                 CoreToListener::Shutdown => std::process::exit(0),
-                CoreToListener::HookInstalled { .. } => {
-                    // SAFETY: an event handle this process holds.
-                    unsafe { SetEvent(signal) }.expect("the test's event is set");
+                CoreToListener::IdleQuery { round } => {
+                    write_message(&mut messages, &ListenerToCore::IdleAnswer { round })
+                        .expect("a message is written");
                 }
                 _ => {}
             }
@@ -215,6 +222,7 @@ fn stand_in(args: &[String]) -> ! {
     // Whether to write a frame when shut down.
     let mut farewell = false;
     let pings_event = open_event(PINGS_ENV);
+    let signal = open_event(SIGNAL_ENV);
     let mut pings = 0;
     loop {
         let command = match read_message::<_, CoreToOutpost>(&mut commands) {
@@ -234,10 +242,10 @@ fn stand_in(args: &[String]) -> ! {
                 );
                 pings += 1;
                 if pings == 4 {
-                    // SAFETY: an event handle this process holds.
-                    unsafe { SetEvent(pings_event) }.expect("the pings event is set");
+                    set(pings_event);
                 }
             }
+            CoreToOutpost::IdleQuery { .. } => set(signal),
             CoreToOutpost::Shutdown => {
                 if farewell {
                     send(&mut messages, &fault("Z", 0));
@@ -261,13 +269,13 @@ fn stand_in(args: &[String]) -> ! {
     }
 }
 
-/// The named events the stand-ins set: the listener's, when an outpost's
-/// hook is in, and the outpost's, on its fourth ping.
+/// The named events the stand-in outpost sets: when it is asked for an
+/// idle round, and on its fourth ping.
 struct Signal(HANDLE, HANDLE);
 
 impl Signal {
-    /// Names this process's event for the stand-in listeners it starts,
-    /// and makes it.
+    /// Names this process's events for the stand-in outposts it starts,
+    /// and makes them.
     fn new() -> Self {
         let name = format!("Local\\verbatim-arrival-order-{}", std::process::id());
         // SAFETY: the environment is set before any thread that reads it
@@ -298,8 +306,9 @@ impl Signal {
         );
     }
 
-    /// Waits for the listener to say an outpost's hook is in: the relay
-    /// has handled that outpost's `Ready`, and every frame before it.
+    /// Waits for the outpost to say it was asked for the idle round the
+    /// test ran while it was starting: the relay has handled its `Ready`,
+    /// and every frame before it.
     fn wait(&self, what: &str) {
         let milliseconds = u32::try_from(WAIT.as_millis()).expect("in range");
         // SAFETY: an event handle this process holds.
@@ -385,9 +394,12 @@ impl Reducer {
             match input {
                 Input::Key(number) => handled.push(format!("key {number}")),
                 // Liveness and the listener's generation are Core's
-                // record's facts, which these tests do not judge.
+                // record's facts, and the idle round is only the tests'
+                // evidence, none of which these tests judge.
                 Input::Outpost(
-                    OutpostMessage::Pong { .. } | OutpostMessage::ListenerStarted { .. },
+                    OutpostMessage::Pong { .. }
+                    | OutpostMessage::ListenerStarted { .. }
+                    | OutpostMessage::IdleQueried { .. },
                 ) => {}
                 Input::Outpost(message) => {
                     if let Some(message) = self.frames.arrived(message) {
@@ -432,9 +444,6 @@ impl Reducer {
             OutpostMessage::Ended {
                 outpost, reason, ..
             } => format!("{} ended: {reason}", self.names[&outpost]),
-            OutpostMessage::Regenerated { outpost, .. } => {
-                format!("{} replaced", self.names[&outpost])
-            }
             other => format!("{other:?}"),
         }
     }
@@ -444,9 +453,15 @@ impl Reducer {
     fn with_outposts(&mut self, applications: &[Pid]) {
         assert_eq!(self.take(1), ["listener ready"]);
         for (index, &pid) in applications.iter().enumerate() {
-            self.supervisor.ensure_spawned(pid);
+            self.supervisor.start_outpost(pid);
             assert_eq!(self.take(1), [format!("O{} started", index + 1)]);
         }
+    }
+
+    /// Runs an idle round, which the relay asks of a starting outpost
+    /// only once it has handled its `Ready` ([`Signal::wait`]).
+    fn idle_round(&self) {
+        self.supervisor.query_idle(1);
     }
 
     /// Cues outpost `name` to write request `request`'s script.
@@ -475,7 +490,9 @@ impl Reducer {
             match input {
                 Input::Key(number) => rest.push(format!("key {number}")),
                 Input::Outpost(
-                    OutpostMessage::Pong { .. } | OutpostMessage::ListenerStarted { .. },
+                    OutpostMessage::Pong { .. }
+                    | OutpostMessage::ListenerStarted { .. }
+                    | OutpostMessage::IdleQueried { .. },
                 ) => {}
                 Input::Outpost(message) => rest.push(format!("{message:?}")),
             }
@@ -515,9 +532,10 @@ fn a_frame_written_before_a_key_is_reduced_before_it_and_one_written_after_it_af
     let mut reducer = Reducer::start();
     reducer.with_outposts(&[pid]);
 
-    // Held from here: the outpost writes A, then Ready, which the relay
-    // handles by telling the listener.
+    // Held from here: the outpost writes A, then Ready, after which the
+    // relay asks it for the idle round.
     reducer.cue("O1", 1);
+    reducer.idle_round();
     signal.wait("A and Ready");
     reducer.press(1);
     reducer.cue("O1", 2);
@@ -534,9 +552,7 @@ fn a_frame_written_before_a_key_is_reduced_before_it_and_one_written_after_it_af
 
 /// An outpost's pipe closing reaches the app, as its end, after every
 /// frame it wrote before, the last a large one, parsed on the reducer's
-/// thread as every frame is. It ended before its `Ready`, so the app hears
-/// it replaced, after its frames as its end is, and after its end its
-/// replacement's start.
+/// thread as every frame is.
 fn a_closed_pipe_reaches_the_app_after_every_frame_before_it() {
     let (app, pid) = application();
     let mut reducer = Reducer::start();
@@ -544,21 +560,14 @@ fn a_closed_pipe_reaches_the_app_after_every_frame_before_it() {
 
     reducer.cue("O1", 5);
     assert_eq!(
-        reducer.take(6),
-        [
-            "O1: F1",
-            "O1: F2",
-            "O1: F3",
-            "O1 replaced",
-            "O1 ended: exited",
-            "O2 started"
-        ]
+        reducer.take(4),
+        ["O1: F1", "O1: F2", "O1: F3", "O1 ended: exited"]
     );
 
-    // The outpost exited with code 3 on its own; the listener and its
-    // replacement shut down cleanly.
+    // The outpost exited with code 3 on its own; the listener shut down
+    // cleanly.
     reducer.finish(ShutdownSummary {
-        clean: 2,
+        clean: 1,
         exited: 1,
         killed: 0,
         killed_on_failure: 0,
@@ -607,6 +616,7 @@ fn while_the_reducer_is_held_the_relay_drains_every_frame_and_two_value_changes_
 
     // Held from here.
     reducer.cue("O1", 6);
+    reducer.idle_round();
     signal.wait("everything the outpost wrote, up to Ready");
     let mut expected: Vec<String> = (0..8).map(|index| format!("O1: filler{index}")).collect();
     expected.extend([
@@ -628,7 +638,7 @@ fn while_the_reducer_is_held_the_relay_drains_every_frame_and_two_value_changes_
 /// A frame that is not a message has its outpost ended, and nothing that
 /// outpost sent after it reaches the reducer but its end: a frame and its
 /// `Ready`, read by the relay behind it while the reducer was held, are
-/// dropped. It had said `Ready`, so its replacement starts after its end.
+/// dropped.
 fn nothing_an_outpost_sent_after_a_frame_that_is_not_a_message_reaches_the_reducer_but_its_end(
     signal: &Signal,
 ) {
@@ -637,14 +647,17 @@ fn nothing_an_outpost_sent_after_a_frame_that_is_not_a_message_reaches_the_reduc
     reducer.with_outposts(&[pid]);
 
     // Held from here: the outpost writes the frame that is not a message,
-    // then G1, then Ready, which the relay handles by telling the
-    // listener.
+    // then G1, then Ready, after which the relay asks it for the idle
+    // round.
     reducer.cue("O1", 8);
+    reducer.idle_round();
     signal.wait("the unreadable frame, G1 and Ready");
-    assert_eq!(reducer.take(2), ["O1 ended: exited", "O2 started"]);
+    assert_eq!(reducer.take(1), ["O1 ended: exited"]);
 
+    // The listener, and the outpost the supervisor ended, shut down
+    // cleanly.
     reducer.finish(ShutdownSummary {
-        clean: 3,
+        clean: 2,
         exited: 0,
         killed: 0,
         killed_on_failure: 0,
@@ -655,24 +668,20 @@ fn nothing_an_outpost_sent_after_a_frame_that_is_not_a_message_reaches_the_reduc
 /// What an outpost the supervisor has ended itself writes afterwards is
 /// dropped: here a frame it writes as the retirement shuts it down, which
 /// the relay reads before the pipe ends, and before the supervisor's
-/// shutdown returns. It had not said `Ready`, so the app hears it replaced
-/// before its end, and its replacement's start after.
+/// shutdown returns.
 fn nothing_an_outpost_writes_after_the_supervisor_ended_it_reaches_the_reducer() {
     let (app, pid) = application();
     let mut reducer = Reducer::start();
     reducer.with_outposts(&[pid]);
 
     reducer.cue("O1", 9);
-    assert_eq!(
-        reducer.take(3),
-        ["O1 replaced", "O1 ended: exited", "O2 started"]
-    );
+    assert_eq!(reducer.take(1), ["O1 ended: exited"]);
 
     // The retirement's shutdown message had the outpost write Z, then
-    // exit cleanly; `finish` asserts Z never arrived. The listener and the
-    // replacement shut down cleanly too.
+    // exit cleanly; `finish` asserts Z never arrived. The listener shut
+    // down cleanly too.
     reducer.finish(ShutdownSummary {
-        clean: 3,
+        clean: 2,
         exited: 0,
         killed: 0,
         killed_on_failure: 0,

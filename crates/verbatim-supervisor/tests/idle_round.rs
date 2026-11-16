@@ -1,10 +1,10 @@
 //! The relay's part of the harness's idle barrier
 //! (`docs/design/communication.md`, section 6.7): a round asks the
-//! listener first, then every outpost behind every fact relayed to it
+//! listener first, then every outpost behind every command sent to it
 //! before, telling the app which outposts it asked before it asks them; a
 //! listener that ends during the round counts as having answered; and an
-//! outpost the round finds still being launched is asked too, once it is
-//! ready, behind the facts held for it.
+//! outpost the round finds still being launched or starting is asked too,
+//! once it is ready, behind the commands sent to it before.
 //!
 //! This test binary runs itself three ways: as an application, a process
 //! with no windows that runs until its standard input closes; as a
@@ -14,15 +14,13 @@
 //! line.
 //!
 //! The stand-in outpost answers pings, says it is ready only when Core
-//! first sends it a `Cancel` of request 0, so the test decides when, and
-//! answers each idle query with a fault saying how many facts reached it
-//! since the query before, then the answer. The stand-in listener closes
-//! its pipe to Core on round 1's query, which ends it as Core sees it,
-//! and exits when Core then shuts it down, so it is counted as shut down
-//! cleanly however soon Core looks; on any later round's, it first sends a focus
-//! fact for the application the test named in the round's number, whose
-//! low 32 bits are that application's pid ([`naming`]), if it named one,
-//! then the answer.
+//! first sends it a `Cancel` of request 0, so the test decides when,
+//! counts every other cancel as a command, and answers each idle query
+//! with a fault saying how many commands reached it since the query
+//! before, then the answer. The stand-in listener closes its pipe to Core
+//! on round 1's query, which ends it as Core sees it, and exits when Core
+//! then shuts it down, so it is counted as shut down cleanly however soon
+//! Core looks; it answers any later round's.
 
 use std::io::{BufReader, Read as _};
 use std::process::{Child, Command, Stdio};
@@ -33,10 +31,9 @@ use crossbeam_channel::unbounded;
 mod common;
 use common::Delivered;
 use verbatim_model::protocol::{
-    CoreToListener, CoreToOutpost, DeliveredFact, EventTiming, ListenerFact, ListenerToCore,
-    OutpostToCore, RequestId,
+    CoreToListener, CoreToOutpost, ListenerToCore, OutpostToCore, RequestId,
 };
-use verbatim_model::{OutpostId, Pid, TraceId};
+use verbatim_model::{OutpostId, Pid};
 use verbatim_process::arguments::OutpostOptions;
 use verbatim_process::message::{read_message, write_message};
 use verbatim_process::transport::{BlockingReader, BlockingWriter};
@@ -95,7 +92,7 @@ fn stand_in(args: &[String]) -> ! {
         outpost_pid: Pid(std::process::id()),
         target_pid,
     };
-    let mut facts = 0;
+    let mut commands_since = 0;
     loop {
         let command = match read_message::<_, CoreToOutpost>(&mut commands) {
             Ok(Some(command)) => command,
@@ -112,12 +109,12 @@ fn stand_in(args: &[String]) -> ! {
             CoreToOutpost::CancelQuery {
                 request_id: RequestId { number: 0, .. },
             } => send(&ready),
-            CoreToOutpost::DeliverFact { .. } => facts += 1,
+            CoreToOutpost::CancelQuery { .. } => commands_since += 1,
             CoreToOutpost::IdleQuery { round } => {
                 send(&OutpostToCore::Fault {
-                    detail: format!("facts before round {round}: {facts}"),
+                    detail: format!("commands before round {round}: {commands_since}"),
                 });
-                facts = 0;
+                commands_since = 0;
                 send(&OutpostToCore::IdleAnswer { round });
             }
             _ => {}
@@ -126,8 +123,7 @@ fn stand_in(args: &[String]) -> ! {
 }
 
 /// The stand-in listener: says it is ready, answers pings, closes its
-/// pipe to Core at round 1, and before answering a round that names an
-/// application ([`naming`]) sends a focus fact from it.
+/// pipe to Core at round 1, and answers every later round.
 fn listener_stand_in(
     commands: &mut BufReader<BlockingReader>,
     messages: &std::cell::RefCell<Option<BlockingWriter>>,
@@ -158,39 +154,14 @@ fn listener_stand_in(
                 drop(messages.borrow_mut().take());
             }
             CoreToListener::IdleQuery { round } => {
-                if round > u64::from(u32::MAX) {
-                    let named = u32::try_from(round & u64::from(u32::MAX)).expect("a pid");
-                    send(&ListenerToCore::FocusFact {
-                        trace_id: TraceId::mint(),
-                        timing: EventTiming::default(),
-                        fact: ListenerFact {
-                            pid: Pid(named),
-                            fact: DeliveredFact::MsaaFocus {
-                                hwnd: 1,
-                                id_object: -4,
-                                id_child: 0,
-                            },
-                        },
-                        win_event: None,
-                    });
-                }
                 send(&ListenerToCore::IdleAnswer { round });
             }
-            CoreToListener::HookInstalled { .. }
-            | CoreToListener::HookRemoved { .. }
-            | CoreToListener::ApplicationExited { .. }
+            CoreToListener::ApplicationExited { .. }
             | CoreToListener::LiveReread { .. }
             | CoreToListener::Request(_)
             | CoreToListener::Cancel(_) => {}
         }
     }
-}
-
-/// The number of the idle round `round` that names the application `pid`,
-/// for which the stand-in listener sends a focus fact before its answer:
-/// `round` in the high 32 bits, the pid in the low.
-fn naming(round: u64, pid: Pid) -> u64 {
-    round << 32 | u64::from(pid.0)
 }
 
 /// The next message from the supervisor, which must come within [`WAIT`].
@@ -263,11 +234,24 @@ fn queried(events: &Delivered, round: u64, outposts: &[OutpostId]) {
     }
 }
 
-/// The outpost's fault saying how many facts reached it before `round`.
-fn facts_before(facts: u32, round: u64) -> OutpostToCore {
+/// The outpost's fault saying how many commands reached it before
+/// `round`.
+fn commands_before(commands: u32, round: u64) -> OutpostToCore {
     OutpostToCore::Fault {
-        detail: format!("facts before round {round}: {facts}"),
+        detail: format!("commands before round {round}: {commands}"),
     }
+}
+
+/// Sends `outpost` a command the stand-in counts.
+fn command(supervisor: &Supervisor, outpost: OutpostId) {
+    supervisor
+        .send_to_outpost(
+            outpost,
+            CoreToOutpost::CancelQuery {
+                request_id: RequestId::shell(1),
+            },
+        )
+        .expect("the command is queued");
 }
 
 /// Has `outpost`, a stand-in for `target_pid` waiting for its cue, say it
@@ -293,7 +277,7 @@ fn make_ready(supervisor: &Supervisor, events: &Delivered, outpost: OutpostId, t
     }
 }
 
-fn a_round_asks_the_listener_then_every_outpost_behind_the_facts_before_it() {
+fn a_round_asks_the_listener_then_every_outpost_behind_the_commands_before_it() {
     let (events_tx, events) = unbounded();
     let exe = std::env::current_exe().expect("this test binary's path");
     let supervisor = Supervisor::with_executables(
@@ -330,32 +314,32 @@ fn a_round_asks_the_listener_then_every_outpost_behind_the_facts_before_it() {
         other => panic!("the supervisor said {other:?}, not that the listener was replaced"),
     }
 
-    // Round 2: the listener sends a fact for an application whose outpost
-    // is ready, then its answer; the outpost is asked behind the fact.
+    // Round 2: an outpost that is ready is asked behind the command sent
+    // to it before the round.
     let (first_app, first_pid) = application();
-    supervisor.ensure_spawned(first_pid);
+    supervisor.start_outpost(first_pid);
     let first = started(&events, first_pid);
     make_ready(&supervisor, &events, first, first_pid);
-    let round = naming(2, first_pid);
-    supervisor.query_idle(round);
-    queried(&events, round, &[first]);
-    from_outpost(&events, first, &facts_before(1, round));
-    from_outpost(&events, first, &OutpostToCore::IdleAnswer { round });
+    command(&supervisor, first);
+    supervisor.query_idle(2);
+    queried(&events, 2, &[first]);
+    from_outpost(&events, first, &commands_before(1, 2));
+    from_outpost(&events, first, &OutpostToCore::IdleAnswer { round: 2 });
 
-    // Round 3: the listener's fact is for an application with no outpost,
-    // which starts one, holding the fact for it. The round asks both
-    // outposts once the launch has reported; the new one is asked once it
-    // is ready, behind the fact.
+    // Round 3: an outpost Core starts just before the round is asked once
+    // its launch has reported, and only once it is ready, behind the
+    // command sent to it before.
     let (second_app, second_pid) = application();
-    let round = naming(3, second_pid);
-    supervisor.query_idle(round);
+    supervisor.start_outpost(second_pid);
+    supervisor.query_idle(3);
     let second = started(&events, second_pid);
-    queried(&events, round, &[first, second]);
-    from_outpost(&events, first, &facts_before(0, round));
-    from_outpost(&events, first, &OutpostToCore::IdleAnswer { round });
+    queried(&events, 3, &[first, second]);
+    from_outpost(&events, first, &commands_before(0, 3));
+    from_outpost(&events, first, &OutpostToCore::IdleAnswer { round: 3 });
+    command(&supervisor, second);
     make_ready(&supervisor, &events, second, second_pid);
-    from_outpost(&events, second, &facts_before(1, round));
-    from_outpost(&events, second, &OutpostToCore::IdleAnswer { round });
+    from_outpost(&events, second, &commands_before(1, 3));
+    from_outpost(&events, second, &OutpostToCore::IdleAnswer { round: 3 });
 
     assert_eq!(
         supervisor.shutdown(),
@@ -393,8 +377,8 @@ fn main() -> std::process::ExitCode {
     let mut arguments = libtest_mimic::Arguments::from_args();
     arguments.test_threads = Some(1);
     let tests: [(&str, fn()); 1] = [(
-        "a_round_asks_the_listener_then_every_outpost_behind_the_facts_before_it",
-        a_round_asks_the_listener_then_every_outpost_behind_the_facts_before_it,
+        "a_round_asks_the_listener_then_every_outpost_behind_the_commands_before_it",
+        a_round_asks_the_listener_then_every_outpost_behind_the_commands_before_it,
     )];
     let trials = tests
         .into_iter()

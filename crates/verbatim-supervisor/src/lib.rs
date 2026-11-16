@@ -1,53 +1,48 @@
-//! The Core-side supervisor (architecture section 1, decisions D9 and D13).
+//! The Core-side supervisor (architecture section 1, decisions D9 and D13):
+//! the process owner, reduced to process facts and their effects
+//! (`docs/design/readers-tell-core-asks-build1.md`, "The outpost
+//! generation record"). Core's reducer owns the outpost generation record
+//! and judges every generation; the supervisor launches children, watches
+//! their liveness by pings, sees pipes close and processes exit, and
+//! reports these to Core, carrying out Core's start, end and shutdown
+//! effects. Its parts:
 //!
-//! The supervisor starts outposts and the focus listener, routes the
-//! listener's facts to the right outpost, and ends children that crash, hang,
-//! or are no longer needed. Its parts:
-//!
-//! - One lifecycle owner thread ([`owner`]) makes every lifecycle decision and
-//!   owns the per-application records and the listener record. Launch
-//!   helpers, retirements, and the app only report facts to it through one
-//!   mailbox; nothing else changes a record, and there is no shared map
-//!   lock. Its heartbeat and sweep run when its wait's deadline passes.
+//! - One owner thread ([`owner`]) launches and ends every child and keeps
+//!   what carrying out Core's effects needs: each application's running
+//!   process, the spares, the listener's record and the processes it
+//!   holds. Launch helpers, retirements, and the app only report to it
+//!   through one mailbox; there is no shared map lock. Its heartbeat runs
+//!   when its wait's deadline passes.
 //! - The owner thread is also the relay ([`relay`];
 //!   `docs/design/communication.md`, section 6.2): it waits only on an I/O
-//!   completion port, reads the listener's pipe and routes each fact in the
-//!   pass that read it, writing it to its outpost there and then, so a fact
-//!   crosses verbatim.exe with one thread's wake-up; it reads every
-//!   outpost's pipe, handles pongs, `Ready`, `TargetExited` and the pipe's
-//!   end itself, and delivers every other frame whole and unparsed
-//!   ([`OutpostMessage::Frame`]), which the app parses through [`Frames`];
-//!   and it finishes every child's writes that pended. It never blocks:
-//!   launching a process and
-//!   ending one run on threads of their own and report back. The owner records the application as
-//!   starting before the launch, so a second fact meanwhile is held, not a
-//!   second launch.
+//!   completion port, reads the listener's pipe and hands each tell and
+//!   answer to the app in the pass that read it, dropping every frame of a
+//!   listener that was replaced; it reads every outpost's pipe, handles
+//!   pongs, `Ready`, `TargetExited` and the pipe's end itself, and delivers
+//!   every other frame whole and unparsed ([`OutpostMessage::Frame`]),
+//!   which the app parses through [`Frames`]; and it finishes every
+//!   child's writes that pended. It never blocks: launching a process and
+//!   ending one run on threads of their own and report back.
 //! - Each child has a writer with a bounded queue ([`writer`]): whichever
 //!   thread sends a command writes it at once when no write is in flight,
-//!   so the reducer thread sends a query without waiting and without a
+//!   so the reducer thread sends a request without waiting and without a
 //!   hand-off, and a write the pipe cannot take at once is finished by the
 //!   relay.
-//! - The supervisor therefore runs on one thread, the relay; the app parses
-//!   every frame on its reducer thread ([`Frames`]).
 //! - It keeps two spare outposts started and waiting, with no application
 //!   (`books/dev/src/reference/adr/0001-focus.md`, "Spare outposts"), from the moment Core's
 //!   own outpost is ready: a start for an application takes the oldest,
 //!   sends it `Assign`, and tells the app the generation `Started`; a
-//!   spare given never returns, and its replacement starts at once.
-//! - Every outpost failure takes one path, whatever its cause: a crash, a
-//!   hook that fails, missed pings, piled-up abandoned workers, or a spare
-//!   that dies waiting. The outpost is ended; an application it served is
-//!   given the next spare, its held facts with it; and nothing is given up,
-//!   repeated failures being spaced by an exponential backoff
-//!   ([`policy::Backoff`]).
+//!   spare given never returns, and its replacement starts at once. A
+//!   spare that fails while it waits is replaced after the spares'
+//!   backoff ([`policy::Backoff`]).
 //!
 //! The app hears of each outpost generation through [`OutpostMessage`]:
 //! `Started` before any of its messages, then its messages, then `Ended`.
 //! When an outpost exits on its own, `Ended` follows everything it wrote; when
-//! the owner kills or retires it, `Ended` is sent at once, and the relay
-//! drops anything the child wrote afterwards. One application's
-//! generations come in the order the supervisor ended and started them:
-//! an outpost's `Ended` before its replacement's `Started`.
+//! the owner ends it, `Ended` is sent at once, and the relay drops
+//! anything the child wrote afterwards. One application's generations
+//! come in the order the supervisor ended and started them: an outpost's
+//! `Ended` before its replacement's `Started`.
 
 mod frames;
 mod owner;
@@ -70,8 +65,7 @@ use verbatim_model::protocol::{CoreToListener, CoreToOutpost, ListenerToCore, Ou
 pub use frames::{Frame, Frames};
 pub use retire::ShutdownSummary;
 pub use verbatim_core::supervisor::EndReason;
-use verbatim_core::supervisor::generation::Lifecycle;
-use verbatim_core::supervisor::{generation, policy};
+use verbatim_core::supervisor::policy;
 use verbatim_process::held::IgnoredProcesses;
 pub use writer::QueueError;
 
@@ -96,13 +90,14 @@ pub struct Timings {
     /// How many ping intervals may pass without a pong before a child is
     /// ended: three intervals, nine seconds.
     pub missed_pongs: u32,
-    /// How long the replacement of an outpost's second failure in a row
+    /// How long the replacement of a spare's second failure in a row
     /// waits: a second. Each failure after it waits twice as long as the
     /// one before, up to [`backoff_limit`](Self::backoff_limit)
     /// (`books/dev/src/reference/adr/0001-focus.md`, "Spare outposts"). The first failure
-    /// is replaced at once.
+    /// is replaced at once. An application's outposts are spaced by Core's
+    /// own backoff.
     pub backoff_first: Duration,
-    /// The longest a failed outpost's replacement waits: 30 seconds.
+    /// The longest a failed spare's replacement waits: 30 seconds.
     pub backoff_limit: Duration,
 }
 
@@ -125,7 +120,7 @@ impl Timings {
     }
 }
 
-/// How long an outpost, or a spare, must have been up for its failure to
+/// How long a spare must have been up for its failure to
 /// count as the first again: a minute, twenty heartbeats, long past the
 /// start and first focus in which a failure that repeats shows itself.
 const STAYED_UP: Duration = Duration::from_mins(1);
@@ -282,7 +277,7 @@ pub enum OutpostMessage {
         sealed: Sealed,
     },
     /// Asked to start an outpost for `target_pid`
-    /// ([`Supervisor::ensure_spawned`]) while one already runs: the
+    /// ([`Supervisor::start_outpost`]) while one already runs: the
     /// generation running, and whether it has said it is ready, so Core's
     /// generation record takes it.
     Running {
@@ -392,6 +387,7 @@ pub enum OutpostMessage {
     /// and its foreground record.
     Foreground(ForegroundReport),
     /// An outpost generation ended. Its node ids are dead from now on.
+    /// What follows is Core's decision.
     Ended {
         /// The generation that ended.
         outpost: OutpostId,
@@ -399,45 +395,26 @@ pub enum OutpostMessage {
         target_pid: Pid,
         /// Why it ended.
         reason: EndReason,
-        /// Whether a next generation follows for the application, at once
-        /// or after a failure's backoff: the supervisor's decision, made
-        /// as it ended this one, so nothing else infers it. When none
-        /// follows, [`OutpostMessage::NotWatched`] comes next.
-        follows: bool,
         /// Only the supervisor sends it.
         sealed: Sealed,
     },
-    /// The generation `outpost` given to `target_pid` failed before its
-    /// `Ready` (`books/dev/src/reference/adr/0001-focus.md`, "Spare outposts"), and the
-    /// application's held facts, and the idle query held for it, go to the
-    /// generation `next`: the next spare, or an outpost launched for the
-    /// application. Sent when `next` is given, at once or when the
-    /// failure's backoff ends, before `outpost`'s `Ended`, which follows
-    /// when the app heard it started, and before `next`'s `Started`, which
-    /// follows at once or once its launch reports. In an
-    /// idle round that asked `outpost`, `next` answers in its place; and
-    /// nothing the application reported is lost, so the app asks it for
-    /// nothing again.
-    Regenerated {
-        /// The generation that failed.
-        outpost: OutpostId,
-        /// The generation that takes its place.
-        next: OutpostId,
+    /// Core asked for an outpost for `target_pid` and none was started:
+    /// its launch failed, or the application's process has exited, cannot
+    /// be held, or is one Verbatim ignores ([`IgnoredProcesses`]), which
+    /// `application_gone` says (Table 5, column C).
+    LaunchFailed {
         /// The application.
         target_pid: Pid,
+        /// Whether no outpost can serve it: its process is gone, cannot be
+        /// held, or is ignored.
+        application_gone: bool,
         /// Only the supervisor sends it.
         sealed: Sealed,
     },
-    /// No outpost watches `target_pid` now, nor will one until something
-    /// asks for one again: one was wanted and none was started, its
-    /// process having exited, or being one that cannot be opened to be
-    /// held, or one Verbatim ignores ([`IgnoredProcesses`]); or its record
-    /// was removed, after the `Ended` of every generation the app heard
-    /// started, as its application exited or its outpost retired, a record
-    /// waiting for a failure's backoff among them. Nothing should wait for
-    /// one. An application whose outposts fail is never given up and never
-    /// reported so: each failure's replacement only waits for its backoff.
-    NotWatched {
+    /// The application `target_pid`'s own process exited, as the handle
+    /// the supervisor holds says (Table 5, column J). Its outpost's
+    /// `Ended`, when one ran, comes first.
+    ApplicationExited {
         /// The application.
         target_pid: Pid,
         /// Only the supervisor sends it.
@@ -450,13 +427,11 @@ pub enum OutpostMessage {
     /// The idle barrier's round `round` (`docs/design/communication.md`,
     /// section 6.7; [`Supervisor::query_idle`]): the listener has answered,
     /// or has gone, and every outpost in `outposts` is asked now, each
-    /// behind every fact relayed to it before, one still starting once it
+    /// behind every command sent to it before, one still starting once it
     /// is ready. Sent before any of them is asked, so it reaches the app
     /// ahead of every answer. Each answers
     /// [`OutpostToCore::IdleAnswer`] as a message of its own, or
-    /// ends ([`OutpostMessage::Ended`]), which counts as its answer, unless
-    /// it was a spare that failed before its `Ready`: then the generation
-    /// [`OutpostMessage::Regenerated`] names answers in its place.
+    /// ends ([`OutpostMessage::Ended`]), which counts as its answer.
     IdleQueried {
         /// The round.
         round: u64,
@@ -465,48 +440,6 @@ pub enum OutpostMessage {
         /// Only the supervisor sends it.
         sealed: Sealed,
     },
-}
-
-/// The message the app takes as the supervisor's own for the lifecycle
-/// notice `notice` a generation's typestate made: only the owner calls it,
-/// so only the owner makes a seal.
-fn sealed(notice: Lifecycle) -> OutpostMessage {
-    match notice {
-        Lifecycle::Started {
-            outpost,
-            target_pid,
-        } => OutpostMessage::Started {
-            outpost,
-            target_pid,
-            sealed: Sealed::new(),
-        },
-        Lifecycle::Ended {
-            outpost,
-            target_pid,
-            reason,
-            follows,
-        } => OutpostMessage::Ended {
-            outpost,
-            target_pid,
-            reason,
-            follows,
-            sealed: Sealed::new(),
-        },
-        Lifecycle::Regenerated {
-            outpost,
-            next,
-            target_pid,
-        } => OutpostMessage::Regenerated {
-            outpost,
-            next,
-            target_pid,
-            sealed: Sealed::new(),
-        },
-        Lifecycle::NotWatched { target_pid } => OutpostMessage::NotWatched {
-            target_pid,
-            sealed: Sealed::new(),
-        },
-    }
 }
 
 /// The executables the supervisor launches its children from, one for each
@@ -679,20 +612,13 @@ impl Supervisor {
         self.ignored.contains(pid)
     }
 
-    /// Starts an outpost for `target_pid` if none exists, without asking it
-    /// to report anything, giving it a spare when one waits. Used at
-    /// startup for Core's own process, before any spare exists, so its
-    /// outpost is warm before the first gesture: a cold spawn races a real
-    /// keypress sent right after Verbatim's menu opens; the spares are
-    /// started once it is ready. Also used for the taskbar's process when
-    /// the tray list dialog asks for the shell's items and that process has
-    /// no ready outpost. An application whose process has exited
-    /// gets none, and the app hears
-    /// [`OutpostMessage::NotWatched`].
-    pub fn ensure_spawned(&self, target_pid: Pid) {
-        let _ = self
-            .owner
-            .send(owner::OwnerEvent::EnsureSpawned(target_pid));
+    /// Carries out Core's effect "start an outpost for `target_pid`",
+    /// giving it a spare when one waits: the app hears
+    /// [`OutpostMessage::Started`] once its process runs, or
+    /// [`OutpostMessage::LaunchFailed`]. One that runs already is reported
+    /// again ([`OutpostMessage::Running`]).
+    pub fn start_outpost(&self, target_pid: Pid) {
+        let _ = self.owner.send(owner::OwnerEvent::StartOutpost(target_pid));
     }
 
     /// Queues `command` for one outpost generation without waiting. A node
@@ -799,7 +725,7 @@ impl Supervisor {
         reply_rx.recv().unwrap_or_default()
     }
 
-    /// Reads the time the failures' backoffs are set and ended by from
+    /// Reads the time the spares' backoff is set and ended by from
     /// `clock`, in microseconds, in place of the run's shared clock, from
     /// the next failure on: a test that moves it past a backoff decides
     /// when the backoff ends, so what it waits for has happened first, and
@@ -839,8 +765,9 @@ impl Supervisor {
     }
 
     /// Ends the outpost generation `outpost`, as Core's generation record
-    /// asks: it is stuck, or retired. Nothing happens when it has ended
-    /// already; its [`OutpostMessage::Ended`] follows otherwise.
+    /// asks: it missed its pings, or its application exited before it was
+    /// ready. Nothing happens when it has ended already; its
+    /// [`OutpostMessage::Ended`] follows otherwise.
     pub fn end_outpost(&self, outpost: OutpostId) {
         let _ = self.owner.send(owner::OwnerEvent::EndOutpost(outpost));
     }
@@ -849,9 +776,9 @@ impl Supervisor {
     /// (`docs/design/communication.md`, section 6.7): the listener is asked
     /// first, behind every command sent to it before; once it answers, or
     /// if it has gone, every outpost, ready or starting, is asked behind
-    /// every fact relayed to it before, and the app hears which
+    /// every command sent to it before, and the app hears which
     /// ([`OutpostMessage::IdleQueried`]). An outpost still being launched
-    /// is waited for first, so the round covers the facts held for it.
+    /// is waited for first, so the app has heard it started.
     pub fn query_idle(&self, round: u64) {
         let _ = self.owner.send(owner::OwnerEvent::IdleRound(round));
     }

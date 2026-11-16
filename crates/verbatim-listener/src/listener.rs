@@ -749,14 +749,10 @@ impl Listener {
                     written_at_us: 0,
                 });
             }
-            // The listener hands no application's events over to an
-            // outpost, and keeps no unasked read to read again: every
+            // The listener keeps no unasked read to read again: every
             // `WinEvent` is told, and Core asks what it needs. The serving
             // loop ends on `Shutdown`, before it is handled here.
-            CoreToListener::HookInstalled { .. }
-            | CoreToListener::HookRemoved { .. }
-            | CoreToListener::LiveReread { .. }
-            | CoreToListener::Shutdown => {}
+            CoreToListener::LiveReread { .. } | CoreToListener::Shutdown => {}
             CoreToListener::ApplicationExited { pid } => {
                 self.checks.application_exited(pid);
                 self.readers.application_exited(pid);

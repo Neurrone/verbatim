@@ -1,18 +1,24 @@
-//! The lifecycle owner: one thread that makes every lifecycle decision and
-//! owns the per-application records and the listener record (outpost
-//! redesign, "The supervisor"). Everything else only reports to it.
+//! The process owner: one thread that launches and ends every child,
+//! watches each one's liveness by pings, sees pipes close and processes
+//! exit, and reports these facts to Core, carrying out Core's start, end
+//! and shutdown effects (`docs/design/readers-tell-core-asks-build1.md`,
+//! "The outpost generation record"). Core's reducer owns the outpost
+//! generation record and judges every generation: when an outpost is
+//! started, replaced or ended, its backoff, its liveness, and which frames
+//! are current. The owner keeps only what carrying out those effects
+//! needs: each application's running process, the spares, the listener's
+//! record, and the processes it holds.
 //!
 //! It is also the relay (`docs/design/communication.md`, sections 4.7 and
 //! 6.2): it waits only on the relay's completion port ([`super::relay`]),
-//! reads the listener's frames and routes each fact in the pass that read
-//! it, writing it to its outpost inline; reads every outpost's frames,
-//! handling pongs, `Ready`, `TargetExited` and the pipe's end itself and
-//! delivering every other frame to the app whole, in the pass that read
-//! it; finishes every child's writes that pended; and takes everything
-//! other threads report from its mailbox when the port says there is
-//! something. Its heartbeat and its sweep
-//! run when the wait's deadline passes. It never blocks: launches
-//! and retirements run on threads of their own and report back.
+//! reads the listener's frames and hands each tell and answer to the app
+//! in the pass that read it; reads every outpost's frames, handling
+//! pongs, `Ready`, `TargetExited` and the pipe's end itself and handing
+//! every other frame to the app whole, in the pass that read it; finishes
+//! every child's writes that pended; and takes everything other threads
+//! report from its mailbox when the port says there is something. Its
+//! heartbeat runs when the wait's deadline passes. It never blocks:
+//! launches and retirements run on threads of their own and report back.
 
 #![forbid(unsafe_code)]
 
@@ -24,24 +30,20 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crossbeam_channel::Sender;
-use verbatim_model::{OutpostId, Pid, TraceId};
+use verbatim_model::{OutpostId, Pid};
 use verbatim_process::overlapped::{Completion, Completions, Port};
 use verbatim_process::scheduling::{ThreadPriority, prioritize_role};
 use verbatim_process::transport::{Parts, Reading};
 
 use verbatim_model::protocol::{
-    CoreToListener, CoreToOutpost, DeliveredFact, EventTiming, ListenerFact, ListenerToCore,
-    OutpostToCore, WinEventStamp, hop_us,
+    CoreToListener, CoreToOutpost, ListenerToCore, OutpostToCore, hop_us,
 };
 use verbatim_process::clock::now_us;
 use verbatim_process::message::{Peeked, decode_message, peek};
 
+use super::Executables;
 use super::frames::Frame;
-use super::generation::{Generation, Heartbeat, Next, Notice, Removed, Run};
-use super::policy::{
-    Backoff, HeldFact, HeldFacts, Liveness, Parked, Spares, WedgeLimits, WedgeReason, due_starts,
-    may_start_outpost,
-};
+use super::policy::{Liveness, Parked, Spares, WedgeLimits, WedgeReason, wedge_decision};
 use super::process::{self, Launched, Role};
 use super::relay::{COMPLETIONS_PER_WAIT, CommandPipes, Inbox, Mailbox, Relay, Source, Taken};
 use super::retire::{Ending, ShutdownSummary, retire};
@@ -50,56 +52,22 @@ use super::{
     ABANDONED_WORKER_LIMIT, EndReason, EventSink, OutpostMessage, SPARES, Sealed, Timings,
     Undelivered, Writers,
 };
-use super::{Executables, sealed};
 use verbatim_process::arguments::ListenerArguments;
-use verbatim_process::held::{IgnoredProcesses, Target};
+use verbatim_process::held::{IgnoredProcesses, NotHeld, Target};
 
-/// The relay thread's priority: it reads each of the listener's facts and
-/// routes it to its outpost, reads each outpost's frame and hands it on,
-/// finishes writes that pended, and handles each child's reports, for
-/// microseconds per wake (`docs/design/communication.md`, section 6.1).
+/// The relay thread's priority: it reads each of the listener's tells and
+/// hands it on, reads each outpost's frame and hands it on, finishes
+/// writes that pended, and handles each child's reports, for microseconds
+/// per wake (`docs/design/communication.md`, section 6.1).
 const RELAY_PRIORITY: ThreadPriority = ThreadPriority::Highest;
 
-/// A fact reported to the owner.
-#[expect(
-    clippy::large_enum_variant,
-    reason = "an event is sent once and moved, never stored in bulk"
-)]
+/// A fact reported to the owner, or an effect it is asked to carry out.
 pub(super) enum OwnerEvent {
-    /// From the app: start an outpost for this application if none exists.
-    EnsureSpawned(Pid),
-    /// From a test: read the time the failures' backoffs are judged by
-    /// from this clock from now on ([`Owner::backoff_clock`]).
+    /// From the app, Core's effect: start an outpost for this application.
+    StartOutpost(Pid),
+    /// From a test: read the time the spares' backoff is judged by from
+    /// this clock from now on ([`Owner::backoff_clock`]).
     BackoffClock(BackoffClock),
-
-    /// Read from the listener's pipe: a focus fact to route.
-    Fact {
-        trace_id: TraceId,
-        timing: EventTiming,
-        fact: ListenerFact,
-        win_event: Option<WinEventStamp>,
-        /// When verbatim.exe read it from the listener.
-        received: Received,
-    },
-    /// Read from the listener's pipe: it forwards none of `pid`'s
-    /// `WinEvent` facts raised after `through`, the answer to the hand-over
-    /// for `outpost`.
-    ForwardingEnded {
-        pid: Pid,
-        outpost: OutpostId,
-        through: u32,
-    },
-    /// Read from the listener's pipe: a menu or the Alt+Tab switcher
-    /// closed.
-    MenuOrSwitchEnded { ended_at_us: u64 },
-    /// Read from the listener's pipe: news of the desktop.
-    Desktop(verbatim_model::DesktopNews),
-    /// Read from the listener's pipe: a progress bar's value changed.
-    Progress(verbatim_model::BarChange),
-    /// Read from the listener's pipe: a window came to the foreground.
-    Foreground(crate::ForegroundReport),
-    /// Read from a child's pipe: the child sent `Ready`.
-    Ready(OutpostId),
     /// Read from a child's pipe: the child answered a ping.
     Pong { outpost: OutpostId, parked: Parked },
     /// From the app's [`super::Frames`]: a frame `outpost` sent is not a
@@ -115,11 +83,9 @@ pub(super) enum OwnerEvent {
     /// From the app: run the idle barrier's round through the children.
     IdleRound(u64),
     /// From the app: a command for the listener, Core's live re-read
-    /// ([`CoreToListener::LiveReread`]) or a request or cancel of Core's
-    /// event queue.
+    /// ([`CoreToListener::LiveReread`]) or a request or cancel of Core's.
     ToListener(CoreToListener),
-    /// From the app: end this outpost generation, as Core's generation
-    /// record asks.
+    /// From the app, Core's effect: end this outpost generation.
     EndOutpost(OutpostId),
     /// From the app: Verbatim is exiting. Every child is shut down, and the
     /// summary of every ending in Verbatim's life is sent back once all
@@ -169,23 +135,102 @@ pub(super) struct Setup {
     pub(super) ignored: std::sync::Arc<IgnoredProcesses>,
 }
 
-/// One application's record: what belongs to the application, and its
-/// outpost generation's state ([`Generation`]), which says whether a
-/// generation is launching, given, starting, ready, or, after a failure,
-/// waiting for its backoff with none.
-struct Record {
-    generation: Generation<OutpostChild>,
-    /// Facts that arrived before `Ready`, released in order on `Ready`.
-    held: HeldFacts,
-    /// The idle barrier's round, held behind the held facts until `Ready`.
-    idle_query: Option<u64>,
-    /// When the current generation was given to the application or
-    /// launched for it, on the run's shared clock: how long it had been up
-    /// when it fails.
-    since_us: u64,
-    /// The failures of the application's outposts while serving it, and,
-    /// while a failure's wait runs, when the next generation is given.
-    backoff: Backoff,
+/// A child's process from its launch: still being launched, or running.
+/// The listener and the spares waiting live this pair of states.
+#[derive(Debug)]
+pub(super) enum Run<C> {
+    /// The launch helper is still at work.
+    Launching,
+    /// Its launch has reported.
+    Running(C),
+}
+
+impl<C> Run<C> {
+    /// The running child.
+    pub(super) fn running(&self) -> Option<&C> {
+        match self {
+            Run::Running(child) => Some(child),
+            Run::Launching => None,
+        }
+    }
+
+    /// The running child, taken.
+    pub(super) fn into_running(self) -> Option<C> {
+        match self {
+            Run::Running(child) => Some(child),
+            Run::Launching => None,
+        }
+    }
+}
+
+/// One application's outpost generation as the owner carries it out, from
+/// Core's start effect until it ends: Core judges it, and the owner only
+/// reports its process's facts.
+enum Generation {
+    /// Its process is being launched for the application, or a spare was
+    /// given whose launch has not reported.
+    Launching {
+        /// The generation.
+        outpost: OutpostId,
+        /// Whether it is a given spare, which is sent `Assign` once it
+        /// runs.
+        spare: bool,
+    },
+    /// Its process runs; its `Ready` has not come.
+    Starting {
+        /// The generation.
+        outpost: OutpostId,
+        /// Its process.
+        child: OutpostChild,
+        /// Its last fault, such as a given spare's hook failing: logged
+        /// with its end.
+        fault: Option<String>,
+        /// The workers its last pong reported parked.
+        parked: Parked,
+        /// The idle barrier's round, asked once it is ready.
+        idle_query: Option<u64>,
+    },
+    /// It sent its `Ready`.
+    Ready {
+        /// The generation.
+        outpost: OutpostId,
+        /// Its process.
+        child: OutpostChild,
+        /// The workers its last pong reported parked.
+        parked: Parked,
+    },
+}
+
+impl Generation {
+    /// Its generation.
+    fn outpost(&self) -> OutpostId {
+        match self {
+            Generation::Launching { outpost, .. }
+            | Generation::Starting { outpost, .. }
+            | Generation::Ready { outpost, .. } => *outpost,
+        }
+    }
+
+    /// Its process, once its launch has reported.
+    fn child(&self) -> Option<&OutpostChild> {
+        match self {
+            Generation::Launching { .. } => None,
+            Generation::Starting { child, .. } | Generation::Ready { child, .. } => Some(child),
+        }
+    }
+
+    /// Its process, taken, once its launch has reported.
+    fn into_child(self) -> Option<OutpostChild> {
+        match self {
+            Generation::Launching { .. } => None,
+            Generation::Starting { child, .. } | Generation::Ready { child, .. } => Some(child),
+        }
+    }
+
+    /// Whether it sent its `Ready`.
+    fn is_ready(&self) -> bool {
+        matches!(self, Generation::Ready { .. })
+    }
 }
 
 /// Where the idle barrier's round is in the relay
@@ -196,7 +241,7 @@ enum IdleStage {
     Listener(u64),
     /// The listener has answered, or has gone, and an outpost is still
     /// being launched: the outposts are asked once every launch has
-    /// reported, so the round covers the facts held for it.
+    /// reported, so the app has heard each one started.
     Launches(u64),
 }
 
@@ -206,11 +251,11 @@ struct ListenerRecord {
     child: Run<Child<CoreToListener>>,
     /// Its pongs.
     liveness: Liveness,
-    /// Whether this listener replaces an earlier one: facts were lost in the
-    /// gap, so the attention application is asked to report again on `Ready`.
+    /// Whether this listener replaces an earlier one: tells were lost in
+    /// the gap, so the app asks for the current focus on `Ready`.
     replacement: bool,
-    /// The hand-over's news for it, held while its launch is still at work,
-    /// in order, and written once it has a writer.
+    /// Commands for it, held while its launch is still at work, in order,
+    /// and written once it has a writer.
     pending: Vec<CoreToListener>,
     /// The processes whose exit it has been told and has not answered, each
     /// handle held until [`ListenerToCore::ExitHandled`], so no new process
@@ -284,9 +329,8 @@ pub(super) type BackoffClock = Arc<dyn Fn() -> u64 + Send + Sync>;
 
 /// The owner thread's state.
 struct Owner {
-    /// The time the failures' backoffs are set and ended by: the run's
-    /// shared clock, or a test's, which moves it past a backoff once what
-    /// it waits for has happened ([`crate::Supervisor::set_backoff_clock`]).
+    /// The time the spares' backoff is set and ended by: the run's shared
+    /// clock, or a test's ([`crate::Supervisor::set_backoff_clock`]).
     backoff_clock: BackoffClock,
     /// The executables each role is launched from.
     executables: Executables,
@@ -303,13 +347,16 @@ struct Owner {
     port: Arc<Port>,
     /// Numbers every launch, outposts and listener alike; never reused.
     generation: u64,
-    records: BTreeMap<Pid, Record>,
+    /// Each application's outpost generation, from Core's start effect
+    /// until it ends.
+    records: BTreeMap<Pid, Generation>,
     listener: Option<ListenerRecord>,
-    /// The applications given a record, each until its process exits: the
-    /// process, held open so the pid it is known by names that process and
-    /// no other ([`Target`]), which outlives the record, so a process id is
-    /// never reused while an outpost or a reading thread serves it.
-    apps: BTreeMap<Pid, App>,
+    /// The applications held, each until its process exits: the process,
+    /// held open so the pid it is known by names that process and no other
+    /// ([`Target`]), from the first tell that names it or Core's start of
+    /// its outpost, so a process id is never reused while Core, an outpost
+    /// or a reading thread knows it.
+    apps: BTreeMap<Pid, Target>,
     own_pid: Pid,
     /// How long an ending child has to exit after the shutdown message.
     shutdown_limit: Duration,
@@ -322,7 +369,7 @@ struct Owner {
     /// child has ended.
     shutting_down: Option<Sender<ShutdownSummary>>,
     /// The processes ignored entirely: no outpost is started for them, and
-    /// the listener, told of them, drops their facts.
+    /// the listener, told of them, drops their events.
     ignored: std::sync::Arc<IgnoredProcesses>,
     /// The idle barrier's round under way in the relay, until the
     /// outposts are asked.
@@ -331,16 +378,8 @@ struct Owner {
     /// (`books/dev/src/reference/adr/0001-focus.md`, "Spare outposts").
     spares: Spares,
     /// Every spare's process, by outpost id, from its launch until it is
-    /// given or ends: `None` while its launch is at work.
+    /// given or ends.
     spare_children: BTreeMap<OutpostId, SpareChild>,
-}
-
-/// An application the supervisor has given a record, from its first record
-/// until its process exits, through any retirement and every outpost
-/// failure.
-struct App {
-    /// Its process, held open.
-    target: Target,
 }
 
 /// A spare outpost's process while it waits.
@@ -407,14 +446,12 @@ pub(super) fn start(setup: Setup) -> io::Result<()> {
 fn up_since(since_us: u64) -> Duration {
     Duration::from_micros(now_us().saturating_sub(since_us))
 }
-
 /// The next time a periodic duty with `interval` is due after `due`, which
 /// has just been done at `now`: a missed time is skipped, never made up.
 fn next_due(due: Instant, now: Instant, interval: Duration) -> Instant {
     let next = due + interval;
     if next > now { next } else { now + interval }
 }
-
 impl Owner {
     /// The limits a child is judged stuck by.
     fn wedge_limits(&self) -> WedgeLimits {
@@ -424,26 +461,21 @@ impl Owner {
             abandoned_workers: ABANDONED_WORKER_LIMIT,
         }
     }
-
-    /// The relay's loop: waits on the port until the heartbeat or the
-    /// sweep is due, and handles what the wait took, in the port's order.
-    /// Returns once Verbatim's exit has ended every child and every pipe
-    /// has finished.
+    /// The relay's loop: waits on the port until the heartbeat is due or
+    /// the spares' backoff ends, and handles what the wait took, in the
+    /// port's order. Returns once Verbatim's exit has ended every child
+    /// and every pipe has finished.
     fn run(&mut self, events: &Inbox<OwnerEvent>) {
         let start = Instant::now();
         let ping_interval = self.timings.ping_interval;
-        let sweep_interval = SWEEP_INTERVAL;
         let mut heartbeat_due = start + ping_interval;
-        let mut sweep_due = start + sweep_interval;
         let mut completions = Completions::with_capacity(COMPLETIONS_PER_WAIT);
         loop {
             if self.finish_shutdown() {
                 return;
             }
-            let mut timeout = heartbeat_due
-                .min(sweep_due)
-                .saturating_duration_since(Instant::now());
-            if let Some(due_us) = self.next_due() {
+            let mut timeout = heartbeat_due.saturating_duration_since(Instant::now());
+            if let Some(due_us) = self.spares.due() {
                 timeout = timeout.min(Duration::from_micros(
                     due_us.saturating_sub((self.backoff_clock)()),
                 ));
@@ -463,7 +495,13 @@ impl Owner {
                     Taken::Read(key) => self.read_pipe(key, &completion),
                 }
             }
-            self.start_due((self.backoff_clock)());
+            if self
+                .spares
+                .due()
+                .is_some_and(|due| due <= (self.backoff_clock)())
+            {
+                self.replenish_spares();
+            }
             let now = Instant::now();
             if now >= heartbeat_due {
                 // What was sent while the port refused the mailbox's wake,
@@ -474,10 +512,6 @@ impl Owner {
                 self.outbox.retry();
                 self.heartbeat();
                 heartbeat_due = next_due(heartbeat_due, now, ping_interval);
-            }
-            if now >= sweep_due {
-                self.sweep();
-                sweep_due = next_due(sweep_due, now, sweep_interval);
             }
         }
     }
@@ -524,25 +558,22 @@ impl Owner {
             }
         }
     }
-
     /// A frame read from the pipe of `outpost`, watching `pid`, dropped
-    /// once the owner has ended that outpost: a pong and
-    /// `TargetExited` are handled here, `Ready` is handled here and handed
-    /// on, and every other frame is handed on to the app whole, unparsed,
-    /// with when it was read (`docs/design/communication.md`, section
-    /// 6.2). Only the frame's kind is read, from its first bytes; a pong,
-    /// a few dozen bytes, is parsed for its counts of parked workers. A
-    /// frame handed on is copied out of the reader's buffer it was lent
-    /// from.
+    /// once the owner has ended that outpost: a pong and `TargetExited`
+    /// are handled here, `Ready` is handled here and handed on, and every
+    /// other frame is handed on to the app whole, unparsed, with when it
+    /// was read (`docs/design/communication.md`, section 6.2). Only the
+    /// frame's kind is read, from its first bytes; a pong, a few dozen
+    /// bytes, is parsed for its counts of parked workers. A frame handed
+    /// on is copied out of the reader's buffer it was lent from.
     fn outpost_frame(&mut self, outpost: OutpostId, pid: Pid, body: Parts<'_>) -> io::Result<()> {
         if self
             .records
             .get(&pid)
-            .is_none_or(|record| record.generation.outpost() != Some(outpost))
+            .is_none_or(|generation| generation.outpost() != outpost)
         {
-            // The owner has ended this generation itself, and told the
-            // app, which drops whatever it sent after; its pipe is read
-            // until it ends, and the rest is dropped here.
+            // The owner has ended this generation, and told the app; its
+            // pipe is read until it ends, and the rest is dropped here.
             return Ok(());
         }
         let read_at_us = now_us();
@@ -569,11 +600,7 @@ impl Owner {
                     },
                 });
             }
-            Peeked::TargetExited => {
-                if let Some(pid) = self.pid_of(outpost) {
-                    self.target_exited(pid, "target exited");
-                }
-            }
+            Peeked::TargetExited => self.application_exited(pid, "its outpost saw it exit"),
             Peeked::Ready => {
                 self.hand_on(Frame::new(pid, outpost, body.into_owned(), read_at_us));
                 self.on_ready(outpost);
@@ -583,17 +610,10 @@ impl Owner {
             Peeked::SpareReady => {}
             Peeked::Fault => {
                 // A given spare's fault before its `Ready`, such as its
-                // hook failing, is kept for the log of its failure.
-                if self
-                    .records
-                    .get_mut(&pid)
-                    .and_then(|record| record.generation.spare_fault())
-                    .is_some()
+                // hook failing, is kept for the log of its end.
+                if let Some(Generation::Starting { .. }) = self.records.get(&pid)
                     && let OutpostToCore::Fault { detail } = decode_message(body)?
-                    && let Some(fault) = self
-                        .records
-                        .get_mut(&pid)
-                        .and_then(|record| record.generation.spare_fault())
+                    && let Some(Generation::Starting { fault, .. }) = self.records.get_mut(&pid)
                 {
                     *fault = Some(detail);
                 }
@@ -640,58 +660,43 @@ impl Owner {
         }
         Ok(())
     }
-
     /// Hands an outpost's frame on to the app. One the app no longer takes
     /// is dropped: it is exiting.
     fn hand_on(&mut self, frame: Frame) {
         self.outbox.send(OutpostMessage::Frame(frame));
     }
-
     /// A message read from the listener `outpost`'s pipe at `received`:
-    /// focus facts, the window in front, pongs, and `Ready` are handled as
-    /// the owner's events;
-    /// faults are logged.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "one arm per message the listener sends, with no wildcard"
-    )]
+    /// tells and answers are handed to the app for Core, which judges
+    /// them; the window in front, pongs and `Ready` are handled as the
+    /// owner's events; faults are logged. Every frame of a listener other
+    /// than the current one is dropped, so nothing of a listener replaced
+    /// reaches Core. A tell's process is held from the first tell that
+    /// names it, so its id names that process until the listener has
+    /// handled its exit.
     fn listener_message(
         &mut self,
         outpost: OutpostId,
         received: Received,
         message: ListenerToCore,
     ) {
+        if self
+            .listener
+            .as_ref()
+            .is_none_or(|listener| listener.outpost != outpost)
+        {
+            tracing::debug!(%outpost, "a frame of a listener that was replaced is dropped");
+            return;
+        }
         #[deny(clippy::wildcard_enum_match_arm)]
-        let event = match message {
-            ListenerToCore::FocusFact {
-                trace_id,
-                timing,
-                fact,
-                win_event,
-            } => OwnerEvent::Fact {
-                trace_id,
-                timing,
-                fact,
-                win_event,
-                received,
-            },
-            ListenerToCore::ForwardingEnded {
-                pid,
-                outpost,
-                through,
-            } => OwnerEvent::ForwardingEnded {
-                pid,
-                outpost,
-                through,
-            },
+        match message {
             ListenerToCore::Pong { written_at_us, .. } => {
                 if let Some(us) = hop_us(written_at_us, received.at_us) {
                     tracing::trace!(target: "verbatim::stage", stage = "listener's pipe to verbatim.exe", us, "pong");
                 }
-                OwnerEvent::Pong {
+                self.handle(OwnerEvent::Pong {
                     outpost,
                     parked: Parked::default(),
-                }
+                });
             }
             ListenerToCore::MenuOrSwitchEnded {
                 ended_at_us,
@@ -704,7 +709,8 @@ impl Owner {
                     pipe_us = hop_us(timing.listener_written_at_us, received.at_us),
                     "a menu or switcher end: listener handling, listener queue, listener's pipe to verbatim.exe"
                 );
-                OwnerEvent::MenuOrSwitchEnded { ended_at_us }
+                self.outbox
+                    .send(OutpostMessage::MenuOrSwitchEnded { ended_at_us });
             }
             ListenerToCore::Desktop { news, timing } => {
                 tracing::trace!(
@@ -715,7 +721,7 @@ impl Owner {
                     ?news,
                     "news of the desktop: listener handling, listener queue, listener's pipe to verbatim.exe"
                 );
-                OwnerEvent::Desktop(news)
+                self.outbox.send(OutpostMessage::Desktop(news));
             }
             ListenerToCore::Progress { change, timing } => {
                 tracing::trace!(
@@ -726,7 +732,7 @@ impl Owner {
                     ?change,
                     "a progress bar's change: listener handling, listener queue, listener's pipe to verbatim.exe"
                 );
-                OwnerEvent::Progress(change)
+                self.outbox.send(OutpostMessage::Progress(change));
             }
             ListenerToCore::Foreground {
                 window,
@@ -736,121 +742,46 @@ impl Owner {
                 thread,
                 console,
                 integrity,
-            } => OwnerEvent::Foreground(crate::ForegroundReport {
-                window,
-                root_owner,
-                process,
-                observed_at_us,
-                thread,
-                console,
-                integrity,
-            }),
-            ListenerToCore::Ready { .. } => OwnerEvent::Ready(outpost),
-            // Core's event queue judges them, the listener's generation
-            // among them.
-            message @ (ListenerToCore::Tell(_) | ListenerToCore::Answer(_)) => {
+            } => self
+                .outbox
+                .send(OutpostMessage::Foreground(crate::ForegroundReport {
+                    window,
+                    root_owner,
+                    process,
+                    observed_at_us,
+                    thread,
+                    console,
+                    integrity,
+                })),
+            ListenerToCore::Ready { .. } => self.on_ready(outpost),
+            // Core's event queue judges them.
+            ListenerToCore::Tell(tell) => {
+                self.hold_told(tell.process);
+                self.outbox.send(OutpostMessage::Listener {
+                    listener: outpost,
+                    message: Box::new(ListenerToCore::Tell(tell)),
+                });
+            }
+            message @ ListenerToCore::Answer(_) => {
                 self.outbox.send(OutpostMessage::Listener {
                     listener: outpost,
                     message: Box::new(message),
                 });
-                return;
             }
-            ListenerToCore::IdleAnswer { round } => {
-                self.listener_idle(outpost, round);
-                return;
-            }
-            ListenerToCore::ExitHandled { pid } => {
-                self.exit_handled(outpost, pid);
-                return;
-            }
+            ListenerToCore::IdleAnswer { round } => self.listener_idle(outpost, round),
+            ListenerToCore::ExitHandled { pid } => self.exit_handled(outpost, pid),
             ListenerToCore::Fault { detail } => {
                 tracing::warn!(detail, "focus listener fault");
-                return;
             }
-        };
-        self.handle(event);
+        }
     }
 
     fn handle(&mut self, event: OwnerEvent) {
         match event {
             OwnerEvent::Shutdown(reply) => self.shut_down_all(reply),
             OwnerEvent::BackoffClock(clock) => self.backoff_clock = clock,
-            OwnerEvent::EnsureSpawned(pid) => {
-                if self.shutting_down.is_some() {
-                    return;
-                }
-                match self.records.get(&pid) {
-                    None => {
-                        let _ = self.start_outpost(pid, None);
-                    }
-                    // Core asks for an outpost the owner already runs: it is
-                    // reported again, so Core's record takes it.
-                    Some(record) => {
-                        if let Some(outpost) = record.generation.outpost() {
-                            let ready = record.generation.is_ready();
-                            self.outbox.send(OutpostMessage::Running {
-                                outpost,
-                                target_pid: pid,
-                                ready,
-                                sealed: Sealed::new(),
-                            });
-                        }
-                    }
-                }
-            }
-
-            OwnerEvent::Fact { .. } if self.shutting_down.is_some() => {}
-            OwnerEvent::Fact {
-                trace_id,
-                timing,
-                fact,
-                win_event,
-                received,
-            } => self.route_fact(
-                HeldFact {
-                    trace_id,
-                    timing,
-                    fact: fact.fact,
-                    win_event,
-                    received,
-                },
-                fact.pid,
-            ),
-            OwnerEvent::ForwardingEnded {
-                pid,
-                outpost,
-                through,
-            } => self.forwarding_ended(pid, outpost, through),
-            OwnerEvent::MenuOrSwitchEnded { ended_at_us } => {
-                self.outbox
-                    .send(OutpostMessage::MenuOrSwitchEnded { ended_at_us });
-            }
-            OwnerEvent::Desktop(news) => self.outbox.send(OutpostMessage::Desktop(news)),
-            OwnerEvent::Progress(change) => self.outbox.send(OutpostMessage::Progress(change)),
-            OwnerEvent::Foreground(report) => {
-                self.outbox.send(OutpostMessage::Foreground(report));
-            }
-            OwnerEvent::Ready(outpost) => self.on_ready(outpost),
-            OwnerEvent::Pong { outpost, parked } => {
-                if let Some(record) = self.record_of(outpost) {
-                    record.generation.ponged(now_us(), parked);
-                    let target_pid = self.pid_of(outpost);
-                    self.outbox.send(OutpostMessage::Pong {
-                        outpost,
-                        target_pid,
-                    });
-                } else if let Some(listener) = self
-                    .listener
-                    .as_mut()
-                    .filter(|listener| listener.outpost == outpost)
-                {
-                    listener.liveness.ponged(now_us());
-                    self.outbox.send(OutpostMessage::Pong {
-                        outpost,
-                        target_pid: None,
-                    });
-                }
-            }
+            OwnerEvent::StartOutpost(pid) => self.start_outpost(pid),
+            OwnerEvent::Pong { outpost, parked } => self.ponged(outpost, parked),
             OwnerEvent::Unreadable(outpost) => self.on_pipe_closed(outpost),
             OwnerEvent::Launched { outpost, result } => self.on_launched(outpost, result),
             OwnerEvent::Retired(ending) => {
@@ -861,10 +792,37 @@ impl Owner {
             OwnerEvent::ToListener(command) => self.tell_listener(command),
             OwnerEvent::EndOutpost(outpost) => {
                 if let Some(pid) = self.pid_of(outpost) {
-                    self.end(pid, EndReason::Killed);
-                    self.release_target(pid);
+                    self.end(pid, EndReason::Killed, "Core ended it");
                 }
             }
+        }
+    }
+
+    /// `outpost` answered a ping, reporting `parked` workers: an
+    /// application's current generation or the listener; Core keeps each
+    /// one's liveness.
+    fn ponged(&mut self, outpost: OutpostId, parked: Parked) {
+        if let Some(pid) = self.pid_of(outpost) {
+            if let Some(
+                Generation::Starting { parked: last, .. } | Generation::Ready { parked: last, .. },
+            ) = self.records.get_mut(&pid)
+            {
+                *last = parked;
+            }
+            self.outbox.send(OutpostMessage::Pong {
+                outpost,
+                target_pid: Some(pid),
+            });
+        } else if let Some(listener) = self
+            .listener
+            .as_mut()
+            .filter(|listener| listener.outpost == outpost)
+        {
+            listener.liveness.ponged(now_us());
+            self.outbox.send(OutpostMessage::Pong {
+                outpost,
+                target_pid: None,
+            });
         }
     }
 
@@ -895,7 +853,6 @@ impl Owner {
             self.listener_gone();
         }
     }
-
     /// The listener `listener` answered round `round`, behind every fact it
     /// sent before, each routed in the pass that read it: the outposts are
     /// asked now, each behind them.
@@ -908,7 +865,6 @@ impl Owner {
             self.query_outposts(round);
         }
     }
-
     /// The listener has gone, its pipe closed or its launch failed, or it
     /// is replaced: one that ends during a round counts as having answered.
     fn listener_gone(&mut self) {
@@ -916,21 +872,18 @@ impl Owner {
             self.query_outposts(round);
         }
     }
-
     /// Asks every outpost, ready or starting, for round `round`, in this
-    /// one pass, behind every fact relayed to it before, and tells the app
+    /// one pass, behind every command sent to it before, and tells the app
     /// which first ([`OutpostMessage::IdleQueried`]). One still starting is
-    /// asked behind its held facts once it is ready. While an outpost is
-    /// still being launched, the app may not have heard it started, so the
-    /// outposts are asked once every launch has reported. An application
-    /// whose failed outpost's replacement waits for its backoff has no
-    /// generation to ask.
+    /// asked once it is ready. While an outpost is still being launched,
+    /// the app may not have heard it started, so the outposts are asked
+    /// once every launch has reported.
     fn query_outposts(&mut self, round: u64) {
         if self.shutting_down.is_none()
             && self
                 .records
                 .values()
-                .any(|record| record.generation.is_launching())
+                .any(|generation| matches!(generation, Generation::Launching { .. }))
         {
             self.idle = Some(IdleStage::Launches(round));
             return;
@@ -939,35 +892,28 @@ impl Owner {
         let outposts = self
             .records
             .values()
-            .filter(|record| record.generation.child().is_some())
-            .filter_map(|record| record.generation.outpost())
+            .filter(|generation| generation.child().is_some())
+            .map(Generation::outpost)
             .collect();
         self.outbox.send(OutpostMessage::IdleQueried {
             round,
             outposts,
             sealed: Sealed::new(),
         });
-        for record in self.records.values_mut() {
-            match record.generation.ready_child() {
-                Some(child) => ask_idle(&child.writer, round),
-                None if record.generation.outpost().is_some() => record.idle_query = Some(round),
-                None => {}
+        for generation in self.records.values_mut() {
+            match generation {
+                Generation::Ready { child, .. } => ask_idle(&child.writer, round),
+                Generation::Starting { idle_query, .. } => *idle_query = Some(round),
+                Generation::Launching { .. } => {}
             }
         }
     }
 
-    /// The record of the outpost generation `outpost`, if it is current.
-    fn record_of(&mut self, outpost: OutpostId) -> Option<&mut Record> {
-        self.records
-            .values_mut()
-            .find(|record| record.generation.outpost() == Some(outpost))
-    }
-
-    /// The application `outpost` watches, if it is current.
+    /// The application `outpost` serves, if it is its current generation.
     fn pid_of(&self, outpost: OutpostId) -> Option<Pid> {
         self.records
             .iter()
-            .find(|(_, record)| record.generation.outpost() == Some(outpost))
+            .find(|(_, generation)| generation.outpost() == outpost)
             .map(|(pid, _)| *pid)
     }
 
@@ -975,138 +921,109 @@ impl Owner {
         self.generation += 1;
         OutpostId(self.generation)
     }
-
-    /// Records `pid` as starting, once its process is held
-    /// ([`hold_target`](Self::hold_target)), and gives it its first
-    /// generation ([`incarnate`](Self::incarnate)); says whether it did. An
-    /// application whose process has exited, or cannot be held, gets no
-    /// outpost, and the app is told ([`OutpostMessage::NotWatched`]), so
-    /// nothing waits for one.
-    fn start_outpost(&mut self, pid: Pid, first: Option<HeldFact>) -> bool {
+    /// Carries out Core's effect "start an outpost for `pid`": gives it
+    /// the oldest spare waiting, ready or not, whose replacement starts at
+    /// once, or, with none, launches one for it. An application whose
+    /// process has exited, or cannot be held, or that Verbatim ignores,
+    /// gets none, and Core hears its launch failed. One that runs already
+    /// is reported again ([`OutpostMessage::Running`]), so Core's record
+    /// takes it.
+    fn start_outpost(&mut self, pid: Pid) {
+        if self.shutting_down.is_some() {
+            return;
+        }
+        if let Some(generation) = self.records.get(&pid) {
+            if generation.child().is_some() {
+                self.outbox.send(OutpostMessage::Running {
+                    outpost: generation.outpost(),
+                    target_pid: pid,
+                    ready: generation.is_ready(),
+                    sealed: Sealed::new(),
+                });
+            }
+            return;
+        }
         if self.ignored.contains(pid) {
             tracing::debug!(%pid, "no outpost is started for a process Verbatim ignores");
-            self.not_watched(pid);
-            return false;
+            self.launch_failed(pid, true);
+            return;
         }
         if let Err(not_held) = self.hold_target(pid) {
             tracing::info!(%pid, %not_held, "no outpost is started for an application that is not running");
-            self.release_target(pid);
-            self.not_watched(pid);
-            return false;
+            self.launch_failed(pid, true);
+            return;
         }
-        let now = now_us();
-        let mut held = HeldFacts::default();
-        if let Some(fact) = first {
-            if let Some(window) = fact_window(&fact.fact) {
-                check_served_by(pid, window);
+        if let Some(spare) = self.spares.take() {
+            let child = self
+                .spare_children
+                .remove(&spare)
+                .and_then(|spare| spare.child.into_running());
+            tracing::info!(outpost = %spare, %pid, "a spare outpost is given to the application");
+            match child {
+                Some(child) => self.running(pid, spare, child, true),
+                None => {
+                    self.records.insert(
+                        pid,
+                        Generation::Launching {
+                            outpost: spare,
+                            spare: true,
+                        },
+                    );
+                }
             }
-            held.hold(fact, now);
+            self.replenish_spares();
+        } else {
+            let outpost = self.next_outpost_id();
+            self.records.insert(
+                pid,
+                Generation::Launching {
+                    outpost,
+                    spare: false,
+                },
+            );
+            self.launch(outpost, Role::Outpost(pid));
+        }
+    }
+
+    /// `pid`'s generation `outpost` runs `child`: a given spare is sent its
+    /// `Assign`, ahead of everything the app will send it, and its pipe is
+    /// read as the application's from now on; the app hears it started
+    /// (Table 5, column B).
+    fn running(&mut self, pid: Pid, outpost: OutpostId, child: OutpostChild, spare: bool) {
+        if spare {
+            if let Err(error) = child.writer.push(Outgoing::HandOver(CoreToOutpost::Assign {
+                target_pid: pid,
+            })) {
+                // Its pipe's end follows, and is its end.
+                tracing::warn!(%error, %outpost, %pid, "a spare could not be sent its application");
+            }
+            self.relay.set_source(outpost, Source::Outpost(pid));
         }
         self.records.insert(
             pid,
-            Record {
-                generation: Generation::new(),
-                held,
+            Generation::Starting {
+                outpost,
+                child,
+                fault: None,
+                parked: Parked::default(),
                 idle_query: None,
-                since_us: now,
-                backoff: Backoff::default(),
             },
         );
-        self.incarnate(pid);
-        true
+        self.outbox.send(OutpostMessage::Started {
+            outpost,
+            target_pid: pid,
+            sealed: Sealed::new(),
+        });
     }
 
-    /// Runs `transition` on `pid`'s generation: takes its state out,
-    /// leaving a record with no generation while it runs, and stores the
-    /// state it returns. `None` when `pid` has no record.
-    fn transition<T>(
-        &mut self,
-        pid: Pid,
-        transition: impl FnOnce(Generation<OutpostChild>) -> (Generation<OutpostChild>, T),
-    ) -> Option<T> {
-        let record = self.records.get_mut(&pid)?;
-        let generation = std::mem::replace(&mut record.generation, Generation::new());
-        let (next, value) = transition(generation);
-        record.generation = next;
-        Some(value)
-    }
-
-    /// Does what a transition of `pid`'s generation says, in order.
-    fn apply(&mut self, pid: Pid, notices: Vec<Notice>) {
-        for notice in notices {
-            match notice {
-                Notice::HookInstalled { pid, outpost } => {
-                    self.tell_listener(CoreToListener::HookInstalled {
-                        pid,
-                        outpost,
-                        sent_at_us: 0,
-                    });
-                }
-                Notice::HookRemoved { pid } => {
-                    self.tell_listener(CoreToListener::HookRemoved { pid, sent_at_us: 0 });
-                }
-                Notice::Assign { outpost } => self.assign(pid, outpost),
-                Notice::Launch { outpost } => self.launch(outpost, Role::Outpost(pid)),
-                Notice::App(notice) => self.outbox.send(sealed(notice)),
-            }
-        }
-    }
-
-    /// Gives `pid`'s record, starting or after a failure, its next
-    /// generation: the oldest spare waiting, ready or not, whose
-    /// replacement starts at once, or, with no spare, a new outpost to
-    /// launch for it ([`Generation::given`]). When the generation before
-    /// failed before its `Ready`, the app hears first that this one takes
-    /// its place ([`OutpostMessage::Regenerated`]), then the failed one's
-    /// end if it heard it started.
-    fn incarnate(&mut self, pid: Pid) {
-        if !self.records.contains_key(&pid) {
-            return;
-        }
-        let now = now_us();
-        let next = match self.spares.take() {
-            Some(spare) => Next::Spare {
-                outpost: spare,
-                child: self
-                    .spare_children
-                    .remove(&spare)
-                    .and_then(|spare| spare.child.into_running()),
-            },
-            None => Next::Launch {
-                outpost: self.next_outpost_id(),
-            },
-        };
-        let took_spare = matches!(next, Next::Spare { .. });
-        let Some(notices) = self.transition(pid, |generation| generation.given(pid, next, now))
-        else {
-            return;
-        };
-        if let Some(record) = self.records.get_mut(&pid) {
-            record.since_us = now;
-        }
-        if took_spare {
-            self.replenish_spares();
-        }
-        self.apply(pid, notices);
-    }
-
-    /// Sends `pid`'s spare `outpost` its `Assign`, ahead of everything the
-    /// app will send it, and reads its pipe as the application's from now
-    /// on.
-    fn assign(&mut self, pid: Pid, outpost: OutpostId) {
-        if let Some(child) = self
-            .records
-            .get(&pid)
-            .and_then(|record| record.generation.child())
-            && let Err(error) = child.writer.push(Outgoing::HandOver(CoreToOutpost::Assign {
-                target_pid: pid,
-            }))
-        {
-            // Its pipe's end follows, and is the spare's failure.
-            tracing::warn!(%error, %outpost, %pid, "a spare could not be sent its application");
-        }
-        self.relay.set_source(outpost, Source::Outpost(pid));
-        tracing::info!(%outpost, %pid, "a spare outpost is given to the application");
+    /// No outpost was started for `pid`: Core hears its launch failed,
+    /// and whether because the application is gone.
+    fn launch_failed(&mut self, pid: Pid, application_gone: bool) {
+        self.outbox.send(OutpostMessage::LaunchFailed {
+            target_pid: pid,
+            application_gone,
+            sealed: Sealed::new(),
+        });
     }
 
     /// Starts keeping spare outposts, once: Core's own outpost is ready, or
@@ -1117,7 +1034,6 @@ impl Owner {
             self.replenish_spares();
         }
     }
-
     /// Launches spares until [`SPARES`] wait, unless a spare's failure's
     /// backoff runs.
     fn replenish_spares(&mut self) {
@@ -1140,7 +1056,6 @@ impl Owner {
             self.launch(spare, Role::Spare(spare));
         }
     }
-
     /// Logs the failure, for `why`, of a waiting spare that had been up for
     /// `up` as an error, the evidence to find its cause from, and replaces
     /// it, at once or after its backoff: spares are always replaced.
@@ -1154,129 +1069,6 @@ impl Owner {
         );
         self.replenish_spares();
     }
-
-    /// The earliest time a failure's backoff ends, an application's or the
-    /// spares', on the run's shared clock.
-    fn next_due(&self) -> Option<u64> {
-        self.records
-            .values()
-            .filter_map(|record| record.backoff.due())
-            .chain(self.spares.due())
-            .min()
-    }
-
-    /// Ends every backoff due at `now`, on the run's shared clock: each
-    /// application waiting is given its next generation, in the order
-    /// [`due_starts`] gives, unless it has exited by now, which ends its
-    /// record as its exit; and the spares are replenished.
-    fn start_due(&mut self, now: u64) {
-        if self.shutting_down.is_some() {
-            return;
-        }
-        let due = due_starts(
-            self.records
-                .iter_mut()
-                .map(|(pid, record)| (*pid, &mut record.backoff)),
-            now,
-        );
-        for pid in due {
-            // Whether the application still runs is read as the start is
-            // decided: a spare is never used up, nor an outpost launched,
-            // for a process that exited during the backoff.
-            if self.has_exited(pid) {
-                self.target_exited(pid, "target exited while its outpost's replacement waited");
-                continue;
-            }
-            tracing::info!(%pid, "a failed outpost's backoff has ended; its application is given the next");
-            self.incarnate(pid);
-        }
-        if self.spares.due().is_some_and(|due| due <= now) {
-            self.replenish_spares();
-        }
-    }
-
-    /// `pid`'s outpost failed, for `why`, as `reason` says: it crashed or
-    /// exited, its hook failed, its launch failed, it stopped answering
-    /// pings, or it piled up abandoned workers, whether a given spare or an
-    /// outpost started for the application, before or after its `Ready`.
-    /// It is ended, unless its application has exited, which ends it as
-    /// the application's exit. Otherwise the record keeps its held facts,
-    /// and the idle query held for it, for the next generation, given at
-    /// once for the application's first failure and after the backoff for
-    /// each further one ([`Backoff`]); facts arriving meanwhile are held
-    /// too. One that was ready is ended for the app now, which asks the
-    /// next for the focus where it needs to; one that failed before its
-    /// `Ready` lost nothing, and the app hears it replaced
-    /// ([`OutpostMessage::Regenerated`]) as the next is given.
-    fn outpost_failed(&mut self, pid: Pid, why: &str, reason: EndReason) {
-        if self.has_exited(pid) {
-            self.target_exited(pid, why);
-            return;
-        }
-        if self.shutting_down.is_some() {
-            self.end_quietly(pid, why);
-            return;
-        }
-        let backoff = self.timings.backoff();
-        let Some(record) = self.records.get_mut(&pid) else {
-            return;
-        };
-        let generation = std::mem::replace(&mut record.generation, Generation::new());
-        let failure = match generation.failed(pid, reason) {
-            Ok(failure) => failure,
-            Err(waiting) => {
-                record.generation = waiting;
-                return;
-            }
-        };
-        record.generation = failure.next;
-        let wait =
-            record
-                .backoff
-                .failed(up_since(record.since_us), (self.backoff_clock)(), backoff);
-        let failed = failure.outpost;
-        let ready = failure.ready;
-        // What it reported before it failed is the evidence of why.
-        let why = match failure.fault {
-            Some(fault) => format!("{why}, after its fault: {fault}"),
-            None => why.to_owned(),
-        };
-        self.forget_writer(failed);
-        if let Some(child) = failure.child {
-            self.retire_child(child, format!("outpost {failed} for {pid}"), why.clone());
-        }
-        // A failure before `Ready`, such as a hook that fails, is an error,
-        // whose sound a user hears, as a spare's failure is; an outpost
-        // that crashes or is stuck after it is a warning, as it was before
-        // every failure took this path.
-        if ready {
-            tracing::warn!(
-                %failed,
-                %pid,
-                why,
-                backoff_ms = wait.as_millis(),
-                "a ready outpost failed; its application is given the next"
-            );
-        } else {
-            tracing::error!(
-                %failed,
-                %pid,
-                why,
-                backoff_ms = wait.as_millis(),
-                "an outpost failed before it was ready; its application is given the next"
-            );
-        }
-        // A ready one's hook goes with it, and the app hears it ended, a
-        // generation following.
-        self.apply(pid, failure.notices);
-        if !ready && pid == self.own_pid {
-            self.keep_spares();
-        }
-        if wait.is_zero() {
-            self.incarnate(pid);
-        }
-    }
-
     /// Removes `outpost`'s writer from those the app can reach.
     fn forget_writer(&self, outpost: OutpostId) {
         self.writers
@@ -1284,66 +1076,43 @@ impl Owner {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .remove(&outpost);
     }
-
-    /// Tells the listener that `pid` has no outpost's hook in
-    /// ([`CoreToListener::HookRemoved`]), so a reading thread it started
-    /// for the application's events is released, then tells the app that
-    /// no outpost will watch `pid` for now ([`OutpostMessage::NotWatched`]),
-    /// so nothing waits for one.
-    fn not_watched(&mut self, pid: Pid) {
-        self.tell_listener(CoreToListener::HookRemoved { pid, sent_at_us: 0 });
-        self.outbox.send(OutpostMessage::NotWatched {
-            target_pid: pid,
-            sealed: Sealed::new(),
-        });
-    }
-
     /// Holds `pid`'s process, unless it is held already: the pid then names
     /// that process for as long as it is held. Fails when the process has
-    /// exited, the one held included, or cannot be opened. A process that
-    /// has exited is let go.
-    fn hold_target(&mut self, pid: Pid) -> Result<(), verbatim_process::held::NotHeld> {
+    /// exited, the one held included, or cannot be opened.
+    fn hold_target(&mut self, pid: Pid) -> Result<(), NotHeld> {
         match self.apps.get(&pid) {
-            Some(app) if app.target.has_exited() => {
-                self.forget_app(pid);
-                Err(verbatim_process::held::NotHeld::Exited)
-            }
+            Some(target) if target.has_exited() => Err(NotHeld::Exited),
             Some(_) => Ok(()),
             None => {
                 let target = Target::open(pid)?;
-                self.apps.insert(pid, App { target });
+                self.apps.insert(pid, target);
                 Ok(())
+            }
+        }
+    }
+
+    /// Holds the process a tell names, from the first tell that names it,
+    /// so its id names that process until the listener has handled its
+    /// exit (`docs/design/readers-tell-core-asks-build1.md`, "The listener's
+    /// record"). A process held already costs a lookup and nothing more.
+    fn hold_told(&mut self, pid: Pid) {
+        if self.apps.contains_key(&pid) || self.ignored.contains(pid) {
+            return;
+        }
+        match Target::open(pid) {
+            Ok(target) => {
+                self.apps.insert(pid, target);
+            }
+            Err(not_held) => {
+                tracing::debug!(%pid, %not_held, "a process a tell names cannot be held");
             }
         }
     }
 
     /// Whether `pid`'s process has exited, or is not held.
     fn has_exited(&self, pid: Pid) -> bool {
-        self.apps
-            .get(&pid)
-            .is_none_or(|app| app.target.has_exited())
+        self.apps.get(&pid).is_none_or(Target::has_exited)
     }
-
-    /// Lets `pid`'s process go once nothing is kept for it: it has no
-    /// record and it has exited. An application whose outpost retires keeps
-    /// its process held until it exits, which the sweep finds.
-    fn release_target(&mut self, pid: Pid) {
-        if !self.records.contains_key(&pid) && self.has_exited(pid) {
-            self.forget_app(pid);
-        }
-    }
-
-    /// Forgets `pid`'s process, whose exit the supervisor has learned, and
-    /// tells the listener, holding its handle until the listener answers. A
-    /// process it does not hold changes nothing, as `release_target` can
-    /// ask for one.
-    fn forget_app(&mut self, pid: Pid) {
-        if let Some(app) = self.apps.remove(&pid) {
-            tracing::debug!(%pid, "an application's process exited");
-            self.tell_exit(pid, app.target);
-        }
-    }
-
     /// Tells the running listener that `pid`'s process, `target`, has
     /// exited, keeping `target` open until it answers. With no listener
     /// running, or one still launching, `target` closes at once and nothing
@@ -1368,7 +1137,6 @@ impl Owner {
             }
         }
     }
-
     /// The listener `outpost` has moved `pid`'s record: its handle closes.
     fn exit_handled(&mut self, outpost: OutpostId, pid: Pid) {
         if let Some(listener) = self
@@ -1379,18 +1147,27 @@ impl Owner {
             drop(listener.exits_told.remove(&pid));
         }
     }
-
-    /// `pid`'s application has exited: its outpost is ended, never replaced,
-    /// and everything kept for it is forgotten.
-    fn target_exited(&mut self, pid: Pid, why: &str) {
-        self.end_because(pid, EndReason::TargetExited, why);
-        self.release_target(pid);
+    /// `pid`'s application has exited, for `why`: its outpost, if one
+    /// runs, is ended, the app hearing its end; Core hears the exit
+    /// (Table 5, column J); and the listener is told, its handle held
+    /// until it answers.
+    fn application_exited(&mut self, pid: Pid, why: &str) {
+        if self.records.contains_key(&pid) {
+            self.end(pid, EndReason::TargetExited, why);
+        }
+        if let Some(target) = self.apps.remove(&pid) {
+            tracing::debug!(%pid, why, "an application's process exited");
+            self.outbox.send(OutpostMessage::ApplicationExited {
+                target_pid: pid,
+                sealed: Sealed::new(),
+            });
+            self.tell_exit(pid, target);
+        }
     }
 
-    /// Records a new listener as starting and hands its launch to a helper.
-    /// It is told on its command line which applications' outposts have
-    /// their own hooks in now, and of every change after this as soon as it
-    /// has a writer ([`tell_listener`](Self::tell_listener)).
+    /// Records a new listener as starting and hands its launch to a helper,
+    /// telling the app first ([`OutpostMessage::ListenerStarted`]), so Core
+    /// keeps its first tells.
     fn start_listener(&mut self, replacement: bool) {
         let outpost = self.next_outpost_id();
         self.listener = Some(ListenerRecord {
@@ -1408,23 +1185,9 @@ impl Owner {
         self.launch(outpost, Role::Listener);
     }
 
-    /// The applications whose outposts have their own `WinEvent` hooks in:
-    /// those that have said they are ready, each with its outpost.
-    fn hooks_in(&self) -> Vec<(Pid, OutpostId)> {
-        self.records
-            .iter()
-            .filter(|(_, record)| record.generation.is_ready())
-            .filter_map(|(pid, record)| record.generation.outpost().map(|outpost| (*pid, outpost)))
-            .collect()
-    }
-
-    /// Sends the listener a message of the MSAA hand-over
-    /// (`books/dev/src/reference/adr/0001-focus.md`, "One route per application, and the marker"),
-    /// or Core's live
-    /// re-read, never dropped, or holds it, in order, while the listener's
-    /// launch is at work. With no listener, it is not needed: the next one
-    /// is told the applications whose outposts have their hooks in on its
-    /// command line, and Core ends its live re-reads at the replacement.
+    /// Sends the listener `command`, never dropped, or holds it, in order,
+    /// while the listener's launch is at work. With no listener it is not
+    /// needed: Core answers what it asked of a listener that ended.
     fn tell_listener(&mut self, command: CoreToListener) {
         let Some(listener) = self.listener.as_mut() else {
             return;
@@ -1432,28 +1195,10 @@ impl Owner {
         match listener.child.running() {
             Some(child) => {
                 if let Err(error) = child.writer.push(Outgoing::HandOver(command)) {
-                    tracing::warn!(%error, "the hand-over could not be told to the listener");
+                    tracing::warn!(%error, "a command could not be told to the listener");
                 }
             }
             None => listener.pending.push(command),
-        }
-    }
-
-    /// Relays the listener's "forwarding ended" to the outpost it was for,
-    /// behind every fact the listener sent before it, if that outpost still
-    /// watches `pid`; one for an earlier generation is dropped.
-    fn forwarding_ended(&self, pid: Pid, outpost: OutpostId, through: u32) {
-        let Some(child) = self
-            .records
-            .get(&pid)
-            .and_then(|record| record.generation.forwarding_target(outpost))
-        else {
-            tracing::debug!(%pid, %outpost, "forwarding ended for an outpost that has gone");
-            return;
-        };
-        let command = CoreToOutpost::ForwardingEnded { through };
-        if let Err(error) = child.writer.push(Outgoing::HandOver(command)) {
-            tracing::warn!(%error, %pid, "forwarding ended could not be relayed");
         }
     }
 
@@ -1463,14 +1208,13 @@ impl Owner {
     /// app as it takes the launch, through the same [`Outbox`] as the end
     /// of the generation before, and only then reads the child's pipe. So
     /// the app hears of a generation after the end of the one before and
-    /// before any of its messages, a query can reach the outpost as soon as
-    /// the app has heard, and the owner always learns of the launch before
-    /// the child's `Ready` or the end of its pipe.
+    /// before any of its messages, a request can reach the outpost as soon
+    /// as the app has heard, and the owner always learns of the launch
+    /// before the child's `Ready` or the end of its pipe.
     fn launch(&self, outpost: OutpostId, role: Role) {
         let listener = match role {
             Role::Listener => ListenerArguments {
                 ignored: self.ignored.pids(),
-                hooks_in: self.hooks_in(),
             },
             Role::Outpost(_) | Role::Spare(_) => ListenerArguments::default(),
         };
@@ -1548,7 +1292,6 @@ impl Owner {
         }
         self.outpost_launched(outpost, result);
     }
-
     /// The listener `outpost`'s launch reported.
     fn listener_launched(&mut self, outpost: OutpostId, result: io::Result<Child<CoreToListener>>) {
         if let Some(listener) = self
@@ -1591,24 +1334,20 @@ impl Owner {
             );
         }
     }
-
     /// The outpost `outpost`'s launch reported, a spare's or an
-    /// application's.
+    /// application's. One that failed is reported to Core as a failed
+    /// launch, which Core judges.
     fn outpost_launched(&mut self, outpost: OutpostId, result: io::Result<OutpostChild>) {
         if self.spare_children.contains_key(&outpost) {
             self.spare_launched(outpost, result);
             return;
         }
         let Some(pid) = self.pid_of(outpost) else {
-            // A child nobody wants any more: unreachable while records are
-            // only ended once their launch has reported, but if it happens
-            // the child must still die.
+            // A child nobody wants any more: its generation was ended while
+            // it launched, but the child must still die.
             if let Ok(child) = result {
                 tracing::warn!(%outpost, "launched a child that is no longer wanted");
-                self.writers
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .remove(&outpost);
+                self.forget_writer(outpost);
                 self.retire_child(
                     child,
                     format!("outpost {outpost}"),
@@ -1617,48 +1356,33 @@ impl Owner {
             }
             return;
         };
+        let Some(Generation::Launching { spare, .. }) = self.records.remove(&pid) else {
+            if let Ok(child) = result {
+                tracing::error!(%outpost, %pid, "launched a child for a generation that is not launching, a logic bug");
+                self.forget_writer(outpost);
+                self.retire_child(
+                    child,
+                    format!("outpost {outpost}"),
+                    "launched for a generation that was not launching".to_owned(),
+                );
+            }
+            return;
+        };
         match result {
             Ok(child) => {
-                let now = now_us();
-                let taken = self.transition(pid, |generation| {
-                    let taken = if generation.is_spare_given() {
-                        generation.assigned(pid, child, now)
-                    } else {
-                        generation.launched(pid, child, now)
-                    };
-                    match taken {
-                        Ok((next, notices)) => (next, Ok(notices)),
-                        Err((kept, child)) => (kept, Err(child)),
-                    }
-                });
-                match taken {
-                    Some(Ok(notices)) => self.apply(pid, notices),
-                    Some(Err(child)) => {
-                        tracing::warn!(%outpost, %pid, "launched a child for a generation that is not launching");
-                        self.retire_child(
-                            child,
-                            format!("outpost {outpost}"),
-                            "launched for a generation that was not launching".to_owned(),
-                        );
-                    }
-                    None => {}
-                }
+                self.running(pid, outpost, child, spare);
                 if self.shutting_down.is_some() {
                     self.end_quietly(pid, "Verbatim is exiting");
                 }
             }
-            Err(error) if self.shutting_down.is_none() => {
-                tracing::error!(%error, %pid, "failed to launch an outpost");
-                self.outpost_failed(
-                    pid,
-                    &format!("its launch failed: {error}"),
-                    EndReason::Exited,
-                );
-            }
             Err(error) => {
-                tracing::error!(%error, %pid, "failed to launch an outpost while Verbatim exits");
-                self.records.remove(&pid);
-                self.release_target(pid);
+                tracing::error!(%error, %pid, %outpost, "failed to launch an outpost");
+                if pid == self.own_pid {
+                    self.keep_spares();
+                }
+                if self.shutting_down.is_none() {
+                    self.launch_failed(pid, self.has_exited(pid));
+                }
             }
         }
     }
@@ -1695,11 +1419,11 @@ impl Owner {
             }
         }
     }
-
-    /// Releases held facts on `Ready`, in arrival order. A listener's
-    /// `Ready` is reported to the app, saying whether it is a replacement:
-    /// facts were then lost in the gap, so the app asks for the current
-    /// focus.
+    /// A child said `Ready`. The listener's is reported to the app, saying
+    /// whether it is a replacement: tells were then lost in the gap, so the
+    /// app asks for the current focus. An outpost's frame has been handed
+    /// on already; it is marked ready, asked the idle round held for it,
+    /// and, for Verbatim's own, spares are kept from now on.
     fn on_ready(&mut self, outpost: OutpostId) {
         if let Some(listener) = self
             .listener
@@ -1718,85 +1442,31 @@ impl Owner {
         let Some(pid) = self.pid_of(outpost) else {
             return;
         };
-        let Some(notices) = self.transition(pid, |generation| generation.ready(pid, outpost))
+        let Some(Generation::Starting {
+            outpost,
+            child,
+            parked,
+            idle_query,
+            ..
+        }) = self.records.remove(&pid)
         else {
+            tracing::debug!(%outpost, %pid, "a second Ready is dropped");
             return;
         };
-        let Some(record) = self.records.get_mut(&pid) else {
-            return;
-        };
-        if let Some(held_us) = record.held.first_held_us() {
-            // The time the supervisor held the application's first fact
-            // for its outpost's start (`books/dev/src/reference/adr/0001-focus.md`, "Spare
-            // outposts").
-            tracing::info!(
-                %outpost,
-                %pid,
-                first_fact_held_us = now_us().saturating_sub(held_us),
-                "outpost ready, its application's first fact held until now"
-            );
+        tracing::info!(%outpost, %pid, "outpost ready");
+        if let Some(round) = idle_query {
+            ask_idle(&child.writer, round);
         }
-        let Some(writer) = record
-            .generation
-            .ready_child()
-            .map(|child| child.writer.clone())
-        else {
-            return;
-        };
-        for mut held in record.held.take() {
-            // The time it was held for the outpost's start, reported apart
-            // from the relay's own (`docs/design/communication.md`, section 10.1).
-            held.timing.core_held_us = super::writer::elapsed_us(held.received);
-            deliver(&writer, held);
-        }
-        if let Some(round) = record.idle_query.take() {
-            ask_idle(&writer, round);
-        }
+        self.records.insert(
+            pid,
+            Generation::Ready {
+                outpost,
+                child,
+                parked,
+            },
+        );
         if pid == self.own_pid {
             self.keep_spares();
-        }
-        // An outpost is ready once its own `WinEvent` hook is in: the
-        // listener stops forwarding the application's MSAA events raised
-        // from now on, and says so behind the last it forwarded.
-        self.apply(pid, notices);
-    }
-
-    /// Routes a listener fact to its application's outpost: delivered at
-    /// once if the outpost is ready, held if it is starting or its failed
-    /// outpost's replacement waits for its backoff, and starting one if
-    /// there is none. A foreground change to the application starts its
-    /// backoff's count again, and ends a backoff that runs: its next
-    /// outpost is given now.
-    fn route_fact(&mut self, held: HeldFact, pid: Pid) {
-        if self.ignored.contains(pid) {
-            // The listener drops these already; nothing is routed either way.
-            return;
-        }
-        if matches!(held.fact, DeliveredFact::Foreground { .. })
-            && let Some(record) = self.records.get_mut(&pid)
-            && record.backoff.foreground()
-        {
-            tracing::info!(%pid, "its application came to the foreground; a failed outpost's backoff ends");
-            self.incarnate(pid);
-        }
-        match self.records.get_mut(&pid) {
-            Some(record) => match record.generation.ready_child() {
-                Some(child) => deliver(&child.writer, held),
-                None => record.held.hold(held, now_us()),
-            },
-            None => {
-                // A selection, or a notification Core would not speak, in
-                // an application with no outpost is not worth starting one
-                // for.
-                if may_start_outpost(&held.fact) {
-                    let _ = self.start_outpost(pid, Some(held));
-                } else if self.hold_target(pid).is_err() {
-                    // Held from its first fact, so that the sweep finds its
-                    // exit and tells the listener; one that cannot be held
-                    // ends its reader as any such process does.
-                    self.tell_listener(CoreToListener::HookRemoved { pid, sent_at_us: 0 });
-                }
-            }
         }
     }
 
@@ -1812,7 +1482,6 @@ impl Owner {
             }
             tracing::warn!(%outpost, "focus listener exited; replacing it");
             self.end_listener("its pipe closed; it is replaced");
-            self.focus_reads_ended();
             self.listener_gone();
             self.start_listener(true);
             return;
@@ -1843,59 +1512,76 @@ impl Owner {
                 self.end_quietly(pid, "its pipe closed while Verbatim is exiting");
                 return;
             }
-            self.outpost_failed(pid, "its pipe closed", EndReason::Exited);
+            // Its application's exit, when that is why, is told as such.
+            if self.has_exited(pid) {
+                self.application_exited(pid, "its pipe closed after its application exited");
+            } else {
+                self.end(pid, EndReason::Exited, "its pipe closed");
+            }
         }
         // Otherwise the owner already ended it, and the app already heard.
     }
 
-    /// Ends `pid`'s outpost: removes its record and writer, shuts the
-    /// process down cleanly, killing it only if it does not exit in time
-    /// ([`retire`], on a thread of its own), and tells the app at once.
-    fn end(&mut self, pid: Pid, reason: EndReason) {
-        self.end_because(pid, reason, &reason.to_string());
-    }
-
-    /// [`end`](Self::end), saying `why` in the log of the process's end:
-    /// the app hears the end of every generation it heard started, the
-    /// one that failed before its `Ready` and whose backoff runs among
-    /// them, with no generation following, and then that the application
-    /// is not watched ([`Generation::removed`]).
-    fn end_because(&mut self, pid: Pid, reason: EndReason, why: &str) {
-        let Some(record) = self.records.remove(&pid) else {
+    /// Ends `pid`'s generation, for `reason`, saying `why` in the log: its
+    /// writer goes, its process is shut down cleanly and killed only if it
+    /// does not exit in time ([`retire`], on a thread of its own), and the
+    /// app hears its end at once ([`OutpostMessage::Ended`]). Core judges
+    /// what follows. Verbatim's own outpost ending before its `Ready`
+    /// starts the spares.
+    fn end(&mut self, pid: Pid, reason: EndReason, why: &str) {
+        let Some(generation) = self.records.remove(&pid) else {
             return;
         };
-        tracing::info!(%pid, %reason, "outpost ended");
-        let removed = record.generation.removed(pid, Some(reason));
-        self.finish_removal(pid, removed, why);
+        let outpost = generation.outpost();
+        let ready = generation.is_ready();
+        let why = match &generation {
+            Generation::Starting {
+                fault: Some(fault), ..
+            } => format!("{why}, after its fault: {fault}"),
+            Generation::Launching { .. }
+            | Generation::Starting { .. }
+            | Generation::Ready { .. } => why.to_owned(),
+        };
+        // A failure before `Ready`, such as a hook that fails, is an error,
+        // whose sound a user hears, as a spare's failure is; an end after
+        // it is a warning.
+        if ready || reason != EndReason::Exited {
+            tracing::warn!(%outpost, %pid, %reason, why, "an outpost ended");
+        } else {
+            tracing::error!(%outpost, %pid, %reason, why, "an outpost ended before it was ready");
+        }
+        self.finish_removal(pid, outpost, generation, &why);
+        self.outbox.send(OutpostMessage::Ended {
+            outpost,
+            target_pid: pid,
+            reason,
+            sealed: Sealed::new(),
+        });
     }
 
-    /// Ends `pid`'s outpost as [`end`](Self::end) does, without telling the
-    /// app: Verbatim is exiting.
+    /// Ends `pid`'s generation as [`end`](Self::end) does, without telling
+    /// the app: Verbatim is exiting.
     fn end_quietly(&mut self, pid: Pid, why: &str) {
-        if let Some(record) = self.records.remove(&pid) {
-            let removed = record.generation.removed(pid, None);
-            self.finish_removal(pid, removed, why);
+        if let Some(generation) = self.records.remove(&pid) {
+            let outpost = generation.outpost();
+            self.finish_removal(pid, outpost, generation, why);
         }
     }
 
-    /// Ends what a removed record left: its writer goes, its process is
-    /// retired, for `why`, and its notices are sent, its hook's removal
-    /// among them.
-    fn finish_removal(&mut self, pid: Pid, removed: Removed<OutpostChild>, why: &str) {
-        if pid == self.own_pid && !removed.ready {
+    /// Ends what a removed generation left: its writer goes and its
+    /// process is retired, for `why`.
+    fn finish_removal(&mut self, pid: Pid, outpost: OutpostId, generation: Generation, why: &str) {
+        if pid == self.own_pid && !generation.is_ready() {
             self.keep_spares();
         }
-        if let Some(outpost) = removed.outpost {
-            self.forget_writer(outpost);
-            if let Some(child) = removed.child {
-                self.retire_child(
-                    child,
-                    format!("outpost {outpost} for {pid}"),
-                    why.to_owned(),
-                );
-            }
+        self.forget_writer(outpost);
+        if let Some(child) = generation.into_child() {
+            self.retire_child(
+                child,
+                format!("outpost {outpost} for {pid}"),
+                why.to_owned(),
+            );
         }
-        self.apply(pid, removed.notices);
     }
 
     /// Ends `child` cleanly on a thread of its own ([`retire`]), which
@@ -1925,21 +1611,17 @@ impl Owner {
             }
         }
     }
-
     /// Verbatim is exiting: no child is started from now on, and every
     /// child is shut down. Children still being launched are shut down as
     /// their launch reports back.
     fn shut_down_all(&mut self, reply: Sender<ShutdownSummary>) {
         tracing::info!("Verbatim is exiting: shutting down every outpost and the focus listener");
         self.shutting_down = Some(reply);
-        // Those still launching are ended as their launch reports; those
-        // waiting for a failure's backoff have nothing to wait for.
+        // Those still launching are ended as their launch reports.
         let launched: Vec<Pid> = self
             .records
             .iter()
-            .filter(|(_, record)| {
-                record.generation.child().is_some() || record.backoff.due().is_some()
-            })
+            .filter(|(_, generation)| generation.child().is_some())
             .map(|(pid, _)| *pid)
             .collect();
         for pid in launched {
@@ -1978,10 +1660,14 @@ impl Owner {
     /// Once Verbatim is exiting, every child has been ended and has
     /// finished ending, and every pipe has finished, sends the summary and
     /// says the owner is done. Until then the relay keeps running, since a
-    /// child's ending needs its shutdown message written.
+    /// child's ending needs its shutdown message written. A generation
+    /// still launching ends as its launch reports.
     fn finish_shutdown(&mut self) -> bool {
         if self.shutting_down.is_none()
-            || !self.records.is_empty()
+            || self
+                .records
+                .values()
+                .any(|generation| matches!(generation, Generation::Launching { .. }))
             || !self.spare_children.is_empty()
             || self.listener.is_some()
             || self.retiring > 0
@@ -2001,31 +1687,6 @@ impl Owner {
             let _ = reply.send(summary);
         }
         true
-    }
-
-    /// Tells every outpost, ready or starting, that the listener whose UIA
-    /// focus markers it may be waiting on has ended, so it waits on none of
-    /// them any more ([`DeliveredFact::UiaFocusReadsEnded`]). Sent behind
-    /// everything relayed from that listener: its pipe has closed, or it is
-    /// ended now, and a read its reader still relays after this lands where
-    /// no marker waits for it, and is handled where it arrives.
-    fn focus_reads_ended(&mut self) {
-        for record in self.records.values_mut() {
-            let held = HeldFact {
-                trace_id: TraceId::mint(),
-                timing: EventTiming {
-                    observed_at_us: verbatim_process::clock::now_us(),
-                    ..EventTiming::default()
-                },
-                fact: DeliveredFact::UiaFocusReadsEnded,
-                win_event: None,
-                received: crate::writer::received_now(),
-            };
-            match record.generation.ready_child() {
-                Some(child) => deliver(&child.writer, held),
-                None => record.held.hold(held, now_us()),
-            }
-        }
     }
 
     /// Ends the focus listener, shutting its process down cleanly, for
@@ -2049,51 +1710,52 @@ impl Owner {
             );
         }
     }
-
-    /// Pings every running child and ends any that is wedged.
+    /// Pings every running child; ends an outpost that has piled up
+    /// abandoned workers, and the listener when it has stopped answering;
+    /// and finds the applications held that have exited. Core judges an
+    /// outpost's missed pings by its own due time
+    /// (`docs/design/readers-tell-core-asks-build1.md`, "The outpost
+    /// generation record").
     fn heartbeat(&mut self) {
         self.relay.commands().forget_finished();
         if self.shutting_down.is_some() {
             return;
         }
         let ping = CoreToOutpost::ping();
-        let mut wedged = Vec::new();
-        let mut exited = Vec::new();
         let at_us = now_us();
         let limits = self.wedge_limits();
-        let running: Vec<Pid> = self
-            .records
+        let exited: Vec<Pid> = self
+            .apps
             .iter()
-            .filter(|(_, record)| record.generation.child().is_some())
-            .map(|(&pid, _)| pid)
+            .filter(|(_, target)| target.has_exited())
+            .map(|(pid, _)| *pid)
             .collect();
-        for pid in running {
-            // An application whose outpost could not tell it exited.
-            if self.has_exited(pid) {
-                exited.push(pid);
-                continue;
-            }
-            let Some(record) = self.records.get_mut(&pid) else {
-                continue;
-            };
-            let Some(beat) = record.generation.heartbeat(at_us, limits) else {
-                continue;
-            };
-            match beat {
-                Heartbeat::Wedged(reason) => wedged.push((pid, reason)),
-                Heartbeat::Ping => {
-                    if let Some(child) = record.generation.child() {
-                        let _ = child.writer.push(Outgoing::Ping(ping.clone()));
-                    }
-                }
-            }
-        }
         for pid in exited {
-            self.target_exited(pid, "target exited, seen by the supervisor");
+            self.application_exited(pid, "seen by the supervisor");
         }
-        for (pid, reason) in wedged {
-            tracing::warn!(%pid, %reason, "ending a stuck outpost");
-            self.outpost_failed(pid, &format!("ended as stuck: {reason}"), EndReason::Killed);
+        let mut wedged = Vec::new();
+        for (pid, generation) in &self.records {
+            let (Generation::Starting { child, parked, .. }
+            | Generation::Ready { child, parked, .. }) = generation
+            else {
+                continue;
+            };
+            // Only the abandoned workers are judged here: a pong's time is
+            // Core's to judge.
+            if wedge_decision(at_us, at_us, limits, *parked) == Some(WedgeReason::AbandonedWorkers)
+            {
+                wedged.push(*pid);
+            } else {
+                let _ = child.writer.push(Outgoing::Ping(ping.clone()));
+            }
+        }
+        for pid in wedged {
+            tracing::warn!(%pid, "ending an outpost that piled up abandoned workers");
+            self.end(
+                pid,
+                EndReason::Killed,
+                &format!("ended as stuck: {}", WedgeReason::AbandonedWorkers),
+            );
         }
         self.spare_heartbeat(at_us, &ping);
 
@@ -2105,7 +1767,6 @@ impl Owner {
                     if decision == Some(WedgeReason::MissedHeartbeats) {
                         tracing::warn!("focus listener stopped answering; replacing it");
                         self.end_listener("it stopped answering pings; it is replaced");
-                        self.focus_reads_ended();
                         self.listener_gone();
                         self.start_listener(true);
                     } else {
@@ -2150,42 +1811,7 @@ impl Owner {
             }
         }
     }
-
-    /// Closes the books of applications that have exited, every
-    /// [`SWEEP_INTERVAL`]. An outpost is never ended for being idle
-    /// (Dickson, 2026-11-10 and 2026-11-16).
-    fn sweep(&mut self) {
-        if self.shutting_down.is_some() {
-            return;
-        }
-        // Applications whose failed outposts' replacements wait for their
-        // backoff, and which have since exited.
-        let gone: Vec<Pid> = self
-            .records
-            .iter()
-            .filter(|(pid, record)| record.backoff.due().is_some() && self.has_exited(**pid))
-            .map(|(pid, _)| *pid)
-            .collect();
-        for pid in gone {
-            self.target_exited(pid, "target exited while its outpost's replacement waited");
-        }
-        // Applications whose records have ended and which have since
-        // exited: their handles are closed.
-        let exited: Vec<Pid> = self
-            .apps
-            .iter()
-            .filter(|(pid, app)| !self.records.contains_key(pid) && app.target.has_exited())
-            .map(|(pid, _)| *pid)
-            .collect();
-        for pid in exited {
-            self.forget_app(pid);
-        }
-    }
 }
-
-/// How often the owner closes the books of applications that have
-/// exited ([`Owner::sweep`]): 30 seconds.
-const SWEEP_INTERVAL: Duration = Duration::from_secs(30);
 
 /// Reports how a retirement's child ended when it is dropped: at the end
 /// of the retirement, or as its thread unwinds from a panic, with the
@@ -2203,56 +1829,12 @@ impl Drop for Retirement {
 
 /// Asks an outpost for the idle barrier's round `round`, behind everything
 /// queued for it before. One that has ended answers by its end.
-/// The window an MSAA fact names, which the listener routed by: a focus's,
-/// a menu's, or the new foreground. `None` for a UIA fact.
-fn fact_window(fact: &DeliveredFact) -> Option<isize> {
-    match fact {
-        DeliveredFact::MsaaFocus { hwnd, .. }
-        | DeliveredFact::Foreground { hwnd }
-        | DeliveredFact::MenuPopup { hwnd, .. } => Some(*hwnd),
-        _ => None,
-    }
-}
-
-/// Checks that `pid`, for which an outpost is starting on account of a fact
-/// in the window `hwnd`, is the process that serves that window
-/// ([`verbatim_win32::provider::provider_process`]), so no outpost is started for a
-/// console's client on account of its console window, whose console host
-/// serves it (`books/dev/src/explanation/design/listener-without-connections.md`, section 4.3).
-/// A debug build fails; a release build logs the error. A window closed
-/// since is not checked. Local calls only, once per outpost started.
-fn check_served_by(pid: Pid, hwnd: isize) {
-    let provider = verbatim_win32::provider::provider_process(hwnd);
-    let served = provider == Some(pid.0) || !verbatim_win32::window::window_exists(hwnd);
-    if !served {
-        tracing::error!(
-            %pid,
-            hwnd,
-            ?provider,
-            "an outpost is starting for a process that does not serve the window it starts for"
-        );
-    }
-    debug_assert!(
-        served,
-        "an outpost for {pid} started for window {hwnd:#x}, which {provider:?} serves"
-    );
-}
-
 fn ask_idle(writer: &WriterHandle<CoreToOutpost>, round: u64) {
     let query = CoreToOutpost::IdleQuery { round };
     if let Err(error) = writer.push(Outgoing::IdleQuery(query)) {
         tracing::debug!(%error, "the idle query could not reach an outpost");
     }
 }
-
-/// Sends a routed fact to an outpost: written at once when its pipe is
-/// free, queued otherwise.
-pub(super) fn deliver(writer: &WriterHandle<CoreToOutpost>, held: HeldFact) {
-    if let Err(error) = writer.push(Outgoing::delivered(held)) {
-        tracing::warn!(%error, "a routed fact could not be queued");
-    }
-}
-
 /// The launch helper's work: launch the process and make its writer on the
 /// relay's port; for an outpost, register the writer. Returns the launch,
 /// with the pipe the relay will read.

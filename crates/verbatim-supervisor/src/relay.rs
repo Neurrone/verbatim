@@ -417,9 +417,8 @@ mod tests {
 
     use super::*;
     use crate::owner::OwnerEvent;
-    use crate::policy::{HeldFact, HeldFacts};
     use crate::writer::{Outgoing, QueueError, received_now};
-    use verbatim_model::protocol::{CoreToOutpost, DeliveredFact, EventTiming, ListenerToCore};
+    use verbatim_model::protocol::{CoreToOutpost, EventTiming, ListenerToCore, RequestId};
     use verbatim_process::message::{read_message, write_message};
 
     /// How long a test waits for a completion it caused before it fails.
@@ -440,26 +439,23 @@ mod tests {
         (writer, BufReader::new(File::from(child)))
     }
 
-    fn held(observed_at_us: u64, hwnd: isize) -> HeldFact {
-        HeldFact {
-            trace_id: TraceId::mint(),
-            timing: EventTiming {
-                observed_at_us,
-                ..EventTiming::default()
+    /// A request numbered `id`, as the reducer sends one.
+    fn request(id: u64) -> Outgoing<CoreToOutpost> {
+        Outgoing::Other(
+            CoreToOutpost::Query {
+                trace_id: TraceId::mint(),
+                request_id: RequestId::shell(id),
+                query: verbatim_model::protocol::Query::DumpTree { locations: false },
+                timing: EventTiming::default(),
             },
-            fact: DeliveredFact::Foreground { hwnd },
-            win_event: None,
-            received: received_now(),
-        }
+            received_now(),
+        )
     }
 
     /// What a command read off a child's pipe is, for the order asserted.
     fn name(command: &CoreToOutpost) -> String {
         match command {
-            CoreToOutpost::DeliverFact { timing, .. } => {
-                format!("fact {}", timing.observed_at_us)
-            }
-            CoreToOutpost::ForwardingEnded { through } => format!("ended {through}"),
+            CoreToOutpost::Query { request_id, .. } => format!("request {}", request_id.number),
             other => format!("{other:?}"),
         }
     }
@@ -530,31 +526,6 @@ mod tests {
         drop(refusal);
     }
 
-    /// The owner's order through the relay's writer: facts held while the
-    /// outpost started go out first, in their order, then a fact read after
-    /// its `Ready`, then the listener's "forwarding ended" behind them all.
-    #[test]
-    fn held_facts_then_later_facts_then_forwarding_ended_reach_the_outpost_in_that_order() {
-        let relay = Relay::new().expect("a relay");
-        let (writer, mut child) = command_pipe(&relay, 1, 0);
-        let mut starting = HeldFacts::default();
-        starting.hold(held(1, 10), 10);
-        starting.hold(held(2, 20), 20);
-        for fact in starting.take() {
-            super::super::owner::deliver(&writer, fact);
-        }
-        super::super::owner::deliver(&writer, held(3, 30));
-        writer
-            .push(Outgoing::HandOver(CoreToOutpost::ForwardingEnded {
-                through: 99,
-            }))
-            .expect("queued");
-        assert_eq!(
-            read_names(&mut child, 4),
-            ["fact 1", "fact 2", "fact 3", "ended 99"]
-        );
-    }
-
     /// A child that stops reading holds up only its own commands: the
     /// other child's are written at once. When the stuck child goes with a
     /// write in flight, the write fails through the port, the relay lets
@@ -576,9 +547,9 @@ mod tests {
                 received_now(),
             ))
             .expect("written, and pending");
-        super::super::owner::deliver(&stuck, held(1, 10));
-        super::super::owner::deliver(&other, held(2, 20));
-        assert_eq!(read_names(&mut other_child, 1), ["fact 2"]);
+        stuck.push(request(1)).expect("queued");
+        other.push(request(2)).expect("written");
+        assert_eq!(read_names(&mut other_child, 1), ["request 2"]);
 
         drop(stuck_child);
         let mut completions = Completions::with_capacity(4);

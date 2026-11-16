@@ -247,8 +247,8 @@ mod tests {
         Urgent, WinEventStamp,
     };
     use verbatim_model::{
-        Backend, CallCounts, NodeDetails, NodeId, NodeSnapshot, NormalizedEvent, OutpostId, Pid,
-        QueryKind, Role, State, StateSet, TraceId, TreeNode,
+        Backend, CallCounts, NodeDetails, NodeId, NodeSnapshot, NormalizedEvent, Pid, QueryKind,
+        Role, State, StateSet, TraceId, TreeNode,
     };
 
     /// What the relay does with `message`'s frame.
@@ -536,7 +536,7 @@ mod tests {
     }
 
     #[test]
-    fn focus_fact_and_deliver_fact_round_trip() {
+    fn a_delivered_fact_round_trips() {
         let snapshot = UiaSnapshotFact {
             runtime_id: vec![42, 7],
             role: Role::MenuItem,
@@ -569,23 +569,6 @@ mod tests {
                 focus: true,
             },
         };
-        let focus_fact = ListenerToCore::FocusFact {
-            trace_id: TraceId::mint(),
-            timing: EventTiming {
-                observed_at_us: 1_752_000_000_000_000,
-                ..EventTiming::default()
-            },
-            fact: fact.clone(),
-            win_event: None,
-        };
-        let mut buffer = Vec::new();
-        write_message(&mut buffer, &focus_fact).expect("writes");
-        let mut reader = buffer.as_slice();
-        let read_back: ListenerToCore = read_message(&mut reader)
-            .expect("reads")
-            .expect("not end of stream");
-        assert_eq!(read_back, focus_fact);
-
         // The delivered fact is the same address minus the pid.
         assert_eq!(fact.pid(), Pid(1234));
         assert_eq!(
@@ -643,41 +626,12 @@ mod tests {
     }
 
     #[test]
-    fn the_hand_over_messages_round_trip() {
-        let pid = Pid(1234);
-        let outpost = OutpostId(5);
-        for command in [
-            CoreToListener::HookInstalled {
-                pid,
-                outpost,
-                sent_at_us: 4_000,
-            },
-            CoreToListener::HookRemoved {
-                pid,
-                sent_at_us: 4_000,
-            },
-        ] {
-            let mut buffer = Vec::new();
-            write_message(&mut buffer, &command).expect("writes");
-            let read_back: Option<CoreToListener> =
-                read_message(&mut buffer.as_slice()).expect("reads");
-            assert_eq!(read_back, Some(command));
-        }
+    fn forwarding_ended_round_trips() {
         let command = CoreToOutpost::ForwardingEnded { through: 99 };
         let mut buffer = Vec::new();
         write_message(&mut buffer, &command).expect("writes");
         let read_back: Option<CoreToOutpost> = read_message(&mut buffer.as_slice()).expect("reads");
         assert_eq!(read_back, Some(command));
-        let ended = ListenerToCore::ForwardingEnded {
-            pid,
-            outpost,
-            through: 99,
-        };
-        let mut buffer = Vec::new();
-        write_message(&mut buffer, &ended).expect("writes");
-        let read_back: Option<ListenerToCore> =
-            read_message(&mut buffer.as_slice()).expect("reads");
-        assert_eq!(read_back, Some(ended));
     }
 
     #[test]

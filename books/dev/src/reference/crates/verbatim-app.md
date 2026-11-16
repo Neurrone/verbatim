@@ -134,9 +134,7 @@ The end-to-end harness's hooks (private `harness` module):
   the question is still in progress, and tells the reducer which outposts
   it asked (`OutpostMessage::IdleQueried`). Each child answers behind
   every message it sent before, and an outpost that ends counts as having
-  answered, except an outpost that failed before its `Ready`, whose
-  place goes to the generation `OutpostMessage::Regenerated` names,
-  which holds its facts and its query. When every answer is in, the reducer takes in what is already
+  answered. When every answer is in, the reducer takes in what is already
   on its port and checks its own conditions: Core's event queue idle
   (`SrState::queue_idle`: no entry at the front or waiting, none to be
   appended later, no request waiting or out, no window watched for
@@ -394,8 +392,10 @@ knowing for review:
   owner thread's process facts (`Started` and `Running` as
   `ProcessFact::OutpostStarted`, an outpost's `Ready` and
   `ListenerReady` as `ReaderReady`, `Ended` and `ListenerEnded` as
-  `ReaderEnded`, `ListenerStarted`, `Pong`, `SpareReady`, and
-  `NotWatched` as `LaunchFailed`); the listener's foreground report, with
+  `ReaderEnded`, but an `Ended` for its application's exit, which Core
+  takes as the `ApplicationExited` that follows, `ListenerStarted`,
+  `Pong`, `SpareReady`, `LaunchFailed`, and `ApplicationExited`); the
+  listener's foreground report, with
   the window's class; the hook's presses, deferred transitions and Alt
   changes; and, posted before Verbatim starts, the harness's ignored
   processes and Verbatim's own process, whose outpost Core
@@ -416,7 +416,7 @@ knowing for review:
   stands in for (`HungWindowFromGhostWindow`), and so is a foreground
   report naming a ghost before Core takes it, so Core judges the hung
   window and its application, not the ghost's process. `StartOutpost` is
-  `ensure_spawned`, `EndOutpost` is `end_outpost`, `WindowDestroyed` goes
+  `start_outpost`, `EndOutpost` is `end_outpost`, `WindowDestroyed` goes
   to the outpost Core names, and `WakeAt` is one of the thread's
   deadlines, its passing fed as `QueueInput::Due`. Each answer the shell
   gives enters the queue after the input whose effects are being carried

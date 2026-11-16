@@ -1,15 +1,13 @@
 //! Core's supervisor's pure decisions (architecture section 1, decisions D9
-//! and D13): the outpost generations' typestates ([`generation`]), and when
-//! an outpost is stuck, how long a failed
-//! outpost's replacement waits, how facts that arrive during a spawn are
-//! held, which facts may start an outpost, and which spare outposts are
-//! kept and given ([`policy`]). The supervisor's owner, in
-//! `verbatim-supervisor`, gathers their inputs, reads the clocks, and
-//! carries out what they decide. Every time they take is in microseconds
+//! and D13): the outpost generation record Core's reducer owns
+//! (`record`), and when a listener or spare is stuck, how long a failed
+//! outpost's replacement waits, and which spare outposts are kept and
+//! given ([`policy`]). The supervisor's owner, in `verbatim-supervisor`,
+//! reports the process facts, reads the clocks, and carries out what they
+//! decide. Every time they take is in microseconds
 //! on the run's shared clock (`verbatim_process::clock::now_us`), given
 //! with the input.
 
-pub mod generation;
 pub mod policy;
 pub(crate) mod record;
 

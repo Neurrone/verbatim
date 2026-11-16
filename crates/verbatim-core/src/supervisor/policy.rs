@@ -1,16 +1,14 @@
 //! The supervisor's pure decisions, kept apart from the I/O that gathers
 //! their inputs so each is unit-tested on its own: when an outpost is stuck,
 //! how long a failed outpost's replacement
-//! waits, how facts that arrive during a spawn are held, which facts may
-//! start an outpost, and which spare outposts are kept and given.
+//! waits, and which spare outposts are kept and given.
 
 #![forbid(unsafe_code)]
 
 use std::collections::VecDeque;
 use std::time::Duration;
 
-use verbatim_model::protocol::DeliveredFact;
-use verbatim_model::{OutpostId, Pid, TraceId};
+use verbatim_model::OutpostId;
 
 /// Why the owner killed an otherwise-alive outpost (recovery ladder rung 3).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -199,87 +197,6 @@ impl Backoff {
     }
 }
 
-/// The applications whose backoff has ended at `now_us`, among
-/// `backoffs`, in the order their waits ended, and by process id when two
-/// ended at the same time: each is given its next generation in that
-/// order, so which application takes which spare is decided here. Each
-/// backoff that ended is told so ([`Backoff::ended`]), so no wait runs for
-/// it after this.
-pub fn due_starts<'a>(
-    backoffs: impl IntoIterator<Item = (Pid, &'a mut Backoff)>,
-    now_us: u64,
-) -> Vec<Pid> {
-    let mut due: Vec<(u64, Pid)> = backoffs
-        .into_iter()
-        .filter_map(|(pid, backoff)| {
-            let due_us = backoff.due()?;
-            backoff.ended(now_us).then_some((due_us, pid))
-        })
-        .collect();
-    due.sort_unstable();
-    due.into_iter().map(|(_, pid)| pid).collect()
-}
-
-/// A focus fact routed to an outpost, with the trace and observation time
-/// (`timing`'s `observed_at_us`) the listener stamped.
-#[derive(Clone, Debug, PartialEq)]
-pub struct HeldFact {
-    /// The trace the listener minted for it.
-    pub trace_id: TraceId,
-    /// Its timing, with the observation the listener stamped.
-    pub timing: verbatim_model::protocol::EventTiming,
-    /// The fact.
-    pub fact: DeliveredFact,
-    /// For an MSAA `WinEvent`'s fact, the thread that raised it and when.
-    pub win_event: Option<verbatim_model::protocol::WinEventStamp>,
-    /// When verbatim.exe read it from the listener.
-    pub received: super::Received,
-}
-
-/// Facts that arrive while an outpost is starting, held in arrival order and
-/// released in that order once it is ready. A newer fact for the same object
-/// and kind, and for an MSAA event other than a menu opening the same
-/// thread that raised it (`DeliveredFact::key`), replaces the older one and takes its place at
-/// the back (`docs/parity/backends.md`, "MSAA winevent flood control"), so
-/// the release order is the order in which the surviving facts last
-/// happened.
-#[derive(Debug, Default)]
-pub struct HeldFacts {
-    facts: Vec<HeldFact>,
-    /// When the first fact was held, on the run's shared clock, until
-    /// they are taken.
-    first_held_us: Option<u64>,
-}
-
-impl HeldFacts {
-    /// Holds `fact`, replacing any older fact for the same object and kind
-    /// and, for an MSAA event other than a menu opening, the same thread
-    /// that raised it. `now_us` is kept only when no fact is held: the
-    /// time the application's first fact was held.
-    pub fn hold(&mut self, fact: HeldFact, now_us: u64) {
-        if let Some(key) = fact.fact.key(fact.win_event) {
-            self.facts
-                .retain(|held| held.fact.key(held.win_event).as_ref() != Some(&key));
-        }
-        self.first_held_us.get_or_insert(now_us);
-        self.facts.push(fact);
-    }
-
-    /// When the first fact still held, or taken since, was held: how long
-    /// the application's first fact has waited for its outpost, on the
-    /// run's shared clock.
-    #[must_use]
-    pub fn first_held_us(&self) -> Option<u64> {
-        self.first_held_us
-    }
-
-    /// Takes every held fact, in release order.
-    pub fn take(&mut self) -> Vec<HeldFact> {
-        self.first_held_us = None;
-        std::mem::take(&mut self.facts)
-    }
-}
-
 /// The spare outposts (`books/dev/src/reference/adr/0001-focus.md`, "Spare outposts"):
 /// whether they are kept yet, which wait, oldest first, and whether each has
 /// said it is ready. A spare given to an application never returns to the
@@ -374,41 +291,6 @@ impl Spares {
         times: (Duration, Duration, Duration),
     ) -> Duration {
         self.backoff.failed(up, now_us, times)
-    }
-}
-
-/// Whether `fact` may start an outpost for an application that has none
-/// (architecture section 1, "The focus listener (D13)"): focus, foreground,
-/// menu, and alert facts may, a UIA focus's marker and read among them,
-/// and the shell's window-snap results notification, the one Core speaks
-/// from any application. A selection without an outpost is dropped, and so
-/// is any other notification: Core speaks a notification only from the
-/// focus's application, and an application with no outpost cannot hold the
-/// focus (`docs/parity/focus-events.md`, "Background events"). A focus's
-/// drop and the end of a listener's reads resolve only markers an outpost
-/// already holds, and a live re-read's answer of gone only a live re-read
-/// Core asked through an outpost it holds; an MSAA live re-read is asked of
-/// an outpost directly, never routed.
-#[must_use]
-pub fn may_start_outpost(fact: &DeliveredFact) -> bool {
-    match fact {
-        DeliveredFact::UiaSelection { .. }
-        | DeliveredFact::UiaFocusDropped { .. }
-        | DeliveredFact::UiaFocusReadsEnded
-        | DeliveredFact::UiaLiveRereadGone { .. }
-        | DeliveredFact::MsaaLiveReread { .. } => false,
-        DeliveredFact::UiaNotification { notification, .. } => {
-            notification.activity_id.as_deref() == Some(crate::SNAP_RESULTS_ACTIVITY)
-        }
-        DeliveredFact::UiaFocusMarker { .. }
-        | DeliveredFact::UiaFocusRead { .. }
-        | DeliveredFact::UiaMarked { .. }
-        | DeliveredFact::MsaaFocus { .. }
-        | DeliveredFact::Foreground { .. }
-        | DeliveredFact::MenuPopup { .. }
-        | DeliveredFact::UiaToast { .. }
-        | DeliveredFact::Alert { .. }
-        | DeliveredFact::Show { .. } => true,
     }
 }
 
@@ -595,64 +477,6 @@ mod tests {
     /// Backoffs that ended start in the order they ended, a tie by process
     /// id, whatever order they are given in; one still running, or with no
     /// wait, is left, and each that ended runs no more.
-    #[test]
-    fn due_starts_are_in_the_order_their_backoffs_ended_then_by_process_id() {
-        let young = Duration::from_secs(1);
-        // A backoff whose wait, from a failure at `at`, is one second.
-        let waiting = |at: u64| {
-            let mut backoff = Backoff::default();
-            let _ = backoff.failed(young, at, TIMES);
-            let _ = backoff.failed(young, at, TIMES);
-            backoff
-        };
-        let mut late = waiting(START + 2 * SECOND);
-        let mut tie_high = waiting(START + SECOND);
-        let mut early = waiting(START);
-        let mut tie_low = waiting(START + SECOND);
-        let mut running = waiting(START + 9 * SECOND);
-        let mut none = Backoff::default();
-        let now = START + 3 * SECOND;
-        let due = due_starts(
-            [
-                (Pid(5), &mut late),
-                (Pid(9), &mut tie_high),
-                (Pid(7), &mut early),
-                (Pid(3), &mut tie_low),
-                (Pid(1), &mut running),
-                (Pid(2), &mut none),
-            ],
-            now,
-        );
-        assert_eq!(due, [Pid(7), Pid(3), Pid(9), Pid(5)]);
-        for ended in [&late, &tie_high, &early, &tie_low] {
-            assert_eq!(ended.due(), None);
-        }
-        assert_eq!(running.due(), Some(START + 10 * SECOND));
-        assert_eq!(none.due(), None);
-    }
-
-    fn held(observed_at_us: u64, fact: DeliveredFact) -> HeldFact {
-        HeldFact {
-            trace_id: TraceId::from_raw(observed_at_us),
-            timing: verbatim_model::protocol::EventTiming {
-                observed_at_us,
-                ..verbatim_model::protocol::EventTiming::default()
-            },
-            fact,
-            win_event: None,
-            received: super::super::Received { at_us: 0 },
-        }
-    }
-
-    fn msaa_focus(hwnd: isize) -> DeliveredFact {
-        DeliveredFact::MsaaFocus {
-            hwnd,
-            id_object: -4,
-            id_child: 0,
-        }
-    }
-
-    /// Spares kept, with `count` started, numbered from 1.
     fn kept(count: u64) -> Spares {
         let mut spares = Spares::default();
         assert!(spares.keep());
@@ -707,85 +531,5 @@ mod tests {
         assert!(spares.remove(OutpostId(1)));
         assert!(!spares.remove(OutpostId(1)), "removed once");
         assert_eq!(spares.wanted(2, START), 1);
-    }
-
-    #[test]
-    fn held_facts_release_in_arrival_order_and_a_repeat_moves_to_the_back() {
-        let mut facts = HeldFacts::default();
-        facts.hold(held(1, DeliveredFact::Foreground { hwnd: 7 }), START);
-        facts.hold(held(2, msaa_focus(8)), START);
-        facts.hold(
-            held(
-                3,
-                DeliveredFact::MenuPopup {
-                    hwnd: 9,
-                    id_object: -4,
-                    id_child: 0,
-                },
-            ),
-            START,
-        );
-        // Focus returns to the same object after the menu: the older entry
-        // is replaced and the newer one is released last.
-        facts.hold(held(4, msaa_focus(8)), START);
-        let released: Vec<u64> = facts
-            .take()
-            .iter()
-            .map(|fact| fact.timing.observed_at_us)
-            .collect();
-        assert_eq!(released, vec![1, 3, 4]);
-        assert!(facts.take().is_empty(), "nothing is left held");
-    }
-
-    #[test]
-    fn a_selection_or_a_background_notification_may_not_start_an_outpost() {
-        use verbatim_model::protocol::UiaSnapshotFact;
-        use verbatim_model::{
-            NodeDetails, Notification, NotificationKind, NotificationProcessing, Role, StateSet,
-        };
-        let snapshot = UiaSnapshotFact {
-            runtime_id: vec![1],
-            role: Role::ListItem,
-            name: None,
-            value: None,
-            states: StateSet::new(),
-            details: NodeDetails::default(),
-        };
-        let selection = DeliveredFact::UiaSelection {
-            hwnd: 0,
-            focus_window: 0,
-            snapshot: snapshot.clone(),
-        };
-        assert!(!may_start_outpost(&selection));
-        let notification = |activity_id: &str| DeliveredFact::UiaNotification {
-            hwnd: 0,
-            snapshot: snapshot.clone(),
-            notification: Notification {
-                kind: NotificationKind::ActionCompleted,
-                processing: NotificationProcessing::ImportantAll,
-                display_string: Some("Copied".into()),
-                activity_id: Some(activity_id.into()),
-            },
-        };
-        assert!(!may_start_outpost(&notification("Clipboard")));
-        // A focus's drop, and the end of a listener's reads, only resolve
-        // markers an outpost holds.
-        assert!(!may_start_outpost(&DeliveredFact::UiaFocusDropped {
-            marker: 1,
-            focus: true,
-        }));
-        assert!(!may_start_outpost(&DeliveredFact::UiaFocusReadsEnded));
-        for fact in [
-            notification(crate::SNAP_RESULTS_ACTIVITY),
-            DeliveredFact::Foreground { hwnd: 1 },
-            DeliveredFact::UiaFocusMarker { marker: 1 },
-            DeliveredFact::Alert {
-                hwnd: 1,
-                id_object: -4,
-                id_child: 0,
-            },
-        ] {
-            assert!(may_start_outpost(&fact), "{fact:?}");
-        }
     }
 }

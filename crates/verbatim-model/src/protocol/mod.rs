@@ -684,8 +684,7 @@ pub enum CoreToOutpost {
     /// of this message, so the listener's copies and the outpost's hook's
     /// are matched from now on only for events raised while the hook went
     /// in (`books/dev/src/reference/crates/verbatim-outpost.md`, "The hand-over of an
-    /// application's MSAA events"). Relayed in order behind every fact the listener sent before
-    /// it ([`ListenerToCore::ForwardingEnded`]).
+    /// application's MSAA events").
     ForwardingEnded {
         /// The listener's clock when it stopped, on the `WinEvent` clock.
         through: u32,
@@ -862,38 +861,6 @@ impl CoreToOutpost {
 /// Messages from verbatim.exe to the focus listener.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CoreToListener {
-    /// The outpost `outpost` watching `pid` has its own `WinEvent` hook in,
-    /// so the listener forwards none of `pid`'s `WinEvent` facts raised
-    /// from now on, and answers [`ListenerToCore::ForwardingEnded`] behind
-    /// every fact it has forwarded (`books/dev/src/reference/adr/0001-focus.md`, "One route per
-    /// application, and the marker").
-    HookInstalled {
-        /// The application.
-        pid: Pid,
-        /// Its outpost generation, echoed in the answer so a late answer
-        /// never reaches a later generation.
-        outpost: OutpostId,
-        /// When verbatim.exe began writing this command to the listener's
-        /// pipe, in microseconds since the Unix epoch
-        /// ([`CoreToListener::stamp_sent`]).
-        #[serde(default)]
-        sent_at_us: u64,
-    },
-    /// `pid` has no outpost with its hook in, so the listener forwards its
-    /// `WinEvent` facts again and its reading thread ends once the events
-    /// waiting for it are read. Sent when a ready generation fails, when an
-    /// application's record is removed from any stage, its hook ever in or
-    /// not, and when the supervisor declines to watch an application, so a
-    /// reading thread started before any hook was in is released too.
-    HookRemoved {
-        /// The application.
-        pid: Pid,
-        /// When verbatim.exe began writing this command to the listener's
-        /// pipe, in microseconds since the Unix epoch
-        /// ([`CoreToListener::stamp_sent`]).
-        #[serde(default)]
-        sent_at_us: u64,
-    },
     /// `pid`'s process has exited: the supervisor holds its handle until
     /// [`ListenerToCore::ExitHandled`] answers, so no new process can have
     /// its id until the listener has moved its record. Sent once per held
@@ -955,9 +922,7 @@ impl CoreToListener {
     /// command's write begins. Reads no clock for any other command.
     pub fn stamp_sent(&mut self, now: impl FnOnce() -> u64) {
         match self {
-            CoreToListener::Ping { sent_at_us, .. }
-            | CoreToListener::HookInstalled { sent_at_us, .. }
-            | CoreToListener::HookRemoved { sent_at_us, .. } => *sent_at_us = now(),
+            CoreToListener::Ping { sent_at_us, .. } => *sent_at_us = now(),
             CoreToListener::IdleQuery { .. }
             | CoreToListener::ApplicationExited { .. }
             | CoreToListener::Shutdown
@@ -972,9 +937,7 @@ impl CoreToListener {
     #[must_use]
     pub fn sent_at_us(&self) -> u64 {
         match self {
-            CoreToListener::Ping { sent_at_us, .. }
-            | CoreToListener::HookInstalled { sent_at_us, .. }
-            | CoreToListener::HookRemoved { sent_at_us, .. } => *sent_at_us,
+            CoreToListener::Ping { sent_at_us, .. } => *sent_at_us,
             CoreToListener::IdleQuery { .. }
             | CoreToListener::ApplicationExited { .. }
             | CoreToListener::Shutdown
@@ -992,9 +955,7 @@ impl CoreToListener {
             | CoreToListener::LiveReread { .. }
             | CoreToListener::Request(_)
             | CoreToListener::Cancel(_) => Kind::Ask,
-            CoreToListener::HookInstalled { .. }
-            | CoreToListener::HookRemoved { .. }
-            | CoreToListener::ApplicationExited { .. }
+            CoreToListener::ApplicationExited { .. }
             | CoreToListener::Ping { .. }
             | CoreToListener::Shutdown => Kind::Lifecycle,
         }
@@ -1346,10 +1307,6 @@ pub enum OutpostToCore {
 
 /// Messages from the focus listener to verbatim.exe.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[expect(
-    clippy::large_enum_variant,
-    reason = "a message is built once and moved; the backlogs that hold messages are short"
-)]
 pub enum ListenerToCore {
     /// The listener has made its desktop-wide UIA subscriptions, or failed
     /// to: its first message after its start's facts.
@@ -1359,39 +1316,6 @@ pub enum ListenerToCore {
         /// A sentinel, 0: the listener has no target application. Only
         /// logged.
         target_pid: Pid,
-    },
-    /// A focus fact the focus listener captured (decision D13). Sent only by
-    /// the listener process, never a per-application outpost; the supervisor
-    /// intercepts it, routes it to the target's own outpost, and never
-    /// forwards it to the app. The listener mints the `trace_id` and stamps
-    /// `timing`'s `observed_at_us` at observation, so the fact is ordered
-    /// by, and the latency timeline starts at, the real OS event.
-    FocusFact {
-        /// Trace ID minted when the listener observed the OS event.
-        trace_id: TraceId,
-        /// When it was raised and observed, in microseconds on the run's
-        /// shared clock.
-        #[serde(default)]
-        timing: EventTiming,
-        /// The captured fact, tagged with the pid Core routes it to.
-        fact: ListenerFact,
-        /// For an MSAA `WinEvent`'s fact, the thread that raised it and
-        /// when; `None` for a UIA fact.
-        #[serde(default)]
-        win_event: Option<WinEventStamp>,
-    },
-    /// The listener's answer to [`CoreToListener::HookInstalled`],
-    /// sent behind every fact it forwarded before it: it forwards none of
-    /// `pid`'s `WinEvent` facts raised after `through`. Sent only by the
-    /// listener; the supervisor relays it to `outpost` as
-    /// [`CoreToOutpost::ForwardingEnded`] if it still watches `pid`.
-    ForwardingEnded {
-        /// The application.
-        pid: Pid,
-        /// The outpost generation the hand-over was for.
-        outpost: OutpostId,
-        /// The listener's clock when it stopped, on the `WinEvent` clock.
-        through: u32,
     },
     /// The listener's answer to [`CoreToListener::ApplicationExited`]: it
     /// has moved `pid`'s record, so the supervisor closes the process's
@@ -1946,27 +1870,23 @@ impl ListenerToCore {
             | ListenerToCore::Tell(_) => Kind::Report,
             ListenerToCore::Ready { .. }
             | ListenerToCore::Pong { .. }
-            | ListenerToCore::ForwardingEnded { .. }
             | ListenerToCore::ExitHandled { .. } => Kind::Lifecycle,
-            ListenerToCore::FocusFact { .. } => Kind::Routed,
         }
     }
 
     /// Records, in the timing the message carries, when its writer began
-    /// writing it to verbatim.exe's pipe: a fact's or a menu end's
+    /// writing it to verbatim.exe's pipe: a menu end's
     /// (`EventTiming::listener_written_at_us`), or a pong's. Nothing for
     /// any other message.
     pub fn written(&mut self, at_us: u64) {
         match self {
-            ListenerToCore::FocusFact { timing, .. }
-            | ListenerToCore::MenuOrSwitchEnded { timing, .. }
+            ListenerToCore::MenuOrSwitchEnded { timing, .. }
             | ListenerToCore::Desktop { timing, .. }
             | ListenerToCore::Progress { timing, .. } => {
                 timing.listener_written_at_us = at_us;
             }
             ListenerToCore::Pong { written_at_us, .. } => *written_at_us = at_us,
             ListenerToCore::Ready { .. }
-            | ListenerToCore::ForwardingEnded { .. }
             | ListenerToCore::ExitHandled { .. }
             | ListenerToCore::Foreground { .. }
             | ListenerToCore::Tell(_)

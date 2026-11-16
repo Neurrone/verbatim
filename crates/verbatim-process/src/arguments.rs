@@ -36,33 +36,6 @@ pub const LISTENER_ARG: &str = "--listener";
 /// processes Verbatim ignores ([`crate::held::IgnoredProcesses`]).
 pub const IGNORE_PIDS_ARG: &str = "--ignore-pids";
 
-/// The command-line option that tells a listener the applications whose
-/// outposts have their own hooks in.
-pub const HOOKS_IN_ARG: &str = "--hooks-in";
-
-/// The applications and outposts in `list`, as the listener's `--hooks-in`
-/// option gives them: `pid:outpost` pairs separated by commas. Anything
-/// that is not such a pair is skipped.
-#[must_use]
-pub fn parse_hooks_in(list: &str) -> Vec<(Pid, OutpostId)> {
-    list.split(',')
-        .filter_map(|pair| {
-            let (pid, outpost) = pair.trim().split_once(':')?;
-            Some((Pid(pid.parse().ok()?), OutpostId(outpost.parse().ok()?)))
-        })
-        .collect()
-}
-
-/// `hooks_in` as [`HOOKS_IN_ARG`] gives it.
-#[must_use]
-pub fn format_hooks_in(hooks_in: &[(Pid, OutpostId)]) -> String {
-    hooks_in
-        .iter()
-        .map(|(pid, outpost)| format!("{}:{}", pid.0, outpost.0))
-        .collect::<Vec<_>>()
-        .join(",")
-}
-
 /// The values of the two pipe ends a child inherits, passed on its command
 /// line as decimal: the one it reads commands from, then the one it writes
 /// messages to.
@@ -159,16 +132,12 @@ impl OutpostArguments {
 
 /// The focus listener's launch arguments: `--listener --pipe-in <handle>
 /// --pipe-out <handle>`, then `--ignore-pids <pids>` when any process is
-/// ignored, then `--hooks-in <pairs>` when any application's outpost has
-/// its own hooks in.
+/// ignored.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ListenerArguments {
     /// The processes Verbatim ignores entirely, whose facts the listener
     /// drops.
     pub ignored: Vec<Pid>,
-    /// The applications whose outposts have their own `WinEvent` hooks in,
-    /// whose MSAA facts the listener does not forward.
-    pub hooks_in: Vec<(Pid, OutpostId)>,
 }
 
 impl ListenerArguments {
@@ -182,12 +151,7 @@ impl ListenerArguments {
             let pids: Vec<String> = self.ignored.iter().map(|pid| pid.0.to_string()).collect();
             format!(" {IGNORE_PIDS_ARG} {}", pids.join(","))
         };
-        let hooked = if self.hooks_in.is_empty() {
-            String::new()
-        } else {
-            format!(" {HOOKS_IN_ARG} {}", format_hooks_in(&self.hooks_in))
-        };
-        format!("{LISTENER_ARG} --pipe-in {pipe_in} --pipe-out {pipe_out}{ignore}{hooked}")
+        format!("{LISTENER_ARG} --pipe-in {pipe_in} --pipe-out {pipe_out}{ignore}")
     }
 
     /// The arguments in `args`, the command line after the program's name;
@@ -208,7 +172,6 @@ impl ListenerArguments {
                 "--pipe-in" => pipe_in = value.parse().ok(),
                 "--pipe-out" => pipe_out = value.parse().ok(),
                 IGNORE_PIDS_ARG => arguments.ignored = crate::held::parse_pids(value),
-                HOOKS_IN_ARG => arguments.hooks_in = parse_hooks_in(value),
                 "--target-pid" | "--spare" | "--classic-uia" | "--attach" => return None,
                 _ => {}
             }
@@ -236,14 +199,6 @@ mod tests {
     /// `line` split as a child's command line is, after its program's name.
     fn split(line: &str) -> Vec<String> {
         line.split(' ').map(str::to_owned).collect()
-    }
-
-    #[test]
-    fn the_applications_with_hooks_in_round_trip_through_the_command_line() {
-        let hooks_in = [(Pid(12), OutpostId(3)), (Pid(40), OutpostId(7))];
-        assert_eq!(parse_hooks_in(&format_hooks_in(&hooks_in)), hooks_in);
-        assert_eq!(parse_hooks_in(" 12:3,x,9, 40:7 "), hooks_in);
-        assert_eq!(parse_hooks_in(""), Vec::<(Pid, OutpostId)>::new());
     }
 
     #[test]
@@ -284,9 +239,8 @@ mod tests {
             (
                 ListenerArguments {
                     ignored: vec![Pid(30), Pid(31)],
-                    hooks_in: vec![(Pid(12), OutpostId(3))],
                 },
-                "--listener --pipe-in 412 --pipe-out 416 --ignore-pids 30,31 --hooks-in 12:3",
+                "--listener --pipe-in 412 --pipe-out 416 --ignore-pids 30,31",
             ),
         ] {
             assert_eq!(arguments.command_line(PIPES), line);

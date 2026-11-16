@@ -1068,15 +1068,6 @@ impl ReducerThread<'_> {
                 reason,
                 ..
             } => self.on_outpost_ended(outpost, target_pid, reason),
-            OutpostMessage::Regenerated {
-                outpost,
-                next,
-                target_pid,
-                ..
-            } => {
-                tracing::info!(%outpost, %next, %target_pid, "a given spare failed before it was ready; the next generation holds its application's facts");
-                self.barrier.handed_on(outpost, next);
-            }
             OutpostMessage::SpareReady { spare, waiting, .. } => {
                 tracing::debug!(%spare, waiting, "spare outpost ready");
                 if waiting >= verbatim_supervisor::SPARES {
@@ -1152,7 +1143,16 @@ impl ReducerThread<'_> {
             // `Frames` turns these into the messages they carry, before
             // anything reaches here.
             OutpostMessage::Frame(_) => {}
-            OutpostMessage::NotWatched { target_pid, .. } => self.not_watched(target_pid),
+            OutpostMessage::LaunchFailed {
+                target_pid,
+                application_gone,
+                ..
+            } => self.launch_failed(target_pid, application_gone),
+            OutpostMessage::ApplicationExited { target_pid, .. } => {
+                self.queue(QueueInput::Process(ProcessFact::ApplicationExited(
+                    target_pid,
+                )));
+            }
         }
     }
 
@@ -1206,12 +1206,11 @@ impl ReducerThread<'_> {
     /// No outpost will serve `target_pid` now: Core hears its launch failed,
     /// what the list dialogs wanted of it is answered with nothing, and a
     /// status entry only waiting for its outpost is removed.
-    fn not_watched(&mut self, target_pid: Pid) {
+    fn launch_failed(&mut self, target_pid: Pid, application_gone: bool) {
         self.wanted.not_watched(target_pid);
         self.queue(QueueInput::Process(ProcessFact::LaunchFailed {
             process: target_pid,
-            application_gone: !verbatim_process::held::Target::open(target_pid)
-                .is_ok_and(|target| !target.has_exited()),
+            application_gone,
         }));
         let mut outposts = self.context.outposts.lock().expect("outposts lock");
         if outposts
@@ -1856,7 +1855,7 @@ impl ReducerThread<'_> {
                 );
             }
             QueueEffect::WakeAt(due) => self.queue_due = due,
-            QueueEffect::StartOutpost(process) => self.context.supervisor.ensure_spawned(process),
+            QueueEffect::StartOutpost(process) => self.context.supervisor.start_outpost(process),
             QueueEffect::EndOutpost(instance) => {
                 if matches!(instance.reader, Reader::Outpost(_)) {
                     self.context
@@ -2059,7 +2058,7 @@ impl ReducerThread<'_> {
             self.ask_shell_items(outpost, kind, ask, times);
         } else {
             self.wanted.want_shell_items(pid, kind, ask, times);
-            self.context.supervisor.ensure_spawned(pid);
+            self.context.supervisor.start_outpost(pid);
         }
     }
 
@@ -2110,9 +2109,14 @@ impl ReducerThread<'_> {
         // Everything it sent is ahead of its end: in the idle
         // barrier's round, its end is its answer.
         self.barrier.ended(outpost);
-        self.queue(QueueInput::ReaderEnded(outpost_instance(
-            target_pid, outpost,
-        )));
+        // An end for its application's exit is Core's as that exit, which
+        // the supervisor reports next (Table 5, column J): no re-take and
+        // no replacement.
+        if reason != EndReason::TargetExited {
+            self.queue(QueueInput::ReaderEnded(outpost_instance(
+                target_pid, outpost,
+            )));
+        }
         if self.live.ended(outpost) {
             self.context
                 .outposts
@@ -2804,7 +2808,7 @@ mod tests {
         let (command_tx, mut command_rx) = port_queue().expect("a port");
         let sink = outpost_sink(command_tx.clone());
         assert!(
-            sink.send(OutpostMessage::NotWatched {
+            sink.send(OutpostMessage::ApplicationExited {
                 target_pid: Pid(1),
                 sealed: verbatim_supervisor::Sealed::for_tests(),
             })
@@ -2815,7 +2819,7 @@ mod tests {
             .map_err(|_| "refused")
             .expect("the receiver is held");
         assert!(
-            sink.send(OutpostMessage::NotWatched {
+            sink.send(OutpostMessage::ApplicationExited {
                 target_pid: Pid(2),
                 sealed: verbatim_supervisor::Sealed::for_tests(),
             })
@@ -2823,7 +2827,7 @@ mod tests {
         );
         let arrived: Vec<String> = std::iter::from_fn(|| command_rx.try_recv())
             .map(|command| match command {
-                ShellCommand::Outpost(OutpostMessage::NotWatched { target_pid, .. }) => {
+                ShellCommand::Outpost(OutpostMessage::ApplicationExited { target_pid, .. }) => {
                     format!("outpost message for {}", target_pid.0)
                 }
                 ShellCommand::InputHandled(input) => format!("key {input}"),
