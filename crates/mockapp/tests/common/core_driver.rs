@@ -276,10 +276,12 @@ impl CoreDriver {
         };
         driver.feed(QueueInput::Process(ProcessFact::ListenerStarted(1)));
         driver.feed(QueueInput::ReaderReady(LISTENER));
-        if driver.outpost.foreground() != 0 {
-            driver.foreground_report();
-        }
-        driver.startup = driver.take().spoken();
+        let started = if driver.outpost.foreground() == 0 {
+            driver.take()
+        } else {
+            driver.foreground_report()
+        };
+        driver.startup = started.spoken();
         driver
     }
 
@@ -500,12 +502,94 @@ impl CoreDriver {
         window: HWND,
         (object, child): (i32, i32),
     ) -> Step {
+        let tell = self.msaa_tell(kind, window, (object, child));
+        self.tell(tell)
+    }
+
+    /// Has mockapp run each of `lines`, and tells Core of the `count`
+    /// `WinEvent`s of `kinds` it raised meanwhile all at once, in the order
+    /// a hook on this thread heard them, before Core hears any answer to
+    /// the requests the first makes: the listener's pipe brought them
+    /// together, as it brings a burst an application raises within a
+    /// millisecond, its limiter keeping one waiting event per object, kind
+    /// and raising thread, the newest in its place
+    /// (`docs/design/readers-tell-core-asks-build1.md`, "Readers' local
+    /// drops"). A value change takes the listener's progress path after
+    /// ([`Self::bar_change`]).
+    pub fn raise_at_once(
+        &mut self,
+        app: &mut super::MockApp,
+        lines: &[&str],
+        kinds: &[WinEventKind],
+        count: usize,
+    ) -> Step {
+        let pid = app.pid();
+        let events = win_events(
+            pid,
+            || {
+                for line in lines {
+                    app.send(line);
+                }
+            },
+            kinds,
+            count,
+        );
+        let mut waiting: Vec<&WinEvent> = Vec::new();
+        for event in &events {
+            waiting.retain(|earlier| {
+                (
+                    earlier.kind,
+                    earlier.hwnd,
+                    earlier.id_object,
+                    earlier.id_child,
+                    earlier.thread,
+                ) != (
+                    event.kind,
+                    event.hwnd,
+                    event.id_object,
+                    event.id_child,
+                    event.thread,
+                )
+            });
+            waiting.push(event);
+        }
+        let inputs = waiting
+            .into_iter()
+            .map(|event| {
+                let kind = verbatim_ia2::tell_kind(event).expect("a WinEvent the listener tells");
+                let tell = self.msaa_tell(
+                    kind,
+                    HWND(event.hwnd as _),
+                    (event.id_object, event.id_child),
+                );
+                self.queued(QueueInput::Tell {
+                    from: LISTENER,
+                    tell: Box::new(tell),
+                })
+            })
+            .collect();
+        self.run(inputs);
+        let mut step = self.take();
+        for event in events
+            .iter()
+            .filter(|event| event.kind == WinEventKind::ValueChange)
+        {
+            let bar = self.bar_change(event);
+            step.said.extend(bar.said);
+            step.calls += bar.calls;
+        }
+        step
+    }
+
+    /// The tell the listener sends for an MSAA `WinEvent` of `kind` for the
+    /// object `object`, child `child`, of `window`.
+    fn msaa_tell(&self, kind: EventKind, window: HWND, (object, child): (i32, i32)) -> Event {
         let window = window.0 as isize;
         let (thread, process) = verbatim_win32::window::window_owner(window);
         let reads = TestReads {
             foreground: self.outpost.foreground(),
         };
-        let tell = Event {
+        Event {
             trace_id: TraceId::mint(),
             kind,
             process: Pid(process),
@@ -523,8 +607,7 @@ impl CoreDriver {
                 WindowPart::read(&reads, window, None).with_foreground(&reads),
             )),
             checked: None,
-        };
-        self.tell(tell)
+        }
     }
 
     /// The listener tells Core `tell`; what Core said once every answer

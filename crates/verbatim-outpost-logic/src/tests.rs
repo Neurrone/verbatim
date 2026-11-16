@@ -354,7 +354,7 @@ fn a_commit_that_cannot_occur_reaches_the_shell_as_a_logic_error() {
     let effects = replay.commit(
         request,
         Change {
-            mark: Some(MarkChange::DropSystemCaret),
+            mark: Some(MarkChange::ClearRedirect),
             ..Change::default()
         },
         2,
@@ -362,7 +362,7 @@ fn a_commit_that_cannot_occur_reaches_the_shell_as_a_logic_error() {
     assert!(matches!(
         &effects[..],
         [Effect::LogicError(LogicError::MarkWithNothingFollowed(
-            MarkChange::DropSystemCaret
+            MarkChange::ClearRedirect
         ))]
     ));
 }

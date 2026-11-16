@@ -73,9 +73,10 @@ impl CaretTell {
                 object: *object,
                 child: *child,
             }),
-            (EventKind::UiaTextSelectionChanged, EventObject::Uia { runtime_id, .. }) => {
-                Target::Uia(runtime_id.clone())
-            }
+            (
+                EventKind::UiaTextSelectionChanged,
+                EventObject::Uia { runtime_id, .. } | EventObject::Followed { runtime_id },
+            ) => Target::Uia(runtime_id.clone()),
             _ => return None,
         };
         Some(Self {
@@ -88,7 +89,7 @@ impl CaretTell {
     /// The element the outpost adopts as the node's when the node's own
     /// has no text pattern (design, "Selection and the caret's text
     /// facts"): a UI Automation tell's, from the outpost following the
-    /// focus; the system caret's names none.
+    /// focus, when the outpost kept it; the system caret's names none.
     pub(crate) fn adopted(&self) -> Option<ElementToken> {
         match (&self.target, &self.tell.object) {
             (Target::Uia(_), EventObject::Uia { token, .. }) => Some(*token),

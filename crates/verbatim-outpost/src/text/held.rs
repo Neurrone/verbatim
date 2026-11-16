@@ -21,9 +21,51 @@ use verbatim_model::{
 };
 
 use super::{
-    CaretState, NodeText, TextError, TextResult, TextSource, change, keep_unit, perform,
-    report_for, selection_changes, unit_at_caret,
+    CaretRequest, CaretState, NodeText, TextError, TextResult, TextSource, change, keep_unit,
+    perform, report_for, selection_changes, unit_at_caret,
 };
+
+/// Reads the caret, the selection and the caret's line, and reports them,
+/// replacing the node's last read: in one go where the source can
+/// ([`TextSource::caret_read`], UI Automation's remote operations), which
+/// also finds where a selection whose caret is its end starts, in the
+/// caret's line or the line before, so Core knows what comes before the
+/// start, as a Backspace over the selection says it; else by its parts,
+/// where a selection's start lies on the caret's line only when it is the
+/// caret.
+fn read_caret<S: TextSource>(
+    source: &mut S,
+    anchors: &mut NodeText<'_, S::Pos>,
+    read_at_us: u64,
+) -> TextResult<(CaretState<S::Pos>, CaretReport)> {
+    let request = CaretRequest {
+        since: None,
+        previous: None,
+        previous_collapsed: false,
+        unit: None,
+        formats: None,
+        recheck: false,
+        read_selection_text: false,
+        read_previous_text: false,
+    };
+    if let Some(read) = source.caret_read(&request)? {
+        let (line, offset) = read.line;
+        let report = report_for(
+            source,
+            anchors,
+            (&read.state, read_at_us),
+            (
+                Some((line, offset, read.formats)),
+                Some(read.selection_start),
+            ),
+            None,
+        )?;
+        return Ok((read.state, report));
+    }
+    let state = source.caret()?;
+    let report = report_for(source, anchors, (&state, read_at_us), (None, None), None)?;
+    Ok((state, report))
+}
 
 /// What a selection read found ([`read_selection`]).
 pub struct SelectionFound<P> {
@@ -87,8 +129,7 @@ pub fn read_selection<S: TextSource>(
     baseline: Option<TextAnchor>,
 ) -> TextResult<SelectionFound<S::Pos>> {
     let old = baseline.and_then(|baseline| anchors.held_read(baseline));
-    let state = source.caret()?;
-    let report = report_for(source, anchors, (&state, read_at_us), (None, None), None)?;
+    let (state, report) = read_caret(source, anchors, read_at_us)?;
     let selected = match &state.selection {
         Some((start, end)) => change(source, true, start, end)?,
         None => None,
@@ -132,8 +173,7 @@ pub fn starting_read<S: TextSource>(
     read_at_us: u64,
     (unit, word): (TextUnit, bool),
 ) -> TextResult<Started> {
-    let state = source.caret()?;
-    let report = report_for(source, anchors, (&state, read_at_us), (None, None), None)?;
+    let (state, report) = read_caret(source, anchors, read_at_us)?;
     let mut at_caret = |anchors: &mut NodeText<'_, S::Pos>, unit| -> TextResult<TextChunk> {
         Ok(unit_at_caret(
             source,

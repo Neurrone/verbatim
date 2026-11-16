@@ -10,7 +10,7 @@ use verbatim_model::request::{
     FocusCaret, FocusCaretRead, Outcome as WireOutcome, Refusal, Reply, Request as Wire, RunRead,
     Tried,
 };
-use verbatim_model::tell::{ElementToken, Payload};
+use verbatim_model::tell::{ElementToken, EventObject, Payload};
 use verbatim_model::{
     CaretReport, CaretSelection, EditSelection, Effect as Said, Phrase, Role, SegmentContent,
     Selection, SelectionChange, SelectionDifference, SelectionRead, SelectionReadReply,
@@ -564,6 +564,26 @@ fn the_baseline_and_every_anchor_a_queued_request_names_are_held() {
 fn the_system_carets_tell_reads_the_committed_focus_through_its_provider() {
     let mut held = uia_field();
     let asked = step(&mut held, 1_000, system_caret());
+    assert_eq!(
+        asked.text,
+        [(3, read_adopting(TextProvider::Uia, None, None))]
+    );
+}
+
+/// A UI Automation caret tell whose element the outpost could not keep
+/// names it by its runtime id alone: its read is the same, adopting
+/// nothing.
+#[test]
+fn a_uia_caret_tell_with_nothing_kept_reads_adopting_nothing() {
+    let mut held = uia_field();
+    let mut tell = uia_tell(1, Vec::new());
+    tell.kind = EventKind::UiaTextSelectionChanged;
+    tell.checked = None;
+    tell.object = EventObject::Followed {
+        runtime_id: verbatim_model::property::RuntimeId(vec![42, 1]),
+    };
+    let entry = Input::Entry(Entry::of_tell(OUTPOST, tell).expect("a caret tell"));
+    let asked = step(&mut held, 1_000, entry);
     assert_eq!(
         asked.text,
         [(3, read_adopting(TextProvider::Uia, None, None))]

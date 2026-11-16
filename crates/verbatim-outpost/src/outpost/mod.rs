@@ -1502,7 +1502,7 @@ fn capture_property(
 /// The acceptance facts of the window of the node Core's newest `Follow`
 /// names, as the outpost recorded it when the node was built: no window
 /// when no node is followed or its window is not known.
-fn followed_window(context: &Context) -> verbatim_model::tell::TellWindow {
+pub(super) fn followed_window(context: &Context) -> verbatim_model::tell::TellWindow {
     use verbatim_win32::window_facts::WindowPart;
     let reads = OutpostReads(context);
     match followed::node(context).and_then(|node| context.store.nearest_window_of(node)) {

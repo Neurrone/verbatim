@@ -411,8 +411,6 @@ pub enum FocusCommit {
 pub enum MarkChange {
     /// The console window's updates are absorbed.
     Absorb(isize),
-    /// The system caret's events are dropped until the next focus.
-    DropSystemCaret,
     /// The redirect mark is cleared.
     ClearRedirect,
 }
@@ -729,7 +727,6 @@ impl FollowState {
                 self.absorbed = Some(window);
                 return;
             }
-            MarkChange::DropSystemCaret => |followed| followed.system_caret_unused = true,
             MarkChange::ClearRedirect => |followed| followed.redirected = false,
         };
         match self.followed.as_mut() {
@@ -1089,7 +1086,7 @@ mod tests {
                 trace: TraceId::from_raw(1),
                 observed_at_us: 0,
             }),
-            mark: Some(MarkChange::DropSystemCaret),
+            mark: Some(MarkChange::ClearRedirect),
             ..Change::default()
         };
         let applied = apply(&mut facts, 0, &change);
@@ -1097,7 +1094,7 @@ mod tests {
             applied.logic_errors,
             vec![
                 LogicError::AgainWithNothingFollowed,
-                LogicError::MarkWithNothingFollowed(MarkChange::DropSystemCaret)
+                LogicError::MarkWithNothingFollowed(MarkChange::ClearRedirect)
             ]
         );
         assert_eq!(facts.marks(), Marks::default());

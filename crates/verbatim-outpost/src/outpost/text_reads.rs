@@ -417,6 +417,25 @@ pub(super) fn text_event_from(
     }
 }
 
+/// A caret tell's read of `node_id` adopts the element its request names,
+/// `adopt`, the one the tell's event came from, when the node's own
+/// answered it has no text pattern: that answer is forgotten and the event's
+/// element kept as the node's ([`text_event_from`]). The element is let go
+/// of either way, its tell answered.
+fn adopt_told(
+    context: &RequestContext<'_>,
+    node_id: NodeId,
+    adopt: Option<verbatim_model::tell::ElementToken>,
+) {
+    let Some(element) = adopt
+        .and_then(|token| context.store.take_parked(token.0))
+        .and_then(super::store::Parked::element)
+    else {
+        return;
+    };
+    text_event_from(context, node_id, Some(&element));
+}
+
 /// Keeps what `source`, `node_id`'s text, is now known to support, for the
 /// node's next read.
 fn keep_support(context: &RequestContext<'_>, node_id: NodeId, source: &UiaText) {
@@ -604,19 +623,22 @@ pub(super) fn answer_asked(
                     TextReply::Started(Box::new(started))
                 })
         }),
-        TextOp::ReadSelection(read) => on_text!(context, node_id, &named, |source, text| {
-            text::held::read_selection(source, text, read_at_us, read.baseline).map_or_else(
-                failed_reply,
-                |found| {
-                    TextReply::SelectionRead(Box::new(SelectionReadReply {
-                        edit_selection: source.edit_selection(&found.state),
-                        caret: found.report,
-                        baseline: found.baseline,
-                        difference: found.difference,
-                    }))
-                },
-            )
-        }),
+        TextOp::ReadSelection(read) => {
+            adopt_told(context, node_id, read.adopt);
+            on_text!(context, node_id, &named, |source, text| {
+                text::held::read_selection(source, text, read_at_us, read.baseline).map_or_else(
+                    failed_reply,
+                    |found| {
+                        TextReply::SelectionRead(Box::new(SelectionReadReply {
+                            edit_selection: source.edit_selection(&found.state),
+                            caret: found.report,
+                            baseline: found.baseline,
+                            difference: found.difference,
+                        }))
+                    },
+                )
+            })
+        }
         TextOp::MoveBySentence(moved) => on_text!(context, node_id, &named, |source, text| {
             text::sentence::move_by_sentence(source, text, (moved.point, moved.forward))
                 .unwrap_or_else(failed_reply)

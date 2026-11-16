@@ -1828,6 +1828,9 @@ impl Worker<'_> {
     /// skips it; the focus's window passed it when the focus was taken, so
     /// the outcome is the same.
     fn uia_event(&mut self, event: UiaEvent, trace: TraceId, observed_at_us: u64) {
+        if matches!(event.kind, UiaKind::TextSelection) && !self.of_terminal(&event) {
+            return self.caret_tell(&event, trace, observed_at_us);
+        }
         let element = event
             .element
             .and_then(|key| self.context.store.take_parked(key))
@@ -1893,18 +1896,11 @@ impl Worker<'_> {
         // has not released: attributed to its node by its runtime id, with
         // no comparison, and read for that node, which Core targets.
         match event.kind {
+            // A terminal's caret event: its own reading path, until its
+            // change tells (build 3).
             UiaKind::TextSelection => {
                 if let Some(node_id) = self.context.nodes().existing(&event.parts.runtime_id) {
                     text_reads::text_event_from(self.context, node_id, element.as_ref());
-                    if self.is_focus(node_id) {
-                        // The focus reports its caret moves itself: the
-                        // system caret's events are dropped until the next
-                        // focus (`Worker::system_caret_of_uia_focus`).
-                        self.commit(Effects {
-                            mark: Some(MarkChange::DropSystemCaret),
-                            ..Effects::default()
-                        });
-                    }
                     self.caret_event(node_id, trace, observed_at_us);
                 }
                 return;
@@ -1949,6 +1945,86 @@ impl Worker<'_> {
         self.emit(trace, observed_at_us, Backend::Uia, hwnd, normalized);
     }
 
+    /// Whether `event`'s element is a terminal the outpost reads, whose
+    /// caret events keep the terminal's own reading path until build 3's
+    /// change tells replace it (`docs/design/readers-tell-core-asks-build1.md`,
+    /// "Terminals in this build").
+    fn of_terminal(&self, event: &UiaEvent) -> bool {
+        self.context
+            .nodes()
+            .existing(&event.parts.runtime_id)
+            .is_some_and(|node_id| self.focused_terminal(node_id))
+    }
+
+    /// Tells Core of a UI Automation caret event (`Text_TextSelectionChanged`)
+    /// that the `Follow` registration delivered for `event`'s element, the
+    /// event's element kept behind the token Core's caret read names for
+    /// the outpost to adopt when the node's own answered no text pattern
+    /// (`docs/design/readers-tell-core-asks-build1.md`, "Selection and the
+    /// caret's text facts"). The outpost reads nothing for it and judges
+    /// nothing of it: Core asks the caret read at the tell's turn, when its
+    /// element is the committed focus. An element UI Automation could not
+    /// make agile is told with nothing kept.
+    fn caret_tell(&self, event: &UiaEvent, trace: TraceId, observed_at_us: u64) {
+        let runtime_id = RuntimeId(event.parts.runtime_id.clone());
+        let object = match event.element {
+            Some(key) => {
+                drop(self.context.store.keep_told(key, observed_at_us));
+                verbatim_model::tell::EventObject::Uia {
+                    token: verbatim_model::tell::ElementToken(key),
+                    runtime_id,
+                }
+            }
+            None => verbatim_model::tell::EventObject::Followed { runtime_id },
+        };
+        let tell = self.followed_tell(
+            verbatim_model::event_kind::EventKind::UiaTextSelectionChanged,
+            object,
+            (
+                PropertyValues(Vec::new()),
+                verbatim_model::tell::Payload::None,
+            ),
+            super::followed_window(self.context),
+            (trace, observed_at_us),
+        );
+        self.commit(Effects {
+            result: Some(OutpostToCore::Tell(Box::new(tell))),
+            ..Effects::default()
+        });
+    }
+
+    /// The tell of an event of kind `kind` that the `Follow` registration
+    /// delivered for `object`, with its cached properties and payload,
+    /// judged by `window`, the followed node's.
+    fn followed_tell(
+        &self,
+        kind: verbatim_model::event_kind::EventKind,
+        object: verbatim_model::tell::EventObject,
+        (cached, payload): (PropertyValues, verbatim_model::tell::Payload),
+        window: verbatim_model::tell::TellWindow,
+        (trace, observed_at_us): (TraceId, u64),
+    ) -> verbatim_model::tell::Event {
+        let thread = match &window {
+            verbatim_model::tell::TellWindow::Found(facts) => facts.window.thread,
+            verbatim_model::tell::TellWindow::NoWindow
+            | verbatim_model::tell::TellWindow::Failed => 0,
+        };
+        let target = self.context.target_pid();
+        verbatim_model::tell::Event {
+            trace_id: trace,
+            kind,
+            process: verbatim_model::Pid(target),
+            application: self.context.application_name(target),
+            thread,
+            at_us: observed_at_us,
+            object,
+            cached,
+            payload,
+            window,
+            checked: None,
+        }
+    }
+
     /// Tells Core of the change of UI Automation property `id` that the
     /// `Follow` registration delivered for `event`'s element, with the
     /// value it carried, whether the element has the Text pattern
@@ -1969,30 +2045,21 @@ impl Worker<'_> {
         let Some((property, value)) = told_property(id, &event.parts) else {
             return;
         };
-        let thread = match &window {
-            verbatim_model::tell::TellWindow::Found(facts) => facts.window.thread,
-            verbatim_model::tell::TellWindow::NoWindow
-            | verbatim_model::tell::TellWindow::Failed => 0,
-        };
-        let target = self.context.target_pid();
-        let tell = verbatim_model::tell::Event {
-            trace_id: trace,
-            kind: verbatim_model::event_kind::EventKind::UiaPropertyChanged,
-            process: verbatim_model::Pid(target),
-            application: self.context.application_name(target),
-            thread,
-            at_us: observed_at_us,
-            object: verbatim_model::tell::EventObject::Followed {
+        let tell = self.followed_tell(
+            verbatim_model::event_kind::EventKind::UiaPropertyChanged,
+            verbatim_model::tell::EventObject::Followed {
                 runtime_id: RuntimeId(event.parts.runtime_id.clone()),
             },
-            cached: PropertyValues(vec![PropertyAnswer {
-                id: PropertyId::HasTextPattern,
-                value: Some(PropertyValue::Flag(text_pattern)),
-            }]),
-            payload: verbatim_model::tell::Payload::PropertyChanged { property, value },
+            (
+                PropertyValues(vec![PropertyAnswer {
+                    id: PropertyId::HasTextPattern,
+                    value: Some(PropertyValue::Flag(text_pattern)),
+                }]),
+                verbatim_model::tell::Payload::PropertyChanged { property, value },
+            ),
             window,
-            checked: None,
-        };
+            (trace, observed_at_us),
+        );
         self.commit(Effects {
             result: Some(OutpostToCore::Tell(Box::new(tell))),
             ..Effects::default()

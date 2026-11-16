@@ -214,7 +214,20 @@ struct State {
     parked: HashMap<u64, Parked>,
     /// The last key given a parked object.
     parked_taken: u64,
+    /// The parked elements of the caret tells sent to Core, oldest first,
+    /// each with when it was told: kept for Core's caret read to adopt
+    /// until it is taken, past [`TOLD_FOR_US`], or beyond the newest
+    /// [`TOLD_KEPT`] (`docs/design/readers-tell-core-asks-build1.md`,
+    /// Table 6, whose rows the outpost's kept elements follow).
+    told: std::collections::VecDeque<(u64, u64)>,
 }
+
+/// How long a caret tell's element is kept for Core to name, in
+/// microseconds: four times the longest due time (Table 6).
+pub(super) const TOLD_FOR_US: u64 = 60_000_000;
+
+/// How many caret tells' elements are kept at most (Table 6).
+pub(super) const TOLD_KEPT: usize = 64;
 
 /// An application object a UIA event came with, parked in the store as the
 /// event is pushed, so the mailbox's entry and the reducer hold only its
@@ -344,6 +357,7 @@ impl Store {
                 routes: HashMap::new(),
                 parked: HashMap::new(),
                 parked_taken: 0,
+                told: std::collections::VecDeque::new(),
             }),
         }
     }
@@ -365,6 +379,25 @@ impl Store {
     /// Takes the object parked under `key`, if it is still parked.
     pub(super) fn take_parked(&self, key: u64) -> Option<Parked> {
         self.lock().parked.remove(&key)
+    }
+
+    /// Keeps the element parked under `key` for the caret tell told at
+    /// `at_us`, whose token it is, and lets go of the elements of earlier
+    /// tells past [`TOLD_FOR_US`] or beyond the newest [`TOLD_KEPT`],
+    /// returned for the caller to drop once no lock is held.
+    pub(super) fn keep_told(&self, key: u64, at_us: u64) -> Removed {
+        let mut removed = Removed::default();
+        let mut state = self.lock();
+        state.told.push_back((key, at_us));
+        while let Some(&(oldest, told_us)) = state.told.front() {
+            let expired = at_us.saturating_sub(told_us) > TOLD_FOR_US;
+            if !expired && state.told.len() <= TOLD_KEPT {
+                break;
+            }
+            state.told.pop_front();
+            removed.parked.extend(state.parked.remove(&oldest));
+        }
+        removed
     }
 
     /// The tag of a new request of worker generation `generation`, for a
@@ -594,6 +627,7 @@ impl Store {
         removed
             .parked
             .extend(state.parked.drain().map(|(_, parked)| parked));
+        state.told.clear();
         (nodes.len(), removed)
     }
 

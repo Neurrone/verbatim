@@ -2,8 +2,7 @@
 //! (`docs/design/communication.md`, section 6.7) in a real outpost,
 //! against mockapp's UIA text provider: the answer to an idle query goes
 //! behind every message the outpost sent before it, one whose write is in
-//! flight and one waiting in its backlog included, and is held back while
-//! a caret key's watch is open, going behind the watch's answer.
+//! flight and one waiting in its backlog included.
 //!
 //! Each test runs on a desktop of its own (`harness::run_isolated`), so no
 //! other client sees mockapp's window or raises its events.
@@ -16,10 +15,7 @@ use verbatim_model::protocol::{
     CoreToOutpost, OutpostToCore, Query, QueryOutcome, QueryResult, RequestId,
 };
 use verbatim_model::request::FocusCaret;
-use verbatim_model::{
-    CaretMotion, KeyFetch, NodeId, NormalizedEvent, NoteRequest, TextOp, TextPoint, TextReply,
-};
-use verbatim_outpost::Heard;
+use verbatim_model::{NodeId, TextOp, TextPoint, TextReply};
 use verbatim_process::arguments::OutpostOptions;
 use verbatim_uia::Uia;
 use windows::Win32::Foundation::HWND;
@@ -120,51 +116,12 @@ fn notes_focus(app: &mut common::MockApp, outpost: &OutpostUnderTest, hwnd: HWND
     focused.node()
 }
 
-/// A key's note holds no answer: an idle query is answered as the outpost
-/// is idle, while the key waits for its evidence in Core's key line.
-fn the_answer_does_not_wait_for_a_note() {
-    let (mut app, hwnd) = start("mockapp-idle-caret-note");
-    let outpost = OutpostUnderTest::new(&app);
-    let notes = notes_focus(&mut app, &outpost, hwnd);
-    // Right Arrow, which the application has not handled yet.
-    outpost.key_note(NoteRequest::Field {
-        node: notes,
-        fetch: KeyFetch {
-            unit: CaretMotion::NextCharacter.unit(),
-            motion: CaretMotion::NextCharacter,
-        },
-    });
-    outpost.settled();
-    outpost
-        .outpost
-        .handle_command(&CoreToOutpost::IdleQuery { round: 3 });
-    // Answered with nothing held back.
-    assert_eq!(outpost.next(), OutpostToCore::IdleAnswer { round: 3 });
-    app.send("caret doc 1");
-    app.send("caret-event doc");
-    match outpost.next() {
-        OutpostToCore::Event {
-            event: NormalizedEvent::CaretMoved { facts: Some(_), .. },
-            ..
-        } => {}
-        other => panic!("the outpost said {other:?}, not the note's report"),
-    }
-    outpost.heard(&[Heard::UiaTextSelection]);
-    outpost.settled();
-    drop(outpost);
-    app.quit();
-}
-
 /// Runs each test on a desktop of its own (`common/harness.rs`).
 fn main() {
     harness::run_isolated(&[
         (
             "the_answer_goes_behind_a_message_in_the_pipe_and_one_in_the_backlog",
             the_answer_goes_behind_a_message_in_the_pipe_and_one_in_the_backlog,
-        ),
-        (
-            "the_answer_does_not_wait_for_a_note",
-            the_answer_does_not_wait_for_a_note,
         ),
     ]);
 }
