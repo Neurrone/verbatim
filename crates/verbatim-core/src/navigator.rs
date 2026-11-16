@@ -399,7 +399,7 @@ pub(crate) async fn report_object(mut cx: Cx<Entries>, press: ReviewPress) {
 pub(crate) async fn to_focus(mut cx: Cx<Entries>, trace_id: TraceId) {
     let (object, window) = {
         let facts = cx.facts();
-        let Some(focus) = facts.focus.object().filter(|focus| focus.alive) else {
+        let Some(focus) = facts.live_focus() else {
             return;
         };
         let Committed::Read(kept) = &facts.versions.committed else {

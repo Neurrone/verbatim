@@ -388,7 +388,6 @@ fn ready(
         selected_child: None,
         text: Some(focus_text(&read.caret)),
         earlier: read.runtime_id_reused.then_some(EarlierElement::Gone),
-        alive: true,
         top_level: Some(origin.asked.top_level),
     };
     let place = Place {
@@ -633,7 +632,6 @@ pub(crate) fn again(state: &mut SrState, trace_id: TraceId) -> Vec<Effect> {
         text: None,
         earlier: None,
 
-        alive: focus.alive,
         top_level: state
             .versions
             .committed_kept()

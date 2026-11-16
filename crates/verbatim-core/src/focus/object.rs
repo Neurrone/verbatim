@@ -37,8 +37,6 @@ pub(crate) struct Report {
     pub(crate) selected_child: Option<NodeSnapshot>,
     pub(crate) text: Option<FocusText>,
     pub(crate) earlier: Option<EarlierElement>,
-    /// False once the outpost generation that issued its node ids ended.
-    pub(crate) alive: bool,
     /// The top-level window its read named, which stands for the entry
     /// just below the desktop when it carries no window facts, as a focus
     /// Core read itself does.

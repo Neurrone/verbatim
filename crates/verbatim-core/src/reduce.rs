@@ -377,13 +377,12 @@ pub(crate) fn take_silently(state: &mut SrState, owned: &Report) {
         report,
     );
     let previous = found.as_ref().map(|found| &found.focus);
-    let mut new_focus = focus_context(
+    let new_focus = focus_context(
         (owned.trace_id, owned.source),
         window,
         report,
         (previous, Arc::clone(&line.ancestors)),
     );
-    new_focus.alive = owned.alive;
     state.focus.execute(new_focus);
     if state.navigator.is_none() {
         state.navigator = Some(Navigator::on(report.node.clone()));
@@ -446,16 +445,14 @@ pub(crate) fn execute_report(state: &mut SrState, owned: &Report, left: bool) ->
         .as_ref()
         .filter(|found| !found.left)
         .map(|found| &found.focus);
-    let mut new_focus = focus_context(
+    let new_focus = focus_context(
         (trace_id, source),
         window,
         report,
         (previous, Arc::clone(&line.ancestors)),
     );
-    new_focus.alive = owned.alive;
-
     if let Some(focus) = previous
-        && !focus.alive
+        && state.focus_ended()
         && reads_the_same(focus, report.node, report.ancestors)
     {
         // The silent re-read: the replacement outpost reports the focus the
@@ -543,7 +540,6 @@ fn focus_context(
         snapshot: report.node.clone(),
         spoken: spoken_record(previous, report, &ancestors),
         ancestors,
-        alive: true,
         reported_focused: report.node.states.contains(State::Focused),
         trace_id: Some(trace_id),
         observed_at_us: report.observed_at_us,
@@ -919,7 +915,7 @@ fn states_event(
 /// change"), which an outpost reads for when the window is the focus of a
 /// report Core refused.
 fn change_on(state: &SrState, kind: ChangeKind, node_id: NodeId) -> Option<ChangeTarget> {
-    let focus = state.focus.object().filter(|focus| focus.alive)?;
+    let focus = state.live_focus()?;
     let foreground = state.foreground.object();
     change_target(
         kind,
@@ -948,7 +944,7 @@ fn slider_value_changed(
     node_id: NodeId,
     value: Option<String>,
 ) -> Vec<Effect> {
-    let Some(focus) = state.focus.object_mut().filter(|focus| focus.alive) else {
+    let Some(focus) = state.live_focus_mut() else {
         return Vec::new();
     };
     let Some(parent) = focus
@@ -1365,10 +1361,9 @@ pub(crate) fn reduce_controlled_selection(
     controller: NodeId,
     node: &NodeSnapshot,
 ) -> Vec<Effect> {
-    if !state
-        .focus
-        .object()
-        .is_some_and(|focus| focus.alive && focus.snapshot.id == controller)
+    if state
+        .live_focus()
+        .is_none_or(|focus| focus.snapshot.id != controller)
     {
         return Vec::new();
     }
@@ -1602,7 +1597,7 @@ fn reduce_ancestor_states_changed(
     node_id: NodeId,
     new_states: StateSet,
 ) -> Vec<Effect> {
-    let Some(focus) = state.focus.object_mut().filter(|focus| focus.alive) else {
+    let Some(focus) = state.live_focus_mut() else {
         return Vec::new();
     };
     let Some(index) = focus

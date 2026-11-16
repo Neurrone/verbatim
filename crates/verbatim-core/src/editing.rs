@@ -100,7 +100,7 @@ pub(crate) fn speak(trace_id: TraceId, segments: Vec<UtteranceSegment>) -> Effec
 /// The focus whose caret keys are watched for evidence: alive, with a
 /// caret Core knows or a role that may have text ([`caret_key`]'s test).
 pub(crate) fn text_focus(state: &SrState) -> Option<NodeId> {
-    let focus = state.focus.object().filter(|focus| focus.alive)?;
+    let focus = state.live_focus()?;
     let node = focus.snapshot.id;
     (focus.caret.is_some() || may_have_text(focus.snapshot.role)).then_some(node)
 }
@@ -853,11 +853,7 @@ fn focus_speech(
     node: NodeId,
     segments: Vec<UtteranceSegment>,
 ) -> Vec<Effect> {
-    let Some(focus) = state
-        .focus
-        .object()
-        .filter(|focus| focus.alive && focus.snapshot.id == node)
-    else {
+    let Some(focus) = state.live_focus().filter(|focus| focus.snapshot.id == node) else {
         return Vec::new();
     };
     vec![Effect::Speak(
@@ -885,9 +881,8 @@ fn focus_speech(
 /// Control+Break (`docs/parity/terminals.md`, "New terminal output").
 pub(crate) fn clearing_key(state: &mut SrState) {
     let terminal = state
-        .focus
-        .object()
-        .is_some_and(|focus| focus.alive && focus.snapshot.role == Role::Terminal);
+        .live_focus()
+        .is_some_and(|focus| focus.snapshot.role == Role::Terminal);
     if terminal {
         state.typed_word.clear();
     }
@@ -904,7 +899,7 @@ pub(crate) fn character_typed(state: &mut SrState, trace_id: TraceId, typed: &st
     // A caret key still watched is not answered by the caret the typing
     // moves: the typing's key press has marked it (`key_line::mark_later`),
     // so its answer only keeps the caret current.
-    let Some(focus) = state.focus.object().filter(|focus| focus.alive) else {
+    let Some(focus) = state.live_focus() else {
         return effects;
     };
     if focus.snapshot.role == Role::Terminal {
@@ -925,7 +920,7 @@ pub(crate) fn character_typed(state: &mut SrState, trace_id: TraceId, typed: &st
 /// Echoes typed text by the settings: a finished word first, when word echo
 /// is on and the text ends one, then the characters.
 pub(crate) fn echo(state: &mut SrState, trace_id: TraceId, typed: &str) -> Vec<Effect> {
-    let Some(focus) = state.focus.object().filter(|focus| focus.alive) else {
+    let Some(focus) = state.live_focus() else {
         return Vec::new();
     };
     let editable = is_editable(&focus.snapshot);

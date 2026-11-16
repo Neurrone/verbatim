@@ -122,6 +122,41 @@ fn the_committed_focus_read_again_after_its_outpost_ends_is_taken_silently() {
     assert_eq!(kept.node, new_id);
 }
 
+/// The edit field "Body" committed by the startup read: the hook holds
+/// caret keys for it and a character typed is echoed; once its outpost
+/// ends, the focus is dead (its committed version ended), so the hook
+/// holds no caret key for it and nothing typed is echoed against it.
+#[test]
+fn a_focus_whose_outpost_ended_holds_no_caret_key_and_echoes_nothing() {
+    let mut state = ready();
+    state.settings.speak_typed_characters = verbatim_model::TypingEcho::EditControls;
+    let _ = feed_at(&mut state, 500, Input::Foreground(IN_FRONT));
+    let mut read = focus_read(None);
+    read.focus.read.values =
+        crate::entries::tests::values("Body", verbatim_model::Role::EditableText);
+    let _ = feed_at(
+        &mut state,
+        600,
+        answer(OUTPOST, 1, Reply::Focus(Box::new(read))),
+    );
+    assert!(state.holds_caret_keys());
+    assert_eq!(
+        crate::editing::character_typed(&mut state, TraceId::from_raw(20), "a").len(),
+        1
+    );
+    assert_eq!(
+        feed_at(&mut state, 1_000, Input::ReaderEnded(OUTPOST)),
+        NOTHING
+    );
+    assert!(matches!(state.versions.committed, Committed::Ended(_)));
+    assert!(!state.holds_caret_keys());
+    assert_eq!(
+        crate::editing::character_typed(&mut state, TraceId::from_raw(21), "b"),
+        Vec::new()
+    );
+    assert_eq!(state.focused(), None);
+}
+
 #[test]
 fn a_different_focus_read_after_its_outpost_ends_is_spoken() {
     let mut state = started();

@@ -41,11 +41,6 @@ pub(crate) struct FocusContext {
     /// recorder does at each checkpoint, copies a pointer, not the chain.
     /// A focus change replaces the whole chain, never edits it.
     pub(crate) ancestors: Arc<[NodeSnapshot]>,
-    /// False once the outpost that issued these node ids has ended. The
-    /// copied data stays, so a replacement outpost's report of the same
-    /// focus can be taken silently (`docs/parity/focus-events.md`, "Recovery after an
-    /// outpost is replaced"), but the ids name nothing any more.
-    pub(crate) alive: bool,
     /// The focused node reported itself focused when it became the focus,
     /// so a later state set without the focused state means the focus has
     /// left it before the next focus event arrived (`docs/parity/changes-and-selection.md`,
@@ -843,9 +838,7 @@ impl SrState {
     /// anything is focused and its outpost is still running.
     #[must_use]
     pub fn focused(&self) -> Option<(Pid, &NodeSnapshot)> {
-        self.focus
-            .object()
-            .filter(|focus| focus.alive)
+        self.live_focus()
             .map(|focus| (focus.source, &focus.snapshot))
     }
 
@@ -917,7 +910,7 @@ impl SrState {
         let mut insert = |id: NodeId| {
             held.entry(id.outpost()).or_default().insert(id);
         };
-        if let Some(focus) = self.focus.object().filter(|focus| focus.alive) {
+        if let Some(focus) = self.live_focus() {
             insert(focus.snapshot.id);
             for ancestor in focus.ancestors.iter() {
                 insert(ancestor.id);
@@ -1040,11 +1033,41 @@ impl SrState {
         mark
     }
 
-    /// Whether the focused node is exactly `node_id` and still alive.
-    pub(crate) fn focus_matches(&self, node_id: NodeId) -> bool {
+    /// Whether the focus object is the committed focus whose outpost
+    /// ended: its data stays, so a replacement outpost's report of the
+    /// same focus can be taken silently (`docs/parity/focus-events.md`,
+    /// "Recovery after an outpost is replaced"), but its ids name nothing
+    /// any more. The one fact of it is the committed focus's version
+    /// ([`Committed::Ended`](crate::focus::versions::Committed::Ended)),
+    /// matched by node, so a focus executed in the replacement's
+    /// generation, whose version is committed after it executes, lives.
+    pub(crate) fn focus_ended(&self) -> bool {
+        let crate::focus::versions::Committed::Ended(kept) = &self.versions.committed else {
+            return false;
+        };
         self.focus
             .object()
-            .is_some_and(|focus| focus.alive && focus.snapshot.id == node_id)
+            .is_some_and(|focus| focus.snapshot.id == kept.node)
+    }
+
+    /// The focus object while its outpost lives: none once the committed
+    /// focus's outpost ended ([`SrState::focus_ended`]).
+    pub(crate) fn live_focus(&self) -> Option<&FocusContext> {
+        self.focus.object().filter(|_| !self.focus_ended())
+    }
+
+    /// [`SrState::live_focus`], to change in place.
+    pub(crate) fn live_focus_mut(&mut self) -> Option<&mut FocusContext> {
+        if self.focus_ended() {
+            return None;
+        }
+        self.focus.object_mut()
+    }
+
+    /// Whether the focused node is exactly `node_id` and still alive.
+    pub(crate) fn focus_matches(&self, node_id: NodeId) -> bool {
+        self.live_focus()
+            .is_some_and(|focus| focus.snapshot.id == node_id)
     }
 
     /// Removes every terminal model `which` picks: the one way a model
