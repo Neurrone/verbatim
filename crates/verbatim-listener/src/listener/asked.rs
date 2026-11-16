@@ -19,7 +19,6 @@ use std::sync::Arc;
 use verbatim_listener_logic::focus::{BarObject, BarVerdict, ClassicBarRead, WindowAnswer};
 use verbatim_listener_logic::kept::Start;
 use verbatim_listener_logic::schedule::{Ended, Ending};
-use verbatim_listener_logic::tell::node_window;
 use verbatim_model::property::{
     Number, PropertyAnswer, PropertyId, PropertyValue, PropertyValues, RuntimeId,
 };
@@ -37,6 +36,7 @@ use verbatim_uia::{
 };
 use verbatim_uia_rops::{FocusAncestry, FocusQuery, Progress, focus_ancestry_classic};
 use verbatim_win32::window::{Readability, WindowReadabilityReader};
+use verbatim_win32::window_facts::node_window;
 use windows::Win32::UI::Accessibility::UIA_LegacyIAccessibleStatePropertyId;
 
 use super::Outgoing;

@@ -68,7 +68,7 @@ this shape are in `books/dev/src/explanation/architecture.md`, section 1
   at the root, from a window after a failed step or at a ghost's or hung
   application's window, or by plain windows after the depth limit of
   64). Each node read carries its nearest window's facts (`NodeWindow`,
-  `verbatim_listener_logic::tell::node_window`) and the properties of the
+  `verbatim_win32::window_facts::node_window`) and the properties of the
   request's set; the listener answers none for a keyboard focus or an
   object's text, which are the check's and the outpost's. An MSAA object
   is read only for its name at the event's address

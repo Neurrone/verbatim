@@ -26,7 +26,6 @@ use verbatim_core::{Runtime, SrState, reduce};
 use verbatim_ia2::{WinEvent, WinEventHook, WinEventKind};
 use verbatim_listener_logic::check::{Call, Check, ProbeRecord, Walked};
 use verbatim_listener_logic::focus::{BarObject, BarVerdict, ClassicBarRead, WindowAnswer};
-use verbatim_listener_logic::tell::{WindowPart, WindowReads};
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::{
     PropertyAnswer, PropertyId, PropertyValue, PropertyValues, RuntimeId,
@@ -43,6 +42,7 @@ use verbatim_model::{
 };
 use verbatim_reader_rules::acceptance::WindowQueries;
 use verbatim_uia::{Cached, Direction, ElementExt, ListenerEvent, Uia};
+use verbatim_win32::window_facts::{WindowPart, WindowReads};
 use windows::Win32::Foundation::HWND;
 
 use super::outpost::OutpostUnderTest;

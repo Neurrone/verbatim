@@ -1946,6 +1946,41 @@ fn a_focus_s_help_text_and_suggestions_are_followed() {
     app.quit();
 }
 
+/// A followed node's change raised while another application's window is
+/// in front is told with its window's facts, which the outpost's callback
+/// gathers from Windows, and acceptance refuses it, as NVDA's
+/// property-change handler applies `shouldAcceptEvent`: Core says nothing
+/// and asks nothing; once mockapp is in front again the next change is
+/// spoken.
+fn a_followed_change_while_another_window_is_in_front_is_refused() {
+    let title = common::unique_title("mockapp-followed-background");
+    let mut app = common::spawn("controller.json", "uia", &title);
+    let client = Client::new(common::find_window(&title));
+    let mut core = CoreDriver::new(&app, OutpostUnderTest::new(&app));
+    let window = core.outpost.app_window();
+
+    app.send("set-focus search");
+    let _ = core.uia_focus(&client.focused());
+
+    core.outpost
+        .set_foreground(common::another_applications_window());
+    app.send("set-description search Type to search");
+    let step = core.told(1);
+    assert_eq!((step.said, step.calls.uia), (Vec::new(), 0));
+
+    core.outpost.set_foreground(window);
+    app.send("set-description search Search the list");
+    assert_eq!(
+        core.told(1).spoken(),
+        [vec![SegmentContent::Description(
+            "Search the list".to_owned()
+        )]]
+    );
+
+    drop(core);
+    app.quit();
+}
+
 /// A selection from a windowless element is given its nearest window by
 /// the listener's reading thread, as NVDA walks up to it
 /// (`getNearestWindowHandle`), for the outpost's window and acceptance
@@ -3375,6 +3410,10 @@ fn main() {
         (
             "a_focus_s_help_text_and_suggestions_are_followed",
             a_focus_s_help_text_and_suggestions_are_followed,
+        ),
+        (
+            "a_followed_change_while_another_window_is_in_front_is_refused",
+            a_followed_change_while_another_window_is_in_front_is_refused,
         ),
         (
             "a_reused_runtime_id_keeps_its_node_with_its_element_gone_remote",

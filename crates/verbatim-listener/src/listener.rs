@@ -2166,7 +2166,7 @@ mod tests {
                 outcome: Outcome::Result(Reply::Object(Box::new(ObjectRead {
                     object: NodeRead {
                         node: None,
-                        window: verbatim_listener_logic::tell::node_window(
+                        window: verbatim_win32::window_facts::node_window(
                             &tells::SystemReads,
                             desktop_window()
                         ),
@@ -2464,7 +2464,7 @@ mod tests {
         assert_eq!(object.object.values, expected);
         assert_eq!(
             object.object.window,
-            verbatim_listener_logic::tell::node_window(&tells::SystemReads, desktop_window())
+            verbatim_win32::window_facts::node_window(&tells::SystemReads, desktop_window())
         );
         assert_eq!(object.route, None, "no walk asked");
         assert_eq!(

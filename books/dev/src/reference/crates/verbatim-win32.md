@@ -92,6 +92,17 @@ Public API:
   and `plain_windows_start`. `verbatim-uia` re-exports them under the same
   names, where its guide describes them ([verbatim-uia](verbatim-uia.md),
   "Provider checks and the process boundary").
+- `window_facts` — the window facts a reader's tell carries for Core's
+  acceptance, and a node's window, gathered with calls to Windows only:
+  `WindowReads`, the reads (class, owner, console host, parent, root, root
+  owner, `IsChild`, topmost, the desktop, the foreground, the foreground
+  thread's active window and the hidden frame), with `SystemReads` making
+  them; `WindowPart`, the window's own part read as the event arrives,
+  completed by the foreground's part (`WindowPart::with_foreground`) into
+  `AcceptanceFacts`, a console window's process the console host the
+  event's thread names; and `node_window`, the `NodeWindow` a node read
+  carries. The listener gathers its tells' facts with it, and an
+  outpost's callback the facts of its followed node's window.
 - `integrity` — `process_integrity(pid)` and `own_integrity()`, a
   process's mandatory integrity level, which the listener reads for each
   application and Core for itself.

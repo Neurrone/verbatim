@@ -1827,9 +1827,14 @@ impl Worker<'_> {
             .element
             .and_then(|key| self.context.store.take_parked(key))
             .and_then(super::store::Parked::element);
-        if let UiaKind::Property { id, text_pattern } = event.kind {
+        if let UiaKind::Property {
+            id,
+            text_pattern,
+            window,
+        } = event.kind.clone()
+        {
             drop(element);
-            return self.property_tell(&event, (id, text_pattern), trace, observed_at_us);
+            return self.property_tell(&event, (id, text_pattern, *window), trace, observed_at_us);
         }
         // An event whose own window's application the system reports hung
         // is dropped before any window lookup or read, as NVDA's UIA
@@ -1941,27 +1946,29 @@ impl Worker<'_> {
 
     /// Tells Core of the change of UI Automation property `id` that the
     /// `Follow` registration delivered for `event`'s element, with the
-    /// value it carried and whether the element has the Text pattern
-    /// (`text_pattern`). The outpost judges nothing of it: Core finds the
+    /// value it carried, whether the element has the Text pattern
+    /// (`text_pattern`) and the facts of the followed node's window its
+    /// callback gathered, which Core's acceptance reads, as NVDA applies
+    /// `shouldAcceptEvent` in its property-change handler. The outpost
+    /// judges nothing of it: Core finds the
     /// node by its runtime id among the committed focus and its ancestors
     /// (`docs/design/readers-tell-core-asks-build1.md`, "Readers' local
     /// drops", "Changes on objects").
     fn property_tell(
         &self,
         event: &UiaEvent,
-        (id, text_pattern): (i32, bool),
+        (id, text_pattern, window): (i32, bool, verbatim_model::tell::TellWindow),
         trace: TraceId,
         observed_at_us: u64,
     ) {
         let Some((property, value)) = told_property(id, &event.parts) else {
             return;
         };
-        // The window that owns the element, by its own handle or else the
-        // window the outpost recorded for its focus: no call.
-        let window = (event.hwnd != 0)
-            .then_some(event.hwnd)
-            .or_else(|| self.context.tracked_window());
-        let thread = window.map_or(0, |window| verbatim_win32::window::window_owner(window).0);
+        let thread = match &window {
+            verbatim_model::tell::TellWindow::Found(facts) => facts.window.thread,
+            verbatim_model::tell::TellWindow::NoWindow
+            | verbatim_model::tell::TellWindow::Failed => 0,
+        };
         let target = self.context.target_pid();
         let tell = verbatim_model::tell::Event {
             trace_id: trace,
@@ -1978,7 +1985,7 @@ impl Worker<'_> {
                 value: Some(PropertyValue::Flag(text_pattern)),
             }]),
             payload: verbatim_model::tell::Payload::PropertyChanged { property, value },
-            window: verbatim_model::tell::TellWindow::NoWindow,
+            window,
             checked: None,
         };
         self.commit(Effects {

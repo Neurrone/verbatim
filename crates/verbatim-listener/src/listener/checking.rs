@@ -48,7 +48,7 @@ use super::Outgoing;
 use super::asked::{UiaJob, UiaReading};
 use super::tells::{Applications, Held, Pending, PendingWindow, SystemReads, Tells};
 use crate::reading::{IdleWaiter, Readers};
-use verbatim_listener_logic::tell::WindowPart;
+use verbatim_win32::window_facts::WindowPart;
 
 /// The UI Automation class of the Office menu item NVDA's
 /// `PlaceholderNetUITWMenuItem` is made of (`NVDAObjects/UIA/__init__.py`

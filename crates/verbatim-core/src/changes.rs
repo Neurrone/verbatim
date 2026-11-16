@@ -499,16 +499,28 @@ pub(crate) fn uia_changed(facts: &mut SrState, change: &UiaChange) -> Vec<verbat
     crate::reduce::property_changed(facts, change.tell.trace_id, node, &property, None)
 }
 
+/// Whether the UI Automation property change `change` passes acceptance
+/// on its tell's facts: the listener's, or those of the followed node's
+/// window an outpost gathered, as NVDA's property-change handler applies
+/// it to every event (`docs/parity/focus-events.md`, "Event acceptance").
+fn accepted(change: &UiaChange) -> bool {
+    acceptance::accept(change.tell.kind, window_facts(&change.tell), false).is_ok()
+}
+
 /// The function of a UI Automation property change entry, which asks
-/// nothing for a name, value or state change.
+/// nothing for a name, value or state change, once it passes acceptance.
 pub(crate) fn uia(cx: &mut Cx<Entries>, change: &UiaChange) {
+    if !accepted(change) {
+        return;
+    }
     let said = uia_changed(&mut cx.facts_mut(), change);
     for said in said {
         cx.emit(said);
     }
 }
 
-/// The function of a UI Automation property change entry at its turn. A
+/// The function of a UI Automation property change entry at its turn,
+/// which passes acceptance on its tell's facts first. A
 /// help text change, told as a description change, and a controller-for
 /// change, told as a suggestions change, are the two Core asks for: one
 /// read of the node's description, which NVDA reads when it handles the
@@ -524,6 +536,9 @@ pub(crate) async fn uia_entry(mut cx: Cx<Entries>, change: UiaChange) {
         PropertyId::Suggestions => PropertyId::Suggestions,
         _ => return uia(&mut cx, &change),
     };
+    if !accepted(&change) {
+        return;
+    }
     let Some((kept, node)) = uia_target(&cx.facts(), &change) else {
         return;
     };

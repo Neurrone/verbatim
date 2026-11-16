@@ -998,6 +998,13 @@ A reset of the hook's line (`QueueInput::StrokesReset`) drops what is
 unsent, leaving a dropped mark for each held key's turn, and withdraws
 the front's starting read; at `QueueInput::Exit` Core names the keys
 whose last transition in line is a release (`QueueEffect::ReleaseAtExit`).
+Beside the line, `SrState::alt_down` is whether Alt is down, set by the
+hook's `QueueInput::Alt` at once in the inbox; a UI Automation focus tell
+takes it at its arrival (`UiaFocus::alt_down`), and its execution judges
+File Explorer's switcher rule (`applications::drops_ancestry`) with it and
+the parent's automation id its tell carries. A UI Automation property
+change, the listener's or a followed node's, passes acceptance on its
+tell's facts before Core judges it (`changes::uia`, `changes::uia_entry`).
 
 ### Caret tells and Core's text facts
 

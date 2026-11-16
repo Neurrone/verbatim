@@ -63,6 +63,10 @@ pub enum UiaKind {
         /// Whether the element has the Text pattern, from the event's
         /// cache, which Core's rule for a value change reads.
         text_pattern: bool,
+        /// The facts of the followed node's known window, gathered by the
+        /// callback with calls to Windows only, which Core's acceptance
+        /// reads; no window when no node is followed.
+        window: Box<verbatim_model::tell::TellWindow>,
     },
     /// An element was selected within its container.
     Selection,

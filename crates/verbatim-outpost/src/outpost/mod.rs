@@ -96,6 +96,7 @@ use verbatim_process::held::Target;
 use verbatim_process::message::{decode_message, read_message};
 use verbatim_reader_rules::acceptance;
 use verbatim_win32::window::{ForegroundReader, WindowReadabilityReader};
+use verbatim_win32::window_facts::{SystemReads, WindowReads};
 
 use verbatim_outpost_logic as reducer;
 
@@ -1462,8 +1463,10 @@ fn unstamped(query: &Query) -> Query {
 }
 
 /// What a UIA callback captures of a property change on the focus: the
-/// element's parts and window handle, read from its cache, and the element
-/// for anything the worker must ask it. No call reaches the application.
+/// element's parts and window handle, read from its cache, the element for
+/// anything the worker must ask it, and the acceptance facts of the
+/// followed node's known window, read with calls to Windows only. No call
+/// reaches the application.
 fn capture_property(
     context: &Context,
     event: &Cached<PropertyEvent>,
@@ -1475,6 +1478,7 @@ fn capture_property(
         kind: UiaKind::Property {
             id: property_id,
             text_pattern: fields.text_available,
+            window: Box::new(followed_window(context)),
         },
         parts: UiaSnapshotFact {
             runtime_id: parts.runtime_id,
@@ -1490,6 +1494,75 @@ fn capture_property(
             .agile()
             .ok()
             .map(|agile| context.store.park(store::Parked::Property(agile))),
+    }
+}
+
+/// The acceptance facts of the window of the node Core's newest `Follow`
+/// names, as the outpost recorded it when the node was built: no window
+/// when no node is followed or its window is not known.
+fn followed_window(context: &Context) -> verbatim_model::tell::TellWindow {
+    use verbatim_win32::window_facts::WindowPart;
+    let reads = OutpostReads(context);
+    match followed::node(context).and_then(|node| context.store.nearest_window_of(node)) {
+        Some(window) if window != 0 => verbatim_model::tell::TellWindow::Found(Box::new(
+            WindowPart::read(&reads, window, None).with_foreground(&reads),
+        )),
+        _ => verbatim_model::tell::TellWindow::NoWindow,
+    }
+}
+
+/// Windows' own state as the outpost reads it: the system's, but the
+/// foreground window by the outpost's foreground reader
+/// ([`Outpost::set_foreground_reader`]).
+struct OutpostReads<'a>(&'a Context);
+
+impl WindowReads for OutpostReads<'_> {
+    fn class(&self, window: isize) -> String {
+        SystemReads.class(window)
+    }
+
+    fn owner(&self, window: isize) -> (u32, u32) {
+        SystemReads.owner(window)
+    }
+
+    fn console_host(&self, window: isize) -> Option<u32> {
+        SystemReads.console_host(window)
+    }
+
+    fn parent(&self, window: isize) -> isize {
+        SystemReads.parent(window)
+    }
+
+    fn root(&self, window: isize) -> isize {
+        SystemReads.root(window)
+    }
+
+    fn root_owner(&self, window: isize) -> isize {
+        SystemReads.root_owner(window)
+    }
+
+    fn is_child(&self, parent: isize, child: isize) -> bool {
+        SystemReads.is_child(parent, child)
+    }
+
+    fn topmost(&self, window: isize) -> bool {
+        SystemReads.topmost(window)
+    }
+
+    fn desktop(&self) -> isize {
+        SystemReads.desktop()
+    }
+
+    fn foreground(&self) -> isize {
+        self.0.foreground_window()
+    }
+
+    fn active_window(&self) -> isize {
+        SystemReads.active_window()
+    }
+
+    fn hidden_frame(&self, window: isize) -> bool {
+        SystemReads.hidden_frame(window)
     }
 }
 

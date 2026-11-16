@@ -76,8 +76,8 @@ Public API:
   its application's check thread, NVDA's handler for its kind in its
   order, as one pure step function: `Check::next` names the next `Call`
   (the walk to the nearest window, the window's class verdict, the probe,
-  each kept element's keyboard focus, the previous sibling, the element's
-  keyboard focus) and the thread records each answer. `Handler::of` maps a
+  each kept element's keyboard focus, the previous sibling, the parent's
+  automation id, the element's keyboard focus) and the thread records each answer. `Handler::of` maps a
   kind to its handler: a focus or menu opening makes every call, a walk
   that finds no window, or a window read through MSAA, ending it; an
   element selected, a window opened and a property change walk and probe;
@@ -89,8 +89,13 @@ Public API:
   NVDA's native-element test fails and its handler returns. A nameless
   `NetUITWMenuItem` menu item has its previous sibling read, and with
   none, or none read, its keyboard focus is not, as NVDA's placeholder
-  allows its focus. `Check::finish` answers what the walk found (`Walked`)
-  and the `Checked` the tell carries.
+  allows its focus. A focus whose cache names a list item of
+  `SWITCHER_ITEM_CLASS` (`ListViewItem`), the task switcher's item, has
+  its raw-view parent's automation id read with one call
+  (`Check::reading_parent`), before its keyboard focus. `Check::finish`
+  answers what the walk found (`Walked`), the `Checked` the tell carries,
+  and the parent's automation id, which the tell carries among its cached
+  properties (`PropertyId::ParentAutomationId`).
 - `check_threads` — the check threads' records (`CheckThreads`), one per
   application, keyed by its generation, under the listener's one lock:
   `push` queues an event, starting a thread when there is no record or
@@ -108,19 +113,13 @@ Public API:
   `KEPT_FOR_US` (60 seconds) or beyond the newest `KEPT_PER_APPLICATION`
   (64); `ended` lets go of every one but a read in flight. Every element
   let go is handed back for release on its application's reading thread.
-- `tell` — `node_window`, the facts of the nearest window a node read
-  carries, by which a request on the node names it; and what the listener
-  decides of a `WinEvent` before it tells
+- `tell` — what the listener decides of a `WinEvent` before it tells
   Core of it: `tell_window`, NVDA's mapping of a window of 0 to the
   desktop window, and of an invalid one to it for the end of a menu, a
   popup menu or the task switcher, dropping any other event of an invalid
   window, and a window's destruction told only for the window's own
   object; `dropped_by_class`, Windows Live Messenger's hidden window and a
-  show of neither a client nor a custom object; `WindowPart`, acceptance's
-  window facts over the `WindowReads` trait, the window's own part read
-  as the event arrives and the foreground's part
-  (`WindowPart::with_foreground`) as the tell is placed, a console
-  window's process the console host the event's thread names; and
+  show of neither a client nor a custom object; and
   `ForegroundHold`, which keeps every item placed behind a foreground
   event whose window `GetForegroundWindow` does not name until it does or
   `FOREGROUND_HOLD_US` (20 ms) pass, a newer foreground awaiting its own

@@ -15,7 +15,7 @@ use std::time::Duration;
 
 use verbatim_ia2::{WinEvent, WinEventKind};
 use verbatim_listener_logic::tell::{
-    ForegroundHold, Placed, TimerChange, WindowPart, WindowReads, dropped_by_class, tell_window,
+    ForegroundHold, Placed, TimerChange, dropped_by_class, tell_window,
 };
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::PropertyValues;
@@ -25,9 +25,9 @@ use verbatim_model::{Pid, TraceId, WindowHandle};
 use verbatim_process::clock::now_us;
 use verbatim_process::held::Target;
 use verbatim_reader_rules::CONSOLE_WINDOW_CLASS;
-use verbatim_reader_rules::Window;
-use verbatim_reader_rules::acceptance::WindowQueries;
-use verbatim_win32::window::{SystemWindows, window_class_name};
+use verbatim_win32::window::window_class_name;
+pub(super) use verbatim_win32::window_facts::SystemReads;
+use verbatim_win32::window_facts::{WindowPart, WindowReads};
 
 use super::{Sent, Timed, TimerHandle, Waiting, process_of_thread, sent, window_pid};
 use verbatim_process::transport::Sender;
@@ -252,61 +252,6 @@ impl Applications {
         self.known
             .retain(|_, (target, _)| target.as_ref().is_none_or(|target| !target.has_exited()));
         self.swept_at = self.known.len();
-    }
-}
-
-/// Windows' own state, read with calls to Windows only.
-pub(super) struct SystemReads;
-
-impl WindowReads for SystemReads {
-    fn class(&self, window: isize) -> String {
-        window_class_name(window)
-    }
-
-    fn owner(&self, window: isize) -> (u32, u32) {
-        verbatim_win32::window::window_owner(window)
-    }
-
-    fn console_host(&self, window: isize) -> Option<u32> {
-        verbatim_win32::provider::provider_process(window)
-    }
-
-    fn parent(&self, window: isize) -> isize {
-        verbatim_win32::window::parent(window)
-    }
-
-    fn root(&self, window: isize) -> isize {
-        verbatim_win32::window::top_level_of(window)
-    }
-
-    fn root_owner(&self, window: isize) -> isize {
-        verbatim_win32::window::root_owner_of(window)
-    }
-
-    fn is_child(&self, parent: isize, child: isize) -> bool {
-        verbatim_win32::window::is_child(parent, child)
-    }
-
-    fn topmost(&self, window: isize) -> bool {
-        Window::new(window).is_some_and(|window| SystemWindows { foreground: 0 }.is_topmost(window))
-    }
-
-    fn desktop(&self) -> isize {
-        verbatim_win32::window::desktop_window()
-    }
-
-    fn foreground(&self) -> isize {
-        foreground()
-    }
-
-    fn active_window(&self) -> isize {
-        SystemWindows { foreground: 0 }
-            .active_window()
-            .map_or(0, Window::get)
-    }
-
-    fn hidden_frame(&self, window: isize) -> bool {
-        verbatim_win32::window::window_is_hidden_frame(window)
     }
 }
 

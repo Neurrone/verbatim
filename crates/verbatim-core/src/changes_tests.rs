@@ -805,3 +805,49 @@ fn a_controlled_selection_moves_the_navigator_to_the_item() {
     );
     assert_eq!(state.focus.object().unwrap().snapshot.id, node(2));
 }
+
+/// The facts of a window outside the foreground window, which acceptance
+/// refuses: not under it, nor sharing its root owner, nor topmost.
+fn background_facts() -> verbatim_model::tell::AcceptanceFacts {
+    let mut facts = crate::entries::tests::facts("Button");
+    facts.window_to_foreground = verbatim_model::tell::Relation::Outside;
+    facts.root_owner_to_foreground = verbatim_model::tell::Relation::Outside;
+    facts.root_owner_is_foregrounds = false;
+    facts
+}
+
+/// A followed name change, and one the listener told, each of a window
+/// acceptance refuses, say nothing, as NVDA's property-change handler
+/// drops an event `shouldAcceptEvent` refuses; the same change of an
+/// accepted window is spoken (above).
+#[test]
+fn a_uia_property_change_of_a_window_acceptance_refuses_says_nothing() {
+    for followed in [true, false] {
+        let mut state = committed();
+        let mut tell = followed_change(
+            PropertyId::Name,
+            Some(PropertyValue::Text("Saved".to_owned())),
+        );
+        tell.window = TellWindow::Found(Box::new(background_facts()));
+        if !followed {
+            tell.object = EventObject::Uia {
+                token: ElementToken(5),
+                runtime_id: RuntimeId(vec![42, 1]),
+            };
+        }
+        let from = if followed {
+            OUTPOST
+        } else {
+            crate::entries::tests::LISTENER
+        };
+        assert_eq!(
+            feed_at(
+                &mut state,
+                4_000,
+                Input::Entry(crate::entries::Entry::of_tell(from, tell).unwrap())
+            ),
+            NOTHING,
+            "followed: {followed}"
+        );
+    }
+}
