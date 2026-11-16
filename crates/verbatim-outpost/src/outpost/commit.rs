@@ -21,8 +21,7 @@ use verbatim_uia::{Agile, Kept};
 use verbatim_model::protocol::{EventTiming, OutpostToCore};
 
 use super::reducer::{
-    Change, DialogMemo, FocusCommit, Followed, Group, LastReported, MarkChange, OwedWork,
-    Subscribed,
+    Change, FocusCommit, Followed, Group, LastReported, MarkChange, OwedWork, Subscribed,
 };
 use super::store::TextWrite;
 
@@ -79,8 +78,6 @@ pub(super) enum FocusEffects {
         followed: Box<Followed>,
         /// Its report's role and batch.
         reported: LastReported,
-        /// The dialog memo it leaves.
-        dialog: Option<DialogMemo>,
         /// What only the shell applies.
         writes: FollowWrites,
     },
@@ -110,14 +107,10 @@ impl FocusEffects {
     fn local(&self) -> FocusCommit {
         match self {
             Self::Adopt {
-                followed,
-                reported,
-                dialog,
-                ..
+                followed, reported, ..
             } => FocusCommit::Adopt {
                 followed: followed.clone(),
                 reported: *reported,
-                dialog: dialog.clone(),
             },
             Self::Again {
                 owed,
@@ -151,15 +144,10 @@ impl FocusEffects {
             Self::Adopt {
                 mut followed,
                 reported,
-                dialog,
                 writes,
             } => {
                 followed.subscription = subscribe(writes);
-                FocusCommit::Adopt {
-                    followed,
-                    reported,
-                    dialog,
-                }
+                FocusCommit::Adopt { followed, reported }
             }
             Self::Again {
                 owed,
@@ -208,9 +196,6 @@ pub(super) struct Effects {
     /// text facts' changes, which it applied to its own copies as it made
     /// them, with the ranges they name, and its patterns and support.
     pub(super) text: Vec<TextWrite>,
-    /// The foreground window whose element the program found, and the
-    /// element, kept under a token by the shell.
-    pub(super) bar_found: Option<(isize, Agile<Kept>)>,
 }
 
 impl Effects {
@@ -229,7 +214,6 @@ impl Effects {
             noted_caret: self.noted_caret,
             replaced: self.stale.as_ref().map(|stale| stale.node),
             text: Vec::new(),
-            bar_found: None,
         }
     }
 
@@ -246,10 +230,8 @@ impl Effects {
             noted_caret: self.noted_caret,
             replaced: self.stale.as_ref().map(|stale| stale.node),
             text: Vec::new(),
-            bar_found: None,
         };
         let writes = Writes {
-            bar_found: self.bar_found,
             focus: self.focus,
             element: self.element,
             terminal: self.terminal,
@@ -263,8 +245,6 @@ impl Effects {
 
 /// What of a commit only the shell applies ([`Effects::split`]).
 pub(super) struct Writes {
-    /// The foreground window's element found ([`Effects::bar_found`]).
-    pub(super) bar_found: Option<(isize, Agile<Kept>)>,
     /// The focus followed or the foreground reported.
     pub(super) focus: Option<FocusEffects>,
     /// The element of a focus found after its report, with its node.

@@ -28,9 +28,7 @@ use std::time::Instant;
 
 use verbatim_model::NoteRequest;
 use verbatim_model::TraceId;
-use verbatim_model::protocol::{
-    EventTiming, FrontWindow, OutpostToCore, QueryOutcome, RequestId, Responder,
-};
+use verbatim_model::protocol::{EventTiming, OutpostToCore, QueryOutcome, RequestId, Responder};
 use verbatim_reader_rules::CONSOLE_WINDOW_CLASS;
 use verbatim_uia::{Agile, Kept};
 use verbatim_win32::window::window_class_name;
@@ -56,8 +54,6 @@ pub(super) enum Posted {
     Entry(Entry),
     /// `Outpost::settle`, answered on `0` once the reducer reaches it.
     Settle(mpsc::Sender<()>),
-    /// Core's word on where attention is.
-    Front(FrontWindow),
     /// Core withdraws a query.
     Cancel(RequestId),
     /// Core's note of a key with no before read.
@@ -140,7 +136,6 @@ impl Mailbox {
                     | Posted::WindowDestroyed(_)
                     | Posted::Settle(_)
                     | Posted::Cancel(_)
-                    | Posted::Front(_)
                     | Posted::KeyNote(_)
             )
         {
@@ -340,9 +335,6 @@ fn discard(effects: Effects, garbage: &mut Garbage) {
     if let Some((_, target)) = writes.element {
         let_go_of_target(target, garbage);
     }
-    if let Some((_, element)) = writes.bar_found {
-        garbage.elements.push(element);
-    }
     if let Some(stale) = writes.stale {
         garbage.elements.extend(stale.element);
     }
@@ -368,7 +360,6 @@ fn write(
 ) -> Change {
     let (mut change, writes) = effects.split();
     let Writes {
-        bar_found,
         mut focus,
         element,
         terminal,
@@ -401,8 +392,6 @@ fn write(
         garbage.elements.extend(evicted);
         garbage.store.push(store.remove_terminal(stale.node));
     }
-    change.bar_found =
-        bar_found.map(|(window, element)| (window, elements.token(element, garbage)));
     change.focus = focus.map(|focus| {
         focus.into_commit(|writes| {
             // A terminal gaining the focus has its caret reported afresh:
@@ -550,7 +539,6 @@ impl Shell {
             Posted::CancelAsk(cancel) => Input::CancelAsk(cancel),
             Posted::WindowDestroyed(window) => Input::WindowDestroyed(window),
             Posted::Answered { request, answer } => Input::Answered { request, answer },
-            Posted::Front(front) => Input::Front(front),
             Posted::KeyNote(note) => {
                 // Only the console host polls its note; finding it is a
                 // local call, whatever the application is doing.

@@ -7,7 +7,7 @@
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
-use verbatim_model::protocol::{EventTiming, FrontWindow, OutpostToCore, UiaFocusRead};
+use verbatim_model::protocol::{EventTiming, OutpostToCore, UiaFocusRead};
 use verbatim_model::{CaretReport, NodeId, NodeSnapshot, Role, TraceId};
 
 use verbatim_reader_rules::Window;
@@ -28,61 +28,6 @@ pub enum Group {
     /// The extended events without the text events.
     ExtendedWithoutTextEvents,
 }
-
-/// The foreground window's progress bars subscription: one value in the
-/// reducer, ended with its generation
-/// (`docs/parity/changes-and-selection.md`, "Progress bars that are not
-/// the focus").
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum BarWatch {
-    /// No window is watched.
-    #[default]
-    None,
-    /// The element of `window` is to be found, by a program not yet started.
-    Due {
-        /// The foreground window.
-        window: isize,
-    },
-    /// The element of `window` is being found by the program in flight:
-    /// this state is entered as that program is dispatched and left before
-    /// any other can start, so a program that ends in it is its lookup.
-    Finding {
-        /// The foreground window.
-        window: isize,
-    },
-    /// The subtree of `window`'s element is subscribed, by its token.
-    Subscribed {
-        /// The foreground window.
-        window: isize,
-        /// Its element's token.
-        element: u64,
-    },
-}
-
-impl BarWatch {
-    /// The window watched, while it is subscribed or its element is sought.
-    #[must_use]
-    pub fn window(self) -> Option<isize> {
-        match self {
-            BarWatch::None => None,
-            BarWatch::Due { window }
-            | BarWatch::Finding { window }
-            | BarWatch::Subscribed { window, .. } => Some(window),
-        }
-    }
-
-    /// The window whose element a program is to start finding, if one is due.
-    pub(crate) fn due(self) -> Option<isize> {
-        match self {
-            BarWatch::Due { window } => Some(window),
-            _ => None,
-        }
-    }
-}
-
-/// The dialog the last foreground report gathered text for, which the
-/// focus that follows it reuses: its node and its text.
-pub type DialogMemo = Option<(NodeId, Option<String>)>;
 
 /// The last focus this outpost reported and adopted: the one whose caret,
 /// text and subscription it tracks. Replaced whole when a focus is adopted,
@@ -411,15 +356,12 @@ pub type Target = Option<Subscribed>;
 #[derive(Clone, Debug)]
 pub enum FocusCommit {
     /// A focus becoming the followed one, replacing the record whole, with
-    /// its report's role and batch and, but for a focus-now answer, the
-    /// dialog memo it leaves.
+    /// its report's role and batch.
     Adopt {
         /// The record.
         followed: Box<Followed>,
         /// Its report's role and batch.
         reported: LastReported,
-        /// The dialog memo the report leaves.
-        dialog: Option<DialogMemo>,
     },
     /// A focus-now answer naming the focus already followed: its
     /// subscription and owed work change, and nothing else.
@@ -498,9 +440,6 @@ pub struct Change {
     /// rest: a program applies each to its own copies as its text call
     /// makes it, so its own commit carries them only for the reducer.
     pub text: Vec<TextChange>,
-    /// The foreground window's element found, by its window and the
-    /// shell's token.
-    pub bar_found: Option<(isize, u64)>,
 }
 
 /// What the outpost follows: changed only by a commit the reducer applies,
@@ -512,9 +451,6 @@ pub struct FollowState {
     /// The role and batch of the last report of a focus or foreground
     /// window.
     pub last_reported: Option<LastReported>,
-    /// The dialog the last foreground report gathered text for. A focus-now
-    /// adoption has none and leaves it.
-    pub dialog: DialogMemo,
     /// The elements of the outpost's older UIA reports, each with its node
     /// and the group it was given, by token, which keep their groups until
     /// the store releases their node, so the outpost hears the changes of
@@ -531,8 +467,6 @@ pub struct FollowState {
     pub absorbed: Option<isize>,
     /// The last committed read of a caret.
     pub caret_read: CaretRead,
-    /// The foreground window's progress bars subscription.
-    pub bar: BarWatch,
 }
 
 /// What a program is given a copy of: everything it reads of what the
@@ -566,8 +500,7 @@ impl Facts {
 
 /// Where the subscription is to follow, by token: the newest focus's
 /// element with its group, the slider's with the value group, every
-/// kept element with its own group (`Followed::Subscribe`), and the
-/// foreground window's element for its progress bars ([`BarWatch`]).
+/// kept element with its own group (`Followed::Subscribe`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Subscription {
     /// The newest focus's element, by token, with its group.
@@ -576,9 +509,6 @@ pub struct Subscription {
     pub slider: Option<u64>,
     /// Every kept element, by token, with its own group.
     pub kept: Vec<(u64, Group)>,
-    /// The foreground window's element, by token, whose subtree is
-    /// followed for its progress bars.
-    pub bar: Option<u64>,
 }
 
 /// What applying a commit asks of the shell besides the follow state
@@ -650,7 +580,6 @@ impl FollowState {
                     || subscribed.slider.is_some_and(|(_, slider)| slider == token)
             })
             || self.kept_groups.iter().any(|&(_, _, kept)| kept == token)
-            || matches!(self.bar, BarWatch::Subscribed { element, .. } if element == token)
     }
 
     /// Lets go of `tokens`, each once, but those the subscription still
@@ -679,79 +608,6 @@ impl FollowState {
             newest: subscribed.map(|subscribed| (subscribed.element, subscribed.group)),
             slider: subscribed.and_then(|subscribed| subscribed.slider.map(|(_, slider)| slider)),
             kept,
-            bar: match self.bar {
-                BarWatch::Subscribed { element, .. } => Some(element),
-                BarWatch::None | BarWatch::Due { .. } | BarWatch::Finding { .. } => None,
-            },
-        }
-    }
-
-    /// Core's word on where attention is, by the table of
-    /// `docs/parity/changes-and-selection.md`, "Progress bars that are not
-    /// the focus".
-    pub fn front(&mut self, front: FrontWindow, applied: &mut Applied) {
-        match (self.bar, front) {
-            (
-                BarWatch::None | BarWatch::Due { .. } | BarWatch::Finding { .. },
-                FrontWindow::Left,
-            ) => {
-                self.bar = BarWatch::None;
-            }
-            (
-                BarWatch::Due { window: before } | BarWatch::Finding { window: before },
-                FrontWindow::In(window),
-            ) if before == window => {}
-            (
-                BarWatch::None | BarWatch::Due { .. } | BarWatch::Finding { .. },
-                FrontWindow::In(window),
-            ) => {
-                self.bar = BarWatch::Due { window };
-            }
-            (BarWatch::Subscribed { window: before, .. }, FrontWindow::In(window))
-                if before == window => {}
-            (BarWatch::Subscribed { element, .. }, FrontWindow::In(window)) => {
-                self.bar = BarWatch::Due { window };
-                self.withdraw_bar(element, applied);
-            }
-            (BarWatch::Subscribed { element, .. }, FrontWindow::Left) => {
-                self.bar = BarWatch::None;
-                self.withdraw_bar(element, applied);
-            }
-        }
-    }
-
-    /// The subscription of the bar watch left: its element is let go of
-    /// unless the focus subscription follows it, and the subscription moved.
-    fn withdraw_bar(&self, element: u64, applied: &mut Applied) {
-        self.unfollow(std::iter::once(element), applied);
-        applied.subscribe = Some(self.subscription());
-    }
-
-    /// The element of `window` found by a program, by `element`'s token.
-    fn bar_found(&mut self, (window, element): (isize, u64), applied: &mut Applied) {
-        match self.bar {
-            BarWatch::Due { window: sought } | BarWatch::Finding { window: sought }
-                if sought == window =>
-            {
-                self.bar = BarWatch::Subscribed { window, element };
-                applied.subscribe = Some(self.subscription());
-            }
-            // An earlier lookup's answer, or a window no longer in front.
-            BarWatch::None
-            | BarWatch::Due { .. }
-            | BarWatch::Finding { .. }
-            | BarWatch::Subscribed { .. } => {
-                self.unfollow(std::iter::once(element), applied);
-            }
-        }
-    }
-
-    /// A program ended, or was abandoned. One that ends while the watch is
-    /// finding is the lookup ([`BarWatch::Finding`]), and found nothing, as
-    /// its answer would have moved the watch on; any other changes nothing.
-    pub fn bar_program_ended(&mut self) {
-        if matches!(self.bar, BarWatch::Finding { .. }) {
-            self.bar = BarWatch::None;
         }
     }
 
@@ -784,11 +640,7 @@ impl FollowState {
     /// Applies a commit's change of what is followed.
     fn apply_focus(&mut self, focus: &FocusCommit, applied: &mut Applied) {
         match focus {
-            FocusCommit::Adopt {
-                followed,
-                reported,
-                dialog,
-            } => {
+            FocusCommit::Adopt { followed, reported } => {
                 let followed = followed.as_ref().clone();
                 let node = followed.node;
                 let target = followed.subscription;
@@ -799,9 +651,6 @@ impl FollowState {
                 self.subscription_moved(previous, (node, target), applied);
                 self.absorbed = None;
                 self.last_reported = Some(*reported);
-                if let Some(dialog) = dialog {
-                    self.dialog.clone_from(dialog);
-                }
             }
             FocusCommit::Again {
                 target,
@@ -901,9 +750,6 @@ pub fn apply(facts: &mut Facts, generation: u64, change: &Change) -> Applied {
     }
     if let Some((node, started_us)) = change.caret_read {
         follow_state.caret_read.note(node.number(), started_us);
-    }
-    if let Some(found) = change.bar_found {
-        follow_state.bar_found(found, &mut applied);
     }
     if let Some(mark) = change.mark {
         follow_state.apply_mark(mark, &mut applied);
@@ -1089,7 +935,6 @@ mod tests {
                     newest: Some((8, Group::Base)),
                     slider: Some(6),
                     kept: Vec::new(),
-                    bar: None,
                 }),
                 vec![5]
             )
@@ -1111,7 +956,6 @@ mod tests {
                     newest: Some((5, Group::Base)),
                     slider: Some(7),
                     kept: Vec::new(),
-                    bar: None,
                 }),
                 vec![6]
             )
@@ -1137,7 +981,6 @@ mod tests {
                     newest: None,
                     slider: None,
                     kept: Vec::new(),
-                    bar: None,
                 }),
                 vec![5, 6]
             )
@@ -1167,7 +1010,6 @@ mod tests {
                     newest: Some((5, Group::Base)),
                     slider: Some(6),
                     kept: Vec::new(),
-                    bar: None,
                 }),
                 vec![4]
             )
@@ -1198,201 +1040,6 @@ mod tests {
             ]
         );
         assert_eq!(facts.marks(), Marks::default());
-    }
-
-    /// A focus followed on element `element`, to share its token with the
-    /// bar watch.
-    fn focused_on(element: u64) -> FollowState {
-        FollowState {
-            followed: Some(Followed {
-                subscription: Some(Subscribed {
-                    group: Group::Base,
-                    element,
-                    slider: None,
-                }),
-                ..plain_followed(NodeId::new(2), Role::Button)
-            }),
-            ..FollowState::default()
-        }
-    }
-
-    const FINDING: BarWatch = BarWatch::Finding { window: 10 };
-    const SUBSCRIBED: BarWatch = BarWatch::Subscribed {
-        window: 10,
-        element: 7,
-    };
-
-    /// Whether the subscription moved, and where it then follows the
-    /// window.
-    #[derive(Debug, PartialEq, Eq)]
-    enum Moved {
-        Not,
-        To(Option<u64>),
-    }
-
-    /// `bar` as the state, an input applied, and what is left: the state,
-    /// where the subscription follows the window, and the tokens let go of.
-    fn after(
-        bar: BarWatch,
-        input: impl FnOnce(&mut FollowState, &mut Applied),
-    ) -> (BarWatch, Moved, Vec<u64>) {
-        let mut follow = FollowState {
-            bar,
-            ..FollowState::default()
-        };
-        let mut applied = Applied::default();
-        input(&mut follow, &mut applied);
-        (
-            follow.bar,
-            applied
-                .subscribe
-                .map_or(Moved::Not, |subscribe| Moved::To(subscribe.bar)),
-            applied.unfollowed,
-        )
-    }
-
-    fn front(front: FrontWindow) -> impl FnOnce(&mut FollowState, &mut Applied) {
-        move |follow, applied| follow.front(front, applied)
-    }
-
-    fn found(window: isize, token: u64) -> impl FnOnce(&mut FollowState, &mut Applied) {
-        move |follow, applied| follow.bar_found((window, token), applied)
-    }
-
-    fn ended() -> impl FnOnce(&mut FollowState, &mut Applied) {
-        move |follow, _| follow.bar_program_ended()
-    }
-
-    #[test]
-    fn a_bar_watch_none_finds_an_element_for_a_window_and_ignores_the_rest() {
-        assert_eq!(
-            after(BarWatch::None, front(FrontWindow::In(10))),
-            (BarWatch::Due { window: 10 }, Moved::Not, vec![])
-        );
-        assert_eq!(
-            after(BarWatch::None, front(FrontWindow::Left)),
-            (BarWatch::None, Moved::Not, vec![])
-        );
-        assert_eq!(
-            after(BarWatch::None, found(10, 7)),
-            (BarWatch::None, Moved::Not, vec![7])
-        );
-        assert_eq!(
-            after(BarWatch::None, ended()),
-            (BarWatch::None, Moved::Not, vec![])
-        );
-    }
-
-    #[test]
-    fn a_bar_watch_finding_takes_only_its_own_windows_answer() {
-        assert_eq!(
-            after(FINDING, found(10, 7)),
-            (SUBSCRIBED, Moved::To(Some(7)), vec![])
-        );
-        assert_eq!(after(FINDING, found(11, 8)), (FINDING, Moved::Not, vec![8]));
-        assert_eq!(
-            after(FINDING, ended()),
-            (BarWatch::None, Moved::Not, vec![])
-        );
-        // A lookup asked for and not yet started waits for its own
-        // program: an earlier program's ending changes nothing, and an
-        // earlier lookup's answer counts only if it is of the same window.
-        let waiting = BarWatch::Due { window: 10 };
-        assert_eq!(after(waiting, ended()), (waiting, Moved::Not, vec![]));
-    }
-
-    #[test]
-    fn a_bar_watch_finding_moves_with_the_window_and_ends_when_left() {
-        assert_eq!(
-            after(FINDING, front(FrontWindow::In(10))),
-            (FINDING, Moved::Not, vec![])
-        );
-        assert_eq!(
-            after(FINDING, front(FrontWindow::In(11))),
-            (BarWatch::Due { window: 11 }, Moved::Not, vec![])
-        );
-        assert_eq!(
-            after(FINDING, front(FrontWindow::Left)),
-            (BarWatch::None, Moved::Not, vec![])
-        );
-    }
-
-    #[test]
-    fn a_bar_watch_subscribed_withdraws_when_the_window_changes_or_is_left() {
-        assert_eq!(
-            after(SUBSCRIBED, front(FrontWindow::In(10))),
-            (SUBSCRIBED, Moved::Not, vec![])
-        );
-        assert_eq!(
-            after(SUBSCRIBED, front(FrontWindow::In(11))),
-            (BarWatch::Due { window: 11 }, Moved::To(None), vec![7])
-        );
-        assert_eq!(
-            after(SUBSCRIBED, front(FrontWindow::Left)),
-            (BarWatch::None, Moved::To(None), vec![7])
-        );
-        assert_eq!(
-            after(SUBSCRIBED, found(10, 8)),
-            (SUBSCRIBED, Moved::Not, vec![8])
-        );
-        assert_eq!(after(SUBSCRIBED, ended()), (SUBSCRIBED, Moved::Not, vec![]));
-    }
-
-    #[test]
-    fn a_bar_watch_due_moves_with_the_window_and_ends_when_left() {
-        const DUE: BarWatch = BarWatch::Due { window: 10 };
-        assert_eq!(
-            after(DUE, front(FrontWindow::In(10))),
-            (DUE, Moved::Not, vec![])
-        );
-        assert_eq!(
-            after(DUE, front(FrontWindow::In(11))),
-            (BarWatch::Due { window: 11 }, Moved::Not, vec![])
-        );
-        assert_eq!(
-            after(DUE, front(FrontWindow::Left)),
-            (BarWatch::None, Moved::Not, vec![])
-        );
-        assert_eq!(
-            after(DUE, found(10, 7)),
-            (SUBSCRIBED, Moved::To(Some(7)), vec![])
-        );
-        assert_eq!(after(DUE, found(11, 8)), (DUE, Moved::Not, vec![8]));
-    }
-
-    /// Letting go of the bar watch's element follows the same rule as
-    /// letting go of the focus's: one token, kept while either follows it.
-    #[test]
-    fn a_token_shared_with_the_focus_is_kept_when_the_bar_watch_lets_it_go() {
-        let mut follow = FollowState {
-            bar: SUBSCRIBED,
-            ..focused_on(7)
-        };
-        let mut applied = Applied::default();
-        follow.front(FrontWindow::Left, &mut applied);
-        assert_eq!(applied.unfollowed, Vec::<u64>::new());
-        // A found element the focus already holds is kept likewise.
-        let mut follow = focused_on(9);
-        let mut applied = Applied::default();
-        follow.bar_found((10, 9), &mut applied);
-        assert_eq!(applied.unfollowed, Vec::<u64>::new());
-        assert_eq!(follow.bar, BarWatch::None);
-    }
-
-    /// The token the bar watch holds is kept when the focus lets it go.
-    #[test]
-    fn a_token_shared_with_the_bar_watch_is_kept_when_the_focus_lets_it_go() {
-        let mut follow = FollowState {
-            bar: SUBSCRIBED,
-            ..focused_on(7)
-        };
-        let mut applied = Applied::default();
-        follow.release_groups(&BTreeSet::from([2]), &mut applied);
-        assert_eq!(applied.unfollowed, Vec::<u64>::new());
-        assert_eq!(
-            applied.subscribe.expect("the subscription moved").bar,
-            Some(7)
-        );
     }
 
     /// A focus's element replaced clears the note on its node, and only

@@ -12,7 +12,7 @@ use crate::settings::ReaderSettings;
 use crate::shell::ShellItemKind;
 use crate::speech::{SpeechMark, Utterance};
 use crate::text::{CaretKey, CaretReport, FocusText, SelectionChange, TextPosition, TextRequest};
-use crate::tree::{Backend, NodeSnapshot, Rect, StateSet};
+use crate::tree::{Backend, NodeSnapshot, StateSet};
 use crate::{KeySeq, NodeId, OutpostId, TraceId};
 
 /// A Windows process identifier, used to name the application an outpost
@@ -376,16 +376,6 @@ pub enum NormalizedEvent {
         /// Snapshot of the selected node.
         node: NodeSnapshot,
     },
-    /// A progress bar's value changed, whether or not it has the focus
-    /// (`docs/nvda/object-model.md`, "How a progress bar reports its
-    /// value"); reported in place of [`NormalizedEvent::ValueChanged`] for
-    /// a visible progress bar.
-    ProgressChanged {
-        /// The progress bar as its value change reads it: its new value,
-        /// whether it is off screen, and its location, by whose centre
-        /// the last report is remembered.
-        bar: ProgressReading,
-    },
     /// A node was selected inside an element the focus controls (its UIA
     /// `ControllerFor` relation), such as a search result while the focus
     /// stays in the search box. The reducer speaks it as a focus and moves
@@ -508,9 +498,6 @@ impl NormalizedEvent {
             NormalizedEvent::SelectionChanged { node } | NormalizedEvent::Alert { node, .. } => {
                 node.assign_outpost(outpost);
             }
-            NormalizedEvent::ProgressChanged { bar } => {
-                bar.id = bar.id.with_outpost(outpost);
-            }
             NormalizedEvent::ControlledSelection { controller, node } => {
                 *controller = controller.with_outpost(outpost);
                 node.assign_outpost(outpost);
@@ -545,22 +532,6 @@ pub enum AlertOrigin {
 /// equality.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToastId(pub u64);
-
-/// A progress bar as a change of its value reads it, for
-/// [`NormalizedEvent::ProgressChanged`]: only the properties a progress
-/// bar's report uses, so a property that was not read is never mistaken
-/// for one that is empty, as it would be in a [`NodeSnapshot`].
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ProgressReading {
-    /// The progress bar.
-    pub id: NodeId,
-    /// Its new value.
-    pub value: Option<String>,
-    /// Whether it is off screen, when its percentage is not indicated.
-    pub offscreen: bool,
-    /// Its location on the screen, when it has one.
-    pub rect: Option<Rect>,
-}
 
 /// What kind of change a [`NormalizedEvent::Notification`] reports —
 /// UIA's `NotificationKind`.

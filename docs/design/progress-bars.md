@@ -84,7 +84,7 @@ The listener's hook, for each `EVENT_OBJECT_VALUECHANGE`, with no call into the 
 
 Whether a window is a native UIA window sends a window message that a busy window can hold (`crates/verbatim-uia/src/probe.rs`), so it is asked on the reading thread only, never on the hook's thread: a native UIA window's event is then dropped there, as NVDA drops it, its bar coming through the group.
 
-The hook needs value changes always, not only while the background setting is on, because foreground bars take this path too. Core alone applies the setting. An outpost's hook still receives the same event for its own application, for text, and reports no bar from it.
+The hook needs value changes always, not only while the background setting is on, because foreground bars take this path too. Core alone applies the setting.
 
 Settings: `report_background_progress_bars`, false by default, is read by Core alone, so it reaches neither the listener nor the outposts. `progressBarOutputMode` and the two intervals are not part of this: the theme chooses tone or speech (D12), and M4.3 builds the speech interval as its roadmap entry says.
 

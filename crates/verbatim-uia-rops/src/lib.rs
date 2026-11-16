@@ -82,8 +82,8 @@ pub use focus::{
     focus_ancestry, focus_ancestry_classic, focus_ancestry_remote, runtime_id_key,
 };
 pub use focus_states::{
-    DIALOG_CHILDREN_PER_RUN, FocusStatesFn, States, StatesQuery, focus_states, focus_states_classic,
-    focus_states_remote,
+    DIALOG_CHILDREN_PER_RUN, FocusStatesFn, States, StatesQuery, focus_states,
+    focus_states_classic, focus_states_remote,
 };
 pub use instruction::{Instruction, OperandId, TypeTest};
 pub use navigate::{

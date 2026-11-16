@@ -18,19 +18,18 @@ mod harness;
 
 use verbatim_uia::text::{Endpoint, TextPatternExt};
 use verbatim_uia::{
-    Ancestor, Cached, DialogText, Fill, FocusInput, Kept, Live, Node, NodeGates, NodeIdRegistry, Shape, Uia,
-    runtime_id,
+    Ancestor, Cached, DialogText, Fill, FocusInput, Kept, Live, Node, NodeGates, NodeIdRegistry,
+    Shape, Uia, runtime_id,
 };
 use verbatim_uia_rops::{
     Attributes, Builder, CaretLineQuery, CaretQuery, Comparison, ControlledQuery, Error,
     FocusAncestry, FocusQuery, FormatSpan, MOST_RUNS, Movement, NavigationDirection, PathQuery,
     Position, RangeAction, RangeEnd, RangeQuery, RowsQuery, SnapshotQuery, StatesQuery, Status,
-    StepQuery,
-    TextAttribute, TextFrom, TextTarget, TreeQuery, UnitsQuery, WatchQuery, caret_read_remote,
-    controlled_selection_remote, counting, element_by_path_remote, focus_ancestry_remote,
-    focus_states_remote,
-    navigation_step_remote, terminal_rows_remote, terminal_snapshot_remote, text_range_remote,
-    text_units_remote, tree_dump_remote, watch_check_remote,
+    StepQuery, TextAttribute, TextFrom, TextTarget, TreeQuery, UnitsQuery, WatchQuery,
+    caret_read_remote, controlled_selection_remote, counting, element_by_path_remote,
+    focus_ancestry_remote, focus_states_remote, navigation_step_remote, terminal_rows_remote,
+    terminal_snapshot_remote, text_range_remote, text_units_remote, tree_dump_remote,
+    watch_check_remote,
 };
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Variant::VARIANT;

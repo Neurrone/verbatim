@@ -99,7 +99,13 @@ pub(super) fn complete(
         // raised from now on is heard, with the text of the dialogs it
         // enters whose elements the outpost holds.
         let gathered = found.as_ref().map_or_else(Vec::new, |element| {
-            states_and_dialogs(context, client, element, nearest, (&mut snapshot, &ancestors))
+            states_and_dialogs(
+                context,
+                client,
+                element,
+                nearest,
+                (&mut snapshot, &ancestors),
+            )
         });
         // Every dialog of the chain below the ancestors Core already knows
         // is one the focus enters.

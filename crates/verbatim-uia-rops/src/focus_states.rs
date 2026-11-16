@@ -76,7 +76,9 @@ pub fn focus_states(
     match focus_states_remote(uia, query) {
         Ok(states) => Ok((states, Path::Remote)),
         Err(error) if gone_or_timed_out(&error) && !is_gone(&error) => Err(error),
-        Err(error) => focus_states_classic(uia, query).map(|states| (states, Path::Fallback(error))),
+        Err(error) => {
+            focus_states_classic(uia, query).map(|states| (states, Path::Fallback(error)))
+        }
     }
 }
 
@@ -210,7 +212,12 @@ pub fn focus_states_classic(uia: &Uia, query: &StatesQuery<'_>) -> Result<States
     let children = query
         .dialogs
         .iter()
-        .map(|dialog| Some(uia.children(dialog, query.children.request()).unwrap_or_default()))
+        .map(|dialog| {
+            Some(
+                uia.children(dialog, query.children.request())
+                    .unwrap_or_default(),
+            )
+        })
         .collect();
     Ok(States { focus, children })
 }

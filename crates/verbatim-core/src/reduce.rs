@@ -17,9 +17,9 @@ use verbatim_model::protocol::FocusPurpose;
 use verbatim_model::{
     ActionName, AlertOrigin, BarChange, Earcon, EarlierElement, Effect, FetchResult,
     ForegroundWindow, Input, Message, NodeId, NodeSnapshot, NormalizedEvent, Notification,
-    NotificationProcessing, OutpostId, Percent, Phrase, Pid, ProgressReading, PropertyChange,
-    QueryKind, ReviewCommand, Role, SegmentContent, SpeechPriority, State, StateSet, TraceId,
-    Utterance, UtteranceSegment, UtteranceSource, WindowFacts,
+    NotificationProcessing, OutpostId, Percent, Phrase, Pid, PropertyChange, QueryKind,
+    ReviewCommand, Role, SegmentContent, SpeechPriority, State, StateSet, TraceId, Utterance,
+    UtteranceSegment, UtteranceSource, WindowFacts,
 };
 use verbatim_model::{
     Backend, FirstCachedAncestor, FocusGroup, FocusNow, FocusReaderKind, FocusText, FocusValidity,
@@ -1215,7 +1215,6 @@ fn reduce_event(
         NormalizedEvent::SelectionChanged { node } => {
             reduce_selection_changed(state, trace_id, node)
         }
-        NormalizedEvent::ProgressChanged { bar } => reduce_progress_changed(state, trace_id, bar),
         NormalizedEvent::ControlledSelection { controller, node } => {
             reduce_controlled_selection(state, trace_id, *controller, node)
         }
@@ -2973,46 +2972,10 @@ fn reduce_value_changed(
     )]
 }
 
-/// A progress bar's value changed, whether or not it is the focus
-/// (`docs/nvda/object-model.md`, "How a progress bar reports its value"):
-/// its percentage is indicated at once (`Earcon::Progress`, a tone by
-/// default) when it differs by at least one percent from the last one
-/// indicated for a progress bar at the same place on the screen, and its
-/// value is not spoken as a value change, focus or not. An off-screen
-/// progress bar, or one whose value is not a number, is an ordinary value
-/// change instead. Background progress bars never get here: their events
-/// are not attended.
-fn reduce_progress_changed(
-    state: &mut SrState,
-    trace_id: TraceId,
-    progress: &ProgressReading,
-) -> Vec<Effect> {
-    let percentage = progress
-        .value
-        .as_deref()
-        .and_then(Percent::parse)
-        .filter(|_| !progress.offscreen);
-    let Some(percentage) = percentage else {
-        return reduce_value_changed(state, trace_id, progress.id, progress.value.clone());
-    };
-    if change_on(state, ChangeKind::Value, progress.id) == Some(ChangeTarget::Focus)
-        && let Some(focus) = state.focus.object_mut()
-    {
-        focus.snapshot.value.clone_from(&progress.value);
-    }
-    let place = progress.rect.map_or((0, 0), |rect| {
-        (
-            rect.left.saturating_add(rect.width / 2),
-            rect.top.saturating_add(rect.height / 2),
-        )
-    });
-    indicate_progress(state, place, percentage)
-}
-
 /// A progress bar's value changed, reported by the listener
 /// (`docs/design/progress-bars.md`, "Rules"): heard when its window is the
 /// foreground window or beneath it, or anywhere when the setting asks for
-/// background bars, by the rule of [`reduce_progress_changed`].
+/// background bars.
 pub(crate) fn reduce_bar_change(state: &mut SrState, change: &BarChange) -> Vec<Effect> {
     if !change.in_foreground && !state.settings.report_background_progress_bars {
         return Vec::new();

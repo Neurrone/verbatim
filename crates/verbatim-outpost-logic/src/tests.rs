@@ -250,7 +250,6 @@ fn focus_change(id: u64, owes: bool) -> Change {
         }),
         focus: Some(FocusCommit::Adopt {
             reported: LastReported { role: focus.role },
-            dialog: None,
             followed: Box::new(Followed {
                 object: Some(Object::Msaa(9, -4, i32::try_from(id).unwrap_or(0))),
                 window: Some(9),
@@ -804,67 +803,6 @@ fn a_settle_is_answered_as_it_is_reached_and_a_close_drops_it() {
         settled_and_dispatches(&replay.finish(query, 7)),
         [] as [String; 0]
     );
-}
-
-/// The foreground window's element is found by one program, whose ending
-/// answers it; a window's change while that program runs starts another
-/// once it ends, and its late answer lets its token go.
-#[test]
-fn the_foreground_windows_element_is_found_by_one_program_at_a_time() {
-    use verbatim_model::protocol::FrontWindow;
-    let mut replay = Replay::new();
-    let first = replay.input(Input::Front(FrontWindow::In(10)), 0);
-    let first_program = program(&first);
-    assert!(matches!(first_program.work, Work::FindBar(10)));
-    let request = first_program.request;
-    // While it runs the window changes: no second program yet.
-    let changed = replay.input(Input::Front(FrontWindow::In(11)), 1);
-    assert!(
-        changed
-            .iter()
-            .all(|effect| !matches!(effect, Effect::Dispatch(_)))
-    );
-    // Its answer is of the old window: its token goes.
-    let late = replay.commit(
-        request,
-        Change {
-            bar_found: Some((10, 7)),
-            ..Change::default()
-        },
-        2,
-    );
-    assert!(
-        late.iter()
-            .any(|effect| matches!(effect, Effect::Unfollow(tokens) if tokens == &vec![7]))
-    );
-    let finished = replay.input(
-        Input::Finished {
-            request,
-            reported: false,
-            panicked: false,
-            cut: None,
-        },
-        3,
-    );
-    // The new window's program, and the watch is not ended by the old one.
-    let second = program(&finished);
-    assert!(matches!(second.work, Work::FindBar(11)));
-    assert_eq!(
-        replay.reducer.facts().follow.bar,
-        BarWatch::Finding { window: 11 }
-    );
-    // Its program ending with no element found ends the watch.
-    let request = second.request;
-    replay.input(
-        Input::Finished {
-            request,
-            reported: false,
-            panicked: false,
-            cut: None,
-        },
-        4,
-    );
-    assert_eq!(replay.reducer.facts().follow.bar, BarWatch::None);
 }
 
 #[test]

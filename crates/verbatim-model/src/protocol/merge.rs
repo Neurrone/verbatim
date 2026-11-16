@@ -143,7 +143,6 @@ impl Merge for OutpostToCore {
             NormalizedEvent::SelectionChanged { node }
             | NormalizedEvent::ControlledSelection { node, .. }
             | NormalizedEvent::Alert { node, .. } => (node.id, Detail::None),
-            NormalizedEvent::ProgressChanged { bar } => (bar.id, Detail::None),
             NormalizedEvent::ValueChanged { node_id, .. }
             | NormalizedEvent::CaretMoved { node_id, .. }
             | NormalizedEvent::TextChanged { node_id }

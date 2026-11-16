@@ -646,16 +646,6 @@ pub enum FactKey {
     Show(isize, i32, i32, u32),
 }
 
-/// Where attention is, for one outpost ([`CoreToOutpost::Front`]).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum FrontWindow {
-    /// Its application holds attention, with this foreground window; a
-    /// change between two windows of the application is one more of these.
-    In(isize),
-    /// Its application no longer holds attention.
-    Left,
-}
-
 /// Messages from verbatim.exe to an outpost.
 ///
 /// An outpost's target application is set once (decision D9: one
@@ -741,12 +731,6 @@ pub enum CoreToOutpost {
         #[serde(default)]
         sent_at_us: u64,
     },
-    /// Where the user's attention is, as it concerns this outpost's
-    /// application (`docs/parity/changes-and-selection.md`, "Progress bars
-    /// that are not the focus"): sent when attention changes and to an
-    /// outpost that starts while its application is attended; Core owns
-    /// attention, and the outpost judges nothing of it.
-    Front(FrontWindow),
     /// The details the active theme wants read for each node
     /// (`SrState::fetches` in `verbatim-core`): a detail whose indication
     /// is off is not read, which saves its cross-process call. Sent when an
@@ -870,7 +854,7 @@ impl CoreToOutpost {
             | CoreToOutpost::Shutdown
             | CoreToOutpost::ForwardingEnded { .. } => Kind::Lifecycle,
             CoreToOutpost::DeliverFact { .. } | CoreToOutpost::LiveReread { .. } => Kind::Routed,
-            CoreToOutpost::Fetches(_) | CoreToOutpost::Front(_) => Kind::Configuration,
+            CoreToOutpost::Fetches(_) => Kind::Configuration,
         }
     }
 }
@@ -1818,7 +1802,6 @@ impl Named {
             NormalizedEvent::SelectionChanged { node } | NormalizedEvent::Alert { node, .. } => {
                 self.node(node);
             }
-            NormalizedEvent::ProgressChanged { bar } => self.nodes.push(bar.id),
             NormalizedEvent::ControlledSelection { controller, node } => {
                 self.nodes.push(*controller);
                 self.node(node);

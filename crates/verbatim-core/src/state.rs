@@ -874,15 +874,6 @@ impl SrState {
             .map(|attention| attention.source)
     }
 
-    /// The application holding attention and its foreground window, the
-    /// source of the outposts' [`FrontWindow`](verbatim_model::protocol::FrontWindow).
-    #[must_use]
-    pub fn attention_window(&self) -> Option<(Pid, isize)> {
-        let attention = self.foreground.attention()?;
-        let window = attention.window.as_ref()?.top_level.0;
-        Some((attention.source, isize::try_from(window).ok()?))
-    }
-
     /// The details to fetch, as the active theme decides: a detail whose
     /// indication is off is not fetched, so off also saves the
     /// cross-process call (`books/dev/src/reference/crates/verbatim-core.md`). Like

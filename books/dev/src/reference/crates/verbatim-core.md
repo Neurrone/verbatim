@@ -658,9 +658,9 @@ code is in `reduce.rs` unless named.
   spoken as a focus, interrupting, and moves the navigator, only while
   its controller is the live focus.
 - Progress bars (`docs/nvda/object-model.md`, "How a progress bar reports
-  its value"): `ProgressChanged` plays `Earcon::Progress` once the value
-  moves a percent from the last one indicated at the same place on screen
-  (`SrState::progress_reported`, the last 32 places).
+  its value"): the listener's `Input::Progress` plays `Earcon::Progress`
+  once the value moves a percent from the last one indicated at the same
+  place on screen (`SrState::progress_reported`, the last 32 places).
 - Notifications: a UIA `Notification` speaks its display string,
   interrupting for `MostRecent` and `ImportantMostRecent`, queued
   otherwise.

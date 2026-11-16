@@ -98,7 +98,7 @@ recorder unchanged. What the reducer does with each type is in
   and range, or its text, and the bar's place and whether its window is in
   the foreground. `ListenerToCore::Progress` carries it to Core, as
   `Input::Progress`.
-- `NormalizedEvent`, `PropertyChange`, `ProgressReading`, `Notification`,
+- `NormalizedEvent`, `PropertyChange`, `Notification`,
   `NotificationKind`, `NotificationProcessing`: the events an outpost
   sends.
   - `FocusChanged`: a full snapshot; `whole_window`, set when the node is
@@ -121,9 +121,7 @@ recorder unchanged. What the reducer does with each type is in
   - `PropertyChanged` with a `PropertyChange`: name, value, description,
     or the complete new `States` set, with a `child_count` read only for a
     state change that newly expands a Win32 tree view item.
-  - `ValueChanged`; `ProgressChanged` with a `ProgressReading` (node, new
-    value, whether off screen, location; only what is read, so a property
-    not read is never taken for an empty one).
+  - `ValueChanged`.
   - `SelectionChanged` (a node selected within its container) and
     `ControlledSelection` (a node selected inside an element the focus
     controls through UIA's ControllerFor relation, with the controlling

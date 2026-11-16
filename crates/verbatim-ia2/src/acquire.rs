@@ -36,8 +36,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 use verbatim_model::{
-    Backend, NodeDetails, NodeId, NodeSnapshot, ProgressReading, QueryKind, Rect, Role, State,
-    TreeNode, WindowHandle,
+    Backend, NodeDetails, NodeId, NodeSnapshot, QueryKind, Rect, Role, State, TreeNode,
+    WindowHandle,
 };
 
 use crate::accessible::{Accessible, Related};
@@ -373,53 +373,6 @@ impl EventObject {
             verbatim_text::strip_bidi_controls(value);
         }
         value
-    }
-
-    /// The object, a progress bar whose value changed, read for what its
-    /// report uses, as NVDA's progress bar behavior reads it: its states,
-    /// then its value and location. `known` is its node and the role it was
-    /// last read with when it is already known, as the focus is; else its
-    /// role is read and its node issued or looked up as a full read would.
-    /// `None`, with nothing more read, when its states make it a busy
-    /// indicator or say it is invisible: neither reports progress.
-    pub fn progress(
-        &mut self,
-        known: Option<(NodeId, Role)>,
-        registry: &dyn Interning,
-    ) -> Option<ProgressReading> {
-        let role = known.map_or_else(|| self.role(), |(_, role)| role);
-        let state = self.acc.state();
-        let invisible = state
-            .is_some_and(|state| state.cast_unsigned() & crate::map::STATE_SYSTEM_INVISIBLE != 0);
-        let (role, states, _) = role_and_states(&self.acc, self.key, role, state);
-        if role != Role::ProgressBar || invisible {
-            return None;
-        }
-        let mut value = visible_text(self.acc.value());
-        if let Some(value) = &mut value {
-            verbatim_text::strip_bidi_controls(value);
-        }
-        let rect = self.acc.location();
-        let id = known.map_or_else(
-            || {
-                // Read for its value alone, so with no name or role kept to
-                // compare: a progress bar is never in a focus line.
-                let facts = Facts {
-                    event: equality::event_of(self.key, true, self.acc.child()),
-                    identity: None,
-                    raw_role: None,
-                    name: None,
-                };
-                node_for(registry, (self.key, true), &self.acc, (role, facts), None)
-            },
-            |(node, _)| node,
-        );
-        Some(ProgressReading {
-            id,
-            value,
-            offscreen: states.contains(State::Offscreen),
-            rect,
-        })
     }
 
     /// The object, known to be a progress bar by its role, read for the

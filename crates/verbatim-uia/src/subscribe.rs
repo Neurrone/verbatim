@@ -191,10 +191,6 @@ pub enum Group {
     /// Only the parts marked [`Part::value_only`], which no other group
     /// holds: for an element only whose value changes the caller follows.
     Value,
-    /// Only the parts marked [`Part::range_value_only`], which no other
-    /// group holds, registered over the element's whole subtree: for a
-    /// window whose progress bars are followed when none is the focus.
-    RangeValue,
 }
 
 /// The one group a part is kept for alone, if it is: no other group holds
@@ -206,8 +202,6 @@ enum Alone {
     No,
     /// Only [`Group::Value`] holds it.
     Value,
-    /// Only [`Group::RangeValue`] holds it.
-    RangeValue,
 }
 
 impl Group {
@@ -215,7 +209,6 @@ impl Group {
     /// `text_events`, and as kept for one group `alone`.
     fn holds(self, extended_only: bool, text_events: bool, alone: Alone) -> bool {
         match self {
-            Group::RangeValue => alone == Alone::RangeValue,
             Group::Value => alone == Alone::Value,
             _ if alone != Alone::No => false,
             Group::Base => !extended_only,
@@ -411,16 +404,6 @@ impl Part {
     pub fn text_events(self) -> Self {
         Self {
             text_events: true,
-            ..self
-        }
-    }
-
-    /// The part, held by [`Group::RangeValue`] alone, as one that delivers
-    /// the range value changes of a window's subtree.
-    #[must_use]
-    pub fn range_value_only(self) -> Self {
-        Self {
-            alone: Alone::RangeValue,
             ..self
         }
     }
@@ -674,8 +657,8 @@ impl Registration {
     }
 
     /// Moves the subscription as [`retarget_to`](Self::retarget_to) does,
-    /// and gives each of `also`, an element alone, or for
-    /// [`Group::RangeValue`] its subtree, the group paired with it, such as
+    /// and gives each of `also`, an element alone, the group paired with
+    /// it, such as
     /// [`Group::Value`] for a focus's parent whose value changes are
     /// followed: one more `AddEventHandlerGroup` call for each
     /// that does not already have its group, and its removal when a later
@@ -1333,14 +1316,10 @@ impl Follower {
     /// (module doc).
     fn move_to(&mut self, client: &Client, target: &Target) {
         let (elements, tree_scope) = self.resolve(client, &target.scope);
-        let also = target.also.iter().filter_map(|(agile, group)| {
-            let tree_scope = if *group == Group::RangeValue {
-                TreeScope_Subtree
-            } else {
-                TreeScope_Element
-            };
-            Some((agile.resolve().ok()?, *group, tree_scope))
-        });
+        let also = target
+            .also
+            .iter()
+            .filter_map(|(agile, group)| Some((agile.resolve().ok()?, *group, TreeScope_Element)));
         let wanted: Vec<(IUIAutomationElement, Group, TreeScope)> = elements
             .into_iter()
             .map(|element| (element, target.group, tree_scope))
@@ -1830,19 +1809,6 @@ mod tests {
             assert_eq!(held(group, true), [false; 4], "{group:?} and a value part");
         }
         assert_eq!(held(Group::Value, true), [true; 4]);
-        assert!(Group::RangeValue.holds(false, false, Alone::RangeValue));
-        assert!(!Group::RangeValue.holds(false, false, Alone::No));
-        for group in [
-            Group::Base,
-            Group::Extended,
-            Group::ExtendedWithoutTextEvents,
-            Group::Value,
-        ] {
-            assert!(
-                !group.holds(false, false, Alone::RangeValue),
-                "{group:?} and a range part"
-            );
-        }
     }
 
     /// An element the registering thread has registered on, by name, with

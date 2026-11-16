@@ -43,8 +43,7 @@ use verbatim_model::{
     TextReply, TraceId, WindowFacts, WindowHandle, had_effect,
 };
 use verbatim_uia::{
-    Cached, Fill, HelpTextRefresh, Interning as _, Kept, Place, SuggestionsRefresh,
-    nearest_window_handle,
+    Cached, Fill, HelpTextRefresh, Interning as _, Kept, SuggestionsRefresh, nearest_window_handle,
 };
 use windows::Win32::UI::Accessibility::{
     UIA_ControllerForPropertyId, UIA_HelpTextPropertyId, UIA_NamePropertyId,
@@ -56,7 +55,7 @@ use verbatim_model::protocol::{
     EventTiming, FocusNow, FocusPurpose, FocusedControl, OutpostToCore, Query, QueryOutcome,
     QueryResult, RequestId, UiaSnapshotFact,
 };
-use verbatim_model::{AlertOrigin, ProgressReading, ToastId};
+use verbatim_model::{AlertOrigin, ToastId};
 use verbatim_process::clock::now_us;
 
 use super::commit::{Committed, Effects, FocusEffects, FollowWrites, KeptTarget, Stale, Target};
@@ -255,9 +254,6 @@ fn run_job(context: &Arc<Context>, client: &mut Client, job: Job, charge: &Arc<C
             Worker::new(&request_context, client, EventTiming::default()).attempt_owed(owed);
         }
         Work::Drop => {}
-        Work::FindBar(window) => {
-            Worker::new(&request_context, client, EventTiming::default()).find_bar(window);
-        }
         Work::NoteRead(node) => {
             request_context.judge_at(context.observed_now());
             let timing = EventTiming {
@@ -352,7 +348,6 @@ fn describe(work: &Work) -> String {
         Work::Owed(owed) => format!("owed work of {:?}", owed.node),
         Work::Drop => "drop".to_owned(),
         Work::NoteRead(node) => format!("the console poll's read of {node:?}"),
-        Work::FindBar(window) => format!("the foreground window {window:#x}'s element"),
         Work::Finish { cut, .. } => format!("the finish of a caret read of {:?}", cut.node),
         Work::Ask(ask) => format!("{}", ask.number),
         Work::Watch(watch) => format!("the watch {}'s {:?}", watch.number, watch.work),
@@ -438,19 +433,6 @@ fn toast_id(runtime_id: &[i32]) -> ToastId {
     let mut hasher = std::hash::DefaultHasher::new();
     runtime_id.hash(&mut hasher);
     ToastId(hasher.finish())
-}
-
-/// Whether `event` is a progress bar's range value change, which is reported
-/// as a progress bar's rather than as a value change.
-fn is_progress_change(event: &UiaEvent) -> bool {
-    is_progress_change_of(&event.kind, event.parts.role)
-}
-
-/// Whether a UIA event of `kind` on an element of `role` is a progress bar's
-/// range value change.
-fn is_progress_change_of(kind: &UiaKind, role: Role) -> bool {
-    role == Role::ProgressBar
-        && matches!(kind, UiaKind::Property(id) if *id == UIA_RangeValueValuePropertyId.0)
 }
 
 /// The name NVDA's acceptance test knows a UIA event of `kind` by, or `None`
@@ -2016,12 +1998,6 @@ impl Worker<'_> {
             crate::gates::leave_out_unreported(&mut node.details, &self.context.fetches());
         }
         let normalized = match event.kind {
-            UiaKind::Property(_) if is_progress_change_of(&event.kind, node.role) => {
-                let Some(bar) = self.progress_reading(element.as_ref(), node) else {
-                    return;
-                };
-                NormalizedEvent::ProgressChanged { bar }
-            }
             UiaKind::Property(id) => {
                 let refreshed = refreshed_for(self.client.uia(), id, element.as_ref());
                 let Some(normalized) = property_event(id, node, refreshed.as_ref()) else {
@@ -2048,28 +2024,17 @@ impl Worker<'_> {
     /// The window of the UIA event `event`, which is of the focus when
     /// `of_focus`: its own, else the recorded window of the focus it
     /// concerns, else its element's. Never the system's focus window, which
-    /// can belong to another application. A progress bar the foreground
-    /// window's subtree reported may belong to a window of another process,
-    /// as a Settings page's content does under its frame: it is judged by
-    /// the window attention names when that window's verdict is UIA, which
-    /// also saves the call to find its nearest window, and otherwise by its
-    /// nearest window, as a classic frame hosting a XAML island needs.
+    /// can belong to another application.
     fn uia_event_window(
         &self,
         event: &UiaEvent,
         of_focus: bool,
         element: Option<&Cached<Kept>>,
     ) -> Option<isize> {
-        let bar_window = (is_progress_change(event) && !of_focus)
-            .then(|| self.context.follow(|follow| follow.bar.window()))
-            .flatten()
-            .filter(|&window| read::window_uses_uia(self.context, window));
         if event.hwnd != 0 {
             Some(event.hwnd)
         } else if of_focus {
             self.context.tracked_window()
-        } else if bar_window.is_some() {
-            bar_window
         } else if event.focus_window != 0 && element.is_none() {
             // A windowless selection's nearest window, which the listener's
             // reading thread walked up to (`FocusReader::check_fact`).
@@ -2077,30 +2042,6 @@ impl Worker<'_> {
         } else {
             element.and_then(|element| nearest_window_handle(element.live().element()))
         }
-    }
-
-    /// A UIA progress bar's change as its report uses it: its value and
-    /// states from the event's cache (`node`), and where it is on the screen
-    /// and whether it is off it, one call, as a progress bar's report needs
-    /// them and an event's cache never holds them (`verbatim_uia::Place`).
-    fn progress_reading(
-        &mut self,
-        element: Option<&Cached<Kept>>,
-        node: NodeSnapshot,
-    ) -> Option<ProgressReading> {
-        let element = element?;
-        let uia = self.client.uia()?;
-        let place = uia
-            .request_fixed::<Place>()
-            .and_then(|request| element.live().refresh(&request))
-            .ok()?;
-        let place = place.read();
-        Some(ProgressReading {
-            id: node.id,
-            value: node.value,
-            offscreen: place.offscreen,
-            rect: place.rect,
-        })
     }
 
     /// A UIA text change of the text focus whose runtime id it carries: it
@@ -2261,30 +2202,6 @@ impl Worker<'_> {
             value: parts.value.clone(),
             states: parts.states,
             details: parts.details.clone(),
-        }
-    }
-
-    /// Finds the foreground window's element, for its progress bars
-    /// (`docs/parity/changes-and-selection.md`, "Progress bars that are not
-    /// the focus"): one call. The element is committed, under a token the
-    /// shell gives it; a window with no element commits nothing, and the
-    /// program's ending answers the lookup.
-    fn find_bar(&mut self, window: isize) {
-        let Some(uia) = self.client.uia() else {
-            return;
-        };
-        let element = uia
-            .request_fixed::<Kept>()
-            .and_then(|request| uia.any_window_element::<Kept>(window, &request))
-            .and_then(|element| element.agile());
-        match element {
-            Ok(element) => {
-                self.commit(Effects {
-                    bar_found: Some((window, element)),
-                    ..Effects::default()
-                });
-            }
-            Err(error) => tracing::debug!(%error, window, "the foreground window's element"),
         }
     }
 
@@ -2560,12 +2477,7 @@ impl Worker<'_> {
             } = focus;
             ancestors.iter_mut().chain(std::iter::once(node))
         });
-        read::describe_dialogs(
-            context,
-            self.client,
-            (windows.chain(focus), None),
-            &[],
-        );
+        read::describe_dialogs(context, self.client, (windows.chain(focus), None), &[]);
         if purpose == FocusPurpose::Report {
             return (answer, None);
         }
@@ -2786,12 +2698,11 @@ struct FollowMade {
 }
 
 impl FollowMade {
-    /// The focus adopted, its report leaving the dialog memo `dialog`.
-    fn adopted(self, dialog: Option<reducer::DialogMemo>) -> FocusEffects {
+    /// The focus adopted.
+    fn adopted(self) -> FocusEffects {
         FocusEffects::Adopt {
             followed: self.followed,
             reported: self.reported,
-            dialog,
             writes: self.writes,
         }
     }
@@ -2816,7 +2727,7 @@ fn answered_focus(followed: Option<NodeId>, is_focus: bool, made: FollowMade) ->
     if followed == Some(made.followed.node) && is_focus {
         made.again()
     } else {
-        made.adopted(None)
+        made.adopted()
     }
 }
 

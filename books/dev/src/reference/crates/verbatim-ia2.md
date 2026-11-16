@@ -270,10 +270,8 @@ Public API:
   child id match the event's; `role()` reads its role alone; `name`,
   `description`, `states`, and `value` read that one property alone, as
   a full read of an object of the given role would give it, for a change
-  of the focus or an ancestor whose role is known; `progress` reads what
-  a progress bar's report uses, its states, value, and location, into a
-  `ProgressReading`, and nothing more for a busy indicator or an
-  invisible bar; `read(registry, purpose)` reads it in full),
+  of the focus or an ancestor whose role is known; `read(registry,
+  purpose)` reads it in full),
   `Purpose` (`Announce` or `Context`, passed to
   `snapshot_from_event` and `EventObject::read`: an object read for
   context, such as an ancestor or the object of a change, has no list view

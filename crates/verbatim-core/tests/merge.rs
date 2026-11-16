@@ -15,10 +15,9 @@ use verbatim_model::protocol::{
 };
 use verbatim_model::{
     Backend, CaretReport, Earcon, Effect, Input, NodeDetails, NodeId, NodeSnapshot,
-    NormalizedEvent, OutpostId, Phrase, Pid, ProgressReading, PropertyChange, QueryId, Rect, Role,
-    SegmentContent, SelectionChange, SelectionText, SpeechPriority, State, StateSet, TextAnchor,
-    TextChunk, TextPosition, TextUnit, TraceId, Utterance, UtteranceSegment, WindowFacts,
-    WindowHandle,
+    NormalizedEvent, OutpostId, Phrase, Pid, PropertyChange, QueryId, Role, SegmentContent,
+    SelectionChange, SelectionText, SpeechPriority, State, StateSet, TextAnchor, TextChunk,
+    TextPosition, TextUnit, TraceId, Utterance, UtteranceSegment, WindowFacts, WindowHandle,
 };
 
 /// The application, and its outpost.
@@ -508,31 +507,6 @@ fn an_alert_merged_is_the_newer_alert() {
             UtteranceSegment::label("Copied twice"),
             role(Role::Alert),
         ])],
-    );
-}
-
-#[test]
-fn a_progress_bar_merged_is_the_newer_reading() {
-    let progress = |value: &str| {
-        report(NormalizedEvent::ProgressChanged {
-            bar: ProgressReading {
-                id: id(8),
-                value: Some(value.to_owned()),
-                offscreen: false,
-                rect: Some(Rect {
-                    left: 0,
-                    top: 0,
-                    width: 100,
-                    height: 10,
-                }),
-            },
-        })
-    };
-    equivalent(
-        &progress("50"),
-        &progress("60"),
-        never,
-        &[played(Earcon::Progress(60))],
     );
 }
 

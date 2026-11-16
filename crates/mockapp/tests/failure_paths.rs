@@ -14,7 +14,6 @@ mod common;
 mod harness;
 
 use std::sync::{Arc, mpsc};
-use std::time::Duration;
 
 use verbatim_faults::Fault;
 use verbatim_model::protocol::{OutpostToCore, Query, QueryOutcome};

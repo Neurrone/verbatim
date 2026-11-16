@@ -79,7 +79,7 @@ use std::time::Duration;
 use self::charge::{Abandoned, InCharge};
 use self::watch::WatchCancelled;
 use verbatim_model::protocol::{
-    EventTiming, FrontWindow, OutpostToCore, Query, QueryOutcome, QueryResult, RequestId,
+    EventTiming, OutpostToCore, Query, QueryOutcome, QueryResult, RequestId,
 };
 use verbatim_model::{
     CallCounts, FocusText, KeyFetch, NodeId, NormalizedEvent, ReadPurpose, TextOp, TraceId,
@@ -88,9 +88,9 @@ use verbatim_model::{
 pub use self::charge::Request;
 pub use self::entry::{Asker, Entry, Item, UiaEvent, UiaKind, WinKind, is_state_property};
 pub use self::follow::{
-    Applied, BarWatch, Change, DialogMemo, Facts, FocusCommit, FocusPath, FollowState, Followed,
-    Group, LastReported, LogicError, MarkChange, MsaaReport, Origin, Owed, OwedProgram, OwedWork,
-    Route, Subscribed, Subscription, Target, apply_local,
+    Applied, Change, Facts, FocusCommit, FocusPath, FollowState, Followed, Group, LastReported,
+    LogicError, MarkChange, MsaaReport, Origin, Owed, OwedProgram, OwedWork, Route, Subscribed,
+    Subscription, Target, apply_local,
 };
 pub use self::intake::{Handling, Marks, Object, TerminalMark};
 pub use self::text::{
@@ -137,9 +137,6 @@ pub enum Work {
     Drop,
     /// One read of the console poll, of this node under its note.
     NoteRead(NodeId),
-    /// Finds the element of the foreground window for its progress bars
-    /// ([`BarWatch`]).
-    FindBar(isize),
     /// Core's request, answered once ([`waiting`]).
     Ask(Box<verbatim_model::request::Ask>),
     /// A caret key's watch's check or final read ([`watch`]), answered
@@ -314,8 +311,6 @@ pub enum Effect {
 pub enum Input {
     /// An entry from a producer.
     Entry(Entry),
-    /// Core's word on where attention is.
-    Front(FrontWindow),
     /// Core withdraws query `0` if it has not started.
     Cancel(RequestId),
     /// Core's note of a key with no before read, set as it arrives, not
@@ -524,11 +519,6 @@ impl Reducer {
         match input {
             Input::Entry(entry) => {
                 self.entry(entry, now, &mut effects);
-            }
-            Input::Front(front) => {
-                let mut applied = Applied::default();
-                self.facts.follow.front(front, &mut applied);
-                Self::subscription_effects(applied, &mut effects);
             }
             Input::Cancel(request_id) => {
                 if let Some(trace) = self.intake.cancel(request_id) {
@@ -933,7 +923,6 @@ impl Reducer {
             replacement,
             item: current,
         } = abandoned;
-        self.facts.follow.bar_program_ended();
         if let Some(followed) = self.facts.follow.followed.as_mut()
             && followed
                 .owed
@@ -976,7 +965,6 @@ impl Reducer {
         let Some(current) = self.flight.end(request) else {
             return;
         };
-        self.facts.follow.bar_program_ended();
         if current.asked.is_some()
             && let Some(answer) = self.asks.ended()
         {
@@ -1063,11 +1051,6 @@ impl Reducer {
             }
             if let Some((entry, handling)) = self.after.pop_front() {
                 self.dispatch_entry(entry, handling, effects);
-                continue;
-            }
-            if let Some(window) = self.facts.follow.bar.due() {
-                self.facts.follow.bar = BarWatch::Finding { window };
-                self.dispatch(Work::FindBar(window), None, effects);
                 continue;
             }
             if std::mem::take(&mut self.to_drop) {
