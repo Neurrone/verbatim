@@ -250,3 +250,172 @@ fn an_element_that_lost_the_focus_under_the_same_node_forgets_its_caret_and_mode
 fn an_element_gone_under_the_same_node_forgets_its_caret_and_model() {
     a_replaced_element_forgets_its_nodes_caret_and_model(EarlierElement::Gone);
 }
+
+// "Identical reads" (`docs/design/readers-tell-core-asks-build3.md`): Core
+// gives the rules no read identical to the last one it gave them, unless the
+// read waited or is the first after the focus arrived. Moved from the
+// outpost's `terminal/tests.rs`, where the outpost dropped such a read
+// before sending it.
+
+/// The terminal the identical-read tests read: node 9 of outpost 1.
+fn watched() -> NodeId {
+    NodeId::new(9).with_outpost(OutpostId(1))
+}
+
+/// The simulated terminal read as the outpost reads it, from the start
+/// Core names with the screen's height Core's model found, each read taken
+/// by Core's model as Core takes an output read's answer.
+struct Watch {
+    sim: verbatim_term_sim::Terminal,
+    state: SrState,
+    /// The start anchors minted, the anchor numbered `n` at `n - 1`.
+    anchors: Vec<verbatim_term_sim::Range>,
+}
+
+impl Watch {
+    fn new() -> Self {
+        Self {
+            sim: verbatim_term_sim::Terminal::new(
+                verbatim_term_sim::Flavor::ConsoleHost,
+                20,
+                4,
+                10,
+            ),
+            state: SrState::new(),
+            anchors: Vec::new(),
+        }
+    }
+
+    /// Core's model of the terminal.
+    fn model(&self) -> &super::TerminalModel {
+        super::model_of(&self.state, watched()).expect("a model of the terminal")
+    }
+
+    /// Writes `bytes`, then a read begun at `at_ms` from the start Core
+    /// names, which `waited` for Core's speech queue: what Core took.
+    fn write(&mut self, bytes: &str, at_ms: u64, waited: bool) -> super::Taken {
+        self.sim.write(bytes.as_bytes());
+        let model = super::model_of(&self.state, watched());
+        let named = model.and_then(|model| model.start);
+        let height = model.map_or(0, |model| model.height);
+        let snapshot = self
+            .sim
+            .snapshot(&verbatim_term_sim::Query {
+                start: named.map(|anchor| {
+                    self.anchors[usize::try_from(anchor.0).expect("a small number") - 1]
+                }),
+                screen_rows: height,
+                whole: false,
+                above: height,
+            })
+            .expect("a simulated read");
+        self.anchors.push(snapshot.next_start);
+        let start = TextAnchor(u64::try_from(self.anchors.len()).expect("a small count"));
+        let unpadded = verbatim_model::TerminalText::unpadded;
+        let reply = verbatim_model::TerminalReadReply {
+            snapshot: verbatim_model::TerminalSnapshot {
+                text: unpadded(&snapshot.text),
+                screen: unpadded(&snapshot.screen),
+                from_start: snapshot.from_start,
+                shrank: snapshot.shrank,
+                at_document_start: snapshot.at_document_start,
+                alternate: snapshot.alternate,
+                first_row: unpadded(&snapshot.first_row),
+                caret_rows_to_end: snapshot.caret_rows_to_end,
+                caret_line: unpadded(&snapshot.caret_line),
+                caret_column: u32::try_from(snapshot.caret_column).expect("a short row"),
+                above: snapshot.above,
+                started_ms: at_ms,
+                ended_ms: at_ms,
+                waited: false,
+                read: 0,
+                colours: None,
+                caret: None,
+            },
+            start,
+            started_us: at_ms * 1_000,
+            point: None,
+        };
+        super::take(&mut self.state, watched(), &reply, (named, waited))
+    }
+}
+
+/// The speech the rules' `speech` becomes.
+fn items(speech: Vec<Speech>) -> Vec<SaidItem> {
+    speech_of(Step {
+        speech,
+        ..Step::default()
+    })
+    .items
+}
+
+#[test]
+fn a_read_identical_to_the_last_given_is_not_given_unless_it_waited() {
+    let mut watch = Watch::new();
+    assert!(watch.write("50%", 100, false).speech.is_some());
+    // The first read took the screen alone; this one a screen above it too.
+    assert!(watch.write("", 200, false).speech.is_some());
+    assert!(watch.write("", 300, false).speech.is_none());
+    assert!(watch.write("", 400, true).speech.is_some());
+    assert!(watch.write("\r60%", 500, false).speech.is_some());
+}
+
+/// A read identical to the last one given, and not given, leaves the start
+/// Core names at that read's, so the rows of a search are counted from a
+/// read Core took (Table 7: the identical read's start is let go).
+#[test]
+fn a_read_not_given_leaves_the_start_core_names_at_the_last_read_given() {
+    let mut watch = Watch::new();
+    let _ = watch.write("50%", 100, false);
+    assert!(watch.write("", 200, false).speech.is_some());
+    assert_eq!(watch.model().start, Some(TextAnchor(2)));
+    assert!(watch.write("", 300, false).speech.is_none());
+    assert_eq!(watch.model().start, Some(TextAnchor(2)));
+    assert!(watch.write("", 400, false).speech.is_none());
+    assert_eq!(watch.model().start, Some(TextAnchor(2)));
+    assert!(watch.write("\r60%", 500, false).speech.is_some());
+    assert_eq!(watch.model().start, Some(TextAnchor(5)));
+}
+
+/// A row changes at a read, a read identical to it follows that waited for
+/// speech, and the row changes again at a read that waited: the identical
+/// read is given, so the two changes are not at reads in a row and the row
+/// is not volatile ("Volatile rows").
+#[test]
+fn a_waited_read_identical_to_the_last_is_given_so_a_row_changed_around_it_is_not_volatile() {
+    let mut watch = Watch::new();
+    let _ = watch.write("50%", 100, false);
+    let _ = watch.write("", 200, false);
+    let changed = watch.write("\r60%", 10_000, false).speech.expect("given");
+    assert_eq!(
+        changed.items,
+        items(vec![Speech::Changed {
+            row: 0,
+            text: "60%".to_owned(),
+        }])
+    );
+    assert!(watch.write("", 15_000, true).speech.is_some());
+    let again = watch.write("\r70%", 20_000, true).speech.expect("given");
+    assert_eq!(
+        again.items,
+        items(vec![Speech::Changed {
+            row: 0,
+            text: "70%".to_owned(),
+        }])
+    );
+    assert_eq!(watch.model().due_ms, None);
+}
+
+/// The read after the focus returns is given though it is identical to the
+/// last one given: the rules take the first read after the focus as the
+/// one that speaks nothing, so had it been dropped, the next read, showing
+/// new output, would have said nothing of it.
+#[test]
+fn the_read_after_the_focus_returns_is_given_though_identical() {
+    let mut watch = Watch::new();
+    let _ = watch.write("50%", 100, false);
+    let _ = watch.write("", 200, false);
+    assert!(watch.write("", 300, false).speech.is_none());
+    super::model_or_new(&mut watch.state, watched()).focused(350);
+    assert!(watch.write("", 400, false).speech.is_some());
+}
