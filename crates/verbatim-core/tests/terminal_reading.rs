@@ -24,8 +24,8 @@ use std::io::BufReader;
 use terminal_support::{Asked, Outpost, Said, Session, said};
 use verbatim_core::{RecordedInput, SrState, dump, read_of, replay, snapshot_of};
 use verbatim_model::{
-    CaretKey, CaretMotion, Effect, Input, Message, ReaderSettings, ReviewCommand, SegmentContent,
-    TraceId, TypingEcho,
+    CaretKey, CaretMotion, Earcon, Effect, Input, Message, ReaderSettings, ReviewCommand,
+    SegmentContent, TraceId, TypingEcho,
 };
 use verbatim_term_sim::conformance::{history, streams};
 use verbatim_term_sim::{Flavor, Query};
@@ -1448,4 +1448,30 @@ fn a_read_taken_at_once_before_the_program_draws_the_key_leaves_the_echo_to_the_
         session.heard(),
         [said(Some(c), "c"), said(Some(c), "ho hi")]
     );
+}
+
+/// A terminal whose window hangs while output is written
+/// (`docs/design/readers-tell-core-asks-build3.md`, "Exact expected speech",
+/// sequence 14, and Table 2, columns E and K): the change told during the
+/// hang has its read refused unsent, and the not-responding sound plays,
+/// the terminal holding attention; a change told while the reading is
+/// stalled asks nothing and sounds nothing; once the window answers Core's
+/// recovery check, `Follow` is sent again and the output written meanwhile
+/// is read and spoken as one read.
+#[test]
+fn a_hung_terminal_sounds_then_speaks_its_output_once_the_window_answers() {
+    let mut session = Session::new(Flavor::ConsoleHost, 20, 4, 100);
+    session.hung = true;
+    session.write("alpha\r\n", 100);
+    assert_eq!(session.heard(), []);
+    assert_eq!(session.earcons(), [Earcon::AppNotResponding]);
+    session.write("beta\r\n", 200);
+    assert_eq!(session.heard(), []);
+    assert_eq!(session.earcons(), []);
+    assert_eq!(session.output_reads, 1, "the refused read alone");
+    session.hung = false;
+    session.due();
+    assert_eq!(session.heard(), plain(&["alpha", "beta"]));
+    assert_eq!(session.earcons(), []);
+    assert_eq!(session.output_reads, 2, "one read after the hang");
 }

@@ -1066,6 +1066,14 @@ pub(crate) fn recovered(state: &mut SrState, window: &RequestWindow, now_us: u64
         }
         FocusedTerminal::Modelled { reading, .. } => {
             let reading = match reading {
+                // An output read is sent only when no full read of the
+                // terminal is out, an entry's included ("Core's inbox: the
+                // change tell"): behind an entry's read, the change waits.
+                Reading::Quiet | Reading::Stalled { holding: false }
+                    if state.terminal_focus.entry_read =>
+                {
+                    Reading::Behind { told: now_us }
+                }
                 Reading::Quiet | Reading::Stalled { holding: false } => {
                     want_output(state, &terminal, (Mark::Spoken, None), now_us)
                 }

@@ -24,8 +24,9 @@ use verbatim_model::request::{
 };
 use verbatim_model::tell::{Event, EventObject, Payload, TellWindow};
 use verbatim_model::{
-    Effect, Input, KeySeq, NodeId, OutpostId, Pid, Role, SegmentContent, SpeechMark, TerminalRead,
-    TerminalReadReply, TerminalScope, TextAnchor, TextOp, TextReply, TraceId, WindowHandle,
+    Earcon, Effect, Input, KeySeq, NodeId, OutpostId, Pid, Role, SegmentContent, SpeechMark,
+    TerminalRead, TerminalReadReply, TerminalScope, TextAnchor, TextOp, TextReply, TraceId,
+    WindowHandle,
 };
 use verbatim_term_sim::{Flavor, Query, Range, Terminal};
 use verbatim_text::terminal_rows::{Read, ReadText};
@@ -476,6 +477,17 @@ pub struct Session {
     /// [`Session::release_output`].
     pub hold_output: bool,
     held_output: VecDeque<Ask>,
+    /// Whether the terminal's window is hung: the shell's live hang check
+    /// refuses every request to it unsent, and answers Core's checks of it
+    /// hung.
+    pub hung: bool,
+    /// The earcons played since the last [`Session::earcons`], in order.
+    earcons: Vec<Earcon>,
+    /// The wake Core last asked for, in microseconds.
+    wake: Option<u64>,
+    /// The windows Core asked the shell to check for a hang, not yet
+    /// answered.
+    checks: Vec<WindowHandle>,
 }
 
 impl Session {
@@ -519,6 +531,10 @@ impl Session {
             next_read_began: None,
             hold_output: false,
             held_output: VecDeque::new(),
+            hung: false,
+            earcons: Vec::new(),
+            wake: None,
+            checks: Vec::new(),
         };
         // The terminal's window in front: Core starts the application's
         // outpost to read its focus, which commits the terminal.
@@ -690,8 +706,16 @@ impl Session {
         }
     }
 
-    /// The outpost's answer to `ask`.
+    /// The outpost's answer to `ask`, or, for a hung window, the shell's
+    /// refusal of it unsent.
     fn answer(&mut self, ask: Ask) {
+        if self.hung {
+            let input =
+                self.queued_input(TraceId::from_raw(2), QueueInput::RefusedHung(ask.number));
+            let effects = self.step(input);
+            self.take(effects, None);
+            return;
+        }
         let outcome = match &ask.request {
             Wire::Follow(_) => Outcome::Result(Reply::Followed),
             Wire::CurrentFocus { .. } => {
@@ -916,14 +940,15 @@ impl Session {
                 // sent, answers dropped by number.
                 Effect::Queue(
                     QueueEffect::Cancel { .. }
-                    | QueueEffect::WakeAt(_)
                     | QueueEffect::SendStrokes(_)
                     | QueueEffect::AnswerDropped { .. }
                     | QueueEffect::StartOutpost(_),
                 )
                 | Effect::DropExpiredSpeech(_)
-                | Effect::Fetch(_)
-                | Effect::PlayEarcon(_) => {}
+                | Effect::Fetch(_) => {}
+                Effect::PlayEarcon(earcon) => self.earcons.push(earcon),
+                Effect::Queue(QueueEffect::WakeAt(wake)) => self.wake = wake,
+                Effect::Queue(QueueEffect::CheckHung(windows)) => self.checks.extend(windows),
                 other => panic!("unexpected effect: {other:?}"),
             }
         }
@@ -960,6 +985,28 @@ impl Session {
     /// When the shell's quiet-period timer is due, if it is armed.
     pub fn armed(&self) -> Option<u64> {
         self.armed
+    }
+
+    /// The earcons played since the last [`Session::earcons`], taken.
+    pub fn earcons(&mut self) -> Vec<Earcon> {
+        std::mem::take(&mut self.earcons)
+    }
+
+    /// Wakes Core at the time it last asked to be woken at, the session's
+    /// time moved on to it, and answers the hang checks it asks then, the
+    /// window hung as [`Session::hung`] says, as the shell's live check
+    /// answers them.
+    pub fn due(&mut self) {
+        let wake = self.wake.take().expect("Core asked to be woken");
+        self.at_ms = self.at_ms.max(wake.div_ceil(1_000));
+        self.queue(QueueInput::Due);
+        while !self.checks.is_empty() {
+            let checks = std::mem::take(&mut self.checks);
+            for window in checks {
+                let hung = self.hung;
+                self.queue(QueueInput::HangCheck { window, hung });
+            }
+        }
     }
 
     /// What was heard since the last [`Session::heard`], taken.
