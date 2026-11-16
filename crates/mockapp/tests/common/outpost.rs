@@ -1144,7 +1144,9 @@ impl OutpostUnderTest {
 
     /// The outpost's completion of the listener's read `focus` from its
     /// route, as Core asks it, which the stand-in for Core commits when it
-    /// answers a focus; with its calls.
+    /// answers a focus; with its calls. Its window is read through UI
+    /// Automation, as the listener's check found the focus's nearest window
+    /// before Core asked: Core asks a completion only then.
     pub fn complete_focus(&self, focus: ListenerFocus) -> (Outcome, CallCounts) {
         let ListenerFocus { object, sent } = focus;
         let ObjectRead {
@@ -1155,8 +1157,9 @@ impl OutpostUnderTest {
         } = object;
         let route = route.expect("a focus read answers its route");
         let window = hwnd(route.window);
-        let number = self.request(
+        let number = self.request_with(
             window,
+            WindowVerdict::Uia,
             Request::CompleteUia(Box::new(CompleteUia {
                 route,
                 read: std::iter::once(object.values)

@@ -676,6 +676,32 @@ pub fn listener_focus(
     .expect("mockapp reports a focused element")
 }
 
+/// mockapp's element named `name` in window `hwnd`, with the listener's
+/// cache request, as an event's element arrives.
+pub fn listener_element(
+    uia: &verbatim_uia::Uia,
+    hwnd: isize,
+    name: &str,
+) -> verbatim_uia::Cached<verbatim_uia::ListenerEvent> {
+    let root = uia.window_live(hwnd).expect("mockapp's window element");
+    let condition = uia
+        .property_condition(
+            windows::Win32::UI::Accessibility::UIA_NamePropertyId,
+            &windows::Win32::System::Variant::VARIANT::from(windows::core::BSTR::from(name)),
+        )
+        .expect("a condition");
+    let request = uia
+        .request_fixed::<verbatim_uia::ListenerEvent>()
+        .expect("the listener's cache request");
+    root.find_first(
+        windows::Win32::UI::Accessibility::TreeScope_Descendants,
+        &condition,
+        &request,
+    )
+    .expect("the search")
+    .unwrap_or_else(|| panic!("mockapp has no element named {name:?}"))
+}
+
 /// The element named `name` under mockapp's window `hwnd`, found by one
 /// search of the window's descendants by name, its cache filled with what
 /// its role is read from. The search reads nothing of the elements it

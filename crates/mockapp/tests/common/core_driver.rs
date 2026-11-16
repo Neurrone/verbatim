@@ -105,6 +105,8 @@ pub struct CoreDriver {
     /// The elements the stand-in for the listener keeps, by token.
     kept: Vec<(ElementToken, Cached<ListenerEvent>)>,
     next_token: u64,
+    /// The last key's number.
+    next_key: u64,
     /// Whether Core has started mockapp's outpost.
     started: bool,
     /// The check thread's record of its probes, kept across events.
@@ -174,6 +176,7 @@ impl CoreDriver {
             app: Pid(app.pid()),
             kept: Vec::new(),
             next_token: 0,
+            next_key: 0,
             started: false,
             probes: ProbeRecord::default(),
             bars: Vec::new(),
@@ -442,6 +445,20 @@ impl CoreDriver {
             from: LISTENER,
             tell: Box::new(tell),
         });
+        self.take()
+    }
+
+    /// The user presses the key of review `command`, its first press; what
+    /// Core said once every answer came.
+    pub fn command(&mut self, command: verbatim_model::ReviewCommand) -> Step {
+        self.next_key += 1;
+        self.feed(QueueInput::Press(Box::new(
+            verbatim_model::request::Press {
+                key_seq: verbatim_model::KeySeq::new(self.next_key),
+                pressed_at_us: self.now(),
+                action: verbatim_model::request::PressAction::Command { command, repeat: 0 },
+            },
+        )));
         self.take()
     }
 
