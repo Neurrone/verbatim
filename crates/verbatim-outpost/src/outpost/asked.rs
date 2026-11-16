@@ -37,7 +37,7 @@ use verbatim_model::request::{
     RunRead, Tried, WindowVerdict,
 };
 use verbatim_model::{
-    Backend, NodeDetails, NodeId, NodeSnapshot, Pid, QueryKind, Role, State, StateSet,
+    Backend, NodeDetails, NodeId, NodeSnapshot, Pid, QueryKind, Role, State, StateSet, TextAnchor,
 };
 use verbatim_process::clock::now_us;
 
@@ -92,14 +92,18 @@ pub(super) fn answer(context: &RequestContext<'_>, client: &mut Client, ask: &As
             Err(error) => failed(&error),
         },
         Request::Text { node, op } => {
-            Outcome::Result(Reply::Text(text_reads::answer(context, *node, op)))
+            Outcome::Result(Reply::Text(text_reads::answer_asked(context, *node, op)))
         }
         Request::Activate { node } => match read::activate(context, client, *node) {
             Ok(action) => Outcome::Result(Reply::Activated(action)),
             Err(error) => failed(&error),
         },
         Request::MsaaRun(run) => msaa_run(context, client, run, &mut probes),
-        Request::CurrentFocus { set, known, .. } => current_focus(context, client, set, known),
+        Request::CurrentFocus {
+            set,
+            known,
+            baseline,
+        } => current_focus(context, client, set, (known, *baseline)),
         Request::CompleteUia(complete) => {
             match verdict(
                 context,
@@ -720,6 +724,9 @@ pub(super) struct Focus<'a> {
     pub(super) foreground: Option<&'a NodeSnapshot>,
     pub(super) value_from_selection: bool,
     pub(super) runtime_id_reused: bool,
+    /// Core's selection baseline for the committed focus, which a repeated
+    /// focus's caret is compared with.
+    pub(super) baseline: Option<TextAnchor>,
 }
 
 /// The focus answer `focus` describes, by `set`.
@@ -762,19 +769,24 @@ pub(super) fn focus_read(
         value_from_selection: focus.value_from_selection,
         class: ObjectClass::Plain,
         runtime_id_reused: focus.runtime_id_reused,
-        caret: caret_of(focus.node),
+        caret: caret_of(context, focus.node, focus.baseline),
     }
 }
 
-/// The focus's caret: not read by this worker yet for a node that may
-/// have text, so Core holds no baseline for it; none for a node with no
-/// text.
-fn caret_of(node: &NodeSnapshot) -> FocusCaret {
-    if matches!(
-        node.role,
-        Role::EditableText | Role::Document | Role::Terminal
-    ) {
+/// The focus's caret, read after its states (Table 17): for a node that
+/// may have text, its caret and selection, compared with `baseline` when
+/// the node holds it, the next baseline held; none for a node with no
+/// text. A terminal's first read is its baseline read, so its caret is not
+/// read here.
+fn caret_of(
+    context: &RequestContext<'_>,
+    node: &NodeSnapshot,
+    baseline: Option<TextAnchor>,
+) -> FocusCaret {
+    if node.role == Role::Terminal {
         FocusCaret::NotRead
+    } else if text_reads::may_have_text(context, node.id, node.role) {
+        text_reads::focus_caret(context, node.id, baseline)
     } else {
         FocusCaret::NoText
     }
@@ -874,6 +886,7 @@ fn try_candidate(
             foreground: None,
             value_from_selection: false,
             runtime_id_reused: false,
+            baseline: run.baseline,
         },
         &run.set,
     );
@@ -887,7 +900,7 @@ fn current_focus(
     context: &RequestContext<'_>,
     client: &mut Client,
     set: &[PropertyId],
-    known: &[KnownAncestor],
+    (known, baseline): (&[KnownAncestor], Option<TextAnchor>),
 ) -> Outcome {
     let (now, control_window) = read::focus_now(context, client, false);
     let Some(control) = now.focus else {
@@ -909,6 +922,7 @@ fn current_focus(
             foreground,
             value_from_selection: false,
             runtime_id_reused: false,
+            baseline,
         },
         set,
     ))))

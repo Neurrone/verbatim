@@ -1019,6 +1019,28 @@ read.
 `Query::Text` is answered `QueryResult::Text`, `NoText` and `Gone` among
 the answers, within two seconds (`text`, the worker's `text_reads`).
 
+Core's `Request::Text` (`text_reads::answer_asked`, `text::held`) holds
+reads behind ids Core names, released as anchors are (Table 16):
+
+- `StartingRead`: the caret and the selection held as the starting point,
+  with the key's unit at the caret (the line where the text has none) and,
+  for Delete, the word; it compares no selection.
+- `ReadSelection`, a caret tell's read: the caret and the selection,
+  compared with the named baseline when the node holds it, as its range
+  now is (through UI Automation a range follows the edits), in specific
+  terms with each part's text, nothing when both are empty, and with the
+  whole new selection beside it; an edit control's selection offsets; the
+  next baseline held. A baseline no longer held is no baseline.
+- `MoveCaret` and `Select` answer `CaretPlaced` and `SelectionPlaced` with
+  the next baseline, the read the move kept, or a fresh read of the caret
+  when it kept none.
+- A focus answer's caret (`FocusCaret::Read`): the same read as
+  `ReadSelection`, after the node's states, with the request's baseline;
+  `NoText` for a node with no text, `NotRead` when the read failed and for
+  a terminal, whose baseline read is its first.
+- The watch and the sentence move are answered unsupported until their
+  handlers are built.
+
 - A UIA node has text when its element has a text pattern (`TextPattern2`
   where offered), fetched once and kept with the node. `NoText` is kept only
   until the node is next the focus or raises a caret or text event
@@ -1233,8 +1255,6 @@ no verdict in force is probed first and the probe carried in the answer.
   ancestors, its parent first. Where the listener's walk met an ancestor
   Core already knows, the route's end names it, and the completion makes
   no read to find it.
-- A focus answer's caret is not read yet: `NotRead` for a node that may
-  have text, `NoText` otherwise.
 - `Follow` (`outpost/followed.rs`, Table 10): what it names, the node,
   its group and any extra object, or nothing, is recorded when the worker
   takes it, then the registration is moved on the registering thread to

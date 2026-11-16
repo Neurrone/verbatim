@@ -31,6 +31,7 @@
 
 mod color;
 pub mod edit;
+pub mod held;
 pub mod uia;
 
 use std::cmp::Ordering;
@@ -39,8 +40,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
 use verbatim_model::{
-    CaretReply, CaretReport, CaretSelection, Change, Compared, FormatRun, LanguageRun,
-    MAX_CHUNK_BYTES, MAX_RANGE_BYTES, MAX_READ_AHEAD, MAX_READ_AHEAD_TEXT,
+    CaretReply, CaretReport, CaretSelection, Change, Compared, EditSelection, FormatRun,
+    LanguageRun, MAX_CHUNK_BYTES, MAX_RANGE_BYTES, MAX_READ_AHEAD, MAX_READ_AHEAD_TEXT,
     MAX_SELECTION_TEXT_BYTES, ReadFacts, Selection, SelectionChange, TextAnchor, TextAttributes,
     TextChunk, TextMovement, TextOp, TextPoint, TextPosition, TextRead, TextReadAhead, TextReply,
     TextThrough, TextUnit, had_effect,
@@ -490,6 +491,12 @@ pub trait TextSource {
     /// How the source treats sentences.
     fn sentences(&self) -> Sentences;
 
+    /// The selection `state` read, by the character offsets an edit
+    /// control's messages give; `None` from any other source.
+    fn edit_selection(&self, _state: &CaretState<Self::Pos>) -> Option<EditSelection> {
+        None
+    }
+
     /// Reads the caret and everything `request` asks for at once, where the
     /// source can do it in one round trip (UIA's remote operations, with
     /// its classic reads behind them); `None` for a source that reads them
@@ -671,6 +678,17 @@ impl<P: Clone> Anchors<P> {
             for key in reported {
                 gone.extend(anchors.reported.remove(&key).map(|slot| slot.at));
             }
+            let held: Vec<u64> = anchors
+                .held
+                .keys()
+                .copied()
+                .filter(|number| forgotten.contains(number))
+                .collect();
+            for number in held {
+                if let Some(read) = anchors.held.remove(&number) {
+                    gone.extend(read.positions().map(|slot| slot.at.clone()));
+                }
+            }
         }
         gone
     }
@@ -715,6 +733,13 @@ pub fn named_anchors(op: &TextOp) -> Vec<u64> {
             point(start).into_iter().chain(point(end)).collect()
         }
         TextOp::MoveCaret(at) | TextOp::Location(at) => point(at).into_iter().collect(),
+        TextOp::ReadSelection(read) => read
+            .baseline
+            .map(|baseline| baseline.0)
+            .into_iter()
+            .collect(),
+        TextOp::Watch(watch) => vec![watch.point.0],
+        TextOp::MoveBySentence(moved) => vec![moved.point.0],
         _ => Vec::new(),
     }
 }
@@ -731,7 +756,7 @@ impl<P: Clone> NodeText<'_, P> {
     /// Mints an anchor at `pos` for a chunk whose text is `text`, recorded
     /// as touched, for the message that reports it.
     fn mint(&mut self, pos: P, text: &str) -> TextAnchor {
-        let number = self.counter.fetch_add(1, AtomicOrdering::Relaxed) + 1;
+        let number = self.next_number();
         self.anchors.anchors.insert(
             number,
             Anchor {
@@ -741,6 +766,11 @@ impl<P: Clone> NodeText<'_, P> {
         );
         self.touch(number);
         TextAnchor(number)
+    }
+
+    /// The next anchor number, shared by anchors and held reads.
+    fn next_number(&self) -> u64 {
+        self.counter.fetch_add(1, AtomicOrdering::Relaxed) + 1
     }
 
     /// The node's last read, its positions as the source's.

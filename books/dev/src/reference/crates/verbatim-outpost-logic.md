@@ -77,7 +77,10 @@ Public API:
   (`Verdicts`, `VerdictChange`, `Probe`, `Probed`, from `verbatim-reader-rules`, and
   `KeptFromAnyGeneration`, this crate's rule of which a generation no
   longer in charge may record); each node's text facts
-  (`NodeAnchors`, `Anchor`, `TextChange`, `ReportCut`, `AnswerCut`); and
+  (`NodeAnchors`, `Anchor`, `TextChange`, `ReportCut`, `AnswerCut`),
+  among them the reads held behind ids Core names (`NodeAnchors::held`: a
+  caret key's starting point and a selection baseline, numbered and
+  released as anchors are, Table 16); and
   `WinKind` and `UiaKind`, its own copies of the backends' event kinds,
   since it names no backend crate.
 

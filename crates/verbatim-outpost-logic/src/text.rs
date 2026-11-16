@@ -45,6 +45,12 @@ pub struct NodeAnchors<P> {
     /// The node's last read, replaced by every read of it; `None` until a
     /// read commits and after a focus read fails.
     pub last: Option<LastRead<P>>,
+    /// The reads held behind ids Core names, numbered as anchors are: a
+    /// caret key's starting point and a selection baseline
+    /// (`docs/design/readers-tell-core-asks-build1.md`, Table 16). Each
+    /// is released with the anchors, so it lives while Core holds it or a
+    /// request names it.
+    pub held: BTreeMap<u64, LastRead<P>>,
 }
 
 /// The selection of a read: its ends, its text up to the source's cap for
@@ -153,6 +159,7 @@ impl<P> Default for NodeAnchors<P> {
             anchors: BTreeMap::new(),
             reported: BTreeMap::new(),
             last: None,
+            held: BTreeMap::new(),
         }
     }
 }
@@ -185,6 +192,9 @@ impl<P: Clone> NodeAnchors<P> {
             if let Some(anchor) = self.anchors.get(&number) {
                 part.anchors.insert(number, anchor.clone());
             }
+            if let Some(read) = self.held.get(&number) {
+                part.held.insert(number, read.clone());
+            }
             for (key, pos) in self.reported.range((number, 0)..=(number, u32::MAX)) {
                 part.reported.insert(*key, pos.clone());
             }
@@ -197,7 +207,11 @@ impl<P: Clone> NodeAnchors<P> {
     pub fn positions(&self) -> impl Iterator<Item = &P> {
         let anchors = self.anchors.values().map(|anchor| &anchor.pos);
         let last = self.last.iter().flat_map(LastRead::positions);
-        anchors.chain(self.reported.values()).chain(last)
+        let held = self.held.values().flat_map(LastRead::positions);
+        anchors
+            .chain(self.reported.values())
+            .chain(last)
+            .chain(held)
     }
 
     /// These with each position given by `position`: an anchor, a reported
@@ -223,10 +237,17 @@ impl<P: Clone> NodeAnchors<P> {
             .into_iter()
             .filter_map(|(key, pos)| Some((key, position(pos)?)))
             .collect();
+        let last = self.last.and_then(|last| last.filter_map(&mut position));
+        let held = self
+            .held
+            .into_iter()
+            .filter_map(|(number, read)| Some((number, read.filter_map(&mut position)?)))
+            .collect();
         NodeAnchors {
             anchors,
             reported,
-            last: self.last.and_then(|last| last.filter_map(position)),
+            last,
+            held,
         }
     }
 
@@ -247,15 +268,29 @@ impl<P: Clone> NodeAnchors<P> {
                 self.reported.insert(*key, pos.clone());
             }
         }
+        for (number, read) in &part.held {
+            if !copied.contains(number) || self.held.contains_key(number) {
+                self.held.insert(*number, read.clone());
+            }
+        }
         self.last.clone_from(&part.last);
     }
 
+    /// Whether any of `numbers` is one of these anchors or held reads.
+    fn holds_any(&self, numbers: &BTreeSet<u64>) -> bool {
+        self.anchors
+            .keys()
+            .chain(self.held.keys())
+            .any(|number| numbers.contains(number))
+    }
+
     /// Forgets the anchors `forgotten` names, with the positions reported
-    /// in their chunks.
+    /// in their chunks, and the reads held under them.
     fn forget_anchors(&mut self, forgotten: &BTreeSet<u64>) {
         self.anchors.retain(|number, _| !forgotten.contains(number));
         self.reported
             .retain(|(anchor, _), _| !forgotten.contains(anchor));
+        self.held.retain(|number, _| !forgotten.contains(number));
     }
 }
 
@@ -924,7 +959,7 @@ impl TextFacts {
             };
             match record {
                 NodeRecord::Uia(kept) => {
-                    if !kept.anchors.keys().any(|number| anchors.contains(number)) {
+                    if !kept.holds_any(anchors) {
                         continue;
                     }
                     let before: BTreeSet<RangeKey> = kept.positions().copied().collect();
@@ -933,7 +968,7 @@ impl TextFacts {
                     dropped.extend(before.difference(&after).map(|&key| (node, key)));
                 }
                 NodeRecord::Edit(kept) => {
-                    if kept.anchors.keys().any(|number| anchors.contains(number)) {
+                    if kept.holds_any(anchors) {
                         Arc::make_mut(kept).forget_anchors(anchors);
                     }
                 }
@@ -1220,6 +1255,60 @@ mod tests {
                 .copied()
                 .collect::<Vec<_>>(),
             [14]
+        );
+    }
+
+    /// A held read (a starting point or a selection baseline) is copied
+    /// only when a call names it, survives a call that did not copy it,
+    /// and is released with the anchors, its UIA ranges handed back
+    /// (Table 16).
+    #[test]
+    fn a_held_read_is_copied_when_named_and_released_as_an_anchor() {
+        let mut facts = TextFacts::default();
+        let mut part = NodeAnchors::default();
+        part.held.insert(5, last_read(20, Some((20, 21))));
+        part.held.insert(7, last_read(30, None));
+        let first = TextChange::Uia {
+            node: 1,
+            part,
+            copied: BTreeSet::new(),
+        };
+        assert_eq!(facts.apply(&first), Vec::new());
+        let kept = facts.uia(1).expect("the node's facts");
+        let (named, copied) = kept.part(&[5]);
+        assert_eq!(named.held.keys().copied().collect::<Vec<_>>(), [5]);
+        assert_eq!(copied, BTreeSet::from([5]));
+        let (unnamed, _) = kept.part(&[]);
+        assert_eq!(unnamed.held, BTreeMap::new());
+        let put = TextChange::Uia {
+            node: 1,
+            part: unnamed,
+            copied: BTreeSet::new(),
+        };
+        assert_eq!(facts.apply(&put), Vec::new());
+        assert_eq!(
+            facts
+                .uia(1)
+                .expect("the node's facts")
+                .held
+                .keys()
+                .copied()
+                .collect::<Vec<_>>(),
+            [5, 7]
+        );
+        assert_eq!(
+            facts.release(&BTreeSet::new(), &BTreeSet::from([5])),
+            vec![(1, 20), (1, 21)]
+        );
+        assert_eq!(
+            facts
+                .uia(1)
+                .expect("the node's facts")
+                .held
+                .keys()
+                .copied()
+                .collect::<Vec<_>>(),
+            [7]
         );
     }
 }

@@ -33,8 +33,10 @@ use windows::Win32::UI::WindowsAndMessaging::OBJID_CLIENT;
 use windows::core::AgileReference;
 
 use verbatim_ia2::CHILDID_SELF;
+use verbatim_model::request::{FocusCaret, FocusCaretRead};
 use verbatim_model::{
-    CaretRead, CaretReply, CaretReport, NodeId, ReadFacts, Role, SelectionChange, TextOp, TextReply,
+    CaretRead, CaretReply, CaretReport, NodeId, ReadFacts, Role, SelectionChange,
+    SelectionReadReply, TextOp, TextReply,
 };
 use verbatim_uia::map::is_terminal_class;
 use verbatim_uia::{Cached, Interning as _, Kept};
@@ -44,6 +46,7 @@ use crate::text::edit::EditText;
 use crate::text::uia::{TextSupport, UiaPos, UiaText};
 use crate::text::{
     self, CheckKey, Checked, FetchAsk, KeyChecked, NodeTextCopy, ReportAsk, Slot, TextError,
+    TextSource as _,
 };
 use verbatim_reader_rules::CONSOLE_WINDOW_CLASS;
 use verbatim_reader_rules::class::normalize_class_name;
@@ -529,6 +532,131 @@ pub(super) fn answer(context: &RequestContext<'_>, node_id: NodeId, op: &TextOp)
             let reply = text::perform(&mut source, &mut call.text(), op);
             put_edit(context, node_id, call);
             reply
+        }
+    }
+}
+
+/// Runs `$read` on `$node_id`'s text, through whichever source it has,
+/// with a copy of its facts holding the anchors `$named`, committing what
+/// the read changed: `Err` with the reply a node with no text, or gone,
+/// answers.
+macro_rules! on_text {
+    ($context:expr, $node_id:expr, $named:expr, |$source:ident, $text:ident| $read:expr) => {{
+        let context = $context;
+        let node_id = $node_id;
+        match source(context, node_id) {
+            Err(reply) => Err(reply),
+            Ok(Source::Uia(mut source)) => {
+                let mut call = uia_call(context, node_id, $named);
+                let read = {
+                    let $source = &mut source;
+                    let $text = &mut call.text();
+                    $read
+                };
+                put_uia(context, node_id, call);
+                note_fallback(context, &mut source);
+                keep_support(context, node_id, &source);
+                Ok(read)
+            }
+            Ok(Source::Edit(mut source)) => {
+                let mut call = edit_call(context, node_id, $named);
+                let read = {
+                    let $source = &mut source;
+                    let $text = &mut call.text();
+                    $read
+                };
+                put_edit(context, node_id, call);
+                Ok(read)
+            }
+        }
+    }};
+}
+
+/// The reply a text read that failed answers.
+fn failed_reply(error: TextError) -> TextReply {
+    match error {
+        TextError::Gone => TextReply::Gone,
+        TextError::Failed(reason) => {
+            tracing::debug!(reason, "a text request was not answered");
+            TextReply::Unanswered
+        }
+    }
+}
+
+/// Answers one of Core's text requests from the event queue or outside it
+/// (`docs/design/readers-tell-core-asks-build1.md`, "Keys and commands in
+/// this build"): a caret key's starting read, a caret tell's read, and
+/// the shared list's reads and moves, a move answered with the next
+/// selection baseline.
+pub(super) fn answer_asked(
+    context: &RequestContext<'_>,
+    node_id: NodeId,
+    op: &TextOp,
+) -> TextReply {
+    let named = text::named_anchors(op);
+    let read_at_us = context.observed_now();
+    let replied = match op {
+        TextOp::StartingRead(read) => on_text!(context, node_id, &named, |source, text| {
+            text::held::starting_read(source, text, read_at_us, (read.unit, read.word))
+                .map_or_else(failed_reply, |started| {
+                    TextReply::Started(Box::new(started))
+                })
+        }),
+        TextOp::ReadSelection(read) => on_text!(context, node_id, &named, |source, text| {
+            text::held::read_selection(source, text, read_at_us, read.baseline).map_or_else(
+                failed_reply,
+                |found| {
+                    TextReply::SelectionRead(Box::new(SelectionReadReply {
+                        edit_selection: source.edit_selection(&found.state),
+                        caret: found.report,
+                        baseline: found.baseline,
+                        difference: found.difference,
+                    }))
+                },
+            )
+        }),
+        // The watch and the sentence move are answered by their own
+        // handlers, not built yet.
+        TextOp::Watch(_) | TextOp::MoveBySentence(_) => Ok(TextReply::Unsupported),
+        other => on_text!(context, node_id, &named, |source, text| {
+            text::held::perform_placed(source, text, other)
+        }),
+    };
+    replied.unwrap_or_else(|reply| reply)
+}
+
+/// A focus's caret, read after its states (Table 17, columns A to C): the
+/// line at the caret and the selection, compared with the baseline Core
+/// named when this node holds it, the next baseline held from the read.
+/// A node with no text answers [`FocusCaret::NoText`], one whose read
+/// failed [`FocusCaret::NotRead`].
+pub(super) fn focus_caret(
+    context: &RequestContext<'_>,
+    node_id: NodeId,
+    baseline: Option<verbatim_model::TextAnchor>,
+) -> FocusCaret {
+    let named: Vec<u64> = baseline.map(|baseline| baseline.0).into_iter().collect();
+    let read_at_us = context.observed_now();
+    let read = on_text!(context, node_id, &named, |source, text| {
+        text::held::read_selection(source, text, read_at_us, baseline).map(|found| {
+            (
+                found.report,
+                found.selected,
+                found.baseline,
+                found.difference,
+            )
+        })
+    });
+    match read {
+        Err(TextReply::NoText) => FocusCaret::NoText,
+        Err(_) | Ok(Err(_)) => FocusCaret::NotRead,
+        Ok(Ok((caret, selected, baseline, difference))) => {
+            FocusCaret::Read(Box::new(FocusCaretRead {
+                caret,
+                selected_text: selected.map(|selected| selected.text),
+                baseline,
+                difference,
+            }))
         }
     }
 }

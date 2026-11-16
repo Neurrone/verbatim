@@ -241,6 +241,11 @@ fn grapheme_units(text: &[u16], at: usize) -> (usize, usize) {
 impl TextSource for EditText {
     type Pos = u32;
 
+    fn edit_selection(&self, state: &CaretState<u32>) -> Option<verbatim_model::EditSelection> {
+        let (start, end) = state.selection.unwrap_or((state.caret, state.caret));
+        Some(verbatim_model::EditSelection { start, end })
+    }
+
     fn caret(&mut self) -> TextResult<CaretState<u32>> {
         // As NVDA's `EditTextInfo`, the caret is the selection's start.
         let (start, end) = self.control.selection()?;

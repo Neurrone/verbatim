@@ -6,6 +6,7 @@ use std::sync::atomic::AtomicU64;
 
 use verbatim_model::{
     CaretMotion, CaretRead, CaretReply, Change, KeyFetch, ReadFacts, ReadPurpose,
+    SelectionDifference,
 };
 
 use super::*;
@@ -1144,5 +1145,192 @@ fn a_selection_typed_over_is_cut_then_finished_in_general_terms() {
             true,
             None
         )
+    );
+}
+
+/// A caret tell's read with no baseline named holds the next and compares
+/// nothing (Table 17, column E).
+#[test]
+fn a_selection_read_naming_no_baseline_holds_one_and_compares_nothing() {
+    let mut source = Fake::new("line one\n", 2);
+    let mut anchors = store();
+    let found = held::read_selection(&mut source, &mut anchors.node(1), REPORTED_AT, None)
+        .expect("the fake answers");
+    assert_eq!(found.difference, None);
+    assert_eq!(found.selected, None);
+    assert_eq!(found.report.line.text, "line one\n");
+    assert_eq!(found.report.line.offset, 2);
+    assert!(
+        anchors.node(1).anchors.held.contains_key(&found.baseline.0),
+        "the baseline is held"
+    );
+}
+
+/// The selection is compared with the named baseline by the contract's
+/// rule, in specific terms with each part's text, and the whole new
+/// selection given beside it (Table 17, column D).
+#[test]
+fn a_selection_read_says_what_changed_from_the_named_baseline() {
+    let mut source = Fake::new("line one\n", 0);
+    let mut anchors = store();
+    let first = held::read_selection(&mut source, &mut anchors.node(1), REPORTED_AT, None)
+        .expect("the fake answers");
+    source.selection = Some((0, 4));
+    let second = held::read_selection(
+        &mut source,
+        &mut anchors.node(1),
+        REPORTED_AT + 1,
+        Some(first.baseline),
+    )
+    .expect("the fake answers");
+    let selected = SelectionChange {
+        selected: true,
+        text: "line".to_owned(),
+        characters: 4,
+    };
+    assert_eq!(
+        second.difference,
+        Some(SelectionDifference {
+            changes: vec![selected.clone()],
+            new_selection: Some(selected),
+        })
+    );
+    assert_ne!(second.baseline, first.baseline);
+    source.selection = Some((0, 2));
+    let third = held::read_selection(
+        &mut source,
+        &mut anchors.node(1),
+        REPORTED_AT + 2,
+        Some(second.baseline),
+    )
+    .expect("the fake answers");
+    assert_eq!(
+        third.difference.map(|difference| difference.changes),
+        Some(vec![SelectionChange {
+            selected: false,
+            text: "ne".to_owned(),
+            characters: 2,
+        }])
+    );
+}
+
+/// When the baseline and the new selection are both empty, the caret
+/// having moved, nothing changed; a baseline the outpost no longer holds
+/// is no baseline.
+#[test]
+fn an_empty_baseline_and_selection_differ_by_nothing_and_a_lost_one_by_none() {
+    let mut source = Fake::new("line one\n", 0);
+    let mut anchors = store();
+    let first = held::read_selection(&mut source, &mut anchors.node(1), REPORTED_AT, None)
+        .expect("the fake answers");
+    source.caret = 3;
+    let moved = held::read_selection(
+        &mut source,
+        &mut anchors.node(1),
+        REPORTED_AT + 1,
+        Some(first.baseline),
+    )
+    .expect("the fake answers");
+    assert_eq!(
+        moved.difference,
+        Some(SelectionDifference {
+            changes: Vec::new(),
+            new_selection: None,
+        })
+    );
+    let lost = held::read_selection(
+        &mut source,
+        &mut anchors.node(1),
+        REPORTED_AT + 2,
+        Some(TextAnchor(9_999)),
+    )
+    .expect("the fake answers");
+    assert_eq!(lost.difference, None);
+}
+
+/// A caret key's starting read holds its starting point with the key's
+/// unit and, for Delete, the word at the caret.
+#[test]
+fn a_starting_read_holds_the_point_with_the_keys_unit_and_word() {
+    let mut source = Fake::new("alpha beta\n", 6);
+    let mut anchors = store();
+    let started = held::starting_read(
+        &mut source,
+        &mut anchors.node(1),
+        REPORTED_AT,
+        (TextUnit::Character, true),
+    )
+    .expect("the fake answers");
+    assert_eq!(started.unit.text, "b");
+    assert_eq!(started.word.map(|word| word.text), Some("beta".to_owned()));
+    assert_eq!(started.caret.line.offset, 6);
+    let held = anchors
+        .node(1)
+        .anchors
+        .held
+        .get(&started.point.0)
+        .map(|read| {
+            (
+                read.caret.at,
+                read.unit.as_ref().map(|unit| unit.text.clone()),
+            )
+        });
+    assert_eq!(held, Some((6, Some("b".to_owned()))));
+}
+
+/// Verbatim's own caret move and selection answer with the next baseline,
+/// held where the caret or the selection is after them.
+#[test]
+fn a_move_and_a_selection_for_an_entry_hold_the_next_baseline() {
+    let mut source = Fake::new("line one\n", 0);
+    let mut anchors = store();
+    let at = report(&mut source, &mut anchors);
+    let moved = held::perform_placed(
+        &mut source,
+        &mut anchors.node(1),
+        &TextOp::MoveCaret(TextPoint::At(TextPosition {
+            anchor: at.line.start,
+            offset: 5,
+        })),
+    );
+    let TextReply::CaretPlaced { baseline, .. } = moved else {
+        panic!("a caret placed, not {moved:?}");
+    };
+    assert_eq!(
+        anchors
+            .node(1)
+            .anchors
+            .held
+            .get(&baseline.0)
+            .map(|read| read.caret.at),
+        Some(5)
+    );
+    let selected = held::perform_placed(
+        &mut source,
+        &mut anchors.node(1),
+        &TextOp::Select {
+            start: TextPoint::Start,
+            end: TextPoint::At(TextPosition {
+                anchor: at.line.start,
+                offset: 4,
+            }),
+            through: None,
+        },
+    );
+    let TextReply::SelectionPlaced { changes, baseline } = selected else {
+        panic!("a selection placed, not {selected:?}");
+    };
+    assert_eq!(changes.len(), 1);
+    assert_eq!(
+        anchors
+            .node(1)
+            .anchors
+            .held
+            .get(&baseline.0)
+            .and_then(|read| read
+                .selection
+                .as_ref()
+                .map(|selection| (selection.start.at, selection.end.at))),
+        Some((0, 4))
     );
 }

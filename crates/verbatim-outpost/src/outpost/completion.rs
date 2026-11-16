@@ -113,6 +113,7 @@ pub(super) fn complete(
             // read.
             value_from_selection: false,
             runtime_id_reused: reused,
+            baseline: complete.baseline,
         },
         &complete.set,
     ))))
