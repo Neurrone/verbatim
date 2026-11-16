@@ -18,8 +18,8 @@ placed in kill-on-close job objects, so they die with it however it ends
 1. **Core**, `verbatim.exe` ([verbatim-app](../reference/crates/verbatim-app.md)). The
    threads that matter here:
    - `verbatim-input-hook`, the low-level keyboard hook;
-   - `verbatim-reducer`, which owns the reducer state, the request table,
-     and the set of live outposts (`ReducerThread` in
+   - `verbatim-reducer`, which runs Core's inbox and event queue and
+     carries out their effects (`ReducerThread` in
      `crates/verbatim-app/src/main.rs`);
    - `verbatim-relay`, the supervisor's lifecycle owner, which reads the
      focus listener's pipe and every outpost's and finishes every child's
@@ -30,17 +30,20 @@ placed in kill-on-close job objects, so they die with it however it ends
    - one control-plane reader and writer per connected client;
    - the GUI thread, which is the main thread.
 2. **The focus listener**, `verbatim-listener.exe`: one per
-   Verbatim, desktop-wide (decision D13). Its callbacks make no
-   cross-process call; it holds the one desktop-wide UIA focus registration
-   and the global MSAA hooks, and judges and reads each UIA focus on a
-   reading thread per application.
+   Verbatim, desktop-wide (decision D13). It holds every desktop-wide
+   registration, the UIA focus handler and every `WinEvent` hook but a
+   console host's, and tells Core of each event. A check thread per
+   application makes, as each UIA event is delivered, the calls NVDA's
+   handler makes for it; a reading thread per application reads a UIA
+   focus when Core asks.
 3. **One outpost per application**, `verbatim-outpost.exe --target-pid
-   <pid>` (decision D9). Inside: an event thread (`verbatim-event`) for its
-   own MSAA hooks, UIA callback threads, an I/O thread on the main thread,
-   which reads Core's commands and finishes writes to Core that pended,
-   one worker (`verbatim-worker`) that is the only thread calling into
-   the application, and a watchdog (`verbatim-watchdog`). Each thread
-   writes its own messages to Core.
+   <pid>` (decision D9). Inside: an event thread that hooks a console
+   host's five events, in a console host's outpost only; UIA callback
+   threads for the objects Core names it to follow, registered on a
+   registering thread; an I/O thread on the main thread, which reads
+   Core's requests and finishes writes to Core that pended; and one
+   worker (`verbatim-worker`) that is the only thread calling into the
+   application, taking Core's requests one at a time.
 4. **One synthesizer host per synthesizer in use**,
    `verbatim-synth-host.exe` (decision D18).
 
@@ -64,143 +67,75 @@ releases Alt. Notepad has no outpost yet.
    window once it is the foreground window, a UIA focus-changed event for
    Notepad's text area, and an MSAA focus event for it
    (`docs/parity/focus-events.md`, "Stale focus events").
-3. **The listener captures facts.** In
+3. **The listener tells Core.** In
    `crates/verbatim-listener/src/listener.rs`
    ([verbatim-listener](../reference/crates/verbatim-listener.md)):
-   - The MSAA events arrive on its event thread. Since Notepad has no
-     outpost whose own hook is in, `forward_msaa_event` reads the owning
-     pid with `GetWindowThreadProcessId`, a local call, and forwards the
-     raw window, object id, and child id as a `DeliveredFact::Foreground`
-     or `DeliveredFact::MsaaFocus`. Once Notepad's outpost has its own
-     hook in, the listener forwards none of Notepad's MSAA events, and the
-     outpost takes them from its own hook in the order Windows raised them
-     (the hand-over).
-   - The UIA focus callback (`focus_subscription`) receives the element
-     with its properties already cached and makes no call. It sends
-     Notepad a marker (`DeliveredFact::UiaFocusMarker`) and queues the
-     element for Notepad's reading thread (`focus_read::Readers`).
-   - That thread judges and reads the focus from the event's own element
-     (`focus_read::FocusReader::read`), as NVDA's focus handler does: a
-     repeat of the focus Core holds, a window that fails NVDA's acceptance
-     test against the foreground window (`verbatim_reader_rules::acceptance`), or an
-     element without the keyboard focus is dropped; otherwise the classic
-     walk reads its value, states, details, selected child and raw-view
-     ancestors, each with its own window handle, within a two-second
-     budget. The result follows the marker as a
-     `DeliveredFact::UiaFocusRead`, or a `DeliveredFact::UiaFocusDropped`
-     saying what the drop tells the outpost. A UIA element cannot be handed
-     to another process (`books/dev/src/reference/uia-bugs.md`, "Elements cannot be passed to
-     another process"), which is why the listener reads it.
-   - The switcher's end is noted and a threadpool timer set; 50 ms later
-     its callback sends `MenuOrSwitchEnded` with the time it ended
-     (step 12), behind any fact still waiting.
-   - Each fact gets a fresh trace id and an observation timestamp, and the
-     thread that captured it writes it at once up the listener's pipe to
-     Core as a `FocusFact` frame (`Outgoing::fact`). Only while an earlier
-     write is in flight does it wait, coalesced, and the listener's I/O
-     thread writes what waits once that write completes; markers, reads
-     and drops are never coalesced.
-4. **Core routes the facts and starts an outpost.** The relay reads the
-   listener's pipe on its completion port (`Owner::read_pipe` and
-   `Owner::listener_message` in
-   `crates/verbatim-supervisor/src/owner.rs`) and handles each fact
-   in the pass that read it; it alone decides lifecycles. `Owner::route_fact`
-   finds no outpost for Notepad's pid. Focus, foreground, menu,
-   notification, and alert facts may start one
-   (`policy::may_start_outpost` in the supervisor), so it gives Notepad a spare
-   outpost, or launches one, with a fresh outpost id (the generation,
-   never reused), and holds the fact. The app hears `OutpostMessage::Started`
-   before any of the generation's messages. Facts arriving meanwhile are
-   held in arrival order (`HeldFacts`); on the outpost's `Ready`,
-   `Owner::on_ready` releases them onto its writer as
-   `CoreToOutpost::DeliverFact`.
-5. **The outpost's intake queues the facts.** The reader
-   (`Outpost::handle_command` in `crates/verbatim-outpost/src/outpost/mod.rs`)
-   only appends each fact to the outpost's mailbox, which the reducer
-   drains into its intake queue (`Intake::push` in
-   `outpost/reducer/intake.rs`). The queue applies NVDA's limiter rules to MSAA
-   events, drops events from a window the system reports hung, and holds
-   everything behind a UIA focus marker until its read or drop takes the
-   marker's place. When planning a batch (`plan`), each consecutive run of
-   MSAA focus events and foreground changes is tried newest first until
-   one is reported, each UIA focus is handled at its own place, and a menu
-   opening is moved last ([verbatim-outpost](../reference/crates/verbatim-outpost.md),
-   "Event flow").
-6. **The worker reports the foreground change.** The worker thread takes
-   the batch (`run` in `outpost/worker.rs`) at once. `Worker::foreground`
-   drops a foreground change whose window is not the foreground window, as
-   NVDA does, then reads the window's own accessible object
-   (`read::foreground_window`), and publishes it as a `FocusChanged` with
-   `foreground: true`, stamped with the later of its observation time and
-   the time it was confirmed in front. Every call into Notepad runs under
-   the watchdog's deadline (walkthrough 4).
-7. **The worker reports the listener's read.** `Worker::uia_focus` reports
-   the read at once, its node minted from its runtime id; then, off the
-   way to speech, it finds its own copy of the element by the path the
-   listener read (`outpost::focus_path`), which it needs for navigation,
-   property changes, and the caret. Arbitration decides which backend owns
-   the window (`Arbitrator`: NVDA's class lists, then the raw probe, one
-   `WM_GETOBJECT`), so the MSAA focus for the same control is dropped in
-   `Worker::msaa_focus`, as NVDA's `winEventToNVDAEvent` drops a native
-   UIA window's event: its UIA focus alone reports it.
-8. **The worker publishes, and keeps what it reported.** `emit_focus`
-   publishes an `OutpostToCore::Event` carrying the trace id, the
-   observation time, the backend, the window's `WindowFacts` (top-level
-   window, root owner, topmost, and `in_foreground`, NVDA's test of whether
-   the window is in the system's foreground window now, read locally by
-   `window_facts`), and the event. The worker moves its focus-following
-   UIA subscription to the new focus. The element behind every node it
-   reported stays in the outpost's registry until Core says it no longer
-   holds it ([verbatim-outpost](../reference/crates/verbatim-outpost.md), "Window
-   destruction and held objects").
-9. **The pipe.** Publishing happens under the watchdog's lock
-   (`Watch::publish`), so an abandoned worker can never publish. The
-   worker writes to Core's pipe itself (`outpost/outbound.rs`) when no
-   write is in flight; otherwise the message waits, merged by object and
-   kind. In Core the relay posts each frame whole to the reducer thread
-   (`OutpostMessage::Frame`), whose `Frames` parses it, stamps every node
-   id with the generation whose pipe it arrived on, and hands each on as
-   `OutpostMessage::Event`.
-10. **The reducer thread gates and records.** In
-    `ReducerThread::on_outpost_message`, a message from a generation not
-    in the live set (`LiveOutposts` in `crates/verbatim-app/src/live.rs`) is
-    dropped. An accepted event goes to the latency ledger, to control-plane
-    subscribers, and to `apply`, which runs the pure `reduce`, records the
-    input in the flight recorder, executes the effects, and sends the
-    derived views (`send_views`).
-11. **The reducer decides (D14).** In `crates/verbatim-core/src/reduce.rs`
-    ([verbatim-core](../reference/crates/verbatim-core.md)):
-    - **Stale check** (`is_stale_focus`): across outposts, a focus observed
-      before the newest focus already applied from another outpost is
-      dropped, unless it is in the same top-level window.
-    - **Classification** (`classify`): a foreground change is attended;
-      another focus is attended if its window facts say it was in the
-      system's foreground window, is topmost, or is a `Windows.UI.Core`
-      window under the active window (`ForegroundRelation::related`).
-    - **Attention** (`reduce_focus_changed`): the foreground change moves
-      attention to Notepad's process and window; a nameless foreground
-      window becomes the focus silently.
-    - **Speech**: every focus change first emits `Effect::DropExpiredSpeech`;
-      a focus that brings a new top-level window, or enters a menu, also
-      emits `Effect::StopSpeech`. Then come the `Speak` effects, all
-      `Queued`: each newly entered presentable container, then the focus's
-      name, role, value, and states in NVDA's order. For Notepad that is
-      the window's title, then, as a separate focus change, the text area.
-      Each focus utterance carries a `FocusValidity`. A focus identical to
-      the one applied is not spoken again, and the navigator and review
-      cursor snap to the new focus.
-12. **The switcher's end.** About 50 ms after the switcher closed, Core
-    receives `MenuOrSwitchEnded`. The reducer does nothing if it has
-    applied a focus observed since (`SrState::latest_focus_observed_at`),
-    the usual case; otherwise it emits `Effect::ReadFocus(FocusPurpose::Fake)`,
-    and `ReducerThread::read_focus` asks the foreground application's
-    outpost for its focus, NVDA's fake focus.
+   - The foreground event is told only once `GetForegroundWindow` names
+     Notepad's window; until then the listener holds every later tell
+     behind it, up to 20 ms, as NVDA defers its event pump. Each tell
+     carries what came with the event, the application and window, when
+     it arrived, and the facts the acceptance test reads about its window
+     and the foreground, all reads of Windows' own state that cannot hang.
+   - The MSAA focus event is told with its window, object and child ids.
+   - The UIA focus callback keeps the element and hands the event to
+     Notepad's check thread, which walks to the element's nearest window,
+     probes it for a native UIA provider, and reads the element's keyboard
+     focus, the calls NVDA's handler makes at delivery; the tell carries
+     their results. A UIA element cannot be handed to another process
+     (`books/dev/src/reference/uia-bugs.md`, "Elements cannot be passed to
+     another process"), which is why the listener keeps it.
+   - The switcher's end is told as it arrives.
+4. **Core's inbox takes them in arrival order.** The relay reads the
+   listener's pipe and posts each frame to Core's thread. The foreground
+   tell is handled at once: Core's foreground record names Notepad's
+   window, every request whose window is outside it is no longer awaited,
+   and a foreground marker joins the back of the event queue. Every other
+   tell joins the event queue. Notepad has no outpost, so Core's
+   generation record starts one, usually by giving it a spare; a request
+   to it waits for its `Ready` under its own due time.
+5. **The front of the queue.** Entries are taken one at a time
+   ([verbatim-core](../reference/crates/verbatim-core.md), "Core's
+   requests"). At the foreground marker's turn the readers' last focus,
+   on the desktop, is emptied, since Notepad's window is unrelated to it.
+   The MSAA focus is judged by the window's backend verdict: Notepad's
+   text area is read through UI Automation, so the MSAA focus is dropped,
+   as NVDA's `winEventToNVDAEvent` drops a native UIA window's event. The
+   UIA focus is judged on its tell's facts, with no call: NVDA's
+   native-element test, its focus overrides, the acceptance test against
+   the foreground record, the keyboard-focus answer, and the duplicate
+   test against the readers' last focus, which is empty.
+6. **Core asks the listener to read it.** The request names the element's
+   token and the properties to read, with no ancestors Core already
+   knows, since the readers' last focus is empty. Notepad's reading
+   thread reads the element and walks its ancestors to the top, and
+   answers a snapshot and the element's route.
+7. **Core asks Notepad's outpost to complete it,** under the same due
+   time. The worker finds its own copy of each element on the route,
+   registers the property changes of the focus and its ancestors, reads
+   the focus's states, the caret and its line, and answers the focus
+   with the node ids it minted
+   ([verbatim-outpost](../reference/crates/verbatim-outpost.md)). Every
+   call into Notepad waits for Notepad; Core's shell checks the window for
+   a hang before each request and every half second while one is out
+   (walkthrough 4).
+8. **Core executes and speaks it** ([verbatim-core](../reference/crates/verbatim-core.md),
+   "Focus, events and objects"). The new focus's top-level window differs
+   from the old one just below the desktop, so speech is cut. With the
+   readers' last focus empty, the window's title is said, then the focus's
+   name, role, value and states in NVDA's order, and its line. The
+   committed focus and the readers' last focus are now the text area, the
+   navigator and review cursor snap to it, and Core tells the outpost
+   which objects to follow.
+9. **The switcher's end.** At its turn Core notes the committed focus and,
+   50 ms later, appends a check entry; at the check's turn, if a focus has
+   been committed since, the usual case, it ends with no read; otherwise
+   Core asks the foreground application's outpost for its focus, NVDA's
+   fake focus.
 
-The ordering rules exist because Windows' events race: a foreground
-change is stamped with the time its window was confirmed in front, and a
-focus is judged against the real foreground through `in_foreground`, as
-NVDA judges it, so a desktop focus raised just before the switch cannot
-outrank Notepad's.
+The order is Core's arrival order, as NVDA's is its queue's: the listener
+tells every event of every application through one pipe, so a desktop
+focus raised just before the switch is judged before Notepad's, against
+the foreground record as it was then.
 
 Not yet, or known limitations:
 
@@ -393,109 +328,101 @@ every query follows.
 
 1. **Asked.** On the control server's connection thread,
    `request_dump_tree` mints a `DumpTicket`, sends `ShellCommand::DumpTree`
-   to the reducer thread, and waits up to five seconds.
-2. **Recorded.** `ReducerThread::dump_tree` finds the attention
-   application's newest live generation, records the request with
-   `Asker::DumpTree`, and queues `Query::DumpTree`. Request ids are never
-   reused, so an old reply can never satisfy a newer request.
-3. **Queued in the outpost.** The query waits in the intake queue, exempt
-   from the batch limits; its deadline starts only when the worker starts
-   it.
-4. **Run under a deadline.** The outpost's reducer starts the query in
-   its work in flight with the entry's budget (`budget` in
-   `verbatim-outpost-logic`'s `src/lib.rs`): five seconds for a tree dump
-   or ancestor walk, two for a text read, 400 ms for a navigation step or
-   activation, ten seconds for a focus-now query, and for a shell item
-   query what is left of the due time it carries. The reducer abandons
-   the worker when the deadline passes, or, from half a second on, when
-   the shell answers its ask that the user has moved to a window of the
-   same application on another UI thread.
-5. **One reply, whichever way it goes.** Exactly one of these happens:
-   - The worker finishes and publishes `Done`, `Gone`, or `Failed` under
-     the watch lock.
-   - The watchdog abandons it first, under the same lock: it bumps the
-     worker generation, sends `Abandoned`, and starts a replacement worker
-     for the rest of the queue. The abandoned thread, if its call ever
-     returns, publishes nothing and exits (`Watch::finish`).
-   - The handling panics, and `run_entry` sends `Failed`.
-   - Core withdraws it while still queued (`Intake::cancel`), and the
-     outpost sends `NotStarted`.
+   to the reducer thread, and waits up to 25 seconds
+   (`DUMP_TREE_TIMEOUT`: the focus read's due time, then the dump's own,
+   and a second for the way back).
+2. **Recorded.** `ReducerThread::dump_tree` finds the main window of the
+   application holding attention, records the asker, and gives Core's
+   event queue `QueueInput::AskOutside` with `Request::DumpTree`. It is a
+   request from outside the event queue: it holds no key, it has the
+   queue's due time, 11 seconds, and its live hang check, and Core does
+   not stop waiting for it when the foreground changes. Request numbers
+   are never reused, so a late answer can never satisfy a newer request.
+3. **Sent.** Once the application's outpost is ready, Core's shell checks
+   the main window for a hang and sends the request
+   (`CoreToOutpost::Request`), or answers it "not responding" unsent. The
+   outpost's worker takes the event queue's requests ahead of every
+   queued request from outside it, so keys never wait behind the dump.
+4. **Run.** The worker walks the tree within its depth and node limits.
+   The outpost keeps no deadline of its own: only Core stops waiting.
+   While the request is out, the shell asks Windows every half second
+   whether the window is hung.
+5. **One ending, whichever way it goes.** Core's request table gives the
+   request exactly one ending ([verbatim-core](../reference/crates/verbatim-core.md),
+   "Core's requests"):
+   - the outpost's answer, taken only from the generation asked: the tree,
+     not there, refused, or failed;
+   - "not responding", when the shell found the window hung before
+     sending;
+   - "ended", when the outpost generation ends first;
+   - no longer awaited, when the shell finds the window hung while the
+     request is out, when its due time passes, or when its asker withdraws
+     it. Core tells the outpost to cancel, with the reason: a request not
+     yet started is dropped, and one running is left to finish, its late
+     answer dropped by number.
+6. **The caller gives up.** After 25 seconds the connection thread sends
+   `ShellCommand::DumpTreeGivenUp`, and the reducer thread gives the queue
+   `QueueInput::WithdrawOutside`: Core stops waiting for the dump with the
+   reason "withdrawn", so a dump still queued in the outpost is dropped
+   and one already running finishes.
+7. **Delivered.** The ending reaches its asker through the queue's
+   `Answered` effect: a tree to the control client, the shell's items to
+   the list dialog.
 
-   "Not started" means it never ran; "abandoned" means it started and
-   passed its deadline, so an effect such as an activation may already
-   have happened.
-6. **The caller gives up.** After five seconds the connection thread
-   sends `ShellCommand::DumpTreeGivenUp`, and the reducer thread sends the
-   outpost `CoreToOutpost::Cancel`. A dump still queued answers "not
-   started"; one already running finishes within its own budget.
-7. **Delivered.** A reply goes by its request id's asker
-   (`requests::reply_input`). A query of the shell's, as this dump is, goes
-   through the request table: `RequestTable::finish` drops an outcome for
-   an id that already has one, or from another generation, and the first
-   outcome goes to its asker (`requests::deliver`): a tree to the control
-   client; for a focus-now query, a foreground change and a focus; the
-   shell's items to the list dialog. A query of the reducer's, a
-   navigation, an activation or a text read, re-enters it as
-   `Input::Answered`, and Core's query table takes it only from the
-   generation asked and only once (`queries::answered`).
-8. **The outpost ends.** On `OutpostMessage::Ended` the reducer thread
-   removes the generation from the live set and applies
-   `Input::OutpostEnded`, which ends the reducer's own queries of it
-   "gone"; then `RequestTable::outpost_ended` answers each of the shell's
-   outstanding requests for it "gone".
-
-Generations make this safe: every spawn gets a fresh `OutpostId`, Core's
+Generations make this safe: every spawn gets a fresh generation, Core's
 reader stamps it on every node id from the pipe, never from the message
-body, and the request table, Core's query table and the live set all
-check it, so nothing an old outpost said can reach the reducer or satisfy a query sent to its
-successor. The tests are in `crates/verbatim-app/src/requests.rs`,
-`live.rs`, `crates/verbatim-outpost/src/outpost/worker.rs`, and
-`crates/verbatim-core/tests/reduce.rs`.
+body, and Core's request table takes an answer only from the generation
+it asked, so nothing an old outpost said can satisfy a request sent to its
+successor. The tests are in `crates/verbatim-core/src/event_queue/tests.rs`.
 
-Known limitation: the app's wiring of these pieces
-(`ReducerThread::on_outpost_message`) has no test of its own, and a long
-tree dump delays that application's events, since queries within one
-application run one at a time by design.
+Known limitation: a long tree dump holds that application's worker, so
+Core's requests to the application wait behind a dump already running.
 
 ## 5. Recovery
 
 Each failure, what notices it, and what happens next
 ([verbatim-supervisor](../reference/crates/verbatim-supervisor.md)).
 
-1. **A call into an application hangs.** The outpost's watchdog abandons
-   the worker and starts a replacement (walkthrough 4); an abandoned
-   thread keeps its stack until its call returns or the process ends.
-   Events from a window the system reports hung are dropped before any
-   read.
+1. **A call into an application hangs.** Core's shell asks Windows
+   whether the request's window is hung before sending a request and every
+   half second while it is out. Found hung, Core stops waiting, plays the
+   "not responding" sound if the application holds attention, and tells
+   the reader to cancel, leaving its thread inside the call, since a fresh
+   thread would stick in the same window; the window joins Core's recovery
+   set, and when it answers again Core asks the application for its focus.
+   A window slow but not reported hung waits out the request's due time.
+   When the foreground leaves the request's window, Core stops waiting at
+   once, and a reader still inside the call abandons that thread and
+   starts a fresh one. The listener drops events from a window the system
+   reports hung as they arrive.
 2. **An outpost is stuck.** The lifecycle owner pings every child every
    three seconds; the outpost's I/O thread answers pings itself, so a busy
-   worker never looks dead. Nine seconds without a pong, or eight
-   abandoned workers (unless the application's own windows are reported
-   hung), ends the outpost as killed (`Owner::heartbeat`, the pure
-   `wedge_decision`) by closing its job handle; there is no shutdown
-   message, because a process that has used UIA can hang or crash in UIA's
-   own exit code (`books/dev/src/reference/uia-bugs.md`, "A process that used UIA can hang or
-   crash as it exits").
+   worker never looks dead, and each pong reports the workers abandoned to
+   calls on windows it did not find hung. Core's generation record ends
+   the outpost when nine seconds pass without a pong, or when a pong
+   reports eight such workers; the owner thread carries out the end by
+   closing its job handle. There is no shutdown message, because a process
+   that has used UIA can hang or crash in UIA's own exit code
+   (`books/dev/src/reference/uia-bugs.md`, "A process that used UIA can
+   hang or crash as it exits").
 3. **An outpost crashes.** Its pipe closes; Core's reader forwards
-   everything it wrote, then the owner sends `Ended` as exited.
-4. **After either.** The reducer thread drops later messages from that
-   generation, the reducer marks the focus dead but keeps its copied
-   data, and outstanding queries end "gone". The owner gives the
-   application the next spare outpost (`Owner::outpost_failed`), at once
-   for its first failure and after a backoff of 1, 2, 4, up to 30 seconds
-   for each further one, never giving up; an application that has exited
-   is left alone. The reducer thread asks the replacement for the current
-   focus when it is ready (`wanted::Wanted`) and compares the answer with
-   the dead focus's copy (`reads_the_same`): if they match, it takes the
+   everything it wrote, then the owner thread reports the generation's end
+   to Core.
+4. **After either.** Core drops every later frame of that generation, and
+   every request out to it or waiting for it ends "ended". Core's record
+   starts the application's next outpost, usually a spare, at once for its
+   first failure and after a backoff of 1, 2, 4, up to 30 seconds for each
+   further one, never giving up; an application that has exited is left
+   alone. When the committed focus's outpost ended, Core asks the
+   replacement for the current focus and compares the answer with the
+   committed focus's copy (`reads_the_same`): if they match, it takes the
    new node ids silently; otherwise it announces the focus.
 5. **The listener is replaced.** If its pipe closes or it misses nine
-   seconds of pongs, the owner ends it and starts another, telling every
-   outpost that the old listener's reads have ended
-   (`DeliveredFact::UiaFocusReadsEnded`). When the replacement is ready the
-   reducer thread hears `OutpostMessage::ListenerReady`, reads the
-   foreground window itself, and asks that application for its focus,
-   taken silently if unchanged. Desktop-wide UIA events from the gap are
-   lost.
+   seconds of pongs, the owner thread ends it and starts another, and Core
+   hears that the old one ended; every request out to it ends "ended",
+   and Core asks the outpost of the application holding attention for its
+   focus once, taken silently if unchanged. Every
+   `WinEvent` and desktop-wide UIA event from the gap is lost.
 6. **The synthesizer host dies or hangs.** `HostedSynth` ends a host whose
    pipe closed, that sent nothing for ten seconds while Core waited, or
    that answered out of turn. The utterance in flight fails, except that
