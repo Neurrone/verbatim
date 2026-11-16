@@ -40,17 +40,15 @@ use verbatim_model::protocol::{
 };
 use verbatim_model::{
     CallCounts, EarlierElement, Effect, Fetches, FocusText, Input, NodeDetails, NormalizedEvent,
-    OutpostId, Pid, PropertyChange, Role, SegmentContent, State, StateSet, WindowHandle,
+    OutpostId, Pid, Role, SegmentContent, State, StateSet, WindowHandle,
 };
-use verbatim_outpost::Heard;
 use verbatim_process::arguments::OutpostOptions;
 use verbatim_uia::{
     Cached, ListenerEvent, ListenerSelection, Part, Registration, Subscription, Uia,
 };
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Accessibility::{
-    IUIAutomation2, UIA_ControllerForPropertyId, UIA_HelpTextPropertyId, UIA_NamePropertyId,
-    UIA_SelectionItem_ElementSelectedEventId,
+    IUIAutomation2, UIA_NamePropertyId, UIA_SelectionItem_ElementSelectedEventId,
 };
 use windows::core::Interface;
 
@@ -1363,126 +1361,89 @@ fn a_focus_that_leaves_between_the_two_keyboard_focus_reads_is_announced_once() 
 /// A UIA menu opening is judged and read as a focus on the menu, as NVDA's
 /// automation event handler maps it to one, by NVDA's checks but the
 /// duplicate test, which is its focus handler's alone: an opening on the
-/// element that is the last focus, and still has the keyboard focus, is
-/// read in full; one whose element has lost the keyboard focus is dropped,
-/// as NVDA's `shouldAllowUIAFocusEvent` drops it.
+/// element that is the committed focus, and still has the keyboard focus,
+/// is that focus again, spoken again as NVDA's redirect to its focus
+/// object speaks it; one whose element has lost the keyboard focus is
+/// dropped, as NVDA's `shouldAllowUIAFocusEvent` drops it, asking nothing.
 fn a_menu_opening_is_judged_as_a_focus_on_the_menu() {
     let title = common::unique_title("mockapp-menu-opening");
     let mut app = common::spawn("small.json", "uia", &title);
     let client = Client::new(common::find_window(&title));
-    let outpost = OutpostUnderTest::new(&app);
+    let mut core = CoreDriver::new(&app, OutpostUnderTest::new(&app));
 
     app.send("set-focus btn1");
     let button = client.focused();
-    let reported = outpost.uia_focus(&button);
-    let (judged, _) = outpost.listener_read_as(&button, FocusEvent::MenuOpened);
-    let Judged::Read(read) = judged else {
-        panic!("the listener did not read the menu opening: {judged:?}");
-    };
+    assert_eq!(core.uia_focus(&button).spoken(), window_and_button());
     assert_eq!(
-        (
-            read.snapshot.name.as_deref(),
-            read.ancestors_end,
-            read.ancestors.is_empty()
-        ),
-        (
-            reported.node.name.as_deref(),
-            verbatim_model::protocol::AncestorsEnd::Top,
-            false
-        ),
-        "read with its ancestors"
+        core.uia_event(EventKind::UiaMenuOpened, &button, None, Payload::None)
+            .spoken(),
+        vec![vec![
+            SegmentContent::Label("Original Name".to_owned()),
+            SegmentContent::Role(Role::Button)
+        ]]
     );
 
     app.send("set-focus slider1");
-    let (judged, _) = outpost.listener_read_as(&button, FocusEvent::MenuOpened);
-    let Judged::Dropped(reason) = judged else {
-        panic!("the listener read a menu without the keyboard focus: {judged:?}");
-    };
-    assert_eq!(reason, "its element no longer has the keyboard focus");
+    let step = core.uia_event(EventKind::UiaMenuOpened, &button, None, Payload::None);
+    assert_eq!((step.said, step.calls.uia), (Vec::new(), 0));
 
-    drop(outpost);
+    drop(core);
     app.quit();
 }
 
-/// A UIA menu opening whose sender UI Automation counts as the current
-/// focus, the last focus the listener accepted with no newer focus queued
-/// since, is judged as that focus, as NVDA's automation event handler
-/// redirects it to its focus object (`books/dev/src/reference/adr/0001-focus.md`, "The listener's
-/// checks, ported from NVDA's focus handler"): with the focus's window and without NVDA's native
-/// check,
-/// so the windowless sender's nearest window is not read. Five calls: the
-/// comparison (`CompareElements`), the focus's keyboard focus, and the
-/// read, which is the focus's own element again: its keyboard focus as the
-/// focus before, its cache, and one step up to its known parent.
+/// A UIA menu opening whose sender is the committed focus is judged as
+/// that focus, as NVDA's automation event handler redirects it to its
+/// focus object (`docs/parity/focus-events.md`): Core speaks the focus
+/// again and reads nothing for it.
 fn a_menu_opening_on_the_current_focus_is_judged_as_that_focus() {
     let title = common::unique_title("mockapp-menu-opening-focus");
     let mut app = common::spawn("small.json", "uia", &title);
     let client = Client::new(common::find_window(&title));
-    let outpost = OutpostUnderTest::new(&app);
+    let mut core = CoreDriver::new(&app, OutpostUnderTest::new(&app));
 
     app.send("set-focus btn1");
     let button = client.focused();
-    let _ = outpost.uia_focus(&button);
-    let (judged, calls) = outpost.listener_read_as(&button, FocusEvent::MenuOpened);
-    let Judged::Read(read) = judged else {
-        panic!("the listener did not read the menu opening: {judged:?}");
-    };
-    assert_eq!(read.snapshot.name.as_deref(), Some("Original Name"));
+    let _ = core.uia_focus(&button);
+    let step = core.uia_event(EventKind::UiaMenuOpened, &button, None, Payload::None);
     assert_eq!(
-        (calls.uia, calls.msaa, calls.window_messages),
-        (5, 0, 0),
-        "the comparison, the focus's keyboard focus, and the read, and no nearest window"
+        (step.spoken(), step.calls),
+        (
+            vec![vec![
+                SegmentContent::Label("Original Name".to_owned()),
+                SegmentContent::Role(Role::Button)
+            ]],
+            CallCounts::default()
+        )
     );
 
-    drop(outpost);
+    drop(core);
     app.quit();
 }
 
-/// A UIA menu opening whose sender is not the current focus goes through
-/// NVDA's native check, its windowless sender's nearest window read: five
-/// calls, the comparison with the current focus, the reading thread's own
-/// last read, the nearest window, the sender's keyboard focus, and the
-/// read's two, its cache and one step up to its known parent. Once the
-/// user has moved away from the application since that read, as another
-/// application's focus queued does, the last read is not current, as
-/// NVDA's focus object is then another application's, and nothing is
-/// compared: five calls, the read now also asking whether the slider it
-/// read just before, under the same runtime id, still has the keyboard
-/// focus.
+/// A UIA menu opening whose sender is not the committed focus is read as
+/// a focus on it, through NVDA's native check of its windowless sender's
+/// nearest window, and spoken as a focus.
 fn a_menu_opening_on_another_element_is_judged_by_its_own_window() {
     let title = common::unique_title("mockapp-menu-opening-other");
     let mut app = common::spawn("small.json", "uia", &title);
     let client = Client::new(common::find_window(&title));
-    let outpost = OutpostUnderTest::new(&app);
+    let mut core = CoreDriver::new(&app, OutpostUnderTest::new(&app));
 
     app.send("set-focus btn1");
-    let _ = outpost.uia_focus(&client.focused());
+    let _ = core.uia_focus(&client.focused());
     app.send("set-focus slider1");
     let slider = client.focused();
-    let (judged, calls) = outpost.listener_read_as(&slider, FocusEvent::MenuOpened);
-    let Judged::Read(read) = judged else {
-        panic!("the listener did not read the menu opening: {judged:?}");
-    };
-    assert_eq!(read.snapshot.name.as_deref(), Some("Level"));
     assert_eq!(
-        (calls.uia, calls.msaa, calls.window_messages),
-        (5, 0, 0),
-        "the comparison, the nearest window, the keyboard focus, and the read"
+        core.uia_event(EventKind::UiaMenuOpened, &slider, None, Payload::None)
+            .spoken(),
+        [vec![
+            SegmentContent::Label("Level".to_owned()),
+            SegmentContent::Role(Role::Slider),
+            SegmentContent::Value("1".to_owned())
+        ]]
     );
 
-    outpost.listener_moved_away();
-    let (judged, calls) = outpost.listener_read_as(&slider, FocusEvent::MenuOpened);
-    let Judged::Read(read) = judged else {
-        panic!("the listener did not read the menu opening: {judged:?}");
-    };
-    assert_eq!(read.snapshot.name.as_deref(), Some("Level"));
-    assert_eq!(
-        (calls.uia, calls.msaa, calls.window_messages),
-        (5, 0, 0),
-        "the nearest window, the keyboard focus, and the read, and no comparison"
-    );
-
-    drop(outpost);
+    drop(core);
     app.quit();
 }
 
@@ -1932,83 +1893,49 @@ fn a_focus_in_a_window_with_no_uia_provider_is_read_and_dropped_by_its_outpost()
 }
 
 /// The focus's help text and `ControllerFor` relation are followed, as
-/// NVDA's local group follows them: a help text change is reported as the
-/// focus's new description, and a search box's relation naming its list
-/// and then nothing as its suggestions opening and closing, each change
-/// in one call, the refresh of the box's cache, which reads the relation
-/// with the rest (`books/dev/src/reference/performance.md`).
+/// NVDA's local group follows them, and told to Core, which asks one read
+/// for each (`docs/design/readers-tell-core-asks-build1.md`, "Changes on
+/// objects"): a help text change is spoken as the focus's new description,
+/// read when Core judges it, and a search box's relation naming its list
+/// and then nothing plays the suggestions opening and closing, each read
+/// in one call, the refresh of the box that reads the relation live.
 fn a_focus_s_help_text_and_suggestions_are_followed() {
     let title = common::unique_title("mockapp-suggestions");
     let mut app = common::spawn("controller.json", "uia", &title);
     let client = Client::new(common::find_window(&title));
-    let outpost = OutpostUnderTest::new(&app);
+    let mut core = CoreDriver::new(&app, OutpostUnderTest::new(&app));
 
-    // The search box has no text pattern in mockapp, so its focus carries
-    // the outpost's word that it has no text.
     app.send("set-focus search");
-    let (judged, _) = outpost.listener_read(&client.focused());
-    assert!(matches!(judged, Judged::Read(_)), "dropped: {judged:?}");
-    outpost.deliver(judged.into_fact(0, FocusEvent::Focus));
-    let node = match outpost.next() {
-        OutpostToCore::Event {
-            event:
-                NormalizedEvent::FocusChanged {
-                    node,
-                    text: Some(text),
-                    ..
-                },
-            ..
-        } if matches!(*text, FocusText::NoText) => node,
-        other => panic!("the outpost said {other:?}, not the search box's focus with no text"),
-    };
-    outpost.settled();
+    let _ = core.uia_focus(&client.focused());
 
     app.send("set-description search Type to search");
-    outpost.heard(&[Heard::UiaProperty(UIA_HelpTextPropertyId.0)]);
-    match outpost.next() {
-        OutpostToCore::Event {
-            event:
-                NormalizedEvent::PropertyChanged {
-                    node_id,
-                    change: PropertyChange::Description(description),
-                    child_count: None,
-                },
-            ..
-        } => assert_eq!(
-            (node_id, description.as_deref()),
-            (node.id, Some("Type to search"))
-        ),
-        other => panic!("the outpost said {other:?}, not the focus's new description"),
-    }
-    outpost.settled();
+    assert_eq!(
+        core.told(1).spoken(),
+        [vec![SegmentContent::Description(
+            "Type to search".to_owned()
+        )]]
+    );
 
-    for (command, open) in [
-        ("set-controller-for search results", true),
-        ("set-controller-for search", false),
+    for (command, earcon) in [
+        (
+            "set-controller-for search results",
+            verbatim_model::Earcon::SuggestionsOpened,
+        ),
+        (
+            "set-controller-for search",
+            verbatim_model::Earcon::SuggestionsClosed,
+        ),
     ] {
         app.send(command);
-        outpost.heard(&[Heard::UiaProperty(UIA_ControllerForPropertyId.0)]);
-        match outpost.next() {
-            OutpostToCore::Event {
-                event:
-                    NormalizedEvent::PropertyChanged {
-                        node_id,
-                        change: PropertyChange::Suggestions(reported),
-                        child_count: None,
-                    },
-                timing,
-                ..
-            } => assert_eq!(
-                (node_id, reported, timing.calls.uia),
-                (node.id, open, 1),
-                "{command}"
-            ),
-            other => panic!("the outpost said {other:?}, not the suggestions after {command}"),
-        }
-        outpost.settled();
+        let step = core.told(1);
+        assert_eq!(
+            (step.said, step.calls.uia),
+            (vec![common::core_driver::Said::Earcon(earcon)], 1),
+            "{command}"
+        );
     }
 
-    drop(outpost);
+    drop(core);
     app.quit();
 }
 
