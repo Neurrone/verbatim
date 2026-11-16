@@ -510,52 +510,29 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
   old;
   `RemoveAllEventHandlers` only at shutdown. A move to what is already
   followed makes no call; a focus read through MSAA is followed by nothing.
-- The queue ([How focus works](../../explanation/design/focus.md), "One MSAA
-  focus"; the rules are in
-  `books/dev/src/explanation/architecture.md`, "Outposts"): one entry per object and kind, and for
-  an MSAA event other than a menu opening per raising thread (a menu opening
-  per address; the console host's events per window and kind), a newer
-  replacing it at the back. A batch is what accumulated during the previous
-  one, in arrival order, but a focused terminal's caret event ahead of its
-  text change goes just after the change, whose read reads the caret
-  (`caret_after_update`). Per batch the newest 4 MSAA focus events and 10
-  other MSAA events per thread are kept (the focus's own events beyond the
-  limit, a foreground change by either). Nothing is dropped at planning
-  for a hung window: the worker tests a UIA event's own
-  window first as it handles it (`IsHungAppWindow`, a window of 0
-  passing, as NVDA's test passes a sender with no cached window), before
-  any window lookup or read, so an entry whose window became hung while
-  it waited is dropped too, and a dropped event's parked element and
-  range go with it; an MSAA event's window is tested by `readable`.
-- Runs: each run of MSAA focus and foreground events is tried newest first,
-  each try a program under its own deadline, until one is reported, at the
-  run's newest place, as NVDA's `pumpAll` does (`ends_a_run`); the reducer
-  dispatches the next try when a try's program ends unreported, and the
-  replacement of a worker abandoned in a try tries the next. Three
-  focus candidates per backend are kept (`Planned::Focus`). A foreground
-  change removes a waiting focus on its client object from the same thread
-  not raised after it. A run whose events all carry raise times is tried in
-  that order (`in_raised_order`), ties in the order they arrived. UIA
-  focus events are handled at their own places, the newest menu opening
-  per backend last.
-- Markers: nothing that arrives after a UIA focus's marker is planned until
-  the read, its drop, or the end of reads resolves it, as NVDA's UIA events
-  pass through one flusher thread. When the read's ancestors include the
-  focus last reported, that old focus's own state changes queued after the
-  marker are planned ahead of the read (`old_focus_events_first`), since a
-  provider moving the focus into a child raises the old focus's change
-  first but it comes by another route. The check compares runtime ids.
+- The queue (`verbatim-outpost-logic`'s intake): what the outpost still
+  hears, its `Follow` subscription's UI Automation events and a console
+  host's console events, with Core's queries, lists of held nodes and idle
+  queries, in arrival order, one entry per object and kind, a newer
+  replacing it at the back (the console host's events per window and
+  kind). A batch is what accumulated during the previous one, but a
+  focused terminal's caret event ahead of its text change goes just after
+  the change, whose read reads the caret (`caret_after_update`). Core's
+  event queue judges every other event
+  (`docs/design/readers-tell-core-asks-build1.md`, "The outpost in this
+  build"). Nothing is dropped at planning for a hung window: the worker
+  tests a UIA event's own window first as it handles it
+  (`IsHungAppWindow`, a window of 0 passing, as NVDA's test passes a
+  sender with no cached window), before any window lookup or read, and a
+  dropped event's parked element and range go with it.
 - The worker generation in charge is the only one calling into the
   application, one program at a time, so events and replies leave in
-  planned order but for menu openings, a run's older focuses, and a caret
-  key's answer. Before any call a program applies NVDA's acceptance test
+  planned order but for a caret key's answer. Before any call a program
+  applies NVDA's acceptance test
   (`verbatim_reader_rules::acceptance`; `docs/parity/focus-events.md`,
   "Event acceptance"): `accepts_event`, a pure function of the event, its
   window, `WindowQueries` (local calls in
-  `verbatim_win32::window::SystemWindows`), and `RequestedEvents`; for an
-  MSAA focus and a foreground change the test was made on the reducer's
-  thread as the entry was taken in, and the program uses the result its
-  entry carries (`reducer::Front`);
+  `verbatim_win32::window::SystemWindows`), and `RequestedEvents`;
   its `foreground_relation` goes in the window facts
   (`verbatim_core::focus_rules::ForegroundRelation`). It takes the backend
   crates' per-thread call counts into each published `EventTiming`; a
@@ -660,33 +637,6 @@ and the inherited pipe handles.
 
 ### Foreground changes and focus-now
 
-- A batch with a foreground fact is handed out at once. A foreground fact
-  whose window is not in front at the outpost's one test is dropped, as
-  NVDA's `processForegroundWinEvent` drops it, since Windows raises its own
-  event once the change is made (`docs/parity/focus-events.md`, "Stale
-  focus events"). The test is made on the reducer's thread as the reducer
-  takes the entry from the mailbox (`Context::front_test`, carried on the
-  entry as `reducer::Front`), never on the worker, which can wait behind a
-  call into a held application; an MSAA focus's acceptance test is made
-  there too ([ADR 0001: Focus](../adr/0001-focus.md), "The foreground and
-  the window title"). It counts among its thread's other events and among focus events
-  in the batch limits, so later focus events do not crowd it out.
-- A foreground fact in front is reported, whatever the focus: NVDA's two
-  tests against its last queued focus are Core's, which refuses a
-  foreground report of the window its focus is in. In a focus group, a
-  reported change whose window holds a report's line lets the older entry
-  be tried, and every report of the group carries its number and rank
-  (`verbatim_model::FocusGroup`), so Core takes the older entry only when
-  it refused the change; a reported change of any other window ends the
-  group, as a reported focus does.
-- It is reported at once as a focus on the window, stamped when its test
-  found it in front, never before its observation. The window's own object is read (`window_element`, or
-  `OBJID_CLIENT`), so a focus on its client area is the same node; a popup
-  menu window (`#32768`) reads as a menu (`read::window_snapshot`). An
-  unreadable window is reported from local data, and an empty name takes
-  the window text (`InternalGetWindowText`). A window that leaves the front
-  during its read is still reported, as NVDA makes no test after its
-  object is made; Core judges it by its foreground record.
 - A foreground event for a UIA window is dropped, as NVDA drops every MSAA
   event for one; the window is announced from the focus's ancestry
   ([ADR 0001: Focus](../adr/0001-focus.md), "The foreground and the window

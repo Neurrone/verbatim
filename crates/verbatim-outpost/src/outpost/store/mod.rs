@@ -440,22 +440,6 @@ impl Store {
 
     // The lines a program copies.
 
-    /// How many of `chain`, outermost first, a walk may stop at: those
-    /// above the outermost one the store no longer holds. Each of them is
-    /// tagged with request `tag`, in the same hold, so no release frees it
-    /// while the request may name it.
-    pub(super) fn held_prefix(&self, tag: Tag, chain: &[NodeId]) -> usize {
-        let mut state = self.lock();
-        let held = chain
-            .iter()
-            .position(|&node| !self.holds(node))
-            .unwrap_or(chain.len());
-        for &node in &chain[..held] {
-            state.tag_node(node, tag);
-        }
-        held
-    }
-
     /// Tags each of `nodes` the store holds with request `tag`: the lines
     /// it copied, which it may name.
     pub(super) fn tag_copied(&self, tag: Tag, nodes: impl IntoIterator<Item = NodeId>) {

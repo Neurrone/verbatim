@@ -1249,46 +1249,6 @@ fn forget_last_read(context: &RequestContext<'_>, node_id: NodeId) {
     }
 }
 
-/// Notes that the text of edit control `node_id` changed, its value change
-/// handled, so its next comparison of selections is made in general terms
-/// ([`TextChange::ContentChanged`]): NVDA's
-/// `IAccessible.event_valueChange` for an object that detects its own
-/// selection changes (`nvda/source/NVDAObjects/IAccessible/__init__.py`
-/// 2019 to 2023).
-pub(super) fn note_value_change(context: &RequestContext<'_>, node_id: NodeId) {
-    record(
-        context,
-        TextChange::ContentChanged(node_id.number()),
-        (Vec::new(), Vec::new()),
-    );
-}
-
-/// Clears the note of edit control `node_id`'s text changes at a caret
-/// event that a caret read made after it already covered
-/// ([`TextChange::ContentCounted`]): that read's comparison counted every
-/// value change observed before it, those handled since included, as
-/// NVDA's comparison at the caret event, made after the value changes
-/// before it, clears `hasContentChangedSinceLastSelection`
-/// (`nvda/source/NVDAObjects/behaviors.py` 346 to 349;
-/// `nvda/source/editableText.py` 449 to 450). Records nothing when nothing
-/// would change, so a covered caret event commits nothing.
-pub(super) fn note_caret_event_counted(context: &RequestContext<'_>, node_id: NodeId) {
-    let node = node_id.number();
-    let noted = context
-        .facts()
-        .text
-        .edit(node)
-        .and_then(|anchors| anchors.last.as_ref())
-        .is_some_and(|last| last.text_changed);
-    if noted {
-        record(
-            context,
-            TextChange::ContentCounted(node),
-            (Vec::new(), Vec::new()),
-        );
-    }
-}
-
 /// The window of the edit control whose client area `node_id` is, if it is
 /// one: the node whose caret reads are cut at their value change check
 /// ([`value_change_cut`]). A UIA text's change is never checked for.

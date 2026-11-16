@@ -95,23 +95,13 @@ pub(super) enum FocusEffects {
         /// What only the shell applies.
         writes: FollowWrites,
     },
-    /// A foreground report, which follows nothing.
-    Foreground {
-        /// The window's node.
-        node: NodeId,
-        /// Its role and batch.
-        reported: LastReported,
-        /// The dialog memo it leaves.
-        dialog: DialogMemo,
-    },
 }
 
 impl FocusEffects {
     /// What only the shell applies, for a focus followed.
-    pub(super) fn writes_mut(&mut self) -> Option<&mut FollowWrites> {
+    pub(super) fn writes_mut(&mut self) -> &mut FollowWrites {
         match self {
-            Self::Adopt { writes, .. } | Self::Again { writes, .. } => Some(writes),
-            Self::Foreground { .. } => None,
+            Self::Adopt { writes, .. } | Self::Again { writes, .. } => writes,
         }
     }
 
@@ -140,24 +130,14 @@ impl FocusEffects {
                 trace: *trace,
                 observed_at_us: *observed_at_us,
             },
-            Self::Foreground {
-                node,
-                reported,
-                dialog,
-            } => FocusCommit::Foreground {
-                node: *node,
-                reported: *reported,
-                dialog: dialog.clone(),
-            },
         }
     }
 
     /// What of this only the shell applies, for a refused commit to let go
     /// of.
-    pub(super) fn into_writes(self) -> Option<FollowWrites> {
+    pub(super) fn into_writes(self) -> FollowWrites {
         match self {
-            Self::Adopt { writes, .. } | Self::Again { writes, .. } => Some(writes),
-            Self::Foreground { .. } => None,
+            Self::Adopt { writes, .. } | Self::Again { writes, .. } => writes,
         }
     }
 
@@ -191,15 +171,6 @@ impl FocusEffects {
                 owed,
                 trace,
                 observed_at_us,
-            },
-            Self::Foreground {
-                node,
-                reported,
-                dialog,
-            } => FocusCommit::Foreground {
-                node,
-                reported,
-                dialog,
             },
         }
     }

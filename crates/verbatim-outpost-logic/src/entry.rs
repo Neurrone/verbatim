@@ -3,62 +3,23 @@
 //! are parked in the store as the entry is pushed, and the entry carries
 //! the key they are parked under (`books/dev/src/explanation/design/ownership.md`).
 
-use verbatim_model::protocol::{DeliveredFact, EventTiming, Query, RequestId, UiaSnapshotFact};
+use verbatim_model::protocol::{EventTiming, Query, RequestId, UiaSnapshotFact};
 use verbatim_model::{NodeId, Notification, TraceId};
-
-/// The kind of an MSAA `WinEvent`, as the outpost's hook normalized it: the
-/// reducer's own copy of `verbatim_ia2::WinEventKind`, variant for variant,
-/// since the reducer names no backend crate. The mailbox converts one into
-/// the other.
+/// The `WinEvent` kinds an outpost still takes in
+/// (`docs/design/readers-tell-core-asks-build1.md`, "The outpost in this
+/// build"): a console host's console events, which its own hook delivers,
+/// and a window Core names destroyed. The mailbox turns a hooked event into
+/// one of these at its arrival.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum WinKind {
-    /// `EVENT_OBJECT_FOCUS`.
-    Focus,
-    /// `EVENT_SYSTEM_FOREGROUND`: a window came to the foreground.
-    Foreground,
-    /// `EVENT_OBJECT_VALUECHANGE`.
-    ValueChange,
-    /// `EVENT_OBJECT_STATECHANGE`, and the selection events NVDA handles as one.
-    StateChange,
-    /// `EVENT_OBJECT_NAMECHANGE`.
-    NameChange,
-    /// `EVENT_OBJECT_DESCRIPTIONCHANGE`.
-    DescriptionChange,
-    /// `EVENT_OBJECT_SELECTION`: an item became the selection.
-    Selection,
-    /// `EVENT_SYSTEM_MENUPOPUPSTART`: a popup menu opened.
-    MenuPopupStart,
-    /// `EVENT_SYSTEM_MENUSTART`: menu mode began; only the focus listener
-    /// takes it.
-    MenuStart,
-    /// A popup menu closed, or menu mode ended.
-    MenuEnd,
-    /// The Alt+Tab switcher closed.
-    SwitchEnd,
-    /// `EVENT_OBJECT_DESTROY`: an object, possibly a window, was destroyed.
-    Destroy,
-    /// `EVENT_SYSTEM_ALERT`: an alert, as toast notifications arrive.
-    Alert,
-    /// The system caret moved, or was shown again after a move.
-    Caret,
-    /// `EVENT_OBJECT_TEXTSELECTIONCHANGED`: a text control's selection or caret changed.
-    TextSelectionChange,
-    /// `EVENT_OBJECT_SHOW` from a tooltip window.
-    Show,
-    /// `EVENT_OBJECT_HIDE`: an object was hidden; only the focus listener
-    /// takes it.
-    Hide,
-    /// The console host's text changed, scrolled, or was laid out anew.
+    /// `EVENT_CONSOLE_UPDATE_REGION`, `EVENT_CONSOLE_UPDATE_SIMPLE`,
+    /// `EVENT_CONSOLE_UPDATE_SCROLL` or `EVENT_CONSOLE_LAYOUT`: the
+    /// console's text changed.
     ConsoleUpdate,
-    /// A foreground event on Program Manager's or the taskbar's window.
-    ShellForeground,
-    /// The console host's caret moved.
+    /// `EVENT_CONSOLE_CARET`: the console's cursor moved.
     ConsoleCaret,
-    /// The input desktop switched; only the focus listener takes it.
-    DesktopSwitch,
-    /// The desktop window's name changed; only the focus listener takes
-    /// it.
-    DesktopName,
+    /// `EVENT_OBJECT_DESTROY` of a window, which Core names.
+    Destroy,
 }
 
 /// The UIA property ids the reducer tells apart, as `UIAutomationClient.h`
@@ -155,6 +116,10 @@ pub enum Asker {
 /// One unit of work: what a program handles, or what the reducer does
 /// itself.
 #[derive(Clone, Debug)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "an entry moves by value from the mailbox to its program, as it always has"
+)]
 pub enum Item {
     /// An MSAA `WinEvent` from this outpost's own hooks, with the thread
     /// that raised it, which the batch limits count it by.
@@ -172,14 +137,6 @@ pub enum Item {
     },
     /// A UIA event from this outpost's own subscriptions.
     Uia(UiaEvent),
-    /// A fact routed from the listener, or an MSAA focus, foreground
-    /// change, menu opening, alert, or tooltip the outpost's own hook took
-    /// in as the same fact, with the thread that raised an MSAA event and
-    /// when (`None` for a UIA fact).
-    Fact(
-        DeliveredFact,
-        Option<verbatim_model::protocol::WinEventStamp>,
-    ),
     /// A query from Core.
     Query {
         /// The query's id, which its reply answers.
@@ -236,31 +193,6 @@ impl Item {
     }
 }
 
-/// The outpost's one test of an entry against the system's foreground,
-/// made from Windows' state on the reducer's thread as the entry is taken
-/// from the mailbox, and carried on the entry to the worker, which makes
-/// none (`books/dev/src/reference/adr/0001-focus.md`, "The foreground and the window title"): the
-/// worker can wait behind
-/// a call into a held application, so a test made there can be made
-/// seconds after the event.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum Front {
-    /// Not an entry the outpost tests: anything but an MSAA focus and a
-    /// foreground change.
-    #[default]
-    Untested,
-    /// An MSAA focus: whether NVDA's acceptance test against the
-    /// foreground window accepted its window.
-    Accepted(bool),
-    /// A foreground change.
-    Foreground {
-        /// When the test found its window to be the system's foreground
-        /// window, on the observation clock, or `None` when it was not, or
-        /// was Core's hidden frame, which no outpost reports.
-        in_front_at_us: Option<u64>,
-    },
-}
-
 /// An item with its trace and observation time, in microseconds on the
 /// run's shared clock.
 #[derive(Clone, Debug)]
@@ -273,9 +205,6 @@ pub struct Entry {
     pub observed_at_us: u64,
     /// When it was raised, observed, and relayed, for the latency log.
     pub timing: EventTiming,
-    /// The outpost's test of it against the foreground, made as the
-    /// reducer took it in.
-    pub front: Front,
 }
 
 impl Entry {
@@ -287,7 +216,6 @@ impl Entry {
             trace,
             observed_at_us,
             timing: EventTiming::default(),
-            front: Front::Untested,
         }
     }
 }

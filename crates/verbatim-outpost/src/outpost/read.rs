@@ -100,24 +100,6 @@ fn join_cache_onto(
     (above.iter().cloned().chain(chain).collect(), above)
 }
 
-/// The part of `previous`, a focus chain outermost first, that a walk may
-/// stop at and splice from: its entries above the outermost one the store
-/// no longer holds, so a walk that meets the chain below a released entry
-/// reads on rather than splicing a node no message may name any more. The
-/// entries below that one are dropped even where the store still holds
-/// them, so the walk reads them again rather than splicing. The entries
-/// kept are the walk's copied line, tagged with its request as they are
-/// judged held, so no release frees one while the walk may name it
-/// ([`super::store::Store::held_prefix`]).
-pub(super) fn held_prefix(
-    context: &RequestContext<'_>,
-    mut previous: Vec<NodeSnapshot>,
-) -> Vec<NodeSnapshot> {
-    let ids: Vec<NodeId> = previous.iter().map(|node| node.id).collect();
-    previous.truncate(context.store.held_prefix(context.tag(), &ids));
-    previous
-}
-
 /// Why a read failed.
 #[derive(Debug)]
 pub(super) enum ReadError {

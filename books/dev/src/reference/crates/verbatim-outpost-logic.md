@@ -71,22 +71,17 @@ Public API:
   echoed in its reply, and decides nothing.
 - The program in flight is the generation in charge's (`InCharge<Current>`,
   the `charge` module): its request, and beside it the query the program
-  answers, the Core request it runs, its focus group try and whether it
+  answers, the Core request it runs, and whether it
   is deferred work. A generation is abandoned only when Core cancels the
   request its program runs because the foreground moved away; the reducer
-  then emits `Abandon` and answers its own obligations: the running query,
-  Core's live re-read the entry answers (`LiveRereadGone`, sent too when a
-  program ends without answering it), the owed work of the dead
-  generation, and the focus group's older entries. A cut caret read's
+  then emits `Abandon` and answers its own obligations: the running query
+  and the owed work of the dead generation. A cut caret read's
   finish is handed on to a new request (`InCharge::hand_on`).
 - `Program` and `Work`: what the worker generation in charge runs, with
   its copies of the facts (`Facts`), whose commits come back as `Change`s
   and are applied while their `Request` is live.
 - The vocabulary of its state, used by the shell and the worker: the
-  intake's `Entry`, `Item`, `Marks` (with `TerminalMark`) and `Object`;
-  `Front`, the outpost's one test of an MSAA focus or a foreground change
-  against the foreground, which the shell makes from Windows' state as it
-  hands the entry to the reducer and the entry carries to its program; the follow
+  intake's `Entry`, `Item`, `Marks` (with `TerminalMark`) and `Object`; the follow
   state (`FollowState`, `Followed`, `Origin`, `Subscribed`, `LastReported`,
   `Owed`, and a commit's `FocusCommit` and `MarkChange`, below); the caret key's
   watch (`Watch`, `OpenWatch`, `Checked`, below); the
@@ -111,10 +106,7 @@ older focus survives beside a newer one; the subscription it replaces keeps
 its group among `kept_groups` until its node is released.
 `FocusCommit::Again`, a focus-now answer on the focus already followed, moves
 the subscription and replaces the owed work and nothing else.
-`FocusCommit::Foreground` writes the role and batch last reported and the
-dialog memo, both outside the record, and follows nothing. A caret key's
-watch on another node than the one an adoption or a foreground report names
-ends. An element found after its report moves the subscription only while
+A caret key's watch on another node than the one an adoption names ends. An element found after its report moves the subscription only while
 its node is followed; otherwise its tokens are let go. `MarkChange` is the
 one change of a mark a commit makes. `FollowState::absorbed`, beside the
 record, is a held console's window, which need not be the followed focus's:
@@ -154,33 +146,9 @@ test `tests/caret_watch.rs`.
 The worker's choice between adopting and following again is
 pinned by the outpost's `a_focus_now_answer_is_followed_again_only_on_the_followed_focus`.
 
-The intake has a generated test of its own
-(`crates/verbatim-outpost-logic/src/tests/intake_order.rs`, 800 cases,
-about 2.0 s): pushes of every kind of entry it orders, hand-outs, cancels,
-a noted caret and the close, with a barrier reached while a noted caret
-is kept put behind it as the reducer does. It plans nothing itself: it
-sees which entries each call leaves waiting (`Intake::traces`, a test
-accessor) and checks each change against the intake's documented rules,
-never its keys or code. A push removes only the markers it resolves, at
-most one waiting entry of its object, kind and thread with no idle
-barrier between them, and for a window's foreground change at most one
-waiting focus on its client area from its thread, and leaves no such pair
-undivided. A batch is what waited before the first marker, through the
-first idle barrier; it keeps only entries it took; an entry the limiter
-counts (the newest four focus events and foreground changes, the newest
-ten other events per thread, a foreground change counted by both) is kept
-exactly when fewer newer entries than one of its groups' limits are kept;
-and of its menu openings it keeps the newest alone. It also checks that
-each batch's number rises by one, that each entry handed out belongs to
-its batch, the noted caret alone handed out outside one and only when
-nothing is ready, that each entry is handed out once or dropped for one
-of those reasons, that nothing is handed out
-ahead of an earlier arrival but by a named exception (a focus run tried
-at its newest's place, a menu opening at its batch's end, a read in its
-marker's place, the noted caret and its barrier put ahead), and that an
-open marker holds back everything after it.
-Beside it, an ignored exploration test (`explore_intake`, in
-`src/tests/explore.rs`, the crate's one file that reads the environment)
-runs the same cases under the seed and case count
-in `VERBATIM_EXPLORE_SEED` and `VERBATIM_EXPLORE_CASES`; only the nightly
-workflow (`.github/workflows/explore.yml`) runs them.
+The intake (`src/intake.rs`) queues what the outpost still hears, its
+`Follow` subscription's UI Automation events and a console host's console
+events, with Core's queries, lists of held nodes and idle queries, in
+arrival order: one waiting entry per object and kind, a batch ending at
+an idle query, and the focused terminal's caret event after its text
+change. Its rules are pinned by its own tests.

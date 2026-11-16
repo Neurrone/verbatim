@@ -94,21 +94,6 @@ fn a_walk_in_flight_keeps_its_tagged_nodes_carried_before_or_not() {
     assert_eq!(release(&store, &outbound, 1, &[]), vec![carried, issued]);
 }
 
-/// A node of a line a running request copied is kept across a release
-/// that omits it, though Core saw its last carrier; once the request has
-/// ended, it goes.
-#[test]
-fn a_node_of_a_running_programs_copied_line_is_kept() {
-    let (outbound, _pipe) = outbound();
-    let store = Store::new();
-    let ancestor = node_under(&store, store.next_tag(0), &[1]);
-    sent(&store, &outbound, focus(&[ancestor]));
-    let walk = store.next_tag(0);
-    assert_eq!(store.held_prefix(walk, &[ancestor]), 1);
-    assert_eq!(release(&store, &outbound, 1, &[walk]), Vec::<NodeId>::new());
-    assert_eq!(release(&store, &outbound, 1, &[]), vec![ancestor]);
-}
-
 /// An abandoned generation's nodes, which no message carried, are freed
 /// by the next release, though the generation's worker may still be in
 /// its call.

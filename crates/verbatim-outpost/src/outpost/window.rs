@@ -7,8 +7,8 @@ use std::ffi::c_void;
 
 use windows::Win32::Foundation::{CloseHandle, HWND};
 use windows::Win32::UI::WindowsAndMessaging::{
-    GA_PARENT, GA_ROOT, GA_ROOTOWNER, GWL_STYLE, GetAncestor, GetForegroundWindow,
-    GetWindowLongPtrW, WS_DISABLED, WS_SYSMENU,
+    GA_ROOT, GA_ROOTOWNER, GWL_STYLE, GetAncestor, GetForegroundWindow, GetWindowLongPtrW,
+    WS_DISABLED, WS_SYSMENU,
 };
 
 use verbatim_model::{Pid, WindowFacts, WindowHandle};
@@ -50,14 +50,6 @@ pub(super) fn console_client(handle: isize, target_pid: u32) -> Option<Pid> {
 /// outpost: the owner, for a console window that is not the target's own.
 fn client_of(class: &str, owner: u32, target_pid: u32) -> Option<u32> {
     (class == CONSOLE_WINDOW_CLASS && owner != 0 && owner != target_pid).then_some(owner)
-}
-
-/// The class name of `handle`'s parent window, or `None` when it has none.
-pub(super) fn parent_class(handle: isize) -> Option<String> {
-    // SAFETY: GetAncestor tolerates any handle, returning null for an invalid
-    // one.
-    let parent = unsafe { GetAncestor(hwnd(handle), GA_PARENT) };
-    (!parent.0.is_null()).then(|| window_class_name(parent.0 as isize))
 }
 
 /// `handle` as the model's opaque window handle.

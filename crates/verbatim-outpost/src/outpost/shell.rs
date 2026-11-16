@@ -77,7 +77,6 @@ pub(super) enum Posted {
     /// check, if it cut one.
     Finished {
         request: Request,
-        reported: bool,
         panicked: bool,
         cut: Option<Box<Cut>>,
     },
@@ -333,7 +332,7 @@ fn discard(effects: Effects, garbage: &mut Garbage) {
     let (_, writes) = effects.split();
     if let Some(target) = writes
         .focus
-        .and_then(FocusEffects::into_writes)
+        .map(FocusEffects::into_writes)
         .and_then(|writes| writes.target)
     {
         let_go_of_target(target, garbage);
@@ -389,7 +388,7 @@ fn write(
         // The subscription is not moved to the element evicted: the focus's
         // own is found after its report.
         if let (Some(evicted), Some(writes)) =
-            (&evicted, focus.as_mut().and_then(FocusEffects::writes_mut))
+            (&evicted, focus.as_mut().map(FocusEffects::writes_mut))
             && writes.node == stale.node
             && writes
                 .target
@@ -531,11 +530,7 @@ impl Shell {
     /// Takes one posted input into the reducer and applies what it asks.
     fn take(&mut self, posted: Posted) {
         let input = match posted {
-            Posted::Entry(mut entry) => {
-                // The one test of an MSAA focus or a foreground change
-                // against the foreground, made as the reducer takes it in,
-                // never on the worker ([`super::reducer::Front`]).
-                entry.front = self.context.front_test(&entry.item);
+            Posted::Entry(entry) => {
                 if let Item::Query { request_id, .. } = &entry.item
                     && !self.closing
                 {
@@ -598,12 +593,11 @@ impl Shell {
 
             Posted::Finished {
                 request,
-                reported,
                 panicked,
                 cut,
             } => Input::Finished {
                 request,
-                reported,
+                reported: false,
                 panicked,
                 cut,
             },
@@ -788,7 +782,6 @@ impl Shell {
             tracing::error!("the generation in charge has no worker; its program is dropped");
             self.context.mailbox.post(Posted::Finished {
                 request,
-                reported: false,
                 panicked: true,
                 cut: None,
             });

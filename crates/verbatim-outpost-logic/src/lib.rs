@@ -80,23 +80,21 @@ use std::time::Duration;
 use self::charge::{Abandoned, InCharge};
 use self::watch::WatchCancelled;
 use verbatim_model::protocol::{
-    DeliveredFact, EventTiming, FrontWindow, OutpostToCore, Query, QueryOutcome, QueryResult,
-    RequestId,
+    EventTiming, FrontWindow, OutpostToCore, Query, QueryOutcome, QueryResult, RequestId,
 };
 use verbatim_model::{
-    CallCounts, FocusGroup, FocusText, KeyFetch, NodeId, NormalizedEvent, ReadPurpose, TextOp,
-    TraceId,
+    CallCounts, FocusText, KeyFetch, NodeId, NormalizedEvent, ReadPurpose, TextOp, TraceId,
 };
 
 pub use self::charge::Request;
-pub use self::entry::{Asker, Entry, Front, Item, UiaEvent, UiaKind, WinKind, is_state_property};
+pub use self::entry::{Asker, Entry, Item, UiaEvent, UiaKind, WinKind, is_state_property};
 pub use self::follow::{
     Applied, BarWatch, Change, DialogMemo, Facts, FocusCommit, FocusPath, FollowState, Followed,
     Group, LastReported, LogicError, MarkChange, MsaaReport, Origin, Owed, OwedProgram, OwedWork,
     Report, Route, Subscribed, Subscription, Target, apply_local,
 };
 pub use self::held::{Evidence, Focus, Held, InFront};
-pub use self::intake::{Handling, Marks, Object, Planned, TerminalMark};
+pub use self::intake::{Handling, Marks, Object, TerminalMark};
 pub use self::text::{
     Anchor, AnswerCut, CutLine, FieldReads, KeptSelection, KeyNote, LastRead, NOTE_LIFE,
     NodeAnchors, NoteFetch, NoteOn, NoteReads, POLL_BOUND, POLL_INTERVAL, RangeKey, ReadSelection,
@@ -127,17 +125,12 @@ pub struct Now {
     reason = "an entry moves by value from the intake to its program, as it always has"
 )]
 pub enum Work {
-    /// One entry, handled as `handling` says, of batch `batch`, with its
-    /// place in a focus group.
+    /// One entry, handled as `handling` says.
     Entry {
         /// The entry.
         entry: Entry,
         /// How the program handles it.
         handling: Handling,
-        /// The batch it belongs to.
-        batch: u64,
-        /// Its place in a focus group, if it is in one.
-        group: Option<FocusGroup>,
     },
     /// The work the followed focus owes.
     Owed(OwedProgram),
@@ -356,13 +349,13 @@ pub enum Input {
         change: Box<Change>,
     },
 
-    /// A program ended: whether it reported a focus that ends its group,
-    /// whether it panicked, and the caret read it cut at its value change
-    /// check, for the reducer to decide and finish.
+    /// A program ended: whether it panicked, and the caret read it cut at
+    /// its value change check, for the reducer to decide and finish.
     Finished {
         /// The request that ended.
         request: Request,
-        /// Whether it reported a focus that ends its group.
+        /// Unread since focus groups went with the event queue; kept until
+        /// the caret watch's seam test, which sets it, is next changed.
         reported: bool,
         /// Whether it panicked.
         panicked: bool,
@@ -407,25 +400,10 @@ struct Current {
     running: Option<(RequestId, TraceId)>,
     /// The Core request it runs ([`Asks::running`]), if it runs one.
     asked: Option<verbatim_model::request::RequestNumber>,
-    /// Core's live re-read its entry answers, if any, until a commit sends
-    /// the answer: one the program ends or is abandoned without answering
-    /// is answered gone, so a pending live re-read always ends.
-    live_reread: Option<u64>,
-    /// The focus group try it is, if it is one.
-    group: Option<GroupTry>,
     /// Whether it does work the idle barrier's answer waits for: a read of
     /// the console poll, which may still read the terminal under the key's
     /// trace.
     deferred: bool,
-}
-
-/// One try of a focus group, and what is left of it.
-#[derive(Clone, Debug)]
-struct GroupTry {
-    number: u64,
-    rank: u32,
-    batch: u64,
-    older: VecDeque<Entry>,
 }
 
 /// The reducer.
@@ -441,17 +419,14 @@ pub struct Reducer {
     facts: Facts,
     /// The program in flight, and the worker generation in charge.
     flight: InCharge<Current>,
-    /// The tries left of a focus group whose try was abandoned, to run
-    /// before anything else.
-    after: VecDeque<(Entry, Handling, Option<GroupTry>)>,
+    /// A key's final read, to run before anything else.
+    after: VecDeque<(Entry, Handling)>,
     /// Whether a release let go of objects for a worker to drop.
     to_drop: bool,
     /// The queries recorded and not yet answered.
     queries: BTreeSet<RequestId>,
     /// The idle barrier's round reached and not yet answered.
     idle_query: Option<u64>,
-    /// How many focus groups have been tried.
-    focus_groups: u64,
     /// Whether a release was asked for and its [`Input::Released`] has not
     /// come: nothing is dispatched until it has, so no program is given a
     /// node it frees.
@@ -578,10 +553,10 @@ impl Reducer {
             }
             Input::Finished {
                 request,
-                reported,
                 panicked,
                 cut,
-            } => self.finished(request, (reported, panicked), cut, &mut effects),
+                ..
+            } => self.finished(request, panicked, cut, &mut effects),
             Input::Released {
                 nodes,
                 anchors,
@@ -786,7 +761,7 @@ impl Reducer {
                     .map(|note| note.until_us);
                 self.queries.insert(*request_id);
                 self.after
-                    .push_back((entry.clone(), Handling::FinalRead { note_until }, None));
+                    .push_back((entry.clone(), Handling::FinalRead { note_until }));
                 return true;
             }
         };
@@ -801,7 +776,7 @@ impl Reducer {
         {
             self.queries.insert(request_id);
         }
-        let pushed = self.intake.push(entry, &self.facts.marks());
+        let pushed = self.intake.push(entry);
         if !pushed.unparked.is_empty() {
             effects.push(Effect::Unpark(pushed.unparked));
         }
@@ -832,11 +807,6 @@ impl Reducer {
             self.attach_note_facts(&mut message, now);
             if let Some(current) = self.current_of(request) {
                 current.running = None;
-                if current.live_reread.is_some()
-                    && current.live_reread == live_reread_answer(&message)
-                {
-                    current.live_reread = None;
-                }
             }
             self.send(message, effects);
         }
@@ -848,7 +818,6 @@ impl Reducer {
                 trace,
                 observed_at_us,
                 timing,
-                front: crate::Front::Untested,
             });
         }
         let mut applied = follow::apply(&mut self.facts, self.flight.generation(), change);
@@ -983,13 +952,6 @@ impl Reducer {
         if let Some((request_id, trace)) = current.running {
             self.send(reply(request_id, trace, QueryOutcome::Abandoned), effects);
         }
-        if let Some(request) = current.live_reread {
-            self.send(OutpostToCore::LiveRereadGone { request }, effects);
-        }
-        // A focus group's older entries are tried by the replacement.
-        if let Some(group) = current.group {
-            self.continue_group(group);
-        }
     }
 
     /// A program ended, having cut a caret read at its value change check
@@ -997,7 +959,7 @@ impl Reducer {
     fn finished(
         &mut self,
         request: Request,
-        (reported, panicked): (bool, bool),
+        panicked: bool,
         cut: Option<Box<Cut>>,
         effects: &mut Vec<Effect>,
     ) {
@@ -1039,22 +1001,6 @@ impl Reducer {
         }
         // A live re-read its program did not answer: its object was gone,
         // or a rule dropped its report.
-        if let Some(request) = current.live_reread {
-            self.send(OutpostToCore::LiveRereadGone { request }, effects);
-        }
-        if let Some(group) = current.group
-            && !reported
-        {
-            self.continue_group(group);
-        }
-    }
-
-    /// Queues the next older entry of `group`, if it has one.
-    fn continue_group(&mut self, mut group: GroupTry) {
-        if let Some(entry) = group.older.pop_front() {
-            group.rank = group.rank.saturating_add(1);
-            self.after.push_back((entry, Handling::Run, Some(group)));
-        }
     }
 
     /// Answers the idle barrier's query once no deferred work is pending:
@@ -1096,12 +1042,12 @@ impl Reducer {
         while !self.busy() && !self.stopping && !self.releasing {
             if let Some(program) = self.watches.due(now.wall_us) {
                 let program = Box::new(program);
-                let request = self.dispatch(Work::Watch(program.clone()), None, None, effects);
+                let request = self.dispatch(Work::Watch(program.clone()), None, effects);
                 self.watches.running(&program, request, now.wall_us);
                 continue;
             }
             if let Some(ask) = self.asks.take_next() {
-                self.dispatch(Work::Ask(ask), None, None, effects);
+                self.dispatch(Work::Ask(ask), None, effects);
                 continue;
             }
             let generation = self.flight.generation();
@@ -1118,23 +1064,23 @@ impl Reducer {
                     self.facts.follow.absorbed = None;
                 }
                 let node = followed.node;
-                self.dispatch(Work::Owed(OwedProgram { node, owed }), None, None, effects);
+                self.dispatch(Work::Owed(OwedProgram { node, owed }), None, effects);
                 continue;
             }
-            if let Some((entry, handling, group)) = self.after.pop_front() {
-                self.start_entry(entry, handling, group, effects);
+            if let Some((entry, handling)) = self.after.pop_front() {
+                self.dispatch_entry(entry, handling, effects);
                 continue;
             }
             if let Some(window) = self.facts.follow.bar.due() {
                 self.facts.follow.bar = BarWatch::Finding { window };
-                self.dispatch(Work::FindBar(window), None, None, effects);
+                self.dispatch(Work::FindBar(window), None, effects);
                 continue;
             }
             if std::mem::take(&mut self.to_drop) {
-                self.dispatch(Work::Drop, None, None, effects);
+                self.dispatch(Work::Drop, None, effects);
                 continue;
             }
-            let Some((planned, batch)) = self.intake.next(&self.facts.marks()) else {
+            let Some(entry) = self.intake.next(&self.facts.marks()) else {
                 // Nothing else is ready: the console poll's due time is
                 // acted on, its read waited for by the idle answer since
                 // after it the program reads the terminal.
@@ -1146,61 +1092,19 @@ impl Reducer {
                 .then(|| Arc::make_mut(&mut self.facts.text).reach_poll(now.wall_us))
                 .flatten();
                 let Some(node) = due else { return };
-                self.dispatch(Work::NoteRead(NodeId::new(node)), None, None, effects);
+                self.dispatch(Work::NoteRead(NodeId::new(node)), None, effects);
                 if let Some(current) = self.flight.item_mut() {
                     current.deferred = true;
                 }
                 continue;
             };
-            match planned {
-                Planned::Run(entry) => self.run(entry, batch, now, effects),
-                Planned::Menu(entry) => {
-                    self.dispatch_entry(entry, Handling::Menu, batch, None, effects);
-                }
-                Planned::Focus(entries) => {
-                    self.focus_groups = self.focus_groups.saturating_add(1);
-                    let mut older: VecDeque<Entry> = entries.into();
-                    let Some(newest) = older.pop_front() else {
-                        continue;
-                    };
-                    let group = GroupTry {
-                        number: self.focus_groups,
-                        rank: 0,
-                        batch,
-                        older,
-                    };
-                    self.start_entry(newest, Handling::Tried(0), Some(group), effects);
-                }
-            }
+            self.run(entry, now, effects);
         }
     }
 
-    /// Starts `entry` as a try of `group`, or on its own.
-    fn start_entry(
-        &mut self,
-        entry: Entry,
-        handling: Handling,
-        group: Option<GroupTry>,
-        effects: &mut Vec<Effect>,
-    ) {
-        let batch = group
-            .as_ref()
-            .map_or(self.intake_batch(), |group| group.batch);
-        let handling = match &group {
-            Some(group) => Handling::Tried(group.rank),
-            None => handling,
-        };
-        self.dispatch_entry(entry, handling, batch, group, effects);
-    }
-
-    /// The number of the batch being handed out.
-    fn intake_batch(&self) -> u64 {
-        self.intake.batch_number()
-    }
-
-    /// An entry planned on its own: the reducer's own entries are handled
-    /// here, and the rest dispatched.
-    fn run(&mut self, entry: Entry, batch: u64, now: Now, effects: &mut Vec<Effect>) {
+    /// An entry handed out: the reducer's own entries are handled here, and
+    /// the rest dispatched.
+    fn run(&mut self, entry: Entry, now: Now, effects: &mut Vec<Effect>) {
         match entry.item {
             Item::Barrier {
                 asker,
@@ -1267,7 +1171,7 @@ impl Reducer {
                 let outcome = QueryOutcome::Done(QueryResult::ShellItemPosition(none));
                 self.send(reply(request_id, entry.trace, outcome), effects);
             }
-            _ => self.dispatch_entry(entry, Handling::Run, batch, None, effects),
+            _ => self.dispatch_entry(entry, Handling::Run, effects),
         }
     }
 
@@ -1281,65 +1185,34 @@ impl Reducer {
     }
 
     /// Dispatches a program for `entry`.
-    fn dispatch_entry(
-        &mut self,
-        entry: Entry,
-        handling: Handling,
-        batch: u64,
-        group: Option<GroupTry>,
-        effects: &mut Vec<Effect>,
-    ) {
+    fn dispatch_entry(&mut self, entry: Entry, handling: Handling, effects: &mut Vec<Effect>) {
         let running = query_of(&entry);
         // Anything that may end a held terminal's hold reads every update
         // observed after it begins.
         if clears_absorb(&entry.item) {
             self.facts.follow.absorbed = None;
         }
-
-        let group_place = group.as_ref().map(|group| FocusGroup {
-            number: group.number,
-            rank: group.rank,
-        });
-        let work = Work::Entry {
-            entry,
-            handling,
-            batch,
-            group: group_place,
-        };
-        self.dispatch(work, running, group, effects);
+        let work = Work::Entry { entry, handling };
+        self.dispatch(work, running, effects);
     }
 
-    /// Dispatches `work`, answering `running`, as a try of `group` when it
-    /// is one. Verbatim moving the caret or selecting on a node clears its
-    /// note, before its copy is taken.
+    /// Dispatches `work`, answering `running`. Verbatim moving the caret or
+    /// selecting on a node clears its note, before its copy is taken.
     fn dispatch(
         &mut self,
         work: Work,
         running: Option<(RequestId, TraceId)>,
-        group: Option<GroupTry>,
         effects: &mut Vec<Effect>,
     ) -> Request {
         if let Some(moved) = verbatims_caret_move(&work) {
             Arc::make_mut(&mut self.facts.text).clear_note(moved.number());
         }
-        let live_reread = match &work {
-            Work::Entry { entry, .. } => live_reread_answered_by(&entry.item),
-            Work::Owed(_)
-            | Work::Drop
-            | Work::NoteRead(_)
-            | Work::Finish { .. }
-            | Work::FindBar(_)
-            | Work::Ask(_)
-            | Work::Watch(_) => None,
-        };
         let current = Current {
             asked: match &work {
                 Work::Ask(ask) => Some(ask.number),
                 _ => None,
             },
             running,
-            live_reread,
-            group,
             deferred: false,
         };
         let request = self.flight.start(current);
@@ -1360,7 +1233,10 @@ impl Reducer {
     /// ahead of its end in the mailbox, so among the entries not yet
     /// dispatched, in the intake.
     fn dispatch_finish(&mut self, cut: Box<Cut>, effects: &mut Vec<Effect>) {
-        let waiting = self.intake.value_change_waiting(cut.edit);
+        // No value change reaches the outpost: Core's event queue judges
+        // them (`docs/design/readers-tell-core-asks-build1.md`, "Selection
+        // and the caret's text facts"), so none waits here.
+        let waiting = false;
         let Some(request) = self.flight.hand_on() else {
             return;
         };
@@ -1393,21 +1269,6 @@ fn verbatims_caret_move(work: &Work) -> Option<NodeId> {
     matches!(op, TextOp::MoveCaret(_) | TextOp::Select { .. }).then_some(*node_id)
 }
 
-/// The edit control whose client area's value change `item` is, if it is
-/// one: what a cut caret read's check looks for ([`Cut`]).
-fn edit_value_change(item: &Item) -> Option<isize> {
-    match item {
-        Item::Msaa {
-            kind: WinKind::ValueChange,
-            hwnd,
-            id_object: intake::OBJID_CLIENT,
-            id_child: 0,
-            ..
-        } => Some(*hwnd),
-        _ => None,
-    }
-}
-
 /// Whether handling `item` may end a held terminal's hold, so its read
 /// must see every update observed after it begins: a caret key, and
 /// Core's on-demand reading but for a change of text.
@@ -1437,34 +1298,6 @@ fn owed_clears_absorb(owed: &Owed) -> bool {
 fn query_of(entry: &Entry) -> Option<(RequestId, TraceId)> {
     match &entry.item {
         Item::Query { request_id, .. } => Some((*request_id, entry.trace)),
-        _ => None,
-    }
-}
-
-/// Core's live re-read the program handling `item` answers: the listener's
-/// read answering it or its answer of gone, or Core's live re-read of an
-/// MSAA report; `None` for any other entry.
-fn live_reread_answered_by(item: &Item) -> Option<u64> {
-    match item {
-        Item::Fact(DeliveredFact::UiaFocusRead { read, .. }, _) => read.answers,
-        Item::Fact(
-            DeliveredFact::UiaLiveRereadGone { request }
-            | DeliveredFact::MsaaLiveReread { request, .. },
-            _,
-        ) => Some(*request),
-        _ => None,
-    }
-}
-
-/// The live re-read `message` answers: a focus report carrying its
-/// request, or its answer of gone.
-fn live_reread_answer(message: &OutpostToCore) -> Option<u64> {
-    match message {
-        OutpostToCore::Event {
-            event: verbatim_model::NormalizedEvent::FocusChanged { answers, .. },
-            ..
-        } => *answers,
-        OutpostToCore::LiveRereadGone { request } => Some(*request),
         _ => None,
     }
 }

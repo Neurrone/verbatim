@@ -155,7 +155,6 @@ impl Followed {
             terminal: self.terminal,
             focus_redirected: self.redirected,
             absorbed,
-            system_caret_unused: self.system_caret_unused,
         }
     }
 
@@ -197,15 +196,13 @@ pub struct Subscribed {
     pub slider: Option<(NodeId, u64)>,
 }
 
-/// The role and batch of the focus or foreground window this outpost last
-/// reported, which the menu rules compare with. Outside [`Followed`]: a
-/// foreground report writes them and follows nothing.
+/// The role of the focus or foreground window this outpost last
+/// reported. Outside [`Followed`]: a foreground report writes it and
+/// follows nothing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LastReported {
     /// The role.
     pub role: Role,
-    /// The batch.
-    pub batch: u64,
 }
 
 /// An MSAA focus report of the outpost's, as a live re-read finds it again
@@ -437,15 +434,6 @@ pub enum FocusCommit {
         /// The event's observation, in microseconds on the run's shared
         /// clock.
         observed_at_us: u64,
-    },
-    /// A foreground report: it follows nothing.
-    Foreground {
-        /// The window's node.
-        node: NodeId,
-        /// Its role and batch.
-        reported: LastReported,
-        /// The dialog memo it leaves for the focus that comes after.
-        dialog: DialogMemo,
     },
 }
 
@@ -853,12 +841,6 @@ impl FollowState {
                     .clone()
                     .map(|work| Owed::due(work, *trace, *observed_at_us));
                 self.subscription_moved(previous, (node, *target), applied);
-            }
-            FocusCommit::Foreground {
-                reported, dialog, ..
-            } => {
-                self.last_reported = Some(*reported);
-                self.dialog.clone_from(dialog);
             }
         }
     }

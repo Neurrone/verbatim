@@ -88,8 +88,7 @@ use verbatim_uia::{
 use crate::arbitration::Arbitrator;
 use verbatim_ia2::event_thread::{EventHandlers, EventThread, MakeHandlers, Nudger};
 use verbatim_model::protocol::{
-    CoreToOutpost, DeliveredFact, EventTiming, OutpostToCore, Query, RequestId, UiaSnapshotFact,
-    Urgent,
+    CoreToOutpost, EventTiming, OutpostToCore, Query, RequestId, UiaSnapshotFact, Urgent,
 };
 use verbatim_process::arguments::OutpostOptions;
 use verbatim_process::clock::now_us;
@@ -196,10 +195,6 @@ pub(crate) struct Context {
     /// by: the run's shared clock, unless a test sets its own
     /// ([`Outpost::set_observation_clock`]).
     observation: OnceLock<verbatim_process::clock::ObservationClock>,
-    /// The processes Verbatim ignores, which the outpost inherits through
-    /// [`IGNORE_PIDS_ENV`](verbatim_process::held::IGNORE_PIDS_ENV): a focus in
-    /// one's window is not reported.
-    ignored: verbatim_process::held::IgnoredProcesses,
     /// The focus-following UIA subscription, one event handler group in
     /// two forms, which the worker moves with the focus
     /// ([`register_focus_events`]).
@@ -360,12 +355,6 @@ impl<'a> RequestContext<'a> {
         self.joined_cache.borrow_mut().extend(nodes);
     }
 
-    /// The cached ancestors the program's walks noted since the last call,
-    /// taken.
-    fn take_cached(&self) -> Vec<NodeId> {
-        std::mem::take(&mut *self.joined_cache.borrow_mut())
-    }
-
     /// Judges every verdict the program asks for at the observation
     /// `at_us`.
     fn judge_at(&mut self, at_us: u64) {
@@ -414,18 +403,6 @@ impl<'a> RequestContext<'a> {
                 .followed
                 .as_ref()
                 .and_then(|followed| followed.object.clone())
-        })
-    }
-
-    /// Whether a focus event on `object` is the redirected-to child's own,
-    /// arriving after its control's: `object` is the focus, reached by a
-    /// redirect, and no other focus came between. The mark is left set; the
-    /// commit that drops the event clears it.
-    fn is_redirected_focus(&self, object: &Object) -> bool {
-        self.follow(|follow| {
-            follow.followed.as_ref().is_some_and(|followed| {
-                followed.redirected && followed.object.as_ref() == Some(object)
-            })
         })
     }
 
@@ -608,60 +585,6 @@ impl Context {
         reader()
     }
 
-    /// The outpost's one test of `item` against the system's foreground,
-    /// made from Windows' state on the reducer's thread as the reducer takes
-    /// the entry from the mailbox, with local calls only: NVDA's acceptance
-    /// test of an MSAA focus (`acceptance::accepts_event`, whose reads of
-    /// the foreground window, the ancestors, the classes and the threads
-    /// are local), and of a foreground change whether its window is the
-    /// foreground window, and when that was found, on the observation clock
-    /// (`books/dev/src/reference/adr/0001-focus.md`, "The foreground and the window title").
-    /// Nothing else is tested.
-    fn front_test(&self, item: &Item) -> reducer::Front {
-        use verbatim_reader_rules::acceptance::{self, EventName};
-        let fact = match item {
-            Item::Fact(DeliveredFact::UiaMarked { fact, .. }, _) => &**fact,
-            Item::Fact(fact, _) => fact,
-            _ => return reducer::Front::Untested,
-        };
-        match *fact {
-            DeliveredFact::Foreground { hwnd } => {
-                // The test's time, read as the test begins.
-                let tested_at_us = self.observed_now();
-                // Core's hidden frame is never reported, so never in front
-                // for the outpost.
-                let in_front = self.foreground_window() == hwnd
-                    && !verbatim_win32::window::window_belongs_to_hidden_frame(hwnd);
-                reducer::Front::Foreground {
-                    in_front_at_us: in_front.then_some(tested_at_us),
-                }
-            }
-            DeliveredFact::MsaaFocus { hwnd, .. } => {
-                let windows = verbatim_win32::window::SystemWindows {
-                    foreground: self.foreground_window(),
-                };
-                let accepted = acceptance::accepts_event(
-                    EventName::GainFocus,
-                    verbatim_reader_rules::Window::new(hwnd),
-                    &windows,
-                    &self.requested_events,
-                );
-                reducer::Front::Accepted(accepted)
-            }
-            _ => reducer::Front::Untested,
-        }
-    }
-
-    /// Whether window `hwnd`'s top-level window belongs to a process
-    /// Verbatim ignores. Local calls, made only while one is ignored.
-    fn in_ignored_window(&self, hwnd: isize) -> bool {
-        !self.ignored.is_empty() && {
-            let (_, pid) =
-                verbatim_win32::window::window_owner(verbatim_win32::window::top_level_of(hwnd));
-            self.ignored.contains(verbatim_model::Pid(pid))
-        }
-    }
-
     /// Whether the store holds `node`: either registry keeps it.
     fn holds(&self, node: NodeId) -> bool {
         self.store.holds(node)
@@ -753,7 +676,6 @@ impl Context {
             trace,
             observed_at_us,
             timing,
-            front: reducer::Front::Untested,
         });
     }
 
@@ -785,9 +707,13 @@ impl Context {
             thread,
             ..
         } = event;
+        let Some(reducer_kind) = worker::win_kind(kind) else {
+            tracing::debug!(?kind, "a WinEvent the outpost does not hook; dropped");
+            return;
+        };
         self.take_in(
             Item::Msaa {
-                kind: worker::win_kind(kind),
+                kind: reducer_kind,
                 hwnd,
                 id_object,
                 id_child,
@@ -1000,7 +926,6 @@ impl Outpost {
             store: store::Store::new(),
             arbitrator: Lock::new(Arbitrator::new(&[])),
             observation: OnceLock::new(),
-            ignored: verbatim_process::held::IgnoredProcesses::from_env(),
             focus_events: OnceLock::new(),
             named: Lock::new(None),
             remote_operations: options.remote_operations,

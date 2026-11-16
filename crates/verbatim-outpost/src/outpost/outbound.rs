@@ -177,19 +177,6 @@ impl Pending {
     pub(super) fn position(&self) -> u64 {
         self.position
     }
-
-    /// The nodes a message still waiting to be written may carry, in
-    /// increasing number.
-    fn waiting_nodes(&self) -> Vec<u64> {
-        self.reported
-            .iter()
-            .filter(|(_, report)| report.waiting > 0)
-            .filter_map(|(carried, _)| match carried {
-                Carried::Node(number) => Some(*number),
-                Carried::Anchor(_) => None,
-            })
-            .collect()
-    }
 }
 
 impl Backlog for Pending {
@@ -291,13 +278,6 @@ impl Outbound {
     pub(crate) fn publish(&self, recorded: Recorded) {
         let (message, carried) = recorded.into_parts();
         sent(&self.sender.send(Outgoing::Message(message, carried)));
-    }
-
-    /// The nodes a message still waiting to be written may carry, in
-    /// increasing number, which the outpost reads changes for as for the
-    /// nodes of its reports.
-    pub(crate) fn waiting_nodes(&self) -> Vec<u64> {
-        self.sender.with_backlog(|pending| pending.waiting_nodes())
     }
 
     /// Runs `read` on the queue's record of what was carried, under the
@@ -742,33 +722,6 @@ mod tests {
         assert_eq!(pending.report(Carried::Node(1)), Some((2, 0)));
         pending.forget(|carried| carried == Carried::Node(1));
         assert_eq!(pending.report(Carried::Node(1)), None);
-    }
-
-    /// The nodes a message still waiting may carry are those the outpost
-    /// reads changes for besides its reports' lines, until the message is
-    /// written.
-    #[test]
-    fn a_node_a_waiting_message_carries_is_among_the_waiting_nodes() {
-        let mut pending = pending();
-        push(&mut pending, text_changed(1), &[7]);
-        assert_eq!(pending.waiting_nodes(), vec![7]);
-        assert_eq!(write(&mut pending).len(), 1);
-        assert_eq!(pending.waiting_nodes(), Vec::<u64>::new());
-    }
-
-    /// The waiting nodes come in increasing number, whatever order they
-    /// were reported in, so the worker's candidates for a state change, and
-    /// the first of them that matches, are the same on every run.
-    #[test]
-    fn the_waiting_nodes_come_in_increasing_number() {
-        let mut pending = pending();
-        let keys = [41, 5, 97, 12, 3, 66, 20, 88, 1, 54, 31, 7];
-        for (message, key) in (1..).zip(keys) {
-            push(&mut pending, text_changed(message), &[key]);
-        }
-        let mut sorted = keys.to_vec();
-        sorted.sort_unstable();
-        assert_eq!(pending.waiting_nodes(), sorted);
     }
 
     /// An outbound queue writing to a pipe with a 4 KiB buffer, its writes
