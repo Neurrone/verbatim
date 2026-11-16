@@ -264,8 +264,8 @@ impl Kept {
             .unwrap_or_default()
     }
 
-    /// `pid`'s application ended (column D): every element it keeps but
-    /// one in read.
+    /// `pid`'s application ended (column D): every element it keeps, the
+    /// kept reference of one in read included.
     fn ended(&self, pid: Pid) -> Vec<Agile<ListenerEvent>> {
         self.lock()
             .remove(&pid)

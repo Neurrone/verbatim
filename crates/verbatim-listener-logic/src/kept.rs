@@ -36,9 +36,11 @@ enum Kept<E> {
         /// When its event was received, in microseconds.
         at_us: u64,
     },
-    /// Being read on the application's reading thread, which holds the
-    /// element.
-    InRead { runtime_id: RuntimeId },
+    /// Being read on the application's reading thread, which holds its
+    /// own reference to the element; this one is the check thread's, so a
+    /// later event with its runtime id reads its keyboard focus as NVDA
+    /// reads its last queued focus's at delivery.
+    InRead { element: E, runtime_id: RuntimeId },
     /// A focus read's element, read and not yet named by a focus request:
     /// Core may execute it.
     ReadNotNamed { element: E, runtime_id: RuntimeId },
@@ -50,27 +52,27 @@ impl<E> Kept<E> {
     fn runtime_id(&self) -> &RuntimeId {
         match self {
             Self::Told { runtime_id, .. }
-            | Self::InRead { runtime_id }
+            | Self::InRead { runtime_id, .. }
             | Self::ReadNotNamed { runtime_id, .. }
             | Self::Named { runtime_id, .. } => runtime_id,
         }
     }
 
-    fn element(&self) -> Option<&E> {
+    fn element(&self) -> &E {
         match self {
             Self::Told { element, .. }
+            | Self::InRead { element, .. }
             | Self::ReadNotNamed { element, .. }
-            | Self::Named { element, .. } => Some(element),
-            Self::InRead { .. } => None,
+            | Self::Named { element, .. } => element,
         }
     }
 
-    fn into_element(self) -> Option<E> {
+    fn into_element(self) -> E {
         match self {
             Self::Told { element, .. }
+            | Self::InRead { element, .. }
             | Self::ReadNotNamed { element, .. }
-            | Self::Named { element, .. } => Some(element),
-            Self::InRead { .. } => None,
+            | Self::Named { element, .. } => element,
         }
     }
 }
@@ -124,22 +126,26 @@ impl<E> KeptElements<E> {
         );
     }
 
-    /// Every kept element with `runtime_id` the check thread can read,
-    /// with its token, oldest first: all but one in read.
+    /// Every kept element with `runtime_id`, with its token, oldest
+    /// first, for the check thread to read: one in read included, since
+    /// the readers' last focus may be the element Core is reading.
     pub fn with_runtime_id<'a>(
         &'a self,
         runtime_id: &'a RuntimeId,
     ) -> impl Iterator<Item = (ElementToken, &'a E)> + 'a {
-        self.kept.iter().filter_map(move |(token, kept)| {
-            (kept.runtime_id() == runtime_id)
-                .then(|| kept.element().map(|element| (*token, element)))
-                .flatten()
-        })
+        self.kept
+            .iter()
+            .filter(move |(_, kept)| kept.runtime_id() == runtime_id)
+            .map(|(token, kept)| (*token, kept.element()))
     }
 
     /// The reading thread starts the read of `token`, which Core asked
-    /// about (column A).
-    pub fn start_read(&mut self, token: ElementToken) -> Start<E> {
+    /// about (column A): it is handed a reference of its own, and the
+    /// kept one stays for the check thread.
+    pub fn start_read(&mut self, token: ElementToken) -> Start<E>
+    where
+        E: Clone,
+    {
         let Some(kept) = self.kept.remove(&token) else {
             return Start::NotThere;
         };
@@ -149,8 +155,15 @@ impl<E> KeptElements<E> {
                 runtime_id,
                 ..
             } => {
-                self.kept.insert(token, Kept::InRead { runtime_id });
-                Start::Read(element)
+                let read = element.clone();
+                self.kept.insert(
+                    token,
+                    Kept::InRead {
+                        element,
+                        runtime_id,
+                    },
+                );
+                Start::Read(read)
             }
             other => {
                 self.kept.insert(token, other);
@@ -164,7 +177,7 @@ impl<E> KeptElements<E> {
     /// and one whose token was let go meanwhile, is released.
     pub fn read_ended(&mut self, token: ElementToken, element: E, focus: bool) -> Ended<E> {
         match self.kept.remove(&token) {
-            Some(Kept::InRead { runtime_id }) if focus => {
+            Some(Kept::InRead { runtime_id, .. }) if focus => {
                 self.kept.insert(
                     token,
                     Kept::ReadNotNamed {
@@ -184,11 +197,14 @@ impl<E> KeptElements<E> {
 
     /// Core cancelled the running read of `token` for the foreground
     /// (column E): its thread is abandoned, and the element it holds is
-    /// released when its call returns ([`Self::read_ended`]). A cancel for
-    /// any other reason leaves the read alone.
-    pub fn read_abandoned(&mut self, token: ElementToken) {
+    /// released when its call returns ([`Self::read_ended`]); the kept
+    /// reference is handed back to release. A cancel for any other reason
+    /// leaves the read alone.
+    pub fn read_abandoned(&mut self, token: ElementToken) -> Option<E> {
         if matches!(self.kept.get(&token), Some(Kept::InRead { .. })) {
-            self.kept.remove(&token);
+            self.kept.remove(&token).map(Kept::into_element)
+        } else {
+            None
         }
     }
 
@@ -225,7 +241,7 @@ impl<E> KeptElements<E> {
                         },
                     );
                 }
-                other => released.extend(other.into_element()),
+                other => released.push(other.into_element()),
             }
         }
         released
@@ -256,16 +272,17 @@ impl<E> KeptElements<E> {
         swept
             .into_iter()
             .filter_map(|token| self.kept.remove(&token))
-            .filter_map(Kept::into_element)
+            .map(Kept::into_element)
             .collect()
     }
 
     /// The application ended (column D): every element it keeps is
-    /// released, but one in read, which its read releases as it ends.
+    /// released, the kept reference of one in read included; the read
+    /// releases its own as it ends.
     pub fn ended(&mut self) -> Vec<E> {
         std::mem::take(&mut self.kept)
             .into_values()
-            .filter_map(Kept::into_element)
+            .map(Kept::into_element)
             .collect()
     }
 
@@ -350,9 +367,11 @@ mod tests {
     }
 
     /// The check thread reads every kept element with the event's runtime
-    /// id but one in read.
+    /// id, one in read included: the readers' last focus may be the
+    /// element Core is reading as a later event with its runtime id is
+    /// checked.
     #[test]
-    fn the_check_reads_every_kept_element_with_the_runtime_id_but_one_in_read() {
+    fn the_check_reads_every_kept_element_with_the_runtime_id_one_in_read_included() {
         let mut kept = KeptElements::default();
         for token in 1..=4 {
             kept.keep(ElementToken(token), token, rid(7), token);
@@ -369,6 +388,7 @@ mod tests {
             found,
             [
                 (ElementToken(1), 1),
+                (ElementToken(2), 2),
                 (ElementToken(3), 3),
                 (ElementToken(4), 4)
             ]
@@ -399,20 +419,20 @@ mod tests {
     fn a_read_abandoned_for_the_foreground_is_released_when_its_call_returns() {
         let mut kept = kept(1);
         let _ = kept.start_read(ElementToken(1));
-        kept.read_abandoned(ElementToken(1));
+        assert_eq!(kept.read_abandoned(ElementToken(1)), Some(1));
         assert_eq!(kept.start_read(ElementToken(1)), Start::NotThere);
         assert_eq!(kept.read_ended(ElementToken(1), 1, true), Ended::Release(1));
     }
 
-    /// The application's end releases every element it keeps but one in
-    /// read, which its read releases.
+    /// The application's end releases every element it keeps, a read in
+    /// flight's kept reference included, and the read releases its own.
     #[test]
-    fn the_applications_end_releases_all_but_a_read_in_flight() {
+    fn the_applications_end_releases_every_kept_reference() {
         let mut kept = kept(3);
         let _ = kept.start_read(ElementToken(1));
         let _ = kept.start_read(ElementToken(2));
         let _ = kept.read_ended(ElementToken(2), 2, true);
-        assert_eq!(kept.ended(), vec![2, 3]);
+        assert_eq!(kept.ended(), vec![1, 2, 3]);
         assert!(kept.is_empty());
         assert_eq!(kept.read_ended(ElementToken(1), 1, true), Ended::Release(1));
     }

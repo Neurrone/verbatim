@@ -102,10 +102,14 @@ Public API:
   the build design): told and not yet asked about, in read, read and not
   yet named, and named as the readers' last focus by a focus request
   (`focus_request`); `with_runtime_id` lists those the check thread reads
-  the keyboard focus of; `sweep` lets go of told elements past
-  `KEPT_FOR_US` (60 seconds) or beyond the newest `KEPT_PER_APPLICATION`
-  (64); `ended` lets go of every one but a read in flight. Every element
-  let go is handed back for release on its application's reading thread.
+  the keyboard focus of, one in read included, since an element in read
+  keeps a reference for the check beside the reading thread's own, and
+  the readers' last focus may be the element Core is reading; `sweep`
+  lets go of told elements past `KEPT_FOR_US` (60 seconds) or beyond the
+  newest `KEPT_PER_APPLICATION` (64); `ended` lets go of every kept
+  reference, and a read in flight releases its own as it ends. Every
+  element let go is handed back for release on its application's
+  reading thread.
 - `tell` — what the listener decides of a `WinEvent` before it tells
   Core of it: `tell_window`, NVDA's mapping of a window of 0 to the
   desktop window, and of an invalid one to it for the end of a menu, a
