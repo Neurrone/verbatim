@@ -12,10 +12,17 @@
 //! request that ends without an answer, or panics, is answered failed.
 //! At shutdown nothing more is dispatched and the requests queued are
 //! dropped unanswered.
+//!
+//! A `Follow` replaces one still queued, which is answered "ended or
+//! stopped" (Table 10): the newest `Follow` wins, and since it names the
+//! whole registration, skipping the older one changes nothing that runs
+//! between them. A window destroyed answers every request queued on it
+//! "not there" (Table 14).
 
 use std::collections::VecDeque;
 
-use verbatim_model::request::{Answer, Ask, Cancel, Outcome, RequestNumber};
+use verbatim_model::WindowHandle;
+use verbatim_model::request::{Answer, Ask, Cancel, Outcome, Request, RequestNumber};
 
 /// What a cancel does.
 #[derive(Debug, PartialEq, Eq)]
@@ -39,9 +46,41 @@ pub struct Asks {
 }
 
 impl Asks {
-    /// Queues `ask` behind those already queued.
-    pub fn push(&mut self, ask: Box<Ask>) {
+    /// Queues `ask` behind those already queued; a `Follow` removes any
+    /// `Follow` still queued, whose answers are returned.
+    pub fn push(&mut self, ask: Box<Ask>) -> Vec<Answer> {
+        let mut replaced = Vec::new();
+        if matches!(ask.request, Request::Follow(_)) {
+            self.queued.retain(|queued| {
+                let follow = matches!(queued.request, Request::Follow(_));
+                if follow {
+                    replaced.push(ended(queued.number, "replaced by a newer Follow"));
+                }
+                !follow
+            });
+        }
         self.queued.push_back(ask);
+        replaced
+    }
+
+    /// Window `window` was destroyed: every request queued on it is
+    /// removed, and their answers, "not there", are returned. The running
+    /// one answers what it found.
+    pub fn destroyed(&mut self, window: WindowHandle) -> Vec<Answer> {
+        let mut gone = Vec::new();
+        self.queued.retain(|queued| {
+            let on = queued.window == window;
+            if on {
+                gone.push(Answer {
+                    number: queued.number,
+                    outcome: Outcome::NotThere,
+                    probes: Vec::new(),
+                    detail: "its window was destroyed".to_owned(),
+                });
+            }
+            !on
+        });
+        gone
     }
 
     /// The next request to dispatch, which runs from now on, when none
@@ -125,8 +164,7 @@ fn ended(number: RequestNumber, detail: &str) -> Answer {
 
 #[cfg(test)]
 mod tests {
-    use verbatim_model::WindowHandle;
-    use verbatim_model::request::{CancelReason, Reply, Request, WindowVerdict};
+    use verbatim_model::request::{CancelReason, Follow, Reply, WindowVerdict};
 
     use super::*;
 
@@ -141,6 +179,57 @@ mod tests {
                 baseline: None,
             },
         })
+    }
+
+    fn follow(number: u64, window: u64) -> Box<Ask> {
+        Box::new(Ask {
+            number: RequestNumber(number),
+            window: WindowHandle(window),
+            verdict: WindowVerdict::Uia,
+            request: Request::Follow(Follow { node: None }),
+        })
+    }
+
+    fn numbers(asks: &Asks) -> Vec<u64> {
+        asks.queued().map(|ask| ask.number.0).collect()
+    }
+
+    /// A newer `Follow` replaces one still queued, answered "ended or
+    /// stopped"; the requests between them keep their places, and a
+    /// `Follow` running is left to run.
+    #[test]
+    fn a_newer_follow_replaces_a_queued_one_answered_ended() {
+        let mut asks = Asks::default();
+        assert_eq!(asks.push(follow(1, 1)), []);
+        let _ = asks.take_next();
+        assert_eq!(asks.push(follow(2, 1)), [], "the running one stays");
+        assert_eq!(asks.push(ask(3)), []);
+        assert_eq!(
+            asks.push(follow(4, 1)),
+            [ended(RequestNumber(2), "replaced by a newer Follow")]
+        );
+        assert_eq!(numbers(&asks), [3, 4]);
+        assert_eq!(asks.running(), Some(RequestNumber(1)));
+    }
+
+    /// A window destroyed answers every request queued on it "not there",
+    /// leaves the others and the running one.
+    #[test]
+    fn a_destroyed_window_answers_its_queued_requests_not_there() {
+        let mut asks = Asks::default();
+        let _ = asks.push(follow(1, 7));
+        let _ = asks.take_next();
+        let _ = asks.push(ask(2));
+        let _ = asks.push(follow(3, 7));
+        let gone = asks.destroyed(WindowHandle(7));
+        assert_eq!(
+            gone.iter()
+                .map(|answer| (answer.number.0, answer.outcome.clone()))
+                .collect::<Vec<_>>(),
+            [(3, Outcome::NotThere)]
+        );
+        assert_eq!(numbers(&asks), [2]);
+        assert_eq!(asks.running(), Some(RequestNumber(1)));
     }
 
     fn cancel(number: u64, reason: CancelReason) -> Cancel {
@@ -163,8 +252,8 @@ mod tests {
     #[test]
     fn requests_run_one_at_a_time_in_sending_order() {
         let mut asks = Asks::default();
-        asks.push(ask(1));
-        asks.push(ask(2));
+        let _ = asks.push(ask(1));
+        let _ = asks.push(ask(2));
         assert_eq!(
             asks.take_next().map(|ask| ask.number),
             Some(RequestNumber(1))
@@ -188,8 +277,8 @@ mod tests {
             CancelReason::Withdrawn,
         ] {
             let mut asks = Asks::default();
-            asks.push(ask(1));
-            asks.push(ask(2));
+            let _ = asks.push(ask(1));
+            let _ = asks.push(ask(2));
             let _ = asks.take_next();
             assert_eq!(
                 asks.cancel(cancel(2, reason)),
@@ -206,8 +295,8 @@ mod tests {
     #[test]
     fn a_running_request_cancelled_for_the_foreground_is_abandoned() {
         let mut asks = Asks::default();
-        asks.push(ask(1));
-        asks.push(ask(2));
+        let _ = asks.push(ask(1));
+        let _ = asks.push(ask(2));
         let _ = asks.take_next();
         assert_eq!(
             asks.cancel(cancel(1, CancelReason::Foreground)),
@@ -235,7 +324,7 @@ mod tests {
             CancelReason::Withdrawn,
         ] {
             let mut asks = Asks::default();
-            asks.push(ask(1));
+            let _ = asks.push(ask(1));
             let _ = asks.take_next();
             assert_eq!(asks.cancel(cancel(1, reason)), Cancelled::Nothing);
             assert_eq!(asks.running(), Some(RequestNumber(1)));
@@ -248,7 +337,7 @@ mod tests {
     #[test]
     fn a_request_ended_unanswered_is_answered_failed_once() {
         let mut asks = Asks::default();
-        asks.push(ask(1));
+        let _ = asks.push(ask(1));
         let _ = asks.take_next();
         assert_eq!(
             asks.ended(),
@@ -259,7 +348,7 @@ mod tests {
         );
         assert_eq!(asks.ended(), None);
         let mut answered = Asks::default();
-        answered.push(ask(2));
+        let _ = answered.push(ask(2));
         let _ = answered.take_next();
         let _ = answered.answered(result(2));
         assert_eq!(answered.ended(), None, "an answered request is not again");
@@ -270,7 +359,7 @@ mod tests {
     #[test]
     fn a_cancel_of_a_request_not_here_does_nothing() {
         let mut asks = Asks::default();
-        asks.push(ask(1));
+        let _ = asks.push(ask(1));
         let _ = asks.take_next();
         let _ = asks.answered(result(1));
         assert_eq!(
@@ -288,8 +377,8 @@ mod tests {
     #[test]
     fn shutdown_drops_the_queued_requests_unanswered() {
         let mut asks = Asks::default();
-        asks.push(ask(1));
-        asks.push(ask(2));
+        let _ = asks.push(ask(1));
+        let _ = asks.push(ask(2));
         let _ = asks.take_next();
         asks.close();
         assert_eq!(asks.take_next(), None);

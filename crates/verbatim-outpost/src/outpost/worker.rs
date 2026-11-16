@@ -1496,6 +1496,10 @@ impl Worker<'_> {
     /// terminal this outpost has not released
     /// ([`focused_terminal`](Self::focused_terminal)).
     fn focused_console_terminal(&self, hwnd: isize) -> Option<NodeId> {
+        // The console terminal Core's `Follow` names.
+        if let Some((node_id, true)) = super::followed::terminal(self.context) {
+            return Some(node_id);
+        }
         let followed = self.context.follow(|follow| {
             follow
                 .followed
@@ -2337,6 +2341,7 @@ impl Worker<'_> {
                 let (removed, gone) = self.context.store.forget_window(hwnd);
                 drop(removed);
                 text_reads::forget_nodes(self.context, &gone);
+                super::followed::window_destroyed(self.context, hwnd, &gone);
             }
             return;
         }

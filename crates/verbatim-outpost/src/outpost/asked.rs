@@ -112,8 +112,7 @@ pub(super) fn answer(context: &RequestContext<'_>, client: &mut Client, ask: &As
                 None => Outcome::NotThere,
             }
         }
-        // `Follow`'s lifecycle (Table 10) is not this worker's yet.
-        Request::Follow(_) => Outcome::Refused(Refusal::Unsupported),
+        Request::Follow(follow) => super::followed::follow(context, follow),
     };
     Answer {
         number: ask.number,

@@ -45,6 +45,7 @@ mod asked;
 mod commit;
 mod completion;
 mod focus_path;
+mod followed;
 pub(crate) mod lock;
 mod outbound;
 mod read;
@@ -203,6 +204,9 @@ pub(crate) struct Context {
     /// two forms, which the worker moves with the focus
     /// ([`register_focus_events`]).
     focus_events: OnceLock<Registration>,
+    /// What Core's newest `Follow` named, which the registration keeps
+    /// ([`followed`]); set on the worker.
+    named: Lock<Option<followed::Named>>,
     /// Whether UIA reads may use remote operations ([`OutpostOptions`]).
     remote_operations: bool,
     /// Windows whose UIA elements could not be imported into a remote
@@ -1008,6 +1012,7 @@ impl Outpost {
             observation: OnceLock::new(),
             ignored: verbatim_process::held::IgnoredProcesses::from_env(),
             focus_events: OnceLock::new(),
+            named: Lock::new(None),
             remote_operations: options.remote_operations,
             classic_windows: Lock::new(HashMap::new()),
             fetches: Lock::new(Fetches::default()),
@@ -1377,6 +1382,24 @@ impl Outpost {
             CoreToOutpost::KeyNote(note) => context.mailbox.post(Posted::KeyNote(*note)),
             CoreToOutpost::Request(ask) => context.mailbox.post(Posted::Ask(unstamped_ask(ask))),
             CoreToOutpost::Cancel(cancel) => context.mailbox.post(Posted::CancelAsk(*cancel)),
+            CoreToOutpost::WindowDestroyed(window) => {
+                // Its queued requests answered "not there" at once, then
+                // its nodes, text facts and followed registration
+                // forgotten by a program, as an object destroyed always
+                // was.
+                context.mailbox.post(Posted::WindowDestroyed(*window));
+                context.push(
+                    Item::Msaa {
+                        kind: reducer::WinKind::Destroy,
+                        hwnd: window::hwnd_of(*window),
+                        id_object: windows::Win32::UI::WindowsAndMessaging::OBJID_WINDOW.0,
+                        id_child: verbatim_ia2::CHILDID_SELF,
+                        raiser: 0,
+                    },
+                    (TraceId::mint(), now_us(), EventTiming::default()),
+                    Source::Other,
+                );
+            }
             CoreToOutpost::Ping { .. } => {
                 context.outbound.urgent(context.pong());
             }

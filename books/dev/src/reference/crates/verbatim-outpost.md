@@ -1222,13 +1222,28 @@ no verdict in force is probed first and the probe carried in the answer.
   focused element; an element kept under its runtime id that is gone or
   lost the keyboard focus is evicted with its text, and the answer says
   the id was reused; a focus's event registration is moved to the
-  element on the registering thread and waited for, then the node's
-  states are read; the ancestors are the listener's reads, completed
+  element on the registering thread and waited for, keeping the node
+  `Follow` named, then the node's states are read; the ancestors are the listener's reads, completed
   above as a focus read's are. Where the listener's walk met an ancestor
   Core already knows, the route's end names it, and the completion makes
   no read to find it.
 - A focus answer's caret is not read yet: `NotRead` for a node that may
-  have text, `NoText` otherwise. `Follow` is refused unsupported.
+  have text, `NoText` otherwise.
+- `Follow` (`outpost/followed.rs`, Table 10): what it names, the node,
+  its group and any extra object, or nothing, is recorded when the worker
+  takes it, then the registration is moved on the registering thread to
+  that node alone, the extra object given the value group, and waited
+  for; a node whose element the outpost no longer holds answers not
+  there, with nothing registered. A console host's terminal takes the
+  extended group without its text and caret events, and is the console
+  terminal the console's events are routed to. A `Follow` still queued is
+  replaced by a newer one, answered "ended or stopped"
+  (`Asks::push`). The registering thread is the only one that registers:
+  the reducer's own subscription moves are dropped.
+- `WindowDestroyed`: the requests queued on the window are answered not
+  there at once (`Asks::destroyed`), and a program forgets the window's
+  MSAA nodes and text facts, and the registration of a followed node in
+  it.
 
 ### Queries
 

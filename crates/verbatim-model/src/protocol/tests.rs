@@ -93,7 +93,8 @@ fn next_core_to_outpost(previous: Option<&CoreToOutpost>) -> Option<CoreToOutpos
             number: crate::request::RequestNumber(1),
             reason: crate::request::CancelReason::Withdrawn,
         }),
-        CoreToOutpost::Cancel(_) => return None,
+        CoreToOutpost::Cancel(_) => CoreToOutpost::WindowDestroyed(crate::WindowHandle(8)),
+        CoreToOutpost::WindowDestroyed(_) => return None,
     })
 }
 
@@ -273,6 +274,7 @@ fn every_variant_has_its_reviewed_kind() {
             "ReadTerminal: Ask",
             "Request: Ask",
             "Cancel: Ask",
+            "WindowDestroyed: Release",
         ]
     );
     assert_eq!(

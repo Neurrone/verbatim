@@ -144,7 +144,8 @@ impl ToChild for CoreToOutpost {
             | CoreToOutpost::Assign { .. }
             | CoreToOutpost::LiveReread { .. }
             | CoreToOutpost::Request(_)
-            | CoreToOutpost::Cancel(_) => None,
+            | CoreToOutpost::Cancel(_)
+            | CoreToOutpost::WindowDestroyed(_) => None,
         }
     }
 }

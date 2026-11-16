@@ -218,3 +218,42 @@ fn a_request_after_shutdown_is_not_run() {
     reducer.input(Input::Close, now(0));
     assert_eq!(dispatched(&reducer.input(ask(1), now(1))), Vec::new());
 }
+
+fn follow(number: u64, window: u64) -> Input {
+    Input::Ask(Box::new(Ask {
+        number: RequestNumber(number),
+        window: WindowHandle(window),
+        verdict: WindowVerdict::Uia,
+        request: CoreRequest::Follow(verbatim_model::request::Follow { node: None }),
+    }))
+}
+
+/// A `Follow` sent while an older one is queued replaces it, which is
+/// answered "ended or stopped" at once (Table 10).
+#[test]
+fn a_newer_follow_answers_the_queued_one_ended() {
+    let mut reducer = Reducer::new();
+    let _ = reducer.input(ask(1), now(0));
+    assert_eq!(answers(&reducer.input(follow(2, 1), now(1))), []);
+    assert_eq!(
+        answers(&reducer.input(follow(3, 1), now(2))),
+        [ended(2, "replaced by a newer Follow")]
+    );
+}
+
+/// A window destroyed answers Core's requests queued on it "not there",
+/// at once, and leaves the one running (Table 14).
+#[test]
+fn a_destroyed_window_answers_the_requests_queued_on_it() {
+    let mut reducer = Reducer::new();
+    let _ = reducer.input(follow(1, 7), now(0));
+    let _ = reducer.input(follow(2, 7), now(1));
+    let effects = reducer.input(Input::WindowDestroyed(WindowHandle(7)), now(2));
+    assert_eq!(
+        answers(&effects)
+            .into_iter()
+            .map(|answer| (answer.number.0, answer.outcome))
+            .collect::<Vec<_>>(),
+        [(2, Outcome::NotThere)]
+    );
+}

@@ -15,11 +15,9 @@
 
 use verbatim_model::property::PropertyValues;
 use verbatim_model::protocol::{UiaAncestorFact, UiaSnapshotFact};
-use verbatim_model::request::{
-    CompleteUia, CompletionFor, Outcome, Refusal, Reply, RouteEnd,
-};
+use verbatim_model::request::{CompleteUia, CompletionFor, Outcome, Refusal, Reply, RouteEnd};
 use verbatim_model::{Backend, NodeId, NodeSnapshot, Role, State};
-use verbatim_uia::{Cached, Interning as _, Kept, Node, Scope};
+use verbatim_uia::{Cached, Interning as _, Kept, Node};
 
 use super::asked::{Focus, ancestors_end, cut_at_known, focus_read, known_stops, snapshot_of};
 use super::focus_path;
@@ -179,12 +177,10 @@ fn replaced_stale(
 }
 
 /// Adds the registration of the focus `element`, node `node` of `role`,
-/// on the registering thread, and waits until it is in: the extended
-/// group for a node that may have text, else the base group.
+/// on the registering thread, keeping what `Follow` named, and waits until
+/// it is in: the extended group for a node that may have text, else the
+/// base group.
 fn register(context: &RequestContext<'_>, element: &Cached<Node>, node: NodeId, role: Role) {
-    let Some(registration) = context.focus_events.get() else {
-        return;
-    };
     let Ok(agile) = element.agile() else {
         return;
     };
@@ -193,8 +189,7 @@ fn register(context: &RequestContext<'_>, element: &Cached<Node>, node: NodeId, 
     } else {
         verbatim_uia::Group::Base
     };
-    registration.retarget_to(Scope::Elements(vec![agile.reference()]), group);
-    registration.settle();
+    super::followed::add_focus(context, (node, agile.reference()), group);
 }
 
 /// The element's ancestors, nearest first, up to the first Core already

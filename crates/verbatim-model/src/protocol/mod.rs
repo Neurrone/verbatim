@@ -825,6 +825,12 @@ pub enum CoreToOutpost {
     /// running is abandoned with its worker replaced when the foreground
     /// moved away, or else left alone.
     Cancel(crate::request::Cancel),
+    /// A window of the outpost's application was destroyed, as the
+    /// listener told Core (`docs/design/readers-tell-core-asks-build1.md`,
+    /// "Changes on objects"): the outpost forgets its MSAA nodes and text
+    /// facts, drops the registration of a followed node in it, and answers
+    /// its queued requests on it "not there".
+    WindowDestroyed(crate::WindowHandle),
 }
 
 impl CoreToOutpost {
@@ -858,7 +864,7 @@ impl CoreToOutpost {
             | CoreToOutpost::KeyNote(_)
             | CoreToOutpost::ReadTerminal { .. }
             | CoreToOutpost::IdleQuery { .. } => Kind::Ask,
-            CoreToOutpost::NodesHeld { .. } => Kind::Release,
+            CoreToOutpost::NodesHeld { .. } | CoreToOutpost::WindowDestroyed(_) => Kind::Release,
             CoreToOutpost::Assign { .. }
             | CoreToOutpost::Ping { .. }
             | CoreToOutpost::Shutdown

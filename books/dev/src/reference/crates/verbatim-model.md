@@ -413,8 +413,11 @@ that carries them on the pipes, `Message`, is
     `CancelQuery` (withdraws a query not started, by its `RequestId`); `Ping`; `Fetches`;
     `NodesHeld`; `IdleQuery`; `Shutdown`; `Assign`; `Request` (an `Ask` of
     the shared list, its node ids stamped with the outpost generation,
-    which the outpost clears with `Ask::unstamp`); and `Cancel` (a
-    request's `Cancel` with its reason).
+    which the outpost clears with `Ask::unstamp`); `Cancel` (a
+    request's `Cancel` with its reason); and `WindowDestroyed` (a window
+    of the outpost's application destroyed, whose MSAA nodes, text facts
+    and followed registration the outpost forgets, and whose queued
+    requests it answers "not there").
   - `CoreToListener`: `HookInstalled`, `HookRemoved`, `ApplicationExited`
     (answered by `ExitHandled`), `Ping`, `IdleQuery` and `Shutdown`.
   - `OutpostToCore`: `Ready`, `SpareReady`, `Event` (trace id,

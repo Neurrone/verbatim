@@ -39,8 +39,8 @@ use super::Context;
 use super::commit::{Effects, FocusEffects, KeptTarget, Writes};
 use super::outbound::Carried;
 use super::reducer::{
-    Asker, Change, Cut, Effect, Entry, Group, Input, Item, Marks, NoteOn, Now, Program, Reducer,
-    Request, Source, Subscribed, Subscription, VerdictChange,
+    Asker, Change, Cut, Effect, Entry, Input, Item, Marks, NoteOn, Now, Program, Reducer, Request,
+    Source, Subscribed, VerdictChange,
 };
 use super::store::{Removed, Store, Tag};
 use super::worker::{self, Charge, Job};
@@ -87,6 +87,9 @@ pub(super) enum Posted {
     Ask(Box<verbatim_model::request::Ask>),
     /// Core cancels a request.
     CancelAsk(verbatim_model::request::Cancel),
+    /// A window was destroyed: Core's requests queued on it are answered
+    /// "not there".
+    WindowDestroyed(verbatim_model::WindowHandle),
     /// A program's answer to the Core request it runs.
     Answered {
         request: Request,
@@ -135,6 +138,7 @@ impl Mailbox {
                 Posted::Entry { .. }
                     | Posted::Ask(_)
                     | Posted::CancelAsk(_)
+                    | Posted::WindowDestroyed(_)
                     | Posted::Settle(_)
                     | Posted::Cancel(_)
                     | Posted::Front(_)
@@ -549,6 +553,7 @@ impl Shell {
             Posted::Cancel(request_id) => Input::Cancel(request_id),
             Posted::Ask(ask) => Input::Ask(ask),
             Posted::CancelAsk(cancel) => Input::CancelAsk(cancel),
+            Posted::WindowDestroyed(window) => Input::WindowDestroyed(window),
             Posted::Answered { request, answer } => Input::Answered { request, answer },
             Posted::Front(front) => Input::Front(front),
             Posted::KeyNote(note) => {
@@ -678,7 +683,9 @@ impl Shell {
                 acknowledged,
                 live,
             } => return vec![self.release(&nodes, &anchors, acknowledged, &live)],
-            Effect::Subscribe(subscription) => self.subscribe(&subscription),
+            // Core's `Follow` and the focus completion alone move the
+            // registration (`super::followed`).
+            Effect::Subscribe(_) => {}
             Effect::Unfollow(tokens) => {
                 for token in tokens {
                     if let Some(element) = self.elements.kept.remove(&token) {
@@ -841,61 +848,6 @@ impl Shell {
             anchors: released.anchors,
             objects: !self.garbage.is_empty(),
         }
-    }
-
-    /// Moves the focus-following subscription as `subscription` says. The
-    /// subscription keeps references of its own; the elements stay kept
-    /// under their tokens until the reducer unfollows them, so an element
-    /// given again is known by its token.
-    fn subscribe(&mut self, subscription: &Subscription) {
-        let reference = |token: u64| self.elements.kept.get(&token).map(Agile::reference);
-        let kept: Vec<_> = subscription
-            .kept
-            .iter()
-            .filter_map(|&(token, group)| {
-                reference(token).map(|element| (element, uia_group(group)))
-            })
-            .collect();
-        let slider = subscription
-            .slider
-            .and_then(reference)
-            .map(|element| (element, verbatim_uia::Group::Value));
-        let bar = subscription
-            .bar
-            .and_then(reference)
-            .map(|element| (element, verbatim_uia::Group::RangeValue));
-        let newest = subscription
-            .newest
-            .and_then(|(token, group)| reference(token).map(|element| (element, group)));
-        tracing::debug!(
-            newest = ?subscription.newest,
-            kept = subscription.kept.len(),
-            "the focus-following subscription is moved"
-        );
-        if let Some(registration) = self.context.focus_events.get() {
-            match newest {
-                Some((element, group)) => registration.retarget_with(
-                    verbatim_uia::Scope::Elements(vec![element]),
-                    uia_group(group),
-                    slider.into_iter().chain(kept).chain(bar).collect(),
-                ),
-                None if !kept.is_empty() || bar.is_some() => registration.retarget_with(
-                    verbatim_uia::Scope::Elements(Vec::new()),
-                    verbatim_uia::Group::Base,
-                    kept.into_iter().chain(bar).collect(),
-                ),
-                None => registration.retarget(verbatim_uia::Scope::Nothing),
-            }
-        }
-    }
-}
-
-/// The UIA group the reducer's `group` names.
-fn uia_group(group: Group) -> verbatim_uia::Group {
-    match group {
-        Group::Base => verbatim_uia::Group::Base,
-        Group::Extended => verbatim_uia::Group::Extended,
-        Group::ExtendedWithoutTextEvents => verbatim_uia::Group::ExtendedWithoutTextEvents,
     }
 }
 

@@ -384,6 +384,9 @@ pub enum Input {
     Ask(Box<verbatim_model::request::Ask>),
     /// Core cancels a request ([`waiting`]).
     CancelAsk(verbatim_model::request::Cancel),
+    /// A window was destroyed: Core's requests queued on it are answered
+    /// "not there" ([`waiting`]).
+    WindowDestroyed(verbatim_model::WindowHandle),
     /// The answer of program `request` to the Core request it runs: sent
     /// while the program is in flight, of the generation in charge.
     Answered {
@@ -574,7 +577,10 @@ impl Reducer {
                 anchors,
                 objects,
             } => self.released(&nodes, &anchors, objects, &mut effects),
-            Input::Ask(_) | Input::CancelAsk(_) | Input::Answered { .. } => {
+            Input::Ask(_)
+            | Input::CancelAsk(_)
+            | Input::Answered { .. }
+            | Input::WindowDestroyed(_) => {
                 self.asked(input, &mut effects);
             }
             Input::Close => {
@@ -607,7 +613,14 @@ impl Reducer {
         match input {
             Input::Ask(ask) => {
                 if !self.stopping {
-                    self.asks.push(ask);
+                    for replaced in self.asks.push(ask) {
+                        effects.push(Effect::Send(Box::new(OutpostToCore::Answer(replaced))));
+                    }
+                }
+            }
+            Input::WindowDestroyed(window) => {
+                for gone in self.asks.destroyed(window) {
+                    effects.push(Effect::Send(Box::new(OutpostToCore::Answer(gone))));
                 }
             }
             Input::CancelAsk(cancel) => self.cancel_ask(cancel, effects),
