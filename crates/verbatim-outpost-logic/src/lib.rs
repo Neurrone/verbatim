@@ -7,7 +7,7 @@
 //! and is tested on any host.
 //!
 //! It holds the intake's order ([`intake`]), the reports Core may hold ([`held`]), the follow state ([`follow`]),
-//! the hand-over's hold ([`hold`]), the arbitrator's verdicts
+//! the arbitrator's verdicts
 //! ([`Verdicts`]), Core's requests ([`waiting`]), the program in flight
 //! with the worker generation in charge ([`charge`]), the queries not yet
 //! answered, and the idle barrier's round.
@@ -66,7 +66,6 @@ mod charge;
 mod entry;
 mod follow;
 mod held;
-mod hold;
 mod intake;
 #[cfg(test)]
 mod tests;
@@ -303,17 +302,12 @@ pub enum Effect {
     /// that changed them, ahead of the transition's other effects so that
     /// no program it dispatches runs before the mailbox judges by them.
     Marks(Marks),
-    /// The push-time copy of the arbitrator's verdicts, replaced.
-    Verdicts(Arc<Verdicts>),
     /// A commit asked for what cannot occur: applied as nothing, for the
     /// shell to record as the logic error it is.
     LogicError(LogicError),
     /// A test's settle, number `0`, was reached: the shell answers whoever
     /// waits on it.
     Settled(u64),
-    /// A verdict of UIA for a window's lifetime was recorded: the event
-    /// thread may narrow its hook (the outpost's `narrowing`).
-    Narrow,
 }
 
 /// Inputs, in mailbox order.
@@ -330,12 +324,6 @@ pub enum Input {
         /// Where it came from.
         source: Source,
     },
-    /// The outpost's hook is in, and a listener forwards to it.
-    Hooked,
-    /// No listener forwards to this outpost.
-    WithoutListener,
-    /// The listener's "forwarding ended", through this tick.
-    ForwardingEnded(u32),
     /// Core's word on where attention is.
     Front(FrontWindow),
     /// Core withdraws query `0` if it has not started.
@@ -445,7 +433,6 @@ pub struct Reducer {
     /// Core's requests, run ahead of everything else.
     asks: Asks,
     intake: intake::Intake,
-    hold: hold::Hold,
     facts: Facts,
     /// The program in flight, and the worker generation in charge.
     flight: InCharge<Current>,
@@ -549,18 +536,8 @@ impl Reducer {
         let before = self.observed();
         let mut effects = Vec::new();
         match input {
-            Input::Entry { entry, source } => {
-                self.entry(entry, source, now, &mut effects);
-            }
-            Input::Hooked => self.hold.hooked(),
-            Input::WithoutListener => {
-                let held = self.hold.without_listener();
-                self.push_all(held, &mut effects);
-            }
-            Input::ForwardingEnded(through) => {
-                if let Some(released) = self.hold.forwarding_ended(through) {
-                    self.push_all(released, &mut effects);
-                }
+            Input::Entry { entry, .. } => {
+                self.entry(entry, now, &mut effects);
             }
             Input::Front(front) => {
                 let mut applied = Applied::default();
@@ -579,7 +556,7 @@ impl Reducer {
                 Arc::make_mut(&mut self.facts.text).set_note(node.number(), fetch, now.wall_us, on);
             }
             Input::Verdict { generation, change } => {
-                self.record_verdict(generation, &change, &mut effects);
+                self.record_verdict(generation, &change);
             }
             Input::Commit { request, change } => {
                 if self.accepts(request) {
@@ -694,37 +671,12 @@ impl Reducer {
         }
     }
 
-    /// Takes in `entry`, from `source`: held while the hand-over's hold
-    /// lasts if it came from the hook, and pushed into the intake
-    /// otherwise.
-    fn entry(&mut self, entry: Entry, source: Source, now: Now, effects: &mut Vec<Effect>) {
+    /// Takes in `entry`, pushed into the intake.
+    fn entry(&mut self, entry: Entry, now: Now, effects: &mut Vec<Effect>) {
         if self.key_arrived(&entry, now) {
             return;
         }
-        match source {
-            Source::Hook => {
-                if let Some(entry) = self.hold.hooked_copy(entry) {
-                    self.push(entry, effects);
-                }
-            }
-            Source::Listener => {
-                self.hold.listener_copy(&entry);
-                self.push(entry, effects);
-            }
-            Source::Other => {
-                let ends_reads = matches!(
-                    entry.item,
-                    Item::Fact(
-                        verbatim_model::protocol::DeliveredFact::UiaFocusReadsEnded,
-                        _
-                    )
-                );
-                self.push(entry, effects);
-                if ends_reads && let Some(released) = self.hold.reads_ended() {
-                    self.push_all(released, effects);
-                }
-            }
-        }
+        self.push(entry, effects);
     }
 
     /// A read of the caret for a key, as it arrives: a before read sets
@@ -764,13 +716,6 @@ impl Reducer {
         };
         Arc::make_mut(&mut self.facts.text).set_note(node_id.number(), read.fetch, now.wall_us, on);
         false
-    }
-
-    /// Pushes `entries` into the intake in order, as one batch.
-    fn push_all(&mut self, entries: Vec<Entry>, effects: &mut Vec<Effect>) {
-        for entry in entries {
-            self.push(entry, effects);
-        }
     }
 
     /// Pushes `entry` into the intake at `now`, recording a query.
@@ -895,31 +840,12 @@ impl Reducer {
     /// generation in charge, and a probe that timed out or a window's
     /// forgetting from any generation, so a window whose probe timed out
     /// is not probed again within the negative verdict's lifetime even
-    /// when the worker that probed it was abandoned. The push-time copy is
-    /// replaced when the record changed, and the event thread nudged when
-    /// a window was found to use UIA.
-    fn record_verdict(
-        &mut self,
-        generation: u64,
-        change: &VerdictChange,
-        effects: &mut Vec<Effect>,
-    ) {
+    /// when the worker that probed it was abandoned.
+    fn record_verdict(&mut self, generation: u64, change: &VerdictChange) {
         if generation != self.generation() && !change.kept_from_any_generation() {
             return;
         }
-        if !Arc::make_mut(&mut self.facts.verdicts).apply(change) {
-            return;
-        }
-        effects.push(Effect::Verdicts(Arc::clone(&self.facts.verdicts)));
-        if matches!(
-            change,
-            VerdictChange::Probed(Probe {
-                probed: Probed::Uia,
-                ..
-            })
-        ) {
-            effects.push(Effect::Narrow);
-        }
+        Arc::make_mut(&mut self.facts.verdicts).apply(change);
     }
 
     /// The shell's part of an [`Applied`]: the subscription moved and the
@@ -1051,17 +977,15 @@ impl Reducer {
     }
 
     /// Answers the idle barrier's query once no deferred work is pending:
-    /// the hook's copies are not held at the start and the program in
-    /// flight is not a read of the console poll. The program
+    /// the program in flight is not a read of the console poll. The program
     /// in flight is otherwise not waited for:
     /// the query is reached only with none in flight, so a program in
     /// flight then handles an entry that arrived after the query.
     fn answer_idle(&mut self, effects: &mut Vec<Effect>) {
-        if self.hold.holding()
-            || self
-                .flight
-                .running()
-                .is_some_and(|(_, current)| current.deferred)
+        if self
+            .flight
+            .running()
+            .is_some_and(|(_, current)| current.deferred)
         {
             return;
         }
@@ -1342,13 +1266,9 @@ impl Reducer {
     /// query that program answers. The check is decided here: every
     /// value change the control raised before the read part's sync is
     /// ahead of its end in the mailbox, so among the entries not yet
-    /// dispatched, in the intake or held.
+    /// dispatched, in the intake.
     fn dispatch_finish(&mut self, cut: Box<Cut>, effects: &mut Vec<Effect>) {
-        let waiting = self.intake.value_change_waiting(cut.edit)
-            || self
-                .hold
-                .held()
-                .any(|entry| edit_value_change(&entry.item) == Some(cut.edit));
+        let waiting = self.intake.value_change_waiting(cut.edit);
         let Some(request) = self.flight.hand_on() else {
             return;
         };

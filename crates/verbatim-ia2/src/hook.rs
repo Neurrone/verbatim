@@ -238,6 +238,14 @@ pub const APP_SUBSCRIPTIONS: &[WinEventKind] = &[
     WinEventKind::ConsoleCaret,
 ];
 
+/// The console host's outpost's subscription set, installed with the
+/// console host's process id: the console's update and caret events, which
+/// only the console host raises and its outpost keeps
+/// (`docs/design/readers-tell-core-asks-build1.md`, "The outpost in this
+/// build"). No other outpost hooks a `WinEvent`.
+pub const CONSOLE_SUBSCRIPTIONS: &[WinEventKind] =
+    &[WinEventKind::ConsoleUpdate, WinEventKind::ConsoleCaret];
+
 /// The focus listener's subscription set (ADR 0003, "Who holds what": the
 /// listener holds every desktop-wide registration), installed with
 /// `idProcess` zero: every kind it tells Core of, each event a tell

@@ -40,7 +40,7 @@ use super::commit::{Effects, FocusEffects, KeptTarget, Writes};
 use super::outbound::Carried;
 use super::reducer::{
     Asker, Change, Cut, Effect, Entry, Group, Input, Item, Marks, NoteOn, Now, Program, Reducer,
-    Request, Source, Subscribed, Subscription, VerdictChange, Verdicts,
+    Request, Source, Subscribed, Subscription, VerdictChange,
 };
 use super::store::{Removed, Store, Tag};
 use super::worker::{self, Charge, Job};
@@ -56,12 +56,6 @@ pub(super) enum Posted {
     Entry { entry: Entry, source: Source },
     /// `Outpost::settle`, answered on `0` once the reducer reaches it.
     Settle(mpsc::Sender<()>),
-    /// The outpost's hook is in.
-    Hooked,
-    /// No listener forwards to this outpost.
-    WithoutListener,
-    /// The listener's "forwarding ended".
-    ForwardingEnded(u32),
     /// Core's word on where attention is.
     Front(FrontWindow),
     /// Core withdraws a query.
@@ -104,7 +98,7 @@ pub(super) enum Posted {
 
 /// The mailbox: an append-only queue under one lock, which every producer
 /// appends to and only the shell drains, with the push-time copies of the
-/// reducer's marks and verdicts that the producers' drops are judged by.
+/// reducer's marks that the producers' drops are judged by.
 #[derive(Default)]
 pub(super) struct Mailbox {
     state: Lock<MailboxState>,
@@ -119,9 +113,6 @@ struct MailboxState {
     posted: VecDeque<Posted>,
     /// The reducer's marks, as its last change of them left them.
     marks: Marks,
-    /// The reducer's verdicts, as its last change of them left them: the
-    /// event thread's drop of an MSAA event of a window known to use UIA.
-    verdicts: Arc<Verdicts>,
     /// Whether the shell waits, so that an append sets the alarm's event;
     /// taken by the first to set it.
     asleep: bool,
@@ -145,9 +136,6 @@ impl Mailbox {
                     | Posted::Ask(_)
                     | Posted::CancelAsk(_)
                     | Posted::Settle(_)
-                    | Posted::Hooked
-                    | Posted::WithoutListener
-                    | Posted::ForwardingEnded(_)
                     | Posted::Cancel(_)
                     | Posted::Front(_)
                     | Posted::KeyNote(_)
@@ -173,16 +161,6 @@ impl Mailbox {
     /// The reducer's marks, for the drops judged at push.
     fn set_marks(&self, marks: Marks) {
         self.lock().marks = marks;
-    }
-
-    /// The reducer's verdicts, for the drops judged at push.
-    fn set_verdicts(&self, verdicts: Arc<Verdicts>) {
-        self.lock().verdicts = verdicts;
-    }
-
-    /// The push-time copy of the reducer's verdicts: a reference count.
-    pub(super) fn verdicts(&self) -> Arc<Verdicts> {
-        Arc::clone(&self.lock().verdicts)
     }
 
     /// Everything posted, waiting for something to be posted or for `at`,
@@ -568,9 +546,6 @@ impl Shell {
                 };
                 input
             }
-            Posted::Hooked => Input::Hooked,
-            Posted::WithoutListener => Input::WithoutListener,
-            Posted::ForwardingEnded(through) => Input::ForwardingEnded(through),
             Posted::Cancel(request_id) => Input::Cancel(request_id),
             Posted::Ask(ask) => Input::Ask(ask),
             Posted::CancelAsk(cancel) => Input::CancelAsk(cancel),
@@ -739,16 +714,11 @@ impl Shell {
             Effect::LogicError(error) => {
                 tracing::error!(?error, "a commit asked for what cannot occur");
             }
-            Effect::Verdicts(verdicts) => self.context.mailbox.set_verdicts(verdicts),
             Effect::Settled(id) => {
                 if let Some(done) = self.settles.remove(&id) {
                     let _ = done.send(());
                 }
             }
-            // After the copy above, so the event thread decides on it.
-            Effect::Narrow => self
-                .context
-                .nudge_event_thread(super::narrowing::Nudge::Decide),
         }
         Vec::new()
     }

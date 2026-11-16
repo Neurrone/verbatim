@@ -292,8 +292,9 @@ impl Entry {
     }
 }
 
-/// Where an entry came from, which the hand-over's hold judges it by
-/// ([`super::hold`]).
+/// Where an entry came from. The reducer judges nothing by it since the
+/// hand-over's hold went; it is removed with the entries' producers that
+/// remain (`docs/design/readers-tell-core-asks-build1.md`, step 8).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Source {
     /// The outpost's own `WinEvent` hook.

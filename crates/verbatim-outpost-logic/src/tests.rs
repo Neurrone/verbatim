@@ -541,49 +541,6 @@ fn a_shell_query_reached_at_its_deadline_is_answered_without_a_walk() {
     assert!(!abandons(&effects));
 }
 
-#[test]
-fn the_hooks_copies_are_held_until_forwarding_ends_and_released_as_one_group() {
-    let mut replay = Replay::new();
-    replay.input(Input::Hooked, 0);
-    // The hook's copies are held.
-    assert!(programs(&replay.push(msaa_focus(1, 100), Source::Hook, 1)).is_empty());
-    assert!(programs(&replay.push(msaa_focus(2, 120), Source::Hook, 2)).is_empty());
-    assert!(programs(&replay.push(msaa_focus(3, 140), Source::Hook, 3)).is_empty());
-    // The listener's copy of the first is handled as it comes.
-    let effects = replay.push(msaa_focus(1, 100), Source::Listener, 4);
-    let listener = program(&effects);
-    assert_eq!(handles(listener), (4, Some(0)));
-    replay.finish(listener.request, true, 5);
-    // The listener forwarded what was raised at or before 100: the hook's
-    // copy of it is dropped, the rest tried as one group, newest first.
-    let effects = replay.input(Input::ForwardingEnded(100), 6);
-    let newest = program(&effects);
-    assert_eq!(handles(newest), (3, Some(0)));
-    let effects = replay.finish(newest.request, false, 7);
-    assert_eq!(handles(program(&effects)), (2, Some(1)));
-}
-
-#[test]
-fn the_end_of_the_listeners_reads_releases_the_hold() {
-    let mut replay = Replay::new();
-    replay.input(Input::Hooked, 0);
-    replay.push(msaa_focus(1, 100), Source::Hook, 1);
-    let effects = replay.push(msaa_focus(1, 100), Source::Listener, 2);
-    let listener = program(&effects).request;
-    replay.finish(listener, true, 3);
-    replay.push(msaa_focus(2, 120), Source::Hook, 4);
-    let effects = replay.push(
-        Item::Fact(DeliveredFact::UiaFocusReadsEnded, None),
-        Source::Other,
-        5,
-    );
-    assert_eq!(
-        handles(program(&effects)),
-        (4, Some(0)),
-        "the copy raised after the newest the listener sent"
-    );
-}
-
 /// The probe of window 0x20, owned by thread 5, judging from 1 ms, that
 /// found `probed`.
 fn probe(probed: Probed) -> VerdictChange {
@@ -608,24 +565,13 @@ impl Replay {
     }
 }
 
-/// The push-time copies of the verdicts `effects` replace, in order.
-fn verdict_copies(effects: &[Effect]) -> Vec<&Arc<Verdicts>> {
-    effects
-        .iter()
-        .filter_map(|effect| match effect {
-            Effect::Verdicts(verdicts) => Some(verdicts),
-            _ => None,
-        })
-        .collect()
-}
-
 /// Window 0x20's verdict in `verdicts` for an event observed at `at_us`.
 fn verdict_of(verdicts: &Verdicts, at_us: u64) -> Option<Probed> {
     verdicts.kept_at(0x20, 5, at_us)
 }
 
 #[test]
-fn a_probe_is_recorded_when_committed_and_reaches_the_event_thread_then_the_next_program() {
+fn a_probe_is_recorded_when_committed_and_reaches_the_next_program() {
     let mut replay = Replay::new();
     let effects = replay.push(msaa_focus(1, 1), Source::Hook, 1);
     let request = program(&effects).request;
@@ -634,20 +580,7 @@ fn a_probe_is_recorded_when_committed_and_reaches_the_event_thread_then_the_next
         verdict_of(&replay.reducer.facts().verdicts, 1_000),
         Some(Probed::Uia)
     );
-    // The push-time copy is the reducer's own snapshot, then the event
-    // thread is nudged to decide its hook on it.
-    let copies = verdict_copies(&effects);
-    assert_eq!(copies.len(), 1);
-    assert!(Arc::ptr_eq(copies[0], &replay.reducer.facts().verdicts));
-    let order: Vec<&str> = effects
-        .iter()
-        .map(|effect| match effect {
-            Effect::Verdicts(_) => "copy",
-            Effect::Narrow => "narrow",
-            _ => "other",
-        })
-        .collect();
-    assert_eq!(order, ["copy", "narrow"]);
+    assert_eq!(effects.len(), 0, "a probe asks nothing of the shell");
     // The next program is given the same snapshot.
     replay.finish(request, false, 3);
     let effects = replay.push(name_change(1), Source::Hook, 4);
@@ -680,12 +613,11 @@ fn a_dead_generations_timed_out_probe_is_recorded() {
     assert!(abandons(
         &replay.input(cancel_for_the_foreground(1), 11_000)
     ));
-    let effects = replay.verdict(dead, probe(Probed::TimedOut(11_502_000)), 11_002);
+    replay.verdict(dead, probe(Probed::TimedOut(11_502_000)), 11_002);
     assert_eq!(
         verdict_of(&replay.reducer.facts().verdicts, 1_000),
         Some(Probed::TimedOut(11_502_000))
     );
-    assert_eq!(verdict_copies(&effects).len(), 1);
 }
 
 #[test]
@@ -703,26 +635,6 @@ fn a_timed_out_probe_committed_before_its_worker_is_abandoned_stays_recorded() {
         verdict_of(&replay.reducer.facts().verdicts, 1_000),
         Some(Probed::TimedOut(3_501_000))
     );
-    assert_eq!(verdict_copies(&effects).len(), 0);
-}
-
-/// Found by the outpost's generated test (`books/dev/src/reference/crates/verbatim-outpost-logic.md`, invariant 13): a probe that leaves the record
-/// as it was, the same verdict from the same observation, sends no copy
-/// and does not narrow the hook again.
-#[test]
-fn a_probe_that_changes_nothing_sends_no_copy() {
-    let mut replay = Replay::new();
-    let request = Request {
-        generation: 0,
-        number: 1,
-    };
-    let effects = replay.verdict(request, probe(Probed::Uia), 1);
-    assert_eq!(verdict_copies(&effects).len(), 1, "the first verdict");
-    // The verdict before it is kept for earlier observations, as itself.
-    let effects = replay.verdict(request, probe(Probed::Uia), 1);
-    assert_eq!(verdict_copies(&effects).len(), 1, "kept as the one before");
-    let effects = replay.verdict(request, probe(Probed::Uia), 1);
-    assert!(effects.is_empty(), "{effects:?}");
 }
 
 /// An edit control's text facts with one anchor, `anchor`, at offset
@@ -955,28 +867,6 @@ fn a_noted_caret_is_read_with_its_events_timing() {
         }
         work => panic!("the noted caret's read, not {work:?}"),
     }
-}
-
-#[test]
-fn the_idle_answer_waits_for_the_hooks_copies_held_at_the_start() {
-    let mut replay = Replay::new();
-    replay.input(Input::Hooked, 0);
-    assert!(programs(&replay.push(name_change(1), Source::Hook, 1)).is_empty());
-    let effects = replay.push(
-        Item::Barrier {
-            asker: Asker::Round(5),
-            behind_noted: false,
-        },
-        Source::Other,
-        2,
-    );
-    assert!(
-        sent(&effects).is_empty(),
-        "no answer while the copy is held"
-    );
-    let effects = replay.input(Input::ForwardingEnded(0), 3);
-    assert_eq!(answers_and_dispatches(&effects), ["dispatch", "answer"]);
-    assert_eq!(sent(&effects), [&OutpostToCore::IdleAnswer { round: 5 }]);
 }
 
 /// A test's settle, number `id`.

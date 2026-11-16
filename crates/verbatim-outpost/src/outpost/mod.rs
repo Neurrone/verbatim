@@ -46,7 +46,6 @@ mod commit;
 mod completion;
 mod focus_path;
 pub(crate) mod lock;
-mod narrowing;
 mod outbound;
 mod read;
 mod shell;
@@ -73,7 +72,7 @@ use windows::Win32::UI::Accessibility::{
 };
 use windows::core::AgileReference;
 
-use verbatim_ia2::{APP_SUBSCRIPTIONS, WinEvent, WinEventKind};
+use verbatim_ia2::{CONSOLE_SUBSCRIPTIONS, WinEvent};
 use verbatim_model::{Fetches, NodeId, Pid, TraceId};
 use verbatim_process::overlapped::{End, Flow, pipe};
 use verbatim_process::scheduling::{ThreadPriority, prioritize_role};
@@ -85,11 +84,11 @@ use verbatim_uia::{
     Subscription, TextEvent, Uia,
 };
 
-use crate::arbitration::{Arbitrator, EventWindows};
+use crate::arbitration::Arbitrator;
 use verbatim_ia2::event_thread::{EventHandlers, EventThread, MakeHandlers, Nudger};
 use verbatim_model::protocol::{
     CoreToOutpost, DeliveredFact, EventTiming, OutpostToCore, Query, RequestId, UiaSnapshotFact,
-    Urgent, WinEventStamp,
+    Urgent,
 };
 use verbatim_process::arguments::OutpostOptions;
 use verbatim_process::clock::now_us;
@@ -780,119 +779,29 @@ impl Context {
         }
     }
 
-    /// Nudges the event thread, once it runs ([`narrowing`]).
-    fn nudge_event_thread(&self, nudge: narrowing::Nudge) {
-        if let Some(nudger) = self.event_thread.get() {
-            nudger.nudge(nudge.words());
-        }
-    }
-
-    /// Takes in a `WinEvent` the outpost's own hook delivered. A focus,
-    /// foreground change, menu opening, alert, or tooltip becomes the fact
-    /// the listener forwards for one, held by the reducer while the
-    /// listener forwards ([`reducer`], the hand-over's hold); one with no
-    /// window is dropped. Any other event is queued as it is, unless its window is already known to be read through UIA:
-    /// the worker would drop it at its window's UIA test, after acceptance
-    /// and the window's state, which have no effect but a log line, so it
-    /// is dropped here instead, and the worker is not woken for it. NVDA
-    /// drops a `WinEvent` from a UIA window the same way, and a console
-    /// flood raises them by the thousand. A console's update or caret
-    /// event, the system caret's event, and a destroyed window are kept:
-    /// the worker uses them for UIA windows too, though the intake drops
-    /// the system caret's while the focus has caret events of its own
-    /// (`Intake::drop_system_caret`). Whether a window is known to be read through UIA is
-    /// asked of `windows`, the event thread's own record, so a flood from
-    /// one window costs one read of its classes.
-    fn take_in_win_event(&self, event: WinEvent, timing: EventTiming, windows: &mut EventWindows) {
+    /// Takes in a console's update or caret event the outpost's own hook
+    /// delivered, as it is.
+    fn take_in_win_event(&self, event: WinEvent, timing: EventTiming) {
         let WinEvent {
             kind,
             hwnd,
             id_object,
             id_child,
             thread,
-            time,
             ..
         } = event;
-        if !matches!(
-            kind,
-            WinEventKind::Focus
-                | WinEventKind::Foreground
-                | WinEventKind::MenuPopupStart
-                | WinEventKind::Alert
-                | WinEventKind::Show
-        ) {
-            // The system caret's events are a UIA focus's caret events
-            // too, and are kept for the worker.
-            if !matches!(
-                kind,
-                WinEventKind::ConsoleUpdate
-                    | WinEventKind::ConsoleCaret
-                    | WinEventKind::Destroy
-                    | WinEventKind::Caret
-            ) && windows.known_to_use_uia(
-                (&self.arbitrator, || self.mailbox.verdicts()),
-                (hwnd, verbatim_win32::window::window_thread(hwnd)),
-                verbatim_win32::window::window_classes,
-            ) {
-                self.tell_heard(Heard::Msaa(kind));
-                return;
-            }
-            self.take_in(
-                Item::Msaa {
-                    kind: worker::win_kind(kind),
-                    hwnd,
-                    id_object,
-                    id_child,
-                    raiser: thread,
-                },
-                Heard::Msaa(kind),
-                timing,
-                Source::Hook,
-            );
-            return;
-        }
-        let Some(fact) = verbatim_ia2::fact_of_win_event(kind, (hwnd, id_object, id_child)) else {
-            return;
-        };
-        let stamp = WinEventStamp { thread, time };
         self.take_in(
-            Item::Fact(fact, Some(stamp)),
+            Item::Msaa {
+                kind: worker::win_kind(kind),
+                hwnd,
+                id_object,
+                id_child,
+                raiser: thread,
+            },
             Heard::Msaa(kind),
             timing,
             Source::Hook,
         );
-    }
-
-    /// Queues a fact the supervisor routed from the listener, handled as it
-    /// comes while the reducer holds the hook's copies ([`reducer`], the
-    /// hand-over's hold). It is ordered by the listener's observation,
-    /// `timing`'s `observed_at_us`.
-    fn take_in_routed_fact(
-        &self,
-        fact: &DeliveredFact,
-        win_event: Option<WinEventStamp>,
-        trace: TraceId,
-        timing: EventTiming,
-    ) {
-        let item = Item::Fact(fact.clone(), win_event);
-        let stamps = (trace, timing.observed_at_us, timing);
-        let source = if win_event.is_some() && fact.is_win_event() {
-            Source::Listener
-        } else {
-            Source::Other
-        };
-        self.push(item, stamps, source);
-        // The event thread takes the application's focus and foreground
-        // windows from these until its own hook delivers them.
-        match fact {
-            DeliveredFact::MsaaFocus { hwnd, .. } | DeliveredFact::MenuPopup { hwnd, .. } => {
-                self.nudge_event_thread(narrowing::Nudge::RoutedFocus(*hwnd));
-            }
-            DeliveredFact::Foreground { hwnd } => {
-                self.nudge_event_thread(narrowing::Nudge::RoutedForeground(*hwnd));
-            }
-            _ => {}
-        }
     }
 
     /// The route to the element `runtime_id` names in `path`, the focus
@@ -1119,59 +1028,27 @@ impl Outpost {
         let shell = Shell::start(&context, warm);
         *context.shell.lock() = Some(shell);
 
-        // The MSAA hooks, process-scoped (decision D13), installed once the
-        // outpost has its application: focus, foreground, menu opening,
-        // alert, and tooltip events, which the listener forwards only until
-        // it hears this hook is in (`books/dev/src/reference/adr/0001-focus.md`, "One route per
-        // application, and the marker"), and value, state, name, selection, and destroy
-        // events. A destroy is queued only for a window, the one kind of
-        // object whose end the outpost tracks.
+        // The console's update and caret events, process-scoped (decision
+        // D13), hooked once the outpost has its application and only when
+        // that application is a console host: no other outpost hooks a
+        // `WinEvent`, the listener telling Core of every other kind.
         let hook_context = Arc::clone(&context);
         let make_handlers: MakeHandlers = Arc::new(move || {
-            // The event thread's own record of its windows and of the
-            // application's focus and foreground windows, which only it
-            // touches.
-            let state = std::rc::Rc::new(RefCell::new(narrowing::EventThreadState::default()));
             let context = Arc::clone(&hook_context);
-            let nudge_context = Arc::clone(&hook_context);
-            let nudge_state = std::rc::Rc::clone(&state);
             EventHandlers {
                 win_event: Box::new(move |event: WinEvent| {
-                    let mut state = state.borrow_mut();
-                    // A destroy is queued only for a window.
-                    if event.kind == WinEventKind::Destroy
-                        && (event.id_object
-                            != windows::Win32::UI::WindowsAndMessaging::OBJID_WINDOW.0
-                            || event.id_child != verbatim_ia2::CHILDID_SELF)
-                    {
-                        return;
-                    }
                     take_in_hooked(
                         event,
-                        &mut *state,
+                        &mut (),
                         || context.observed_now(),
-                        |state, event| {
-                            if event.kind == WinEventKind::Destroy {
-                                state.windows.forget(event.hwnd);
-                            }
-                            // Before the event is queued, so a focus moving
-                            // into a window read through MSAA hooks its
-                            // kinds again at once.
-                            state.note_win_event(event, &context);
-                        },
-                        |state, event, timing| {
-                            context.take_in_win_event(event, timing, &mut state.windows);
-                        },
+                        |(), _| {},
+                        |(), event, timing| context.take_in_win_event(event, timing),
                     );
                 }),
-                nudge: Some(Box::new(move |word, hwnd| {
-                    if let Some(nudge) = narrowing::Nudge::from_words(word, hwnd) {
-                        nudge_state.borrow_mut().nudged(nudge, &nudge_context);
-                    }
-                })),
+                nudge: None,
             }
         });
-        let event_thread = EventThread::spawn(APP_SUBSCRIPTIONS, make_handlers);
+        let event_thread = EventThread::spawn(CONSOLE_SUBSCRIPTIONS, make_handlers);
         let _ = context.event_thread.set(event_thread.nudger());
         Self {
             context,
@@ -1212,10 +1089,8 @@ impl Outpost {
             fault(context, detail.clone());
             return Err(detail);
         }
-        // Before the hook is installed, so the reducer holds every copy the
-        // hook takes until the listener's forwarding ends.
-        context.mailbox.post(Posted::Hooked);
-        if let Err(error) = self.event_thread.hook(target_pid) {
+        let console_host = is_console_host(&context.application_name(target_pid));
+        if console_host && let Err(error) = self.event_thread.hook(target_pid) {
             let detail = format!("the WinEvent hook could not be installed: {error}");
             tracing::error!(
                 target_pid,
@@ -1225,8 +1100,6 @@ impl Outpost {
             fault(context, detail.clone());
             return Err(detail);
         }
-        // A verdict the worker kept before the hook was in changed nothing.
-        context.nudge_event_thread(narrowing::Nudge::Decide);
         tracing::info!(
             target_pid,
             image = %context.application_name(target_pid),
@@ -1422,14 +1295,6 @@ impl Outpost {
         *self.context.window_readability.lock() = reader;
     }
 
-    /// Tells the outpost that no focus listener forwards its application's
-    /// `WinEvent`s to it: its own hook's copies are handled as they come,
-    /// never held for the hand-over (`books/dev/src/explanation/design/ownership.md`), as for an outpost run alone
-    /// ([`run_attach`]) or one a test hands facts to itself.
-    pub fn without_listener(&self) {
-        self.context.mailbox.post(Posted::WithoutListener);
-    }
-
     /// Tells `observer` of every event the outpost's own UIA handlers and
     /// `WinEvent` hooks take in from the application, once it is queued for
     /// the worker. Events reach a client asynchronously, after the
@@ -1459,22 +1324,12 @@ impl Outpost {
     pub fn handle_command(&self, command: &CoreToOutpost) {
         let context = &self.context;
         match command {
-            CoreToOutpost::DeliverFact {
-                trace_id,
-                timing,
-                fact,
-                win_event,
-            } => context.take_in_routed_fact(
-                fact,
-                *win_event,
-                *trace_id,
-                EventTiming {
-                    relayed_at_us: now_us(),
-                    ..*timing
-                },
-            ),
-            CoreToOutpost::ForwardingEnded { through } => {
-                context.mailbox.post(Posted::ForwardingEnded(*through));
+            // Core tells and asks: the listener's facts and the hand-over's
+            // end are no longer the outpost's.
+            CoreToOutpost::DeliverFact { .. }
+            | CoreToOutpost::ForwardingEnded { .. }
+            | CoreToOutpost::LiveReread { .. } => {
+                tracing::debug!("a routed fact or live re-read is not the outpost's; dropped");
             }
             CoreToOutpost::Query {
                 trace_id,
@@ -1498,19 +1353,6 @@ impl Outpost {
                         ..EventTiming::default()
                     },
                 ),
-                Source::Other,
-            ),
-            // Core's live re-read of the outpost's last MSAA focus report,
-            // planned in its place as a fact.
-            CoreToOutpost::LiveReread { request, trace_id } => context.push(
-                Item::Fact(
-                    DeliveredFact::MsaaLiveReread {
-                        request: *request,
-                        trace_id: *trace_id,
-                    },
-                    None,
-                ),
-                (TraceId::mint(), now_us(), EventTiming::default()),
                 Source::Other,
             ),
             CoreToOutpost::IdleQuery { round } => context.push(
@@ -1563,6 +1405,12 @@ impl Outpost {
             }
         }
     }
+}
+
+/// Whether an application named `name` (its image, without the extension)
+/// is a console host, whose console's events its outpost hooks.
+fn is_console_host(name: &str) -> bool {
+    name.eq_ignore_ascii_case("conhost") || name.eq_ignore_ascii_case("OpenConsole")
 }
 
 /// `ask` with the node ids it names as this outpost knows them.
@@ -2024,9 +1872,6 @@ pub fn run_attach(target_pid: u32, options: OutpostOptions) -> io::Result<()> {
             }
         })?;
     let outpost = Outpost::with_options(written, target_pid, options);
-    // No listener forwards anything here: the outpost's own hook takes in
-    // every `WinEvent`.
-    outpost.context.mailbox.post(Posted::WithoutListener);
     outpost.handle_command(&CoreToOutpost::Query {
         trace_id: TraceId::mint(),
         request_id: RequestId::shell(0),

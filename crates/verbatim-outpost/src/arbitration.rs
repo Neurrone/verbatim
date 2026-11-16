@@ -80,8 +80,6 @@ use std::sync::Arc;
 use crate::outpost::lock::{Lock, LockGuard};
 use std::time::{Duration, Instant};
 
-use verbatim_ia2::WindowCache;
-
 pub use crate::outpost::Verdicts;
 use crate::outpost::{Probe as KeptProbe, Probed, VerdictChange};
 use verbatim_process::clock::{Clock, ObservationClock};
@@ -408,60 +406,6 @@ fn decide(
     }
 }
 
-/// What an outpost's event thread knows of each window it takes in
-/// `WinEvents` from, so a flood of events from one window reads its
-/// classes once and asks the arbitrator only until its backend is decided
-/// for the window's lifetime ([`Arbitrator::lasting_verdict`]). A window's
-/// entry goes when the window is destroyed ([`forget`](Self::forget)), or
-/// when its handle is found owned by another thread ([`WindowCache`]).
-#[derive(Default)]
-pub(crate) struct EventWindows {
-    windows: WindowCache<KnownWindow>,
-}
-
-/// What [`EventWindows`] keeps of one window.
-struct KnownWindow {
-    classes: WindowClasses,
-    /// Its backend, once decided for its lifetime: `Some(true)` for UIA.
-    lasting: Option<bool>,
-}
-
-impl EventWindows {
-    /// Whether window `hwnd`, owned by thread `owner`, is already known to
-    /// be read through UIA, from the class lists or a kept verdict, without
-    /// the probe ([`uses_uia`] probes when neither decides), with
-    /// `verdicts` the push-time copy of the reducer's verdicts, taken only while the
-    /// window's backend is not decided for its lifetime. Its classes are
-    /// read with `classes_of` the first time. Local calls only, so safe on
-    /// the thread that takes in an outpost's `WinEvents`.
-    pub(crate) fn known_to_use_uia(
-        &mut self,
-        (arbitrator, verdicts): (&Lock<Arbitrator>, impl FnOnce() -> Arc<Verdicts>),
-        (hwnd, owner): (isize, u32),
-        classes_of: impl FnOnce(isize) -> WindowClasses,
-    ) -> bool {
-        let known = self.windows.get_or_learn(hwnd, owner, || KnownWindow {
-            classes: classes_of(hwnd),
-            lasting: None,
-        });
-        if let Some(uia) = known.lasting {
-            return uia;
-        }
-        let verdicts = verdicts();
-        let (verdict, lasting) = lock(arbitrator).lasting_verdict(&verdicts, hwnd, &known.classes);
-        if lasting {
-            known.lasting = verdict;
-        }
-        verdict == Some(true)
-    }
-
-    /// Forgets window `hwnd`: it was destroyed, and its handle may be
-    /// reused.
-    pub(crate) fn forget(&mut self, hwnd: isize) {
-        self.windows.forget(hwnd);
-    }
-}
-
 /// `arbitrator`, locked: a poisoned lock is taken as it is, as its state
 /// stays consistent.
 #[track_caller]
@@ -479,43 +423,6 @@ mod tests {
     /// The classes of a top-level window of class `class`.
     fn top(class: &str) -> WindowClasses {
         WindowClasses::new(class, class)
-    }
-
-    /// Whether the event thread knows window 42, owned by thread 7 and of a
-    /// class NVDA always reads through UIA, to be read through UIA, each
-    /// read of its classes counted in `reads`.
-    fn uia_window_known(
-        windows: &mut EventWindows,
-        arbitrator: &Lock<Arbitrator>,
-        reads: &std::cell::Cell<u32>,
-    ) -> bool {
-        let verdicts = || Arc::new(Verdicts::default());
-        windows.known_to_use_uia((arbitrator, verdicts), (42, 7), |_| {
-            reads.set(reads.get() + 1);
-            top("RAIL_WINDOW")
-        })
-    }
-
-    #[test]
-    fn the_event_thread_reads_a_windows_classes_once_for_its_events() {
-        let arbitrator = Lock::new(Arbitrator::default());
-        let mut windows = EventWindows::default();
-        let reads = std::cell::Cell::new(0);
-        for _ in 0..3 {
-            assert!(uia_window_known(&mut windows, &arbitrator, &reads));
-        }
-        assert_eq!(reads.get(), 1);
-    }
-
-    #[test]
-    fn the_event_thread_forgets_a_destroyed_window() {
-        let arbitrator = Lock::new(Arbitrator::default());
-        let mut windows = EventWindows::default();
-        let reads = std::cell::Cell::new(0);
-        assert!(uia_window_known(&mut windows, &arbitrator, &reads));
-        windows.forget(42);
-        assert!(uia_window_known(&mut windows, &arbitrator, &reads));
-        assert_eq!(reads.get(), 2, "read again once the window was destroyed");
     }
 
     #[test]

@@ -51,48 +51,18 @@ start asks the foreground application's outpost for its focus instead
 dropped is lost, as NVDA loses it. The installation's end is logged
 at info, with the time it took; the shutdown waits for it.
 
-### The hand-over of an application's MSAA events
+### The console host's events
 
-An outpost's own process-scoped hook takes in all its application's MSAA
-events, focus, foreground, menu-popup, alert, and tooltip included, so they
-reach it by one route in the order Windows raised them
-([ADR 0001: Focus](../adr/0001-focus.md), "One route per application, and
-the marker"). The listener forwards
-those events only until the outpost's hook is in, so that an application's
-first events start its outpost:
-
-- An outpost tells its reducer the hook goes in, installs its hook, and
-  says `Ready` once it is in.
-- On `Ready` the supervisor sends the listener `HookInstalled` (application
-  and generation). The listener reads the clock, forwards none of that
-  application's facts raised after that tick, still forwards those raised
-  at or before it, and queues `ForwardingEnded`, naming the tick, behind
-  every fact queued; the supervisor relays it to that generation, or drops
-  it if the generation has gone.
-- Every `WinEvent` fact carries its raising thread and time
-  (`WinEventStamp`). The reducer holds the hook's whole stream from the
-  hook's install until `ForwardingEnded`, and handles the listener's
-  copies as they come (`reducer::hold`;
-  `books/dev/src/explanation/design/ownership.md`). At
-  `ForwardingEnded` it drops the held copies of the kinds the listener
-  forwards raised at or before the named tick, which the listener
-  forwarded, and releases the rest in the hook's order, as one batch,
-  ahead of anything the hook delivers later; a later `ForwardingEnded`,
-  from a replacement listener, finds the hold released. If the listener's
-  reads end first (`UiaFocusReadsEnded`), the hold is released, dropping
-  the held copies raised at or before the newest listener copy handled. An
-  outpost no listener forwards to (`run_attach`, or a test's,
-  `Outpost::without_listener`) holds nothing. The hold costs only an
-  outpost's start: a median of 20.6 ms, at most 591.3 ms over 126 starts.
-- When an application's outpost generation ends, from any stage, or the
-  supervisor declines to watch it, the supervisor sends the listener
-  `HookRemoved`, and the listener forwards that application's events again.
-  A replacement listener gets `--hooks-in`, forwards none of those
-  applications' events, and first sends each such outpost a
-  `ForwardingEnded`. Messages for the listener while it launches are held
-  in order.
-- A console window's events reach the console host's outpost by its own
-  hook, which Windows scopes by the event's thread.
+No outpost hooks a `WinEvent` but the console host's: its event thread
+hooks the console's update and caret events (`CONSOLE_SUBSCRIPTIONS`),
+scoped to the console host's process, which Windows scopes by the
+event's thread, once the outpost is assigned an application whose image
+is `conhost` or `OpenConsole`. The listener tells Core of every other
+kind, and Core asks the outpost for what it reads
+(`docs/design/readers-tell-core-asks-build1.md`). A fact the supervisor
+still routes to an outpost (`CoreToOutpost::DeliverFact`), the end of
+the listener's forwarding and Core's live re-read are dropped as they
+arrive.
 
 ### A UIA focus, judged and read by the listener
 
@@ -340,10 +310,7 @@ the same tables and code, which the arbitrator's own lists are built from.
   from the worker generation in charge, but a timed-out probe and a destroyed window's
   forgetting from any generation, so a window is not probed again more
   often than NVDA probes it. A probe committed before its worker is
-  abandoned stays recorded. When the record changes the reducer publishes
-  the new snapshot to the mailbox's push-time copy (`Effect::Verdicts`),
-  and after it, for a probe that found a provider, nudges the event thread
-  to decide its hook again (`Effect::Narrow`).
+  abandoned stays recorded.
 - `lasting_verdict` answers only a verdict that lasts the window's
   lifetime.
 - `Clock` (`verbatim_process::clock`), `Arbitrator::set_clock`, and
@@ -384,9 +351,7 @@ the same tables and code, which the arbitrator's own lists are built from.
   worker the window of each foreground change a program is about to
   handle, so a test can hold the worker there);
   `set_focus_window_reader` (a `FocusWindowReader` for focus-now); `set_observation_clock` (a `verbatim_process::clock::ObservationClock`
-  for the outpost's own events' stamps and its verdicts' keeps);
-  and `without_listener`, for an outpost
-  no focus listener forwards to, whose hook's copies are never held.
+  for the outpost's own events' stamps and its verdicts' keeps).
 - `Outpost::settle` posts a barrier (`Item::Barrier` with
   `Asker::Settle`) and waits until the reducer reaches it with no program
   in flight, everything queued before it handled and a noted caret read,
@@ -409,8 +374,8 @@ the same tables and code, which the arbitrator's own lists are built from.
 Inside an outpost (`docs/design/communication.md`, section 6.4;
 `books/dev/src/explanation/design/ownership.md`):
 
-- The mailbox (`outpost::shell::Mailbox`): the hook callbacks
-  (`APP_SUBSCRIPTIONS`), the subscription's callbacks, routed facts,
+- The mailbox (`outpost::shell::Mailbox`): the console host's hook
+  callbacks (`CONSOLE_SUBSCRIPTIONS`), the subscription's callbacks,
   Core's commands, and the workers' commits and ends only append to it,
   under its one lock, and return. Two kinds of entry are dropped as they
   are pushed, judged on copies of the reducer's marks that only the shell
@@ -426,7 +391,7 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
   its own, run by its shell (`outpost::shell`): it holds Core's requests
   queued for the worker, the intake's order (`reducer::intake`), the
   reports Core may hold (`reducer::held`), the follow state
-  (`reducer::follow`), the hand-over's hold, the arbitrator's verdicts
+  (`reducer::follow`), the arbitrator's verdicts
   (`reducer::verdicts`), each node's text facts (`reducer::text`), the
   program in flight with the worker generation in charge, and the queries
   not yet answered. Inputs come in mailbox order; effects go out:
@@ -778,26 +743,9 @@ and the inherited pipe handles.
 - The event thread hosts the hook, never rebound: a second
   `WINEVENT_OUTOFCONTEXT` hook set on a thread that has one has been seen to
   stop delivery on it for the process's life.
-- Every event is arbitrated per window, so one backend reports it. The event
-  thread drops an MSAA event for a known UIA window before queuing it, from
-  its record of windows (`arbitration::EventWindows` in a
-  `verbatim_ia2::WindowCache`), asking the arbitrator with the mailbox's
-  push-time copy of the verdicts only until `lasting_verdict`; a verdict a
-  program probed reaches it one transition of the reducer later, which
-  lets at most a few more MSAA events through for the program to drop. An
-  entry goes on destruction or when the handle is
-  found owned by another thread, and all go after an override change. A UIA
-  element that is not a window gets its window from `nearest_window_handle`
-  on the worker.
-- The event thread narrows the hook (`outpost/narrowing.rs`;
-  `books/dev/src/explanation/design/wake-ups.md`, "Narrowing the outpost's hook", which states
-  what can be lost): while the focus window and foreground window are both
-  UIA, the value, state, name, description, selection, and text selection
-  events are unhooked (`narrowing::NARROWED`), hooked again once the focus,
-  a menu opening, or the foreground is in an MSAA or undecided window.
-  Those windows come from the hook's own events, or, until it delivers one,
-  from nudges for routed facts (`verbatim_ia2::event_thread::Nudger`); the shell nudges
-  when the reducer records a UIA verdict (`Effect::Narrow`).
+- The event thread hooks only the console host's events, and queues each
+  as it comes. A UIA element that is not a window gets its window from
+  `nearest_window_handle` on the worker.
 - Trace ids are minted when an event arrives. `WindowFacts` (`window_facts`,
   local calls) give the top-level window and root owner, topmost style,
   `Windows.UI.Core` activity, NVDA's foreground test, and for a focus the

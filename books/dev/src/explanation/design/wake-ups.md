@@ -73,7 +73,7 @@ The items keep their numbers, since code and the crate guides cite them.
    pays the same per event. Only filtering inside the application before
    the event leaves it removes the wake, which is the injection helper
    of decision D2; until then each kind is hooked only where it is needed
-   (item 13, and "Narrowing the outpost's hook" below).
+   (item 13, and "The outpost's hook" below).
 8. UI Automation's own threads in the listener wake for every event its
    desktop-wide subscriptions deliver, in its client-side dispatch, with
    no Verbatim code on the stack. The threads that run Verbatim's
@@ -138,63 +138,14 @@ or 50 ms after the key's before read: at most 10 worker wake-ups a key,
 none while no note polls (`books/dev/src/explanation/design/key-holding.md`,
 "The console host's caret poll").
 
-## Narrowing the outpost's hook
+## The outpost's hook
 
-Approved by Dickson; amended on 2026-10-20, when the system caret's
-location change left the narrowed kinds.
-
-The problem: an outpost hooked a fixed set of `WinEvent` kinds for its
-application's life, and the event thread dropped the value, state, name,
-description, selection and text selection events of a window read
-through UIA only after they had woken it. In a console flood those were
-57 percent of the events the outpost took, nearly all UI Automation's own
-`WinEvent` copies of its events, which UI Automation raises only while
-some client hooks them.
-
-The rule: while the application's focus window and foreground window are
-both known to be read through UIA, those kinds are unhooked; as soon as
-the focus, a menu opening, or the foreground is in a window read through
-MSAA, or not yet decided, they are hooked again before that event is
-queued. Focus, foreground, menu opening, alert, tooltip, window shown,
-the system caret's location change, window destroyed, and the console's
-updates and caret stay hooked, because the worker uses them for UIA
-windows too, the system caret's events as a caret event on a UIA focus,
-as NVDA handles them. Once a focus has raised a UIA caret event of its
-own, and in a focused console host terminal, the intake drops the system
-caret's events as they are pushed, until the next focus, since each
-would otherwise cost a caret read that the UIA caret event repeats. The
-mechanism is in `books/dev/src/reference/crates/verbatim-outpost.md`, the event thread, and
-`books/dev/src/reference/crates/verbatim-ia2.md`, `suspend_kinds`.
-
-The effect, in a console flood: the event thread's wake-ups fell by about
-40 percent and the outpost received about 23,700 `WinEvent`s in a run
-instead of 53,800; in a Windows Terminal flood it received 7.
-
-What can be lost:
-
-- An event of a narrowed kind raised by a window read through MSAA after
-  the focus or foreground entered it but before the event thread took
-  that focus or foreground event. Checked in the console host's Find
-  dialog: one value change on its edit, raised before its foreground
-  event, was not received; the hook was in again 0.1 ms after the
-  foreground event, before the dialog's focus, and what was said was
-  unchanged, since the worker reads the edit with the focus anyway.
-- Such events from a window read through MSAA that is neither the focus
-  window nor the foreground window, which the worker accepts only from a
-  topmost window such as a menu or a drop-down list, whose own focus or
-  menu opening hooks them again. Application support that asks for
-  events from any window (`RequestedEvents`, empty today) will need those
-  kinds kept hooked.
-
-Narrowing exposed a race it had not caused: with value changes unhooked,
-a read under a key's note could run while the console host wrote a character
-and moved its cursor between two of its provider calls, pairing the new
-text with the old caret, and the reducer then echoed the character
-wrongly. A remote operation is not atomic against the provider, so the
-read's program reads the caret again at its end and answers nothing when
-it moved; the update after the write reads again
-(`books/dev/src/reference/crates/verbatim-uia-rops.md`, `recheck` and `moved_while_read`).
-Hooking value changes again only hid the race.
+No outpost hooks a `WinEvent` but the console host's, which hooks only
+its console's update and caret events, scoped to its process: every other
+kind is the focus listener's, told to Core
+(`docs/design/readers-tell-core-asks-build1.md`, "The outpost in this
+build"), so an outpost's event thread wakes for nothing in any other
+application.
 
 ## What remains, largest first
 

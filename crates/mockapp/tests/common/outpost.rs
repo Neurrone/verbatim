@@ -579,14 +579,11 @@ impl OutpostUnderTest {
         buffer: u32,
         time: ObservationTime,
     ) -> Self {
-        let under_test = Self::build_ready(app, options, buffer, time);
-        under_test.outpost.without_listener();
-        under_test
+        Self::build_ready(app, options, buffer, time)
     }
 
     /// An outpost watching `app`, on the observation clock `time`, which
-    /// has announced itself ready, its hook's copies held as a listener's
-    /// forwarding asks.
+    /// has announced itself ready.
     fn build_ready(
         app: &super::MockApp,
         options: OutpostOptions,
