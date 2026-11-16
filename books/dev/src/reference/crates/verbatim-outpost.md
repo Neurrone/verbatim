@@ -1120,20 +1120,16 @@ Caret and text events:
   selected. No text gives `FocusText::NoText` (Core speaks the value);
   unreadable text gives `FocusText::NotRead` (Core speaks neither). A caret
   read that hangs holds the report until the deadline.
-- `Text_TextSelectionChanged` is `CaretMoved`, `Text_TextChanged` is
-  `TextChanged`, and the active text position change is
-  `ActiveTextPositionChanged`, its range's start kept as an anchor without a
-  call, dropped for an unknown element or no range. An edit control's caret
-  (`EVENT_OBJECT_LOCATIONCHANGE` or `EVENT_OBJECT_SHOW` on `OBJID_CARET`)
-  and text selection events are `CaretMoved`, its value change
-  `TextChanged`.
-- For a UIA focus, the system caret's events are its caret events
-  (`Worker::system_caret_of_uia_focus`), since some UIA documents raise
-  none, until the focus raises a UIA caret event of its own, or from the
-  start in a console host terminal; then the intake drops them
-  (`Intake::drop_system_caret`) until the next focus, edit controls' caret
-  events with them. NVDA's IAccessible2, Word, and Scintilla exceptions are
-  not built (`docs/parity/text.md`).
+- `Text_TextSelectionChanged` of a followed node is told to Core as a
+  caret tell (`Worker::caret_tell`), the event's element kept behind the
+  token the tell names, let go past 60 seconds or beyond the newest 64,
+  for Core's caret read to adopt when the node answered no text pattern
+  (`text_reads::adopt_told`); the outpost reads nothing for it. A
+  terminal's caret events keep the terminal's reading path until build
+  3's change tells. `Text_TextChanged` is `TextChanged`, and the active
+  text position change is `ActiveTextPositionChanged`, its range's start
+  kept as an anchor without a call, dropped for an unknown element or no
+  range. The system caret's events reach Core from the listener.
 - The intake keeps one caret report per node and drops a caret event older
   than the node's last caret read. A held terminal's caret event is noted
   (`Item::NotedCaret`, handed out by `Intake::when_idle`), and the console
