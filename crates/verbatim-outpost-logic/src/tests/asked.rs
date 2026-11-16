@@ -92,16 +92,13 @@ fn finished(request: Request) -> Input {
 }
 
 fn query() -> Input {
-    Input::Entry {
-        entry: entry(
-            Item::Query {
-                request_id: verbatim_model::protocol::RequestId::shell(1),
-                query: Query::DumpTree { locations: false },
-            },
-            0,
-        ),
-        source: Source::Other,
-    }
+    Input::Entry(entry(
+        Item::Query {
+            request_id: verbatim_model::protocol::RequestId::shell(1),
+            query: Query::DumpTree { locations: false },
+        },
+        0,
+    ))
 }
 
 /// A request runs at once with nothing in flight, and one sent while a

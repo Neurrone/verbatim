@@ -87,9 +87,7 @@ use verbatim_model::{
 };
 
 pub use self::charge::Request;
-pub use self::entry::{
-    Asker, Entry, Front, Item, Source, UiaEvent, UiaKind, WinKind, is_state_property,
-};
+pub use self::entry::{Asker, Entry, Front, Item, UiaEvent, UiaKind, WinKind, is_state_property};
 pub use self::follow::{
     Applied, BarWatch, Change, DialogMemo, Facts, FocusCommit, FocusPath, FollowState, Followed,
     Group, LastReported, LogicError, MarkChange, MsaaReport, Origin, Owed, OwedProgram, OwedWork,
@@ -317,13 +315,8 @@ pub enum Effect {
     reason = "an entry moves by value from the mailbox into the intake, as it always has"
 )]
 pub enum Input {
-    /// An entry from a producer, and where it came from.
-    Entry {
-        /// The entry.
-        entry: Entry,
-        /// Where it came from.
-        source: Source,
-    },
+    /// An entry from a producer.
+    Entry(Entry),
     /// Core's word on where attention is.
     Front(FrontWindow),
     /// Core withdraws query `0` if it has not started.
@@ -539,7 +532,7 @@ impl Reducer {
         let before = self.observed();
         let mut effects = Vec::new();
         match input {
-            Input::Entry { entry, .. } => {
+            Input::Entry(entry) => {
                 self.entry(entry, now, &mut effects);
             }
             Input::Front(front) => {

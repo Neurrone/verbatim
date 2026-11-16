@@ -107,7 +107,7 @@ pub(crate) use reducer::{
     Anchor, AnswerCut, CutLine, KeptSelection, NodeAnchors, Probe, Probed, ReadSelection,
     ReportCut, VerdictChange,
 };
-use reducer::{Entry, Facts, FollowState, Item, Object, Source, UiaEvent, UiaKind};
+use reducer::{Entry, Facts, FollowState, Item, Object, UiaEvent, UiaKind};
 use shell::{Mailbox, Posted, Shell};
 use worker::Charge;
 
@@ -746,32 +746,23 @@ impl Context {
         nodes
     }
 
-    /// Appends `item` to the mailbox, from `source`.
-    fn push(
-        &self,
-        item: Item,
-        (trace, observed_at_us, timing): (TraceId, u64, EventTiming),
-        source: Source,
-    ) {
-        self.mailbox.push(
-            Entry {
-                item,
-                trace,
-                observed_at_us,
-                timing,
-                front: reducer::Front::Untested,
-            },
-            source,
-        );
+    /// Appends `item` to the mailbox.
+    fn push(&self, item: Item, (trace, observed_at_us, timing): (TraceId, u64, EventTiming)) {
+        self.mailbox.push(Entry {
+            item,
+            trace,
+            observed_at_us,
+            timing,
+            front: reducer::Front::Untested,
+        });
     }
 
     /// Queues an event one of the outpost's own handlers took in, observed
     /// now, then tells the observer, if there is one, that it was heard.
-    fn take_in(&self, item: Item, heard: Heard, timing: EventTiming, source: Source) {
+    fn take_in(&self, item: Item, heard: Heard, timing: EventTiming) {
         self.push(
             item,
             (TraceId::mint(), window::observed_us(&timing), timing),
-            source,
         );
         self.tell_heard(heard);
     }
@@ -804,7 +795,6 @@ impl Context {
             },
             Heard::Msaa(kind),
             timing,
-            Source::Hook,
         );
     }
 
@@ -1358,7 +1348,6 @@ impl Outpost {
                         ..EventTiming::default()
                     },
                 ),
-                Source::Other,
             ),
             CoreToOutpost::IdleQuery { round } => context.push(
                 Item::Barrier {
@@ -1366,7 +1355,6 @@ impl Outpost {
                     behind_noted: false,
                 },
                 (TraceId::mint(), now_us(), EventTiming::default()),
-                Source::Other,
             ),
             CoreToOutpost::Front(front) => context.mailbox.post(Posted::Front(*front)),
             // The reducer withdraws the query if it has not dispatched it,
@@ -1377,7 +1365,6 @@ impl Outpost {
             CoreToOutpost::ReadTerminal { node, trace_id } => context.push(
                 read_terminal_item(*node),
                 (*trace_id, now_us(), EventTiming::default()),
-                Source::Other,
             ),
             CoreToOutpost::KeyNote(note) => context.mailbox.post(Posted::KeyNote(*note)),
             CoreToOutpost::Request(ask) => context.mailbox.post(Posted::Ask(unstamped_ask(ask))),
@@ -1397,7 +1384,6 @@ impl Outpost {
                         raiser: 0,
                     },
                     (TraceId::mint(), now_us(), EventTiming::default()),
-                    Source::Other,
                 );
             }
             CoreToOutpost::Ping { .. } => {
@@ -1423,7 +1409,6 @@ impl Outpost {
                         acknowledged: *acknowledged,
                     },
                     (TraceId::mint(), now_us(), EventTiming::default()),
-                    Source::Other,
                 );
             }
         }
@@ -1613,7 +1598,6 @@ fn range_value_subscription(context: &Arc<Context>) -> Subscription<Cached<Prope
                     observed_at_us: context.observed_now(),
                     ..EventTiming::default()
                 },
-                Source::Other,
             );
         }),
     }
@@ -1651,7 +1635,6 @@ fn register_focus_events(context: &Arc<Context>) -> Option<Registration> {
                     observed_at_us: property_context.observed_now(),
                     ..EventTiming::default()
                 },
-                Source::Other,
             );
         });
     let properties = Subscription::Properties {
@@ -1678,7 +1661,6 @@ fn register_focus_events(context: &Arc<Context>) -> Option<Registration> {
                     observed_at_us: text_context.observed_now(),
                     ..EventTiming::default()
                 },
-                Source::Other,
             );
         });
     let caret = Subscription::Events {
@@ -1707,7 +1689,6 @@ fn register_focus_events(context: &Arc<Context>) -> Option<Registration> {
                         observed_at_us: position_context.observed_now(),
                         ..EventTiming::default()
                     },
-                    Source::Other,
                 );
             },
         ),

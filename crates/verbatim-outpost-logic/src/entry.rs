@@ -291,18 +291,3 @@ impl Entry {
         }
     }
 }
-
-/// Where an entry came from. The reducer judges nothing by it since the
-/// hand-over's hold went; it is removed with the entries' producers that
-/// remain (`docs/design/readers-tell-core-asks-build1.md`, step 8).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Source {
-    /// The outpost's own `WinEvent` hook.
-    Hook,
-    /// The focus listener, forwarding a copy of a `WinEvent` the outpost's
-    /// hook may also take.
-    Listener,
-    /// Anything else: the outpost's own UIA subscriptions, the listener's
-    /// other facts, Core's commands and the outpost's own entries.
-    Other,
-}

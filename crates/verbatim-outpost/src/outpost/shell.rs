@@ -40,7 +40,7 @@ use super::commit::{Effects, FocusEffects, KeptTarget, Writes};
 use super::outbound::Carried;
 use super::reducer::{
     Asker, Change, Cut, Effect, Entry, Input, Item, Marks, NoteOn, Now, Program, Reducer, Request,
-    Source, Subscribed, VerdictChange,
+    Subscribed, VerdictChange,
 };
 use super::store::{Removed, Store, Tag};
 use super::worker::{self, Charge, Job};
@@ -52,8 +52,8 @@ use verbatim_process::alarm::Alarm;
     reason = "an entry moves by value from its producer into the mailbox, as it always has"
 )]
 pub(super) enum Posted {
-    /// An entry, and where it came from.
-    Entry { entry: Entry, source: Source },
+    /// An entry.
+    Entry(Entry),
     /// `Outpost::settle`, answered on `0` once the reducer reaches it.
     Settle(mpsc::Sender<()>),
     /// Core's word on where attention is.
@@ -135,7 +135,7 @@ impl Mailbox {
         if state.closed
             && matches!(
                 posted,
-                Posted::Entry { .. }
+                Posted::Entry(_)
                     | Posted::Ask(_)
                     | Posted::CancelAsk(_)
                     | Posted::WindowDestroyed(_)
@@ -153,12 +153,12 @@ impl Mailbox {
 
     /// Appends `entry`, from `source`, unless the reducer's marks drop it
     /// as it is pushed, waking nobody ([`Marks::drops_on_arrival`]).
-    pub(super) fn push(&self, entry: Entry, source: Source) {
+    pub(super) fn push(&self, entry: Entry) {
         let mut state = self.lock();
         if state.closed || state.marks.drops_on_arrival(&entry.item) {
             return;
         }
-        state.posted.push_back(Posted::Entry { entry, source });
+        state.posted.push_back(Posted::Entry(entry));
         self.rouse(state);
     }
 
@@ -531,7 +531,7 @@ impl Shell {
     /// Takes one posted input into the reducer and applies what it asks.
     fn take(&mut self, posted: Posted) {
         let input = match posted {
-            Posted::Entry { mut entry, source } => {
+            Posted::Entry(mut entry) => {
                 // The one test of an MSAA focus or a foreground change
                 // against the foreground, made as the reducer takes it in,
                 // never on the worker ([`super::reducer::Front`]).
@@ -542,7 +542,7 @@ impl Shell {
                     self.tokens
                         .insert(*request_id, token(&self.context, *request_id, entry.trace));
                 }
-                Input::Entry { entry, source }
+                Input::Entry(entry)
             }
             Posted::Settle(done) => {
                 let Some(input) = self.settle(done) else {
@@ -645,10 +645,11 @@ impl Shell {
             asker: Asker::Settle(id),
             behind_noted: false,
         };
-        Some(Input::Entry {
-            entry: Entry::own(barrier, TraceId::mint(), self.now().wall_us),
-            source: Source::Other,
-        })
+        Some(Input::Entry(Entry::own(
+            barrier,
+            TraceId::mint(),
+            self.now().wall_us,
+        )))
     }
 
     /// Applies the reducer's effects, in order. An effect that asks, a
@@ -927,13 +928,7 @@ mod tests {
             TraceId::mint(),
             1,
         );
-        let effects = reducer.input(
-            Input::Entry {
-                entry,
-                source: Source::Other,
-            },
-            Now::default(),
-        );
+        let effects = reducer.input(Input::Entry(entry), Now::default());
         let in_flight = effects
             .iter()
             .find_map(|effect| match effect {

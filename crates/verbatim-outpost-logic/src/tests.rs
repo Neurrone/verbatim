@@ -42,15 +42,9 @@ impl Replay {
         self.reducer.tick(now(at_ms))
     }
 
-    /// Pushes `item`, observed at `at_ms`, from `source`.
-    fn push(&mut self, item: Item, source: Source, at_ms: u64) -> Vec<Effect> {
-        self.input(
-            Input::Entry {
-                entry: entry(item, at_ms),
-                source,
-            },
-            at_ms,
-        )
+    /// Pushes `item`, observed at `at_ms`.
+    fn push(&mut self, item: Item, at_ms: u64) -> Vec<Effect> {
+        self.input(Input::Entry(entry(item, at_ms)), at_ms)
     }
 
     /// Ends `request`'s program at `at_ms`, reporting or not.
@@ -323,12 +317,11 @@ fn what_arrives_after_a_focus_marker_waits_for_its_read() {
     let mut replay = Replay::new();
     let effects = replay.push(
         Item::Fact(DeliveredFact::UiaFocusMarker { marker: 7 }, None),
-        Source::Other,
         1,
     );
     assert!(programs(&effects).is_empty());
     // The copy of a `WinEvent` focus after the marker waits for its read.
-    let effects = replay.push(msaa_focus(1, 2), Source::Listener, 2);
+    let effects = replay.push(msaa_focus(1, 2), 2);
     assert!(programs(&effects).is_empty(), "the copy waits");
     let effects = replay.push(
         Item::Fact(
@@ -338,7 +331,6 @@ fn what_arrives_after_a_focus_marker_waits_for_its_read() {
             },
             None,
         ),
-        Source::Other,
         3,
     );
     assert_eq!(
@@ -354,10 +346,10 @@ fn what_arrives_after_a_focus_marker_waits_for_its_read() {
 #[test]
 fn a_cleared_absorption_reaches_the_mailbox_before_the_read_that_cleared_it() {
     let mut replay = Replay::new();
-    let request = program(&replay.push(msaa_focus(1, 1), Source::Hook, 1)).request;
+    let request = program(&replay.push(msaa_focus(1, 1), 1)).request;
     replay.commit(request, focus_change(1, false), 2);
     replay.finish(request, false, 2);
-    let effects = replay.push(name_change(1), Source::Hook, 2);
+    let effects = replay.push(name_change(1), 2);
     let request = program(&effects).request;
     let effects = replay.commit(
         request,
@@ -383,7 +375,6 @@ fn a_cleared_absorption_reaches_the_mailbox_before_the_read_that_cleared_it() {
                 op: TextOp::TerminalHold,
             },
         },
-        Source::Other,
         4,
     );
     assert!(matches!(
@@ -400,7 +391,7 @@ fn a_cleared_absorption_reaches_the_mailbox_before_the_read_that_cleared_it() {
 #[test]
 fn a_commit_that_cannot_occur_reaches_the_shell_as_a_logic_error() {
     let mut replay = Replay::new();
-    let request = program(&replay.push(name_change(1), Source::Hook, 1)).request;
+    let request = program(&replay.push(name_change(1), 1)).request;
     let effects = replay.commit(
         request,
         Change {
@@ -421,9 +412,9 @@ fn a_commit_that_cannot_occur_reaches_the_shell_as_a_logic_error() {
 fn a_foreground_change_and_a_focus_of_one_batch_are_one_group_tried_newest_first() {
     let mut replay = Replay::new();
     // A program in flight, so both wait for one batch.
-    let effects = replay.push(name_change(5), Source::Hook, 1);
+    let effects = replay.push(name_change(5), 1);
     let first = program(&effects).request;
-    replay.push(msaa_focus(1, 200), Source::Hook, 2);
+    replay.push(msaa_focus(1, 200), 2);
     replay.push(
         Item::Fact(
             DeliveredFact::Foreground { hwnd: 8 },
@@ -432,7 +423,6 @@ fn a_foreground_change_and_a_focus_of_one_batch_are_one_group_tried_newest_first
                 time: 184,
             }),
         ),
-        Source::Hook,
         3,
     );
     let effects = replay.finish(first, false, 4);
@@ -453,7 +443,6 @@ fn a_release_waits_for_the_program_in_flight_and_names_no_dead_request_live() {
             anchors: vec![],
             acknowledged: 0,
         },
-        Source::Other,
         2,
     );
     assert!(
@@ -494,7 +483,7 @@ fn a_release_waits_for_the_program_in_flight_and_names_no_dead_request_live() {
 #[test]
 fn a_shell_query_reached_at_its_deadline_is_answered_without_a_walk() {
     let mut replay = Replay::new();
-    let busy = program(&replay.push(name_change(5), Source::Hook, 1)).request;
+    let busy = program(&replay.push(name_change(5), 1)).request;
     replay.push(
         Item::Query {
             request_id: RequestId::shell(4),
@@ -507,7 +496,6 @@ fn a_shell_query_reached_at_its_deadline_is_answered_without_a_walk() {
                 answer_by_us: 2_000_000,
             },
         },
-        Source::Other,
         2,
     );
     // The query is reached at 2 s, behind the event's program.
@@ -573,7 +561,7 @@ fn verdict_of(verdicts: &Verdicts, at_us: u64) -> Option<Probed> {
 #[test]
 fn a_probe_is_recorded_when_committed_and_reaches_the_next_program() {
     let mut replay = Replay::new();
-    let effects = replay.push(msaa_focus(1, 1), Source::Hook, 1);
+    let effects = replay.push(msaa_focus(1, 1), 1);
     let request = program(&effects).request;
     let effects = replay.verdict(request, probe(Probed::Uia), 2);
     assert_eq!(
@@ -583,7 +571,7 @@ fn a_probe_is_recorded_when_committed_and_reaches_the_next_program() {
     assert_eq!(effects.len(), 0, "a probe asks nothing of the shell");
     // The next program is given the same snapshot.
     replay.finish(request, false, 3);
-    let effects = replay.push(name_change(1), Source::Hook, 4);
+    let effects = replay.push(name_change(1), 4);
     let next = program(&effects);
     assert!(Arc::ptr_eq(
         &next.facts.verdicts,
@@ -669,9 +657,9 @@ fn edit_commit(node: u64, part: NodeAnchors<u32>) -> Change {
 #[test]
 fn a_programs_text_change_reaches_the_next_programs_copy() {
     let mut replay = Replay::new();
-    let effects = replay.push(focus_now(1), Source::Other, 1);
+    let effects = replay.push(focus_now(1), 1);
     let first = program(&effects).request;
-    replay.push(focus_now(2), Source::Other, 2);
+    replay.push(focus_now(2), 2);
     let dead = Request {
         generation: 7,
         number: 99,
@@ -768,9 +756,9 @@ impl Replay {
 #[test]
 fn a_value_change_ahead_of_a_cut_read_is_found_waiting() {
     let mut replay = Replay::new();
-    let read = program(&replay.push(edit_caret(), Source::Hook, 1)).request;
+    let read = program(&replay.push(edit_caret(), 1)).request;
     assert!(
-        programs(&replay.push(edit_value_change(), Source::Hook, 2)).is_empty(),
+        programs(&replay.push(edit_value_change(), 2)).is_empty(),
         "the read part is in flight"
     );
     let effects = replay.finish_cut(read, cut(report_cut()), 3);
@@ -787,12 +775,12 @@ fn a_value_change_ahead_of_a_cut_read_is_found_waiting() {
 #[test]
 fn a_value_change_behind_a_cut_read_is_not_found_waiting() {
     let mut replay = Replay::new();
-    let read = program(&replay.push(edit_caret(), Source::Hook, 1)).request;
+    let read = program(&replay.push(edit_caret(), 1)).request;
     let effects = replay.finish_cut(read, cut(report_cut()), 2);
     let finish = program(&effects);
     assert_eq!(finishes(finish), ("report", false));
     assert!(
-        programs(&replay.push(edit_value_change(), Source::Hook, 3)).is_empty(),
+        programs(&replay.push(edit_value_change(), 3)).is_empty(),
         "the finish is in flight"
     );
     let effects = replay.finish(finish.request, false, 4);
@@ -817,17 +805,16 @@ fn answers_and_dispatches(effects: &[Effect]) -> Vec<&'static str> {
 #[test]
 fn the_idle_answer_waits_for_nothing_that_arrived_after_its_query() {
     let mut replay = Replay::new();
-    let effects = replay.push(name_change(1), Source::Hook, 1);
+    let effects = replay.push(name_change(1), 1);
     let busy = program(&effects).request;
     replay.push(
         Item::Barrier {
             asker: Asker::Round(5),
             behind_noted: false,
         },
-        Source::Other,
         2,
     );
-    replay.push(focus_now(1), Source::Other, 3);
+    replay.push(focus_now(1), 3);
     // The query is reached as the program ends: it is answered before the
     // query that arrived after it is dispatched, not once that is handled.
     let effects = replay.finish(busy, false, 4);
@@ -839,7 +826,7 @@ fn the_idle_answer_waits_for_nothing_that_arrived_after_its_query() {
 #[test]
 fn a_noted_caret_is_read_with_its_events_timing() {
     let mut replay = Replay::new();
-    let effects = replay.push(name_change(1), Source::Hook, 1);
+    let effects = replay.push(name_change(1), 1);
     let request = program(&effects).request;
     let timing = EventTiming {
         observed_at_us: 1_000,
@@ -892,15 +879,15 @@ fn settled_and_dispatches(effects: &[Effect]) -> Vec<String> {
 #[test]
 fn a_settle_is_answered_as_it_is_reached_and_a_close_drops_it() {
     let mut replay = Replay::new();
-    let effects = replay.push(name_change(1), Source::Hook, 1);
+    let effects = replay.push(name_change(1), 1);
     let busy = program(&effects).request;
     // Pushed while a program is in flight: it waits, with no program of
     // its own, and the query after it is not waited for.
     assert_eq!(
-        settled_and_dispatches(&replay.push(settle(1), Source::Other, 2)),
+        settled_and_dispatches(&replay.push(settle(1), 2)),
         [] as [String; 0]
     );
-    replay.push(focus_now(1), Source::Other, 3);
+    replay.push(focus_now(1), 3);
     assert_eq!(replay.reducer.settles(), [1].into_iter().collect());
     let effects = replay.finish(busy, false, 4);
     assert_eq!(settled_and_dispatches(&effects), ["settled 1", "dispatch"]);
@@ -909,7 +896,7 @@ fn a_settle_is_answered_as_it_is_reached_and_a_close_drops_it() {
     // A settle behind the program in flight when the outpost closes is
     // dropped with the intake, unanswered.
     let query = program(&effects).request;
-    replay.push(settle(2), Source::Other, 5);
+    replay.push(settle(2), 5);
     assert_eq!(replay.reducer.settles(), [2].into_iter().collect());
     let effects = replay.input(Input::Close, 6);
     assert_eq!(settled_and_dispatches(&effects), [] as [String; 0]);
@@ -977,7 +964,7 @@ fn commit_in_window(
 #[test]
 fn a_focus_inherits_its_windows_entered_in_front_at_commit() {
     let mut replay = Replay::new();
-    let request = program(&replay.push(msaa_focus(1, 1), Source::Hook, 1)).request;
+    let request = program(&replay.push(msaa_focus(1, 1), 1)).request;
     // Read in front as the focus entered the window.
     let entered = commit_in_window(
         &mut replay,
@@ -989,7 +976,7 @@ fn a_focus_inherits_its_windows_entered_in_front_at_commit() {
     replay.finish(request, true, 3);
     // A later focus in the same window, read while another window was in
     // front, keeps what the window entered with.
-    let request = program(&replay.push(msaa_focus(2, 4), Source::Hook, 4)).request;
+    let request = program(&replay.push(msaa_focus(2, 4), 4)).request;
     let entered = commit_in_window(
         &mut replay,
         request,
@@ -1002,7 +989,7 @@ fn a_focus_inherits_its_windows_entered_in_front_at_commit() {
 #[test]
 fn a_foreground_change_after_a_background_focus_in_the_same_window_sets_it() {
     let mut replay = Replay::new();
-    let request = program(&replay.push(msaa_focus(1, 1), Source::Hook, 1)).request;
+    let request = program(&replay.push(msaa_focus(1, 1), 1)).request;
     // The window is in the background as its focus is reported.
     let entered = commit_in_window(
         &mut replay,
@@ -1037,16 +1024,10 @@ fn a_foreground_change_after_a_background_focus_in_the_same_window_sets_it() {
 #[test]
 fn an_msaa_focus_is_tested_for_acceptance_as_it_is_taken_in() {
     let mut replay = Replay::new();
-    let first = program(&replay.push(focus_now(1), Source::Other, 0)).request;
+    let first = program(&replay.push(focus_now(1), 0)).request;
     let mut tested = entry(msaa_focus(1, 5), 5);
     tested.front = Front::Accepted(false);
-    let waiting = replay.input(
-        Input::Entry {
-            entry: tested,
-            source: Source::Other,
-        },
-        5,
-    );
+    let waiting = replay.input(Input::Entry(tested), 5);
     assert!(programs(&waiting).is_empty(), "the focus-now runs");
     let effects = replay.finish(first, false, 6);
     let Work::Entry { entry, .. } = &program(&effects).work else {
@@ -1109,10 +1090,10 @@ fn gone(effects: &[Effect]) -> Vec<u64> {
 #[test]
 fn a_live_re_read_answer_dropped_by_the_outpost_is_answered_gone() {
     let mut replay = Replay::new();
-    let dropped = program(&replay.push(listener_read(1, Some(4)), Source::Other, 1)).request;
+    let dropped = program(&replay.push(listener_read(1, Some(4)), 1)).request;
     assert_eq!(gone(&replay.finish(dropped, false, 2)), [4]);
 
-    let panicked = program(&replay.push(listener_read(1, Some(5)), Source::Other, 3)).request;
+    let panicked = program(&replay.push(listener_read(1, Some(5)), 3)).request;
     let effects = replay.input(
         Input::Finished {
             request: panicked,
@@ -1142,9 +1123,9 @@ fn a_newer_focus_of_the_same_element_never_replaces_a_live_re_read_answer() {
         work => panic!("a listener read's program, not {work:?}"),
     };
     let mut replay = Replay::new();
-    let held = program(&replay.push(msaa_focus(1, 1), Source::Hook, 1)).request;
-    assert!(programs(&replay.push(listener_read(2, Some(4)), Source::Other, 2)).is_empty());
-    assert!(programs(&replay.push(listener_read(2, None), Source::Other, 3)).is_empty());
+    let held = program(&replay.push(msaa_focus(1, 1), 1)).request;
+    assert!(programs(&replay.push(listener_read(2, Some(4)), 2)).is_empty());
+    assert!(programs(&replay.push(listener_read(2, None), 3)).is_empty());
     let answer = program(&replay.finish(held, false, 4)).clone();
     assert_eq!(answers(&answer), Some(4), "the answer first");
     let newer = program(&replay.finish(answer.request, false, 5)).clone();
@@ -1216,7 +1197,7 @@ fn the_foreground_windows_element_is_found_by_one_program_at_a_time() {
 fn a_query_is_answered_once_whatever_ends_it() {
     // By its program.
     let mut replay = Replay::new();
-    let effects = replay.push(focus_now(1), Source::Other, 1);
+    let effects = replay.push(focus_now(1), 1);
     let request = program(&effects).request;
     let effects = replay.commit(
         request,
@@ -1231,16 +1212,16 @@ fn a_query_is_answered_once_whatever_ends_it() {
     assert!(replay.reducer.queries().is_empty());
 
     // By a program that ended without answering it.
-    let effects = replay.push(focus_now(3), Source::Other, 10_010);
+    let effects = replay.push(focus_now(3), 10_010);
     let request = program(&effects).request;
     let effects = replay.finish(request, false, 10_011);
     assert_eq!(replies(&effects), [(3, "failed")]);
     assert!(replay.reducer.queries().is_empty());
 
     // Withdrawn before it started.
-    let effects = replay.push(name_change(1), Source::Hook, 10_020);
+    let effects = replay.push(name_change(1), 10_020);
     let busy = program(&effects).request;
-    replay.push(focus_now(4), Source::Other, 10_021);
+    replay.push(focus_now(4), 10_021);
     let effects = replay.input(Input::Cancel(RequestId::shell(4)), 10_022);
     assert_eq!(replies(&effects), [(4, "not started")]);
     assert!(
@@ -1300,12 +1281,9 @@ fn note_at(replay: &Replay, at_ms: u64) -> Option<KeyNote> {
 #[test]
 fn a_before_read_sets_the_note_as_it_arrives_and_a_final_read_goes_ahead_of_the_queue() {
     let mut replay = Replay::new();
-    let effects = replay.push(name_change(1), Source::Hook, 1);
+    let effects = replay.push(name_change(1), 1);
     let busy = program(&effects).request;
-    assert!(
-        programs(&replay.push(read_caret(5, ReadPurpose::BeforeFieldKey), Source::Other, 2))
-            .is_empty()
-    );
+    assert!(programs(&replay.push(read_caret(5, ReadPurpose::BeforeFieldKey), 2)).is_empty());
     assert_eq!(
         note_at(&replay, 2),
         Some(KeyNote {
@@ -1317,11 +1295,8 @@ fn a_before_read_sets_the_note_as_it_arrives_and_a_final_read_goes_ahead_of_the_
             reads: NoteReads::Field(FieldReads::CaretAndText),
         })
     );
-    assert!(
-        programs(&replay.push(read_caret(6, ReadPurpose::BeforeFieldKey), Source::Other, 3))
-            .is_empty()
-    );
-    assert!(programs(&replay.push(read_caret(7, ReadPurpose::Final), Source::Other, 4)).is_empty());
+    assert!(programs(&replay.push(read_caret(6, ReadPurpose::BeforeFieldKey), 3)).is_empty());
+    assert!(programs(&replay.push(read_caret(7, ReadPurpose::Final), 4)).is_empty());
     assert!(
         note_at(&replay, 4).is_some(),
         "the final read clears it when it commits, not as it arrives"
@@ -1392,7 +1367,7 @@ fn a_verbatim_caret_move_clears_the_notes_of_its_node() {
             op: TextOp::MoveCaret(verbatim_model::TextPoint::Start),
         },
     };
-    let effects = replay.push(moved, Source::Other, 2);
+    let effects = replay.push(moved, 2);
     let request = program(&effects).request;
     assert_eq!(note_at(&replay, 2), None);
     replay.finish(request, false, 3);
