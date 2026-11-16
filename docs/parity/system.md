@@ -104,14 +104,31 @@ the switch is handled ahead of any event still queued.
   NVDA handles, normally the one queued 200 ms after the return,
   replaces it (`doPreGainFocus`, `eventHandler.py` 378 to 387).
 
-Verbatim: **partial**. The focus listener tests each desktop switch as
-NVDA does, with `OpenInputDesktop`, and on a return to the user's
-desktop tells Core 200 ms later, which reads the focus with no duplicate
-test (`desktop_switched` in `crates/verbatim-listener/src/listener.rs`;
-the return's speech is "Different, deliberately" in
-`docs/parity/focus-context.md`). A switch away from the user's desktop is
-not yet handled (M8.7): no speech is cut, nothing is said, and no
-sleeping focus is committed.
+Verbatim: **partial** (Dickson, 2026-11-12; [ADR 0003: Readers tell,
+Core asks](../../books/dev/src/reference/adr/0003-readers-tell-core-asks.md),
+"The secure desktop and the lock state"). The focus listener tells each
+desktop switch with whether the input desktop opens, tested as NVDA tests
+it, with `OpenInputDesktop`, and Core handles the switch at once in its
+inbox, ahead of the event queue (`crates/verbatim-core/src/input_desktop.rs`):
+
+- A switch to a desktop that does not open cuts speech and commits the
+  sleeping focus, a focus Core commits itself with no reader and no
+  ancestors, which follows nothing; the keyboard hook clears its record
+  of the modifiers held, the held keys Core has not passed on are
+  dropped, and the old application is asked nothing. Entries already
+  queued run as NVDA's do, and a focus among them replaces the sleeping
+  focus. "Secure Desktop" is not yet spoken (M8.7), so a switch away says
+  nothing beyond the cut.
+- A switch to a desktop that opens arms a 200 ms timer; when it comes
+  due, an entry joins the back of the event queue and asks the front
+  application for its focus, with no duplicate test and none of the
+  ancestors Core already knows, so the window's title and the focus are
+  said, as NVDA says them ("Window announcement on switching
+  applications" in [Focus context](focus-context.md)). A further switch
+  before then re-arms or cancels the timer.
+
+Core's `input_desktop_tests.rs`; nothing on the secure desktop can be
+tested end to end until M8.7.
 
 ### The lock screen
 
@@ -154,8 +171,18 @@ object (271), or the navigator object (311, 330). Speech for it is empty
 lock-screen mode is on (`scriptHandler.findScript`, `scriptHandler.py`
 101 to 108; the list in `getSafeScripts`, `utils/security.py` 71 to 152).
 
-Verbatim: **not yet (M8.7)**: without UIAccess Verbatim cannot read
-below the lock screen, as NVDA cannot.
+Verbatim: **not yet (M8.7)**. Core holds the session's lock state, from
+Windows' session notifications and a query at startup
+(`crates/verbatim-app/src/session_lock.rs`), and counts an unknown state
+as locked, where NVDA counts it unlocked (Verbatim-only: security
+mitigation B3). No object is judged below the lock screen while
+Verbatim lacks UIAccess, as NVDA judges none without it
+(`utils/security.py` 227 to 230);
+the test and the rules that drop objects below the lock screen come with
+UIAccess in M8.7 (Dickson, 2026-11-15; [ADR 0003: Readers tell, Core
+asks](../../books/dev/src/reference/adr/0003-readers-tell-core-asks.md),
+"The secure desktop and the lock state"). Nor are commands limited to a
+safe list while the session is locked: every command runs, until M8.7.
 
 ### Elevated applications on the user desktop
 

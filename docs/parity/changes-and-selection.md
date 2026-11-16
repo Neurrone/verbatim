@@ -103,18 +103,19 @@ element the focus controls, and every other selection is a change of
 state, spoken only for the focus or its ancestors. Selecting the focused
 item itself is such a change of state, and Verbatim speaks it
 ("selected"), as NVDA does ([verbatim-core](../../books/dev/src/reference/crates/verbatim-core.md)).
-Verbatim: **different** (Dickson, 2026-10-08; the roadmap's M3 item
-"announce a focused list's selected item"): it speaks MSAA selection
-changes and a focused list's selected item ("Fruits list Apple" where
-NVDA says "Fruits list"). The outpost applies these rules before it
-reads an MSAA selection: one on the focus or an ancestor has its states
-read alone and is reported as a change of state, one inside a focused
-list or tab control is read in full, and any other is dropped after its
-acquisition, never read. Both apply one definition
-(`verbatim_core::focus_rules::selection_target`; decision D14, "Where the
-rules run"), the outpost against the focus Core holds and those it
-reported that Core has not judged yet, and Core against its own focus
-once it has judged them.
+Verbatim: selection events take NVDA's rule (Dickson, 2026-11-15),
+judged in Core at the event's turn against the committed focus: a UI
+Automation selection on the committed focus is its change of state,
+judged on the states its event carries; any other, and every plain MSAA
+selection, has Core ask for the item with the committed focus's
+controller-for relation read live, and an item that is an object the
+focus controls, or inside one, is spoken as a focus, while any other is
+a change of state of the selected object, spoken only on the focus or an
+ancestor (`docs/design/readers-tell-core-asks-build1.md`, "Changes on
+objects"). **matched (unverified)**. **Different** (Dickson, 2026-10-08;
+the roadmap's M3 item "announce a focused list's selected item"): a
+focused list's selected item is said with the focus ("Fruits list
+Apple" where NVDA says "Fruits list").
 
 ### A selection container's selected item through UIA
 
@@ -162,9 +163,11 @@ that are in a Chromium document NVDA reads through IA2 are not yet
 built; they belong to the phase that implements IA2 (browsers, M7).
 
 Verbatim reads the relation live for each selection event, as NVDA
-reads it (Dickson, 2026-10-10), and searches each element it names and
-that element's descendants for the selected element, both in one remote
-operation. NVDA's results captured on mockapp's list fixtures (2026-11-09):
+reads it (Dickson, 2026-10-10): Core asks the focus listener to read the
+selected item and its outpost to complete it, and the completion reads
+the committed focus's controller-for relation and answers whether the
+item is an element it names or inside one, from which Core judges.
+NVDA's results captured on mockapp's list fixtures (2026-11-09):
 a selection of the controlled list itself says "Suggestions list selected",
 as NVDA's `NormalizeElement` answers the element itself
 (`NVDAObjects/UIA/__init__.py` 2444 to 2461); a selection in a second
@@ -184,23 +187,18 @@ structure change; read then, the item would be said as "list item".
 No such reading was seen with Verbatim running: 20 runs of
 `settings_search_suggestions` each said "Sound settings 1 of 22", so
 nothing in Verbatim waits for the list to fill (Dickson, 2026-11-03).
-The first suggestion comes before the suggestions-opened sound because
-its selection reaches the outpost's queue about 50 ms before Settings'
-second change of the search box's relation; a delay of that much in the
-listener's handling puts the sound first.
+For each arrow NVDA queues the search box's line ("A caret key that
+moves nothing" in [text](text.md)) and cuts it off with the suggestion
+as it reports it, about 100 ms after the key, once its script ends.
+Verbatim does the same: the selection's event waits behind the key in
+Core's event queue, so the key's line is said and then cut off by the
+suggestion.
 
-Different:
-
-- The first suggestion, which Settings selects itself as its list
-  opens, is spoken by NVDA with the name its event's element carried,
-  which Settings has not set yet ("list item 1 of 22"), and by Verbatim
-  with the name read when the selection is handled ("Sound settings 1 of
-  22"), since NVDA's word tells the user nothing (Dickson, 2026-10-20).
-- For each arrow NVDA queues the search box's line ("A caret key that
-  moves nothing" in [text](text.md)) and cuts it off with the suggestion
-  as it reports it, about 100 ms after the key, once its script ends.
-  Verbatim says the suggestion when its event arrives, and ends the key
-  with no line.
+Different: the first suggestion, which Settings selects itself as its
+list opens, is spoken by NVDA with the name its event's element carried,
+which Settings has not set yet ("list item 1 of 22"), and by Verbatim
+with the name read when the selection is handled ("Sound settings 1 of
+22"), since NVDA's word tells the user nothing (Dickson, 2026-10-20).
 
 ### Suggestions appearing and going away
 
@@ -365,13 +363,16 @@ keyboard focus as they are arrowed, and each is said once, by its focus
 ("Simplified Chinese (Lunar) not selected 2 of 3"), with no value change
 (`target/e2e-evidence/fixes-round-six-2026-10-21/settings-combo-box-live-check.txt`).
 Settings raises the combo box's expand state change before the item's
-focus, and when the change reaches the outpost behind the item's focus
-marker, the outpost plans it ahead of the item's focus, since the item
-is inside the combo box that was the focus
-(`books/dev/src/reference/adr/0001-focus.md`, "One route per application, and
-the marker"; the outpost's intake test
-`the_old_focus_uia_events_behind_a_focus_inside_it_are_planned_first`),
-so Verbatim says "expanded" there too.
+focus, from 0 to 2 ms before it. The change is told by the outpost
+following the combo box and the focus by the focus listener, two
+processes with no order between them, so when the item's focus read
+completes with the committed combo box among its ancestors, Core first
+judges the combo box's waiting UI Automation state changes, then takes
+the focus (ADR 0003's narrow ordering rule,
+`docs/design/readers-tell-core-asks-build1.md`, "The narrow ordering
+rule"), and Verbatim says "expanded" there too. A change that reaches
+Core only after the focus has been taken is said after the item, as an
+ancestor's change.
 
 ### What an accepted MSAA change reads
 

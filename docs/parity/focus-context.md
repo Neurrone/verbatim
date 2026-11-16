@@ -69,41 +69,36 @@ each said "Remove dialog" as the focus moves into it
 A focus reported again, the same as the focus, does not replace the
 line: NVDA keeps its line when the focus matches itself, so a repeat
 leaves the containers the focus is in, and the next focus in them says
-only itself; the repeat's newer reading of the focus and of the line's
-live nodes it holds is kept, never of its cached ones (Fable,
-2026-10-30). A child window's client object reached from its window
+only itself. A repeat that NVDA's duplicate test catches against the
+readers' last focus ends with no read, and nothing is kept or said
+(`UIAHandler/__init__.py` 917; `IAccessibleHandler/__init__.py` 777). A
+child window's client object reached from its window
 object is its window's, whether or not it has an identity string, so it
-carries its window. Each report's chain is complete to the desktop: a
+carries its window. Each report's chain reaches an ancestor Core already
+knows or the desktop: a
 failed walk step goes on from the parent window by its own object, read
 live, and only a chain cut at the depth limit is completed by plain
 windows ("A focus whose element is gone before its read" in [Focus
 events](focus-events.md)). A window matched by its handle keeps, in the
 line, the name it was entered with.
 
-The ancestry cache (Dickson, 2026-11-07; [ADR 0001:
-Focus](../../books/dev/src/reference/adr/0001-focus.md), "Reusing an
-earlier ancestry"): each focus reader, the listener's reading thread for
-an application or the outpost's own reads, stops its walk where it meets
-the ancestors it read last in that application and reuses them, once its
-title check, local calls, finds each saved window title unchanged; a
-changed title or a gone window makes the walk read live to the top or the
-process boundary. Core then checks each report before speaking
-(`focus_rules::needs_live_ancestry`): one that would speak a cached
-ancestor, as entered or as the window's title, is set aside, and its
-focus reader reads the same element again with no cache, a live re-read,
-whose answer Core applies as an ordinary report. NVDA walks live from the
-focus to the lowest common ancestor with its focus line
-(`api.setFocusObject`, `api.py` 111 to 147), so it never speaks a stale
-name; Verbatim says the same words, and the difference is the live
-re-read's cost on a return between top-level windows whose titles did
-not change: a partial walk, a round trip to Core and a full walk, where
-NVDA makes the full walk only. A repeat of the element while its live
-re-read waits is judged as a new report, asking its own live re-read or
-spoken if it was read live (Claude, 2026-11-08, pending Dickson's
-acceptance). Core's `live_reread/tests.rs` and
-`generated_cases_keep_the_ancestry_caches_invariants`, mockapp's
-`a_changed_title_walks_to_the_top` and
-`a_uia_window_with_an_msaa_menu_re_reads_live_once_per_return`, and the
+The ancestors Core already knows (Dickson, 2026-11-13; [ADR 0003:
+Readers tell, Core
+asks](../../books/dev/src/reference/adr/0003-readers-tell-core-asks.md),
+"The ancestors Core already knows and leaving a window"): a focus
+reader, the listener's reading thread for an application or the
+application's outpost, walks up from the focus until it reaches one of
+the ancestors Core already knows, the committed focus first and then its
+ancestors, or else the process boundary or the top. Core sends them with
+the request only while the readers' last focus is set, and only the
+nodes of the answering outpost generation. No earlier ancestry is kept
+per application, so nothing above the meeting point is reused and no
+stale window title can be spoken; a return from another application walks
+to the top live. NVDA walks the same way, from the focus until it meets
+the ancestors of its own focus (`api.setFocusObject`, `api.py` 98 to 101
+and 111 to 147). `crates/verbatim-core/src/entries_tests.rs` and
+`crates/verbatim-core/src/focus/versions_tests.rs`, mockapp's
+`the_walk_stops_at_a_known_ancestor_or_the_depth_limit`, and the
 scenarios `windows_terminal_two_windows` (a window retitled while the
 user is away, from NVDA's capture) and `measure_focus_return`.
 
@@ -191,7 +186,7 @@ known to be the client, and is read as reached. There is no separate foreground 
 pane without the mark, mockapp's
 `a_window_above_the_process_boundary_is_a_plain_window_with_no_call`
 for the windows above the boundary, and
-`a_window_entered_by_a_focus_beside_its_unread_foreground_change_is_said`
+`an_msaa_ancestor_reached_with_no_identity_string_is_its_windows_client`
 for a form's client reached with no identity string.
 
 ### Window announcement on switching applications
@@ -209,17 +204,22 @@ event for a window NVDA reads through UI Automation is dropped, so such
 windows are announced only from the focus's ancestry
 ([Event handling](../nvda/events.md), "Foreground windows").
 
-Verbatim: a foreground fact arrives as a whole-window focus, and the
-reducer refuses it when its window handle equals the top-level window
-handle of Core's focus and that focus was not left. Window handles are
-compared rather than node ids because one window has different node ids
-in different outposts (a Settings page whose frame belongs to
+Verbatim: the listener tells each foreground change to Core, where it is
+tried as a whole-window focus in its run of MSAA focus and foreground
+entries. Core refuses it with no read when its window is not the
+foreground record's, when it is the window of the readers' last focus or
+of one of that focus's ancestors, or when its ids equal that focus's
+(design of build 1 of ADR 0003, "Focus and foreground"). Window handles
+are compared rather than node ids because one window has different node
+ids in different outposts (a Settings page whose frame belongs to
 `ApplicationFrameHost.exe`). A window that has no name when focus enters
 it is not announced later, and a whole-window focus of a nameless window
 is taken silently (a bare "window" says nothing), though it cancels
-speech, as NVDA's foreground event does. The outposts drop a foreground
-fact whose window is not the foreground window at their one test, and
-one for a window read through UI Automation; the reducer, when the focus
+speech, as NVDA's foreground event does. A candidate whose window is
+read through UI Automation is skipped when its outpost reads the run, and
+the next older candidate tried, as NVDA's `processFocusWinEvent` returns
+false for it (`IAccessibleHandler/__init__.py` 577 to 582, 1088 to
+1092). Core, when the focus
 line shares nothing with the previous one below the desktop, cuts speech
 off and speaks the entered presentable ancestors outermost first, the
 top-level window among them by the rule in "Top-level windows in the
@@ -227,18 +227,24 @@ ancestry", then the focus ([How focus
 works](../../books/dev/src/explanation/design/focus.md), "One UI
 Automation focus, end to end").
 
-The left mark (Dickson, 2026-11-02 and 2026-11-08; the title gate
-Claude's, 2026-11-08, accepted by Dickson; [ADR 0001:
-Focus](../../books/dev/src/reference/adr/0001-focus.md), "The foreground
-and the window title"): it lives on the last queued focus. A foreground
-change into a window unrelated to that focus, observed after it or
-reaching Core after it, leaves it for that window, for the reports Core
-judges after the change that were observed after it; a report already
-judged keeps its verdict. A report judged left meets nothing of the left
-line, so the return to a focus after a visit elsewhere is spoken as the
-switch is. A report from the window the focus was left for is not judged
-left, so Core compares the two lines as they are,
-as NVDA compares its focus line with the one before; and the title rule
+Leaving a window (Dickson, 2026-11-13; [ADR 0003: Readers tell, Core
+asks](../../books/dev/src/reference/adr/0003-readers-tell-core-asks.md),
+"The ancestors Core already knows and leaving a window"): when the
+foreground leaves for a top-level window unrelated to the committed
+focus, neither that focus's top-level window nor a window with its root
+owner, the readers' last focus is emptied, in arrival order; the
+committed focus stays for commands and typed echo. With no readers' last
+focus, the duplicate tests and the refusal of a foreground change behave
+as with no earlier focus, and no ancestors are sent as known, so the
+return to an application that committed no focus while the user was away
+meets nothing of the line it left and is spoken as the switch is, the
+window's title and then the focus. Different, deliberately (Dickson,
+2026-11-08): NVDA keeps its last queued focus across a foreground change,
+so when no other focus was queued while the user was away it judges the
+return's focus against the focus it left. A window owned by
+the focus's window is related, so the readers' last focus stays and Core
+compares the two lines as they are, as NVDA compares its focus line with
+the one before; and the title rule
 below adds no title when the two lines meet at an object they share, as
 NVDA speaks the window in front only when its focus difference level is
 at most 1, the two lines differing just below the desktop
@@ -247,30 +253,28 @@ dialog that another process opens over a window it owns is entered with
 no owner title, its outpost's stand-in for the owner meeting the owner's
 entry, and the return to the owner says only its focus, as NVDA's
 capture says (the scenario `owned_dialog_across_processes`; Core's
-`a_window_owned_across_processes_meets_its_owner_both_ways`). A limit: a
-window left for a window owned by another process's window, whose own
-focus never arrives, keeps the mark, so the return re-enters the owner,
-where NVDA would not.
+`a_window_owned_across_processes_meets_its_owner_both_ways`).
 
 The title rule (Dickson, 2026-10-30): the window's title is always said
 when the focus enters a top-level window it was not in, decided in Core
 from the focus's chain. A focus Core takes whose own top-level window is
 the system's foreground window when it was read
 (`WindowFacts::foreground_window`), that window not the entered window
-or Core's focus having been left, says the window's own entry in its
+or the readers' last focus empty, says the window's own entry in its
 chain, the outermost with that window's handle, with the words of a
 whole-window focus of the window, after the cut and before the other
 entered containers, unless its line already speaks it, it has no name,
 or the two lines meet at an object they share; a whole-window focus
 taken first enters its window, so the focus after it says nothing more. So the title does not depend on whether a
-foreground change and its focus shared an outpost's batch, which NVDA's
+foreground change and its focus were tried in one run, which NVDA's
 own result does by pump timing. Program Manager and the taskbar are
 entered with no title (`WindowFacts::foreground_is_shell`), as NVDA
 takes no foreground event for them (`internalWinEventHandler.py`), so
 the desktop says "Desktop list" alone. A foreground change into one of
-Verbatim's own windows, its menu or a dialog, clears the entered window,
-so the return from it says the title even when the application's focus
-is its only report. Core's `tests/foreground.rs`.
+Verbatim's own windows, its menu or a dialog, is like any other: the
+window is unrelated to the application's focus, so the readers' last
+focus is emptied and the return from it says the title. Core's
+`tests/foreground.rs`.
 
 - Different, deliberately: a Windows Forms form or dialog brought to the
   front with its focus within NVDA's 10 ms pump says its title, where
@@ -282,18 +286,23 @@ is its only report. Core's `tests/foreground.rs`.
   foreground change arrives, its window already in front, says the title
   with the focus, where NVDA drops the later foreground change as a
   repeat.
-- Different, deliberately: the return to the user's desktop after the
-  secure desktop says the title, where NVDA normally says the focus
-  alone (untestable until M8.7).
+- Matched (needs a capture; untestable until M8.7): the return to the
+  user's desktop after the secure desktop says the window's title and
+  the focus. NVDA's sleeping focus object has no parent
+  (`winAPI/secureDesktop.py` 56 to 70), so the focus it queues 200 ms
+  after the return meets nothing of it and enters its window anew
+  (`IAccessibleHandler/__init__.py` 809 to 813; `api.py` 98 to 150;
+  `eventHandler.py` 402 to 419). Verbatim's sleeping focus has no
+  ancestors either, and the read after the return is sent none as known.
 - Different, known: on the first Escape from Windows 11 Notepad's WinUI
   context menu, NVDA says "Untitled - Notepad"
   (`keyboard-opened-context-menu.txt` in the same folder). The menu is a
   popup in Notepad's foreground, so the title rule adds nothing; Verbatim
   says the title only when Notepad's whole-window focus is tried in its
-  batch.
+  run.
 - A focus raised before its window's foreground change within one pump
   is no departure: the foreground change, newest, is tried first, and its
-  report ends the focus group, so Verbatim, like NVDA, says the window
+  read ends the run, so Verbatim, like NVDA, says the window
   and not that focus.
 - Matched (Dickson, 2026-11-07): an application that does not answer
   says nothing until its focus comes, as NVDA

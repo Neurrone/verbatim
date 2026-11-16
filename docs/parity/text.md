@@ -10,7 +10,7 @@ selection deltas. NVDA: [TextInfo](../nvda/text-infos.md) and
 Verbatim: **matched (verified)** for UIA text and the Win32 edit and
 rich edit controls, through the text protocol
 (`books/dev/src/reference/crates/verbatim-model.md`, "The text protocol";
-`books/dev/src/reference/crates/verbatim-core.md`, "Text (milestone M4)"; the
+`books/dev/src/reference/crates/verbatim-core.md`, "Text"; the
 `notepad_editing` and `notepad_review_cursor` scenarios); an MSAA object
 that is neither has no text.
 
@@ -34,19 +34,21 @@ The layer's cases are the entries that follow, from "Caret keys and
 what each speaks" to "Not yet built". The end-to-end steps that declare
 a difference from NVDA against this entry show the differences recorded
 in "A caret key that moves nothing", "What counts as a caret key's
-evidence", "What Backspace and Delete say", "Keys outside the caret
-table", "A selection no key made", "Selection over changed text through
-UIA" and "NVDA's delayed character description at the caret".
+evidence", "Holding caret keys", "Keys outside the caret table",
+"Selecting with Shift" and "NVDA's delayed character description at the
+caret".
 
 ### Caret keys and what each speaks
 
 NVDA speaks its unit for each caret key once the caret has moved
 ([Editable text and terminals](../nvda/editable-text-and-terminals.md)).
 Verbatim: **matched (verified)** (the `caret_keys` scenarios,
-`notepad_editing`, `notepad_review_cursor`). Caret keys pass to the
-application, and Core asks the outpost to watch for evidence of the
-key's effect, never waiting for it
-(`books/dev/src/reference/crates/verbatim-core.md`, "Text (milestone M4)"). Core then
+`notepad_editing`, `notepad_review_cursor`). A caret key is held: at
+its turn in Core's event queue the outpost reads the caret, Core passes
+the key on and asks the outpost to watch for the key's effect, and Core
+never blocks on the answer
+(`books/dev/src/reference/crates/verbatim-core.md`, "The caret key on the
+event queue"). Core then
 speaks NVDA's unit: the character for Left and Right Arrow, Home, and
 End; the provider's word for Control with Left or Right Arrow, a word of
 one character (Notepad's full stop) by its name, as NVDA spells it; the
@@ -62,18 +64,21 @@ and what Delete left at the caret.
   `target/e2e-evidence/m42-text-captures-2026-10-23/`, items 4a to 4c).
 - Alt with Up or Down Arrow, NVDA's sentence keys, speak the line when
   the application moves the caret, as NVDA does.
-- A newer key supersedes a watched one and a focus change drops it; a
-  key's reply read after a later key was pressed is not spoken for it,
-  since it may show that key's effect. NVDA's two short-circuits are
-  narrower in one way and earlier in another: its wait ends silently
-  when a script is queued behind the key (`isScriptWaiting`,
-  `scriptHandler.py` 333 to 334, counted by `queueScript`, 240 to 244),
-  which a modifier alone never queues
-  and an unbound key, such as a typed letter, queues only while an
-  intercepted command's script has not finished (`inputCore.py` 629 to
-  630 and 644 to 648); and when a focus is pending, queued but not yet
-  handled, before the focus changes ("While a focus is pending" in
-  `docs/parity/focus-events.md`).
+- NVDA's wait ends silently when a script is queued behind the key
+  (`isScriptWaiting`, `scriptHandler.py` 333 to 334, counted by
+  `queueScript`, 240 to 244), which a modifier alone never queues and an
+  unbound key, such as a typed letter, queues only while an intercepted
+  command's script has not finished (`inputCore.py` 629 to 630 and 644
+  to 648), as a caret script is; and when a focus is pending, queued but
+  not yet handled ("While a focus is pending" in
+  `docs/parity/focus-events.md`). Verbatim does the same: a later key
+  other than a modifier, a command, or a key Core sends, joining the
+  queue behind a caret key, marks it silent, and its watch is withdrawn;
+  a focus pending when Core judges the key withdraws its request too.
+  Either way the key says nothing, except Backspace and
+  Control+Backspace, which with a focus pending say the text they
+  delete before the focus, as NVDA's `_backspaceScriptHelper` speaks it
+  (`editableText.py` 293 to 321; Dickson, 2026-11-16).
 - A line break a unit lands on is named as NVDA names it ("A line break
   as a character" in
   [Editable text and terminals](../nvda/editable-text-and-terminals.md)):
@@ -91,21 +96,24 @@ and what Delete left at the caret.
 NVDA runs one script at a time, so reading the current line waits for an
 earlier Down Arrow's script to finish (`nvda/input.md`, "Scripts run one
 at a time"). Verbatim: **matched (verified)** (`notepad_editing` under
-load). The caret as it was when the key was pressed is the key's
-baseline, for its caret, for what Backspace deleted and for the text
-Delete compares, since the key's path to Core can be slower than the
-application's caret event; the caret Core holds is the newest by the
-time each report was observed or read, not the last to arrive, so a
-caret key's reply read before a caret event that reached Core first does
-not move the caret, or the review cursor following it, back
-(`books/dev/src/reference/crates/verbatim-core.md`, "Text (milestone M4)", owns the
-mechanism).
+load). A caret key's starting read, made at the key's turn in Core's
+event queue before the key is passed on, is the point the key is judged
+from: for its caret, for what Backspace deletes and for the text Delete
+compares. It is taken with no wait for the effect of the key ahead, as
+NVDA's next script reads the caret as soon as the one ahead returns
+(`editableText.py` 94 to 95; Dickson, 2026-11-16). Core takes each caret
+answer as the caret in the order the answers arrive, since one worker
+answers the event queue's requests one at a time
+(`books/dev/src/reference/crates/verbatim-core.md`, "The caret key on the
+event queue", owns the mechanism).
 
 A review command while the review cursor follows the caret, say-all from
-the caret, and the caret's location read the caret as the outpost finds
-it, not Core's copy, which can lag behind a key the application has
-already handled; a live read gives the same line as NVDA's waiting
-script without holding the command back.
+the caret, and the caret's location run at their turn in the event
+queue and read the caret as the outpost finds it. A command pressed
+behind a caret key marks the key silent and reads at once, so it may
+read the line before the key's move, as NVDA's capture does
+([holding caret keys](../../books/dev/src/explanation/design/key-holding.md),
+"Limitations").
 
 ### A caret key that moves nothing
 
@@ -125,24 +133,31 @@ through UI Automation, which has no sentence unit, it moves nothing
 window behind the document).
 
 Verbatim: **matched** (Dickson, 2026-10-29 and 2026-11-08). The key's
-bound is Core's, 100 ms from when the key is passed on, NVDA's wait, in
-Windows Terminal too. A key with no evidence by then has one final read,
+bound is NVDA's, 100 ms from when the key is passed on, multiplied by
+1.5 in a console host older than the improved API level and by 3 in
+Windows Terminal, and carried in the watch Core asks for
+(`editableText.py` 86 to 88; `NVDAObjects/UIA/winConsoleUIA.py` 365 to
+376, 470, 486). A key with no effect by then has one final read,
 and a read showing no effect is the bound answer: the line after Up and
 Down Arrow, the page keys and Control with Home or End; the character
 after Left and Right Arrow, Home and End, "blank" where there is none;
 the word after Control with Left or Right Arrow; the paragraph after
 Control with Up or Down Arrow; the unit at the caret after Delete,
 Shift+Delete and Control+Delete. Backspace and Control+Backspace say
-nothing where the caret stayed, and a key with Shift says nothing. Alt
-with Up or Down Arrow where the application moves nothing moves the
-caret by sentence, by Unicode's rules within each paragraph, and through
-UI Automation, which has no sentence unit, says nothing.
+nothing where the caret stayed, and a key with Shift, which is not held,
+says nothing for itself. Alt with Up or Down Arrow where the application
+moves nothing moves the caret by sentence from the key's starting read,
+by Unicode's rules within each paragraph, with the ordinary due time of
+a request, as NVDA blocks until it can move (`editableText.py` 245 to
+262; Dickson, 2026-11-16), and through UI Automation, which has no
+sentence unit, says nothing.
 
-The differences: a move later than 100 ms is not spoken, and a control
-that raises a caret event for a key that moved nothing is heard at the
-100 ms where NVDA speaks at once. A sentence move whose final read or a
-later step passes 150 ms is dropped, the caret staying, where NVDA
-blocks until it can read. A focused classic edit control's system caret
+The differences: a move later than the bound is not spoken for the key,
+and in a classic edit control or MSAA text, where the watch checks the
+caret's position rather than taking the caret event (see "What counts as
+a caret key's evidence"), a control that raises a caret event for a key
+that moved nothing is heard at the bound where NVDA speaks at once. A
+focused classic edit control's system caret
 location change and show are caret events to Verbatim; a Common Controls
 version 6 edit control, such as a Windows Forms text box with visual
 styles, reports it with its text selection event too. An application
@@ -156,16 +171,27 @@ NVDA finds the effect of a key on a password field by the caret event
 the control raises within 60 ms of the key, which it takes as evidence
 ("Protected (password) fields" in
 [Editable text and terminals](../nvda/editable-text-and-terminals.md)).
-Verbatim: **different** (the wait-for-evidence design, Dickson,
-2026-10-08): a caret event alone is not evidence when the caret's
-position is known, since an application's late caret event can belong to
-an earlier key; the position, the characters either side of the caret,
-or the selection must change. For Backspace and Delete, alone or with
-Control, the caret's line differing from the line of the last caret
-reported before the key is evidence too (Dickson, 2026-10-26), since
+NVDA takes such events wherever `caretMovementDetectionUsesEvents` holds,
+which is every editable text but its `Terminal` behaviour
+(`editableText.py` 57, 104 to 120 and 194 to 206;
+`NVDAObjects/behaviors.py` 527 to 530), and elsewhere checks the caret's
+position.
+
+Verbatim: **matched** in UI Automation text fields other than terminals
+(Dickson, 2026-11-16): a caret or text-change event of the watched node
+within 60 ms of the key's pass ends the watch as the key's effect,
+whether or not the caret moved, and the outpost reads the caret at once.
+Terminals check the caret's position, as NVDA does. **Different** in a
+classic edit control and MSAA text, whose caret events reach the focus
+listener rather than the outpost that watches, so the watch checks the
+caret's position there: the position, the characters either side of the
+caret, or the selection must change, and after Delete or Control+Delete
+the word at the caret, compared once 30 ms have passed since the pass,
+as NVDA compares it for its delete script. For Backspace and Delete,
+alone or with Control, the caret's line differing from the line at the
+key's starting read is an effect too (Dickson, 2026-10-26), since
 deleting one of a run of the same character, such as a password field's
-mask, changes neither the caret's neighbors nor, in a WPF `PasswordBox`,
-whose positions follow edits, where the caret is (`wpf_password`).
+mask, need not change the caret's neighbors.
 
 ### Holding caret keys
 
@@ -184,18 +210,24 @@ there.
 Verbatim: **different** ([holding caret keys](../../books/dev/src/explanation/design/key-holding.md),
 which owns the mechanism; Dickson, 2026-10-08 and 2026-10-22). Verbatim
 holds every caret key while the focus has text, as NVDA's caret scripts
-do: the hook swallows it, the focus's outpost reads the caret and its
-line, and the key is sent on. The differences:
+do: the hook swallows it, and at its turn in Core's event queue the
+outpost reads the caret and its line and the key is sent on. A held key
+behind another takes its starting read at its own turn, with no wait for
+the effect of the key ahead, as NVDA's next script does (Dickson,
+2026-11-16). The selection keys, the Shift forms of the moves and
+Control+A, are not held, as NVDA binds no script to them in a control
+that detects its own selection changes. The differences:
 
 - Keys pressed while a held key waits, typed characters included, wait
   behind it and reach the application in the order pressed, one step
   beyond NVDA; the lock keys alone pass at once, since their state is
   announced from Windows' and Num Lock's decides what a numpad key is
   (Dickson, 2026-10-26).
-- A held key behind another has its caret read once the key ahead's
-  evidence has been answered, or 100 ms after the key ahead was sent on,
-  whichever comes first, so that the read sees the application after the
-  key ahead (Dickson, 2026-10-22); Verbatim's bound is 100 ms everywhere.
+- A held key is sent on 150 ms after its press, whatever waits ahead of
+  it in Core's event queue, and then says nothing, so a slow read never
+  holds the user's typing (Dickson, 2026-11-13;
+  [ADR 0003](../../books/dev/src/reference/adr/0003-readers-tell-core-asks.md),
+  "Keys and commands").
 - While a window of higher integrity than Verbatim's is in front,
   nothing is held.
 
@@ -205,16 +237,15 @@ NVDA's Backspace and Delete scripts speak what they expect the key to
 remove: Control+Backspace in a Windows Forms password box says "4 star"
 (`winforms-password-deleting-keys.txt` in
 `target/e2e-evidence/m42-protected-fixes-2026-10-22/`).
-Verbatim: **different** (Dickson, 2026-10-08, amended 2026-11-09): what
-Backspace deleted is worked out by comparing the line read before the
-key with the line after it ([holding caret
-keys](../../books/dev/src/explanation/design/key-holding.md)). The text
-removed at the caret is spoken, in any language. With nothing removed a
-caret that stayed says nothing, and a caret that moved forward says
-"blank", as NVDA's empty deleted text does: so the classic edit
-control's Control+Backspace, which inserts a DEL character, says "blank"
-wherever it is, where NVDA says "blank" only at the text's start and
-elsewhere the word it expected to go (`text_box_password`).
+Verbatim: **matched** (Dickson, 2026-11-16): Backspace and
+Control+Backspace say what the key's starting read shows them about to
+delete, the character or the text from the word's start before the
+caret, or before a selection's start, "blank" at the text's start, once
+the key's effect shows, and nothing at the bound, as NVDA's scripts do
+([holding caret
+keys](../../books/dev/src/explanation/design/key-holding.md); Core's
+`backspace_says_what_it_deleted_from_its_starting_read`). Delete and
+Control+Delete say the unit now at the caret.
 
 - A backspace over a line break, with or without Control, names the
   kind of break the text was last seen to use, which is what NVDA reads,
@@ -260,7 +291,10 @@ scenarios).
 
 NVDA: "Selection changes" in
 [Editable text and terminals](../nvda/editable-text-and-terminals.md).
-Verbatim: **matched (verified)**. Shift movement speaks the text
+Verbatim: **matched (verified)**. A selection change is said by the
+caret event the application raises, as NVDA's is (mockapp's
+`a_selecting_keys_selection_is_said_by_its_caret_tell`). Shift movement
+speaks the text
 followed by "selected" or "unselected", NVDA's word order, a single
 character by its name, and 512 characters or more as their number; a
 selection
@@ -299,23 +333,22 @@ nothing while Right's waits (`selection_keys` scenarios, captured
 2026-10-22 in
 `target/e2e-evidence/m42-key-holding-merge-2026-10-22/captures/`).
 
-Verbatim: **different** (Dickson, 2026-10-26): speaking every
-intermediate change. A selection no key made, such as one made with the
-mouse or by the application, is reported as NVDA reports it (Dickson,
-2026-10-15): the outpost compares the selection each caret event finds
-with the one in its last caret report for the focus, and Core speaks the
-changes with a selecting key's words, "alpha selected" and "alpha
-unselected" (mockapp's
-`a_selection_no_key_made_is_reported_with_its_change`). A key's
-selection is spoken once, by the key's answer, or, when the key's caret
-event was reported before the watch arrived, by the report, after the
-key's own words. One Verbatim makes itself, select then copy's first
-press, is spoken by its own reply, and the caret event after it carries
-no change, as does the one after say-all moves the caret. When the
-outpost merges a caret report waiting to be written with a newer one for
-the same node, the merged report carries both reports' changes, so
-Shift+Right followed at once by Right says the selection, the character,
-and the selection cleared.
+Verbatim: **matched** (Dickson, 2026-11-16). Every selection change, a
+key's or one no key made, such as one made with the mouse or by the
+application, is said from the caret event the application raises: at
+the event's turn in Core's event queue, on the committed focus with no
+focus pending, the outpost compares the selection now with the selection
+baseline, the selection last spoken from, which Core names, and Core
+speaks the changes, "alpha selected" and "alpha unselected" (mockapp's
+`a_selection_no_key_made_is_said_by_its_caret_tell`). The baseline is
+taken when the object gains the focus. Caret events waiting for one
+object merge into one entry, as NVDA's limiter keeps one, so only the
+last selection is compared. A caret key's own reads compare no
+selection, as NVDA's caret scripts compare only the caret. A selection
+Verbatim makes itself, select then copy's first press, or a caret it
+moves, is spoken by its own reply, if at all, and becomes the next
+baseline, so the caret event after it says no change (mockapp's
+`a_selection_verbatim_made_is_the_next_baseline`).
 
 ### Selection over changed text in a classic edit control
 
@@ -333,27 +366,30 @@ against the captures in
 `target/e2e-evidence/m42-selection-keys-2026-10-22/` (each named by the
 control and the key, such as `textbox-word-backspace.txt`) and
 `target/e2e-evidence/m42-desktop-2-2026-10-22/` (`part3b-textbox-*.txt`).
-The outpost keeps one old selection per node, and every comparison uses
-it, a caret event's report and every key's answer alike; a selection
-Verbatim makes itself or a caret it moves is kept in its place (mockapp's
-`a_shift_key_after_verbatims_selection_compares_with_it`). A comparison
-is in general terms when the note is set (a classic edit control's value
-change handled, as NVDA's `hasContentChangedSinceLastSelection`, read
-and cleared at each comparison with a selection, and cleared by a
-focus), when
-the control's value change waits once the caret is read, or when the old
-selection's text no longer matches what its range holds
-(`books/dev/src/reference/crates/verbatim-core.md`, "Text (milestone M4)"). General terms
+Core keeps one selection baseline for the committed focus, and only a
+caret event's read compares with it; a selection Verbatim makes itself
+or a caret it moves becomes the next baseline (mockapp's
+`a_selection_after_verbatims_compares_with_it`). A caret event whose
+selection offsets equal the previous caret event's says nothing, as
+NVDA's edit control returns before comparing (`NVDAObjects/window/edit.py`
+1068 to 1074). A comparison is in general terms when the text-changed
+flag is set (a value change of the focus judged, as NVDA's
+`hasContentChangedSinceLastSelection`, cleared at each comparison with a
+baseline and by a focus with no caret), or when the control's value
+change waits in the event queue at the caret read's answer, which is
+then taken as counted, as NVDA runs it inside its caret event
+(`NVDAObjects/window/edit.py` 1075 to 1080;
+`books/dev/src/reference/crates/verbatim-core.md`, "Caret tells and
+Core's text facts"). General terms
 are the whole new selection followed by "selected" when anything was
 selected, then, when anything was unselected, the whole new selection
 followed by "selected instead", or "selection removed" when nothing is
-selected now; the outpost carries them as `content_changed`. A key's
-own words come first and the selection's change after, as NVDA speaks
-its script's words and then its caret event's; a report that came
-before the key's watch is said after the key's words, and a superseded
-answer's change after the later key's, so no change compared is lost. Backspace and Control+Backspace over a selection say what comes
-before the selection's start, NVDA's caret (mockapp's
-`a_selections_start_on_the_carets_line_is_reported_in_it`).
+selected now. A key's own words come first and the selection's change
+after, since the caret event joins the event queue behind the key, as
+NVDA speaks its script's words and then its caret event's. Backspace and
+Control+Backspace over a selection say what comes before the
+selection's start, NVDA's caret (mockapp's
+`a_selections_start_is_read_in_the_line_it_starts_in`).
 
 In the Windows Forms text box, over "alpha " or "beta " selected with
 Shift+Control+Right Arrow: Backspace says the character before the
@@ -372,14 +408,10 @@ Shift+End's rest of a line; Control+C says nothing. For Enter neither
 says anything more: Verbatim has no read of the new line, since Enter
 reaches it as typed text, "\r". The `text_box_selection_keys` and
 `text_box_editing` scenarios; mockapp's
-`an_edit_controls_deleting_key_over_a_selection_is_answered_in_general_terms`,
-`an_edit_controls_caret_event_before_its_value_change_is_said_in_general_terms`,
-`an_edit_controls_value_change_handled_first_has_the_next_change_said_in_general_terms`,
-`an_edit_controls_value_change_raised_during_its_caret_read_is_said_in_general_terms`,
-`a_caret_report_before_a_keys_watch_leaves_its_answer_no_selection_change`
-and, for a selection extended by Shift and a click after a key that
-changed nothing, said at once as NVDA says it,
-`a_selection_moved_before_a_keys_watch_is_evidence_by_its_ends`.
+`an_edit_controls_delete_over_a_selection_says_its_unit_then_the_selection_removed`,
+`an_edit_controls_caret_tell_before_its_value_change_is_said_in_general_terms`
+and
+`an_edit_controls_value_change_judged_first_has_the_next_change_said_in_general_terms`.
 
 ### Selection over changed text through UIA
 
@@ -398,44 +430,25 @@ return" (`01b-*` and `02b-*` in
 "alpha " was captured again because the first capture had NVDA reading
 Notepad as a classic edit control, not through UIA).
 
-Verbatim: **different** (Dickson, 2026-10-22), who judges NVDA's words
-wrong, since they name the new text as though it had been selected; NVDA's
-behavior is not offered as a setting. Verbatim keeps the selection's
-text when it is reported and, when the old range no longer holds it,
-says the change in general terms: "x" then "selection removed", and
-"selection removed" after each of those keys' own words. Backspace over
-"alpha " at the text's start says "blank" then "selection removed"
-(`target/e2e-evidence/m42-selection-fixes-2026-10-22/notepad-first-word-backspace.txt`;
-NVDA's captures are in `m42-selection-keys-2026-10-22/` and
-`part3b-notepad-*.txt` in `m42-desktop-2-2026-10-22/`, beside the
-classic edit control's);
-over "beta ", and over "gamma" selected with Shift+End to the line's end,
-which in Notepad selects the line break too and puts the caret at the
-next line's start, "space" then "selection removed"; at a later line's
-start, "carriage return" then "selection removed" (`notepad_selection_keys`
-and `notepad_editing`; mockapp's
-`a_uia_selection_typed_over_is_said_in_general_terms` and
-`a_uia_deleting_key_over_a_selection_is_answered_in_general_terms`).
-
-Both texts are read in the caret read's one round trip, each up to 513
-UTF-16 code units, one more than the 512 characters from which a
-selection is spoken as a count (Dickson, 2026-10-22), so a longer
-selection is compared by its first 513 units and by being longer, and
-only an edit that leaves both as they were, such as one past its 513th
-unit, is compared as NVDA compares it, in specific terms. The new
-selection's text is read only when its ends moved; when they did not,
-what the old ends hold now is its text and is kept (mockapp's
-`remote_and_classic_caret_reads_agree`). A range that still holds its
-text is compared as NVDA compares it, the same words in both:
-Control+Backspace over "beta ", which Notepad answers by deleting the
-word before the selection, says "alpha" then "beta unselected", and over
-"gamma" to the line's end "beta" then "gamma unselected"; over "alpha "
-at the text's start Notepad deletes nothing and both say nothing; over
-"alpha " at a later line's start Notepad deletes the line break before
-the selection, and both say "carriage return" then "alpha unselected"
-(`notepad_selection_keys`; `notepad-second-word-control-backspace.txt`,
-`notepad-third-word-to-end-control-backspace.txt`,
-`notepad-word-control-backspace.txt`).
+Verbatim: **matched** (Dickson, 2026-11-16): the caret event's read
+compares the selection baseline's range as it now is, its ends where the
+provider moved them with the edit, and names what that range now holds,
+or says nothing when the old range and the new selection are both empty,
+as NVDA's `speakSelectionChange` compares its kept old range
+(`speech/speech.py` 1340 to 1418; mockapp's
+`a_uia_selection_typed_over_says_what_its_range_now_holds` and Core's
+`an_old_range_now_holding_other_text_is_said_as_it_now_is`). The
+deleting keys' case is pinned by `notepad_selection_keys`, since
+mockapp's ranges do not follow a deletion. Control+Backspace over "beta
+", which Notepad answers by deleting the word before the selection, says
+"alpha" then "beta unselected", and over "gamma" to the line's end
+"beta" then "gamma unselected"; over "alpha " at the text's start
+Notepad deletes nothing and nothing is said; over "alpha " at a later
+line's start Notepad deletes the line break before the selection, and
+"carriage return" then "alpha unselected" is said
+(`notepad-second-word-control-backspace.txt`,
+`notepad-third-word-to-end-control-backspace.txt` and
+`notepad-word-control-backspace.txt`, NVDA's captures).
 
 ### NVDA's delayed character description at the caret
 
@@ -451,16 +464,10 @@ Verbatim: **different**: a setting Verbatim does not have yet
 
 Selection detection cases not built. Verbatim: **not yet**.
 
-- A kept selection with no text, as the by-parts select path keeps it,
-  is not checked for its range no longer holding its text until its
-  ends move; the caret and selection rework's last read keeps the text
-  from every path (`docs/design/caret-selection-rework.md`).
-- NVDA's classic edit control drops a caret event whose selection
-  offsets equal the last one's (`NVDAObjects/window/edit.py` 1068 to
-  1075); Verbatim reads each caret event (M6.5).
 - Unscheduled: terminals are unresolved: NVDA's console class replaces the detection
   (`NVDAObjects/UIA/winConsoleUIA.py` line 416), which is not yet
-  traced, and Verbatim reports no selection change in a terminal.
+  traced, and Verbatim reports no selection change in a terminal, which
+  has no selection baseline.
 
 ### Terminals recognized by their class
 
@@ -476,13 +483,17 @@ NVDA handles the system caret's location change and show (`OBJID_CARET`)
 as a caret event on the focus. Verbatim: **matched (verified)**, whether
 the focus is an edit control read through MSAA or a UIA node: some UIA
 documents, such as Visual Studio's, raise no UIA caret event of their
-own (mockapp's `the_system_carets_move_is_the_uia_focuss_caret_event`),
+own (mockapp's `the_system_carets_move_is_a_caret_tell_of_a_uia_focus`),
 and a caret show from the focused classic edit control is its caret
-event (`a_classic_edit_controls_caret_show_is_its_caret_event`). For a
-UIA focus they are taken from any window NVDA's acceptance test takes a
-location change from (the foreground application's windows, those
-sharing its root owner, and the rest of `docs/parity/focus-events.md`,
-"Event acceptance"), not only from the focus's own window. The caret's
+event (`a_classic_edit_controls_caret_show_is_a_caret_tell`). The
+system caret's event is for the focus last told by the readers, whatever
+its window, as NVDA maps it onto its last queued focus
+(`IAccessibleHandler/__init__.py` 634 to 666), and is read only when
+that is Core's committed focus. It is taken from any window NVDA's
+acceptance test takes a location change from (the foreground
+application's windows, those sharing its root owner, and the rest of
+`docs/parity/focus-events.md`, "Event acceptance"), not only from the
+focus's own window. The caret's
 show from a classic edit control comes with every repaint, since
 painting hides and shows the caret, so each repaint reads the caret, as
 in NVDA. The differences are in "The system caret beside other caret
@@ -502,16 +513,13 @@ read its caret at each blink.
 
 ### The system caret beside other caret events
 
-Verbatim: **different**, in four cases:
+A UIA focus's own caret events and the system caret's are both
+handled, as NVDA handles both: each reads the caret and compares the
+selection with the baseline, so the second event of one move finds no
+change and says nothing (mockapp's
+`a_system_caret_tell_after_the_uia_one_of_the_same_move_says_nothing`).
+Verbatim: **different**, in three cases:
 
-- Once a UIA focus has raised a UIA caret event of its own, Verbatim
-  drops the system caret's events until the next focus is reported,
-  where NVDA handles both. The ones before that first UIA caret event
-  are still read: Windows 11 Notepad raises the system caret's events
-  first, so the first move after each focus on its document reads the
-  caret twice (`notepad_editing`). A focus that later stops raising UIA
-  caret events is followed again from its next focus
-  (`a_new_focus_uses_the_system_caret_again`).
 - In a focused console host terminal, the system caret's events are
   never used: the console's caret event (`EVENT_CONSOLE_CARET`) is its
   caret event (`books/dev/src/reference/crates/verbatim-outpost.md`, "Terminals"), read
@@ -538,8 +546,8 @@ Verbatim: **different**, in four cases:
   and `uia-probe-conhost.txt`). The console host raises the system
   caret's location change about 130 microseconds before its console
   caret event, at the same blink tick, for the same move.
-- The event's window is checked as readable before the caret event is
-  mapped onto the focus: it must be a window, have no ghost window
+- The event's window is checked as readable when the focus listener
+  receives the event, before it tells Core: it must be a window, have no ghost window
   standing in for it, and belong to an application that is responding,
   so that a hung application's caret event never leads to a read that
   would wait on it. NVDA checks that the event's window exists for every
@@ -560,13 +568,13 @@ object's life, with a new object for every focus event; an object
 without a text pattern has its value spoken in place of its line, and
 UIA reports a provider that fails the pattern request exactly as one
 with no pattern ([The UIA client](../nvda/uia.md), "Element wrapping").
-Verbatim: **matched (verified)**: the answer of no pattern is not kept
-past evidence that it is out of date: the next focus on the node, or a
-caret or text event from it, which only an element with text raises,
-has the pattern fetched again; a caret key's watch on such a node stays
-open for that event instead of being answered at once; and a fetch that
-fails with an error is not kept at all (mockapp's
-`a_text_pattern_missing_at_the_focus_is_read_at_the_next_caret_event`).
+Verbatim: **matched**: a caret event from the element, which only an
+element with text raises, is read through the event's element when the
+focus's node had no text pattern (mockapp's
+`a_caret_tells_read_adopts_its_element_when_the_node_had_no_text_pattern`);
+a caret key on a node with no text is sent on at once and says nothing,
+as NVDA's script sends the key when its caret read fails
+(`editableText.py` 182 to 186).
 Different: when a focus's text has a pattern but cannot be read at all,
 nothing is said in place of its line until its caret is next reported,
 where NVDA's read raises and nothing more of the focus is spoken.

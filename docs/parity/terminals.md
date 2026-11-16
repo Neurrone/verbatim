@@ -50,11 +50,20 @@ Verbatim: **different** (Dickson, 2026-10-23; rules 5, 12 and 13).
   unfinished last word until the line grows past it, the caret leaves
   the line, or the quiet period passes, so a streamed word is not spoken
   in pieces.
-- In the console host, the console's own update `WinEvents` are taken as
-  text changes as well as UIA's, merged per window, and a change observed
-  before the last read began is covered by it, since UIA's text changes
-  stopped reaching the outpost in the middle of large writes in 2 of 14
-  runs (different).
+- The terminal is read only when Core asks. The outpost tells Core of
+  every change signal of the focused terminal, with when it observed it,
+  and makes no call for it; a tell still waiting on its pipe is merged
+  with a newer one of the same terminal. In the console host, the
+  console's own update `WinEvents` are change signals as well as UIA's
+  text changes, since UIA's text changes stopped reaching the outpost in
+  the middle of large writes in 2 of 14 runs (different). Core asks one
+  read at once, outside its event queue, when none is out; changes told
+  while one is out are read once after it, unless it began after them,
+  and a change a read begun after it covers asks nothing (Dickson,
+  2026-11-16; `crates/verbatim-core/src/terminal/reading.rs`).
+  Each read's speech joins the event queue in order, as NVDA reads on a
+  monitor thread of its own and queues only the speech
+  (`NVDAObjects/behaviors.py` 466 to 500).
 - Windows Terminal's notifications from a terminal, and the console
   host's from its text area, are all ignored, whatever their activity
   id, so nothing is spoken twice, as NVDA's overlays block them.
@@ -131,9 +140,10 @@ settings", Core's flood policy).
   (Dickson, 2026-10-25). Nothing is lost for good: every line is still
   there for the review cursor (the `*_flood` and
   `*_scrollback_overflow_during_group` scenarios).
-- The terminal is read on demand while Core's queue is full: the outpost
-  only notes changes until Core asks, when a group's last line is handed
-  to speech (rule 1).
+- While the flood policy holds, Core sends no read for the changes told:
+  it reads them when a group's last line is handed to speech; a cut while
+  it holds reads them at once with a silent read, which speaks only its
+  answers to keys, as NVDA's cut drops output it had already read.
 
 ### Typing
 
@@ -308,12 +318,13 @@ grouping", "list", and the tab moved to ("<title> 1 of 2") in full, and
 on releasing Control the tab's terminal and its line.
 
 Verbatim: **matched (verified)** for Control+Tab and Control+Shift+Tab
-(`books/dev/src/reference/adr/0001-focus.md`, "Who reads a UI Automation
-focus"). The
-focus listener judges and reads each focus from the event's own element
-on its thread for the application, a few milliseconds after the event,
-and the outpost reports every focus it read, in the order the events
-arrived; Core culls the speech of a focus no longer current. The tab's
+([How focus works](../../books/dev/src/explanation/design/focus.md),
+"One UI Automation focus, end to end"). The focus listener's check
+thread for the application reads the keyboard focus of each event's own
+element a few milliseconds after the event, as NVDA's handler does, and
+tells Core of every focus in the order the events arrived; Core judges
+each in its event queue, asks the listener to read it and the outpost to
+complete it, and culls the speech of a focus no longer current. The tab's
 ancestors are its own element's, the terminal's container above its
 list, so Verbatim says "list" and the tab, as NVDA does, and the tab
 left is announced and then culled, as NVDA queues it. Either key says
@@ -330,7 +341,17 @@ elsewhere is new output to its diff, and it drops a marker's change of
 one or two characters as probably typed.
 
 Verbatim: **matched (verified)** for Up and Down Arrow in a terminal, a
-selection list a program draws among them (Dickson, 2026-10-09). Verbatim
+selection list a program draws among them (Dickson, 2026-10-09). A caret
+key in a terminal is Core's caret watch, as in any text field: Core reads
+the terminal, passes the key on, checks the caret every 5 ms for up to
+100 ms in the console host and every 10 ms for up to 300 ms in Windows
+Terminal, the terminal's caret events left unused as NVDA leaves them,
+and then reads the terminal again; the reading rules speak each read,
+and the key says nothing itself (`crates/verbatim-core/src/keys/caret_key.rs`).
+NVDA's wait is 100 ms in the console host and three times that in
+Windows Terminal (`NVDAObjects/UIA/winConsoleUIA.py` 374 to 376, 470,
+486); the console host's 5 ms checks are Verbatim's (Dickson,
+2026-10-26). Verbatim
 credits a key with the changes found by reads that begin within 300
 milliseconds after the key reached the program; later changes are
 output (rule 18). It answers the key with the caret's line, or with what
