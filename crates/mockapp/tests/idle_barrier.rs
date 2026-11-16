@@ -13,13 +13,12 @@ mod common;
 #[path = "common/harness.rs"]
 mod harness;
 
-use verbatim_ia2::WinEventKind;
 use verbatim_model::protocol::{
-    CoreToOutpost, DeliveredFact, OutpostToCore, Query, QueryOutcome, QueryResult, RequestId,
+    CoreToOutpost, OutpostToCore, Query, QueryOutcome, QueryResult, RequestId,
 };
+use verbatim_model::request::FocusCaret;
 use verbatim_model::{
-    CaretMotion, CaretReport, FocusText, KeyFetch, NodeId, NormalizedEvent, NoteRequest, TextOp,
-    TextPoint, TextReply,
+    CaretMotion, KeyFetch, NodeId, NormalizedEvent, NoteRequest, TextOp, TextPoint, TextReply,
 };
 use verbatim_outpost::Heard;
 use verbatim_process::arguments::OutpostOptions;
@@ -70,17 +69,20 @@ fn the_answer_goes_behind_a_message_in_the_pipe_and_one_in_the_backlog() {
     app.send(&format!("set-text doc {}", "x".repeat(LONG_TEXT)));
     let mut outpost =
         OutpostUnderTest::with_pipe_buffer(&app, OutpostOptions::default(), SMALL_PIPE);
-    let (notes, _) = notes_focus(&mut app, &outpost, hwnd);
-    outpost.hold_worker();
+    let notes = notes_focus(&mut app, &outpost, hwnd);
     let read = TextOp::ReadRange {
         start: TextPoint::Start,
         end: TextPoint::End,
         through: None,
     };
+    // The worker is held inside the first read's call while the second
+    // read and the idle query are handed over.
+    app.hold();
     let first = outpost.ask(Query::Text {
         node_id: notes,
         op: read.clone(),
     });
+    let _ = app.held();
     let second = outpost.ask(Query::Text {
         node_id: notes,
         op: read,
@@ -88,55 +90,35 @@ fn the_answer_goes_behind_a_message_in_the_pipe_and_one_in_the_backlog() {
     outpost
         .outpost
         .handle_command(&CoreToOutpost::IdleQuery { round: 7 });
-    // A foreground change behind the query holds the worker again once it
-    // has handled everything before it.
-    outpost.deliver(DeliveredFact::Foreground {
-        hwnd: common::another_applications_window().0 as isize,
-    });
-    outpost.step_worker(1);
+    app.release();
     // The first read's answer is in flight, the second's and the idle
     // answer wait behind it; only now does Core read.
     whole_text(&outpost, first);
     whole_text(&outpost, second);
     assert_eq!(outpost.next(), OutpostToCore::IdleAnswer { round: 7 });
-    outpost.release_worker();
     outpost.settled();
     drop(outpost);
     app.quit();
 }
 
-/// Focuses mockapp's "Notes" document, hands the outpost the fact the
-/// listener sends for it, and returns its node and the caret the outpost
-/// reported with the focus, which must be all it said.
-fn notes_focus(
-    app: &mut common::MockApp,
-    outpost: &OutpostUnderTest,
-    hwnd: HWND,
-) -> (NodeId, CaretReport) {
+/// Focuses mockapp's "Notes" document, has the outpost complete the
+/// listener's read of it as Core asks, and returns its node, whose answer
+/// carries its caret.
+fn notes_focus(app: &mut common::MockApp, outpost: &OutpostUnderTest, hwnd: HWND) -> NodeId {
     app.send("set-focus doc");
     let uia = Uia::new().expect("a UIA client");
     let element = common::listener_focus(&uia, hwnd.0 as isize);
-    outpost.deliver(outpost.listener_fact(&element));
-    let (node, caret) = match outpost.next() {
-        OutpostToCore::Event {
-            event:
-                NormalizedEvent::FocusChanged {
-                    node,
-                    text: Some(text),
-                    ..
-                },
-            ..
-        } if matches!(*text, FocusText::Caret { .. }) => {
-            let FocusText::Caret { caret, .. } = *text else {
-                unreachable!("matched by the guard");
-            };
-            (node, caret)
-        }
-        other => panic!("the outpost said {other:?}, not the document's focus with its caret"),
-    };
-    assert_eq!(node.name.as_deref(), Some("Notes"));
+    let focused = outpost.uia_focus_answer(&element);
+    assert_eq!(
+        (
+            focused.name(),
+            matches!(focused.read.caret, FocusCaret::Read(_))
+        ),
+        (Some("Notes"), true),
+        "the document's focus with its caret"
+    );
     outpost.settled();
-    (node.id, caret)
+    focused.node()
 }
 
 /// A key's note holds no answer: an idle query is answered as the outpost
@@ -144,7 +126,7 @@ fn notes_focus(
 fn the_answer_does_not_wait_for_a_note() {
     let (mut app, hwnd) = start("mockapp-idle-caret-note");
     let outpost = OutpostUnderTest::new(&app);
-    let (notes, _) = notes_focus(&mut app, &outpost, hwnd);
+    let notes = notes_focus(&mut app, &outpost, hwnd);
     // Right Arrow, which the application has not handled yet.
     outpost.key_note(NoteRequest::Field {
         node: notes,
@@ -168,10 +150,7 @@ fn the_answer_does_not_wait_for_a_note() {
         } => {}
         other => panic!("the outpost said {other:?}, not the note's report"),
     }
-    outpost.heard(&[
-        Heard::UiaTextSelection,
-        Heard::Msaa(WinEventKind::TextSelectionChange),
-    ]);
+    outpost.heard(&[Heard::UiaTextSelection]);
     outpost.settled();
     drop(outpost);
     app.quit();
@@ -194,26 +173,7 @@ fn held_terminal(name: &str) -> (common::MockApp, OutpostUnderTest, NodeId) {
     app.send("set-focus term");
     let uia = Uia::new().expect("a UIA client");
     let element = common::listener_focus(&uia, hwnd.0 as isize);
-    outpost.deliver(outpost.listener_fact(&element));
-    let term = match outpost.next() {
-        OutpostToCore::Event {
-            event:
-                NormalizedEvent::FocusChanged {
-                    node,
-                    text: Some(text),
-                    ..
-                },
-            ..
-        } if matches!(*text, FocusText::Caret { .. }) => node.id,
-        other => panic!("the outpost said {other:?}, not the terminal's focus with its caret"),
-    };
-    match outpost.next() {
-        OutpostToCore::Event {
-            event: NormalizedEvent::TerminalSnapshot { node_id, .. },
-            ..
-        } if node_id == term => {}
-        other => panic!("the outpost said {other:?}, not the terminal's first read"),
-    }
+    let term = outpost.uia_focus_answer(&element).node();
     outpost.settled();
     let hold = outpost.ask(Query::Text {
         node_id: term,
@@ -234,10 +194,7 @@ fn held_terminal(name: &str) -> (common::MockApp, OutpostUnderTest, NodeId) {
             .concat()
     ));
     app.send("text-changed term");
-    outpost.heard(&[
-        Heard::UiaTextChanged,
-        Heard::Msaa(WinEventKind::ValueChange),
-    ]);
+    outpost.heard(&[Heard::UiaTextChanged]);
     outpost.settled();
     (app, outpost, term)
 }
@@ -253,10 +210,7 @@ fn a_noted_caret_holds_the_answer_back_only_for_its_own_read() {
     outpost.hold_worker();
     // Noted when handled, the terminal being held with its text changed.
     app.send("caret-event term");
-    outpost.heard(&[
-        Heard::UiaTextSelection,
-        Heard::Msaa(WinEventKind::TextSelectionChange),
-    ]);
+    outpost.heard(&[Heard::UiaTextSelection]);
     outpost
         .outpost
         .handle_command(&CoreToOutpost::IdleQuery { round: 5 });
