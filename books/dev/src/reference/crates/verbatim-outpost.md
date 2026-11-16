@@ -1038,8 +1038,15 @@ reads behind ids Core names, released as anchors are (Table 16):
   `ReadSelection`, after the node's states, with the request's baseline;
   `NoText` for a node with no text, `NotRead` when the read failed and for
   a terminal, whose baseline read is its first.
-- The watch and the sentence move are answered unsupported until their
-  handlers are built.
+- `MoveBySentence` (`text::sentence`), run whole: from the starting
+  point, the caret's paragraph is read, the next or previous sentence
+  found in it by Unicode's rules, the paragraph beside it read when the
+  sentence is not in it, and the caret moved; past the last sentence the
+  caret goes to the text's end, and at the start it stays with the first
+  sentence; the next baseline held. A source with no sentence unit
+  answers `UnsupportedUnit`, a starting point no longer held
+  `AnchorLost`.
+- The watch is answered unsupported until its handler is built.
 
 - A UIA node has text when its element has a text pattern (`TextPattern2`
   where offered), fetched once and kept with the node. `NoText` is kept only

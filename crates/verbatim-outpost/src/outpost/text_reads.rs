@@ -615,9 +615,12 @@ pub(super) fn answer_asked(
                 },
             )
         }),
-        // The watch and the sentence move are answered by their own
-        // handlers, not built yet.
-        TextOp::Watch(_) | TextOp::MoveBySentence(_) => Ok(TextReply::Unsupported),
+        TextOp::MoveBySentence(moved) => on_text!(context, node_id, &named, |source, text| {
+            text::sentence::move_by_sentence(source, text, (moved.point, moved.forward))
+                .unwrap_or_else(failed_reply)
+        }),
+        // The watch is answered by its own handler, not built yet.
+        TextOp::Watch(_) => Ok(TextReply::Unsupported),
         other => on_text!(context, node_id, &named, |source, text| {
             text::held::perform_placed(source, text, other)
         }),

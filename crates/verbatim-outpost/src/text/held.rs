@@ -61,7 +61,7 @@ impl<P: Clone> NodeText<'_, P> {
     }
 
     /// The read held under `baseline`, its positions as the source's.
-    fn held_read(&self, baseline: TextAnchor) -> Option<super::LastRead<P>> {
+    pub(super) fn held_read(&self, baseline: TextAnchor) -> Option<super::LastRead<P>> {
         self.anchors
             .held
             .get(&baseline.0)
@@ -200,7 +200,7 @@ pub fn perform_placed<S: TextSource>(
 /// The baseline held after a move: the read the move kept, when it kept
 /// one (its time changed from `kept_before`), else a fresh read of the
 /// caret begun at `read_at_us`.
-fn held_after_move<S: TextSource>(
+pub(super) fn held_after_move<S: TextSource>(
     source: &mut S,
     anchors: &mut NodeText<'_, S::Pos>,
     kept_before: Option<u64>,

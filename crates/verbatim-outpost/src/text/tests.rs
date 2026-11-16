@@ -6,7 +6,7 @@ use std::sync::atomic::AtomicU64;
 
 use verbatim_model::{
     CaretMotion, CaretRead, CaretReply, Change, KeyFetch, ReadFacts, ReadPurpose,
-    SelectionDifference,
+    SelectionDifference, SentenceMoved,
 };
 
 use super::*;
@@ -1333,4 +1333,108 @@ fn a_move_and_a_selection_for_an_entry_hold_the_next_baseline() {
                 .map(|selection| (selection.start.at, selection.end.at))),
         Some((0, 4))
     );
+}
+
+/// Moves by sentence from a starting point held at `caret` in
+/// "One. Two.\nThree.", `forward` or back: what it answered and where the
+/// caret is after.
+fn sentence_from(caret: usize, forward: bool) -> (TextReply, usize) {
+    let mut source = Fake::new("One. Two.\nThree.", caret);
+    let mut anchors = store();
+    let started = held::starting_read(
+        &mut source,
+        &mut anchors.node(1),
+        REPORTED_AT,
+        (TextUnit::Sentence, false),
+    )
+    .expect("the fake answers");
+    let reply =
+        sentence::move_by_sentence(&mut source, &mut anchors.node(1), (started.point, forward))
+            .expect("the fake answers");
+    (reply, source.caret)
+}
+
+/// The sentence and line a move answered, `None` for another answer.
+fn moved_to(reply: &TextReply) -> Option<(String, String, u32)> {
+    match reply {
+        TextReply::Sentence(moved) => match &**moved {
+            SentenceMoved::Moved { sentence, line, .. } => {
+                Some((sentence.clone(), line.text.clone(), line.offset))
+            }
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// The next sentence in the caret's paragraph, then the next paragraph's
+/// first, then the text's end past the last.
+#[test]
+fn a_sentence_move_forward_finds_the_next_sentence_then_paragraph_then_the_end() {
+    let (reply, caret) = sentence_from(0, true);
+    assert_eq!(
+        moved_to(&reply),
+        Some(("Two.".to_owned(), "One. Two.\n".to_owned(), 5))
+    );
+    assert_eq!(caret, 5);
+    let (reply, caret) = sentence_from(5, true);
+    assert_eq!(
+        moved_to(&reply),
+        Some(("Three.".to_owned(), "Three.".to_owned(), 0))
+    );
+    assert_eq!(caret, 10);
+    let (reply, caret) = sentence_from(12, true);
+    let TextReply::Sentence(moved) = reply else {
+        panic!("a sentence move, not {reply:?}");
+    };
+    let SentenceMoved::End { line, .. } = *moved else {
+        panic!("the end, not {moved:?}");
+    };
+    assert_eq!((line.text.as_str(), line.offset), ("Three.", 6));
+    assert_eq!(caret, 16);
+}
+
+/// The sentence before the caret, then the previous paragraph's last, and
+/// at the text's start the caret stays with the first sentence.
+#[test]
+fn a_sentence_move_back_finds_the_one_before_then_stays_at_the_start() {
+    let (reply, caret) = sentence_from(7, false);
+    assert_eq!(
+        moved_to(&reply),
+        Some(("Two.".to_owned(), "One. Two.\n".to_owned(), 5))
+    );
+    assert_eq!(caret, 5);
+    let (reply, caret) = sentence_from(10, false);
+    assert_eq!(
+        moved_to(&reply),
+        Some(("Two.".to_owned(), "One. Two.\n".to_owned(), 5))
+    );
+    assert_eq!(caret, 5);
+    let (reply, caret) = sentence_from(0, false);
+    let TextReply::Sentence(moved) = reply else {
+        panic!("a sentence move, not {reply:?}");
+    };
+    let SentenceMoved::StayedAtStart { sentence, .. } = *moved else {
+        panic!("stayed at the start, not {moved:?}");
+    };
+    assert_eq!(sentence, "One. ");
+    assert_eq!(caret, 0);
+}
+
+/// Text with no sentence unit is not moved in, and a starting point no
+/// longer held is lost.
+#[test]
+fn a_sentence_move_without_sentences_or_its_point_moves_nothing() {
+    let mut source = Fake::new("One. Two.", 0);
+    let mut anchors = store();
+    assert_eq!(
+        sentence::move_by_sentence(&mut source, &mut anchors.node(1), (TextAnchor(77), true)),
+        Ok(TextReply::AnchorLost)
+    );
+    source.sentences = Sentences::Unsupported;
+    assert_eq!(
+        sentence::move_by_sentence(&mut source, &mut anchors.node(1), (TextAnchor(77), true)),
+        Ok(TextReply::UnsupportedUnit(TextUnit::Sentence))
+    );
+    assert_eq!(source.caret, 0);
 }

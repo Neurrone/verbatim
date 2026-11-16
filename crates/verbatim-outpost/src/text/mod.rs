@@ -32,6 +32,7 @@
 mod color;
 pub mod edit;
 pub mod held;
+pub mod sentence;
 pub mod uia;
 
 use std::cmp::Ordering;
