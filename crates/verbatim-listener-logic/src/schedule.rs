@@ -964,9 +964,13 @@ impl<J> Schedule<J> {
         // NVDA's UIA limiter keeps one waiting event per element and kind:
         // a newer one erases the older, which is reported dropped.
         let mut replaced = false;
-        // A progress bar's change never starts or holds an outpost: it is
-        // read and the record then goes, whatever else the record holds.
-        let bar = matches!(kind, FocusEvent::UiaBar | FocusEvent::ClassicBar);
+        // A progress bar's change, and a release of kept elements, never
+        // starts or holds an outpost: it is read and the record then goes,
+        // whatever else the record holds.
+        let bar = matches!(
+            kind,
+            FocusEvent::UiaBar | FocusEvent::ClassicBar | FocusEvent::Release
+        );
         if let Some(running) = self.running.get_mut(&pid) {
             // An event while its outpost's end is asked: the application
             // runs on.
@@ -2888,6 +2892,19 @@ mod tests {
             "the focus's job"
         );
         assert!(in_charge(&schedule, 1, 1), "kept by the focus");
+    }
+
+    /// A release of kept elements in a process no record names makes a
+    /// record that is let go as soon as it has nothing left, as a bar's
+    /// change does: it starts and holds no outpost.
+    #[test]
+    fn a_releases_record_is_let_go_when_idle() {
+        let mut schedule = schedule();
+        let _ = step(&mut schedule, push(1, 1, FocusEvent::Release), 0);
+        let _ = step(&mut schedule, next(1, 1), 0);
+        let _ = step(&mut schedule, returned(1, request(1, 1), 1), 1);
+        assert_eq!(step(&mut schedule, next(1, 1), 1), [Seen::Forget(1)]);
+        assert!(schedule.held().next().is_none(), "let go when idle");
     }
 
     /// A bar's change never moves an application's record from its end

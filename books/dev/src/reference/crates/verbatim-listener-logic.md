@@ -36,7 +36,9 @@ Public API:
   `Gathered` lives for one read; the tests are a table of exact cases, one
   per check and drop reason.
 - `focus` — the vocabulary a focus event is judged and scheduled in: its
-  kind (`FocusEvent`), what the callback knew of it (`Meta`) and where it
+  kind (`FocusEvent`, among them `Release`, a job releasing kept elements,
+  which like a bar's change starts and holds no outpost), what the
+  callback knew of it (`Meta`) and where it
   was queued (`Arrival`, `arrival_of`), and what became of it (`Judged`,
   with `into_fact`). `classic_value_change`, `BarObject`, `BarVerdict` and
   `ClassicBarRead` are the listener's hook's table for a classic value
@@ -127,6 +129,40 @@ Public API:
   before, until a later event finds it in front or a newer foreground
   event replaces it; none sent replaces another.
 
+- `check` — the calls a UI Automation event's check makes at delivery on
+  its application's check thread, NVDA's handler for its kind in its
+  order, as one pure step function: `Check::next` names the next `Call`
+  (the walk to the nearest window, the window's class verdict, the probe,
+  each kept element's keyboard focus, the previous sibling, the element's
+  keyboard focus) and the thread records each answer. `Handler::of` maps a
+  kind to its handler: a focus or menu opening makes every call, a walk
+  that finds no window ending it; an element selected, a window opened
+  and a property change walk and probe; a notification walks alone, a
+  failed walk telling no window. A window on one of NVDA's lists is not
+  probed, nor one whose probe in the thread's `ProbeRecord` began within
+  `PROBE_RECORD_US` (half a second). A nameless `NetUITWMenuItem` menu
+  item has its previous sibling read, and with none, or none read, its
+  keyboard focus is not, as NVDA's placeholder allows its focus.
+  `Check::finish` answers what the walk found (`Walked`) and the
+  `Checked` the tell carries. Every read but the walk is made whatever the
+  probe answered, since Core holds the verdict.
+- `check_threads` — the check threads' records (`CheckThreads`), one per
+  application, keyed by its generation, under the listener's one lock:
+  `push` queues an event, starting a thread when there is no record or
+  waking an idle one; `take` hands the thread its next event, or has it
+  wait, or exit by removing its record once idle for `IDLE_US`
+  (30 seconds); `checked` says whether its tell is placed, only while the
+  record is its own; `ended` drops an ended application's queue untold;
+  `stop` drops every queue; and `when_idle` holds the idle barrier's
+  waiter until every event pushed before it is told or dropped.
+- `kept` — one application's kept elements (`KeptElements`, Table 6 of
+  the build design): told and not yet asked about, in read, read and not
+  yet named, and named as the readers' last focus by a focus request
+  (`focus_request`); `with_runtime_id` lists those the check thread reads
+  the keyboard focus of; `sweep` lets go of told elements past
+  `KEPT_FOR_US` (60 seconds) or beyond the newest `KEPT_PER_APPLICATION`
+  (64); `ended` lets go of every one but a read in flight. Every element
+  let go is handed back for release on its application's reading thread.
 - `tell` — what the listener decides of a `WinEvent` before it tells
   Core of it: `tell_window`, NVDA's mapping of a window of 0 to the
   desktop window, and of an invalid one to it for the end of a menu, a

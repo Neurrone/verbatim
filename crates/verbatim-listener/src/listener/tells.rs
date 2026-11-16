@@ -20,7 +20,7 @@ use verbatim_listener_logic::tell::{
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::PropertyValues;
 use verbatim_model::protocol::ListenerToCore;
-use verbatim_model::tell::{Event, EventObject, Payload, TellWindow};
+use verbatim_model::tell::{Checked, Event, EventObject, Payload, TellWindow};
 use verbatim_model::{Pid, TraceId, WindowHandle};
 use verbatim_process::clock::now_us;
 use verbatim_process::held::Target;
@@ -44,15 +44,28 @@ pub(super) struct TellKey {
 /// A tell before it is placed in the listener's order: everything but the
 /// foreground's part of its window facts, which is read as it is placed.
 pub(super) struct Pending {
-    trace_id: TraceId,
-    kind: EventKind,
-    process: Pid,
-    application: String,
-    thread: u32,
-    at_us: u64,
-    object: EventObject,
-    payload: Payload,
-    part: WindowPart,
+    pub(super) trace_id: TraceId,
+    pub(super) kind: EventKind,
+    pub(super) process: Pid,
+    pub(super) application: String,
+    pub(super) thread: u32,
+    pub(super) at_us: u64,
+    pub(super) object: EventObject,
+    pub(super) cached: PropertyValues,
+    pub(super) payload: Payload,
+    pub(super) window: PendingWindow,
+    pub(super) checked: Option<Checked>,
+}
+
+/// The window a tell is judged by, before it is placed: found, with the
+/// part of its facts that depends on it alone, or why there is none.
+pub(super) enum PendingWindow {
+    /// Found.
+    Found(WindowPart),
+    /// The check thread's walk found no window.
+    NoWindow,
+    /// The check thread's walk failed.
+    Failed,
 }
 
 impl Pending {
@@ -64,6 +77,11 @@ impl Pending {
             object: self.object.clone(),
             thread: self.thread,
         };
+        let window = match self.window {
+            PendingWindow::Found(part) => TellWindow::Found(Box::new(part.with_foreground(reads))),
+            PendingWindow::NoWindow => TellWindow::NoWindow,
+            PendingWindow::Failed => TellWindow::Failed,
+        };
         let tell = Event {
             trace_id: self.trace_id,
             kind: self.kind,
@@ -72,10 +90,10 @@ impl Pending {
             thread: self.thread,
             at_us: self.at_us,
             object: self.object,
-            cached: PropertyValues(Vec::new()),
+            cached: self.cached,
             payload: self.payload,
-            window: TellWindow::Found(Box::new(self.part.with_foreground(reads))),
-            checked: None,
+            window,
+            checked: self.checked,
         };
         (key, ListenerToCore::Tell(Box::new(tell)))
     }
@@ -374,8 +392,14 @@ pub(super) fn tell_win_event(
             object: event.id_object,
             child: event.id_child,
         },
+        cached: PropertyValues(Vec::new()),
         payload,
-        part: WindowPart::read(&reads, window, console.then_some((event.thread, process.0))),
+        window: PendingWindow::Found(WindowPart::read(
+            &reads,
+            window,
+            console.then_some((event.thread, process.0)),
+        )),
+        checked: None,
     };
     match awaited {
         Some(window) => tells.foreground(window, Some(tell)),

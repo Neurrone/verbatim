@@ -355,6 +355,24 @@ section 6.3).
   once all are in, so a menu opened right after start is seen. Range-value changes and live regions are not subscribed:
   values are spoken only for the focus, and live regions are milestone
   M7's.
+- Every UIA event the listener hears but a progress bar's range-value
+  change goes from its callback, which makes no call, to its
+  application's check thread (`listener::checking`, `Checks`), after the
+  callback's drops: before the subscriptions are installed, with no
+  process, or with its sender's cached window hung. The thread makes the
+  calls NVDA's handler for the event's kind makes at delivery
+  (`verbatim_listener_logic::check`), with its own UI Automation client,
+  then places the tell, carrying the nearest window's acceptance facts,
+  the probe, the keyboard-focus answers and the cached properties of the
+  kind's set, under the check threads' lock and the tells' lock, so no
+  tell of an ended application is sent and the idle barrier's answer
+  follows the tells of every event handed before it. Each told element is
+  kept behind the token its tell names (`verbatim_listener_logic::kept`);
+  those let go, by the sweep at each tell or at the application's exit,
+  are released as a `UiaJob::Release` on the application's reading
+  thread. A thread exits after 30 seconds with nothing to check; at
+  shutdown one inside a call is abandoned. Today's routing goes on beside
+  the tells.
 - A UIA menu opening takes the focus's route, judged as NVDA's automation
   event handler judges one, and is read as a focus on the menu. One that
   arrives while a focus of its application waits or is read is dropped

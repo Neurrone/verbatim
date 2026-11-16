@@ -200,7 +200,9 @@ pub struct Event {
     /// record of the application. Core's rules for an application's
     /// elements read it, as NVDA's application modules match by it.
     pub application: String,
-    /// The thread that raised the event, by which the limiter counts it.
+    /// The thread that raised the event, by which the limiter counts it;
+    /// for a UI Automation event, which names none, the thread that owns
+    /// its tell window, 0 when the check found none.
     pub thread: u32,
     /// When the reader's callback received it, in microseconds on the
     /// run's shared clock.

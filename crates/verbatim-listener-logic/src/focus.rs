@@ -69,6 +69,13 @@ pub enum FocusEvent {
     /// has no marker an outpost waits on, moves away from no application,
     /// and is no pending focus.
     DesktopName,
+    /// The release of the UI Automation elements the listener kept for
+    /// its tells and let go ([`crate::kept`]), as a job on their
+    /// application's reading thread, since a release can call into the
+    /// application. Like a progress bar's change, it has no marker an
+    /// outpost waits on, moves away from no application, is no pending
+    /// focus, and starts and holds no outpost.
+    Release,
 }
 
 /// The reason a focus or selection is dropped when its sender has no

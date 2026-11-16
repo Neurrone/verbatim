@@ -140,7 +140,9 @@ use windows::Win32::UI::Accessibility::{
 };
 
 use verbatim_ia2::{LISTENER_SUBSCRIPTIONS, WinEvent, WinEventKind};
-use verbatim_model::{BarChange, Notification, OutpostId, Percent, Pid, Role, TraceId};
+use verbatim_model::event_kind::EventKind;
+use verbatim_model::tell::Payload;
+use verbatim_model::{BarChange, Notification, OutpostId, Percent, Pid, Role, StateSet, TraceId};
 use verbatim_process::scheduling::{ThreadPriority, prioritize_role};
 use verbatim_process::transport::{Backlog, ChildIo, SendError, Sender, Served, Serving};
 use verbatim_uia::map::{
@@ -155,7 +157,10 @@ use verbatim_uia::{
 
 use crate::focus_read::{FocusReader, Readers, Reading, WatchedRead};
 
+mod checking;
 mod tells;
+
+use checking::{CheckEvent, Checks};
 
 use crate::value_change::{Found, Judgement, ValueChange, ValueChangeKnowledge, probed_of};
 use tells::{Applications, Held, TellKey, Tells, tell_win_event};
@@ -817,6 +822,13 @@ impl Outgoing {
         (!self.ignored.contains(pid)).then_some(pid)
     }
 
+    /// Whether the desktop-wide UIA subscriptions have been installed, or
+    /// their installation has failed: until then every UIA event is
+    /// dropped.
+    fn uia_installed(&self) -> bool {
+        self.uia_installed.load(Ordering::Acquire)
+    }
+
     /// A new marker's number.
     fn next_marker(&self) -> u64 {
         self.markers.fetch_add(1, Ordering::Relaxed) + 1
@@ -996,14 +1008,19 @@ impl Outgoing {
 /// What makes the listener's desktop-wide UIA subscriptions, on the
 /// thread [`Listener::start`] starts for it, returning them, or `None`
 /// when their installation failed.
-type InstallSubscriptions =
-    Box<dyn FnOnce(&Arc<Outgoing>, &Arc<Readers<UiaFocusReading>>) -> Option<Registration> + Send>;
+type InstallSubscriptions = Box<
+    dyn FnOnce(&Arc<Outgoing>, &Arc<Readers<UiaFocusReading>>, &Arc<Checks>) -> Option<Registration>
+        + Send,
+>;
 
 /// The focus listener: owns its subscriptions for the whole life of the
 /// process.
 struct Listener {
     outgoing: Arc<Outgoing>,
     readers: Arc<Readers<UiaFocusReading>>,
+    /// Every application's check thread, which checks and tells its UI
+    /// Automation events.
+    checks: Arc<Checks>,
     /// The thread making the desktop-wide UIA registration, which returns
     /// it, or `None` when it failed ([`Listener::start`]).
     registering: JoinHandle<Option<Registration>>,
@@ -1094,6 +1111,10 @@ pub(crate) enum UiaJob {
         percent: Percent,
         report: Responder<BarChange>,
     },
+    /// The elements kept for tells and let go, released here, on their
+    /// application's reading thread, since a release can call into the
+    /// application ([`Checks`]).
+    Release(Vec<Agile<ListenerEvent>>),
 }
 
 impl Reading for UiaFocusReading {
@@ -1156,6 +1177,10 @@ impl Reading for UiaFocusReading {
                 return Judged::Dropped(BAR_READ);
             }
             UiaJob::Event(element, _, _, kind, fact) => (element, kind, fact),
+            UiaJob::Release(elements) => {
+                drop(elements);
+                return Judged::Dropped(RELEASED);
+            }
             UiaJob::LiveReread(request, _) => return reader.live_reread(request, meta.trace),
             UiaJob::DesktopName((hwnd, id_object, id_child), name) => {
                 if let Some(read) = (self.desktop_name)(hwnd, id_object, id_child) {
@@ -1194,7 +1219,8 @@ impl Reading for UiaFocusReading {
             UiaJob::Event(..)
             | UiaJob::DesktopName(..)
             | UiaJob::ClassicBar { .. }
-            | UiaJob::UiaBar { .. } => None,
+            | UiaJob::UiaBar { .. }
+            | UiaJob::Release(..) => None,
         }
     }
 
@@ -1213,6 +1239,7 @@ impl Reading for UiaFocusReading {
             UiaJob::DesktopName(..) => FocusEvent::DesktopName,
             UiaJob::ClassicBar { .. } => FocusEvent::ClassicBar,
             UiaJob::UiaBar { .. } => FocusEvent::UiaBar,
+            UiaJob::Release(..) => FocusEvent::Release,
         }
     }
 
@@ -1233,7 +1260,7 @@ impl Reading for UiaFocusReading {
             }
             UiaJob::ClassicBar { key, .. } => Some((FocusEvent::ClassicBar, key.as_slice())),
             UiaJob::UiaBar { runtime_id, .. } => Some((FocusEvent::UiaBar, runtime_id.as_slice())),
-            UiaJob::LiveReread(..) | UiaJob::DesktopName(..) => None,
+            UiaJob::LiveReread(..) | UiaJob::DesktopName(..) | UiaJob::Release(..) => None,
         }
     }
 
@@ -1265,6 +1292,9 @@ impl Reading for UiaFocusReading {
         answer.answer(fact);
     }
 }
+
+/// What a release of kept elements' outcome is: no outpost waits for it.
+const RELEASED: &str = "a release of kept elements, owing no outpost anything";
 
 /// What a desktop name read's outcome is: no outpost waits for it.
 const DESKTOP_NAME_READ: &str = "a read of the desktop window's name, owing no outpost anything";
@@ -1335,12 +1365,11 @@ impl Listener {
             sender,
             ignored,
             hooks_in,
-            Box::new(|outgoing, readers| {
+            Box::new(|outgoing, readers, checks| {
                 install_desktop_subscriptions(
-                    outgoing,
-                    readers,
-                    focus_subscription(outgoing, readers),
-                    menu_subscription(outgoing, readers),
+                    (outgoing, readers, checks),
+                    focus_subscription(outgoing, readers, checks),
+                    menu_subscription(outgoing, readers, checks),
                 )
             }),
         )
@@ -1391,6 +1420,8 @@ impl Listener {
             UiaFocusReading::new(),
             verbatim_model::FOCUS_READ_DEADLINE,
         ));
+        let checks = Arc::new(Checks::new(&outgoing, &readers));
+        let idle_checks = Arc::clone(&checks);
         let msaa_outgoing = Arc::clone(&outgoing);
         let idle_readers = Arc::clone(&readers);
         let make_handlers: MakeHandlers = Arc::new(move || {
@@ -1398,6 +1429,7 @@ impl Listener {
             let idle_outgoing = Arc::clone(&msaa_outgoing);
             let readers = Arc::clone(&idle_readers);
             let event_readers = Arc::clone(&readers);
+            let checks = Arc::clone(&idle_checks);
             // The window in front, for the keyboard hook's view of it,
             // kept on this thread by both handlers.
             let watch = Rc::new(RefCell::new(ForegroundWatch::default()));
@@ -1432,7 +1464,7 @@ impl Listener {
                             .start(front_now(idle_outgoing.now()));
                         foreground_step(&idle_outgoing, step);
                     } else {
-                        answer_when_reads_are_done(&readers, &idle_outgoing, round as u64);
+                        answer_when_reads_are_done(&readers, &checks, &idle_outgoing, round as u64);
                     }
                 })),
             }
@@ -1447,11 +1479,12 @@ impl Listener {
         // after it.
         nudger.nudge((0, NUDGE_FOREGROUND_START));
 
-        let registering = install_on_its_thread(&outgoing, &readers, install)?;
+        let registering = install_on_its_thread(&outgoing, &readers, &checks, install)?;
 
         Ok(Self {
             outgoing,
             readers,
+            checks,
             registering,
             nudger,
             _event_thread: event_thread,
@@ -1475,6 +1508,7 @@ impl Listener {
         let Self {
             outgoing,
             readers,
+            checks,
             registering,
             nudger: _,
             _event_thread: event_thread,
@@ -1485,6 +1519,7 @@ impl Listener {
             .unwrap_or_else(|panic| std::panic::resume_unwind(panic));
         let registration_failed_reads = registration.as_ref().map_or(0, Registration::failed_reads);
         drop(registration);
+        checks.stop();
         let reading_threads = readers.stop();
         let failed_reads = registration_failed_reads.saturating_add(readers.failed_reads());
         outgoing.close();
@@ -1526,6 +1561,7 @@ impl Listener {
                 self.readers.outpost_ended(*pid);
             }
             CoreToListener::ApplicationExited { pid } => {
+                self.checks.application_exited(*pid);
                 self.readers.application_exited(*pid);
                 self.outgoing
                     .urgent(ListenerToCore::ExitHandled { pid: *pid });
@@ -1582,7 +1618,7 @@ impl Listener {
     fn idle_query(&self, round: u64) {
         let posted = usize::try_from(round).is_ok_and(|word| self.nudger.nudge((word, 0)));
         if !posted {
-            answer_when_reads_are_done(&self.readers, &self.outgoing, round);
+            answer_when_reads_are_done(&self.readers, &self.checks, &self.outgoing, round);
         }
     }
 }
@@ -1687,15 +1723,17 @@ fn route_win_event(
 fn install_on_its_thread(
     outgoing: &Arc<Outgoing>,
     readers: &Arc<Readers<UiaFocusReading>>,
+    checks: &Arc<Checks>,
     install: InstallSubscriptions,
 ) -> io::Result<JoinHandle<Option<Registration>>> {
     let outgoing = Arc::clone(outgoing);
     let readers = Arc::clone(readers);
+    let checks = Arc::clone(checks);
     std::thread::Builder::new()
         .name("listener UIA subscriptions".to_owned())
         .spawn(move || {
             let started = Instant::now();
-            let registration = install(&outgoing, &readers);
+            let registration = install(&outgoing, &readers, &checks);
             outgoing.uia_installation_ended();
             tracing::info!(
                 elapsed_ms = started.elapsed().as_millis(),
@@ -1714,14 +1752,20 @@ fn install_on_its_thread(
 
 /// Answers the idle barrier's round `round` once no reading thread has an
 /// event waiting or being read, behind the outcome of every one queued
-/// before ([`Readers::when_idle`]).
+/// before ([`Readers::when_idle`]), and then once no check thread has an
+/// event waiting or being checked, behind the tell of every one handed to
+/// it before ([`Checks::when_idle`]).
 fn answer_when_reads_are_done(
     readers: &Readers<UiaFocusReading>,
+    checks: &Arc<Checks>,
     outgoing: &Arc<Outgoing>,
     round: u64,
 ) {
     let outgoing = Arc::clone(outgoing);
-    readers.when_idle(Box::new(move || outgoing.idle_answer(round)));
+    let checks = Arc::clone(checks);
+    readers.when_idle(Box::new(move || {
+        checks.when_idle(Box::new(move || outgoing.idle_answer(round)));
+    }));
 }
 
 /// What a UIA callback captures from an event's element, `sender`, read
@@ -1779,18 +1823,25 @@ fn snapshot_fact(parts: CachedUiaParts) -> UiaSnapshotFact {
 fn focus_subscription(
     outgoing: &Arc<Outgoing>,
     readers: &Arc<Readers<UiaFocusReading>>,
+    checks: &Arc<Checks>,
 ) -> Subscription<Cached<ListenerEvent>> {
     let outgoing = Arc::clone(outgoing);
     let readers = Arc::clone(readers);
+    let checks = Arc::clone(checks);
     let callback = Arc::new(move |sender: &Cached<ListenerEvent>| {
-        queue_for_reading(
-            &outgoing,
-            &readers,
-            sender,
-            &sender.read(),
-            FocusEvent::Focus,
-            None,
-        );
+        let fields = sender.read();
+        let told = (EventKind::UiaFocus, None, Payload::None);
+        if let Some(pid) = arrived(&outgoing, &readers, &checks, (sender, &fields), told) {
+            queue_for_reading(
+                &outgoing,
+                &readers,
+                pid,
+                sender,
+                &fields,
+                FocusEvent::Focus,
+                None,
+            );
+        }
     });
     Subscription::Focus { callback }
 }
@@ -1804,22 +1855,29 @@ fn focus_subscription(
 fn menu_subscription(
     outgoing: &Arc<Outgoing>,
     readers: &Arc<Readers<UiaFocusReading>>,
+    checks: &Arc<Checks>,
 ) -> Subscription<Cached<ListenerEvent>> {
     let outgoing = Arc::clone(outgoing);
     let readers = Arc::clone(readers);
+    let checks = Arc::clone(checks);
     Subscription::Event {
         event: UIA_MenuOpenedEventId,
         callback: Arc::new(move |sender: &Cached<ListenerEvent>| {
             let fields = sender.read();
+            let told = (EventKind::UiaMenuOpened, None, Payload::None);
+            let Some(pid) = arrived(&outgoing, &readers, &checks, (sender, &fields), told) else {
+                return;
+            };
             // The event's process from its cache, the pid its focuses are
             // read under: no call.
-            if readers.focus_pending(fields.process_id.map(Pid)) {
+            if readers.focus_pending(Some(pid)) {
                 tracing::debug!("UIA menu opening dropped: a focus is pending");
                 return;
             }
             queue_for_reading(
                 &outgoing,
                 &readers,
+                pid,
                 sender,
                 &fields,
                 FocusEvent::MenuOpened,
@@ -1829,30 +1887,59 @@ fn menu_subscription(
     }
 }
 
-/// Queues the UIA event `kind` whose sender is `sender`, read as `fields`,
-/// for its application's reading thread, after sending its marker; `fact`,
-/// for a selection or a notification, is what was captured from it. An
-/// event whose sender's cached window the listener's readability reader
-/// answers hung or ghosted is dropped here, as it arrives, with no marker
-/// sent and nothing queued, as NVDA's UIA handlers drop it
-/// (`_shouldSkipEventForHungWindow`, `UIAHandler/utils.py` 438 to 455); a
-/// sender with no cached window is not tested. Makes no cross-process
-/// call: the test is local calls.
+/// A UI Automation event of `kind` whose sender is `sender`, read as
+/// `fields`, arrived: with `states` and `payload`, what its kind carries
+/// beyond its cached properties. Dropped as NVDA's handlers drop it before
+/// any call: before the subscriptions are installed, with no process, or
+/// with its sender's cached window hung or ghosted as it arrives (a sender
+/// with no cached window is not tested). Otherwise handed to its
+/// application's check thread, which tells Core of it, and, unless its
+/// process is one Verbatim ignores, answered with that process for
+/// today's routing, which goes on beside the tell until the build removes
+/// it. Makes no cross-process call.
+fn arrived(
+    outgoing: &Outgoing,
+    readers: &Readers<UiaFocusReading>,
+    checks: &Arc<Checks>,
+    (sender, fields): (&Cached<ListenerEvent>, &ListenerEvent),
+    (kind, states, payload): (EventKind, Option<StateSet>, Payload),
+) -> Option<Pid> {
+    let at_us = outgoing.now();
+    if !outgoing.uia_installed() {
+        tracing::debug!(
+            ?kind,
+            "UIA event dropped: received before the listener's UIA subscriptions were installed"
+        );
+        return None;
+    }
+    let pid = fields.process_id.filter(|&pid| pid != 0).map(Pid)?;
+    if readers.window_hung(fields.role.hwnd) {
+        tracing::debug!(%pid, ?kind, hwnd = fields.role.hwnd, "UIA event dropped as it arrived: its window is hung");
+        return None;
+    }
+    if let Some(event) = CheckEvent::new(kind, (sender, fields), pid, at_us, (states, payload)) {
+        checks.hand(pid, event);
+    }
+    (!outgoing.ignored.contains(pid)).then_some(pid)
+}
+
+/// Queues the UIA event `kind` of `pid`'s whose sender is `sender`, read as
+/// `fields`, for its application's reading thread, after sending its
+/// marker; `fact`, for a selection or a notification, is what was captured
+/// from it. Called once [`arrived`] has taken it, so an event whose
+/// sender's cached window was hung or ghosted as it arrived sends no marker
+/// and queues nothing, as NVDA's UIA handlers drop it
+/// (`_shouldSkipEventForHungWindow`, `UIAHandler/utils.py` 438 to 455).
+/// Makes no cross-process call.
 fn queue_for_reading(
     outgoing: &Arc<Outgoing>,
     readers: &Readers<UiaFocusReading>,
+    pid: Pid,
     sender: &Cached<ListenerEvent>,
     fields: &ListenerEvent,
     kind: FocusEvent,
     fact: Option<DeliveredFact>,
 ) {
-    let Some(pid) = outgoing.uia_event_process(fields.process_id) else {
-        return;
-    };
-    if readers.window_hung(fields.role.hwnd) {
-        tracing::debug!(%pid, ?kind, hwnd = fields.role.hwnd, "UIA event dropped as it arrived: its window is hung");
-        return;
-    }
     let meta = outgoing.received(kind);
     let runtime_id = sender.runtime_id();
     // Every event's arrival, by its marker, whatever its read makes of it,
@@ -1903,14 +1990,13 @@ fn queue_for_reading(
 /// states, and details. A failure is reported as a fault and leaves the
 /// MSAA path running on its own.
 fn install_desktop_subscriptions(
-    outgoing: &Arc<Outgoing>,
-    readers: &Arc<Readers<UiaFocusReading>>,
+    (outgoing, readers, checks): (&Arc<Outgoing>, &Arc<Readers<UiaFocusReading>>, &Arc<Checks>),
     focus: Subscription<Cached<ListenerEvent>>,
     menu: Subscription<Cached<ListenerEvent>>,
 ) -> Option<Registration> {
-    let selection = selection_subscription(outgoing, readers);
-    let notifications = notification_subscription(outgoing, readers);
-    let toasts = toast_subscription(outgoing, readers);
+    let selection = selection_subscription(outgoing, readers, checks);
+    let notifications = notification_subscription(outgoing, readers, checks);
+    let toasts = toast_subscription(outgoing, readers, checks);
     let progress = progress_subscription(outgoing, readers);
     // NVDA's base cache request, as its global group carries, with what
     // refines a role (`ListenerEvent`): UIA fills only these in the
@@ -1945,28 +2031,47 @@ fn install_desktop_subscriptions(
 fn selection_subscription(
     outgoing: &Arc<Outgoing>,
     readers: &Arc<Readers<UiaFocusReading>>,
+    checks: &Arc<Checks>,
 ) -> Subscription<Cached<ListenerSelection>> {
     let outgoing = Arc::clone(outgoing);
     let readers = Arc::clone(readers);
+    let checks = Arc::clone(checks);
     Subscription::Event {
         event: UIA_SelectionItem_ElementSelectedEventId,
         callback: Arc::new(move |sender: &Cached<ListenerSelection>| {
             let fields = sender.read();
-            if let Some((hwnd, snapshot)) = capture_selection(sender, &fields) {
-                let fact = DeliveredFact::UiaSelection {
-                    hwnd,
-                    focus_window: 0,
-                    snapshot,
-                };
-                queue_for_reading(
-                    &outgoing,
-                    &readers,
-                    &sender.narrow(),
-                    &fields.event,
-                    FocusEvent::Selection,
-                    Some(fact),
-                );
-            }
+            let Some((hwnd, snapshot)) = capture_selection(sender, &fields) else {
+                return;
+            };
+            let narrowed = sender.narrow();
+            let told = (
+                EventKind::UiaElementSelected,
+                Some(snapshot.states),
+                Payload::None,
+            );
+            let Some(pid) = arrived(
+                &outgoing,
+                &readers,
+                &checks,
+                (&narrowed, &fields.event),
+                told,
+            ) else {
+                return;
+            };
+            let fact = DeliveredFact::UiaSelection {
+                hwnd,
+                focus_window: 0,
+                snapshot,
+            };
+            queue_for_reading(
+                &outgoing,
+                &readers,
+                pid,
+                &narrowed,
+                &fields.event,
+                FocusEvent::Selection,
+                Some(fact),
+            );
         }),
     }
 }
@@ -1977,9 +2082,11 @@ fn selection_subscription(
 fn notification_subscription(
     outgoing: &Arc<Outgoing>,
     readers: &Arc<Readers<UiaFocusReading>>,
+    checks: &Arc<Checks>,
 ) -> Subscription<Cached<ListenerEvent>> {
     let outgoing = Arc::clone(outgoing);
     let readers = Arc::clone(readers);
+    let checks = Arc::clone(checks);
     Subscription::Notifications {
         callback: Arc::new(
             move |sender: &Cached<ListenerEvent>,
@@ -2001,9 +2108,24 @@ fn notification_subscription(
                         display_string,
                         activity_id,
                     };
+                    let told = (
+                        EventKind::UiaNotification,
+                        None,
+                        Payload::Notification {
+                            text: notification.display_string.clone().unwrap_or_default(),
+                            kind: notification.kind,
+                            processing: notification.processing,
+                            activity: notification.activity_id.clone().unwrap_or_default(),
+                        },
+                    );
+                    let Some(pid) = arrived(&outgoing, &readers, &checks, (sender, &fields), told)
+                    else {
+                        return;
+                    };
                     queue_for_reading(
                         &outgoing,
                         &readers,
+                        pid,
                         sender,
                         &fields,
                         FocusEvent::Notification,
@@ -2031,9 +2153,11 @@ fn notification_subscription(
 fn toast_subscription(
     outgoing: &Arc<Outgoing>,
     readers: &Arc<Readers<UiaFocusReading>>,
+    checks: &Arc<Checks>,
 ) -> Subscription<Cached<ListenerEvent>> {
     let outgoing = Arc::clone(outgoing);
     let readers = Arc::clone(readers);
+    let checks = Arc::clone(checks);
     Subscription::Event {
         event: UIA_Window_WindowOpenedEventId,
         callback: Arc::new(move |sender: &Cached<ListenerEvent>| {
@@ -2050,9 +2174,14 @@ fn toast_subscription(
                 tracing::debug!("a toast candidate has no owning process");
                 return;
             };
+            let told = (EventKind::UiaWindowOpened, None, Payload::None);
+            let Some(pid) = arrived(&outgoing, &readers, &checks, (sender, &fields), told) else {
+                return;
+            };
             queue_for_reading(
                 &outgoing,
                 &readers,
+                pid,
                 sender,
                 &fields,
                 FocusEvent::Toast,
@@ -2789,6 +2918,9 @@ mod tests {
     use verbatim_process::transport::EVENT_PIPE_BUFFER;
 
     use super::*;
+    use verbatim_model::WindowHandle;
+    use verbatim_model::property::RuntimeId;
+    use verbatim_model::tell::{ElementToken, EventObject, Read, TellWindow};
     use verbatim_process::message::read_message;
 
     /// A live re-read is judged by the moved-on rule by its report's
@@ -3189,7 +3321,7 @@ mod tests {
     #[test]
     fn a_hung_windows_value_change_is_dropped_in_the_hook() {
         let asked = Arc::new(Mutex::new(Vec::new()));
-        let (outgoing, readers, _events) = listening(|_| Readability::Hung, &asked);
+        let (outgoing, readers, _checks, _events) = listening(|_| Readability::Hung, &asked);
         let hwnd = desktop_window();
         value_change_event(
             &outgoing,
@@ -3319,6 +3451,7 @@ mod tests {
     ) -> (
         Arc<Outgoing>,
         Arc<Readers<UiaFocusReading>>,
+        Arc<Checks>,
         mpsc::Receiver<ListenerToCore>,
     ) {
         let (outgoing, reader) = outgoing();
@@ -3336,7 +3469,9 @@ mod tests {
             },
             verbatim_model::FOCUS_READ_DEADLINE,
         ));
-        (Arc::new(outgoing), readers, drain(reader))
+        let outgoing = Arc::new(outgoing);
+        let checks = Arc::new(Checks::new(&outgoing, &readers));
+        (outgoing, readers, checks, drain(reader))
     }
 
     /// The desktop window's name change, as the csrss-scoped hook delivers
@@ -3430,8 +3565,9 @@ mod tests {
             "the sender has a process, so only its window can drop it"
         );
         let asked = Arc::new(Mutex::new(Vec::new()));
-        let (outgoing, readers, sent) = listening(|_| Readability::Hung, &asked);
-        let Subscription::Focus { callback } = focus_subscription(&outgoing, &readers) else {
+        let (outgoing, readers, checks, sent) = listening(|_| Readability::Hung, &asked);
+        let Subscription::Focus { callback } = focus_subscription(&outgoing, &readers, &checks)
+        else {
             unreachable!("the focus subscription");
         };
         callback(&sender);
@@ -3453,7 +3589,7 @@ mod tests {
         let uia = verbatim_uia::Uia::new().expect("a UIA client");
         let sender = desktop_sender::<ListenerEvent>(&uia);
         let asked = Arc::new(Mutex::new(Vec::new()));
-        let (outgoing, readers, sent) = listening(
+        let (outgoing, readers, checks, sent) = listening(
             |nth| {
                 if nth == 0 {
                     Readability::Readable
@@ -3463,21 +3599,24 @@ mod tests {
             },
             &asked,
         );
-        let Subscription::Focus { callback } = focus_subscription(&outgoing, &readers) else {
+        let Subscription::Focus { callback } = focus_subscription(&outgoing, &readers, &checks)
+        else {
             unreachable!("the focus subscription");
         };
         callback(&sender);
         drop(callback);
-        let fact = |message: ListenerToCore| match message {
-            ListenerToCore::FocusFact { fact, .. } => fact.fact,
-            other => panic!("the listener sent {other:?}, not a fact"),
-        };
+        // The focus's tell, which its check thread sends beside today's
+        // facts, is not what this test pins.
         let timeout = Duration::from_secs(10);
-        let marker = sent.recv_timeout(timeout).map(fact).expect("the marker");
-        let outcome = sent
-            .recv_timeout(timeout)
-            .map(fact)
-            .expect("the read's outcome");
+        let next_fact = || loop {
+            match sent.recv_timeout(timeout).expect("a fact") {
+                ListenerToCore::FocusFact { fact, .. } => return fact.fact,
+                ListenerToCore::Tell(_) => {}
+                other => panic!("the listener sent {other:?}, not a fact"),
+            }
+        };
+        let marker = next_fact();
+        let outcome = next_fact();
         assert_eq!(
             [marker, outcome],
             [
@@ -3496,6 +3635,82 @@ mod tests {
         );
     }
 
+    /// A UIA focus is checked on its application's check thread and told
+    /// with what the check found: the walk to its nearest window, here the
+    /// desktop's own, the probe of that window, which is on neither of
+    /// NVDA's lists, and its keyboard focus read live; its element is kept
+    /// behind the token the tell names. A second focus on the same element
+    /// has the first one's kept element's keyboard focus read too.
+    #[test]
+    fn a_focus_is_told_from_its_check_thread_with_what_its_check_found() {
+        let uia = verbatim_uia::Uia::new().expect("a UIA client");
+        let sender = desktop_sender::<ListenerEvent>(&uia);
+        let asked = Arc::new(Mutex::new(Vec::new()));
+        let (outgoing, readers, checks, sent) = listening(|_| Readability::Readable, &asked);
+        let Subscription::Focus { callback } = focus_subscription(&outgoing, &readers, &checks)
+        else {
+            unreachable!("the focus subscription");
+        };
+        let timeout = Duration::from_secs(20);
+        let next_tell = || loop {
+            match sent.recv_timeout(timeout).expect("a tell") {
+                ListenerToCore::Tell(tell) => return tell,
+                ListenerToCore::FocusFact { .. } => {}
+                other => panic!("the listener sent {other:?}"),
+            }
+        };
+        callback(&sender);
+        let first = next_tell();
+        callback(&sender);
+        let second = next_tell();
+        drop(callback);
+        let runtime_id = RuntimeId(sender.runtime_id());
+        let desktop = WindowHandle(u64::try_from(desktop_window()).expect("a handle"));
+        let (desktop_thread, _) = verbatim_win32::window::window_owner(desktop_window());
+        assert_eq!(first.kind, EventKind::UiaFocus);
+        assert_eq!(
+            first.object,
+            EventObject::Uia {
+                token: ElementToken(1),
+                runtime_id: runtime_id.clone(),
+            }
+        );
+        assert_eq!(first.thread, desktop_thread);
+        let TellWindow::Found(facts) = &first.window else {
+            panic!("the desktop window: {:?}", first.window);
+        };
+        assert_eq!(facts.window.handle, desktop);
+        assert!(facts.desktop);
+        let checked = first.checked.as_ref().expect("checked");
+        let probe = checked.probe.expect("the desktop window probed");
+        assert_eq!((probe.window, probe.thread), (desktop, desktop_thread));
+        assert!(matches!(checked.keyboard_focus, Some(Read::Answered(_))));
+        assert_eq!(checked.kept, Vec::new());
+        assert_eq!(checked.previous_sibling, None);
+        assert_eq!(
+            second.object,
+            EventObject::Uia {
+                token: ElementToken(2),
+                runtime_id,
+            }
+        );
+        let kept: Vec<ElementToken> = second
+            .checked
+            .as_ref()
+            .expect("checked")
+            .kept
+            .iter()
+            .map(|&(token, focused)| {
+                assert!(matches!(focused, Read::Answered(_)), "{focused:?}");
+                token
+            })
+            .collect();
+        assert_eq!(kept, [ElementToken(1)]);
+        checks.stop();
+        readers.stop();
+        outgoing.close();
+    }
+
     /// A selection and a notification whose sender's cached window the
     /// listener's reader answers hung as they arrive are dropped in their
     /// callbacks: no marker is sent and nothing is queued.
@@ -3510,15 +3725,16 @@ mod tests {
             "both are captured, so only their window can drop them"
         );
         let asked = Arc::new(Mutex::new(Vec::new()));
-        let (outgoing, readers, sent) = listening(|_| Readability::Hung, &asked);
-        let Subscription::Event { callback, .. } = selection_subscription(&outgoing, &readers)
+        let (outgoing, readers, checks, sent) = listening(|_| Readability::Hung, &asked);
+        let Subscription::Event { callback, .. } =
+            selection_subscription(&outgoing, &readers, &checks)
         else {
             unreachable!("the selection subscription");
         };
         callback(&selected);
         drop(callback);
         let Subscription::Notifications { callback } =
-            notification_subscription(&outgoing, &readers)
+            notification_subscription(&outgoing, &readers, &checks)
         else {
             unreachable!("the notification subscription");
         };
@@ -3544,8 +3760,9 @@ mod tests {
         let uia = verbatim_uia::Uia::new().expect("a UIA client");
         let opened = desktop_sender::<ListenerEvent>(&uia);
         let asked = Arc::new(Mutex::new(Vec::new()));
-        let (outgoing, readers, sent) = listening(|_| Readability::Hung, &asked);
-        let Subscription::Event { callback, .. } = toast_subscription(&outgoing, &readers) else {
+        let (outgoing, readers, checks, sent) = listening(|_| Readability::Hung, &asked);
+        let Subscription::Event { callback, .. } = toast_subscription(&outgoing, &readers, &checks)
+        else {
             unreachable!("the window-opened subscription");
         };
         callback(&opened);
@@ -3585,7 +3802,7 @@ mod tests {
             Sender::start(ours, Waiting::default(), "listener-test", || {}).expect("a sender");
         let mut reader = BufReader::new(File::from(theirs));
         let (release, released) = mpsc::channel::<()>();
-        let install: InstallSubscriptions = Box::new(move |_, _| {
+        let install: InstallSubscriptions = Box::new(move |_, _, _| {
             // Released once the test has read the alert below; the bound
             // only ends a run whose alert is never forwarded, which then
             // fails on the `Ready` that follows.
