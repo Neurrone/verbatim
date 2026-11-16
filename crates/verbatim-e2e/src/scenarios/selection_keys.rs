@@ -42,6 +42,7 @@ use std::io;
 
 use crate::registry::ScenarioState;
 use crate::scenario::{Document, Scenario, WINDOW_TIMEOUT};
+use crate::speech::{cut_off, heard};
 
 pub(crate) use super::no_teardown as teardown;
 
@@ -150,7 +151,7 @@ pub(crate) fn text_box_body(scenario: &mut Scenario, _state: &mut ScenarioState)
     press(scenario, "control+v", &["selection removed"]);
 
     // NVDA at 30 ms: "l" (rtca-selection-keys-2026-11-17, text box, step 31).
-    shift_right_then_right(scenario, &["l"]);
+    shift_right_then_right(scenario, &[heard("l")]);
 
     // Backspace over the first word of a later line: the line break before
     // the selection's start
@@ -176,14 +177,14 @@ pub(crate) fn text_box_body(scenario: &mut Scenario, _state: &mut ScenarioState)
 /// once both keys have been handled, when nothing is selected before or
 /// after (`docs/parity/text.md`, "A selection no key made"; the 2026-11-17
 /// comparison).
-fn shift_right_then_right(scenario: &mut Scenario, heard: &[&str]) {
+fn shift_right_then_right(scenario: &mut Scenario, expected: &[crate::speech::Expected]) {
     press(scenario, "downarrow", &[LINE]);
     press(scenario, "home", &["a"]);
     // 30 ms apart, as a person types (Dickson, 2026-11-16).
     scenario
         .send_keys_paced(&["shift+rightarrow", "rightarrow"], 30)
         .expect("sends shift+rightarrow and rightarrow");
-    scenario.speech().expect(heard);
+    scenario.speech().expect_sequence(expected);
 }
 
 /// The scenario in Windows 11 Notepad, read through UI Automation, whose
@@ -271,7 +272,11 @@ pub(crate) fn notepad_body(scenario: &mut Scenario, _state: &mut ScenarioState) 
     // NVDA at 30 ms: Notepad's selection event comes before Right, so
     // "a selected", "l", "a unselected" (rtca-selection-keys-2026-11-17,
     // Notepad, step 40).
-    shift_right_then_right(scenario, &["a selected", "l", "a unselected"]);
+    // "a selected" is cut off by Right, as NVDA's capture shows ("cancel").
+    shift_right_then_right(
+        scenario,
+        &[cut_off("a selected"), heard("l"), heard("a unselected")],
+    );
 
     // Control+Backspace over the first word of a later line: Notepad
     // deletes the line break before the selection, which is said, and the
