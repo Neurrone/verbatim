@@ -1639,6 +1639,31 @@ pub(super) fn focus_now(
     )
 }
 
+/// The foreground object a focus entering a new window is told with, as
+/// NVDA reads `objectInForeground` when the focus difference level is 1
+/// or less (`docs/design/readers-tell-core-asks-build1.md`, "Focus and
+/// foreground"): the client object of the window the outpost's
+/// foreground reader names, when that window is the target application's
+/// and not Verbatim's hidden frame, a plain window when it cannot be read;
+/// `None` for another application's foreground window, which this outpost
+/// does not read, or for none.
+pub(super) fn foreground_object(
+    context: &RequestContext<'_>,
+    client: &mut Client,
+) -> Option<NodeSnapshot> {
+    let hwnd = context.foreground_window();
+    if hwnd == 0 || !served_by(hwnd, context.target_pid()) || window_is_hidden_frame(hwnd) {
+        return None;
+    }
+    Some(
+        if window_exists(hwnd) && context.window_unreadable(hwnd).is_some() {
+            plain_window(context, hwnd)
+        } else {
+            foreground_window(context, client, hwnd).1
+        },
+    )
+}
+
 /// Resolves a UIA node to a live element filled by `nodes`: the registry's
 /// kept element first (refreshing its cache both updates it and proves it
 /// still answers), then, if that element is gone or none is kept, the route

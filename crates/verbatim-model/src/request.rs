@@ -128,8 +128,10 @@ pub enum KnownAncestor {
 /// What a read finds out of the object's relation to nodes Core names.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RelationQuery {
-    /// Whether the object is one of these nodes: the committed focus's
-    /// ancestors.
+    /// Whether the object is one of these nodes: the committed focus first,
+    /// met by NVDA's equality, then its ancestors, each met only at the
+    /// address it was reported at, as NVDA meets an ancestor
+    /// (`docs/parity/focus-announcement.md`).
     OneOf(Vec<NodeId>),
     /// Whether the object is, or is inside, an object the focus controls,
     /// read live from the focus's controller-for relation.

@@ -67,16 +67,19 @@ fn switched_to(fixture: &str, prefix: &str) -> (common::MockApp, HWND, CoreDrive
 }
 
 /// mockapp with `fixture` on its MSAA provider, its window topmost and not
-/// the foreground window, which is none, as a popup menu's is, and Core
-/// driving an outpost watching it.
+/// the foreground window, as a popup menu's is: the foreground window is
+/// another top-level window of mockapp's (`thread-window`), as a popup
+/// menu's application's main window is. Core drives an outpost watching
+/// it.
 fn started_in_the_background(fixture: &str, prefix: &str) -> (common::MockApp, HWND, CoreDriver) {
     common::init_com();
     let title = common::unique_title(prefix);
-    let app = common::spawn(fixture, "msaa", &title);
+    let mut app = common::spawn(fixture, "msaa", &title);
     let hwnd = common::find_window(&title);
     common::make_topmost(hwnd);
+    let front = app.thread_window();
     let outpost = OutpostUnderTest::new(&app);
-    outpost.set_foreground(HWND::default());
+    outpost.set_foreground(front);
     let core = CoreDriver::new(&app, outpost);
     (app, hwnd, core)
 }
@@ -406,23 +409,54 @@ fn a_selection_beside_the_focus_says_nothing() {
     app.quit();
 }
 
+/// mockapp's window of the tooltip class titled `name`, which the fixture
+/// hosts a node in (`"window_class": "tooltips_class32"`).
+fn tip_window(app: &common::MockApp, name: &str) -> HWND {
+    use windows::Win32::UI::WindowsAndMessaging::FindWindowExW;
+    let title: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
+    let mut after = None;
+    loop {
+        // SAFETY: a local search of the desktop's top-level windows; the
+        // strings outlive the call.
+        let found = unsafe {
+            FindWindowExW(
+                None,
+                after,
+                windows::Win32::UI::Controls::TOOLTIPS_CLASSW,
+                windows::core::PCWSTR(title.as_ptr()),
+            )
+        }
+        .expect("mockapp made the tooltip window");
+        if verbatim_win32::window::window_owner(found.0 as isize).1 == app.pid() {
+            return found;
+        }
+        after = Some(found);
+    }
+}
+
 /// A tooltip window's show event is spoken as NVDA's notification
 /// behavior speaks a help balloon, which NVDA reports by default; an
 /// ordinary tooltip is not, as NVDA does not report tooltips by default.
+/// Both are windows of the real tooltip class, `tooltips_class32`, which
+/// mockapp makes from comctl32's own class, checked here.
 fn a_help_balloon_shown_is_spoken() {
-    /// mockapp's scripted help balloon and tooltip, by their index in its
-    /// tree.
-    const BALLOON: usize = 5;
-    const TIP: usize = 6;
-    let (app, hwnd, mut core) = started("tree_view.json", "mockapp-msaa-help-balloon");
-    let object = |index: usize| i32::try_from(index + 1).expect("a small index");
+    let (app, _, mut core) = started("tree_view.json", "mockapp-msaa-help-balloon");
+    let balloon = tip_window(&app, "Updates are ready");
+    let tip = tip_window(&app, "Close");
     assert_eq!(
-        core.msaa_event(EventKind::Show, hwnd, (object(TIP), 0))
+        (
+            verbatim_win32::window::window_class_name(balloon.0 as isize),
+            verbatim_win32::window::window_class_name(tip.0 as isize)
+        ),
+        ("tooltips_class32".to_owned(), "tooltips_class32".to_owned())
+    );
+    assert_eq!(
+        core.msaa_event(EventKind::Show, tip, (OBJID_CLIENT.0, 0))
             .spoken(),
         NOTHING
     );
     assert_eq!(
-        core.msaa_event(EventKind::Show, hwnd, (object(BALLOON), 0))
+        core.msaa_event(EventKind::Show, balloon, (OBJID_CLIENT.0, 0))
             .spoken(),
         [vec![
             SegmentContent::Label("Updates are ready".to_owned()),

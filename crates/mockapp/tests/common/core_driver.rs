@@ -25,6 +25,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use verbatim_core::{Runtime, SrState, reduce};
 use verbatim_ia2::{WinEvent, WinEventHook, WinEventKind};
 use verbatim_listener_logic::check::{Call, Check, ProbeRecord, Walked};
+use verbatim_listener_logic::focus::{BarObject, BarVerdict, ClassicBarRead, WindowAnswer};
 use verbatim_listener_logic::tell::{WindowPart, WindowReads};
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::{
@@ -37,8 +38,8 @@ use verbatim_model::request::{
 };
 use verbatim_model::tell::{ElementToken, Event, EventObject, Payload, Read, TellWindow};
 use verbatim_model::{
-    CallCounts, Earcon, Effect, Input, OutpostId, Pid, SegmentContent, StateSet, TraceId,
-    WindowHandle,
+    BarChange, CallCounts, Earcon, Effect, Input, OutpostId, Pid, SegmentContent, StateSet,
+    TraceId, WindowHandle,
 };
 use verbatim_reader_rules::acceptance::WindowQueries;
 use verbatim_uia::{Cached, Direction, ElementExt, ListenerEvent, Uia};
@@ -108,6 +109,11 @@ pub struct CoreDriver {
     started: bool,
     /// The check thread's record of its probes, kept across events.
     probes: ProbeRecord,
+    /// The progress path's record of the objects a value change came
+    /// from, as a reading thread found them.
+    bars: Vec<(BarObject, BarVerdict)>,
+    /// The windows the progress path has judged.
+    bar_windows: Vec<isize>,
     /// The outpost's requests not yet answered.
     open: Vec<RequestNumber>,
     /// The wake Core last asked for.
@@ -170,6 +176,8 @@ impl CoreDriver {
             next_token: 0,
             started: false,
             probes: ProbeRecord::default(),
+            bars: Vec::new(),
+            bar_windows: Vec::new(),
             open: Vec::new(),
             wake: None,
             floor_us: 0,
@@ -255,7 +263,13 @@ impl CoreDriver {
         if window.0 as isize == self.outpost.foreground() {
             step = self.foreground_report();
         }
-        let told = self.msaa_event(EventKind::Foreground, window, (0, 0));
+        // The listener's hook names a window object's event by its client
+        // area, as NVDA's hook does (`verbatim_ia2`'s hook).
+        let told = self.msaa_event(
+            EventKind::Foreground,
+            window,
+            (windows::Win32::UI::WindowsAndMessaging::OBJID_CLIENT.0, 0),
+        );
         step.said.extend(told.said);
         step.calls += told.calls;
         step
@@ -291,14 +305,99 @@ impl CoreDriver {
         step
     }
 
-    /// The listener tells Core of `event`, a `WinEvent` its hook heard.
+    /// The listener tells Core of `event`, a `WinEvent` its hook heard; a
+    /// value change takes the listener's progress path instead
+    /// ([`Self::bar_change`]).
     pub fn win_event(&mut self, event: &WinEvent) -> Step {
+        if event.kind == WinEventKind::ValueChange {
+            return self.bar_change(event);
+        }
         let kind = verbatim_ia2::tell_kind(event).expect("a WinEvent the listener tells");
         self.msaa_event(
             kind,
             HWND(event.hwnd as _),
             (event.id_object, event.id_child),
         )
+    }
+
+    /// The listener's progress path for the MSAA value change `event`, as
+    /// its hook and the application's reading thread take one
+    /// (`docs/design/progress-bars.md`): the object's class and the
+    /// path's record decide the read, which
+    /// `verbatim_listener::listener::read_classic_bar` makes on this
+    /// thread, and a bar's change goes to Core's inbox, related to the
+    /// foreground the test sets rather than the desktop's.
+    pub fn bar_change(&mut self, event: &WinEvent) -> Step {
+        use std::sync::mpsc;
+        use verbatim_model::protocol::Responder;
+        let object = BarObject {
+            window: event.hwnd,
+            object: event.id_object,
+            child: event.id_child,
+        };
+        let listed = verbatim_reader_rules::class::is_progress_bar_class(
+            &verbatim_reader_rules::class::normalize_class_name(
+                &verbatim_win32::window::window_class_name(event.hwnd),
+            ),
+        );
+        let verdict = self
+            .bars
+            .iter()
+            .find(|(known, _)| *known == object)
+            .map(|(_, verdict)| *verdict);
+        let Some(read) = verbatim_listener_logic::focus::classic_value_change(
+            listed,
+            verbatim_win32::window::window_is_visible(event.hwnd),
+            verdict,
+        ) else {
+            return Step::default();
+        };
+        // A window the path has not judged is judged first, as its record
+        // asks.
+        let read = if read == ClassicBarRead::Unknown && !self.bar_windows.contains(&event.hwnd) {
+            ClassicBarRead::Probe
+        } else {
+            read
+        };
+        let (reports, changed) = mpsc::channel();
+        let (verdicts, learned) = mpsc::channel();
+        let (windows, judged) = mpsc::channel();
+        verbatim_listener::listener::read_classic_bar(
+            object,
+            read,
+            Responder::new(move |change: Option<BarChange>| {
+                if let Some(change) = change {
+                    let _ = reports.send(change);
+                }
+            }),
+            Responder::new(move |verdict: Option<BarVerdict>| {
+                if let Some(verdict) = verdict {
+                    let _ = verdicts.send(verdict);
+                }
+            }),
+            Responder::new(move |answer: Option<WindowAnswer>| {
+                if let Some(answer) = answer {
+                    let _ = windows.send(answer);
+                }
+            }),
+        );
+        if judged.try_recv().is_ok() {
+            self.bar_windows.push(event.hwnd);
+        }
+        if let Ok(verdict) = learned.try_recv() {
+            self.bars.push((object, verdict));
+        }
+        let Ok(mut change) = changed.try_recv() else {
+            return Step::default();
+        };
+        let front = self.outpost.foreground();
+        change.in_foreground = front != 0
+            && (event.hwnd == front || verbatim_win32::window::is_child(front, event.hwnd));
+        self.run(VecDeque::from([Input::Progress {
+            trace_id: TraceId::mint(),
+            change,
+        }]));
+        self.take()
     }
 
     /// The listener tells Core of an MSAA `WinEvent` of `kind` for the

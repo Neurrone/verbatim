@@ -433,14 +433,28 @@ fn read_object(
             };
             // An MSAA object controls nothing: a selection's relation is
             // its place among the nodes, as NVDA compares an MSAA selection
-            // with the focus's ancestors.
+            // with the focus's ancestors. The first node, the committed
+            // focus, is met by NVDA's equality, as NVDA directs an event to
+            // the focus object it equals; every other only at the address
+            // it was reported at, as NVDA meets an ancestor again only in
+            // its table of live objects by address and its gate asks
+            // whether the object is that very ancestor
+            // (`docs/parity/focus-announcement.md`, "An ancestor is
+            // recognized by the address it was reported at").
             let relation = match &read.relation {
                 None => None,
                 Some(RelationQuery::ControlledBy(_)) => Some(RelationFound::Unrelated),
                 Some(RelationQuery::OneOf(nodes) | RelationQuery::Selection { nodes, .. }) => Some(
                     nodes
                         .iter()
-                        .position(|&node| object.is_equal_to(node, context.nodes()))
+                        .enumerate()
+                        .position(|(place, &node)| {
+                            if place == 0 {
+                                object.is_equal_to(node, context.nodes())
+                            } else {
+                                object.which_of(&[node], context.nodes()) == Some(node)
+                            }
+                        })
                         .and_then(|place| u32::try_from(place).ok())
                         .map_or(RelationFound::Unrelated, RelationFound::Is),
                 ),
@@ -882,6 +896,12 @@ fn try_candidate(
             object,
             child,
         });
+    // A focus that met none of the ancestors Core knows enters a new
+    // window: its foreground object is read with it, as NVDA reads it then.
+    let foreground = met
+        .is_none()
+        .then(|| read::foreground_object(context, client))
+        .flatten();
     let mut read = focus_read(
         context,
         &Focus {
@@ -890,7 +910,7 @@ fn try_candidate(
             met,
             nearest: Some(hwnd),
             msaa: Some(msaa),
-            foreground: None,
+            foreground: foreground.as_ref(),
             value_from_selection: false,
             runtime_id_reused: false,
             baseline: run.baseline,

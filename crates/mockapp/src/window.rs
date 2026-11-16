@@ -185,6 +185,9 @@ pub(crate) fn run(
         if let Some(text) = text {
             crate::edit::create(hwnd, &text, edit_version_6)?;
         }
+        // A help balloon or tooltip in a window of the tooltip class, as a
+        // real one is.
+        crate::tip_window::create_all(&tree, hwnd)?;
     }
     // Real controls, read through their own MSAA implementations, and a
     // child window that is a UIA provider of its own.

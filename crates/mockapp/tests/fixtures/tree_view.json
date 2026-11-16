@@ -14,8 +14,8 @@
       ]
     },
     { "id": "copying", "role": "progress_bar", "name": "Copying", "value": "10" },
-    { "id": "balloon", "role": "help_balloon", "name": "Updates are ready" },
-    { "id": "tip", "role": "tool_tip", "name": "Close" },
+    { "id": "balloon", "role": "help_balloon", "name": "Updates are ready", "window_class": "tooltips_class32" },
+    { "id": "tip", "role": "tool_tip", "name": "Close", "window_class": "tooltips_class32" },
     {
       "id": "tree",
       "role": "tree",

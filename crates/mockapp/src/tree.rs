@@ -127,6 +127,11 @@ pub(crate) struct NodeData {
     /// Whether MSAA reads the node's role as a window's client area's
     /// (the fixture's `client_role`).
     pub(crate) client_role: bool,
+    /// The class of the window the node is hosted in, apart from the host
+    /// window, on the MSAA backend (the fixture's `window_class`):
+    /// `tooltips_class32` for a help balloon or tooltip
+    /// ([`crate::tip_window`]).
+    pub(crate) window_class: Option<String>,
 }
 
 /// A text's formatting: stretches that are spelling errors, that are bold,
@@ -434,6 +439,7 @@ fn insert(
         popup: None,
         content: node.content,
         client_role: node.client_role,
+        window_class: node.window_class,
     });
     by_fixture_id.insert(node.id, index);
     if let Some(controlled) = node.controller_for {

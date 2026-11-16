@@ -22,6 +22,7 @@ mod menu;
 mod msaa;
 mod popup;
 mod stdin;
+mod tip_window;
 mod tree;
 mod tree_view;
 mod uia;
