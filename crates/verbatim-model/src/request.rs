@@ -1293,6 +1293,17 @@ pub struct CaretBinding {
     pub role: crate::Role,
     /// How its text is read.
     pub provider: crate::TextProvider,
+    /// The focus record it was bound to: the trace of the event Core took
+    /// that focus from, which with the node names the record, since each
+    /// focus taken is a new record.
+    #[serde(default)]
+    pub record: Option<crate::TraceId>,
+    /// The record's formatting memory at the press: the formatting last
+    /// spoken in its text, which the key compares with and updates
+    /// (`docs/design/readers-tell-core-asks-build2.md`, "The formatting
+    /// memory").
+    #[serde(default)]
+    pub formatting: crate::TextAttributes,
 }
 
 /// How a request from outside the event queue ended, as its asker learns:

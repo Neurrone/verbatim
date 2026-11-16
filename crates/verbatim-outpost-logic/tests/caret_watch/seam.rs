@@ -221,6 +221,8 @@ impl Seam {
                         Kind::Notepad => TextProvider::Uia,
                         Kind::TextBox => TextProvider::EditMessages,
                     },
+                    record: None,
+                    formatting: verbatim_model::TextAttributes::default(),
                 })),
             )
         } else {

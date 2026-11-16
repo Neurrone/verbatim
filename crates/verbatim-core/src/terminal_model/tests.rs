@@ -78,6 +78,8 @@ fn each_key_input_is_the_rules_key_and_a_clearing_key_forget() {
         window: window.node_window(),
         role: Role::Terminal,
         provider: verbatim_model::TextProvider::Uia,
+        record: None,
+        formatting: verbatim_model::TextAttributes::default(),
     };
     let press = |action, at_ms: u64| {
         crate::keys::entry::PressEntry::new(

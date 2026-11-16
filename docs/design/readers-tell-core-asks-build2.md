@@ -8,7 +8,8 @@ Sources: [ADR 0003: Readers tell, Core asks](https://github.com/Neurrone/verbati
 
 - Text provider: how the outpost reads a node's text: UI Automation, an edit control's window messages (with its edit API version), IAccessible2 text (M7), or none.
 - Details: what a text read fetches beyond the text (formatting attributes, spelling errors, links).
-- Text memory: the formatting last spoken and the kind of line break, kept for one focus record.
+- Formatting memory: the formatting last spoken in a focus record's text.
+- Focus record: Core's focus object; each focus taken is a new record, named by its node and the trace of the event Core took it from.
 
 ## The decisions this design honours
 
@@ -18,27 +19,28 @@ Sources: [ADR 0003: Readers tell, Core asks](https://github.com/Neurrone/verbati
 
 ## The model
 
-Core names the text provider and the details in every text request, so the outpost keeps no settings and `CoreToOutpost::Fetches` goes. The text memory lives on the focus record a key or entry was bound to, not on the focus object alone. Until this build, the outpost chooses the provider by window class and reads the details `Fetches` names, as today, and build 1's Core sends `Fetches` as an effect.
+Core names the text provider and the details in every text request, so the outpost keeps no settings and `CoreToOutpost::Fetches` goes. The formatting memory goes with the focus record, as ADR 0001 decided ("The formatting last reported goes with the focus object", Dickson, 2026-11-08), and a caret key's binding carries the record it was bound to, memory included. Until this build, the outpost chooses the provider by window class and reads the details `Fetches` names, as today, and build 1's Core sends `Fetches` as an effect.
 
 ## Rules, each with its reason
 
 - Every text request names the provider Core chose and the details it fetches. Core chooses the provider from the focus answer: a UI Automation node reads through UI Automation; an MSAA node's client object whose window's normalized class is an edit control's reads by its window messages, with its edit API version (today in the outpost, `verbatim-ia2/src/edit.rs` 96 to 104, `text_reads.rs` 274 to 295); anything else has none. Reason: which interface reads a node is a rule, and rules are Core's. The outpost's two guesses that only cost calls stay: `TextSupport` (`text/uia.rs` 214 to 224) and the classic fallback (`text_reads.rs` 468 to 480).
 - The details come from Core's settings, the unit and the reason: a character or word read takes the extra detail; a paragraph or cell read for a caret key leaves out spelling errors. NVDA: `speech/speech.py` 1586 to 1596. `CoreToOutpost::Fetches`, the theme broadcast (`verbatim-app/src/main.rs` 1911 to 1933) and `fetches_sent` (`verbatim-app/src/live.rs` 30) go; the MSAA backend's and the UI Automation gates' reading of the registry's `Fetches` (`verbatim-ia2/src/registry.rs` 226 to 236; `verbatim-outpost/src/outpost/mod.rs` 701 to 724) takes the request's set, which build 1 introduced for node reads.
-- The formatting last spoken and the kind of line break live on each focus record a key or entry names, while the committed focus or a waiting entry names it, cleared when its outpost is replaced and not restored by a silent re-take. NVDA keeps them on the object (`speech/speech.py` 1504 to 1518, 1580 to 1583). Today they live only on the focus object (`editing.rs` 693 to 715). Reason: a key run on its press-bound field (build 1, ruled 2026-11-16) compares formatting with that field's memory, as NVDA's script compares it with its own object's.
+- The formatting memory, per ADR 0001's decision, is part of the focus record, the committed focus object, and each focus taken, a silent re-take included, starts with none. A caret key's `CaretBinding` carries, from its press, the record it was bound to (its node and the trace the focus was taken from) and that record's memory by value. When the key speaks its unit it compares the formatting with that memory and updates it, then writes it back to the focus object only when that is still the same record. NVDA keeps the cache on the object (`speech/speech.py` 1503 to 1518, 1580 to 1583) and makes a new object for each focus event. Reason: a key run on its press-bound field (build 1, ruled 2026-11-16) compares formatting with that field's memory, as NVDA's script compares it with its own object's. The kind of line break stays with the focus's caret.
+- Not built: writing the memory forward to later keys bound to the same record. A key that speaks has no caret key waiting behind it, since a later key withdraws its watch (build 1, Table 7, S4, column B), so the write could not happen.
 - Control fields, when built, are compared by the provider's identity or by equality, never by an outpost node id. NVDA: `speech/speech.py` 1646 to 1657. Not built here.
 
 ## State table
 
-### Table 1: a focus record's text memory (formatting last spoken, kind of line break)
+### Table 1: a focus record's formatting memory
 
-States: K, kept (the record is the committed focus or a waiting entry names it); G, gone.
+States: K, kept (the record is the committed focus, or a waiting key's binding carries it); G, gone.
 
-Columns: A, a key or entry bound to the record speaks text; B, the committed focus moves on and no waiting entry names the record; C, its outpost is replaced; D, a silent re-take takes it.
+Columns: A, a key bound to the record speaks its unit; B, a later focus is taken; C, its outpost is replaced; D, a silent re-take takes the focus.
 
 | State | A | B | C | D |
 | --- | --- | --- | --- | --- |
-| K | its formatting compared with and written to this record's memory | to G | cleared, so formatting is said afresh | not restored: the re-take starts empty |
-| G | n/a: an entry naming the record keeps it | nothing | nothing | n/a |
+| K | compared with the binding's copy, which is updated, and written back to the focus object while it is the same record | the new record starts empty; a waiting key keeps its binding's copy | the re-take is a new record, so formatting is said afresh | the re-take starts empty |
+| G | n/a | nothing | nothing | n/a |
 
 ## Decisions made outside Core, with their facts
 
@@ -48,7 +50,7 @@ The provider, the details and the memory are Core's.
 
 ## Waiting states, messages, timers and two-place lifecycles
 
-Added: none. The text memory is one fact in Core, on each focus record.
+Added: a copy of a focus record's memory in each caret key's binding, from its press until it runs: the record may be replaced meanwhile, as ADR 0001's decision has it.
 
 Removed: `Fetches` in the outpost and the theme broadcast, a copy of Core's settings held in each outpost; the formatting memory on the focus object alone.
 
@@ -59,7 +61,7 @@ Removed: `Fetches` in the outpost and the theme broadcast, a copy of Core's sett
 
 ## What users hear
 
-No sequence changes beyond the formatting memory's: a key bound to an earlier focus record compares formatting with that record's memory, and a record whose outpost was replaced says its formatting afresh. Pinned by, unchanged expectations: `spelling_errors`, `notepad_spelling_errors`, `theme_panel`, `notepad_editing`, `text_box_editing` and Core's formatting, spelling error and line break tests (`books/dev/src/reference/test-coverage.md`, "Spelling errors", "Document formatting" and "Line breaks").
+No sequence changes beyond the formatting memory's: a key bound to an earlier focus record compares formatting with that record's memory as it was at the press, and a record whose outpost was replaced says its formatting afresh. Pinned by, unchanged expectations: `spelling_errors`, `notepad_spelling_errors`, `theme_panel`, `notepad_editing`, `text_box_editing` and Core's formatting, spelling error and line break tests (`books/dev/src/reference/test-coverage.md`, "Spelling errors", "Document formatting" and "Line breaks").
 
 ## Tests
 
@@ -75,6 +77,7 @@ Hand-written, one per rule: every cell of Table 1 in Core; the provider chosen f
 ## Limits
 
 - Control fields are not built here.
+- Keys bound to an old focus record share its memory only through write-forward, which is not built: none speaks with another waiting.
 
 ## Performance figures
 

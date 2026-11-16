@@ -79,6 +79,10 @@ pub(crate) fn binding(state: &SrState) -> Option<CaretBinding> {
     if !editing::may_have_text(kept.role) && state.focus_caret(kept.node).is_none() {
         return None;
     }
+    let (record, formatting) = match editing::focus_record(state) {
+        Some((node, record, formatting)) if node == kept.node => (record, formatting),
+        _ => (None, verbatim_model::TextAttributes::default()),
+    };
     Some(CaretBinding {
         node: kept.node,
         window: kept.window.node_window(),
@@ -87,6 +91,8 @@ pub(crate) fn binding(state: &SrState) -> Option<CaretBinding> {
             crate::focus::versions::ReadBy::Uia { .. } => TextProvider::Uia,
             crate::focus::versions::ReadBy::Msaa { .. } => TextProvider::EditMessages,
         },
+        record,
+        formatting,
     })
 }
 
@@ -683,13 +689,28 @@ fn effect_words(
     if key.motion.deletes_back() {
         return deleted(state, binding, key, started);
     }
-    editing::unit_of(
+    unit_remembered(state, binding, key, read)
+}
+
+/// The key's unit at `read`, its formatting compared with and written to
+/// the memory of the focus record its binding carries, which is written
+/// back to the focus object when that is still the same record (ADR 0001,
+/// "The formatting last reported goes with the focus object").
+fn unit_remembered(
+    state: &mut SrState,
+    binding: &CaretBinding,
+    key: CaretKey,
+    read: &WatchedRead,
+) -> Vec<UtteranceSegment> {
+    let mut reported = binding.formatting.clone();
+    let words = editing::unit_with(
         state,
         binding.node,
-        key.motion,
-        &read.caret.line,
-        &read.unit,
-    )
+        (key.motion, &read.caret.line, &read.unit),
+        &mut reported,
+    );
+    editing::formatting_back(state, (binding.node, binding.record), reported);
+    words
 }
 
 /// The words of a key at its bound: a movement key's or Delete's unit at
@@ -703,13 +724,7 @@ fn bound_words(
     if editing::selects(key) || key.motion.deletes_back() || key.motion == CaretMotion::Other {
         return Vec::new();
     }
-    editing::unit_of(
-        state,
-        binding.node,
-        key.motion,
-        &read.caret.line,
-        &read.unit,
-    )
+    unit_remembered(state, binding, key, read)
 }
 
 /// The caret key `entry` is, when it is one this module runs.

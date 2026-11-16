@@ -465,14 +465,56 @@ pub(crate) fn unit_of(
     line: &TextChunk,
     unit: &TextChunk,
 ) -> Vec<UtteranceSegment> {
+    let mut reported = reported_format(state, node);
+    let segments = unit_with(state, node, (motion, line, unit), &mut reported);
+    keep_reported_format(state, node, reported);
+    segments
+}
+
+/// [`unit_of`], its formatting compared with and written to `reported`,
+/// the memory of the focus record a key is bound to.
+pub(crate) fn unit_with(
+    state: &SrState,
+    node: NodeId,
+    (motion, line, unit): (CaretMotion, &TextChunk, &TextChunk),
+    reported: &mut TextAttributes,
+) -> Vec<UtteranceSegment> {
     let grid = state
         .focus
         .object()
         .is_some_and(|focus| focus.snapshot.id == node && is_grid(focus.snapshot.role));
-    let mut reported = reported_format(state, node);
-    let segments = unit_segments(line, Some(unit), (motion.unit(), grid), &mut reported);
-    keep_reported_format(state, node, reported);
-    segments
+    unit_segments(line, Some(unit), (motion.unit(), grid), reported)
+}
+
+/// The committed focus's record, `(node, the trace it was taken from)`,
+/// and its formatting memory, which a caret key bound to it captures at
+/// its press (ADR 0001, "The formatting last reported goes with the focus
+/// object").
+pub(crate) fn focus_record(state: &SrState) -> Option<(NodeId, Option<TraceId>, TextAttributes)> {
+    state.focus.object().map(|focus| {
+        (
+            focus.snapshot.id,
+            focus.trace_id,
+            focus.reported_format.clone(),
+        )
+    })
+}
+
+/// Writes `reported`, the memory a key bound to the focus record
+/// `(node, record)` updated, back to the focus object when it is still that
+/// record; a later focus taken is a new record, which keeps its own.
+pub(crate) fn formatting_back(
+    state: &mut SrState,
+    (node, record): (NodeId, Option<TraceId>),
+    reported: TextAttributes,
+) {
+    if let Some(focus) = state
+        .focus
+        .object_mut()
+        .filter(|focus| focus.snapshot.id == node && focus.trace_id == record)
+    {
+        focus.reported_format = reported;
+    }
 }
 
 /// What a Backspace said, from its read: over a selection, what was before

@@ -1110,6 +1110,8 @@ fn a_caret_key_binds_to_a_committed_field_and_not_to_a_button() {
             window: win(4),
             role: Role::EditableText,
             provider: TextProvider::Uia,
+            record: Some(TraceId::from_raw(0)),
+            formatting: verbatim_model::TextAttributes::default(),
         }
     );
     let mut button = ready();
@@ -1151,4 +1153,86 @@ fn the_starting_point_is_held_while_its_watch_is_out_and_no_baseline_is_minted()
         ),
     );
     assert_eq!(crate::text_facts::held(&held.state), None);
+}
+
+/// Italic text, as a key's unit carries it and a memory keeps it.
+fn italic() -> verbatim_model::TextAttributes {
+    verbatim_model::TextAttributes {
+        italic: Some(true),
+        ..verbatim_model::TextAttributes::default()
+    }
+}
+
+/// The character "i" in italic.
+fn italic_i() -> TextChunk {
+    TextChunk {
+        formats: vec![verbatim_model::FormatRun {
+            start: 0,
+            end: 1,
+            attributes: italic(),
+        }],
+        ..unit(TextUnit::Character, "i", 10)
+    }
+}
+
+/// The formatting memory by value (build 2's design, "The formatting
+/// memory", after ADR 0001's decision that it goes with the focus object):
+/// a key's binding carries its focus record's memory from the press; the
+/// key compares its unit's formatting with it, so "italic" is said, and
+/// writes what it spoke back to the record, still the committed focus.
+#[test]
+fn a_keys_formatting_memory_goes_back_to_its_record() {
+    let mut held = watching(
+        CaretMotion::NextCharacter,
+        line("line 01", 7, 0),
+        unit(TextUnit::Character, "l", 8),
+    );
+    let binding = bound(&held);
+    assert_eq!(
+        binding.formatting,
+        verbatim_model::TextAttributes::default()
+    );
+    let ended = step(
+        &mut held,
+        20_000,
+        watched(4, Watched::Effect(read(line("line 01", 9, 1), italic_i()))),
+    );
+    assert_eq!(
+        ended.said,
+        [vec![
+            "Format(Italic)".to_owned(),
+            "Character(\"i\")".to_owned()
+        ]]
+    );
+    assert_eq!(held.state.focus.object().unwrap().reported_format, italic());
+}
+
+/// A key whose focus record is no longer the committed focus, a later
+/// focus taken on the same field being a new record, speaks from its own
+/// record's memory and leaves the new record's untouched (ADR 0001, "The
+/// formatting last reported goes with the focus object").
+#[test]
+fn a_keys_formatting_memory_is_not_written_to_a_later_focus_record() {
+    let mut held = watching(
+        CaretMotion::NextCharacter,
+        line("line 01", 7, 0),
+        unit(TextUnit::Character, "l", 8),
+    );
+    held.state.focus.object_mut().unwrap().trace_id = Some(TraceId::from_raw(99));
+    let ended = step(
+        &mut held,
+        20_000,
+        watched(4, Watched::Effect(read(line("line 01", 9, 1), italic_i()))),
+    );
+    assert_eq!(
+        ended.said,
+        [vec![
+            "Format(Italic)".to_owned(),
+            "Character(\"i\")".to_owned()
+        ]]
+    );
+    assert_eq!(
+        held.state.focus.object().unwrap().reported_format,
+        verbatim_model::TextAttributes::default()
+    );
 }

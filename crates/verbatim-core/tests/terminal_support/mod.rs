@@ -66,6 +66,8 @@ pub fn binding() -> CaretBinding {
         window: window(),
         role: Role::Terminal,
         provider: verbatim_model::TextProvider::Uia,
+        record: None,
+        formatting: verbatim_model::TextAttributes::default(),
     }
 }
 
