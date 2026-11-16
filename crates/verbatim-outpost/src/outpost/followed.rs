@@ -83,6 +83,9 @@ pub(super) fn follow(
         })
     });
     let not_there = follow.node.is_some() && named.is_none();
+    if named.as_ref().is_some_and(|named| named.terminal == Some(true)) {
+        context.hook_console();
+    }
     context.named.lock().clone_from(&named);
     match named {
         Some(named) => registration.retarget_with(

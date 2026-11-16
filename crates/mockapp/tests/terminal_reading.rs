@@ -9,7 +9,10 @@
 //!
 //! - Every change signal of the terminal `Follow` names is told to Core as
 //!   one "terminal changed" tell, with no call: Windows Terminal's text
-//!   change and caret event.
+//!   change and caret event, and a console host's console caret event,
+//!   which the outpost hooks once `Follow` names a console's terminal;
+//!   UI Automation's caret event and the system caret's are not used for
+//!   a console's terminal.
 //! - Core's "read the terminal" request reads from a screen above the
 //!   start anchor Core names and mints the start of its own screen; a
 //!   history read and a search count from the start Core names; the read
@@ -24,9 +27,11 @@ mod common;
 #[path = "common/harness.rs"]
 mod harness;
 
+use verbatim_ia2::WinEventKind;
 use verbatim_model::event_kind::EventKind;
+use verbatim_model::property::PropertyId;
 use verbatim_model::request::{Follow, FollowGroup, Followed, Outcome, Reply, Request};
-use verbatim_model::tell::EventObject;
+use verbatim_model::tell::{EventObject, Payload};
 use verbatim_model::{
     NodeId, TerminalRead, TerminalReadReply, TerminalScope, TerminalSnapshot, TextAnchor, TextOp,
     TextReply, TextUnit,
@@ -35,6 +40,7 @@ use verbatim_outpost::Heard;
 use verbatim_process::arguments::OutpostOptions;
 use verbatim_uia::{Cached, ListenerEvent, Uia};
 use windows::Win32::Foundation::HWND;
+use windows::Win32::UI::Accessibility::UIA_HelpTextPropertyId;
 
 use common::outpost::OutpostUnderTest;
 
@@ -392,6 +398,96 @@ fn a_starting_read_reads_the_caret_and_mints_the_starting_point() {
     terminal.quit();
 }
 
+/// [`start_with`] for mockapp's console host fixture: its text area in a
+/// window of the console's class, which `Follow` names as a console's
+/// terminal, so the outpost hooks the console's events.
+fn start_console(name: &str) -> Terminal {
+    start_with(name, "console_terminal.json", "text", true)
+}
+
+/// The console host's text area takes its caret event from its console:
+/// UI Automation's caret event is not registered for a console's terminal
+/// and no `WinEvent` but the console's is hooked, so it is not heard, and a
+/// description change UI Automation delivers after it is told alone, its
+/// description left for Core to read as NVDA reads it; the
+/// console's own caret event (`EVENT_CONSOLE_CARET`) is told as the
+/// terminal's change, and Core's read then finds the caret moved.
+/// Converted from `the_console_hosts_caret_comes_from_its_console`: the
+/// outpost tells the change and Core reads it (build 3, "The outpost:
+/// change tells").
+fn the_console_hosts_caret_comes_from_its_console() {
+    let mut terminal = start_console("mockapp-console-caret");
+    terminal.app.send("caret text 1");
+    terminal.app.send("caret-event text");
+    terminal.app.send("set-description text moved");
+    terminal
+        .outpost
+        .heard(&[Heard::UiaProperty(UIA_HelpTextPropertyId.0)]);
+    match terminal.outpost.next() {
+        verbatim_model::protocol::OutpostToCore::Tell(tell) => assert_eq!(
+            (tell.kind, tell.payload),
+            (
+                EventKind::UiaPropertyChanged,
+                Payload::PropertyChanged {
+                    property: PropertyId::Description,
+                    value: None,
+                }
+            )
+        ),
+        other => panic!("the outpost said {other:?}, not the text area's description"),
+    }
+    terminal.outpost.settled();
+    terminal.app.send("console-caret 1 0");
+    terminal.outpost.heard(&[Heard::Msaa(WinEventKind::ConsoleCaret)]);
+    terminal.told();
+    terminal.outpost.settled();
+    let read = terminal.fresh_from(terminal.start);
+    assert_eq!(caret_at(&read.snapshot), ("one\r\n", 1));
+    terminal.outpost.settled();
+    terminal.quit();
+}
+
+/// A console host's caret move with no text change reaches Core: its caret
+/// event is told as the terminal's change, as Windows Terminal's caret
+/// events are, and Core's read, its text as before, carries the moved
+/// caret, so Core's reading rules judge the next key from it
+/// (`books/dev/src/explanation/design/terminal-model.md`, "Where it runs":
+/// one caret). Converted from
+/// `a_console_caret_move_with_no_text_change_is_read`: the outpost tells,
+/// Core reads.
+fn a_console_caret_move_with_no_text_change_is_told() {
+    let mut terminal = start_console("mockapp-console-caret-move");
+    terminal.app.send("caret text 24");
+    terminal.app.send("console-caret 2 1");
+    terminal.outpost.heard(&[Heard::Msaa(WinEventKind::ConsoleCaret)]);
+    terminal.told();
+    terminal.outpost.settled();
+    let read = terminal.fresh_from(terminal.start);
+    assert_eq!(text(&read.snapshot), rows(&["one", "two", "ready>"]));
+    assert_eq!(caret_at(&read.snapshot), ("two\r\n", 2));
+    terminal.outpost.settled();
+    terminal.quit();
+}
+
+/// In the focused console host's text area the system caret's events tell
+/// of the caret its console caret event tells of, at the same tick, and are
+/// not used: the outpost does not hook them, so the console's caret event,
+/// raised after, is the first event heard, and the one change told.
+/// Converted from `the_console_hosts_system_caret_is_not_its_caret_event`.
+fn the_console_hosts_system_caret_is_not_its_caret_event() {
+    let mut terminal = start_console("mockapp-console-system-caret");
+    terminal.app.send("caret text 1");
+    terminal.app.send("system-caret");
+    terminal.app.send("console-caret 1 0");
+    terminal.outpost.heard(&[Heard::Msaa(WinEventKind::ConsoleCaret)]);
+    terminal.told();
+    terminal.outpost.settled();
+    let read = terminal.fresh_from(terminal.start);
+    assert_eq!(caret_at(&read.snapshot), ("one\r\n", 1));
+    terminal.outpost.settled();
+    terminal.quit();
+}
+
 fn main() {
     harness::run_isolated(&[
         (
@@ -421,6 +517,18 @@ fn main() {
         (
             "a_starting_read_reads_the_caret_and_mints_the_starting_point",
             a_starting_read_reads_the_caret_and_mints_the_starting_point,
+        ),
+        (
+            "the_console_hosts_caret_comes_from_its_console",
+            the_console_hosts_caret_comes_from_its_console,
+        ),
+        (
+            "a_console_caret_move_with_no_text_change_is_told",
+            a_console_caret_move_with_no_text_change_is_told,
+        ),
+        (
+            "the_console_hosts_system_caret_is_not_its_caret_event",
+            the_console_hosts_system_caret_is_not_its_caret_event,
         ),
     ]);
 }

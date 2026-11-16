@@ -477,7 +477,6 @@ const FAULT_TESTS: &[(&str, &str)] = &[
     ("verbatim-supervisor", "fault_paths"),
     ("mockapp", "failure_paths"),
     ("mockapp", "shutdown"),
-    ("mockapp", "terminal_reading"),
     ("mockapp", "time_limits"),
     ("mockapp", "window_messages"),
 ];

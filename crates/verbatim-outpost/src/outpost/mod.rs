@@ -247,9 +247,12 @@ pub(crate) struct Context {
     /// The failed cached reads the worker has made (`verbatim_uia::calls`),
     /// taken after each entry.
     failed_reads: AtomicU32,
-    /// What nudges the event thread, which decides whether the hook is
-    /// narrowed ([`narrowing`]); set once the thread runs.
+    /// What nudges the event thread and installs its hook; set once the
+    /// thread runs.
     event_thread: OnceLock<Nudger>,
+    /// Whether the event thread's console hook was asked for
+    /// ([`Context::hook_console`]).
+    console_hooked: std::sync::atomic::AtomicBool,
 }
 
 /// An event the outpost's own UIA handlers or `WinEvent` hooks took in from
@@ -697,6 +700,32 @@ impl Context {
         }
     }
 
+    /// Hooks the console's events for this outpost's application, once
+    /// for its life, the first time `Follow` names a terminal in a
+    /// console's window (`docs/design/readers-tell-core-asks-build1.md`:
+    /// "An outpost holds no `WinEvent` hook, except a console host's outpost,
+    /// which keeps the console's five events"). The application serving a
+    /// console's window is its console host whatever its image: `conhost`,
+    /// `OpenConsole` behind Windows Terminal, or a test's own stand-in.
+    /// The hook is in before `Follow` is answered, so every console event
+    /// raised after the baseline read Core sends behind it is heard;
+    /// one raised before is covered by that read. A hook that cannot be
+    /// installed is reported to Core ([`OutpostToCore::Fault`]).
+    fn hook_console(&self) {
+        if self.console_hooked.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let Some(nudger) = self.event_thread.get() else {
+            return;
+        };
+        let target_pid = self.target_pid();
+        if let Err(error) = nudger.hook(target_pid) {
+            let detail = format!("the console's WinEvent hook could not be installed: {error}");
+            tracing::error!(target_pid, detail, "the outpost cannot hear its console");
+            fault(self, detail);
+        }
+    }
+
     /// Takes in a console's update or caret event the outpost's own hook
     /// delivered, as it is.
     fn take_in_win_event(&self, event: WinEvent, timing: EventTiming) {
@@ -942,6 +971,7 @@ impl Outpost {
             foreground_programs: OnceLock::new(),
             failed_reads: AtomicU32::new(0),
             event_thread: OnceLock::new(),
+            console_hooked: std::sync::atomic::AtomicBool::new(false),
         });
         if let Some(registration) = register_focus_events(&context) {
             let _ = context.focus_events.set(registration);
@@ -980,8 +1010,9 @@ impl Outpost {
     }
 
     /// Gives the outpost its application, `target_pid`, for the rest of
-    /// its life: the MSAA hand-over's clock is read, the process-scoped
-    /// `WinEvent` hook installed, and [`OutpostToCore::Ready`] sent.
+    /// its life, and sends [`OutpostToCore::Ready`]. Its `WinEvent` hook is
+    /// installed only once `Follow` names a console's terminal
+    /// ([`Context::hook_console`]).
     /// Called once: by [`run_pipe`] at the start of an outpost started for
     /// an application, or for a spare's [`CoreToOutpost::Assign`];
     /// by the constructors of an outpost in a test's own process; and by a
@@ -990,11 +1021,9 @@ impl Outpost {
     /// # Errors
     ///
     /// Returns why the outpost cannot watch the application: it already
-    /// has one, or its hook could not be installed. The failure is also
-    /// reported to Core ([`OutpostToCore::Fault`]), and no `Ready` is
-    /// sent: the caller ends the outpost, since an application no hook
-    /// watches would have its `WinEvent`s handed over to nothing
-    /// (`books/dev/src/reference/adr/0001-focus.md`, "Spare outposts", item 5).
+    /// has one. The failure is also reported to Core
+    /// ([`OutpostToCore::Fault`]), and no `Ready` is sent: the caller ends
+    /// the outpost.
     pub fn assign(&self, target_pid: u32) -> Result<(), String> {
         let context = &self.context;
         if context
@@ -1007,17 +1036,6 @@ impl Outpost {
                 target_pid,
                 detail,
                 "the outpost cannot watch another application"
-            );
-            fault(context, detail.clone());
-            return Err(detail);
-        }
-        let console_host = is_console_host(&context.application_name(target_pid));
-        if console_host && let Err(error) = self.event_thread.hook(target_pid) {
-            let detail = format!("the WinEvent hook could not be installed: {error}");
-            tracing::error!(
-                target_pid,
-                detail,
-                "the outpost cannot watch its application"
             );
             fault(context, detail.clone());
             return Err(detail);
@@ -1339,12 +1357,6 @@ impl Outpost {
             }
         }
     }
-}
-
-/// Whether an application named `name` (its image, without the extension)
-/// is a console host, whose console's events its outpost hooks.
-fn is_console_host(name: &str) -> bool {
-    name.eq_ignore_ascii_case("conhost") || name.eq_ignore_ascii_case("OpenConsole")
 }
 
 /// `ask` with the node ids it names as this outpost knows them.

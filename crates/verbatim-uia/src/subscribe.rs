@@ -955,9 +955,14 @@ impl Handler {
 }
 
 /// A part's handler as the registering thread holds it: with its cache
-/// request, and whether only the extended group holds it.
+/// request, and whether only the extended group holds it. Each group is
+/// given handlers of its own, made from `subscription`, never this one:
+/// UI Automation removes a group from an element by its handlers, so a
+/// handler two groups shared would leave the element no handler once a
+/// move replaced one of the groups there by the other.
 struct Built {
     handler: Handler,
+    subscription: Subscription,
     cache: IUIAutomationCacheRequest,
     extended_only: bool,
     text_events: bool,
@@ -997,6 +1002,9 @@ struct Follower {
     /// Which registration this is, for the log.
     id: u64,
     built: Vec<Built>,
+    /// Where each group's handlers add the failed cached reads their
+    /// callbacks make.
+    failed_reads: Arc<AtomicU32>,
     /// The desktop's root element, fetched before a focus handler was
     /// registered, for the group to be registered on, as NVDA registers its
     /// global group on the root it fetched first.
@@ -1220,7 +1228,8 @@ impl Follower {
                 };
                 Ok(Built {
                     cache,
-                    handler: Handler::of(part.subscription, failed_reads),
+                    handler: Handler::of(part.subscription.clone(), failed_reads),
+                    subscription: part.subscription,
                     extended_only: part.extended_only,
                     text_events: part.text_events,
                     alone: part.alone,
@@ -1252,6 +1261,7 @@ impl Follower {
         let mut follower = Self {
             id,
             built,
+            failed_reads: Arc::clone(failed_reads),
             desktop_root,
             groups: Vec::new(),
             registered: Vec::new(),
@@ -1546,7 +1556,8 @@ impl Follower {
 
     /// The event handler group for `group` over `tree_scope`, built on its
     /// first use and kept: each part the group holds, with the part's own
-    /// cache request. Local: nothing is registered until the group is.
+    /// cache request and a handler made for this group alone ([`Built`]).
+    /// Local: nothing is registered until the group is.
     fn group(
         &mut self,
         client: &Client,
@@ -1564,7 +1575,11 @@ impl Follower {
         let handlers = unsafe { client.client.CreateEventHandlerGroup() }?;
         for built in &self.built {
             if group.holds(built.extended_only, built.text_events, built.alone) {
-                built.handler.add_to(&handlers, tree_scope, &built.cache)?;
+                Handler::of(built.subscription.clone(), &self.failed_reads).add_to(
+                    &handlers,
+                    tree_scope,
+                    &built.cache,
+                )?;
             }
         }
         self.groups.push(BuiltGroup {

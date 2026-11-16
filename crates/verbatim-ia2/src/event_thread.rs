@@ -62,8 +62,6 @@ const EVENT_THREAD_PRIORITY: ThreadPriority = ThreadPriority::Highest;
 /// D13) use it, differing only in their pid and subscription set.
 pub struct EventThread {
     nudger: Nudger,
-    /// The outcome of installing the hooks, sent by the thread.
-    hooked: Receiver<Result<(), String>>,
     join: Option<JoinHandle<()>>,
 }
 
@@ -92,32 +90,19 @@ impl EventThread {
                 thread_id,
                 synced,
                 tickets,
+                hooked,
             },
-            hooked,
             join: Some(join),
         }
     }
 
-    /// Installs the thread's hooks, scoped to `target_pid` (every process
-    /// for zero), on the thread, behind every nudge sent before, and
-    /// returns once they are in, so a caller that reports itself ready
-    /// after it really sees the events from then on. A thread has one set
-    /// of hooks for its whole life (decision D9), which includes the hook
-    /// for this process's sync markers ([`Nudger::sync`]).
+    /// Installs the thread's hooks ([`Nudger::hook`]).
     ///
     /// # Errors
     ///
-    /// Returns why the hooks are not in: a hook failed to install, the
-    /// thread already has its hooks, or the thread has ended.
+    /// As [`Nudger::hook`].
     pub fn hook(&self, target_pid: u32) -> Result<(), String> {
-        let word = usize::try_from(target_pid).map_err(|error| error.to_string())?;
-        // SAFETY: posting a message with no pointer parameters; the call
-        // fails safely for a thread that has ended.
-        unsafe { PostThreadMessageW(self.nudger.thread_id, WM_HOOK, WPARAM(word), LPARAM(0)) }
-            .map_err(|error| format!("the event thread could not be asked to hook: {error}"))?;
-        self.hooked
-            .recv()
-            .map_err(|_| "the event thread ended before it hooked".to_owned())?
+        self.nudger.hook(target_pid)
     }
 
     /// What nudges this thread, for any thread to keep.
@@ -134,6 +119,8 @@ pub struct Nudger {
     thread_id: u32,
     synced: Arc<Synced>,
     tickets: Arc<Mutex<Tickets>>,
+    /// The outcome of installing the hooks, sent by the thread.
+    hooked: Receiver<Result<(), String>>,
 }
 
 /// The syncs handed out ([`Nudger::sync`]).
@@ -213,6 +200,28 @@ impl Synced {
 }
 
 impl Nudger {
+    /// Installs the thread's hooks, scoped to `target_pid` (every process
+    /// for zero), on the thread, behind every nudge sent before, and
+    /// returns once they are in, so a caller that reports itself ready
+    /// after it really sees the events from then on. A thread has one set
+    /// of hooks for its whole life (decision D9), which includes the hook
+    /// for this process's sync markers ([`Nudger::sync`]).
+    ///
+    /// # Errors
+    ///
+    /// Returns why the hooks are not in: a hook failed to install, the
+    /// thread already has its hooks, or the thread has ended.
+    pub fn hook(&self, target_pid: u32) -> Result<(), String> {
+        let word = usize::try_from(target_pid).map_err(|error| error.to_string())?;
+        // SAFETY: posting a message with no pointer parameters; the call
+        // fails safely for a thread that has ended.
+        unsafe { PostThreadMessageW(self.thread_id, WM_HOOK, WPARAM(word), LPARAM(0)) }
+            .map_err(|error| format!("the event thread could not be asked to hook: {error}"))?;
+        self.hooked
+            .recv()
+            .map_err(|_| "the event thread ended before it hooked".to_owned())?
+    }
+
     /// Hands the two words to the event thread's nudge handler, behind
     /// every event already delivered to the thread. Returns at once, saying
     /// whether the thread took the nudge: one that has ended takes none.
