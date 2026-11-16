@@ -857,9 +857,11 @@ fn a_focus_whose_parent_step_fails_goes_on_from_its_windows_parent() {
         outpost.settled();
         let deep = fixture.focus_delivered("deep", "Deep button");
         // Core names the focus's nearest window, which the listener's
-        // check thread found, so the read's first step is its walk's.
+        // check thread found at delivery, so the read's first step is its
+        // walk's.
+        let nearest = common::outpost::nearest_window(&deep);
         fixture.app.send(&format!("answer-parent deep {case}"));
-        let (focus, _) = outpost.listener_focus(&deep);
+        let (focus, _) = outpost.listener_focus_in(&deep, nearest);
         assert_eq!(
             (
                 focus.object.ancestors.len(),
@@ -1025,10 +1027,11 @@ fn a_focus_inside_one_whose_parent_step_failed_meets_its_chain_there() {
     let mut fixture = Fixture::start("mockapp-rops-after-unknown");
     let outpost = OutpostUnderTest::new(&fixture.app);
     let group = fixture.focus_delivered("group2", "Inner group");
-    // Core names the focus's nearest window, so the read's first parent
-    // step is its walk's.
+    // Core names the focus's nearest window, which the check thread found
+    // at delivery, so the read's first parent step is its walk's.
+    let nearest = common::outpost::nearest_window(&group);
     fixture.app.send("answer-parent group2 fail");
-    let focused = outpost.uia_focus_answer(&group);
+    let focused = outpost.uia_focus_answer_in(&group, nearest);
     assert_eq!(
         focused.ancestor_names(),
         [] as [Option<&str>; 0],

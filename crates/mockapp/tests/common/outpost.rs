@@ -1111,12 +1111,19 @@ impl OutpostUnderTest {
         element: &Cached<ListenerEvent>,
         read: &ReadObject,
     ) -> (Outcome, CallCounts) {
+        self.listener_object_in(element, nearest_window(element), read)
+    }
+
+    /// [`Self::listener_object`], Core's request naming `nearest`, the
+    /// nearest window the check thread's walk found when the event was
+    /// delivered, before the test changed how mockapp answers that walk.
+    pub fn listener_object_in(
+        &self,
+        element: &Cached<ListenerEvent>,
+        nearest: isize,
+        read: &ReadObject,
+    ) -> (Outcome, CallCounts) {
         let uia = verbatim_uia::Uia::new().expect("a UIA client for the listener's reads");
-        // The nearest window the check thread's walk found at delivery,
-        // which Core's request names.
-        let nearest = verbatim_uia::nearest_window_lookup(element.live().element())
-            .expect("the check's walk to the nearest window")
-            .expect("the element has a nearest window");
         let _ = verbatim_uia::calls::take();
         let readability = self.listener_readability();
         let outcome = verbatim_listener::focus_read::read_object(
@@ -1132,9 +1139,21 @@ impl OutpostUnderTest {
     /// asks it: up to the ancestors Core already knows, answering its
     /// route, which must come. With the calls it made.
     pub fn listener_focus(&self, element: &Cached<ListenerEvent>) -> (ListenerFocus, CallCounts) {
+        self.listener_focus_in(element, nearest_window(element))
+    }
+
+    /// [`Self::listener_focus`], Core's request naming `nearest`, the
+    /// nearest window the check thread's walk found at the event's
+    /// delivery ([`nearest_window`]).
+    pub fn listener_focus_in(
+        &self,
+        element: &Cached<ListenerEvent>,
+        nearest: isize,
+    ) -> (ListenerFocus, CallCounts) {
         let sent = self.known();
-        let (outcome, calls) = self.listener_object(
+        let (outcome, calls) = self.listener_object_in(
             element,
+            nearest,
             &ReadObject {
                 object: ObjectRef::Kept(verbatim_model::tell::ElementToken(0)),
                 set: focus_set(),
@@ -1199,15 +1218,31 @@ impl OutpostUnderTest {
     /// ([`Self::complete_focus`]). Returns the completion's answer, with
     /// the calls of both reads.
     pub fn uia_focus_read(&self, element: &Cached<ListenerEvent>) -> (Outcome, CallCounts) {
-        let (focus, listener_calls) = self.listener_focus(element);
+        self.uia_focus_read_in(element, nearest_window(element))
+    }
+
+    /// [`Self::uia_focus_read`], Core's request naming `nearest`, the
+    /// nearest window found at the event's delivery ([`nearest_window`]).
+    pub fn uia_focus_read_in(
+        &self,
+        element: &Cached<ListenerEvent>,
+        nearest: isize,
+    ) -> (Outcome, CallCounts) {
+        let (focus, listener_calls) = self.listener_focus_in(element, nearest);
         let (outcome, calls) = self.complete_focus(focus);
         (outcome, listener_calls + calls)
     }
 
     /// [`Self::uia_focus_read`], which must answer a focus.
     pub fn uia_focus_answer(&self, element: &Cached<ListenerEvent>) -> Focused {
+        self.uia_focus_answer_in(element, nearest_window(element))
+    }
+
+    /// [`Self::uia_focus_answer`], Core's request naming `nearest`, the
+    /// nearest window found at the event's delivery ([`nearest_window`]).
+    pub fn uia_focus_answer_in(&self, element: &Cached<ListenerEvent>, nearest: isize) -> Focused {
         let _ = verbatim_uia::calls::take_failed_reads();
-        let (outcome, calls) = self.uia_focus_read(element);
+        let (outcome, calls) = self.uia_focus_read_in(element, nearest);
         let listener_failed = verbatim_uia::calls::take_failed_reads();
         match outcome {
             Outcome::Result(Reply::Focus(read)) => Focused {
@@ -2044,4 +2079,14 @@ pub fn role_of(node: &FocusNode) -> Role {
         Some(PropertyValue::Role(role)) => *role,
         _ => Role::Unknown,
     }
+}
+
+/// The nearest window of `element`, as the listener's check thread's walk
+/// finds it when the element's event is delivered, which Core's request
+/// names: a test that changes how mockapp answers the walk afterwards finds
+/// it first.
+pub fn nearest_window(element: &Cached<ListenerEvent>) -> isize {
+    verbatim_uia::nearest_window_lookup(element.live().element())
+        .expect("the check's walk to the nearest window")
+        .expect("the element has a nearest window")
 }

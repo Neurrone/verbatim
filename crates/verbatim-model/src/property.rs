@@ -250,6 +250,10 @@ pub enum UiaConversion {
     /// `System.Windows.Forms, Version=4.0.0.0`, the `Value` pattern and no
     /// `Selection` pattern; then its window's `GetComboBoxInfo` list.
     WinFormsComboBoxList,
+    /// The automation id of the element's raw-view parent, read by a step
+    /// to the parent and its live `AutomationId`, absent when empty, never
+    /// from the element's own cache.
+    ParentAutomationId,
 }
 
 /// How MSAA reads a property: an `IAccessible` call, or a read of the
@@ -715,8 +719,11 @@ const PARENT_AUTOMATION_ID: PropertyEntry = PropertyEntry {
     id: PropertyId::ParentAutomationId,
     name: "parent automation id",
     kind: ValueKind::Text,
-    // Read by a call to the parent, never from a cache.
-    uia: None,
+    // Read by a call to the parent, never from the element's cache.
+    uia: Some(UiaRead {
+        cached: &[uia::AUTOMATION_ID],
+        conversion: UiaConversion::ParentAutomationId,
+    }),
     msaa: None,
     ia2: None,
     cost: Cost::Alone,
@@ -1216,7 +1223,7 @@ mod tests {
                 1
             );
         }
-        assert_eq!(PROPERTIES.len(), 26);
+        assert_eq!(PROPERTIES.len(), 27);
     }
 
     #[test]
