@@ -60,29 +60,23 @@ use std::sync::{Arc, mpsc};
 
 use verbatim_model::property::{NodeDetail, NodeDetailSet};
 use verbatim_model::{
-    CallCounts, QueryKind, ReportedDetails, Role, SegmentContent, StateSet, TextDetails,
-    WindowHandle,
+    CallCounts, QueryKind, ReportedDetails, Role, SegmentContent, StateSet, WindowHandle,
 };
 use verbatim_model::{
-    CaretMotion, CaretReply, LineStyle, SelectionChange, TextAttributes, TextMovement, TextOp,
-    TextPoint, TextPosition, TextRead, TextReadAhead, TextReply, TextThrough, TextUnit, Theme,
+    TextMovement, TextOp, TextPoint, TextPosition, TextRead, TextReadAhead, TextReply, TextThrough,
+    TextUnit, Theme,
 };
 use verbatim_outpost::dialog_text::{UiaDialog, dialog_text};
 use verbatim_outpost::text::edit::EditText;
 use verbatim_outpost::text::uia::{UiaPos, UiaText};
-use verbatim_outpost::text::{
-    Anchors, CheckKey, FetchAsk, KeyChecked, LastRead, NoteFetch, ReportAsk, TextSource,
-    caret_report, caret_report_since, check_key, perform,
-};
+use verbatim_outpost::text::{Anchors, TextSource, perform};
 use verbatim_process::arguments::OutpostOptions;
 use verbatim_uia::{
     Ancestor, Cached, DialogText, FOCUS_PROPERTIES, Fill, FocusInput, ListenerEvent,
     ListenerSelection, Live, Node, NodeIdRegistry, Part, PropertyEvent, Registration, Scope, Shape,
     Subscription, TextEvent, Uia,
 };
-use verbatim_uia_rops::{
-    Attributes, FocusAncestry, FocusQuery, TextAttribute, focus_ancestry, focus_ancestry_classic,
-};
+use verbatim_uia_rops::{FocusAncestry, FocusQuery, focus_ancestry, focus_ancestry_classic};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::{
@@ -2393,10 +2387,14 @@ fn an_acc_focus_served_by_another_process_answers_no_focused_control() {
     let title = common::unique_title("mockapp-acc-focus");
     let mut app = common::spawn("small.json", "msaa", &title);
     app.send(&format!("acc-focus-window {}", other.0 as isize));
-    let mut outpost = OutpostUnderTest::new(&app);
+    let outpost = OutpostUnderTest::new(&app);
     common::reset_hits(other);
-    let (answer, _) = outpost.focus_now_answer();
-    assert_eq!(answer.focus, None, "the focus now's focused control");
+    let (outcome, _) = outpost.current_focus();
+    assert_eq!(
+        outcome,
+        verbatim_model::request::Outcome::NotThere,
+        "the current focus's focused control"
+    );
     assert_eq!(
         (common::read_hits(other), common::read_get_objects(other)),
         (vec![("WM_GETOBJECT", 1)], vec![("OBJID_CLIENT", 1)]),
@@ -2585,67 +2583,6 @@ fn uia_navigation_steps_cost_exactly() {
     );
 
     ratchet.finish();
-}
-
-/// A focus's ancestors as the outpost reads them itself, for the
-/// ancestors query, with a theme that reports descriptions as off, once
-/// Core has committed the focus the listener told: the
-/// focus's element filled as a node and each ancestor as an ancestor, so
-/// the provider is not asked for the focus's description, nor for an
-/// ancestor's beyond the one the layout judgment reads, and no cached read
-/// fails (`books/dev/src/explanation/design/uia-shapes.md`, section 4.2).
-fn uia_ancestors_with_descriptions_off_cost_exactly() {
-    let title = common::unique_title("mockapp-counts-uia-ancestors");
-    let mut app = common::spawn("counts.json", "uia", &title);
-    let hwnd = common::find_window(&title);
-    let under_test = UiaUnderTest::new(hwnd);
-    let mut core = CoreDriver::new(&app, OutpostUnderTest::on_frozen_time(&app));
-    core.reported(ReportedDetails {
-        node: NodeDetailSet::ALL.without(NodeDetail::Description),
-        ..ReportedDetails::ALL
-    });
-    let mut ratchet = Ratchet::default();
-    let _ = measure_uia_focus((&mut app, &under_test, hwnd), &mut core, ("first", "First"));
-    let first = core
-        .state()
-        .focused()
-        .expect("Core committed the focus")
-        .1
-        .id;
-
-    common::reset_hits(hwnd);
-    let (ancestors, calls_made) = core.outpost.ancestors(first);
-    let names: Vec<Option<&str>> = ancestors
-        .iter()
-        .map(|ancestor| ancestor.name.as_deref())
-        .collect();
-    assert_eq!(names, [Some("Mockapp Counts Fixture"), Some("Settings")]);
-    let cost = Cost {
-        calls: calls_made,
-        hits: common::read_hits(hwnd),
-        failed_reads: core.outpost.take_failed_reads(),
-    };
-    ratchet.check(
-        "UIA ancestors of a focus, descriptions off",
-        &cost,
-        calls(5, 0, 0),
-        0,
-        &[
-            ("WM_GETOBJECT", 1),
-            ("ProviderOptions", 28),
-            ("GetPatternProvider", 36),
-            ("GetPropertyValue", 60),
-            ("HostRawElementProvider", 12),
-            ("Navigate", 5),
-            ("GetRuntimeId", 5),
-            ("BoundingRectangle", 1),
-            ("FragmentRoot", 9),
-        ],
-    );
-
-    ratchet.finish();
-    drop(core);
-    app.quit();
 }
 
 /// A UIA node whose element the outpost does not keep, and whose route
@@ -3236,624 +3173,16 @@ fn uia_active_text_position_costs_exactly() {
     app.quit();
 }
 
-/// One check of a caret key's watch, as the worker makes one, for Right
-/// Arrow from `baseline`, the node's last read.
-fn check<S: TextSource>(
+/// The caret's report, read as a caret tell's read reads it, at
+/// `read_at_us`.
+fn caret_report<S: TextSource>(
     source: &mut S,
     anchors: &mut verbatim_outpost::text::NodeText<'_, S::Pos>,
-    _baseline: &LastRead<S::Pos>,
-) -> KeyChecked {
-    let motion = CaretMotion::NextCharacter;
-    check_key(
-        source,
-        anchors,
-        &CheckKey {
-            note: NoteFetch {
-                unit: motion.unit(),
-                motion,
-                details: verbatim_model::TextDetails::ALL,
-            },
-            read_at_us: 2,
-            final_read: false,
-            ended: || 3,
-        },
-    )
-}
-
-/// The read of a check that found evidence.
-fn answered(checked: KeyChecked) -> CaretReply {
-    match checked {
-        KeyChecked::Read { read, effect: true } => *read,
-        other => panic!("no evidence: {other:?}"),
-    }
-}
-
-/// One caret move answered, as the outpost's worker answers a caret key
-/// with `text_reads::check_watch` once it has the node's text: the caret is
-/// reported (Core's knowledge), mockapp's caret moves one character on, as
-/// Right Arrow moves it, and the watch's first check finds the evidence and
-/// reports the line and the character there. Then the caret moves on again
-/// and is reported alone, as the worker reports it for a caret event, after
-/// a typed character above all, with `text_reads::report_caret`: compared
-/// with the selection last reported, the answer's, for how it changed.
-/// Then a selection no key made is reported the same way, with how it
-/// changed. Then the caret, moved on with nothing selected, is read as the
-/// outpost reads it before a held caret key is passed on
-/// (`ReadPurpose::BeforeFieldKey`, `books/dev/src/explanation/design/key-holding.md`): the report's read,
-/// leaving the kept selection alone. Returns the calls and hits of the
-/// answer, of the report, of the report with a selection change, and of
-/// the read before a held key.
-#[expect(
-    clippy::too_many_lines,
-    reason = "one sequence of reads, measured in the order they are made"
-)]
-fn measure_caret_move<S: TextSource>(
-    app: &mut common::MockApp,
-    hwnd: HWND,
-    source: &mut S,
-    take: fn() -> CallCounts,
-) -> (Cost, Cost, Cost, Cost) {
-    let mut store = Anchors::new(Arc::default());
-    let mut anchors = store.node(1);
-    common::apply(app, hwnd, "caret doc 0");
-    caret_report(source, &mut anchors, 1, false).expect("the caret");
-    let baseline = anchors.last_read().expect("the baseline");
-    common::apply(app, hwnd, "caret doc 1");
-    let _ = take();
-    let _ = verbatim_uia::calls::take_failed_reads();
-    let reply = answered(check(source, &mut anchors, &baseline));
-    let calls = take();
-    assert_eq!(reply.facts.unit.as_ref().expect("a unit").text, "l");
-    let answer = Cost {
-        calls,
-        hits: common::read_hits(hwnd),
-        failed_reads: verbatim_uia::calls::take_failed_reads(),
-    };
-
-    common::apply(app, hwnd, "caret doc 2");
-    let _ = take();
-    let _ = verbatim_uia::calls::take_failed_reads();
-    let read = caret_report_since(
-        source,
-        &mut anchors,
-        3,
-        &ReportAsk {
-            formats: false,
-            since: None,
-            compare: true,
-            fetch: None,
-        },
-    )
-    .expect("the caret");
-    let calls = take();
-    assert_eq!(read.report.line.offset, 2);
-    assert_eq!(read.selection_changes, []);
-    let report = Cost {
-        calls,
-        hits: common::read_hits(hwnd),
-        failed_reads: verbatim_uia::calls::take_failed_reads(),
-    };
-
-    // A selection no key made, from the caret: "al" selected.
-    common::apply(app, hwnd, "caret doc 0 2");
-    let _ = take();
-    let _ = verbatim_uia::calls::take_failed_reads();
-    let read = caret_report_since(
-        source,
-        &mut anchors,
-        4,
-        &ReportAsk {
-            formats: false,
-            since: None,
-            compare: true,
-            fetch: None,
-        },
-    )
-    .expect("the caret");
-    let calls = take();
-    assert_eq!(
-        read.selection_changes,
-        [SelectionChange {
-            selected: true,
-            text: "al".to_owned(),
-            characters: 2,
-        }]
-    );
-    let selected = Cost {
-        calls,
-        hits: common::read_hits(hwnd),
-        failed_reads: verbatim_uia::calls::take_failed_reads(),
-    };
-
-    common::apply(app, hwnd, "caret doc 3");
-    let _ = take();
-    let _ = verbatim_uia::calls::take_failed_reads();
-    let read = caret_report_since(
-        source,
-        &mut anchors,
-        5,
-        &ReportAsk {
-            formats: false,
-            since: None,
-            compare: true,
-            fetch: Some(FetchAsk {
-                note: NoteFetch {
-                    unit: CaretMotion::NextCharacter.unit(),
-                    motion: CaretMotion::NextCharacter,
-                    details: verbatim_model::TextDetails::ALL,
-                },
-                ended: || 3,
-            }),
-        },
-    )
-    .expect("the caret");
-    let calls = take();
-    assert_eq!(read.report.line.offset, 3);
-    assert_eq!(
-        read.selection_changes,
-        [SelectionChange {
-            selected: false,
-            text: "al".to_owned(),
-            characters: 2,
-        }]
-    );
-    let before_key = Cost {
-        calls,
-        hits: common::read_hits(hwnd),
-        failed_reads: verbatim_uia::calls::take_failed_reads(),
-    };
-    (answer, report, selected, before_key)
-}
-
-/// What a remote caret read costs the provider beyond its text calls: the
-/// element's import and its text pattern.
-const IMPORT_HITS: [(&str, u32); 5] = [
-    ("ProviderOptions", 2),
-    ("GetPatternProvider", 1),
-    ("GetPropertyValue", 1),
-    ("HostRawElementProvider", 1),
-    ("Navigate", 1),
-];
-
-/// The text calls of a remote caret read that a classic one made as
-/// `hits`: inside the provider the program also copies the collapsed caret
-/// before using it, one clone and one endpoint move more.
-fn plus_copy(hits: &[(&'static str, u32)]) -> Vec<(&'static str, u32)> {
-    hits.iter()
-        .map(|&(name, count)| match name {
-            "Clone" | "MoveEndpointByRange" => (name, count + 1),
-            _ => (name, count),
-        })
-        .collect()
-}
-
-/// The hits of `times` remote caret reads that each made `text` calls.
-fn remote_hits(times: u32, text: &[(&'static str, u32)]) -> Vec<(&'static str, u32)> {
-    IMPORT_HITS
-        .iter()
-        .chain(text)
-        .map(|&(name, count)| (name, count * times))
-        .collect()
-}
-
-/// The report after a focus, whose line is spoken, with the line's
-/// formatting: mockapp's first line has four stretches (bold "alpha", a
-/// space, the misspelt "beta", the line feed), each read as `attributes`
-/// says, given whether the stretch is bold and whether it is misspelt.
-fn measure_focus_report(
-    hwnd: HWND,
-    source: &mut UiaText,
-    attributes: impl Fn(bool, bool) -> TextAttributes,
-) -> Cost {
-    let mut store = Anchors::new(Arc::default());
-    let _ = verbatim_uia::calls::take();
-    let _ = verbatim_uia::calls::take_failed_reads();
-    common::reset_hits(hwnd);
-    let (report, _) = caret_report(source, &mut store.node(1), 0, true).expect("the caret");
-    let cost = Cost {
-        calls: verbatim_uia::calls::take(),
-        hits: common::read_hits(hwnd),
-        failed_reads: verbatim_uia::calls::take_failed_reads(),
-    };
-    let runs: Vec<(u32, u32, TextAttributes)> = report
-        .line
-        .formats
-        .iter()
-        .map(|run| (run.start, run.end, run.attributes.clone()))
-        .collect();
-    assert_eq!(
-        runs,
-        [
-            (0, 5, attributes(true, false)),
-            (5, 6, attributes(false, false)),
-            (6, 10, attributes(false, true)),
-            (10, 11, attributes(false, false)),
-        ]
-    );
-    cost
-}
-
-/// The attributes the default theme reads: the errors, and links, which
-/// mockapp's text without styles does not support.
-fn errors_only(_bold: bool, spelling_error: bool) -> TextAttributes {
-    TextAttributes {
-        spelling_error,
-        ..TextAttributes::default()
-    }
-}
-
-/// Every attribute mockapp's text without styles reports, as the outpost
-/// reads it: strikethrough, the background color, bullets, and links are
-/// not supported, and read as none.
-fn every_attribute(bold: bool, spelling_error: bool) -> TextAttributes {
-    TextAttributes {
-        spelling_error,
-        grammar_error: false,
-        font_name: Some("Consolas".to_owned()),
-        font_size: Some("11.0 pt".to_owned()),
-        color: Some("black".to_owned()),
-        bold: Some(bold),
-        italic: Some(false),
-        underline: Some(false),
-        underline_style: Some(LineStyle::None),
-        strikethrough: None,
-        background_color: None,
-        bullet: None,
-        link: false,
-    }
-}
-
-/// A caret move, a caret report, the report after a focus with its
-/// line's formatting, and a wait that finds nothing, through UIA, remotely
-/// or classically, with the default theme's formatting (spelling and
-/// grammar errors, and links). The report after a focus is measured twice
-/// for the same text, as the outpost keeps what it learned of the control
-/// between reads: the first read learns that mockapp's text without styles
-/// does not support links (or, with every indication on, strikethrough,
-/// the background color, and bullets too), and the second no longer asks
-/// for them.
-#[expect(
-    clippy::too_many_lines,
-    reason = "both ways' pinned provider hits, listed in full"
-)]
-fn check_uia_caret_costs(ratchet: &mut Ratchet, remote: bool) {
-    let title = common::unique_title("mockapp-counts-uia-caret");
-    let mut app = common::spawn("text.json", "uia", &title);
-    let hwnd = common::find_window(&title);
-    let mut source = uia_notes(hwnd).remote(remote);
-    let (answer, report, selected, before_key) =
-        measure_caret_move(&mut app, hwnd, &mut source, verbatim_uia::calls::take);
-    let (nothing, later) = measure_watch(&mut app, hwnd, &mut source, verbatim_uia::calls::take);
-    let focus_report = measure_focus_report(hwnd, &mut source, errors_only);
-    let focus_again = measure_focus_report(hwnd, &mut source, errors_only);
-    // The same report with every formatting indication on: eleven
-    // attributes per stretch, the annotation types, font name and size,
-    // weight, italic, underline style, strikethrough style, color,
-    // background color, bullet style, and link, until the four mockapp
-    // does not support are learned.
-    let mut formatted = uia_notes(hwnd).remote(remote).details(TextDetails::ALL);
-    let formatted_report = measure_focus_report(hwnd, &mut formatted, every_attribute);
-    let formatted_again = measure_focus_report(hwnd, &mut formatted, every_attribute);
-    assert_eq!(
-        formatted.known_support().unsupported,
-        Attributes::of(&[
-            TextAttribute::StrikethroughStyle,
-            TextAttribute::BackgroundColor,
-            TextAttribute::BulletStyle,
-            TextAttribute::Link,
-        ])
-    );
-    // The caret's read, the evidence, the line and the caret's offset
-    // in it, the character's spelling error and link, which a character's read
-    // never learns are not supported, and the caret read again and
-    // compared, to tell whether it moved while it was read.
-    let move_hits = [
-        ("ITextProvider::GetSelection", 2),
-        ("Clone", 3),
-        ("CompareEndpoints", 4),
-        ("ExpandToEnclosingUnit", 2),
-        ("GetAttributeValue", 2),
-        ("GetText", 2),
-        ("MoveEndpointByRange", 1),
-    ];
-    // The report's, with the selection last read, "al", compared and its
-    // change read: its ends, the text it held, and the character at the
-    // caret, the key's unit.
-    // Remotely, whether the key's baseline is on the line too.
-    let remote_move_hits = [
-        ("ITextProvider::GetSelection", 2),
-        ("Clone", 3),
-        ("CompareEndpoints", 6),
-        ("ExpandToEnclosingUnit", 2),
-        ("GetAttributeValue", 2),
-        ("GetText", 2),
-        ("MoveEndpointByRange", 1),
-    ];
-    let before_key_hits = [
-        ("ITextProvider::GetSelection", 1),
-        ("Clone", 4),
-        ("CompareEndpoints", 2),
-        ("ExpandToEnclosingUnit", 1),
-        ("GetText", 4),
-        ("MoveEndpointByRange", 5),
-    ];
-    let report_hits = [
-        ("ITextProvider::GetSelection", 1),
-        ("Clone", 2),
-        ("CompareEndpoints", 1),
-        ("ExpandToEnclosingUnit", 1),
-        ("GetText", 2),
-        ("MoveEndpointByRange", 1),
-    ];
-    // The report's; the line's annotation types, which it has, and, while
-    // their support is not known, the attributes being learned, asked of
-    // the line; and the line walked by the format unit: four stretches,
-    // each compared with the line's end (the last cut there), read, and its
-    // attributes read, and the walk moved on after each but the last. 39
-    // classically before the text range audit of 2026-10-07, which found
-    // that the comparison of where the next stretch starts repeated the one
-    // before it.
-    let with_attributes = |reads: u32| -> Vec<(&'static str, u32)> {
-        [
-            ("ITextProvider::GetSelection", 1),
-            ("Clone", 7),
-            ("CompareEndpoints", 5),
-            ("ExpandToEnclosingUnit", 1),
-            ("GetAttributeValue", reads),
-            ("GetText", 6),
-            ("MoveEndpointByUnit", 4),
-            ("MoveEndpointByRange", 6),
-        ]
-        .to_vec()
-    };
-    // The line's annotation types and link, then two attributes per
-    // stretch; once links are known to be unsupported, the line's
-    // annotation types and one per stretch.
-    let focus_hits = with_attributes(2 + 4 * 2);
-    let focus_again_hits = with_attributes(1 + 4);
-    // The line's annotation types and the ten others being learned, then
-    // eleven attributes per stretch; once four are known to be
-    // unsupported and the rest supported, the line's annotation types and
-    // seven per stretch.
-    let formatted_hits = with_attributes(11 + 4 * 11);
-    let formatted_again_hits = with_attributes(1 + 4 * 7);
-    if remote {
-        // One round trip each, the program copying the collapsed caret
-        // (`plus_copy`).
-        ratchet.check(
-            "UIA caret move, remotely",
-            &answer,
-            calls(1, 0, 0),
-            0,
-            &remote_hits(1, &plus_copy(&remote_move_hits)),
-        );
-        ratchet.check(
-            "UIA caret report, remotely",
-            &report,
-            calls(1, 0, 0),
-            0,
-            &remote_hits(1, &plus_copy(&report_hits)),
-        );
-        // The caret report's round trip, comparing no selection.
-        ratchet.check(
-            "UIA caret read before a held key, remotely",
-            &before_key,
-            calls(1, 0, 0),
-            0,
-            &[
-                ("ProviderOptions", 2),
-                ("GetPatternProvider", 1),
-                ("GetPropertyValue", 1),
-                ("HostRawElementProvider", 1),
-                ("Navigate", 1),
-                ("ITextProvider::GetSelection", 1),
-                ("Clone", 5),
-                ("CompareEndpoints", 5),
-                ("ExpandToEnclosingUnit", 1),
-                ("GetText", 4),
-                ("MoveEndpointByRange", 6),
-            ],
-        );
-        // Still one round trip: the program compares the selection with
-        // the one last reported, reads the change it finds, reads the new
-        // selection's text, kept with it for the next comparison, and
-        // where the selection starts, here the text's start. Inside the
-        // provider, the classic read's calls (below), the program's copy of
-        // the caret (`plus_copy`), three comparisons and one pattern
-        // request more, and the element's import. The last selection
-        // holding nothing, the change is the whole new selection, so the
-        // two comparisons that place a change on each side are not made
-        // (since 2026-10-23).
-        ratchet.check(
-            "UIA caret report with a selection change, remotely",
-            &selected,
-            calls(1, 0, 0),
-            0,
-            &[
-                ("ProviderOptions", 2),
-                ("GetPatternProvider", 2),
-                ("GetPropertyValue", 1),
-                ("HostRawElementProvider", 1),
-                ("Navigate", 1),
-                ("ITextProvider::GetSelection", 1),
-                ("DocumentRange", 1),
-                ("GetCaretRange", 1),
-                ("Clone", 5),
-                ("CompareEndpoints", 7),
-                ("ExpandToEnclosingUnit", 1),
-                ("GetText", 5),
-                ("MoveEndpointByRange", 5),
-            ],
-        );
-        ratchet.check(
-            "UIA caret report after a focus, remotely",
-            &focus_report,
-            calls(1, 0, 0),
-            0,
-            &remote_hits(1, &plus_copy(&focus_hits)),
-        );
-        ratchet.check(
-            "UIA caret report after a focus, links learned, remotely",
-            &focus_again,
-            calls(1, 0, 0),
-            0,
-            &remote_hits(1, &plus_copy(&focus_again_hits)),
-        );
-        ratchet.check(
-            "UIA caret report after a focus with every attribute, remotely",
-            &formatted_report,
-            calls(1, 0, 0),
-            0,
-            &remote_hits(1, &plus_copy(&formatted_hits)),
-        );
-        ratchet.check(
-            "UIA caret report after a focus with every attribute learned, remotely",
-            &formatted_again,
-            calls(1, 0, 0),
-            0,
-            &remote_hits(1, &plus_copy(&formatted_again_hits)),
-        );
-        // One round trip for each check, the whole read: the check that
-        // finds the evidence is the answer. 11 before 2026-10-08, one read
-        // every 10 milliseconds until 100 had passed.
-        ratchet.check(
-            "UIA caret watch finding nothing, remotely",
-            &nothing,
-            calls(1, 0, 0),
-            0,
-            &remote_hits(1, &plus_copy(&remote_move_hits)),
-        );
-        ratchet.check(
-            "UIA caret watch answered by a later caret event, remotely",
-            &later,
-            calls(1, 0, 0),
-            0,
-            &[
-                ("ProviderOptions", 2),
-                ("GetPatternProvider", 1),
-                ("GetPropertyValue", 1),
-                ("HostRawElementProvider", 1),
-                ("Navigate", 1),
-                ("ITextProvider::GetSelection", 2),
-                ("Clone", 4),
-                ("CompareEndpoints", 6),
-                ("ExpandToEnclosingUnit", 2),
-                ("GetAttributeValue", 2),
-                ("GetText", 2),
-                ("MoveEndpointByRange", 2),
-            ],
-        );
-    } else {
-        ratchet.check(
-            "UIA caret move, classically",
-            &answer,
-            calls(15, 0, 0),
-            0,
-            &move_hits,
-        );
-        ratchet.check(
-            "UIA caret report, classically",
-            &report,
-            calls(8, 0, 0),
-            0,
-            &report_hits,
-        );
-        // The caret report's 8, the selection last read compared and its
-        // change read, and the key's unit.
-        ratchet.check(
-            "UIA caret read before a held key, classically",
-            &before_key,
-            calls(17, 0, 0),
-            0,
-            &before_key_hits,
-        );
-        // The caret report's 8 with the selection's caret
-        // (`GetCaretRange`); its ends compared with the old caret's (2);
-        // the old selection holding nothing, no comparison to place the
-        // change, which is the whole new selection (four before
-        // 2026-10-23); the change's text read (a copy, its two ends moved,
-        // its text); the new selection's text, kept with it for the next
-        // comparison; and where the selection starts, since
-        // `TextPattern2`'s caret may be its other end (the start compared
-        // with the line's, a copy of the line, its end moved to the start,
-        // its text), and, the start being the line's, whether it is the
-        // text's (its document range, compared): 21 (25 before
-        // 2026-10-23, 18 before 2026-10-22, 19 before the selection's
-        // start was read). A selection starting inside a line costs 19. The report of a caret with nothing
-        // selected, after one with nothing selected, compares nothing (8,
-        // above).
-        ratchet.check(
-            "UIA caret report with a selection change, classically",
-            &selected,
-            calls(21, 0, 0),
-            0,
-            &[
-                ("ITextProvider::GetSelection", 1),
-                ("DocumentRange", 1),
-                ("GetCaretRange", 1),
-                ("Clone", 4),
-                ("CompareEndpoints", 4),
-                ("ExpandToEnclosingUnit", 1),
-                ("GetText", 5),
-                ("MoveEndpointByRange", 4),
-            ],
-        );
-        // The caret report's 8, one call asking the line for its
-        // annotation types and the attributes being learned, and the walk's
-        // 26, with one `GetAttributeValues` call per stretch for all its
-        // attributes (`IUIAutomationTextRange3`), which the provider
-        // answers one attribute at a time: 35 however many attributes are
-        // read (34 before the line was asked first; 63 with seven
-        // attributes when each attribute was a call; 39 before the text
-        // range audit).
-        ratchet.check(
-            "UIA caret report after a focus, classically",
-            &focus_report,
-            calls(35, 0, 0),
-            0,
-            &focus_hits,
-        );
-        ratchet.check(
-            "UIA caret report after a focus, links learned, classically",
-            &focus_again,
-            calls(35, 0, 0),
-            0,
-            &focus_again_hits,
-        );
-        ratchet.check(
-            "UIA caret report after a focus with every attribute, classically",
-            &formatted_report,
-            calls(35, 0, 0),
-            0,
-            &formatted_hits,
-        );
-        ratchet.check(
-            "UIA caret report after a focus with every attribute learned, classically",
-            &formatted_again,
-            calls(35, 0, 0),
-            0,
-            &formatted_again_hits,
-        );
-        // A caret move's reads for each check. 134 before 2026-10-08, 12
-        // for each of eleven reads and 2 comparing the caret with the
-        // document's end; 12 for each check before the caret was read
-        // again (2026-10-14).
-        ratchet.check(
-            "UIA caret watch finding nothing, classically",
-            &nothing,
-            calls(15, 0, 0),
-            0,
-            &move_hits,
-        );
-        ratchet.check(
-            "UIA caret watch answered by a later caret event, classically",
-            &later,
-            calls(15, 0, 0),
-            0,
-            &move_hits,
-        );
-    }
-    app.quit();
+    read_at_us: u64,
+) -> verbatim_model::CaretReport {
+    verbatim_outpost::text::held::read_selection(source, anchors, read_at_us, None)
+        .expect("the caret")
+        .report
 }
 
 /// One text request answered as the outpost's worker answers it
@@ -3882,8 +3211,7 @@ fn measure_text(
 /// classically: the review cursor's next line, a word from a position
 /// inside the line (found by the text before it), say-all's read ahead of
 /// every line, the selected text read for a copy, the caret moved as
-/// say-all moves it, the caret's location, and a caret key's answer that
-/// reports a selection's change.
+/// say-all moves it, and the caret's location.
 #[expect(
     clippy::too_many_lines,
     reason = "each request measured in turn, as one session makes them"
@@ -3897,7 +3225,7 @@ fn check_uia_text_costs(ratchet: &mut Ratchet, remote: bool) {
     let mut store = Anchors::new(Arc::default());
     let mut anchors = store.node(1);
     common::apply(&mut app, hwnd, "caret doc 0");
-    let (report, _) = caret_report(&mut source, &mut anchors, 0, false).expect("the caret");
+    let report = caret_report(&mut source, &mut anchors, 0);
     let caret = TextPosition {
         anchor: report.line.start,
         offset: report.line.offset,
@@ -4202,81 +3530,11 @@ fn check_uia_text_costs(ratchet: &mut Ratchet, remote: bool) {
     );
 
     common::apply(&mut app, hwnd, "caret doc 0");
-    let (collapsed, _) = caret_report(&mut source, &mut anchors, 1, false).expect("the caret");
-    let baseline = anchors.last_read().expect("the baseline");
+    let collapsed = caret_report(&mut source, &mut anchors, 1);
     let at = TextPosition {
         anchor: collapsed.line.start,
         offset: collapsed.line.offset,
     };
-    common::apply(&mut app, hwnd, "caret doc 0 5");
-    let _ = verbatim_uia::calls::take();
-    let _ = verbatim_uia::calls::take_failed_reads();
-    let reply = answered(check(&mut source, &mut anchors, &baseline));
-    let cost = Cost {
-        calls: verbatim_uia::calls::take(),
-        hits: common::read_hits(hwnd),
-        failed_reads: verbatim_uia::calls::take_failed_reads(),
-    };
-    let changes: Vec<(bool, &str, u32)> = reply
-        .selection_changes
-        .iter()
-        .map(|change| (change.selected, change.text.as_str(), change.characters))
-        .collect();
-    assert_eq!(changes, [(true, "alpha", 5)]);
-    // The character's spelling error and link: two attribute reads (one
-    // before the default theme reported links). The caret read again at
-    // the end, the selection and `TextPattern2`'s caret, and compared. The
-    // new selection's text, kept with it for the next comparison (one
-    // `GetText` more since 2026-10-22), and where the selection starts,
-    // here the text's start (six calls more classically: 28 before, four
-    // for a start inside a line). The key compares with the selection the
-    // outpost kept, its caret report's, which held nothing, so the change
-    // is the whole new selection and no comparison places it (two fewer
-    // remotely and four fewer classically since 2026-10-23).
-    let expected: (CallCounts, &[(&str, u32)]) = if remote {
-        (
-            calls(1, 0, 0),
-            &[
-                ("ProviderOptions", 2),
-                ("GetPatternProvider", 3),
-                ("GetPropertyValue", 1),
-                ("HostRawElementProvider", 1),
-                ("Navigate", 1),
-                ("ITextProvider::GetSelection", 2),
-                ("DocumentRange", 1),
-                ("GetCaretRange", 2),
-                ("Clone", 6),
-                ("CompareEndpoints", 12),
-                ("ExpandToEnclosingUnit", 2),
-                ("GetAttributeValue", 2),
-                ("GetText", 5),
-                ("MoveEndpointByRange", 5),
-            ],
-        )
-    } else {
-        (
-            calls(30, 0, 0),
-            &[
-                ("ITextProvider::GetSelection", 2),
-                ("DocumentRange", 1),
-                ("GetCaretRange", 2),
-                ("Clone", 5),
-                ("CompareEndpoints", 8),
-                ("ExpandToEnclosingUnit", 2),
-                ("GetAttributeValue", 2),
-                ("GetText", 5),
-                ("MoveEndpointByRange", 4),
-            ],
-        )
-    };
-    ratchet.check(
-        &format!("UIA caret key selecting, {way}"),
-        &cost,
-        expected.0,
-        0,
-        expected.1,
-    );
-
     // The review copy's first press: "alpha" selected from a collapsed
     // caret, the selection read before and after and compared. As Core
     // sends it: the marker on the first "a" and the review cursor on the
@@ -4632,110 +3890,6 @@ fn uia_say_all_batches_cost_exactly() {
     ratchet.finish();
 }
 
-/// An operation's expected calls and provider hits.
-type Expected = (CallCounts, &'static [(&'static str, u32)]);
-
-/// The report after a focus on a line whose one format stretch reads as
-/// "mixed" for italics (mockapp's `italic.json`, "plain italic text"):
-/// read again by its four words, and the mixed word "italic " by its seven
-/// characters, ten stretches in all, with every formatting indication on,
-/// remotely and classically.
-fn uia_mixed_stretch_costs_exactly() {
-    common::init_com();
-    let mut ratchet = Ratchet::default();
-    let title = common::unique_title("mockapp-counts-uia-mixed");
-    let mut app = common::spawn("italic.json", "uia", &title);
-    let hwnd = common::find_window(&title);
-    common::apply(&mut app, hwnd, "caret doc 0");
-    for remote in [true, false] {
-        let mut source = uia_notes(hwnd).remote(remote).details(TextDetails::ALL);
-        let mut store = Anchors::new(Arc::default());
-        let _ = verbatim_uia::calls::take();
-        let _ = verbatim_uia::calls::take_failed_reads();
-        common::reset_hits(hwnd);
-        let (report, _) =
-            caret_report(&mut source, &mut store.node(1), 0, true).expect("the caret");
-        let cost = Cost {
-            calls: verbatim_uia::calls::take(),
-            hits: common::read_hits(hwnd),
-            failed_reads: verbatim_uia::calls::take_failed_reads(),
-        };
-        let italics: Vec<(u32, u32, Option<bool>)> = report
-            .line
-            .formats
-            .iter()
-            .map(|run| (run.start, run.end, run.attributes.italic))
-            .collect();
-        let mut expected = vec![(0, 6, Some(false))];
-        expected.extend((6..12).map(|at| (at, at + 1, Some(true))));
-        expected.extend([
-            (12, 13, Some(false)),
-            (13, 17, Some(false)),
-            (17, 18, Some(false)),
-        ]);
-        assert_eq!(italics, expected);
-        // The line's annotation types, which it has none of, and the ten
-        // other attributes, being learned; and twelve stretches walked (the
-        // line's one, its four words, the mixed word's seven characters),
-        // each a copy, an end moved one unit on, a comparison with the
-        // span's end, and its attributes but the annotation types, ten; the
-        // ten appended also read their text.
-        // Before the line's annotation types were asked first, each
-        // stretch read them too, and there were seven attributes in all
-        // (84 reads, 82 calls classically). Before the text range audit of
-        // 2026-10-07 the line was one stretch whose italics were none.
-        let (way, expected): (&str, Expected) = if remote {
-            (
-                "remotely",
-                (
-                    calls(1, 0, 0),
-                    &[
-                        ("ProviderOptions", 2),
-                        ("GetPatternProvider", 1),
-                        ("GetPropertyValue", 1),
-                        ("HostRawElementProvider", 1),
-                        ("Navigate", 1),
-                        ("ITextProvider::GetSelection", 1),
-                        ("Clone", 18),
-                        ("CompareEndpoints", 13),
-                        ("ExpandToEnclosingUnit", 1),
-                        ("GetAttributeValue", 131),
-                        ("GetText", 12),
-                        ("MoveEndpointByUnit", 12),
-                        ("MoveEndpointByRange", 15),
-                    ],
-                ),
-            )
-        } else {
-            (
-                "classically",
-                (
-                    calls(83, 0, 0),
-                    &[
-                        ("ITextProvider::GetSelection", 1),
-                        ("Clone", 17),
-                        ("CompareEndpoints", 13),
-                        ("ExpandToEnclosingUnit", 1),
-                        ("GetAttributeValue", 131),
-                        ("GetText", 12),
-                        ("MoveEndpointByUnit", 12),
-                        ("MoveEndpointByRange", 14),
-                    ],
-                ),
-            )
-        };
-        ratchet.check(
-            &format!("UIA caret report after a focus on a mixed stretch, {way}"),
-            &cost,
-            expected.0,
-            0,
-            expected.1,
-        );
-    }
-    app.quit();
-    ratchet.finish();
-}
-
 /// What a caret tell's read costs, through Core: mockapp's "Notes" document
 /// focused and committed, then a selection no key made, "alpha", and a UI
 /// Automation caret event on the document, which the outpost's `Follow`
@@ -4837,13 +3991,11 @@ fn caret_tell_reads_cost_exactly() {
     ratchet.finish();
 }
 
-fn caret_moves_cost_exactly() {
+/// An edit control's review copy select and caret location, each by its
+/// window messages.
+fn edit_control_select_and_location_cost_exactly() {
     common::init_com();
     let mut ratchet = Ratchet::default();
-    for remote in [true, false] {
-        check_uia_caret_costs(&mut ratchet, remote);
-    }
-
     let title = common::unique_title("mockapp-counts-edit-caret");
     let mut app = common::spawn("text.json", "msaa", &title);
     let hwnd = common::find_window(&title);
@@ -4858,54 +4010,13 @@ fn caret_moves_cost_exactly() {
     }
     .expect("mockapp's edit control");
     let mut source = EditText::new(edit.0 as isize, 0);
-    let (answer, report, selected, before_key) =
-        measure_caret_move(&mut app, hwnd, &mut source, verbatim_ia2::calls::take);
-    // The answer reads the selection again (`EM_GETSEL`), so a caret read
-    // before the key's effect is never paired with a line read after it.
-    ratchet.check("Edit control caret move", &answer, calls(0, 0, 6), 0, &[]);
-    ratchet.check("Edit control caret report", &report, calls(0, 0, 5), 0, &[]);
-    // The caret report's 5 and the change from the selection last read
-    // (`WM_GETTEXTLENGTH`, `WM_GETTEXT`).
-    ratchet.check(
-        "Edit control caret read before a held key",
-        &before_key,
-        calls(0, 0, 7),
-        0,
-        &[],
-    );
-    // The report's 5 and the change's text (`WM_GETTEXTLENGTH`,
-    // `WM_GETTEXT`); the comparisons are of offsets, with no message.
-    ratchet.check(
-        "Edit control caret report with a selection change",
-        &selected,
-        calls(0, 0, 7),
-        0,
-        &[],
-    );
-    // A caret move's messages for each check; 55 for the wait that found
-    // nothing before 2026-10-08.
-    let (nothing, later) = measure_watch(&mut app, hwnd, &mut source, verbatim_ia2::calls::take);
-    ratchet.check(
-        "Edit control caret watch finding nothing",
-        &nothing,
-        calls(0, 0, 5),
-        0,
-        &[],
-    );
-    ratchet.check(
-        "Edit control caret watch answered by a later caret event",
-        &later,
-        calls(0, 0, 6),
-        0,
-        &[],
-    );
 
     // The review copy's first press: "alpha" selected from a collapsed
     // caret, the selection read before and after and compared.
     let mut store = Anchors::new(Arc::default());
     let mut anchors = store.node(1);
     common::apply(&mut app, hwnd, "caret doc 0");
-    let (report, _) = caret_report(&mut source, &mut anchors, 0, false).expect("the caret");
+    let report = caret_report(&mut source, &mut anchors, 0);
     let at = |offset| {
         TextPoint::At(TextPosition {
             anchor: report.line.start,
@@ -4957,50 +4068,6 @@ fn caret_moves_cost_exactly() {
     app.quit();
 
     ratchet.finish();
-}
-
-/// A caret key's watch checked as the worker checks it: when the request
-/// arrives the key has moved nothing yet, so the check's one read finds no
-/// evidence and the watch stays open, with no wait; then the application
-/// moves the caret one character on and reports it, and the check the
-/// caret event prompts answers the key with the character there. Returns
-/// the calls and hits of each check.
-fn measure_watch<S: TextSource>(
-    app: &mut common::MockApp,
-    hwnd: HWND,
-    source: &mut S,
-    take: fn() -> CallCounts,
-) -> (Cost, Cost) {
-    let mut store = Anchors::new(Arc::default());
-    let mut anchors = store.node(1);
-    common::apply(app, hwnd, "caret doc 1");
-    caret_report(source, &mut anchors, 1, false).expect("the caret");
-    let baseline = anchors.last_read().expect("the baseline");
-    let _ = take();
-    let _ = verbatim_uia::calls::take_failed_reads();
-    common::reset_hits(hwnd);
-    let checked = check(source, &mut anchors, &baseline);
-    assert!(
-        matches!(checked, KeyChecked::Read { effect: false, .. }),
-        "{checked:?}"
-    );
-    let nothing = Cost {
-        calls: take(),
-        hits: common::read_hits(hwnd),
-        failed_reads: verbatim_uia::calls::take_failed_reads(),
-    };
-
-    common::apply(app, hwnd, "caret doc 2");
-    let _ = take();
-    let _ = verbatim_uia::calls::take_failed_reads();
-    let reply = answered(check(source, &mut anchors, &baseline));
-    assert_eq!(reply.facts.unit.as_ref().expect("a unit").text, "p");
-    let later = Cost {
-        calls: take(),
-        hits: common::read_hits(hwnd),
-        failed_reads: verbatim_uia::calls::take_failed_reads(),
-    };
-    (nothing, later)
 }
 
 /// The text of mockapp's "Notes" document through UIA, as the outpost's
@@ -5597,7 +4664,10 @@ fn main() {
             "an_acc_focus_served_by_another_process_answers_no_focused_control",
             an_acc_focus_served_by_another_process_answers_no_focused_control,
         ),
-        ("caret_moves_cost_exactly", caret_moves_cost_exactly),
+        (
+            "edit_control_select_and_location_cost_exactly",
+            edit_control_select_and_location_cost_exactly,
+        ),
         (
             "caret_tell_reads_cost_exactly",
             caret_tell_reads_cost_exactly,
@@ -5605,10 +4675,6 @@ fn main() {
         (
             "an_outposts_probe_that_finds_a_provider_makes_no_connection",
             an_outposts_probe_that_finds_a_provider_makes_no_connection,
-        ),
-        (
-            "uia_mixed_stretch_costs_exactly",
-            uia_mixed_stretch_costs_exactly,
         ),
         (
             "uia_text_requests_cost_exactly",
@@ -5680,10 +4746,6 @@ fn main() {
         (
             "uia_navigation_steps_cost_exactly",
             uia_navigation_steps_cost_exactly,
-        ),
-        (
-            "uia_ancestors_with_descriptions_off_cost_exactly",
-            uia_ancestors_with_descriptions_off_cost_exactly,
         ),
         (
             "a_node_whose_route_does_not_lead_to_it_is_gone_by_its_route_alone",

@@ -29,7 +29,6 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use verbatim_ia2::{WinEvent, WinEventHook, WinEventKind};
-use verbatim_model::protocol::{OutpostToCore, Query, QueryOutcome, QueryResult, RequestId};
 use verbatim_model::request::{MsaaIds, Outcome, Reply, Request, WindowVerdict};
 use verbatim_model::{CallCounts, NodeId, QueryKind, Role, ShellItem, ShellItemKind, WindowHandle};
 use verbatim_process::arguments::OutpostOptions;
@@ -98,18 +97,6 @@ fn ancestor_named(focused: &common::outpost::Focused, name: &str) -> NodeId {
         .unwrap_or_else(|| panic!("the focus's chain has no {name:?}"))
 }
 
-/// The outcome of query `request_id`, the outpost's next message.
-fn reply_to(outpost: &OutpostUnderTest, request_id: RequestId) -> QueryOutcome {
-    match outpost.next() {
-        OutpostToCore::Reply {
-            request_id: answered,
-            outcome,
-            ..
-        } if answered == request_id => outcome,
-        other => panic!("the outpost said {other:?}, not the query's answer"),
-    }
-}
-
 /// A navigation step asked while mockapp's window thread is stalled for
 /// twice the step's old limit of 400 milliseconds, which ran on the
 /// outpost's reducer's clock in real time, answers its neighbor once
@@ -121,24 +108,18 @@ fn a_slow_navigation_step_answers_its_neighbor() {
     let mut app = common::spawn("ancestry.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let uia = Uia::new().expect("a UIA client");
-    let mut outpost = OutpostUnderTest::new(&app);
+    let outpost = OutpostUnderTest::new(&app);
     app.send("set-focus notes");
     let focused = outpost.uia_focus_answer(&common::listener_focus(&uia, hwnd.0 as isize));
     let group = ancestor_named(&focused, "Inner group");
 
     let stall = Duration::from_millis(800);
     app.stall(stall);
-    let request_id = outpost.ask(Query::Navigate {
-        node_id: group,
-        kind: QueryKind::FirstChild,
-        details: verbatim_model::property::NodeDetailSet::ALL,
-    });
-    match reply_to(&outpost, request_id) {
-        QueryOutcome::Done(QueryResult::Navigated(Some(neighbor))) => {
-            assert_eq!(neighbor.name.as_deref(), Some("Deep button"));
-        }
-        other => panic!("the step answered {other:?}, not its neighbor"),
-    }
+    let (neighbor, _) = outpost.navigate(hwnd, group, QueryKind::FirstChild);
+    assert_eq!(
+        common::outpost::name_in(&neighbor.values),
+        Some("Deep button")
+    );
     app.stall_ended(stall);
     outpost.settled();
     drop(outpost);
@@ -158,7 +139,7 @@ fn a_slow_path_walk_answers_its_node() {
     let mut app = common::spawn("ancestry.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let uia = Uia::new().expect("a UIA client");
-    let mut outpost = OutpostUnderTest::with_options(
+    let outpost = OutpostUnderTest::with_options(
         &app,
         OutpostOptions {
             remote_operations: false,
@@ -169,8 +150,11 @@ fn a_slow_path_walk_answers_its_node() {
     let group = ancestor_named(&focused, "Inner group");
 
     outpost.run_out_of_time_after(2);
-    let (neighbor, _) = outpost.navigate(group, QueryKind::FirstChild);
-    assert_eq!(neighbor.name.as_deref(), Some("Deep button"));
+    let (neighbor, _) = outpost.navigate(hwnd, group, QueryKind::FirstChild);
+    assert_eq!(
+        common::outpost::name_in(&neighbor.values),
+        Some("Deep button")
+    );
     drop(outpost);
     app.quit();
 }

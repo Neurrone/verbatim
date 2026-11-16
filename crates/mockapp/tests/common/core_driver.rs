@@ -4,7 +4,7 @@
 //! [`CoreDriver`] as the tell the listener would send, Core's requests go
 //! to the outpost through its request driver ([`OutpostUnderTest::forward`])
 //! or, for the listener, are answered on this thread with the listener's
-//! own read of the element it keeps (`verbatim_listener::focus_read::read_object`),
+//! own read of the element it keeps (`verbatim_listener::read_object`),
 //! and every answer is fed back to Core, so that a test asserts what Core
 //! says.
 //!
@@ -48,7 +48,6 @@ use verbatim_model::{
     BarChange, CallCounts, CaretKey, Earcon, Effect, Input, OutpostId, Pid, SegmentContent,
     StateSet, TraceId, WindowHandle,
 };
-use verbatim_reader_rules::acceptance::WindowQueries;
 use verbatim_uia::{Cached, Direction, ElementExt, ListenerEvent, Uia};
 use verbatim_win32::window_facts::{WindowPart, WindowReads};
 use windows::Win32::Foundation::HWND;
@@ -823,10 +822,8 @@ impl CoreDriver {
     }
 
     /// Gives Core the details the theme reports, as the shell does when a
-    /// theme becomes active, and has the outpost harness's own queries
-    /// name them too.
+    /// theme becomes active.
     pub fn reported(&mut self, reported: verbatim_model::ReportedDetails) {
-        self.outpost.report(reported);
         self.run(VecDeque::from([Input::Reported(reported)]));
     }
 
@@ -912,10 +909,6 @@ impl CoreDriver {
                     from: self.outpost_instance(),
                     tell,
                 }));
-            }
-            mut message @ OutpostToCore::Event { .. } => {
-                message.assign_outpost(OutpostId(GENERATION));
-                inputs.extend(verbatim_model::protocol::event_input(self.app, message));
             }
             other => panic!("the outpost said {other:?}, which Core does not take here"),
         }
@@ -1063,7 +1056,7 @@ impl CoreDriver {
             .1;
         let _ = verbatim_uia::calls::take();
         let readability = self.outpost.listener_readability();
-        let outcome = verbatim_listener::focus_read::read_object(
+        let outcome = verbatim_listener::read_object(
             (&self.uia, &readability),
             element,
             (
@@ -1345,9 +1338,7 @@ impl WindowReads for TestReads {
     }
 
     fn topmost(&self, window: isize) -> bool {
-        verbatim_reader_rules::Window::new(window).is_some_and(|window| {
-            verbatim_win32::window::SystemWindows { foreground: 0 }.is_topmost(window)
-        })
+        verbatim_win32::window::is_topmost(window)
     }
 
     fn desktop(&self) -> isize {

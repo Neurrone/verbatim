@@ -8,7 +8,7 @@
 //! it runs on.
 //!
 //! What is checked: lines, words, and characters read; the caret reported;
-//! a caret key answered with what it did, the selection's change included;
+//! a caret key's final read, and a selection's change from its baseline;
 //! an unsupported unit reported as such; movement stopping at the text's
 //! ends; the language UIA reports; the caret read in one remote
 //! operation agreeing with its classic reads, formatting included; and
@@ -27,15 +27,12 @@ use common::core_driver::CoreDriver;
 use common::outpost::OutpostUnderTest;
 use verbatim_model::request::Request;
 use verbatim_model::{
-    CaretMotion, CaretReply, ReviewCommand, SegmentContent, SpeechMark, TextChunk, TextMovement,
-    TextOp, TextPoint, TextPosition, TextRead, TextReadAhead, TextReply, TextUnit,
+    CaretReport, ReviewCommand, SegmentContent, SpeechMark, TextChunk, TextMovement, TextOp,
+    TextPoint, TextPosition, TextRead, TextReadAhead, TextReply, TextUnit,
 };
 use verbatim_outpost::text::edit::EditText;
 use verbatim_outpost::text::uia::UiaText;
-use verbatim_outpost::text::{
-    Anchors, CheckKey, KeyChecked, NodeText, NoteFetch, TextSource, caret_report, check_key,
-    perform,
-};
+use verbatim_outpost::text::{Anchors, NodeText, TextSource, check, held, perform};
 use verbatim_uia::Uia;
 use verbatim_uia::text::Endpoint;
 use verbatim_uia_rops::{
@@ -50,31 +47,15 @@ use windows::Win32::UI::Accessibility::{IUIAutomationElement, TextUnit_Line, Tex
 use windows::Win32::UI::WindowsAndMessaging::FindWindowExW;
 use windows::core::w;
 
-/// The read of a caret key's check, made after the caret moved, judged
-/// from the node's last read.
-fn answered<S: TextSource>(
+/// The caret's report, read as a caret tell's read reads it, at `read_at_us`.
+fn caret_report<S: TextSource>(
     source: &mut S,
     anchors: &mut NodeText<'_, S::Pos>,
-    motion: CaretMotion,
-) -> CaretReply {
-    let checked = check_key(
-        source,
-        anchors,
-        &CheckKey {
-            note: NoteFetch {
-                unit: motion.unit(),
-                motion,
-                details: verbatim_model::TextDetails::ALL,
-            },
-            read_at_us: 2,
-            final_read: false,
-            ended: || 3,
-        },
-    );
-    match checked {
-        KeyChecked::Read { read, effect: true } => *read,
-        other => panic!("the check found no evidence: {other:?}"),
-    }
+    read_at_us: u64,
+) -> CaretReport {
+    held::read_selection(source, anchors, read_at_us, None)
+        .expect("the caret")
+        .report
 }
 
 /// mockapp's "Notes" document's element, found by its name
@@ -143,7 +124,7 @@ fn lines_stop_at_the_end<S: TextSource>(
     anchors: &mut NodeText<'_, S::Pos>,
     break_text: &str,
 ) {
-    let (report, _) = caret_report(source, anchors, 0, false).expect("the caret");
+    let report = caret_report(source, anchors, 0);
     assert_eq!(report.line.text, format!("alpha beta{break_text}"));
     assert_eq!(report.line.offset, 0);
     assert_eq!(report.selection, None);
@@ -284,9 +265,9 @@ const UIA_SECOND_WORD: &str = "beta";
 /// `text/edit.rs`).
 const EDIT_SECOND_WORD: &str = "beta";
 
-/// A caret key's answer: the caret moved to 6, the word there,
-/// `second_word`, and then a selection of the first word reported as
-/// selected.
+/// A caret key's final read: the caret moved to 6 and the word there,
+/// `second_word`; and then a selection of the first word read as selected
+/// from the baseline held with the caret at its start.
 fn a_caret_key_is_answered_with_what_it_did<S: TextSource>(
     (app, hwnd): (&mut common::MockApp, HWND),
     source: &mut S,
@@ -294,22 +275,29 @@ fn a_caret_key_is_answered_with_what_it_did<S: TextSource>(
     second_word: &str,
 ) {
     common::apply(app, hwnd, "caret doc 0");
-    caret_report(source, anchors, 1, false).expect("the caret");
+    caret_report(source, anchors, 1);
     common::apply(app, hwnd, "caret doc 6");
-    let reply = answered(source, anchors, CaretMotion::NextWord);
-    assert_eq!(reply.caret.line.offset, 6);
-    assert_eq!(reply.facts.unit.as_ref().expect("a unit").text, second_word);
+    let read = check::final_read(source, anchors, TextUnit::Word, 2).expect("the final read");
+    assert_eq!(
+        (read.caret.line.offset, read.unit.text.as_str()),
+        (6, second_word)
+    );
 
     common::apply(app, hwnd, "caret doc 0");
-    caret_report(source, anchors, 1, false).expect("the caret");
+    let baseline = held::read_selection(source, anchors, 1, None)
+        .expect("the caret")
+        .baseline;
     common::apply(app, hwnd, "caret doc 0 5");
-    let reply = answered(source, anchors, CaretMotion::NextCharacter);
-    let changes: Vec<(bool, &str, u32)> = reply
-        .selection_changes
-        .iter()
-        .map(|change| (change.selected, change.text.as_str(), change.characters))
+    let found =
+        held::read_selection(source, anchors, 2, Some(baseline)).expect("the selection read");
+    let changes: Vec<(bool, String, u32)> = found
+        .difference
+        .expect("the baseline is held")
+        .changes
+        .into_iter()
+        .map(|change| (change.selected, change.text, change.characters))
         .collect();
-    assert_eq!(changes, [(true, "alpha", 5)]);
+    assert_eq!(changes, [(true, "alpha".to_owned(), 5)]);
 }
 
 fn uia_text_reads_moves_and_answers_caret_keys() {

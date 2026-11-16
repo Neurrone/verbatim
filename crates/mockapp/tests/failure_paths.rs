@@ -16,7 +16,7 @@ mod harness;
 use std::sync::{Arc, mpsc};
 
 use verbatim_faults::Fault;
-use verbatim_model::protocol::{OutpostToCore, Query, QueryOutcome};
+use verbatim_model::request::{Outcome, Request};
 use verbatim_uia::{Part, PropertyEvent, Registration, Scope, Subscription, Uia};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Accessibility::{UIA_AutomationPropertyChangedEventId, UIA_NamePropertyId};
@@ -37,7 +37,8 @@ fn fail_worker_start(generation: u64, times: usize) -> verbatim_faults::Guard {
 }
 
 /// Focuses mockapp's button "Original Name" and has the outpost read it
-/// as the focused element, as a focus-now query reads the system's focus.
+/// as the focused element, as Core's request for the current focus reads
+/// the system's focus.
 fn focus_button(app: &mut common::MockApp, outpost: &OutpostUnderTest, title: &str) {
     app.send("set-focus btn1");
     let uia = Uia::new().expect("a UIA client");
@@ -45,54 +46,44 @@ fn focus_button(app: &mut common::MockApp, outpost: &OutpostUnderTest, title: &s
     outpost.read_focus_as(focused.live().element());
 }
 
-/// The name of the focused control in the outpost's answer to the focus
-/// now, which must be its next message, and the only one.
-fn focused_name(outpost: &mut OutpostUnderTest) -> Option<String> {
-    let (now, _) = outpost.focus_now_answer();
-    now.focus.and_then(|focused| focused.node.name)
-}
-
-/// The outpost's answer to `request`, which must be its next message.
-fn outcome(
-    outpost: &OutpostUnderTest,
-    request: verbatim_model::protocol::RequestId,
-) -> QueryOutcome {
-    match outpost.next() {
-        OutpostToCore::Reply {
-            request_id,
-            outcome,
-            ..
-        } if request_id == request => outcome,
-        other => panic!("the outpost said {other:?}, not its answer to {request:?}"),
-    }
+/// The name of the application's current focus, as Core's request for it
+/// is answered, which must be the outpost's next message.
+fn focused_name(outpost: &OutpostUnderTest) -> Option<String> {
+    let (outcome, calls) = outpost.current_focus();
+    common::outpost::Focused::of(outcome, calls)
+        .name()
+        .map(str::to_owned)
 }
 
 /// A first worker that cannot start, at the outpost's start nor at the
-/// first dispatch, leaves the first focus query answered as failed; the
-/// second dispatch starts it, and the second query is answered with its
-/// read; the outpost shuts down.
+/// first dispatch, leaves Core's first request for the current focus
+/// answered ended; the second dispatch starts it, and the second request
+/// is answered with its read; the outpost shuts down.
 fn a_first_worker_that_cannot_start_answers_its_program_and_starts_with_the_next() {
     let title = common::unique_title("mockapp-first-worker");
     let mut app = common::spawn("small.json", "uia", &title);
     let refusal = fail_worker_start(0, 2);
-    let mut outpost = OutpostUnderTest::new(&app);
+    let outpost = OutpostUnderTest::new(&app);
     focus_button(&mut app, &outpost, &title);
 
-    let first = outpost.ask(Query::ReadFocus {
-        purpose: verbatim_model::protocol::FocusPurpose::Plain,
-        details: verbatim_model::property::NodeDetailSet::ALL,
-        text: verbatim_model::TextDetails::ALL,
-    });
+    let first = outpost.request(
+        outpost.app_window(),
+        Request::CurrentFocus {
+            set: common::outpost::focus_set(),
+            known: Vec::new(),
+            baseline: None,
+        },
+    );
     assert_eq!(
-        outcome(&outpost, first),
-        QueryOutcome::Failed("the outpost failed handling the query".to_owned()),
-        "no worker could be had for the first query"
+        outpost.answer(first).outcome,
+        Outcome::Ended,
+        "no worker could be had for the first request"
     );
     outpost.settled();
     assert_eq!(
-        focused_name(&mut outpost).as_deref(),
+        focused_name(&outpost).as_deref(),
         Some("Original Name"),
-        "the second query's dispatch started the worker, which read it"
+        "the second request's dispatch started the worker, which read it"
     );
     drop(refusal);
     outpost.outpost.shutdown();

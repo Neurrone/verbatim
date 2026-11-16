@@ -1,21 +1,22 @@
 //! A real outpost in the test process, watching mockapp, as Core would
-//! drive it: the tests hand it facts and queries over its command entry
-//! point and read every message it writes to its pipe.
+//! drive it: the tests send it Core's requests through its request driver
+//! (`verbatim_outpost::driver`) and read every message it writes to its
+//! pipe.
 //!
 //! The test stands in for the focus listener for UIA focus events: it
-//! judges and reads each focus from the element mockapp reports focused
-//! with the listener's own reader ([`FocusReader`], on the test's thread,
-//! where its calls are counted apart from the outpost's), and hands the
-//! outpost the read, as the listener sends it
-//! (`books/dev/src/explanation/design/focus.md`, "One UI Automation focus, end to end").
+//! reads each focus from the element mockapp reports focused with the
+//! listener's own read of a kept element ([`verbatim_listener::read_object`],
+//! on the test's thread, where its calls are counted apart from the
+//! outpost's), and has the outpost complete it from its route, as Core
+//! asks it.
 //!
-//! A focus-now query reads the system's keyboard focus, which a test must
-//! not take from the desktop it runs on, so this outpost reads it from the
-//! test instead ([`Outpost::with_focused_element_reader`]): the test sets
-//! the element mockapp reports focused, and the outpost's read of it
-//! counts as the one call the system read is. The window with the keyboard
-//! focus is the one the test reads as the foreground
-//! ([`Outpost::set_focus_window_reader`]).
+//! Core's request for the current focus reads the system's keyboard focus,
+//! which a test must not take from the desktop it runs on, so this outpost
+//! reads it from the test instead
+//! ([`Outpost::with_focused_element_reader`]): the test sets the element
+//! mockapp reports focused, and the outpost's read of it counts as the one
+//! call the system read is. The window with the keyboard focus is the one
+//! the test reads as the foreground ([`Outpost::set_focus_window_reader`]).
 //!
 //! The outpost reads the time from the test too ([`Outpost::set_clock`]):
 //! the time stands still unless the test moves it on
@@ -43,38 +44,17 @@
 //! ([`OutpostUnderTest::observed_now`]).
 //!
 //! No window takes the foreground on the desktop a test runs on, so the
-//! outpost and the listener's reader read the foreground window from the
-//! test too ([`Outpost::set_foreground_reader`],
-//! [`FocusReader::set_foreground_reader`]): mockapp's own window unless the
+//! outpost reads the foreground window from the test too
+//! ([`Outpost::set_foreground_reader`]): mockapp's own window unless the
 //! test says otherwise ([`OutpostUnderTest::set_foreground`]), as when a
-//! user works in mockapp, so its events pass the acceptance test against
-//! the foreground window, which the listener makes for a UIA focus and the
-//! outpost for every other event.
+//! user works in mockapp.
 //!
-//! The outpost's own hook takes in mockapp's MSAA focus, foreground, menu,
-//! alert, and tooltip events, as every outpost's does
-//! (`books/dev/src/reference/adr/0001-focus.md`, "One route per application, and the marker"). A
-//! fact the test hands
-//! over carries no `WinEvent` stamp, so the outpost never takes it for the
-//! twin of an event its hook took in: a test hands over an MSAA fact for an
-//! event mockapp never raised, or raised before the outpost was made. Only
-//! [`OutpostUnderTest::deliver_win_event`] hands over a stamped one, the
-//! listener's copy of an event mockapp raised.
-//!
-//! The test stands in for Core's holding of the outpost's nodes too: as
-//! each focus the outpost reports, or each focus-now answer with a control,
-//! is read from its pipe, Core takes it, but for a foreground change of the
-//! window its focus is already in, which Core refuses, and holds its focus
-//! line, counting the position of every message that carries nodes. The
-//! outpost reads changes for every node it has not released, so nothing is
-//! released until a test delivers Core's list of the nodes it holds, as
-//! verbatim.exe writes it after a focus report
+//! The test stands in for Core's holding of the outpost's nodes too: each
+//! focus an answer carries is committed as Core commits it
+//! ([`OutpostUnderTest::commit_focus`]), and the position of every message
+//! that carries nodes is counted. Nothing is released until a test
+//! delivers Core's list of the nodes it holds
 //! ([`OutpostUnderTest::release`], [`OutpostUnderTest::release_all`]).
-//!
-//! The test stands in for the listener's read scheduler as well: each read
-//! is the next event queued, and a test says when the user moved away from
-//! mockapp's application since the last read, for a menu opening's
-//! currentness ([`OutpostUnderTest::listener_moved_away`]).
 
 use std::cell::{Cell, RefCell};
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU64, Ordering};
@@ -82,22 +62,14 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, TryRecvError};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
-use verbatim_listener::focus_read::FocusReader;
-use verbatim_listener_logic::focus::{Arrival, FocusEvent, Judged};
 use verbatim_model::property::{PropertyId, PropertyValue, PropertyValues};
-use verbatim_model::protocol::{
-    CoreToOutpost, DeliveredFact, EventTiming, FocusNow, FocusedControl, OutpostToCore, Query,
-    QueryOutcome, QueryResult, RequestId,
-};
+use verbatim_model::protocol::{CoreToOutpost, OutpostToCore};
 use verbatim_model::request::{
     Answer, CandidateKind, CompleteUia, CompletionFor, FocusNode, FocusRead, KnownAncestor,
-    MsaaIds, MsaaRun, ObjectRead, ObjectRef, Outcome, Purpose, ReadObject, Reply, Request,
-    RequestNumber, RunCandidate, RunRead, Tried, WindowVerdict,
+    MsaaIds, MsaaRun, NodeRead, ObjectRead, ObjectRef, Outcome, Purpose, ReadObject, Reply,
+    Request, RequestNumber, RunCandidate, RunRead, Tried, WindowVerdict,
 };
-use verbatim_model::{
-    CallCounts, FocusText, NodeId, NodeSnapshot, NormalizedEvent, Pid, QueryKind, Role, StateSet,
-    TraceId, WindowFacts, WindowHandle,
-};
+use verbatim_model::{CallCounts, NodeId, Pid, QueryKind, Role, StateSet, WindowHandle};
 use verbatim_outpost::{Heard, Outpost};
 use verbatim_process::arguments::OutpostOptions;
 use verbatim_process::message::read_message;
@@ -359,44 +331,6 @@ impl WorkerGate {
     }
 }
 
-/// A focus the outpost reported, with the calls it made reading it.
-pub struct Reported {
-    pub node: NodeSnapshot,
-    pub ancestors: Vec<NodeSnapshot>,
-    pub selected_child: Option<NodeSnapshot>,
-    /// What the outpost's caret read found, for a focus that may have text.
-    pub text: Option<FocusText>,
-    /// What the listener read of the element it held before under a UIA
-    /// focus's runtime id.
-    pub earlier: Option<verbatim_model::EarlierElement>,
-    /// The top-level window of the event's window.
-    pub window: Option<WindowHandle>,
-    /// The event's window facts, as Core takes them.
-    pub facts: Option<WindowFacts>,
-    pub calls: CallCounts,
-    /// The failed cached reads the outpost made for it, and the listener's
-    /// reader on this thread for a UIA focus.
-    pub failed_reads: u32,
-    /// Where its cached ancestors begin, as the outpost computed it.
-    pub first_cached_ancestor: Option<verbatim_model::FirstCachedAncestor>,
-    /// The live re-read it answers, if any.
-    pub answers: Option<u64>,
-    /// Its trace.
-    pub trace: TraceId,
-}
-
-impl Reported {
-    /// The names of the focus's chain, outermost first, ending with the
-    /// focus.
-    pub fn chain(&self) -> Vec<Option<&str>> {
-        self.ancestors
-            .iter()
-            .chain(std::iter::once(&self.node))
-            .map(|node| node.name.as_deref())
-            .collect()
-    }
-}
-
 /// Which observation clock a test runs its outpost on, chosen once, as it
 /// makes the outpost.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -461,15 +395,6 @@ fn observe_on_the_tests_time(outpost: &Outpost, time: ObservationTime) -> Arc<Te
     clock
 }
 
-/// The focus line the stand-in for Core holds in the outpost: the trace of
-/// the report it took it from, its nodes, outermost first, ending with the
-/// focus, and its top-level window.
-struct CoreHolds {
-    trace: TraceId,
-    line: Vec<NodeId>,
-    top_level: Option<WindowHandle>,
-}
-
 /// A real outpost in this process, watching mockapp, with its pipe to Core.
 pub struct OutpostUnderTest {
     pub outpost: Outpost,
@@ -477,7 +402,6 @@ pub struct OutpostUnderTest {
     /// Every event the outpost's own handlers took in from mockapp, in the
     /// order they were queued ([`Outpost::observe_heard`]).
     heard: Receiver<Heard>,
-    next_request: u64,
     pub focus: FocusSlot,
     /// Where the outpost's worker waits while the test holds it.
     gate: Arc<WorkerGate>,
@@ -498,37 +422,19 @@ pub struct OutpostUnderTest {
     /// when the test set one apart from the foreground window; 0 when it
     /// is the foreground window.
     focus_window: Arc<AtomicIsize>,
-    /// The focus listener's reader, standing in for the listener's thread
-    /// for mockapp's application.
-    reader: RefCell<FocusReader>,
     /// How the stand-in for the listener's reading thread judges whether a
     /// window can be read ([`Self::judge_hung`]).
     listener_readability: RefCell<verbatim_win32::window::WindowReadabilityReader>,
     /// Told each call the stand-in for the listener's reading thread is
     /// about to make reading an element Core names
     /// ([`Self::listener_observes_calls`]).
-    read_observer: RefCell<Option<verbatim_listener::focus_read::CallObserver>>,
+    read_observer: RefCell<Option<verbatim_listener::CallObserver>>,
     /// The outpost's failed cached reads when last taken
     /// ([`Self::take_failed_reads`]).
     failed_reads_taken: Cell<u32>,
-    /// The details the stand-in for Core's settings reports, which the
-    /// queries this harness asks name ([`Self::report`]): everything until
-    /// a test says otherwise.
-    reported: Cell<verbatim_model::ReportedDetails>,
-    /// How many events the stand-in for the listener's scheduler has
-    /// queued: each read is the next.
-    listener_queued: Cell<u64>,
-    /// The place of the newest event that moved away from mockapp's
-    /// application, as the listener's scheduler records it.
-    listener_left_at: Cell<u64>,
-    /// The focus line the stand-in for Core holds ([`Self::core_judges`]).
-    core: RefCell<Option<CoreHolds>>,
     /// The position of the last message read that carries nodes, as Core
     /// counts them, which Core's list of held nodes acknowledges.
     position: Cell<u64>,
-    /// The trace of the listener's reader's last read, which Core's live
-    /// re-read names it by.
-    reader_trace: Cell<Option<TraceId>>,
     /// The outpost's observation clock, which the test moves on.
     observation: Arc<TestClock>,
     /// The window the keyboard focus moves to during the outpost's next
@@ -669,10 +575,6 @@ impl OutpostUnderTest {
     }
 
     /// An outpost for `app`, watching it from the start, or a spare.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "one field for each piece of the harness's state"
-    )]
     fn build(
         app: &super::MockApp,
         options: OutpostOptions,
@@ -753,17 +655,10 @@ impl OutpostUnderTest {
             // The test may have finished with the outpost's calls.
             let _ = calls_tx.send((number, calls));
         }));
-        let mut reader = FocusReader::new().expect("a UIA client for the listener's reads");
-        // The listener's acceptance test reads the same foreground window.
-        let listener_foreground = Arc::clone(&foreground);
-        reader.set_foreground_reader(Arc::new(move || {
-            listener_foreground.load(Ordering::Relaxed)
-        }));
         Self {
             outpost,
             messages,
             heard,
-            next_request: 1,
             focus,
             gate,
             time,
@@ -772,16 +667,10 @@ impl OutpostUnderTest {
             foreground,
             foreground_reads,
             focus_window,
-            reader: RefCell::new(reader),
             listener_readability: RefCell::new(Arc::new(verbatim_win32::window::readability)),
             read_observer: RefCell::new(None),
-            listener_queued: Cell::new(0),
-            listener_left_at: Cell::new(0),
             failed_reads_taken: Cell::new(0),
-            reported: Cell::new(verbatim_model::ReportedDetails::ALL),
-            core: RefCell::new(None),
             position: Cell::new(0),
-            reader_trace: Cell::new(None),
             observation,
             moves_to,
             last_asked: Cell::new(RequestNumber(0)),
@@ -801,24 +690,16 @@ impl OutpostUnderTest {
         self.moves_to.store(hwnd.0 as isize, Ordering::Relaxed);
     }
 
-    /// Tells the listener's reader whether to skip no focus by its
-    /// window's class, so it reads one in a window on NVDA's MSAA list
-    /// (`FocusReader::forces_uia`).
-    pub fn listener_forces_uia(&self, forced: bool) {
-        self.reader.borrow().forces_uia(forced);
+    /// Tells `observer` the name of each call the listener's read of an
+    /// element Core names ([`Self::listener_object`]) is about to make,
+    /// before each is made, so a test can change mockapp's windows between
+    /// two of them.
+    pub fn listener_observes_calls(&self, observer: verbatim_listener::CallObserver) {
+        *self.read_observer.borrow_mut() = Some(observer);
     }
 
-    /// Tells `observer` the name of each call the listener's reader's
-    /// classic walk, and its read of an element Core names
-    /// ([`Self::listener_object`]), are about to make, before each is
-    /// made, so a test can change mockapp's windows between two of them.
-    pub fn listener_observes_calls(&self, observer: verbatim_listener::focus_read::CallObserver) {
-        *self.read_observer.borrow_mut() = Some(Arc::clone(&observer));
-        self.reader.borrow_mut().observe_calls(observer);
-    }
-
-    /// Has the outpost, and the listener's reader in the walk it reads a
-    /// focus's ancestors with, judge window `hung` as a hung application's,
+    /// Has the outpost, and the listener's read of an element Core names,
+    /// judge window `hung` as a hung application's,
     /// as Windows judges a window whose thread has not answered for five
     /// seconds, and every other window by the system's judgement.
     pub fn judge_hung(&self, hung: HWND) {
@@ -832,10 +713,7 @@ impl OutpostUnderTest {
         });
         self.outpost
             .set_window_readability_reader(Arc::clone(&reader));
-        *self.listener_readability.borrow_mut() = Arc::clone(&reader);
-        self.reader
-            .borrow_mut()
-            .set_window_readability_reader(reader);
+        *self.listener_readability.borrow_mut() = reader;
     }
 
     /// How the stand-in for the listener judges whether a window can be
@@ -844,18 +722,15 @@ impl OutpostUnderTest {
         Arc::clone(&self.listener_readability.borrow())
     }
 
-    /// Has the listener's reader alone judge whether a window can be read
-    /// by `reader`, as the listener's one window readability reader judges
-    /// its reads' windows, the outpost judging by the system's: a test of
-    /// the listener's own tests for a hung window.
+    /// Has the listener's read alone judge whether a window can be read by
+    /// `reader`, as the listener's one window readability reader judges its
+    /// reads' windows, the outpost judging by the system's: a test of the
+    /// listener's own tests for a hung window.
     pub fn listener_judges_readability(
         &self,
         reader: verbatim_win32::window::WindowReadabilityReader,
     ) {
-        *self.listener_readability.borrow_mut() = Arc::clone(&reader);
-        self.reader
-            .borrow_mut()
-            .set_window_readability_reader(reader);
+        *self.listener_readability.borrow_mut() = reader;
     }
 
     /// Now on the outpost's observation clock ([`TestClock`]), which a fact
@@ -1094,7 +969,7 @@ impl OutpostUnderTest {
     /// What the listener answers for Core's read `read` of `element`, the
     /// element a UI Automation event of mockapp named, which the test holds
     /// as the listener keeps it: made with the listener's own read
-    /// (`verbatim_listener::focus_read::read_object`) on this thread, with
+    /// (`verbatim_listener::read_object`) on this thread, with
     /// the calls it made.
     pub fn listener_object(
         &self,
@@ -1117,14 +992,14 @@ impl OutpostUnderTest {
         let _ = verbatim_uia::calls::take();
         let readability = self.listener_readability();
         let outcome = match self.read_observer.borrow().clone() {
-            Some(observer) => verbatim_listener::focus_read::read_object_observed(
+            Some(observer) => verbatim_listener::read_object_observed(
                 (&uia, &readability),
                 element,
                 (Pid(self.app_pid), nearest),
                 read,
                 observer,
             ),
-            None => verbatim_listener::focus_read::read_object(
+            None => verbatim_listener::read_object(
                 (&uia, &readability),
                 element,
                 (Pid(self.app_pid), nearest),
@@ -1328,8 +1203,8 @@ impl OutpostUnderTest {
         (answer.outcome, calls)
     }
 
-    /// The outpost's next message, a focus in it judged as Core judges it
-    /// ([`Self::core_judges`]).
+    /// The outpost's next message, counted as Core counts the messages
+    /// that carry nodes.
     pub fn next(&self) -> OutpostToCore {
         let message = self
             .messages
@@ -1338,77 +1213,12 @@ impl OutpostUnderTest {
         if message.carries_nodes() {
             self.position.set(self.position.get() + 1);
         }
-        self.core_judges(&message);
         message
-    }
-
-    /// Stands in for Core judging `message`: a focus the outpost reported,
-    /// or a focus-now answer's control, becomes the focus Core holds, with
-    /// the line it was reported with, but for a foreground change of the
-    /// window its focus is already in, which Core refuses.
-    fn core_judges(&self, message: &OutpostToCore) {
-        let (trace, node, foreground, ancestors, top_level) = match message {
-            OutpostToCore::Event {
-                trace_id,
-                window,
-                event:
-                    NormalizedEvent::FocusChanged {
-                        node,
-                        whole_window: foreground,
-                        ancestors,
-                        ..
-                    },
-                ..
-            } => (
-                *trace_id,
-                node,
-                *foreground,
-                ancestors,
-                window.as_ref().map(|window| window.top_level),
-            ),
-            OutpostToCore::Reply {
-                trace_id,
-                outcome: QueryOutcome::Done(QueryResult::Focus(now)),
-                ..
-            } => {
-                let Some(control) = &now.focus else {
-                    return;
-                };
-                (
-                    *trace_id,
-                    &control.node,
-                    false,
-                    &control.ancestors,
-                    control
-                        .window
-                        .as_ref()
-                        .or(now.window.as_ref().map(|(_, facts)| facts))
-                        .map(|window| window.top_level),
-                )
-            }
-            _ => return,
-        };
-        let mut core = self.core.borrow_mut();
-        let refused = foreground
-            && core
-                .as_ref()
-                .is_some_and(|focus| focus.top_level.is_some() && focus.top_level == top_level);
-        if !refused {
-            *core = Some(CoreHolds {
-                trace,
-                line: ancestors
-                    .iter()
-                    .map(|ancestor| ancestor.id)
-                    .chain(std::iter::once(node.id))
-                    .collect(),
-                top_level,
-            });
-        }
     }
 
     /// Delivers Core's list of the nodes it holds in the outpost, `held`,
     /// acknowledging every message read so far, as verbatim.exe writes it
-    /// after a focus report: the outpost releases every node it carried at
+    /// after a focus is committed: the outpost releases every node it carried at
     /// or before that position that is not among them, and so stops reading
     /// changes for it.
     pub fn release(&self, held: &[NodeId]) {
@@ -1419,22 +1229,27 @@ impl OutpostUnderTest {
         });
     }
 
-    /// [`release`](Self::release) with the focus line Core holds: what
-    /// Core writes after it judged the outpost's focus reports read so far.
+    /// [`release`](Self::release) with the focus line the stand-in for
+    /// Core committed ([`Self::commit_focus`]): what Core writes after it
+    /// commits a focus.
     pub fn release_to_core_line(&self) {
-        let line = self
-            .core
+        let line: Vec<NodeId> = self
+            .committed
             .borrow()
-            .as_ref()
-            .map(|core| core.line.clone())
-            .unwrap_or_default();
+            .iter()
+            .flat_map(|(_, known)| known.iter())
+            .filter_map(|known| match known {
+                KnownAncestor::Node(id) => Some(*id),
+                _ => None,
+            })
+            .collect();
         self.release(&line);
     }
 
     /// [`release`](Self::release) of every node: Core's focus moved to
     /// another application, and it holds none of the outpost's.
     pub fn release_all(&self) {
-        *self.core.borrow_mut() = None;
+        self.forget_focus();
         self.release(&[]);
     }
 
@@ -1491,232 +1306,49 @@ impl OutpostUnderTest {
         }
     }
 
-    /// Sends the outpost a key's note, as Core would, and returns at once.
-    pub fn key_note(&self, note: verbatim_model::NoteRequest) {
-        self.outpost.handle_command(&CoreToOutpost::KeyNote(note));
-    }
-
-    /// Asks the outpost `query`, as Core would, and returns its request id
-    /// at once.
-    pub fn ask(&mut self, query: Query) -> RequestId {
-        let request_id = RequestId::shell(self.next_request);
-        self.next_request += 1;
-        self.outpost.handle_command(&CoreToOutpost::Query {
-            trace_id: TraceId::mint(),
-            request_id,
-            query,
-            timing: EventTiming::default(),
-        });
-        request_id
-    }
-
-    /// Judges and reads a UIA focus event whose element is `element`, as
-    /// the focus listener's thread for mockapp does, on this thread, and
-    /// returns what became of it and the calls the read made. `element`
-    /// is filled as the listener's registration delivers it.
-    pub fn listener_read(&self, element: &Cached<ListenerEvent>) -> (Judged, CallCounts) {
-        self.listener_read_as(element, FocusEvent::Focus)
-    }
-
-    /// [`Self::listener_read`] for an event of kind `kind`: a UIA menu
-    /// opening is judged and read as a focus on the menu.
-    pub fn listener_read_as(
+    /// One object-navigation step from `node` in `window`, as Core asks it
+    /// with the window's verdict in force since its focus: what the step
+    /// reached, which it must, and the calls it made.
+    pub fn navigate(
         &self,
-        element: &Cached<ListenerEvent>,
-        kind: FocusEvent,
-    ) -> (Judged, CallCounts) {
-        let _ = verbatim_uia::calls::take();
-        let _ = verbatim_uia::calls::take_failed_reads();
-        let arrival = self.listener_arrival();
-        self.reader_trace.set(Some(arrival.trace));
-        let judged = self.reader.borrow_mut().read(element, kind, arrival);
-        (judged, verbatim_uia::calls::take())
-    }
-
-    /// The next event the stand-in for the listener's scheduler queues,
-    /// observed now: its place, and where mockapp's application was last
-    /// moved away from.
-    fn listener_arrival(&self) -> Arrival {
-        let place = self.listener_queued.get() + 1;
-        self.listener_queued.set(place);
-        Arrival {
-            trace: TraceId::mint(),
-            observed_at_us: self.observed_now(),
-            place,
-            left_at: self.listener_left_at.get(),
+        window: HWND,
+        node: NodeId,
+        direction: QueryKind,
+    ) -> (NodeRead, CallCounts) {
+        let number = self.request_with(
+            window,
+            WindowVerdict::Uia,
+            Request::Navigate {
+                node,
+                direction,
+                set: focus_set(),
+            },
+        );
+        match self.answer_with_calls(number) {
+            (
+                Answer {
+                    outcome: Outcome::Result(Reply::Navigated(Some(read))),
+                    ..
+                },
+                calls,
+            ) => (read, calls),
+            (other, _) => panic!("the step answered {:?}, not a node", other.outcome),
         }
     }
 
-    /// Core's live re-read `request` of the listener's reader's last read,
-    /// made by the reader on this thread as its reading thread would, and
-    /// the calls it made.
-    pub fn listener_live_reread(&self, request: u64) -> (Judged, CallCounts) {
-        let trace = self.reader_trace.get().unwrap_or_else(TraceId::mint);
-        self.listener_live_reread_traced(request, trace)
+    /// The outcome of Core's `request` about a node in `window`, with the
+    /// window's verdict in force since its focus, and the calls it made.
+    pub fn asked(&self, window: HWND, request: Request) -> (Outcome, CallCounts) {
+        let number = self.request_with(window, WindowVerdict::Uia, request);
+        let (answer, calls) = self.answer_with_calls(number);
+        (answer.outcome, calls)
     }
 
-    /// [`Self::listener_live_reread`] of the read traced `trace`.
-    pub fn listener_live_reread_traced(
-        &self,
-        request: u64,
-        trace: TraceId,
-    ) -> (Judged, CallCounts) {
-        let _ = verbatim_uia::calls::take();
-        let judged = self.reader.borrow_mut().live_reread(request, trace);
-        (judged, verbatim_uia::calls::take())
-    }
-
-    /// Asks the outpost, as Core would, for its live re-read `request` of
-    /// its MSAA focus report traced `trace`, and returns at once.
-    pub fn live_reread(&self, request: u64, trace: TraceId) {
-        self.outpost.handle_command(&CoreToOutpost::LiveReread {
-            request,
-            trace_id: trace,
-        });
-    }
-
-    /// Has the user moved away from mockapp's application since the
-    /// listener's last read, as another application's focus queued does:
-    /// that read is no longer current for a later menu opening
-    /// (`QueuePlace::current_since` in `verbatim_listener_logic`'s read schedule).
-    pub fn listener_moved_away(&self) {
-        self.listener_left_at.set(self.listener_queued.get());
-    }
-
-    /// The fact the focus listener sends for a UIA focus event on `element`
-    /// once it has read it, which must not be dropped.
-    pub fn listener_fact(&self, element: &Cached<ListenerEvent>) -> DeliveredFact {
-        match self.listener_read(element).0 {
-            read @ Judged::Read(_) => read.into_fact(0, FocusEvent::Focus),
-            dropped @ Judged::Dropped(_) => {
-                panic!("the listener dropped the focus: {dropped:?}")
-            }
-            Judged::Passed(fact) => panic!("a focus read passed a fact on: {fact:?}"),
-        }
-    }
-
-    /// What the focus listener's reading thread makes of `fact`, a
-    /// selection or a notification captured from `element`, as its
-    /// application's thread checks it (`FocusReader::check_fact`).
-    pub fn listener_check(&self, element: &Cached<ListenerEvent>, fact: DeliveredFact) -> Judged {
-        self.reader.borrow_mut().check_fact(element, fact)
-    }
-
-    /// Makes the outpost's read of the focused element for a focus-now
-    /// query answer `element`.
+    /// Makes the outpost's read of the focused element, for Core's request
+    /// for the current focus, answer `element`.
     pub fn read_focus_as(&self, element: &IUIAutomationElement) {
         *self.focus.lock().unwrap_or_else(PoisonError::into_inner) =
             Some(AgileReference::new(element).expect("an agile reference"));
-    }
-
-    /// Asks the outpost for one object-navigation step, as Core would, and
-    /// returns the neighbor and the calls it made; the reply must be the
-    /// next thing the outpost says, and the only thing.
-    pub fn navigate(&mut self, node_id: NodeId, kind: QueryKind) -> (NodeSnapshot, CallCounts) {
-        let request_id = self.ask(Query::Navigate {
-            node_id,
-            kind,
-            details: self.reported.get().node,
-        });
-        let answer = match self.next() {
-            OutpostToCore::Reply {
-                request_id: answered,
-                outcome: QueryOutcome::Done(QueryResult::Navigated(Some(neighbor))),
-                timing,
-                ..
-            } if answered == request_id => (neighbor, timing.calls),
-            other => panic!("the outpost said {other:?}, not the step's neighbor"),
-        };
-        self.settled();
-        answer
-    }
-
-    /// Asks the outpost for the focus now, as Core would at its start, and
-    /// returns its focused control; the reply must be the next thing the
-    /// outpost says, and the only thing.
-    pub fn focus_now(&mut self) -> Option<FocusedControl> {
-        self.focus_now_with_calls().0
-    }
-
-    /// [`focus_now`](Self::focus_now) with the calls its read made.
-    pub fn focus_now_with_calls(&mut self) -> (Option<FocusedControl>, CallCounts) {
-        let (now, calls) = self.focus_now_answer();
-        (now.focus, calls)
-    }
-
-    /// [`focus_now`](Self::focus_now)'s whole answer, with the calls its
-    /// read made.
-    pub fn focus_now_answer(&mut self) -> (FocusNow, CallCounts) {
-        self.focus_now_for(verbatim_model::protocol::FocusPurpose::Plain)
-    }
-
-    /// [`focus_now_answer`](Self::focus_now_answer) for `purpose`.
-    pub fn focus_now_for(
-        &mut self,
-        purpose: verbatim_model::protocol::FocusPurpose,
-    ) -> (FocusNow, CallCounts) {
-        let reported = self.reported.get();
-        let request_id = self.ask(Query::ReadFocus {
-            purpose,
-            details: reported.node,
-            text: reported.text,
-        });
-        let answer = match self.next() {
-            OutpostToCore::Reply {
-                request_id: answered,
-                outcome: QueryOutcome::Done(QueryResult::Focus(now)),
-                timing,
-                ..
-            } if answered == request_id => (now, timing.calls),
-            other => panic!("the outpost said {other:?}, not the focus now"),
-        };
-        self.settled();
-        answer
-    }
-
-    /// Asks the outpost `query`, as Core would, and returns the calls it
-    /// made answering it gone; the reply must be the next thing the outpost
-    /// says, and the only thing.
-    pub fn gone(&mut self, query: Query) -> CallCounts {
-        let request_id = self.ask(query);
-        let calls = match self.next() {
-            OutpostToCore::Reply {
-                request_id: answered,
-                outcome: QueryOutcome::Gone,
-                timing,
-                ..
-            } if answered == request_id => timing.calls,
-            other => panic!("the outpost said {other:?}, not that the node is gone"),
-        };
-        self.settled();
-        calls
-    }
-
-    /// Has the queries this harness asks from now on name the details
-    /// `reported` reports, as Core names the settings' in its own.
-    pub fn report(&self, reported: verbatim_model::ReportedDetails) {
-        self.reported.set(reported);
-    }
-
-    /// Asks the outpost for a node's ancestors, as Core would, and returns
-    /// them, outermost first, and the calls it made; the reply must be the
-    /// next thing the outpost says, and the only thing.
-    pub fn ancestors(&mut self, node_id: NodeId) -> (Vec<NodeSnapshot>, CallCounts) {
-        let request_id = self.ask(Query::Ancestors {
-            node_id,
-            details: self.reported.get().node,
-        });
-        let answer = match self.next() {
-            OutpostToCore::Reply {
-                request_id: answered,
-                outcome: QueryOutcome::Done(QueryResult::Ancestors(chain)),
-                timing,
-                ..
-            } if answered == request_id => (chain, timing.calls),
-            other => panic!("the outpost said {other:?}, not the node's ancestors"),
-        };
-        self.settled();
-        answer
     }
 }
 
@@ -1882,15 +1514,25 @@ impl Focused {
 
 /// The name a focus answer's node was read with.
 pub fn name_of(node: &FocusNode) -> Option<&str> {
-    match value(&node.read.values, PropertyId::Name) {
+    name_in(&node.read.values)
+}
+
+/// The role a focus answer's node was read with.
+pub fn role_of(node: &FocusNode) -> Role {
+    role_in(&node.read.values)
+}
+
+/// The name among `values`.
+pub fn name_in(values: &PropertyValues) -> Option<&str> {
+    match value(values, PropertyId::Name) {
         Some(PropertyValue::Text(name)) => Some(name),
         _ => None,
     }
 }
 
-/// The role a focus answer's node was read with.
-pub fn role_of(node: &FocusNode) -> Role {
-    match value(&node.read.values, PropertyId::Role) {
+/// The role among `values`, unknown when it was not read.
+pub fn role_in(values: &PropertyValues) -> Role {
+    match value(values, PropertyId::Role) {
         Some(PropertyValue::Role(role)) => *role,
         _ => Role::Unknown,
     }

@@ -38,8 +38,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use verbatim_model::protocol::OutpostToCore;
 use verbatim_model::{
-    CallCounts, EarlierElement, NormalizedEvent, Role, SegmentContent, State, StateSet,
-    WindowHandle,
+    CallCounts, EarlierElement, Role, SegmentContent, State, StateSet, WindowHandle,
 };
 use verbatim_process::arguments::OutpostOptions;
 use verbatim_uia::{Cached, ListenerEvent, Uia};
@@ -1016,9 +1015,9 @@ fn focus_in_caret_fixture(
 /// The focus-following registration moves with the focus as NVDA's local
 /// group does, added to the new focus as its completion reads it
 /// (`docs/design/readers-tell-core-asks-build1.md`, "Changes on objects"):
-/// after the focus leaves the document for a button and returns, a text
-/// change the document raises is heard and reported for its node.
-fn a_text_change_after_the_focus_returns_to_a_document_is_heard() {
+/// after the focus leaves the document for a button and returns, a caret
+/// event the document raises is heard and told for its element.
+fn a_caret_event_after_the_focus_returns_to_a_document_is_heard() {
     let title = common::unique_title("mockapp-focus-returns");
     let mut app = common::spawn("caret_watch.json", "uia", &title);
     let client = Client::new(common::find_window(&title));
@@ -1031,13 +1030,24 @@ fn a_text_change_after_the_focus_returns_to_a_document_is_heard() {
     let returned = focus_in_caret_fixture(&mut app, &client, &outpost, "doc");
     assert_eq!(returned.node(), notes.node());
 
-    app.send("text-changed doc");
+    app.send("caret-event doc");
     match outpost.next() {
-        OutpostToCore::Event {
-            event: NormalizedEvent::TextChanged { node_id },
-            ..
-        } => assert_eq!(node_id, notes.node()),
-        other => panic!("the outpost said {other:?}, not the document's text change"),
+        OutpostToCore::Tell(tell) => assert_eq!(
+            (
+                tell.kind,
+                match tell.object {
+                    EventObject::Uia { runtime_id, .. } | EventObject::Followed { runtime_id } => {
+                        Some(runtime_id)
+                    }
+                    _ => None,
+                }
+            ),
+            (
+                EventKind::UiaTextSelectionChanged,
+                notes.read.focus.runtime_id.clone()
+            )
+        ),
+        other => panic!("the outpost said {other:?}, not the document's caret event"),
     }
     outpost.settled();
 
@@ -1901,50 +1911,6 @@ fn a_windowless_selection_is_given_its_nearest_window() {
     }
 
     drop(core);
-    app.quit();
-}
-
-/// An unnamed grouping with a description is focus context whatever the
-/// theme, as NVDA's layout judgment reads the description whatever its
-/// setting (`books/dev/src/explanation/design/uia-shapes.md`, decision 4): with a theme that
-/// reports descriptions as off, the outpost's own read of a focus's
-/// ancestors, for Core's ancestors query, reports the grouping, without
-/// the description the theme does not report.
-fn an_unnamed_grouping_with_a_description_is_focus_context_with_descriptions_off() {
-    let title = common::unique_title("mockapp-described-group");
-    let mut app = common::spawn("described_group.json", "uia", &title);
-    let hwnd = common::find_window(&title);
-    let client = Client::new(hwnd);
-    let mut outpost = OutpostUnderTest::new(&app);
-    outpost.report(verbatim_model::ReportedDetails {
-        node: verbatim_model::property::NodeDetailSet::ALL
-            .without(verbatim_model::property::NodeDetail::Description),
-        ..verbatim_model::ReportedDetails::ALL
-    });
-
-    app.send("set-focus louder");
-    let focus = outpost.uia_focus_answer(&client.focused());
-    assert_eq!(focus.name(), Some("Louder"));
-    let (ancestors, _) = outpost.ancestors(focus.node());
-    let reported: Vec<(Role, Option<&str>, Option<&str>)> = ancestors
-        .iter()
-        .map(|ancestor| {
-            (
-                ancestor.role,
-                ancestor.name.as_deref(),
-                ancestor.details.description.as_deref(),
-            )
-        })
-        .collect();
-    assert_eq!(
-        reported,
-        [
-            (Role::Window, Some("Mockapp Described Group Fixture"), None),
-            (Role::Group, None, None),
-        ]
-    );
-
-    drop(outpost);
     app.quit();
 }
 
@@ -2836,10 +2802,6 @@ fn main() {
             the_listener_skips_a_focus_in_a_class_listed_window,
         ),
         (
-            "an_unnamed_grouping_with_a_description_is_focus_context_with_descriptions_off",
-            an_unnamed_grouping_with_a_description_is_focus_context_with_descriptions_off,
-        ),
-        (
             "a_windowless_selection_is_given_its_nearest_window",
             a_windowless_selection_is_given_its_nearest_window,
         ),
@@ -2960,8 +2922,8 @@ fn main() {
             a_route_walk_that_finds_its_element_gone_answers_gone,
         ),
         (
-            "a_text_change_after_the_focus_returns_to_a_document_is_heard",
-            a_text_change_after_the_focus_returns_to_a_document_is_heard,
+            "a_caret_event_after_the_focus_returns_to_a_document_is_heard",
+            a_caret_event_after_the_focus_returns_to_a_document_is_heard,
         ),
         (
             "a_focus_dropped_before_its_window_is_in_front_is_reported_once_it_is",

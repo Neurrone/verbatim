@@ -19,8 +19,6 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use common::outpost::{Focused, OutpostUnderTest};
-use verbatim_listener_logic::focus::Judged;
-use verbatim_model::CallCounts;
 use verbatim_model::{Role, State};
 use verbatim_process::arguments::OutpostOptions;
 use verbatim_uia::map::{add_legacy_checked_state, wants_legacy_checked_state};
@@ -707,57 +705,6 @@ fn a_focus_walk_that_times_out_fails() {
     fixture.app.quit();
 }
 
-/// The focus listener drops a focus whose lookup of its nearest window does
-/// not answer within UIA's transaction timeout, for that reason and not as
-/// one with no window, and makes no call after the lookup: no probe of the
-/// window and no read of the focus, into an application that has just
-/// failed to answer. NVDA's lookup answers no window when it fails, and NVDA
-/// drops a focus with none (`UIAHandler/__init__.py` 1437 to 1444;
-/// `books/dev/src/reference/crates/verbatim-listener.md`, "How a UIA focus is judged and read").
-/// The
-/// lookup's first step to the parent waits past the timeout
-/// (`slow-parent`), and returns before mockapp's wait ends.
-fn a_timed_out_nearest_window_lookup_reads_nothing_into_the_application() {
-    const TIMEOUT: Duration = Duration::from_millis(1_200);
-    const SLOW_PARENT: Duration = Duration::from_millis(1_800);
-    let mut fixture = Fixture::start("mockapp-rops-lookup-timed-out");
-    let deep = fixture.focus_delivered("deep", "Deep button");
-    let outpost = OutpostUnderTest::new(&fixture.app);
-    let client: IUIAutomation2 = fixture.uia.client().cast().expect("IUIAutomation2");
-    let restored = ProcessTimeout::set(&client, Kind::Transaction, TIMEOUT);
-    fixture
-        .app
-        .send(&format!("slow-parent deep {}", SLOW_PARENT.as_millis()));
-    let (judged, calls) = outpost.listener_read(&deep);
-    let returned = common::now_us();
-    let ended = {
-        fixture.app.stamped_line("slow-parent started");
-        fixture.app.stamped_line("slow-parent ended")
-    };
-    fixture.app.send("slow-parent deep 0");
-    drop(restored);
-    assert!(
-        returned < ended,
-        "the transaction timeout ended the lookup: it returned at {returned} us, after the wait ended at {ended} us"
-    );
-    let Judged::Dropped(reason) = judged else {
-        panic!("the listener took a focus whose nearest window's lookup timed out: {judged:?}");
-    };
-    assert_eq!(reason, verbatim_listener_logic::focus::NEAREST_TIMED_OUT);
-    assert_eq!(
-        calls,
-        CallCounts {
-            uia: 1,
-            msaa: 0,
-            window_messages: 0,
-            connections: 0,
-        },
-        "the lookup is the read's only call"
-    );
-    drop(outpost);
-    fixture.app.quit();
-}
-
 /// The focus listener, the focus walk's caller, and the outpost handle a
 /// walk that timed out: with every pattern request slow (`slow-patterns`),
 /// so that filling an element's cache outlasts UIA's transaction timeout
@@ -937,7 +884,7 @@ fn focus_now_with_a_missing_grandparent(
 ) -> (Option<String>, Vec<Option<String>>, u32) {
     let path = if remote { "remote" } else { "classic" };
     let mut fixture = Fixture::start(&format!("mockapp-rops-now-{answer}-{path}"));
-    let mut outpost = OutpostUnderTest::with_options(
+    let outpost = OutpostUnderTest::with_options(
         &fixture.app,
         OutpostOptions {
             remote_operations: remote,
@@ -952,12 +899,16 @@ fn focus_now_with_a_missing_grandparent(
     for command in setup {
         fixture.app.send(command);
     }
-    let (now, calls) = outpost.focus_now_with_calls();
-    let now = now.unwrap_or_else(|| panic!("{answer} {path}: the focus now has a focused control"));
+    let (outcome, calls) = outpost.current_focus();
+    let now = common::outpost::Focused::of(outcome, calls);
     drop(outpost);
     fixture.app.quit();
-    let ancestors = now.ancestors.into_iter().map(|node| node.name).collect();
-    (now.node.name, ancestors, calls.uia)
+    let ancestors = now
+        .ancestor_names()
+        .into_iter()
+        .map(|name| name.map(str::to_owned))
+        .collect();
+    (now.name().map(str::to_owned), ancestors, now.calls.uia)
 }
 
 /// A focus-now query whose remote program's walk ends at a missing parent
@@ -1049,67 +1000,6 @@ fn a_focus_inside_one_whose_parent_step_failed_meets_its_chain_there() {
         [Some("Inner group".to_owned())]
     );
     outpost.settled();
-    drop(outpost);
-    fixture.app.quit();
-}
-
-/// A focus whose read fails is reported from its event, below the window
-/// it is in, as the focus, its only state focused, whatever the event's
-/// cache says of its keyboard focus: NVDA's
-/// last check reads the sender's keyboard focus live
-/// (`shouldAllowUIAFocusEvent`), and once that has said it has the focus,
-/// nothing NVDA does consults the event's cached value. Here the event's
-/// cache is filled before the sender has the focus, the focus then moves to
-/// it, raising no event, so that its live read says it has it, and the read
-/// times out, every pattern request slow (`slow-patterns`) as in
-/// `a_focus_whose_walk_times_out_is_reported_below_its_window`. Its chain
-/// goes on from the parent window of mockapp's window, its nearest, no
-/// ancestor read.
-fn a_focus_whose_read_fails_is_reported_whatever_its_event_says_of_its_focus() {
-    const TIMEOUT: Duration = Duration::from_millis(300);
-    const SLOW_CALL: Duration = Duration::from_millis(40);
-    let mut fixture = Fixture::start("mockapp-rops-failed-unfocused");
-    let outpost = OutpostUnderTest::new(&fixture.app);
-    let deep = fixture.delivered("Deep button");
-    assert!(
-        !deep.read().has_focus,
-        "the event's cache says the sender did not have the keyboard focus"
-    );
-    fixture.app.send("set-focus deep");
-    assert_eq!(
-        deep.live().element().has_keyboard_focus().ok(),
-        Some(true),
-        "the sender has the keyboard focus, read live"
-    );
-    let client: IUIAutomation2 = fixture.uia.client().cast().expect("IUIAutomation2");
-    let restored = ProcessTimeout::set(&client, Kind::Transaction, TIMEOUT);
-
-    fixture
-        .app
-        .send(&format!("slow-patterns {}", SLOW_CALL.as_millis()));
-    let (judged, _) = outpost.listener_read(&deep);
-    // Acknowledged once mockapp has answered the calls still queued.
-    fixture.app.send("slow-patterns 0");
-    drop(restored);
-    let Judged::Read(read) = judged else {
-        panic!("the listener did not report a focus whose read failed: {judged:?}");
-    };
-    assert_eq!(read.snapshot.name.as_deref(), Some("Deep button"));
-    assert_eq!(
-        read.snapshot.states,
-        verbatim_model::StateSet::new().with(State::Focused),
-        "reported as the focus, whatever its event's cache said"
-    );
-    assert_eq!(
-        (read.ancestors.len(), read.ancestors_end),
-        (
-            0,
-            verbatim_model::protocol::AncestorsEnd::ContinueFrom(verbatim_uia::parent_window(
-                fixture.hwnd
-            ))
-        ),
-        "going on from the parent window of mockapp's window"
-    );
     drop(outpost);
     fixture.app.quit();
 }
@@ -1468,7 +1358,7 @@ fn focus_now_with_a_slow_grandparent(remote: bool) -> (Option<String>, Vec<Optio
     const SLOW_PARENT: Duration = Duration::from_millis(600);
     let path = if remote { "remote" } else { "classic" };
     let mut fixture = Fixture::start(&format!("mockapp-rops-now-slow-{path}"));
-    let mut outpost = OutpostUnderTest::with_options(
+    let outpost = OutpostUnderTest::with_options(
         &fixture.app,
         OutpostOptions {
             remote_operations: remote,
@@ -1481,14 +1371,17 @@ fn focus_now_with_a_slow_grandparent(remote: bool) -> (Option<String>, Vec<Optio
     fixture
         .app
         .send(&format!("slow-parent group2 {}", SLOW_PARENT.as_millis()));
-    let (now, _) = outpost.focus_now_with_calls();
+    let (outcome, calls) = outpost.current_focus();
     drop(restored);
-    let now = now.unwrap_or_else(|| panic!("{path}: the focus now has a focused control"));
+    let now = common::outpost::Focused::of(outcome, calls);
     drop(outpost);
     fixture.app.quit();
     (
-        now.node.name,
-        now.ancestors.into_iter().map(|node| node.name).collect(),
+        now.name().map(str::to_owned),
+        now.ancestor_names()
+            .into_iter()
+            .map(|name| name.map(str::to_owned))
+            .collect(),
     )
 }
 
@@ -1518,7 +1411,6 @@ fn a_failed_remote_program_continues_from_the_parent_window_live() {
     );
 }
 
-#[expect(clippy::too_many_lines, reason = "the list of this binary's tests")]
 fn main() {
     harness::run_isolated(&[
         (
@@ -1570,10 +1462,6 @@ fn main() {
             a_focus_walk_that_times_out_fails,
         ),
         (
-            "a_timed_out_nearest_window_lookup_reads_nothing_into_the_application",
-            a_timed_out_nearest_window_lookup_reads_nothing_into_the_application,
-        ),
-        (
             "a_focus_whose_walk_times_out_is_reported_below_its_window",
             a_focus_whose_walk_times_out_is_reported_below_its_window,
         ),
@@ -1608,10 +1496,6 @@ fn main() {
         (
             "a_focus_inside_one_whose_parent_step_failed_meets_its_chain_there",
             a_focus_inside_one_whose_parent_step_failed_meets_its_chain_there,
-        ),
-        (
-            "a_focus_whose_read_fails_is_reported_whatever_its_event_says_of_its_focus",
-            a_focus_whose_read_fails_is_reported_whatever_its_event_says_of_its_focus,
         ),
         (
             "a_selection_read_that_times_out_or_finds_the_list_gone_fails",

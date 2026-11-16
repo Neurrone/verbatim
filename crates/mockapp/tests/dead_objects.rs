@@ -9,34 +9,44 @@ mod common;
 #[path = "common/harness.rs"]
 mod harness;
 
-use verbatim_model::protocol::{OutpostToCore, Query, QueryOutcome, QueryResult};
+use verbatim_model::property::PropertyId;
+use verbatim_model::request::{Outcome, Reply, Request};
 use verbatim_model::{
-    Backend, CallCounts, NodeId, QueryKind, Role, TextOp, TextPoint, TextRead, TextReply, TextUnit,
+    CallCounts, NodeId, QueryKind, Role, TextOp, TextPoint, TextRead, TextReply, TextUnit,
 };
 use verbatim_uia::Uia;
 use windows::Win32::Foundation::HWND;
 
-use common::outpost::OutpostUnderTest;
+use common::outpost::{OutpostUnderTest, focus_set, name_in, role_in, value};
 
-/// Reads `node_id` live through `outpost`, as a review command does:
-/// its name and the calls it made, the reply being the next thing the
-/// outpost says.
-fn read_node(outpost: &mut OutpostUnderTest, node_id: NodeId) -> (Option<String>, CallCounts) {
-    let request_id = outpost.ask(Query::ReadNode {
-        node_id,
-        details: verbatim_model::property::NodeDetailSet::ALL,
-    });
-    let answer = match outpost.next() {
-        OutpostToCore::Reply {
-            request_id: answered,
-            outcome: QueryOutcome::Done(QueryResult::Node(node)),
-            timing,
-            ..
-        } if answered == request_id => (node.name, timing.calls),
-        other => panic!("the outpost said {other:?}, not the node"),
+/// Reads `node_id`, in `window`, live through `outpost`, as a review
+/// command does: its name and the calls it made, the answer being the next
+/// thing the outpost says.
+fn read_node(
+    outpost: &OutpostUnderTest,
+    window: HWND,
+    node_id: NodeId,
+) -> (Option<String>, CallCounts) {
+    let (outcome, calls) = outpost.asked(
+        window,
+        Request::Properties {
+            node: node_id,
+            set: focus_set(),
+        },
+    );
+    let Outcome::Result(Reply::Properties(values)) = outcome else {
+        panic!("the outpost answered {outcome:?}, not the node");
     };
     outpost.settled();
-    answer
+    (name_in(&values).map(str::to_owned), calls)
+}
+
+/// Asks `request` about a node of `window`, which must answer that it is
+/// not there.
+fn not_there(outpost: &OutpostUnderTest, window: HWND, request: Request) {
+    let (outcome, _) = outpost.asked(window, request);
+    assert_eq!(outcome, Outcome::NotThere);
+    outpost.settled();
 }
 
 /// Focuses mockapp's text box "Notes" and reports it to `outpost`; its
@@ -58,33 +68,44 @@ fn focus_notes(
 fn a_dead_element_answers_gone_and_its_parent_is_its_windows_parent() {
     let title = common::unique_title("mockapp-dead-object");
     let mut app = common::spawn("ancestry.json", "uia", &title);
-    let window = common::find_window(&title).0 as isize;
-    let mut outpost = OutpostUnderTest::new(&app);
+    let hwnd = common::find_window(&title);
+    let window = hwnd.0 as isize;
+    let outpost = OutpostUnderTest::new(&app);
     let uia = Uia::new().expect("a UIA client");
     let notes = focus_notes(&mut app, &outpost, &uia, window);
-    let (group, _) = outpost.navigate(notes, QueryKind::Parent);
-    assert_eq!(group.name.as_deref(), Some("Inner group"));
+    let (group, _) = outpost.navigate(hwnd, notes, QueryKind::Parent);
+    assert_eq!(name_in(&group.values), Some("Inner group"));
+    let group = group.node.expect("the outpost mints the node");
+    outpost.settled();
 
     app.send("disconnect group2");
-    for kind in [
+    for direction in [
         QueryKind::NextSibling,
         QueryKind::PreviousSibling,
         QueryKind::FirstChild,
     ] {
-        outpost.gone(Query::Navigate {
-            node_id: group.id,
-            kind,
-            details: verbatim_model::property::NodeDetailSet::ALL,
-        });
+        not_there(
+            &outpost,
+            hwnd,
+            Request::Navigate {
+                node: group,
+                direction,
+                set: focus_set(),
+            },
+        );
     }
-    outpost.gone(Query::ReadNode {
-        node_id: group.id,
-        details: verbatim_model::property::NodeDetailSet::ALL,
-    });
+    not_there(
+        &outpost,
+        hwnd,
+        Request::Properties {
+            node: group,
+            set: focus_set(),
+        },
+    );
 
-    let (parent, _) = outpost.navigate(group.id, QueryKind::Parent);
+    let (parent, _) = outpost.navigate(hwnd, group, QueryKind::Parent);
     assert_eq!(
-        (parent.role, parent.details.desktop_window),
+        (role_in(&parent.values), parent.window.desktop),
         (Role::Window, true),
         "the parent of the dead element's window, the desktop for Core to name"
     );
@@ -121,33 +142,29 @@ fn dead_island(label: &str) -> (common::MockApp, HWND, HWND) {
 /// host.
 fn a_dead_element_s_parent_is_its_own_window_s_parent_with_its_own_role() {
     let (mut app, host, island) = dead_island("mockapp-dead-island-navigated");
-    let mut outpost = OutpostUnderTest::new(&app);
+    let outpost = OutpostUnderTest::new(&app);
     let uia = Uia::new().expect("a UIA client");
     let focused = common::listener_focus(&uia, island.0 as isize);
     let ok = outpost.uia_focus_answer(&focused).node();
-    let (inner, _) = outpost.navigate(ok, QueryKind::Parent);
-    assert_eq!(inner.name.as_deref(), Some("Inner"));
+    let (inner, _) = outpost.navigate(island, ok, QueryKind::Parent);
+    assert_eq!(name_in(&inner.values), Some("Inner"));
+    let inner = inner.node.expect("the outpost mints the node");
 
     app.send("set-focus apply");
     let focused = common::listener_focus(&uia, host.0 as isize);
     let _ = outpost.uia_focus_answer(&focused);
 
     app.send("island disconnect inner");
-    let (parent, _) = outpost.navigate(inner.id, QueryKind::Parent);
+    let (parent, _) = outpost.navigate(island, inner, QueryKind::Parent);
     assert_eq!(
         (
-            parent.backend,
-            parent.role,
-            parent.name.as_deref(),
-            parent.details.desktop_window
+            value(&parent.values, PropertyId::RuntimeId).is_some(),
+            role_in(&parent.values),
+            name_in(&parent.values),
+            parent.window.desktop
         ),
-        (
-            Backend::Uia,
-            Role::Window,
-            Some("Mockapp Dead Island"),
-            false
-        ),
-        "the host window's element, not the focus window's parent"
+        (true, Role::Window, Some("Mockapp Dead Island"), false),
+        "the host window's UI Automation element, not the focus window's parent"
     );
 
     drop(outpost);
@@ -161,7 +178,7 @@ fn a_dead_element_s_parent_is_its_own_window_s_parent_with_its_own_role() {
 /// now has the focus.
 fn a_dead_focus_keeps_the_window_it_was_found_in() {
     let (mut app, host, island) = dead_island("mockapp-dead-island-focused");
-    let mut outpost = OutpostUnderTest::new(&app);
+    let outpost = OutpostUnderTest::new(&app);
     let uia = Uia::new().expect("a UIA client");
     app.send("set-focus apply");
     let focused = common::listener_focus(&uia, host.0 as isize);
@@ -172,9 +189,9 @@ fn a_dead_focus_keeps_the_window_it_was_found_in() {
     let _ = outpost.uia_focus_answer(&focused);
 
     app.send("disconnect apply");
-    let (parent, _) = outpost.navigate(apply, QueryKind::Parent);
+    let (parent, _) = outpost.navigate(host, apply, QueryKind::Parent);
     assert_eq!(
-        (parent.role, parent.details.desktop_window),
+        (role_in(&parent.values), parent.window.desktop),
         (Role::Window, true)
     );
 
@@ -189,16 +206,16 @@ fn a_dead_focus_keeps_the_window_it_was_found_in() {
 fn a_live_read_of_a_menu_item_reads_its_legacy_state() {
     let title = common::unique_title("mockapp-live-read-menu-item");
     let mut app = common::spawn("modal_owner.json", "uia", &title);
-    let window = common::find_window(&title).0 as isize;
-    let mut outpost = OutpostUnderTest::new(&app);
+    let hwnd = common::find_window(&title);
+    let outpost = OutpostUnderTest::new(&app);
     let uia = Uia::new().expect("a UIA client");
     app.send("set-focus copy");
-    let focused = common::listener_focus(&uia, window);
+    let focused = common::listener_focus(&uia, hwnd.0 as isize);
     let copy = outpost.uia_focus_answer(&focused).node();
     // The element, found by the focus's route, is kept for the read below.
-    let _ = read_node(&mut outpost, copy);
+    let _ = read_node(&outpost, hwnd, copy);
 
-    let (name, calls) = read_node(&mut outpost, copy);
+    let (name, calls) = read_node(&outpost, hwnd, copy);
     assert_eq!(
         (name.as_deref(), calls.uia, calls.msaa),
         (Some("Copy"), 2, 0),
@@ -213,30 +230,26 @@ fn a_live_read_of_a_menu_item_reads_its_legacy_state() {
 fn a_text_read_of_a_dead_object_says_gone() {
     let title = common::unique_title("mockapp-dead-text");
     let mut app = common::spawn("text.json", "uia", &title);
-    let window = common::find_window(&title).0 as isize;
-    let mut outpost = OutpostUnderTest::new(&app);
+    let hwnd = common::find_window(&title);
+    let outpost = OutpostUnderTest::new(&app);
     let uia = Uia::new().expect("a UIA client");
     app.send("set-focus doc");
-    let focused = common::listener_focus(&uia, window);
+    let focused = common::listener_focus(&uia, hwnd.0 as isize);
     let doc = outpost.uia_focus_answer(&focused).node();
 
     app.send("disconnect doc");
-    let request = outpost.ask(Query::Text {
-        node_id: doc,
-        op: TextOp::Read(TextRead {
-            at: TextPoint::Start,
-            movement: None,
-            unit: TextUnit::Line,
-        }),
-    });
-    match outpost.next() {
-        OutpostToCore::Reply {
-            request_id,
-            outcome: QueryOutcome::Done(QueryResult::Text(TextReply::Gone)),
-            ..
-        } if request_id == request => {}
-        other => panic!("the outpost said {other:?}, not that the text is gone"),
-    }
+    let (outcome, _) = outpost.asked(
+        hwnd,
+        Request::Text {
+            node: doc,
+            op: TextOp::Read(TextRead {
+                at: TextPoint::Start,
+                movement: None,
+                unit: TextUnit::Line,
+            }),
+        },
+    );
+    assert_eq!(outcome, Outcome::Result(Reply::Text(TextReply::Gone)));
     outpost.settled();
 
     drop(outpost);
@@ -249,17 +262,20 @@ fn a_text_read_of_a_dead_object_says_gone() {
 fn a_navigator_node_keeps_its_element_after_the_focus_moves_on() {
     let title = common::unique_title("mockapp-navigator-kept");
     let mut app = common::spawn("ancestry.json", "uia", &title);
-    let window = common::find_window(&title).0 as isize;
-    let mut outpost = OutpostUnderTest::new(&app);
+    let hwnd = common::find_window(&title);
+    let window = hwnd.0 as isize;
+    let outpost = OutpostUnderTest::new(&app);
     let uia = Uia::new().expect("a UIA client");
     let notes = focus_notes(&mut app, &outpost, &uia, window);
-    let (group, _) = outpost.navigate(notes, QueryKind::Parent);
+    let (group, _) = outpost.navigate(hwnd, notes, QueryKind::Parent);
+    let group = group.node.expect("the outpost mints the node");
+    outpost.settled();
 
     app.send("set-focus apple");
     let focused = common::listener_focus(&uia, window);
     let _ = outpost.uia_focus_answer(&focused);
 
-    let (name, calls) = read_node(&mut outpost, group.id);
+    let (name, calls) = read_node(&outpost, hwnd, group);
     assert_eq!(
         (name.as_deref(), calls),
         (
