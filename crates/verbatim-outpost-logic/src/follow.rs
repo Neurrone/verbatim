@@ -1,18 +1,18 @@
 //! What the outpost follows, and what a program's commit changes of it
 //! (`books/dev/src/explanation/design/ownership.md`): the follow state, the focus line's paths, the caret key's
-//! note and owed work, all reducer state with no application object. A
+//! note, all reducer state with no application object. A
 //! program is given a copy ([`Facts`]) and applies its own commits to it
 //! with the same function the reducer applies them with ([`apply`]), so
 //! what it reads after a commit is what the reducer will hold.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
-use verbatim_model::protocol::{EventTiming, OutpostToCore, UiaFocusRead};
-use verbatim_model::{CaretReport, NodeId, NodeSnapshot, Role, TraceId};
+use verbatim_model::protocol::{OutpostToCore, UiaFocusRead};
+use verbatim_model::{NodeId, NodeSnapshot, Role, TraceId};
 
 use verbatim_reader_rules::Window;
 
-use super::intake::{Marks, Object, TerminalMark};
+use super::intake::Object;
 use super::text::{RangeKey, TextChange, TextFacts};
 use verbatim_reader_rules::verdicts::Verdicts;
 
@@ -54,10 +54,6 @@ pub struct Followed {
     pub titles: Vec<verbatim_reader_rules::ancestry_cache::SavedTitle>,
     /// How the focus was read.
     pub origin: Origin,
-    /// Whether it is a terminal read through UIA, and its window when
-    /// known: its caret event is planned after its text changes waiting
-    /// with it.
-    pub terminal: TerminalMark,
     /// Whether it was reached by redirecting a control's own focus event to
     /// the control's focused child, whose own event is still to come.
     pub redirected: bool,
@@ -67,8 +63,6 @@ pub struct Followed {
     /// Where the focus-following subscription follows it, `None` for
     /// nothing.
     pub subscription: Option<Subscribed>,
-    /// What the focus still owes.
-    pub owed: Option<Owed>,
 }
 
 impl Followed {
@@ -88,28 +82,6 @@ impl Followed {
         match &self.origin {
             Origin::Msaa(report) => Some(*report),
             Origin::Listener(_) | Origin::Answer | Origin::MenuOpening => None,
-        }
-    }
-
-    /// The marks the mailbox and the intake read of this focus, with the
-    /// held terminal's window `absorbed`, which is not a fact of it.
-    fn marks(&self, absorbed: Option<isize>) -> Marks {
-        Marks {
-            focused: self.object.clone(),
-            terminal: self.terminal,
-            focus_redirected: self.redirected,
-            absorbed,
-        }
-    }
-
-    /// The terminal mark of a focus that is a terminal read through UIA
-    /// (`terminal`) or not, in `window`.
-    #[must_use]
-    pub fn terminal_mark(terminal: bool, window: Option<isize>) -> TerminalMark {
-        if terminal {
-            TerminalMark::of(window.and_then(Window::new))
-        } else {
-            TerminalMark::None
         }
     }
 }
@@ -182,52 +154,6 @@ impl CaretRead {
         self.0
             .is_some_and(|(read, at)| read == node && at >= observed_us)
     }
-}
-
-/// What the followed focus still needs after the commit that made it
-/// followed: owed work, attempted once per worker generation as a program
-/// of its own with a deadline of its own.
-#[derive(Clone, Debug)]
-pub struct Owed {
-    /// What is owed.
-    pub work: OwedWork,
-    /// The trace and observation of the event the focus came from.
-    pub trace: TraceId,
-    /// The event's observation, in microseconds on the run's shared clock.
-    pub observed_at_us: u64,
-    /// The worker generation attempting it, once one has started to.
-    pub attempting: Option<u64>,
-}
-
-impl Owed {
-    /// `work`, owed for the event `trace` observed at `observed_at_us`,
-    /// which no worker has attempted.
-    #[must_use]
-    pub fn due(work: OwedWork, trace: TraceId, observed_at_us: u64) -> Self {
-        Self {
-            work,
-            trace,
-            observed_at_us,
-            attempting: None,
-        }
-    }
-}
-
-/// The owed work a program is given: the followed focus's node and what it
-/// owes.
-#[derive(Clone, Debug)]
-pub struct OwedProgram {
-    /// The focus that owes it.
-    pub node: NodeId,
-    /// What is owed.
-    pub owed: Owed,
-}
-
-/// The work a followed focus owes ([`Owed`]).
-#[derive(Clone, Debug)]
-pub enum OwedWork {
-    /// A terminal's first read, with the caret read with its report.
-    FirstRead(CaretReport),
 }
 
 /// The raw-view chain of the UIA focus the outpost last reported from the
@@ -391,17 +317,10 @@ pub enum FocusCommit {
         reported: LastReported,
     },
     /// A focus-now answer naming the focus already followed: its
-    /// subscription and owed work change, and nothing else.
+    /// subscription changes, and nothing else.
     Again {
         /// Where the subscription is moved.
         target: Target,
-        /// What the focus owes now.
-        owed: Option<OwedWork>,
-        /// The trace of the event it came from.
-        trace: TraceId,
-        /// The event's observation, in microseconds on the run's shared
-        /// clock.
-        observed_at_us: u64,
     },
 }
 
@@ -409,8 +328,6 @@ pub enum FocusCommit {
 /// ([`Change::mark`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MarkChange {
-    /// The console window's updates are absorbed.
-    Absorb(isize),
     /// The redirect mark is cleared.
     ClearRedirect,
 }
@@ -443,17 +360,11 @@ pub struct Change {
     /// found: the subscription is moved to them only while that node is
     /// the followed focus.
     pub element: Option<(NodeId, Subscribed)>,
-    /// The owed work of this node is done, read or failed.
-    pub owed_done: Option<NodeId>,
     /// A read of this node's caret began at the instant given, in
     /// microseconds.
     pub caret_read: Option<(NodeId, u64)>,
     /// A change of the marks on the followed focus.
     pub mark: Option<MarkChange>,
-    /// A held terminal's caret event, noted to be read once nothing else
-    /// is waiting, with its event's timing, which the read of the caret
-    /// judges the caret reads since the event by.
-    pub noted_caret: Option<(NodeId, TraceId, u64, EventTiming)>,
 
     /// The node of a UIA focus whose earlier element, by the focus
     /// listener's evidence, lost the focus or is gone, so a new element
@@ -481,15 +392,6 @@ pub struct FollowState {
     /// the store releases their node, so the outpost hears the changes of
     /// every node it has not released (`books/dev/src/explanation/design/ownership.md`).
     pub kept_groups: Vec<(NodeId, Group, u64)>,
-    /// The console window whose updates are dropped as they are pushed: a
-    /// held terminal's window, which need not be the followed focus's, as
-    /// a terminal stays held after the focus moves elsewhere in its console.
-    /// A program marks it while the terminal's reading is held with its text
-    /// changed and no key's note lives on it, when it would do nothing
-    /// for an update; an adoption clears it, as does anything that may end
-    /// the hold before it is handled, so an update observed after the read
-    /// that ends the hold begins is never dropped.
-    pub absorbed: Option<isize>,
     /// The last committed read of a caret.
     pub caret_read: CaretRead,
 }
@@ -505,22 +407,6 @@ pub struct Facts {
     pub verdicts: Arc<Verdicts>,
     /// Each node's text facts, shared until a change ([`super::text`]).
     pub text: Arc<TextFacts>,
-}
-
-impl Facts {
-    /// What the intake and the mailbox read of the followed focus, computed
-    /// from its record.
-    #[must_use]
-    pub fn marks(&self) -> Marks {
-        let absorbed = self.follow.absorbed;
-        self.follow.followed.as_ref().map_or_else(
-            || Marks {
-                absorbed,
-                ..Marks::default()
-            },
-            |followed| followed.marks(absorbed),
-        )
-    }
 }
 
 /// Where the subscription is to follow, by token: the newest focus's
@@ -674,15 +560,9 @@ impl FollowState {
                     .replace(followed)
                     .and_then(|before| Some((before.node, before.subscription?)));
                 self.subscription_moved(previous, (node, target), applied);
-                self.absorbed = None;
                 self.last_reported = Some(*reported);
             }
-            FocusCommit::Again {
-                target,
-                owed,
-                trace,
-                observed_at_us,
-            } => {
+            FocusCommit::Again { target } => {
                 let Some(followed) = self.followed.as_mut() else {
                     applied
                         .logic_errors
@@ -692,9 +572,6 @@ impl FollowState {
                 let node = followed.node;
                 let previous = followed.subscription.map(|before| (node, before));
                 followed.subscription = *target;
-                followed.owed = owed
-                    .clone()
-                    .map(|work| Owed::due(work, *trace, *observed_at_us));
                 self.subscription_moved(previous, (node, *target), applied);
             }
         }
@@ -723,10 +600,6 @@ impl FollowState {
     /// Applies a commit's change of the marks on the followed focus.
     fn apply_mark(&mut self, mark: MarkChange, applied: &mut Applied) {
         let set: fn(&mut Followed) = match mark {
-            MarkChange::Absorb(window) => {
-                self.absorbed = Some(window);
-                return;
-            }
             MarkChange::ClearRedirect => |followed| followed.redirected = false,
         };
         match self.followed.as_mut() {
@@ -738,11 +611,11 @@ impl FollowState {
     }
 }
 
-/// Applies the pure part of a commit of `generation`'s, `change`, but for
+/// Applies the pure part of a commit, `change`, but for
 /// its report and messages, which the caller records and sends first: to
 /// the reducer's follow state, reports and marks, by the shared clock
 /// (`clock`), or to a program's copies of them, with no clock.
-pub fn apply(facts: &mut Facts, generation: u64, change: &Change) -> Applied {
+pub fn apply(facts: &mut Facts, change: &Change) -> Applied {
     let mut applied = Applied::default();
     if !change.text.is_empty() {
         let text = Arc::make_mut(&mut facts.text);
@@ -760,18 +633,6 @@ pub fn apply(facts: &mut Facts, generation: u64, change: &Change) -> Applied {
     if let Some((node, target)) = change.element {
         follow_state.element_found(node, target, &mut applied);
     }
-    if let Some(node) = change.owed_done
-        && let Some(followed) = follow_state
-            .followed
-            .as_mut()
-            .filter(|followed| followed.node == node)
-        && followed
-            .owed
-            .as_ref()
-            .is_some_and(|owed| owed.attempting == Some(generation))
-    {
-        followed.owed = None;
-    }
     if let Some((node, started_us)) = change.caret_read {
         follow_state.caret_read.note(node.number(), started_us);
     }
@@ -781,11 +642,11 @@ pub fn apply(facts: &mut Facts, generation: u64, change: &Change) -> Applied {
     applied
 }
 
-/// Applies `change`, a program's commit of `generation`, to a program's
+/// Applies `change`, a program's commit, to a program's
 /// copies `facts`, as the program's own commit does: [`apply`], with no
 /// clock.
-pub fn apply_local(facts: &mut Facts, generation: u64, change: &Change) -> Applied {
-    apply(facts, generation, change)
+pub fn apply_local(facts: &mut Facts, change: &Change) -> Applied {
+    apply(facts, change)
 }
 
 /// A record of `node`, of `role`, with nothing but its node and role, as
@@ -800,11 +661,9 @@ pub(crate) fn plain_followed(node: NodeId, role: Role) -> Followed {
         chain: Vec::new(),
         titles: Vec::new(),
         origin: Origin::Answer,
-        terminal: TerminalMark::None,
         redirected: false,
         system_caret_unused: false,
         subscription: None,
-        owed: None,
     }
 }
 
@@ -971,13 +830,10 @@ mod tests {
         let change = Change {
             focus: Some(FocusCommit::Again {
                 target: Some(target),
-                owed: None,
-                trace: TraceId::from_raw(1),
-                observed_at_us: 0,
             }),
             ..Change::default()
         };
-        apply(facts, 0, &change)
+        apply(facts, &change)
     }
 
     #[test]
@@ -1080,16 +936,11 @@ mod tests {
     fn a_commit_that_cannot_occur_is_returned_as_a_logic_error() {
         let mut facts = Facts::default();
         let change = Change {
-            focus: Some(FocusCommit::Again {
-                target: None,
-                owed: None,
-                trace: TraceId::from_raw(1),
-                observed_at_us: 0,
-            }),
+            focus: Some(FocusCommit::Again { target: None }),
             mark: Some(MarkChange::ClearRedirect),
             ..Change::default()
         };
-        let applied = apply(&mut facts, 0, &change);
+        let applied = apply(&mut facts, &change);
         assert_eq!(
             applied.logic_errors,
             vec![
@@ -1097,7 +948,7 @@ mod tests {
                 LogicError::MarkWithNothingFollowed(MarkChange::ClearRedirect)
             ]
         );
-        assert_eq!(facts.marks(), Marks::default());
+        assert!(facts.follow.followed.is_none());
     }
 
     /// A focus's element replaced clears the note on its node, and only
@@ -1109,18 +960,18 @@ mod tests {
             unit: TextUnit::Character,
             motion: CaretMotion::NextCharacter,
         };
-        Arc::make_mut(&mut facts.text).set_note(1, fetch, 0, crate::text::NoteOn::Field);
+        Arc::make_mut(&mut facts.text).set_note(1, fetch, 0);
         let elsewhere = Change {
             replaced: Some(NodeId::new(2)),
             ..Change::default()
         };
-        apply(&mut facts, 0, &elsewhere);
+        apply(&mut facts, &elsewhere);
         assert!(facts.text.live_note(1, 0).is_some());
         let replaced = Change {
             replaced: Some(NodeId::new(1)),
             ..Change::default()
         };
-        apply(&mut facts, 0, &replaced);
+        apply(&mut facts, &replaced);
         assert_eq!(facts.text.live_note(1, 0), None);
     }
 }

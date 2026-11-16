@@ -61,14 +61,12 @@ use verbatim_ia2::{
     CHILDID_SELF, Facts, Found, Held, KeptObject, MsaaKey, NodeIdRegistry as MsaaRegistry,
 };
 use verbatim_model::protocol::OutpostToCore;
-use verbatim_model::{CaretReport, Fetches, NodeId, Role};
+use verbatim_model::{Fetches, NodeId, Role};
 use verbatim_uia::{Agile, Cached, Kept, NodeIdRegistry as UiaRegistry};
 
 use super::outbound::{Carried, Outbound};
 use super::reducer::{RangeKey, TextChange};
 use super::text_reads::Patterns;
-use crate::terminal::Terminal;
-use crate::terminal::reading::Reading;
 use crate::text::uia::{TextSupport, UiaPos};
 
 /// The worker generation and request a node or anchor was issued or looked
@@ -90,7 +88,6 @@ pub(super) struct Removed {
     patterns: Vec<Patterns>,
     /// UIA ranges of text positions.
     ranges: Vec<UiaPos>,
-    terminals: Vec<Terminal>,
     /// Objects entries came with, never taken.
     parked: Vec<Parked>,
 }
@@ -120,12 +117,6 @@ impl Removed {
             }
         }
         removed
-    }
-
-    /// `self`, and the terminal entry a refused commit made, if any.
-    pub(super) fn with_terminal(mut self, terminal: Option<Terminal>) -> Self {
-        self.terminals.extend(terminal);
-        self
     }
 }
 
@@ -196,10 +187,6 @@ struct State {
     /// What each UIA node's text is known to support of the text
     /// attributes, learned from its answers.
     support: HashMap<u64, TextSupport>,
-    /// What the outpost keeps of each focused terminal between its reads,
-    /// by node (`books/dev/src/explanation/design/terminal-model.md`, "Where it runs"). A read
-    /// works on a copy, which only the commit of its result puts in place.
-    terminals: HashMap<u64, Terminal>,
     /// Each UIA node's nearest window, recorded when the node is built and
     /// kept after its element dies, as NVDA's object keeps the window it
     /// found when it was made (`NVDAObjects/UIA/__init__.py` 1604 to 1607).
@@ -307,7 +294,6 @@ impl State {
             self.support.remove(&node);
             self.nearest_windows.remove(&node);
             self.routes.remove(&node);
-            removed.terminals.extend(self.terminals.remove(&node));
         }
     }
 }
@@ -352,7 +338,6 @@ impl Store {
                 ranges: HashMap::new(),
                 patterns: HashMap::new(),
                 support: HashMap::new(),
-                terminals: HashMap::new(),
                 nearest_windows: HashMap::new(),
                 routes: HashMap::new(),
                 parked: HashMap::new(),
@@ -612,9 +597,6 @@ impl Store {
             .patterns
             .extend(state.patterns.drain().map(|(_, patterns)| patterns));
         state.support.clear();
-        removed
-            .terminals
-            .extend(state.terminals.drain().map(|(_, terminal)| terminal));
         removed.ranges.extend(
             state
                 .ranges
@@ -762,75 +744,6 @@ impl Store {
     #[cfg(test)]
     pub(super) fn tags_anchor(&self, anchor: u64) -> bool {
         self.lock().anchors.contains_key(&anchor)
-    }
-
-    // Terminals.
-
-    /// A copy of terminal `node`'s entry, for a read made with no lock
-    /// held.
-    pub(super) fn terminal(&self, node: NodeId) -> Option<Terminal> {
-        self.lock().terminals.get(&node.number()).cloned()
-    }
-
-    /// Terminal `node`'s on-demand reading, when it has an entry.
-    pub(super) fn terminal_reading(&self, node: NodeId) -> Option<Reading> {
-        self.lock()
-            .terminals
-            .get(&node.number())
-            .map(|terminal| terminal.reading)
-    }
-
-    /// Whether terminal `node`'s last read covers a text change observed at
-    /// `observed_at_us` ([`Terminal::covers`]).
-    pub(super) fn terminal_covers(&self, node: NodeId, observed_at_us: u64) -> bool {
-        self.lock()
-            .terminals
-            .get(&node.number())
-            .is_some_and(|terminal| terminal.covers(observed_at_us))
-    }
-
-    /// Whether terminal `node` has an entry.
-    pub(super) fn has_terminal(&self, node: NodeId) -> bool {
-        self.lock().terminals.contains_key(&node.number())
-    }
-
-    /// Puts `entry` in place as terminal `node`'s, while the store holds
-    /// the node; returns what it replaced, or `entry` for a node released.
-    pub(super) fn put_terminal(&self, node: NodeId, entry: Terminal) -> Removed {
-        let mut removed = Removed::default();
-        let mut state = self.lock();
-        if self.holds(node) {
-            removed
-                .terminals
-                .extend(state.terminals.insert(node.number(), entry));
-        } else {
-            removed.terminals.push(entry);
-        }
-        removed
-    }
-
-    /// Notes `caret` as the caret last sent to Core for terminal `node`,
-    /// while the store holds it: in a new entry when `create` and there is
-    /// none, else only in the entry there is. A caret is plain data.
-    pub(super) fn set_sent_caret(&self, node: NodeId, caret: Option<CaretReport>, create: bool) {
-        let mut state = self.lock();
-        if !self.holds(node) {
-            return;
-        }
-        if create {
-            state.terminals.entry(node.number()).or_default().sent_caret = caret;
-        } else if let Some(entry) = state.terminals.get_mut(&node.number()) {
-            entry.sent_caret = caret;
-        }
-    }
-
-    /// Takes terminal `node`'s entry out, for the caller to drop.
-    pub(super) fn remove_terminal(&self, node: NodeId) -> Removed {
-        let mut removed = Removed::default();
-        removed
-            .terminals
-            .extend(self.lock().terminals.remove(&node.number()));
-        removed
     }
 }
 

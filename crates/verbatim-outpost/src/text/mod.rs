@@ -796,6 +796,10 @@ pub fn named_anchors(op: &TextOp) -> Vec<u64> {
             .collect(),
         TextOp::Watch(watch) => vec![watch.point.0],
         TextOp::MoveBySentence(moved) => vec![moved.point.0],
+        TextOp::ReadTerminal(read) => read.start.map(|start| start.0).into_iter().collect(),
+        TextOp::TerminalHistory { start, .. } | TextOp::TerminalFind { start, .. } => {
+            vec![start.0]
+        }
         _ => Vec::new(),
     }
 }
@@ -913,6 +917,23 @@ impl<P: Clone> NodeText<'_, P> {
             .reported
             .get(&(position.anchor.0, position.offset))
             .map(|slot| slot.at.clone())
+    }
+
+    /// Holds `pos` as an anchor of its own with no text, recorded as
+    /// touched, for a later request to name: a terminal read's start
+    /// anchor (`docs/design/readers-tell-core-asks-build3.md`). No call.
+    pub fn hold_point(&mut self, pos: P) -> TextAnchor {
+        self.mint(pos, "")
+    }
+
+    /// The position anchor `anchor` holds, with no call; `None` when it was
+    /// forgotten.
+    #[must_use]
+    pub fn anchor_point(&self, anchor: TextAnchor) -> Option<P> {
+        self.anchors
+            .anchors
+            .get(&anchor.0)
+            .map(|held| held.pos.at.clone())
     }
 
     /// A position minted for `pos` alone, a new anchor there at offset 0,

@@ -449,20 +449,15 @@ pub struct CaretRead {
     pub purpose: ReadPurpose,
 }
 
-/// Which read a [`CaretRead`] is. Core alone says whether a key's node is a
-/// terminal, from its role, because the outpost's own test can disagree with
-/// the role.
+/// Which read a [`CaretRead`] is. A terminal's caret key reads the terminal
+/// with Core's full reads ([`TextOp::ReadTerminal`]), never with these.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ReadPurpose {
     /// Before a held key is passed on in a text field: its arrival sets the
     /// node's note.
     BeforeFieldKey,
-    /// Before a held key is passed on in a terminal: its arrival sets the
-    /// node's note.
-    BeforeTerminalKey,
     /// When a text field's key's bound passes with no evidence: it clears
-    /// the node's note when it commits, and goes ahead of queued reads. A
-    /// terminal's key has none.
+    /// the node's note when it commits, and goes ahead of queued reads.
     Final,
 }
 
@@ -478,13 +473,6 @@ pub enum NoteRequest {
         /// What the node's reads fetch while the note lives.
         fetch: KeyFetch,
     },
-    /// A key in a terminal.
-    Terminal {
-        /// The key's node.
-        node: NodeId,
-        /// What the node's reads fetch while the note lives.
-        fetch: KeyFetch,
-    },
 }
 
 impl NoteRequest {
@@ -492,7 +480,7 @@ impl NoteRequest {
     #[must_use]
     pub fn node(self) -> NodeId {
         match self {
-            Self::Field { node, .. } | Self::Terminal { node, .. } => node,
+            Self::Field { node, .. } => node,
         }
     }
 
@@ -500,7 +488,7 @@ impl NoteRequest {
     #[must_use]
     pub fn fetch(self) -> KeyFetch {
         match self {
-            Self::Field { fetch, .. } | Self::Terminal { fetch, .. } => fetch,
+            Self::Field { fetch, .. } => fetch,
         }
     }
 }
@@ -933,9 +921,8 @@ pub struct SelectionReadReply {
 #[non_exhaustive]
 pub enum TextOp {
     /// Reads the caret for a key ([`CaretRead`]): answered
-    /// [`TextReply::Caret`], or [`TextReply::TerminalSnapshot`] for a before
-    /// read in a terminal, whose caret answers it, or
-    /// [`TextReply::Unanswered`] when the read failed.
+    /// [`TextReply::Caret`], or [`TextReply::Unanswered`] when the read
+    /// failed.
     ReadCaret(CaretRead),
     /// A held caret key's starting read: answered [`TextReply::Started`].
     StartingRead(StartingRead),
@@ -985,31 +972,6 @@ pub enum TextOp {
     /// Read several units ahead (say-all): answered [`TextReply::Chunks`],
     /// or as [`TextOp::Read`] is when the first unit cannot be read.
     ReadAhead(TextReadAhead),
-    /// A focused terminal's on-demand reading (`books/dev/src/explanation/design/terminal-model.md`,
-    /// "Reading rules", rule 1): Core's output queue is full, so the outpost
-    /// only notes that the terminal's text changed from now on, without
-    /// reading it. Answered [`TextReply::Done`].
-    TerminalHold,
-    /// Read what is new in a focused terminal now, if its text changed
-    /// since the last read, and then hold (`hold`) or read each change at
-    /// once again. Answered [`TextReply::TerminalSnapshot`], or
-    /// [`TextReply::TerminalUnchanged`] when nothing changed since the last
-    /// read.
-    TerminalRead {
-        /// Whether to go on holding after this read.
-        hold: bool,
-    },
-    /// Speech was cut off: read the terminal to its end without speaking
-    /// what is new, as NVDA drops what was pending, and read each change at
-    /// once again. Answered [`TextReply::TerminalSnapshot`], of whose
-    /// speech Core says only the answers to keys, or
-    /// [`TextReply::TerminalUnchanged`] when nothing changed while held.
-    TerminalCancel,
-    /// Read the focused terminal at once, whatever its on-demand state, and
-    /// answer with the read ([`TextReply::TerminalSnapshot`]): a fresh read
-    /// before a review command, the whole document after a lost read, or a
-    /// first read again with its history block.
-    TerminalReadNow(crate::TerminalScope),
     /// Read the history above the start the next read takes: from `above`
     /// rows above it to the document's end, or the whole document when
     /// `whole`. Answered [`TextReply::TerminalHistory`], which names the
@@ -1044,28 +1006,6 @@ pub enum TextOp {
         rows: u32,
         /// The start anchor the rows are counted from, which Core names.
         start: TextAnchor,
-    },
-    /// A key reached the focused terminal at `from_ms`, and its window, as
-    /// Core knows it, lasts until `until_ms`: every read that begins by
-    /// the latest such end takes the screen's colours. When the last read
-    /// ended at or after `from_ms` without them, because this request had
-    /// not yet come, a read is taken at once with them, whenever the
-    /// request came, and sent as a live read. Answered
-    /// [`TextReply::Done`].
-    TerminalColours {
-        /// When the key reached the program, in milliseconds on the clock
-        /// every process of a run shares.
-        from_ms: u64,
-        /// When the key's window ends, on the same clock.
-        until_ms: u64,
-    },
-    /// The screen's height and width as the reading rules found them, for
-    /// the outpost's next reads. Answered [`TextReply::Done`].
-    TerminalShape {
-        /// Rows.
-        height: u32,
-        /// Cells.
-        width: u32,
     },
     /// Read the terminal: a full read from a screen above the start Core
     /// names to the document's end, with the screen, the caret and its line
@@ -1176,9 +1116,6 @@ pub enum TextReply {
         /// The text was cut.
         truncated: bool,
     },
-    /// A [`TextOp::TerminalHold`], [`TextOp::TerminalColours`] or
-    /// [`TextOp::TerminalShape`] was done.
-    Done,
     /// A [`TextOp::MoveCaret`] was done, the move begun at this time.
     Moved {
         /// When the move began, in microseconds on the clock every process
@@ -1210,14 +1147,6 @@ pub enum TextReply {
         /// The selection baseline the selection minted.
         baseline: TextAnchor,
     },
-    /// A read of a terminal: the answer to [`TextOp::TerminalReadNow`], to
-    /// [`TextOp::TerminalRead`] and [`TextOp::TerminalCancel`], and to
-    /// [`TextOp::ReadCaret`] in a terminal, the read before a held key, whose
-    /// caret answers it.
-    TerminalSnapshot(Box<crate::TerminalSnapshot>),
-    /// [`TextOp::TerminalRead`] or [`TextOp::TerminalCancel`] found nothing
-    /// changed since the last read.
-    TerminalUnchanged,
     /// The answer to [`TextOp::ReadTerminal`].
     TerminalRead(Box<TerminalReadReply>),
     /// The answer to [`TextOp::TerminalHistory`]: the text read, padding

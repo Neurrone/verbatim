@@ -7,22 +7,19 @@
 //!
 //! [`Effects`] carries, besides the reducer's [`Change`], what only the
 //! shell can apply: the elements a focus's subscription target names, the
-//! element a UIA focus's evidence says is stale, a terminal's entry, the
-//! caret last sent to Core, and the program's text writes since its last
-//! commit, all writes to the store or the shell's table of followed
+//! element a UIA focus's evidence says is stale, and the program's text
+//! writes since its last commit, all writes to the store or the shell's table of followed
 //! elements, made on the reducer's thread under the store's lock alone,
 //! with no call into the application.
 
 #![forbid(unsafe_code)]
 
-use verbatim_model::{CaretReport, NodeId, TraceId};
+use verbatim_model::NodeId;
 use verbatim_uia::{Agile, Kept};
 
-use verbatim_model::protocol::{EventTiming, OutpostToCore};
+use verbatim_model::protocol::OutpostToCore;
 
-use super::reducer::{
-    Change, FocusCommit, Followed, Group, LastReported, MarkChange, OwedWork, Subscribed,
-};
+use super::reducer::{Change, FocusCommit, Followed, Group, LastReported, MarkChange, Subscribed};
 use super::store::TextWrite;
 
 /// Where the focus-following subscription follows a focus, computed before
@@ -44,8 +41,7 @@ pub(super) type Target = Option<KeptTarget>;
 /// evidence says is no longer the node's element: the runtime id names a
 /// new element, the one it named having lost the focus or gone
 /// (`books/dev/src/reference/adr/0001-focus.md`, "Object identity").
-/// The node's terminal entry goes with it, and any key's note on the
-/// node ends (`Change::replaced`).
+/// Any key's note on the node ends (`Change::replaced`).
 pub(super) struct Stale {
     /// The node.
     pub(super) node: NodeId,
@@ -58,11 +54,6 @@ pub(super) struct Stale {
 pub(super) struct FollowWrites {
     /// The focus's node.
     pub(super) node: NodeId,
-    /// Whether it is a terminal read through UI Automation.
-    pub(super) terminal: bool,
-    /// For a terminal, the caret read with its report, noted as the caret
-    /// last sent to Core.
-    pub(super) sent_caret: Option<CaretReport>,
     /// Where the subscription is moved.
     pub(super) target: Target,
 }
@@ -83,12 +74,6 @@ pub(super) enum FocusEffects {
     },
     /// A focus-now answer naming the focus already followed.
     Again {
-        /// What it owes now.
-        owed: Option<OwedWork>,
-        /// The trace of the event it came from.
-        trace: TraceId,
-        /// The event's observation, on the run's shared clock.
-        observed_at_us: u64,
         /// What only the shell applies.
         writes: FollowWrites,
     },
@@ -112,17 +97,7 @@ impl FocusEffects {
                 followed: followed.clone(),
                 reported: *reported,
             },
-            Self::Again {
-                owed,
-                trace,
-                observed_at_us,
-                ..
-            } => FocusCommit::Again {
-                target: None,
-                owed: owed.clone(),
-                trace: *trace,
-                observed_at_us: *observed_at_us,
-            },
+            Self::Again { .. } => FocusCommit::Again { target: None },
         }
     }
 
@@ -149,16 +124,8 @@ impl FocusEffects {
                 followed.subscription = subscribe(writes);
                 FocusCommit::Adopt { followed, reported }
             }
-            Self::Again {
-                owed,
-                trace,
-                observed_at_us,
-                writes,
-            } => FocusCommit::Again {
+            Self::Again { writes } => FocusCommit::Again {
                 target: subscribe(writes),
-                owed,
-                trace,
-                observed_at_us,
             },
         }
     }
@@ -176,12 +143,6 @@ pub(super) struct Effects {
     /// found: the subscription is moved to them only while that node is
     /// the followed focus.
     pub(super) element: Option<(NodeId, KeptTarget)>,
-    /// A terminal's new entry, the copy its read worked on.
-    pub(super) terminal: Option<(NodeId, crate::terminal::Terminal)>,
-    /// The caret last sent to Core for a focused terminal.
-    pub(super) sent_caret: Option<(NodeId, CaretReport)>,
-    /// The owed work of this node is done, read or failed.
-    pub(super) owed_done: Option<NodeId>,
     /// A read of this node's caret began at the instant given, in
     /// microseconds.
     pub(super) caret_read: Option<(NodeId, u64)>,
@@ -189,9 +150,6 @@ pub(super) struct Effects {
     pub(super) mark: Option<MarkChange>,
     /// A UIA focus's stale element, evicted before the focus is followed.
     pub(super) stale: Option<Stale>,
-    /// A held terminal's caret event, noted to be read once nothing else is
-    /// waiting, with its event's timing.
-    pub(super) noted_caret: Option<(NodeId, TraceId, u64, EventTiming)>,
     /// The program's text writes since its last commit, in order: its
     /// text facts' changes, which it applied to its own copies as it made
     /// them, with the ranges they name, and its patterns and support.
@@ -208,10 +166,8 @@ impl Effects {
             result: None,
             focus: self.focus.as_ref().map(FocusEffects::local),
             element: None,
-            owed_done: self.owed_done,
             caret_read: self.caret_read,
             mark: self.mark,
-            noted_caret: self.noted_caret,
             replaced: self.stale.as_ref().map(|stale| stale.node),
             text: Vec::new(),
         }
@@ -224,18 +180,14 @@ impl Effects {
             focus: None,
             element: None,
             result: self.result,
-            owed_done: self.owed_done,
             caret_read: self.caret_read,
             mark: self.mark,
-            noted_caret: self.noted_caret,
             replaced: self.stale.as_ref().map(|stale| stale.node),
             text: Vec::new(),
         };
         let writes = Writes {
             focus: self.focus,
             element: self.element,
-            terminal: self.terminal,
-            sent_caret: self.sent_caret,
             stale: self.stale,
             text: self.text,
         };
@@ -249,10 +201,6 @@ pub(super) struct Writes {
     pub(super) focus: Option<FocusEffects>,
     /// The element of a focus found after its report, with its node.
     pub(super) element: Option<(NodeId, KeptTarget)>,
-    /// A terminal's new entry.
-    pub(super) terminal: Option<(NodeId, crate::terminal::Terminal)>,
-    /// The caret last sent to Core for a focused terminal.
-    pub(super) sent_caret: Option<(NodeId, CaretReport)>,
     /// A UIA focus's stale element.
     pub(super) stale: Option<Stale>,
     /// The program's text writes, which give the change its text facts'

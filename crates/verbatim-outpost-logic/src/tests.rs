@@ -9,8 +9,8 @@ use std::time::Duration;
 
 use verbatim_model::protocol::{EventTiming, OutpostToCore, Query, QueryOutcome, QueryResult};
 use verbatim_model::{
-    Backend, CallCounts, CaretMotion, CaretRead, KeyFetch, NodeId, NodeSnapshot, NormalizedEvent,
-    ReadPurpose, Role, StateSet, TextOp, TextReply, TextUnit, TraceId,
+    CallCounts, CaretMotion, CaretRead, KeyFetch, NodeId, ReadPurpose, TextOp, TextReply, TextUnit,
+    TraceId,
 };
 
 use super::*;
@@ -186,86 +186,8 @@ fn done(request_id: u64) -> OutpostToCore {
     OutpostToCore::Reply {
         trace_id: TraceId::from_raw(1),
         request_id: RequestId::shell(request_id),
-        outcome: QueryOutcome::Done(QueryResult::Text(TextReply::Done)),
+        outcome: QueryOutcome::Done(QueryResult::Text(TextReply::Unanswered)),
         timing: EventTiming::default(),
-    }
-}
-
-/// A node `id` of `role`.
-fn node(id: u64, role: Role) -> NodeSnapshot {
-    NodeSnapshot {
-        id: NodeId::new(id),
-        backend: Backend::Msaa,
-        role,
-        name: None,
-        value: None,
-        states: StateSet::new(),
-        details: verbatim_model::NodeDetails::default(),
-    }
-}
-
-/// The caret a terminal's report was read with, which its first read is
-/// owed with.
-fn reported_caret() -> verbatim_model::CaretReport {
-    verbatim_model::CaretReport {
-        line: verbatim_model::TextChunk {
-            unit: TextUnit::Line,
-            text: String::new(),
-            start: verbatim_model::TextAnchor(1),
-            offset: 0,
-            languages: Vec::new(),
-            first: true,
-            last: true,
-            truncated: false,
-            formats: Vec::new(),
-        },
-        selection: None,
-        read_at_us: 1,
-    }
-}
-
-/// The commit that reports node `id` as the focus and follows it, owing a
-/// terminal's first read when `owes`.
-fn focus_change(id: u64, owes: bool) -> Change {
-    let focus = node(id, if owes { Role::Terminal } else { Role::Button });
-    Change {
-        result: Some(OutpostToCore::Event {
-            trace_id: TraceId::from_raw(2),
-            observed_at_us: 0,
-            backend: Backend::Msaa,
-            window: None,
-            application: None,
-            timing: EventTiming::default(),
-            event: NormalizedEvent::FocusChanged {
-                node: focus.clone(),
-                whole_window: false,
-                ancestors: Vec::new(),
-                selected_child: None,
-                text: None,
-                earlier: None,
-                group: None,
-                answers: None,
-                first_cached_ancestor: None,
-            },
-        }),
-        focus: Some(FocusCommit::Adopt {
-            reported: LastReported { role: focus.role },
-            followed: Box::new(Followed {
-                object: Some(Object::Msaa(9, -4, i32::try_from(id).unwrap_or(0))),
-                window: Some(9),
-                terminal: Followed::terminal_mark(owes, Some(9)),
-                owed: owes.then(|| {
-                    Owed::due(
-                        OwedWork::FirstRead(reported_caret()),
-                        TraceId::from_raw(3),
-                        0,
-                    )
-                }),
-                chain: vec![focus.clone()],
-                ..follow::plain_followed(focus.id, focus.role)
-            }),
-        }),
-        ..Change::default()
     }
 }
 
@@ -297,52 +219,6 @@ fn abandons(effects: &[Effect]) -> bool {
     effects
         .iter()
         .any(|effect| matches!(effect, Effect::Abandon { .. }))
-}
-
-/// A held console's absorption cleared by a terminal read's dispatch
-/// reaches the mailbox ahead of the read's program, so no update observed
-/// after the read begins is dropped.
-#[test]
-fn a_cleared_absorption_reaches_the_mailbox_before_the_read_that_cleared_it() {
-    let mut replay = Replay::new();
-    let request = program(&replay.push(console_caret(1), 1)).request;
-    replay.commit(request, focus_change(1, false), 2);
-    replay.finish(request, 2);
-    let effects = replay.push(console_update(1), 2);
-    let request = program(&effects).request;
-    let effects = replay.commit(
-        request,
-        Change {
-            mark: Some(MarkChange::Absorb(7)),
-            ..Change::default()
-        },
-        2,
-    );
-    assert!(matches!(
-        &effects[..],
-        [Effect::Marks(Marks {
-            absorbed: Some(7),
-            ..
-        })]
-    ));
-    replay.finish(request, 3);
-    let effects = replay.push(
-        Item::Query {
-            request_id: RequestId::shell(5),
-            query: Query::Text {
-                node_id: NodeId::new(1),
-                op: TextOp::TerminalHold,
-            },
-        },
-        4,
-    );
-    assert!(matches!(
-        &effects[..],
-        [
-            Effect::Marks(Marks { absorbed: None, .. }),
-            Effect::Dispatch(_)
-        ]
-    ));
 }
 
 /// A commit the followed focus's state table says cannot occur reaches the
@@ -708,7 +584,6 @@ fn the_idle_answer_waits_for_nothing_that_arrived_after_its_query() {
     replay.push(
         Item::Barrier {
             asker: Asker::Round(5),
-            behind_noted: false,
         },
         2,
     );
@@ -721,44 +596,9 @@ fn the_idle_answer_waits_for_nothing_that_arrived_after_its_query() {
     assert_eq!(handles(program(&effects)), 3);
 }
 
-#[test]
-fn a_noted_caret_is_read_with_its_events_timing() {
-    let mut replay = Replay::new();
-    let effects = replay.push(console_update(1), 1);
-    let request = program(&effects).request;
-    let timing = EventTiming {
-        observed_at_us: 1_000,
-        ..EventTiming::default()
-    };
-    replay.commit(
-        request,
-        Change {
-            noted_caret: Some((NodeId::new(4), TraceId::from_raw(6), 1_000, timing)),
-            ..Change::default()
-        },
-        2,
-    );
-    // Read once nothing else is ready, judged by its event's observation:
-    // a caret read since that event covers it, and no earlier one does.
-    let effects = replay.finish(request, 3);
-    match &program(&effects).work {
-        Work::Entry { entry, .. } => {
-            assert!(
-                matches!(entry.item, Item::NotedCaret { node_id } if node_id == NodeId::new(4)),
-                "the noted caret's read, not {:?}",
-                entry.item
-            );
-            assert_eq!(entry.timing.observed_at_us, 1_000);
-        }
-        work => panic!("the noted caret's read, not {work:?}"),
-    }
-}
-
-/// A test's settle, number `id`.
 fn settle(id: u64) -> Item {
     Item::Barrier {
         asker: Asker::Settle(id),
-        behind_noted: false,
     }
 }
 
@@ -924,50 +764,12 @@ fn a_before_read_sets_the_note_as_it_arrives_and_a_final_read_goes_ahead_of_the_
 }
 
 #[test]
-fn a_console_note_is_polled_when_nothing_else_is_ready_and_stops_at_its_end() {
-    let mut replay = Replay::new();
-    replay.input(
-        Input::KeyNote {
-            node: NodeId::new(1),
-            fetch: fetch(),
-            on: NoteOn::ConsoleHost,
-        },
-        1,
-    );
-    assert_eq!(
-        replay.reducer.next_timer(now(1)),
-        Some(Duration::from_millis(6))
-    );
-    let effects = replay.tick(6);
-    let read = program(&effects);
-    assert!(matches!(read.work, Work::NoteRead(_)));
-    let request = read.request;
-    // In flight, no poll is timed; a poll after it is due 5 ms later.
-    assert_eq!(replay.finish(request, 7).len(), 0);
-    assert_eq!(
-        replay.reducer.next_timer(now(7)),
-        Some(Duration::from_millis(11))
-    );
-    // The read due at the poll's bound is made, and the one reached after
-    // that bound is not: the note stops polling.
-    let effects = replay.tick(51);
-    let read = program(&effects).request;
-    assert!(programs(&replay.finish(read, 52)).is_empty());
-    assert_eq!(replay.reducer.next_timer(now(53)), None);
-    assert!(matches!(
-        note_at(&replay, 53).map(|note| note.reads),
-        Some(NoteReads::Terminal(TerminalReads::CaretAndText))
-    ));
-}
-
-#[test]
 fn a_verbatim_caret_move_clears_the_notes_of_its_node() {
     let mut replay = Replay::new();
     replay.input(
         Input::KeyNote {
             node: NodeId::new(1),
             fetch: fetch(),
-            on: NoteOn::Field,
         },
         1,
     );

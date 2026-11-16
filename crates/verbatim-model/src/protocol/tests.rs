@@ -31,23 +31,16 @@ fn timing() -> EventTiming {
 /// One sample of each [`CoreToOutpost`] variant, after `previous`.
 fn next_core_to_outpost(previous: Option<&CoreToOutpost>) -> Option<CoreToOutpost> {
     let Some(previous) = previous else {
-        return Some(CoreToOutpost::DeliverFact {
-            trace_id: TraceId::from_raw(1),
-            timing: timing(),
-            fact: DeliveredFact::UiaFocusReadsEnded,
-            win_event: None,
-        });
-    };
-    Some(match previous {
-        CoreToOutpost::DeliverFact { .. } => CoreToOutpost::ForwardingEnded { through: 1 },
-        CoreToOutpost::ForwardingEnded { .. } => CoreToOutpost::Query {
+        return Some(CoreToOutpost::Query {
             trace_id: TraceId::from_raw(2),
             request_id: RequestId::shell(1),
             query: Query::ReadFocus {
                 purpose: FocusPurpose::Plain,
             },
             timing: timing(),
-        },
+        });
+    };
+    Some(match previous {
         CoreToOutpost::Query { .. } => CoreToOutpost::CancelQuery {
             request_id: RequestId::shell(1),
         },
@@ -72,22 +65,16 @@ fn next_core_to_outpost(previous: Option<&CoreToOutpost>) -> Option<CoreToOutpos
                 motion: crate::CaretMotion::NextWord,
             },
         }),
-        CoreToOutpost::KeyNote(_) => CoreToOutpost::ReadTerminal {
-            node: crate::NodeId::new(1),
-            trace_id: crate::TraceId::from_raw(1),
-        },
-        CoreToOutpost::ReadTerminal { .. } => {
-            CoreToOutpost::Request(Box::new(crate::request::Ask {
-                number: crate::request::RequestNumber(1),
-                window: crate::WindowHandle(8),
-                verdict: crate::request::WindowVerdict::Msaa,
-                request: crate::request::Request::CurrentFocus {
-                    set: vec![crate::property::PropertyId::Name],
-                    known: Vec::new(),
-                    baseline: None,
-                },
-            }))
-        }
+        CoreToOutpost::KeyNote(_) => CoreToOutpost::Request(Box::new(crate::request::Ask {
+            number: crate::request::RequestNumber(1),
+            window: crate::WindowHandle(8),
+            verdict: crate::request::WindowVerdict::Msaa,
+            request: crate::request::Request::CurrentFocus {
+                set: vec![crate::property::PropertyId::Name],
+                known: Vec::new(),
+                baseline: None,
+            },
+        })),
         CoreToOutpost::Request(_) => CoreToOutpost::Cancel(crate::request::Cancel {
             number: crate::request::RequestNumber(1),
             reason: crate::request::CancelReason::Withdrawn,
@@ -234,8 +221,6 @@ fn every_variant_has_its_reviewed_kind() {
                 .collect()
         ),
         [
-            "DeliverFact: Routed",
-            "ForwardingEnded: Lifecycle",
             "Query: Ask",
             "CancelQuery: Ask",
             "Ping: Lifecycle",
@@ -246,7 +231,6 @@ fn every_variant_has_its_reviewed_kind() {
             "Assign: Lifecycle",
             "LiveReread: Routed",
             "KeyNote: Ask",
-            "ReadTerminal: Ask",
             "Request: Ask",
             "Cancel: Ask",
             "WindowDestroyed: Release",

@@ -1736,14 +1736,6 @@ impl ReducerThread<'_> {
                     tracing::debug!(%error, %outpost, "a key's note was refused");
                 }
             }
-            Effect::ReadTerminal(node) => {
-                let outpost = node.outpost();
-                let command = CoreToOutpost::ReadTerminal { node, trace_id };
-                if let Err(error) = self.context.supervisor.send_to_outpost(outpost, command) {
-                    // The next event's read covers it: nothing waits.
-                    tracing::debug!(%error, %outpost, "a terminal's read was refused");
-                }
-            }
             Effect::Withdraw { outpost, query_id } => {
                 let command = CoreToOutpost::CancelQuery {
                     request_id: RequestId::reducer(query_id.0),

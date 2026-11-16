@@ -89,14 +89,13 @@ pub use self::charge::Request;
 pub use self::entry::{Asker, Entry, Item, UiaEvent, UiaKind, WinKind, is_state_property};
 pub use self::follow::{
     Applied, Change, Facts, FocusCommit, FocusPath, FollowState, Followed, Group, LastReported,
-    LogicError, MarkChange, MsaaReport, Origin, Owed, OwedProgram, OwedWork, Route, Subscribed,
-    Subscription, Target, apply_local,
+    LogicError, MarkChange, MsaaReport, Origin, Route, Subscribed, Subscription, Target,
+    apply_local,
 };
-pub use self::intake::{Handling, Marks, Object, TerminalMark};
+pub use self::intake::{Handling, Object};
 pub use self::text::{
     Anchor, AnswerCut, CutLine, FieldReads, KeptSelection, KeyNote, LastRead, NOTE_LIFE,
-    NodeAnchors, NoteFetch, NoteOn, NoteReads, POLL_BOUND, POLL_INTERVAL, RangeKey, ReadSelection,
-    ReportCut, TerminalReads, TextChange, TextFacts,
+    NodeAnchors, NoteFetch, NoteReads, RangeKey, ReadSelection, ReportCut, TextChange, TextFacts,
 };
 pub use self::waiting::{Asks, Cancelled};
 pub use self::watch::{EVENT_WINDOW_US, WORD_AFTER_US, WatchProgram, WatchWork, Watches};
@@ -130,13 +129,9 @@ pub enum Work {
         /// How the program handles it.
         handling: Handling,
     },
-    /// The work the followed focus owes.
-    Owed(OwedProgram),
 
     /// Drops the objects the shell hands it: what a release let go of.
     Drop,
-    /// One read of the console poll, of this node under its note.
-    NoteRead(NodeId),
     /// Core's request, answered once ([`waiting`]).
     Ask(Box<verbatim_model::request::Ask>),
     /// A caret key's watch's check or final read ([`watch`]), answered
@@ -290,10 +285,6 @@ pub enum Effect {
         /// The generation started in its place.
         replacement: u64,
     },
-    /// The push-time copy of the facts' marks, given after a transition
-    /// that changed them, ahead of the transition's other effects so that
-    /// no program it dispatches runs before the mailbox judges by them.
-    Marks(Marks),
     /// A commit asked for what cannot occur: applied as nothing, for the
     /// shell to record as the logic error it is.
     LogicError(LogicError),
@@ -314,15 +305,12 @@ pub enum Input {
     /// Core withdraws query `0` if it has not started.
     Cancel(RequestId),
     /// Core's note of a key with no before read, set as it arrives, not
-    /// queued behind what waits; `console` when its node is the console
-    /// host's focused text area, which polls.
+    /// queued behind what waits.
     KeyNote {
         /// The key's node.
         node: NodeId,
         /// What the node's reads fetch.
         fetch: KeyFetch,
-        /// Which node it is.
-        on: NoteOn,
     },
     /// A verdict a program of generation `generation` probed, or a window
     /// it found destroyed, posted alone as it was made, even from an
@@ -393,10 +381,6 @@ struct Current {
     running: Option<(RequestId, TraceId)>,
     /// The Core request it runs ([`Asks::running`]), if it runs one.
     asked: Option<verbatim_model::request::RequestNumber>,
-    /// Whether it does work the idle barrier's answer waits for: a read of
-    /// the console poll, which may still read the terminal under the key's
-    /// trace.
-    deferred: bool,
 }
 
 /// The reducer.
@@ -485,36 +469,23 @@ impl Reducer {
         self.flight.accepts(request)
     }
 
-    /// When the shell is next to call [`tick`](Self::tick): the console
-    /// poll's due time while no program is in flight, no release is pending
-    /// and the outpost is not stopping (only then is it acted on), on the
-    /// shell's clock.
+    /// When the shell is next to call [`tick`](Self::tick): a waiting
+    /// watch's next check while no program is in flight, no release is
+    /// pending and the outpost is not stopping (only then is it acted on),
+    /// on the shell's clock.
     #[must_use]
     pub fn next_timer(&self, now: Now) -> Option<Duration> {
-        let mut times = Vec::new();
-        if !self.busy()
-            && !self.releasing
-            && !self.stopping
-            && let Some(due_us) = self.facts.text.poll_due()
-        {
-            let left = due_us.saturating_sub(now.wall_us);
-            // A time past the clock's range never comes.
-            times.extend(now.at.checked_add(Duration::from_micros(left)));
+        if self.busy() || self.releasing || self.stopping {
+            return None;
         }
-        if !self.busy()
-            && !self.releasing
-            && !self.stopping
-            && let Some(due_us) = self.watches.next_due()
-        {
-            let left = due_us.saturating_sub(now.wall_us);
-            times.extend(now.at.checked_add(Duration::from_micros(left)));
-        }
-        times.into_iter().min()
+        let due_us = self.watches.next_due()?;
+        let left = due_us.saturating_sub(now.wall_us);
+        // A time past the clock's range never comes.
+        now.at.checked_add(Duration::from_micros(left))
     }
 
     /// Takes `input` at `now`.
     pub fn input(&mut self, input: Input, now: Now) -> Vec<Effect> {
-        let before = self.observed();
         let mut effects = Vec::new();
         match input {
             Input::Entry(entry) => {
@@ -528,8 +499,8 @@ impl Reducer {
                     );
                 }
             }
-            Input::KeyNote { node, fetch, on } => {
-                Arc::make_mut(&mut self.facts.text).set_note(node.number(), fetch, now.wall_us, on);
+            Input::KeyNote { node, fetch } => {
+                Arc::make_mut(&mut self.facts.text).set_note(node.number(), fetch, now.wall_us);
             }
             Input::Verdict { generation, change } => {
                 self.record_verdict(generation, &change);
@@ -568,17 +539,14 @@ impl Reducer {
         }
         self.pump(now, &mut effects);
         self.answer_idle(&mut effects);
-        self.changed(&before, &mut effects);
         effects
     }
 
     /// The shell's timed wait has ended at `now`: whatever is due is done.
     pub fn tick(&mut self, now: Now) -> Vec<Effect> {
-        let before = self.observed();
         let mut effects = Vec::new();
         self.pump(now, &mut effects);
         self.answer_idle(&mut effects);
-        self.changed(&before, &mut effects);
         effects
     }
 
@@ -670,23 +638,6 @@ impl Reducer {
         }
     }
 
-    /// What the shell keeps a copy of, before a transition: the facts'
-    /// marks, for the mailbox ([`changed`](Self::changed)).
-    fn observed(&self) -> Marks {
-        self.facts.marks()
-    }
-
-    /// Gives the shell what a transition changed of what it keeps a copy
-    /// of, from `before`: the marks ahead of every other effect, so that a
-    /// program the transition dispatched, which may read what a cleared
-    /// mark would drop, starts only once the mailbox judges by them.
-    fn changed(&self, marks: &Marks, effects: &mut Vec<Effect>) {
-        let now = self.facts.marks();
-        if now != *marks {
-            effects.insert(0, Effect::Marks(now));
-        }
-    }
-
     /// What the reducer keeps of the program in flight, if it is
     /// `request`'s.
     fn current_of(&mut self, request: Request) -> Option<&mut Current> {
@@ -738,9 +689,8 @@ impl Reducer {
         if self.stopping {
             return false;
         }
-        let on = match read.purpose {
-            ReadPurpose::BeforeFieldKey => NoteOn::Field,
-            ReadPurpose::BeforeTerminalKey => NoteOn::Terminal,
+        match read.purpose {
+            ReadPurpose::BeforeFieldKey => {}
             ReadPurpose::Final => {
                 let note_until = self
                     .facts
@@ -752,8 +702,8 @@ impl Reducer {
                     .push_back((entry.clone(), Handling::FinalRead { note_until }));
                 return true;
             }
-        };
-        Arc::make_mut(&mut self.facts.text).set_note(node_id.number(), read.fetch, now.wall_us, on);
+        }
+        Arc::make_mut(&mut self.facts.text).set_note(node_id.number(), read.fetch, now.wall_us);
         false
     }
 
@@ -795,17 +745,7 @@ impl Reducer {
             }
             self.send(message, effects);
         }
-        if let Some((node_id, trace, observed_at_us, timing)) = change.noted_caret {
-            // The event's timing goes with it: its read is skipped only
-            // when a caret read since the event covers it.
-            self.intake.when_idle(Entry {
-                item: Item::NotedCaret { node_id },
-                trace,
-                observed_at_us,
-                timing,
-            });
-        }
-        let mut applied = follow::apply(&mut self.facts, self.flight.generation(), change);
+        let mut applied = follow::apply(&mut self.facts, change);
         let ranges = std::mem::take(&mut applied.ranges);
         if !ranges.is_empty() {
             effects.push(Effect::ForgetRanges(ranges));
@@ -915,22 +855,14 @@ impl Reducer {
     }
 
     /// The worker in charge was abandoned: its replacement is started, and
-    /// the program's query, the live re-read its entry answers, the owed
-    /// work it attempted are answered.
+    /// the program's query and the live re-read its entry answers are
+    /// answered.
     fn abandoned(&mut self, abandoned: Abandoned<Current>, effects: &mut Vec<Effect>) {
         let Abandoned {
             dead,
             replacement,
             item: current,
         } = abandoned;
-        if let Some(followed) = self.facts.follow.followed.as_mut()
-            && followed
-                .owed
-                .as_ref()
-                .is_some_and(|owed| owed.attempting == Some(dead))
-        {
-            followed.owed = None;
-        }
         effects.push(Effect::Abandon { dead, replacement });
         if let Some((request_id, trace)) = current.running {
             self.send(reply(request_id, trace, QueryOutcome::Abandoned), effects);
@@ -985,18 +917,12 @@ impl Reducer {
         // or a rule dropped its report.
     }
 
-    /// Answers the idle barrier's query once no deferred work is pending:
-    /// the program in flight is not a read of the console poll. The program
-    /// in flight is otherwise not waited for:
-    /// the query is reached only with none in flight, so a program in
-    /// flight then handles an entry that arrived after the query.
+    /// Answers the idle barrier's query once no watch waits. The program
+    /// in flight is not waited for: the query is reached only with none in
+    /// flight, so a program in flight then handles an entry that arrived
+    /// after the query.
     fn answer_idle(&mut self, effects: &mut Vec<Effect>) {
-        if !self.watches.is_empty()
-            || self
-                .flight
-                .running()
-                .is_some_and(|(_, current)| current.deferred)
-        {
+        if !self.watches.is_empty() {
             return;
         }
         if let Some(round) = self.idle_query.take() {
@@ -1032,23 +958,6 @@ impl Reducer {
                 self.dispatch(Work::Ask(ask), None, effects);
                 continue;
             }
-            let generation = self.flight.generation();
-            if let Some(followed) = self.facts.follow.followed.as_mut()
-                && let Some(owed) = followed
-                    .owed
-                    .as_mut()
-                    .filter(|owed| owed.attempting.is_none())
-            {
-                owed.attempting = Some(generation);
-                let owed = owed.clone();
-                // Whatever the owed read observes must reach it.
-                if owed_clears_absorb(&owed) {
-                    self.facts.follow.absorbed = None;
-                }
-                let node = followed.node;
-                self.dispatch(Work::Owed(OwedProgram { node, owed }), None, effects);
-                continue;
-            }
             if let Some((entry, handling)) = self.after.pop_front() {
                 self.dispatch_entry(entry, handling, effects);
                 continue;
@@ -1057,23 +966,8 @@ impl Reducer {
                 self.dispatch(Work::Drop, None, effects);
                 continue;
             }
-            let Some(entry) = self.intake.next(&self.facts.marks()) else {
-                // Nothing else is ready: the console poll's due time is
-                // acted on, its read waited for by the idle answer since
-                // after it the program reads the terminal.
-                let due = (self
-                    .facts
-                    .text
-                    .poll_due()
-                    .is_some_and(|due| due <= now.wall_us))
-                .then(|| Arc::make_mut(&mut self.facts.text).reach_poll(now.wall_us))
-                .flatten();
-                let Some(node) = due else { return };
-                self.dispatch(Work::NoteRead(NodeId::new(node)), None, effects);
-                if let Some(current) = self.flight.item_mut() {
-                    current.deferred = true;
-                }
-                continue;
+            let Some(entry) = self.intake.next() else {
+                return;
             };
             self.run(entry, now, effects);
         }
@@ -1083,35 +977,15 @@ impl Reducer {
     /// the rest dispatched.
     fn run(&mut self, entry: Entry, now: Now, effects: &mut Vec<Effect>) {
         match entry.item {
-            Item::Barrier {
-                asker,
-                behind_noted,
-            } => {
-                // A noted caret is work owed: the barrier goes directly
-                // behind it, and waits for nothing more when it is reached
-                // again.
-                if !behind_noted && let Some(noted) = self.intake.take_idle() {
-                    let barrier = Entry {
-                        item: Item::Barrier {
-                            asker,
-                            behind_noted: true,
-                        },
-                        ..entry
-                    };
-                    self.intake.push_ahead([noted, barrier]);
-                } else {
-                    // Answered before anything after it is dispatched: a
-                    // test's settle at once, Core's round once no deferred
-                    // work is pending.
-                    match asker {
-                        Asker::Round(round) => {
-                            self.idle_query = Some(round);
-                            self.answer_idle(effects);
-                        }
-                        Asker::Settle(id) => effects.push(Effect::Settled(id)),
-                    }
+            // Answered before anything after it is dispatched: a test's
+            // settle at once, Core's round once no watch waits.
+            Item::Barrier { asker } => match asker {
+                Asker::Round(round) => {
+                    self.idle_query = Some(round);
+                    self.answer_idle(effects);
                 }
-            }
+                Asker::Settle(id) => effects.push(Effect::Settled(id)),
+            },
             Item::NodesHeld {
                 nodes,
                 mut anchors,
@@ -1164,11 +1038,6 @@ impl Reducer {
     /// Dispatches a program for `entry`.
     fn dispatch_entry(&mut self, entry: Entry, handling: Handling, effects: &mut Vec<Effect>) {
         let running = query_of(&entry);
-        // Anything that may end a held terminal's hold reads every update
-        // observed after it begins.
-        if clears_absorb(&entry.item) {
-            self.facts.follow.absorbed = None;
-        }
         let work = Work::Entry { entry, handling };
         self.dispatch(work, running, effects);
     }
@@ -1190,7 +1059,6 @@ impl Reducer {
                 _ => None,
             },
             running,
-            deferred: false,
         };
         let request = self.flight.start(current);
         effects.push(Effect::Dispatch(Box::new(Program {
@@ -1244,31 +1112,6 @@ fn verbatims_caret_move(work: &Work) -> Option<NodeId> {
         return None;
     };
     matches!(op, TextOp::MoveCaret(_) | TextOp::Select { .. }).then_some(*node_id)
-}
-
-/// Whether handling `item` may end a held terminal's hold, so its read
-/// must see every update observed after it begins: a caret key, and
-/// Core's on-demand reading but for a change of text.
-fn clears_absorb(item: &Item) -> bool {
-    matches!(
-        item,
-        Item::Query {
-            query: Query::Text {
-                op: TextOp::ReadCaret(_)
-                    | TextOp::TerminalHold
-                    | TextOp::TerminalRead { .. }
-                    | TextOp::TerminalCancel,
-                ..
-            },
-            ..
-        }
-    )
-}
-
-/// Whether attempting `owed` may end a held terminal's hold: a terminal's
-/// first read.
-fn owed_clears_absorb(owed: &Owed) -> bool {
-    matches!(owed.work, OwedWork::FirstRead(_))
 }
 
 /// The query `entry` answers, if it is one.

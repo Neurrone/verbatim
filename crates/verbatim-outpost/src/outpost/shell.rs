@@ -29,16 +29,15 @@ use std::time::Instant;
 use verbatim_model::NoteRequest;
 use verbatim_model::TraceId;
 use verbatim_model::protocol::{EventTiming, OutpostToCore, QueryOutcome, RequestId, Responder};
-use verbatim_reader_rules::CONSOLE_WINDOW_CLASS;
+
 use verbatim_uia::{Agile, Kept};
-use verbatim_win32::window::window_class_name;
 
 use super::Context;
 use super::commit::{Effects, FocusEffects, KeptTarget, Writes};
 use super::outbound::Carried;
 use super::reducer::{
-    Asker, Change, Cut, Effect, Entry, Input, Item, Marks, NoteOn, Now, Program, Reducer, Request,
-    Subscribed, VerdictChange,
+    Asker, Change, Cut, Effect, Entry, Input, Item, Now, Program, Reducer, Request, Subscribed,
+    VerdictChange,
 };
 use super::store::{Removed, Store, Tag};
 use super::worker::{self, Charge, Job};
@@ -95,8 +94,7 @@ pub(super) enum Posted {
 }
 
 /// The mailbox: an append-only queue under one lock, which every producer
-/// appends to and only the shell drains, with the push-time copies of the
-/// reducer's marks that the producers' drops are judged by.
+/// appends to and only the shell drains.
 #[derive(Default)]
 pub(super) struct Mailbox {
     state: Lock<MailboxState>,
@@ -109,8 +107,6 @@ pub(super) struct Mailbox {
 #[derive(Default)]
 struct MailboxState {
     posted: VecDeque<Posted>,
-    /// The reducer's marks, as its last change of them left them.
-    marks: Marks,
     /// Whether the shell waits, so that an append sets the alarm's event;
     /// taken by the first to set it.
     asleep: bool,
@@ -145,20 +141,14 @@ impl Mailbox {
         self.rouse(state);
     }
 
-    /// Appends `entry`, from `source`, unless the reducer's marks drop it
-    /// as it is pushed, waking nobody ([`Marks::drops_on_arrival`]).
+    /// Appends `entry`, from `source`.
     pub(super) fn push(&self, entry: Entry) {
         let mut state = self.lock();
-        if state.closed || state.marks.drops_on_arrival(&entry.item) {
+        if state.closed {
             return;
         }
         state.posted.push_back(Posted::Entry(entry));
         self.rouse(state);
-    }
-
-    /// The reducer's marks, for the drops judged at push.
-    fn set_marks(&self, marks: Marks) {
-        self.lock().marks = marks;
     }
 
     /// Everything posted, waiting for something to be posted or for `at`,
@@ -338,9 +328,7 @@ fn discard(effects: Effects, garbage: &mut Garbage) {
     if let Some(stale) = writes.stale {
         garbage.elements.extend(stale.element);
     }
-    garbage
-        .store
-        .push(Removed::of_text(writes.text).with_terminal(writes.terminal.map(|(_, entry)| entry)));
+    garbage.store.push(Removed::of_text(writes.text));
 }
 
 /// Makes the writes of `effects`, a commit of request `tag`, that only the
@@ -349,8 +337,7 @@ fn discard(effects: Effects, garbage: &mut Garbage) {
 /// facts' changes those the store made. Called only for a commit the
 /// reducer accepts, in the order the program made them: its text writes,
 /// made before the rest as its text calls came first; the stale element
-/// evicted before the focus is followed; then the follow's caret; then a
-/// terminal's entry and the caret sent.
+/// evicted before the focus is followed; then the follow.
 fn write(
     store: &Store,
     tag: Tag,
@@ -362,8 +349,6 @@ fn write(
     let Writes {
         mut focus,
         element,
-        terminal,
-        sent_caret,
         stale,
         text,
     } = writes;
@@ -390,29 +375,15 @@ fn write(
             let_go_of_target(target, garbage);
         }
         garbage.elements.extend(evicted);
-        garbage.store.push(store.remove_terminal(stale.node));
     }
     change.focus = focus.map(|focus| {
         focus.into_commit(|writes| {
-            // A terminal gaining the focus has its caret reported afresh:
-            // the caret read with its report is the one sent.
-            if writes.terminal {
-                store.set_sent_caret(writes.node, writes.sent_caret, true);
-            } else {
-                store.set_sent_caret(writes.node, None, false);
-            }
             writes
                 .target
                 .map(|target| tokens_of(target, elements, garbage))
         })
     });
     change.element = element.map(|(node, target)| (node, tokens_of(target, elements, garbage)));
-    if let Some((node, entry)) = terminal {
-        garbage.store.push(store.put_terminal(node, entry));
-    }
-    if let Some((node, caret)) = sent_caret {
-        store.set_sent_caret(node, Some(caret), true);
-    }
     change
 }
 
@@ -539,27 +510,10 @@ impl Shell {
             Posted::CancelAsk(cancel) => Input::CancelAsk(cancel),
             Posted::WindowDestroyed(window) => Input::WindowDestroyed(window),
             Posted::Answered { request, answer } => Input::Answered { request, answer },
-            Posted::KeyNote(note) => {
-                // Only the console host polls its note; finding it is a
-                // local call, whatever the application is doing.
-                let on = match note {
-                    NoteRequest::Field { .. } => NoteOn::Field,
-                    NoteRequest::Terminal { node, .. }
-                        if self.context.store.has_terminal(node)
-                            && self.reducer.followed_window().is_some_and(|hwnd| {
-                                window_class_name(hwnd) == CONSOLE_WINDOW_CLASS
-                            }) =>
-                    {
-                        NoteOn::ConsoleHost
-                    }
-                    NoteRequest::Terminal { .. } => NoteOn::Terminal,
-                };
-                Input::KeyNote {
-                    node: note.node(),
-                    fetch: note.fetch(),
-                    on,
-                }
-            }
+            Posted::KeyNote(note) => Input::KeyNote {
+                node: note.node(),
+                fetch: note.fetch(),
+            },
             Posted::Verdict { generation, change } => Input::Verdict { generation, change },
             Posted::Commit { request, effects } => {
                 // A dead generation's or a claimed request's commit gives
@@ -625,7 +579,6 @@ impl Shell {
         self.settles.insert(id, done);
         let barrier = Item::Barrier {
             asker: Asker::Settle(id),
-            behind_noted: false,
         };
         Some(Input::Entry(Entry::own(
             barrier,
@@ -700,7 +653,6 @@ impl Shell {
                 self.count_parked();
                 self.spawn_worker(replacement, false);
             }
-            Effect::Marks(marks) => self.context.mailbox.set_marks(marks),
             Effect::LogicError(error) => {
                 tracing::error!(?error, "a commit asked for what cannot occur");
             }

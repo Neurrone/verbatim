@@ -89,12 +89,8 @@ impl ToChild for CoreToOutpost {
     fn relay_timing(&mut self) -> Option<&mut EventTiming> {
         match self {
             CoreToOutpost::Query { timing, .. } => Some(timing),
-            // Never sent by the supervisor: Core routes no listener fact.
-            CoreToOutpost::DeliverFact { .. }
-            | CoreToOutpost::ForwardingEnded { .. }
-            | CoreToOutpost::CancelQuery { .. }
+            CoreToOutpost::CancelQuery { .. }
             | CoreToOutpost::KeyNote(_)
-            | CoreToOutpost::ReadTerminal { .. }
             | CoreToOutpost::Ping { .. }
             | CoreToOutpost::Fetches(_)
             | CoreToOutpost::NodesHeld { .. }

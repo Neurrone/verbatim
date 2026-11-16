@@ -87,7 +87,7 @@ use verbatim_listener_logic::focus::{Arrival, FocusEvent, Judged};
 use verbatim_model::property::{PropertyId, PropertyValue, PropertyValues};
 use verbatim_model::protocol::{
     CoreToOutpost, DeliveredFact, EventTiming, FocusNow, FocusedControl, OutpostToCore, Query,
-    QueryOutcome, QueryResult, RequestId, WinEventStamp,
+    QueryOutcome, QueryResult, RequestId,
 };
 use verbatim_model::request::{
     Answer, CandidateKind, CompleteUia, CompletionFor, FocusNode, FocusRead, KnownAncestor,
@@ -522,9 +522,6 @@ pub struct OutpostUnderTest {
     /// The position of the last message read that carries nodes, as Core
     /// counts them, which Core's list of held nodes acknowledges.
     position: Cell<u64>,
-    /// The trace of the UIA focus event the listener's reader last read,
-    /// which its read is delivered under, as the listener sends it.
-    last_read: Cell<Option<TraceId>>,
     /// The trace of the listener's reader's last read, which Core's live
     /// re-read names it by.
     reader_trace: Cell<Option<TraceId>>,
@@ -668,10 +665,6 @@ impl OutpostUnderTest {
     }
 
     /// An outpost for `app`, watching it from the start, or a spare.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "the harness's every field, set once as the outpost is made"
-    )]
     fn build(
         app: &super::MockApp,
         options: OutpostOptions,
@@ -779,7 +772,6 @@ impl OutpostUnderTest {
             failed_reads_taken: Cell::new(0),
             core: RefCell::new(None),
             position: Cell::new(0),
-            last_read: Cell::new(None),
             reader_trace: Cell::new(None),
             observation,
             moves_to,
@@ -877,28 +869,6 @@ impl OutpostUnderTest {
     pub fn idle_round(&self, round: u64) {
         self.outpost
             .handle_command(&CoreToOutpost::IdleQuery { round });
-    }
-
-    /// Hands the outpost what the listener sends for the UIA focus event
-    /// `marker` names when its outcome is `judged`, observed at
-    /// `observed_at_us`.
-    pub fn listener_outcome(&self, marker: u64, judged: Judged, observed_at_us: u64) {
-        self.hand_over(judged.into_fact(marker, FocusEvent::Focus), observed_at_us);
-    }
-
-    /// Hands the outpost `fact`, observed at `observed_at_us`, as the
-    /// supervisor relays the listener's fact.
-    fn hand_over(&self, fact: DeliveredFact, observed_at_us: u64) {
-        let command = CoreToOutpost::DeliverFact {
-            trace_id: self.trace_for(&fact),
-            timing: EventTiming {
-                observed_at_us,
-                ..EventTiming::default()
-            },
-            fact,
-            win_event: None,
-        };
-        self.outpost.handle_command(&command);
     }
 
     /// Makes `hwnd` the window the outpost reads as the foreground from now
@@ -1512,74 +1482,6 @@ impl OutpostUnderTest {
         }
     }
 
-    /// Hands the outpost `fact`, as the supervisor relays the listener's
-    /// fact for a UIA event its callback received at `observed_at_us` on
-    /// the run's shared clock. Returns at once.
-    pub fn deliver_stamped(&self, fact: DeliveredFact, observed_at_us: u64) {
-        self.hand_over(fact, observed_at_us);
-    }
-
-    /// The trace `fact` is delivered under: a UIA focus read's is the
-    /// trace of the event the listener's reader last read, as the listener
-    /// sends it; any other fact's a new one.
-    fn trace_for(&self, fact: &DeliveredFact) -> TraceId {
-        match fact {
-            DeliveredFact::UiaFocusRead { .. } => {
-                self.last_read.take().unwrap_or_else(TraceId::mint)
-            }
-            _ => TraceId::mint(),
-        }
-    }
-
-    /// Hands the outpost `fact`, as the listener would, observed now on the
-    /// outpost's observation clock, and returns at once.
-    pub fn deliver(&self, fact: DeliveredFact) {
-        self.hand_over(fact, self.observed_now());
-    }
-
-    /// Hands the outpost the fact the listener forwards for an MSAA
-    /// `WinEvent`, with the thread that raised the event and when, which
-    /// the outpost matches with its own hook's copy, and returns at once.
-    pub fn deliver_win_event(&self, fact: DeliveredFact, stamp: WinEventStamp) {
-        self.deliver_win_event_observed(fact, stamp, self.observed_now());
-    }
-
-    /// [`deliver_win_event`](Self::deliver_win_event), the event observed
-    /// at `observed_at_us`, in microseconds on the outpost's observation
-    /// clock ([`observed_now`](Self::observed_now)).
-    pub fn deliver_win_event_observed(
-        &self,
-        fact: DeliveredFact,
-        stamp: WinEventStamp,
-        observed_at_us: u64,
-    ) {
-        let command = CoreToOutpost::DeliverFact {
-            trace_id: TraceId::mint(),
-            timing: EventTiming {
-                observed_at_us,
-                ..EventTiming::default()
-            },
-            fact,
-            win_event: Some(stamp),
-        };
-        self.outpost.handle_command(&command);
-    }
-
-    /// Tells the outpost, as the supervisor relays it, that the focus
-    /// listener forwards none of its application's `WinEvent`s raised after
-    /// `through`, an event clock time: the MSAA hand-over's end.
-    pub fn forwarding_ended(&self, through: u32) {
-        self.outpost
-            .handle_command(&CoreToOutpost::ForwardingEnded { through });
-    }
-
-    /// Hands the outpost `fact`, as the listener would, stamped on the
-    /// run's shared clock with the time it is handed over as the time it
-    /// was observed, and returns at once.
-    pub fn deliver_observed_now(&self, fact: DeliveredFact) {
-        self.hand_over(fact, self.observed_now());
-    }
-
     /// Sends the outpost a key's note, as Core would, and returns at once.
     pub fn key_note(&self, note: verbatim_model::NoteRequest) {
         self.outpost.handle_command(&CoreToOutpost::KeyNote(note));
@@ -1617,7 +1519,6 @@ impl OutpostUnderTest {
         let _ = verbatim_uia::calls::take();
         let _ = verbatim_uia::calls::take_failed_reads();
         let arrival = self.listener_arrival();
-        self.last_read.set(Some(arrival.trace));
         self.reader_trace.set(Some(arrival.trace));
         let judged = self.reader.borrow_mut().read(element, kind, arrival);
         (judged, verbatim_uia::calls::take())
@@ -1692,144 +1593,11 @@ impl OutpostUnderTest {
         self.reader.borrow_mut().check_fact(element, fact)
     }
 
-    /// Holds the outpost's idle worker: hands it a foreground change of
-    /// another application's window, not in front, whose program waits as
-    /// it begins until [`Self::release_worker`]
-    /// ([`Outpost::observe_foreground_programs`]), and returns once the
-    /// worker is waiting there. Events the test then has the application
-    /// raise wait in the outpost's intake, and are planned as one batch
-    /// when the worker goes on. The change itself says nothing, its window
-    /// not in front. The worker waits under the
-    /// change's deadline, so a step that holds it must be brief.
-    pub fn hold_worker(&self) {
-        self.hold_worker_on(super::another_applications_window().0 as isize);
-    }
-
-    /// [`Self::hold_worker`] on a foreground change of window `hwnd`, for
-    /// any backend: the worker waits as that change's program begins. A
-    /// change of a window that is not the foreground window then says
-    /// nothing.
-    pub fn hold_worker_on(&self, hwnd: isize) {
-        self.gate.set_closed(true);
-        self.deliver(DeliveredFact::Foreground { hwnd });
-        self.gate.wait_for_worker();
-    }
-
-    /// Lets the worker [`Self::hold_worker`] held go on through the
-    /// foreground change it waits in and `changes - 1` after it, and
-    /// returns once it waits as the next foreground change's program
-    /// begins: stepping one from one held foreground change to the next
-    /// has the worker handle everything handed to it between the two and
-    /// hold it again.
-    pub fn step_worker(&self, changes: u64) {
-        self.gate.step(changes);
-    }
-
-    /// Lets the worker [`Self::hold_worker`] held go on.
-    pub fn release_worker(&self) {
-        self.gate.set_closed(false);
-    }
-
     /// Makes the outpost's read of the focused element for a focus-now
     /// query answer `element`.
     pub fn read_focus_as(&self, element: &IUIAutomationElement) {
         *self.focus.lock().unwrap_or_else(PoisonError::into_inner) =
             Some(AgileReference::new(element).expect("an agile reference"));
-    }
-
-    /// Hands the outpost `fact` and returns the focus it reports, which
-    /// must be the next thing it says, and the only thing.
-    pub fn focus(&self, fact: DeliveredFact) -> Reported {
-        self.deliver(fact);
-        self.reported_focus()
-    }
-
-    /// The focus the outpost reports next, which must be the next thing it
-    /// says, and the only thing but a terminal's first read: one handed
-    /// over, or one its own hook took in from a focus event mockapp's
-    /// control raised.
-    pub fn reported_focus(&self) -> Reported {
-        let reported = match self.next() {
-            OutpostToCore::Event {
-                event:
-                    NormalizedEvent::FocusChanged {
-                        node,
-                        whole_window: false,
-                        ancestors,
-                        selected_child,
-                        text,
-                        earlier,
-                        first_cached_ancestor,
-                        answers,
-                        ..
-                    },
-                window,
-                timing,
-                trace_id,
-                ..
-            } => Reported {
-                node,
-                ancestors,
-                selected_child,
-                text: text.map(|text| *text),
-                earlier,
-                window: window.as_ref().map(|window| window.top_level),
-                facts: window,
-                calls: timing.calls,
-                failed_reads: 0,
-                first_cached_ancestor,
-                answers,
-                trace: trace_id,
-            },
-            other => panic!("the outpost said {other:?}, not a focus with its ancestors"),
-        };
-        // A terminal is read once it has the focus, and the read sent.
-        if reported.node.role == verbatim_model::Role::Terminal {
-            self.first_terminal_read(reported.node.id);
-        }
-        self.settled();
-        Reported {
-            failed_reads: self.take_failed_reads(),
-            ..reported
-        }
-    }
-
-    /// Takes the read of terminal `node` the outpost sends once the
-    /// terminal has the focus, which must be the next thing it says.
-    pub fn first_terminal_read(&self, node: NodeId) {
-        match self.next() {
-            OutpostToCore::Event {
-                event: NormalizedEvent::TerminalSnapshot { node_id, .. },
-                ..
-            } if node_id == node => {}
-            other => panic!("the outpost said {other:?}, not the terminal's first read"),
-        }
-    }
-
-    /// Hands the outpost an MSAA focus on mockapp's node `index`, as the
-    /// listener would, and returns the focus it reports.
-    pub fn msaa_focus(&self, hwnd: HWND, index: usize) -> Reported {
-        self.focus(DeliveredFact::MsaaFocus {
-            hwnd: hwnd.0 as isize,
-            id_object: i32::try_from(index + 1).expect("a small index"),
-            id_child: 0,
-        })
-    }
-
-    /// Hands the outpost a UIA focus on `element`, which mockapp reports
-    /// focused, as the listener reads and sends it, and returns the focus
-    /// it reports, with the listener's calls added to the outpost's.
-    /// `element` carries the listener's cache request.
-    pub fn uia_focus(&self, element: &Cached<ListenerEvent>) -> Reported {
-        let (judged, calls) = self.listener_read(element);
-        let Judged::Read(_) = &judged else {
-            panic!("the listener dropped the focus: {judged:?}");
-        };
-        let listener_failed_reads = verbatim_uia::calls::take_failed_reads();
-        let mut reported = self.focus(judged.into_fact(0, FocusEvent::Focus));
-        reported.calls += calls;
-        reported.failed_reads += listener_failed_reads;
-        reported
     }
 
     /// Asks the outpost for one object-navigation step, as Core would, and

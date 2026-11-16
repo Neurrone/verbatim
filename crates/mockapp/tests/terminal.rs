@@ -30,13 +30,13 @@ use verbatim_model::{
     NormalizedEvent, OutpostId, Pid, ReviewCommand, Role, SegmentContent, StateSet, TerminalScope,
     TerminalSnapshot, TextOp, TextReply, TraceId,
 };
-use verbatim_outpost::terminal::{Terminal, read};
+use verbatim_outpost::terminal::{ReadAsk, read};
 use verbatim_outpost::text::uia::UiaText;
 use verbatim_process::clock::now_us;
 use verbatim_uia::Uia;
 use verbatim_uia_rops::CaretLineQuery;
 use windows::Win32::Foundation::HWND;
-use windows::Win32::UI::Accessibility::IUIAutomationElement;
+use windows::Win32::UI::Accessibility::{IUIAutomationElement, IUIAutomationTextRange};
 
 /// The terminal's width in cells.
 const WIDTH: usize = 12;
@@ -72,8 +72,32 @@ fn show(app: &mut common::MockApp, hwnd: HWND, rows: &[&str]) {
     common::apply(app, hwnd, &format!("caret term {caret} {caret}"));
 }
 
-/// One read of the terminal of `scope` (a live read for `None`), as the
-/// worker makes it, and the snapshot it sends Core.
+/// What Core names in a terminal's reads: the start the last read minted,
+/// and the screen's shape from its model, 0 before it has one
+/// (`docs/design/readers-tell-core-asks-build3.md`, "The full read request
+/// and its starts").
+#[derive(Default)]
+struct Terminal {
+    start: Option<IUIAutomationTextRange>,
+    height: u32,
+    width: u32,
+}
+
+impl Terminal {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    /// The start the last read minted, which a history read or search
+    /// counts from.
+    fn start(&self) -> &IUIAutomationTextRange {
+        self.start.as_ref().expect("a read before")
+    }
+}
+
+/// One read of the terminal of `scope` (a fresh read for `None`), from the
+/// start the last read minted, as the worker makes it, and the snapshot it
+/// sends Core.
 fn read_terminal(
     uia: &Uia,
     source: &UiaText,
@@ -87,15 +111,23 @@ fn read_terminal(
         max_text: 4096,
         since: None,
     };
-    read(
+    let ask = ReadAsk {
+        start: terminal.start.as_ref(),
+        scope: scope.unwrap_or(TerminalScope::Fresh),
+        height: terminal.height,
+        width: terminal.width,
+        colours: false,
+    };
+    let mut answer = read(
         uia,
         (source.element(), source.pattern()),
         caret,
-        terminal,
-        (scope, remote, false),
+        &ask,
+        remote,
     )
-    .expect("the terminal reads")
-    .snapshot
+    .expect("the terminal reads");
+    terminal.start = answer.next_start.take();
+    answer.snapshot
 }
 
 /// mockapp's terminal read by the outpost's terminal module, and Core's
@@ -199,9 +231,12 @@ impl Session<'_> {
         let reply = match effect {
             Effect::Text(request) => match &request.op {
                 TextOp::ReadCaret(_) => TextReply::Unanswered,
-                // The session reads only when a test or Core asks.
-                TextOp::TerminalHold => TextReply::Done,
-                TextOp::TerminalHistory { above, whole, .. } => {
+                TextOp::TerminalHistory {
+                    above,
+                    whole,
+                    height,
+                    ..
+                } => {
                     self.histories += 1;
                     if let Some((app, hwnd, shown)) = self.before_history.take() {
                         let shown: Vec<&str> = shown.iter().map(String::as_str).collect();
@@ -211,8 +246,8 @@ impl Session<'_> {
                     let history = verbatim_outpost::terminal::history(
                         self.uia,
                         (self.source.element(), self.source.pattern()),
-                        &self.terminal,
-                        (*above, *whole, self.remote),
+                        self.terminal.start(),
+                        (*above, *whole, *height, self.remote),
                     )
                     .expect("the history is read");
                     // The path asked for answered, never the fallback.
@@ -221,28 +256,8 @@ impl Session<'_> {
                     TextReply::TerminalHistory {
                         text: history.text,
                         above: history.above,
-                        read: history.read,
+                        read: 0,
                     }
-                }
-                TextOp::TerminalShape { height, width } => {
-                    self.terminal.shape(*height, *width);
-                    TextReply::Done
-                }
-                TextOp::TerminalReadNow(scope) => {
-                    TextReply::TerminalSnapshot(Box::new(read_terminal(
-                        self.uia,
-                        &self.source,
-                        &mut self.terminal,
-                        (Some(*scope), self.remote),
-                    )))
-                }
-                TextOp::TerminalColours { from_ms, until_ms } => {
-                    // A read at once is sent as a live read; the request's
-                    // own answer, done, says nothing to Core.
-                    if self.terminal.colours((*from_ms, *until_ms)) {
-                        return Some(self.live_input());
-                    }
-                    TextReply::Done
                 }
                 TextOp::TerminalFind {
                     needle, from, rows, ..
@@ -256,7 +271,7 @@ impl Session<'_> {
                     let found = verbatim_outpost::terminal::find(
                         self.uia,
                         (self.source.element(), self.source.pattern()),
-                        &self.terminal,
+                        self.terminal.start(),
                         (needle, *from, *rows),
                         self.remote,
                     )
@@ -266,7 +281,7 @@ impl Session<'_> {
                     assert_eq!(path, if self.remote { "remote" } else { "classic" });
                     TextReply::TerminalFound {
                         matches: found.matches,
-                        read: found.read,
+                        read: 0,
                     }
                 }
                 op => panic!("Core asked the terminal {op:?}"),
@@ -636,7 +651,7 @@ fn find_on_path(
     (needle, from): (&str, i32),
     remote: bool,
 ) -> Vec<verbatim_model::TerminalMatch> {
-    let start = terminal.start_range().expect("a read placed the start");
+    let start = terminal.start().clone();
     let query = verbatim_uia_rops::FindQuery {
         element: source.element(),
         pattern: source.pattern(),

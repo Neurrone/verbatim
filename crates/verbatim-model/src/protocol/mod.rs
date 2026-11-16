@@ -658,37 +658,6 @@ pub enum FactKey {
     reason = "a message is built once and moved, never stored in bulk"
 )]
 pub enum CoreToOutpost {
-    /// Delivers a focus fact the focus listener captured, for this outpost's
-    /// target application (decision D13), threading the listener's
-    /// `trace_id` and observation (`timing`'s `observed_at_us`) through to
-    /// the emitted event so the event is ordered by, and the latency
-    /// timeline starts at, the real OS event rather than this delivery.
-    DeliverFact {
-        /// Trace ID the listener minted when it observed the OS event.
-        trace_id: TraceId,
-        /// When it was raised and observed: its `observed_at_us` is the
-        /// listener's observation, the first point on the keypress-to-audio
-        /// timeline.
-        #[serde(default)]
-        timing: EventTiming,
-        /// The routed fact, minus the pid (routing is done).
-        fact: DeliveredFact,
-        /// For an MSAA `WinEvent`'s fact, the thread that raised it and
-        /// when, by which the outpost matches it with its own hook's copy
-        /// and counts it in NVDA's limits; `None` for a UIA fact.
-        #[serde(default)]
-        win_event: Option<WinEventStamp>,
-    },
-    /// The listener forwards none of the application's `WinEvent` facts
-    /// raised after `through`, and every one it forwarded before is ahead
-    /// of this message, so the listener's copies and the outpost's hook's
-    /// are matched from now on only for events raised while the hook went
-    /// in (`books/dev/src/reference/crates/verbatim-outpost.md`, "The hand-over of an
-    /// application's MSAA events").
-    ForwardingEnded {
-        /// The listener's clock when it stopped, on the `WinEvent` clock.
-        through: u32,
-    },
     /// A query, answered by exactly one [`OutpostToCore::Reply`] carrying
     /// the same `request_id`.
     Query {
@@ -714,15 +683,6 @@ pub enum CoreToOutpost {
     /// The note of a key with no before read, set on its node as it
     /// arrives, with no reply: nothing waits on it.
     KeyNote(crate::NoteRequest),
-    /// Read this terminal now: a caret key was passed on in a terminal that
-    /// is not the console host. No reply and no lifecycle; a late or refused
-    /// one leaves the read to the next event.
-    ReadTerminal {
-        /// The terminal.
-        node: NodeId,
-        /// The trace of the key it is read for.
-        trace_id: TraceId,
-    },
     /// Liveness probe; answered by [`OutpostToCore::Pong`].
     Ping {
         /// When verbatim.exe began writing this command, in microseconds
@@ -845,14 +805,12 @@ impl CoreToOutpost {
             | CoreToOutpost::Request(_)
             | CoreToOutpost::Cancel(_)
             | CoreToOutpost::KeyNote(_)
-            | CoreToOutpost::ReadTerminal { .. }
             | CoreToOutpost::IdleQuery { .. } => Kind::Ask,
             CoreToOutpost::NodesHeld { .. } | CoreToOutpost::WindowDestroyed(_) => Kind::Release,
-            CoreToOutpost::Assign { .. }
-            | CoreToOutpost::Ping { .. }
-            | CoreToOutpost::Shutdown
-            | CoreToOutpost::ForwardingEnded { .. } => Kind::Lifecycle,
-            CoreToOutpost::DeliverFact { .. } | CoreToOutpost::LiveReread { .. } => Kind::Routed,
+            CoreToOutpost::Assign { .. } | CoreToOutpost::Ping { .. } | CoreToOutpost::Shutdown => {
+                Kind::Lifecycle
+            }
+            CoreToOutpost::LiveReread { .. } => Kind::Routed,
             CoreToOutpost::Fetches(_) => Kind::Configuration,
         }
     }
@@ -1690,11 +1648,6 @@ impl Named {
                     self.chunk(chunk);
                 }
             }
-            TextReply::TerminalSnapshot(snapshot) => {
-                if let Some(caret) = &snapshot.caret {
-                    self.caret(caret);
-                }
-            }
             TextReply::TerminalRead(read) => {
                 self.anchors.push(read.start);
                 self.anchors.extend(read.point);
@@ -1703,10 +1656,8 @@ impl Named {
                 }
             }
             TextReply::Range { .. }
-            | TextReply::Done
             | TextReply::Moved { .. }
             | TextReply::Selected(_)
-            | TextReply::TerminalUnchanged
             | TextReply::TerminalHistory { .. }
             | TextReply::TerminalFound { .. }
             | TextReply::Location { .. }

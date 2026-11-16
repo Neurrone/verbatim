@@ -250,27 +250,6 @@ fn fetch_of(key: CaretKey) -> KeyFetch {
     }
 }
 
-/// The read of a terminal asked at a key's pass, in a terminal other than
-/// the console host, whose caret poll covers its reads.
-fn terminal_read_now(state: &SrState, node: NodeId, trace_id: TraceId) -> Option<Effect> {
-    let console = state
-        .foreground
-        .window()
-        .is_some_and(|window| window.console);
-    let terminal = match state.current() {
-        Some(CurrentKey::Watched(Watched::Terminal(_))) => true,
-        Some(
-            CurrentKey::Watched(Watched::Field(_))
-            | CurrentKey::Reading { .. }
-            | CurrentKey::FinalReading { .. }
-            | CurrentKey::MovingBySentence { .. }
-            | CurrentKey::Review(_),
-        )
-        | None => false,
-    };
-    (terminal && !console).then(|| for_key(trace_id, Effect::ReadTerminal(node)))
-}
-
 /// `effect` carried under the key `trace_id`'s trace.
 fn for_key(trace_id: TraceId, effect: Effect) -> Effect {
     Effect::ForKey(trace_id, Box::new(effect))
@@ -428,11 +407,7 @@ fn start_held(state: &mut SrState, held: HeldKey) -> Vec<Effect> {
     let heard = replaced_key_heard(state, held.trace_id);
     let read = CaretRead {
         fetch: fetch_of(held.key),
-        purpose: if focus_is_terminal(state) {
-            ReadPurpose::BeforeTerminalKey
-        } else {
-            ReadPurpose::BeforeFieldKey
-        },
+        purpose: ReadPurpose::BeforeFieldKey,
     };
     let (query, effect) = state.queries.ask(
         Asking::Text(node, TextOp::ReadCaret(read)),
@@ -614,11 +589,7 @@ fn watch_from_last_read(
     effects.push(Effect::BoundHeldKey(Some((held.trace_id, bound_ms))));
     if sends_note {
         let fetch = fetch_of(held.key);
-        let request = if focus_is_terminal(state) {
-            NoteRequest::Terminal { node, fetch }
-        } else {
-            NoteRequest::Field { node, fetch }
-        };
+        let request = NoteRequest::Field { node, fetch };
         effects.push(for_key(held.trace_id, Effect::KeyNote(request)));
     }
     let passed = PassedKey {
@@ -1097,7 +1068,6 @@ fn before_read_answered(
     let watched = watched_on_focus(state, passed, before);
     set_current(state, CurrentKey::Watched(watched));
     effects.push(for_key(held.trace_id, Effect::PassHeldKey(held.trace_id)));
-    effects.extend(terminal_read_now(state, node, held.trace_id));
     effects.extend(pass_rule(state));
     effects
 }
@@ -1252,7 +1222,6 @@ fn before_read_given_up(
         (at_us, KEY_BOUND_MS, false),
     ));
     effects.push(for_key(trace_id, Effect::PassHeldKey(trace_id)));
-    effects.extend(terminal_read_now(state, node, trace_id));
     effects.extend(pass_rule(state));
     effects
 }

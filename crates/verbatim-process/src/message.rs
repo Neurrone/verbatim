@@ -244,7 +244,7 @@ mod tests {
     use verbatim_model::protocol::{
         DeliveredFact, DumpedTree, EventTiming, FocusNow, FocusedControl, ListenerFact, Query,
         QueryOutcome, QueryResult, RequestId, UiaAncestorFact, UiaFocusRead, UiaSnapshotFact,
-        Urgent, WinEventStamp,
+        Urgent,
     };
     use verbatim_model::{
         Backend, CallCounts, NodeDetails, NodeId, NodeSnapshot, NormalizedEvent, Pid, QueryKind,
@@ -536,7 +536,7 @@ mod tests {
     }
 
     #[test]
-    fn a_delivered_fact_round_trips() {
+    fn a_listener_fact_is_delivered_without_its_pid() {
         let snapshot = UiaSnapshotFact {
             runtime_id: vec![42, 7],
             role: Role::MenuItem,
@@ -579,59 +579,6 @@ mod tests {
                 focus: true,
             }
         );
-        for fact in [
-            DeliveredFact::UiaFocusMarker { marker: 9 },
-            DeliveredFact::UiaFocusDropped {
-                marker: 9,
-                focus: true,
-            },
-            DeliveredFact::UiaFocusReadsEnded,
-        ] {
-            let deliver = CoreToOutpost::DeliverFact {
-                trace_id: TraceId::mint(),
-                timing: EventTiming {
-                    observed_at_us: 1,
-                    ..EventTiming::default()
-                },
-                fact,
-                win_event: None,
-            };
-            let mut buffer = Vec::new();
-            write_message(&mut buffer, &deliver).expect("writes");
-            let read_back: Option<CoreToOutpost> =
-                read_message(&mut buffer.as_slice()).expect("reads");
-            assert_eq!(read_back, Some(deliver));
-        }
-
-        let deliver = CoreToOutpost::DeliverFact {
-            trace_id: TraceId::mint(),
-            timing: EventTiming {
-                observed_at_us: 1_752_000_000_001_000,
-                ..EventTiming::default()
-            },
-            fact: DeliveredFact::MsaaFocus {
-                hwnd: 0x1234,
-                id_object: -4,
-                id_child: 0,
-            },
-            win_event: Some(WinEventStamp {
-                thread: 77,
-                time: 1000,
-            }),
-        };
-        let mut buffer = Vec::new();
-        write_message(&mut buffer, &deliver).expect("writes");
-        let read_back: Option<CoreToOutpost> = read_message(&mut buffer.as_slice()).expect("reads");
-        assert_eq!(read_back, Some(deliver));
-    }
-
-    #[test]
-    fn forwarding_ended_round_trips() {
-        let command = CoreToOutpost::ForwardingEnded { through: 99 };
-        let mut buffer = Vec::new();
-        write_message(&mut buffer, &command).expect("writes");
-        let read_back: Option<CoreToOutpost> = read_message(&mut buffer.as_slice()).expect("reads");
-        assert_eq!(read_back, Some(command));
     }
 
     #[test]

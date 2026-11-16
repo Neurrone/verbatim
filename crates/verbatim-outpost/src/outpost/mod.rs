@@ -479,11 +479,7 @@ impl<'a> RequestContext<'a> {
             return Committed::Refused;
         }
         let local = effects.local();
-        reducer::apply_local(
-            &mut self.facts.borrow_mut(),
-            program.request.generation,
-            &local,
-        );
+        reducer::apply_local(&mut self.facts.borrow_mut(), &local);
         self.mailbox.post(Posted::Commit {
             request: program.request,
             effects: Box::new(effects),
@@ -593,11 +589,6 @@ impl Context {
     fn foreground_window(&self) -> isize {
         let reader = Arc::clone(&self.foreground.lock());
         reader()
-    }
-
-    /// Whether the store holds `node`: either registry keeps it.
-    fn holds(&self, node: NodeId) -> bool {
-        self.store.holds(node)
     }
 
     /// Sends `message` to Core without waiting, the nodes and anchors it
@@ -1264,12 +1255,8 @@ impl Outpost {
     pub fn handle_command(&self, command: &CoreToOutpost) {
         let context = &self.context;
         match command {
-            // Core tells and asks: the listener's facts and the hand-over's
-            // end are no longer the outpost's.
-            CoreToOutpost::DeliverFact { .. }
-            | CoreToOutpost::ForwardingEnded { .. }
-            | CoreToOutpost::LiveReread { .. } => {
-                tracing::debug!("a routed fact or live re-read is not the outpost's; dropped");
+            CoreToOutpost::LiveReread { .. } => {
+                tracing::debug!("a live re-read is not the outpost's; dropped");
             }
             CoreToOutpost::Query {
                 trace_id,
@@ -1297,7 +1284,6 @@ impl Outpost {
             CoreToOutpost::IdleQuery { round } => context.push(
                 Item::Barrier {
                     asker: reducer::Asker::Round(*round),
-                    behind_noted: false,
                 },
                 (TraceId::mint(), now_us(), EventTiming::default()),
             ),
@@ -1306,10 +1292,6 @@ impl Outpost {
             CoreToOutpost::CancelQuery { request_id } => {
                 context.mailbox.post(Posted::Cancel(*request_id));
             }
-            CoreToOutpost::ReadTerminal { node, trace_id } => context.push(
-                read_terminal_item(*node),
-                (*trace_id, now_us(), EventTiming::default()),
-            ),
             CoreToOutpost::KeyNote(note) => context.mailbox.post(Posted::KeyNote(*note)),
             CoreToOutpost::Request(ask) => context.mailbox.post(Posted::Ask(unstamped_ask(ask))),
             CoreToOutpost::Cancel(cancel) => context.mailbox.post(Posted::CancelAsk(*cancel)),
@@ -1434,14 +1416,6 @@ mod hook_stamp_tests {
             (timing.observed_at_us, timing.raised_ms_ago),
             (7_000_000, Some(3))
         );
-    }
-}
-
-/// The read Core asked of `node`, which it names stamped with this outpost's
-/// generation, under the number the outpost knows it by.
-fn read_terminal_item(node: NodeId) -> Item {
-    Item::ReadTerminal {
-        node_id: node.unstamped(),
     }
 }
 

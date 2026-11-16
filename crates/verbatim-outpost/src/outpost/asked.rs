@@ -40,6 +40,7 @@ use verbatim_model::request::{
 };
 use verbatim_model::{
     Backend, NodeDetails, NodeId, NodeSnapshot, Pid, QueryKind, Role, State, StateSet, TextAnchor,
+    TextOp, TextReply,
 };
 
 use super::read::{self, Client, ReadError};
@@ -53,6 +54,10 @@ use super::{Context, RequestContext};
 const MAX_NODES: usize = 1000;
 
 /// The answer to `ask`, read on the worker.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one arm per request of the shared list"
+)]
 pub(super) fn answer(context: &RequestContext<'_>, client: &mut Client, ask: &Ask) -> Answer {
     let mut probes = Vec::new();
     // Core's verdict for the request's window is the one its reads judge
@@ -108,9 +113,12 @@ pub(super) fn answer(context: &RequestContext<'_>, client: &mut Client, ask: &As
             )),
             Err(error) => failed(&error),
         },
-        Request::Text { node, op } => {
-            Outcome::Result(Reply::Text(text_reads::answer_asked(context, *node, op)))
-        }
+        Request::Text { node, op } => match op {
+            TextOp::ReadTerminal(_)
+            | TextOp::TerminalHistory { .. }
+            | TextOp::TerminalFind { .. } => terminal(context, client, *node, op),
+            _ => Outcome::Result(Reply::Text(text_reads::answer_asked(context, *node, op))),
+        },
         Request::Activate { node } => match read::activate(context, client, *node) {
             Ok(action) => Outcome::Result(Reply::Activated(action)),
             Err(error) => failed(&error),
@@ -156,6 +164,41 @@ pub(super) fn answer(context: &RequestContext<'_>, client: &mut Client, ask: &As
         outcome,
         probes,
         detail: String::new(),
+    }
+}
+
+/// A terminal's read, history read or search Core asks
+/// (`docs/design/readers-tell-core-asks-build3.md`): a terminal that is
+/// gone answers "not there", which ends Core's model of it, and any other
+/// read that brings nothing answers its reply, which Core takes as failed.
+fn terminal(
+    context: &RequestContext<'_>,
+    client: &mut Client,
+    node: NodeId,
+    op: &TextOp,
+) -> Outcome {
+    let Some(uia) = client.uia() else {
+        return Outcome::Result(Reply::Text(TextReply::Unanswered));
+    };
+    let reply = match op {
+        TextOp::ReadTerminal(read) => text_reads::terminal_read(context, uia, node, read),
+        TextOp::TerminalHistory {
+            above,
+            whole,
+            start,
+            height,
+        } => text_reads::terminal_history(context, uia, node, (*start, *above, *whole, *height)),
+        TextOp::TerminalFind {
+            needle,
+            from,
+            rows,
+            start,
+        } => text_reads::terminal_find(context, uia, node, *start, (needle, *from, *rows)),
+        _ => TextReply::Unsupported,
+    };
+    match reply {
+        TextReply::Gone => Outcome::NotThere,
+        reply => Outcome::Result(Reply::Text(reply)),
     }
 }
 

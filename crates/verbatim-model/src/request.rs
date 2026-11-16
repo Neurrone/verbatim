@@ -825,6 +825,29 @@ impl Ask {
     }
 }
 
+impl Request {
+    /// Whether Core asks it from outside the event queue, which a reader's
+    /// worker makes after every request of the queue's waiting with it
+    /// (`docs/design/readers-tell-core-asks-build1.md`, "Requests in Core"
+    /// and Table 14): a tree dump, the taskbar list's two reads, and a
+    /// terminal's reads for its output
+    /// (`docs/design/readers-tell-core-asks-build3.md`). `Follow` and a
+    /// terminal's baseline are the queue's, as are every other request.
+    #[must_use]
+    pub fn outside_the_queue(&self) -> bool {
+        match self {
+            Request::DumpTree { .. }
+            | Request::ShellItems { .. }
+            | Request::ShellItemPosition { .. } => true,
+            Request::Text {
+                op: crate::TextOp::ReadTerminal(read),
+                ..
+            } => read.output,
+            _ => false,
+        }
+    }
+}
+
 impl Answer {
     /// Stamps `outpost` on every node id the answer carries, as
     /// [`crate::protocol::OutpostToCore::assign_outpost`] stamps every

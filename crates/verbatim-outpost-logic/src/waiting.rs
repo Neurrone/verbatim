@@ -1,6 +1,10 @@
 //! Core's requests on the outpost's one worker
 //! (`docs/design/readers-tell-core-asks-build1.md`, Table 14): queued in
-//! the order Core sent them, run one at a time ahead of the outpost's own
+//! the order Core sent them, the event queue's requests (`Follow` and a
+//! terminal's baseline among them) ahead of every request from outside
+//! the queue still waiting ([`Request::outside_the_queue`]: a tree dump,
+//! the taskbar's reads, a terminal's reads for its output), so that keys
+//! never wait behind them; run one at a time ahead of the outpost's own
 //! work, each answered once with one of the five outcomes.
 //!
 //! A request queued is dispatched when no program runs. Cancel drops one
@@ -46,8 +50,10 @@ pub struct Asks {
 }
 
 impl Asks {
-    /// Queues `ask` behind those already queued; a `Follow` removes any
-    /// `Follow` still queued, whose answers are returned.
+    /// Queues `ask` behind those already queued of its order class, an
+    /// event queue's request ahead of every request from outside the queue
+    /// still queued; a `Follow` removes any `Follow` still queued, whose
+    /// answers are returned.
     pub fn push(&mut self, ask: Box<Ask>) -> Vec<Answer> {
         let mut replaced = Vec::new();
         if matches!(ask.request, Request::Follow(_)) {
@@ -59,7 +65,15 @@ impl Asks {
                 !follow
             });
         }
-        self.queued.push_back(ask);
+        let place = if ask.request.outside_the_queue() {
+            self.queued.len()
+        } else {
+            self.queued
+                .iter()
+                .position(|queued| queued.request.outside_the_queue())
+                .unwrap_or(self.queued.len())
+        };
+        self.queued.insert(place, ask);
         replaced
     }
 
@@ -209,6 +223,32 @@ mod tests {
             [ended(RequestNumber(2), "replaced by a newer Follow")]
         );
         assert_eq!(numbers(&asks), [3, 4]);
+        assert_eq!(asks.running(), Some(RequestNumber(1)));
+    }
+
+    fn outside(number: u64) -> Box<Ask> {
+        Box::new(Ask {
+            number: RequestNumber(number),
+            window: WindowHandle(1),
+            verdict: WindowVerdict::Uia,
+            request: Request::DumpTree { locations: false },
+        })
+    }
+
+    /// The event queue's requests are made ahead of every request from
+    /// outside the queue still queued, each class in the order Core sent
+    /// it; one already running is left to run (Table 14).
+    #[test]
+    fn the_queues_requests_go_ahead_of_requests_from_outside_it() {
+        let mut asks = Asks::default();
+        let _ = asks.push(outside(1));
+        let _ = asks.take_next();
+        let _ = asks.push(outside(2));
+        let _ = asks.push(ask(3));
+        let _ = asks.push(outside(4));
+        let _ = asks.push(follow(5, 1));
+        let _ = asks.push(ask(6));
+        assert_eq!(numbers(&asks), [3, 5, 6, 2, 4]);
         assert_eq!(asks.running(), Some(RequestNumber(1)));
     }
 

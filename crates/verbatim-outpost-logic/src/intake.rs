@@ -13,19 +13,7 @@
 //!   is read. A newer list of the nodes Core holds replaces a waiting one.
 //! - A batch is everything that accumulated while the worker handled the
 //!   previous batch, up to and including the first idle query, handed out
-//!   in the order it arrived, with one exception: the focused terminal's
-//!   caret event is handed out after a text change of the terminal that
-//!   waits behind it with only events between, since the change's read
-//!   reads the caret too ([`caret_after_update`]).
-//! - One entry may be kept apart, handed out only when nothing else is
-//!   ready: a held terminal's noted caret ([`Item::NotedCaret`]).
-//! - The console updates of one window may be absorbed: dropped as they are
-//!   pushed, without waking the worker, while the worker has marked that
-//!   window's console terminal as held with its text changed and no caret
-//!   key's note live ([`Marks::absorbed`]). The worker does nothing for
-//!   such an update, and the read that ends the hold covers every update
-//!   observed before it, as NVDA's console handler skips an update while
-//!   one is already pending.
+//!   in the order it arrived.
 //!
 //! The intake is the reducer's ([`super`]): the mailbox's producers only
 //! append, and the reducer pushes each entry it drains into the intake, in
@@ -35,7 +23,6 @@ use std::collections::VecDeque;
 
 use verbatim_model::protocol::RequestId;
 use verbatim_model::{NotificationKind, NotificationProcessing, TraceId};
-use verbatim_reader_rules::Window;
 
 use super::entry::{Asker, Entry, Item, UiaKind, WinKind};
 
@@ -93,83 +80,14 @@ pub enum Handling {
     },
 }
 
-/// The intake: what waits, the batch being handed out, and the entry kept
-/// for when nothing else is ready. One owner, the reducer, so it takes no
-/// lock.
+/// The intake: what waits, and the batch being handed out. One owner, the
+/// reducer, so it takes no lock.
 #[cfg_attr(test, derive(Clone, Debug))]
 #[derive(Default)]
 pub struct Intake {
     waiting: VecDeque<Waiting>,
     batch: VecDeque<Entry>,
-    /// A noted caret ([`Item::NotedCaret`]), handed out only when nothing
-    /// else is ready ([`Intake::when_idle`]).
-    idle: Option<Entry>,
     closed: bool,
-}
-
-/// What the intake and the mailbox read of the focus last reported,
-/// computed from the followed focus's record ([`super::Facts::marks`]): the
-/// intake is given them where it reads them, and the mailbox a copy whenever
-/// the computed value changes.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Marks {
-    /// The object last reported as the focus.
-    pub focused: Option<Object>,
-    /// Whether `focused` is a terminal read through UIA, and its window
-    /// when known: its caret event is handed out after its text changes
-    /// waiting with it ([`caret_after_update`]).
-    pub terminal: TerminalMark,
-    /// Whether `focused` was reached by redirecting a control's own focus
-    /// event to its focused child, whose own event is still to come.
-    pub focus_redirected: bool,
-    /// The console window whose updates are dropped as they are pushed: a
-    /// program marks it while its focused console terminal's reading is
-    /// held with its text changed and no key's note lives on it, when
-    /// it would do nothing for an update; it is cleared before anything
-    /// that changes that is handled, so an update observed after the read
-    /// that ends the hold begins is never dropped, and by a new focus.
-    pub absorbed: Option<isize>,
-}
-
-/// Whether the focus is a terminal read through UIA, and in which window
-/// ([`Marks::terminal`]).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum TerminalMark {
-    /// The focus is not such a terminal.
-    #[default]
-    None,
-    /// The focus is such a terminal whose window is not known.
-    WindowUnknown,
-    /// The focus is such a terminal in this window.
-    In(Window),
-}
-
-impl TerminalMark {
-    /// A terminal in `window`, or one whose window is not known when
-    /// `window` is `None`.
-    #[must_use]
-    pub fn of(window: Option<Window>) -> Self {
-        window.map_or(Self::WindowUnknown, Self::In)
-    }
-}
-
-impl Marks {
-    /// Whether `item` is dropped as it is pushed, waking nobody: a console
-    /// update while its window's updates are absorbed, for which a program
-    /// would do nothing and which the read that ends the hold covers
-    /// ([`Marks::absorbed`]). Judged by the mailbox as an entry is pushed,
-    /// on its copy of these marks.
-    #[must_use]
-    pub fn drops_on_arrival(&self, item: &Item) -> bool {
-        match item {
-            Item::Msaa {
-                kind: WinKind::ConsoleUpdate,
-                hwnd,
-                ..
-            } => self.absorbed == Some(*hwnd),
-            _ => false,
-        }
-    }
 }
 
 /// What one push did besides queuing its entry: the objects parked for
@@ -202,11 +120,9 @@ impl Intake {
     }
 
     /// The next entry to handle, planning a new batch from everything
-    /// waiting up to the first idle query when the current one is done,
-    /// by the focus in `marks`. With nothing else ready it gives the entry
-    /// [`when_idle`](Self::when_idle) kept, if any. `None` when nothing is
-    /// ready.
-    pub fn next(&mut self, marks: &Marks) -> Option<Entry> {
+    /// waiting up to the first idle query when the current one is done.
+    /// `None` when nothing is ready.
+    pub fn next(&mut self) -> Option<Entry> {
         if let Some(entry) = self.batch.pop_front() {
             return Some(entry);
         }
@@ -218,17 +134,14 @@ impl Intake {
             .position(|waiting| matches!(waiting.entry.item, Item::Barrier { .. }))
             .map_or(self.waiting.len(), |at| at.saturating_add(1));
         if ready > 0 {
-            let mut waiting: Vec<Waiting> = self.waiting.drain(..ready).collect();
-            caret_after_update(&mut waiting, marks.focused.as_ref(), marks.terminal);
-            self.batch = waiting.into_iter().map(|waiting| waiting.entry).collect();
-            if let Some(entry) = self.batch.pop_front() {
-                return Some(entry);
-            }
+            self.batch = self
+                .waiting
+                .drain(..ready)
+                .map(|waiting| waiting.entry)
+                .collect();
+            return self.batch.pop_front();
         }
-        if self.closed {
-            return None;
-        }
-        self.idle.take()
+        None
     }
 
     /// Closes the queue for the outpost's shutdown: everything waiting and
@@ -241,8 +154,7 @@ impl Intake {
             .waiting
             .drain(..)
             .map(|waiting| waiting.entry)
-            .chain(self.batch.drain(..))
-            .chain(self.idle.take());
+            .chain(self.batch.drain(..));
         dropped.flat_map(|entry| entry.item.parked()).collect()
     }
 
@@ -254,33 +166,6 @@ impl Intake {
         self.waiting.retain(|waiting| !is_it(&waiting.entry));
         self.batch.retain(|entry| !is_it(entry));
         Some(trace)
-    }
-
-    /// Puts `entries` ahead of everything waiting, for the idle barrier's
-    /// query the reducer has reached with a noted caret owed: the query
-    /// ends its batch and nothing after it has been handled, so the query
-    /// waits for that caret and for nothing that arrived after it.
-    pub fn push_ahead(&mut self, entries: impl IntoIterator<Item = Entry>) {
-        if self.closed {
-            return;
-        }
-        for (offset, entry) in entries.into_iter().enumerate() {
-            let key = key_of(&entry.item);
-            self.waiting.insert(offset, Waiting { key, entry });
-        }
-    }
-
-    /// Keeps `entry` to be handed out once nothing else is ready, in place
-    /// of one kept before: a held terminal's noted caret is read then
-    /// ([`Item::NotedCaret`]), when the burst of events that kept the
-    /// outpost busy has ended, and not on every caret event of the burst.
-    pub fn when_idle(&mut self, entry: Entry) {
-        self.idle = Some(entry);
-    }
-
-    /// Takes the entry [`when_idle`](Self::when_idle) kept, if any.
-    pub fn take_idle(&mut self) -> Option<Entry> {
-        self.idle.take()
     }
 
     /// The entries waiting, then those planned and not yet handed out.
@@ -351,61 +236,7 @@ fn key_of(item: &Item) -> Option<Key> {
         }
         // Only the newest list of held nodes matters.
         Item::NodesHeld { .. } => Some(Key::NodesHeld),
-        Item::Msaa { .. }
-        | Item::Query { .. }
-        | Item::NotedCaret { .. }
-        | Item::ReadTerminal { .. }
-        | Item::Barrier { .. } => None,
-    }
-}
-
-/// Moves the focused terminal's caret event (its console's caret event, or
-/// its UIA caret event in Windows Terminal), when it waits ahead of a text
-/// change of the same terminal (its console update, or its UIA text change),
-/// to just after the newest such change, as long as only events lie between
-/// them. The text change's read reads the caret too, so the caret event is
-/// then covered by it and reads nothing (`Context::caret_read_since`), where
-/// handled first it read the caret once more for nothing; a batch with a
-/// query or anything else between the two keeps its order. Windows Terminal
-/// raises its caret event after its text change, but the intake moves a
-/// newer change that replaces a waiting one to the back, behind the caret
-/// event; the console host raises the two in either order.
-fn caret_after_update(
-    waiting: &mut Vec<Waiting>,
-    focused: Option<&Object>,
-    terminal: TerminalMark,
-) {
-    let window = match terminal {
-        TerminalMark::None => return,
-        TerminalMark::WindowUnknown => None,
-        TerminalMark::In(window) => Some(window),
-    };
-    let Some(Object::Uia(runtime_id)) = focused else {
-        return;
-    };
-    let uia_caret = Key::Uia(2, 0, runtime_id.clone());
-    let console_caret = window.map(|window| Key::Console(WinKind::ConsoleCaret, window.get()));
-    let Some(at) = waiting.iter().position(|waiting| {
-        let key = waiting.key.as_ref();
-        key == Some(&uia_caret) || (key.is_some() && key == console_caret.as_ref())
-    }) else {
-        return;
-    };
-    let text_changed = Key::Uia(3, 0, runtime_id.clone());
-    let console_update = window.map(|window| Key::Console(WinKind::ConsoleUpdate, window.get()));
-    let mut newest_change = None;
-    for (index, later) in waiting.iter().enumerate().skip(at.saturating_add(1)) {
-        if !matches!(later.entry.item, Item::Msaa { .. } | Item::Uia(_)) {
-            break;
-        }
-        let key = later.key.as_ref();
-        if key == Some(&text_changed) || (key.is_some() && key == console_update.as_ref()) {
-            newest_change = Some(index);
-        }
-    }
-    if let Some(change) = newest_change {
-        let caret = waiting.remove(at);
-        waiting.insert(change, caret);
+        Item::Msaa { .. } | Item::Query { .. } | Item::Barrier { .. } => None,
     }
 }
 
@@ -416,18 +247,6 @@ mod tests {
 
     use super::super::entry::UiaEvent;
     use super::*;
-
-    /// The marks of a focus on `object`, a terminal read through UIA in
-    /// window `terminal` when that is given.
-    fn focused(object: Option<Object>, terminal: Option<isize>) -> Marks {
-        Marks {
-            focused: object,
-            terminal: terminal.map_or(TerminalMark::None, |hwnd| {
-                TerminalMark::In(Window::new(hwnd).expect("a window"))
-            }),
-            ..Marks::default()
-        }
-    }
 
     fn snapshot(runtime_id: Vec<i32>) -> UiaSnapshotFact {
         UiaSnapshotFact {
@@ -449,8 +268,8 @@ mod tests {
     }
 
     /// Hands out everything ready, by the observation of each entry.
-    fn handed_out(intake: &mut Intake, marks: &Marks) -> Vec<u64> {
-        std::iter::from_fn(|| intake.next(marks))
+    fn handed_out(intake: &mut Intake) -> Vec<u64> {
+        std::iter::from_fn(|| intake.next())
             .map(|entry| entry.observed_at_us)
             .collect()
     }
@@ -482,7 +301,7 @@ mod tests {
         push_item(&mut intake, console(WinKind::ConsoleUpdate, 7), 1);
         push_item(&mut intake, console(WinKind::ConsoleUpdate, 8), 2);
         push_item(&mut intake, console(WinKind::ConsoleUpdate, 7), 3);
-        assert_eq!(handed_out(&mut intake, &Marks::default()), [2, 3]);
+        assert_eq!(handed_out(&mut intake), [2, 3]);
     }
 
     #[test]
@@ -492,51 +311,12 @@ mod tests {
         push_item(&mut intake, text_event(UiaKind::TextSelection, &[1]), 2);
         push_item(&mut intake, text_event(UiaKind::TextChanged, &[2]), 3);
         push_item(&mut intake, text_event(UiaKind::TextChanged, &[1]), 4);
-        assert_eq!(handed_out(&mut intake, &Marks::default()), [2, 3, 4]);
-    }
-
-    #[test]
-    fn a_focused_terminals_caret_event_is_planned_after_its_text_change() {
-        let terminal = [42, 7];
-        let marks = focused(Some(Object::Uia(terminal.to_vec())), Some(7));
-        let mut intake = Intake::default();
-        // The console host's text area, whose caret its console's caret
-        // event tells of, and its output its console updates.
-        push_item(&mut intake, console(WinKind::ConsoleCaret, 7), 1);
-        push_item(&mut intake, console(WinKind::ConsoleUpdate, 7), 2);
-        assert_eq!(handed_out(&mut intake, &marks), [2, 1]);
-        // Windows Terminal's control, whose output its UIA text change
-        // tells of.
-        push_item(
-            &mut intake,
-            text_event(UiaKind::TextSelection, &terminal),
-            3,
-        );
-        push_item(&mut intake, text_event(UiaKind::TextChanged, &terminal), 4);
-        assert_eq!(handed_out(&mut intake, &marks), [4, 3]);
-    }
-
-    #[test]
-    fn a_held_consoles_updates_are_dropped_at_push_until_the_mark_is_cleared() {
-        let mut marks = Marks {
-            absorbed: Some(7),
-            ..Marks::default()
-        };
-        assert!(marks.drops_on_arrival(&console(WinKind::ConsoleUpdate, 7)));
-        // Another window's update, and the held window's caret, still come.
-        assert!(!marks.drops_on_arrival(&console(WinKind::ConsoleUpdate, 8)));
-        assert!(!marks.drops_on_arrival(&console(WinKind::ConsoleCaret, 7)));
-        marks.absorbed = None;
-        assert!(
-            !marks.drops_on_arrival(&console(WinKind::ConsoleUpdate, 7)),
-            "the next update comes through"
-        );
+        assert_eq!(handed_out(&mut intake), [2, 3, 4]);
     }
 
     fn idle_query(round: u64) -> Item {
         Item::Barrier {
             asker: Asker::Round(round),
-            behind_noted: false,
         }
     }
 
@@ -552,7 +332,7 @@ mod tests {
         // Behind the query, a newer update of the same window still
         // replaces the one waiting with it.
         push_item(&mut intake, console(WinKind::ConsoleUpdate, 7), 4);
-        assert_eq!(handed_out(&mut intake, &Marks::default()), [1, 2, 4]);
+        assert_eq!(handed_out(&mut intake), [1, 2, 4]);
     }
 
     #[test]
@@ -566,7 +346,7 @@ mod tests {
         push_item(&mut intake, held(1), 1);
         push_item(&mut intake, console(WinKind::ConsoleUpdate, 7), 2);
         push_item(&mut intake, held(2), 3);
-        assert_eq!(handed_out(&mut intake, &Marks::default()), [2, 3]);
+        assert_eq!(handed_out(&mut intake), [2, 3]);
     }
 
     #[test]
@@ -586,6 +366,6 @@ mod tests {
         push_item(&mut intake, console(WinKind::ConsoleUpdate, 7), 2);
         assert_eq!(intake.cancel(RequestId::shell(5)), Some(trace));
         assert_eq!(intake.cancel(RequestId::shell(5)), None);
-        assert_eq!(handed_out(&mut intake, &Marks::default()), [2]);
+        assert_eq!(handed_out(&mut intake), [2]);
     }
 }

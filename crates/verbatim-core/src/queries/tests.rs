@@ -8,8 +8,8 @@ use verbatim_model::protocol::{QueryOutcome, QueryResult};
 use verbatim_model::{
     Backend, CaretChanges, CaretKey, CaretMotion, CaretReply, CaretReport, EarlierElement, Effect,
     FocusText, Input, KeySeq, NodeDetails, NodeId, NodeSnapshot, NormalizedEvent, OutpostId, Pid,
-    QueryId, ReviewCommand, Role, StateSet, TerminalSnapshot, TerminalText, TextAnchor, TextChunk,
-    TextOp, TextReply, TextUnit, TraceId,
+    QueryId, ReviewCommand, Role, StateSet, TextAnchor, TextChunk, TextOp, TextReply, TextUnit,
+    TraceId,
 };
 
 use crate::queries::Then;
@@ -88,33 +88,6 @@ fn focus(
             first_cached_ancestor: None,
         },
     )
-}
-
-/// A read of a console showing a prompt, its caret after it.
-pub(super) fn console_read(read: u64, at_ms: u64) -> TerminalSnapshot {
-    TerminalSnapshot {
-        text: TerminalText::unpadded("PS> "),
-        screen: TerminalText::unpadded("PS> "),
-        from_start: false,
-        shrank: false,
-        at_document_start: true,
-        alternate: false,
-        first_row: TerminalText::unpadded("PS> "),
-        caret_rows_to_end: 1,
-        caret_line: TerminalText::unpadded("PS> "),
-        caret_column: 4,
-        above: 0,
-        started_ms: at_ms,
-        ended_ms: at_ms,
-        waited: false,
-        read,
-        colours: None,
-        caret: Some(CaretReport {
-            line: line("PS> ", 900, 4),
-            selection: None,
-            read_at_us: at_ms * 1_000,
-        }),
-    }
 }
 
 /// The text box focused with its caret, on [`EDIT_OUTPOST`].
@@ -512,9 +485,6 @@ fn fitting(outpost: OutpostId, asked: &Asked) -> QueryResult {
                 moved: 0,
                 chunks: vec![line("hello world", 300, 0)],
             },
-            TextOp::TerminalRead { .. } | TextOp::TerminalCancel | TextOp::TerminalReadNow(_) => {
-                TextReply::TerminalSnapshot(Box::new(console_read(2, 1_600)))
-            }
             TextOp::TerminalHistory { .. } => TextReply::TerminalHistory {
                 text: String::new(),
                 above: 0,
@@ -525,7 +495,7 @@ fn fitting(outpost: OutpostId, asked: &Asked) -> QueryResult {
                 read: 2,
             },
             TextOp::Location(_) => TextReply::NoText,
-            _ => TextReply::Done,
+            _ => TextReply::Unsupported,
         }),
     }
 }

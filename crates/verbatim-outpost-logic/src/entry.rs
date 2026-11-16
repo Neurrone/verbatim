@@ -4,7 +4,7 @@
 //! the key they are parked under (`books/dev/src/explanation/design/ownership.md`).
 
 use verbatim_model::protocol::{EventTiming, Query, RequestId, UiaSnapshotFact};
-use verbatim_model::{NodeId, Notification, TraceId};
+use verbatim_model::{Notification, TraceId};
 /// The `WinEvent` kinds an outpost still takes in
 /// (`docs/design/readers-tell-core-asks-build1.md`, "The outpost in this
 /// build"): a console host's console events, which its own hook delivers,
@@ -164,31 +164,13 @@ pub enum Item {
         /// The position of the last message Core has handled.
         acknowledged: u64,
     },
-    /// A caret event of the focused terminal `node_id`, noted while its
-    /// reading was held and its text had changed unread: its caret is read
-    /// once nothing else is waiting, unless a read since saw it, so Core's
-    /// copy of the caret catches up when a burst of output ends rather
-    /// than at the next read Core asks for.
-    NotedCaret {
-        /// The terminal's node.
-        node_id: NodeId,
-    },
-    /// Core passed a caret key on in this terminal: read it now.
-    ReadTerminal {
-        /// The terminal's node.
-        node_id: NodeId,
-    },
     /// The idle barrier (`docs/design/communication.md`, section 6.7):
     /// it ends its batch, and is reached once everything that arrived
-    /// before it has been handled and a noted caret is read. Core's round
-    /// is answered then once no deferred work is pending, a test's settle
-    /// at once. `behind_noted` once the reducer has put it directly behind
-    /// the noted caret, so that reaching it again waits for nothing more.
+    /// before it has been handled. Core's round is answered then once no
+    /// deferred work is pending, a test's settle at once.
     Barrier {
         /// Who asked for it.
         asker: Asker,
-        /// Whether the reducer has put it directly behind the noted caret.
-        behind_noted: bool,
     },
 }
 

@@ -51,7 +51,7 @@ enum Wire<'a> {
     Reply {
         trace_id: TraceId,
         request_id: RequestId,
-        outcome: WireOutcome<'a>,
+        outcome: WireOutcome,
         timing: EventTiming,
     },
 }
@@ -67,24 +67,19 @@ enum WireEvent<'a> {
 
 /// [`QueryOutcome::Done`] with a terminal's reply.
 #[derive(Serialize, Deserialize)]
-enum WireOutcome<'a> {
-    Done(WireResult<'a>),
+enum WireOutcome {
+    Done(WireResult),
 }
 
 /// [`QueryResult::Text`] with a terminal's reply.
 #[derive(Serialize, Deserialize)]
-enum WireResult<'a> {
-    Text(WireReply<'a>),
+enum WireResult {
+    Text(WireReply),
 }
 
 /// The [`TextReply`]s that carry a terminal's text.
 #[derive(Serialize, Deserialize)]
-#[expect(
-    clippy::enum_variant_names,
-    reason = "the model's variants' names, which the JSON carries"
-)]
-enum WireReply<'a> {
-    TerminalSnapshot(Box<Snapshot<'a>>),
+enum WireReply {
     TerminalHistory { text: Range, above: u32, read: u64 },
     TerminalFound { matches: Vec<Match>, read: u64 },
 }
@@ -193,9 +188,6 @@ impl<'a> Terminal<'a> {
                 timing,
             } => {
                 let reply = match reply {
-                    TextReply::TerminalSnapshot(snapshot) => {
-                        WireReply::TerminalSnapshot(Box::new(layout.snapshot(snapshot)))
-                    }
                     TextReply::TerminalHistory { text, above, read } => {
                         WireReply::TerminalHistory {
                             text: layout.text(text),
@@ -369,9 +361,6 @@ pub(super) fn decode(body: &[u8], raw: &[u8]) -> io::Result<OutpostToCore> {
             timing,
         } => {
             let reply = match reply {
-                WireReply::TerminalSnapshot(snapshot) => {
-                    TextReply::TerminalSnapshot(Box::new(section.snapshot(*snapshot)?))
-                }
                 WireReply::TerminalHistory { text, above, read } => TextReply::TerminalHistory {
                     text: section.text(text)?,
                     above,
@@ -687,11 +676,7 @@ mod tests {
                     }),
                 },
             },
-            reply(TextReply::TerminalSnapshot(Box::new(snapshot(
-                &cyrillic,
-                "",
-                Some(colours),
-            )))),
+            event(snapshot(&cyrillic, "", Some(colours))),
             reply(TextReply::TerminalHistory {
                 text: cyrillic.clone(),
                 above: 2,
@@ -741,18 +726,18 @@ mod tests {
     /// the runs' records.
     #[test]
     fn a_terminals_text_and_colours_are_the_raw_section_and_the_body_names_them() {
-        let message = reply(TextReply::TerminalSnapshot(Box::new(TerminalSnapshot {
+        let message = event(TerminalSnapshot {
             text: text("ab"),
             screen: text("пр"),
             first_row: TerminalText::default(),
             colours: Some(vec![vec![run(0, 2, 7, 0)], Vec::new()]),
             ..snapshot("", "", None)
-        })));
+        });
         let (body, raw) = parts_of(&message);
         let body: serde_json::Value = serde_json::from_slice(&body).expect("JSON");
         assert_eq!(
-            body["Reply"]["outcome"],
-            serde_json::json!({"Done": {"Text": {"TerminalSnapshot": {
+            body["Event"]["event"]["TerminalSnapshot"]["snapshot"],
+            serde_json::json!({
                 "text": {"raw": [0, 2], "lengths": [[1, 2]]},
                 "screen": {"raw": [2, 4], "lengths": [[1, 2]]},
                 "from_start": true,
@@ -769,7 +754,7 @@ mod tests {
                 "waited": true,
                 "read": 9,
                 "colours": {"raw": [6, 16], "rows": [1, 0]},
-            }}}})
+            })
         );
         let mut expected = "abпр".as_bytes().to_vec();
         for value in [0u32, 2, 7, 0] {
@@ -800,8 +785,7 @@ mod tests {
                     node_id: NodeId::new(1),
                 },
             },
-            reply(TextReply::Done),
-            reply(TextReply::TerminalUnchanged),
+            reply(TextReply::Unanswered),
         ];
         for message in &messages {
             let json = serde_json::to_vec(message).expect("JSON");
