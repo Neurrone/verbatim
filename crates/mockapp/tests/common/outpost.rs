@@ -1044,11 +1044,11 @@ impl OutpostUnderTest {
             &ReadObject {
                 object: ObjectRef::Kept(verbatim_model::tell::ElementToken(0)),
                 set: {
-                    let mut set = self.reported_set.borrow().clone();
-                    if !set.contains(&PropertyId::Description) {
-                        set.push(PropertyId::Description);
+                    let mut walked = self.reported_set.borrow().clone();
+                    if !walked.contains(&PropertyId::Description) {
+                        walked.push(PropertyId::Description);
                     }
-                    set
+                    walked
                 },
                 relation: None,
                 descendants: false,

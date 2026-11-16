@@ -1526,6 +1526,7 @@ fn a_failed_remote_program_continues_from_the_parent_window_live() {
     );
 }
 
+#[expect(clippy::too_many_lines, reason = "the list of this binary's tests")]
 fn main() {
     harness::run_isolated(&[
         (
