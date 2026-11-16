@@ -1,6 +1,6 @@
 # ADR 0003: Readers tell, Core asks
 
-Status: decided, 2026-11-13, by Dickson; the model and every ruling in it are his. Nothing in it is built yet: the phase "Readers tell, Core asks" in [the roadmap](https://github.com/Neurrone/verbatim/blob/main/docs/roadmap.md) builds it, and until each build lands, [How focus works](../../explanation/design/focus.md) and the crate guides describe the code as it is.
+Status: decided, 2026-11-13, by Dickson; the model and every ruling in it are his. Built in three builds by the phase "Readers tell, Core asks" in [the roadmap](https://github.com/Neurrone/verbatim/blob/main/docs/roadmap.md); [How focus works](../../explanation/design/focus.md) and the crate guides describe the code.
 
 This record keeps why Verbatim's readers stop reading on their own and read only when Core asks: the problem, the decisions with their reasons, the options weighed, and the limits accepted. Every rule in full, with NVDA's source for each, the order of the builds and the measurements are in [the build notes](https://github.com/Neurrone/verbatim/blob/main/docs/design/readers-tell-core-asks.md).
 
