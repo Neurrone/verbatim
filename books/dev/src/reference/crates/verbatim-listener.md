@@ -99,7 +99,10 @@ this shape are in `books/dev/src/explanation/architecture.md`, section 1
   does not use it.
 - `focus_read::read_object` is the listener's answer to Core's generic
   read of an element, the read a reading thread makes for a kept element,
-  for a test that stands in for the listener holding the element itself.
+  for a test that stands in for the listener holding the element itself;
+  `focus_read::read_object_observed` is the same read, telling a test the
+  name of each call before it makes it, so the test can change the
+  application's windows between two of them.
 
 ## Progress bars
 
