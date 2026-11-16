@@ -336,7 +336,8 @@ fn ready(
     node.details
         .parent_automation_id
         .clone_from(&origin.parent_automation_id);
-    let (nearest_first, kept_ancestors) = chain(state, &read.ancestors, read.met, known, backend)?;
+    let (nearest_first, mut kept_ancestors) =
+        chain(state, &read.ancestors, read.met, known, backend)?;
     let read_foreground = match &read.foreground {
         Some(foreground) => Some(snapshot(foreground, node_backend(foreground, backend))?),
         None => None,
@@ -347,13 +348,27 @@ fn ready(
     // so that it enters the frame and says its title. The frame is a
     // top-level window, read through MSAA as its client pane, which stands
     // for it; the answer's values do not carry that mark, so it is set
-    // here, or the pane would be structure and say nothing.
+    // here, or the pane would be structure and say nothing. Core keeps it
+    // as the focus's outermost ancestor too, so the next focus in the menu,
+    // which meets the menu and reads no foreground, keeps the frame above
+    // it and enters nothing, and a focus that reads it again finds it
+    // already entered: the title is said once, entering the menu.
     if origin.frame_owned
         && let Some(frame) = &read_foreground
         && !ancestors.iter().any(|ancestor| ancestor.id == frame.id)
     {
         let mut frame = frame.clone();
         frame.details.top_level_client = frame.role == Role::Pane;
+        kept_ancestors.push(KeptAncestor {
+            node: frame.id,
+            runtime_id: None,
+            window: read
+                .foreground
+                .as_ref()
+                .and_then(|frame| own_window(&frame.read.values)),
+            simple_child: false,
+            dialog_text: None,
+        });
         ancestors.push(frame);
     }
     ancestors.reverse();

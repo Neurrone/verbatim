@@ -978,6 +978,140 @@ fn a_focus_in_the_hidden_frames_popup_menu_with_no_owner_says_the_frames_title()
     );
 }
 
+/// A focus tell of child `child` of Verbatim's popup menu, as
+/// [`a_focus_in_the_hidden_frames_popup_menu_with_no_owner_says_the_frames_title`]
+/// makes it.
+fn frame_menu_tell(child: i32) -> Event {
+    let mut tell = msaa_tell(-4);
+    tell.object = EventObject::Msaa {
+        window: WindowHandle(6),
+        object: -4,
+        child,
+    };
+    tell.window = TellWindow::Found(Box::new(AcceptanceFacts {
+        window: facet(6, "#32768"),
+        root: facet(6, "#32768"),
+        root_owner: facet(6, "#32768"),
+        foreground: WindowHandle(8),
+        foreground_root_owner: WindowHandle(8),
+        window_to_foreground: Relation::Outside,
+        root_owner_to_foreground: Relation::Outside,
+        root_owner_is_foregrounds: false,
+        window_to_active: Relation::Outside,
+        root_topmost: true,
+        window_topmost: true,
+        hidden_frame_owned: true,
+        ..facts("#32768")
+    }));
+    tell
+}
+
+/// A focus answer in Verbatim's popup menu: node `number` named `name`
+/// with role `role`, read by child `child`, and the hidden frame, titled
+/// "Verbatim", as its foreground object when `frame`.
+fn frame_menu_read(number: u64, name: &str, role: Role, child: i32, frame: bool) -> FocusRead {
+    let mut read = focus_read(Some(HeldIds {
+        event: MsaaIds {
+            window: WindowHandle(6),
+            object: -4,
+            child,
+        },
+        held_child: child,
+    }));
+    read.focus.read.node = Some(node(number));
+    read.focus.read.values = values(name, role);
+    read.focus.read.window = win(6);
+    read.ancestors.clear();
+    let mut values = values("Verbatim", Role::Pane);
+    values.0.push(PropertyAnswer {
+        id: PropertyId::NativeWindow,
+        value: Some(PropertyValue::Window(WindowHandle(8))),
+    });
+    read.foreground = frame.then(|| FocusNode {
+        read: NodeRead {
+            node: Some(node(1)),
+            window: win(8),
+            values,
+        },
+        runtime_id: None,
+    });
+    read
+}
+
+/// Down Arrow twice in Verbatim's popup menu (`menu_and_settings_dialog`'s
+/// artifacts): the first item meets the menu and reads no foreground; the
+/// frame's foreground report then arrives, which leaves the focus in the
+/// menu, the frame being its outermost ancestor; the second item, its
+/// walk meeting nothing Core knows, reads the menu and the frame again.
+/// The frame's title is said only on entering the menu.
+#[test]
+fn a_focus_moving_in_the_hidden_frames_popup_menu_says_the_frames_title_once() {
+    let mut state = ready();
+    let frame = Foreground {
+        window: WindowHandle(8),
+        root_owner: WindowHandle(8),
+        process: APP,
+        thread: 41,
+        by_class: None,
+        shell: false,
+    };
+    // The first foreground report's startup read, which finds nothing.
+    assert_eq!(
+        feed_at(&mut state, 500, Input::Foreground(frame)),
+        ["send Outpost(Pid(40)) CurrentFocus"]
+    );
+    feed_at(
+        &mut state,
+        600,
+        answer_outcome(OUTPOST, 1, WireOutcome::NotThere),
+    );
+    feed_at(&mut state, 1_000, entry(frame_menu_tell(0)));
+    let menu = frame_menu_read(3, "Context", Role::Menu, 0, true);
+    let tried = |read| RunRead {
+        tried: vec![Tried::Focus(Box::new(read))],
+    };
+    assert_eq!(
+        feed_at(
+            &mut state,
+            2_000,
+            answer(OUTPOST, 2, Reply::Run(tried(menu)))
+        ),
+        ["Label(\"Verbatim\")", "Label(\"Context\") Role(Menu)"]
+    );
+    feed_at(&mut state, 3_000, entry(frame_menu_tell(1)));
+    let mut settings = frame_menu_read(5, "Settings...", Role::MenuItem, 1, false);
+    settings.met = Some(0);
+    assert_eq!(
+        feed_at(
+            &mut state,
+            4_000,
+            answer(OUTPOST, 3, Reply::Run(tried(settings)))
+        ),
+        ["Label(\"Settings...\")"]
+    );
+    // The frame's foreground report comes again, after the item's focus.
+    assert_eq!(
+        feed_at(&mut state, 4_500, Input::Foreground(frame)),
+        NOTHING
+    );
+    assert!(state.versions.last.is_some());
+    feed_at(&mut state, 5_000, entry(frame_menu_tell(3)));
+    let mut exit = frame_menu_read(6, "Exit", Role::MenuItem, 3, true);
+    exit.ancestors.push(FocusAncestor {
+        node: frame_menu_read(3, "Context", Role::Menu, 0, false).focus,
+        simple_child: false,
+        dialog_text: None,
+    });
+    assert_eq!(
+        feed_at(
+            &mut state,
+            6_000,
+            answer(OUTPOST, 4, Reply::Run(tried(exit)))
+        ),
+        ["Label(\"Exit\")"]
+    );
+}
+
 #[test]
 fn a_focus_whose_top_level_window_is_an_ignored_processs_is_dropped_at_its_answer() {
     let mut state = asked_completion();

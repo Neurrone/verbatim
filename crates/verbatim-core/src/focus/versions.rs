@@ -69,10 +69,15 @@ pub(crate) struct Place {
 
 impl Place {
     /// Whether `window` is a top-level window unrelated to this place:
-    /// neither its top-level window nor its root owner (Table 3, columns D
-    /// and E).
+    /// neither its top-level window, nor its root owner, nor an ancestor's
+    /// window (Table 3, columns D and E). The last holds only for a focus
+    /// in Verbatim's popup menu, which has no owner yet keeps the hidden
+    /// frame as its outermost ancestor: the frame coming to the front
+    /// leaves no focus in the menu (Verbatim-only).
     pub(crate) fn unrelated(&self, window: WindowHandle, root_owner: WindowHandle) -> bool {
-        window != self.top_level && root_owner != self.root_owner
+        window != self.top_level
+            && root_owner != self.root_owner
+            && !self.ancestor_windows.contains(&window)
     }
 
     /// Whether `window` is this focus's window or one of its ancestors'.
