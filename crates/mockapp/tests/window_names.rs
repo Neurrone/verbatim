@@ -3,27 +3,26 @@
 //! window is "Notepad" for a moment, then names the document. What
 //! Verbatim says is what NVDA says: the window was announced by the name it
 //! had when it took the foreground, and its rename, off the focus, is not
-//! spoken. NVDA speaks a name change only for the focus, so the outpost
-//! tells the renamed object from the focus by its identity and does not
-//! read or report it (`books/dev/src/reference/crates/verbatim-outpost.md`, "MSAA name,
-//! value, and state changes").
+//! spoken. NVDA speaks a name change only for the focus, so Core, judging
+//! the listener's tell against the committed focus, says nothing of it
+//! (`docs/design/readers-tell-core-asks-build1.md`, "Changes on objects").
 //!
-//! The outpost runs in this process (`common::outpost`). mockapp's
-//! `client-name` renames the client area alone, raising a name change on
-//! it. The focus, a slider, is handed to the outpost as the listener
+//! Core drives a real outpost in this process (`common::core_driver`).
+//! mockapp's `client-name` renames the client area alone, raising a name
+//! change on it. The focus, a slider, is told to Core as the listener
 //! would; a change of its value raised after the renames is the evidence
-//! that their events were handled, since it comes from the same hook: it
-//! is the first thing the outpost says. Whether the window
-//! is in the foreground plays no part in the outpost's report, and these
-//! tests never rely on the foreground (see `events.rs`).
+//! that their tells were judged, since it comes from the same hook: it is
+//! the only thing Core says. Whether the window is in the foreground plays
+//! no part, and these tests never rely on the foreground (see `events.rs`).
 
 mod common;
 #[path = "common/harness.rs"]
 mod harness;
 
-use verbatim_model::NormalizedEvent;
-use verbatim_model::protocol::OutpostToCore;
+use verbatim_ia2::WinEventKind;
+use verbatim_model::SegmentContent;
 
+use common::core_driver::CoreDriver;
 use common::outpost::OutpostUnderTest;
 
 fn a_window_renamed_after_activation_is_not_reported() {
@@ -31,23 +30,33 @@ fn a_window_renamed_after_activation_is_not_reported() {
     let title = common::unique_title("mockapp-window-names");
     let mut app = common::spawn("small.json", "msaa", &title);
     let hwnd = common::find_window(&title);
-    let outpost = OutpostUnderTest::new(&app);
+    let mut core = CoreDriver::new(&app, OutpostUnderTest::new(&app));
 
     // The slider is node 2, after the root and the button.
     common::apply(&mut app, hwnd, "set-focus slider1");
-    let focus = outpost.msaa_focus(hwnd, 2);
-    assert_eq!(focus.node.name.as_deref(), Some("Level"));
-    common::apply(&mut app, hwnd, "client-name Notepad");
-    common::apply(&mut app, hwnd, "client-name notes.txt - Notepad");
-    common::apply(&mut app, hwnd, "set-value slider1 77");
-    match outpost.next() {
-        OutpostToCore::Event {
-            event: NormalizedEvent::ValueChanged { value, .. },
-            ..
-        } => assert_eq!(value.as_deref(), Some("77")),
-        other => panic!("the outpost said {other:?} before the focus's value change"),
-    }
-    outpost.settled();
+    assert_eq!(
+        core.msaa_focus(hwnd, 2).spoken(),
+        [vec![
+            SegmentContent::Label("Level".to_owned()),
+            SegmentContent::Role(verbatim_model::Role::Slider),
+            SegmentContent::Value("1".to_owned())
+        ]]
+    );
+    assert_eq!(
+        core.raise(
+            &mut app,
+            &[
+                "client-name Notepad",
+                "client-name notes.txt - Notepad",
+                "set-value slider1 77"
+            ],
+            &[WinEventKind::NameChange, WinEventKind::ValueChange],
+            3
+        )
+        .spoken(),
+        [vec![SegmentContent::Value("77".to_owned())]]
+    );
+    drop(core);
     app.quit();
 }
 

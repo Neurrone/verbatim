@@ -328,18 +328,22 @@ impl CoreDriver {
     }
 
     /// The listener tells Core of `event`, a `WinEvent` its hook heard; a
-    /// value change takes the listener's progress path instead
-    /// ([`Self::bar_change`]).
+    /// value change then takes the listener's progress path too
+    /// ([`Self::bar_change`]), as the listener's callback tells every
+    /// event first and routes it after.
     pub fn win_event(&mut self, event: &WinEvent) -> Step {
-        if event.kind == WinEventKind::ValueChange {
-            return self.bar_change(event);
-        }
         let kind = verbatim_ia2::tell_kind(event).expect("a WinEvent the listener tells");
-        self.msaa_event(
+        let mut step = self.msaa_event(
             kind,
             HWND(event.hwnd as _),
             (event.id_object, event.id_child),
-        )
+        );
+        if event.kind == WinEventKind::ValueChange {
+            let bar = self.bar_change(event);
+            step.said.extend(bar.said);
+            step.calls += bar.calls;
+        }
+        step
     }
 
     /// The listener's progress path for the MSAA value change `event`, as
