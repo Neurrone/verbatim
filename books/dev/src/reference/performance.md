@@ -1268,8 +1268,9 @@ its probe adds 1 window message (above):
 - Today: a UIA document (`text.json`) 9 remotely and 10 with a selection,
   protected or not, each with 1 connection and no window message, so the
   minimum is met remotely; classically 45, and 57 with a selection. A UIA
-  terminal (`terminal_reading.json`) 9 remotely and 27 classically, each
-  with 1 connection and no window message. A classic edit control through
+  terminal (`terminal_reading.json`), its caret read with its focus and
+  its baseline read after it, 11 remotely and 48 classically, each with 1
+  connection and no window message. A classic edit control through
   MSAA 40 MSAA calls and 6 window messages, 2 of them the roles of the
   focused-state check of a control without the keyboard focus; one of the
   calls is the acquisition of its top-level window's client at its own
