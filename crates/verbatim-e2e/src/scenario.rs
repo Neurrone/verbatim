@@ -360,14 +360,12 @@ impl Scenario {
     ///
     /// As [`Scenario::launch_with`].
     pub fn launch() -> io::Result<Self> {
-        Self::launch_with(None, None, false)
+        Self::launch_with(None, None)
     }
 
     /// Launches a fresh Verbatim with `configure` applied to the fixed
     /// settings, from the desktop every scenario starts from, with
-    /// `document` open in Windows 11 Notepad when there is one, and its
-    /// idle retirement shortened when `quick_retirement` is set
-    /// ([`QUICK_RETIREMENT`]).
+    /// `document` open in Windows 11 Notepad when there is one.
     ///
     /// In order: closes the Notepad harness tabs an earlier run left, as
     /// tabs, and ends every process the agent launched for an earlier run
@@ -394,9 +392,8 @@ impl Scenario {
     pub fn launch_with(
         configure: Option<fn(&mut Settings)>,
         document: Option<Document>,
-        quick_retirement: bool,
     ) -> io::Result<Self> {
-        Self::start(configure, document, quick_retirement, false)
+        Self::start(configure, document, false)
     }
 
     /// [`Scenario::launch_with`] in compare mode ([`crate::compare`]): the
@@ -416,7 +413,7 @@ impl Scenario {
         configure: Option<fn(&mut Settings)>,
         document: Option<Document>,
     ) -> io::Result<Self> {
-        Self::start(configure, document, false, true)
+        Self::start(configure, document, true)
     }
 
     /// [`Scenario::launch_with`], or in compare mode, when `comparing`,
@@ -428,7 +425,6 @@ impl Scenario {
     fn start(
         configure: Option<fn(&mut Settings)>,
         document: Option<Document>,
-        quick_retirement: bool,
         comparing: bool,
     ) -> io::Result<Self> {
         let agent_addr =
@@ -589,10 +585,6 @@ impl Scenario {
         ];
         if !is_audible() {
             env.push(("VERBATIM_TEST_AUDIO".to_owned(), "null".to_owned()));
-        }
-        if quick_retirement {
-            let (name, value) = QUICK_RETIREMENT;
-            env.push((name.to_owned(), value.to_owned()));
         }
         let filter = std::env::var(RUST_LOG_ENV).unwrap_or_else(|_| DEFAULT_RUST_LOG.to_owned());
         if !filter.is_empty() {
@@ -3156,13 +3148,6 @@ const SETTINGS_TITLE: &str = "Settings";
 /// The variable naming the event Verbatim sets once it is ready for input;
 /// read by `verbatim-app`.
 const READY_EVENT_ENV: &str = "VERBATIM_READY_EVENT";
-
-/// The test-only variable, and its value, that shortens Verbatim's idle
-/// retirement of an outpost (`verbatim_supervisor::TEST_RETIREMENT_ENV`)
-/// from two minutes, looked for every 30 seconds, to 10 seconds, looked
-/// for every second, for a scenario that waits for a retirement
-/// (`ScenarioDef::quick_retirement`).
-pub const QUICK_RETIREMENT: (&str, &str) = ("VERBATIM_TEST_RETIREMENT", "10000,1000");
 
 /// A name for this launch's readiness event, unique to this test process
 /// and launch.

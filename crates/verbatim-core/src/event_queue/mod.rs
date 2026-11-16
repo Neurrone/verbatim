@@ -275,13 +275,6 @@ pub(crate) trait Logic: Sized + 'static {
         true
     }
 
-    /// Whether Core's facts hold a node or anchor of the outpost
-    /// generation `generation`, which keeps it from retirement.
-    fn holds(facts: &Self::Facts, generation: verbatim_model::OutpostId) -> bool {
-        let _ = (facts, generation);
-        false
-    }
-
     /// The entries Core's facts ask to join the back now, such as a
     /// say-all's next read: taken after every input and every function's
     /// step, so they join in the order they were wanted.

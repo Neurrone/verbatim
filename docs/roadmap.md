@@ -1080,9 +1080,11 @@ both be in the application, where two Verbatim processes' calls collide
 inside UIA (`books/dev/src/explanation/design/listener-without-connections.md`).
 
 - An outpost is not retired merely for being idle (Dickson,
-  2026-11-10): the early retirement of idle outposts that the
-  architecture allows to bound memory is settled here, with the rest of
-  how an outpost ends.
+  2026-11-10): idle retirement is gone (Dickson, 2026-11-16, built with
+  the event queue and focus build), so an outpost ends only when its
+  application exits, when it fails or stops answering pings, or when
+  Verbatim exits. How outposts' memory is bounded, which the
+  architecture's early retirement of idle outposts was for, stays here.
 - One record of an outpost generation's life: today the relay thread
   and the reducer thread each keep one, kept in step by ten kinds of
   notice; Core's reducer owns the single record, the owner thread

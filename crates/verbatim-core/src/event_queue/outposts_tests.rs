@@ -10,7 +10,7 @@ use crate::entries::tests::{
 };
 use crate::event_queue::{Instance, Reader};
 use crate::focus::versions::Committed;
-use crate::supervisor::record::{LIVENESS_US, Retirement, Stage};
+use crate::supervisor::record::{LIVENESS_US, Stage};
 
 /// The generation after [`OUTPOST`].
 const NEXT: Instance = Instance {
@@ -357,80 +357,17 @@ fn an_applications_exit_answers_its_requests_not_there_and_takes_nothing_again()
     assert!(held.state.queue.table.requests().next().is_none());
 }
 
-/// Row "Ready", column G: an outpost whose application has not held
-/// attention for the idle time, of which Core holds nothing, is ended
-/// and its record goes; one holding a request out is kept.
+/// Row "Ready": an outpost is never ended for being idle (Dickson,
+/// 2026-11-10 and 2026-11-16). One whose application has not held
+/// attention for ten minutes, of which Core holds nothing and to which no
+/// request is out, is kept while it answers its pings, and Core times no
+/// wake but its liveness.
 #[test]
-fn an_idle_outpost_holding_nothing_is_retired_and_one_with_a_request_is_kept() {
+fn an_idle_outpost_holding_nothing_is_kept() {
     let mut held = listening();
-    let retirement = Retirement {
-        idle_us: 10_000,
-        sweep_us: 1_000,
-    };
-    let _ = route(
-        &mut held,
-        0,
-        &QueueInput::Process(ProcessFact::Retirement {
-            idle_us: retirement.idle_us,
-            sweep_us: retirement.sweep_us,
-        }),
-    );
     let _ = route(&mut held, 1_000, &focus_tell());
     let _ = route(&mut held, 1_100, &started(GENERATION));
     let _ = route(&mut held, 1_200, &QueueInput::ReaderReady(OUTPOST));
-    // Request 1 is out: the outpost is held.
-    assert_eq!(
-        route(&mut held, 20_000, &QueueInput::Due),
-        Vec::<String>::new()
-    );
-    assert!(matches!(stage(&held), Some(Stage::Ready(_))));
-    // Answered not there, nothing holds it.
-    let _ = route(
-        &mut held,
-        20_100,
-        &QueueInput::Answer {
-            from: OUTPOST,
-            answer: verbatim_model::request::Answer {
-                number: verbatim_model::request::RequestNumber(1),
-                outcome: verbatim_model::request::Outcome::NotThere,
-                probes: Vec::new(),
-                detail: String::new(),
-            },
-        },
-    );
-    assert_eq!(route(&mut held, 21_200, &QueueInput::Due), ["end 3"]);
-    assert_eq!(stage(&held), None);
-}
-
-/// Row "Ready", column G, today's `retirement_decision`: an application's
-/// idle time counts from when it last held attention, so an outpost whose
-/// application held attention for longer than the idle time is kept until
-/// the idle time has passed since it lost attention, then retired.
-#[test]
-fn an_outpost_is_retired_only_once_the_idle_time_passes_after_its_application_loses_attention() {
-    let mut held = listening();
-    let _ = route(
-        &mut held,
-        0,
-        &QueueInput::Process(ProcessFact::Retirement {
-            idle_us: 10_000,
-            sweep_us: 1_000,
-        }),
-    );
-    let foreground_of = |process: Pid, window: u64| {
-        QueueInput::Foreground(verbatim_model::request::ForegroundReport {
-            window: WindowHandle(window),
-            root_owner: WindowHandle(window),
-            process,
-            thread: 41,
-            class: "Frame".to_owned(),
-        })
-    };
-    let _ = route(&mut held, 1_000, &foreground_of(APP, 4));
-    let _ = route(&mut held, 1_100, &started(GENERATION));
-    let _ = route(&mut held, 1_200, &QueueInput::ReaderReady(OUTPOST));
-    // The first foreground's read of the current focus, request 1, is
-    // answered "not there": nothing holds the outpost.
     let _ = route(
         &mut held,
         1_300,
@@ -445,29 +382,71 @@ fn an_outpost_is_retired_only_once_the_idle_time_passes_after_its_application_lo
         },
     );
     assert!(held.state.queue.table.requests().next().is_none());
-    // Attended for 50 ms, far past the idle time, then another
-    // application takes the foreground.
-    let ended = |said: Vec<String>| -> Vec<String> {
-        said.into_iter()
-            .filter(|said| said.starts_with("end"))
-            .collect()
-    };
-    assert_eq!(
-        ended(route(&mut held, 50_000, &foreground_of(Pid(50), 9))),
-        Vec::<String>::new()
-    );
-    assert_eq!(
-        ended(route(&mut held, 52_000, &QueueInput::Due)),
-        Vec::<String>::new()
-    );
+    let ten_minutes = 600_000_000;
+    let mut at_us = 1_300;
+    while at_us < ten_minutes {
+        at_us += 3_000_000;
+        assert_eq!(
+            route(
+                &mut held,
+                at_us,
+                &QueueInput::Process(ProcessFact::Pong(OUTPOST))
+            ),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            route(&mut held, at_us + 1, &QueueInput::Due),
+            Vec::<String>::new()
+        );
+    }
     assert!(matches!(stage(&held), Some(Stage::Ready(_))));
-    assert_eq!(ended(route(&mut held, 61_000, &QueueInput::Due)), ["end 3"]);
-    assert_eq!(stage(&held), None);
+    assert_eq!(held.state.queue.next_due(), Some(at_us + LIVENESS_US));
 }
 
-/// Verbatim's own outpost is started at once and never retired.
+/// Row "Ready", its application exiting: the owner thread shuts the
+/// outpost down and reports its end, so the request out is answered
+/// "reader ended" and a replacement asked for; the owner refuses to start
+/// one for an application that has exited, and the record is released,
+/// with nothing started again.
 #[test]
-fn verbatims_own_outpost_is_started_at_once_and_never_retired() {
+fn an_applications_exit_ends_its_outpost_and_releases_its_record() {
+    let mut held = committed();
+    assert_eq!(
+        route(&mut held, 2_000, &focus_tell_of(-8)),
+        ["send Outpost(Pid(40)) MsaaRun"]
+    );
+    let ended = route(&mut held, 2_100, &QueueInput::ReaderEnded(OUTPOST));
+    assert!(
+        ended.contains(&"start 40".to_owned()),
+        "a replacement is asked for: {ended:?}"
+    );
+    assert!(
+        held.state
+            .queue
+            .table
+            .live(verbatim_model::request::RequestNumber(2))
+            .is_none(),
+        "request 2 was answered when its reader ended"
+    );
+    assert_eq!(stage(&held), Some(Stage::Launching));
+    assert_eq!(
+        route(
+            &mut held,
+            2_200,
+            &QueueInput::Process(ProcessFact::LaunchFailed {
+                process: APP,
+                application_gone: true,
+            })
+        ),
+        Vec::<String>::new()
+    );
+    assert_eq!(stage(&held), None);
+    assert!(held.state.queue.table.requests().next().is_none());
+}
+
+/// Verbatim's own outpost is started at once.
+#[test]
+fn verbatims_own_outpost_is_started_at_once() {
     let mut held = listening();
     let own = Pid(77);
     assert_eq!(
@@ -494,7 +473,6 @@ fn verbatims_own_outpost_is_started_at_once_and_never_retired() {
             generation: 5,
         }),
     );
-    assert_eq!(held.state.queue.record.sweep_due_us, None);
     assert_eq!(
         held.state.readiness(),
         crate::Readiness {

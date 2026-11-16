@@ -1,6 +1,6 @@
 //! Core's supervisor's pure decisions (architecture section 1, decisions D9
 //! and D13): the outpost generations' typestates ([`generation`]), and when
-//! an outpost is stuck, when an idle one is retired, how long a failed
+//! an outpost is stuck, how long a failed
 //! outpost's replacement waits, how facts that arrive during a spawn are
 //! held, which facts may start an outpost, and which spare outposts are
 //! kept and given ([`policy`]). The supervisor's owner, in
@@ -18,13 +18,10 @@ pub(crate) mod record;
 pub enum EndReason {
     /// Its pipe closed: it exited or crashed.
     Exited,
-    /// The owner ended it for not answering pings or for piling up abandoned
+    /// It was ended for not answering pings or for piling up abandoned
     /// workers: it was asked to shut down and killed if it did not exit in
     /// time.
     Killed,
-    /// The owner retired it: its application had not held attention for two
-    /// minutes and Core held none of its nodes.
-    Retired,
     /// Its application exited, so the owner shut it down.
     TargetExited,
 }
@@ -34,7 +31,6 @@ impl std::fmt::Display for EndReason {
         f.write_str(match self {
             EndReason::Exited => "exited",
             EndReason::Killed => "killed",
-            EndReason::Retired => "retired",
             EndReason::TargetExited => "target exited",
         })
     }

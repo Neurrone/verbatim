@@ -565,8 +565,8 @@ impl<C> Generation<C> {
         })
     }
 
-    /// `pid`'s record is removed: its application exited, its outpost
-    /// retired, or Verbatim is exiting. The listener hears first that the
+    /// `pid`'s record is removed: its application exited, Core ended its
+    /// outpost, or Verbatim is exiting. The listener hears first that the
     /// application's hook is gone, from every stage and not only `Ready`,
     /// so a reading thread it started for the application's events before
     /// any outpost's hook was in is released too. With `reason`, the app hears the end of every generation it heard
@@ -835,15 +835,11 @@ mod tests {
     }
 
     #[test]
-    fn a_retirement_removes_the_hook_ends_the_generation_and_is_not_watched() {
-        let removed = ready(3).removed(PID, Some(EndReason::Retired));
+    fn an_end_core_asks_removes_the_hook_ends_the_generation_and_is_not_watched() {
+        let removed = ready(3).removed(PID, Some(EndReason::Killed));
         assert_eq!(
             named(&removed.notices),
-            [
-                "HookRemoved",
-                "Ended 3 retired, follows false",
-                "NotWatched"
-            ]
+            ["HookRemoved", "Ended 3 killed, follows false", "NotWatched"]
         );
         let quiet = ready(3).removed(PID, None);
         assert_eq!(named(&quiet.notices), ["HookRemoved"]);

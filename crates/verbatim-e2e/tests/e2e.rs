@@ -64,7 +64,6 @@ const LIVE: &[&str] = scenario_tests! {
     controlled_list_selections
     table_cells
     alt_tab_switcher
-    return_after_retirement
     return_from_a_held_application
     owned_dialog_across_processes
     lock_key_announcements

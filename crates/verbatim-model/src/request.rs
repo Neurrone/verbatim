@@ -1140,19 +1140,8 @@ pub enum ProcessFact {
     /// How many spare outposts wait, as the owner thread last counted
     /// them: a fact for the test harness's readiness.
     SparesReady(usize),
-    /// Verbatim's own process, at startup: its outpost is started at once
-    /// and never retired.
+    /// Verbatim's own process, at startup: its outpost is started at once.
     OwnProcess(Pid),
-    /// How long an application must go without attention before its
-    /// outpost is retired, and how often idle ones are looked for, in
-    /// microseconds: the end-to-end harness's shortening, given once at
-    /// startup.
-    Retirement {
-        /// The idle time.
-        idle_us: u64,
-        /// The check's interval.
-        sweep_us: u64,
-    },
 }
 
 /// A key or command as the hook reports it to the event queue (ADR 0003,
@@ -1321,7 +1310,7 @@ pub enum QueueEffect {
     /// one, and report [`ProcessFact::OutpostStarted`] or
     /// [`ProcessFact::LaunchFailed`].
     StartOutpost(Pid),
-    /// End this outpost generation: it is stuck, or retired.
+    /// End this outpost generation: it stopped answering pings.
     EndOutpost(Instance),
     /// A frame of an instance that is not its reader's current one was
     /// dropped: log it.

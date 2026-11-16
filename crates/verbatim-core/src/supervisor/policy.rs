@@ -1,6 +1,6 @@
 //! The supervisor's pure decisions, kept apart from the I/O that gathers
 //! their inputs so each is unit-tested on its own: when an outpost is stuck,
-//! when an idle one is retired, how long a failed outpost's replacement
+//! how long a failed outpost's replacement
 //! waits, how facts that arrive during a spawn are held, which facts may
 //! start an outpost, and which spare outposts are kept and given.
 
@@ -124,21 +124,6 @@ impl Liveness {
     pub fn wedged(&self, now_us: u64, limits: WedgeLimits) -> Option<WedgeReason> {
         wedge_decision(self.last_pong_us, now_us, limits, Parked::default())
     }
-}
-
-/// Whether an outpost is retired: its application has not held attention for
-/// `idle_after` since `last_attention_us`, at `now_us`, on the run's shared
-/// clock, and Core holds none of its nodes. Core's own outpost is never
-/// retired, which the caller checks.
-#[must_use]
-pub fn retirement_decision(
-    last_attention_us: u64,
-    now_us: u64,
-    idle_after: Duration,
-    holds_attention: bool,
-    nodes_held: bool,
-) -> bool {
-    !holds_attention && !nodes_held && since_us(last_attention_us, now_us) >= idle_after
 }
 
 /// The backoff between an outpost's failures (`books/dev/src/reference/adr/0001-focus.md`, "Spare
@@ -501,22 +486,6 @@ mod tests {
     fn a_now_before_the_last_pong_never_panics() {
         let earlier = START - 5 * SECOND;
         assert_eq!(wedge_decision(START, earlier, LIMITS, others(0)), None);
-    }
-
-    #[test]
-    fn retirement_needs_two_idle_minutes_without_attention_or_held_nodes() {
-        let idle = Duration::from_mins(2);
-        let later = START + 120 * SECOND;
-        assert!(retirement_decision(START, later, idle, false, false));
-        assert!(!retirement_decision(START, later, idle, true, false));
-        assert!(!retirement_decision(START, later, idle, false, true));
-        assert!(!retirement_decision(
-            START,
-            START + 119 * SECOND,
-            idle,
-            false,
-            false
-        ));
     }
 
     #[test]

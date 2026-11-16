@@ -432,7 +432,7 @@ impl Owner {
     fn run(&mut self, events: &Inbox<OwnerEvent>) {
         let start = Instant::now();
         let ping_interval = self.timings.ping_interval;
-        let sweep_interval = self.timings.retirement.sweep_interval;
+        let sweep_interval = SWEEP_INTERVAL;
         let mut heartbeat_due = start + ping_interval;
         let mut sweep_due = start + sweep_interval;
         let mut completions = Completions::with_capacity(COMPLETIONS_PER_WAIT);
@@ -861,7 +861,7 @@ impl Owner {
             OwnerEvent::ToListener(command) => self.tell_listener(command),
             OwnerEvent::EndOutpost(outpost) => {
                 if let Some(pid) = self.pid_of(outpost) {
-                    self.end(pid, EndReason::Retired);
+                    self.end(pid, EndReason::Killed);
                     self.release_target(pid);
                 }
             }
@@ -2151,9 +2151,9 @@ impl Owner {
         }
     }
 
-    /// Closes the books of applications that have exited: Core's
-    /// generation record retires idle outposts
-    /// ([`super::Supervisor::end_outpost`]).
+    /// Closes the books of applications that have exited, every
+    /// [`SWEEP_INTERVAL`]. An outpost is never ended for being idle
+    /// (Dickson, 2026-11-10 and 2026-11-16).
     fn sweep(&mut self) {
         if self.shutting_down.is_some() {
             return;
@@ -2169,8 +2169,8 @@ impl Owner {
         for pid in gone {
             self.target_exited(pid, "target exited while its outpost's replacement waited");
         }
-        // Applications whose records have ended, by retirement, and which
-        // have since exited: their handles are closed.
+        // Applications whose records have ended and which have since
+        // exited: their handles are closed.
         let exited: Vec<Pid> = self
             .apps
             .iter()
@@ -2182,6 +2182,10 @@ impl Owner {
         }
     }
 }
+
+/// How often the owner closes the books of applications that have
+/// exited ([`Owner::sweep`]): 30 seconds.
+const SWEEP_INTERVAL: Duration = Duration::from_secs(30);
 
 /// Reports how a retirement's child ended when it is dropped: at the end
 /// of the retirement, or as its thread unwinds from a panic, with the

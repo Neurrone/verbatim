@@ -852,12 +852,9 @@ fn the_reducer_routes_a_tell_into_the_queue_and_asks_to_be_woken_at_its_due_time
         &mut held.runtime,
         &queued(QueueInput::ReaderReady(OUTPOST)),
     );
-    // With no application in front, the ready outpost is looked at for
-    // retirement in 30 seconds (Table 5, column G).
-    assert_eq!(
-        effects,
-        [Said::Queue(QueueEffect::WakeAt(Some(1_000 + 30_000_000)))]
-    );
+    // A ready outpost times no wake of its own: it is never ended for
+    // being idle, and this one's liveness is due at the clock's end.
+    assert_eq!(effects, [Said::Queue(QueueEffect::WakeAt(None))]);
     let effects = crate::reduce(
         &mut held.state,
         &mut held.runtime,

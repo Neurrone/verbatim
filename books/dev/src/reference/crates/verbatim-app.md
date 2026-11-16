@@ -98,12 +98,6 @@ the hook's cancel takes no lock. The supervisor's sink is
 
 The end-to-end harness's hooks (private `harness` module):
 
-- The idle retirement: when launched with `VERBATIM_TEST_RETIREMENT`,
-  `<idle ms>,<sweep ms>`, Verbatim retires an idle outpost after that
-  idle time, looked for at that interval, in place of two minutes and 30
-  seconds (`verbatim_supervisor::Retirement::from_test_env`, handed to
-  `Supervisor::new`); a malformed value stops its start. Only the
-  end-to-end scenario that waits for a retirement sets it.
 - Ignored processes: when launched with `VERBATIM_IGNORE_PIDS` naming
   pids, separated by commas, Verbatim holds those processes open and
   ignores them entirely (`verbatim_process::held::IgnoredProcesses`,
@@ -396,8 +390,8 @@ knowing for review:
   `ReaderEnded`, `ListenerStarted`, `Pong`, `SpareReady`, and
   `NotWatched` as `LaunchFailed`); the listener's foreground report, with
   the window's class; the hook's presses, deferred transitions and Alt
-  changes; and, posted before Verbatim starts, the harness's retirement
-  and ignored processes and Verbatim's own process, whose outpost Core
+  changes; and, posted before Verbatim starts, the harness's ignored
+  processes and Verbatim's own process, whose outpost Core
   starts at once; and the session's lock state (`QueueInput::Lock`), from
   the `session_lock` module's thread, which registers a message-only
   window for the session's notifications, then queries the state

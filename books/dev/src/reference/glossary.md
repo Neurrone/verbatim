@@ -132,10 +132,6 @@ their NVDA meanings and are documented in [docs/nvda](https://github.com/Neurron
 - **Hook** — a function a module exports and the host calls, on the
   thread that holds the event, under an epoch deadline.
   [extensions](https://github.com/Neurrone/verbatim/blob/main/docs/design/extensions.md).
-- **Idle retirement** — ending an outpost whose application has not
-  held attention for two minutes and in which Core holds no nodes
-  (risk R2's memory mitigation).
-  [verbatim-supervisor](crates/verbatim-supervisor.md).
 - **Indication** — one entry of the catalogue of everything Verbatim
   can report (a role, a state, a description, a spelling error, an
   event), with a stable id and a category; a theme says how each is

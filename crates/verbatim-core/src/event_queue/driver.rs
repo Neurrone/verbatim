@@ -160,7 +160,7 @@ impl<E, F> Queue<E, F> {
             Reader::Listener => self.record.listener = Some(instance.generation),
             Reader::Outpost(process) => {
                 if !self.record.applications.contains_key(&process) {
-                    self.record.launch(process, self.now_us);
+                    self.record.launch(process);
                 }
                 if let Some(application) = self.record.applications.get_mut(&process) {
                     application.stage = Stage::Starting(Running {

@@ -33,25 +33,6 @@ pub(crate) const BACKOFF: (Duration, Duration, Duration) = (
     Duration::from_mins(1),
 );
 
-/// When idle outposts are retired: how long an application must go
-/// without attention, and how often the idle ones are looked for.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct Retirement {
-    /// How long without attention, in microseconds: two minutes.
-    pub(crate) idle_us: u64,
-    /// How often the check runs, in microseconds: 30 seconds.
-    pub(crate) sweep_us: u64,
-}
-
-impl Default for Retirement {
-    fn default() -> Self {
-        Self {
-            idle_us: 120_000_000,
-            sweep_us: 30_000_000,
-        }
-    }
-}
-
 /// One application's outpost, by the stage of its generation's life
 /// (Table 5's rows; none is the application's absence from the record).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -94,8 +75,6 @@ pub(crate) struct Application {
     pub(crate) stage: Stage,
     /// The backoff between its outposts' failures.
     pub(crate) backoff: Backoff,
-    /// When it last held attention, which its retirement is judged from.
-    pub(crate) attended_us: u64,
 }
 
 impl Application {
@@ -131,28 +110,22 @@ pub(crate) struct Record {
     /// The newest listener the owner thread reported started: frames of
     /// any other are dropped.
     pub(crate) listener: Option<u64>,
-    /// Verbatim's own process, whose outpost is never retired.
+    /// Verbatim's own process, whose outpost is started at once.
     pub(crate) own: Option<Pid>,
     /// How many spare outposts wait, as the owner thread last reported:
     /// a fact for the test harness's readiness, which judges nothing.
     pub(crate) spares_ready: usize,
-    /// When idle outposts are retired.
-    pub(crate) retirement: Retirement,
-    /// When the next retirement check runs, armed only while an outpost
-    /// other than Verbatim's own is ready.
-    pub(crate) sweep_due_us: Option<u64>,
 }
 
 impl Record {
     /// Core asks for `process`'s outpost: a record launching, with the
     /// failures counted from none.
-    pub(crate) fn launch(&mut self, process: Pid, now_us: u64) {
+    pub(crate) fn launch(&mut self, process: Pid) {
         self.applications.insert(
             process,
             Application {
                 stage: Stage::Launching,
                 backoff: Backoff::default(),
-                attended_us: now_us,
             },
         );
     }
@@ -184,7 +157,7 @@ impl Record {
     }
 
     /// The earliest time the record waits for: a liveness or backoff due
-    /// time, or the retirement check. A due time saturated at the clock's
+    /// time. A due time saturated at the clock's
     /// end never comes, and is no wake.
     pub(crate) fn next_due(&self) -> Option<u64> {
         self.applications
@@ -194,27 +167,7 @@ impl Record {
                 Stage::WaitingOut { due_us } => Some(due_us),
                 Stage::Launching => None,
             })
-            .chain(self.sweep_due_us)
             .filter(|due_us| *due_us != u64::MAX)
             .min()
-    }
-
-    /// Arms the retirement check from `now_us` while an outpost other
-    /// than Verbatim's own is running whose application, `attended` not
-    /// being it, does not hold attention, and disarms it otherwise, so
-    /// that no wake is timed that would not be acted on.
-    pub(crate) fn settle_sweep(&mut self, now_us: u64, attended: Option<Pid>) {
-        let retirable = self.applications.iter().any(|(process, application)| {
-            Some(*process) != self.own
-                && Some(*process) != attended
-                && matches!(application.stage, Stage::Starting(_) | Stage::Ready(_))
-        });
-        match (retirable, self.sweep_due_us) {
-            (true, None) => {
-                self.sweep_due_us = Some(now_us.saturating_add(self.retirement.sweep_us));
-            }
-            (false, Some(_)) => self.sweep_due_us = None,
-            (true, Some(_)) | (false, None) => {}
-        }
     }
 }

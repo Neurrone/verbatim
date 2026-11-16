@@ -307,15 +307,10 @@ fn run(
     // read from them. Unset for real users, so nothing is ignored.
     let ignored = Arc::new(verbatim_process::held::IgnoredProcesses::from_env());
     let ignored_pids = ignored.pids();
-    // The idle retirement: two minutes, but in the end-to-end scenario that
-    // waits for one, whose harness shortens it with
-    // `VERBATIM_TEST_RETIREMENT`; unset for real users.
-    let retirement = verbatim_supervisor::Retirement::from_test_env()?;
     let supervisor = Arc::new(Supervisor::new(
         outpost_sink(command_tx.clone()),
         outpost_options,
         ignored,
-        retirement,
     )?);
     let outposts: Arc<Mutex<HashMap<Pid, OutpostStatus>>> = Arc::new(Mutex::new(HashMap::new()));
     // The GUI's handle, once the GUI thread is up; part of readiness.
@@ -328,15 +323,11 @@ fn run(
     let idle_line = Arc::new(harness::IdleLine::default());
     let live_re_reads = Arc::new(std::sync::atomic::AtomicU64::new(0));
 
-    // Core's generation record takes the harness's retirement and ignored
-    // processes, and starts Verbatim's own outpost at once, before the
+    // Core's generation record takes the harness's ignored processes, and
+    // starts Verbatim's own outpost at once, before the
     // first gesture can come: a cold outpost races a real keypress sent
     // right after Verbatim's menu opens.
     for fact in [
-        QueueInput::Process(ProcessFact::Retirement {
-            idle_us: micros(retirement.idle),
-            sweep_us: micros(retirement.sweep_interval),
-        }),
         QueueInput::Ignored(ignored_pids),
         QueueInput::Process(ProcessFact::OwnProcess(Pid(own_pid))),
     ] {
@@ -2213,11 +2204,6 @@ fn listener_instance(listener: OutpostId) -> Instance {
 /// The window `window` names, as the Windows calls take it.
 fn window_handle(window: WindowHandle) -> isize {
     isize::from_ne_bytes(window.0.to_ne_bytes())
-}
-
-/// `duration` in microseconds.
-fn micros(duration: Duration) -> u64 {
-    u64::try_from(duration.as_micros()).unwrap_or(u64::MAX)
 }
 
 /// Whether `who` is the tree dump named `ticket`.

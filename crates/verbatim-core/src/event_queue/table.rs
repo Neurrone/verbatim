@@ -368,12 +368,6 @@ impl Table {
             .any(|live| live.reader == reader && live.stage == Stage::Waiting)
     }
 
-    /// Whether a request waits for `reader` or is out to it, which holds
-    /// its outpost from retirement.
-    pub(crate) fn holds(&self, reader: Reader) -> bool {
-        self.live.values().any(|live| live.reader == reader)
-    }
-
     /// The readers requests wait for, each once.
     pub(crate) fn waiting_readers(&self) -> impl Iterator<Item = Reader> + '_ {
         let mut readers: Vec<Reader> = self

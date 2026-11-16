@@ -124,8 +124,7 @@ guide maps those behaviors onto the crate's types and modules.
   (`wedge_decision` under `WedgeLimits`, which counts only the workers
   parked on windows the outpost did not judge hung, `Parked::other`, the
   outpost being the one judge of a hung window; and `Liveness` for the
-  listener and the spares, which report no parked workers), when an idle one is
-  retired (`retirement_decision`), how long a failed outpost's
+  listener and the spares, which report no parked workers), how long a failed outpost's
   replacement waits (`Backoff`), in which order the applications whose
   waits ended start (`due_starts`: in the order the waits ended, then by
   process id), how facts that arrive during a start are held and merged
@@ -300,20 +299,21 @@ being its absence. The owner thread reports its process facts as
 `QueueInput::Process` (`ProcessFact`): an outpost started, a launch
 failed (with whether the application is gone), each pong, the
 application's exit, the listener it is about to launch, the spares
-waiting, Verbatim's own process and the harness's retirement times; an
+waiting and Verbatim's own process; an
 outpost's `Ready` and its end arrive as `ReaderReady` and `ReaderEnded`.
 Core asks for an outpost (`QueueEffect::StartOutpost`) when a request
 waits for an application with none, or the listener's foreground report
 names one, and ends a generation (`QueueEffect::EndOutpost`) that passes
-9 seconds with no pong or is retired. A request waits through the
+9 seconds with no pong. A request waits through the
 launch and start and is sent at the generation's `Ready`; a first
 failure is replaced at once, a later one after today's backoff, which a
 foreground report resets and ends; a backoff that ends launches again
 only when a request waits or the application holds attention. The
 application's exit answers every request waiting or out "not there",
-drops its held ids and takes nothing again. Retirement is today's rule,
-checked every sweep while a ready outpost other than Verbatim's own is
-unattended, with a request waiting or out counting as holding. A frame of
+drops its held ids and takes nothing again. An outpost is never ended
+for being idle (Dickson, 2026-11-10 and 2026-11-16): it ends when its
+application exits, when it fails or stops answering pings, or when
+Verbatim exits. A frame of
 an instance that is not its reader's current one, a tell of an ended
 generation or of a listener other than the newest started, is dropped
 (`QueueEffect::StaleFrame`). `SrState::readiness` and `ready_outposts`

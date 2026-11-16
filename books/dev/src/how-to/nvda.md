@@ -321,8 +321,7 @@ before a series of comparisons, as before a capture.
 
 Some scenarios cannot be compared, and compare mode refuses them, saying
 why: one that ends Verbatim's own processes (`crash_recovery`), and one
-that starts a second Verbatim (`verbatim_lifecycle`); one that waits for Verbatim to retire an
-outpost (`return_after_retirement`); those that read Verbatim's status
+that starts a second Verbatim (`verbatim_lifecycle`); those that read Verbatim's status
 (`switch_to_onecore`, `second_application_and_verbatim_menu`); those
 that take speech until a given line or until Verbatim is idle
 (`rapid_tabbing_in_settings`, the `*_control_flood` scenarios); those that

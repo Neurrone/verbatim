@@ -662,9 +662,7 @@ Verbatim's run.
 ## The registry
 
 `ScenarioDef` is one named, grouped scenario: `name` (its test, `--scenario` selector, artifacts directory, and video name),
-`group`, `settings` (a change to the fixed settings), `local_only`,
-`quick_retirement` (Verbatim launched with its idle retirement
-shortened, `scenario::QUICK_RETIREMENT`), `comparable`, `document`, and `setup`, `body` and `teardown`.
+`group`, `settings` (a change to the fixed settings), `local_only`, `comparable`, `document`, and `setup`, `body` and `teardown`.
 `ScenarioState` is what setup hands the body and teardown: nothing, a
 target's pid, a window title, names, or a `Window` (the launch's pid, the
 window's title, how Verbatim announces the terminal's text area,
@@ -709,12 +707,7 @@ under `src/scenarios/` documents exactly what it asserts.
   column and position read by the agent from the switcher's list first;
   then, Alt still held, Tab pressed once for each item, each next item said
   alone, the last followed by the first, round to the first window's item
-  again; and Alt released, the first window announced), `return_after_retirement` (a text box brought forward
-  again once Core reports its outpost retired after 10 seconds without
-  attention, announced as before through a new outpost; its Verbatim is
-  launched with the test-only `VERBATIM_TEST_RETIREMENT`, which shortens
-  the retirement from two minutes and its sweep from every 30 seconds to
-  every second, through `ScenarioDef::quick_retirement`),
+  again; and Alt released, the first window announced),
   `return_from_a_held_application` (the text box left for a
   mockapp UIA window, read once, entered again while mockapp holds the
   first call into it: its title said about a second later, and the return

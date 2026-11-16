@@ -487,11 +487,7 @@ Each failure, what notices it, and what happens next
    focus when it is ready (`wanted::Wanted`) and compares the answer with
    the dead focus's copy (`reads_the_same`): if they match, it takes the
    new node ids silently; otherwise it announces the focus.
-5. **An idle outpost is retired.** Every 30 seconds, an outpost whose
-   application has not held attention for two minutes, which is not
-   Core's own, and in which the reducer holds no nodes, is ended as
-   retired (`retirement_decision`).
-6. **The listener is replaced.** If its pipe closes or it misses nine
+5. **The listener is replaced.** If its pipe closes or it misses nine
    seconds of pongs, the owner ends it and starts another, telling every
    outpost that the old listener's reads have ended
    (`DeliveredFact::UiaFocusReadsEnded`). When the replacement is ready the
@@ -499,27 +495,27 @@ Each failure, what notices it, and what happens next
    foreground window itself, and asks that application for its focus,
    taken silently if unchanged. Desktop-wide UIA events from the gap are
    lost.
-7. **The synthesizer host dies or hangs.** `HostedSynth` ends a host whose
+6. **The synthesizer host dies or hangs.** `HostedSynth` ends a host whose
    pipe closed, that sent nothing for ten seconds while Core waited, or
    that answered out of turn. The utterance in flight fails, except that
    one whose host's pipe ended before any of it was relayed is sent once
    more to a fresh host. The next request starts a new host and restores
    every setting the old one had. The `crash_recovery` scenario
    kills the host and expects the next announcement in full.
-8. **A synthesizer will not start.** At startup the speech manager tries
+7. **A synthesizer will not start.** At startup the speech manager tries
    every other registered synthesizer in order, eSpeak NG first, without
    saving the fallback as the user's choice; a failed switch leaves the
    previous synthesizer active.
-9. **The audio device fails or changes.** The mixer reopens it
+8. **The audio device fails or changes.** The mixer reopens it
    (walkthrough 3); utterances already converted for an old format end as
    failed.
-10. **Verbatim is started outside an interactive session.** `main` calls
+9. **Verbatim is started outside an interactive session.** `main` calls
     `check_interactive_session` (`verbatim_process::session::current`)
     before replacing a running instance, so a launch from WinRM,
     PowerShell Direct, or a service exits with a diagnosis and never stops
     a working Verbatim. The agent makes the same check before binding its
     port.
-11. **Verbatim itself dies.** The kernel closes Core's job handles and
+10. **Verbatim itself dies.** The kernel closes Core's job handles and
     kills every outpost, the listener, and every synthesizer host. A panic
     on any thread writes a flight-recorder dump first
     (`flight_dump::install_panic_hook`).

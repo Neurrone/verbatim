@@ -156,8 +156,9 @@ Each is measured unless marked inferred.
    subscription, a few hundred `WinEvent`s): in a windows-opening
    workload the new windows' outposts together cost more than the
    listener. Starting an outpost only when a process's window is focused
-   or read would remove most of it (inferred). Idle retirement ends the
-   idle ones after two minutes.
+   or read would remove most of it (inferred). Outposts are not ended for
+   being idle (Dickson, 2026-11-16); how their memory is bounded stays
+   with M6.2.
 2. Out-of-context `WinEvent` intake in a console flood still wakes the
    event thread for every console update; only filtering inside the
    application (decision D2's injection helper) removes it (item 7).

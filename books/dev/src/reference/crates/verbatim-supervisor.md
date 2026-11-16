@@ -15,7 +15,7 @@ message layer, the launch arguments and the held processes are
 
 `Supervisor`:
 
-- `new(events, options, ignored, retirement)` starts the relay, which
+- `new(events, options, ignored)` starts the relay, which
   starts the listener at once, launching each role from its executable
   beside the current one (`Executables::beside_current`:
   `verbatim-outpost.exe` and `verbatim-listener.exe`); a missing one fails
@@ -25,18 +25,12 @@ message layer, the launch arguments and the held processes are
   argument, `--listener`. Both take the `OutpostOptions` every outpost
   gets.
 - `Timings` holds the ping interval (3 seconds), the pings that may be
-  missed (three), the backoff's first wait and limit (1 and 30 seconds)
-  and the `Retirement`: the idle time before an outpost is retired (two
-  minutes) and the sweep's interval (30 seconds). `Timings::default` is
-  Verbatim's; `new` uses it with the retirement it is given, and
-  `with_executables` uses it unchanged, since a stand-in judged by a
+  missed (three) and the backoff's first wait and limit (1 and 30
+  seconds). `Timings::default` is Verbatim's; `new` and
+  `with_executables` use it unchanged, since a stand-in judged by a
   shorter ping interval is ended as stuck when its start is slow; a test of the backoff moves the clock the
   backoffs are judged by instead (`set_backoff_clock`). No setting
-  reaches them. `Retirement::from_test_env`
-  reads the test-only `VERBATIM_TEST_RETIREMENT` (`TEST_RETIREMENT_ENV`),
-  `<idle ms>,<sweep ms>`, which the end-to-end harness sets for the one
-  scenario that waits for a retirement; unset, it is the default, and a
-  malformed value stops Verbatim's start.
+  reaches them.
 - `shutdown()` shuts every child down and returns a `ShutdownSummary`: how
   many children ended cleanly, had exited, exited with an error, were killed
   at their time limit, or were killed because ending them failed.
@@ -44,8 +38,9 @@ message layer, the launch arguments and the held processes are
   as Core's generation record asks (`QueueEffect::StartOutpost`); asked for
   an application whose generation already runs, it reports that one
   (`Running`), so Core's record takes it.
-- `end_outpost(outpost)` ends a generation as Core's record asks: it is
-  stuck, or retired.
+- `end_outpost(outpost)` ends a generation as Core's record asks: it
+  stopped answering pings. No outpost is ended for being idle (Dickson,
+  2026-11-10 and 2026-11-16).
 - `send_to_listener(command)` sends the listener a request or cancel of
   Core's event queue, behind every command sent to it before.
 - `send_to_outpost(outpost, command)` queues a command without waiting,
@@ -68,9 +63,9 @@ liveness), `SpareReady`, `Regenerated`, `IdleQueried`, `NotWatched`,
 `Foreground`, `Progress` (a progress bar's change from the listener),
 `Running`, and per
 generation `Started`, its messages as unparsed `Frame`s, and `Ended` with a
-reason (exited, killed, retired, target exited) and whether a next
+reason (exited, killed, target exited) and whether a next
 generation follows (`follows`), the supervisor's decision as it ended it.
-Every removal of a record, at a retirement or a target exit, one waiting
+Every removal of a record, at an end Core asks or a target exit, one waiting
 for a failure's backoff among them, sends `NotWatched` after the `Ended` of
 every generation the app heard started, so nothing waits for an outpost
 that will not come. The lifecycle notices (`Started`, `Ended`,
@@ -182,9 +177,9 @@ How it works:
   hung end an outpost (the pong's `parked_count`; its `parked_on_hung`
   never counts, since the outpost is the one judge of a hung window),
   judged by the generation's `heartbeat` and, for the listener and the
-  spares, by their `Liveness`, all on the run's shared clock. Core's
-  generation record retires an idle outpost (`end_outpost`); the sweep only
-  closes the books of applications that have exited. An
+  spares, by their `Liveness`, all on the run's shared clock. The sweep,
+  every 30 seconds (`SWEEP_INTERVAL`), only closes the books of
+  applications that have exited. An
   outpost says `TargetExited` when its application exits, and the heartbeat
   also checks every held application.
 - Every ending is a clean shutdown (`retire`, under "Shutting down"); an

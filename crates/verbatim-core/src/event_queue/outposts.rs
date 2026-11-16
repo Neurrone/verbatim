@@ -2,8 +2,11 @@
 //! (`docs/design/readers-tell-core-asks-build1.md`, Table 5): the owner
 //! thread's process facts become inputs here, and the record's
 //! transitions move the requests that wait for an application's outpost
-//! or are out to it. Core owns routing and retirement; the owner thread
-//! carries out the effects, starting an outpost or ending a generation.
+//! or are out to it. Core owns routing and judges a generation's
+//! liveness; the owner thread carries out the effects, starting an outpost
+//! or ending a generation. An outpost is never ended for being idle
+//! (Dickson, 2026-11-10 and 2026-11-16): it ends when its application
+//! exits, when it fails or stops answering pings, or when Verbatim exits.
 
 use std::time::Duration;
 
@@ -13,8 +16,7 @@ use verbatim_model::request::{Outcome as WireOutcome, ProcessFact};
 use super::driver::Core;
 use super::inbox::Effect;
 use super::{Instance, Logic, Reader};
-use crate::supervisor::policy::retirement_decision;
-use crate::supervisor::record::{Application, Replaced, Retirement, Running, Stage};
+use crate::supervisor::record::{Application, Replaced, Running, Stage};
 
 impl<L: Logic> Core<L> {
     /// Applies a process fact the owner thread reported.
@@ -37,10 +39,6 @@ impl<L: Logic> Core<L> {
                 self.shared.borrow_mut().state.queue.record.spares_ready = waiting;
             }
             ProcessFact::OwnProcess(process) => self.own_process(process),
-            ProcessFact::Retirement { idle_us, sweep_us } => {
-                self.shared.borrow_mut().state.queue.record.retirement =
-                    Retirement { idle_us, sweep_us };
-            }
         }
     }
 
@@ -231,46 +229,31 @@ impl<L: Logic> Core<L> {
     }
 
     /// Verbatim's own process: its outpost is started at once, as
-    /// `ensure_spawned` did, and never retired.
+    /// `ensure_spawned` did.
     fn own_process(&mut self, process: Pid) {
         let mut shared = self.shared.borrow_mut();
-        let now_us = shared.state.queue.now_us;
         let record = &mut shared.state.queue.record;
         record.own = Some(process);
         if !record.applications.contains_key(&process) {
-            record.launch(process, now_us);
+            record.launch(process);
             shared.effects.push(Effect::StartOutpost(process));
         }
     }
 
     /// The listener's foreground report names `process` (column I): with
     /// no record, its outpost is started as an attended application's;
-    /// a backoff that runs ends at once; attention is noted for the
-    /// retirement, both by the application gaining it and by the one
-    /// losing it, so an application's idle time counts from when it last
-    /// held attention, as `retirement_decision` reads it.
+    /// a backoff that runs ends at once.
     pub(super) fn attended(&mut self, process: Pid) {
         let mut shared = self.shared.borrow_mut();
-        let now_us = shared.state.queue.now_us;
-        let queue = &mut shared.state.queue;
-        if let Some(left) = queue
-            .foreground
-            .map(|foreground| foreground.process)
-            .filter(|left| *left != process)
-            && let Some(application) = queue.record.applications.get_mut(&left)
-        {
-            application.attended_us = now_us;
-        }
         if !L::watched(&shared.state.facts, process) {
             return;
         }
         let record = &mut shared.state.queue.record;
         let Some(application) = record.applications.get_mut(&process) else {
-            record.launch(process, now_us);
+            record.launch(process);
             shared.effects.push(Effect::StartOutpost(process));
             return;
         };
-        application.attended_us = now_us;
         application.backoff.foreground();
         if let Stage::WaitingOut { .. } = application.stage {
             application.stage = Stage::Launching;
@@ -281,7 +264,7 @@ impl<L: Logic> Core<L> {
     /// The record's timers at `now_us`: a generation past its liveness
     /// due time is ended (column F); a backoff that ended launches again
     /// when a request waits or the application holds attention, else the
-    /// record goes (column H); and the retirement check (column G).
+    /// record goes (column H).
     pub(super) fn outpost_timers(&mut self) {
         let (now_us, applications) = {
             let shared = self.shared.borrow();
@@ -318,19 +301,6 @@ impl<L: Logic> Core<L> {
                 | Stage::WaitingOut { .. } => {}
             }
         }
-        let sweep = {
-            let shared = self.shared.borrow();
-            shared
-                .state
-                .queue
-                .record
-                .sweep_due_us
-                .is_some_and(|due_us| due_us <= now_us)
-        };
-        if sweep {
-            self.shared.borrow_mut().state.queue.record.sweep_due_us = None;
-            self.retire_idle();
-        }
     }
 
     /// `process`'s backoff ended (column H).
@@ -349,57 +319,6 @@ impl<L: Logic> Core<L> {
             shared.effects.push(Effect::StartOutpost(process));
         } else {
             queue.record.applications.remove(&process);
-        }
-    }
-
-    /// The retirement check (column G): today's `retirement_decision`
-    /// on a running outpost, starting or ready, not Verbatim's own: its
-    /// application has not held attention for the idle time and Core
-    /// holds none of its nodes, with the design's one addition that a
-    /// request out or waiting for it counts as holding. Such an outpost
-    /// is ended, its record gone and nothing taken again.
-    fn retire_idle(&mut self) {
-        let retired: Vec<Instance> = {
-            let shared = self.shared.borrow();
-            let queue = &shared.state.queue;
-            let record = &queue.record;
-            let attended = queue.foreground.map(|foreground| foreground.process);
-            record
-                .applications
-                .iter()
-                .filter_map(|(process, application)| {
-                    let (Stage::Starting(running) | Stage::Ready(running)) = application.stage
-                    else {
-                        return None;
-                    };
-                    let reader = Reader::Outpost(*process);
-                    let holding = queue.table.holds(reader)
-                        || L::holds(
-                            &shared.state.facts,
-                            verbatim_model::OutpostId(running.generation),
-                        );
-                    (Some(*process) != record.own
-                        && retirement_decision(
-                            application.attended_us,
-                            queue.now_us,
-                            Duration::from_micros(record.retirement.idle_us),
-                            attended == Some(*process),
-                            holding,
-                        ))
-                    .then_some(Instance {
-                        reader,
-                        generation: running.generation,
-                    })
-                })
-                .collect()
-        };
-        for instance in retired {
-            if let Reader::Outpost(process) = instance.reader {
-                let mut shared = self.shared.borrow_mut();
-                shared.state.queue.record.applications.remove(&process);
-                shared.effects.push(Effect::EndOutpost(instance));
-            }
-            self.reader_ended(instance, false);
         }
     }
 
@@ -432,8 +351,7 @@ impl<L: Logic> Core<L> {
             };
             if watched {
                 let mut shared = self.shared.borrow_mut();
-                let now_us = shared.state.queue.now_us;
-                shared.state.queue.record.launch(process, now_us);
+                shared.state.queue.record.launch(process);
                 shared.effects.push(Effect::StartOutpost(process));
                 continue;
             }
@@ -449,10 +367,6 @@ impl<L: Logic> Core<L> {
                 self.deliver(ended);
             }
         }
-        let mut shared = self.shared.borrow_mut();
-        let queue = &mut shared.state.queue;
-        let attended = queue.foreground.map(|foreground| foreground.process);
-        queue.record.settle_sweep(queue.now_us, attended);
         delivered
     }
 }

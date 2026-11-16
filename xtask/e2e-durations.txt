@@ -35,7 +35,6 @@
 10.0 owned_dialog_across_processes
 5.7 quick_link_menu
 11.4 rapid_tabbing_in_settings
-21.7 return_after_retirement
 17.5 return_from_a_held_application
 10.8 review_dead_object
 12.8 second_application_and_verbatim_menu

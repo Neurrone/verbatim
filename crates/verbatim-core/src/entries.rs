@@ -637,11 +637,6 @@ impl Logic for Entries {
         !facts.ignored.contains(&process)
     }
 
-    fn holds(facts: &SrState, generation: verbatim_model::OutpostId) -> bool {
-        facts.held_nodes().contains_key(&generation)
-            || facts.held_anchors().contains_key(&generation)
-    }
-
     fn window_destroyed(facts: &mut SrState, window: WindowHandle) {
         facts.follows.window_destroyed(window);
     }
