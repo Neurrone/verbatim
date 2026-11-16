@@ -377,7 +377,11 @@ subscriptions".
   caller another way, or `Value`, only the parts marked value-only, for an
   element only whose value changes the caller follows, such as a focus's
   parent; no other group holds those parts. Each is built once per
-  registration, on first need.
+  registration, on first need, with handler objects of its own: UI
+  Automation removes a group from an element by its handlers, so a handler
+  shared by two groups would leave an element with none once a move
+  replaced one group there by the other, as `Follow` does for a console's
+  terminal.
 - A focus subscription is not part of the groups: its handler is
   registered on the registering thread's client itself
   (`AddFocusChangedEventHandler`) before any group, as NVDA registers its

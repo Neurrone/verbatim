@@ -56,13 +56,15 @@ at info, with the time it took; the shutdown waits for it.
 No outpost hooks a `WinEvent` but the console host's: its event thread
 hooks the console's update and caret events (`CONSOLE_SUBSCRIPTIONS`),
 scoped to the console host's process, which Windows scopes by the
-event's thread, once the outpost is assigned an application whose image
-is `conhost` or `OpenConsole`. The listener tells Core of every other
+event's thread. The outpost hooks them once, the first time `Follow`
+names a terminal in a console's window (`FollowGroup::Terminal { console:
+true }`, `Context::hook_console`), whatever binary hosts the console
+(`conhost`, `OpenConsole` behind Windows Terminal, or a test's stand-in),
+and before it answers that `Follow`, so every console event raised after
+Core's baseline read is heard. A hook that cannot be installed is a
+`Fault`. The listener tells Core of every other
 kind, and Core asks the outpost for what it reads
-(`docs/design/readers-tell-core-asks-build1.md`). A fact the supervisor
-still routes to an outpost (`CoreToOutpost::DeliverFact`), the end of
-the listener's forwarding and Core's live re-read are dropped as they
-arrive.
+(`docs/design/readers-tell-core-asks-build1.md`). Core's live re-read is dropped as it arrives.
 
 ### A UIA focus, judged and read by the listener
 
@@ -111,9 +113,7 @@ application's (`read::own_window_verdict`, through `served_by`): another
 process's window is neither probed, read nor reported, with a debug line
 naming it, since any process can raise a `WinEvent` naming another's
 window, and the probe, or a console window's check by handle, would call
-into that process. The supervisor checks that a
-process it starts an outpost for serves the fact's window
-(`check_served_by` in `crates/verbatim-supervisor/src/owner.rs`; a debug build fails). Core
+into that process. Core
 routes a console client's focus-now query to its host through
 `verbatim_win32::provider`'s `provider_process` and `console_host_of`.
 
@@ -202,17 +202,16 @@ is replaced, Core asks for the focus with one focus-now query.
 
 An application usually gets a spare ([ADR 0001: Focus](../adr/0001-focus.md),
 "Spare outposts"): the supervisor keeps two outposts started with `--spare`, with
-everything made but a hook, which say `SpareReady`. A start takes the
+everything made but its application, which say `SpareReady`. A start takes the
 oldest, ready or not, and sends `Assign`; the spare sets its application,
-reads the clock, installs its hook, waits on the application's exit, and
+waits on the application's exit, and
 says `Ready`, the supervisor holding the application's facts meanwhile.
 Spares start once Core's own outpost is ready or has ended; a given spare
 is replaced at once. Spares are pinged but never asked in idle rounds,
 sent end-of-reads markers, or retired.
 
 Every outpost failure takes one path (`Owner::outpost_failed`): the process
-exits or crashes, its hook fails (a `Fault`, then exit code 1 without
-`Ready`), its launch fails, it misses three pings, or it piles up abandoned
+exits or crashes, its console hook fails (a `Fault`), its launch fails, it misses three pings, or it piles up abandoned
 workers. The failure is logged with its last fault, as an error (heard)
 for a spare or before `Ready`, a warning otherwise. If the application has
 exited, that is its end. Otherwise the application keeps its record, held
@@ -220,10 +219,8 @@ facts, and any idle query, and gets the next spare or a new outpost: the
 first failure at once, further ones after a backoff (`policy::Backoff`) of
 1, 2, 4, 8, 16, then 30 seconds, counted again once an outpost stayed up a
 minute (`STAYED_UP`) or the application comes to the foreground. A ready
-outpost's `Ended` and `HookRemoved` go at once; for one that failed before
-`Ready` the app hears `Regenerated`, then the failed one's `Ended` if it
-heard it start, then the next one's `Started`, which also answers an idle
-round in its place. Spares' failures are replaced with their own backoff.
+outpost's `Ended` goes at once, then the next one's `Started`, which also
+answers an idle round in its place. Spares' failures are replaced with their own backoff.
 
 ### Who calls into an application
 
@@ -331,9 +328,8 @@ the same tables and code, which the arbitrator's own lists are built from.
 
 - `run_pipe(pipe_in, pipe_out, target_pid, options)` runs one on Core's
   inherited overlapped pipes, watching `target_pid`, or for `None` as a
-  spare. `Outpost::assign` sets the application once: the clock, the hook on
-  the `WinEvent` thread (`verbatim_ia2::event_thread::EventThread::hook`), and `Ready`. When the hook
-  fails it reports a `Fault`, sends no `Ready`, and exits with code 1
+  spare. `Outpost::assign` sets the application once and says `Ready`; it installs no hook (the console's is
+  `Context::hook_console`, through `verbatim_ia2::event_thread::Nudger::hook`).
   ([ADR 0001: Focus](../adr/0001-focus.md), "Spare outposts"). It serves until
   `Shutdown` or the end of the command pipe, then shuts down cleanly, and a
   thread waiting on the target sends `TargetExited`.
@@ -520,9 +516,7 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
   host's console events, with Core's queries, lists of held nodes and idle
   queries, in arrival order, one entry per object and kind, a newer
   replacing it at the back (the console host's events per window and
-  kind). A batch is what accumulated during the previous one, but a
-  focused terminal's caret event ahead of its text change goes just after
-  the change, whose read reads the caret (`caret_after_update`). Core's
+  kind). A batch is what accumulated during the previous one. Core's
   event queue judges every other event
   (`docs/design/readers-tell-core-asks-build1.md`, "The outpost in this
   build"). Nothing is dropped at planning for a hung window: the worker
@@ -619,8 +613,7 @@ and the inherited pipe handles.
   that holds them for the whole read, a test or mockapp, until
   `forget_anchors`, with `note_content_changed`; `NodeText` is one node's,
   borrowed from it or from the crate's `NodeTextCopy`, the copy a
-  program's text call works on (`position_at`, `forget_selection`,
-  `reported_point`). Both hold the reducer's `NodeAnchors` with each
+  program's text call works on (`position_at`, `reported_point`). Both hold the reducer's `NodeAnchors` with each
   position a `Slot`: the source's position and the key it was kept under,
   so a call's result names a position it was given by the same key and
   only one it made is given a new one (`NodeTextCopy::finish`);
@@ -698,8 +691,8 @@ and the inherited pipe handles.
 - The event thread hosts the hook, never rebound: a second
   `WINEVENT_OUTOFCONTEXT` hook set on a thread that has one has been seen to
   stop delivery on it for the process's life.
-- The event thread hooks only the console host's events, and queues each
-  as it comes. A UIA element that is not a window gets its window from
+- The event thread hooks only the console host's events, when `Follow`
+  first names a console's terminal, and queues each as it comes. A UIA element that is not a window gets its window from
   `nearest_window_handle` on the worker.
 - Trace ids are minted when an event arrives. `WindowFacts` (`window_facts`,
   local calls) give the top-level window and root owner, topmost style,
@@ -1037,12 +1030,6 @@ A caret key is read and reported for Core, which alone judges it
 - The final read, `ReadPurpose::Final`, answers Core with the same
   comparison. Core reports nothing for a key's progress: it passes the key
   on, counts its bound, and judges each report's facts.
-- The console host's caret poll (`TerminalReads::Poll`; a documented workaround,
-  `books/dev/src/explanation/design/key-holding.md`, "The console host's
-  caret poll"): the console host raises caret events only on its cursor's
-  blink timer, so in its focused text area the note's reads run every 5 ms
-  for 50 ms from when the before read ended or the note arrived, until a
-  read shows the key's effect.
 
 
 Selections no key made (`docs/parity/text.md`, "TextInfo-equivalent
@@ -1270,25 +1257,12 @@ window before it is handled.
 
 ### Selection and notification events
 
-Selections emit `NormalizedEvent::SelectionChanged` and UIA notifications
-`NormalizedEvent::Notification`. A UIA selection of an element the
-focus names in its ControllerFor relation, or inside one, emits
-`NormalizedEvent::ControlledSelection` with the focus's id, as NVDA reports
-a search suggestion; the relation and the search are one remote operation
-(`verbatim_uia_rops::controlled_selection`). A UIA selection or
-notification goes through its application's reading thread behind a marker
-(`DeliveredFact::UiaMarked`), which finds a non-window sender's nearest
-window; one with none is dropped, but for the shell's window-snap
-notifications. A waiting notification is replaced by a newer one from the
-same element with the same kind, processing, and activity id, as NVDA's
-UIA limiter keys it.
-
-A Windows toast (`DeliveredFact::UiaToast`) goes through the same reading
-thread and is reported as `NormalizedEvent::Alert` with
-`AlertOrigin::ToastWindowOpened`, its identity a hash of its runtime id
-computed here, for Core's repeat rule (`docs/parity/alerts.md`, "Toasts").
-MSAA alert and show events from a native UIA window are dropped by the
-arbitrator's verdict for the window.
+The outpost raises none of these: selections, UI Automation notifications
+and toasts are the listener's tells, which Core's event queue judges
+(`docs/design/readers-tell-core-asks-build1.md`). What Core reads for a
+controlled selection, an element of the focus's ControllerFor relation or
+inside one, the relation and the search are one remote operation
+(`verbatim_uia_rops::controlled_selection`) made on Core's request.
 
 The ancestry cache ([verbatim-core](verbatim-core.md), "The ancestry
 cache"). The followed chain is the outpost's ancestry cache, saved with the
@@ -1298,17 +1272,9 @@ when the read answers a live re-read. Every join to the cache,
 `read::join_cache`, notes the entries it took
 (`RequestContext::note_cached`), and so do the listener's cached facts;
 `emit_focus` computes the report's `first_cached_ancestor` from the
-entries it emits, after its filters, by its `FocusSource`. A listener read
-carrying `answers` keeps its report's verdict and joins no cache; an MSAA
-live re-read (`CoreToOutpost::LiveReread`, planned as
-`DeliveredFact::MsaaLiveReread`) reacquires the object at the last MSAA
-report's event address (`Origin::Msaa`). The reducer records the
-live re-read each program's entry answers (`Current::live_reread`), cleared
-by the commit that sends its report or the listener's `UiaLiveRereadGone`;
-one the program ends, panics or is abandoned without answering, its object
-gone or its report dropped, is answered `OutpostToCore::LiveRereadGone`
-there, the one answer path. A newer focus of the same element never
-replaces a waiting answer in the intake.
+entries it emits, after its filters, by where each came from. A listener read
+carrying `answers` keeps its report's verdict and joins no cache. An MSAA live re-read
+(`CoreToOutpost::LiveReread`) is not the outpost's: it drops it.
 
 ## Messages to Core
 
@@ -1427,84 +1393,75 @@ clean exit). The end-to-end suite checks every child exited with code 0.
 ## Terminals
 
 The `terminal` module (public, so mockapp drives it) reads a focused
-terminal and sends each read to Core, whose terminal model aligns it and
-applies the reading rules (`books/dev/src/explanation/design/terminal-model.md`, "Where it runs";
-[verbatim-core](verbatim-core.md), "Core's terminal model"); the outpost
-judges nothing a read says. A UIA element of class `TermControl` (Windows
+terminal as Core asks and sends each read to Core, whose terminal model
+aligns it and applies the reading rules (`books/dev/src/explanation/design/terminal-model.md`,
+"Where it runs"; [verbatim-core](verbatim-core.md), "Core's terminal
+model"); the outpost judges nothing a read says and keeps nothing of a
+terminal between reads but the start anchors Core names, held as text
+anchors until `NodesHeld` lets them go. A UIA element of class `TermControl` (Windows
 Terminal) or `WPFTermControl` (Visual Studio), or a focus in a
 `ConsoleWindowClass` window, is `Role::Terminal`, never by title. The
 console host's text area is read through UIA; inside a remote operation its
 provider gives no handle for the window, which the classic walk finds.
 
-- Per terminal node the worker keeps a `Terminal`: the next read's start
-  (`Snapshot::next_start`) and whether its screen showed text, the screen's
-  size as Core told it (`TextOp::TerminalShape`, `Terminal::shape`), whether
-  colours are due, the reading state (`terminal::reading`), the last read's
-  times, the caret last sent, and a hash of the last read sent.
-- A read is one snapshot (`terminal::read`, through
-  `verbatim_uia_rops::terminal_snapshot`, classic fallback behind it): text
-  from a screen above the start to the end in one `GetText`, the screen,
-  the caret and its line, and colours when due, in one remote operation.
-  Core may ask for the whole document or a first read's history block
-  (`TextOp::TerminalReadNow`). `terminal::snapshot_of` makes Core's
-  `TerminalSnapshot`: UTF-8 text without line padding, each line's padded
-  length (one pass, `terminal::unpadded_utf16`, into new buffers),
-  the caret's row and column, colours from `verbatim_uia_rops::ColourRun`,
-  and when the read began. The start is kept unless the screen shows no text
-  where the last kept read's did (`verbatim_text::terminal_rows::shows_text`).
-  The caret read is a caret report inside the snapshot
-  (`text_reads::terminal_read`).
-- A live read is sent as `NormalizedEvent::TerminalSnapshot` unless
-  identical to the last sent but for times and caret (`Terminal::sends`), a
-  read that waited for Core's queue excepted; an answer to Core is always
-  sent (`TextReply::TerminalSnapshot`). Reads never merge while waiting,
-  since each starts where the last said, and a whole document goes as one
-  message.
-- Core asks for colours with every key that reaches the terminal
-  (`TextOp::TerminalColours { from_ms, until_ms }`); reads beginning by the
-  latest end asked take them (`Terminal::colours`), and if the last read
-  ended after the key without them, one is read at once. Each read carries
-  its end (`ended_ms`).
-- Keys and reading settings are Core's. A held caret key's before read is,
-  in a terminal, a snapshot whose caret answers it; the watch's evidence
-  then reads the terminal, and its answer says nothing.
-- The console host's console events (`EVENT_CONSOLE_UPDATE_REGION`,
-  `_SIMPLE`, `_SCROLL`, `EVENT_CONSOLE_LAYOUT`, merged per window) are its
-  text changes, and its `EVENT_CONSOLE_CARET` reads the terminal too;
-  Windows Terminal's UIA text changes and caret events read it. A change
-  observed before the last read began is covered (`Terminal::covers`, in
-  microseconds; `ReadAnswer::started_us` is the read's start, which the
-  snapshot's event is stamped with). Reads on Windows Terminal's events
-  never wait for a frame; the before read of a held key, prompted by no event, can
-  cost that key one software-rendered frame. Windows Terminal raises no change for writes of
-  blank lines only, so such a scroll is read at the next event.
+- A change is a tell. Every change signal of the terminal `Follow` names
+  (the console host's `EVENT_CONSOLE_UPDATE_REGION`, `_SIMPLE`, `_SCROLL`,
+  `EVENT_CONSOLE_LAYOUT` and `EVENT_CONSOLE_CARET`; Windows Terminal's UIA
+  text changes and caret events) is sent to Core as one `Event` tell of
+  kind `TerminalChanged` (`Worker::terminal_tell`), with the time it was
+  observed. The outpost reads nothing for it. The intake's limiter merges
+  the signals of the same window or element and kind that wait together
+  (`a_windows_console_updates_merge_into_one_while_they_wait`). The outpost
+  keeps no "changed, not yet read" flag: Core alone does.
+- A read is one `TextOp::ReadTerminal(TerminalRead)` of Core's
+  (`text_reads::terminal_read`, through `terminal::read`, `verbatim_uia_rops::terminal_snapshot`, classic fallback
+  behind it): text from a screen above the start anchor Core names to the
+  end in one `GetText`, the screen, the caret and its line, and colours when
+  Core asks, in one remote operation. Every fact of the read is Core's
+  (`terminal::ReadAsk`): the start anchor, the scope (`Fresh`, `Whole`, or
+  `HistoryBlock`), the screen's height and width, and whether to take colours.
+  The answer is `TextReply::TerminalRead` (`TerminalReadReply`): the
+  `TerminalSnapshot` (`terminal::snapshot_of`: UTF-8 text without line
+  padding, each line's padded length from one pass,
+  `terminal::unpadded_utf16`, the caret's row and column, colours from
+  `verbatim_uia_rops::ColourRun`, and when the read began), the start
+  anchor the read minted at the top of its screen unless the screen shows
+  no text where the last read's did (`verbatim_text::terminal_rows::shows_text`),
+  when the read began on the shared clock, and the caret starting point
+  when the request named a unit, held from the caret the read found
+  (`text::held::starting_from`), so a caret key's starting read is one
+  round trip. The caret read is a caret report inside the snapshot.
+  Output reads are the worker's own after the event queue's requests; a
+  read waits for the worker's current request, up to a search's length.
+- Reads are numbered (`TerminalSnapshot::read`) for the control plane; Core
+  judges nothing by the number.
+- Keys and reading settings are Core's, and so is whether a read takes
+  colours. A caret key's starting and final reads in a terminal are
+  `ReadTerminal` requests of Core's caret key entry.
+- Windows Terminal's reads never wait for a frame. Windows Terminal raises
+  no change for writes of blank lines only, so such a scroll is read at
+  the next change.
 - When a terminal's focus is reported, the subscription moves to it and the
-  worker waits for the move (`Registration::settle`) before the first read,
-  which is sent even if identical (`Terminal::focused`).
-- On-demand reading (`terminal::reading`, a pure transition function): live
-  by default; `TextOp::TerminalHold` only notes changes;
-  `TextOp::TerminalRead { hold }` answers with a read taken as one that
-  waited, or `TextReply::TerminalUnchanged`; `TextOp::TerminalCancel` goes
-  live and reads only if the text changed; `TerminalReadNow(Fresh)` reads
-  whatever the state. Each read is answered from one locked state of the
-  buffer.
-- History: `TextOp::TerminalHistory { above, whole }` reads rows above
-  Core's memory, padding kept, answered `TextReply::TerminalHistory` with
-  the rows above the start and the read number whose start it is
-  (`terminal::history`, `History`); `TextOp::TerminalFind`
-  (`terminal::find`, `verbatim_uia_rops::terminal_find`) finds a command
-  mark's line, answered `TextReply::TerminalFound`, and Core picks the
-  match. Reads are numbered (`TerminalSnapshot::read`); an unsent read's
-  number is the last sent one's.
+  worker waits for the move (`Registration::settle`) before the first
+  read. The console host's console events are hooked when `Follow` first
+  names it ("The console host's events", above).
+- History: `TextOp::TerminalHistory { above, whole, start, height }` reads rows
+  above the start anchor Core names, padding kept, answered
+  `TextReply::TerminalHistory` with the rows above the start and the read
+  number whose start it is (`terminal::history`, `History`);
+  `TextOp::TerminalFind` (`terminal::find`,
+  `verbatim_uia_rops::terminal_find`) finds a command mark's line from the
+  named start, answered `TextReply::TerminalFound`, and Core picks the
+  match. A start anchor released while a request names it is held until
+  the answer; one that no longer exists ends the request as the anchor lost.
 - Each snapshot and read logs its cost at debug (`terminal snapshot
   timing`, `terminal read timing`).
 - The listener ignores every UIA notification from a terminal
   (`verbatim_uia::map::ignores_notifications`), as NVDA's terminal overlays
   do, or output would be spoken twice.
-- Tests: `terminal/reading.rs` covers every reading state; `terminal/tests.rs`
-  drives `Terminal::sends` over `verbatim-term-sim` and checks the one-pass
-  conversion, with an ignored `measure_conversion` that times the
+- Tests: `terminal/tests.rs` checks the one-pass conversion over
+  `verbatim-term-sim`, with an ignored `measure_conversion` that times the
   conversion, the read's event written as the outpost writes it, and
   Core's parse of that frame, in a release build (`books/dev/src/reference/performance.md`,
-  "A terminal's reads in Core"); mockapp's `terminal` and
-  `terminal_reading` tests drive a real outpost.
+  "A terminal's reads in Core"); mockapp's `terminal`, `terminal_reading`
+  and `terminal_snapshot` tests drive a real outpost through its request driver.

@@ -428,8 +428,10 @@ by Core on entering the window: one acquisition; `progress`, an
   pumps the messages their out-of-context callbacks are delivered
   through, which an outpost and the focus listener each run, differing
   only in their pid and kinds. `EventThread::spawn(kinds, make_handlers)`
-  starts it with no hook; `hook(pid)` installs its one set when asked (a
-  spare starts it before it has an application). `EventHandlers` are made
+  starts it with no hook; `hook(pid)`, on the thread or on any copy of its
+  `Nudger` (`Nudger::hook`), installs its one set when asked, behind every
+  nudge sent before and returning once the hooks are in (an outpost asks
+  when `Follow` first names a console's terminal). `EventHandlers` are made
   on the thread: the `WinEvent` callback and an optional nudge handler. A
   `Nudger` hands the thread two words between events (`nudge`), which is
   how an outpost unhooks some kinds and hooks them again, and waits for it

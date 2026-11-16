@@ -405,17 +405,12 @@ that carries them on the pipes, `Message`, is
 - One enum per direction and role, so a receiver cannot be sent what it
   does not take: a frame of another direction fails to decode, and its
   child is ended as failed.
-  - `CoreToOutpost`: `Front` (where attention is: the application's foreground
-    window, or that it left), `DeliverFact` (a routed fact: a UIA focus's
-    marker, read, or drop with whether its sender had no window, an MSAA focus or
-    menu-popup address, a foreground window, with the listener's trace
-    id, its `EventTiming`, whose `observed_at_us` orders the fact, and
-    for a `WinEvent` its `WinEventStamp`); `ForwardingEnded`; `Query`
+  - `CoreToOutpost`: `Query`
     (under a `RequestId`: who in Core asked, `Requester::Reducer` or
     `Requester::Shell`, non-exhaustive for later askers, and that asker's
     number, which outposts store, compare and echo and decide nothing by);
-    `CancelQuery` (withdraws a query not started, by its `RequestId`); `Ping`; `Fetches`;
-    `NodesHeld`; `IdleQuery`; `Shutdown`; `Assign`; `Request` (an `Ask` of
+    `CancelQuery` (withdraws a query not started, by its `RequestId`); `KeyNote` (the note of a key with no before read, with no reply); `Ping`; `Fetches`;
+    `NodesHeld`; `IdleQuery`; `Shutdown`; `LiveReread`; `Assign`; `Request` (an `Ask` of
     the shared list, its node ids stamped with the outpost generation,
     which the outpost clears with `Ask::unstamp`); `Cancel` (a
     request's `Cancel` with its reason); and `WindowDestroyed` (a window
@@ -584,11 +579,10 @@ implements. What each answer says is in `docs/parity/text.md`,
   that. A key's own caret event is taken by its watch.
 - `TextChanged { node_id }`: the node's text changed; Core says nothing of
   it.
-- `TerminalSnapshot { node_id, snapshot }`: one read of a focused
-  terminal, for Core's terminal model ([verbatim-core](verbatim-core.md),
-  "Core's terminal model"), sent in place of `TextChanged` unless
-  identical to the last read sent. A `TerminalSnapshot` is whole by
-  itself: its `text` from the read's start to the document's end, the
+- `TerminalSnapshot { node_id, snapshot }`: one full read of a focused
+  terminal, the control plane's protocol version 4 event the test harness
+  waits on ([verbatim-core](verbatim-core.md), "Core's terminal model");
+  no outpost sends it. A `TerminalSnapshot` is whole by itself: its `text` from the read's start to the document's end, the
   `screen`, the document's `first_row` and the `caret_line`, each a
   `TerminalText`; the flags `from_start`, `shrank`, `at_document_start`
   and `alternate`; `caret_rows_to_end`, `caret_column`, and `above`;
@@ -665,29 +659,26 @@ supersedes an older one, whose answer Core drops. The operations
   `Unsupported`; in text measured by character offsets (a plain Win32
   edit control, not a rich edit), `OffsetLocation { offset, length, point }`, the point's offset,
   the text's length and its place in pixels when the control gives one.
-- `TerminalHold`, `TerminalRead { hold }`, `TerminalCancel`: a focused
-  terminal's on-demand reading (`docs/parity/terminals.md`, "Reading a
-  terminal on demand"). Hold: only note changes (`Done`). Read: what the
-  terminal says now, then hold or read each change again
-  (`TerminalSnapshot`, or `TerminalUnchanged`). Cancel: speech was cut, so
-  read to the end and go live again.
-- `TerminalReadNow(TerminalScope)`: read at once (`TerminalSnapshot`):
-  `Fresh`, before a review command Core answers from its memory; `Whole`,
-  the whole document after a lost read; `HistoryBlock { height }`, a first
-  read again.
-- `TerminalHistory { above, whole }`: the text from `above` rows above the
-  next read's start to the document's end, or the whole document,
-  answered `TerminalHistory { text, above, read }`.
-- `TerminalFind { needle, from, rows }`: a command mark's line sought by
-  its first row's text outward from `from` rows above the next read's
-  start, at most 20 matches, `rows` rows read from each, answered
+- `ReadTerminal(TerminalRead)`: a full read of the focused terminal from a
+  screen above the start anchor Core names (`None` for a first read) to the
+  document's end, answered `TerminalRead(TerminalReadReply)`: the
+  `TerminalSnapshot` with the screen, the caret and its line, the start
+  anchor the read minted at the top of its screen for a later read to name,
+  when the read began (`started_us`, on the shared clock, so a change
+  observed before it is covered by it), and the caret starting point when
+  `starting` named a unit. The request carries every fact Core owns that the
+  read uses: the scope (`Fresh`, `Whole`, or `HistoryBlock { height }`), the
+  screen's `height` and `width`, whether to take the screen's `colours`,
+  whether the window is a console host's (`console`), and whether it is an
+  output read (`output`), which Core asks outside the event queue
+  (`docs/design/readers-tell-core-asks-build3.md`).
+- `TerminalHistory { above, whole, start, height }`: the text from `above`
+  rows above the start anchor Core names to the document's end, or the whole
+  document, answered `TerminalHistory { text, above, read }`.
+- `TerminalFind { needle, from, rows, start }`: a command mark's line sought
+  by its first row's text outward from `from` rows above the start anchor,
+  at most 20 matches, `rows` rows read from each, answered
   `TerminalFound { matches, read }` with a `TerminalMatch` for each.
-- `TerminalColours { from_ms, until_ms }`: every read that begins by the
-  latest such `until_ms` takes the screen's colours; when the last read
-  ended at or after `from_ms` without them, one is taken at once and sent
-  as a live read (`Done`).
-- `TerminalShape { height, width }`: the screen's shape for the outpost's
-  next reads (`Done`).
 
 Any request can also be answered `NoText` (no text interface; Core reviews
 the value or name as flat text), `AnchorLost`, `Gone` (the node no longer

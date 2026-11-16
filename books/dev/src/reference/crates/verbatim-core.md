@@ -62,7 +62,7 @@ guide maps those behaviors onto the crate's types and modules.
     finds it, by `same_object` alone, the indexes of the two entries, or
     `None` when the lines share no object; the reducer keeps the previous
     line to that entry and enters the new entries below it.
-    `already_entered(previous, new)` counts the new line's entries,
+    `already_entered_ancestors(previous, new)` counts the new line's entries,
     outermost first, at or above where it meets `previous`, by which an
     outpost gathers a newly entered dialog's own text. Neither allocates.
   - `HeldNode`: one node of a focus line as an outpost records its
@@ -132,32 +132,22 @@ guide maps those behaviors onto the crate's types and modules.
 
 ## Core's queries
 
-Every query the reducer asks, of an outpost or of a terminal's memory,
-is recorded in one field of `SrState`, `queries` (`src/queries.rs`), from
+Every query the reducer asks of an outpost is recorded in one field of `SrState`, `queries` (`src/queries.rs`), from
 its request to its one ending, under the `QueryId` its request goes out
 as (`protocol::RequestId::reducer`). An entry holds the outpost asked,
-the trace its request runs under, who answers it (`Asked`: `Read`, which
-the idle barrier waits for, `Watch`, a caret key's watch, which it does
-not, or `Memory`, a request Core answers from a terminal's memory), and
-what its answer continues (`Then`).
+the trace its request runs under, who answers it (`Asked::Read`, which
+the idle barrier waits for), and what its answer continues (`Then`).
 
 - One way to ask: `Queries::ask(asking, then)` records the query and
   returns the request's effect (`Effect::Fetch`, `Effect::Text` or
-  `Effect::Activate`); `ask_memory(node, then)` records one only Core
-  answers, a command mark's move. `terminal_model::intercept` turns a
-  request it takes out of the effects into a `Memory` one
-  (`answer_from_memory_later`).
+  `Effect::Activate`).
 - One ending each, after which the continuation runs once, routed by the
   entry's `then` (`queries::ended`): the outpost's answer,
-  `Input::Answered`, taken only from the outpost asked and never for a
-  `Memory` entry (`queries::answered`); the outpost's end, inside
+  `Input::Answered`, taken only from the outpost asked (`queries::answered`); the outpost's end, inside
   `Input::OutpostEnded`, where every entry still open there ends "gone" in
   number order, under its own trace or the end's (`outpost_gone`); its
   owner's withdrawal, the held key's read at its deadline
-  (`Queries::withdraw_kept`, `Effect::Withdraw`); and Core's answer from
-  memory (`answer_from_memory`), or the removal of the terminal's model,
-  which ends its reviews' entries with nothing run
-  (`SrState::drop_models`, the only way a model goes). An answer with no
+  (`Queries::withdraw_kept`, `Effect::Withdraw`). An answer with no
   entry is dropped.
 - The outcome becomes the result the entry's kind takes: a navigation's
   `FetchResult` (`Gone` for a gone node, `Unanswered` for any failure), an
@@ -166,17 +156,12 @@ what its answer continues (`Then`).
   failure).
 - A query superseded or cleared is turned to `Then::Nothing`
   (`Queries::forget`): its entry stays until its answer, which runs
-  nothing, so the idle barrier still waits for a superseded read; a
-  `Memory` entry is removed at once instead. A newer caret key on the same
-  node turns the waiting key's entry into `SupersededCaret`, whose answer
-  may still say a change of the selection; a cancel turns the flood
-  policy's open read into `Overtaken`.
-- A terminal model's asks (owed, fresh, history and search reads) are
-  entries tagged with the model's node and generation, which each model
-  gets from a counter kept with the models (`Terminals`), so a model made
-  again for the same node takes none of its predecessor's answers. Its
-  questions are lookups (`model_asks`). An owed read asked while one is
-  open turns the older to `Nothing`.
+  nothing, so the idle barrier still waits for a superseded read.
+- A terminal's full reads are not in this table: the focused terminal's
+  reads are Core's own requests awaited by its facts, tagged with the
+  model's node and generation, which each model gets from a counter kept
+  with the models (`Terminals`), so a model made again for the same node
+  takes none of its predecessor's answers ("Core's terminal model").
 - `reduce` ends each transition by setting the trace of the queries made
   in it to the trace the shell runs their requests under: the key's inside
   `Effect::ForKey`, else the input's (`set_traces`).
@@ -460,7 +445,7 @@ code is in `reduce.rs` unless named.
   one that only lost the focus they meet at it, as UI Automation compares
   two elements by runtime id. `HeldNode` carries a window's handle, the
   backend and the stand-in mark as the snapshot does, so an outpost's own
-  use of the rule, for a dialog's text, judges by `already_entered`.
+  use of the rule, for a dialog's text, judges by `already_entered_ancestors`.
 - The window in front. `SrState::hook_foreground()`
   (`verbatim_model::HookForeground`) is decided from the window the focus
   listener last reported (`Input::Foreground`), one of Verbatim's own
@@ -749,35 +734,21 @@ reads, `Then::Review`, or, for a focus or Verbatim+Tab's answer, a
 
 ### Verbatim+Tab
 
-(`report_focus.rs`.) Each press is a live focus query,
-`Effect::ReadFocus(FocusPurpose::Report)`, which the app routes to the
-process of the foreground thread's focus window
-([verbatim-app](verbatim-app.md)); nothing is said until it answers.
-The answer comes back as an `Input::Event` whose `purpose` is `Report`,
-under the press's trace, and is spoken only: never taken as Core's
-focus, nor recorded as the last focus queued, so Core's focus ancestry,
-its navigator and the outposts' followed chains are unchanged. The first
-press says the object as a query announces it (`reduce::announce_query`),
-then its text as the navigator's is read (`editing::reported_text`, whose
-`PendingText::about` carries the answer, which is neither the navigator
-object nor the focus); an answer of the focus Core holds moves what was
-last spoken of it. A second press spells the name, "blank" for none, a
-third and later with character descriptions.
-
-The press waiting for its answer is `SrState::report_press`
-(`WaitingPress`: its trace and the first and last repeat counts kept).
-A press within the repeat interval while one waits is kept with it, so
-the answer is spoken, then spelled, in order; a press after the interval
-asks again and replaces it, the older query's answer then being late.
-Its endings are its answer, `Input::ReadFocusUnanswered` (nothing to ask,
-its outpost's end, `NotWatched` or an empty answer say "No focus";
-abandoned at its deadline, or replaced in the app while it waited for an
-outpost, nothing), a focus Core applies that was observed after the
-press, in a later millisecond, or either time unknown (`record_taken`),
-and a replacing press. A focus observed before the press and applied while
-it waits leaves it waiting, as NVDA runs NVDA+Tab after the focus event
-queued before it and speaks both. An answer for no waiting press says
-nothing.
+(`report_focus.rs`; `docs/design/readers-tell-core-asks-build1.md`,
+"Report focus".) Each press is an event-queue entry that, at its turn,
+reads the committed focus node's properties live in one request
+(`ANNOUNCED_SET`) and speaks the answer only: never taken as Core's
+focus, so Core's focus ancestry, its navigator and the outposts'
+followed chains are unchanged. The first press says the object as its
+announcement does, then its text as the navigator's is read
+(`editing::reported_text`); a second press spells the name, "blank" for
+none, a third and later with character descriptions. With no committed
+focus the press says "No focus" and asks nothing; any outcome but a
+result says nothing (a request refused unsent or stopped because the
+window is hung has already played the not-responding sound in the queue,
+if the window is attended). Each press waits its turn, so two presses
+give two announcements, and a press ahead of a focus reads the old
+focus.
 
 A press's answer ends it, or a follow-up read replaces its read (a line
 read for the line, then a move, or an object's announcement and then its
@@ -1106,7 +1077,7 @@ The answer updates the caret and speaks, queued:
 - Delete and Control+Delete: the character or word now at the caret.
 - Any other passed key that types nothing (`CaretMotion::Other`, from the
   hook's `KeyReport::Passed`, and the clearing keys): text it removed, a
-  new line (`KeyRead::on_baseline_line`), or by where the caret landed on
+  new line, or by where the caret landed on
   an unchanged line. A key
   that removed a selection says only the selection's change
   (`editing::removes_selection`).
@@ -1258,22 +1229,22 @@ a pipe.
   a grapheme boundary and followed by `Message::TerminalLineCut`. A line
   and its growth (`TerminalItem::Growth`) are one unit, counted and
   dropped together.
-- On-demand reading (`docs/parity/terminals.md`, "Reading a terminal on
-  demand"). Once a group's worth of lines waits, Core tells the outpost to
-  hold (`TextOp::TerminalHold`); when the group's last line is handed to
-  speech, it asks for what is new (`TextOp::TerminalRead`), and the
-  backlog is decided once both have happened
-  (`TerminalSpeechState::deciding`). With nothing waiting, reading goes
-  live again. Whether the outpost holds is the focused terminal's model's
-  (`TerminalModel::held`), and every request goes to the focused terminal
-  Core models, so when the outpost ends, its hold goes with the model and
-  nothing more is asked of it; what Core had already read is still
-  spoken, as NVDA speaks the lines its monitor read (the request out is
-  answered gone, and the backlog decided then). A cut while held or with a request out sends
-  `TextOp::TerminalCancel`; of reads before the cut
+- Reading on demand (`docs/parity/terminals.md`, "Reading a terminal on
+  demand"; `docs/design/readers-tell-core-asks-build3.md`). The outpost
+  tells Core of every change signal; Core alone keeps "told, not yet
+  read" and sends the output read (`terminal/reading.rs`, "Core's
+  terminal model" below). Once a group's worth of lines waits, the
+  reading holds: a change told is kept, not read. When the group's last
+  line is handed to speech, one waited read is sent as the release, and
+  the backlog is decided once the release read's answer and the last
+  line have both happened (`TerminalSpeechState::deciding`). With nothing
+  waiting, reading goes live again. When the outpost ends, the reading
+  goes with its model and nothing more is asked of it; what Core had
+  already read is still spoken, as NVDA speaks the lines its monitor
+  read. A cut while holding or with a read out leaves that read
+  silent: of reads begun before the cut
   (`Input::SpeechCancelled::at_ms` against the read's start) only the
-  answers to keys are spoken, as for an overtaken request
-  (`TerminalSpeechState::overtaken`).
+  answers to keys are spoken (`Mark::Silent`).
 - Anything that cuts speech drops the output waiting and handed to
   speech: `Input::SpeechCancelled`, a step whose effects stop speech or
   interrupt, and `Input::UtteranceCancelled`. `Input::UtteranceFailed`
@@ -1285,15 +1256,17 @@ a pipe.
   answers to keys.
 
 The unit tests in `terminal/tests.rs` drive the flood policy and the
-reducer with simulated playback and a simulated outpost that holds and
-answers Core's requests as the real one does.
+reducer with simulated playback and a simulated outpost that tells a
+change per write and answers Core's reads from the start anchors it names,
+as the real one does.
 
 ### Core's terminal model
 
 The reading rules run in Core (`books/dev/src/explanation/design/terminal-model.md`, "Where it
-runs"): `terminal_model.rs` and `terminal_model/review.rs` take each read
-a terminal's outpost sends (`NormalizedEvent::TerminalSnapshot`) and the
-answers to the requests they make.
+runs"): `terminal_model.rs` and `terminal_model/review.rs` take each full
+read of a terminal (`TextReply::TerminalRead`, the snapshot with the start
+anchor it minted) and the answers to the requests they make;
+`terminal/reading.rs` is the focused terminal's life and its reading.
 
 - Public: `read_of(&TerminalSnapshot)`, the rules' `Read` of a snapshot
   (its text without its lines' padding, and the screen, padded again
@@ -1302,57 +1275,74 @@ answers to the requests they make.
   terminal; and `read_at(&TerminalSnapshot)`, when a snapshot was taken as
   far as keys are concerned: when the read ended, or when it began for a
   snapshot that does not say when it ended.
+- The focused terminal is one value, `FocusedTerminal` (`terminal/reading.rs`):
+  `None`; `Baselining`, its `Follow` and baseline read out (the baseline
+  carries Core's parameters; a failed baseline is sent at the next
+  change); `WaitingForWindow`, its window hung before the baseline
+  answered, which the recovery set re-asks; or `Modelled` with its
+  `Reading`. A `Reading` is `Quiet`, `Behind` (a change told while an
+  entry's full read is out), `Out` (an output read out, with its token,
+  its `Mark` and the change told meanwhile), `Holding` (the flood
+  policy's hold) or `Stalled` (its window hung while a read was out). A
+  read's `Mark` says what its speech does: `Spoken`, `Waited` (the
+  release at a group's last line or not) or `Silent`. A change that the
+  last read, begun after it was observed, covers needs no read; every
+  other change sends one output read at once, outside the event queue,
+  as Core's own request awaited by its facts. Every full read's answer is
+  taken by the model at once, in the order the outpost's worker made the
+  reads, and its speech joins the event queue as a `SpeechEntry`, judged
+  at its turn (a cut that came after the read began, a changed focus or
+  model generation, and its reader's end silence it). A late answer is
+  dropped by its number.
 - `SrState::terminals` (`Terminals`) holds a model per terminal node
   read, at most 16, least recently read forgotten first and an ended
   outpost's dropped, each only through `SrState::drop_models`: the rules
   (`TerminalReader`) behind an `Arc`, the model's generation, the keys not
-  yet given to them, waiting review requests, history rows that came, the
-  review places, the caret and screen shape, the shape told to the
-  outpost, whether the outpost holds for the flood policy, and the
-  quiet-period timer's due time. The reads it asked for
-  are Core's queries, tagged with its node and generation ("Core's
-  queries", above). A model is made with a terminal's first snapshot
-  while it has the focus.
+  yet given to them, the history rows that came, the review places, the
+  caret and screen shape, the start anchor the next read names (the start
+  of the last read whose screen showed text, or the first), the scope the
+  rules owe (`Fresh`, `Whole` or `HistoryBlock`, taken by the next full
+  read sent), when the newest read began, and the quiet-period timer's due
+  time. A model is made with the baseline while the terminal has the
+  focus.
 - Keys. Every key input while the focus is a modeled terminal is kept by
-  its kind, a clearing key as `Forget` then `Other`. With each, Core asks
-  for the screen's colours over the key's window, `KEY_WINDOW_MS` from its
-  time (`TextOp::TerminalColours`, always answered `Done`). Before a read
+  its kind, a clearing key as `Forget` then `Other`. Whether a read takes
+  the screen's colours is Core's decision from the keys kept
+  (`KEY_WINDOW_MS` from a key's time) and the last read, sent in the read's
+  request (`TerminalRead::colours`). Before a read
   taken at S (`read_at`) is given to the rules, every kept key at or
   before S is given in order; before the timer at T, those up to T; past
   256 kept keys the oldest is given at once. Leaving the terminal tells
-  the rules `blur` and drops the keys; returning tells them `focus`.
+  the rules `blur` and drops the keys; returning tells them `focus`. A
+  caret key in a terminal is Core's caret key entry with its watch, whose
+  starting and final reads are full reads of the terminal.
 - A read's speech key is the newest key given whose window holds the
   read's time; its speech and effects go out as `Effect::ForKey` for that
   key. A read with no speech key, and the timer's speech, carry the
   input's trace.
-- Reads. A live snapshot is taken only for the focused terminal. When the
-  rules ask for the whole document or a first read with its history
-  block, Core sends `TextOp::TerminalReadNow` (`TerminalScope::Whole` or
-  `HistoryBlock { height }`) and drops live snapshots until it comes,
-  since the outpost answers in order. `TextReply::TerminalUnchanged` says
-  nothing. A read's caret report becomes Core's caret at the read's time.
-  The read before a held key is answered with a snapshot (`before_key`)
-  whose caret answers the read. A new screen shape is told with
-  `TextOp::TerminalShape`. The rules' timer is the focused model's due
+- Reads. A full read is a `TextOp::ReadTerminal(TerminalRead)`: the start
+  anchor the model names, the scope, the screen's shape from the model,
+  whether to take colours, and whether the window is a console host's. A
+  read identical to the last one given to the rules, with its times,
+  number, start and caret left out, is skipped unless it is the first
+  after the focus arrived. A read's caret report becomes Core's caret at
+  the read's time. The rules' timer is the focused model's due
   time, which the shell reads after each step
   (`SrState::terminal_timer_due`) and answers with `Input::TerminalTimer`
   once it is past; another model's due time does not count, so a model
   dropped or left has no timer, and the timer's step moves the due time
   past the time it fired at (a debug assertion, and a postcondition of
   the generated test).
-- Review commands. A request the memory answers is not sent: `reduce`
-  takes it out of the step's effects, its query becoming one Core answers
-  itself, never waited for, asks for a fresh read
-  (`TerminalScope::Fresh`) and answers it from the memory, which ends its
-  query (`queries::answer_from_memory`). Rows above the
-  memory are asked for with `TextOp::TerminalHistory { above, whole }`, a
-  screen more than needed, and placed only when they count from the read
-  the memory last took (`review::placed_history`, sharing
-  `review::start_of`); otherwise the request is answered `Unanswered`.
-  The memory's rows carry anchors with the top bit set
-  (`TERMINAL_ANCHORS`), a range no outpost mints from, with at most 64
-  places beyond those Core holds. A waiting review is `Review::Text` or
-  `Review::StatusBar` ("Report status bar",
+- Review commands. A review command in a focused modelled terminal is one
+  entry on the event queue (`terminal/commands.rs`): it sends one fresh full
+  read and answers from the memory the model then holds. Rows above the
+  memory are asked for with `TextOp::TerminalHistory { above, whole, start, height }`, a
+  screen more than needed, and placed from the start anchor Core named, which
+  the outpost holds until the answer (`NodesHeld` lets it go); an anchor whose
+  row left the memory ends the command silently, marks kept. The memory's rows carry anchors with
+  the top bit set (`TERMINAL_ANCHORS`), a range no outpost mints from, with
+  at most 64 places beyond those Core holds. A waiting review is
+  `Review::Text` or `Review::StatusBar` ("Report status bar",
   `terminal_model::report_status_bar`, reading `review::footer`), or
   `Message::NoStatusLineFound` outside a modeled terminal.
 - Command marks. Enter on a caret line holding input
@@ -1361,7 +1351,9 @@ answers to the requests they make.
   `Review::Mark`) try the marks beyond the review position, nearest
   first, by their line's hash in the memory and above it with
   `TextOp::TerminalFind`, whose matches are placed with `review::placed`;
-  a press makes at most `review::MARK_SEARCHES` (3) searches.
+  a press makes at most `review::MARK_SEARCHES` (3) searches. Output
+  written just before Control+C during a mark search can be spoken, a
+  limit Dickson accepted (2026-11-16).
 - Settings: "report new output" and "review follows caret" are given to
   every model's rules whenever they change.
 

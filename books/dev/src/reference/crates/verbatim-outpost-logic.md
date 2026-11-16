@@ -57,11 +57,11 @@ Public API:
   program's answer to it, a verdict, a commit, a program finished, a
   release's answer, and the shell's close. `Effect`: dispatch a
   `Program`, send a message, release, move the subscription
-  (`Subscription`), drop elements or objects, abandon a worker generation
-  (`Abandon`, with the dead generation and its replacement; the shell
-  alone counts the abandoned workers that have not returned), or publish
-  the facts' marks, given after a transition that changed them and ahead
-  of its other effects, or the verdicts.
+  (`Subscribe`), let go of followed groups (`Unfollow`) or parked elements
+  (`Unpark`), forget text ranges (`ForgetRanges`), abandon a worker
+  generation (`Abandon`, with the dead generation and its replacement; the
+  shell alone counts the abandoned workers that have not returned), report
+  a logic error (`LogicError`) or a settle reached (`Settled`).
 - A program runs until it ends: it has no deadline, and the outpost
   judges no hang and no user moving on. Core bounds its requests by their
   due times and judges a hang itself. A shell items or position query
@@ -81,10 +81,10 @@ Public API:
   its copies of the facts (`Facts`), whose commits come back as `Change`s
   and are applied while their `Request` is live.
 - The vocabulary of its state, used by the shell and the worker: the
-  intake's `Entry`, `Item`, `Marks` (with `TerminalMark`) and `Object`; the follow
+  intake's `Entry`, `Item` and `Object`; the follow
   state (`FollowState`, `Followed`, `Origin`, `Subscribed`, `LastReported`,
-  `Owed`, and a commit's `FocusCommit` and `MarkChange`, below); the caret key's
-  watch (`Watch`, `OpenWatch`, `Checked`, below); the verdicts
+  and a commit's `FocusCommit` and `MarkChange`, below); the caret key's
+  watches (`Watches`, `WatchProgram`, `WatchWork`, above); the verdicts
   (`Verdicts`, `VerdictChange`, `Probe`, `Probed`, from `verbatim-reader-rules`, and
   `KeptFromAnyGeneration`, this crate's rule of which a generation no
   longer in charge may record); each node's text facts
@@ -98,8 +98,8 @@ Public API:
 The followed focus (`src/follow.rs`) is one record, `Followed`: the node,
 its role, object, window, chain and titles, how it was read (`Origin`: the
 listener's read with its focus path, an MSAA focus with what a live re-read
-needs, a focus-now answer, a menu opening), its terminal mark, its redirect
-and system-caret marks, its subscription and what it owes. A
+needs, a focus-now answer, a menu opening), its redirect and system-caret
+marks and its subscription. A
 commit's `FocusCommit::Adopt` replaces the record whole, so that no fact of an
 older focus survives beside a newer one; the subscription it replaces keeps
 its group among `kept_groups` until its node is released.
@@ -107,12 +107,8 @@ its group among `kept_groups` until its node is released.
 the subscription and replaces the owed work and nothing else.
 A caret key's watch on another node than the one an adoption names ends. An element found after its report moves the subscription only while
 its node is followed; otherwise its tokens are let go. `MarkChange` is the
-one change of a mark a commit makes. `FollowState::absorbed`, beside the
-record, is a held console's window, which need not be the followed focus's:
-an adoption clears it, as does anything that may end the hold. What the
-mailbox and the intake read is computed from the record and it
-(`Facts::marks`), and `Effect::Marks` is sent when the computed value
-changes. A commit the state table says cannot occur, a
+one change of a mark a commit makes (clearing the redirect). A commit the
+state table says cannot occur, a
 `FocusCommit::Again` or a mark of the record's changed with nothing
 followed, changes nothing and comes back as `Effect::LogicError`, which the shell logs as an
 error.
@@ -120,16 +116,13 @@ error.
 A node's note (`docs/design/caret-selection-rework.md`) is kept in the
 text facts with the node's record (`text.rs`): `KeyNote`, its key's unit and
 motion, when it ends, and what it causes to be read besides the node's
-caret events (`NoteReads::Field` or `NoteReads::Terminal`, each
-`CaretAndText`, or `CaretOnly` once a read showed the key's effect, and a
-terminal's `Poll`, the console host's). It is set as a before
+caret events (`NoteReads::Field`, `CaretAndText`, or `CaretOnly` once a read showed the
+key's effect). It is set as a before
 read's request or a one-way `CoreToOutpost::KeyNote` arrives and cleared by
 the key's final read, which goes ahead of queued reads, or Verbatim's own
 caret move; a note past its end counts as absent where it is read, so
-no timer ends it and no key's progress is held here. The console poll's due
-time is the reducer's (`poll_due`, `reach_poll`), driven by the run's shared
-clock, and a poll read is one `Work::NoteRead`. Core alone judges a read's
-facts as a key's evidence.
+no timer ends it and no key's progress is held here. Core alone judges a
+read's facts as a key's evidence.
 
 `cargo xtask ci` reads every file of the crate by the pure rule
 (`xtask/src/ownership.rs`): no clock, no lock, no thread, no Windows type.
@@ -147,7 +140,7 @@ pinned by the outpost's `a_focus_now_answer_is_followed_again_only_on_the_follow
 
 The intake (`src/intake.rs`) queues what the outpost still hears, its
 `Follow` subscription's UI Automation events and a console host's console
-events, with Core's queries, lists of held nodes and idle queries, in
-arrival order: one waiting entry per object and kind, a batch ending at
-an idle query, and the focused terminal's caret event after its text
-change. Its rules are pinned by its own tests.
+events, a window Core named destroyed, and Core's queries, lists of held
+nodes and idle queries, in arrival order: one waiting entry per object and
+kind, a console's events merged per window and kind, and a batch ending at
+an idle query. Its rules are pinned by its own tests.
