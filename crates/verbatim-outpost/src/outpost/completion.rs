@@ -19,7 +19,9 @@ use verbatim_model::request::{
     CompleteUia, CompletionFor, ObjectRead, Outcome, Refusal, Reply, RouteEnd,
 };
 use verbatim_model::{Backend, NodeId, NodeSnapshot, Role, State};
-use verbatim_uia::{Cached, Interning as _, Kept, Node};
+use verbatim_uia::map::with_legacy_checked_state;
+use verbatim_uia::{Cached, DialogText, Fill, Interning as _, Kept, Node};
+use verbatim_uia_rops::{Path, StatesQuery, focus_states};
 
 use super::asked::{
     Focus, ancestor_reads, ancestors_end, controlled_by, cut_at_known, focus_read, known_stops,
@@ -58,15 +60,6 @@ pub(super) fn complete(
     let mut snapshot = snapshot_of(node, Backend::Uia, first_read);
     if focus && let Some(element) = &found {
         register(context, element, node, snapshot.role);
-        // The node's states, read once its registration is in, so a change
-        // raised from now on is heard.
-        if let Ok(fresh) = read::read_node(context, client, node) {
-            let focused = snapshot.states.contains(State::Focused);
-            snapshot.states = fresh.states;
-            if focused {
-                snapshot.states = snapshot.states.with(State::Focused);
-            }
-        }
     }
     let nearest = hwnd_of(route.window);
     // The node's window, fixed as it is made, as NVDA's object fixes its
@@ -102,6 +95,12 @@ pub(super) fn complete(
         .then(|| read::foreground_object_among(context, client, &ancestors))
         .flatten();
     if focus {
+        // The node's states, read once its registration is in, so a change
+        // raised from now on is heard, with the text of the dialogs it
+        // enters whose elements the outpost holds.
+        let gathered = found.as_ref().map_or_else(Vec::new, |element| {
+            states_and_dialogs(context, client, element, nearest, (&mut snapshot, &ancestors))
+        });
         // Every dialog of the chain below the ancestors Core already knows
         // is one the focus enters.
         read::describe_dialogs(
@@ -111,7 +110,7 @@ pub(super) fn complete(
                 ancestors.iter_mut().chain(std::iter::once(&mut snapshot)),
                 Some(&path),
             ),
-            (&mut None, false),
+            &gathered,
         );
     }
     if let CompletionFor::SelectionItem { focus } = complete.completes {
@@ -290,6 +289,84 @@ fn register(context: &RequestContext<'_>, element: &Cached<Node>, node: NodeId, 
         verbatim_uia::Group::Base
     };
     super::followed::add_focus(context, (node, agile.reference()), group);
+}
+
+/// Reads the states of the focus `element`, whose registration is in, into
+/// `snapshot`, and gathers the text of each dialog among `ancestors` and
+/// the focus that wants it and whose element the outpost holds, in one
+/// remote program where `window` allows one
+/// ([`verbatim_uia_rops::focus_states`]): NVDA's `event_gainFocus`
+/// registers for the focus's events before it speaks it, dialog text
+/// included (`NVDAObjects/UIA/__init__.py` 1623 to 1626). Answers each
+/// dialog's text gathered, for [`read::describe_dialogs`] to give; the
+/// states stay as the listener read them when the read fails.
+fn states_and_dialogs(
+    context: &RequestContext<'_>,
+    client: &mut Client,
+    element: &Cached<Node>,
+    window: isize,
+    (snapshot, ancestors): (&mut NodeSnapshot, &[NodeSnapshot]),
+) -> Vec<(NodeId, Option<String>)> {
+    use crate::dialog_text::{UiaDialog, dialog_text};
+    let dialogs: Vec<(NodeId, verbatim_uia::Live)> = ancestors
+        .iter()
+        .chain(std::iter::once(&*snapshot))
+        .filter(|node| node.backend == Backend::Uia && read::wants_dialog_text(context, node))
+        .filter_map(|node| {
+            let held = context.store.element_of(node.id)?.resolve().ok()?;
+            Some((node.id, held.live().clone()))
+        })
+        .collect();
+    let Ok((uia, nodes)) = client.uia_with(context, Context::node_request) else {
+        return Vec::new();
+    };
+    let Ok(children) = uia.request_fixed::<DialogText>() else {
+        return Vec::new();
+    };
+    let lives: Vec<verbatim_uia::Live> = dialogs.iter().map(|(_, live)| live.clone()).collect();
+    let fill = Fill::new(&nodes);
+    let children_fill = Fill::new(&children);
+    let query = StatesQuery {
+        focus: element.live(),
+        fill: &fill,
+        dialogs: &lives,
+        children: &children_fill,
+    };
+    let (states, path) = match focus_states(uia, &query, context.tries_remote(Some(window))) {
+        Ok(answer) => answer,
+        Err(error) => {
+            tracing::debug!(%error, "a focus's states could not be read");
+            return Vec::new();
+        }
+    };
+    if let Path::Fallback(error) = &path {
+        tracing::warn!(window, %error, "a remote operation failed; read the classic way");
+        if matches!(error, verbatim_uia_rops::Error::Import(_)) {
+            context.read_classically(window);
+        }
+    }
+    if let Some(fresh) = states.focus {
+        let fresh = with_legacy_checked_state(
+            fresh.live().element(),
+            fresh.snapshot_in_table(context.nodes()),
+        );
+        let focused = snapshot.states.contains(State::Focused);
+        snapshot.states = fresh.states;
+        if focused {
+            snapshot.states = snapshot.states.with(State::Focused);
+        }
+    }
+    dialogs
+        .into_iter()
+        .zip(states.children)
+        .map(|((id, live), read)| {
+            let text = match read {
+                Some(read) => dialog_text(&UiaDialog::with_children(uia, &children, live, read)),
+                None => dialog_text(&UiaDialog::new(uia, &children, live)),
+            };
+            (id, text)
+        })
+        .collect()
 }
 
 /// The element's ancestors, nearest first, up to the first Core already

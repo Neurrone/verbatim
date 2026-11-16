@@ -1179,10 +1179,18 @@ pub(super) fn msaa_enrichment(
     Ok((ancestors, selected))
 }
 
-/// The dialog this outpost last gathered text for in a foreground report,
-/// and the text: the focus that follows it into the dialog reuses it rather
-/// than reading the dialog again.
-pub(super) type DialogMemo = Option<(NodeId, Option<String>)>;
+/// Whether `node` is a dialog whose own text is to be gathered as its
+/// description: a dialog with no description of its own, while
+/// descriptions are read at all.
+pub(super) fn wants_dialog_text(context: &RequestContext<'_>, node: &NodeSnapshot) -> bool {
+    context.fetches().description
+        && is_dialog(node.role)
+        && node
+            .details
+            .description
+            .as_deref()
+            .is_none_or(|description| description.trim().is_empty())
+}
 
 /// Gives every dialog among `nodes`, the chain of a focus, outermost first,
 /// that has no description of its own, its own text as its description
@@ -1192,15 +1200,13 @@ pub(super) type DialogMemo = Option<(NodeId, Option<String>)>;
 /// dialog in it is one the focus enters and is read
 /// (`docs/design/readers-tell-core-asks-build1.md`, "The focus answers").
 ///
-/// `memo` is taken: a dialog it names is given its text without reading it
-/// again. With `remember`, the last text read is kept in it for the next
-/// report, which is how a foreground report hands its dialog to the focus
-/// inside it. A UIA dialog's text is gathered on the worker's own client,
-/// `client`, inside the program, as NVDA gathers a dialog's text inside its
-/// focus event. A UIA dialog whose element this outpost does not hold is
-/// found by `path`, the path the focus listener read for the focus these
-/// nodes are, so a dialog has its text on the first focus the listener
-/// read for it.
+/// A dialog `gathered` names is given the text gathered for it already,
+/// with no read. A UIA dialog's text is gathered on the worker's own
+/// client, `client`, as NVDA gathers a dialog's text inside its focus
+/// event. A UIA dialog whose element this outpost does not hold is found
+/// by `path`, the path the focus listener read for the focus these nodes
+/// are, so a dialog has its text on the first focus the listener read for
+/// it.
 pub(super) fn describe_dialogs<'a>(
     context: &RequestContext<'_>,
     client: &mut Client,
@@ -1208,42 +1214,29 @@ pub(super) fn describe_dialogs<'a>(
         impl IntoIterator<Item = &'a mut NodeSnapshot>,
         Option<&super::focus_path::FocusPath>,
     ),
-    (memo, remember): (&mut DialogMemo, bool),
+    gathered: &[(NodeId, Option<String>)],
 ) {
-    let mut remembered = memo.take();
-    if !context.fetches().description {
-        return;
-    }
+    let mut read: Vec<(NodeId, Option<String>)> = gathered.to_vec();
     for node in nodes {
-        if !is_dialog(node.role)
-            || node
-                .details
-                .description
-                .as_deref()
-                .is_some_and(|description| !description.trim().is_empty())
-        {
+        if !wants_dialog_text(context, node) {
             continue;
         }
-        let text = match &remembered {
-            Some((id, text)) if *id == node.id => text.clone(),
-            _ => {
-                let started = std::time::Instant::now();
-                let text = dialog_text_of(context, client, node, path);
-                tracing::debug!(
-                    found = text.is_some(),
-                    elapsed_us = started.elapsed().as_micros(),
-                    "a dialog's text gathered"
-                );
-                text
-            }
+        let text = if let Some((_, text)) = read.iter().find(|(id, _)| *id == node.id) {
+            // A dialog met twice in one chain, or gathered already, is
+            // read once.
+            text.clone()
+        } else {
+            let started = std::time::Instant::now();
+            let text = dialog_text_of(context, client, node, path);
+            tracing::debug!(
+                found = text.is_some(),
+                elapsed_us = started.elapsed().as_micros(),
+                "a dialog's text gathered"
+            );
+            read.push((node.id, text.clone()));
+            text
         };
-        // A dialog that is both the foreground window and the focus's
-        // ancestor in one report is read once.
-        remembered = Some((node.id, text.clone()));
         node.details.description = text;
-    }
-    if remember {
-        *memo = remembered;
     }
 }
 

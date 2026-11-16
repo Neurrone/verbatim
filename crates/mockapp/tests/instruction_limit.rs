@@ -18,15 +18,17 @@ mod harness;
 
 use verbatim_uia::text::{Endpoint, TextPatternExt};
 use verbatim_uia::{
-    Ancestor, Cached, Fill, FocusInput, Kept, Live, Node, NodeGates, NodeIdRegistry, Shape, Uia,
+    Ancestor, Cached, DialogText, Fill, FocusInput, Kept, Live, Node, NodeGates, NodeIdRegistry, Shape, Uia,
     runtime_id,
 };
 use verbatim_uia_rops::{
     Attributes, Builder, CaretLineQuery, CaretQuery, Comparison, ControlledQuery, Error,
     FocusAncestry, FocusQuery, FormatSpan, MOST_RUNS, Movement, NavigationDirection, PathQuery,
-    Position, RangeAction, RangeEnd, RangeQuery, RowsQuery, SnapshotQuery, Status, StepQuery,
+    Position, RangeAction, RangeEnd, RangeQuery, RowsQuery, SnapshotQuery, StatesQuery, Status,
+    StepQuery,
     TextAttribute, TextFrom, TextTarget, TreeQuery, UnitsQuery, WatchQuery, caret_read_remote,
     controlled_selection_remote, counting, element_by_path_remote, focus_ancestry_remote,
+    focus_states_remote,
     navigation_step_remote, terminal_rows_remote, terminal_snapshot_remote, text_range_remote,
     text_units_remote, tree_dump_remote, watch_check_remote,
 };
@@ -983,6 +985,68 @@ fn watch_checks_execute_exactly() {
     assert!(worst < LIMIT / 2);
 }
 
+/// A focus completion's read after the focus's registration
+/// (`verbatim_uia_rops::focus_states`): typically, a button's states with
+/// its dialog window's four children, `dialog_class_window.json`'s three
+/// and the window's title bar; at its worst,
+/// a focus's states with the children of `wide.json`'s list of a hundred
+/// items read as a dialog's, which the run stops at its sixty and answers
+/// unread.
+fn focus_states_execute_exactly() {
+    common::init_com();
+    let run = |name: &str, prefix: &str, focus: &str, dialog: Option<&str>| {
+        let fixture = Fixture::start(name, prefix);
+        let nodes = fixture.nodes();
+        let children = Fill::new(
+            &fixture
+                .uia
+                .request_fixed::<DialogText>()
+                .expect("a cache request"),
+        );
+        let focus = Live::new(fixture.find(focus));
+        let dialogs = vec![Live::new(
+            dialog.map_or_else(|| fixture.root.clone(), |name| fixture.find(name)),
+        )];
+        let query = StatesQuery {
+            focus: &focus,
+            fill: &nodes,
+            dialogs: &dialogs,
+            children: &children,
+        };
+        let mut answered = None;
+        let count = counted(|| {
+            let states = focus_states_remote(&fixture.uia, &query).expect("the program runs");
+            answered = Some(
+                states
+                    .children
+                    .iter()
+                    .map(|read| read.as_ref().map(Vec::len))
+                    .collect::<Vec<_>>(),
+            );
+        });
+        fixture.app.quit();
+        (count, answered.expect("an answer"))
+    };
+    let typical = run(
+        "dialog_class_window.json",
+        "mockapp-instructions-dialog-states",
+        "No",
+        None,
+    );
+    let worst = run(
+        "wide.json",
+        "mockapp-instructions-wide-states",
+        "Item 000",
+        Some("Many"),
+    );
+    assert_eq!(
+        (typical.clone(), worst.clone()),
+        ((287, vec![Some(4)]), (1630, vec![None])),
+        "a dialog window's four children; a hundred, past the run's sixty"
+    );
+    assert!(typical.0 < LIMIT / 2 && worst.0 < LIMIT / 2);
+}
+
 /// `count` numbered lines, `line 000` on, as mockapp's `set-text` takes
 /// them, each line feed escaped.
 fn numbered(count: u32) -> String {
@@ -1040,5 +1104,6 @@ fn main() {
         ),
         ("tree_dumps_execute_exactly", tree_dumps_execute_exactly),
         ("watch_checks_execute_exactly", watch_checks_execute_exactly),
+        ("focus_states_execute_exactly", focus_states_execute_exactly),
     ]);
 }

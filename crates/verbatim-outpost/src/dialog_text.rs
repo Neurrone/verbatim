@@ -220,6 +220,8 @@ pub struct UiaDialog<'a> {
     uia: &'a Uia,
     request: &'a Request<DialogText>,
     element: Live,
+    /// Its children, when they were read already, filled by `request`.
+    read: Option<Vec<verbatim_uia::Cached<DialogText>>>,
 }
 
 impl<'a> UiaDialog<'a> {
@@ -231,15 +233,40 @@ impl<'a> UiaDialog<'a> {
             uia,
             request,
             element,
+            read: None,
+        }
+    }
+
+    /// The dialog `element` whose children, `children`, were read already
+    /// with `request`, which reads their own children.
+    #[must_use]
+    pub fn with_children(
+        uia: &'a Uia,
+        request: &'a Request<DialogText>,
+        element: Live,
+        children: Vec<verbatim_uia::Cached<DialogText>>,
+    ) -> Self {
+        Self {
+            uia,
+            request,
+            element,
+            read: Some(children),
         }
     }
 }
 
 impl<'a> DialogParent for UiaDialog<'a> {
     type Child = UiaObject<'a>;
-    /// One call: the dialog's children with their properties cached.
+    /// One call: the dialog's children with their properties cached; none
+    /// when they were read already.
     fn children(&self) -> Vec<UiaObject<'a>> {
-        children_of(self.uia, self.request, &self.element)
+        match &self.read {
+            Some(children) => children
+                .iter()
+                .map(|child| object(self.uia, self.request, child))
+                .collect(),
+            None => children_of(self.uia, self.request, &self.element),
+        }
     }
 }
 
@@ -261,14 +288,23 @@ fn children_of<'a>(
 ) -> Vec<UiaObject<'a>> {
     uia.children(parent, request)
         .unwrap_or_default()
-        .into_iter()
-        .map(|child| UiaObject {
-            uia,
-            request,
-            parts: child.read().parts(child.runtime_id()),
-            element: child.live().clone(),
-        })
+        .iter()
+        .map(|child| object(uia, request, child))
         .collect()
+}
+
+/// The object a child read with `request` is.
+fn object<'a>(
+    uia: &'a Uia,
+    request: &'a Request<DialogText>,
+    child: &verbatim_uia::Cached<DialogText>,
+) -> UiaObject<'a> {
+    UiaObject {
+        uia,
+        request,
+        parts: child.read().parts(child.runtime_id()),
+        element: child.live().clone(),
+    }
 }
 
 impl DialogParent for UiaObject<'_> {

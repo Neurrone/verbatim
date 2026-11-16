@@ -883,7 +883,7 @@ fn try_candidate(
         context,
         client,
         (ancestors.iter_mut().chain(std::iter::once(&mut node)), None),
-        (&mut None, false),
+        &[],
     );
     let msaa = HeldIds {
         event: ids,
@@ -944,7 +944,7 @@ fn current_focus(
                 .chain(std::iter::once(&mut control.node)),
             None,
         ),
-        (&mut None, false),
+        &[],
     );
     let msaa = (control.node.backend == Backend::Msaa)
         .then(|| held_ids(context, &control.node))

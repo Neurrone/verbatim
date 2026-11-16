@@ -2037,6 +2037,10 @@ first, the share of the limit in brackets:
   (`CHILDREN_PER_RUN`) down `deep.json`'s sixty-two nested groups, then
   746; `wide.json`'s hundred items 2,545, then 654, 588 for each sixteen
   items, and 356.
+- A focus's states with its dialogs' children: 1,630 (16 percent) for a
+  run stopped at its sixty children (`DIALOG_CHILDREN_PER_RUN`) in
+  `wide.json`'s hundred items, 287 for a button with its dialog window's
+  four children.
 - The controlled selection: 183 inside a group of the controlled list, 215
   for its second child, 238 for an item outside it, about 35 an element
   passed, plus 11 to read the current selection of an element not found

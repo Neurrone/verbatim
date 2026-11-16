@@ -632,6 +632,22 @@ across the desktop. The outpost uses it to find its own copy of an
 element the focus listener read ([ADR 0001: Focus](../adr/0001-focus.md),
 "The outpost's own element").
 
+## Layer 3: a focus's states after its registration
+
+`focus_states(uia, query, remote)` (`FocusStatesFn`) answers the outpost's
+read of a UI Automation focus once its event registration is in, which
+NVDA's `event_gainFocus` makes before it speaks the focus
+(`NVDAObjects/UIA/__init__.py` 1623 to 1626): `StatesQuery::focus`'s cache
+filled anew by `StatesQuery::fill`, and the children of each of
+`StatesQuery::dialogs`, the dialogs the focus enters, filled by
+`StatesQuery::children` as `verbatim_uia::DialogText`, from which their
+text is gathered. The program reads them all in one round trip, up to
+`DIALOG_CHILDREN_PER_RUN` (60) children in all, each dialog's children in
+a try block; a dialog whose children fail or do not fit is answered
+unread (`None`), for the caller to read classically. The classic
+implementation refreshes the focus and reads each dialog's children, one
+call each.
+
 ## Layer 3: the tree dump
 
 `tree_dump(uia, query, remote)` (`TreeDumpFn`) answers the control

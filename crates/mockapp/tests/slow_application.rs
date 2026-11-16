@@ -218,10 +218,17 @@ fn a_slow_dialog_text_is_reported_with_the_focus() {
             )
         });
     assert_eq!(dialog.dialog_text.as_deref(), Some(QUESTION));
+    // Three calls: the dialog window's element, the walk down the route to
+    // the focus, and one program reading the focus's states with the
+    // dialog's children. The old report made two, but never registered
+    // for the focus's events before reading its states; Dickson's ruling
+    // has the outpost register first, as NVDA's `event_gainFocus`
+    // registers before speaking (`NVDAObjects/UIA/__init__.py` 1623 to
+    // 1626), so the states and the dialog's text are read after it.
     assert_eq!(
         focused.calls,
         CallCounts {
-            uia: 2,
+            uia: 3,
             msaa: 0,
             window_messages: 0,
             connections: 1,

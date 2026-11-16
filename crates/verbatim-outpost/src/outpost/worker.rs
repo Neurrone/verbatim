@@ -2564,7 +2564,7 @@ impl Worker<'_> {
             context,
             self.client,
             (windows.chain(focus), None),
-            (&mut None, false),
+            &[],
         );
         if purpose == FocusPurpose::Report {
             return (answer, None);

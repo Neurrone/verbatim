@@ -37,7 +37,9 @@
 //!   [`controlled_selection`]; and, for the outpost finding its own copy
 //!   of an element the focus listener read, [`element_by_path`]: the
 //!   element reached from one the caller has by the runtime ids below it;
-//!   and, for the control plane's tree dump, [`tree_dump`]: an element's
+//!   for a focus's completion, [`focus_states`]: the focus's states, read
+//!   once its event registration is in, with the children of the dialogs
+//!   it enters; and, for the control plane's tree dump, [`tree_dump`]: an element's
 //!   subtree, each element's children read in one call.
 //!
 //! The crate is Windows-specific and GPL like NVDA, from which the
@@ -49,6 +51,7 @@ mod caret;
 mod controlled;
 mod error;
 mod focus;
+mod focus_states;
 mod instruction;
 mod navigate;
 mod opcode;
@@ -77,6 +80,10 @@ pub use error::{Error, Failure};
 pub use focus::{
     Ancestry, FailedHop, FocusAncestry, FocusAncestryFn, FocusQuery, Path, Progress,
     focus_ancestry, focus_ancestry_classic, focus_ancestry_remote, runtime_id_key,
+};
+pub use focus_states::{
+    DIALOG_CHILDREN_PER_RUN, FocusStatesFn, States, StatesQuery, focus_states, focus_states_classic,
+    focus_states_remote,
 };
 pub use instruction::{Instruction, OperandId, TypeTest};
 pub use navigate::{
