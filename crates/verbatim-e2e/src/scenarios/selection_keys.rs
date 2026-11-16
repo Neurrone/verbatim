@@ -149,7 +149,8 @@ pub(crate) fn text_box_body(scenario: &mut Scenario, _state: &mut ScenarioState)
     press(scenario, "shift+control+rightarrow", &["beta  selected"]);
     press(scenario, "control+v", &["selection removed"]);
 
-    shift_right_then_right(scenario);
+    // NVDA at 30 ms: "l" (rtca-selection-keys-2026-11-17, text box, step 31).
+    shift_right_then_right(scenario, &["l"]);
 
     // Backspace over the first word of a later line: the line break before
     // the selection's start
@@ -175,13 +176,14 @@ pub(crate) fn text_box_body(scenario: &mut Scenario, _state: &mut ScenarioState)
 /// once both keys have been handled, when nothing is selected before or
 /// after (`docs/parity/text.md`, "A selection no key made"; the 2026-11-17
 /// comparison).
-fn shift_right_then_right(scenario: &mut Scenario) {
+fn shift_right_then_right(scenario: &mut Scenario, heard: &[&str]) {
     press(scenario, "downarrow", &[LINE]);
     press(scenario, "home", &["a"]);
+    // 30 ms apart, as a person types (Dickson, 2026-11-16).
     scenario
-        .send_keys(&["shift+rightarrow", "rightarrow"])
+        .send_keys_paced(&["shift+rightarrow", "rightarrow"], 30)
         .expect("sends shift+rightarrow and rightarrow");
-    scenario.speech().expect(&["l"]);
+    scenario.speech().expect(heard);
 }
 
 /// The scenario in Windows 11 Notepad, read through UI Automation, whose
@@ -266,7 +268,10 @@ pub(crate) fn notepad_body(scenario: &mut Scenario, _state: &mut ScenarioState) 
     press(scenario, "shift+control+rightarrow", &["beta  selected"]);
     press_silent(scenario, "control+v");
 
-    shift_right_then_right(scenario);
+    // NVDA at 30 ms: Notepad's selection event comes before Right, so
+    // "a selected", "l", "a unselected" (rtca-selection-keys-2026-11-17,
+    // Notepad, step 40).
+    shift_right_then_right(scenario, &["a selected", "l", "a unselected"]);
 
     // Control+Backspace over the first word of a later line: Notepad
     // deletes the line break before the selection, which is said, and the
