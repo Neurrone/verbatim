@@ -131,6 +131,7 @@ fn a_slow_navigation_step_answers_its_neighbor() {
     let request_id = outpost.ask(Query::Navigate {
         node_id: group,
         kind: QueryKind::FirstChild,
+        details: verbatim_model::property::NodeDetailSet::ALL,
     });
     match reply_to(&outpost, request_id) {
         QueryOutcome::Done(QueryResult::Navigated(Some(neighbor))) => {

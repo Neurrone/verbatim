@@ -856,6 +856,8 @@ mod tests {
                 request_id: RequestId::shell(1),
                 query: Query::ReadFocus {
                     purpose: verbatim_model::protocol::FocusPurpose::Plain,
+                    details: verbatim_model::property::NodeDetailSet::ALL,
+                    text: verbatim_model::TextDetails::ALL,
                 },
             },
             TraceId::mint(),
@@ -869,7 +871,13 @@ mod tests {
                 _ => None,
             })
             .expect("the query's program dispatched");
-        let node = store.nodes_for(tag_of(in_flight)).window(5).number();
+        let node = store
+            .nodes_for(
+                tag_of(in_flight),
+                verbatim_model::property::NodeDetailSet::ALL,
+            )
+            .window(5)
+            .number();
         let dead = Request {
             generation: 7,
             number: 99,

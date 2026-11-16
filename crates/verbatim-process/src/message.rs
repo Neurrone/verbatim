@@ -616,16 +616,20 @@ mod tests {
         let queries = [
             Query::ReadFocus {
                 purpose: verbatim_model::protocol::FocusPurpose::Plain,
+                details: verbatim_model::property::NodeDetailSet::ALL,
+                text: verbatim_model::TextDetails::ALL,
             },
             Query::Navigate {
                 node_id: NodeId::new(9),
                 kind: QueryKind::NextSibling,
+                details: verbatim_model::property::NodeDetailSet::ALL,
             },
             Query::Activate {
                 node_id: NodeId::new(9),
             },
             Query::Ancestors {
                 node_id: NodeId::new(9),
+                details: verbatim_model::property::NodeDetailSet::ALL,
             },
             Query::DumpTree { locations: false },
         ];

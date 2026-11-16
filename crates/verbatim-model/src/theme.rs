@@ -15,8 +15,8 @@
 //! (decision D12); the presentation stage at the end of the speech pipeline
 //! turns each span into words, a sound, both, or nothing, as the active
 //! theme says ([`Indication::of_segment`] finds the span's indication). The
-//! reducer consults the theme in one case, to skip fetching details set to
-//! off ([`Fetches`]).
+//! reducer consults the theme in one case, to choose the details each read
+//! fetches ([`ReportedDetails`]), so a detail set to off is not read.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -24,7 +24,9 @@ use std::fmt;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::event::Earcon;
+use crate::property::{NodeDetail, NodeDetailSet};
 use crate::speech::{Message, Phrase, SegmentContent, TextFormat};
+use crate::text::{FormatAttribute, FormatSet, TextDetails};
 use crate::tree::{Role, State};
 
 /// The categories of the catalogue, in the order the theme panel lists
@@ -670,28 +672,46 @@ impl Theme {
             .is_some_and(|setting| *setting != indication.default_setting())
     }
 
-    /// What the reducer fetches under this theme: each detail unless its
-    /// indication is off.
+    /// The details this theme reports, each unless its indication is off,
+    /// from which Core chooses each read's details.
     #[must_use]
-    pub fn fetches(&self) -> Fetches {
+    pub fn reported(&self) -> ReportedDetails {
         let on = |indication| self.setting(indication).report != Presentation::Off;
-        Fetches {
-            description: on(Indication::Description),
-            shortcut: on(Indication::Shortcut),
-            position: on(Indication::Position),
-            level: on(Indication::Level),
-            cell_coordinates: on(Indication::CellCoordinates),
-            spelling_errors: on(Indication::SpellingError),
-            grammar_errors: on(Indication::GrammarError),
-            font_name: on(Indication::FontName),
-            font_size: on(Indication::FontSize),
-            color: on(Indication::Color),
-            background_color: on(Indication::BackgroundColor),
-            font_attributes: on(Indication::FontAttributes),
-            strikethrough: on(Indication::Strikethrough),
-            underline_style: on(Indication::UnderlineStyle),
-            bullet_style: on(Indication::BulletStyle),
-            link: on(Indication::Link),
+        let node = NodeDetail::ALL
+            .into_iter()
+            .filter(|detail| {
+                on(match detail {
+                    NodeDetail::Description => Indication::Description,
+                    NodeDetail::KeyboardShortcut => Indication::Shortcut,
+                    NodeDetail::Position => Indication::Position,
+                    NodeDetail::Level => Indication::Level,
+                    NodeDetail::Cell => Indication::CellCoordinates,
+                })
+            })
+            .collect::<Vec<_>>();
+        let formats = FormatAttribute::ALL
+            .into_iter()
+            .filter(|attribute| {
+                on(match attribute {
+                    FormatAttribute::FontName => Indication::FontName,
+                    FormatAttribute::FontSize => Indication::FontSize,
+                    FormatAttribute::Color => Indication::Color,
+                    FormatAttribute::BackgroundColor => Indication::BackgroundColor,
+                    FormatAttribute::FontAttributes => Indication::FontAttributes,
+                    FormatAttribute::Strikethrough => Indication::Strikethrough,
+                    FormatAttribute::UnderlineStyle => Indication::UnderlineStyle,
+                    FormatAttribute::BulletStyle => Indication::BulletStyle,
+                })
+            })
+            .collect::<Vec<_>>();
+        ReportedDetails {
+            node: NodeDetailSet::of(&node),
+            text: TextDetails {
+                formats: FormatSet::of(&formats),
+                spelling_errors: on(Indication::SpellingError),
+                grammar_errors: on(Indication::GrammarError),
+                links: on(Indication::Link),
+            },
         }
     }
 
@@ -836,74 +856,32 @@ impl fmt::Display for ThemeProblem {
     }
 }
 
-/// The details the reducer has fetched, decided by the active theme
-/// ([`Theme::fetches`]): a detail whose indication is off is not fetched,
-/// so off also saves the cross-process call. The shell gives it to the
-/// reducer as `Input::Fetches`, and passes the reducer's view of it to every
-/// outpost, which leaves out what is not wanted when it reads a node or
-/// text.
+/// The details the active theme reports ([`Theme::reported`]): Core's
+/// settings for what its reads fetch beyond what each always takes. The
+/// shell gives it to the reducer at startup and whenever the theme in use
+/// changes, and Core chooses from it, per request, the property set of a
+/// node read and the details of a text read; no reader holds a copy
+/// (`docs/design/readers-tell-core-asks-build2.md`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(default)]
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "independent details, each fetched or not"
-)]
-pub struct Fetches {
-    /// Object descriptions.
-    pub description: bool,
-    /// Keyboard shortcuts.
-    pub shortcut: bool,
-    /// Position in set and set size.
-    pub position: bool,
-    /// Nesting level.
-    pub level: bool,
-    /// A table cell's row and column.
-    pub cell_coordinates: bool,
-    /// Spelling errors in text.
-    pub spelling_errors: bool,
-    /// Grammar errors in text.
-    pub grammar_errors: bool,
-    /// Font name of text.
-    pub font_name: bool,
-    /// Font size of text.
-    pub font_size: bool,
-    /// Color of text.
-    pub color: bool,
-    /// Background color of text.
-    pub background_color: bool,
-    /// Bold, italic, and underline of text.
-    pub font_attributes: bool,
-    /// Strikethrough of text.
-    pub strikethrough: bool,
-    /// The kind of underline of text.
-    pub underline_style: bool,
-    /// The bullets of list items.
-    pub bullet_style: bool,
-    /// Links in text.
-    pub link: bool,
+pub struct ReportedDetails {
+    /// The node details reported.
+    pub node: NodeDetailSet,
+    /// The text details reported.
+    pub text: TextDetails,
 }
 
-impl Default for Fetches {
-    /// Everything, as before themes existed.
+impl ReportedDetails {
+    /// Everything.
+    pub const ALL: Self = Self {
+        node: NodeDetailSet::ALL,
+        text: TextDetails::ALL,
+    };
+}
+
+impl Default for ReportedDetails {
+    /// Everything, until the shell gives Core the theme's.
     fn default() -> Self {
-        Self {
-            description: true,
-            shortcut: true,
-            position: true,
-            level: true,
-            cell_coordinates: true,
-            spelling_errors: true,
-            grammar_errors: true,
-            font_name: true,
-            font_size: true,
-            color: true,
-            background_color: true,
-            font_attributes: true,
-            strikethrough: true,
-            underline_style: true,
-            bullet_style: true,
-            link: true,
-        }
+        Self::ALL
     }
 }
 
@@ -1012,8 +990,8 @@ mod tests {
         );
         assert!(theme.differs(Indication::Description));
         assert!(!theme.differs(Indication::Level));
-        assert!(!theme.fetches().description);
-        assert!(theme.fetches().shortcut);
+        assert!(!theme.reported().node.contains(NodeDetail::Description));
+        assert!(theme.reported().node.contains(NodeDetail::KeyboardShortcut));
     }
 
     #[test]
@@ -1025,26 +1003,16 @@ mod tests {
             assert!(!theme.differs(indication));
         }
         assert_eq!(theme.problems(), Vec::new());
-        let fetches = theme.fetches();
         assert_eq!(
-            fetches,
-            Fetches {
-                description: true,
-                shortcut: true,
-                position: true,
-                level: true,
-                cell_coordinates: true,
-                spelling_errors: true,
-                grammar_errors: true,
-                font_name: false,
-                font_size: false,
-                color: false,
-                background_color: false,
-                font_attributes: false,
-                strikethrough: false,
-                underline_style: false,
-                bullet_style: false,
-                link: true,
+            theme.reported(),
+            ReportedDetails {
+                node: NodeDetailSet::ALL,
+                text: TextDetails {
+                    formats: FormatSet::NONE,
+                    spelling_errors: true,
+                    grammar_errors: true,
+                    links: true,
+                },
             }
         );
     }

@@ -247,6 +247,7 @@ async fn run_next(
                 let request = crate::navigator::Properties {
                     window,
                     node: object.id,
+                    set: crate::details::node_set(&cx.facts(), &crate::report_focus::ANNOUNCED_SET),
                 };
                 let read = match cx.ask(request, due_us).await {
                     Outcome::Result(values) => {
@@ -379,8 +380,9 @@ pub(crate) fn read_object(state: &mut SrState, press: ReviewPress) -> Vec<Effect
         return Vec::new();
     };
     let node = navigator.object.id;
+    let details = state.reported.node;
     let (query, effect) = state.queries.ask(
-        crate::queries::Asking::ReadNode(node),
+        crate::queries::Asking::ReadNode(node, details),
         Then::Review(TextFollowUp::NodeRead),
     );
     let mut effects = key_line::press_read(state, node, query, press);

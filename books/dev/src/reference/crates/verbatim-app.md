@@ -289,8 +289,9 @@ Milestone M4's themes and earcons are wired here too
   and every problem found is logged. At startup this happens before the
   speech manager is built, which is given the theme at construction, so
   speech is presented with the configured theme and its sounds from the
-  first word; the reducer is sent `Input::Fetches` with what the theme
-  wants fetched (`send_fetches`). `activate` does both for a theme
+  first word; the reducer is sent `Input::Reported` with the details the
+  theme reports (`send_reported`), from which Core chooses what each of
+  its requests fetches. `activate` does both for a theme
   chosen later, setting it on the speech manager's theme handle. It runs
   whenever the settings dialog's Theme panel
   changes the theme or its options: `AppThemeHost` is the GUI's

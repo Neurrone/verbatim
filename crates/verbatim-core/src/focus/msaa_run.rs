@@ -179,7 +179,7 @@ pub(crate) async fn run(mut cx: Cx<Entries>, candidates: Vec<Candidate>) {
             process,
             run: MsaaRun {
                 candidates: listed,
-                set: FOCUS_SET.to_vec(),
+                set: crate::details::node_set(&cx.facts(), FOCUS_SET),
                 known: known.sent.clone(),
                 baseline: known.baseline,
             },

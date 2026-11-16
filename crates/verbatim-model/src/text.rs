@@ -179,14 +179,14 @@ pub struct TextChunk {
     /// read it (milestone M4 item 7): in order, not overlapping, each a
     /// byte range of `text` on character boundaries. Empty when none was
     /// read; a caret report carries it for the text that is spoken, with
-    /// only the attributes the theme asks for ([`crate::Fetches`]).
+    /// only the attributes its request asks for ([`TextDetails`]).
     #[serde(default)]
     pub formats: Vec<FormatRun>,
 }
 
 /// The formatting of a stretch of text, as an outpost read it (milestone M4
 /// item 7; `docs/nvda/document-formatting.md`). An attribute the provider
-/// does not expose, or that was not read because its indication is off, is
+/// does not expose, or that its read did not ask for ([`TextDetails`]), is
 /// `None` (false for the errors).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -438,6 +438,8 @@ pub struct KeyFetch {
     pub unit: TextUnit,
     /// What the key does, which says what counts as its evidence.
     pub motion: CaretMotion,
+    /// What its reads fetch beyond the text.
+    pub details: TextDetails,
 }
 
 /// One query reading the caret for a key, answered once.
@@ -681,23 +683,129 @@ impl TextProvider {
     }
 }
 
-/// What a text read fetches beyond the text.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// A formatting attribute a text read may fetch, one per attribute the
+/// theme switches (`docs/design/readers-tell-core-asks-build2.md`, "Rules,
+/// each with its reason").
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum FormatAttribute {
+    /// The font's name.
+    FontName,
+    /// The font's size.
+    FontSize,
+    /// The text's colour.
+    Color,
+    /// The background's colour.
+    BackgroundColor,
+    /// Bold, italic and underline.
+    FontAttributes,
+    /// Strikethrough.
+    Strikethrough,
+    /// The kind of underline.
+    UnderlineStyle,
+    /// A list item's bullet.
+    BulletStyle,
+}
+
+impl FormatAttribute {
+    /// Every attribute, in declaration order.
+    pub const ALL: [Self; 8] = [
+        Self::FontName,
+        Self::FontSize,
+        Self::Color,
+        Self::BackgroundColor,
+        Self::FontAttributes,
+        Self::Strikethrough,
+        Self::UnderlineStyle,
+        Self::BulletStyle,
+    ];
+
+    const fn bit(self) -> u8 {
+        match self {
+            Self::FontName => 1 << 0,
+            Self::FontSize => 1 << 1,
+            Self::Color => 1 << 2,
+            Self::BackgroundColor => 1 << 3,
+            Self::FontAttributes => 1 << 4,
+            Self::Strikethrough => 1 << 5,
+            Self::UnderlineStyle => 1 << 6,
+            Self::BulletStyle => 1 << 7,
+        }
+    }
+}
+
+/// A set of [`FormatAttribute`]s, stored as a bitmask.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct FormatSet(u8);
+
+impl FormatSet {
+    /// No attribute.
+    pub const NONE: Self = Self(0);
+    /// Every attribute.
+    pub const ALL: Self = Self::of(&FormatAttribute::ALL);
+
+    /// The set of `attributes`.
+    #[must_use]
+    pub const fn of(mut attributes: &[FormatAttribute]) -> Self {
+        let mut bits = 0;
+        while let [first, rest @ ..] = attributes {
+            bits |= first.bit();
+            attributes = rest;
+        }
+        Self(bits)
+    }
+
+    /// Whether `attribute` is in the set.
+    #[must_use]
+    pub const fn contains(self, attribute: FormatAttribute) -> bool {
+        self.0 & attribute.bit() != 0
+    }
+
+    /// This set with `attribute` added.
+    #[must_use]
+    pub const fn with(self, attribute: FormatAttribute) -> Self {
+        Self(self.0 | attribute.bit())
+    }
+
+    /// This set without `attribute`.
+    #[must_use]
+    pub const fn without(self, attribute: FormatAttribute) -> Self {
+        Self(self.0 & !attribute.bit())
+    }
+}
+
+/// What a text read fetches beyond the text: the format attributes the
+/// settings ask for, spelling and grammar errors, and links. Core chooses
+/// it per request from its settings, the read's unit and its reason, and
+/// the outpost reads exactly what it names
+/// (`docs/design/readers-tell-core-asks-build2.md`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct TextDetails {
-    /// Formatting attributes.
-    pub formatting: bool,
+    /// The format attributes.
+    pub formats: FormatSet,
     /// Spelling errors.
     pub spelling_errors: bool,
+    /// Grammar errors.
+    pub grammar_errors: bool,
     /// Links.
     pub links: bool,
 }
 
 impl TextDetails {
-    /// Every detail, as a caret key's words speak them as they change.
+    /// Every detail.
     pub const ALL: Self = Self {
-        formatting: true,
+        formats: FormatSet::ALL,
         spelling_errors: true,
+        grammar_errors: true,
         links: true,
+    };
+
+    /// Nothing beyond the text.
+    pub const NONE: Self = Self {
+        formats: FormatSet::NONE,
+        spelling_errors: false,
+        grammar_errors: false,
+        links: false,
     };
 }
 

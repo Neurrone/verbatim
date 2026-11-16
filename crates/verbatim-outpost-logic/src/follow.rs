@@ -959,6 +959,7 @@ mod tests {
         let fetch = KeyFetch {
             unit: TextUnit::Character,
             motion: CaretMotion::NextCharacter,
+            details: verbatim_model::TextDetails::ALL,
         };
         Arc::make_mut(&mut facts.text).set_note(1, fetch, 0);
         let elsewhere = Change {

@@ -276,6 +276,7 @@ fn check(
             note: NoteFetch {
                 unit: motion.unit(),
                 motion,
+                details: verbatim_model::TextDetails::ALL,
             },
             read_at_us: REPORTED_AT + 2,
             final_read: false,
@@ -419,6 +420,7 @@ fn a_keys_request_is_not_carried_out_by_perform() {
         fetch: KeyFetch {
             unit: TextUnit::Character,
             motion: CaretMotion::NextCharacter,
+            details: verbatim_model::TextDetails::ALL,
         },
         purpose: ReadPurpose::BeforeFieldKey,
     };

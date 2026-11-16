@@ -36,7 +36,7 @@ use verbatim_ia2::CHILDID_SELF;
 use verbatim_model::request::{FocusCaret, FocusCaretRead, Outcome, Reply};
 use verbatim_model::{
     CaretRead, CaretReply, CaretReport, NodeId, ReadFacts, Role, SelectionChange,
-    SelectionReadReply, TextOp, TextReply, WatchFinalRead, Watched,
+    SelectionReadReply, TextDetails, TextOp, TextReply, WatchFinalRead, Watched,
 };
 use verbatim_uia::map::is_terminal_class;
 use verbatim_uia::{Cached, Interning as _, Kept};
@@ -275,9 +275,13 @@ enum Source {
 /// The text behind `node_id`, or the reply that ends the request: `NoText`
 /// for a node with no text interface, `Gone` for one this outpost no longer
 /// knows.
-fn source(context: &RequestContext<'_>, node_id: NodeId) -> Result<Source, TextReply> {
+fn source(
+    context: &RequestContext<'_>,
+    node_id: NodeId,
+    details: TextDetails,
+) -> Result<Source, TextReply> {
     if context.store.runtime_id_of(node_id).is_some() {
-        return uia_source(context, node_id).map(Source::Uia);
+        return uia_source(context, node_id, details).map(Source::Uia);
     }
     let Some((hwnd, object, child)) = context.store.key_of(node_id) else {
         return Err(TextReply::Gone);
@@ -297,8 +301,13 @@ fn edit_version(hwnd: isize, object: i32, child: i32) -> Option<u8> {
     verbatim_ia2::edit::edit_api_version(&normalize_class_name(&window_class_name(hwnd)))
 }
 
-/// A UIA node's text, its patterns fetched once and kept.
-fn uia_source(context: &RequestContext<'_>, node_id: NodeId) -> Result<UiaText, TextReply> {
+/// A UIA node's text, its patterns fetched once and kept, its reads
+/// fetching `details` beyond the text.
+fn uia_source(
+    context: &RequestContext<'_>,
+    node_id: NodeId,
+    details: TextDetails,
+) -> Result<UiaText, TextReply> {
     let element = context
         .store
         .element_of(node_id)
@@ -358,7 +367,7 @@ fn uia_source(context: &RequestContext<'_>, node_id: NodeId) -> Result<UiaText, 
         terminal,
     )
     .remote(remote)
-    .fetches(context.fetches())
+    .details(details)
     .support(support))
 }
 
@@ -516,10 +525,28 @@ pub(super) fn may_have_text(context: &Context, node_id: NodeId, role: Role) -> b
         .is_some_and(|(hwnd, object, child)| edit_version(hwnd, object, child).is_some())
 }
 
+/// What `op` fetches beyond the text, as Core named it in the request: a
+/// read that names none fetches nothing more, since it reads no
+/// formatting.
+fn details_of(op: &TextOp) -> TextDetails {
+    match op {
+        TextOp::ReadCaret(read) => read.fetch.details,
+        TextOp::StartingRead(read) => read.details,
+        TextOp::MoveBySentence(moved) => moved.details,
+        TextOp::Watch(watch) => match watch.final_read {
+            WatchFinalRead::Unit { details, .. } | WatchFinalRead::UnitAtEffect { details, .. } => {
+                details
+            }
+            WatchFinalRead::Terminal => TextDetails::NONE,
+        },
+        _ => TextDetails::NONE,
+    }
+}
+
 /// Answers one of Core's text requests other than a caret key's, which
 /// [`before_read`] and [`note_read`] answer.
 pub(super) fn answer(context: &RequestContext<'_>, node_id: NodeId, op: &TextOp) -> TextReply {
-    let source = match source(context, node_id) {
+    let source = match source(context, node_id, details_of(op)) {
         Ok(source) => source,
         Err(reply) => return reply,
     };
@@ -543,14 +570,15 @@ pub(super) fn answer(context: &RequestContext<'_>, node_id: NodeId, op: &TextOp)
 }
 
 /// Runs `$read` on `$node_id`'s text, through whichever source it has,
+/// fetching `$details` beyond the text,
 /// with a copy of its facts holding the anchors `$named`, committing what
 /// the read changed: `Err` with the reply a node with no text, or gone,
 /// answers.
 macro_rules! on_text {
-    ($context:expr, $node_id:expr, $named:expr, |$source:ident, $text:ident| $read:expr) => {{
+    ($context:expr, $node_id:expr, $details:expr, $named:expr, |$source:ident, $text:ident| $read:expr) => {{
         let context = $context;
         let node_id = $node_id;
-        match source(context, node_id) {
+        match source(context, node_id, $details) {
             Err(reply) => Err(reply),
             Ok(Source::Uia(mut source)) => {
                 let mut call = uia_call(context, node_id, $named);
@@ -600,17 +628,20 @@ pub(super) fn answer_asked(
     op: &TextOp,
 ) -> TextReply {
     let named = text::named_anchors(op);
+    let details = details_of(op);
     let read_at_us = context.observed_now();
     let replied = match op {
-        TextOp::StartingRead(read) => on_text!(context, node_id, &named, |source, text| {
-            text::held::starting_read(source, text, read_at_us, (read.unit, read.word))
-                .map_or_else(failed_reply, |started| {
-                    TextReply::Started(Box::new(started))
-                })
-        }),
+        TextOp::StartingRead(read) => {
+            on_text!(context, node_id, details, &named, |source, text| {
+                text::held::starting_read(source, text, read_at_us, (read.unit, read.word))
+                    .map_or_else(failed_reply, |started| {
+                        TextReply::Started(Box::new(started))
+                    })
+            })
+        }
         TextOp::ReadSelection(read) => {
             adopt_told(context, node_id, read.adopt);
-            on_text!(context, node_id, &named, |source, text| {
+            on_text!(context, node_id, details, &named, |source, text| {
                 text::held::read_selection(source, text, read_at_us, read.baseline).map_or_else(
                     failed_reply,
                     |found| {
@@ -624,14 +655,16 @@ pub(super) fn answer_asked(
                 )
             })
         }
-        TextOp::MoveBySentence(moved) => on_text!(context, node_id, &named, |source, text| {
-            text::sentence::move_by_sentence(source, text, (moved.point, moved.forward))
-                .unwrap_or_else(failed_reply)
-        }),
+        TextOp::MoveBySentence(moved) => {
+            on_text!(context, node_id, details, &named, |source, text| {
+                text::sentence::move_by_sentence(source, text, (moved.point, moved.forward))
+                    .unwrap_or_else(failed_reply)
+            })
+        }
         // A watch waits in the reducer's table, which runs its checks and
         // final read as programs of their own ([`watch`]).
         TextOp::Watch(_) => Ok(TextReply::Unsupported),
-        other => on_text!(context, node_id, &named, |source, text| {
+        other => on_text!(context, node_id, details, &named, |source, text| {
             text::held::perform_placed(source, text, other)
         }),
     };
@@ -650,13 +683,16 @@ pub(super) fn watch(context: &RequestContext<'_>, program: &WatchProgram) -> Opt
     let read_at_us = context.observed_now();
     // A terminal's watch reads no unit at its end: Core's full read of the
     // terminal follows (build 3).
-    let unit = match program.watch.final_read {
-        WatchFinalRead::Unit { unit, .. } | WatchFinalRead::UnitAtEffect { unit, .. } => unit,
-        WatchFinalRead::Terminal => verbatim_model::TextUnit::Character,
+    let (unit, details) = match program.watch.final_read {
+        WatchFinalRead::Unit { unit, details } | WatchFinalRead::UnitAtEffect { unit, details } => {
+            (unit, details)
+        }
+        WatchFinalRead::Terminal => (verbatim_model::TextUnit::Character, TextDetails::NONE),
     };
     let ran = on_text!(
         context,
         node_id,
+        details,
         &named,
         |source, text| match program.work {
             WatchWork::Check { word, last } => text::check::check(
@@ -703,16 +739,23 @@ pub(super) fn focus_caret(
 ) -> FocusCaret {
     let named: Vec<u64> = baseline.map(|baseline| baseline.0).into_iter().collect();
     let read_at_us = context.observed_now();
-    let read = on_text!(context, node_id, &named, |source, text| {
-        text::held::read_selection(source, text, read_at_us, baseline).map(|found| {
-            (
-                found.report,
-                found.selected,
-                found.baseline,
-                found.difference,
-            )
-        })
-    });
+    // The read takes no formatting: nothing beyond the text is fetched.
+    let read = on_text!(
+        context,
+        node_id,
+        TextDetails::NONE,
+        &named,
+        |source, text| {
+            text::held::read_selection(source, text, read_at_us, baseline).map(|found| {
+                (
+                    found.report,
+                    found.selected,
+                    found.baseline,
+                    found.difference,
+                )
+            })
+        }
+    );
     match read {
         Err(TextReply::NoText) => FocusCaret::NoText,
         Err(_) | Ok(Err(_)) => FocusCaret::NotRead,
@@ -752,8 +795,9 @@ pub(super) fn before_read(
     let note = NoteFetch {
         unit: read.fetch.unit,
         motion: read.fetch.motion,
+        details: read.fetch.details,
     };
-    let Ok(source) = source(context, node_id) else {
+    let Ok(source) = source(context, node_id, note.details) else {
         return (Err(NoCaret::NotRead), None);
     };
     let read_at_us = context.observed_now();
@@ -884,7 +928,7 @@ pub(super) fn note_read(
     note: NoteFetch,
     (final_read, cuts): (bool, bool),
 ) -> (NoteCheck, Option<u64>) {
-    let Ok(source) = source(context, node_id) else {
+    let Ok(source) = source(context, node_id, note.details) else {
         return (Checked::Done(KeyChecked::Failed), None);
     };
     let read_at_us = context.observed_now();
@@ -954,7 +998,8 @@ fn edit_source(
     node_id: NodeId,
     length: Option<u32>,
 ) -> Result<EditText, TextReply> {
-    match source(context, node_id)? {
+    // An edit control's messages read no detail beyond the text.
+    match source(context, node_id, TextDetails::NONE)? {
         Source::Edit(source) => Ok(source.knowing_length(length)),
         Source::Uia(_) => Err(TextReply::NoText),
     }
@@ -1043,9 +1088,9 @@ pub(super) fn report_caret(
     context: &RequestContext<'_>,
     node_id: NodeId,
     purpose: CaretFor,
-    fetch: Option<NoteFetch>,
+    (fetch, details): (Option<NoteFetch>, TextDetails),
 ) -> CaretReading {
-    let source = match source(context, node_id) {
+    let source = match source(context, node_id, details) {
         Ok(source) => source,
         Err(reply) => {
             if purpose == CaretFor::Focus {
@@ -1303,7 +1348,7 @@ pub(super) fn terminal_read(
     node_id: NodeId,
     read: &verbatim_model::TerminalRead,
 ) -> TextReply {
-    let mut source = match uia_source(context, node_id) {
+    let mut source = match uia_source(context, node_id, TextDetails::NONE) {
         Ok(source) => source,
         Err(reply) => return reply,
     };
@@ -1433,7 +1478,7 @@ pub(super) fn terminal_history(
     node_id: NodeId,
     (start, above, whole, height): (verbatim_model::TextAnchor, u32, bool, u32),
 ) -> TextReply {
-    let source = match uia_source(context, node_id) {
+    let source = match uia_source(context, node_id, TextDetails::NONE) {
         Ok(source) => source,
         Err(reply) => return reply,
     };
@@ -1472,7 +1517,7 @@ pub(super) fn terminal_find(
     start: verbatim_model::TextAnchor,
     (needle, from, rows): (&str, i32, u32),
 ) -> TextReply {
-    let source = match uia_source(context, node_id) {
+    let source = match uia_source(context, node_id, TextDetails::NONE) {
         Ok(source) => source,
         Err(reply) => return reply,
     };

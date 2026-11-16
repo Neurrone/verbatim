@@ -181,7 +181,7 @@ pub(crate) async fn run(mut cx: Cx<Entries>, focus: UiaFocus) {
         window,
         read: ReadObject {
             object: ObjectRef::Kept(focus.token),
-            set: FOCUS_SET.to_vec(),
+            set: crate::details::node_set(&cx.facts(), FOCUS_SET),
             relation: None,
             descendants: false,
             walk: Some(walk),
@@ -218,7 +218,7 @@ pub(crate) async fn run(mut cx: Cx<Entries>, focus: UiaFocus) {
             read: iter::once(object.object.values)
                 .chain(object.ancestors.into_iter().map(|ancestor| ancestor.values))
                 .collect(),
-            set: FOCUS_SET.to_vec(),
+            set: crate::details::node_set(&cx.facts(), FOCUS_SET),
             known: known.sent.clone(),
             completes: CompletionFor::Focus,
             baseline: known.baseline,

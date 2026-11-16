@@ -58,9 +58,10 @@ use std::collections::HashMap;
 use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, mpsc};
 
-use verbatim_model::protocol::CoreToOutpost;
+use verbatim_model::property::{NodeDetail, NodeDetailSet};
 use verbatim_model::{
-    CallCounts, Fetches, QueryKind, Role, SegmentContent, StateSet, WindowHandle,
+    CallCounts, QueryKind, ReportedDetails, Role, SegmentContent, StateSet, TextDetails,
+    WindowHandle,
 };
 use verbatim_model::{
     CaretMotion, CaretReply, LineStyle, SelectionChange, TextAttributes, TextMovement, TextOp,
@@ -1057,16 +1058,16 @@ fn msaa_navigation_steps_cost_exactly() {
     );
 
     // A theme reporting descriptions and shortcuts as off, which the shell
-    // sends the outpost as it sends Core's fetches: the outpost no longer
-    // reads them, and saves their calls. The navigator moved back to the
-    // focus, which Core holds, with no call, takes the step from it again.
-    core.outpost
-        .outpost
-        .handle_command(&CoreToOutpost::Fetches(Fetches {
-            description: false,
-            shortcut: false,
-            ..Fetches::default()
-        }));
+    // gives Core: Core's request no longer names them, so the outpost does
+    // not read them, and saves their calls. The navigator moved back to
+    // the focus, which Core holds, with no call, takes the step from it
+    // again.
+    core.reported(ReportedDetails {
+        node: NodeDetailSet::ALL
+            .without(NodeDetail::Description)
+            .without(NodeDetail::KeyboardShortcut),
+        ..ReportedDetails::ALL
+    });
     let (_, cost) = step(&mut core, ReviewCommand::ToFocus);
     assert_eq!(
         cost.calls,
@@ -2453,7 +2454,7 @@ fn place_below(hwnd: HWND, parent: HWND, owned: bool) {
 /// One object-navigation step's cost through an outpost reading UIA as
 /// `remote` says: Core's next sibling of `First`, then the parent of
 /// `Second`, from the navigator that followed the focus on `First`, with
-/// the default theme's fetches, as Core sends them; what Core said of
+/// the default theme's details, as the shell gives Core them; what Core said of
 /// each, and its cost.
 fn uia_navigation_steps(remote: bool) -> [(Vec<Utterance>, Cost); 2] {
     let path = if remote { "remote" } else { "classic" };
@@ -2470,9 +2471,7 @@ fn uia_navigation_steps(remote: bool) -> [(Vec<Utterance>, Cost); 2] {
             },
         ),
     );
-    core.outpost
-        .outpost
-        .handle_command(&CoreToOutpost::Fetches(Theme::builtin_default().fetches()));
+    core.reported(Theme::builtin_default().reported());
     // The navigator follows the focus to "First".
     let _ = measure_uia_focus((&mut app, &under_test, hwnd), &mut core, ("first", "First"));
     let mut step = |command: ReviewCommand| {
@@ -2601,12 +2600,10 @@ fn uia_ancestors_with_descriptions_off_cost_exactly() {
     let hwnd = common::find_window(&title);
     let under_test = UiaUnderTest::new(hwnd);
     let mut core = CoreDriver::new(&app, OutpostUnderTest::on_frozen_time(&app));
-    core.outpost
-        .outpost
-        .handle_command(&CoreToOutpost::Fetches(Fetches {
-            description: false,
-            ..Fetches::default()
-        }));
+    core.reported(ReportedDetails {
+        node: NodeDetailSet::ALL.without(NodeDetail::Description),
+        ..ReportedDetails::ALL
+    });
     let mut ratchet = Ratchet::default();
     let _ = measure_uia_focus((&mut app, &under_test, hwnd), &mut core, ("first", "First"));
     let first = core
@@ -2710,7 +2707,7 @@ fn a_node_whose_route_does_not_lead_to_it_is_gone_by_its_route_alone() {
             ("WM_GETOBJECT", 11),
             ("ProviderOptions", 38),
             ("GetPatternProvider", patterns),
-            ("GetPropertyValue", 22),
+            ("GetPropertyValue", 15),
             ("HostRawElementProvider", 13),
             ("Navigate", 17),
             ("GetRuntimeId", 2),
@@ -2727,7 +2724,7 @@ fn a_node_whose_route_does_not_lead_to_it_is_gone_by_its_route_alone() {
                 set: vec![verbatim_model::property::PropertyId::Name],
             },
             connected(2, 0, 0),
-            walk(14),
+            walk(11),
         ),
         (
             "UIA properties of a node gone",
@@ -2736,13 +2733,13 @@ fn a_node_whose_route_does_not_lead_to_it_is_gone_by_its_route_alone() {
                 set: vec![verbatim_model::property::PropertyId::Name],
             },
             connected(2, 0, 0),
-            walk(17),
+            walk(14),
         ),
         (
             "UIA activation of a node gone",
             verbatim_model::request::Request::Activate { node },
             connected(2, 0, 0),
-            walk(14),
+            walk(11),
         ),
     ] {
         common::reset_hits(hwnd);
@@ -3254,6 +3251,7 @@ fn check<S: TextSource>(
             note: NoteFetch {
                 unit: motion.unit(),
                 motion,
+                details: verbatim_model::TextDetails::ALL,
             },
             read_at_us: 2,
             final_read: false,
@@ -3382,6 +3380,7 @@ fn measure_caret_move<S: TextSource>(
                 note: NoteFetch {
                     unit: CaretMotion::NextCharacter.unit(),
                     motion: CaretMotion::NextCharacter,
+                    details: verbatim_model::TextDetails::ALL,
                 },
                 ended: || 3,
             }),
@@ -3532,7 +3531,7 @@ fn check_uia_caret_costs(ratchet: &mut Ratchet, remote: bool) {
     // weight, italic, underline style, strikethrough style, color,
     // background color, bullet style, and link, until the four mockapp
     // does not support are learned.
-    let mut formatted = uia_notes(hwnd).remote(remote).fetches(Fetches::default());
+    let mut formatted = uia_notes(hwnd).remote(remote).details(TextDetails::ALL);
     let formatted_report = measure_focus_report(hwnd, &mut formatted, every_attribute);
     let formatted_again = measure_focus_report(hwnd, &mut formatted, every_attribute);
     assert_eq!(
@@ -4649,7 +4648,7 @@ fn uia_mixed_stretch_costs_exactly() {
     let hwnd = common::find_window(&title);
     common::apply(&mut app, hwnd, "caret doc 0");
     for remote in [true, false] {
-        let mut source = uia_notes(hwnd).remote(remote).fetches(Fetches::default());
+        let mut source = uia_notes(hwnd).remote(remote).details(TextDetails::ALL);
         let mut store = Anchors::new(Arc::default());
         let _ = verbatim_uia::calls::take();
         let _ = verbatim_uia::calls::take_failed_reads();
@@ -5011,7 +5010,7 @@ fn uia_notes(hwnd: HWND) -> UiaText {
     let under_test = UiaUnderTest::new(hwnd);
     let notes = under_test.element("Notes").clone();
     let (pattern, pattern2) = verbatim_uia::text::text_pattern(&notes).expect("a text pattern");
-    UiaText::new(notes, pattern, pattern2, false).fetches(Theme::builtin_default().fetches())
+    UiaText::new(notes, pattern, pattern2, false).details(Theme::builtin_default().reported().text)
 }
 
 /// A focus onto a combo box without the `Value` pattern, whose first
@@ -5225,8 +5224,8 @@ fn uia_combo_box_costs_exactly() {
                 &[
                     ("WM_GETOBJECT", 10),
                     ("ProviderOptions", 91),
-                    ("GetPatternProvider", 90),
-                    ("GetPropertyValue", 134),
+                    ("GetPatternProvider", 84),
+                    ("GetPropertyValue", 120),
                     ("HostRawElementProvider", 42),
                     ("Navigate", 22),
                     ("GetRuntimeId", 19),
@@ -5264,8 +5263,8 @@ fn uia_combo_box_costs_exactly() {
                 &[
                     ("WM_GETOBJECT", 10),
                     ("ProviderOptions", 89),
-                    ("GetPatternProvider", 90),
-                    ("GetPropertyValue", 132),
+                    ("GetPatternProvider", 84),
+                    ("GetPropertyValue", 118),
                     ("HostRawElementProvider", 41),
                     ("Navigate", 18),
                     ("GetRuntimeId", 17),

@@ -43,9 +43,9 @@ pub(crate) const ANNOUNCED_SET: [PropertyId; 15] = [
 ];
 
 /// The properties report focus reads: everything the focus announcement
-/// speaks, and the text summary.
-fn report_set() -> Vec<PropertyId> {
-    let mut set = ANNOUNCED_SET.to_vec();
+/// speaks that the settings report, and the text summary.
+fn report_set(state: &crate::state::SrState) -> Vec<PropertyId> {
+    let mut set = crate::details::node_set(state, &ANNOUNCED_SET);
     set.push(PropertyId::TextSummary);
     set
 }
@@ -56,6 +56,7 @@ struct FocusProperties {
     process: Pid,
     window: RequestWindow,
     node: NodeId,
+    set: Vec<PropertyId>,
 }
 
 impl Request for FocusProperties {
@@ -72,7 +73,7 @@ impl Request for FocusProperties {
     fn wire(&self) -> Wire {
         Wire::Properties {
             node: self.node,
-            set: report_set(),
+            set: self.set.clone(),
         }
     }
 
@@ -98,20 +99,24 @@ enum Target {
 /// A press of report focus under `trace_id`, `repeat` extra times in
 /// quick succession, at its turn.
 pub(crate) async fn run(mut cx: Cx<Entries>, trace_id: TraceId, repeat: u8) {
-    let target = match &cx.facts().versions.committed {
-        Committed::Nothing => Target::Nothing,
-        Committed::Read(kept) => Target::Read(
-            FocusProperties {
-                process: kept.source,
-                window: kept.window,
-                node: kept.node,
-            },
-            match kept.read_by {
-                ReadBy::Uia { .. } => Backend::Uia,
-                ReadBy::Msaa { .. } => Backend::Msaa,
-            },
-        ),
-        Committed::Ended(_) | Committed::Own { .. } => Target::Unread,
+    let target = {
+        let facts = cx.facts();
+        match &facts.versions.committed {
+            Committed::Nothing => Target::Nothing,
+            Committed::Read(kept) => Target::Read(
+                FocusProperties {
+                    process: kept.source,
+                    window: kept.window,
+                    node: kept.node,
+                    set: report_set(&facts),
+                },
+                match kept.read_by {
+                    ReadBy::Uia { .. } => Backend::Uia,
+                    ReadBy::Msaa { .. } => Backend::Msaa,
+                },
+            ),
+            Committed::Ended(_) | Committed::Own { .. } => Target::Unread,
+        }
     };
     let (request, backend) = match target {
         Target::Nothing => {

@@ -50,7 +50,7 @@ pub(crate) async fn run(mut cx: Cx<Entries>, announcement: Announcement) {
         window,
         read: ReadObject {
             object: ObjectRef::Kept(kept.token),
-            set: FOCUS_SET.to_vec(),
+            set: crate::details::node_set(&cx.facts(), FOCUS_SET),
             relation: None,
             descendants: false,
             walk: None,

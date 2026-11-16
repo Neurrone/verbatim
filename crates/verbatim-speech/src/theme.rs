@@ -24,7 +24,7 @@ use verbatim_i18n::{
     negated_state_name, phrase_text, position_in_set, role_name, state_name,
 };
 use verbatim_model::{
-    Earcon, Fetches, Indication, IndicationSetting, MAX_GAIN, Presentation, SegmentContent,
+    Earcon, Indication, IndicationSetting, MAX_GAIN, Presentation, ReportedDetails, SegmentContent,
     SoundSource, TextFormat, Theme, ThemeOptions, ThemeProblem, Utterance, UtteranceId,
 };
 use verbatim_text::{composed, is_capital};
@@ -152,10 +152,11 @@ impl ActiveTheme {
         &self.problems
     }
 
-    /// What the reducer fetches under this theme.
+    /// The details this theme reports, from which Core chooses what each
+    /// read fetches.
     #[must_use]
-    pub fn fetches(&self) -> Fetches {
-        self.theme.fetches()
+    pub fn reported(&self) -> ReportedDetails {
+        self.theme.reported()
     }
 
     /// How `indication` is reported now: its sound, when it plays one and

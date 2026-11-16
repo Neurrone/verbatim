@@ -511,6 +511,10 @@ pub struct OutpostUnderTest {
     /// The outpost's failed cached reads when last taken
     /// ([`Self::take_failed_reads`]).
     failed_reads_taken: Cell<u32>,
+    /// The details the stand-in for Core's settings reports, which the
+    /// queries this harness asks name ([`Self::report`]): everything until
+    /// a test says otherwise.
+    reported: Cell<verbatim_model::ReportedDetails>,
     /// How many events the stand-in for the listener's scheduler has
     /// queued: each read is the next.
     listener_queued: Cell<u64>,
@@ -665,6 +669,10 @@ impl OutpostUnderTest {
     }
 
     /// An outpost for `app`, watching it from the start, or a spare.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one field for each piece of the harness's state"
+    )]
     fn build(
         app: &super::MockApp,
         options: OutpostOptions,
@@ -770,6 +778,7 @@ impl OutpostUnderTest {
             listener_queued: Cell::new(0),
             listener_left_at: Cell::new(0),
             failed_reads_taken: Cell::new(0),
+            reported: Cell::new(verbatim_model::ReportedDetails::ALL),
             core: RefCell::new(None),
             position: Cell::new(0),
             reader_trace: Cell::new(None),
@@ -1604,7 +1613,11 @@ impl OutpostUnderTest {
     /// returns the neighbor and the calls it made; the reply must be the
     /// next thing the outpost says, and the only thing.
     pub fn navigate(&mut self, node_id: NodeId, kind: QueryKind) -> (NodeSnapshot, CallCounts) {
-        let request_id = self.ask(Query::Navigate { node_id, kind });
+        let request_id = self.ask(Query::Navigate {
+            node_id,
+            kind,
+            details: self.reported.get().node,
+        });
         let answer = match self.next() {
             OutpostToCore::Reply {
                 request_id: answered,
@@ -1642,7 +1655,12 @@ impl OutpostUnderTest {
         &mut self,
         purpose: verbatim_model::protocol::FocusPurpose,
     ) -> (FocusNow, CallCounts) {
-        let request_id = self.ask(Query::ReadFocus { purpose });
+        let reported = self.reported.get();
+        let request_id = self.ask(Query::ReadFocus {
+            purpose,
+            details: reported.node,
+            text: reported.text,
+        });
         let answer = match self.next() {
             OutpostToCore::Reply {
                 request_id: answered,
@@ -1674,11 +1692,20 @@ impl OutpostUnderTest {
         calls
     }
 
+    /// Has the queries this harness asks from now on name the details
+    /// `reported` reports, as Core names the settings' in its own.
+    pub fn report(&self, reported: verbatim_model::ReportedDetails) {
+        self.reported.set(reported);
+    }
+
     /// Asks the outpost for a node's ancestors, as Core would, and returns
     /// them, outermost first, and the calls it made; the reply must be the
     /// next thing the outpost says, and the only thing.
     pub fn ancestors(&mut self, node_id: NodeId) -> (Vec<NodeSnapshot>, CallCounts) {
-        let request_id = self.ask(Query::Ancestors { node_id });
+        let request_id = self.ask(Query::Ancestors {
+            node_id,
+            details: self.reported.get().node,
+        });
         let answer = match self.next() {
             OutpostToCore::Reply {
                 request_id: answered,

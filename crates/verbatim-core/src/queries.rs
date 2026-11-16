@@ -69,8 +69,8 @@ pub(crate) struct Open {
 pub(crate) enum Asking {
     /// A request about the node's text.
     Text(NodeId, TextOp),
-    /// A live read of the node.
-    ReadNode(NodeId),
+    /// A live read of the node, fetching the node details named.
+    ReadNode(NodeId, verbatim_model::property::NodeDetailSet),
 }
 
 /// Core's open queries, by number.
@@ -97,9 +97,15 @@ impl Queries {
                     op,
                 }),
             ),
-            Asking::ReadNode(node_id) => {
-                (node_id, Asked::Read, Effect::ReadNode { query_id, node_id })
-            }
+            Asking::ReadNode(node_id, details) => (
+                node_id,
+                Asked::Read,
+                Effect::ReadNode {
+                    query_id,
+                    node_id,
+                    details,
+                },
+            ),
         };
         self.open.insert(
             query_id,

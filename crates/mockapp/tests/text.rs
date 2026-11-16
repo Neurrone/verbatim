@@ -62,6 +62,7 @@ fn answered<S: TextSource>(
             note: NoteFetch {
                 unit: motion.unit(),
                 motion,
+                details: verbatim_model::TextDetails::ALL,
             },
             read_at_us: 2,
             final_read: false,

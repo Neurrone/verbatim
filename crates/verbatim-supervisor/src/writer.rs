@@ -92,7 +92,6 @@ impl ToChild for CoreToOutpost {
             CoreToOutpost::CancelQuery { .. }
             | CoreToOutpost::KeyNote(_)
             | CoreToOutpost::Ping { .. }
-            | CoreToOutpost::Fetches(_)
             | CoreToOutpost::NodesHeld { .. }
             | CoreToOutpost::IdleQuery { .. }
             | CoreToOutpost::Shutdown

@@ -545,11 +545,13 @@ by Core on entering the window: one acquisition; `progress`, an
   (`LVM_GETITEMCOUNT`, `TVM_GETNEXTITEM`, and the two child-id mapping
   messages), each counted as a window message; it offers only messages
   whose parameters are plain integers.
-- `NodeIdRegistry` — also carries the details a read includes
-  (`fetches` and `set_fetches`, a `verbatim_model::Fetches`, everything by
-  default): a snapshot skips `accDescription`, `accKeyboardShortcut`, the
-  list and tree position reads, and a tree item's level when the active
-  theme reports them as off. And the nodes the outpost has issued, each with its
+- `Interning::details` — the node details the walk's request names
+  (a `verbatim_model::property::NodeDetailSet`): a snapshot skips
+  `accDescription`, `accKeyboardShortcut`, the list and tree position
+  reads, and a tree item's level when the request does not name them.
+  The outpost's store answers its request's set; the registry itself,
+  untagged, a tool's or a test's, answers every detail.
+- `NodeIdRegistry` — the nodes the outpost has issued, each with its
   address, an `MsaaKey` (window handle, object id, and child id, the
   child id `CHILDID_SELF`, zero, for the object itself; `id_for(key)`
   mints or finds a node, `key_of(node)` gives its address back, and a
@@ -564,7 +566,7 @@ by Core on entering the window: one acquisition; `progress`, an
   returning their ids and `Released` likewise. The walks in `acquire`,
   `equality` and `dialog` take an `Interning` (`&dyn Interning`) rather
   than the registry: the registry's own operations (`id_for`, `find`,
-  `insert`, `reissue`, `facts_of`, `key_of`, `locate`, `fetches`, and
+  `insert`, `reissue`, `facts_of`, `key_of`, `locate`, `details`, and
   `touch` for a found node the caller confirmed), which the outpost's
   object store implements to tag each node issued or looked up with the
   request that named it, and the registry implements untagged, its

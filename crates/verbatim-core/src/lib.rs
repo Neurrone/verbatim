@@ -55,6 +55,7 @@ mod caret_location;
 mod caret_tell;
 mod changes;
 mod desktop;
+mod details;
 pub mod dump;
 mod editing;
 mod entries;

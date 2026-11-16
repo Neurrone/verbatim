@@ -67,7 +67,7 @@ pub(crate) async fn run(mut cx: Cx<Entries>, announcement: Announcement) {
                 object: ids.object,
                 child: ids.child,
             },
-            set: FOCUS_SET.to_vec(),
+            set: crate::details::node_set(&cx.facts(), FOCUS_SET),
             relation: (!line.is_empty()).then_some(RelationQuery::OneOf(line)),
             descendants: true,
             walk: None,

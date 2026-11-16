@@ -358,6 +358,8 @@ mod tests {
                 request_id: RequestId::shell(5),
                 query: verbatim_model::protocol::Query::ReadFocus {
                     purpose: verbatim_model::protocol::FocusPurpose::Report,
+                    details: verbatim_model::property::NodeDetailSet::ALL,
+                    text: verbatim_model::TextDetails::ALL,
                 },
             },
             trace,

@@ -269,7 +269,9 @@ impl Wire {
                     self.open
                         .insert(*query_id, (node_id.outpost(), Asked::Activate));
                 }
-                Effect::ReadNode { query_id, node_id } => {
+                Effect::ReadNode {
+                    query_id, node_id, ..
+                } => {
                     self.open
                         .insert(*query_id, (node_id.outpost(), Asked::ReadNode));
                 }
@@ -451,6 +453,7 @@ pub(super) fn key_op() -> TextOp {
         fetch: verbatim_model::KeyFetch {
             unit: TextUnit::Character,
             motion: CaretMotion::NextCharacter,
+            details: verbatim_model::TextDetails::ALL,
         },
         purpose: verbatim_model::ReadPurpose::BeforeFieldKey,
     })

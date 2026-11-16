@@ -36,9 +36,9 @@ mod harness;
 
 use std::sync::{Arc, Mutex, PoisonError};
 
-use verbatim_model::protocol::{CoreToOutpost, OutpostToCore};
+use verbatim_model::protocol::OutpostToCore;
 use verbatim_model::{
-    CallCounts, EarlierElement, Fetches, NormalizedEvent, Role, SegmentContent, State, StateSet,
+    CallCounts, EarlierElement, NormalizedEvent, Role, SegmentContent, State, StateSet,
     WindowHandle,
 };
 use verbatim_process::arguments::OutpostOptions;
@@ -1916,12 +1916,11 @@ fn an_unnamed_grouping_with_a_description_is_focus_context_with_descriptions_off
     let hwnd = common::find_window(&title);
     let client = Client::new(hwnd);
     let mut outpost = OutpostUnderTest::new(&app);
-    outpost
-        .outpost
-        .handle_command(&CoreToOutpost::Fetches(Fetches {
-            description: false,
-            ..Fetches::default()
-        }));
+    outpost.report(verbatim_model::ReportedDetails {
+        node: verbatim_model::property::NodeDetailSet::ALL
+            .without(verbatim_model::property::NodeDetail::Description),
+        ..verbatim_model::ReportedDetails::ALL
+    });
 
     app.send("set-focus louder");
     let focus = outpost.uia_focus_answer(&client.focused());

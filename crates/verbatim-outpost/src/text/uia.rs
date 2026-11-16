@@ -21,12 +21,12 @@
 //! `verbatim-uia-rops`'s `caret_read`, in one remote operation where the
 //! provider runs them, with its classic reads behind it: the caret, the
 //! evidence, the line and the unit at the caret, and the formatting the
-//! theme asks for ([`Fetches`]), converted here to the model's
+//! request names ([`TextDetails`]), converted here to the model's
 //! [`TextAttributes`] (`docs/nvda/document-formatting.md`, "UIA
 //! providers").
 //!
 //! Which attributes are read is generic, never by application: those the
-//! theme's indications ask for, among those the control supports. Support
+//! request names, among those the control supports. Support
 //! is learned from the control itself ([`TextSupport`]): an attribute UIA
 //! answers "not supported" for, over every stretch of a line read, is one
 //! the control does not support, and is not asked again while the control
@@ -45,8 +45,8 @@ use windows::Win32::UI::Accessibility::{
 use windows::core::AgileReference;
 
 use verbatim_model::{
-    BulletStyle, Fetches, LineStyle, MAX_READ_AHEAD_TEXT, TextAttributes, TextMovement, TextReply,
-    TextUnit,
+    BulletStyle, FormatAttribute, LineStyle, MAX_READ_AHEAD_TEXT, TextAttributes, TextDetails,
+    TextMovement, TextReply, TextUnit,
 };
 use verbatim_uia::text::{Endpoint, TextPatternExt, TextRangeExt, caret_range, uia_text_unit};
 use verbatim_uia_rops::{
@@ -208,7 +208,7 @@ pub struct UiaText {
     pattern2: Option<IUIAutomationTextPattern2>,
     terminal: bool,
     remote: bool,
-    fetches: Fetches,
+    details: TextDetails,
     support: TextSupport,
     fallback: Option<verbatim_uia_rops::Error>,
 }
@@ -228,9 +228,9 @@ pub struct TextSupport {
 impl UiaText {
     /// The text of `element` behind `pattern`, with `pattern2` for the
     /// caret where the provider has it; `terminal` for a terminal's text.
-    /// Caret reads use remote operations and read every formatting
-    /// attribute until [`remote`](Self::remote) and
-    /// [`fetches`](Self::fetches) say otherwise.
+    /// Caret reads use remote operations and read no detail beyond the
+    /// text until [`remote`](Self::remote) and
+    /// [`details`](Self::details) say otherwise.
     #[must_use]
     pub fn new(
         element: IUIAutomationElement,
@@ -244,7 +244,7 @@ impl UiaText {
             pattern2,
             terminal,
             remote: true,
-            fetches: Fetches::default(),
+            details: TextDetails::NONE,
             support: TextSupport::default(),
             fallback: None,
         }
@@ -258,11 +258,11 @@ impl UiaText {
         self
     }
 
-    /// The details the theme wants read: the formatting attributes whose
-    /// indications are on.
+    /// What reads fetch beyond the text, as the request names it: the
+    /// format attributes, errors and links.
     #[must_use]
-    pub fn fetches(mut self, fetches: Fetches) -> Self {
-        self.fetches = fetches;
+    pub fn details(mut self, details: TextDetails) -> Self {
+        self.details = details;
         self
     }
 
@@ -621,7 +621,7 @@ impl TextSource for UiaText {
         };
         // A unit this text does not have is not read.
         let unit = request.unit.and_then(|unit| self.unit(unit));
-        let attributes = attributes_for(self.fetches).without(self.support.unsupported);
+        let attributes = attributes_for(self.details).without(self.support.unsupported);
         let learning = attributes
             .without(self.support.supported)
             .without(Attributes::NONE.with(TextAttribute::Annotations));
@@ -673,7 +673,7 @@ impl TextSource for UiaText {
             formats.push((
                 at,
                 at + run.length,
-                attributes_of(&run.attributes, self.fetches),
+                attributes_of(&run.attributes, self.details),
             ));
             at += run.length;
         }
@@ -923,30 +923,52 @@ fn unit_read(read: verbatim_uia_rops::UnitRead) -> TextResult<(Unit<UiaPos>, usi
     ))
 }
 
-/// The attributes to read for the details the theme wants.
-fn attributes_for(fetches: Fetches) -> Attributes {
+/// The attributes to read for the details a request names.
+fn attributes_for(details: TextDetails) -> Attributes {
+    let format = |attribute| details.formats.contains(attribute);
     let mut attributes = Attributes::NONE;
     for (wanted, read) in [
         (
-            fetches.spelling_errors || fetches.grammar_errors,
+            details.spelling_errors || details.grammar_errors,
             &[TextAttribute::Annotations][..],
         ),
-        (fetches.font_name, &[TextAttribute::FontName]),
-        (fetches.font_size, &[TextAttribute::FontSize]),
         (
-            fetches.font_attributes,
+            format(FormatAttribute::FontName),
+            &[TextAttribute::FontName],
+        ),
+        (
+            format(FormatAttribute::FontSize),
+            &[TextAttribute::FontSize],
+        ),
+        (
+            format(FormatAttribute::FontAttributes),
             &[
                 TextAttribute::FontWeight,
                 TextAttribute::Italic,
                 TextAttribute::UnderlineStyle,
             ],
         ),
-        (fetches.underline_style, &[TextAttribute::UnderlineStyle]),
-        (fetches.strikethrough, &[TextAttribute::StrikethroughStyle]),
-        (fetches.color, &[TextAttribute::ForegroundColor]),
-        (fetches.background_color, &[TextAttribute::BackgroundColor]),
-        (fetches.bullet_style, &[TextAttribute::BulletStyle]),
-        (fetches.link, &[TextAttribute::Link]),
+        (
+            format(FormatAttribute::UnderlineStyle),
+            &[TextAttribute::UnderlineStyle],
+        ),
+        (
+            format(FormatAttribute::Strikethrough),
+            &[TextAttribute::StrikethroughStyle],
+        ),
+        (
+            format(FormatAttribute::Color),
+            &[TextAttribute::ForegroundColor],
+        ),
+        (
+            format(FormatAttribute::BackgroundColor),
+            &[TextAttribute::BackgroundColor],
+        ),
+        (
+            format(FormatAttribute::BulletStyle),
+            &[TextAttribute::BulletStyle],
+        ),
+        (details.links, &[TextAttribute::Link]),
     ] {
         if wanted {
             attributes = attributes.union(Attributes::of(read));
@@ -960,13 +982,13 @@ fn attributes_for(fetches: Fetches) -> Attributes {
 /// none, the size in points ("11.0 pt"), the colors by their names, and the
 /// line and bullet styles by UIA's numbers (`docs/nvda/document-formatting.md`,
 /// "UIA providers"). The underline style is read for the font attributes
-/// and for the kind of underline alike, and given to each that `fetches`
-/// asks for.
-fn attributes_of(run: &RunAttributes, fetches: Fetches) -> TextAttributes {
+/// and for the kind of underline alike, and given to each that `details`
+/// asks for; the errors are given as `details` asks for each.
+fn attributes_of(run: &RunAttributes, details: TextDetails) -> TextAttributes {
     let color_name = |color: i32| super::color::color_name(color.cast_unsigned());
     TextAttributes {
-        spelling_error: run.spelling_error,
-        grammar_error: run.grammar_error,
+        spelling_error: run.spelling_error && details.spelling_errors,
+        grammar_error: run.grammar_error && details.grammar_errors,
         font_name: run.font_name.clone(),
         font_size: run.font_size.map(|size| format!("{size:?} pt")),
         color: run.color.map(color_name),
@@ -974,11 +996,11 @@ fn attributes_of(run: &RunAttributes, fetches: Fetches) -> TextAttributes {
         italic: run.italic,
         underline: run
             .underline
-            .filter(|_| fetches.font_attributes)
+            .filter(|_| details.formats.contains(FormatAttribute::FontAttributes))
             .map(|style| style != 0),
         underline_style: run
             .underline
-            .filter(|_| fetches.underline_style)
+            .filter(|_| details.formats.contains(FormatAttribute::UnderlineStyle))
             .map(line_style),
         strikethrough: run.strikethrough.map(line_style),
         background_color: run.background_color.map(color_name),
@@ -1050,4 +1072,83 @@ fn round(value: f64) -> i32 {
     )]
     let pixels = value.round() as i32;
     pixels
+}
+
+#[cfg(test)]
+mod tests {
+    use verbatim_model::{FormatAttribute, FormatSet, TextDetails};
+    use verbatim_uia_rops::{Attributes, TextAttribute};
+
+    use super::attributes_for;
+
+    /// Each detail a request leaves out leaves its UI Automation attributes
+    /// unread, but those another detail still asked for reads: the
+    /// underline style, which the font attributes read too, and the
+    /// annotations, which hold spelling and grammar errors alike.
+    #[test]
+    fn a_detail_left_out_leaves_its_attributes_unread() {
+        let without_format = |attribute| {
+            attributes_for(TextDetails {
+                formats: FormatSet::ALL.without(attribute),
+                ..TextDetails::ALL
+            })
+        };
+        let less = |gone: &[TextAttribute]| Attributes::ALL.without(Attributes::of(gone));
+        assert_eq!(attributes_for(TextDetails::ALL), Attributes::ALL);
+        assert_eq!(attributes_for(TextDetails::NONE), Attributes::NONE);
+        assert_eq!(
+            without_format(FormatAttribute::FontName),
+            less(&[TextAttribute::FontName])
+        );
+        assert_eq!(
+            without_format(FormatAttribute::FontSize),
+            less(&[TextAttribute::FontSize])
+        );
+        assert_eq!(
+            without_format(FormatAttribute::Color),
+            less(&[TextAttribute::ForegroundColor])
+        );
+        assert_eq!(
+            without_format(FormatAttribute::BackgroundColor),
+            less(&[TextAttribute::BackgroundColor])
+        );
+        assert_eq!(
+            without_format(FormatAttribute::FontAttributes),
+            less(&[TextAttribute::FontWeight, TextAttribute::Italic])
+        );
+        assert_eq!(
+            without_format(FormatAttribute::Strikethrough),
+            less(&[TextAttribute::StrikethroughStyle])
+        );
+        assert_eq!(
+            without_format(FormatAttribute::UnderlineStyle),
+            Attributes::ALL
+        );
+        assert_eq!(
+            without_format(FormatAttribute::BulletStyle),
+            less(&[TextAttribute::BulletStyle])
+        );
+        assert_eq!(
+            attributes_for(TextDetails {
+                links: false,
+                ..TextDetails::ALL
+            }),
+            less(&[TextAttribute::Link])
+        );
+        assert_eq!(
+            attributes_for(TextDetails {
+                spelling_errors: false,
+                ..TextDetails::ALL
+            }),
+            Attributes::ALL
+        );
+        assert_eq!(
+            attributes_for(TextDetails {
+                spelling_errors: false,
+                grammar_errors: false,
+                ..TextDetails::ALL
+            }),
+            less(&[TextAttribute::Annotations])
+        );
+    }
 }

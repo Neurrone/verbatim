@@ -60,8 +60,9 @@ use windows::Win32::UI::WindowsAndMessaging::{OBJID_CLIENT, OBJID_WINDOW};
 use verbatim_ia2::{
     CHILDID_SELF, Facts, Found, Held, KeptObject, MsaaKey, NodeIdRegistry as MsaaRegistry,
 };
+use verbatim_model::property::NodeDetailSet;
 use verbatim_model::protocol::OutpostToCore;
-use verbatim_model::{Fetches, NodeId, Role};
+use verbatim_model::{NodeId, Role};
 use verbatim_uia::{Agile, Cached, Kept, NodeIdRegistry as UiaRegistry};
 
 use super::outbound::{Carried, Outbound};
@@ -397,12 +398,13 @@ impl Store {
 
     /// The store's handle for the request `tag`, through which a walk
     /// issues and looks up nodes, each tagged with it.
-    pub(super) fn nodes_for(&self, tag: Tag) -> Nodes<'_> {
+    pub(super) fn nodes_for(&self, tag: Tag, details: NodeDetailSet) -> Nodes<'_> {
         Nodes {
             store: self,
             generation: tag.generation,
             request: AtomicU64::new(tag.request),
             replaced: Lock::new(Vec::new()),
+            details,
         }
     }
 
@@ -454,11 +456,6 @@ impl Store {
             .values()
             .find(|route| route.runtime_id == runtime_id)
             .cloned()
-    }
-
-    /// The details a node read includes.
-    pub(super) fn set_fetches(&self, fetches: Fetches) {
-        self.msaa.set_fetches(fetches);
     }
 
     /// Takes the element kept for `node` out, for the caller to drop.
@@ -760,6 +757,9 @@ pub(super) struct Nodes<'a> {
     generation: u64,
     request: AtomicU64,
     replaced: Lock<Vec<Agile<Kept>>>,
+    /// The node details the request's reads fetch, as its property set
+    /// names them.
+    details: NodeDetailSet,
 }
 
 impl Nodes<'_> {
@@ -830,8 +830,8 @@ impl verbatim_uia::Interning for Nodes<'_> {
 }
 
 impl verbatim_ia2::Interning for Nodes<'_> {
-    fn fetches(&self) -> Fetches {
-        self.store.msaa.fetches()
+    fn details(&self) -> NodeDetailSet {
+        self.details
     }
 
     fn id_for(&self, key: MsaaKey) -> NodeId {

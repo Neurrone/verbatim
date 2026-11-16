@@ -35,6 +35,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     GET_WINDOW_CMD, GW_HWNDNEXT, GW_HWNDPREV, OBJID_CLIENT, OBJID_WINDOW,
 };
 
+use verbatim_model::property::NodeDetail;
 use verbatim_model::{
     Backend, NodeDetails, NodeId, NodeSnapshot, QueryKind, Rect, Role, State, TreeNode,
     WindowHandle,
@@ -310,12 +311,12 @@ impl EventObject {
     /// chose for its object when it made it does.
     #[must_use]
     pub fn name(&self, role: Role, registry: &dyn Interning) -> Option<String> {
-        let fetches = registry.fetches();
+        let details = registry.details();
         let columns = is_list_view_item(&self.acc, self.key, role)
             .then(|| {
                 crate::list_view::column_name(self.key.0, self.acc.child(), || {
-                    fetches
-                        .description
+                    details
+                        .contains(NodeDetail::Description)
                         .then(|| non_empty(self.acc.description()))
                         .flatten()
                 })
@@ -334,12 +335,14 @@ impl EventObject {
     }
 
     /// The object's description, read alone, as a full read of an object of
-    /// `role` gives it: none when the active theme does not report
+    /// `role` gives it: none when the walk's request does not name
     /// descriptions or the object is a list view item, and bidirectional
     /// formatting characters stripped.
     #[must_use]
     pub fn description(&self, role: Role, registry: &dyn Interning) -> Option<String> {
-        if !registry.fetches().description || is_list_view_item(&self.acc, self.key, role) {
+        if !registry.details().contains(NodeDetail::Description)
+            || is_list_view_item(&self.acc, self.key, role)
+        {
             return None;
         }
         let mut description = non_empty(self.acc.description());
@@ -2034,15 +2037,15 @@ fn read_snapshot_with(
     let role = raw_role.map_or(Role::Unknown, |r| role_from_msaa(r.cast_unsigned()));
     let (role, states, tree_item) =
         role_and_states(acc, key, role, reading.state.or_read(|| acc.state()));
-    // A detail the active theme reports as off is not read at all, saving
-    // its cross-process call (`NodeIdRegistry::fetches`).
-    let fetches = registry.fetches();
-    let description = fetches
-        .description
+    // A detail the walk's request does not name is not read at all,
+    // saving its cross-process call (`Interning::details`).
+    let details = registry.details();
+    let description = details
+        .contains(NodeDetail::Description)
         .then(|| non_empty(acc.description()))
         .flatten();
-    let keyboard_shortcut = fetches
-        .shortcut
+    let keyboard_shortcut = details
+        .contains(NodeDetail::KeyboardShortcut)
         .then(|| non_empty(acc.keyboard_shortcut()))
         .flatten();
     // Read or not: the equality compares the location read here, so it
@@ -2055,18 +2058,19 @@ fn read_snapshot_with(
     // The edit field of a combo box takes the combo box's label, so it
     // has none of its own when the combo box is labelled, as in NVDA.
     let name = labelled_name(acc, role, name);
-    let (position_in_set, set_size) = if fetches.position && reading.purpose == Purpose::Announce {
-        position_of(key.0, acc.child(), role, tree_item)
-    } else {
-        (None, None)
-    };
+    let (position_in_set, set_size) =
+        if details.contains(NodeDetail::Position) && reading.purpose == Purpose::Announce {
+            position_of(key.0, acc.child(), role, tree_item)
+        } else {
+            (None, None)
+        };
     let list_view_item = is_list_view_item(acc, key, role);
     let (value, level) = match role {
         Role::TreeItem if is_systreeview32(key.0) => {
             let level = raw_value
                 .as_deref()
                 .and_then(|v| v.parse::<u32>().ok())
-                .filter(|_| fetches.level);
+                .filter(|_| details.contains(NodeDetail::Level));
             (None, level)
         }
         _ => (value_for(acc, key, role, raw_value), None),
@@ -2494,8 +2498,8 @@ fn live_name(
     let mut name = if is_list_view_item(acc, key, role) {
         columned_name(acc, key, name, || {
             registry
-                .fetches()
-                .description
+                .details()
+                .contains(NodeDetail::Description)
                 .then(|| non_empty(acc.description()))
                 .flatten()
         })

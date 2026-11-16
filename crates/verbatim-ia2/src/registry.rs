@@ -35,7 +35,8 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use windows::Win32::UI::Accessibility::IAccessible;
 use windows::core::AgileReference;
 
-use verbatim_model::{Fetches, NodeId, Role};
+use verbatim_model::property::NodeDetailSet;
+use verbatim_model::{NodeId, Role};
 
 /// The MSAA address of one accessible: its window handle, object id, and child
 /// id (`CHILDID_SELF` is zero).
@@ -125,8 +126,6 @@ pub enum Found {
 pub struct NodeIdRegistry {
     counter: Arc<AtomicU64>,
     inner: Arc<Mutex<Inner>>,
-    /// What a node read includes; every read goes through the registry.
-    fetches: Arc<Mutex<Fetches>>,
 }
 
 #[derive(Default)]
@@ -141,8 +140,9 @@ struct Inner {
 /// the request that named it, or a [`NodeIdRegistry`] itself, untagged.
 /// Each method is the registry's of the same name.
 pub trait Interning {
-    /// [`NodeIdRegistry::fetches`].
-    fn fetches(&self) -> Fetches;
+    /// The node details the walk's request names, which its reads fetch:
+    /// a detail it does not name is not read, and its call is not made.
+    fn details(&self) -> NodeDetailSet;
     /// [`NodeIdRegistry::id_for`]: issues or looks up.
     fn id_for(&self, key: MsaaKey) -> NodeId;
     /// [`NodeIdRegistry::find`]: a node found is looked up.
@@ -169,8 +169,10 @@ pub trait Interning {
 }
 
 impl Interning for NodeIdRegistry {
-    fn fetches(&self) -> Fetches {
-        NodeIdRegistry::fetches(self)
+    /// A walk through the registry itself, untagged, is no request's: a
+    /// tool's or a test's, which reads every detail.
+    fn details(&self) -> NodeDetailSet {
+        NodeDetailSet::ALL
     }
 
     fn id_for(&self, key: MsaaKey) -> NodeId {
@@ -218,22 +220,7 @@ impl NodeIdRegistry {
         Self {
             counter,
             inner: Arc::new(Mutex::new(Inner::default())),
-            fetches: Arc::new(Mutex::new(Fetches::default())),
         }
-    }
-
-    /// The details a node read through this registry includes, as the
-    /// active theme wants them (`Fetches`): a detail whose indication is
-    /// off is not read, which saves its cross-process call. Every detail
-    /// until [`set_fetches`](Self::set_fetches) says otherwise.
-    #[must_use]
-    pub fn fetches(&self) -> Fetches {
-        *self.fetches.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-
-    /// Changes the details nodes read from now on include.
-    pub fn set_fetches(&self, fetches: Fetches) {
-        *self.fetches.lock().unwrap_or_else(PoisonError::into_inner) = fetches;
     }
 
     fn lock(&self) -> MutexGuard<'_, Inner> {

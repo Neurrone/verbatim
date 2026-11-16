@@ -598,7 +598,7 @@ and the inherited pipe handles.
   drives it. `perform(source, anchors, op)` answers a `TextOp` over a
   `TextSource`, a backend's view of one node's text in UTF-16:
   `uia::UiaText` over a text pattern (positions are `UiaPos`; `new` takes
-  the element for remote operations; `remote`, `fetches`, `support`, and
+  the element for remote operations; `remote`, `details`, `support`, and
   `known_support` say whether caret reads try a remote operation, which
   formatting they read, and the `TextSupport` known before and after), or
   `edit::EditText` over an edit control's messages (offsets; a word is the
@@ -922,18 +922,23 @@ foreground application for its focus unless a newer focus was applied.
 
 ### What to read
 
-`Fetches` carries the details the theme wants (`SrState::fetches`;
-[verbatim-model](verbatim-model.md), "Themes"), sent at start and on theme
-changes; until it arrives everything is read. UIA requests and remote
-fills are built from the gates of the `Node` and `Ancestor` shapes
+Each program reads the node details its request names and nothing more
+([verbatim-model](verbatim-model.md), "Themes"): a request of the shared
+list by its property set (`asked::node_details`), a legacy query by the
+details it carries, a tree dump every detail, an event's own reads, which
+no request names, every detail (Core's theme decides what is spoken), and
+a text read or a release none. The store's handle for the program carries
+them, so the MSAA reads see them too (`Interning::details`). UIA requests
+and remote fills are built from the gates of the `Node` and `Ancestor`
+shapes
 (`books/dev/src/explanation/design/uia-shapes.md`), one function per shape and use (`gates.rs`):
 a node's place only for an element read alone (`node_gates`,
 `focus_gates`, not `many_node_gates` or `ancestor_gates`, decision 9), and
-an ancestor's description always (decision 4). MSAA reads skip what is off.
-The subscriptions' cache requests are fixed, whatever the theme, so the
-details of a listener's selection that the theme does not report are taken
-out of its report (`gates::leave_out_unreported`). Text formatting is
-read only for indications that are on and attributes the control supports,
+an ancestor's description always (decision 4). MSAA reads skip what is
+not named. The subscriptions' cache requests are fixed, so a listener's
+selection is reported with every detail its cache holds. Text formatting
+is read only for the details the request names (`TextDetails`, from the
+text op or the key's `KeyFetch`) and attributes the control supports,
 learned from its answers and kept per node (`TextSupport`); spelling and
 grammar annotation types are never learned, since Notepad answers "not
 supported" without annotations, so the caret read asks a line first

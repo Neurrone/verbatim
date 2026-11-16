@@ -137,7 +137,7 @@ async fn start(cx: &mut Cx<Entries>, candidate: &Candidate, run_executed: bool) 
                 kind: CandidateKind::MenuStart,
                 verdict,
             }],
-            set: FOCUS_SET.to_vec(),
+            set: crate::details::node_set(&cx.facts(), FOCUS_SET),
             known: known.sent.clone(),
             baseline: known.baseline,
         },
@@ -200,6 +200,7 @@ pub(crate) async fn check(mut cx: Cx<Entries>, check: MenuCheck) {
         window,
         known: known.sent.clone(),
         baseline: known.baseline,
+        set: crate::details::node_set(&cx.facts(), FOCUS_SET),
     };
     let Outcome::Result(read) = cx.ask(request, due_us).await else {
         cx.facts_mut().focus_read_failed();

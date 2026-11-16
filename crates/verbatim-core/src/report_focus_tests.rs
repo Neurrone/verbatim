@@ -106,7 +106,7 @@ fn it_reads_the_committed_node_live_and_speaks_it_with_its_line() {
         state.queue.table_for_tests().last(),
         Some(&Wire::Properties {
             node: node(2),
-            set: super::report_set(),
+            set: super::report_set(&state),
         })
     );
     assert_eq!(

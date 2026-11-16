@@ -19,7 +19,7 @@ use std::time::Duration;
 
 use verbatim_model::{
     CaretMotion, CaretReport, CaretSelection, Change, Compared, KeyFetch, ReadFacts, TextChunk,
-    TextUnit, had_effect,
+    TextDetails, TextUnit, had_effect,
 };
 
 /// The key the store keeps a UIA position's range under.
@@ -452,6 +452,8 @@ pub struct NoteFetch {
     pub unit: TextUnit,
     /// What the key does, which says what counts as its evidence.
     pub motion: CaretMotion,
+    /// What reads fetch beyond the text, as the key's request names it.
+    pub details: TextDetails,
 }
 
 /// What reads a text field's note causes besides its caret events.
@@ -693,6 +695,7 @@ impl TextFacts {
             fetch: NoteFetch {
                 unit: fetch.unit,
                 motion: fetch.motion,
+                details: fetch.details,
             },
             until_us,
             reads,
@@ -904,6 +907,7 @@ mod tests {
         KeyFetch {
             unit: TextUnit::Character,
             motion,
+            details: TextDetails::ALL,
         }
     }
 

@@ -227,7 +227,10 @@ fn requests(effects: &[Effect], key: Option<TraceId>) -> Vec<(QueryId, NodeId, O
         .flat_map(|effect| match effect {
             Effect::ForKey(key, inner) => requests(std::slice::from_ref(&**inner), Some(*key)),
             Effect::Fetch(query) => vec![(query.query_id, query.node_id, key)],
-            Effect::Activate { query_id, node_id } | Effect::ReadNode { query_id, node_id } => {
+            Effect::Activate { query_id, node_id }
+            | Effect::ReadNode {
+                query_id, node_id, ..
+            } => {
                 vec![(*query_id, *node_id, key)]
             }
             Effect::Text(request) => vec![(request.query_id, request.node_id, key)],

@@ -361,7 +361,11 @@ them yet.
   `WatchFinalRead`, answered `Watched` (the effect or the bound, with a
   `WatchedRead`, or the bound unread); and `SentenceMove`, answered
   `SentenceMoved`, each answer with the selection baseline it minted and
-  the caret's line. Each names its `TextProvider` and `TextDetails`.
+  the caret's line. Each names its `TextProvider` and `TextDetails`: the
+  format attributes to read (a `FormatSet` of `FormatAttribute`s, one per
+  attribute the theme switches), spelling and grammar errors, and links,
+  which the outpost reads exactly; a caret key's `KeyFetch` names them
+  too, and a read that names none fetches nothing beyond the text.
 - A caret tell's read (`TextOp::ReadSelection`, a `SelectionRead` naming
   the provider, Core's selection baseline, if any, and the tell's element
   for the outpost to adopt when the node's own answered it has no text
@@ -415,7 +419,7 @@ that carries them on the pipes, `Message`, is
     (under a `RequestId`: who in Core asked, `Requester::Reducer` or
     `Requester::Shell`, non-exhaustive for later askers, and that asker's
     number, which outposts store, compare and echo and decide nothing by);
-    `CancelQuery` (withdraws a query not started, by its `RequestId`); `KeyNote` (the note of a key with no before read, with no reply); `Ping`; `Fetches`;
+    `CancelQuery` (withdraws a query not started, by its `RequestId`); `KeyNote` (the note of a key with no before read, with no reply); `Ping`;
     `NodesHeld`; `IdleQuery`; `Shutdown`; `LiveReread`; `Assign`; `Request` (an `Ask` of
     the shared list, its node ids stamped with the outpost generation,
     which the outpost clears with `Ask::unstamp`); `Cancel` (a
@@ -717,8 +721,9 @@ exists), or `Unanswered` (no answer in time, or the read failed).
   reports of the marks the reducer placed.
 - `Input::SpeechCancelled { at_ms }`: a key press cut speech off outside
   the reducer.
-- `Input::Settings(ReaderSettings)` and `Input::Fetches(Fetches)`: at
-  startup and whenever they change.
+- `Input::Settings(ReaderSettings)` and
+  `Input::Reported(ReportedDetails)`: at startup and whenever they
+  change.
 - `Input::TerminalTimer { trace_id, at_ms }`: the focused terminal's
   quiet-period timer came due, at the due time Core's state gave.
 - The shell sends the speech side's reports and its timers as queue
@@ -788,7 +793,8 @@ is [verbatim-speech](verbatim-speech.md)'s.
   indication with `Indication::default_setting`; `setting(indication)`
   falls back to the default for anything not mentioned (no chains);
   `differs` says whether an indication is changed; `problems` finds what
-  is wrong without reading files; `fetches` gives the reducer's `Fetches`.
+  is wrong without reading files; `reported` gives the details it reports
+  (`ReportedDetails`).
 - The default theme matches NVDA's defaults: everything spoken as NVDA
   speaks it; sounds where NVDA plays them by default (NVDA's files in the
   top-level `sounds` directory); Verbatim's own cues as tones (an
@@ -806,6 +812,11 @@ is [verbatim-speech](verbatim-speech.md)'s.
 - `ThemeOptions`: the settings that go with a theme: sound volume (0 to
   100, relative to speech), sounds during say-all, and speaking
   indications that play a sound.
-- `Fetches`: the details the reducer fetches (description, shortcut,
-  position, level, a cell's row and column, and each text attribute),
-  each unless its indication is off.
+- `ReportedDetails`: the details the theme reports, each unless its
+  indication is off: the node details (a `NodeDetailSet` of description,
+  keyboard shortcut, position, level and a cell's row and column) and the
+  text details (`TextDetails`). Core keeps it and chooses each request's
+  details from it; no reader holds a copy. The property table names the
+  setting that switches each property (`PropertyEntry::detail`), so a
+  property set names its details (`NodeDetailSet::named_by`) and the
+  settings choose a set (`NodeDetailSet::choose`).

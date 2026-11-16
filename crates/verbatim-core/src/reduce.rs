@@ -192,8 +192,8 @@ fn reduce_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
             state.settings = *settings;
             effects
         }
-        Input::Fetches(fetches) => {
-            state.fetches = *fetches;
+        Input::Reported(reported) => {
+            state.reported = *reported;
             Vec::new()
         }
         Input::Foreground(change) => foreground_changed(state, *change),

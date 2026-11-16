@@ -12,7 +12,7 @@
 //! it read. An object with neither, put there by the old focus path, is
 //! read by no command until that path is deleted.
 
-use verbatim_model::property::PropertyValues;
+use verbatim_model::property::{PropertyId, PropertyValues};
 use verbatim_model::request::{FocusNode, NodeRead, Reply, Request as Wire};
 use verbatim_model::{
     ActionName, Effect, FetchResult, Message, NodeId, NodeSnapshot, QueryKind, SegmentContent,
@@ -69,6 +69,8 @@ struct Navigate {
     window: RequestWindow,
     node: NodeId,
     direction: QueryKind,
+    /// The properties of the node reached, chosen from the settings.
+    set: Vec<PropertyId>,
 }
 
 impl Request for Navigate {
@@ -86,7 +88,7 @@ impl Request for Navigate {
         Wire::Navigate {
             node: self.node,
             direction: self.direction,
-            set: crate::report_focus::ANNOUNCED_SET.to_vec(),
+            set: self.set.clone(),
         }
     }
 
@@ -133,6 +135,8 @@ impl Request for Activate {
 pub(crate) struct Properties {
     pub(crate) window: RequestWindow,
     pub(crate) node: NodeId,
+    /// The properties, chosen from the settings.
+    pub(crate) set: Vec<PropertyId>,
 }
 
 impl Request for Properties {
@@ -149,7 +153,7 @@ impl Request for Properties {
     fn wire(&self) -> Wire {
         Wire::Properties {
             node: self.node,
-            set: crate::report_focus::ANNOUNCED_SET.to_vec(),
+            set: self.set.clone(),
         }
     }
 
@@ -255,6 +259,7 @@ pub(crate) async fn navigate(mut cx: Cx<Entries>, press: ReviewPress, kind: Quer
         window: on.window,
         node: on.object.id,
         direction: kind,
+        set: crate::details::node_set(&cx.facts(), &crate::report_focus::ANNOUNCED_SET),
     };
     let due_us = cx.due_in(OTHER_DUE_US);
     let result = match cx.ask(request, due_us).await {
@@ -318,6 +323,7 @@ pub(crate) async fn report_object(mut cx: Cx<Entries>, press: ReviewPress) {
     let request = Properties {
         window: on.window,
         node: on.object.id,
+        set: crate::details::node_set(&cx.facts(), &crate::report_focus::ANNOUNCED_SET),
     };
     let due_us = cx.due_in(OTHER_DUE_US);
     let Outcome::Result(values) = cx.ask(request, due_us).await else {

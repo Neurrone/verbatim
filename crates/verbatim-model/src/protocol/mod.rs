@@ -690,12 +690,6 @@ pub enum CoreToOutpost {
         #[serde(default)]
         sent_at_us: u64,
     },
-    /// The details the active theme wants read for each node
-    /// (`SrState::fetches` in `verbatim-core`): a detail whose indication
-    /// is off is not read, which saves its cross-process call. Sent when an
-    /// outpost starts and whenever the theme in use changes; everything is
-    /// read until the first arrives.
-    Fetches(crate::Fetches),
     /// The nodes from this outpost that Core still holds
     /// (`books/dev/src/reference/crates/verbatim-outpost.md`, held objects), as the numbers the
     /// outpost issued, and the position of the last message from this
@@ -811,7 +805,6 @@ impl CoreToOutpost {
                 Kind::Lifecycle
             }
             CoreToOutpost::LiveReread { .. } => Kind::Routed,
-            CoreToOutpost::Fetches(_) => Kind::Configuration,
         }
     }
 }
@@ -930,6 +923,10 @@ pub enum Query {
     ReadFocus {
         /// Why the focus is read.
         purpose: FocusPurpose,
+        /// The node details each node's read fetches.
+        details: crate::property::NodeDetailSet,
+        /// What the read of the focus's line fetches beyond its text.
+        text: crate::TextDetails,
     },
     /// One object-navigation step from `node_id` in the direction `kind`
     /// names.
@@ -938,6 +935,8 @@ pub enum Query {
         node_id: NodeId,
         /// Which way: parent, next or previous sibling, or first child.
         kind: QueryKind,
+        /// The node details the read of the node reached fetches.
+        details: crate::property::NodeDetailSet,
     },
     /// The node as it is now: its name, value and the rest, read live for
     /// a review command, and its table's row and column counts, for Report
@@ -946,6 +945,8 @@ pub enum Query {
     ReadNode {
         /// The node to read.
         node_id: NodeId,
+        /// The node details the read fetches.
+        details: crate::property::NodeDetailSet,
     },
     /// Activate a node: UIA `Invoke`, `Toggle`, or the legacy default
     /// action; MSAA `accDoDefaultAction`.
@@ -957,6 +958,8 @@ pub enum Query {
     Ancestors {
         /// The node whose ancestors are wanted.
         node_id: NodeId,
+        /// The node details each ancestor's read fetches.
+        details: crate::property::NodeDetailSet,
     },
     /// The application's tree from its top-level window, capped at a depth
     /// of 64 and 4096 nodes.
@@ -1876,8 +1879,6 @@ pub enum Kind {
     Lifecycle,
     /// A fact the relay routes from the listener to an outpost.
     Routed,
-    /// A setting the receiver applies.
-    Configuration,
 }
 
 /// A message an outpost sends ahead of everything waiting in its outbound

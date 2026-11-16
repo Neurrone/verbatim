@@ -90,18 +90,18 @@ pub use terminal::{
 };
 pub use text::{
     BulletStyle, CaretChanges, CaretKey, CaretMotion, CaretRead, CaretReply, CaretReport,
-    CaretSelection, Change, Compared, EditSelection, FocusText, FormatRun, HeldAnchors, KeyFetch,
-    LanguageRun, LineStyle, MAX_CHUNK_BYTES, MAX_RANGE_BYTES, MAX_READ_AHEAD, MAX_READ_AHEAD_TEXT,
-    MAX_SELECTION_TEXT_BYTES, NoteRequest, ReadFacts, ReadPurpose, Selection, SelectionChange,
-    SelectionDifference, SelectionRead, SelectionReadReply, SentenceMove, SentenceMoved, Started,
-    StartingRead, TerminalRead, TerminalReadReply, TextAnchor, TextAttributes, TextChunk,
-    TextDetails, TextMovement, TextOp, TextPoint, TextPosition, TextProvider, TextRead,
-    TextReadAhead, TextReply, TextRequest, TextThrough, TextUnit, Watch, WatchFinalRead, Watched,
-    WatchedRead, had_effect,
+    CaretSelection, Change, Compared, EditSelection, FocusText, FormatAttribute, FormatRun,
+    FormatSet, HeldAnchors, KeyFetch, LanguageRun, LineStyle, MAX_CHUNK_BYTES, MAX_RANGE_BYTES,
+    MAX_READ_AHEAD, MAX_READ_AHEAD_TEXT, MAX_SELECTION_TEXT_BYTES, NoteRequest, ReadFacts,
+    ReadPurpose, Selection, SelectionChange, SelectionDifference, SelectionRead,
+    SelectionReadReply, SentenceMove, SentenceMoved, Started, StartingRead, TerminalRead,
+    TerminalReadReply, TextAnchor, TextAttributes, TextChunk, TextDetails, TextMovement, TextOp,
+    TextPoint, TextPosition, TextProvider, TextRead, TextReadAhead, TextReply, TextRequest,
+    TextThrough, TextUnit, Watch, WatchFinalRead, Watched, WatchedRead, had_effect,
 };
 pub use theme::{
-    DEFAULT_GAIN, Fetches, Indication, IndicationCategory, IndicationSetting, MAX_GAIN,
-    Presentation, SoundSource, Theme, ThemeOptions, ThemeProblem, Tone, VoiceStyle,
+    DEFAULT_GAIN, Indication, IndicationCategory, IndicationSetting, MAX_GAIN, Presentation,
+    ReportedDetails, SoundSource, Theme, ThemeOptions, ThemeProblem, Tone, VoiceStyle,
     is_plain_file_name,
 };
 pub use tree::{

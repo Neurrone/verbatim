@@ -11,7 +11,7 @@
 
 use std::collections::{BTreeSet, HashMap};
 
-use verbatim_model::{Fetches, OutpostId, Pid};
+use verbatim_model::{OutpostId, Pid};
 
 /// A live outpost generation.
 pub(crate) struct Live {
@@ -25,8 +25,6 @@ pub(crate) struct Live {
     /// The held nodes and text anchors last left for it, and the position
     /// acknowledged then ([`Live::held_changed`]).
     held_left: (BTreeSet<u64>, BTreeSet<u64>, u64),
-    /// The details to read last sent to it, `None` before the first.
-    pub(crate) fetches_sent: Option<Fetches>,
 }
 
 impl Live {
@@ -118,7 +116,6 @@ impl LiveOutposts {
                 application: None,
                 position: 0,
                 held_left: (BTreeSet::new(), BTreeSet::new(), 0),
-                fetches_sent: None,
             }),
         );
     }

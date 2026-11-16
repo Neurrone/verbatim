@@ -242,11 +242,14 @@ fn watched_on_focus(state: &SrState, passed: PassedKey, before: Before) -> Watch
     }
 }
 
-/// What the reads for a key of `key`'s motion fetch.
-fn fetch_of(key: CaretKey) -> KeyFetch {
+/// What the reads for a key of `key`'s motion fetch: its unit, and the
+/// details the settings report for it ([`crate::details`]).
+fn fetch_of(state: &SrState, key: CaretKey) -> KeyFetch {
+    let unit = key.motion.unit();
     KeyFetch {
-        unit: key.motion.unit(),
+        unit,
         motion: key.motion,
+        details: crate::details::text_details(state, unit, crate::details::TextReason::CaretKey),
     }
 }
 
@@ -406,7 +409,7 @@ fn start_held(state: &mut SrState, held: HeldKey) -> Vec<Effect> {
     };
     let heard = replaced_key_heard(state, held.trace_id);
     let read = CaretRead {
-        fetch: fetch_of(held.key),
+        fetch: fetch_of(state, held.key),
         purpose: ReadPurpose::BeforeFieldKey,
     };
     let (query, effect) = state.queries.ask(
@@ -588,7 +591,7 @@ fn watch_from_last_read(
     effects.extend(key_taking_effect(state, held.key, node));
     effects.push(Effect::BoundHeldKey(Some((held.trace_id, bound_ms))));
     if sends_note {
-        let fetch = fetch_of(held.key);
+        let fetch = fetch_of(state, held.key);
         let request = NoteRequest::Field { node, fetch };
         effects.push(for_key(held.trace_id, Effect::KeyNote(request)));
     }
@@ -1262,7 +1265,7 @@ fn bound_passed(state: &mut SrState, watched: Watched) -> Vec<Effect> {
     };
     let node = field.passed.node;
     let read = CaretRead {
-        fetch: fetch_of(field.passed.key.key),
+        fetch: fetch_of(state, field.passed.key.key),
         purpose: ReadPurpose::Final,
     };
     let (query, effect) = state.queries.ask(
@@ -1279,7 +1282,7 @@ fn bound_passed(state: &mut SrState, watched: Watched) -> Vec<Effect> {
 fn final_read_of_sentence_key(state: &mut SrState, passed: PassedKey) -> Vec<Effect> {
     let node = passed.node;
     let read = CaretRead {
-        fetch: fetch_of(passed.key.key),
+        fetch: fetch_of(state, passed.key.key),
         purpose: ReadPurpose::Final,
     };
     let (query, effect) = state.queries.ask(

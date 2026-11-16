@@ -176,7 +176,7 @@ async fn selected(
         window,
         read: ReadObject {
             object: ObjectRef::Kept(kept.token),
-            set: FOCUS_SET.to_vec(),
+            set: crate::details::node_set(&cx.facts(), FOCUS_SET),
             relation: None,
             descendants: false,
             walk: Some(Known::of(&cx.facts(), None).sent),
@@ -207,7 +207,7 @@ async fn selected(
             read: iter::once(object.object.values)
                 .chain(object.ancestors.into_iter().map(|ancestor| ancestor.values))
                 .collect(),
-            set: FOCUS_SET.to_vec(),
+            set: crate::details::node_set(&cx.facts(), FOCUS_SET),
             known: known.sent.clone(),
             completes: CompletionFor::SelectionItem {
                 focus: committed.node,

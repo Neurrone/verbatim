@@ -115,6 +115,8 @@ fn focus_now(request_id: u64) -> Item {
         request_id: RequestId::shell(request_id),
         query: Query::ReadFocus {
             purpose: verbatim_model::protocol::FocusPurpose::Plain,
+            details: verbatim_model::property::NodeDetailSet::ALL,
+            text: verbatim_model::TextDetails::ALL,
         },
     }
 }
@@ -722,6 +724,7 @@ fn fetch() -> KeyFetch {
     KeyFetch {
         unit: TextUnit::Character,
         motion: CaretMotion::NextCharacter,
+        details: verbatim_model::TextDetails::ALL,
     }
 }
 
@@ -742,6 +745,7 @@ fn a_before_read_sets_the_note_as_it_arrives_and_a_final_read_goes_ahead_of_the_
             fetch: NoteFetch {
                 unit: TextUnit::Character,
                 motion: CaretMotion::NextCharacter,
+                details: verbatim_model::TextDetails::ALL,
             },
             until_us: 302_000,
             reads: NoteReads::Field(FieldReads::CaretAndText),

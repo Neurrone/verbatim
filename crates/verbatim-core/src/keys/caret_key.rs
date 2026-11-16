@@ -299,7 +299,7 @@ pub(crate) async fn run(mut cx: Cx<Entries>, press: CaretPress) {
     let due_us = cx.due_in(OTHER_DUE_US);
     let starting = StartingRead {
         provider: binding.provider,
-        details: TextDetails::ALL,
+        details: key_details(&cx, &press),
         unit: press.key.motion.unit(),
         word: matches!(
             press.key.motion,
@@ -469,12 +469,12 @@ async fn watching(
         final_read: if moves_by_sentence(press, binding) {
             WatchFinalRead::UnitAtEffect {
                 unit: press.key.motion.unit(),
-                details: TextDetails::ALL,
+                details: key_details(cx, press),
             }
         } else {
             WatchFinalRead::Unit {
                 unit: press.key.motion.unit(),
-                details: TextDetails::ALL,
+                details: key_details(cx, press),
             }
         },
     };
@@ -527,7 +527,7 @@ async fn sentence(
             provider: binding.provider,
             point: started.point,
             forward,
-            details: TextDetails::ALL,
+            details: key_details(cx, press),
         }),
     ));
     let Outcome::Result(moved) = cx.ask(request, due_us).await else {
@@ -614,6 +614,16 @@ fn stop_say_all(cx: &mut Cx<Entries>) {
     for effect in stopped {
         cx.emit(effect);
     }
+}
+
+/// What `press`'s text reads fetch beyond the text: what the settings
+/// report for its unit, read for a caret key ([`crate::details`]).
+fn key_details(cx: &Cx<Entries>, press: &CaretPress) -> TextDetails {
+    crate::details::text_details(
+        &cx.facts(),
+        press.key.motion.unit(),
+        crate::details::TextReason::CaretKey,
+    )
 }
 
 /// Whether a key, command, braille gesture or key Core sends joined behind

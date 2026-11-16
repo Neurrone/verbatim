@@ -60,7 +60,9 @@ fn unchanged_answer(
     let whole = serde_json::to_value(state).expect("the state serializes");
     let navigator = &whole["navigator"];
     match effect {
-        Effect::ReadNode { query_id, node_id } => {
+        Effect::ReadNode {
+            query_id, node_id, ..
+        } => {
             let object = serde_json::from_value(navigator["object"].clone()).ok()?;
             Some((
                 *query_id,
@@ -5803,6 +5805,7 @@ fn a_sentence_key_with_others_behind_it_is_only_passed_on() {
             fetch: verbatim_model::KeyFetch {
                 unit: TextUnit::Character,
                 motion: CaretMotion::NextCharacter,
+                details: verbatim_model::TextDetails::ALL,
             },
             purpose: ReadPurpose::BeforeFieldKey,
         }),

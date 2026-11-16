@@ -30,7 +30,7 @@
 #![forbid(unsafe_code)]
 
 use verbatim_model::property::{
-    PropertyAnswer, PropertyId, PropertyValue, PropertyValues, RuntimeId,
+    NodeDetailSet, PropertyAnswer, PropertyId, PropertyValue, PropertyValues, RuntimeId,
 };
 use verbatim_model::request::{
     Answer, Ask, FindScope, FocusAncestor, FocusCaret, FocusNode, FocusRead, HeldIds,
@@ -43,10 +43,10 @@ use verbatim_model::{
     TextOp, TextReply,
 };
 
+use super::RequestContext;
 use super::read::{self, Client, ReadError};
 use super::text_reads;
 use super::window::{hwnd_of, window_handle};
-use super::{Context, RequestContext};
 
 /// How many children a request reads of one node at most, and how many
 /// nodes a find of descendants visits: a bound on a request into a list
@@ -164,6 +164,29 @@ pub(super) fn answer(context: &RequestContext<'_>, client: &mut Client, ask: &As
         outcome,
         probes,
         detail: String::new(),
+    }
+}
+
+/// The node details `request`'s reads fetch: those its property set names
+/// ([`NodeDetailSet::named_by`]); every detail for the control plane's tree
+/// dump, which records them all; none for a request that reads no node's
+/// properties.
+pub(super) fn node_details(request: &Request) -> NodeDetailSet {
+    match request {
+        Request::ReadObject(ReadObject { set, .. })
+        | Request::Properties { set, .. }
+        | Request::Navigate { set, .. }
+        | Request::Find { set, .. }
+        | Request::Children { set, .. }
+        | Request::MsaaRun(MsaaRun { set, .. })
+        | Request::CurrentFocus { set, .. } => NodeDetailSet::named_by(set),
+        Request::CompleteUia(complete) => NodeDetailSet::named_by(&complete.set),
+        Request::DumpTree { .. } => NodeDetailSet::ALL,
+        Request::Text { .. }
+        | Request::Activate { .. }
+        | Request::Follow(_)
+        | Request::ShellItems { .. }
+        | Request::ShellItemPosition { .. } => NodeDetailSet::NONE,
     }
 }
 
@@ -818,7 +841,7 @@ pub(super) fn controlled_by(
     ) else {
         return RelationFound::Unrelated;
     };
-    let Ok((uia, nodes)) = client.uia_with(context, Context::node_request) else {
+    let Ok((uia, nodes)) = client.uia_with(context, RequestContext::node_request) else {
         return RelationFound::Unrelated;
     };
     let fill = verbatim_uia::Fill::new(&nodes);

@@ -80,6 +80,8 @@ fn a_first_worker_that_cannot_start_answers_its_program_and_starts_with_the_next
 
     let first = outpost.ask(Query::ReadFocus {
         purpose: verbatim_model::protocol::FocusPurpose::Plain,
+        details: verbatim_model::property::NodeDetailSet::ALL,
+        text: verbatim_model::TextDetails::ALL,
     });
     assert_eq!(
         outcome(&outpost, first),

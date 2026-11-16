@@ -23,6 +23,7 @@ use verbatim_uia::map::with_legacy_checked_state;
 use verbatim_uia::{Cached, DialogText, Fill, Interning as _, Kept, Node};
 use verbatim_uia_rops::{Path, StatesQuery, focus_states};
 
+use super::RequestContext;
 use super::asked::{
     Focus, ancestor_reads, ancestors_end, controlled_by, cut_at_known, focus_read, known_stops,
     node_read, snapshot_of,
@@ -32,7 +33,6 @@ use super::read::{self, Client};
 use super::reducer::FocusPath;
 use super::text_reads;
 use super::window::hwnd_of;
-use super::{Context, RequestContext};
 
 /// The answer to `complete`, whose window is read through UI Automation.
 pub(super) fn complete(
@@ -184,7 +184,7 @@ fn find(
 ) -> (Option<Cached<Node>>, Option<Cached<Node>>) {
     let mut window_element = None;
     if let Some(route) = path.route_to(runtime_id) {
-        let Ok((uia, nodes)) = client.uia_with(context, Context::node_request) else {
+        let Ok((uia, nodes)) = client.uia_with(context, RequestContext::node_request) else {
             return (None, None);
         };
         let remote = context.tries_remote(Some(route.window.get()));
@@ -312,7 +312,7 @@ fn replaced_stale(
     }
     let stale = match kept.resolve() {
         Err(_) => true,
-        Ok(element) => match client.uia_with(context, Context::node_request) {
+        Ok(element) => match client.uia_with(context, RequestContext::node_request) {
             Ok((_, request)) => match element.live().refresh(&request) {
                 Ok(fresh) => !fresh
                     .read()
@@ -376,7 +376,7 @@ fn states_and_dialogs(
             Some((node.id, held.live().clone()))
         })
         .collect();
-    let Ok((uia, nodes)) = client.uia_with(context, Context::node_request) else {
+    let Ok((uia, nodes)) = client.uia_with(context, RequestContext::node_request) else {
         return Vec::new();
     };
     let Ok(children) = uia.request_fixed::<DialogText>() else {

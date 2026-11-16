@@ -318,6 +318,106 @@ pub struct PropertyEntry {
     pub ia2: Option<Ia2Read>,
     /// What it costs to read.
     pub cost: Cost,
+    /// The setting that switches it, `None` for one every read that names
+    /// it takes: a read leaves it out while its setting is off.
+    pub detail: Option<NodeDetail>,
+}
+
+/// A node detail a setting switches: a read leaves out the properties of
+/// one whose setting is off, so its call is not made
+/// (`docs/design/readers-tell-core-asks-build2.md`, "Rules, each with its
+/// reason").
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum NodeDetail {
+    /// The description.
+    Description,
+    /// The keyboard shortcut.
+    KeyboardShortcut,
+    /// The position in the set and the set's size.
+    Position,
+    /// The nesting level.
+    Level,
+    /// A table cell's row and column.
+    Cell,
+}
+
+impl NodeDetail {
+    /// Every detail, in declaration order.
+    pub const ALL: [Self; 5] = [
+        Self::Description,
+        Self::KeyboardShortcut,
+        Self::Position,
+        Self::Level,
+        Self::Cell,
+    ];
+
+    const fn bit(self) -> u8 {
+        match self {
+            Self::Description => 1 << 0,
+            Self::KeyboardShortcut => 1 << 1,
+            Self::Position => 1 << 2,
+            Self::Level => 1 << 3,
+            Self::Cell => 1 << 4,
+        }
+    }
+}
+
+/// A set of [`NodeDetail`]s, stored as a bitmask: the details the settings
+/// ask for, from which Core builds a read's property set
+/// ([`NodeDetailSet::choose`]), and the details a read's property set
+/// names ([`NodeDetailSet::named_by`]), which the reader fetches.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct NodeDetailSet(u8);
+
+impl NodeDetailSet {
+    /// No detail.
+    pub const NONE: Self = Self(0);
+    /// Every detail.
+    pub const ALL: Self = Self::of(&NodeDetail::ALL);
+
+    /// The set of `details`.
+    #[must_use]
+    pub const fn of(mut details: &[NodeDetail]) -> Self {
+        let mut bits = 0;
+        while let [first, rest @ ..] = details {
+            bits |= first.bit();
+            details = rest;
+        }
+        Self(bits)
+    }
+
+    /// Whether `detail` is in the set.
+    #[must_use]
+    pub const fn contains(self, detail: NodeDetail) -> bool {
+        self.0 & detail.bit() != 0
+    }
+
+    /// This set without `detail`.
+    #[must_use]
+    pub const fn without(self, detail: NodeDetail) -> Self {
+        Self(self.0 & !detail.bit())
+    }
+
+    /// The details `set` names: each whose properties it holds one of.
+    #[must_use]
+    pub fn named_by(set: &[PropertyId]) -> Self {
+        Self(
+            set.iter()
+                .filter_map(|id| id.entry().detail)
+                .fold(0, |bits, detail| bits | detail.bit()),
+        )
+    }
+
+    /// `base` less the properties of the details not in this set: the
+    /// property set a read takes under the settings this set holds.
+    #[must_use]
+    pub fn choose(self, base: &[PropertyId]) -> Vec<PropertyId> {
+        base.iter()
+            .copied()
+            .filter(|id| id.entry().detail.is_none_or(|detail| self.contains(detail)))
+            .collect()
+    }
 }
 
 /// UI Automation property ids, the numbers UI Automation's headers give
@@ -373,6 +473,7 @@ const NAME: PropertyEntry = PropertyEntry {
     msaa: Some(MsaaRead::Name),
     ia2: None,
     cost: Cost::Cheap,
+    detail: None,
 };
 
 const ROLE: PropertyEntry = PropertyEntry {
@@ -386,6 +487,7 @@ const ROLE: PropertyEntry = PropertyEntry {
     msaa: Some(MsaaRead::Role),
     ia2: None,
     cost: Cost::Cheap,
+    detail: None,
 };
 
 const VALUE: PropertyEntry = PropertyEntry {
@@ -399,6 +501,7 @@ const VALUE: PropertyEntry = PropertyEntry {
     msaa: Some(MsaaRead::Value),
     ia2: None,
     cost: Cost::Cheap,
+    detail: None,
 };
 
 const STATES: PropertyEntry = PropertyEntry {
@@ -423,6 +526,7 @@ const STATES: PropertyEntry = PropertyEntry {
     msaa: Some(MsaaRead::State),
     ia2: None,
     cost: Cost::Cheap,
+    detail: None,
 };
 
 const DESCRIPTION: PropertyEntry = PropertyEntry {
@@ -436,6 +540,7 @@ const DESCRIPTION: PropertyEntry = PropertyEntry {
     msaa: Some(MsaaRead::Description),
     ia2: None,
     cost: Cost::Cheap,
+    detail: Some(NodeDetail::Description),
 };
 
 const KEYBOARD_SHORTCUT: PropertyEntry = PropertyEntry {
@@ -449,6 +554,7 @@ const KEYBOARD_SHORTCUT: PropertyEntry = PropertyEntry {
     msaa: Some(MsaaRead::KeyboardShortcut),
     ia2: None,
     cost: Cost::Cheap,
+    detail: Some(NodeDetail::KeyboardShortcut),
 };
 
 const POSITION_IN_SET: PropertyEntry = PropertyEntry {
@@ -462,6 +568,7 @@ const POSITION_IN_SET: PropertyEntry = PropertyEntry {
     msaa: None,
     ia2: None,
     cost: Cost::Cheap,
+    detail: Some(NodeDetail::Position),
 };
 
 const SET_SIZE: PropertyEntry = PropertyEntry {
@@ -475,6 +582,7 @@ const SET_SIZE: PropertyEntry = PropertyEntry {
     msaa: None,
     ia2: None,
     cost: Cost::Cheap,
+    detail: Some(NodeDetail::Position),
 };
 
 const LEVEL: PropertyEntry = PropertyEntry {
@@ -488,6 +596,7 @@ const LEVEL: PropertyEntry = PropertyEntry {
     msaa: None,
     ia2: None,
     cost: Cost::Cheap,
+    detail: Some(NodeDetail::Level),
 };
 
 const RECT: PropertyEntry = PropertyEntry {
@@ -501,6 +610,7 @@ const RECT: PropertyEntry = PropertyEntry {
     msaa: Some(MsaaRead::Location),
     ia2: None,
     cost: Cost::Alone,
+    detail: None,
 };
 
 const CLASS_NAME: PropertyEntry = PropertyEntry {
@@ -514,6 +624,7 @@ const CLASS_NAME: PropertyEntry = PropertyEntry {
     msaa: Some(MsaaRead::WindowClass),
     ia2: None,
     cost: Cost::Cheap,
+    detail: None,
 };
 
 const AUTOMATION_ID: PropertyEntry = PropertyEntry {
@@ -527,6 +638,7 @@ const AUTOMATION_ID: PropertyEntry = PropertyEntry {
     msaa: None,
     ia2: None,
     cost: Cost::Cheap,
+    detail: None,
 };
 
 const NATIVE_WINDOW: PropertyEntry = PropertyEntry {
@@ -540,6 +652,7 @@ const NATIVE_WINDOW: PropertyEntry = PropertyEntry {
     msaa: Some(MsaaRead::Window),
     ia2: None,
     cost: Cost::Cheap,
+    detail: None,
 };
 
 const PROCESS: PropertyEntry = PropertyEntry {
@@ -553,6 +666,7 @@ const PROCESS: PropertyEntry = PropertyEntry {
     msaa: Some(MsaaRead::WindowProcess),
     ia2: None,
     cost: Cost::Cheap,
+    detail: None,
 };
 
 const RUNTIME_ID: PropertyEntry = PropertyEntry {
@@ -566,6 +680,7 @@ const RUNTIME_ID: PropertyEntry = PropertyEntry {
     msaa: None,
     ia2: None,
     cost: Cost::Cheap,
+    detail: None,
 };
 
 const HAS_KEYBOARD_FOCUS: PropertyEntry = PropertyEntry {
@@ -579,6 +694,7 @@ const HAS_KEYBOARD_FOCUS: PropertyEntry = PropertyEntry {
     msaa: None,
     ia2: None,
     cost: Cost::Cheap,
+    detail: None,
 };
 
 const HAS_TEXT_PATTERN: PropertyEntry = PropertyEntry {
@@ -592,6 +708,7 @@ const HAS_TEXT_PATTERN: PropertyEntry = PropertyEntry {
     msaa: None,
     ia2: None,
     cost: Cost::Cheap,
+    detail: None,
 };
 
 const RANGE_VALUE: PropertyEntry = PropertyEntry {
@@ -605,6 +722,7 @@ const RANGE_VALUE: PropertyEntry = PropertyEntry {
     msaa: None,
     ia2: None,
     cost: Cost::Cheap,
+    detail: None,
 };
 
 const CELL: PropertyEntry = PropertyEntry {
@@ -618,6 +736,7 @@ const CELL: PropertyEntry = PropertyEntry {
     msaa: None,
     ia2: None,
     cost: Cost::Alone,
+    detail: Some(NodeDetail::Cell),
 };
 
 const TABLE_COUNTS: PropertyEntry = PropertyEntry {
@@ -631,6 +750,7 @@ const TABLE_COUNTS: PropertyEntry = PropertyEntry {
     msaa: None,
     ia2: None,
     cost: Cost::Alone,
+    detail: None,
 };
 
 const TEXT_SUMMARY: PropertyEntry = PropertyEntry {
@@ -644,6 +764,7 @@ const TEXT_SUMMARY: PropertyEntry = PropertyEntry {
     msaa: Some(MsaaRead::TextSummary),
     ia2: None,
     cost: Cost::Alone,
+    detail: None,
 };
 
 const VALUE_FROM_SELECTION: PropertyEntry = PropertyEntry {
@@ -661,6 +782,7 @@ const VALUE_FROM_SELECTION: PropertyEntry = PropertyEntry {
     msaa: None,
     ia2: None,
     cost: Cost::Cheap,
+    detail: None,
 };
 
 const SUGGESTIONS: PropertyEntry = PropertyEntry {
@@ -678,6 +800,7 @@ const SUGGESTIONS: PropertyEntry = PropertyEntry {
     msaa: None,
     ia2: None,
     cost: Cost::Alone,
+    detail: None,
 };
 
 const HAS_VALUE_PATTERN: PropertyEntry = PropertyEntry {
@@ -691,6 +814,7 @@ const HAS_VALUE_PATTERN: PropertyEntry = PropertyEntry {
     msaa: None,
     ia2: None,
     cost: Cost::Cheap,
+    detail: None,
 };
 
 const WINDOW_CLASS: PropertyEntry = PropertyEntry {
@@ -704,6 +828,7 @@ const WINDOW_CLASS: PropertyEntry = PropertyEntry {
     msaa: Some(MsaaRead::WindowClass),
     ia2: None,
     cost: Cost::Cheap,
+    detail: None,
 };
 
 const COMBO_BOX_LIST: PropertyEntry = PropertyEntry {
@@ -724,6 +849,7 @@ const COMBO_BOX_LIST: PropertyEntry = PropertyEntry {
     msaa: None,
     ia2: None,
     cost: Cost::Alone,
+    detail: None,
 };
 
 const PARENT_AUTOMATION_ID: PropertyEntry = PropertyEntry {
@@ -738,6 +864,7 @@ const PARENT_AUTOMATION_ID: PropertyEntry = PropertyEntry {
     msaa: None,
     ia2: None,
     cost: Cost::Alone,
+    detail: None,
 };
 
 const CHILD_COUNT: PropertyEntry = PropertyEntry {
@@ -748,6 +875,7 @@ const CHILD_COUNT: PropertyEntry = PropertyEntry {
     msaa: Some(MsaaRead::TreeViewChildCount),
     ia2: None,
     cost: Cost::Alone,
+    detail: None,
 };
 
 /// The whole table, in [`PropertyId`] order.
@@ -1392,5 +1520,40 @@ mod tests {
     fn a_number_equals_itself() {
         assert_eq!(Number(0.5), Number(0.5));
         assert_ne!(Number(0.5), Number(0.25));
+    }
+
+    /// A property set names each detail one of whose properties it holds,
+    /// and the settings' details choose a set that keeps every property
+    /// no setting switches.
+    #[test]
+    fn node_details_are_named_by_a_set_and_choose_one() {
+        assert_eq!(
+            NodeDetailSet::named_by(&[PropertyId::Name, PropertyId::SetSize, PropertyId::Cell]),
+            NodeDetailSet::of(&[NodeDetail::Position, NodeDetail::Cell])
+        );
+        assert_eq!(
+            NodeDetailSet::named_by(&[PropertyId::Name, PropertyId::Value]),
+            NodeDetailSet::NONE
+        );
+        let base = [
+            PropertyId::Name,
+            PropertyId::Description,
+            PropertyId::PositionInSet,
+            PropertyId::SetSize,
+            PropertyId::Level,
+        ];
+        assert_eq!(
+            NodeDetailSet::of(&[NodeDetail::Level]).choose(&base),
+            [PropertyId::Name, PropertyId::Level]
+        );
+        assert_eq!(NodeDetailSet::ALL.choose(&base), base);
+        assert_eq!(
+            NodeDetailSet::named_by(&NodeDetailSet::ALL.choose(&base)),
+            NodeDetailSet::of(&[
+                NodeDetail::Description,
+                NodeDetail::Position,
+                NodeDetail::Level
+            ])
+        );
     }
 }

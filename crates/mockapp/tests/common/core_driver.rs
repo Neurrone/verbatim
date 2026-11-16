@@ -803,6 +803,14 @@ impl CoreDriver {
         self.send_observer = observer;
     }
 
+    /// Gives Core the details the theme reports, as the shell does when a
+    /// theme becomes active, and has the outpost harness's own queries
+    /// name them too.
+    pub fn reported(&mut self, reported: verbatim_model::ReportedDetails) {
+        self.outpost.report(reported);
+        self.run(VecDeque::from([Input::Reported(reported)]));
+    }
+
     /// Core's state, for a test that reads what it committed.
     pub fn state(&self) -> &SrState {
         &self.state

@@ -1,14 +1,14 @@
 //! The theme in use (`books/dev/src/reference/crates/verbatim-model.md`, "Themes"): loading the
 //! one the configuration names and making
-//! a theme active, which the speech pipeline presents with and the reducer
-//! fetches for.
+//! a theme active, which the speech pipeline presents with and Core chooses
+//! its reads' details from.
 //!
 //! The configuration names the theme by id: the base settings' `[theme]`,
 //! or a profile's once M8.3 activates profiles. Making one active decodes its
 //! sounds (a missing or unreadable one is logged, and its indications are
 //! spoken instead), hands it to the speech manager's theme handle, and
-//! tells the reducer what it wants fetched (`Input::Fetches`), which the
-//! reducer thread passes on to every outpost.
+//! tells the reducer the details it reports (`Input::Reported`), from which
+//! Core chooses what each of its requests fetches.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -136,25 +136,25 @@ pub(crate) fn prepare(
         |file| loaded.sound_path(file, sounds_dir),
         options,
     );
-    tracing::info!(theme = %loaded.theme.id, ?options, fetches = ?active.fetches(), "theme in use");
+    tracing::info!(theme = %loaded.theme.id, ?options, reported = ?active.reported(), "theme in use");
     active
 }
 
-/// Tells the reducer what `theme` wants fetched (`Input::Fetches`).
-pub(crate) fn send_fetches(commands: &Commands, theme: &ActiveTheme) {
+/// Tells the reducer the details `theme` reports (`Input::Reported`).
+pub(crate) fn send_reported(commands: &Commands, theme: &ActiveTheme) {
     if commands
-        .send(ShellCommand::Input(Box::new(Input::Fetches(
-            theme.fetches(),
+        .send(ShellCommand::Input(Box::new(Input::Reported(
+            theme.reported(),
         ))))
         .is_err()
     {
-        tracing::debug!("the reducer thread is gone; the theme's fetches are not sent");
+        tracing::debug!("the reducer thread is gone; the theme's details are not sent");
     }
 }
 
 /// Makes `loaded` the active theme with `options` ([`prepare`]): sets it
 /// on the speech manager, so the next thing spoken uses it, and tells the
-/// reducer what it wants fetched.
+/// reducer the details it reports.
 pub(crate) fn activate(
     manager: &SpeechManager,
     commands: &Commands,
@@ -163,6 +163,6 @@ pub(crate) fn activate(
     options: ThemeOptions,
 ) {
     let active = prepare(loaded, sounds_dir, options);
-    send_fetches(commands, &active);
+    send_reported(commands, &active);
     manager.themes().set(active);
 }

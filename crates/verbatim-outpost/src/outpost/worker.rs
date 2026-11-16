@@ -38,12 +38,12 @@ use std::time::Instant;
 
 use verbatim_ia2::{CHILDID_SELF, WinEventKind};
 use verbatim_model::property::{
-    PropertyAnswer, PropertyId, PropertyValue, PropertyValues, RuntimeId,
+    NodeDetailSet, PropertyAnswer, PropertyId, PropertyValue, PropertyValues, RuntimeId,
 };
 use verbatim_model::{
     Backend, CallCounts, CaretChanges, CaretRead, CaretReply, CaretReport, Change, FocusText,
-    NodeId, NodeSnapshot, NormalizedEvent, ReadPurpose, Role, TextOp, TextPoint, TextReply,
-    TraceId, WindowFacts, WindowHandle, had_effect,
+    NodeId, NodeSnapshot, NormalizedEvent, ReadPurpose, Role, TextDetails, TextOp, TextPoint,
+    TextReply, TraceId, WindowFacts, WindowHandle, had_effect,
 };
 use verbatim_uia::{Cached, Fill, Interning as _, Kept, nearest_window_handle};
 use windows::Win32::UI::Accessibility::{
@@ -216,6 +216,30 @@ pub(super) fn catching(body: impl FnOnce()) -> std::thread::Result<()> {
     handled
 }
 
+/// The node details `work`'s reads fetch: those its request names. A
+/// query names them, but a tree dump, which records every detail; Core's
+/// request by its property set; an event's own reads, which no request
+/// names, every detail, of which Core's theme decides what is spoken; a
+/// text read or a release, none.
+fn node_details_of(work: &Work) -> NodeDetailSet {
+    match work {
+        Work::Entry { entry, .. } => match &entry.item {
+            Item::Query { query, .. } => match query {
+                Query::ReadFocus { details, .. }
+                | Query::Navigate { details, .. }
+                | Query::ReadNode { details, .. }
+                | Query::Ancestors { details, .. } => *details,
+                Query::DumpTree { .. } => NodeDetailSet::ALL,
+                _ => NodeDetailSet::NONE,
+            },
+            Item::Msaa { .. } | Item::Uia(_) => NodeDetailSet::ALL,
+            Item::NodesHeld { .. } | Item::Barrier { .. } => NodeDetailSet::NONE,
+        },
+        Work::Ask(ask) => super::asked::node_details(&ask.request),
+        Work::Drop | Work::Watch(_) | Work::Finish { .. } => NodeDetailSet::NONE,
+    }
+}
+
 fn run_job(context: &Arc<Context>, client: &mut Client, job: Job, charge: &Arc<Charge>) {
     let Job { program, garbage } = job;
     // Objects the shell let go of: releasing one can call into the
@@ -229,8 +253,13 @@ fn run_job(context: &Arc<Context>, client: &mut Client, job: Job, charge: &Arc<C
     let started = Instant::now();
     let description = tracing::enabled!(tracing::Level::DEBUG).then(|| describe(&work));
     let tag = super::shell::tag_of(request);
-    let mut request_context =
-        RequestContext::for_program(context, tag, (request, facts), Arc::clone(charge));
+    let details = node_details_of(&work);
+    let mut request_context = RequestContext::for_program(
+        context,
+        (tag, details),
+        (request, facts),
+        Arc::clone(charge),
+    );
     let mut cut = None;
     let handled = catching(|| match work {
         Work::Entry { entry, handling } => {
@@ -581,6 +610,7 @@ impl Worker<'_> {
         let note = NoteFetch {
             unit: asked.fetch.unit,
             motion: asked.fetch.motion,
+            details: asked.fetch.details,
         };
         let (checked, read_at) = text_reads::note_read(self.context, node_id, note, (true, false));
         if let Some(until_us) = self.final_note_until {
@@ -987,7 +1017,12 @@ impl Worker<'_> {
     /// So is a focus whose node still keeps the element the listener's
     /// evidence says is no longer its own ([`Stale`]), its own not found:
     /// that element's text is not the focus's.
-    fn read_focus_text(&self, node_id: NodeId, role: Role) -> (Option<FocusText>, Option<u64>) {
+    fn read_focus_text(
+        &self,
+        node_id: NodeId,
+        role: Role,
+        details: TextDetails,
+    ) -> (Option<FocusText>, Option<u64>) {
         let context = self.context;
         text_reads::forget_no_text(context, node_id);
         let role_has_text = matches!(role, Role::EditableText | Role::Document | Role::Terminal);
@@ -1006,7 +1041,7 @@ impl Worker<'_> {
             context,
             node_id,
             text_reads::CaretFor::Focus,
-            note.map(|note| note.fetch),
+            (note.map(|note| note.fetch), details),
         );
         let text = match read {
             Ok(Checked::Done((caret, selection))) => {
@@ -1307,14 +1342,11 @@ impl Worker<'_> {
         }
         // A selection the listener heard carries what Core speaks of the
         // item, filled by UIA with the event (`verbatim_uia::ListenerSelection`),
-        // and is reported with it, less the details the theme does not
-        // report: no search is made for its element, which could enter a
-        // child window another process serves
-        // (`docs/design/cross-process-calls-study.md`, instance 3).
-        let mut node = Self::uia_node(self.context, &event.parts, element.as_ref());
-        if matches!(event.kind, UiaKind::Selection | UiaKind::Toast) {
-            crate::gates::leave_out_unreported(&mut node.details, &self.context.fetches());
-        }
+        // and is reported with it, every detail its cache holds, which
+        // Core's theme presents or leaves unspoken: no search is made for
+        // its element, which could enter a child window another process
+        // serves (`docs/design/cross-process-calls-study.md`, instance 3).
+        let node = Self::uia_node(self.context, &event.parts, element.as_ref());
         let normalized = match event.kind {
             UiaKind::Selection => NormalizedEvent::SelectionChanged { node },
             UiaKind::Notification(notification) => NormalizedEvent::Notification {
@@ -1690,21 +1722,21 @@ impl Worker<'_> {
         // answer is sent.
         let mut follow = None;
         let result = match query {
-            Query::ReadFocus { purpose } => {
-                let (answer, answered) = self.focus_now(*purpose);
+            Query::ReadFocus { purpose, text, .. } => {
+                let (answer, answered) = self.focus_now(*purpose, *text);
                 follow = answered;
                 Ok(QueryResult::Focus(answer))
             }
-            Query::Navigate { node_id, kind } => {
+            Query::Navigate { node_id, kind, .. } => {
                 read::navigate(context, client, *node_id, *kind).map(QueryResult::Navigated)
             }
-            Query::ReadNode { node_id } => {
+            Query::ReadNode { node_id, .. } => {
                 read::read_node(context, client, *node_id).map(QueryResult::Node)
             }
             Query::Activate { node_id } => {
                 read::activate(context, client, *node_id).map(QueryResult::Activated)
             }
-            Query::Ancestors { node_id } => {
+            Query::Ancestors { node_id, .. } => {
                 read::ancestors(context, client, *node_id).map(QueryResult::Ancestors)
             }
             Query::DumpTree { locations } => {
@@ -1756,7 +1788,11 @@ impl Worker<'_> {
     /// whether Alt is held, as a reported focus's do, for Core's rules for
     /// an application's windows, the Alt+Tab switcher's among them
     /// ([`focus_answer_facts`]).
-    fn focus_now(&mut self, purpose: FocusPurpose) -> (FocusNow, Option<AnsweredFocus>) {
+    fn focus_now(
+        &mut self,
+        purpose: FocusPurpose,
+        text: TextDetails,
+    ) -> (FocusNow, Option<AnsweredFocus>) {
         let context = self.context;
         let (mut answer, window) =
             read::focus_now(context, self.client, purpose == FocusPurpose::Fake, &[]);
@@ -1787,7 +1823,7 @@ impl Worker<'_> {
         }
         let answered = answer.focus.as_mut().map(|control| {
             let node = &control.node;
-            let (text, read_at) = self.read_focus_text(node.id, node.role);
+            let (text, read_at) = self.read_focus_text(node.id, node.role, text);
             control.text = text.map(Box::new);
             AnsweredFocus {
                 node: node.clone(),

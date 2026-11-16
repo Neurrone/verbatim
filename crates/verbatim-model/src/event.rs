@@ -641,6 +641,8 @@ pub struct Query {
     pub node_id: NodeId,
     /// What to read.
     pub kind: QueryKind,
+    /// The node details the read of the node reached fetches.
+    pub details: crate::property::NodeDetailSet,
 }
 
 /// A focus reader's kind: which of an application's two sources of focus
@@ -969,9 +971,10 @@ pub enum Input {
     },
     /// The reader settings, at startup and whenever the user changes them.
     Settings(ReaderSettings),
-    /// The details the active theme wants fetched ([`crate::Fetches`]), at
-    /// startup and whenever the theme in use changes.
-    Fetches(crate::Fetches),
+    /// The details the active theme reports ([`crate::ReportedDetails`]),
+    /// at startup and whenever the theme in use changes: Core chooses each
+    /// read's details from them.
+    Reported(crate::ReportedDetails),
     /// An utterance the reducer placed index marks in was cut off before
     /// playback reached all of them (a key, an interrupting utterance, the
     /// focus moving on, a synthesizer switch). Reported by the speech
@@ -1518,6 +1521,8 @@ pub enum Effect {
         query_id: QueryId,
         /// The node to read. Its outpost is the one asked.
         node_id: NodeId,
+        /// The node details the read fetches, chosen from the settings.
+        details: crate::property::NodeDetailSet,
     },
     /// Activate a node — invoke, toggle, or its default action — in the
     /// application that owns it; the answer re-enters as

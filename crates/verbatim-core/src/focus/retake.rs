@@ -11,6 +11,7 @@
 //! None of them sends the ancestors Core already knows.
 
 use serde::{Deserialize, Serialize};
+use verbatim_model::property::PropertyId;
 use verbatim_model::request::{FocusRead, KnownAncestor, Reply, Request as Wire};
 use verbatim_model::{TextAnchor, TraceId};
 
@@ -60,6 +61,8 @@ pub(crate) struct CurrentFocusRead {
     /// The committed focus's selection baseline, which a repeated focus's
     /// caret is compared with.
     pub(crate) baseline: Option<TextAnchor>,
+    /// The properties of each node, chosen from the settings.
+    pub(crate) set: Vec<PropertyId>,
 }
 
 impl Request for CurrentFocusRead {
@@ -75,7 +78,7 @@ impl Request for CurrentFocusRead {
 
     fn wire(&self) -> Wire {
         Wire::CurrentFocus {
-            set: FOCUS_SET.to_vec(),
+            set: self.set.clone(),
             known: self.known.clone(),
             baseline: self.baseline,
         }
@@ -208,6 +211,7 @@ pub(crate) async fn run(mut cx: Cx<Entries>, entry: CurrentFocus) {
         window: entry.window,
         known: Vec::new(),
         baseline: crate::text_facts::named_in_focus_read(&cx.facts(), generation),
+        set: crate::details::node_set(&cx.facts(), FOCUS_SET),
     };
     let Outcome::Result(read) = cx.ask(request, due_us).await else {
         cx.facts_mut().focus_read_failed();

@@ -10,9 +10,9 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use verbatim_model::{
-    CaretSelection, CellPosition, Fetches, HeldAnchors, HookForeground, NodeId, NodeSnapshot,
-    OutpostId, Pid, ReaderSettings, ReviewCommand, SpeechMark, StateSet, TableId, TextAttributes,
-    TextChunk, TextPosition, TextUnit, ToastId, TraceId, WindowFacts,
+    CaretSelection, CellPosition, HeldAnchors, HookForeground, NodeId, NodeSnapshot, OutpostId,
+    Pid, ReaderSettings, ReportedDetails, ReviewCommand, SpeechMark, StateSet, TableId,
+    TextAttributes, TextChunk, TextPosition, TextUnit, ToastId, TraceId, WindowFacts,
 };
 
 use crate::foreground::Foreground;
@@ -564,8 +564,9 @@ pub struct SrState {
     pub(crate) typed_word: String,
     /// The next index mark number.
     pub(crate) next_mark: u64,
-    /// The details the active theme wants fetched (`Input::Fetches`).
-    pub(crate) fetches: Fetches,
+    /// The details the active theme reports (`Input::Reported`), from
+    /// which each read's details are chosen ([`crate::details`]).
+    pub(crate) reported: ReportedDetails,
     /// The focused terminal's output still to be spoken (milestone M4 item
     /// 9), bounded by the flood policy's limits.
     pub(crate) terminal: crate::terminal::TerminalSpeechState,
@@ -926,18 +927,6 @@ impl SrState {
         self.foreground
             .attention()
             .map(|attention| attention.source)
-    }
-
-    /// The details to fetch, as the active theme decides: a detail whose
-    /// indication is off is not fetched, so off also saves the
-    /// cross-process call (`books/dev/src/reference/crates/verbatim-core.md`). Like
-    /// [`held_nodes`](Self::held_nodes), this is a view the shell sends
-    /// out: every outpost is given it, and leaves out what is not wanted
-    /// when it reads a node or text. Everything until the shell says
-    /// otherwise.
-    #[must_use]
-    pub fn fetches(&self) -> Fetches {
-        self.fetches
     }
 
     /// The reader settings as the reducer has them now: the last

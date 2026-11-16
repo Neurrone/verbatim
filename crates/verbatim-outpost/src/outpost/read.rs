@@ -140,12 +140,12 @@ impl Client {
     }
 
     /// The UIA client and the request `request` builds for the details the
-    /// active theme wants read ([`Context::node_request`],
-    /// [`Context::ancestor_request`]).
-    pub(super) fn uia_with<S: Shape>(
+    /// program's request names ([`RequestContext::node_request`],
+    /// [`RequestContext::ancestor_request`]).
+    pub(super) fn uia_with<'c, S: Shape>(
         &mut self,
-        context: &Context,
-        request: fn(&Context, &Uia) -> windows::core::Result<Request<S>>,
+        context: &RequestContext<'c>,
+        request: fn(&RequestContext<'c>, &Uia) -> windows::core::Result<Request<S>>,
     ) -> Result<(&Uia, Request<S>), ReadError> {
         let uia = self
             .uia()
@@ -248,7 +248,9 @@ fn window_snapshot(
     }
     // The window's element is the connection to it.
     if window_uses_uia(context, hwnd) {
-        let (uia, nodes) = client.uia_with(context, Context::node_request).ok()?;
+        let (uia, nodes) = client
+            .uia_with(context, RequestContext::node_request)
+            .ok()?;
         let element = uia.window_element(hwnd, &nodes).ok()?;
         let node = element.snapshot(context.nodes());
         Some((Backend::Uia, node))
@@ -570,7 +572,7 @@ pub(super) fn parent_window_for_focused_state(
         return ParentWindow::Msaa;
     }
     let focused = client
-        .uia_with(context, Context::node_request)
+        .uia_with(context, RequestContext::node_request)
         .ok()
         .and_then(|(uia, nodes)| uia.window_element(hwnd, &nodes).ok())
         .map(|element| element.read().states.has_focus);
@@ -822,7 +824,9 @@ pub(super) fn uia_chain_from_read(
     };
     // Without a client the continuation reads every window it reaches
     // through MSAA or as a plain window.
-    let request = client.uia_with(context, Context::ancestor_request).ok();
+    let request = client
+        .uia_with(context, RequestContext::ancestor_request)
+        .ok();
     complete(
         context,
         request.as_ref().map(|(uia, request)| (*uia, request)),
@@ -903,7 +907,10 @@ fn uia_remote_enrichment(
     let input = element.narrow::<FocusInput>();
     let fill = Fill::new(request);
     // The selected child is read alone, with its place (`verbatim_uia::Place`).
-    let element_fill = Fill::new(&uia.request(gates::focus_gates(&context.fetches())).ok()?);
+    let element_fill = Fill::new(
+        &uia.request(gates::focus_gates(context.node_details()))
+            .ok()?,
+    );
     let query = FocusQuery {
         element: &input,
         known: &known,
@@ -1170,7 +1177,9 @@ pub(super) fn msaa_enrichment(
     // parents the `GenericWindow` class, which is not a presentable focus
     // ancestor. A dialog is still announced, by its client area's dialog
     // role.
-    let request = client.uia_with(context, Context::ancestor_request).ok();
+    let request = client
+        .uia_with(context, RequestContext::ancestor_request)
+        .ok();
     let ancestors = msaa_ancestors(
         context,
         request.as_ref().map(|(uia, request)| (*uia, request)),
@@ -1189,7 +1198,9 @@ pub(super) fn msaa_enrichment(
 /// description: a dialog with no description of its own, while
 /// descriptions are read at all.
 pub(super) fn wants_dialog_text(context: &RequestContext<'_>, node: &NodeSnapshot) -> bool {
-    context.fetches().description
+    context
+        .node_details()
+        .contains(verbatim_model::property::NodeDetail::Description)
         && is_dialog(node.role)
         && node
             .details
@@ -1274,7 +1285,7 @@ fn dialog_text_of(
             let remote = route
                 .as_ref()
                 .is_some_and(|route| context.tries_remote(Some(route.window.get())));
-            let gates = crate::gates::node_gates(&context.fetches());
+            let gates = crate::gates::node_gates(context.node_details());
             let uia = client.uia()?;
             // Nothing of the dialog's own element is read: its text is
             // gathered from its children.
@@ -1391,7 +1402,7 @@ fn uia_focused_control(
 ) -> Result<(isize, FocusedControl), FocusReadMiss> {
     {
         let (uia, nodes) = client
-            .uia_with(context, Context::node_request)
+            .uia_with(context, RequestContext::node_request)
             .map_err(|_| FocusReadMiss::Failed(None))?;
         let ancestor_request = context
             .ancestor_request(uia)
@@ -1471,7 +1482,7 @@ pub(super) fn focused_element_in(
         return Err(FocusReadMiss::Refused);
     }
     let (uia, nodes) = client
-        .uia_with(context, Context::node_request)
+        .uia_with(context, RequestContext::node_request)
         .map_err(|_| FocusReadMiss::Failed(None))?;
     checked_focused_element(context, (uia, &nodes), hwnd, trigger)
 }
@@ -1748,7 +1759,7 @@ fn uia_node<'a>(
     client: &'a mut Client,
     node_id: NodeId,
 ) -> Result<(&'a Uia, Request<Node>, Cached<Node>), ReadError> {
-    let (uia, nodes) = client.uia_with(context, Context::node_request)?;
+    let (uia, nodes) = client.uia_with(context, RequestContext::node_request)?;
     let element = resolve_uia_element(context, uia, &nodes, node_id)?;
     Ok((uia, nodes, element))
 }
@@ -1791,7 +1802,7 @@ pub(super) fn read_node(
     if context.store.runtime_id_of(node_id).is_none() {
         return verbatim_ia2::acquire::read_node(node_id, context.nodes()).map_err(ReadError::from);
     }
-    let (uia, nodes) = client.uia_with(context, Context::read_node_request)?;
+    let (uia, nodes) = client.uia_with(context, RequestContext::read_node_request)?;
     let element = resolve_uia_element(context, uia, &nodes, node_id)?;
     let mut snapshot = with_legacy_checked_state(
         element.live().element(),
@@ -1825,7 +1836,9 @@ pub(super) fn element_reference(
         return Some(kept.reference());
     }
     context.store.runtime_id_of(node_id)?;
-    let (uia, nodes) = client.uia_with(context, Context::read_node_request).ok()?;
+    let (uia, nodes) = client
+        .uia_with(context, RequestContext::read_node_request)
+        .ok()?;
     let element = resolve_uia_element(context, uia, &nodes, node_id).ok()?;
     windows::core::AgileReference::new(element.live().element()).ok()
 }
@@ -1845,7 +1858,7 @@ pub(super) fn refreshed<S: verbatim_uia::Ungated>(
         .store
         .element_of(node_id)
         .and_then(|agile| agile.resolve().ok());
-    let (uia, nodes) = client.uia_with(context, Context::read_node_request)?;
+    let (uia, nodes) = client.uia_with(context, RequestContext::read_node_request)?;
     let request = uia
         .request_fixed::<S>()
         .map_err(|error| ReadError::Failed(format!("could not build a cache request: {error}")))?;
@@ -1973,7 +1986,7 @@ fn window_object(
         return Ok(plain_window(context, hwnd));
     }
     if window_uses_uia(context, hwnd) {
-        let (uia, nodes) = client.uia_with(context, Context::node_request)?;
+        let (uia, nodes) = client.uia_with(context, RequestContext::node_request)?;
         let element = uia
             .window_element(hwnd, &nodes)
             .map_err(|error| ReadError::Failed(format!("the window's element: {error}")))?;
@@ -2114,7 +2127,7 @@ fn uia_remote_step(
     if !context.tries_remote(window) || (own != 0 && top_level_of(own) == own) {
         return Ok(None);
     }
-    let (uia, nodes) = client.uia_with(context, Context::node_request)?;
+    let (uia, nodes) = client.uia_with(context, RequestContext::node_request)?;
     let fill = Fill::new(&nodes);
     let query = StepQuery {
         element: &element,
@@ -2198,7 +2211,7 @@ fn corrected_backend(
         return neighbor;
     }
     client
-        .uia_with(context, Context::node_request)
+        .uia_with(context, RequestContext::node_request)
         .ok()
         .and_then(|(uia, nodes)| uia.window_element(window, &nodes).ok())
         .map_or(neighbor, |element| element.snapshot(context.nodes()))
@@ -2275,7 +2288,7 @@ pub(super) fn dump_tree(
             .ok_or_else(|| ReadError::Failed("could not create a UIA client".to_owned()))?;
         let gates = NodeGates {
             place: locations.then_some(()),
-            ..gates::many_node_gates(&context.fetches())
+            ..gates::many_node_gates(context.node_details())
         };
         let nodes = uia
             .request::<Node>(gates)

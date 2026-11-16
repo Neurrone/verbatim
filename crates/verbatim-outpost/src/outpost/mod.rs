@@ -74,7 +74,8 @@ use windows::Win32::UI::Accessibility::{
 use windows::core::AgileReference;
 
 use verbatim_ia2::{CONSOLE_SUBSCRIPTIONS, WinEvent};
-use verbatim_model::{Fetches, NodeId, Pid, TraceId};
+use verbatim_model::property::NodeDetailSet;
+use verbatim_model::{NodeId, Pid, TraceId};
 use verbatim_process::overlapped::{End, Flow, pipe};
 use verbatim_process::scheduling::{ThreadPriority, prioritize_role};
 use verbatim_process::transport::{
@@ -211,12 +212,6 @@ pub(crate) struct Context {
     /// is kept with the thread that owned it, so a reused handle, whose
     /// destroy event was lost, is not read the classic way by mistake.
     classic_windows: Lock<HashMap<isize, u32>>,
-    /// The details the active theme wants read for each node
-    /// ([`CoreToOutpost::Fetches`]); everything until Core says
-    /// otherwise. UIA reads leave the properties of the others out of
-    /// their cache requests; MSAA reads skip their calls, through the MSAA
-    /// registry, which holds the same.
-    fetches: Lock<Fetches>,
     /// How the worker reads the element that has the keyboard focus, for a
     /// focus-now query: a UIA focus event's element comes from the focus
     /// listener's read instead.
@@ -349,13 +344,13 @@ impl<'a> RequestContext<'a> {
     /// worker's `charge`.
     fn for_program(
         context: &'a Context,
-        tag: store::Tag,
+        (tag, details): (store::Tag, NodeDetailSet),
         (request, facts): (reducer::Request, Facts),
         charge: Arc<Charge>,
     ) -> Self {
         Self {
             context,
-            nodes: context.store.nodes_for(tag),
+            nodes: context.store.nodes_for(tag, details),
             facts: RefCell::new(facts),
             program_text: RefCell::default(),
             joined_cache: RefCell::default(),
@@ -390,6 +385,34 @@ impl<'a> RequestContext<'a> {
     /// look up nodes.
     fn nodes(&self) -> &store::Nodes<'a> {
         &self.nodes
+    }
+
+    /// The node details the program's reads fetch, as its request names
+    /// them.
+    fn node_details(&self) -> NodeDetailSet {
+        verbatim_ia2::Interning::details(&self.nodes)
+    }
+
+    /// The request a node is fetched with, for the details the program's
+    /// request names.
+    fn node_request(&self, uia: &Uia) -> windows::core::Result<Request<Node>> {
+        uia.request(crate::gates::node_gates(self.node_details()))
+    }
+
+    /// The request a review command's live read of a node
+    /// (`Query::ReadNode`) is made with: a node read alone, with its table's
+    /// row and column counts.
+    fn read_node_request(&self, uia: &Uia) -> windows::core::Result<Request<Node>> {
+        uia.request(verbatim_uia::NodeGates {
+            counts: Some(()),
+            ..crate::gates::node_gates(self.node_details())
+        })
+    }
+
+    /// The request an ancestor is fetched with, for the details the
+    /// program's request names.
+    fn ancestor_request(&self, uia: &Uia) -> windows::core::Result<Request<Ancestor>> {
+        uia.request(crate::gates::ancestor_gates(self.node_details()))
     }
 
     /// The program's worker's charge.
@@ -609,33 +632,6 @@ impl Context {
     #[track_caller]
     fn classic_windows(&self) -> LockGuard<'_, HashMap<isize, u32>> {
         self.classic_windows.lock()
-    }
-
-    /// The details the active theme wants read for each node.
-    fn fetches(&self) -> Fetches {
-        *self.fetches.lock()
-    }
-
-    /// The request a node is fetched with, for the details the active
-    /// theme wants.
-    fn node_request(&self, uia: &Uia) -> windows::core::Result<Request<Node>> {
-        uia.request(crate::gates::node_gates(&self.fetches()))
-    }
-
-    /// The request a review command's live read of a node
-    /// (`Query::ReadNode`) is made with: a node read alone, with its table's
-    /// row and column counts.
-    fn read_node_request(&self, uia: &Uia) -> windows::core::Result<Request<Node>> {
-        uia.request(verbatim_uia::NodeGates {
-            counts: Some(()),
-            ..crate::gates::node_gates(&self.fetches())
-        })
-    }
-
-    /// The request an ancestor is fetched with, for the details the active
-    /// theme wants.
-    fn ancestor_request(&self, uia: &Uia) -> windows::core::Result<Request<Ancestor>> {
-        uia.request(crate::gates::ancestor_gates(&self.fetches()))
     }
 
     /// Whether a UIA read for an element of `hwnd` should try a remote
@@ -960,7 +956,6 @@ impl Outpost {
             named: Lock::new(None),
             remote_operations: options.remote_operations,
             classic_windows: Lock::new(HashMap::new()),
-            fetches: Lock::new(Fetches::default()),
             focused_element,
             foreground: Lock::new(Arc::new(verbatim_win32::window::foreground_window_handle)),
             focus_window: Lock::new(Arc::new(verbatim_win32::window::focus_window)),
@@ -1333,10 +1328,6 @@ impl Outpost {
             CoreToOutpost::Ping { .. } => {
                 context.outbound.urgent(context.pong());
             }
-            CoreToOutpost::Fetches(fetches) => {
-                *context.fetches.lock() = *fetches;
-                context.store.set_fetches(*fetches);
-            }
             // `run_pipe` ends its loop on `Shutdown` and calls `shutdown`,
             // which takes the outpost, and handles `Assign`, which ends the
             // outpost when it fails.
@@ -1435,18 +1426,25 @@ mod hook_stamp_tests {
 /// stamped with Core's outpost id.
 fn unstamped(query: &Query) -> Query {
     match query {
-        Query::Navigate { node_id, kind } => Query::Navigate {
+        Query::Navigate {
+            node_id,
+            kind,
+            details,
+        } => Query::Navigate {
             node_id: node_id.unstamped(),
             kind: *kind,
+            details: *details,
         },
-        Query::ReadNode { node_id } => Query::ReadNode {
+        Query::ReadNode { node_id, details } => Query::ReadNode {
             node_id: node_id.unstamped(),
+            details: *details,
         },
         Query::Activate { node_id } => Query::Activate {
             node_id: node_id.unstamped(),
         },
-        Query::Ancestors { node_id } => Query::Ancestors {
+        Query::Ancestors { node_id, details } => Query::Ancestors {
             node_id: node_id.unstamped(),
+            details: *details,
         },
         Query::Text { node_id, op } => Query::Text {
             node_id: node_id.unstamped(),

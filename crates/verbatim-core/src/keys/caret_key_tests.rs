@@ -228,10 +228,25 @@ fn read(line: TextChunk, unit: TextChunk) -> WatchedRead {
     }
 }
 
+/// What a key of `motion`'s reads fetch under settings that report
+/// everything: all of it, but no spelling or grammar errors for a
+/// paragraph.
+fn details(motion: CaretMotion) -> TextDetails {
+    if motion.unit() == TextUnit::Paragraph {
+        TextDetails {
+            spelling_errors: false,
+            grammar_errors: false,
+            ..TextDetails::ALL
+        }
+    } else {
+        TextDetails::ALL
+    }
+}
+
 fn starting_read(motion: CaretMotion, provider: TextProvider) -> TextOp {
     TextOp::StartingRead(StartingRead {
         provider,
-        details: TextDetails::ALL,
+        details: details(motion),
         unit: motion.unit(),
         word: matches!(motion, CaretMotion::Delete | CaretMotion::DeleteWord),
     })
@@ -248,7 +263,7 @@ fn watch(motion: CaretMotion, passed_at_us: u64, events: bool) -> TextOp {
         bound_us: 100_000,
         final_read: WatchFinalRead::Unit {
             unit: motion.unit(),
-            details: TextDetails::ALL,
+            details: details(motion),
         },
     })
 }

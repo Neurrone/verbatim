@@ -251,13 +251,13 @@ fn run(
     let (command_tx, command_rx) = port_queue::<ShellCommand>()?;
 
     // The theme the configuration names, with its sounds, presents speech
-    // from the first word and decides what the reducer fetches; the theme
+    // from the first word and decides what Core's reads fetch; the theme
     // panel switches it.
     let theme = {
         let (loaded, options) = themes::configured(&config);
         themes::prepare(&loaded, &config.sounds_dir(), options)
     };
-    themes::send_fetches(&command_tx, &theme);
+    themes::send_reported(&command_tx, &theme);
     let initial_synth = initial_synth(&config);
     let (themes_dir, sounds_dir) = (config.themes_dir(), config.sounds_dir());
 
@@ -995,7 +995,6 @@ impl ReducerThread<'_> {
                 ..
             } => {
                 self.live.started(outpost, target_pid);
-                self.send_fetches();
                 self.context.outposts.lock().expect("outposts lock").insert(
                     target_pid,
                     OutpostStatus {
@@ -1576,7 +1575,6 @@ impl ReducerThread<'_> {
     fn send_views(&mut self) {
         let held = self.state.held_nodes();
         let anchors = self.state.held_anchors();
-        self.send_fetches();
         for (outpost, live) in self.live.iter_mut() {
             let nodes: BTreeSet<u64> = held
                 .get(outpost)
@@ -1613,30 +1611,6 @@ impl ReducerThread<'_> {
             }
         }
         self.focus_reported.clear();
-    }
-
-    /// Tells each live outpost the details the active theme wants read
-    /// (`SrState::fetches`), when they differ from what it was last told:
-    /// a detail whose indication is off is not read at all. A new outpost
-    /// is told at once, before it reports anything.
-    fn send_fetches(&mut self) {
-        let fetches = self.state.fetches();
-        for (outpost, live) in self.live.iter_mut() {
-            if live.fetches_sent != Some(fetches) {
-                match self
-                    .context
-                    .supervisor
-                    .send_to_outpost(*outpost, CoreToOutpost::Fetches(fetches))
-                {
-                    Ok(()) => live.fetches_sent = Some(fetches),
-                    // A full queue is retried after the next input; a closed
-                    // one belongs to an outpost that is ending.
-                    Err(error) => {
-                        tracing::debug!(%error, %outpost, "the fetches were not sent yet");
-                    }
-                }
-            }
-        }
     }
 
     /// Fans an event Core took out to the control plane's event stream,
@@ -1677,13 +1651,18 @@ impl ReducerThread<'_> {
                 Query::Navigate {
                     node_id: query.node_id,
                     kind: query.kind,
+                    details: query.details,
                 },
             ),
-            Effect::ReadNode { query_id, node_id } => self.ask_for_reducer(
+            Effect::ReadNode {
+                query_id,
+                node_id,
+                details,
+            } => self.ask_for_reducer(
                 trace_id,
                 query_id,
                 node_id.outpost(),
-                Query::ReadNode { node_id },
+                Query::ReadNode { node_id, details },
             ),
             Effect::Activate { query_id, node_id } => self.ask_for_reducer(
                 trace_id,

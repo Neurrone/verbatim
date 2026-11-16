@@ -259,9 +259,9 @@ Public API:
   `LoadedTheme::sound_path`), generates its tones, and reports and logs
   each sound that is missing or cannot be decoded (`problems`);
   `with_options` changes the settings that go with it, keeping its
-  sounds; `fetches` gives what the reducer should fetch. There is no
-  default: a handle always holds a theme made by `new`. `ThemeHandle::get`,
-  `set`, and `set_options` read and switch it; a switch applies to the
+  sounds; `reported` gives the details it reports, from which Core
+  chooses what its reads fetch. There is no default: a handle always
+  holds a theme made by `new`. `ThemeHandle::get`, `set`, and `set_options` read and switch it; a switch applies to the
   next utterance presented.
 
 - `hosting` (a public module) — the synthesizer host protocol (decision

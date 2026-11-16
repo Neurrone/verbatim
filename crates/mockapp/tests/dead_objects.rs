@@ -22,7 +22,10 @@ use common::outpost::OutpostUnderTest;
 /// its name and the calls it made, the reply being the next thing the
 /// outpost says.
 fn read_node(outpost: &mut OutpostUnderTest, node_id: NodeId) -> (Option<String>, CallCounts) {
-    let request_id = outpost.ask(Query::ReadNode { node_id });
+    let request_id = outpost.ask(Query::ReadNode {
+        node_id,
+        details: verbatim_model::property::NodeDetailSet::ALL,
+    });
     let answer = match outpost.next() {
         OutpostToCore::Reply {
             request_id: answered,
@@ -71,9 +74,13 @@ fn a_dead_element_answers_gone_and_its_parent_is_its_windows_parent() {
         outpost.gone(Query::Navigate {
             node_id: group.id,
             kind,
+            details: verbatim_model::property::NodeDetailSet::ALL,
         });
     }
-    outpost.gone(Query::ReadNode { node_id: group.id });
+    outpost.gone(Query::ReadNode {
+        node_id: group.id,
+        details: verbatim_model::property::NodeDetailSet::ALL,
+    });
 
     let (parent, _) = outpost.navigate(group.id, QueryKind::Parent);
     assert_eq!(

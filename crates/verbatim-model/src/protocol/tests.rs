@@ -36,6 +36,8 @@ fn next_core_to_outpost(previous: Option<&CoreToOutpost>) -> Option<CoreToOutpos
             request_id: RequestId::shell(1),
             query: Query::ReadFocus {
                 purpose: FocusPurpose::Plain,
+                details: crate::property::NodeDetailSet::ALL,
+                text: crate::TextDetails::ALL,
             },
             timing: timing(),
         });
@@ -45,8 +47,7 @@ fn next_core_to_outpost(previous: Option<&CoreToOutpost>) -> Option<CoreToOutpos
             request_id: RequestId::shell(1),
         },
         CoreToOutpost::CancelQuery { .. } => CoreToOutpost::Ping { sent_at_us: 0 },
-        CoreToOutpost::Ping { .. } => CoreToOutpost::Fetches(crate::Fetches::default()),
-        CoreToOutpost::Fetches(_) => CoreToOutpost::NodesHeld {
+        CoreToOutpost::Ping { .. } => CoreToOutpost::NodesHeld {
             nodes: Vec::new(),
             anchors: Vec::new(),
             acknowledged: 0,
@@ -63,6 +64,7 @@ fn next_core_to_outpost(previous: Option<&CoreToOutpost>) -> Option<CoreToOutpos
             fetch: crate::KeyFetch {
                 unit: crate::TextUnit::Word,
                 motion: crate::CaretMotion::NextWord,
+                details: crate::TextDetails::ALL,
             },
         }),
         CoreToOutpost::KeyNote(_) => CoreToOutpost::Request(Box::new(crate::request::Ask {
@@ -224,7 +226,6 @@ fn every_variant_has_its_reviewed_kind() {
             "Query: Ask",
             "CancelQuery: Ask",
             "Ping: Lifecycle",
-            "Fetches: Configuration",
             "NodesHeld: Release",
             "IdleQuery: Ask",
             "Shutdown: Lifecycle",
@@ -517,6 +518,8 @@ fn a_request_id_round_trips_with_its_asker() {
                 request_id,
                 query: Query::ReadFocus {
                     purpose: FocusPurpose::Plain,
+                    details: crate::property::NodeDetailSet::ALL,
+                    text: crate::TextDetails::ALL,
                 },
                 timing: timing(),
             },

@@ -4,6 +4,7 @@
 
 use std::fs::File;
 
+use verbatim_model::property::NodeDetailSet;
 use verbatim_model::protocol::EventTiming;
 use verbatim_model::{Backend, NodeDetails, NodeSnapshot, NormalizedEvent, StateSet, TraceId};
 use verbatim_process::overlapped::{End, Flow, pipe};
@@ -63,7 +64,7 @@ fn sent(store: &Store, outbound: &Outbound, message: OutpostToCore) {
 /// The node of runtime id `runtime_id`, issued or looked up under the
 /// request `tag`.
 fn node_under(store: &Store, tag: Tag, runtime_id: &[i32]) -> NodeId {
-    store.nodes_for(tag).id_for(runtime_id)
+    store.nodes_for(tag, NodeDetailSet::ALL).id_for(runtime_id)
 }
 
 /// Releases for a held list that holds nothing and acknowledges

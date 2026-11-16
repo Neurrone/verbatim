@@ -89,11 +89,15 @@ guide maps those behaviors onto the crate's types and modules.
     line or point, the start marker, and say-all's positions). The shell
     sends each outpost its own, which keeps them alive
     ([verbatim-model](verbatim-model.md), "The text protocol").
-  - `fetches()`: the details the active theme wants fetched, as the last
-    `Input::Fetches` set them (everything until then), which the shell
-    gives every outpost so that a detail whose indication is off is never
-    fetched ([verbatim-model](verbatim-model.md), "Themes"). It is the one
-    place the reducer consults the theme.
+  - The details the active theme reports, as the last `Input::Reported`
+    set them (everything until then), kept in the state a dump restores.
+    Core chooses each request's details from them (`details.rs`): a node
+    read's property set is its base set less the properties of each node
+    detail off (`NodeDetailSet::choose`), and a caret key's text reads
+    take the text details reported, less spelling and grammar errors for
+    a paragraph, as NVDA leaves them out for speed
+    ([verbatim-model](verbatim-model.md), "Themes"). It is the one place
+    the reducer consults the theme, and no reader holds a copy.
   - `settings()`: the reader settings as the reducer has them, toggle keys
     included, which the shell merges the settings dialog's Terminal page
     changes into.
