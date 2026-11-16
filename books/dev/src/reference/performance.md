@@ -1038,10 +1038,11 @@ character with nothing selected, then "al" selected from the caret.
 A caret key pressed while the focus has text is held by the hook until
 its turn and its starting read
 (`books/dev/src/explanation/design/key-holding.md`), which takes the
-caret and the key's unit (`caret_moves_cost_exactly`).
+caret and the key's unit (`starting_reads_cost_exactly`).
 
-- Today: 1 UIA call remotely, 17 classically, 7 window messages in a
-  Win32 edit control.
+- Today: 1 UIA call remotely, 8 classically, 5 window messages in a
+  Win32 edit control: the caret report's read, the unit taken from the
+  line it read.
 - Wake-ups: two more of the hook's thread per held key, and the read's
   round trip: roughly 8 to 13 wake-ups and 0.7 to 1.5 ms of processor time
   per held key in the terminals, measured with the read before each key

@@ -3991,6 +3991,81 @@ fn caret_tell_reads_cost_exactly() {
     ratchet.finish();
 }
 
+/// A held caret key's starting read (`TextOp::StartingRead`,
+/// `books/dev/src/explanation/design/key-holding.md`), the read each held
+/// key waits for before its stroke is sent: the caret, its line and the
+/// selection, and the key's unit at the caret, a character here, with no
+/// word, as the outpost's worker runs it
+/// (`verbatim_outpost::text::held::starting_read`) on mockapp's "Notes"
+/// document, the caret inside its first line, through UI Automation
+/// remotely and classically and through an edit control's window
+/// messages. Remotely one program; classically the caret report's 8
+/// calls, the unit read from the line already read; in the edit control
+/// the caret report's 5 window messages.
+fn starting_reads_cost_exactly() {
+    common::init_com();
+    let mut ratchet = Ratchet::default();
+    for (operation, remote, expected) in [
+        ("UIA starting read, remotely", true, calls(1, 0, 0)),
+        ("UIA starting read, classically", false, calls(8, 0, 0)),
+    ] {
+        let title = common::unique_title("mockapp-counts-starting-read");
+        let mut app = common::spawn("text.json", "uia", &title);
+        let hwnd = common::find_window(&title);
+        let mut source = uia_notes(hwnd).remote(remote);
+        let measured = starting_read_calls(&mut app, hwnd, &mut source, verbatim_uia::calls::take);
+        app.quit();
+        ratchet.check_calls(operation, measured, expected);
+    }
+    let title = common::unique_title("mockapp-counts-starting-read-edit");
+    let mut app = common::spawn("text.json", "msaa", &title);
+    let hwnd = common::find_window(&title);
+    // SAFETY: a local search of mockapp's window's children by class.
+    let edit = unsafe {
+        windows::Win32::UI::WindowsAndMessaging::FindWindowExW(
+            Some(hwnd),
+            None,
+            windows::core::w!("EDIT"),
+            None,
+        )
+    }
+    .expect("mockapp's edit control");
+    let mut source = EditText::new(edit.0 as isize, 0);
+    let measured = starting_read_calls(&mut app, hwnd, &mut source, verbatim_ia2::calls::take);
+    app.quit();
+    ratchet.check_calls("Edit control starting read", measured, calls(0, 0, 5));
+    ratchet.finish();
+}
+
+/// The calls of one starting read of `source`, mockapp's "Notes"
+/// document, its caret moved to the second character, as `take` counts
+/// them; the read must find the character there.
+fn starting_read_calls<S: TextSource>(
+    app: &mut common::MockApp,
+    hwnd: HWND,
+    source: &mut S,
+    take: fn() -> CallCounts,
+) -> CallCounts {
+    let mut store = Anchors::new(Arc::default());
+    let mut anchors = store.node(1);
+    common::apply(app, hwnd, "caret doc 1");
+    let _ = take();
+    let started = verbatim_outpost::text::held::starting_read(
+        source,
+        &mut anchors,
+        1,
+        (TextUnit::Character, false),
+    )
+    .expect("the starting read");
+    let measured = take();
+    assert_eq!(
+        (started.caret.line.offset, started.unit.text.as_str()),
+        (1, "l"),
+        "the caret and the character at it"
+    );
+    measured
+}
+
 /// An edit control's review copy select and caret location, each by its
 /// window messages.
 fn edit_control_select_and_location_cost_exactly() {
@@ -4672,6 +4747,7 @@ fn main() {
             "caret_tell_reads_cost_exactly",
             caret_tell_reads_cost_exactly,
         ),
+        ("starting_reads_cost_exactly", starting_reads_cost_exactly),
         (
             "an_outposts_probe_that_finds_a_provider_makes_no_connection",
             an_outposts_probe_that_finds_a_provider_makes_no_connection,
