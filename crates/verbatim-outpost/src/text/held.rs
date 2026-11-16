@@ -21,8 +21,8 @@ use verbatim_model::{
 };
 
 use super::{
-    CaretRequest, CaretState, NodeText, TextError, TextResult, TextSource, change, change_of,
-    keep_unit, perform, report_for, selection_changes, unit_at_caret,
+    CaretRead, CaretRequest, CaretState, NodeText, TextError, TextResult, TextSource, change,
+    change_of, keep_unit, perform, report_for, selection_changes, unit_at_caret,
 };
 
 /// Reads the caret, the selection and the caret's line, and reports them,
@@ -225,6 +225,48 @@ pub fn starting_read<S: TextSource>(
     (unit, word): (TextUnit, bool),
 ) -> TextResult<Started> {
     let CaretFound { state, report, .. } = read_caret(source, anchors, read_at_us, (false, None))?;
+    started_at(source, anchors, (state, report), (unit, word))
+}
+
+/// [`starting_read`] from the caret, selection and line `read` already
+/// found, read at `read_at_us`: a terminal's full read reads them in its
+/// own round trip, so a caret key's starting read mints its starting point
+/// with no call of its own for the caret
+/// (`docs/design/readers-tell-core-asks-build3.md`, "The full read request
+/// and its starts").
+///
+/// # Errors
+///
+/// When the application does not answer or the node is gone.
+pub fn starting_from<S: TextSource>(
+    source: &mut S,
+    anchors: &mut NodeText<'_, S::Pos>,
+    read: CaretRead<S::Pos>,
+    read_at_us: u64,
+    (unit, word): (TextUnit, bool),
+) -> TextResult<Started> {
+    let (line, offset) = read.line;
+    let report = report_for(
+        source,
+        anchors,
+        (&read.state, read_at_us),
+        (
+            Some((line, offset, read.formats)),
+            Some(read.selection_start),
+        ),
+        None,
+    )?;
+    started_at(source, anchors, (read.state, report), (unit, word))
+}
+
+/// The starting point held from the caret `state` and its `report`, with
+/// the key's `unit` and, with `word`, the word at the caret.
+fn started_at<S: TextSource>(
+    source: &mut S,
+    anchors: &mut NodeText<'_, S::Pos>,
+    (state, report): (CaretState<S::Pos>, CaretReport),
+    (unit, word): (TextUnit, bool),
+) -> TextResult<Started> {
     let mut at_caret = |anchors: &mut NodeText<'_, S::Pos>, unit| -> TextResult<TextChunk> {
         Ok(unit_at_caret(
             source,

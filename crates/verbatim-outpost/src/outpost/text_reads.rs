@@ -1360,40 +1360,9 @@ pub(super) fn terminal_read(
         return TextReply::Unanswered;
     };
     let minted = call.text().hold_point(next_start);
-    // The caret read with the text goes with it: a terminal raises no caret
-    // event for every character typed, so the read keeps Core's caret
-    // following typing.
-    answer.snapshot.caret = answer.caret.take().and_then(|found| {
-        let found = source.caret_read_from(found).ok()?;
-        crate::text::caret_report_from(
-            &mut source,
-            &mut call.text(),
-            found,
-            (answer.started_us, false),
-        )
-        .ok()
-    });
-    // A caret key's starting read mints the key's caret starting point,
-    // which its watch's checks compare with (build 1, "A terminal's caret
-    // key").
-    let point = match read.starting {
-        Some(unit) => {
-            let read_at_us = context.observed_now();
-            match text::held::starting_read(
-                &mut source,
-                &mut call.text(),
-                read_at_us,
-                (unit, false),
-            ) {
-                Ok(started) => Some(started.point),
-                Err(TextError::Gone) => return TextReply::Gone,
-                Err(TextError::Failed(reason)) => {
-                    tracing::debug!(reason, "a terminal key's starting point was not read");
-                    None
-                }
-            }
-        }
-        None => None,
+    let point = match terminal_caret(&mut source, &mut call, &mut answer, read.starting) {
+        Ok(point) => point,
+        Err(reply) => return reply,
     };
     put_uia(context, node_id, call);
     keep_support(context, node_id, &source);
@@ -1403,6 +1372,55 @@ pub(super) fn terminal_read(
         started_us: answer.started_us,
         point,
     }))
+}
+
+/// The caret a terminal's full read found, given as its snapshot's caret
+/// report: a terminal raises no caret event for every character typed, so
+/// the read keeps Core's caret following typing. For a caret key's
+/// starting read, `starting` names the key's unit, and the key's caret
+/// starting point, which its watch's checks compare with (build 1, "A
+/// terminal's caret key"), is minted from that same caret, so the read
+/// stays one round trip; it is returned. A node gone answers its reply.
+fn terminal_caret(
+    source: &mut UiaText,
+    call: &mut TextCall<UiaPos, RangeKey>,
+    answer: &mut crate::terminal::ReadAnswer,
+    starting: Option<verbatim_model::TextUnit>,
+) -> Result<Option<verbatim_model::TextAnchor>, TextReply> {
+    let Some(found) = answer
+        .caret
+        .take()
+        .and_then(|found| source.caret_read_from(found).ok())
+    else {
+        return Ok(None);
+    };
+    let Some(unit) = starting else {
+        answer.snapshot.caret = crate::text::caret_report_from(
+            source,
+            &mut call.text(),
+            found,
+            (answer.started_us, false),
+        )
+        .ok();
+        return Ok(None);
+    };
+    match text::held::starting_from(
+        source,
+        &mut call.text(),
+        found,
+        answer.started_us,
+        (unit, false),
+    ) {
+        Ok(started) => {
+            answer.snapshot.caret = Some(started.caret);
+            Ok(Some(started.point))
+        }
+        Err(TextError::Gone) => Err(TextReply::Gone),
+        Err(TextError::Failed(reason)) => {
+            tracing::debug!(reason, "a terminal key's starting point was not read");
+            Ok(None)
+        }
+    }
 }
 
 /// Reads the history of terminal `node_id` above the start anchor Core

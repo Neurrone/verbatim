@@ -30,10 +30,10 @@ mod harness;
 use verbatim_ia2::WinEventKind;
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::PropertyId;
-use verbatim_model::request::{Follow, FollowGroup, Followed, Outcome, Reply, Request};
+use verbatim_model::request::{Answer, Follow, FollowGroup, Followed, Outcome, Reply, Request};
 use verbatim_model::tell::{EventObject, Payload};
 use verbatim_model::{
-    NodeId, TerminalRead, TerminalReadReply, TerminalScope, TerminalSnapshot, TextAnchor, TextOp,
+    CallCounts, NodeId, TerminalRead, TerminalReadReply, TerminalScope, TerminalSnapshot, TextAnchor, TextOp,
     TextReply, TextUnit,
 };
 use verbatim_outpost::Heard;
@@ -107,10 +107,27 @@ impl Terminal {
 
     /// The answer to `read`, a full read, which must be a read.
     fn read(&self, read: TerminalRead) -> TerminalReadReply {
-        let op = TextOp::ReadTerminal(read);
-        match self.text(op) {
-            TextReply::TerminalRead(reply) => *reply,
-            other => panic!("the outpost answered {other:?}, not a read"),
+        self.read_with_calls(read).0
+    }
+
+    /// [`Self::read`], with the calls it made into mockapp.
+    fn read_with_calls(&self, read: TerminalRead) -> (TerminalReadReply, CallCounts) {
+        let number = self.outpost.request(
+            self.hwnd,
+            Request::Text {
+                node: self.node,
+                op: TextOp::ReadTerminal(read),
+            },
+        );
+        match self.outpost.answer_with_calls(number) {
+            (
+                Answer {
+                    outcome: Outcome::Result(Reply::Text(TextReply::TerminalRead(reply))),
+                    ..
+                },
+                calls,
+            ) => (*reply, calls),
+            (other, _) => panic!("the outpost answered {other:?}, not a read"),
         }
     }
 
@@ -380,13 +397,15 @@ fn a_read_takes_the_colours_when_core_asks() {
 }
 
 /// A caret key's starting read in a terminal is a full read with its
-/// caret, and mints the key's caret starting point. Converted from
+/// caret, and mints the key's caret starting point from the caret the read
+/// found, so it is one round trip, the remote program's one call, as a
+/// fresh read is. Converted from
 /// `the_read_before_a_held_key_is_a_read_with_its_caret` (build 1, "A
 /// terminal's caret key").
 fn a_starting_read_reads_the_caret_and_mints_the_starting_point() {
     let mut terminal = start("mockapp-terminal-starting-read");
     terminal.app.send("caret term 1");
-    let read = terminal.read(TerminalRead {
+    let (read, calls) = terminal.read_with_calls(TerminalRead {
         starting: Some(TextUnit::Character),
         output: false,
         ..terminal.ask(Some(terminal.start), TerminalScope::Fresh, (0, 0), false)
@@ -394,6 +413,16 @@ fn a_starting_read_reads_the_caret_and_mints_the_starting_point() {
     assert_eq!(caret_at(&read.snapshot), ("one\r\n", 1));
     assert!(read.snapshot.caret.is_some());
     assert!(read.point.is_some());
+    assert_eq!(
+        calls,
+        CallCounts {
+            uia: 1,
+            msaa: 0,
+            window_messages: 0,
+            connections: 0,
+        },
+        "one program, one call"
+    );
     terminal.outpost.settled();
     terminal.quit();
 }
