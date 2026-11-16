@@ -18,13 +18,12 @@
 //! 24). The clipboard is filled by the scenario's own Control+C of the
 //! document's "kiwi" and "mango" lines, the texts NVDA's captures pasted.
 //!
-//! Differences from NVDA are deliberate and declared where they occur:
-//! a key outside the caret table speaks by its evidence (Control+Z says the
-//! "x" it removed, and a paste that moves the caret to another line reads
-//! that line, where NVDA says nothing; Dickson, 2026-10-08); and in
-//! Notepad, read through UI Automation, a selection whose old range no
-//! longer holds its text is said removed, where NVDA names what the range
-//! now holds or says nothing (Dickson, 2026-10-22). Alt+Down Arrow, which
+//! Every step asserts what NVDA said in the captures of 2026-11-17 (NVDA
+//! alpha-58022,732d1ce2, kept in
+//! `target/e2e-evidence/rtca-caret-keys-2026-11-17/` as
+//! `cmp-notepad_caret_keys.txt` and `cmp-text_box_caret_keys.txt`), so a
+//! selection whose old range no longer holds its text is spoken as NVDA
+//! does (Dickson, 2026-11-17). Alt+Down Arrow, which
 //! NVDA answers in the text box by moving to the next sentence itself, is
 //! not here: Verbatim does not move by sentence when the application does
 //! not (`docs/parity/text.md`, "TextInfo-equivalent layer").
@@ -79,14 +78,6 @@ fn press(scenario: &mut Scenario, keys: &str, heard: &[&str]) {
 /// Presses `keys`, which says nothing; the next step's words show it.
 fn press_silent(scenario: &mut Scenario, keys: &str) {
     scenario.send_keys(&[keys]).expect("sends the key");
-}
-
-/// Presses `keys`, declared a deliberate difference from NVDA, and asserts
-/// exactly `heard`.
-fn press_deviating(scenario: &mut Scenario, keys: &str, heard: &[&str]) {
-    scenario.send_keys(&[keys]).expect("sends the key");
-    scenario.deviates_from_nvda("docs/parity/text.md", "TextInfo-equivalent layer");
-    scenario.speech().expect(heard);
 }
 
 /// Types `text` and asserts exactly `heard`.
@@ -188,8 +179,8 @@ pub(crate) fn text_box_body(scenario: &mut Scenario, _state: &mut ScenarioState)
     // Shift+Control+Left Arrow
     // (`09a-textbox-docA-shift-control-left-run1.txt`).
     press(scenario, "end", &["carriage return"]);
-    press_deviating(scenario, "shift+rightarrow", &["   selected"]);
-    press_deviating(scenario, "shift+leftarrow", &["   unselected"]);
+    press(scenario, "shift+rightarrow", &["   selected"]);
+    press(scenario, "shift+leftarrow", &["   unselected"]);
     press(scenario, "shift+control+leftarrow", &["gamma selected"]);
     press(scenario, "shift+control+leftarrow", &["beta  selected"]);
     press(
@@ -285,12 +276,13 @@ pub(crate) fn notepad_body(scenario: &mut Scenario, _state: &mut ScenarioState) 
     down_blocks(scenario, 1);
 
     // Shift+Delete cuts the selected word: the character now at the caret,
-    // then the selection removed, where NVDA says nothing more
-    // (`04b-notepad-docA-select-word-shift-delete-run1.txt`).
+    // and nothing more, as NVDA's capture shows
+    // (`04b-notepad-docA-select-word-shift-delete-run1.txt`,
+    // `cmp-notepad_caret_keys.txt`, step 9).
     // Shift+Backspace at a line's start: the line break it deletes
     // (`04c-notepad-docA-down-shift-backspace-run1.txt`).
     press(scenario, "shift+control+rightarrow", &["alpha  selected"]);
-    press_deviating(scenario, "shift+delete", &["b", "selection removed"]);
+    press(scenario, "shift+delete", &["b"]);
     press(scenario, "downarrow", &[SECOND]);
     press(scenario, "shift+backspace", &["carriage return"]);
     press(scenario, "downarrow", &[FIRST]);
@@ -370,15 +362,16 @@ pub(crate) fn notepad_body(scenario: &mut Scenario, _state: &mut ScenarioState) 
     // (`25a-notepad-docA-shift-end-control-v-run1.txt`), and on the next
     // line Enter, where NVDA names the line break now in the old range,
     // "carriage return unselected"
-    // (`25b-notepad-docA-shift-end-enter-run1.txt`): the old range no
-    // longer holds its text, so the selection is said removed. The paste
+    // (`25b-notepad-docA-shift-end-enter-run1.txt`), as the captures of
+    // 2026-11-17 show again (`cmp-notepad_caret_keys.txt`, steps 66 and
+    // 70). The paste
     // replaced the line break, so the next line is the next block's first.
     press(scenario, "shift+end", &["alpha beta gamma  selected"]);
-    press_deviating(scenario, "control+v", &["selection removed"]);
+    press_silent(scenario, "control+v");
     press(scenario, "downarrow", &[FIRST]);
     press(scenario, "home", &["a"]);
     press(scenario, "shift+end", &["alpha beta gamma  selected"]);
-    press_deviating(scenario, "enter", &["selection removed"]);
+    press(scenario, "enter", &["carriage return  unselected"]);
     press(scenario, "downarrow", &["kiwi"]);
 
     // The two-line paste is `text_box_caret_keys`' step: here the save that

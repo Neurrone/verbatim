@@ -1,0 +1,1276 @@
+   Compiling verbatim-core v0.1.0 (C:\Users\Dickson\Desktop\projects\verbatim\crates\verbatim-core)
+   Compiling verbatim-replay v0.1.0 (C:\Users\Dickson\Desktop\projects\verbatim\crates\verbatim-replay)
+   Compiling verbatim-e2e v0.1.0 (C:\Users\Dickson\Desktop\projects\verbatim\crates\verbatim-e2e)
+   Compiling xtask v0.1.0 (C:\Users\Dickson\Desktop\projects\verbatim\xtask)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 13.73s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running `target\debug\xtask.exe nvda compare text_box_caret_keys`
+xtask nvda: comparing text_box_caret_keys with NVDA; the desktop belongs to it until it ends
+   Compiling verbatim-e2e v0.1.0 (C:\Users\Dickson\Desktop\projects\verbatim\crates\verbatim-e2e)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.68s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running tests\e2e.rs (target\debug\deps\e2e-e3aecc69eb421d9a.exe)
+
+running 1 test
+test text_box_caret_keys ...    Compiling verbatim-outpost v0.1.0 (C:\Users\Dickson\Desktop\projects\verbatim\crates\verbatim-outpost)
+   Compiling verbatim-listener v0.1.0 (C:\Users\Dickson\Desktop\projects\verbatim\crates\verbatim-listener)
+   Compiling verbatim-supervisor v0.1.0 (C:\Users\Dickson\Desktop\projects\verbatim\crates\verbatim-supervisor)
+   Compiling verbatim-app v0.1.0 (C:\Users\Dickson\Desktop\projects\verbatim\crates\verbatim-app)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 5.92s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+compare mode: NVDA alpha-58022,732d1ce2 in session 2, quiet period 1s
+compare mode records no video
+Comparing text_box_caret_keys with NVDA
+Date: 2026-11-16
+NVDA: alpha-58022,732d1ce2
+Submodule pin: 732d1ce2f (release-2026.3beta3-44-g732d1ce2f)
+The pin is the installed build.
+Quiet period: 1000 ms
+
+Step 1: start
+Verbatim:
+  Desktop list
+  NVDA 3 of 13
+NVDA:
+  (nothing)
+Verdict: not compared: NVDA says nothing about a desktop already in front
+
+Step 2: launch powershell.exe, its window titled "verbatim-e2e-caret-keys-mwjrrgjw" brought forward
+Verbatim:
+  verbatim-e2e-caret-keys-mwjrrgjw
+  Text edit multi line
+  alpha beta gamma
+NVDA:
+  cancel
+  verbatim-e 2e-caret-keys-mwjrrgjw
+  Text  edit  multi line  alpha beta gamma
+Verbatim compared: verbatim-e2e-caret-keys-mwjrrgjw Text edit multi line alpha beta gamma
+NVDA compared: verbatim-e 2e-caret-keys-mwjrrgjw Text edit multi line alpha beta gamma
+Verdict: differs
+
+Step 3: keys [end]
+Verbatim:
+  carriage return
+NVDA:
+  cancel
+  carriage return
+Verdict: same
+
+Step 4: keys [home]
+Verbatim:
+  a
+NVDA:
+  cancel
+  a
+Verdict: same
+
+Step 5: keys [numpaddelete]
+Verbatim:
+  l
+NVDA:
+  cancel
+  l
+Verdict: same
+
+Step 6: keys [downarrow]
+Verbatim:
+  delta epsilon
+NVDA:
+  cancel
+  delta epsilon
+Verdict: same
+
+Step 7: keys [downarrow]
+Verbatim:
+  alpha beta gamma
+NVDA:
+  cancel
+  alpha beta gamma
+Verdict: same
+
+Step 8: keys [shift+control+rightarrow]
+Verbatim:
+  alpha  selected
+NVDA:
+  cancel
+  alpha  selected
+Verdict: same
+
+Step 9: keys [shift+delete]
+Verbatim:
+  b
+  selection removed
+NVDA:
+  cancel
+  b
+  selection removed
+Verdict: same
+
+Step 10: keys [downarrow]
+Verbatim:
+  delta epsilon
+NVDA:
+  cancel
+  delta epsilon
+Verdict: same
+
+Step 11: keys [shift+backspace]
+Verbatim:
+  line feed
+NVDA:
+  cancel
+  line feed
+Verdict: same
+
+Step 12: keys [downarrow]
+Verbatim:
+  alpha beta gamma
+NVDA:
+  cancel
+  alpha beta gamma
+Verdict: same
+
+Step 13: keys [end]
+Verbatim:
+  carriage return
+NVDA:
+  cancel
+  carriage return
+Verdict: same
+
+Step 14: keys [shift+rightarrow]
+Verbatim:
+     selected
+NVDA:
+  cancel
+  selected
+Declared deviation: docs/parity/text.md, "TextInfo-equivalent layer"
+Verdict: declared, but NVDA agrees: TextInfo-equivalent layer
+
+Step 15: keys [shift+leftarrow]
+Verbatim:
+     unselected
+NVDA:
+  cancel
+  unselected
+Declared deviation: docs/parity/text.md, "TextInfo-equivalent layer"
+Verdict: declared, but NVDA agrees: TextInfo-equivalent layer
+
+Step 16: keys [shift+control+leftarrow]
+Verbatim:
+  gamma selected
+NVDA:
+  cancel
+  gamma selected
+Verdict: same
+
+Step 17: keys [shift+control+leftarrow]
+Verbatim:
+  beta  selected
+NVDA:
+  cancel
+  beta  selected
+Verdict: same
+
+Step 18: keys [end]
+Verbatim:
+  carriage return
+  beta gamma unselected
+NVDA:
+  cancel
+  carriage return
+  beta gamma unselected
+Verdict: same
+
+Step 19: keys [downarrow]
+Verbatim:
+  delta epsilon
+NVDA:
+  cancel
+  delta epsilon
+Verdict: same
+
+Step 20: keys [downarrow]
+Verbatim:
+  alpha beta gamma
+NVDA:
+  cancel
+  alpha beta gamma
+Verdict: same
+
+Step 21: keys [home]
+Verbatim:
+  a
+NVDA:
+  cancel
+  a
+Verdict: same
+
+Step 22: keys [shift+downarrow]
+Verbatim:
+  alpha beta gamma   selected
+NVDA:
+  cancel
+  alpha beta gamma   selected
+Verdict: same
+
+Step 23: keys [shift+downarrow]
+Verbatim:
+  delta epsilon   selected
+NVDA:
+  cancel
+  delta epsilon   selected
+Verdict: same
+
+Step 24: keys [shift+uparrow]
+Verbatim:
+  delta epsilon   unselected
+NVDA:
+  cancel
+  delta epsilon   unselected
+Verdict: same
+
+Step 25: keys [shift+uparrow]
+Verbatim:
+  alpha beta gamma   unselected
+NVDA:
+  cancel
+  alpha beta gamma   unselected
+Verdict: same
+
+Step 26: keys [downarrow]
+Verbatim:
+  delta epsilon
+NVDA:
+  cancel
+  delta epsilon
+Verdict: same
+
+Step 27: keys [downarrow]
+Verbatim:
+  alpha beta gamma
+NVDA:
+  cancel
+  alpha beta gamma
+Verdict: same
+
+Step 28: keys [control+rightarrow]
+Verbatim:
+  beta
+NVDA:
+  cancel
+  beta
+Verdict: same
+
+Step 29: keys [enter]
+Verbatim:
+  (nothing)
+NVDA:
+  cancel
+Verdict: same
+
+Step 30: keys [downarrow]
+Verbatim:
+  delta epsilon
+NVDA:
+  cancel
+  delta epsilon
+Verdict: same
+
+Step 31: keys [downarrow]
+Verbatim:
+  alpha beta gamma
+NVDA:
+  cancel
+  alpha beta gamma
+Verdict: same
+
+Step 32: text "x"
+Verbatim:
+  x
+NVDA:
+  cancel
+  x
+Verdict: same
+
+Step 33: keys [control+z]
+Verbatim:
+  (nothing)
+NVDA:
+  cancel
+Verdict: same
+
+Step 34: keys [downarrow]
+Verbatim:
+  delta epsilon
+NVDA:
+  delta epsilon
+Verdict: same
+
+Step 35: keys [downarrow]
+Verbatim:
+  alpha beta gamma
+NVDA:
+  cancel
+  alpha beta gamma
+Verdict: same
+
+Step 36: keys [shift+control+rightarrow]
+Verbatim:
+  alpha  selected
+NVDA:
+  cancel
+  alpha  selected
+Verdict: same
+
+Step 37: keys [control+x]
+Verbatim:
+  selection removed
+NVDA:
+  cancel
+  selection removed
+Verdict: same
+
+Step 38: keys [control+z]
+Verbatim:
+  alpha  selected
+NVDA:
+  cancel
+  alpha  selected
+Verdict: same
+
+Step 39: keys [end]
+Verbatim:
+  carriage return
+  alpha  unselected
+NVDA:
+  cancel
+  carriage return
+  alpha  unselected
+Verdict: same
+
+Step 40: keys [downarrow]
+Verbatim:
+  delta epsilon
+NVDA:
+  cancel
+  delta epsilon
+Verdict: same
+
+Step 41: keys [downarrow]
+Verbatim:
+  alpha beta gamma
+NVDA:
+  cancel
+  alpha beta gamma
+Verdict: same
+
+Step 42: keys [downarrow]
+Verbatim:
+  delta epsilon
+NVDA:
+  cancel
+  delta epsilon
+Verdict: same
+
+Step 43: keys [downarrow]
+Verbatim:
+  kiwi
+NVDA:
+  cancel
+  kiwi
+Verdict: same
+
+Step 44: keys [home]
+Verbatim:
+  k
+NVDA:
+  cancel
+  k
+Verdict: same
+
+Step 45: keys [shift+rightarrow]
+Verbatim:
+  k selected
+NVDA:
+  cancel
+  k   selected
+Verdict: same
+
+Step 46: keys [shift+rightarrow]
+Verbatim:
+  i selected
+NVDA:
+  cancel
+  i   selected
+Verdict: same
+
+Step 47: keys [shift+rightarrow]
+Verbatim:
+  w selected
+NVDA:
+  cancel
+  w   selected
+Verdict: same
+
+Step 48: keys [shift+rightarrow]
+Verbatim:
+  i selected
+NVDA:
+  cancel
+  i   selected
+Verdict: same
+
+Step 49: keys [control+c]
+Verbatim:
+  (nothing)
+NVDA:
+  cancel
+Verdict: same
+
+Step 50: keys [downarrow]
+Verbatim:
+  mango
+  kiwi unselected
+NVDA:
+  mango
+  kiwi unselected
+Verdict: same
+
+Step 51: keys [downarrow]
+Verbatim:
+  alpha beta gamma
+NVDA:
+  cancel
+  alpha beta gamma
+Verdict: same
+
+Step 52: keys [home]
+Verbatim:
+  a
+NVDA:
+  cancel
+  a
+Verdict: same
+
+Step 53: keys [control+v]
+Verbatim:
+  (nothing)
+NVDA:
+  cancel
+Verdict: same
+
+Step 54: keys [downarrow]
+Verbatim:
+  delta epsilon
+NVDA:
+  delta epsilon
+Verdict: same
+
+Step 55: keys [downarrow]
+Verbatim:
+  alpha beta gamma
+NVDA:
+  cancel
+  alpha beta gamma
+Verdict: same
+
+Step 56: keys [home]
+Verbatim:
+  a
+NVDA:
+  cancel
+  a
+Verdict: same
+
+Step 57: keys [shift+end]
+Verbatim:
+  alpha beta gamma selected
+NVDA:
+  cancel
+  alpha beta gamma selected
+Verdict: same
+
+Step 58: keys [control+v]
+Verbatim:
+  selection removed
+NVDA:
+  cancel
+  selection removed
+Verdict: same
+
+Step 59: keys [downarrow]
+Verbatim:
+  delta epsilon
+NVDA:
+  cancel
+  delta epsilon
+Verdict: same
+
+Step 60: keys [downarrow]
+Verbatim:
+  alpha beta gamma
+NVDA:
+  cancel
+  alpha beta gamma
+Verdict: same
+
+Step 61: keys [home]
+Verbatim:
+  a
+NVDA:
+  cancel
+  a
+Verdict: same
+
+Step 62: keys [shift+end]
+Verbatim:
+  alpha beta gamma selected
+NVDA:
+  cancel
+  alpha beta gamma selected
+Verdict: same
+
+Step 63: keys [enter]
+Verbatim:
+  selection removed
+NVDA:
+  cancel
+  selection removed
+Verdict: same
+
+Step 64: keys [downarrow]
+Verbatim:
+  delta epsilon
+NVDA:
+  cancel
+  delta epsilon
+Verdict: same
+
+Step 65: keys [downarrow]
+Verbatim:
+  kiwi
+NVDA:
+  cancel
+  kiwi
+Verdict: same
+
+Step 66: keys [shift+downarrow]
+Verbatim:
+  kiwi   selected
+NVDA:
+  cancel
+  kiwi   selected
+Verdict: same
+
+Step 67: keys [shift+rightarrow]
+Verbatim:
+  m selected
+NVDA:
+  cancel
+  m   selected
+Verdict: same
+
+Step 68: keys [shift+rightarrow]
+Verbatim:
+  a selected
+NVDA:
+  cancel
+  a   selected
+Verdict: same
+
+Step 69: keys [shift+rightarrow]
+Verbatim:
+  n selected
+NVDA:
+  cancel
+  n   selected
+Verdict: same
+
+Step 70: keys [shift+rightarrow]
+Verbatim:
+  g selected
+NVDA:
+  cancel
+  g   selected
+Verdict: same
+
+Step 71: keys [shift+rightarrow]
+Verbatim:
+  o selected
+NVDA:
+  cancel
+  o   selected
+Verdict: same
+
+Step 72: keys [control+c]
+Verbatim:
+  (nothing)
+NVDA:
+  cancel
+Verdict: same
+
+Step 73: keys [downarrow]
+Verbatim:
+  alpha beta gamma
+  kiwi  mango unselected
+NVDA:
+  alpha beta gamma
+  kiwi  mango unselected
+Verdict: same
+
+Step 74: keys [home]
+Verbatim:
+  a
+NVDA:
+  cancel
+  a
+Verdict: same
+
+Step 75: keys [control+v]
+Verbatim:
+  (nothing)
+NVDA:
+  cancel
+Verdict: same
+
+Summary of 75 steps:
+  same: 71
+  differs: 1
+  declared deviation: 0
+  declared, but NVDA agrees: 2
+  not compared: 1
+
+scenario "text_box_caret_keys" compared with NVDA: done
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 88.12s
+
+end-of-run summary, one line per scenario that ran:
+summary: text_box_caret_keys pass 88.1s
+
+C:\Users\Dickson\Desktop\projects\verbatim\target\e2e-artifacts\text_box_caret_keys\compare.txt:
+Comparing text_box_caret_keys with NVDA
+Date: 2026-11-16
+NVDA: alpha-58022,732d1ce2
+Submodule pin: 732d1ce2f (release-2026.3beta3-44-g732d1ce2f)
+The pin is the installed build.
+Quiet period: 1000 ms
+
+Step 1: start
+Verbatim:
+  Desktop list
+  NVDA 3 of 13
+NVDA:
+  (nothing)
+Verdict: not compared: NVDA says nothing about a desktop already in front
+
+Step 2: launch powershell.exe, its window titled "verbatim-e2e-caret-keys-mwjrrgjw" brought forward
+Verbatim:
+  verbatim-e2e-caret-keys-mwjrrgjw
+  Text edit multi line
+  alpha beta gamma
+NVDA:
+  cancel
+  verbatim-e 2e-caret-keys-mwjrrgjw
+  Text  edit  multi line  alpha beta gamma
+Verbatim compared: verbatim-e2e-caret-keys-mwjrrgjw Text edit multi line alpha beta gamma
+NVDA compared: verbatim-e 2e-caret-keys-mwjrrgjw Text edit multi line alpha beta gamma
+Verdict: differs
+
+Step 3: keys [end]
+Verbatim:
+  carriage return
+NVDA:
+  cancel
+  carriage return
+Verdict: same
+
+Step 4: keys [home]
+Verbatim:
+  a
+NVDA:
+  cancel
+  a
+Verdict: same
+
+Step 5: keys [numpaddelete]
+Verbatim:
+  l
+NVDA:
+  cancel
+  l
+Verdict: same
+
+Step 6: keys [downarrow]
+Verbatim:
+  delta epsilon
+NVDA:
+  cancel
+  delta epsilon
+Verdict: same
+
+Step 7: keys [downarrow]
+Verbatim:
+  alpha beta gamma
+NVDA:
+  cancel
+  alpha beta gamma
+Verdict: same
+
+Step 8: keys [shift+control+rightarrow]
+Verbatim:
+  alpha  selected
+NVDA:
+  cancel
+  alpha  selected
+Verdict: same
+
+Step 9: keys [shift+delete]
+Verbatim:
+  b
+  selection removed
+NVDA:
+  cancel
+  b
+  selection removed
+Verdict: same
+
+Step 10: keys [downarrow]
+Verbatim:
+  delta epsilon
+NVDA:
+  cancel
+  delta epsilon
+Verdict: same
+
+Step 11: keys [shift+backspace]
+Verbatim:
+  line feed
+NVDA:
+  cancel
+  line feed
+Verdict: same
+
+Step 12: keys [downarrow]
+Verbatim:
+  alpha beta gamma
+NVDA:
+  cancel
+  alpha beta gamma
+Verdict: same
+
+Step 13: keys [end]
+Verbatim:
+  carriage return
+NVDA:
+  cancel
+  carriage return
+Verdict: same
+
+Step 14: keys [shift+rightarrow]
+Verbatim:
+     selected
+NVDA:
+  cancel
+  selected
+Declared deviation: docs/parity/text.md, "TextInfo-equivalent layer"
+Verdict: declared, but NVDA agrees: TextInfo-equivalent layer
+
+Step 15: keys [shift+leftarrow]
+Verbatim:
+     unselected
+NVDA:
+  cancel
+  unselected
+Declared deviation: docs/parity/text.md, "TextInfo-equivalent layer"
+Verdict: declared, but NVDA agrees: TextInfo-equivalent layer
+
+Step 16: keys [shift+control+leftarrow]
+Verbatim:
+  gamma selected
+NVDA:
+  cancel
+  gamma selected
+Verdict: same
+
+Step 17: keys [shift+control+leftarrow]
+Verbatim:
+  beta  selected
+NVDA:
+  cancel
+  beta  selected
+Verdict: same
+
+Step 18: keys [end]
+Verbatim:
+  carriage return
+  beta gamma unselected
+NVDA:
+  cancel
+  carriage return
+  beta gamma unselected
+Verdict: same
+
+Step 19: keys [downarrow]
+Verbatim:
+  delta epsilon
+NVDA:
+  cancel
+  delta epsilon
+Verdict: same
+
+Step 20: keys [downarrow]
+Verbatim:
+  alpha beta gamma
+NVDA:
+  cancel
+  alpha beta gamma
+Verdict: same
+
+Step 21: keys [home]
+Verbatim:
+  a
+NVDA:
+  cancel
+  a
+Verdict: same
+
+Step 22: keys [shift+downarrow]
+Verbatim:
+  alpha beta gamma   selected
+NVDA:
+  cancel
+  alpha beta gamma   selected
+Verdict: same
+
+Step 23: keys [shift+downarrow]
+Verbatim:
+  delta epsilon   selected
+NVDA:
+  cancel
+  delta epsilon   selected
+Verdict: same
+
+Step 24: keys [shift+uparrow]
+Verbatim:
+  delta epsilon   unselected
+NVDA:
+  cancel
+  delta epsilon   unselected
+Verdict: same
+
+Step 25: keys [shift+uparrow]
+Verbatim:
+  alpha beta gamma   unselected
+NVDA:
+  cancel
+  alpha beta gamma   unselected
+Verdict: same
+
+Step 26: keys [downarrow]
+Verbatim:
+  delta epsilon
+NVDA:
+  cancel
+  delta epsilon
+Verdict: same
+
+Step 27: keys [downarrow]
+Verbatim:
+  alpha beta gamma
+NVDA:
+  cancel
+  alpha beta gamma
+Verdict: same
+
+Step 28: keys [control+rightarrow]
+Verbatim:
+  beta
+NVDA:
+  cancel
+  beta
+Verdict: same
+
+Step 29: keys [enter]
+Verbatim:
+  (nothing)
+NVDA:
+  cancel
+Verdict: same
+
+Step 30: keys [downarrow]
+Verbatim:
+  delta epsilon
+NVDA:
+  cancel
+  delta epsilon
+Verdict: same
+
+Step 31: keys [downarrow]
+Verbatim:
+  alpha beta gamma
+NVDA:
+  cancel
+  alpha beta gamma
+Verdict: same
+
+Step 32: text "x"
+Verbatim:
+  x
+NVDA:
+  cancel
+  x
+Verdict: same
+
+Step 33: keys [control+z]
+Verbatim:
+  (nothing)
+NVDA:
+  cancel
+Verdict: same
+
+Step 34: keys [downarrow]
+Verbatim:
+  delta epsilon
+NVDA:
+  delta epsilon
+Verdict: same
+
+Step 35: keys [downarrow]
+Verbatim:
+  alpha beta gamma
+NVDA:
+  cancel
+  alpha beta gamma
+Verdict: same
+
+Step 36: keys [shift+control+rightarrow]
+Verbatim:
+  alpha  selected
+NVDA:
+  cancel
+  alpha  selected
+Verdict: same
+
+Step 37: keys [control+x]
+Verbatim:
+  selection removed
+NVDA:
+  cancel
+  selection removed
+Verdict: same
+
+Step 38: keys [control+z]
+Verbatim:
+  alpha  selected
+NVDA:
+  cancel
+  alpha  selected
+Verdict: same
+
+Step 39: keys [end]
+Verbatim:
+  carriage return
+  alpha  unselected
+NVDA:
+  cancel
+  carriage return
+  alpha  unselected
+Verdict: same
+
+Step 40: keys [downarrow]
+Verbatim:
+  delta epsilon
+NVDA:
+  cancel
+  delta epsilon
+Verdict: same
+
+Step 41: keys [downarrow]
+Verbatim:
+  alpha beta gamma
+NVDA:
+  cancel
+  alpha beta gamma
+Verdict: same
+
+Step 42: keys [downarrow]
+Verbatim:
+  delta epsilon
+NVDA:
+  cancel
+  delta epsilon
+Verdict: same
+
+Step 43: keys [downarrow]
+Verbatim:
+  kiwi
+NVDA:
+  cancel
+  kiwi
+Verdict: same
+
+Step 44: keys [home]
+Verbatim:
+  k
+NVDA:
+  cancel
+  k
+Verdict: same
+
+Step 45: keys [shift+rightarrow]
+Verbatim:
+  k selected
+NVDA:
+  cancel
+  k   selected
+Verdict: same
+
+Step 46: keys [shift+rightarrow]
+Verbatim:
+  i selected
+NVDA:
+  cancel
+  i   selected
+Verdict: same
+
+Step 47: keys [shift+rightarrow]
+Verbatim:
+  w selected
+NVDA:
+  cancel
+  w   selected
+Verdict: same
+
+Step 48: keys [shift+rightarrow]
+Verbatim:
+  i selected
+NVDA:
+  cancel
+  i   selected
+Verdict: same
+
+Step 49: keys [control+c]
+Verbatim:
+  (nothing)
+NVDA:
+  cancel
+Verdict: same
+
+Step 50: keys [downarrow]
+Verbatim:
+  mango
+  kiwi unselected
+NVDA:
+  mango
+  kiwi unselected
+Verdict: same
+
+Step 51: keys [downarrow]
+Verbatim:
+  alpha beta gamma
+NVDA:
+  cancel
+  alpha beta gamma
+Verdict: same
+
+Step 52: keys [home]
+Verbatim:
+  a
+NVDA:
+  cancel
+  a
+Verdict: same
+
+Step 53: keys [control+v]
+Verbatim:
+  (nothing)
+NVDA:
+  cancel
+Verdict: same
+
+Step 54: keys [downarrow]
+Verbatim:
+  delta epsilon
+NVDA:
+  delta epsilon
+Verdict: same
+
+Step 55: keys [downarrow]
+Verbatim:
+  alpha beta gamma
+NVDA:
+  cancel
+  alpha beta gamma
+Verdict: same
+
+Step 56: keys [home]
+Verbatim:
+  a
+NVDA:
+  cancel
+  a
+Verdict: same
+
+Step 57: keys [shift+end]
+Verbatim:
+  alpha beta gamma selected
+NVDA:
+  cancel
+  alpha beta gamma selected
+Verdict: same
+
+Step 58: keys [control+v]
+Verbatim:
+  selection removed
+NVDA:
+  cancel
+  selection removed
+Verdict: same
+
+Step 59: keys [downarrow]
+Verbatim:
+  delta epsilon
+NVDA:
+  cancel
+  delta epsilon
+Verdict: same
+
+Step 60: keys [downarrow]
+Verbatim:
+  alpha beta gamma
+NVDA:
+  cancel
+  alpha beta gamma
+Verdict: same
+
+Step 61: keys [home]
+Verbatim:
+  a
+NVDA:
+  cancel
+  a
+Verdict: same
+
+Step 62: keys [shift+end]
+Verbatim:
+  alpha beta gamma selected
+NVDA:
+  cancel
+  alpha beta gamma selected
+Verdict: same
+
+Step 63: keys [enter]
+Verbatim:
+  selection removed
+NVDA:
+  cancel
+  selection removed
+Verdict: same
+
+Step 64: keys [downarrow]
+Verbatim:
+  delta epsilon
+NVDA:
+  cancel
+  delta epsilon
+Verdict: same
+
+Step 65: keys [downarrow]
+Verbatim:
+  kiwi
+NVDA:
+  cancel
+  kiwi
+Verdict: same
+
+Step 66: keys [shift+downarrow]
+Verbatim:
+  kiwi   selected
+NVDA:
+  cancel
+  kiwi   selected
+Verdict: same
+
+Step 67: keys [shift+rightarrow]
+Verbatim:
+  m selected
+NVDA:
+  cancel
+  m   selected
+Verdict: same
+
+Step 68: keys [shift+rightarrow]
+Verbatim:
+  a selected
+NVDA:
+  cancel
+  a   selected
+Verdict: same
+
+Step 69: keys [shift+rightarrow]
+Verbatim:
+  n selected
+NVDA:
+  cancel
+  n   selected
+Verdict: same
+
+Step 70: keys [shift+rightarrow]
+Verbatim:
+  g selected
+NVDA:
+  cancel
+  g   selected
+Verdict: same
+
+Step 71: keys [shift+rightarrow]
+Verbatim:
+  o selected
+NVDA:
+  cancel
+  o   selected
+Verdict: same
+
+Step 72: keys [control+c]
+Verbatim:
+  (nothing)
+NVDA:
+  cancel
+Verdict: same
+
+Step 73: keys [downarrow]
+Verbatim:
+  alpha beta gamma
+  kiwi  mango unselected
+NVDA:
+  alpha beta gamma
+  kiwi  mango unselected
+Verdict: same
+
+Step 74: keys [home]
+Verbatim:
+  a
+NVDA:
+  cancel
+  a
+Verdict: same
+
+Step 75: keys [control+v]
+Verbatim:
+  (nothing)
+NVDA:
+  cancel
+Verdict: same
+
+Summary of 75 steps:
+  same: 71
+  differs: 1
+  declared deviation: 0
+  declared, but NVDA agrees: 2
+  not compared: 1
+
