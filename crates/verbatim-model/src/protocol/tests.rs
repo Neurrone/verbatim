@@ -2,7 +2,6 @@
 //! the pure methods of the messages.
 
 use super::*;
-use crate::{NodeDetails, NodeSnapshot, Role, StateSet};
 
 /// Every sample a `next` function chains, from the first: each match of
 /// `next` names every variant without a wildcard, so a new variant must
@@ -31,22 +30,9 @@ fn timing() -> EventTiming {
 /// One sample of each [`CoreToOutpost`] variant, after `previous`.
 fn next_core_to_outpost(previous: Option<&CoreToOutpost>) -> Option<CoreToOutpost> {
     let Some(previous) = previous else {
-        return Some(CoreToOutpost::Query {
-            trace_id: TraceId::from_raw(2),
-            request_id: RequestId::shell(1),
-            query: Query::ReadFocus {
-                purpose: FocusPurpose::Plain,
-                details: crate::property::NodeDetailSet::ALL,
-                text: crate::TextDetails::ALL,
-            },
-            timing: timing(),
-        });
+        return Some(CoreToOutpost::Ping { sent_at_us: 0 });
     };
     Some(match previous {
-        CoreToOutpost::Query { .. } => CoreToOutpost::CancelQuery {
-            request_id: RequestId::shell(1),
-        },
-        CoreToOutpost::CancelQuery { .. } => CoreToOutpost::Ping { sent_at_us: 0 },
         CoreToOutpost::Ping { .. } => CoreToOutpost::NodesHeld {
             nodes: Vec::new(),
             anchors: Vec::new(),
@@ -55,19 +41,7 @@ fn next_core_to_outpost(previous: Option<&CoreToOutpost>) -> Option<CoreToOutpos
         CoreToOutpost::NodesHeld { .. } => CoreToOutpost::IdleQuery { round: 1 },
         CoreToOutpost::IdleQuery { .. } => CoreToOutpost::Shutdown,
         CoreToOutpost::Shutdown => CoreToOutpost::Assign { target_pid: Pid(1) },
-        CoreToOutpost::Assign { .. } => CoreToOutpost::LiveReread {
-            request: 1,
-            trace_id: TraceId::from_raw(4),
-        },
-        CoreToOutpost::LiveReread { .. } => CoreToOutpost::KeyNote(crate::NoteRequest::Field {
-            node: crate::NodeId::new(1),
-            fetch: crate::KeyFetch {
-                unit: crate::TextUnit::Word,
-                motion: crate::CaretMotion::NextWord,
-                details: crate::TextDetails::ALL,
-            },
-        }),
-        CoreToOutpost::KeyNote(_) => CoreToOutpost::Request(Box::new(crate::request::Ask {
+        CoreToOutpost::Assign { .. } => CoreToOutpost::Request(Box::new(crate::request::Ask {
             number: crate::request::RequestNumber(1),
             window: crate::WindowHandle(8),
             verdict: crate::request::WindowVerdict::Msaa,
@@ -117,15 +91,6 @@ fn next_core_to_listener(previous: Option<&CoreToListener>) -> Option<CoreToList
 }
 
 /// A reply with `outcome`.
-fn reply(outcome: QueryOutcome) -> OutpostToCore {
-    OutpostToCore::Reply {
-        trace_id: TraceId::from_raw(3),
-        request_id: RequestId::shell(1),
-        outcome,
-        timing: timing(),
-    }
-}
-
 /// One sample of each [`ListenerToCore`] variant, after `previous`.
 fn next_listener_to_core(previous: Option<&ListenerToCore>) -> Option<ListenerToCore> {
     let Some(previous) = previous else {
@@ -154,7 +119,7 @@ fn next_listener_to_core(previous: Option<&ListenerToCore>) -> Option<ListenerTo
             integrity: None,
         },
         ListenerToCore::Foreground { .. } => ListenerToCore::Tell(Box::new(crate::tell::Event {
-            trace_id: TraceId::from_raw(5),
+            trace_id: crate::TraceId::from_raw(5),
             kind: crate::event_kind::EventKind::MsaaFocus,
             process: Pid(2),
             application: "notepad".to_owned(),
@@ -207,15 +172,11 @@ fn every_variant_has_its_reviewed_kind() {
                 .collect()
         ),
         [
-            "Query: Ask",
-            "CancelQuery: Ask",
             "Ping: Lifecycle",
             "NodesHeld: Release",
             "IdleQuery: Ask",
             "Shutdown: Lifecycle",
             "Assign: Lifecycle",
-            "LiveReread: Routed",
-            "KeyNote: Ask",
             "Request: Ask",
             "Cancel: Ask",
             "WindowDestroyed: Release",
@@ -247,14 +208,11 @@ fn every_variant_has_its_reviewed_kind() {
         [
             "Ready: Lifecycle",
             "SpareReady: Lifecycle",
-            "Event: Report",
-            "Reply: Answer",
             "Pong: Lifecycle",
             "NotResponding: Report",
             "Fault: Report",
             "TargetExited: Lifecycle",
             "IdleAnswer: Answer",
-            "LiveRereadGone: Report",
             "Tell: Report",
             "Answer: Answer",
         ]
@@ -298,10 +256,10 @@ fn core_sends_no_report() {
     assert_eq!(reports, Vec::<String>::new());
 }
 
-/// Only an event, a completed query's reply and an answer with a result
-/// carry nodes, as the outpost and verbatim.exe count them.
+/// Only an answer with a result carries nodes, as the outpost and
+/// verbatim.exe count them.
 #[test]
-fn only_an_event_a_completed_reply_and_a_result_carry_nodes() {
+fn only_an_answer_with_a_result_carries_nodes() {
     let carried: Vec<(String, bool)> = super::samples::outpost_to_core()
         .iter()
         .map(|message| (name(message), message.carries_nodes()))
@@ -311,14 +269,11 @@ fn only_an_event_a_completed_reply_and_a_result_carry_nodes() {
         [
             ("Ready".to_owned(), false),
             ("SpareReady".to_owned(), false),
-            ("Event".to_owned(), true),
-            ("Reply".to_owned(), false),
             ("Pong".to_owned(), false),
             ("NotResponding".to_owned(), false),
             ("Fault".to_owned(), false),
             ("TargetExited".to_owned(), false),
             ("IdleAnswer".to_owned(), false),
-            ("LiveRereadGone".to_owned(), false),
             ("Tell".to_owned(), false),
             ("Answer".to_owned(), false),
         ]
@@ -330,223 +285,13 @@ fn only_an_event_a_completed_reply_and_a_result_carry_nodes() {
         detail: String::new(),
     });
     assert!(answer.carries_nodes());
-    let outcomes = [
-        (QueryOutcome::Done(QueryResult::Navigated(None)), true),
-        (QueryOutcome::Gone, false),
-        (QueryOutcome::Failed("no".to_owned()), false),
-        (QueryOutcome::NotStarted, false),
-        (QueryOutcome::Abandoned, false),
-    ];
-    for (outcome, carries) in outcomes {
-        let message = reply(outcome);
-        assert_eq!(message.carries_nodes(), carries, "{message:?}");
-    }
-}
-
-/// A message names the nodes stamping stamps and the anchors of its text:
-/// a focus's line, its caret's line and selection, and a read's chunk.
-#[test]
-fn a_message_names_its_nodes_and_its_texts_anchors() {
-    use crate::{CaretReport, FocusText, Selection, TextAnchor, TextChunk, TextPosition, TextUnit};
-    let snapshot = |number| NodeSnapshot {
-        id: NodeId::new(number),
-        backend: Backend::Uia,
-        role: Role::Button,
-        name: None,
-        value: None,
-        states: StateSet::new(),
-        details: NodeDetails::default(),
-    };
-    let chunk = |anchor| TextChunk {
-        unit: TextUnit::Line,
-        text: String::new(),
-        start: TextAnchor(anchor),
-        offset: 0,
-        languages: Vec::new(),
-        first: false,
-        last: false,
-        truncated: false,
-        formats: Vec::new(),
-    };
-    let focus = OutpostToCore::Event {
-        trace_id: TraceId::from_raw(5),
-        timing: EventTiming::default(),
-        observed_at_us: 0,
-        backend: Backend::Uia,
-        window: None,
-        application: None,
-        event: NormalizedEvent::FocusChanged {
-            node: snapshot(1),
-            whole_window: false,
-            ancestors: vec![snapshot(2)],
-            selected_child: Some(snapshot(3)),
-            text: Some(Box::new(FocusText::Caret {
-                caret: CaretReport {
-                    line: chunk(10),
-                    selection: Some(crate::CaretSelection {
-                        range: Selection {
-                            start: TextPosition::at(TextAnchor(11)),
-                            end: TextPosition::at(TextAnchor(12)),
-                        },
-                        start_line: Some(Box::new(chunk(13))),
-                    }),
-                    read_at_us: 0,
-                },
-                selected_text: None,
-                changes: crate::CaretChanges::default(),
-                facts: None,
-            })),
-            earlier: None,
-            group: None,
-            first_cached_ancestor: None,
-            answers: None,
-        },
-    };
-    let read = reply(QueryOutcome::Done(QueryResult::Text(TextReply::Read {
-        moved: 0,
-        chunk: chunk(14),
-    })));
-    assert_eq!(
-        focus.named(),
-        Named {
-            nodes: vec![NodeId::new(1), NodeId::new(2), NodeId::new(3)],
-            anchors: [10, 11, 12, 13].map(TextAnchor).to_vec(),
-        }
-    );
-    assert_eq!(
-        read.named(),
-        Named {
-            nodes: Vec::new(),
-            anchors: vec![TextAnchor(14)],
-        }
-    );
 }
 
 #[test]
-fn stamping_names_every_node_id_in_a_message_with_its_outpost() {
-    let snapshot = |number| NodeSnapshot {
-        id: NodeId::new(number),
-        backend: Backend::Uia,
-        role: Role::Button,
-        name: None,
-        value: None,
-        states: StateSet::new(),
-        details: NodeDetails::default(),
-    };
-    let mut event = OutpostToCore::Event {
-        trace_id: TraceId::from_raw(6),
-        timing: EventTiming::default(),
-        observed_at_us: 0,
-        backend: Backend::Uia,
-        window: None,
-        application: None,
-        event: NormalizedEvent::FocusChanged {
-            node: snapshot(1),
-            whole_window: false,
-            ancestors: vec![snapshot(2)],
-            selected_child: Some(snapshot(3)),
-            text: None,
-            earlier: None,
-            group: None,
-            first_cached_ancestor: None,
-            answers: None,
-        },
-    };
-    let mut chain = reply(QueryOutcome::Done(QueryResult::Ancestors(vec![snapshot(
-        4,
-    )])));
-    event.assign_outpost(OutpostId(7));
-    chain.assign_outpost(OutpostId(7));
-
-    let OutpostToCore::Event {
-        event:
-            NormalizedEvent::FocusChanged {
-                node,
-                ancestors,
-                selected_child,
-                ..
-            },
-        ..
-    } = event
-    else {
-        panic!("still a focus event");
-    };
-    let OutpostToCore::Reply {
-        outcome: QueryOutcome::Done(QueryResult::Ancestors(chain)),
-        ..
-    } = chain
-    else {
-        panic!("still an ancestor chain");
-    };
-    for (id, number) in [
-        (node.id, 1),
-        (ancestors[0].id, 2),
-        (selected_child.expect("kept").id, 3),
-        (chain[0].id, 4),
-    ] {
-        assert_eq!(id, NodeId::in_outpost(OutpostId(7), number));
-    }
-}
-
-/// A request id keeps its asker and number through the wire, in a query,
-/// its cancel and its reply, for each asker.
-#[test]
-fn a_request_id_round_trips_with_its_asker() {
-    for request_id in [RequestId::reducer(7), RequestId::shell(7)] {
-        let commands = [
-            CoreToOutpost::Query {
-                trace_id: TraceId::from_raw(2),
-                request_id,
-                query: Query::ReadFocus {
-                    purpose: FocusPurpose::Plain,
-                    details: crate::property::NodeDetailSet::ALL,
-                    text: crate::TextDetails::ALL,
-                },
-                timing: timing(),
-            },
-            CoreToOutpost::CancelQuery { request_id },
-        ];
-        for command in commands {
-            let json = serde_json::to_string(&command).expect("JSON");
-            let read: CoreToOutpost = serde_json::from_str(&json).expect("reads");
-            assert_eq!(read, command);
-        }
-        let reply = OutpostToCore::Reply {
-            trace_id: TraceId::from_raw(3),
-            request_id,
-            outcome: QueryOutcome::Gone,
-            timing: timing(),
-        };
-        let json = serde_json::to_string(&reply).expect("JSON");
-        let read: OutpostToCore = serde_json::from_str(&json).expect("reads");
-        assert_eq!(read, reply);
-    }
-}
-
-#[test]
-fn a_reply_or_timing_from_an_older_peer_reads_with_no_calls() {
-    let reply: OutpostToCore = serde_json::from_str(
-        r#"{"Reply":{"trace_id":7,"request_id":{"asker":"Shell","number":3},"outcome":"Gone"}}"#,
-    )
-    .expect("an older reply still reads");
-    let OutpostToCore::Reply { timing, .. } = reply else {
-        panic!("still a reply");
-    };
-    assert_eq!(timing, EventTiming::default());
+fn a_timing_from_an_older_peer_reads_with_no_calls() {
     let timing: EventTiming =
         serde_json::from_str(r#"{"observed_at_us":5}"#).expect("older timing still reads");
     assert!(timing.calls.is_empty());
-}
-
-#[test]
-fn a_win_event_is_raised_before_or_after_a_tick_across_the_clocks_wrap() {
-    let at = |time| WinEventStamp { thread: 1, time };
-    assert!(at(20).raised_after(10));
-    assert!(at(5).raised_before(10));
-    assert!(!at(10).raised_after(10) && !at(10).raised_before(10));
-    // Just after the clock wrapped is after just before it.
-    assert!(at(3).raised_after(u32::MAX - 3));
-    assert!(at(u32::MAX - 3).raised_before(3));
 }
 
 #[test]

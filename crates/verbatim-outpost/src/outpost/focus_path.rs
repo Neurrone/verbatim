@@ -120,50 +120,33 @@ pub(crate) fn find_from_window(
 
 #[cfg(test)]
 mod tests {
-    use verbatim_model::{NodeDetails, Role, StateSet};
+    use verbatim_model::WindowHandle;
+    use verbatim_model::property::RuntimeId;
+    use verbatim_model::request::{Route as ReadRoute, RouteEnd, RouteStep};
 
     use super::*;
-    use verbatim_model::protocol::{UiaAncestorFact, UiaFocusRead, UiaSnapshotFact};
 
-    fn snapshot(id: i32) -> UiaSnapshotFact {
-        UiaSnapshotFact {
-            runtime_id: vec![42, id],
-            role: Role::Group,
-            name: None,
-            value: None,
-            states: StateSet::new(),
-            details: NodeDetails::default(),
-        }
-    }
-
-    /// A focus, runtime id `[42, 1]`, in window `own` (0 for none), with
-    /// ancestors `[42, 2]`, `[42, 3]`, and `[42, 4]`, nearest first, in the
-    /// windows `windows` gives.
-    fn read(own: isize, windows: [isize; 3]) -> UiaFocusRead {
-        UiaFocusRead {
-            hwnd: own,
-            snapshot: snapshot(1),
-            ancestors: (2..=4)
-                .zip(windows)
-                .map(|(id, hwnd)| UiaAncestorFact {
-                    snapshot: snapshot(id),
-                    hwnd,
-                    content: true,
-                })
+    /// The route to a focus, runtime id `[42, 1]`, in window `own` (0 for
+    /// none), with ancestors `[42, 2]`, `[42, 3]`, and `[42, 4]`, nearest
+    /// first, in the windows `windows` gives, its walk reaching the top.
+    fn read(own: isize, windows: [isize; 3]) -> FocusPath {
+        let step = |id, hwnd: isize| RouteStep {
+            runtime_id: RuntimeId(vec![42, id]),
+            window: (hwnd != 0).then(|| WindowHandle(u64::from_ne_bytes(hwnd.to_ne_bytes()))),
+            content: true,
+        };
+        FocusPath::of_route(&ReadRoute {
+            window: WindowHandle(0),
+            steps: std::iter::once(step(1, own))
+                .chain((2..=4).zip(windows).map(|(id, hwnd)| step(id, hwnd)))
                 .collect(),
-            ancestors_end: verbatim_model::protocol::AncestorsEnd::Top,
-            selected_child: None,
-            value_from_selection: false,
-            window: None,
-            same_as_last: None,
-            answers: None,
-            cached_from: None,
-        }
+            end: RouteEnd::Root,
+        })
     }
 
     #[test]
     fn a_windowless_focus_is_found_from_its_nearest_window_by_the_ids_below_it() {
-        let path = FocusPath::of(&read(0, [0, 70, 80]));
+        let path = read(0, [0, 70, 80]);
         assert_eq!(
             path.route_to(&[42, 1]),
             Some(Route {
@@ -187,7 +170,7 @@ mod tests {
 
     #[test]
     fn a_focus_that_is_a_window_is_its_own_start() {
-        let path = FocusPath::of(&read(60, [0, 70, 80]));
+        let path = read(60, [0, 70, 80]);
         assert_eq!(
             path.route_to(&[42, 1])
                 .map(|route| (route.window.get(), route.path)),
@@ -197,9 +180,9 @@ mod tests {
 
     #[test]
     fn no_route_without_a_window_above_or_for_an_element_not_in_the_chain() {
-        let path = FocusPath::of(&read(0, [0, 0, 0]));
+        let path = read(0, [0, 0, 0]);
         assert_eq!(path.route_to(&[42, 1]), None);
-        let path = FocusPath::of(&read(0, [0, 70, 80]));
+        let path = read(0, [0, 70, 80]);
         assert_eq!(path.route_to(&[42, 9]), None);
     }
 }

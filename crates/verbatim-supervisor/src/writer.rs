@@ -43,11 +43,10 @@ use std::io;
 use std::os::windows::io::OwnedHandle;
 use std::sync::Arc;
 
-use verbatim_model::protocol::{CoreToListener, CoreToOutpost, EventTiming};
+use verbatim_model::protocol::{CoreToListener, CoreToOutpost};
 use verbatim_process::overlapped::{Completion, Port};
 use verbatim_process::transport::{Backlog, SendError, Sender};
 
-pub(super) use verbatim_core::supervisor::Received;
 use verbatim_process::clock::now_us;
 use verbatim_process::message::{Message, put_message};
 
@@ -67,10 +66,6 @@ pub(crate) trait ToChild: Message + Clone + std::fmt::Debug + Send + 'static {
     /// Stamps a ping, or a command to the listener, with `now`, read just
     /// before its write begins.
     fn stamp_sent(&mut self, now: impl FnOnce() -> u64);
-
-    /// The timing a query carries, which verbatim.exe's relay stamps are
-    /// filled into as it is written.
-    fn relay_timing(&mut self) -> Option<&mut EventTiming>;
 }
 
 impl ToChild for CoreToOutpost {
@@ -85,23 +80,6 @@ impl ToChild for CoreToOutpost {
     fn stamp_sent(&mut self, now: impl FnOnce() -> u64) {
         CoreToOutpost::stamp_sent(self, now);
     }
-
-    fn relay_timing(&mut self) -> Option<&mut EventTiming> {
-        match self {
-            CoreToOutpost::Query { timing, .. } => Some(timing),
-            CoreToOutpost::CancelQuery { .. }
-            | CoreToOutpost::KeyNote(_)
-            | CoreToOutpost::Ping { .. }
-            | CoreToOutpost::NodesHeld { .. }
-            | CoreToOutpost::IdleQuery { .. }
-            | CoreToOutpost::Shutdown
-            | CoreToOutpost::Assign { .. }
-            | CoreToOutpost::LiveReread { .. }
-            | CoreToOutpost::Request(_)
-            | CoreToOutpost::Cancel(_)
-            | CoreToOutpost::WindowDestroyed(_) => None,
-        }
-    }
 }
 
 impl ToChild for CoreToListener {
@@ -115,10 +93,6 @@ impl ToChild for CoreToListener {
 
     fn stamp_sent(&mut self, now: impl FnOnce() -> u64) {
         CoreToListener::stamp_sent(self, now);
-    }
-
-    fn relay_timing(&mut self) -> Option<&mut EventTiming> {
-        None
     }
 }
 
@@ -135,16 +109,13 @@ pub(super) enum Outgoing<M: ToChild> {
     HandOver(M),
     /// The idle barrier's query for a round.
     IdleQuery(M),
-    /// Anything else: a query, an activation, a configuration command, with
-    /// when it was queued.
-    Other(M, Received),
+    /// Anything else: a request, its cancel, or what Core holds.
+    Other(M),
 }
 
 impl<M: ToChild> Outgoing<M> {
-    /// The command to write now, a request stamped with
-    /// verbatim.exe's relay time up to this moment ([`Received::stamp`]),
-    /// and a ping or a command to the listener with the moment its write
-    /// begins ([`ToChild::stamp_sent`]).
+    /// The command to write now: a ping or a hand-over with the moment
+    /// its write begins ([`ToChild::stamp_sent`]).
     pub(super) fn relayed(self) -> M {
         self.relayed_with(now_us)
     }
@@ -152,45 +123,15 @@ impl<M: ToChild> Outgoing<M> {
     /// [`relayed`](Self::relayed), with `now` the clock a command to the
     /// listener is stamped from.
     fn relayed_with(self, now: impl FnOnce() -> u64) -> M {
-        let (mut command, received) = match self {
-            Outgoing::Shutdown => return M::shutdown(),
-            Outgoing::Other(command, received) => (command, received),
+        match self {
+            Outgoing::Shutdown => M::shutdown(),
+            Outgoing::Other(command) | Outgoing::IdleQuery(command) => command,
             Outgoing::Ping(mut command) | Outgoing::HandOver(mut command) => {
                 command.stamp_sent(now);
-                return command;
+                command
             }
-            Outgoing::IdleQuery(command) => return command,
-        };
-        if let Some(timing) = command.relay_timing() {
-            stamp(received, timing);
         }
-        command
     }
-}
-
-/// Now, as verbatim.exe takes in something it relays to an outpost: a
-/// request as it was queued
-/// (`docs/design/communication.md`, section 10.1), on the run's shared
-/// clock, which every process's stamps share.
-/// The data is `verbatim_core::supervisor::Received`.
-pub(super) fn received_now() -> Received {
-    Received { at_us: now_us() }
-}
-
-/// How long ago `received` was, in microseconds.
-pub(super) fn elapsed_us(received: Received) -> u64 {
-    now_us().saturating_sub(received.at_us)
-}
-
-/// Fills in `timing`'s relay stamps: received at `received`, relayed now.
-/// The shared clock counts on the performance counter from one offset
-/// fixed for the run, so the duration does not depend on the wall clock,
-/// and the time sent is derived from it.
-pub(super) fn stamp(received: Received, timing: &mut EventTiming) {
-    let relay_us = elapsed_us(received);
-    timing.core_received_at_us = received.at_us;
-    timing.core_relay_us = relay_us;
-    timing.core_sent_at_us = received.at_us.saturating_add(relay_us);
 }
 
 /// Why a command was not queued.
@@ -348,7 +289,7 @@ impl<M: ToChild> WriterHandle<M> {
     /// written to carry.
     pub(super) fn send_held(&self, held: M) {
         self.sender.with_backlog(|queue| queue.held = None);
-        if let Err(QueueError::Full) = self.push(Outgoing::Other(held.clone(), received_now())) {
+        if let Err(QueueError::Full) = self.push(Outgoing::Other(held.clone())) {
             self.leave_held(held);
         }
     }
@@ -387,7 +328,6 @@ where
 
 #[cfg(test)]
 mod tests {
-    use verbatim_model::TraceId;
 
     use super::*;
 
@@ -398,11 +338,10 @@ mod tests {
                 Outgoing::Ping(command)
                 | Outgoing::IdleQuery(command)
                 | Outgoing::HandOver(command)
-                | Outgoing::Other(command, _) => command.clone(),
+                | Outgoing::Other(command) => command.clone(),
             }
         }
     }
-    use verbatim_model::protocol::RequestId;
 
     fn ping() -> Outgoing<CoreToOutpost> {
         Outgoing::Ping(CoreToOutpost::Ping { sent_at_us: 0 })
@@ -410,15 +349,10 @@ mod tests {
 
     /// A request numbered `id`.
     fn request(id: u64) -> Outgoing<CoreToOutpost> {
-        Outgoing::Other(
-            CoreToOutpost::Query {
-                trace_id: TraceId::mint(),
-                request_id: RequestId::shell(id),
-                query: verbatim_model::protocol::Query::DumpTree { locations: false },
-                timing: EventTiming::default(),
-            },
-            received_now(),
-        )
+        Outgoing::Other(CoreToOutpost::Cancel(verbatim_model::request::Cancel {
+            number: verbatim_model::request::RequestNumber(id),
+            reason: verbatim_model::request::CancelReason::Withdrawn,
+        }))
     }
 
     fn query() -> Outgoing<CoreToOutpost> {
@@ -429,7 +363,7 @@ mod tests {
     fn order(queue: &mut Queue<CoreToOutpost>) -> Vec<String> {
         std::iter::from_fn(|| queue.pop())
             .map(|item| match item.command() {
-                CoreToOutpost::Query { request_id, .. } => format!("query {}", request_id.number),
+                CoreToOutpost::Cancel(cancel) => format!("query {}", cancel.number.0),
                 CoreToOutpost::Assign { target_pid } => format!("assign {target_pid}"),
                 CoreToOutpost::IdleQuery { round } => format!("idle {round}"),
                 other => format!("{other:?}"),
@@ -527,9 +461,7 @@ mod tests {
         {
             names.push(match command {
                 CoreToOutpost::Ping { .. } => "ping".to_owned(),
-                CoreToOutpost::Query { request_id, .. } => {
-                    format!("query {}", request_id.number)
-                }
+                CoreToOutpost::Cancel(cancel) => format!("query {}", cancel.number.0),
                 CoreToOutpost::NodesHeld { acknowledged, .. } => {
                     format!("held {acknowledged}")
                 }

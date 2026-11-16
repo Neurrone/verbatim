@@ -154,7 +154,7 @@ const REDUCER_ALLOWED: [&str; 13] = [
 
 /// What the outpost's reducer may not name: the pure rule's list, but
 /// `Arc`, which it may share immutable snapshots by, and `thread`, a field
-/// of the model's `WinEventStamp`, for which the thread module's paths and
+/// of the model's `NodeWindow`, for which the thread module's paths and
 /// its spawn and sleep stand; with the clock read as `Instant` at all, a
 /// lock by its method, a log, and a way out of the module.
 const REDUCER_FORBIDDEN: [&str; 21] = [
@@ -1293,7 +1293,7 @@ fn after() { GetMessageW(); }
 
     #[test]
     fn the_reducers_own_items_and_the_model_are_allowed() {
-        let source = "use std::sync::Arc;\nuse std::time::Duration;\nuse super::entry::Entry;\nuse verbatim_model::protocol::WinEventStamp;\nfn raiser(stamp: WinEventStamp) -> u32 {\n    stamp.thread\n}\n";
+        let source = "use std::sync::Arc;\nuse std::time::Duration;\nuse super::entry::Entry;\nuse verbatim_model::request::NodeWindow;\nfn raiser(window: NodeWindow) -> u32 {\n    window.thread\n}\n";
         assert_eq!(findings(source, &REDUCER), Vec::<String>::new());
     }
 

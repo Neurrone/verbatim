@@ -1,7 +1,7 @@
 //! The reducer's thread and its shell (`books/dev/src/explanation/design/ownership.md`): the mailbox every producer appends to,
 //! the thread that drains it into the reducer ([`super::reducer`]) and
 //! applies the reducer's effects, the reducer's timers in its timed wait,
-//! the queries' reply tokens, and the worker generations.
+//! and the worker generations.
 //!
 //! The rule that lets the reducer keep time: every lock its thread takes is
 //! a short hold with no call into an application and no wait inside it,
@@ -9,12 +9,9 @@
 //! mailbox's, the outbound backlog's with the store's inside it for a
 //! release, the store's for its writes, and a worker's charge's.
 //!
-//! What the shell holds that names an application's object, the elements
-//! the focus-following subscription is moved to, is kept by token, so the
-//! reducer holds none; an object the shell lets go of, an element no longer
-//! followed, a parked event object, or what a release removed, is handed
-//! to the next program dispatched, and dropped on its worker before the
-//! program runs, never on this thread.
+//! An object the shell lets go of, a parked event object or what a release
+//! removed, is handed to the next program dispatched, and dropped on its
+//! worker before the program runs, never on this thread.
 
 #![forbid(unsafe_code)]
 
@@ -26,18 +23,14 @@ use super::lock::{Lock, LockGuard};
 use std::thread;
 use std::time::Instant;
 
-use verbatim_model::NoteRequest;
 use verbatim_model::TraceId;
-use verbatim_model::protocol::{EventTiming, OutpostToCore, QueryOutcome, RequestId, Responder};
-
-use verbatim_uia::{Agile, Kept};
+use verbatim_model::protocol::OutpostToCore;
 
 use super::Context;
-use super::commit::{Effects, FocusEffects, KeptTarget, Writes};
+use super::commit::Effects;
 use super::outbound::Carried;
 use super::reducer::{
-    Asker, Change, Cut, Effect, Entry, Input, Item, Now, Program, Reducer, Request, Subscribed,
-    VerdictChange,
+    Asker, Change, Effect, Entry, Input, Item, Now, Program, Reducer, Request, VerdictChange,
 };
 use super::store::{Removed, Store, Tag};
 use super::worker::{self, Charge, Job};
@@ -53,10 +46,6 @@ pub(super) enum Posted {
     Entry(Entry),
     /// `Outpost::settle`, answered on `0` once the reducer reaches it.
     Settle(mpsc::Sender<()>),
-    /// Core withdraws a query.
-    Cancel(RequestId),
-    /// Core's note of a key with no before read.
-    KeyNote(NoteRequest),
     /// A verdict a program of generation `generation` made, posted alone,
     /// and taken after the mailbox closes, as a commit is.
     Verdict {
@@ -68,13 +57,8 @@ pub(super) enum Posted {
         request: Request,
         effects: Box<Effects>,
     },
-    /// A program ended, with the caret read it cut at its value change
-    /// check, if it cut one.
-    Finished {
-        request: Request,
-        panicked: bool,
-        cut: Option<Box<Cut>>,
-    },
+    /// A program ended.
+    Finished { request: Request, panicked: bool },
     /// An abandoned worker of this generation returned from its call.
     Returned(u64),
     /// Core's request.
@@ -131,8 +115,6 @@ impl Mailbox {
                     | Posted::CancelAsk(_)
                     | Posted::WindowDestroyed(_)
                     | Posted::Settle(_)
-                    | Posted::Cancel(_)
-                    | Posted::KeyNote(_)
             )
         {
             return;
@@ -195,13 +177,12 @@ impl Mailbox {
 #[derive(Default)]
 pub(super) struct Garbage {
     pub(super) store: Vec<Removed>,
-    pub(super) elements: Vec<Agile<Kept>>,
     pub(super) parked: Vec<super::store::Parked>,
 }
 
 impl Garbage {
     fn is_empty(&self) -> bool {
-        self.store.is_empty() && self.elements.is_empty() && self.parked.is_empty()
+        self.store.is_empty() && self.parked.is_empty()
     }
 }
 
@@ -217,8 +198,6 @@ struct Generation {
 pub(super) struct Shell {
     context: Arc<Context>,
     reducer: Reducer,
-    /// The reply tokens of the queries the reducer records, by request id.
-    tokens: HashMap<RequestId, Responder<OutpostToCore>>,
     /// Who waits on each test's settle, by its number: kept while the
     /// settle waits in the intake ([`Reducer::settles`]), answered as the
     /// reducer reaches it, and dropped as the outpost closes, which ends
@@ -226,8 +205,6 @@ pub(super) struct Shell {
     settles: HashMap<u64, mpsc::Sender<()>>,
     /// The last settle numbered.
     settles_taken: u64,
-    /// The elements the subscription follows, by token.
-    elements: Elements,
     garbage: Garbage,
     /// The generation in charge, and the threads of every worker started.
     generations: HashMap<u64, Generation>,
@@ -243,30 +220,6 @@ pub(super) struct Shell {
     warm: bool,
 }
 
-/// The elements the focus-following subscription follows, by the tokens
-/// the reducer names them by: an element given that is the same as one
-/// kept is given its token, so a focus that returns to an element keeps
-/// its group.
-#[derive(Default)]
-struct Elements {
-    kept: HashMap<u64, Agile<Kept>>,
-    taken: u64,
-}
-
-impl Elements {
-    /// The token of `element`, kept, or the one of the same element
-    /// already kept, `element` then let go of into `garbage`.
-    fn token(&mut self, element: Agile<Kept>, garbage: &mut Garbage) -> u64 {
-        if let Some((&token, _)) = self.kept.iter().find(|(_, kept)| kept.same_as(&element)) {
-            garbage.elements.push(element);
-            return token;
-        }
-        self.taken += 1;
-        self.kept.insert(self.taken, element);
-        self.taken
-    }
-}
-
 /// The store's tag for `request`.
 pub(super) fn tag_of(request: Request) -> Tag {
     Tag {
@@ -276,115 +229,38 @@ pub(super) fn tag_of(request: Request) -> Tag {
 }
 
 /// The change the reducer is given for `effects`, a commit of `request`:
-/// for a commit it accepts, its writes made ([`write`]). Any other is
+/// for a commit it accepts, its text writes made ([`write`]). Any other is
 /// refused whole, `None`: its writes are not made and its objects are let
 /// go of into `garbage`.
 fn admit(
     store: &Store,
     reducer: &Reducer,
     (request, effects): (Request, Effects),
-    elements: &mut Elements,
     garbage: &mut Garbage,
 ) -> Option<Change> {
+    let (mut change, text) = effects.split();
     if reducer.accepts(request) {
-        return Some(write(store, tag_of(request), effects, elements, garbage));
+        if !text.is_empty() {
+            change.text = write(store, tag_of(request), text, garbage);
+        }
+        return Some(change);
     }
-    discard(effects, garbage);
+    garbage.store.push(Removed::of_text(text));
     None
 }
 
-/// Lets go of the elements of `target` into `garbage`.
-fn let_go_of_target(target: KeptTarget, garbage: &mut Garbage) {
-    garbage.elements.push(target.element);
-    garbage
-        .elements
-        .extend(target.slider.map(|(_, slider)| slider));
-}
-
-/// `target` as the reducer takes it, its elements given their tokens.
-fn tokens_of(target: KeptTarget, elements: &mut Elements, garbage: &mut Garbage) -> Subscribed {
-    Subscribed {
-        group: target.group,
-        element: elements.token(target.element, garbage),
-        slider: target
-            .slider
-            .map(|(node, slider)| (node, elements.token(slider, garbage))),
-    }
-}
-
-/// Lets go of what a refused commit holds into `garbage`.
-fn discard(effects: Effects, garbage: &mut Garbage) {
-    let (_, writes) = effects.split();
-    if let Some(target) = writes
-        .focus
-        .map(FocusEffects::into_writes)
-        .and_then(|writes| writes.target)
-    {
-        let_go_of_target(target, garbage);
-    }
-    if let Some((_, target)) = writes.element {
-        let_go_of_target(target, garbage);
-    }
-    if let Some(stale) = writes.stale {
-        garbage.elements.extend(stale.element);
-    }
-    garbage.store.push(Removed::of_text(writes.text));
-}
-
-/// Makes the writes of `effects`, a commit of request `tag`, that only the
-/// shell applies, to the store and the elements followed, and returns the
-/// reducer's change, its targets' elements given their tokens and its text
-/// facts' changes those the store made. Called only for a commit the
-/// reducer accepts, in the order the program made them: its text writes,
-/// made before the rest as its text calls came first; the stale element
-/// evicted before the focus is followed; then the follow.
+/// Makes `text`, the text writes of a commit of request `tag` the reducer
+/// accepts, to the store, in the order the program made them, and returns
+/// the text facts' changes the store made.
 fn write(
     store: &Store,
     tag: Tag,
-    effects: Effects,
-    elements: &mut Elements,
+    text: Vec<super::store::TextWrite>,
     garbage: &mut Garbage,
-) -> Change {
-    let (mut change, writes) = effects.split();
-    let Writes {
-        mut focus,
-        element,
-        stale,
-        text,
-    } = writes;
-    if !text.is_empty() {
-        let (changes, removed) = store.write_text(tag, text);
-        change.text = changes;
-        garbage.store.push(removed);
-    }
-    if let Some(stale) = stale {
-        let evicted = stale
-            .element
-            .and_then(|element| store.evict_element_if(stale.node, &element));
-        // The subscription is not moved to the element evicted: the focus's
-        // own is found after its report.
-        if let (Some(evicted), Some(writes)) =
-            (&evicted, focus.as_mut().map(FocusEffects::writes_mut))
-            && writes.node == stale.node
-            && writes
-                .target
-                .as_ref()
-                .is_some_and(|target| target.element.same_as(evicted))
-            && let Some(target) = writes.target.take()
-        {
-            let_go_of_target(target, garbage);
-        }
-        garbage.elements.extend(evicted);
-    }
-    change.focus = focus.map(|focus| {
-        focus.into_commit(|writes| {
-            writes
-                .target
-                .map(|target| tokens_of(target, elements, garbage))
-        })
-    });
-    change.element = element.map(|(node, target)| (node, tokens_of(target, elements, garbage)));
-    change
+) -> Vec<super::reducer::TextChange> {
+    let (changes, removed) = store.write_text(tag, text);
+    garbage.store.push(removed);
+    changes
 }
 
 impl Shell {
@@ -397,10 +273,8 @@ impl Shell {
         let mut shell = Shell {
             context: Arc::clone(context),
             reducer: Reducer::new(),
-            tokens: HashMap::new(),
             settles: HashMap::new(),
             settles_taken: 0,
-            elements: Elements::default(),
             garbage: Garbage::default(),
             generations: HashMap::new(),
             threads: Vec::new(),
@@ -474,11 +348,9 @@ impl Shell {
                 break;
             }
         }
-        // No program is in flight: what the shell let go of and the
-        // elements followed are dropped by the worker in charge, as at
-        // runtime, and the workers end once their channels close.
-        let kept = std::mem::take(&mut self.elements.kept);
-        self.garbage.elements.extend(kept.into_values());
+        // No program is in flight: what the shell let go of is dropped by
+        // the worker in charge, as at runtime, and the workers end once
+        // their channels close.
         if !self.garbage.is_empty() {
             let program = self.reducer.shutdown_drop();
             self.dispatch(program);
@@ -490,30 +362,17 @@ impl Shell {
     /// Takes one posted input into the reducer and applies what it asks.
     fn take(&mut self, posted: Posted) {
         let input = match posted {
-            Posted::Entry(entry) => {
-                if let Item::Query { request_id, .. } = &entry.item
-                    && !self.closing
-                {
-                    self.tokens
-                        .insert(*request_id, token(&self.context, *request_id, entry.trace));
-                }
-                Input::Entry(entry)
-            }
+            Posted::Entry(entry) => Input::Entry(entry),
             Posted::Settle(done) => {
                 let Some(input) = self.settle(done) else {
                     return;
                 };
                 input
             }
-            Posted::Cancel(request_id) => Input::Cancel(request_id),
             Posted::Ask(ask) => Input::Ask(ask),
             Posted::CancelAsk(cancel) => Input::CancelAsk(cancel),
             Posted::WindowDestroyed(window) => Input::WindowDestroyed(window),
             Posted::Answered { request, answer } => Input::Answered { request, answer },
-            Posted::KeyNote(note) => Input::KeyNote {
-                node: note.node(),
-                fetch: note.fetch(),
-            },
             Posted::Verdict { generation, change } => Input::Verdict { generation, change },
             Posted::Commit { request, effects } => {
                 // A dead generation's or a claimed request's commit gives
@@ -522,7 +381,6 @@ impl Shell {
                     &self.context.store,
                     &self.reducer,
                     (request, *effects),
-                    &mut self.elements,
                     &mut self.garbage,
                 ) else {
                     return;
@@ -533,15 +391,10 @@ impl Shell {
                 }
             }
 
-            Posted::Finished {
-                request,
-                panicked,
-                cut,
-            } => Input::Finished {
+            Posted::Finished { request, panicked } => Input::Finished {
                 request,
                 reported: false,
                 panicked,
-                cut,
             },
             Posted::Returned(generation) => {
                 self.parked.remove(&generation);
@@ -619,16 +472,6 @@ impl Shell {
                 acknowledged,
                 live,
             } => return vec![self.release(&nodes, &anchors, acknowledged, &live)],
-            // Core's `Follow` and the focus completion alone move the
-            // registration (`super::followed`).
-            Effect::Subscribe(_) => {}
-            Effect::Unfollow(tokens) => {
-                for token in tokens {
-                    if let Some(element) = self.elements.kept.remove(&token) {
-                        self.garbage.elements.push(element);
-                    }
-                }
-            }
             Effect::ForgetRanges(ranges) => {
                 self.garbage
                     .store
@@ -653,9 +496,6 @@ impl Shell {
                 self.count_parked();
                 self.spawn_worker(replacement, false);
             }
-            Effect::LogicError(error) => {
-                tracing::error!(?error, "a commit asked for what cannot occur");
-            }
             Effect::Settled(id) => {
                 if let Some(done) = self.settles.remove(&id) {
                     let _ = done.send(());
@@ -670,9 +510,9 @@ impl Shell {
         *self.context.parked.lock() = self.parked.len();
     }
 
-    /// Checks, in debug builds, that the shell's tables match the
-    /// reducer's: a waiter for every settle waiting in the intake, and a
-    /// reply token for every query the reducer records, and no other.
+    /// Checks, in debug builds, that the shell's table matches the
+    /// reducer's: a waiter for every settle waiting in the intake, and no
+    /// other.
     fn check_tables(&self) {
         debug_assert_eq!(
             self.settles
@@ -681,14 +521,6 @@ impl Shell {
                 .collect::<std::collections::BTreeSet<u64>>(),
             self.reducer.settles(),
             "a waiter for every settle waiting in the intake, and no other"
-        );
-        debug_assert_eq!(
-            self.tokens
-                .keys()
-                .copied()
-                .collect::<std::collections::BTreeSet<RequestId>>(),
-            *self.reducer.queries(),
-            "a reply token for every query the reducer records, and no other"
         );
     }
 
@@ -723,19 +555,12 @@ impl Shell {
             self.context.mailbox.post(Posted::Finished {
                 request,
                 panicked: true,
-                cut: None,
             });
         }
     }
 
-    /// Sends `message`: a reply through its query's token.
-    fn send(&mut self, message: OutpostToCore) {
-        if let OutpostToCore::Reply { request_id, .. } = &message
-            && let Some(token) = self.tokens.remove(request_id)
-        {
-            token.answer(message);
-            return;
-        }
+    /// Sends `message` to Core.
+    fn send(&self, message: OutpostToCore) {
         self.context.send(message);
     }
 
@@ -785,32 +610,11 @@ impl Shell {
     }
 }
 
-/// The reply token of query `request_id`, traced `trace`: its one answer
-/// is sent to Core, and dropped unanswered it answers "failed", the
-/// model's one outcome for a responder dropped unanswered on the outpost's
-/// wire, since the outpost's process lives.
-fn token(
-    context: &Arc<Context>,
-    request_id: RequestId,
-    trace: TraceId,
-) -> Responder<OutpostToCore> {
-    let context = Arc::clone(context);
-    Responder::new(move |answer: Option<OutpostToCore>| {
-        let message = answer.unwrap_or_else(|| OutpostToCore::Reply {
-            trace_id: trace,
-            request_id,
-            outcome: QueryOutcome::Failed("the outpost dropped the query".to_owned()),
-            timing: EventTiming::default(),
-        });
-        context.send(message);
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeSet;
 
-    use verbatim_model::protocol::{Query, RequestId, Urgent};
+    use verbatim_model::protocol::Urgent;
 
     use super::super::reducer::{Anchor, NodeAnchors, TextChange};
     use super::super::store::TextWrite;
@@ -852,13 +656,12 @@ mod tests {
         let store = Store::new();
         let mut reducer = Reducer::new();
         let entry = Entry::own(
-            Item::Query {
-                request_id: RequestId::shell(1),
-                query: Query::ReadFocus {
-                    purpose: verbatim_model::protocol::FocusPurpose::Plain,
-                    details: verbatim_model::property::NodeDetailSet::ALL,
-                    text: verbatim_model::TextDetails::ALL,
-                },
+            Item::Msaa {
+                kind: super::super::reducer::WinKind::ConsoleUpdate,
+                hwnd: 5,
+                id_object: 3,
+                id_child: 65,
+                raiser: 3,
             },
             TraceId::mint(),
             1,
@@ -870,7 +673,7 @@ mod tests {
                 Effect::Dispatch(program) => Some(program.request),
                 _ => None,
             })
-            .expect("the query's program dispatched");
+            .expect("the entry's program dispatched");
         let node = store
             .nodes_for(
                 tag_of(in_flight),
@@ -882,26 +685,14 @@ mod tests {
             generation: 7,
             number: 99,
         };
-        let (mut elements, mut garbage) = (Elements::default(), Garbage::default());
+        let mut garbage = Garbage::default();
         let (refused, _) = minted(node, 7);
-        let admitted = admit(
-            &store,
-            &reducer,
-            (dead, refused),
-            &mut elements,
-            &mut garbage,
-        );
+        let admitted = admit(&store, &reducer, (dead, refused), &mut garbage);
         assert!(admitted.is_none());
         assert!(!store.tags_anchor(7));
         let (accepted, change) = minted(node, 8);
-        let admitted = admit(
-            &store,
-            &reducer,
-            (in_flight, accepted),
-            &mut elements,
-            &mut garbage,
-        )
-        .expect("the change of the program in flight");
+        let admitted = admit(&store, &reducer, (in_flight, accepted), &mut garbage)
+            .expect("the change of the program in flight");
         assert_eq!(admitted.text, vec![change]);
         assert!(store.tags_anchor(8));
     }
@@ -932,10 +723,8 @@ mod tests {
         Shell {
             context: context(),
             reducer: Reducer::new(),
-            tokens: HashMap::new(),
             settles: HashMap::new(),
             settles_taken: 0,
-            elements: Elements::default(),
             garbage: Garbage::default(),
             generations: HashMap::new(),
             threads: Vec::new(),

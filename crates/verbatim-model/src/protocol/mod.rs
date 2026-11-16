@@ -8,77 +8,14 @@
 
 #![deny(clippy::wildcard_enum_match_arm)]
 
-mod merge;
 mod responder;
 pub mod samples;
 
-pub use merge::{Barrier, EventKey, Merge, merge_into};
 pub use responder::Responder;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    Backend, CallCounts, NodeDetails, NodeId, NodeSnapshot, NormalizedEvent, Notification,
-    NotificationKind, NotificationProcessing, OutpostId, Pid, QueryKind, Role, StateSet, TextOp,
-    TextReply, TraceId, TreeNode, WindowFacts,
-};
-
-/// Names one query Core sent an outpost ([`CoreToOutpost::Query`]), echoed
-/// in its [`OutpostToCore::Reply`] and named by its
-/// [`CoreToOutpost::CancelQuery`]: who in Core asked, and that asker's own
-/// number for it. Outposts carry it opaquely, storing, comparing and
-/// echoing it, and decide nothing by it; Core routes a reply by its
-/// [`asker`](Self::asker).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-pub struct RequestId {
-    /// Who in Core asked, and so where its reply goes.
-    pub asker: Requester,
-    /// The asker's number for the query, unique among its queries.
-    pub number: u64,
-}
-
-impl RequestId {
-    /// The query numbered `number` by Core's reducer.
-    #[must_use]
-    pub const fn reducer(number: u64) -> Self {
-        Self {
-            asker: Requester::Reducer,
-            number,
-        }
-    }
-
-    /// The query numbered `number` by verbatim.exe's own request table.
-    #[must_use]
-    pub const fn shell(number: u64) -> Self {
-        Self {
-            asker: Requester::Shell,
-            number,
-        }
-    }
-}
-
-impl std::fmt::Display for RequestId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let asker = match self.asker {
-            Requester::Reducer => "reducer",
-            Requester::Shell => "shell",
-        };
-        write!(f, "{asker} {}", self.number)
-    }
-}
-
-/// Who in Core asked a query ([`RequestId`]). Open to later askers, such as
-/// extensions.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[non_exhaustive]
-pub enum Requester {
-    /// Core's reducer, whose query numbers are its `QueryId`s.
-    Reducer,
-    /// verbatim.exe's own request table: a tree dump, focus-now, the fake
-    /// focus, and the shell item queries.
-    Shell,
-}
-
+use crate::{CallCounts, NodeDetails, NodeId, OutpostId, Pid, Role, StateSet, TextReply, TreeNode};
 /// When an event reached each point on its way through the listener and
 /// the outpost, for the latency log Core writes for every announcement:
 /// microseconds since the Unix epoch, 0 for a point it did not pass. Also
@@ -229,423 +166,6 @@ pub enum AncestorsEnd {
     PlainFrom(isize),
 }
 
-/// A UIA focus as the focus listener judged and read it from the event's
-/// own element, on the thread for the element's application
-/// (`books/dev/src/reference/adr/0001-focus.md`, "Who reads a UI Automation focus"): the element
-/// had the
-/// keyboard focus, read live, when it was read.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct UiaFocusRead {
-    /// The element's cached native window handle, or 0 when it is not a
-    /// window in its own right.
-    pub hwnd: isize,
-    /// The focus: its name and role from the event's cache, as NVDA reads
-    /// them from the event's element, and its value, states, and details
-    /// read afresh.
-    pub snapshot: UiaSnapshotFact,
-    /// Its raw-view ancestors, nearest first, up to its process's
-    /// top-level window: read from the element up to the first one the
-    /// thread already knew from the focus before, and the rest as they were
-    /// read then. Where the walk stopped short, [`Self::ancestors_end`]
-    /// names the window the outpost completes the chain from.
-    pub ancestors: Vec<UiaAncestorFact>,
-    /// Where the chain goes on above them, as the walk ended.
-    #[serde(default)]
-    pub ancestors_end: AncestorsEnd,
-    /// For a list or tab control, its first selected child; never for a
-    /// focus whose value is its first selected item
-    /// ([`Self::value_from_selection`]).
-    pub selected_child: Option<UiaSnapshotFact>,
-    /// Whether the focus's value is its first selected item's name, as
-    /// NVDA reads it for a combo box without the `Value` pattern and a
-    /// looping selector (`verbatim_uia::map::value_from_selection`): that
-    /// item is then its value, never its selected child, and a later
-    /// selection of one of its items is a change of its value.
-    pub value_from_selection: bool,
-    /// The element's own window or its nearest ancestor's (NVDA's
-    /// `getNearestWindowHandle`), when it was found.
-    pub window: Option<isize>,
-    /// Whether the event's runtime id still names the element it named
-    /// before: `None` when it is not that of the last focus the listener's
-    /// thread read for the application, or the read was cut before that
-    /// element's; else what was read live of that earlier element with this
-    /// focus. Not focused or gone means the application gave the id to a
-    /// new element after the one it named died: the node keeps its id, and
-    /// the outpost evicts the element it kept for it, dropping its text
-    /// caches and terminal entry too when it is gone; focused lets the
-    /// outpost keep the element it found for the node, as it does for a
-    /// repeat read while the focus before it waited for Core's judgement
-    /// (`books/dev/src/reference/adr/0001-focus.md`, "Object identity").
-    pub same_as_last: Option<crate::EarlierElement>,
-    /// Where the ancestors taken from the reading thread's ancestry cache
-    /// begin: the index, in [`Self::ancestors`] nearest first, of the
-    /// first one not read live, every one from there on reused from its
-    /// last read in the application. `None` when every ancestor was read
-    /// live.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cached_from: Option<u32>,
-    /// The live re-read this read answers, by Core's request number
-    /// (`verbatim_model::LiveReread`): a read of the held element of the
-    /// thread's last read, with no ancestry cache, which carries no
-    /// marker of its own. `None` for any other read.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub answers: Option<u64>,
-}
-
-/// The thread that raised an MSAA `WinEvent` and when, as every hook that
-/// receives the event is told (`idEventThread` and `dwmsEventTime`): with
-/// the event's kind and address, what tells the listener's copy of an event
-/// and the outpost's own hook's copy apart from other events
-/// (`books/dev/src/reference/crates/verbatim-outpost.md`, "The hand-over of an application's MSAA
-/// events"). The thread is also the one NVDA's limiter counts the event
-/// by.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct WinEventStamp {
-    /// The thread that raised the event.
-    pub thread: u32,
-    /// When Windows raised it, on the clock `verbatim_ia2::event_clock`
-    /// reads, which wraps after 49.7 days.
-    pub time: u32,
-}
-
-impl WinEventStamp {
-    /// Whether the event was raised after the clock read `tick`.
-    #[must_use]
-    pub fn raised_after(self, tick: u32) -> bool {
-        tick_is_after(self.time, tick)
-    }
-
-    /// Whether the event was raised before the clock read `tick`.
-    #[must_use]
-    pub fn raised_before(self, tick: u32) -> bool {
-        tick_is_after(tick, self.time)
-    }
-}
-
-/// Whether tick `a` comes after tick `b` on the event clock, which wraps:
-/// two ticks are compared by their difference, so the comparison holds
-/// across a wrap for times less than 24 days apart.
-#[must_use]
-pub fn tick_is_after(a: u32, b: u32) -> bool {
-    a != b && a.wrapping_sub(b) < 1 << 31
-}
-
-/// A fact the listener forwards to Core, tagged with the pid Core routes it
-/// to (decision D13). An MSAA fact forwards the raw `WinEvent` address
-/// untouched, and a UIA selection, menu, or notification fact is built
-/// from the element's cached properties, with hang-safe local reads only
-/// (the owning pid, a cached window handle). A UIA focus is a marker sent
-/// as the event arrives, then the read the listener's thread for the
-/// application made from the event's own element
-/// ([`DeliveredFact::UiaFocusRead`]), or its drop.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct ListenerFact {
-    /// The process whose outpost handles the fact: the application it
-    /// concerns, or, for a console window, its console host.
-    pub pid: Pid,
-    /// The fact itself, as the target outpost receives it.
-    pub fact: DeliveredFact,
-}
-
-impl ListenerFact {
-    /// The pid the supervisor routes this fact to.
-    #[must_use]
-    pub fn pid(&self) -> Pid {
-        self.pid
-    }
-
-    /// Strips the pid, yielding the [`DeliveredFact`] the supervisor hands to
-    /// the target outpost once routing is done.
-    #[must_use]
-    pub fn into_delivered(self) -> DeliveredFact {
-        self.fact
-    }
-}
-
-/// A fact the supervisor delivers to a target outpost (decision D13): what
-/// the listener captured, minus the pid, since routing is already done. The
-/// outpost's worker reads, arbitrates, and reports it exactly as it does the
-/// events it hooks itself; its own hook makes the same facts of the MSAA
-/// focus, foreground, menu, alert, and tooltip events it takes in
-/// (the outpost crate's `fact_of_win_event`).
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub enum DeliveredFact {
-    /// The focus listener received a UIA focus event in this application
-    /// and is reading it: entries the outpost takes in after this wait
-    /// until the read arrives or is dropped, and the focus is handled in
-    /// this place (`books/dev/src/reference/adr/0001-focus.md`, "One route per application, and
-    /// the marker"), as NVDA's UIA events pass in order through the
-    /// one thread that judges them.
-    UiaFocusMarker {
-        /// The listener's number for this focus event, which its read or
-        /// drop carries.
-        marker: u64,
-    },
-    /// The focus listener's read of the UIA focus event `marker` names.
-    UiaFocusRead {
-        /// The marker the read resolves.
-        marker: u64,
-        /// The focus as read.
-        read: Box<UiaFocusRead>,
-        /// Whether the event read was a focus rather than a menu opening.
-        focus: bool,
-    },
-    /// The UIA focus event `marker` names is not reported: its element had
-    /// lost the keyboard focus when it was read, as NVDA drops such an
-    /// event, or its window was hung, the console window's own, or of a
-    /// class on NVDA's MSAA list; or its read did not return in time.
-    UiaFocusDropped {
-        /// The marker the drop resolves.
-        marker: u64,
-        /// Whether the event dropped was a focus rather than a menu
-        /// opening, a selection, or a notification.
-        focus: bool,
-    },
-    /// The focus listener that sent the markers still waiting has ended:
-    /// none of them will be resolved, so none is waited for any more. Made
-    /// by the supervisor when it replaces the listener.
-    UiaFocusReadsEnded,
-    /// An MSAA focus change: the raw `WinEvent` address.
-    MsaaFocus {
-        /// The event's window handle.
-        hwnd: isize,
-        /// The event's `idObject`.
-        id_object: i32,
-        /// The event's `idChild`.
-        id_child: i32,
-    },
-    /// A foreground change: the new foreground window.
-    Foreground {
-        /// The new foreground window handle.
-        hwnd: isize,
-    },
-    /// A popup menu opening: the raw `WinEvent` address.
-    MenuPopup {
-        /// The event's window handle.
-        hwnd: isize,
-        /// The event's `idObject`.
-        id_object: i32,
-        /// The event's `idChild`.
-        id_child: i32,
-    },
-    /// A UIA event the focus listener took to its application's reading
-    /// thread for NVDA's checks of its sender (a selection's or a
-    /// notification's nearest window), behind marker `marker`: what the
-    /// thread found, which takes the marker's place in the outpost's
-    /// intake as a focus's read does.
-    UiaMarked {
-        /// The marker this resolves.
-        marker: u64,
-        /// The event, as the reading thread passed it.
-        fact: Box<DeliveredFact>,
-    },
-    /// A UIA element selected within its container
-    /// (`SelectionItem_ElementSelected`).
-    UiaSelection {
-        /// The element's cached native window handle, or 0.
-        hwnd: isize,
-        /// For an element that is not a window: its nearest window, which
-        /// the listener's reading thread walked up to as NVDA does
-        /// (`getNearestWindowHandle`), else 0. The window the outpost tests
-        /// the selection's window and acceptance with, as NVDA tests them
-        /// with the nearest window.
-        #[serde(default)]
-        focus_window: isize,
-        /// The selected element's cached snapshot parts.
-        snapshot: UiaSnapshotFact,
-    },
-    /// A UIA notification (`AutomationNotification`).
-    UiaNotification {
-        /// The element's cached native window handle, or 0.
-        hwnd: isize,
-        /// The raising element's cached snapshot parts.
-        snapshot: UiaSnapshotFact,
-        /// The notification.
-        notification: Notification,
-    },
-    /// A Windows toast opening, as the focus listener's desktop-wide
-    /// window-opened subscription keeps one (`docs/parity/alerts.md`,
-    /// "Toasts"): read on the application's reading thread as a selection is.
-    UiaToast {
-        /// The toast's window: as the callback sends it, its own, 0 for
-        /// none; once its reading thread has passed it, its nearest.
-        hwnd: isize,
-        /// The toast as its reading thread read it.
-        snapshot: UiaSnapshotFact,
-    },
-    /// An MSAA alert (`EVENT_SYSTEM_ALERT`): the raw `WinEvent` address.
-    Alert {
-        /// The event's window handle.
-        hwnd: isize,
-        /// The event's `idObject`.
-        id_object: i32,
-        /// The event's `idChild`.
-        id_child: i32,
-    },
-    /// A tooltip window shown (`EVENT_OBJECT_SHOW` on `tooltips_class32`):
-    /// the raw `WinEvent` address.
-    Show {
-        /// The event's window handle.
-        hwnd: isize,
-        /// The event's `idObject`.
-        id_object: i32,
-        /// The event's `idChild`.
-        id_child: i32,
-    },
-    /// The focus listener answers Core's live re-read `request` gone: the
-    /// application has no reading thread, or its thread no longer holds
-    /// the read the re-read names, or the element is gone. The outpost
-    /// passes it on to Core ([`OutpostToCore::LiveRereadGone`]).
-    UiaLiveRereadGone {
-        /// Core's request.
-        request: u64,
-    },
-    /// Core's live re-read `request` of the outpost's own MSAA report
-    /// traced `trace_id` ([`CoreToOutpost::LiveReread`]), taken into the
-    /// outpost's intake as a fact.
-    MsaaLiveReread {
-        /// Core's request.
-        request: u64,
-        /// The trace of the report to read again.
-        trace_id: TraceId,
-    },
-}
-
-impl DeliveredFact {
-    /// Whether this fact is an MSAA `WinEvent`'s, which an outpost's own
-    /// hook takes in once it is installed, and the listener forwards only
-    /// until then (`books/dev/src/reference/adr/0001-focus.md`, "One route per application, and
-    /// the marker").
-    #[must_use]
-    pub fn is_win_event(&self) -> bool {
-        matches!(
-            self,
-            DeliveredFact::MsaaFocus { .. }
-                | DeliveredFact::Foreground { .. }
-                | DeliveredFact::MenuPopup { .. }
-                | DeliveredFact::Alert { .. }
-                | DeliveredFact::Show { .. }
-        )
-    }
-
-    /// Whether this fact is part of a UIA focus's read: a marker, the read,
-    /// a drop, a marked selection or notification, which resolves its
-    /// marker as a read does, the end of a listener's reads, or a live
-    /// re-read's answer of gone. The supervisor relays these in order and
-    /// never drops one, since an outpost waits on a marker until its read
-    /// or drop arrives, and Core on a live re-read until its answer.
-    #[must_use]
-    pub fn is_focus_read(&self) -> bool {
-        matches!(
-            self,
-            DeliveredFact::UiaFocusMarker { .. }
-                | DeliveredFact::UiaFocusRead { .. }
-                | DeliveredFact::UiaFocusDropped { .. }
-                | DeliveredFact::UiaMarked { .. }
-                | DeliveredFact::UiaFocusReadsEnded
-                | DeliveredFact::UiaLiveRereadGone { .. }
-        )
-    }
-
-    /// The object and kind this fact concerns, for NVDA's limiter rule (one
-    /// waiting entry per object and kind, a newer one replacing it); for a
-    /// notification, its element, kind, processing, and activity id, not
-    /// its text, as NVDA's UIA limiter keys one (`eventRecord.h`), so a
-    /// newer notification of the same activity replaces one still waiting.
-    /// A `WinEvent`'s fact other than a menu opening (a foreground change,
-    /// an MSAA focus, an alert, or a tooltip shown) is keyed by the thread
-    /// that raised it too, from `win_event` (0 without it), as NVDA's
-    /// `WinEvent` limiter keys those events (`orderedWinEventLimiter.py` 63
-    /// to 75 and 79), so the facts of one address from two threads are not
-    /// merged. A menu opening is keyed by its address alone: NVDA's limiter
-    /// keeps only its most recent menu event, whatever its address or
-    /// thread (76 to 78), which the outpost's intake follows per
-    /// application, for popup starts, by handling only a batch's newest
-    /// menu opening (NVDA's one slot also holds menu starts and ends and
-    /// covers every application: `docs/parity/backends.md`, the limiter's
-    /// entry).
-    /// `None` for the parts of a UIA focus's read, which are never replaced
-    /// on the way: the outpost coalesces a read only where it takes its
-    /// marker's place.
-    #[must_use]
-    pub fn key(&self, win_event: Option<WinEventStamp>) -> Option<FactKey> {
-        let thread = win_event.map_or(0, |stamp| stamp.thread);
-        Some(match self {
-            DeliveredFact::Foreground { hwnd } => FactKey::Foreground(*hwnd, thread),
-            DeliveredFact::MsaaFocus {
-                hwnd,
-                id_object,
-                id_child,
-            } => FactKey::MsaaFocus(*hwnd, *id_object, *id_child, thread),
-            DeliveredFact::UiaFocusMarker { .. }
-            | DeliveredFact::UiaFocusRead { .. }
-            | DeliveredFact::UiaFocusDropped { .. }
-            | DeliveredFact::UiaFocusReadsEnded
-            | DeliveredFact::UiaMarked { .. }
-            | DeliveredFact::UiaLiveRereadGone { .. }
-            | DeliveredFact::MsaaLiveReread { .. } => return None,
-            DeliveredFact::UiaNotification {
-                snapshot,
-                notification,
-                ..
-            } => FactKey::UiaNotification(
-                snapshot.runtime_id.clone(),
-                notification.kind,
-                notification.processing,
-                notification.activity_id.clone(),
-            ),
-            DeliveredFact::MenuPopup {
-                hwnd,
-                id_object,
-                id_child,
-            } => FactKey::MenuPopup(*hwnd, *id_object, *id_child),
-            DeliveredFact::UiaSelection { snapshot, .. } => {
-                FactKey::UiaSelection(snapshot.runtime_id.clone())
-            }
-            DeliveredFact::UiaToast { snapshot, .. } => {
-                FactKey::UiaToast(snapshot.runtime_id.clone())
-            }
-            DeliveredFact::Alert {
-                hwnd,
-                id_object,
-                id_child,
-            } => FactKey::Alert(*hwnd, *id_object, *id_child, thread),
-            DeliveredFact::Show {
-                hwnd,
-                id_object,
-                id_child,
-            } => FactKey::Show(*hwnd, *id_object, *id_child, thread),
-        })
-    }
-}
-
-/// The object and kind a [`DeliveredFact`] concerns.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub enum FactKey {
-    /// A foreground change to this window, raised by this thread.
-    Foreground(isize, u32),
-    /// An MSAA focus at this address, raised by this thread.
-    MsaaFocus(isize, i32, i32, u32),
-    /// An MSAA menu opening at this address, whatever thread raised it.
-    MenuPopup(isize, i32, i32),
-    /// A UIA selection of this runtime id.
-    UiaSelection(Vec<i32>),
-    /// A UIA notification of this runtime id, with this kind, processing,
-    /// and activity id.
-    UiaNotification(
-        Vec<i32>,
-        NotificationKind,
-        NotificationProcessing,
-        Option<String>,
-    ),
-    /// A toast of this runtime id.
-    UiaToast(Vec<i32>),
-    /// An MSAA alert at this address, raised by this thread.
-    Alert(isize, i32, i32, u32),
-    /// A tooltip shown at this address, raised by this thread.
-    Show(isize, i32, i32, u32),
-}
-
 /// Messages from verbatim.exe to an outpost.
 ///
 /// An outpost's target application is set once (decision D9: one
@@ -653,36 +173,7 @@ pub enum FactKey {
 /// line, or, for a spare started before it had one, by
 /// [`CoreToOutpost::Assign`].
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[expect(
-    clippy::large_enum_variant,
-    reason = "a message is built once and moved, never stored in bulk"
-)]
 pub enum CoreToOutpost {
-    /// A query, answered by exactly one [`OutpostToCore::Reply`] carrying
-    /// the same `request_id`.
-    Query {
-        /// Trace ID of the input that caused the query.
-        trace_id: TraceId,
-        /// Core's id for this request, echoed in the reply.
-        request_id: RequestId,
-        /// What to do.
-        query: Query,
-        /// verbatim.exe's relay stamps (`EventTiming::core_received_at_us`
-        /// and the two after it), filled in as the request is written, which
-        /// the outpost carries into its reply's timing; default as sent.
-        #[serde(default)]
-        timing: EventTiming,
-    },
-    /// Withdraws a query that has not started: it is answered
-    /// [`QueryOutcome::NotStarted`] instead of being run. A query already
-    /// running is not affected.
-    CancelQuery {
-        /// The query to withdraw.
-        request_id: RequestId,
-    },
-    /// The note of a key with no before read, set on its node as it
-    /// arrives, with no reply: nothing waits on it.
-    KeyNote(crate::NoteRequest),
     /// Liveness probe; answered by [`OutpostToCore::Pong`].
     Ping {
         /// When verbatim.exe began writing this command, in microseconds
@@ -728,19 +219,6 @@ pub enum CoreToOutpost {
     /// has not exited within its time limit. Nothing is answered: the pipe
     /// closing and the process exiting are the answer.
     Shutdown,
-    /// A live re-read of the outpost's last MSAA focus report, traced
-    /// `trace_id`, which Core set aside because it would have spoken a
-    /// cached ancestor: the object at the report's event address is read
-    /// again with its ancestors live and reported carrying `request`
-    /// (`NormalizedEvent::FocusChanged::answers`), or, when that is not the
-    /// last report or the address gives no object, answered
-    /// [`OutpostToCore::LiveRereadGone`].
-    LiveReread {
-        /// Core's request.
-        request: u64,
-        /// The report's trace.
-        trace_id: TraceId,
-    },
     /// To a spare outpost (`books/dev/src/reference/adr/0001-focus.md`, "Spare outposts"): the
     /// application it watches from now on, for the rest of its life. It
     /// installs its process-scoped `WinEvent` hook for that application,
@@ -794,17 +272,13 @@ impl CoreToOutpost {
     #[must_use]
     pub fn kind(&self) -> Kind {
         match self {
-            CoreToOutpost::Query { .. }
-            | CoreToOutpost::CancelQuery { .. }
-            | CoreToOutpost::Request(_)
+            CoreToOutpost::Request(_)
             | CoreToOutpost::Cancel(_)
-            | CoreToOutpost::KeyNote(_)
             | CoreToOutpost::IdleQuery { .. } => Kind::Ask,
             CoreToOutpost::NodesHeld { .. } | CoreToOutpost::WindowDestroyed(_) => Kind::Release,
             CoreToOutpost::Assign { .. } | CoreToOutpost::Ping { .. } | CoreToOutpost::Shutdown => {
                 Kind::Lifecycle
             }
-            CoreToOutpost::LiveReread { .. } => Kind::Routed,
         }
     }
 }
@@ -891,224 +365,8 @@ impl CoreToListener {
     }
 }
 
-/// What a [`CoreToOutpost::Query`] asks for.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub enum Query {
-    /// The application's current foreground window, if it is the system's
-    /// foreground window, and its focused control with that control's
-    /// ancestors and selected child, read for `purpose`, which decides the
-    /// tests the answer gets ([`FocusPurpose`]).
-    ReadFocus {
-        /// Why the focus is read.
-        purpose: FocusPurpose,
-        /// The node details each node's read fetches.
-        details: crate::property::NodeDetailSet,
-        /// What the read of the focus's line fetches beyond its text.
-        text: crate::TextDetails,
-    },
-    /// One object-navigation step from `node_id` in the direction `kind`
-    /// names.
-    Navigate {
-        /// The node to navigate from.
-        node_id: NodeId,
-        /// Which way: parent, next or previous sibling, or first child.
-        kind: QueryKind,
-        /// The node details the read of the node reached fetches.
-        details: crate::property::NodeDetailSet,
-    },
-    /// The node as it is now: its name, value and the rest, read live for
-    /// a review command, and its table's row and column counts, for Report
-    /// Current Object (`docs/design/m42-parity.md`). Answered
-    /// [`QueryResult::Node`] or [`QueryOutcome::Gone`].
-    ReadNode {
-        /// The node to read.
-        node_id: NodeId,
-        /// The node details the read fetches.
-        details: crate::property::NodeDetailSet,
-    },
-    /// Activate a node: UIA `Invoke`, `Toggle`, or the legacy default
-    /// action; MSAA `accDoDefaultAction`.
-    Activate {
-        /// The node to activate.
-        node_id: NodeId,
-    },
-    /// The node's ancestors, outermost first, capped at 64.
-    Ancestors {
-        /// The node whose ancestors are wanted.
-        node_id: NodeId,
-        /// The node details each ancestor's read fetches.
-        details: crate::property::NodeDetailSet,
-    },
-    /// The application's tree from its top-level window, capped at a depth
-    /// of 64 and 4096 nodes.
-    DumpTree {
-        /// Whether each element's location and whether it is off the
-        /// screen are read. A read of many elements leaves both out
-        /// otherwise, since for some elements, a window's title bar among
-        /// them, the application's UI thread is asked for them, so each
-        /// node shows them as not read ([`DumpedTree::locations`]).
-        locations: bool,
-    },
-    /// A text request (milestone M4's text protocol, `TextOp` in
-    /// `verbatim-model`): read, wait for the caret, select, or move the
-    /// caret in a node's text. Answered [`QueryResult::Text`].
-    Text {
-        /// The node whose text to use.
-        node_id: NodeId,
-        /// What to do.
-        op: TextOp,
-    },
-    /// The shell's tray icons or taskbar buttons, for Core's system tray
-    /// list dialog, asked of the outpost of the process that owns the
-    /// taskbar, which reads them within its own application
-    /// (`books/dev/src/explanation/design/listener-without-connections.md`, decision 9).
-    /// Answered [`QueryResult::ShellItems`].
-    ShellItems {
-        /// Which shell surface.
-        kind: crate::ShellItemKind,
-        /// The outpost's deadline for the query, in microseconds on the
-        /// run's shared clock: past it the query is abandoned and answered
-        /// [`QueryOutcome::Abandoned`], and a query dispatched past it is
-        /// answered with no items.
-        answer_by_us: u64,
-    },
-    /// Where one item of a list [`Query::ShellItems`] answered may be on
-    /// the screen now, for a click on it: the outpost walks the surface
-    /// again and reads the position, which no list read fetches, of every
-    /// button whose runtime id or name is the item's. Which of them Core
-    /// clicks, if any, Core decides. Answered
-    /// [`QueryResult::ShellItemPosition`].
-    ShellItemPosition {
-        /// Which shell surface the item was listed from.
-        kind: crate::ShellItemKind,
-        /// The item chosen.
-        item: crate::ShellItem,
-        /// The outpost's deadline for the query, in microseconds on the
-        /// run's shared clock, as for [`Query::ShellItems`].
-        answer_by_us: u64,
-    },
-}
-
-/// Why a [`Query::ReadFocus`] reads the focus, which the app keeps with its
-/// asker and marks the answer's input with (`Input::Event`'s `purpose`),
-/// since each has its own tests in NVDA
-/// (`books/dev/src/reference/adr/0001-focus.md`, "A focus UI Automation does not deliver").
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum FocusPurpose {
-    /// At the start, and after an outpost or the listener was replaced:
-    /// the answer is taken as a focus by Core's usual rules.
-    Plain,
-    /// A menu or the Alt+Tab switcher closed with no focus event, NVDA's
-    /// fake focus: an MSAA answer is refused by the outpost when neither it
-    /// nor an ancestor has the focused state, and Core applies its
-    /// duplicate rule to an MSAA answer only.
-    Fake,
-    /// The user's desktop returned: Core applies no duplicate rule, as
-    /// NVDA queues that focus with no test.
-    Again,
-    /// Verbatim+Tab: the answer is spoken only, never taken as Core's
-    /// focus, and the outpost neither adopts nor follows it.
-    Report,
-}
-
-/// The one outcome of a query.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[expect(
-    clippy::large_enum_variant,
-    reason = "a reply is built once and moved, never stored in bulk"
-)]
-pub enum QueryOutcome {
-    /// The query finished.
-    Done(QueryResult),
-    /// The node the query named is no longer reachable.
-    Gone,
-    /// The query failed, for the reason given.
-    Failed(String),
-    /// The query was withdrawn or expired before it started: it had no side
-    /// effects.
-    NotStarted,
-    /// The query started and passed its deadline: side effects, such as an
-    /// activation, may already have happened.
-    Abandoned,
-}
-
-/// What a finished query found.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[expect(
-    clippy::large_enum_variant,
-    reason = "a reply is built once and moved, never stored in bulk"
-)]
-pub enum QueryResult {
-    /// The answer to [`Query::ReadFocus`].
-    Focus(FocusNow),
-    /// The answer to [`Query::Navigate`]: the neighbor, or `None` for a
-    /// genuine tree edge (not an error).
-    Navigated(Option<NodeSnapshot>),
-    /// The answer to [`Query::ReadNode`].
-    Node(NodeSnapshot),
-    /// The answer to [`Query::Activate`]: the name of the action performed,
-    /// if it has one.
-    Activated(Option<crate::ActionName>),
-    /// The answer to [`Query::Ancestors`], outermost first.
-    Ancestors(Vec<NodeSnapshot>),
-    /// The answer to [`Query::DumpTree`].
-    Tree(DumpedTree),
-    /// The answer to [`Query::Text`]. Every answer the text protocol has,
-    /// `NoText` and `Gone` among them, comes back this way, so Core hands it
-    /// to the reducer unchanged.
-    Text(TextReply),
-    /// The answer to [`Query::ShellItems`], in the shell's order.
-    ShellItems(Vec<crate::ShellItem>),
-    /// The answer to [`Query::ShellItemPosition`]: the buttons that may be
-    /// the item, with their positions, and whether the walk read them all.
-    ShellItemPosition(crate::ShellCandidates),
-}
-
-/// The answer to [`Query::ReadFocus`].
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FocusNow {
-    /// The application's top-level window and its facts, when it is the
-    /// system's foreground window.
-    pub window: Option<(NodeSnapshot, WindowFacts)>,
-    /// The focused control and its facts, when the application has one.
-    pub focus: Option<FocusedControl>,
-    /// When the outpost began reading the answer, in microseconds since the
-    /// Unix epoch on the run's shared clock: the answer's place among the
-    /// focus events, which carry the time they were observed. A focus event
-    /// observed before it is older than the answer, and one observed after
-    /// it newer, as NVDA queues a focus it reads in order with the events
-    /// around it. 0 from an older peer.
-    #[serde(default)]
-    pub observed_at_us: u64,
-}
-
-/// The focused control in a [`FocusNow`] answer.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FocusedControl {
-    /// The control.
-    pub node: NodeSnapshot,
-    /// Its ancestors, outermost first, complete to the desktop: a read cut
-    /// short, by its time or a failed step, is completed by plain windows
-    /// (`books/dev/src/reference/adr/0001-focus.md`, "Object identity").
-    pub ancestors: Vec<NodeSnapshot>,
-    /// The selected child, for a selection container.
-    pub selected_child: Option<NodeSnapshot>,
-    /// Its window's facts.
-    pub window: Option<WindowFacts>,
-    /// What the outpost's caret read found, for a control that may have
-    /// text, read as a reported focus's is (`FocusChanged`'s `text`), so a
-    /// text field's line is spoken and Core has its caret; `None` for any
-    /// other control. The outpost's read leaves it `None` and the worker
-    /// fills it.
-    pub text: Option<Box<crate::FocusText>>,
-}
-
 /// Messages from an outpost to verbatim.exe.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[expect(
-    clippy::large_enum_variant,
-    reason = "a message is built once and moved; the backlogs that hold messages are short"
-)]
 pub enum OutpostToCore {
     /// The outpost has its application and its `WinEvent` hook is in: the
     /// first message of an outpost started for an application, and the
@@ -1118,58 +376,6 @@ pub enum OutpostToCore {
         outpost_pid: Pid,
         /// The application it is watching.
         target_pid: Pid,
-    },
-    /// A normalized accessibility event.
-    Event {
-        /// Trace ID minted when the OS event was first observed in the
-        /// outpost.
-        trace_id: TraceId,
-        /// Microseconds since the Unix epoch on the run's shared clock when
-        /// the OS event was first observed, which orders it against other
-        /// outposts' events. A foreground change carries instead the time
-        /// its window was confirmed as the foreground, since Windows raises
-        /// the event before the change completes; `timing` keeps the first
-        /// observation, where the latency timeline starts. Defaults to 0
-        /// for messages from older peers.
-        #[serde(default)]
-        observed_at_us: u64,
-        /// Which backend sourced the event.
-        backend: Backend,
-        /// Facts about the window the event concerns, read with local calls
-        /// when the event was observed; `None` when it had no window.
-        #[serde(default)]
-        window: Option<WindowFacts>,
-        /// The application the event belongs to when it is not the
-        /// outpost's target: for an event in a console window, which the
-        /// console host's outpost reports, the console's client, the
-        /// window's owner by `GetWindowThreadProcessId`, as NVDA gives a
-        /// console window and its text area the client's app module
-        /// (`books/dev/src/reference/crates/verbatim-outpost.md`, "Console windows and frames of
-        /// another process"). `None` for the
-        /// target itself.
-        #[serde(default)]
-        application: Option<Pid>,
-        /// When the event reached each point in the outpost, for the
-        /// latency log.
-        #[serde(default)]
-        timing: EventTiming,
-        /// The event itself.
-        event: NormalizedEvent,
-    },
-    /// The one answer to a [`CoreToOutpost::Query`].
-    Reply {
-        /// Trace ID carried through from the query.
-        trace_id: TraceId,
-        /// The request this answers.
-        request_id: RequestId,
-        /// What became of it.
-        outcome: QueryOutcome,
-        /// When the query reached each point in the outpost, and the
-        /// cross-process calls answering it made, for the latency log.
-        /// Default for a query withdrawn or abandoned, and from an older
-        /// peer.
-        #[serde(default)]
-        timing: EventTiming,
     },
     /// Answer to [`CoreToOutpost::Ping`].
     Pong {
@@ -1228,13 +434,6 @@ pub enum OutpostToCore {
     IdleAnswer {
         /// The round answered.
         round: u64,
-    },
-    /// Core's live re-read `request` is answered gone: its focus reader
-    /// has no such read, or its element is gone, or the outpost dropped
-    /// the read that answered it. Sent in order with the outpost's events.
-    LiveRereadGone {
-        /// Core's request.
-        request: u64,
     },
     /// A tell (ADR 0003, "Readers tell, Core asks"): an event the outpost's
     /// `Follow` registration delivered, with the value it carried. Sent in
@@ -1349,14 +548,10 @@ impl OutpostToCore {
     #[must_use]
     pub fn kind(&self) -> Kind {
         match self {
-            OutpostToCore::Reply { .. }
-            | OutpostToCore::IdleAnswer { .. }
-            | OutpostToCore::Answer(_) => Kind::Answer,
-            OutpostToCore::Event { .. }
-            | OutpostToCore::Tell(_)
+            OutpostToCore::IdleAnswer { .. } | OutpostToCore::Answer(_) => Kind::Answer,
+            OutpostToCore::Tell(_)
             | OutpostToCore::Fault { .. }
-            | OutpostToCore::NotResponding { .. }
-            | OutpostToCore::LiveRereadGone { .. } => Kind::Report,
+            | OutpostToCore::NotResponding { .. } => Kind::Report,
             OutpostToCore::Ready { .. }
             | OutpostToCore::SpareReady { .. }
             | OutpostToCore::TargetExited
@@ -1365,22 +560,14 @@ impl OutpostToCore {
     }
 
     /// Whether this message counts toward the message positions that
-    /// [`CoreToOutpost::NodesHeld`] acknowledges: an event or a completed
-    /// query's reply, the messages that carry node ids. The outpost and
-    /// Core count the same messages, in pipe order, with this one function,
-    /// so every variant is listed: one that carries nodes and is not
-    /// counted would let the outpost release a node Core still reads.
+    /// [`CoreToOutpost::NodesHeld`] acknowledges: an answer with a result,
+    /// the message that carries node ids. The outpost and Core count the
+    /// same messages, in pipe order, with this one function, so every
+    /// variant is listed: one that carries nodes and is not counted would
+    /// let the outpost release a node Core still reads.
     #[must_use]
     pub fn carries_nodes(&self) -> bool {
         match self {
-            OutpostToCore::Event { .. } => true,
-            OutpostToCore::Reply { outcome, .. } => match outcome {
-                QueryOutcome::Done(_) => true,
-                QueryOutcome::Gone
-                | QueryOutcome::Failed(_)
-                | QueryOutcome::NotStarted
-                | QueryOutcome::Abandoned => false,
-            },
             OutpostToCore::Answer(answer) => {
                 matches!(answer.outcome, crate::request::Outcome::Result(_))
             }
@@ -1391,38 +578,15 @@ impl OutpostToCore {
             | OutpostToCore::Fault { .. }
             | OutpostToCore::NotResponding { .. }
             | OutpostToCore::TargetExited
-            | OutpostToCore::IdleAnswer { .. }
-            | OutpostToCore::LiveRereadGone { .. } => false,
+            | OutpostToCore::IdleAnswer { .. } => false,
         }
     }
 
-    /// Records, in the timing the message carries, when its writer began
-    /// writing it to verbatim.exe's pipe: an event's or a reply's
-    /// (`EventTiming::written_at_us`), or a pong's. Nothing for any other
-    /// message.
+    /// Records, in a pong, when its writer began writing it to
+    /// verbatim.exe's pipe. Nothing for any other message.
     pub fn written(&mut self, at_us: u64) {
-        match self {
-            OutpostToCore::Event { timing, .. } | OutpostToCore::Reply { timing, .. } => {
-                timing.written_at_us = at_us;
-            }
-            OutpostToCore::Pong { written_at_us, .. } => *written_at_us = at_us,
-            OutpostToCore::Answer(_)
-            | OutpostToCore::Tell(_)
-            | OutpostToCore::Ready { .. }
-            | OutpostToCore::SpareReady { .. }
-            | OutpostToCore::Fault { .. }
-            | OutpostToCore::NotResponding { .. }
-            | OutpostToCore::TargetExited
-            | OutpostToCore::IdleAnswer { .. }
-            | OutpostToCore::LiveRereadGone { .. } => {}
-        }
-    }
-
-    /// Records, in an event's or a reply's timing, when verbatim.exe read
-    /// the message off the outpost's pipe (`EventTiming::core_read_at_us`).
-    pub fn core_read(&mut self, at_us: u64) {
-        if let OutpostToCore::Event { timing, .. } | OutpostToCore::Reply { timing, .. } = self {
-            timing.core_read_at_us = at_us;
+        if let OutpostToCore::Pong { written_at_us, .. } = self {
+            *written_at_us = at_us;
         }
     }
 
@@ -1431,52 +595,36 @@ impl OutpostToCore {
     /// outpost generation and never come from the message body.
     pub fn assign_outpost(&mut self, outpost: OutpostId) {
         match self {
-            OutpostToCore::Event { event, .. } => event.assign_outpost(outpost),
-            OutpostToCore::Reply {
-                outcome: QueryOutcome::Done(result),
-                ..
-            } => match result {
-                QueryResult::Focus(focus) => {
-                    if let Some((window, _)) = &mut focus.window {
-                        window.assign_outpost(outpost);
-                    }
-                    if let Some(control) = &mut focus.focus {
-                        control.node.assign_outpost(outpost);
-                        for ancestor in &mut control.ancestors {
-                            ancestor.assign_outpost(outpost);
-                        }
-                        if let Some(selected) = &mut control.selected_child {
-                            selected.assign_outpost(outpost);
-                        }
-                    }
-                }
-                QueryResult::Navigated(Some(node)) | QueryResult::Node(node) => {
-                    node.assign_outpost(outpost);
-                }
-                QueryResult::Ancestors(chain) => {
-                    for node in chain {
-                        node.assign_outpost(outpost);
-                    }
-                }
-                QueryResult::Tree(dumped) => dumped.root.assign_outpost(outpost),
-                QueryResult::Navigated(None)
-                | QueryResult::Activated(_)
-                | QueryResult::Text(_)
-                | QueryResult::ShellItems(_)
-                | QueryResult::ShellItemPosition(_) => {}
-            },
             OutpostToCore::Answer(answer) => answer.assign_outpost(outpost),
             OutpostToCore::Tell(tell) => tell.assign_outpost(outpost),
-            OutpostToCore::Reply { .. }
+            OutpostToCore::Ready { .. }
+            | OutpostToCore::SpareReady { .. }
+            | OutpostToCore::Pong { .. }
+            | OutpostToCore::Fault { .. }
+            | OutpostToCore::NotResponding { .. }
+            | OutpostToCore::TargetExited
+            | OutpostToCore::IdleAnswer { .. } => {}
+        }
+    }
+
+    /// Every node id and text anchor this message names: the nodes
+    /// [`assign_outpost`](Self::assign_outpost) stamps in an answer, and
+    /// the anchors of its text. Empty for a message that names none.
+    #[must_use]
+    pub fn named(&self) -> Named {
+        let mut named = Named::default();
+        match self {
+            OutpostToCore::Answer(answer) => named.answer(answer),
+            OutpostToCore::Tell(_)
             | OutpostToCore::Ready { .. }
             | OutpostToCore::SpareReady { .. }
             | OutpostToCore::Pong { .. }
             | OutpostToCore::Fault { .. }
             | OutpostToCore::NotResponding { .. }
             | OutpostToCore::TargetExited
-            | OutpostToCore::IdleAnswer { .. }
-            | OutpostToCore::LiveRereadGone { .. } => {}
+            | OutpostToCore::IdleAnswer { .. } => {}
         }
+        named
     }
 }
 
@@ -1493,10 +641,6 @@ pub struct Named {
 }
 
 impl Named {
-    fn node(&mut self, node: &NodeSnapshot) {
-        self.nodes.push(node.id);
-    }
-
     fn answer(&mut self, answer: &crate::request::Answer) {
         let (nodes, anchors) = answer.named();
         self.nodes.extend(nodes);
@@ -1504,13 +648,6 @@ impl Named {
         if let crate::request::Outcome::Result(crate::request::Reply::Text(reply)) = &answer.outcome
         {
             self.text_reply(reply);
-        }
-    }
-
-    fn tree(&mut self, tree: &TreeNode) {
-        self.node(&tree.snapshot);
-        for child in &tree.children {
-            self.tree(child);
         }
     }
 
@@ -1533,38 +670,8 @@ impl Named {
         }
     }
 
-    fn focus_text(&mut self, text: Option<&crate::FocusText>) {
-        if let Some(crate::FocusText::Caret { caret, facts, .. }) = text {
-            self.caret(caret);
-            if let Some(facts) = facts {
-                self.facts(facts);
-            }
-        }
-    }
-
-    fn facts(&mut self, facts: &crate::ReadFacts) {
-        if let Some(unit) = &facts.unit {
-            self.chunk(unit);
-        }
-        if let crate::Change::Compared {
-            previous_line,
-            previous_selection,
-            ..
-        } = &facts.change
-        {
-            self.chunk(previous_line);
-            if let Some(selection) = previous_selection {
-                self.selection(selection);
-            }
-        }
-    }
-
     fn text_reply(&mut self, reply: &TextReply) {
         match reply {
-            TextReply::Caret(reply) => {
-                self.caret(&reply.caret);
-                self.facts(&reply.facts);
-            }
             TextReply::Read { chunk, .. } => self.chunk(chunk),
             TextReply::Started(started) => {
                 self.anchors.push(started.point);
@@ -1624,148 +731,6 @@ impl Named {
             | TextReply::Unanswered => {}
         }
     }
-
-    fn event(&mut self, event: &NormalizedEvent) {
-        match event {
-            NormalizedEvent::FocusChanged {
-                node,
-                ancestors,
-                selected_child,
-                text,
-                ..
-            } => {
-                self.node(node);
-                for ancestor in ancestors {
-                    self.node(ancestor);
-                }
-                if let Some(selected) = selected_child {
-                    self.node(selected);
-                }
-                self.focus_text(text.as_deref());
-            }
-            NormalizedEvent::SelectionChanged { node } | NormalizedEvent::Alert { node, .. } => {
-                self.node(node);
-            }
-            NormalizedEvent::ControlledSelection { controller, node } => {
-                self.nodes.push(*controller);
-                self.node(node);
-            }
-            NormalizedEvent::CaretMoved {
-                node_id,
-                caret,
-                facts,
-                ..
-            } => {
-                self.nodes.push(*node_id);
-                self.caret(caret);
-                if let Some(facts) = facts {
-                    self.facts(facts);
-                }
-            }
-            NormalizedEvent::TerminalSnapshot { node_id, snapshot } => {
-                self.nodes.push(*node_id);
-                if let Some(caret) = &snapshot.caret {
-                    self.caret(caret);
-                }
-            }
-            NormalizedEvent::ActiveTextPositionChanged { node_id, position } => {
-                self.nodes.push(*node_id);
-                self.anchors.push(position.anchor);
-            }
-            NormalizedEvent::PropertyChanged { node_id, .. }
-            | NormalizedEvent::ValueChanged { node_id, .. }
-            | NormalizedEvent::Notification { node_id, .. }
-            | NormalizedEvent::TextChanged { node_id } => self.nodes.push(*node_id),
-        }
-    }
-}
-
-impl OutpostToCore {
-    /// Every node id and text anchor this message names: the nodes
-    /// [`assign_outpost`](Self::assign_outpost) stamps, and the anchors of
-    /// its text, a caret's line and selection, a read's chunks, and an
-    /// active text position. Empty for a message that names none.
-    #[must_use]
-    pub fn named(&self) -> Named {
-        let mut named = Named::default();
-        match self {
-            OutpostToCore::Event { event, .. } => named.event(event),
-            OutpostToCore::Reply {
-                outcome: QueryOutcome::Done(result),
-                ..
-            } => match result {
-                QueryResult::Focus(focus) => {
-                    if let Some((window, _)) = &focus.window {
-                        named.node(window);
-                    }
-                    if let Some(control) = &focus.focus {
-                        named.node(&control.node);
-                        for ancestor in &control.ancestors {
-                            named.node(ancestor);
-                        }
-                        if let Some(selected) = &control.selected_child {
-                            named.node(selected);
-                        }
-                        named.focus_text(control.text.as_deref());
-                    }
-                }
-                QueryResult::Navigated(Some(node)) | QueryResult::Node(node) => named.node(node),
-                QueryResult::Ancestors(chain) => {
-                    for node in chain {
-                        named.node(node);
-                    }
-                }
-                QueryResult::Tree(dumped) => named.tree(&dumped.root),
-                QueryResult::Text(reply) => named.text_reply(reply),
-                QueryResult::Navigated(None)
-                | QueryResult::Activated(_)
-                | QueryResult::ShellItems(_)
-                | QueryResult::ShellItemPosition(_) => {}
-            },
-            OutpostToCore::Answer(answer) => named.answer(answer),
-            OutpostToCore::Reply { .. }
-            | OutpostToCore::Tell(_)
-            | OutpostToCore::Ready { .. }
-            | OutpostToCore::SpareReady { .. }
-            | OutpostToCore::Pong { .. }
-            | OutpostToCore::Fault { .. }
-            | OutpostToCore::NotResponding { .. }
-            | OutpostToCore::TargetExited
-            | OutpostToCore::IdleAnswer { .. }
-            | OutpostToCore::LiveRereadGone { .. } => {}
-        }
-        named
-    }
-}
-
-/// The reducer's input an outpost's event is, `source` being the
-/// application the outpost watches: the event's own application when it
-/// names one, a console's client for an event in its console window, else
-/// `source`. `None` for any other message. The app and the merge's tests
-/// both reduce what this gives, so a test reduces what the app applies.
-#[must_use]
-pub fn event_input(source: Pid, message: OutpostToCore) -> Option<crate::Input> {
-    let OutpostToCore::Event {
-        trace_id,
-        observed_at_us,
-        backend,
-        window,
-        application,
-        event,
-        ..
-    } = message
-    else {
-        return None;
-    };
-    Some(crate::Input::Event {
-        trace_id,
-        observed_at_us,
-        source: application.unwrap_or(source),
-        backend,
-        window,
-        event,
-        purpose: None,
-    })
 }
 
 impl ListenerToCore {
@@ -1824,8 +789,6 @@ pub enum Kind {
     /// end, each from one ordered path per generation, the owner thread's
     /// writer or the child's own pipe.
     Lifecycle,
-    /// A fact the relay routes from the listener to an outpost.
-    Routed,
 }
 
 /// A message an outpost sends ahead of everything waiting in its outbound

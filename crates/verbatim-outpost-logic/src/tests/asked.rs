@@ -87,18 +87,12 @@ fn finished(request: Request) -> Input {
         request,
         reported: false,
         panicked: false,
-        cut: None,
     }
 }
 
-fn query() -> Input {
-    Input::Entry(entry(
-        Item::Query {
-            request_id: verbatim_model::protocol::RequestId::shell(1),
-            query: Query::DumpTree { locations: false },
-        },
-        0,
-    ))
+/// The outpost's own work: a console's update it heard.
+fn own_work() -> Input {
+    Input::Entry(entry(console_update(1), 0))
 }
 
 /// A request runs at once with nothing in flight, and one sent while a
@@ -115,7 +109,7 @@ fn a_request_runs_ahead_of_the_outposts_own_work() {
             .collect::<Vec<_>>(),
         ["ask 1"]
     );
-    assert_eq!(dispatched(&reducer.input(query(), now(1))), Vec::new());
+    assert_eq!(dispatched(&reducer.input(own_work(), now(1))), Vec::new());
     assert_eq!(dispatched(&reducer.input(ask(2), now(2))), Vec::new());
     let request = first[0].0;
     let effects = reducer.input(

@@ -630,7 +630,7 @@ impl Supervisor {
             .get(&outpost)
             .cloned()
             .ok_or(QueueError::Closed)?;
-        writer.push(writer::Outgoing::Other(command, writer::received_now()))
+        writer.push(writer::Outgoing::Other(command))
     }
 
     /// Leaves for one outpost generation the list of its nodes and text

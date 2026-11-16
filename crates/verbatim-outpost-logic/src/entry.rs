@@ -3,8 +3,8 @@
 //! are parked in the store as the entry is pushed, and the entry carries
 //! the key they are parked under (`books/dev/src/explanation/design/ownership.md`).
 
-use verbatim_model::protocol::{EventTiming, Query, RequestId, UiaSnapshotFact};
-use verbatim_model::{Notification, TraceId};
+use verbatim_model::TraceId;
+use verbatim_model::protocol::{EventTiming, UiaSnapshotFact};
 /// The `WinEvent` kinds an outpost still takes in
 /// (`docs/design/readers-tell-core-asks-build1.md`, "The outpost in this
 /// build"): a console host's console events, which its own hook delivers,
@@ -68,19 +68,10 @@ pub enum UiaKind {
         /// reads; no window when no node is followed.
         window: Box<verbatim_model::tell::TellWindow>,
     },
-    /// An element was selected within its container.
-    Selection,
-    /// An application-initiated notification.
-    Notification(Notification),
-    /// A Windows toast opened (`UIA_Window_WindowOpenedEventId`).
-    Toast,
     /// A text focus's caret or selection changed (`Text_TextSelectionChanged`).
     TextSelection,
     /// A text focus's text changed (`Text_TextChanged`).
     TextChanged,
-    /// The active position in a text focus's text changed, to the start of
-    /// the range parked under this key when the event carried one.
-    ActiveTextPosition(Option<u64>),
 }
 
 /// A UIA event as its callback captured it: cached properties only, and
@@ -94,23 +85,8 @@ pub struct UiaEvent {
     pub parts: UiaSnapshotFact,
     /// The element's cached window handle, 0 when it is not a window itself.
     pub hwnd: isize,
-    /// For a listener's selection on an element that is not a window
-    /// itself, the nearest window the listener's reading thread found, else
-    /// 0: the window its acceptance is tested with.
-    pub focus_window: isize,
     /// The key its element is parked under, if it came with one.
     pub element: Option<u64>,
-}
-
-impl UiaEvent {
-    /// The keys of the objects parked for this event.
-    pub fn parked(&self) -> impl Iterator<Item = u64> {
-        let range = match self.kind {
-            UiaKind::ActiveTextPosition(range) => range,
-            _ => None,
-        };
-        self.element.into_iter().chain(range)
-    }
 }
 
 /// Who asked for an idle barrier ([`Item::Barrier`]).
@@ -147,13 +123,6 @@ pub enum Item {
     },
     /// A UIA event from this outpost's own subscriptions.
     Uia(UiaEvent),
-    /// A query from Core.
-    Query {
-        /// The query's id, which its reply answers.
-        request_id: RequestId,
-        /// The query.
-        query: Query,
-    },
     /// The nodes and text anchors Core still holds, and the position of
     /// the last message it has handled: release the rest.
     NodesHeld {
@@ -179,7 +148,7 @@ impl Item {
     #[must_use]
     pub fn parked(&self) -> Vec<u64> {
         match self {
-            Item::Uia(event) => event.parked().collect(),
+            Item::Uia(event) => event.element.into_iter().collect(),
             _ => Vec::new(),
         }
     }

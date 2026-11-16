@@ -6,15 +6,14 @@
 //! Its parts:
 //!
 //! 1. The mailbox ([`shell`]): the MSAA hook callbacks, the UIA
-//!    subscription callbacks, and the reader's routed facts and queries only
-//!    append an entry to it and return. They never call into the
+//!    subscription callbacks, and Core's commands only append an entry to
+//!    it and return. They never call into the
 //!    application and never wait on anything but the mailbox's lock.
 //! 2. The reducer ([`reducer`]), on a thread of its own run by its shell
 //!    ([`shell`]): the pure state machine that holds every remembered fact
 //!    of the application, the intake's order with NVDA's limiter rules
-//!    among them, and keeps the outpost's timers: a worker's deadline and
-//!    its half-second check, the check of the window in front while a
-//!    listener read's marker waits, and a key's note's reads.
+//!    among them, Core's requests waiting, and the timers of a caret key's
+//!    watch.
 //! 3. The workers ([`worker`]): the threads that call into the application,
 //!    one generation in charge at a time, each running one program at a
 //!    time on copies, posting its commits to the mailbox. A worker whose
@@ -26,7 +25,7 @@
 //! 6. The outbound queue ([`outbound`]): every thread writes its own
 //!    messages to Core when no write is in flight; pongs and `Ready` go
 //!    first; sending never waits, and messages waiting behind a write in
-//!    flight are merged by object and kind.
+//!    flight keep their order.
 //!
 //! Workers run in COM's multithreaded apartment; the object store
 //! ([`store`]) keeps agile references, so a replacement worker can use what
@@ -71,7 +70,6 @@ use windows::Win32::UI::Accessibility::{
     IUIAutomationTextRange, UIA_RangeValueValuePropertyId, UIA_Text_TextChangedEventId,
     UIA_Text_TextSelectionChangedEventId, UIA_ValueValuePropertyId,
 };
-use windows::core::AgileReference;
 
 use verbatim_ia2::{CONSOLE_SUBSCRIPTIONS, WinEvent};
 use verbatim_model::property::NodeDetailSet;
@@ -89,13 +87,12 @@ use verbatim_uia::{
 use crate::arbitration::Arbitrator;
 use verbatim_ia2::event_thread::{EventHandlers, EventThread, MakeHandlers, Nudger};
 use verbatim_model::protocol::{
-    CoreToOutpost, EventTiming, OutpostToCore, Query, UiaSnapshotFact, Urgent,
+    CoreToOutpost, EventTiming, OutpostToCore, UiaSnapshotFact, Urgent,
 };
 use verbatim_process::arguments::OutpostOptions;
 use verbatim_process::clock::now_us;
 use verbatim_process::held::Target;
 use verbatim_process::message::{decode_message, read_message};
-use verbatim_reader_rules::acceptance;
 use verbatim_win32::window::{ForegroundReader, WindowReadabilityReader};
 use verbatim_win32::window_facts::{SystemReads, WindowReads};
 
@@ -104,11 +101,8 @@ use verbatim_outpost_logic as reducer;
 use commit::{Committed, Effects};
 use outbound::Outbound;
 pub use reducer::Verdicts;
-pub(crate) use reducer::{
-    Anchor, AnswerCut, CutLine, KeptSelection, NodeAnchors, Probe, Probed, ReadSelection,
-    ReportCut, VerdictChange,
-};
-use reducer::{Entry, Facts, FollowState, Item, Object, UiaEvent, UiaKind};
+pub(crate) use reducer::{Anchor, NodeAnchors, Probe, Probed, ReadSelection, VerdictChange};
+use reducer::{Entry, Facts, Item, UiaEvent, UiaKind};
 use shell::{Mailbox, Posted, Shell};
 use worker::Charge;
 
@@ -212,23 +206,20 @@ pub(crate) struct Context {
     /// is kept with the thread that owned it, so a reused handle, whose
     /// destroy event was lost, is not read the classic way by mistake.
     classic_windows: Lock<HashMap<isize, u32>>,
-    /// How the worker reads the element that has the keyboard focus, for a
-    /// focus-now query: a UIA focus event's element comes from the focus
-    /// listener's read instead.
+    /// How the worker reads the element that has the keyboard focus, for
+    /// Core's request for the current focus.
     focused_element: FocusedElementReader,
     /// How the worker reads the foreground window when it records the
     /// window a focus was reported in ([`Outpost::set_foreground_reader`]).
     foreground: Lock<ForegroundReader>,
-    /// How a focus-now query reads the window with the keyboard focus
+    /// How Core's request for the current focus reads the window with the
+    /// keyboard focus
     /// ([`Outpost::set_focus_window_reader`]).
     focus_window: Lock<FocusWindowReader>,
     /// How the worker judges whether a window can be read, or is no
     /// window, a ghost's or a hung application's
     /// ([`Outpost::set_window_readability_reader`]).
     window_readability: Lock<WindowReadabilityReader>,
-    /// The events application support asked for from any window of the
-    /// application, whatever the foreground ([`acceptance`]).
-    requested_events: acceptance::RequestedEvents,
     /// Who is told of each event the outpost's own handlers take in
     /// ([`Outpost::observe_heard`]), if anyone.
     heard: OnceLock<HeardObserver>,
@@ -262,7 +253,8 @@ pub enum Heard {
     UiaTextSelection,
     /// A text focus's text changed event.
     UiaTextChanged,
-    /// A text focus's active text position changed event.
+    /// A text focus's active text position changed event, which the
+    /// outpost hears and drops: Core has no handler for it.
     UiaActiveTextPosition,
     /// A `WinEvent` of one of the kinds the outpost hooks.
     Msaa(verbatim_ia2::WinEventKind),
@@ -289,9 +281,9 @@ pub type ForegroundProgramObserver = Arc<dyn Fn(isize) + Send + Sync>;
 pub type FocusWindowReader = Arc<dyn Fn() -> Option<isize> + Send + Sync>;
 
 /// Reads the UIA element that has the keyboard focus, filled by the given
-/// request, with the given client, on the worker's thread, for a
-/// focus-now query, the one read of the focused element the outpost makes
-/// (a UIA focus event's element is the focus listener's read). An outpost
+/// request, with the given client, on the worker's thread, for Core's
+/// request for the current focus, the one read of the focused element the
+/// outpost makes. An outpost
 /// reads the system's keyboard focus ([`Uia::focused`]); a test
 /// that drives a real outpost against an application without taking the
 /// keyboard focus from the desktop it runs on supplies its own
@@ -425,52 +417,13 @@ impl<'a> RequestContext<'a> {
         self.facts.borrow()
     }
 
-    /// Reads the follow state with `read`.
-    fn follow<T>(&self, read: impl FnOnce(&FollowState) -> T) -> T {
-        read(&self.facts().follow)
-    }
-
-    /// The object last reported as the focus.
-    fn focused(&self) -> Option<Object> {
-        self.follow(|follow| {
-            follow
-                .followed
-                .as_ref()
-                .and_then(|followed| followed.object.clone())
-        })
-    }
-
-    /// Whether a read of `node`'s caret committed since `observed_us`
-    /// covers an event observed then, which needs no report of its own.
-    fn caret_read_since(&self, node: NodeId, observed_us: u64) -> bool {
-        self.follow(|follow| follow.caret_read.covers(node.number(), observed_us))
-    }
-
-    /// The window of the last focus this outpost reported.
-    fn tracked_window(&self) -> Option<isize> {
-        self.follow(|follow| {
-            follow
-                .followed
-                .as_ref()
-                .and_then(|followed| followed.window)
-        })
-    }
-
-    /// The route to the element `runtime_id` names, when it is in the chain
-    /// the focus listener read for the UIA focus this outpost last reported,
-    /// and its window is one the outpost's application serves: the outpost
-    /// looks up no window of another process by its handle
+    /// The route to the element `runtime_id` names, kept with the node a
+    /// listener's read minted, when its window is one the outpost's
+    /// application serves: the outpost looks up no window of another
+    /// process by its handle
     /// (`books/dev/src/explanation/design/listener-without-connections.md`, section 4.3).
     fn focus_route(&self, runtime_id: &[i32]) -> Option<focus_path::Route> {
-        let route = self.store.route_to(runtime_id).or_else(|| {
-            self.follow(|follow| {
-                follow
-                    .followed
-                    .as_ref()
-                    .and_then(reducer::Followed::focus_path)
-                    .and_then(|path| path.route_to(runtime_id))
-            })
-        })?;
+        let route = self.store.route_to(runtime_id)?;
         read::serves(self, route.window.get()).then_some(route)
     }
 
@@ -492,11 +445,10 @@ impl<'a> RequestContext<'a> {
     }
 
     /// Commits `effects`, with the program's text writes since its last
-    /// commit: unless the worker was abandoned, applies their pure part to
-    /// the program's copies, so what it reads after is what the reducer
-    /// will hold (the text facts' changes were applied as they were made),
-    /// and posts them for the reducer, which applies them only while the
-    /// request is live. Returns what was done.
+    /// commit, their text facts' changes already applied to the program's
+    /// copies as they were made: unless the worker was abandoned, posts
+    /// them for the reducer, which applies them only while the request is
+    /// live. Returns what was done.
     fn commit(&self, effects: Effects) -> Committed {
         let program = self.program();
         let effects = self.program_text.borrow_mut().seal(effects);
@@ -504,8 +456,6 @@ impl<'a> RequestContext<'a> {
             drop(effects);
             return Committed::Refused;
         }
-        let local = effects.local();
-        reducer::apply_local(&mut self.facts.borrow_mut(), &local);
         self.mailbox.post(Posted::Commit {
             request: program.request,
             effects: Box::new(effects),
@@ -618,14 +568,8 @@ impl Context {
     }
 
     /// Sends `message` to Core without waiting, the nodes and anchors it
-    /// names recorded as carried by it ([`store::Recorded`]). A debug
-    /// build logs a focus chain naming one window twice, which a provider
-    /// can give (a child element reporting its host's handle), so it is
-    /// never asserted.
+    /// names recorded as carried by it ([`store::Recorded`]).
     fn send(&self, message: OutpostToCore) {
-        if cfg!(debug_assertions) && !one_entry_per_window(&message) {
-            tracing::debug!(?message, "a focus chain carries two entries for one window");
-        }
         self.outbound.publish(self.store.record(message));
     }
 
@@ -763,47 +707,6 @@ impl Context {
     }
 }
 
-/// Whether every focus chain `message` carries, a reported focus's or a
-/// focus-now answer's ancestors and focus, holds at most one entry for each
-/// window (`NodeDetails::window`): a chain goes on after a failure from the
-/// parent window of its outermost entry's nearest window, never from that
-/// window itself, so no window's own object is followed by another entry
-/// for its handle (`books/dev/src/reference/adr/0001-focus.md`, "Object identity"). A message
-/// failing it is logged in debug
-/// builds, never asserted, since a provider can name one window twice.
-fn one_entry_per_window(message: &OutpostToCore) -> bool {
-    use verbatim_model::NormalizedEvent;
-    use verbatim_model::protocol::{QueryOutcome, QueryResult};
-    let distinct = |ancestors: &[verbatim_model::NodeSnapshot],
-                    focus: &verbatim_model::NodeSnapshot| {
-        let windows: Vec<_> = ancestors
-            .iter()
-            .chain(std::iter::once(focus))
-            .filter_map(|node| node.details.window)
-            .collect();
-        windows
-            .iter()
-            .enumerate()
-            .all(|(index, window)| !windows[index + 1..].contains(window))
-    };
-    match message {
-        OutpostToCore::Event {
-            event: NormalizedEvent::FocusChanged {
-                node, ancestors, ..
-            },
-            ..
-        } => distinct(ancestors, node),
-        OutpostToCore::Reply {
-            outcome: QueryOutcome::Done(QueryResult::Focus(answer)),
-            ..
-        } => answer
-            .focus
-            .as_ref()
-            .is_none_or(|control| distinct(&control.ancestors, &control.node)),
-        _ => true,
-    }
-}
-
 /// The outpost: owns the context and the event thread for one target
 /// application, set once and fixed for the rest of the outpost's life.
 pub struct Outpost {
@@ -859,7 +762,7 @@ impl Outpost {
     }
 
     /// [`Outpost::with_options`], reading the element that has the keyboard
-    /// focus for a focus-now query with `focused_element` rather than from
+    /// focus for Core's request for the current focus with `focused_element` rather than from
     /// the system: for a test that asks the outpost for the focus of an
     /// application that does not have the keyboard focus, and measures
     /// everything the outpost does with it.
@@ -897,7 +800,7 @@ impl Outpost {
     /// of an outpost's start that needs no application, its worker's UIA
     /// client included, writes [`OutpostToCore::SpareReady`] to
     /// `pipe`, and watches the application [`Outpost::assign`] gives it
-    /// from then on. It reads the keyboard focus for a focus-now query with
+    /// from then on. It reads the keyboard focus for Core's request for the current focus with
     /// `focused_element`, as [`Outpost::with_focused_element_reader`] does.
     ///
     /// # Panics
@@ -960,7 +863,6 @@ impl Outpost {
             foreground: Lock::new(Arc::new(verbatim_win32::window::foreground_window_handle)),
             focus_window: Lock::new(Arc::new(verbatim_win32::window::focus_window)),
             window_readability: Lock::new(Arc::new(verbatim_win32::window::readability)),
-            requested_events: acceptance::RequestedEvents::default(),
             heard: OnceLock::new(),
             request_calls: OnceLock::new(),
             foreground_programs: OnceLock::new(),
@@ -1048,15 +950,13 @@ impl Outpost {
     }
 
     /// Waits until the reducer reaches a barrier behind everything queued
-    /// before this call and the noted caret those entries left, with no
-    /// program in flight, then until the focus-following subscriptions
+    /// before this call, with no program in flight, then until the focus-following subscriptions
     /// have made every move asked of them before it and every message
     /// published before it has been written to the pipe. A test that
     /// measures what the outpost's handling cost the application, or that
     /// asserts the outpost said nothing more, waits on this for its
-    /// evidence. Unlike Core's idle round, it waits for no key's note
-    /// or held copies of the hook's, and it divides
-    /// batches as the round does. Returns once the outpost shuts down.
+    /// evidence. Unlike Core's idle round, it waits for no caret key's
+    /// watch, and it divides batches as the round does. Returns once the outpost shuts down.
     pub fn settle(&self) {
         let (done_tx, done_rx) = std::sync::mpsc::channel();
         self.context.mailbox.post(Posted::Settle(done_tx));
@@ -1213,7 +1113,8 @@ impl Outpost {
     }
 
     /// Reads the window with the keyboard focus with `reader` from now on,
-    /// in place of the system's, when answering a focus-now query, whose
+    /// in place of the system's, when answering Core's request for the
+    /// current focus, whose
     /// focused element is read only in a window the application serves,
     /// and when judging whether the user has moved on from a program's
     /// window: a test whose application runs on a desktop where no window
@@ -1268,44 +1169,12 @@ impl Outpost {
     pub fn handle_command(&self, command: &CoreToOutpost) {
         let context = &self.context;
         match command {
-            CoreToOutpost::LiveReread { .. } => {
-                tracing::debug!("a live re-read is not the outpost's; dropped");
-            }
-            CoreToOutpost::Query {
-                trace_id,
-                request_id,
-                query,
-                timing,
-            } => context.push(
-                Item::Query {
-                    request_id: *request_id,
-                    query: unstamped(query),
-                },
-                (
-                    *trace_id,
-                    now_us(),
-                    // Only Core's relay stamps come with a request.
-                    EventTiming {
-                        relayed_at_us: now_us(),
-                        core_received_at_us: timing.core_received_at_us,
-                        core_relay_us: timing.core_relay_us,
-                        core_sent_at_us: timing.core_sent_at_us,
-                        ..EventTiming::default()
-                    },
-                ),
-            ),
             CoreToOutpost::IdleQuery { round } => context.push(
                 Item::Barrier {
                     asker: reducer::Asker::Round(*round),
                 },
                 (TraceId::mint(), now_us(), EventTiming::default()),
             ),
-            // The reducer withdraws the query if it has not dispatched it,
-            // and answers it "not started" through its token.
-            CoreToOutpost::CancelQuery { request_id } => {
-                context.mailbox.post(Posted::Cancel(*request_id));
-            }
-            CoreToOutpost::KeyNote(note) => context.mailbox.post(Posted::KeyNote(*note)),
             CoreToOutpost::Request(ask) => context.mailbox.post(Posted::Ask(unstamped_ask(ask))),
             CoreToOutpost::Cancel(cancel) => context.mailbox.post(Posted::CancelAsk(*cancel)),
             CoreToOutpost::WindowDestroyed(window) => {
@@ -1422,38 +1291,6 @@ mod hook_stamp_tests {
     }
 }
 
-/// A query with its node ids as this outpost issued them: they arrive
-/// stamped with Core's outpost id.
-fn unstamped(query: &Query) -> Query {
-    match query {
-        Query::Navigate {
-            node_id,
-            kind,
-            details,
-        } => Query::Navigate {
-            node_id: node_id.unstamped(),
-            kind: *kind,
-            details: *details,
-        },
-        Query::ReadNode { node_id, details } => Query::ReadNode {
-            node_id: node_id.unstamped(),
-            details: *details,
-        },
-        Query::Activate { node_id } => Query::Activate {
-            node_id: node_id.unstamped(),
-        },
-        Query::Ancestors { node_id, details } => Query::Ancestors {
-            node_id: node_id.unstamped(),
-            details: *details,
-        },
-        Query::Text { node_id, op } => Query::Text {
-            node_id: node_id.unstamped(),
-            op: op.clone(),
-        },
-        other => other.clone(),
-    }
-}
-
 /// What a UIA callback captures of a property change on the focus: the
 /// element's parts and window handle, read from its cache, the element for
 /// anything the worker must ask it, and the acceptance facts of the
@@ -1481,7 +1318,6 @@ fn capture_property(
             details: parts.details,
         },
         hwnd: fields.role.hwnd,
-        focus_window: 0,
         element: event
             .agile()
             .ok()
@@ -1558,10 +1394,10 @@ impl WindowReads for OutpostReads<'_> {
     }
 }
 
-/// What a UIA callback captures of a caret, text, or active text position
-/// change: the element's runtime id, which is all its handling reads of
-/// it, and its window handle, read from its cache, and the element. No
-/// call reaches the application.
+/// What a UIA callback captures of a caret or text change: the element's
+/// runtime id, which is all its handling reads of it, and its window
+/// handle, read from its cache, and the element. No call reaches the
+/// application.
 fn capture_text(context: &Context, event: &Cached<TextEvent>, kind: UiaKind) -> UiaEvent {
     UiaEvent {
         kind,
@@ -1574,7 +1410,6 @@ fn capture_text(context: &Context, event: &Cached<TextEvent>, kind: UiaKind) -> 
             details: verbatim_model::NodeDetails::default(),
         },
         hwnd: event.read().hwnd,
-        focus_window: 0,
         element: event
             .agile()
             .ok()
@@ -1594,8 +1429,7 @@ fn capture_text(context: &Context, event: &Cached<TextEvent>, kind: UiaKind) -> 
 /// (`Text_TextChanged`) and the active text position changes. A third
 /// group, given only the parent of a focus that is a `SensitiveSlider`'s
 /// thumb, holds its value changes alone. Selections and notifications come
-/// desktop-wide from the listener instead. A caret or text change also has
-/// the worker read under a key's note.
+/// desktop-wide from the listener instead.
 ///
 /// One group carries a cache request per handler, so each event's element
 /// arrives with what its handling reads: a property change with what the
@@ -1649,25 +1483,14 @@ fn register_focus_events(context: &Arc<Context>) -> Option<Registration> {
         events: vec![UIA_Text_TextChangedEventId],
         callback: text_callback,
     };
+    // NVDA's extended group holds the active text position changes too;
+    // the outpost tells Core nothing of them, Core having no handler for
+    // them, so each is heard and dropped.
     let position_context = Arc::clone(context);
     let position = Subscription::ActiveTextPosition {
         callback: Arc::new(
-            move |event: &Cached<TextEvent>, range: Option<&IUIAutomationTextRange>| {
-                let range = range
-                    .and_then(|range| AgileReference::new(range).ok())
-                    .map(|range| position_context.store.park(store::Parked::Range(range)));
-                position_context.take_in(
-                    Item::Uia(capture_text(
-                        &position_context,
-                        event,
-                        UiaKind::ActiveTextPosition(range),
-                    )),
-                    Heard::UiaActiveTextPosition,
-                    EventTiming {
-                        observed_at_us: position_context.observed_now(),
-                        ..EventTiming::default()
-                    },
-                );
+            move |_: &Cached<TextEvent>, _: Option<&IUIAutomationTextRange>| {
+                position_context.tell_heard(Heard::UiaActiveTextPosition);
             },
         ),
     };
@@ -1897,54 +1720,5 @@ mod shutdown_tests {
         leaving.shutdown();
         assert!(verbatim_uia::registering_thread_runs());
         staying.shutdown();
-    }
-
-    /// A chain whose provider gives two of its elements one window handle,
-    /// a child element reporting its host's through
-    /// `UIA_NativeWindowHandlePropertyId`, is application input: it is sent
-    /// as it is, and a debug outpost does not panic on it.
-    #[test]
-    fn a_chain_naming_one_window_twice_is_sent() {
-        use verbatim_model::protocol::EventTiming;
-        use verbatim_model::{
-            Backend, NodeDetails, NodeId, NodeSnapshot, NormalizedEvent, Role, StateSet, TraceId,
-            WindowHandle,
-        };
-        let node = |number, role, window| NodeSnapshot {
-            id: NodeId::new(number),
-            backend: Backend::Uia,
-            role,
-            name: None,
-            value: None,
-            states: StateSet::new(),
-            details: NodeDetails {
-                window,
-                ..NodeDetails::default()
-            },
-        };
-        let host = Some(WindowHandle(0x10));
-        let message = OutpostToCore::Event {
-            trace_id: TraceId::mint(),
-            observed_at_us: 0,
-            backend: Backend::Uia,
-            window: None,
-            application: None,
-            timing: EventTiming::default(),
-            event: NormalizedEvent::FocusChanged {
-                node: node(3, Role::Button, None),
-                whole_window: false,
-                ancestors: vec![node(1, Role::Window, host), node(2, Role::Group, host)],
-                selected_child: None,
-                text: None,
-                earlier: None,
-                group: None,
-                answers: None,
-                first_cached_ancestor: None,
-            },
-        };
-        assert!(!super::one_entry_per_window(&message));
-        let sender = outpost();
-        sender.context.send(message);
-        sender.shutdown();
     }
 }

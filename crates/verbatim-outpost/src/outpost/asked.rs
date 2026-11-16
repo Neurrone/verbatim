@@ -876,7 +876,7 @@ pub(super) fn controlled_by(
 }
 
 /// The nearest window of node `node` known without a call, by its id.
-fn known_nearest_of(context: &RequestContext<'_>, node: NodeId) -> Option<isize> {
+pub(super) fn known_nearest_of(context: &RequestContext<'_>, node: NodeId) -> Option<isize> {
     context
         .store
         .key_of(node)
@@ -1226,7 +1226,7 @@ fn current_focus(
     set: &[PropertyId],
     (known, baseline): (&[KnownAncestor], Option<TextAnchor>),
 ) -> Outcome {
-    let (now, control_window) = read::focus_now(context, client, false, &known_stops(known));
+    let (now, control_window) = read::focus_now(context, client, &known_stops(known));
     let Some(mut control) = now.focus else {
         return Outcome::NotThere;
     };
@@ -1245,7 +1245,7 @@ fn current_focus(
     let msaa = (control.node.backend == Backend::Msaa)
         .then(|| held_ids(context, &control.node))
         .flatten();
-    let foreground = now.window.as_ref().map(|(window, _)| window);
+    let foreground = now.window.as_ref();
     Outcome::Result(Reply::Focus(Box::new(focus_read(
         context,
         &Focus {

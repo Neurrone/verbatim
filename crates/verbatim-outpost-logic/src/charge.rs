@@ -15,16 +15,14 @@ pub struct Request {
     pub number: u64,
 }
 
-/// An abandonment: the generation in charge died, the next took charge,
-/// and the program's item left.
+/// An abandonment: the generation in charge died, and the next took
+/// charge.
 #[derive(Debug)]
-pub struct Abandoned<T> {
+pub struct Abandoned {
     /// The generation that died.
     pub dead: u64,
     /// The generation now in charge.
     pub replacement: u64,
-    /// What the reducer kept of the program.
-    pub item: T,
 }
 
 /// The generation in charge and its program, if one runs.
@@ -54,19 +52,6 @@ impl<T> InCharge<T> {
         request
     }
 
-    /// Hands the program running on to a new request of the same
-    /// generation, which takes over its item; `None` with none running.
-    pub fn hand_on(&mut self) -> Option<Request> {
-        let request = Request {
-            generation: self.generation,
-            number: self.requests.saturating_add(1),
-        };
-        let running = self.running.as_mut()?;
-        self.requests = self.requests.saturating_add(1);
-        running.0 = request;
-        Some(request)
-    }
-
     /// Ends `request`'s program, returning its item; `None` when it is not
     /// the one running.
     pub fn end(&mut self, request: Request) -> Option<T> {
@@ -76,14 +61,13 @@ impl<T> InCharge<T> {
 
     /// Abandons the generation in charge with its program: the next
     /// generation takes charge. `None` with no program running.
-    pub fn abandon(&mut self) -> Option<Abandoned<T>> {
-        let (_, item) = self.running.take()?;
+    pub fn abandon(&mut self) -> Option<Abandoned> {
+        self.running.take()?;
         let dead = self.generation;
         self.generation = self.generation.saturating_add(1);
         Some(Abandoned {
             dead,
             replacement: self.generation,
-            item,
         })
     }
 
@@ -107,11 +91,6 @@ impl<T> InCharge<T> {
         self.running
             .as_ref()
             .map(|(request, item)| (*request, item))
-    }
-
-    /// The item of the program running.
-    pub fn item_mut(&mut self) -> Option<&mut T> {
-        self.running.as_mut().map(|(_, item)| item)
     }
 
     /// A new request of the generation in charge, for a program that is
@@ -138,27 +117,12 @@ mod tests {
         let first = charge.start("first");
         assert!(charge.accepts(first));
         let abandoned = charge.abandon().expect("a program runs");
-        assert_eq!(
-            (abandoned.dead, abandoned.replacement, abandoned.item),
-            (0, 1, "first")
-        );
+        assert_eq!((abandoned.dead, abandoned.replacement), (0, 1));
         assert!(!charge.accepts(first));
         let second = charge.start("second");
         assert_eq!(second.generation, 1);
         assert_eq!(charge.end(first), None);
         assert_eq!(charge.end(second), Some("second"));
         assert!(charge.abandon().is_none());
-    }
-
-    /// A program handed on keeps its item under a new request, and its old
-    /// request's results are refused.
-    #[test]
-    fn a_program_handed_on_keeps_its_item_under_a_new_request() {
-        let mut charge = InCharge::default();
-        let cut = charge.start(7);
-        let finish = charge.hand_on().expect("a program runs");
-        assert_ne!(cut, finish);
-        assert!(!charge.accepts(cut));
-        assert_eq!(charge.end(finish), Some(7));
     }
 }

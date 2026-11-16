@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use crate::settings::ReaderSettings;
 use crate::shell::ShellItemKind;
 use crate::speech::{SpeechMark, Utterance};
-use crate::text::{CaretKey, CaretReport, FocusText, SelectionChange, TextPosition, TextRequest};
+use crate::text::{CaretKey, CaretReport, FocusText, SelectionChange, TextPosition};
 use crate::tree::{Backend, NodeSnapshot, StateSet};
 use crate::{KeySeq, NodeId, OutpostId, TraceId};
 
@@ -199,13 +199,6 @@ pub struct HookForeground {
     pub desktop_switches: u32,
 }
 
-/// Names one query Core's reducer asked, an outpost's or one Core answers
-/// from a terminal's memory, so its answer re-enters the reducer as
-/// [`Input::Answered`]. It is the number of the request id the query goes
-/// out under (`protocol::RequestId::reducer`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-pub struct QueryId(pub u64);
-
 /// A property change carried by [`NormalizedEvent::PropertyChanged`].
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
@@ -336,17 +329,6 @@ pub enum NormalizedEvent {
         /// for a report of no group.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         group: Option<FocusGroup>,
-        /// Where the ancestors its focus reader took from its ancestry
-        /// cache begin, rather than read live
-        /// ([`FirstCachedAncestor`]); `None` when none was, or the report
-        /// answers a live re-read.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        first_cached_ancestor: Option<FirstCachedAncestor>,
-        /// The live re-read this report answers, by its request number
-        /// ([`Effect::LiveReread`]): a read of the same element with no
-        /// ancestry cache. `None` for any other report.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        answers: Option<u64>,
     },
     /// A property of a node changed.
     PropertyChanged {
@@ -424,18 +406,18 @@ pub enum NormalizedEvent {
         /// Where the caret now is.
         caret: CaretReport,
         /// How the selection changed from the one the outpost last reported
-        /// for the node, by the rule of [`CaretReply`](crate::CaretReply)'s
+        /// for the node, by the rule of [`CaretChanges`](crate::CaretChanges)'s
         /// `selection_changes`. Always empty for a terminal, and for the
         /// first report after Verbatim itself selected or moved the caret.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         selection_changes: Vec<SelectionChange>,
         /// The node's text changed since the selection compared with was
         /// reported, so the change is spoken in general terms, as
-        /// [`CaretReply`](crate::CaretReply)'s `content_changed` says.
+        /// [`CaretChanges`](crate::CaretChanges)'s `content_changed` says.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         content_changed: bool,
         /// With `content_changed`, the whole new selection's text, as
-        /// [`CaretReply`](crate::CaretReply)'s `new_selection` says.
+        /// [`CaretChanges`](crate::CaretChanges)'s `new_selection` says.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         new_selection: Option<SelectionChange>,
         /// What the read found for a key, present exactly when the read was
@@ -584,39 +566,6 @@ pub struct Notification {
     pub activity_id: Option<String>,
 }
 
-/// What a completed fetch produced.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[non_exhaustive]
-#[expect(
-    clippy::large_enum_variant,
-    reason = "a result is built once per fetch and moved, never stored in bulk"
-)]
-pub enum FetchResult {
-    /// A fresh snapshot of the requested node.
-    Node(NodeSnapshot),
-    /// The node no longer exists.
-    Gone,
-    /// A navigation query found no node in the requested direction — a
-    /// root's parent, a last child's next sibling, a leaf's first child.
-    /// A first-class outcome, distinct from `Gone` (the starting node is
-    /// fine, the neighbor simply does not exist).
-    NoNeighbor,
-    /// The application did not answer in time, or the read failed for
-    /// another reason: nothing is known about the node or its neighbor, so
-    /// the navigator stays where it is, as NVDA's stays when a call to a
-    /// busy application is cancelled.
-    Unanswered,
-}
-
-impl FetchResult {
-    /// Stamps `outpost` on the node id a found node carries.
-    pub fn assign_outpost(&mut self, outpost: OutpostId) {
-        if let FetchResult::Node(node) = self {
-            node.assign_outpost(outpost);
-        }
-    }
-}
-
 /// What to fetch: one object-navigation step from a node to a neighbor
 /// (roadmap M3). Later milestones add text ranges and subtree queries.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -632,160 +581,10 @@ pub enum QueryKind {
     FirstChild,
 }
 
-/// A fetch request emitted by the reducer and executed by an outpost.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Query {
-    /// Correlates the eventual [`FetchResult`] back to this request.
-    pub query_id: QueryId,
-    /// The node to read. Its outpost is the one asked.
-    pub node_id: NodeId,
-    /// What to read.
-    pub kind: QueryKind,
-    /// The node details the read of the node reached fetches.
-    pub details: crate::property::NodeDetailSet,
-}
-
-/// A focus reader's kind: which of an application's two sources of focus
-/// reports read one. With the report's outpost generation it names the
-/// focus reader, which a live re-read is asked of.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-pub enum FocusReaderKind {
-    /// The focus listener's reading thread for the application.
-    Listener,
-    /// The application's outpost's own reads.
-    Outpost,
-}
-
-/// Where a focus report's cached ancestors begin: the entries of its
-/// ancestors, outermost first, that its focus reader took from its
-/// ancestry cache, its saved ancestors from its last read in the
-/// application, rather than read live. They are the outermost entries,
-/// from the first through `index`, the innermost of them, and lie above
-/// the cache join, where the reader's walk met its ancestry cache.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FirstCachedAncestor {
-    /// The index, in the report's ancestors outermost first, of its
-    /// innermost cached ancestor.
-    pub index: u32,
-    /// The focus reader that read the report, which a live re-read of it
-    /// is asked of.
-    pub reader: FocusReaderKind,
-}
-
-/// Why a report was set aside for a live re-read ([`Effect::LiveReread`]).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum LiveRereadReason {
-    /// A cached ancestor would have been spoken as entered: it lies below
-    /// the lowest common ancestor of the report and Core's focus ancestry.
-    Entered,
-    /// A cached ancestor is the entry the title rule would speak.
-    Title,
-}
-
-/// A live re-read Core asks of a focus reader: read the element of the
-/// report it set aside again, live, with no ancestry cache, and report it
-/// carrying `request` (`NormalizedEvent::FocusChanged::answers`), or answer
-/// it gone ([`Input::LiveRereadGone`]).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LiveReread {
-    /// Core's number for the request.
-    pub request: u64,
-    /// The outpost generation of the report set aside.
-    pub outpost: OutpostId,
-    /// The focus reader that read it.
-    pub reader: FocusReaderKind,
-    /// The report's trace, by which the focus reader finds its read.
-    pub trace_id: TraceId,
-    /// The report's top-level window, when it carried window facts, by
-    /// which the reader's moved-on rule judges the re-read as it judges a
-    /// focus read.
-    #[serde(default)]
-    pub window: Option<WindowHandle>,
-    /// For the log: the report's focus, the cache join (the entry its
-    /// walk met its ancestry cache at: the entry just inside its innermost
-    /// cached ancestor), the lowest common ancestor Core found, `None` for
-    /// none, and why a cached ancestor would have been spoken.
-    pub logged: LiveRereadLog,
-}
-
-/// What Core logs of a live re-read ([`LiveReread::logged`]).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LiveRereadLog {
-    /// The report's focus.
-    pub focus: NodeId,
-    /// The cache join, and its name.
-    pub cache_join: (NodeId, Option<String>),
-    /// The lowest common ancestor of the report and Core's focus ancestry,
-    /// when they share one.
-    pub lowest_common_ancestor: Option<NodeId>,
-    /// Why a cached ancestor would have been spoken.
-    pub reason: LiveRereadReason,
-}
-
 /// One input to the reducer. Strictly accessibility-shaped.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
-#[expect(
-    clippy::large_enum_variant,
-    reason = "an input is built once per event and moved, never stored in bulk"
-)]
 pub enum Input {
-    /// A normalized accessibility event from an outpost.
-    Event {
-        /// Trace ID minted when the OS event was first observed.
-        trace_id: TraceId,
-        /// Microseconds since the Unix epoch on the run's shared clock when
-        /// the OS event was first observed, the stamp the outpost put on the
-        /// wire; 0 when unknown. The reducer orders by it, to drop a focus
-        /// observed before the focus it already applied
-        /// (`docs/parity/focus-events.md`, "Stale focus events").
-        #[serde(default)]
-        observed_at_us: u64,
-        /// The application the event came from: information about its
-        /// source, for attention and logs. Node ids carry the outpost.
-        source: Pid,
-        /// Which backend sourced the event (diagnostics only).
-        backend: Backend,
-        /// Facts about the window the event concerns, or `None` when the
-        /// event has no window to read them from.
-        #[serde(default)]
-        window: Option<WindowFacts>,
-        /// The event itself.
-        event: NormalizedEvent,
-        /// For the answer to a [`crate::protocol::Query::ReadFocus`], why
-        /// it was asked, which only the app sets; `None` for every report.
-        #[serde(default)]
-        purpose: Option<crate::protocol::FocusPurpose>,
-    },
-    /// An outpost answered a query the reducer asked ([`Effect::Fetch`],
-    /// [`Effect::Text`], [`Effect::ReadNode`] or [`Effect::Activate`]), or the shell could not
-    /// send it: the protocol's outcome, which the reducer turns into the
-    /// result its query's kind takes.
-    Answered {
-        /// Trace ID the reply carries, the request's.
-        trace_id: TraceId,
-        /// The query this answers.
-        query_id: QueryId,
-        /// The outpost that answered: an answer from another outpost than
-        /// the one asked is dropped.
-        outpost: OutpostId,
-        /// What became of the query.
-        outcome: crate::protocol::QueryOutcome,
-        /// When the shell gave this to Core, in microseconds on the run's
-        /// shared clock: the moment a held key whose read this answers is
-        /// passed on.
-        at_us: u64,
-    },
-    /// An outpost generation ended: it exited, was killed, or was retired.
-    /// Every node id it issued is dead from now on, and every query the
-    /// reducer asked of it and has not had answered ends "gone".
-    OutpostEnded {
-        /// A trace the shell mints for the end, which an ended query asked
-        /// with no trace of its own is answered under.
-        trace_id: TraceId,
-        /// The generation that ended.
-        outpost: OutpostId,
-    },
     /// A review or object-navigation command, from a bound gesture
     /// (roadmap M3). The imperative shell translates a keyboard script
     /// into this; the reducer runs it against its navigator object and
@@ -896,16 +695,6 @@ pub enum Input {
         #[serde(default)]
         pressed_at_ms: u64,
     },
-    /// The key line's one deadline has passed ([`Effect::BoundHeldKey`]):
-    /// a before read past its 150 ms is given up, and a key past its 100 ms
-    /// bound gets its final read.
-    HeldKeyDue {
-        /// The trace ID of the key whose deadline passed.
-        trace_id: TraceId,
-        /// When it passed, in microseconds on the clock every process of a
-        /// run shares.
-        at_us: u64,
-    },
     /// Text was typed into the focused application: one character, or
     /// several at once when an input method commits a composition (one key
     /// press need not be one character). Sourced on the platform side,
@@ -961,14 +750,6 @@ pub enum Input {
         /// The mark.
         mark: SpeechMark,
     },
-    /// Speech was cut off outside the reducer: a key press cancelled it, as
-    /// the keyboard hook does for nearly every key. Say-all stops here, as
-    /// NVDA's stops on any key.
-    SpeechCancelled {
-        /// When it was cut off, in microseconds on the clock every process
-        /// of a run shares.
-        at_us: u64,
-    },
     /// The reader settings, at startup and whenever the user changes them.
     Settings(ReaderSettings),
     /// The details the active theme reports ([`crate::ReportedDetails`]),
@@ -1009,16 +790,6 @@ pub enum Input {
     },
     /// An error was logged, on any thread.
     ErrorLogged,
-    /// A window stopped responding: its outpost found it hung, once per
-    /// hang (`OutpostToCore::NotResponding`). Core plays the sound only if
-    /// the window's process holds attention as this arrives.
-    ApplicationNotResponding {
-        /// The outpost that found the window hung.
-        outpost: OutpostId,
-        /// The process that owns the window, which the outpost watches.
-        #[serde(default = "no_process")]
-        process: Pid,
-    },
     /// A lock key's state changed: read once the key had reached Windows
     /// and Windows had changed it.
     LockKeyToggled {
@@ -1081,13 +852,6 @@ pub enum Input {
     /// The settings dialog's theme page previews an event, as the theme
     /// reports it.
     PreviewEarcon(Earcon),
-    /// A menu or the Alt+Tab switcher closed, at `ended_at_us`, as the focus
-    /// listener tells it, 50 ms later.
-    MenuOrSwitchEnded {
-        /// When it closed, in microseconds since the Unix epoch on the
-        /// clock events' `observed_at_us` use.
-        ended_at_us: u64,
-    },
     /// The quiet-period timer of the focused terminal's reading rules came
     /// due, at the due time Core's state gives, which the shell reads after
     /// each step: the rules are given the keys that reached the program by
@@ -1105,36 +869,6 @@ pub enum Input {
     /// ([`HookForeground`]), moves attention, and keeps its foreground
     /// record.
     Foreground(ForegroundWindow),
-    /// A focus reader answered the live re-read `request` gone
-    /// ([`Effect::LiveReread`]): its element is gone, or the reader no
-    /// longer holds the read the re-read names.
-    LiveRereadGone {
-        /// The outpost generation the answer came through.
-        outpost: OutpostId,
-        /// The request it answers.
-        request: u64,
-    },
-    /// The focus listener was replaced: every live re-read asked of it
-    /// ends with no answer.
-    ListenerReplaced,
-    /// Verbatim+Tab's query ([`Effect::ReadFocus`] with
-    /// [`crate::protocol::FocusPurpose::Report`]), asked under `trace_id`,
-    /// ends with no answer: `abandoned` past its deadline, when nothing is
-    /// said; otherwise nothing could be asked, or its outpost ended or
-    /// answered no focus, when "No focus" is said.
-    ReadFocusUnanswered {
-        /// The trace the query was asked under, the press's.
-        trace_id: TraceId,
-        /// Whether it was abandoned at its deadline.
-        abandoned: bool,
-    },
-    /// News of the desktop, from the focus listener.
-    Desktop {
-        /// A trace the shell mints for it, which its speech carries.
-        trace_id: TraceId,
-        /// What happened.
-        news: DesktopNews,
-    },
     /// A progress bar's value changed, from the focus listener, which is
     /// the one owner of every bar's changes.
     Progress {
@@ -1143,23 +877,6 @@ pub enum Input {
         /// What changed.
         change: BarChange,
     },
-}
-
-/// News of the desktop the focus listener tells Core
-/// (`books/dev/src/reference/adr/0001-focus.md`, "The desktop's return and name").
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum DesktopNews {
-    /// The user's desktop returned, 200 ms after the desktop switch, as
-    /// NVDA tells it later: Core asks the application in front for its
-    /// focus again.
-    Returned,
-    /// The virtual desktop's name, the desktop window's MSAA name read
-    /// after its name change: kept until the next focus Core takes, or its
-    /// due time.
-    Name(String),
-    /// The name's due time, 250 ms after its event: a name still kept is
-    /// spoken as a message.
-    NameDue,
 }
 
 /// A progress bar's percentage, 0 to 100, kept in hundredths of a percent
@@ -1314,10 +1031,7 @@ impl Input {
     #[must_use]
     pub fn trace_id(&self) -> Option<TraceId> {
         match self {
-            Self::Event { trace_id, .. }
-            | Self::Answered { trace_id, .. }
-            | Self::OutpostEnded { trace_id, .. }
-            | Self::Command { trace_id, .. }
+            Self::Command { trace_id, .. }
             | Self::Script { trace_id, .. }
             | Self::ToggleKeyPressed { trace_id, .. }
             | Self::CaretKey { trace_id, .. }
@@ -1331,8 +1045,6 @@ impl Input {
             | Self::ShellItemGone { trace_id, .. }
             | Self::ShellItemUnclickable { trace_id, .. }
             | Self::PreviewSpeech { trace_id, .. }
-            | Self::ReadFocusUnanswered { trace_id, .. }
-            | Self::Desktop { trace_id, .. }
             | Self::Progress { trace_id, .. }
             | Self::Queue { trace_id, .. } => Some(*trace_id),
             _ => None,
@@ -1508,40 +1220,15 @@ pub enum Effect {
     /// longer valid ([`crate::FocusValidity`]), and judge waiting focus
     /// speech against this focus when its turn comes.
     DropExpiredSpeech(crate::FocusNow),
-    /// Ask an outpost for more data; the answer re-enters as
-    /// [`Input::Answered`].
-    Fetch(Query),
     /// Indicate an event at once, as the active theme reports it: a sound
     /// on its own mixer source, words, both, or nothing.
     PlayEarcon(Earcon),
-    /// Read a node as it is now ([`crate::protocol::Query::ReadNode`]): a
-    /// review command's live read of the navigator object.
-    ReadNode {
-        /// Correlates the answer with this request.
-        query_id: QueryId,
-        /// The node to read. Its outpost is the one asked.
-        node_id: NodeId,
-        /// The node details the read fetches, chosen from the settings.
-        details: crate::property::NodeDetailSet,
-    },
-    /// Activate a node — invoke, toggle, or its default action — in the
-    /// application that owns it; the answer re-enters as
-    /// [`Input::Answered`], and the reducer speaks what was done.
-    Activate {
-        /// Correlates the answer with this request.
-        query_id: QueryId,
-        /// The node to activate. Its outpost is the one asked.
-        node_id: NodeId,
-    },
     /// Copy text to the system clipboard through the shell's shared
     /// clipboard helper, whose result comes back as
     /// [`Input::ClipboardCopied`], which the reducer confirms in speech.
     /// The reducer stays pure — it never touches the clipboard itself — so
     /// the report-object triple-press emits this rather than doing the copy.
     CopyToClipboard(String),
-    /// Ask an outpost to read or act on a node's text; the answer re-enters
-    /// as [`Input::Answered`] (milestone M4).
-    Text(TextRequest),
     /// Keep the display on (true) while say-all reads, or let it turn off
     /// again (false), NVDA's "Prevent display from turning off during say
     /// all". Every true is followed by a false when say-all ends.
@@ -1549,42 +1236,12 @@ pub enum Effect {
     /// The reducer changed a reader setting itself, by a toggle key; the
     /// shell saves the new settings.
     SettingsChanged(ReaderSettings),
-    /// Pass the caret key the hook held back as [`Input::HeldKey`] with
-    /// this trace ID on to the application, re-sent as the user pressed
-    /// it.
-    PassHeldKey(TraceId),
-    /// Sets the key line's one deadline, or clears it with `None`: the key
-    /// with this trace ID waits at most this many milliseconds from now,
-    /// when the shell enters [`Input::HeldKeyDue`] with its trace ID. A
-    /// later one replaces it.
-    BoundHeldKey(Option<(TraceId, u64)>),
-    /// Core's note for a key with no before read
-    /// ([`crate::protocol::CoreToOutpost::KeyNote`]), one-way.
-    KeyNote(crate::NoteRequest),
-    /// Core gave up on its query `query_id` to `outpost`, which it no longer
-    /// records, so its outcome is dropped: the shell withdraws it from its
-    /// outpost, which answers it "not started" if it has not started.
-    Withdraw {
-        /// The outpost asked.
-        outpost: OutpostId,
-        /// The query withdrawn.
-        query_id: QueryId,
-    },
     /// The effect on behalf of the key with this trace ID, whatever input
     /// caused it: a key that waited behind a held key is handled while the
     /// reducer handles the held key's read (the read before a held key, or
     /// a later key's own effects), and its requests and speech must carry
     /// its own key's trace, so that its answers and speech are that key's.
     ForKey(TraceId, Box<Effect>),
-    /// Ask for the focus now, for `purpose`
-    /// ([`crate::protocol::FocusPurpose`]): for a fake focus after a menu or
-    /// the Alt+Tab switcher closes, or the desktop's return, the
-    /// application in front, its answer reported as a focus on the control
-    /// alone, and one whose outpost is not ready asked as at a foreground
-    /// change; for Verbatim+Tab, the process of the foreground thread's
-    /// focus window, under the trace the shell executes this with, its
-    /// answer spoken only.
-    ReadFocus(crate::protocol::FocusPurpose),
     /// Read the time and date, for the report-time gesture: the shell
     /// enters [`Input::ClockRead`] with the trace it executed this under.
     ReadClock {
@@ -1593,10 +1250,6 @@ pub enum Effect {
     },
     /// Show a window of the GUI.
     Show(GuiRequest),
-    /// Ask a focus reader for a live re-read of a report Core set aside
-    /// because it would have spoken a cached ancestor; the shell logs it
-    /// and routes it to the listener or the outpost.
-    LiveReread(LiveReread),
     /// An event Core took, for the control plane's event stream, which
     /// carries it as version 4 of the control protocol did: the shell
     /// fans it out to the connections subscribed to events, and does

@@ -412,13 +412,12 @@ mod tests {
     use std::fs::File;
     use std::io::BufReader;
 
-    use verbatim_model::TraceId;
     use verbatim_process::overlapped::{End, Flow, pipe};
 
     use super::*;
     use crate::owner::OwnerEvent;
-    use crate::writer::{Outgoing, QueueError, received_now};
-    use verbatim_model::protocol::{CoreToOutpost, EventTiming, ListenerToCore, RequestId};
+    use crate::writer::{Outgoing, QueueError};
+    use verbatim_model::protocol::{CoreToOutpost, ListenerToCore};
     use verbatim_process::message::{read_message, write_message};
 
     /// How long a test waits for a completion it caused before it fails.
@@ -441,21 +440,16 @@ mod tests {
 
     /// A request numbered `id`, as the reducer sends one.
     fn request(id: u64) -> Outgoing<CoreToOutpost> {
-        Outgoing::Other(
-            CoreToOutpost::Query {
-                trace_id: TraceId::mint(),
-                request_id: RequestId::shell(id),
-                query: verbatim_model::protocol::Query::DumpTree { locations: false },
-                timing: EventTiming::default(),
-            },
-            received_now(),
-        )
+        Outgoing::Other(CoreToOutpost::Cancel(verbatim_model::request::Cancel {
+            number: verbatim_model::request::RequestNumber(id),
+            reason: verbatim_model::request::CancelReason::Withdrawn,
+        }))
     }
 
     /// What a command read off a child's pipe is, for the order asserted.
     fn name(command: &CoreToOutpost) -> String {
         match command {
-            CoreToOutpost::Query { request_id, .. } => format!("request {}", request_id.number),
+            CoreToOutpost::Cancel(cancel) => format!("request {}", cancel.number.0),
             other => format!("{other:?}"),
         }
     }
@@ -538,14 +532,11 @@ mod tests {
         // More than the pipe's 4 KiB buffer, so its write waits for a
         // reader that never comes.
         stuck
-            .push(Outgoing::Other(
-                CoreToOutpost::NodesHeld {
-                    nodes: (0..2_000).collect(),
-                    anchors: Vec::new(),
-                    acknowledged: 1,
-                },
-                received_now(),
-            ))
+            .push(Outgoing::Other(CoreToOutpost::NodesHeld {
+                nodes: (0..2_000).collect(),
+                anchors: Vec::new(),
+                acknowledged: 1,
+            }))
             .expect("written, and pending");
         stuck.push(request(1)).expect("queued");
         other.push(request(2)).expect("written");

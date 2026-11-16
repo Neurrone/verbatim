@@ -29,9 +29,8 @@ use crossbeam_channel::unbounded;
 
 mod common;
 use common::Delivered;
-use verbatim_model::protocol::{
-    CoreToListener, CoreToOutpost, ListenerToCore, OutpostToCore, RequestId,
-};
+use verbatim_model::protocol::{CoreToListener, CoreToOutpost, ListenerToCore, OutpostToCore};
+use verbatim_model::request::{Cancel, CancelReason, RequestNumber};
 use verbatim_model::{OutpostId, Pid};
 use verbatim_process::arguments::OutpostOptions;
 use verbatim_process::message::{read_message, write_message};
@@ -196,9 +195,10 @@ fn an_outpost_that_ends_after_its_application_exited_ends_as_the_exit_and_none_s
     supervisor
         .send_to_outpost(
             outpost,
-            CoreToOutpost::CancelQuery {
-                request_id: RequestId::shell(0),
-            },
+            CoreToOutpost::Cancel(Cancel {
+                number: RequestNumber(0),
+                reason: CancelReason::Withdrawn,
+            }),
         )
         .expect("the command that crashes the stand-in is queued");
     match next(&events) {
@@ -316,9 +316,10 @@ fn an_end_the_app_refuses_for_now_still_comes_before_its_replacement() {
     supervisor
         .send_to_outpost(
             outpost,
-            CoreToOutpost::CancelQuery {
-                request_id: RequestId::shell(0),
-            },
+            CoreToOutpost::Cancel(Cancel {
+                number: RequestNumber(0),
+                reason: CancelReason::Withdrawn,
+            }),
         )
         .expect("the command that crashes the stand-in is queued");
     refusal
@@ -366,9 +367,10 @@ fn crash(supervisor: &Supervisor, events: &Delivered, outpost: OutpostId, target
     supervisor
         .send_to_outpost(
             outpost,
-            CoreToOutpost::CancelQuery {
-                request_id: RequestId::shell(0),
-            },
+            CoreToOutpost::Cancel(Cancel {
+                number: RequestNumber(0),
+                reason: CancelReason::Withdrawn,
+            }),
         )
         .expect("the command that crashes the stand-in is queued");
     match next(events) {

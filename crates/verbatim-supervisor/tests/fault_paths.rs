@@ -199,7 +199,7 @@ fn a_message_the_port_refuses_is_delivered_again_in_order_and_shutdown_ends() {
     );
     // Core's own outpost's start is the relay's next send, behind the kept
     // message, unless a heartbeat delivered that first.
-    supervisor.ensure_spawned(Pid(std::process::id()));
+    supervisor.start_outpost(Pid(std::process::id()));
     let taken: Vec<String> = (0..3 + SPARES).map(|_| name(&next(&events))).collect();
     assert_eq!(
         taken,
@@ -232,7 +232,7 @@ fn a_shutdown_whose_wake_the_port_refuses_still_ends() {
     let (events_tx, events) = unbounded();
     let supervisor = supervisor(events_tx.into());
     let events = Delivered::new(events, &supervisor);
-    supervisor.ensure_spawned(Pid(std::process::id()));
+    supervisor.start_outpost(Pid(std::process::id()));
     let mut waiting = 0;
     while waiting < SPARES {
         if let OutpostMessage::SpareReady { waiting: now, .. } = next(&events) {

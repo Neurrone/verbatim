@@ -225,33 +225,18 @@ pub(super) const TOLD_KEPT: usize = 64;
 pub(super) enum Parked {
     /// A property change's element.
     Property(verbatim_uia::Agile<verbatim_uia::PropertyEvent>),
-    /// A caret, text, or active text position change's element.
+    /// A caret or text change's element.
     Text(verbatim_uia::Agile<verbatim_uia::TextEvent>),
-    /// The range an active text position change carried.
-    Range(windows::core::AgileReference<windows::Win32::UI::Accessibility::IUIAutomationTextRange>),
 }
 
 impl Parked {
     /// The element, on this thread, read as the `Kept` shape both event
     /// shapes cover, which is all any reader of it reads and what the node
-    /// registry keeps; `None` when it cannot be resolved or is a range.
+    /// registry keeps; `None` when it cannot be resolved.
     pub(super) fn element(self) -> Option<Cached<Kept>> {
         match self {
             Self::Property(agile) => agile.resolve().ok().map(|event| event.narrow()),
             Self::Text(agile) => agile.resolve().ok().map(|event| event.narrow()),
-            Self::Range(_) => None,
-        }
-    }
-
-    /// The range, when it is one.
-    pub(super) fn range(
-        self,
-    ) -> Option<
-        windows::core::AgileReference<windows::Win32::UI::Accessibility::IUIAutomationTextRange>,
-    > {
-        match self {
-            Self::Range(range) => Some(range),
-            Self::Property(_) | Self::Text(_) => None,
         }
     }
 }

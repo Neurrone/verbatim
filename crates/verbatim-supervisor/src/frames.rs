@@ -39,18 +39,15 @@ pub struct Frame {
     /// up, for a frame read over several reads, its header still ahead of
     /// them; in a copy otherwise.
     bytes: OwnedFrame,
-    /// When the relay read it, in microseconds since the Unix epoch.
-    read_at_us: u64,
 }
 
 impl Frame {
     /// The frame `outpost` sent.
-    pub(super) fn new(pid: Pid, outpost: OutpostId, bytes: OwnedFrame, read_at_us: u64) -> Self {
+    pub(super) fn new(pid: Pid, outpost: OutpostId, bytes: OwnedFrame) -> Self {
         Self {
             pid,
             outpost,
             bytes,
-            read_at_us,
         }
     }
 }
@@ -156,7 +153,6 @@ impl Frames {
 /// generation whose pipe they arrived on, never whatever the body claims.
 fn parse(frame: &Frame) -> io::Result<Box<OutpostToCore>> {
     let mut message: Box<OutpostToCore> = Box::new(decode_message(frame.bytes.parts())?);
-    message.core_read(frame.read_at_us);
     message.assign_outpost(frame.outpost);
     Ok(message)
 }

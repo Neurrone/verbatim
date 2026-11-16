@@ -47,8 +47,9 @@ use super::policy::{Liveness, Spares, WedgeLimits, WedgeReason};
 use super::process::{self, Launched, Role};
 use super::relay::{COMPLETIONS_PER_WAIT, CommandPipes, Inbox, Mailbox, Relay, Source, Taken};
 use super::retire::{Ending, ShutdownSummary, retire};
-use super::writer::{Outgoing, Received, ToChild, WriterHandle, received_now};
+use super::writer::{Outgoing, ToChild, WriterHandle};
 use super::{EndReason, EventSink, OutpostMessage, SPARES, Sealed, Timings, Undelivered, Writers};
+use verbatim_core::supervisor::Received;
 use verbatim_process::arguments::ListenerArguments;
 use verbatim_process::held::{IgnoredProcesses, NotHeld, Target};
 
@@ -525,7 +526,7 @@ impl Owner {
             Source::Listener => {
                 // When verbatim.exe took the message in, before it is
                 // parsed (`docs/design/communication.md`, section 10.1).
-                let received = received_now();
+                let received = Received { at_us: now_us() };
                 self.listener_message(outpost, received, decode_message(body)?);
                 Ok(())
             }
@@ -593,7 +594,7 @@ impl Owner {
             }
             Peeked::TargetExited => self.application_exited(pid, "its outpost saw it exit"),
             Peeked::Ready => {
-                self.hand_on(Frame::new(pid, outpost, body.into_owned(), read_at_us));
+                self.hand_on(Frame::new(pid, outpost, body.into_owned()));
                 self.on_ready(outpost);
             }
             // Written by a spare before it read its `Assign`, and read
@@ -608,9 +609,9 @@ impl Owner {
                 {
                     *fault = Some(detail);
                 }
-                self.hand_on(Frame::new(pid, outpost, body.into_owned(), read_at_us));
+                self.hand_on(Frame::new(pid, outpost, body.into_owned()));
             }
-            Peeked::Other => self.hand_on(Frame::new(pid, outpost, body.into_owned(), read_at_us)),
+            Peeked::Other => self.hand_on(Frame::new(pid, outpost, body.into_owned())),
         }
         Ok(())
     }

@@ -10,18 +10,11 @@
 //!   dead one.
 //! - Sending never waits: nothing that sends a message, the worker and the
 //!   watchdog above all, can be held up by a pipe Core is slow to read.
-//! - While messages wait, they are merged as their type declares
-//!   (`Merge for OutpostToCore` in `verbatim_model::protocol`): an event
-//!   replaces a waiting event of the same kind for the same node and goes
-//!   to the back. A terminal's read is never merged: where each read starts
-//!   is where the one before it said to start, so a read dropped for a
-//!   newer one would leave the rows between them unread by Core. Answers
-//!   to Core's requests, notifications, and faults are never merged, and
-//!   keep their order. The idle barrier's answer is never merged either,
-//!   and no event is merged across it, so it never overtakes what was sent
-//!   before it; nor is anything merged across a flush marker. What waits
-//!   is therefore bounded by the nodes and kinds there are, by Core's
-//!   requests, and by the intake's own limits.
+//! - Ordinary messages, tells, answers to Core's requests, the idle
+//!   barrier's answer and faults, are never merged and keep their order:
+//!   each answer answers its own request, and each tell is an entry of
+//!   Core's event queue, whose limiter is Core's. What waits is bounded by
+//!   Core's requests and by the intake's own limits.
 //! - The messages that carry node ids are numbered as Core counts them, as
 //!   each is written, and the nodes and text anchors each names, which the
 //!   object store listed in its [`Recorded`], are recorded at its number
@@ -35,7 +28,7 @@ use std::collections::{BTreeMap, VecDeque};
 use std::convert::Infallible;
 use std::io;
 
-use verbatim_model::protocol::{Merge, OutpostToCore, Urgent, merge_into};
+use verbatim_model::protocol::{OutpostToCore, Urgent};
 use verbatim_process::transport::{Backlog, SendError, Sender};
 
 use super::store::Recorded;
@@ -53,10 +46,6 @@ pub(crate) enum Carried {
 }
 
 /// What is sent to Core: one item of the outbound queue.
-#[expect(
-    clippy::large_enum_variant,
-    reason = "an item is moved once into the backlog and out, never held in bulk outside it"
-)]
 pub(crate) enum Outgoing {
     /// A message that goes ahead of everything waiting: a pong, `Ready`,
     /// `TargetExited` or `SpareReady`, none of which carries a node.
@@ -64,8 +53,7 @@ pub(crate) enum Outgoing {
     /// An ordinary message, with the nodes and anchors it names.
     Message(OutpostToCore, Vec<Carried>),
     /// Answered once every message sent before it is written, every write
-    /// before it having completed. Nothing sent after it is merged into a
-    /// message before it.
+    /// before it having completed.
     Flushed(std::sync::mpsc::Sender<()>),
 }
 
@@ -89,7 +77,7 @@ struct Report {
 /// The waiting messages, and the numbering of those that carry node ids:
 /// the backlog of the outpost's [`Sender`]. Every message sent passes
 /// through it, written at once or after waiting, so the numbers are given
-/// in the order the messages are written. Pure, so the merging and the
+/// in the order the messages are written. Pure, so the order and the
 /// numbering are tested on their own.
 pub(crate) struct Pending {
     urgent: VecDeque<Urgent>,
@@ -111,33 +99,10 @@ impl Pending {
         }
     }
 
-    /// Queues `message`, which may report each of `touched`, merged with a
-    /// waiting message as [`Merge for OutpostToCore`](Merge) declares,
-    /// among those waiting since the last flush marker.
-    fn push_message(&mut self, message: OutpostToCore, mut touched: Vec<Carried>) {
+    /// Queues `message`, which may report each of `touched`, at the back.
+    fn push_message(&mut self, message: OutpostToCore, touched: Vec<Carried>) {
         for &number in &touched {
             self.reported.entry(number).or_default().waiting += 1;
-        }
-        let mut message = message;
-        let since_flush = self
-            .ordinary
-            .iter()
-            .rposition(|waiting| matches!(waiting, Waiting::Flushed(_)))
-            .map_or(0, |marker| marker + 1);
-        let waiting = self
-            .ordinary
-            .iter()
-            .enumerate()
-            .skip(since_flush)
-            .filter_map(|(place, waiting)| match waiting {
-                Waiting::Message(message, _) => Some((place, &**message)),
-                Waiting::Flushed(_) => None,
-            });
-        if let Some(place) = merge_into(waiting, &message)
-            && let Some(Waiting::Message(older, older_touched)) = self.ordinary.remove(place)
-        {
-            message = OutpostToCore::merged(*older, message);
-            touched.extend(older_touched);
         }
         self.ordinary
             .push_back(Waiting::Message(Box::new(message), touched));
@@ -315,103 +280,37 @@ mod tests {
     use std::sync::mpsc;
     use std::time::Duration;
 
-    use verbatim_model::{
-        Backend, NodeId, NormalizedEvent, TerminalColourRun, TerminalSnapshot, TerminalText,
-        TraceId,
-    };
+    use verbatim_model::request::{Answer, Outcome, Reply, RequestNumber};
     use verbatim_process::overlapped::{End, Flow, pipe};
 
     use super::*;
-    use verbatim_model::protocol::{EventTiming, QueryOutcome, RequestId};
     use verbatim_process::message::read_message;
 
-    fn node(number: u64) -> NodeId {
-        NodeId::new(number)
-    }
-
-    fn event(event: NormalizedEvent) -> OutpostToCore {
-        OutpostToCore::Event {
-            trace_id: TraceId::mint(),
-            observed_at_us: 0,
-            backend: Backend::Uia,
-            window: None,
-            application: None,
-            timing: EventTiming::default(),
-            event,
-        }
-    }
-
-    fn text_changed(number: u64) -> OutpostToCore {
-        event(NormalizedEvent::TextChanged {
-            node_id: node(number),
+    /// The answer to Core's request `number`, its result carrying nodes.
+    fn answer(number: u64) -> OutpostToCore {
+        OutpostToCore::Answer(Answer {
+            number: RequestNumber(number),
+            outcome: Outcome::Result(Reply::Followed),
+            probes: Vec::new(),
+            detail: String::new(),
         })
     }
 
-    fn value_changed(number: u64) -> OutpostToCore {
-        event(NormalizedEvent::ValueChanged {
-            node_id: node(number),
-            value: None,
+    /// The answer to Core's request `number`, ended, with `detail` for the
+    /// log: it carries no node.
+    fn ended(number: u64, detail: &str) -> OutpostToCore {
+        OutpostToCore::Answer(Answer {
+            number: RequestNumber(number),
+            outcome: Outcome::Ended,
+            probes: Vec::new(),
+            detail: detail.to_owned(),
         })
     }
 
-    fn reply(request_id: u64) -> OutpostToCore {
-        OutpostToCore::Reply {
-            trace_id: TraceId::mint(),
-            request_id: RequestId::shell(request_id),
-            outcome: QueryOutcome::Abandoned,
-            timing: EventTiming::default(),
-        }
-    }
-
-    /// A read of a terminal whose text is `text`, with colours when
-    /// `coloured`.
-    fn terminal(text: &str, coloured: bool) -> OutpostToCore {
-        event(NormalizedEvent::TerminalSnapshot {
-            node_id: node(9),
-            snapshot: Box::new(TerminalSnapshot {
-                text: TerminalText::unpadded(text),
-                screen: TerminalText::unpadded(text),
-                from_start: true,
-                shrank: false,
-                at_document_start: false,
-                alternate: false,
-                first_row: TerminalText::default(),
-                caret_rows_to_end: 1,
-                caret_line: TerminalText::default(),
-                caret_column: 0,
-                above: 0,
-                started_ms: 0,
-                ended_ms: 0,
-                waited: false,
-                read: 0,
-                colours: coloured.then(|| {
-                    vec![vec![TerminalColourRun {
-                        column: 0,
-                        length: 3,
-                        foreground: 7,
-                        background: 0,
-                    }]]
-                }),
-                caret: None,
-            }),
-        })
-    }
-
-    /// The text of a terminal's read written.
-    fn text_of(message: &OutpostToCore) -> &str {
-        match message {
-            OutpostToCore::Event {
-                event: NormalizedEvent::TerminalSnapshot { snapshot, .. },
-                ..
-            } => &snapshot.text.text,
-            other => panic!("not a terminal's read: {other:?}"),
-        }
-    }
-
-    /// A terminal's read larger than a pipe's 4 KiB buffer, so the write
-    /// that carries it pends until the test reads.
+    /// An answer larger than a pipe's 4 KiB buffer, so the write that
+    /// carries it pends until the test reads.
     fn large() -> OutpostToCore {
-        terminal(&"x".repeat(20_000), false)
+        ended(99, &"x".repeat(20_000))
     }
 
     fn pending() -> Pending {
@@ -442,249 +341,42 @@ mod tests {
         written
     }
 
-    fn summary(message: &OutpostToCore) -> String {
-        match message {
-            OutpostToCore::Event { event, .. } => format!("{event:?}"),
-            OutpostToCore::Reply { request_id, .. } => format!("reply {}", request_id.number),
-            other => format!("{other:?}"),
-        }
-    }
-
+    /// Two answers to one request number and an idle answer between them
+    /// are each written, in the order sent: nothing merges.
     #[test]
-    fn a_waiting_event_is_replaced_by_one_of_the_same_kind_for_the_same_node_at_the_back() {
+    fn ordinary_messages_are_written_whole_in_the_order_sent() {
         let mut pending = pending();
-        push(&mut pending, text_changed(1), &[]);
-        push(&mut pending, value_changed(1), &[]);
-        push(&mut pending, text_changed(2), &[]);
-        push(&mut pending, reply(7), &[]);
-        push(&mut pending, text_changed(1), &[]);
-        let order: Vec<String> = write(&mut pending).iter().map(summary).collect();
+        push(&mut pending, answer(1), &[]);
+        push(&mut pending, ended(2, "gone"), &[]);
+        push(&mut pending, OutpostToCore::IdleAnswer { round: 3 }, &[]);
+        push(&mut pending, answer(1), &[]);
         assert_eq!(
-            order,
-            vec![
-                summary(&value_changed(1)),
-                summary(&text_changed(2)),
-                "reply 7".to_owned(),
-                summary(&text_changed(1)),
+            write(&mut pending),
+            [
+                answer(1),
+                ended(2, "gone"),
+                OutpostToCore::IdleAnswer { round: 3 },
+                answer(1),
             ]
         );
     }
 
+    /// A message the size of a terminal's whole document of a full history,
+    /// 9,001 rows of 120 columns each holding text to its last column, goes
+    /// to Core as one message.
     #[test]
-    fn answers_and_notifications_are_never_merged() {
-        let notification = || {
-            event(NormalizedEvent::Notification {
-                node_id: node(1),
-                notification: verbatim_model::Notification {
-                    kind: verbatim_model::NotificationKind::Other,
-                    processing: verbatim_model::NotificationProcessing::All,
-                    display_string: Some("saved".to_owned()),
-                    activity_id: None,
-                },
-            })
-        };
-        let mut pending = pending();
-        push(&mut pending, reply(1), &[]);
-        push(&mut pending, notification(), &[]);
-        push(&mut pending, reply(1), &[]);
-        push(&mut pending, notification(), &[]);
-        assert_eq!(write(&mut pending).len(), 4);
-    }
-
-    #[test]
-    fn a_terminals_reads_are_never_merged() {
-        let mut pending = pending();
-        push(&mut pending, terminal("one", false), &[]);
-        push(&mut pending, terminal("two", true), &[]);
-        push(&mut pending, terminal("three", false), &[]);
-        let written = write(&mut pending);
-        let texts: Vec<&str> = written.iter().map(text_of).collect();
-        assert_eq!(texts, ["one", "two", "three"]);
-    }
-
-    /// The whole document of a full history, 9,001 rows of 120 columns
-    /// each holding text to its last column, goes to Core as one message.
-    #[test]
-    fn a_whole_documents_read_of_a_full_history_is_written_whole() {
+    fn a_message_the_size_of_a_full_historys_read_is_written_whole() {
         let row = "y".repeat(120);
-        let text = vec![row.as_str(); 9_001].join(
-            "
-",
-        );
+        let text = vec![row.as_str(); 9_001].join("\n");
         let mut pending = pending();
-        push(&mut pending, terminal(&text, false), &[]);
-        let written = write(&mut pending);
-        assert_eq!(written.len(), 1);
-        assert_eq!(text_of(&written[0]), text);
-    }
-
-    fn caret_moved(offset: u32, changes: &[(bool, &str)]) -> OutpostToCore {
-        event(NormalizedEvent::CaretMoved {
-            node_id: node(1),
-            caret: verbatim_model::CaretReport {
-                line: verbatim_model::TextChunk {
-                    unit: verbatim_model::TextUnit::Line,
-                    text: "alpha beta\n".to_owned(),
-                    start: verbatim_model::TextAnchor(1),
-                    offset,
-                    languages: Vec::new(),
-                    first: true,
-                    last: true,
-                    truncated: false,
-                    formats: Vec::new(),
-                },
-                selection: None,
-                read_at_us: 0,
-            },
-            selection_changes: changes
-                .iter()
-                .map(|&(selected, text)| verbatim_model::SelectionChange {
-                    selected,
-                    text: text.to_owned(),
-                    characters: 5,
-                })
-                .collect(),
-            content_changed: false,
-            new_selection: None,
-            facts: None,
-        })
-    }
-
-    #[test]
-    fn a_waiting_caret_reports_selection_changes_come_before_the_newer_ones() {
-        let mut pending = pending();
-        push(&mut pending, caret_moved(5, &[(true, "alpha")]), &[]);
-        push(
-            &mut pending,
-            caret_moved(10, &[(false, "alpha"), (true, "beta ")]),
-            &[],
-        );
-        let written: Vec<String> = write(&mut pending).iter().map(summary).collect();
-        assert_eq!(
-            written,
-            vec![summary(&caret_moved(
-                10,
-                &[(true, "alpha"), (false, "alpha"), (true, "beta ")]
-            ))]
-        );
-    }
-
-    /// A waiting caret report that carries selection changes is not merged
-    /// across a reply: the merged report would be written after the reply,
-    /// and its change, which Core had not seen when the key the reply
-    /// answers was pressed, would be spoken a second time.
-    #[test]
-    fn a_caret_report_with_selection_changes_is_not_moved_past_a_reply() {
-        let mut pending = pending();
-        push(&mut pending, caret_moved(5, &[(true, "alpha")]), &[]);
-        push(&mut pending, reply(7), &[]);
-        push(&mut pending, caret_moved(10, &[]), &[]);
-        let order: Vec<String> = write(&mut pending).iter().map(summary).collect();
-        assert_eq!(
-            order,
-            vec![
-                summary(&caret_moved(5, &[(true, "alpha")])),
-                "reply 7".to_owned(),
-                summary(&caret_moved(10, &[])),
-            ]
-        );
-    }
-
-    fn states_changed(expanded: bool, child_count: Option<u32>) -> OutpostToCore {
-        let states = verbatim_model::StateSet::new().with(verbatim_model::State::Focused);
-        let states = if expanded {
-            states.with(verbatim_model::State::Expanded)
-        } else {
-            states.with(verbatim_model::State::Collapsed)
-        };
-        event(NormalizedEvent::PropertyChanged {
-            node_id: node(1),
-            change: verbatim_model::PropertyChange::States(states),
-            child_count,
-        })
-    }
-
-    /// A tree view item made expanded raises a change that reads its child
-    /// count, then one read after it is expanded that reads none: merged,
-    /// the count is kept while the item stays expanded.
-    #[test]
-    fn a_merged_expansion_keeps_its_child_count() {
-        let mut pending = pending();
-        push(&mut pending, states_changed(true, Some(52)), &[]);
-        push(&mut pending, states_changed(true, None), &[]);
-        let written: Vec<String> = write(&mut pending).iter().map(summary).collect();
-        assert_eq!(written, vec![summary(&states_changed(true, Some(52)))]);
-
-        let mut collapsed = Pending::new();
-        push(&mut collapsed, states_changed(true, Some(52)), &[]);
-        push(&mut collapsed, states_changed(false, None), &[]);
-        let written: Vec<String> = write(&mut collapsed).iter().map(summary).collect();
-        assert_eq!(written, vec![summary(&states_changed(false, None))]);
-    }
-
-    fn focus(earlier: Option<verbatim_model::EarlierElement>) -> OutpostToCore {
-        event(NormalizedEvent::FocusChanged {
-            node: verbatim_model::NodeSnapshot {
-                id: node(1),
-                backend: Backend::Uia,
-                role: verbatim_model::Role::Button,
-                name: Some("OK".to_owned()),
-                value: None,
-                states: verbatim_model::StateSet::new(),
-                details: verbatim_model::NodeDetails::default(),
-            },
-            whole_window: false,
-            ancestors: Vec::new(),
-            selected_child: None,
-            text: None,
-            earlier,
-            group: None,
-            answers: None,
-            first_cached_ancestor: None,
-        })
-    }
-
-    /// Two focus reports of one node merged keep the stronger evidence of
-    /// the element held before, in the order gone, not focused, focused,
-    /// none, so a newer report that says focused does not hide that the
-    /// older found another element.
-    #[test]
-    fn a_merged_focus_report_keeps_the_older_evidence_of_another_element() {
-        use verbatim_model::EarlierElement::{Focused, Gone, NotFocused};
-        for (older, newer, kept) in [
-            (Some(Gone), Some(Focused), Some(Gone)),
-            (Some(NotFocused), Some(Focused), Some(NotFocused)),
-            (Some(Gone), Some(NotFocused), Some(Gone)),
-            (Some(NotFocused), Some(Gone), Some(Gone)),
-            (Some(Focused), None, Some(Focused)),
-            (None, Some(Focused), Some(Focused)),
-        ] {
-            let mut pending = pending();
-            push(&mut pending, focus(older), &[]);
-            push(&mut pending, focus(newer), &[]);
-            let written: Vec<String> = write(&mut pending).iter().map(summary).collect();
-            assert_eq!(
-                written,
-                vec![summary(&focus(kept))],
-                "{older:?} then {newer:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn nothing_is_merged_across_a_flush() {
-        let mut pending = pending();
-        push(&mut pending, text_changed(1), &[]);
-        let (done, _) = mpsc::channel();
-        assert!(pending.push(Outgoing::Flushed(done)).is_ok());
-        push(&mut pending, text_changed(1), &[]);
-        assert_eq!(write(&mut pending).len(), 2);
+        push(&mut pending, ended(1, &text), &[]);
+        assert_eq!(write(&mut pending), [ended(1, &text)]);
     }
 
     #[test]
     fn urgent_messages_go_first() {
         let mut pending = pending();
-        push(&mut pending, text_changed(1), &[]);
+        push(&mut pending, answer(1), &[]);
         assert!(pending.push(Outgoing::Urgent(Urgent::TargetExited)).is_ok());
         let written = write(&mut pending);
         assert_eq!(written.first(), Some(&OutpostToCore::TargetExited));
@@ -693,30 +385,28 @@ mod tests {
     #[test]
     fn positions_are_counted_in_the_order_messages_are_written() {
         let mut pending = pending();
-        push(&mut pending, text_changed(1), &[1]);
-        push(&mut pending, text_changed(2), &[2]);
-        // Replaces the first, and goes to the back: Core reads node 2's
-        // message first, and this one second.
-        push(&mut pending, text_changed(1), &[3]);
+        push(&mut pending, answer(1), &[1]);
+        push(&mut pending, answer(2), &[2]);
+        push(&mut pending, answer(3), &[1, 3]);
         // A message without node ids takes no position.
-        push(&mut pending, reply(4), &[4]);
-        assert_eq!(write(&mut pending).len(), 3);
-        assert_eq!(pending.position(), 2, "Core counts two messages");
+        push(&mut pending, ended(4, ""), &[4]);
+        assert_eq!(write(&mut pending).len(), 4);
+        assert_eq!(pending.position(), 3, "Core counts three messages");
         let reports: Vec<Option<(u64, u32)>> = [1, 2, 3, 4, 5]
             .map(|number| pending.report(Carried::Node(number)))
             .to_vec();
         assert_eq!(
             reports,
-            vec![Some((2, 0)), Some((1, 0)), Some((2, 0)), Some((2, 0)), None]
+            vec![Some((3, 0)), Some((2, 0)), Some((3, 0)), Some((3, 0)), None]
         );
     }
 
     #[test]
     fn a_node_a_waiting_message_carries_is_counted_as_waiting_until_written() {
         let mut pending = pending();
-        push(&mut pending, text_changed(1), &[1]);
+        push(&mut pending, answer(1), &[1]);
         assert_eq!(write(&mut pending).len(), 1);
-        push(&mut pending, text_changed(2), &[1]);
+        push(&mut pending, answer(2), &[1]);
         assert_eq!(pending.report(Carried::Node(1)), Some((1, 1)));
         assert_eq!(write(&mut pending).len(), 1);
         assert_eq!(pending.report(Carried::Node(1)), Some((2, 0)));
@@ -741,33 +431,23 @@ mod tests {
     }
 
     #[test]
-    fn messages_sent_behind_a_write_in_flight_are_merged_and_written_in_order_after_it() {
+    fn messages_sent_behind_a_write_in_flight_are_written_in_order_after_it() {
         let (outbound, mut reader) = outbound();
         outbound.send(large());
-        outbound.send(text_changed(1));
-        outbound.send(value_changed(1));
-        outbound.send(text_changed(2));
-        outbound.send(reply(7));
-        outbound.send(text_changed(1));
+        outbound.send(answer(1));
+        outbound.send(ended(2, ""));
+        outbound.send(answer(1));
         outbound.urgent(Urgent::Pong {
             parked_count: 0,
             parked_on_hung: 0,
         });
-        assert_eq!(summary(&read(&mut reader)), summary(&large()));
+        assert_eq!(read(&mut reader), large());
         assert!(
             matches!(read(&mut reader), OutpostToCore::Pong { .. }),
             "the pong goes ahead of what waited"
         );
-        let rest: Vec<String> = (0..4).map(|_| summary(&read(&mut reader))).collect();
-        assert_eq!(
-            rest,
-            vec![
-                summary(&value_changed(1)),
-                summary(&text_changed(2)),
-                "reply 7".to_owned(),
-                summary(&text_changed(1)),
-            ]
-        );
+        let rest: Vec<OutpostToCore> = (0..3).map(|_| read(&mut reader)).collect();
+        assert_eq!(rest, [answer(1), ended(2, ""), answer(1)]);
         outbound.close();
         assert_eq!(
             read_message::<_, OutpostToCore>(&mut reader).expect("read"),
@@ -777,35 +457,27 @@ mod tests {
 
     /// The idle barrier's answer, sent behind a write in flight, goes after
     /// every message waiting before it, a pong sent after it going ahead of
-    /// both, and a newer event of a node whose event waits before it is not
-    /// merged into that one across it, so what that event reports is never
-    /// moved behind the answer.
+    /// both.
     #[test]
-    fn the_idle_answer_waits_behind_every_message_before_it_and_nothing_is_merged_across_it() {
+    fn the_idle_answer_waits_behind_every_message_before_it() {
         let (outbound, mut reader) = outbound();
         outbound.send(large());
-        outbound.send(text_changed(1));
-        outbound.send(reply(7));
+        outbound.send(answer(1));
         outbound.send(OutpostToCore::IdleAnswer { round: 4 });
-        outbound.send(text_changed(1));
+        outbound.send(answer(2));
         outbound.urgent(Urgent::Pong {
             parked_count: 0,
             parked_on_hung: 0,
         });
-        assert_eq!(summary(&read(&mut reader)), summary(&large()));
+        assert_eq!(read(&mut reader), large());
         assert!(
             matches!(read(&mut reader), OutpostToCore::Pong { .. }),
             "the pong goes ahead of what waited"
         );
-        let rest: Vec<String> = (0..4).map(|_| summary(&read(&mut reader))).collect();
+        let rest: Vec<OutpostToCore> = (0..3).map(|_| read(&mut reader)).collect();
         assert_eq!(
             rest,
-            vec![
-                summary(&text_changed(1)),
-                "reply 7".to_owned(),
-                summary(&OutpostToCore::IdleAnswer { round: 4 }),
-                summary(&text_changed(1)),
-            ]
+            [answer(1), OutpostToCore::IdleAnswer { round: 4 }, answer(2),]
         );
         outbound.close();
         assert_eq!(
@@ -836,7 +508,7 @@ mod tests {
             Err(mpsc::TryRecvError::Empty),
             "the large message's write is still in flight"
         );
-        assert_eq!(summary(&read(&mut reader)), summary(&large()));
+        assert_eq!(read(&mut reader), large());
         assert_eq!(done.recv_timeout(Duration::from_secs(10)), Ok(()));
     }
 }

@@ -4,9 +4,9 @@
 
 use std::fs::File;
 
-use verbatim_model::property::NodeDetailSet;
-use verbatim_model::protocol::EventTiming;
-use verbatim_model::{Backend, NodeDetails, NodeSnapshot, NormalizedEvent, StateSet, TraceId};
+use verbatim_model::property::{NodeDetailSet, PropertyValues};
+use verbatim_model::request::{Answer, NodeRead, NodeWindow, Outcome, Reply, RequestNumber};
+use verbatim_model::{Pid, WindowHandle};
 use verbatim_process::overlapped::{End, Flow, pipe};
 use verbatim_process::transport::Sender;
 use verbatim_uia::Interning as _;
@@ -22,37 +22,27 @@ fn outbound() -> (Outbound, File) {
     (Outbound::new(sender), File::from(theirs))
 }
 
-/// A focus event naming `nodes`, the first the focus and the rest its
-/// ancestors.
+/// An answer naming `nodes`, the children Core asked for.
 fn focus(nodes: &[NodeId]) -> OutpostToCore {
-    let snapshot = |id: NodeId| NodeSnapshot {
-        id,
-        backend: Backend::Uia,
-        role: Role::Button,
-        name: None,
-        value: None,
-        states: StateSet::new(),
-        details: NodeDetails::default(),
-    };
-    OutpostToCore::Event {
-        trace_id: TraceId::mint(),
-        observed_at_us: 0,
-        backend: Backend::Uia,
-        window: None,
-        application: None,
-        timing: EventTiming::default(),
-        event: NormalizedEvent::FocusChanged {
-            node: snapshot(nodes[0]),
-            whole_window: false,
-            ancestors: nodes[1..].iter().copied().map(snapshot).collect(),
-            selected_child: None,
-            text: None,
-            earlier: None,
-            group: None,
-            answers: None,
-            first_cached_ancestor: None,
+    let window = WindowHandle(0);
+    let read = |id: NodeId| NodeRead {
+        node: Some(id),
+        window: NodeWindow {
+            handle: window,
+            top_level: window,
+            root_owner: window,
+            process: Pid(0),
+            thread: 0,
+            desktop: false,
         },
-    }
+        values: PropertyValues(Vec::new()),
+    };
+    OutpostToCore::Answer(Answer {
+        number: RequestNumber(1),
+        outcome: Outcome::Result(Reply::Children(nodes.iter().copied().map(read).collect())),
+        probes: Vec::new(),
+        detail: String::new(),
+    })
 }
 
 /// Sends `message` and waits until it is written, so it has its position.

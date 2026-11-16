@@ -289,7 +289,6 @@ impl Seam {
                         details: NodeDetails::default(),
                     },
                     hwnd: 0,
-                    focus_window: 0,
                     element: None,
                 }),
                 TraceId::from_raw(5_000),
@@ -484,7 +483,6 @@ impl Seam {
                     );
                     seen.extend(self.outpost_effects(effects, app));
                 }
-                OutpostEffect::LogicError(error) => panic!("the outpost's logic error: {error:?}"),
                 _ => {}
             }
         }
@@ -560,7 +558,6 @@ impl Seam {
                         request,
                         reported: false,
                         panicked: false,
-                        cut: None,
                     },
                     now_of(self.now),
                 ));
@@ -590,7 +587,6 @@ impl Seam {
                         request,
                         reported: false,
                         panicked: false,
-                        cut: None,
                     },
                     now_of(self.now),
                 ));
@@ -602,7 +598,6 @@ impl Seam {
                         request,
                         reported: false,
                         panicked: false,
-                        cut: None,
                     },
                     now_of(self.now),
                 );

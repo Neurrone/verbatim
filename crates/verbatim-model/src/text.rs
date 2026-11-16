@@ -25,8 +25,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::event::QueryId;
-use crate::{NodeId, OutpostId};
+use crate::OutpostId;
 
 /// The most UTF-8 bytes of text one [`TextChunk`] carries. A longer unit
 /// (a minified file's single line) is cut at a character boundary at or
@@ -375,13 +374,33 @@ pub struct CaretReport {
 }
 
 /// How a read's selection changed from the node's last read.
+///
+/// `selection_changes` describe how the selection changed from the node's
+/// last read. With that selection `[old_start, old_end)` and the selection
+/// now `[new_start, new_end)` (each collapsed at the caret when nothing is
+/// selected), they are worked out by comparing endpoints, which only the
+/// outpost can do:
+///
+/// - When the two do not overlap or touch (`new_end < old_start` or
+///   `new_start > old_end`), the old text, if any, is unselected and the new
+///   text, if any, is selected, in that order.
+/// - Otherwise, first the start: `[new_start, old_start)` is selected when
+///   the start moved back, `[old_start, new_start)` unselected when it
+///   moved forward; then the end: `[old_end, new_end)` is selected when
+///   the end moved forward, `[new_end, old_end)` unselected when it moved
+///   back.
+///
+/// Empty changes are left out.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CaretChanges {
-    /// How the selection changed, by the rule [`CaretReply`] describes.
+    /// How the selection changed, by the rule above.
     #[serde(default)]
     pub selection_changes: Vec<SelectionChange>,
-    /// The text changed since the selection compared with was read
-    /// ([`CaretReply::content_changed`]).
+    /// The node's text changed since the selection compared with was read,
+    /// so the change is spoken in general terms (`docs/parity/text.md`,
+    /// "TextInfo-equivalent layer"): each of `selection_changes` then says
+    /// only whether something was selected or unselected, with no text, and
+    /// `new_selection` is the whole new selection.
     #[serde(default)]
     pub content_changed: bool,
     /// With `content_changed`, the whole new selection's text.
@@ -429,70 +448,6 @@ pub enum FocusText {
     /// failed): Core speaks neither its line nor its value, which for a
     /// document is all of its text.
     NotRead,
-}
-
-/// What a key's reads fetch: the unit at the caret and what the key does.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct KeyFetch {
-    /// The unit to read at the caret.
-    pub unit: TextUnit,
-    /// What the key does, which says what counts as its evidence.
-    pub motion: CaretMotion,
-    /// What its reads fetch beyond the text.
-    pub details: TextDetails,
-}
-
-/// One query reading the caret for a key, answered once.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CaretRead {
-    /// What the read fetches.
-    pub fetch: KeyFetch,
-    /// Which read it is.
-    pub purpose: ReadPurpose,
-}
-
-/// Which read a [`CaretRead`] is. A terminal's caret key reads the terminal
-/// with Core's full reads ([`TextOp::ReadTerminal`]), never with these.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ReadPurpose {
-    /// Before a held key is passed on in a text field: its arrival sets the
-    /// node's note.
-    BeforeFieldKey,
-    /// When a text field's key's bound passes with no evidence: it clears
-    /// the node's note when it commits, and goes ahead of queued reads.
-    Final,
-}
-
-/// Core's note for a key with no before read
-/// ([`crate::protocol::CoreToOutpost::KeyNote`]), one-way, set on the node
-/// as it arrives.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum NoteRequest {
-    /// A key in a text field.
-    Field {
-        /// The key's node.
-        node: NodeId,
-        /// What the node's reads fetch while the note lives.
-        fetch: KeyFetch,
-    },
-}
-
-impl NoteRequest {
-    /// The key's node.
-    #[must_use]
-    pub fn node(self) -> NodeId {
-        match self {
-            Self::Field { node, .. } => node,
-        }
-    }
-
-    /// What the node's reads fetch while the note lives.
-    #[must_use]
-    pub fn fetch(self) -> KeyFetch {
-        match self {
-            Self::Field { fetch, .. } => fetch,
-        }
-    }
 }
 
 /// What a read found compared with the node's last read, by the comparisons
@@ -563,47 +518,6 @@ pub struct ReadFacts {
     /// When the read ended, in microseconds on the clock every process of a
     /// run shares: Core judges a key's evidence by it.
     pub read_ended_at_us: u64,
-}
-
-/// The answer to a [`CaretRead`]: a read of the caret.
-///
-/// `selection_changes` describe how the selection changed from the node's
-/// last read. With that selection `[old_start, old_end)` and the selection
-/// now `[new_start, new_end)` (each collapsed at the caret when nothing is
-/// selected), they are worked out by comparing endpoints, which only the
-/// outpost can do:
-///
-/// - When the two do not overlap or touch (`new_end < old_start` or
-///   `new_start > old_end`), the old text, if any, is unselected and the new
-///   text, if any, is selected, in that order.
-/// - Otherwise, first the start: `[new_start, old_start)` is selected when
-///   the start moved back, `[old_start, new_start)` unselected when it
-///   moved forward; then the end: `[old_end, new_end)` is selected when
-///   the end moved forward, `[new_end, old_end)` unselected when it moved
-///   back.
-///
-/// Empty changes are left out.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CaretReply {
-    /// The caret as it is now.
-    pub caret: CaretReport,
-    /// How the selection changed from the node's last read.
-    #[serde(default)]
-    pub selection_changes: Vec<SelectionChange>,
-    /// The node's text changed since the selection compared with was read,
-    /// so the change is spoken in general terms (`docs/parity/text.md`,
-    /// "TextInfo-equivalent layer"): each of `selection_changes` then says
-    /// only whether something was selected or unselected, with no text, and
-    /// [`new_selection`](Self::new_selection) is the whole new selection.
-    #[serde(default)]
-    pub content_changed: bool,
-    /// With `content_changed`, the whole new selection's text, read in the
-    /// same read, its `selected` true; `None` when nothing is selected, and
-    /// always without `content_changed`.
-    #[serde(default)]
-    pub new_selection: Option<SelectionChange>,
-    /// What the read found for its key.
-    pub facts: ReadFacts,
 }
 
 /// A movement by whole units, positive forward and negative back.
@@ -989,7 +903,7 @@ pub struct SelectionRead {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SelectionDifference {
     /// What became selected and unselected, each part's text what its
-    /// range now holds, by the rule [`CaretReply`] describes for its
+    /// range now holds, by the rule [`CaretChanges`] describes for its
     /// `selection_changes`; empty when the old range and the new selection
     /// are both empty.
     pub changes: Vec<SelectionChange>,
@@ -1028,10 +942,6 @@ pub struct SelectionReadReply {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum TextOp {
-    /// Reads the caret for a key ([`CaretRead`]): answered
-    /// [`TextReply::Caret`], or [`TextReply::Unanswered`] when the read
-    /// failed.
-    ReadCaret(CaretRead),
     /// A held caret key's starting read: answered [`TextReply::Started`].
     StartingRead(StartingRead),
     /// A caret key's watch: answered [`TextReply::Watched`].
@@ -1170,24 +1080,10 @@ pub struct TerminalReadReply {
     pub point: Option<TextAnchor>,
 }
 
-/// A text request from Core to the outpost that owns `node_id`; the answer
-/// comes back as `Input::Answered` with the same `query_id`.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TextRequest {
-    /// Correlates the answer with this request.
-    pub query_id: QueryId,
-    /// The node whose text to use. Its outpost is the one asked.
-    pub node_id: NodeId,
-    /// What to do.
-    pub op: TextOp,
-}
-
-/// An outpost's answer to a [`TextRequest`].
+/// An outpost's answer to a text request.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum TextReply {
-    /// The answer to [`TextOp::ReadCaret`].
-    Caret(Box<CaretReply>),
     /// The answer to [`TextOp::StartingRead`].
     Started(Box<Started>),
     /// The answer to [`TextOp::Watch`].
@@ -1233,7 +1129,7 @@ pub enum TextReply {
     /// The answer to [`TextOp::Select`]: how the selection changed from
     /// the one the outpost read just before selecting (collapsed at the
     /// caret when nothing was selected) to the one it read just after, by
-    /// the rule [`CaretReply`] describes for its `selection_changes`.
+    /// the rule [`CaretChanges`] describes for its `selection_changes`.
     Selected(Vec<SelectionChange>),
     /// A [`TextOp::MoveCaret`] asked by an event-queue entry was done: the
     /// move begun at `read_at_us`, as [`TextReply::Moved`], with the

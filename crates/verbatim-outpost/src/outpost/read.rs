@@ -27,13 +27,10 @@ use verbatim_uia_rops::{
 use crate::dialog_text::is_dialog;
 
 use crate::gates;
-use verbatim_model::protocol::{DumpedTree, FocusNow, FocusedControl};
-use verbatim_process::clock::now_us;
+use verbatim_model::protocol::DumpedTree;
 use verbatim_win32::window::window_class_name;
 
-use super::window::{
-    foreground_window_of, main_window_of, window_facts, window_style, window_text,
-};
+use super::window::{foreground_window_of, main_window_of, window_style, window_text};
 use super::{Context, RequestContext};
 use verbatim_reader_rules::CONSOLE_WINDOW_CLASS;
 use verbatim_win32::window::{
@@ -186,25 +183,6 @@ pub(super) fn serves(context: &Context, hwnd: isize) -> bool {
 /// (`books/dev/src/explanation/design/listener-without-connections.md`, sections 4.3 and 4.4).
 fn own_window_uses_uia(context: &RequestContext<'_>, hwnd: isize) -> bool {
     serves(context, hwnd) && window_uses_uia(context, hwnd)
-}
-
-/// The backend of window `hwnd`, which an event or the listener names, as
-/// [`window_uses_uia`] judges it, `Some(true)` for UIA, only when the
-/// outpost's application serves it ([`serves`]): `None`, with no probe and
-/// a debug line naming the window, for another process's window, which the
-/// worker neither reads nor reports. Any process can raise a `WinEvent`
-/// naming another's window, and the probe, and a console window's check,
-/// would call into that process. Local calls before the verdict.
-pub(super) fn own_window_verdict(context: &RequestContext<'_>, hwnd: isize) -> Option<bool> {
-    if !serves(context, hwnd) {
-        tracing::debug!(
-            hwnd,
-            target_pid = context.target_pid(),
-            "an event names a window the outpost's application does not serve; it is neither probed, read nor reported"
-        );
-        return None;
-    }
-    Some(window_uses_uia(context, hwnd))
 }
 
 /// The snapshot of the top-level window `hwnd` for a foreground report. A
@@ -1347,7 +1325,7 @@ fn dialog_text_of(
 pub(super) fn focused_control_in(
     context: &RequestContext<'_>,
     client: &mut Client,
-    (trigger, fake): (FocusRead, bool),
+    trigger: FocusRead,
     known: &[NodeSnapshot],
 ) -> Result<(isize, FocusedControl), FocusReadMiss> {
     let hwnd = checked_focus_window(context)?;
@@ -1359,36 +1337,12 @@ pub(super) fn focused_control_in(
         // comparing what it reads with them by NVDA's equality
         // (`books/dev/src/reference/adr/0001-focus.md`, "Object identity").
         let candidates = Candidates::new(vec![known.iter().map(|node| node.id).collect()]);
-        let mut object =
-            verbatim_ia2::acquire::focused_object(hwnd, &|window| serves(context, window))
-                .ok_or(FocusReadMiss::Failed(None))?;
-        if fake
-            && !object.has_focused_state(
-                MAX_ANCESTOR_HOPS,
-                &|window| reads_as_plain(context, window),
-                &mut |window| parent_window_for_focused_state(context, client, window),
-            )
-        {
-            tracing::debug!(
-                hwnd,
-                "the fake focus's MSAA object has no focused state, nor any ancestor; nothing is answered"
-            );
-            return Err(FocusReadMiss::Unfocused);
-        }
+        let object = verbatim_ia2::acquire::focused_object(hwnd, &|window| serves(context, window))
+            .ok_or(FocusReadMiss::Failed(None))?;
         let node = object.read(context.nodes(), Some(&candidates));
-        let (ancestors, selected_child) =
-            msaa_enrichment(context, client, (&node, known, Some(&candidates)))
-                .map_err(|FocusLost| FocusReadMiss::Failed(None))?;
-        Ok((
-            hwnd,
-            FocusedControl {
-                node,
-                ancestors,
-                selected_child,
-                window: Some(window_facts(hwnd)),
-                text: None,
-            },
-        ))
+        let (ancestors, _) = msaa_enrichment(context, client, (&node, known, Some(&candidates)))
+            .map_err(|FocusLost| FocusReadMiss::Failed(None))?;
+        Ok((hwnd, FocusedControl { node, ancestors }))
     }
 }
 
@@ -1449,20 +1403,10 @@ fn uia_focused_control(
         node.details.set_table(table);
         // A combo box without the `Value` pattern, or a looping selector:
         // its first selected item is its value.
-        let mut selected_child = selected_child;
         if fields.value_from_selection() {
-            node.value = selected_child.take().and_then(|child| child.name);
+            node.value = selected_child.and_then(|child| child.name);
         }
-        Ok((
-            hwnd,
-            FocusedControl {
-                node,
-                ancestors,
-                selected_child,
-                window: Some(window_facts(hwnd)),
-                text: None,
-            },
-        ))
+        Ok((hwnd, FocusedControl { node, ancestors }))
     }
 }
 
@@ -1547,16 +1491,33 @@ pub(super) enum FocusReadMiss {
     /// The read itself failed, with the error's `HRESULT` when the failed
     /// call gave one.
     Failed(Option<windows::core::HRESULT>),
-    /// A fake focus's MSAA object, which neither it nor any ancestor has
-    /// the focused state for: NVDA refuses it before it is queued.
-    Unfocused,
+}
+
+/// The focused control a read of the application's focus finds
+/// ([`focused_control_in`]).
+pub(super) struct FocusedControl {
+    /// The control.
+    pub(super) node: NodeSnapshot,
+    /// Its ancestors, outermost first, complete to the desktop: a read cut
+    /// short, by its time or a failed step, is completed by plain windows
+    /// (`books/dev/src/reference/adr/0001-focus.md`, "Object identity").
+    pub(super) ancestors: Vec<NodeSnapshot>,
+}
+
+/// What a read of the application's current focus finds ([`focus_now`]).
+pub(super) struct FocusNow {
+    /// The application's top-level window, when it is the system's
+    /// foreground window.
+    pub(super) window: Option<NodeSnapshot>,
+    /// The focused control, when the application has one.
+    pub(super) focus: Option<FocusedControl>,
 }
 
 /// What asked [`focused_control_in`] to read the application's focus,
 /// logged with each read, so a run's log shows how often each makes it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum FocusRead {
-    /// A focus-now query ([`focus_now`]).
+    /// Core's request for the current focus ([`focus_now`]).
     FocusNow,
     /// A windowless text focus whose walk up the listener cut, so the
     /// chain it sent holds only the focus and no route leads to its
@@ -1595,58 +1556,33 @@ fn console_text_area_in(node: &mut NodeSnapshot, window_class: impl FnOnce() -> 
     }
 }
 
-/// The answer to a focus-now query: the application's foreground window, if
-/// it holds the system foreground, and its focused control. A console
-/// host's is its console window ([`foreground_window_of`]). A foreground
-/// window that cannot be read, a ghost's
-/// or a hung application's, is a plain window, as its focus is
+/// The application's current focus, for Core's request for it: the
+/// application's foreground window, if it holds the system foreground, and
+/// its focused control. A console host's is its console window
+/// ([`foreground_window_of`]). A foreground window that cannot be read, a
+/// ghost's or a hung application's, is a plain window, as its focus is
 /// ([`focused_control_in`]). Returned with the window whose focused element
-/// it read, the control's own window. For a fake focus (`fake`), an MSAA
-/// control with no focused state, nor any ancestor, makes the whole answer
-/// empty, no window and no control, as NVDA refuses the object before it
-/// is queued (`books/dev/src/reference/adr/0001-focus.md`, "A focus UI Automation does not
-/// deliver"); a fake focus with no control is no input, whatever its
-/// window, so the window is not tested. An MSAA focus's walk up stops at
-/// one of `known` ([`focused_control_in`]).
+/// it read, the control's own window. An MSAA focus's walk up stops at one
+/// of `known` ([`focused_control_in`]).
 pub(super) fn focus_now(
     context: &RequestContext<'_>,
     client: &mut Client,
-    fake: bool,
     known: &[NodeSnapshot],
 ) -> (FocusNow, Option<isize>) {
-    let observed_at_us = now_us();
     // A foreground window that cannot be read is a plain window, with no
     // call, as the focus in it is ([`focused_control_in`]).
     let window = foreground_window_of(context.target_pid())
         .filter(|&hwnd| !window_is_hidden_frame(hwnd))
         .map(|hwnd| {
-            let node = if window_exists(hwnd) && context.window_unreadable(hwnd).is_some() {
+            if window_exists(hwnd) && context.window_unreadable(hwnd).is_some() {
                 plain_window(context, hwnd)
             } else {
                 foreground_window(context, client, hwnd).1
-            };
-            (node, window_facts(hwnd))
+            }
         });
-    let control = focused_control_in(context, client, (FocusRead::FocusNow, fake), known);
-    if control == Err(FocusReadMiss::Unfocused) {
-        return (
-            FocusNow {
-                window: None,
-                focus: None,
-                observed_at_us,
-            },
-            None,
-        );
-    }
+    let control = focused_control_in(context, client, FocusRead::FocusNow, known);
     let (control_window, focus) = control.ok().unzip();
-    (
-        FocusNow {
-            window,
-            focus,
-            observed_at_us,
-        },
-        control_window,
-    )
+    (FocusNow { window, focus }, control_window)
 }
 
 /// The foreground object a focus entering a new window is told with, as

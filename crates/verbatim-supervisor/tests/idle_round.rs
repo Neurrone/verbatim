@@ -30,9 +30,8 @@ use crossbeam_channel::unbounded;
 
 mod common;
 use common::Delivered;
-use verbatim_model::protocol::{
-    CoreToListener, CoreToOutpost, ListenerToCore, OutpostToCore, RequestId,
-};
+use verbatim_model::protocol::{CoreToListener, CoreToOutpost, ListenerToCore, OutpostToCore};
+use verbatim_model::request::{Cancel, CancelReason, RequestNumber};
 use verbatim_model::{OutpostId, Pid};
 use verbatim_process::arguments::OutpostOptions;
 use verbatim_process::message::{read_message, write_message};
@@ -106,10 +105,11 @@ fn stand_in(args: &[String]) -> ! {
                 written_at_us: 0,
             }),
             CoreToOutpost::Shutdown => std::process::exit(0),
-            CoreToOutpost::CancelQuery {
-                request_id: RequestId { number: 0, .. },
-            } => send(&ready),
-            CoreToOutpost::CancelQuery { .. } => commands_since += 1,
+            CoreToOutpost::Cancel(Cancel {
+                number: RequestNumber(0),
+                ..
+            }) => send(&ready),
+            CoreToOutpost::Cancel(_) => commands_since += 1,
             CoreToOutpost::IdleQuery { round } => {
                 send(&OutpostToCore::Fault {
                     detail: format!("commands before round {round}: {commands_since}"),
@@ -246,9 +246,10 @@ fn command(supervisor: &Supervisor, outpost: OutpostId) {
     supervisor
         .send_to_outpost(
             outpost,
-            CoreToOutpost::CancelQuery {
-                request_id: RequestId::shell(1),
-            },
+            CoreToOutpost::Cancel(Cancel {
+                number: RequestNumber(1),
+                reason: CancelReason::Withdrawn,
+            }),
         )
         .expect("the command is queued");
 }
@@ -259,9 +260,10 @@ fn make_ready(supervisor: &Supervisor, events: &Delivered, outpost: OutpostId, t
     supervisor
         .send_to_outpost(
             outpost,
-            CoreToOutpost::CancelQuery {
-                request_id: RequestId::shell(0),
-            },
+            CoreToOutpost::Cancel(Cancel {
+                number: RequestNumber(0),
+                reason: CancelReason::Withdrawn,
+            }),
         )
         .expect("the stand-in's cue is queued");
     match next(events) {

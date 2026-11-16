@@ -2,8 +2,7 @@
 //! (`books/dev/src/explanation/design/ownership.md`): each node's anchors with their chunks' text, the positions the
 //! outpost reported, and the node's one last read, the only baseline a
 //! caret key or a comparison of selections has
-//! (`docs/design/caret-selection-rework.md`), and for a short time after a
-//! key's request a note of which unit its reads fetch. A position is a fact of its own kind: an edit control's
+//! (`docs/design/caret-selection-rework.md`). A position is a fact of its own kind: an edit control's
 //! offset, or the key of a UIA range the outpost's store keeps, so no
 //! application object is held here and an edit control's offsets cross
 //! between programs as they are.
@@ -15,12 +14,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use std::time::Duration;
-
-use verbatim_model::{
-    CaretMotion, CaretReport, CaretSelection, Change, Compared, KeyFetch, ReadFacts, TextChunk,
-    TextDetails, TextUnit, had_effect,
-};
+use verbatim_model::{CaretSelection, TextChunk};
 
 /// The key the store keeps a UIA position's range under.
 pub type RangeKey = u64;
@@ -78,9 +72,6 @@ pub struct LastRead<P> {
     pub selection: Option<ReadSelection<P>>,
     /// The caret's line, with the caret at the chunk's offset.
     pub line: TextChunk,
-    /// The node's text changed since this read, so the next comparison of
-    /// selections is made in general terms.
-    pub text_changed: bool,
     /// When the read began, in microseconds on the shared clock.
     pub read_at_us: u64,
     /// The key's unit at the caret when the read fetched one, for the next
@@ -105,7 +96,6 @@ impl<P> LastRead<P> {
             caret: position(self.caret)?,
             selection,
             line: self.line,
-            text_changed: self.text_changed,
             read_at_us: self.read_at_us,
             unit: self.unit,
         })
@@ -294,70 +284,6 @@ impl<P: Clone> NodeAnchors<P> {
     }
 }
 
-/// A caret event's report of an edit control cut at its value change
-/// check (`books/dev/src/explanation/design/ownership.md`): what the read part found, which the part that finishes it
-/// compares and reports from. `P` is a position, an offset.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ReportCut<P> {
-    /// The caret and the selection's ends, when something is selected.
-    pub caret: P,
-    /// The selection's ends, when something is selected.
-    pub selection: Option<(P, P)>,
-    /// The caret is no longer where the read was asked to compare with.
-    pub moved: bool,
-    /// When the read began, in microseconds on the shared clock.
-    pub read_at_us: u64,
-    /// The selection the report compares with.
-    pub last: KeptSelection<P>,
-    /// What the read fetches for a key, when it was made for one.
-    pub fetch: Option<NoteFetch>,
-    /// The node's last read, which a read for a key compares with.
-    pub previous: Option<LastRead<P>>,
-}
-
-/// A read for a key of an edit control, cut at its value change check, the
-/// evidence found: what the read part found, which the part that finishes
-/// it answers from.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AnswerCut<P> {
-    /// The caret and the selection's ends, when something is selected.
-    pub caret: P,
-    /// The selection's ends, when something is selected.
-    pub selection: Option<(P, P)>,
-    /// When the read began, in microseconds on the shared clock.
-    pub read_at_us: u64,
-    /// The caret's line, when the read part read it.
-    pub line: Option<CutLine<P>>,
-    /// The key's unit and motion.
-    pub note: NoteFetch,
-    /// Whether the caret is on the line it was on in the last read.
-    pub on_previous_line: bool,
-    /// Whether the read found the key's effect.
-    pub effect: bool,
-    /// What the read found compared with the last read.
-    pub comparison: verbatim_model::Compared,
-    /// The selection the answer compares with.
-    pub compared: KeptSelection<P>,
-    /// The node's last read.
-    pub previous: LastRead<P>,
-}
-
-/// The caret's line as a cut read part read it: its ends, its UTF-16 text,
-/// whether the text was cut at the limit, and the caret's offset in it.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CutLine<P> {
-    /// The line's start.
-    pub start: P,
-    /// The line's end.
-    pub end: P,
-    /// The line's text, in UTF-16.
-    pub text: Vec<u16>,
-    /// Whether the text was cut at the limit.
-    pub truncated: bool,
-    /// The caret's offset in the text.
-    pub offset: usize,
-}
-
 /// One change of a node's text facts, as a program's text call makes it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TextChange {
@@ -380,37 +306,9 @@ pub enum TextChange {
         /// The anchors the part held.
         copied: BTreeSet<u64>,
     },
-    /// A focus read failed: the node's last read is dropped, so the next
-    /// read compares with nothing.
-    LastReadFailed(u64),
-    /// The edit control's text changed, its value change handled, so its
-    /// next comparison of selections is made in general terms.
-    ContentChanged(u64),
-    /// A caret event of the edit control that a caret read made after it
-    /// already covered was handled: the note of its text's changes
-    /// ([`TextChange::ContentChanged`]) is cleared, as the comparison NVDA
-    /// makes at each caret event clears it, and kept while there is no
-    /// selection to compare with, as NVDA's comparison keeps it then.
-    ContentCounted(u64),
     /// Everything of the node's text is forgotten: its runtime id names a
     /// new element, or its window was destroyed.
     Forget(u64),
-    /// A read showed its key's effect: the note ending at `until_us`, when
-    /// it is still the node's, reads no more text changes.
-    NoteEffect {
-        /// The node's number.
-        node: u64,
-        /// The end of the note the read was made under, which names it.
-        until_us: u64,
-    },
-    /// The key's final read committed: the note ending at `until_us`, when
-    /// it is still the node's, is cleared.
-    NoteCleared {
-        /// The node's number.
-        node: u64,
-        /// The end of the note the read was made under, which names it.
-        until_us: u64,
-    },
 }
 
 impl TextChange {
@@ -418,14 +316,7 @@ impl TextChange {
     #[must_use]
     pub fn node(&self) -> u64 {
         match self {
-            Self::Uia { node, .. }
-            | Self::Edit { node, .. }
-            | Self::LastReadFailed(node)
-            | Self::ContentChanged(node)
-            | Self::ContentCounted(node)
-            | Self::Forget(node)
-            | Self::NoteEffect { node, .. }
-            | Self::NoteCleared { node, .. } => *node,
+            Self::Uia { node, .. } | Self::Edit { node, .. } | Self::Forget(node) => *node,
         }
     }
 
@@ -433,104 +324,8 @@ impl TextChange {
     /// the store holds the node.
     #[must_use]
     pub fn adds(&self) -> bool {
-        matches!(
-            self,
-            Self::Uia { .. } | Self::Edit { .. } | Self::ContentChanged(_)
-        )
+        matches!(self, Self::Uia { .. } | Self::Edit { .. })
     }
-}
-
-/// How long a text field's note lasts from its request's
-/// arrival: the 150 ms bound on the before read, the 100 ms bound, and a
-/// margin for the pipe.
-pub const NOTE_LIFE: Duration = Duration::from_millis(300);
-
-/// What a key's reads fetch at the caret.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct NoteFetch {
-    /// The unit reads fetch.
-    pub unit: TextUnit,
-    /// What the key does, which says what counts as its evidence.
-    pub motion: CaretMotion,
-    /// What reads fetch beyond the text, as the key's request names it.
-    pub details: TextDetails,
-}
-
-/// What reads a text field's note causes besides its caret events.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FieldReads {
-    /// Text changes are read too.
-    CaretAndText,
-    /// A read showed the key's effect: caret events are still read with
-    /// their facts, and text changes are not read.
-    CaretOnly,
-}
-
-/// What reads a node's note causes besides the node's caret events.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum NoteReads {
-    /// A text field's note.
-    Field(FieldReads),
-}
-
-impl NoteReads {
-    /// Whether a read has shown the key's effect.
-    #[must_use]
-    pub fn effect_seen(self) -> bool {
-        matches!(self, Self::Field(FieldReads::CaretOnly))
-    }
-
-    /// These reads once a read has shown the key's effect.
-    fn narrowed(self) -> Self {
-        match self {
-            Self::Field(_) => Self::Field(FieldReads::CaretOnly),
-        }
-    }
-}
-
-/// A node's note: for a short time after a key's request, which unit its
-/// reads fetch and that text changes are read too. It knows nothing of the
-/// key's progress and ends by the clock.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct KeyNote {
-    /// The key's unit and motion.
-    pub fetch: NoteFetch,
-    /// When it ends, on the shared clock.
-    pub until_us: u64,
-    /// What it reads.
-    pub reads: NoteReads,
-}
-
-/// `line`'s caret as a byte offset; past any text when it does not fit.
-fn caret_offset(line: &TextChunk) -> usize {
-    usize::try_from(line.offset).unwrap_or(usize::MAX)
-}
-
-/// The character at `line`'s caret; empty at its end.
-fn character_at(line: &TextChunk) -> &str {
-    verbatim_text::grapheme_at(&line.text, caret_offset(line))
-        .and_then(|range| line.text.get(range))
-        .unwrap_or_default()
-}
-
-/// The characters just before and at `line`'s caret.
-fn beside(line: &TextChunk) -> (&str, &str) {
-    let offset = caret_offset(line);
-    let before = line
-        .text
-        .get(..offset)
-        .and_then(|text| {
-            verbatim_text::graphemes(text)
-                .pop()
-                .and_then(|range| text.get(range))
-        })
-        .unwrap_or_default();
-    (before, character_at(line))
-}
-
-/// `duration` in microseconds.
-fn micros(duration: Duration) -> u64 {
-    u64::try_from(duration.as_micros()).unwrap_or(u64::MAX)
 }
 
 /// One node's text facts, of one provider.
@@ -540,23 +335,17 @@ enum NodeRecord {
     Edit(Arc<NodeAnchors<u32>>),
 }
 
-/// Everything kept for one node: its text facts, once a read has made them,
-/// and its note, which end with it.
+/// Everything kept for one node: its text facts, once a read has made them.
 #[derive(Clone, Debug, Default)]
 struct NodeEntry {
     record: Option<NodeRecord>,
-    note: Option<KeyNote>,
 }
 
-/// Every node's text facts, through UIA and through edit controls' messages,
-/// and their notes, so one place names every range the store must keep.
+/// Every node's text facts, through UIA and through edit controls'
+/// messages, so one place names every range the store must keep.
 #[derive(Clone, Debug, Default)]
 pub struct TextFacts {
     nodes: BTreeMap<u64, NodeEntry>,
-    /// The nodes that were given a note, as a read of an event not known
-    /// to be the focus's looks one up without walking the nodes; ones past
-    /// their note are removed as the next note is set.
-    noted: BTreeSet<u64>,
 }
 
 /// The keys `record` names.
@@ -583,129 +372,6 @@ impl TextFacts {
         match self.nodes.get(&node)?.record.as_ref()? {
             NodeRecord::Edit(anchors) => Some(&**anchors),
             NodeRecord::Uia(_) => None,
-        }
-    }
-
-    /// Node `node`'s note, when it has one and it has not passed its end
-    /// by `now_us`: a note that has passed its end counts as absent.
-    #[must_use]
-    pub fn live_note(&self, node: u64, now_us: u64) -> Option<KeyNote> {
-        self.nodes
-            .get(&node)?
-            .note
-            .filter(|note| note.until_us > now_us)
-    }
-
-    /// Node `node`'s last read's line and selection.
-    fn last_line(&self, node: u64) -> Option<(TextChunk, Option<CaretSelection>)> {
-        let selection = |report: CaretSelection| report;
-        match self.nodes.get(&node)?.record.as_ref()? {
-            NodeRecord::Uia(anchors) => anchors.last.as_ref().map(|last| {
-                let report = last.selection.as_ref().map(|s| selection(s.report.clone()));
-                (last.line.clone(), report)
-            }),
-            NodeRecord::Edit(anchors) => anchors.last.as_ref().map(|last| {
-                let report = last.selection.as_ref().map(|s| selection(s.report.clone()));
-                (last.line.clone(), report)
-            }),
-        }
-    }
-
-    /// What a caret event's or a focus's read, dispatched before node `node`'s live note
-    /// arrived and so made with no facts, found: the comparison with the
-    /// node's last read by the text both hold, as a report's is, which
-    /// needs no call, and the key's character cut from the line or its line;
-    /// a word it did not fetch. `None` with no note to judge by.
-    /// `selection_moved` is whether the report's selection changed. A read
-    /// that shows the effect narrows the note.
-    pub fn facts_at_commit(
-        &mut self,
-        node: u64,
-        (caret, selection_moved): (&CaretReport, bool),
-        now_us: u64,
-    ) -> Option<ReadFacts> {
-        let key_fetch = self.live_note(node, now_us)?.fetch;
-        let line = &caret.line;
-        let unit = match key_fetch.unit {
-            TextUnit::Character => Some(TextChunk {
-                unit: TextUnit::Character,
-                text: character_at(line).to_owned(),
-                offset: 0,
-                languages: Vec::new(),
-                formats: Vec::new(),
-                ..line.clone()
-            }),
-            TextUnit::Line => Some(line.clone()),
-            _ => None,
-        };
-        let change = self
-            .last_line(node)
-            .map_or(Change::NoPrevious, |(was, selection)| {
-                let line_changed = line.text != was.text;
-                let compared = Compared {
-                    caret_moved: line_changed || line.offset != was.offset,
-                    selection_moved,
-                    beside_changed: beside(line) != beside(&was),
-                    unit_changed: key_fetch.unit == TextUnit::Character
-                        && character_at(line) != character_at(&was),
-                    line_changed,
-                };
-                Change::Compared {
-                    compared,
-                    previous_selection: selection,
-                    previous_line: was,
-                    on_previous_line: !line_changed,
-                }
-            });
-        if matches!(change, Change::Compared { compared, .. } if had_effect(compared, key_fetch.motion))
-            && let Some(narrowed) = self
-                .nodes
-                .get_mut(&node)
-                .and_then(|entry| entry.note.as_mut())
-        {
-            narrowed.reads = narrowed.reads.narrowed();
-        }
-        Some(ReadFacts {
-            unit,
-            change,
-            read_ended_at_us: now_us,
-        })
-    }
-
-    /// The live notes, by node.
-    pub fn live_notes(&self, now_us: u64) -> impl Iterator<Item = (u64, KeyNote)> + '_ {
-        self.noted
-            .iter()
-            .filter_map(move |&node| Some((node, self.live_note(node, now_us)?)))
-    }
-
-    /// Sets node `node`'s note as a request for it arrives at `now_us`.
-    pub fn set_note(&mut self, node: u64, fetch: KeyFetch, now_us: u64) {
-        let nodes = &self.nodes;
-        self.noted.retain(|noted| {
-            nodes
-                .get(noted)
-                .and_then(|entry| entry.note)
-                .is_some_and(|note| note.until_us > now_us)
-        });
-        self.noted.insert(node);
-        let until_us = now_us.saturating_add(micros(NOTE_LIFE));
-        let reads = NoteReads::Field(FieldReads::CaretAndText);
-        self.nodes.entry(node).or_default().note = Some(KeyNote {
-            fetch: NoteFetch {
-                unit: fetch.unit,
-                motion: fetch.motion,
-                details: fetch.details,
-            },
-            until_us,
-            reads,
-        });
-    }
-
-    /// Clears node `node`'s note, when it has one.
-    pub fn clear_note(&mut self, node: u64) {
-        if let Some(entry) = self.nodes.get_mut(&node) {
-            entry.note = None;
         }
     }
 
@@ -750,61 +416,12 @@ impl TextFacts {
                     *record = NodeRecord::Edit(Arc::new(anchors));
                 }
             }
-            TextChange::LastReadFailed(_) => match self.record_mut(node) {
-                Some(NodeRecord::Uia(anchors)) if anchors.last.is_some() => {
-                    Arc::make_mut(anchors).last = None;
-                }
-                Some(NodeRecord::Edit(anchors)) if anchors.last.is_some() => {
-                    Arc::make_mut(anchors).last = None;
-                }
-                _ => {}
-            },
-            TextChange::ContentChanged(_) => {
-                if let Some(NodeRecord::Edit(anchors)) = self.record_mut(node)
-                    && let Some(last) = Arc::make_mut(anchors).last.as_mut()
-                {
-                    last.text_changed = true;
-                }
-            }
-            TextChange::ContentCounted(_) => {
-                if let Some(NodeRecord::Edit(anchors)) = self.record_mut(node)
-                    && anchors.last.as_ref().is_some_and(|last| last.text_changed)
-                    && let Some(last) = Arc::make_mut(anchors).last.as_mut()
-                {
-                    last.text_changed = false;
-                }
-            }
             TextChange::Forget(_) => {
                 self.nodes.remove(&node);
-            }
-            TextChange::NoteEffect { until_us, .. } => {
-                if let Some(note) = self.note_named(node, *until_us) {
-                    note.reads = note.reads.narrowed();
-                }
-            }
-            TextChange::NoteCleared { until_us, .. } => {
-                if self.note_named(node, *until_us).is_some() {
-                    self.clear_note(node);
-                }
             }
         }
         let after = self.named(node);
         named.difference(&after).map(|&key| (node, key)).collect()
-    }
-
-    /// Node `node`'s record, to change.
-    fn record_mut(&mut self, node: u64) -> Option<&mut NodeRecord> {
-        self.nodes.get_mut(&node)?.record.as_mut()
-    }
-
-    /// Node `node`'s note named by the end `until_us` of the note a program
-    /// read, when it is still the node's.
-    fn note_named(&mut self, node: u64, until_us: u64) -> Option<&mut KeyNote> {
-        self.nodes
-            .get_mut(&node)?
-            .note
-            .as_mut()
-            .filter(|note| note.until_us == until_us)
     }
 
     /// Forgets the nodes `nodes` and the anchors `anchors` a release freed.
@@ -816,7 +433,6 @@ impl TextFacts {
         anchors: &BTreeSet<u64>,
     ) -> Vec<(u64, RangeKey)> {
         self.nodes.retain(|node, _| !nodes.contains(node));
-        self.noted.retain(|node| !nodes.contains(node));
         if anchors.is_empty() {
             return Vec::new();
         }
@@ -848,6 +464,8 @@ impl TextFacts {
 
 #[cfg(test)]
 mod tests {
+    use verbatim_model::TextUnit;
+
     use super::*;
 
     /// An edit control's facts with anchors `numbers`, each at its own
@@ -896,140 +514,9 @@ mod tests {
                 truncated: false,
                 formats: Vec::new(),
             },
-            text_changed: false,
             read_at_us: 0,
             unit: None,
         }
-    }
-
-    /// A note's fetch.
-    fn fetch(motion: CaretMotion) -> KeyFetch {
-        KeyFetch {
-            unit: TextUnit::Character,
-            motion,
-            details: TextDetails::ALL,
-        }
-    }
-
-    /// A note lives from its request's arrival for 300 ms, and is the
-    /// node's until then, whatever else happens to the node's text.
-    #[test]
-    fn a_note_ends_by_the_clock() {
-        let mut facts = TextFacts::default();
-        facts.set_note(1, fetch(CaretMotion::NextCharacter), 1_000);
-        let until = 301_000;
-        assert_eq!(
-            facts.live_note(1, until - 1).map(|note| note.until_us),
-            Some(until)
-        );
-        assert_eq!(facts.live_note(1, until), None);
-        assert_eq!(facts.live_note(2, 1_000), None);
-        assert_eq!(facts.live_notes(until - 1).count(), 1);
-        assert_eq!(facts.live_notes(until).count(), 0);
-    }
-
-    /// A read's effect narrows the note it was made under, and a later
-    /// note replacing it keeps its own reads.
-    #[test]
-    fn an_effect_narrows_only_the_note_it_was_read_under() {
-        let mut facts = TextFacts::default();
-        facts.set_note(1, fetch(CaretMotion::NextCharacter), 1_000);
-        let until = facts.live_note(1, 1_000).expect("the note").until_us;
-        facts.set_note(1, fetch(CaretMotion::Delete), 2_000);
-        // An effect read under the older note does not touch the newer one.
-        facts.apply(&TextChange::NoteEffect {
-            node: 1,
-            until_us: until,
-        });
-        assert_eq!(
-            facts.live_note(1, 2_000).map(|note| note.reads),
-            Some(NoteReads::Field(FieldReads::CaretAndText))
-        );
-        let until = facts.live_note(1, 2_000).expect("the note").until_us;
-        facts.apply(&TextChange::NoteEffect {
-            node: 1,
-            until_us: until,
-        });
-        assert_eq!(
-            facts.live_note(1, 2_000).map(|note| note.reads),
-            Some(NoteReads::Field(FieldReads::CaretOnly))
-        );
-    }
-
-    /// A caret report with the note's facts attached at its commit: the
-    /// character from the line, the comparison by the text, and the note
-    /// narrowed by the effect; a key that reads another unit gets none.
-    #[test]
-    fn a_read_dispatched_before_its_note_gets_facts_at_commit() {
-        let report = |offset: u32| CaretReport {
-            line: TextChunk {
-                text: "abc".to_owned(),
-                offset,
-                ..last_read(0, None).line
-            },
-            selection: None,
-            read_at_us: 9,
-        };
-        let mut facts = TextFacts::default();
-        let part = NodeAnchors {
-            last: Some(LastRead {
-                line: report(0).line,
-                ..last_read(0, None)
-            }),
-            ..NodeAnchors::default()
-        };
-        facts.apply(&TextChange::Uia {
-            node: 1,
-            part,
-            copied: BTreeSet::new(),
-        });
-        assert_eq!(facts.facts_at_commit(1, (&report(1), false), 0), None);
-        facts.set_note(1, fetch(CaretMotion::NextCharacter), 0);
-        let found = facts
-            .facts_at_commit(1, (&report(1), false), 5)
-            .expect("the facts");
-        assert_eq!(found.unit.map(|unit| unit.text), Some("b".to_owned()));
-        assert!(matches!(
-            found.change,
-            Change::Compared { compared, .. } if compared.caret_moved
-        ));
-        assert_eq!(found.read_ended_at_us, 5);
-        assert_eq!(
-            facts.live_note(1, 5).map(|note| note.reads),
-            Some(NoteReads::Field(FieldReads::CaretOnly))
-        );
-        let mut word = fetch(CaretMotion::NextWord);
-        word.unit = TextUnit::Word;
-        facts.set_note(1, word, 6);
-        assert_eq!(
-            facts
-                .facts_at_commit(1, (&report(2), false), 7)
-                .expect("the facts")
-                .unit,
-            None
-        );
-        let mut line = fetch(CaretMotion::NextLine);
-        line.unit = TextUnit::Line;
-        facts.set_note(1, line, 8);
-        assert_eq!(
-            facts
-                .facts_at_commit(1, (&report(2), false), 9)
-                .expect("the facts")
-                .unit,
-            Some(report(2).line)
-        );
-    }
-
-    /// A note goes with its node's record.
-    #[test]
-    fn a_note_is_dropped_with_its_node() {
-        let mut facts = TextFacts::default();
-        facts.set_note(1, fetch(CaretMotion::NextCharacter), 0);
-        facts.apply(&TextChange::Forget(1));
-        assert_eq!(facts.live_note(1, 0), None);
-        facts.set_note(2, fetch(CaretMotion::NextCharacter), 0);
-        facts.release(&BTreeSet::from([2]), &BTreeSet::new());
-        assert_eq!(facts.live_note(2, 0), None);
     }
 
     /// A text call's part is taken in without an anchor it copied that was

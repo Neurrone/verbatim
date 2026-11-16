@@ -6,9 +6,7 @@
 //! ends the child inherits, their handle values passed on its command line,
 //! so there is nothing to discover or secure. Each message is one frame of
 //! `crate::transport`: a `Content-Length` header, then the
-//! message as compact JSON, readable by eye and in captures, and, for a
-//! message carrying a terminal's text or colours, a raw section holding
-//! them, the JSON giving their places (the `raw` module); all of it
+//! message as compact JSON, readable by eye and in captures; all of it
 //! isolated behind [`Message`], [`write_message`], [`encode_message`] and
 //! [`read_message`] so neither end's logic sees the framing.
 
@@ -21,8 +19,6 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use verbatim_model::protocol::{CoreToListener, CoreToOutpost, ListenerToCore, OutpostToCore};
 
-mod raw;
-
 /// The most bytes one message may take, its frame's header aside, in either
 /// direction between Core and a child (`docs/design/communication.md`, section
 /// 4.2; Dickson, 2026-10-07): room for 10 MB
@@ -33,10 +29,7 @@ mod raw;
 pub const MAX_MESSAGE_BYTES: usize = crate::transport::MAX_FRAME_BYTES;
 
 /// A message of the Core-outpost protocol as a frame carries it: its JSON
-/// body, and for a message that carries a terminal's text and colours, a
-/// raw section holding them, the body giving their places
-/// (`docs/design/communication.md`, section 4.2). Every other message is a
-/// body alone, and is refused with a raw section.
+/// body alone, refused with a raw section.
 pub trait Message: Sized {
     /// Appends this message's frame to `buffer`.
     ///
@@ -98,17 +91,11 @@ impl Message for ListenerToCore {
 
 impl Message for OutpostToCore {
     fn put_frame(&self, buffer: &mut Vec<u8>) -> io::Result<()> {
-        match raw::Terminal::of(self) {
-            Some(terminal) => terminal.put_frame(buffer),
-            None => put_json(buffer, self),
-        }
+        put_json(buffer, self)
     }
 
     fn from_parts(parts: Parts<'_>) -> io::Result<Self> {
-        match parts.raw {
-            Some(section) => raw::decode(parts.body, section),
-            None => serde_json::from_slice(parts.body).map_err(io::Error::other),
-        }
+        from_json(parts)
     }
 }
 
@@ -241,15 +228,19 @@ pub fn decode_message<T: Message>(parts: Parts<'_>) -> io::Result<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use verbatim_model::protocol::{
-        DeliveredFact, DumpedTree, EventTiming, FocusNow, FocusedControl, ListenerFact, Query,
-        QueryOutcome, QueryResult, RequestId, UiaAncestorFact, UiaFocusRead, UiaSnapshotFact,
-        Urgent,
-    };
-    use verbatim_model::{
-        Backend, CallCounts, NodeDetails, NodeId, NodeSnapshot, NormalizedEvent, Pid, QueryKind,
-        Role, State, StateSet, TraceId, TreeNode,
-    };
+    use verbatim_model::Pid;
+    use verbatim_model::protocol::Urgent;
+    use verbatim_model::request::{Answer, Outcome, Reply, RequestNumber};
+
+    /// An answer with a result, which carries nodes.
+    fn followed() -> OutpostToCore {
+        OutpostToCore::Answer(Answer {
+            number: RequestNumber(1),
+            outcome: Outcome::Result(Reply::Followed),
+            probes: Vec::new(),
+            detail: String::new(),
+        })
+    }
 
     /// What the relay does with `message`'s frame.
     fn peeked(message: &OutpostToCore) -> Peeked {
@@ -276,22 +267,14 @@ mod tests {
             OutpostToCore::Pong { .. } => Peeked::Pong,
             OutpostToCore::Fault { .. } => Peeked::Fault,
             OutpostToCore::TargetExited => Peeked::TargetExited,
-            OutpostToCore::Event { .. }
-            | OutpostToCore::Reply { .. }
-            | OutpostToCore::NotResponding { .. }
+            OutpostToCore::NotResponding { .. }
             | OutpostToCore::IdleAnswer { .. }
-            | OutpostToCore::LiveRereadGone { .. }
             | OutpostToCore::Tell(_)
             | OutpostToCore::Answer(_) => Peeked::Other,
         };
         let mut samples = verbatim_model::protocol::samples::outpost_to_core();
-        // A completed reply too, which carries nodes.
-        samples.push(OutpostToCore::Reply {
-            trace_id: TraceId::mint(),
-            request_id: RequestId::shell(1),
-            outcome: QueryOutcome::Done(QueryResult::Navigated(None)),
-            timing: EventTiming::default(),
-        });
+        // An answer with a result too, which carries nodes.
+        samples.push(followed());
         let cases: Vec<(OutpostToCore, Peeked)> = samples
             .into_iter()
             .map(|message| {
@@ -454,33 +437,7 @@ mod tests {
 
     #[test]
     fn messages_round_trip_over_a_byte_stream() {
-        let event = OutpostToCore::Event {
-            trace_id: TraceId::mint(),
-            timing: EventTiming::default(),
-            observed_at_us: 1_752_000_000_000_000,
-            backend: Backend::Msaa,
-            window: None,
-            application: Some(Pid(20)),
-            event: NormalizedEvent::FocusChanged {
-                whole_window: false,
-                ancestors: Vec::new(),
-                selected_child: None,
-                node: NodeSnapshot {
-                    id: NodeId::new(1),
-                    backend: Backend::Msaa,
-                    role: Role::MenuItem,
-                    name: Some("Settings...".into()),
-                    value: None,
-                    states: StateSet::new().with(State::Focused),
-                    details: NodeDetails::default(),
-                },
-                text: None,
-                earlier: None,
-                group: None,
-                answers: None,
-                first_cached_ancestor: None,
-            },
-        };
+        let event = followed();
         let ready = OutpostToCore::Ready {
             outpost_pid: Pid(4242),
             target_pid: Pid(1234),
@@ -536,52 +493,6 @@ mod tests {
     }
 
     #[test]
-    fn a_listener_fact_is_delivered_without_its_pid() {
-        let snapshot = UiaSnapshotFact {
-            runtime_id: vec![42, 7],
-            role: Role::MenuItem,
-            name: Some("Settings...".into()),
-            value: None,
-            states: StateSet::new().with(State::Focused),
-            details: NodeDetails::default(),
-        };
-        let read = UiaFocusRead {
-            hwnd: 0,
-            snapshot: snapshot.clone(),
-            ancestors: vec![UiaAncestorFact {
-                snapshot: snapshot.clone(),
-                hwnd: 0x40,
-                content: true,
-            }],
-            ancestors_end: verbatim_model::protocol::AncestorsEnd::Top,
-            selected_child: None,
-            value_from_selection: false,
-            window: Some(0x40),
-            same_as_last: Some(verbatim_model::EarlierElement::Gone),
-            answers: None,
-            cached_from: None,
-        };
-        let fact = ListenerFact {
-            pid: Pid(1234),
-            fact: DeliveredFact::UiaFocusRead {
-                marker: 9,
-                read: Box::new(read.clone()),
-                focus: true,
-            },
-        };
-        // The delivered fact is the same address minus the pid.
-        assert_eq!(fact.pid(), Pid(1234));
-        assert_eq!(
-            fact.into_delivered(),
-            DeliveredFact::UiaFocusRead {
-                marker: 9,
-                read: Box::new(read),
-                focus: true,
-            }
-        );
-    }
-
-    #[test]
     fn the_idle_barriers_query_and_answer_round_trip() {
         let query = CoreToOutpost::IdleQuery { round: 12 };
         let mut buffer = Vec::new();
@@ -595,120 +506,5 @@ mod tests {
         assert_eq!(read_back, Some(answer));
         // It carries no node, so Core and the outpost do not count it.
         assert!(!OutpostToCore::IdleAnswer { round: 12 }.carries_nodes());
-    }
-
-    #[test]
-    #[expect(
-        clippy::too_many_lines,
-        reason = "one sample of each query and of each outcome"
-    )]
-    fn queries_and_every_outcome_round_trip() {
-        let node = NodeSnapshot {
-            id: NodeId::new(9),
-            backend: Backend::Uia,
-            role: Role::Window,
-            name: Some("Verbatim".into()),
-            value: None,
-            states: StateSet::new(),
-            details: NodeDetails::default(),
-        };
-        let mut buffer = Vec::new();
-        let queries = [
-            Query::ReadFocus {
-                purpose: verbatim_model::protocol::FocusPurpose::Plain,
-                details: verbatim_model::property::NodeDetailSet::ALL,
-                text: verbatim_model::TextDetails::ALL,
-            },
-            Query::Navigate {
-                node_id: NodeId::new(9),
-                kind: QueryKind::NextSibling,
-                details: verbatim_model::property::NodeDetailSet::ALL,
-            },
-            Query::Activate {
-                node_id: NodeId::new(9),
-            },
-            Query::Ancestors {
-                node_id: NodeId::new(9),
-                details: verbatim_model::property::NodeDetailSet::ALL,
-            },
-            Query::DumpTree { locations: false },
-        ];
-        let commands: Vec<CoreToOutpost> = queries
-            .into_iter()
-            .map(|query| CoreToOutpost::Query {
-                trace_id: TraceId::mint(),
-                request_id: RequestId::shell(3),
-                query,
-                timing: EventTiming::default(),
-            })
-            .chain([CoreToOutpost::CancelQuery {
-                request_id: RequestId::shell(3),
-            }])
-            .collect();
-        for command in &commands {
-            write_message(&mut buffer, command).expect("writes");
-        }
-        let outcomes = [
-            QueryOutcome::Done(QueryResult::Focus(FocusNow {
-                window: None,
-                focus: Some(FocusedControl {
-                    node: node.clone(),
-                    ancestors: Vec::new(),
-                    selected_child: None,
-                    window: None,
-                    text: None,
-                }),
-                observed_at_us: 42,
-            })),
-            QueryOutcome::Done(QueryResult::Navigated(None)),
-            QueryOutcome::Done(QueryResult::Tree(DumpedTree {
-                root: TreeNode {
-                    snapshot: node,
-                    children: Vec::new(),
-                },
-                truncated: true,
-                locations: false,
-            })),
-            QueryOutcome::Gone,
-            QueryOutcome::Failed("no activation pattern".to_owned()),
-            QueryOutcome::NotStarted,
-            QueryOutcome::Abandoned,
-        ];
-        let replies: Vec<OutpostToCore> = outcomes
-            .into_iter()
-            .map(|outcome| OutpostToCore::Reply {
-                trace_id: TraceId::mint(),
-                request_id: RequestId::shell(3),
-                outcome,
-                timing: EventTiming {
-                    dequeued_at_us: 10,
-                    published_at_us: 20,
-                    calls: CallCounts {
-                        uia: 3,
-                        msaa: 0,
-                        window_messages: 1,
-                        connections: 0,
-                    },
-                    ..EventTiming::default()
-                },
-            })
-            .collect();
-        for reply in &replies {
-            write_message(&mut buffer, reply).expect("writes");
-        }
-
-        let mut reader = buffer.as_slice();
-        for command in &commands {
-            let read: CoreToOutpost = read_message(&mut reader)
-                .expect("reads")
-                .expect("not end of stream");
-            assert_eq!(&read, command);
-        }
-        for reply in &replies {
-            let read: OutpostToCore = read_message(&mut reader)
-                .expect("reads")
-                .expect("not end of stream");
-            assert_eq!(&read, reply);
-        }
     }
 }

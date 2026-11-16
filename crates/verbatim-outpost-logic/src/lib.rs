@@ -9,8 +9,8 @@
 //! It holds the intake's order ([`intake`]), the follow state ([`follow`]),
 //! the arbitrator's verdicts
 //! ([`Verdicts`]), Core's requests ([`waiting`]), the program in flight
-//! with the worker generation in charge ([`charge`]), the queries not yet
-//! answered, and the idle barrier's round.
+//! with the worker generation in charge ([`charge`]), and the idle
+//! barrier's round.
 //! Programs, run by a worker on copies ([`Facts`]), make every call into
 //! the application; their commits come back as inputs, and the reducer
 //! applies a commit only while its request is live: the program in flight
@@ -72,30 +72,20 @@ mod text;
 mod waiting;
 mod watch;
 
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Duration;
 
 use self::charge::{Abandoned, InCharge};
 use self::watch::WatchCancelled;
-use verbatim_model::protocol::{
-    EventTiming, OutpostToCore, Query, QueryOutcome, QueryResult, RequestId,
-};
-use verbatim_model::{
-    CallCounts, FocusText, KeyFetch, NodeId, NormalizedEvent, ReadPurpose, TextOp, TraceId,
-};
+use verbatim_model::TextOp;
+use verbatim_model::protocol::OutpostToCore;
 
 pub use self::charge::Request;
 pub use self::entry::{Asker, Entry, Item, UiaEvent, UiaKind, WinKind, is_state_property};
-pub use self::follow::{
-    Applied, Change, Facts, FocusCommit, FocusPath, FollowState, Followed, Group, LastReported,
-    LogicError, MarkChange, MsaaReport, Origin, Route, Subscribed, Subscription, Target,
-    apply_local,
-};
-pub use self::intake::{Handling, Object};
+pub use self::follow::{Change, Facts, FocusPath, Route};
 pub use self::text::{
-    Anchor, AnswerCut, CutLine, FieldReads, KeptSelection, KeyNote, LastRead, NOTE_LIFE,
-    NodeAnchors, NoteFetch, NoteReads, RangeKey, ReadSelection, ReportCut, TextChange, TextFacts,
+    Anchor, KeptSelection, LastRead, NodeAnchors, RangeKey, ReadSelection, TextChange, TextFacts,
 };
 pub use self::waiting::{Asks, Cancelled};
 pub use self::watch::{EVENT_WINDOW_US, WORD_AFTER_US, WatchProgram, WatchWork, Watches};
@@ -122,13 +112,8 @@ pub struct Now {
     reason = "an entry moves by value from the intake to its program, as it always has"
 )]
 pub enum Work {
-    /// One entry, handled as `handling` says.
-    Entry {
-        /// The entry.
-        entry: Entry,
-        /// How the program handles it.
-        handling: Handling,
-    },
+    /// One entry.
+    Entry(Entry),
 
     /// Drops the objects the shell hands it: what a release let go of.
     Drop,
@@ -137,78 +122,6 @@ pub enum Work {
     /// A caret key's watch's check or final read ([`watch`]), answered
     /// with [`Input::Answered`] when it ends the watch.
     Watch(Box<WatchProgram>),
-    /// Finishes the caret read `cut`, cut at its value change check, with
-    /// the reducer's decision: whether a value change of its edit control
-    /// waited when the read part ended (`waiting`).
-    Finish {
-        /// The cut read.
-        cut: Box<Cut>,
-        /// Whether a value change of its edit control waited when the read part ended.
-        waiting: bool,
-    },
-}
-
-/// A caret read of an edit control's client area cut at its value change
-/// check (`books/dev/src/explanation/design/ownership.md`): the read part read the caret and synced with the `WinEvent`
-/// thread, so every value change the control raised before the sync waits
-/// ahead of the read part's end in the mailbox. The part that finishes it
-/// makes the comparison and the rest of the read's calls.
-#[derive(Clone, Debug)]
-pub struct Cut {
-    /// The edit control's window, whose client area's value change the
-    /// reducer looks for.
-    pub edit: isize,
-    /// The edit control's client area, and its text's length if the read
-    /// part read it, so the finish reads it no more than the read uncut.
-    pub node: NodeId,
-    /// The text's length, when the read part read it.
-    pub length: Option<u32>,
-    /// When the read began, on the observation clock, committed with what
-    /// the finish sends.
-    pub read_at: Option<u64>,
-    /// The timing of the entry the read part handled, and the calls it
-    /// made that no message has carried, which the finish's message
-    /// carries with its own.
-    pub timing: EventTiming,
-    /// The calls the read part made that no message has carried.
-    pub calls: CallCounts,
-    /// What finishes it.
-    pub finish: Finish,
-}
-
-/// What a cut caret read was for.
-#[derive(Clone, Debug)]
-pub enum Finish {
-    /// A caret event's report, of the event with this trace and
-    /// observation.
-    Report {
-        /// The event's trace.
-        trace: TraceId,
-        /// The event's observation, in microseconds on the run's shared clock.
-        observed_at_us: u64,
-        /// What the read part found.
-        read: ReportCut<u32>,
-    },
-    /// A held key's before read, which answers its request.
-    Before {
-        /// The request's query id.
-        request_id: RequestId,
-        /// The query's trace.
-        trace: TraceId,
-        /// What the read part found.
-        read: ReportCut<u32>,
-    },
-    /// A key's read under its note.
-    Note {
-        /// The event's trace.
-        trace: TraceId,
-        /// The event's observation, in microseconds on the run's shared clock.
-        observed_at_us: u64,
-        /// The end of the note read under.
-        until_us: u64,
-        /// What the read part found.
-        read: AnswerCut<u32>,
-    },
 }
 
 /// A program for the worker in charge: its request, its copies, and its
@@ -252,8 +165,7 @@ impl KeptFromAnyGeneration for VerdictChange {
 pub enum Effect {
     /// Hand `Program` to the worker in charge.
     Dispatch(Box<Program>),
-    /// Send a message to Core, its nodes recorded as carried. A reply
-    /// answers its query's token.
+    /// Send a message to Core, its nodes recorded as carried.
     Send(Box<OutpostToCore>),
     /// Release the nodes and anchors no live request can still name, for
     /// Core's held lists, which acknowledge `acknowledged`; the shell
@@ -268,10 +180,6 @@ pub enum Effect {
         /// The requests still live, whose nodes and anchors stay.
         live: Vec<Request>,
     },
-    /// Move the focus-following subscription.
-    Subscribe(Subscription),
-    /// Drop the shell's elements under these tokens, on a worker.
-    Unfollow(Vec<u64>),
     /// Drop the objects parked under these keys, on a worker.
     Unpark(Vec<u64>),
     /// Let go of the UIA ranges the store keeps under these keys, by node,
@@ -285,9 +193,6 @@ pub enum Effect {
         /// The generation started in its place.
         replacement: u64,
     },
-    /// A commit asked for what cannot occur: applied as nothing, for the
-    /// shell to record as the logic error it is.
-    LogicError(LogicError),
     /// A test's settle, number `0`, was reached: the shell answers whoever
     /// waits on it.
     Settled(u64),
@@ -302,16 +207,6 @@ pub enum Effect {
 pub enum Input {
     /// An entry from a producer.
     Entry(Entry),
-    /// Core withdraws query `0` if it has not started.
-    Cancel(RequestId),
-    /// Core's note of a key with no before read, set as it arrives, not
-    /// queued behind what waits.
-    KeyNote {
-        /// The key's node.
-        node: NodeId,
-        /// What the node's reads fetch.
-        fetch: KeyFetch,
-    },
     /// A verdict a program of generation `generation` probed, or a window
     /// it found destroyed, posted alone as it was made, even from an
     /// abandoned worker.
@@ -330,8 +225,7 @@ pub enum Input {
         change: Box<Change>,
     },
 
-    /// A program ended: whether it panicked, and the caret read it cut at
-    /// its value change check, for the reducer to decide and finish.
+    /// A program ended, and whether it panicked.
     Finished {
         /// The request that ended.
         request: Request,
@@ -340,8 +234,6 @@ pub enum Input {
         reported: bool,
         /// Whether it panicked.
         panicked: bool,
-        /// The caret read it cut at its value change check, for the reducer to decide and finish.
-        cut: Option<Box<Cut>>,
     },
     /// What a release let go of, nodes and anchors by number, and whether
     /// there are objects to drop.
@@ -372,13 +264,9 @@ pub enum Input {
     Close,
 }
 
-/// What the reducer keeps of the program in flight, beside what the work
-/// in flight keeps of it (its request, times, walk and moved-on rule).
+/// What the reducer keeps of the program in flight.
 #[derive(Clone, Debug)]
 struct Current {
-    /// The query the program answers, if it answers one, which an
-    /// abandonment or a program that ends without answering answers.
-    running: Option<(RequestId, TraceId)>,
     /// The Core request it runs ([`Asks::running`]), if it runs one.
     asked: Option<verbatim_model::request::RequestNumber>,
 }
@@ -396,12 +284,8 @@ pub struct Reducer {
     facts: Facts,
     /// The program in flight, and the worker generation in charge.
     flight: InCharge<Current>,
-    /// A key's final read, to run before anything else.
-    after: VecDeque<(Entry, Handling)>,
     /// Whether a release let go of objects for a worker to drop.
     to_drop: bool,
-    /// The queries recorded and not yet answered.
-    queries: BTreeSet<RequestId>,
     /// The idle barrier's round reached and not yet answered.
     idle_query: Option<u64>,
     /// Whether a release was asked for and its [`Input::Released`] has not
@@ -425,27 +309,10 @@ impl Reducer {
         &self.facts
     }
 
-    /// The window of the focus this outpost follows, if any.
-    #[must_use]
-    pub fn followed_window(&self) -> Option<isize> {
-        self.facts
-            .follow
-            .followed
-            .as_ref()
-            .and_then(|followed| followed.window)
-    }
-
     /// The worker generation in charge.
     #[must_use]
     pub fn generation(&self) -> u64 {
         self.flight.generation()
-    }
-
-    /// The queries recorded and not yet answered, which the shell's tokens
-    /// match.
-    #[must_use]
-    pub fn queries(&self) -> &BTreeSet<RequestId> {
-        &self.queries
     }
 
     /// The tests' settles waiting in the intake, by number, which the
@@ -491,31 +358,15 @@ impl Reducer {
             Input::Entry(entry) => {
                 self.entry(entry, now, &mut effects);
             }
-            Input::Cancel(request_id) => {
-                if let Some(trace) = self.intake.cancel(request_id) {
-                    self.send(
-                        reply(request_id, trace, QueryOutcome::NotStarted),
-                        &mut effects,
-                    );
-                }
-            }
-            Input::KeyNote { node, fetch } => {
-                Arc::make_mut(&mut self.facts.text).set_note(node.number(), fetch, now.wall_us);
-            }
             Input::Verdict { generation, change } => {
                 self.record_verdict(generation, &change);
             }
             Input::Commit { request, change } => {
                 if self.accepts(request) {
-                    self.commit(request, &change, now, &mut effects);
+                    self.commit(&change, &mut effects);
                 }
             }
-            Input::Finished {
-                request,
-                panicked,
-                cut,
-                ..
-            } => self.finished(request, panicked, cut, &mut effects),
+            Input::Finished { request, .. } => self.finished(request, &mut effects),
             Input::Released {
                 nodes,
                 anchors,
@@ -617,7 +468,7 @@ impl Reducer {
             }
             WatchCancelled::Abandon(answer) => {
                 if let Some(abandoned) = self.flight.abandon() {
-                    self.abandoned(abandoned, effects);
+                    Self::abandoned(&abandoned, effects);
                 }
                 effects.push(Effect::Send(Box::new(OutpostToCore::Answer(answer))));
                 return;
@@ -630,25 +481,11 @@ impl Reducer {
             }
             Cancelled::Abandon(answer) => {
                 if let Some(abandoned) = self.flight.abandon() {
-                    self.abandoned(abandoned, effects);
+                    Self::abandoned(&abandoned, effects);
                 }
                 effects.push(Effect::Send(Box::new(OutpostToCore::Answer(answer))));
             }
             Cancelled::Nothing => {}
-        }
-    }
-
-    /// What the reducer keeps of the program in flight, if it is
-    /// `request`'s.
-    fn current_of(&mut self, request: Request) -> Option<&mut Current> {
-        if self
-            .flight
-            .running()
-            .is_some_and(|(running, ..)| running == request)
-        {
-            self.flight.item_mut()
-        } else {
-            None
         }
     }
 
@@ -663,147 +500,22 @@ impl Reducer {
         {
             self.watches.heard(now.wall_us);
         }
-        if self.key_arrived(&entry, now) {
-            return;
-        }
-        self.push(entry, effects);
-    }
-
-    /// A read of the caret for a key, as it arrives: a before read sets
-    /// the node's note and is queued; a final read goes ahead of queued
-    /// reads, as nothing of it can wait behind them, and the note stays
-    /// until it commits, so a read in flight still gets its facts.
-    /// Whether the entry was taken here.
-    fn key_arrived(&mut self, entry: &Entry, now: Now) -> bool {
-        let Item::Query {
-            request_id,
-            query:
-                Query::Text {
-                    node_id,
-                    op: TextOp::ReadCaret(read),
-                },
-        } = &entry.item
-        else {
-            return false;
-        };
-        if self.stopping {
-            return false;
-        }
-        match read.purpose {
-            ReadPurpose::BeforeFieldKey => {}
-            ReadPurpose::Final => {
-                let note_until = self
-                    .facts
-                    .text
-                    .live_note(node_id.number(), now.wall_us)
-                    .map(|note| note.until_us);
-                self.queries.insert(*request_id);
-                self.after
-                    .push_back((entry.clone(), Handling::FinalRead { note_until }));
-                return true;
-            }
-        }
-        Arc::make_mut(&mut self.facts.text).set_note(node_id.number(), read.fetch, now.wall_us);
-        false
-    }
-
-    /// Pushes `entry` into the intake at `now`, recording a query.
-    fn push(&mut self, entry: Entry, effects: &mut Vec<Effect>) {
-        if let Item::Query { request_id, .. } = entry.item
-            && !self.stopping
-        {
-            self.queries.insert(request_id);
-        }
         let pushed = self.intake.push(entry);
         if !pushed.unparked.is_empty() {
             effects.push(Effect::Unpark(pushed.unparked));
         }
     }
 
-    /// Sends `message`; a reply answers its query.
-    fn send(&mut self, message: OutpostToCore, effects: &mut Vec<Effect>) {
-        if let OutpostToCore::Reply { request_id, .. } = &message {
-            self.queries.remove(request_id);
-            if let Some(current) = self.flight.item_mut().filter(|current| {
-                current
-                    .running
-                    .is_some_and(|(running, _)| running == *request_id)
-            }) {
-                current.running = None;
-            }
-        }
-        effects.push(Effect::Send(Box::new(message)));
-    }
-
-    /// Applies the commit of `request`'s program: its messages sent, then
+    /// Applies a commit of the program in flight: its message sent, then
     /// the rest.
-    fn commit(&mut self, request: Request, change: &Change, now: Now, effects: &mut Vec<Effect>) {
-        if let Some(mut message) = change.result.clone() {
-            self.attach_note_facts(&mut message, now);
-            if let Some(current) = self.current_of(request) {
-                current.running = None;
-            }
-            self.send(message, effects);
+    fn commit(&mut self, change: &Change, effects: &mut Vec<Effect>) {
+        if let Some(message) = change.result.clone() {
+            effects.push(Effect::Send(Box::new(message)));
         }
-        let mut applied = follow::apply(&mut self.facts, change);
-        let ranges = std::mem::take(&mut applied.ranges);
+        let ranges = follow::apply(&mut self.facts, change);
         if !ranges.is_empty() {
             effects.push(Effect::ForgetRanges(ranges));
         }
-        effects.extend(
-            std::mem::take(&mut applied.logic_errors)
-                .into_iter()
-                .map(Effect::LogicError),
-        );
-        Self::subscription_effects(applied, effects);
-    }
-
-    /// A caret event's report with no facts whose node has a live note: its
-    /// read was dispatched before the note arrived. The comparison needs no
-    /// call, so it is attached here, before the commit replaces the last
-    /// read, and the read can be its key's evidence.
-    fn attach_note_facts(&mut self, message: &mut OutpostToCore, now: Now) {
-        let OutpostToCore::Event { event, .. } = message else {
-            return;
-        };
-        let (node, caret, selection_changes, facts) = match event {
-            NormalizedEvent::CaretMoved {
-                node_id,
-                caret,
-                selection_changes,
-                facts,
-                ..
-            } => (*node_id, &*caret, &*selection_changes, facts),
-            NormalizedEvent::FocusChanged { node, text, .. } => {
-                let Some(FocusText::Caret {
-                    caret,
-                    changes,
-                    facts,
-                    ..
-                }) = text.as_deref_mut()
-                else {
-                    return;
-                };
-                (node.id, &*caret, &changes.selection_changes, facts)
-            }
-            _ => return,
-        };
-        if facts.is_some()
-            || self
-                .facts
-                .text
-                .live_note(node.number(), now.wall_us)
-                .is_none()
-        {
-            return;
-        }
-        *facts = Arc::make_mut(&mut self.facts.text)
-            .facts_at_commit(
-                node.number(),
-                (caret, !selection_changes.is_empty()),
-                now.wall_us,
-            )
-            .map(Box::new);
     }
 
     /// Records a verdict of a program of `generation`'s: one from the
@@ -816,22 +528,6 @@ impl Reducer {
             return;
         }
         Arc::make_mut(&mut self.facts.verdicts).apply(change);
-    }
-
-    /// The shell's part of an [`Applied`]: the subscription moved and the
-    /// elements no longer followed dropped.
-    fn subscription_effects(applied: Applied, effects: &mut Vec<Effect>) {
-        let Applied {
-            subscribe,
-            unfollowed,
-            ..
-        } = applied;
-        if let Some(subscribe) = subscribe {
-            effects.push(Effect::Subscribe(subscribe));
-        }
-        if !unfollowed.is_empty() {
-            effects.push(Effect::Unfollow(unfollowed));
-        }
     }
 
     /// What a release let go of: nodes and anchors by number, and whether
@@ -848,45 +544,24 @@ impl Reducer {
         if !ranges.is_empty() {
             effects.push(Effect::ForgetRanges(ranges));
         }
-        let mut applied = Applied::default();
-        self.facts.follow.release_groups(nodes, &mut applied);
-        Self::subscription_effects(applied, effects);
         self.to_drop |= objects;
     }
 
-    /// The worker in charge was abandoned: its replacement is started, and
-    /// the program's query and the live re-read its entry answers are
-    /// answered.
-    fn abandoned(&mut self, abandoned: Abandoned<Current>, effects: &mut Vec<Effect>) {
-        let Abandoned {
-            dead,
-            replacement,
-            item: current,
-        } = abandoned;
-        effects.push(Effect::Abandon { dead, replacement });
-        if let Some((request_id, trace)) = current.running {
-            self.send(reply(request_id, trace, QueryOutcome::Abandoned), effects);
-        }
+    /// The worker in charge was abandoned: its replacement is started.
+    fn abandoned(abandoned: &Abandoned, effects: &mut Vec<Effect>) {
+        effects.push(Effect::Abandon {
+            dead: abandoned.dead,
+            replacement: abandoned.replacement,
+        });
     }
 
-    /// A program ended, having cut a caret read at its value change check
-    /// when `cut` is given.
-    fn finished(
-        &mut self,
-        request: Request,
-        panicked: bool,
-        cut: Option<Box<Cut>>,
-        effects: &mut Vec<Effect>,
-    ) {
+    /// Program `request` ended.
+    fn finished(&mut self, request: Request, effects: &mut Vec<Effect>) {
         if self
             .flight
             .running()
             .is_none_or(|(running, ..)| running != request)
         {
-            return;
-        }
-        if let Some(cut) = cut.filter(|_| !panicked) {
-            self.dispatch_finish(cut, effects);
             return;
         }
         if self.watches.runs(request)
@@ -902,19 +577,6 @@ impl Reducer {
         {
             effects.push(Effect::Send(Box::new(OutpostToCore::Answer(answer))));
         }
-        // A query it left unanswered still gets its one reply.
-        if let Some((request_id, trace)) = current.running {
-            self.send(
-                reply(
-                    request_id,
-                    trace,
-                    QueryOutcome::Failed("the outpost failed handling the query".to_owned()),
-                ),
-                effects,
-            );
-        }
-        // A live re-read its program did not answer: its object was gone,
-        // or a rule dropped its report.
     }
 
     /// Answers the idle barrier's query once no watch waits. The program
@@ -950,32 +612,28 @@ impl Reducer {
         while !self.busy() && !self.stopping && !self.releasing {
             if let Some(program) = self.watches.due(now.wall_us) {
                 let program = Box::new(program);
-                let request = self.dispatch(Work::Watch(program.clone()), None, effects);
+                let request = self.dispatch(Work::Watch(program.clone()), effects);
                 self.watches.running(&program, request, now.wall_us);
                 continue;
             }
             if let Some(ask) = self.asks.take_next() {
-                self.dispatch(Work::Ask(ask), None, effects);
-                continue;
-            }
-            if let Some((entry, handling)) = self.after.pop_front() {
-                self.dispatch_entry(entry, handling, effects);
+                self.dispatch(Work::Ask(ask), effects);
                 continue;
             }
             if std::mem::take(&mut self.to_drop) {
-                self.dispatch(Work::Drop, None, effects);
+                self.dispatch(Work::Drop, effects);
                 continue;
             }
             let Some(entry) = self.intake.next() else {
                 return;
             };
-            self.run(entry, now, effects);
+            self.run(entry, effects);
         }
     }
 
     /// An entry handed out: the reducer's own entries are handled here, and
     /// the rest dispatched.
-    fn run(&mut self, entry: Entry, now: Now, effects: &mut Vec<Effect>) {
+    fn run(&mut self, entry: Entry, effects: &mut Vec<Effect>) {
         match entry.item {
             // Answered before anything after it is dispatched: a test's
             // settle at once, Core's round once no watch waits.
@@ -1002,27 +660,9 @@ impl Reducer {
                     live,
                 });
             }
-            // A shell query reached at its deadline is answered at once with
-            // no items, as one abandoned there would have nothing to say.
-            Item::Query {
-                request_id,
-                query: Query::ShellItems { answer_by_us, .. },
-            } if now.wall_us >= answer_by_us => {
-                let outcome = QueryOutcome::Done(QueryResult::ShellItems(Vec::new()));
-                self.send(reply(request_id, entry.trace, outcome), effects);
+            _ => {
+                self.dispatch(Work::Entry(entry), effects);
             }
-            Item::Query {
-                request_id,
-                query: Query::ShellItemPosition { answer_by_us, .. },
-            } if now.wall_us >= answer_by_us => {
-                let none = verbatim_model::ShellCandidates {
-                    candidates: Vec::new(),
-                    complete: false,
-                };
-                let outcome = QueryOutcome::Done(QueryResult::ShellItemPosition(none));
-                self.send(reply(request_id, entry.trace, outcome), effects);
-            }
-            _ => self.dispatch_entry(entry, Handling::Run, effects),
         }
     }
 
@@ -1035,30 +675,13 @@ impl Reducer {
             .collect()
     }
 
-    /// Dispatches a program for `entry`.
-    fn dispatch_entry(&mut self, entry: Entry, handling: Handling, effects: &mut Vec<Effect>) {
-        let running = query_of(&entry);
-        let work = Work::Entry { entry, handling };
-        self.dispatch(work, running, effects);
-    }
-
-    /// Dispatches `work`, answering `running`. Verbatim moving the caret or
-    /// selecting on a node clears its note, before its copy is taken.
-    fn dispatch(
-        &mut self,
-        work: Work,
-        running: Option<(RequestId, TraceId)>,
-        effects: &mut Vec<Effect>,
-    ) -> Request {
-        if let Some(moved) = verbatims_caret_move(&work) {
-            Arc::make_mut(&mut self.facts.text).clear_note(moved.number());
-        }
+    /// Dispatches `work`.
+    fn dispatch(&mut self, work: Work, effects: &mut Vec<Effect>) -> Request {
         let current = Current {
             asked: match &work {
                 Work::Ask(ask) => Some(ask.number),
                 _ => None,
             },
-            running,
         };
         let request = self.flight.start(current);
         effects.push(Effect::Dispatch(Box::new(Program {
@@ -1067,58 +690,6 @@ impl Reducer {
             work,
         })));
         request
-    }
-
-    /// Dispatches the program that finishes `cut`, the caret read the
-    /// program in flight cut at its value change check, before anything
-    /// else and even while the outpost shuts down, as the read's program
-    /// would have gone on: handed on to a new request, it takes over the
-    /// query that program answers. The check is decided here: every
-    /// value change the control raised before the read part's sync is
-    /// ahead of its end in the mailbox, so among the entries not yet
-    /// dispatched, in the intake.
-    fn dispatch_finish(&mut self, cut: Box<Cut>, effects: &mut Vec<Effect>) {
-        // No value change reaches the outpost: Core's event queue judges
-        // them (`docs/design/readers-tell-core-asks-build1.md`, "Selection
-        // and the caret's text facts"), so none waits here.
-        let waiting = false;
-        let Some(request) = self.flight.hand_on() else {
-            return;
-        };
-        effects.push(Effect::Dispatch(Box::new(Program {
-            request,
-            facts: self.facts.clone(),
-            work: Work::Finish { cut, waiting },
-        })));
-    }
-}
-
-/// The node `work` moves the caret or selects on for Verbatim, if it does:
-/// the move becomes the last read, and clears the node's note.
-fn verbatims_caret_move(work: &Work) -> Option<NodeId> {
-    let Work::Entry {
-        entry:
-            Entry {
-                item:
-                    Item::Query {
-                        query: Query::Text { node_id, op },
-                        ..
-                    },
-                ..
-            },
-        ..
-    } = work
-    else {
-        return None;
-    };
-    matches!(op, TextOp::MoveCaret(_) | TextOp::Select { .. }).then_some(*node_id)
-}
-
-/// The query `entry` answers, if it is one.
-fn query_of(entry: &Entry) -> Option<(RequestId, TraceId)> {
-    match &entry.item {
-        Item::Query { request_id, .. } => Some((*request_id, entry.trace)),
-        _ => None,
     }
 }
 
@@ -1129,15 +700,5 @@ fn started_point(answer: &verbatim_model::request::Answer) -> Option<verbatim_mo
             verbatim_model::TextReply::Started(started),
         )) => Some(started.point),
         _ => None,
-    }
-}
-
-/// The reply to query `request_id`, traced `trace`, ending as `outcome`.
-fn reply(request_id: RequestId, trace: TraceId, outcome: QueryOutcome) -> OutpostToCore {
-    OutpostToCore::Reply {
-        trace_id: trace,
-        request_id,
-        outcome,
-        timing: EventTiming::default(),
     }
 }

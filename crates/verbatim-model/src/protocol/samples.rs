@@ -3,8 +3,8 @@
 //! them from here, where a new variant must be given its sample, since the
 //! chain that makes them names every variant without a wildcard.
 
-use super::{EventTiming, OutpostToCore, QueryOutcome, RequestId};
-use crate::{Backend, NodeId, NormalizedEvent, Pid, TraceId};
+use super::OutpostToCore;
+use crate::{Pid, TraceId};
 
 /// One sample of each [`OutpostToCore`] variant, in declaration order.
 #[must_use]
@@ -14,21 +14,6 @@ pub fn outpost_to_core() -> Vec<OutpostToCore> {
         samples.push(sample);
     }
     samples
-}
-
-/// An event of node 1.
-fn event() -> OutpostToCore {
-    OutpostToCore::Event {
-        trace_id: TraceId::from_raw(1),
-        observed_at_us: 0,
-        backend: Backend::Uia,
-        window: None,
-        application: None,
-        timing: EventTiming::default(),
-        event: NormalizedEvent::TextChanged {
-            node_id: NodeId::new(1),
-        },
-    }
 }
 
 /// One sample of each [`OutpostToCore`] variant, after `previous`.
@@ -43,14 +28,7 @@ fn next(previous: Option<&OutpostToCore>) -> Option<OutpostToCore> {
         OutpostToCore::Ready { .. } => OutpostToCore::SpareReady {
             outpost_pid: Pid(1),
         },
-        OutpostToCore::SpareReady { .. } => event(),
-        OutpostToCore::Event { .. } => OutpostToCore::Reply {
-            trace_id: TraceId::from_raw(2),
-            request_id: RequestId::shell(1),
-            outcome: QueryOutcome::Gone,
-            timing: EventTiming::default(),
-        },
-        OutpostToCore::Reply { .. } => OutpostToCore::Pong {
+        OutpostToCore::SpareReady { .. } => OutpostToCore::Pong {
             parked_count: 0,
             parked_on_hung: 0,
             written_at_us: 0,
@@ -61,8 +39,7 @@ fn next(previous: Option<&OutpostToCore>) -> Option<OutpostToCore> {
         },
         OutpostToCore::Fault { .. } => OutpostToCore::TargetExited,
         OutpostToCore::TargetExited => OutpostToCore::IdleAnswer { round: 1 },
-        OutpostToCore::IdleAnswer { .. } => OutpostToCore::LiveRereadGone { request: 1 },
-        OutpostToCore::LiveRereadGone { .. } => OutpostToCore::Tell(Box::new(crate::tell::Event {
+        OutpostToCore::IdleAnswer { .. } => OutpostToCore::Tell(Box::new(crate::tell::Event {
             trace_id: TraceId::from_raw(3),
             kind: crate::event_kind::EventKind::UiaPropertyChanged,
             process: Pid(2),

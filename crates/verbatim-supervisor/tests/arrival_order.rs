@@ -31,10 +31,9 @@ use std::io::{BufReader, Read as _, Write as _};
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
-use verbatim_model::protocol::{
-    CoreToListener, CoreToOutpost, EventTiming, ListenerToCore, OutpostToCore, RequestId,
-};
-use verbatim_model::{Backend, NodeId, NormalizedEvent, OutpostId, Pid, TraceId};
+use verbatim_model::protocol::{CoreToListener, CoreToOutpost, ListenerToCore, OutpostToCore};
+use verbatim_model::request::{Cancel, CancelReason, RequestNumber};
+use verbatim_model::{OutpostId, Pid};
 use verbatim_process::arguments::OutpostOptions;
 use verbatim_process::message::{read_message, write_message};
 use verbatim_process::port_queue::{PortQueue, Received, port_queue};
@@ -82,24 +81,6 @@ fn fault(name: &str, padding: usize) -> OutpostToCore {
     OutpostToCore::Fault { detail }
 }
 
-/// A value change of node 7 to `value`: two of them are merged by the
-/// outpost's outbound rules whenever the second is sent while the first
-/// waits behind a write in flight.
-fn value_change(value: &str) -> OutpostToCore {
-    OutpostToCore::Event {
-        trace_id: TraceId::mint(),
-        observed_at_us: 0,
-        backend: Backend::Uia,
-        window: None,
-        application: None,
-        timing: EventTiming::default(),
-        event: NormalizedEvent::ValueChanged {
-            node_id: NodeId::new(7),
-            value: Some(value.to_owned()),
-        },
-    }
-}
-
 /// What the stand-in outpost writes for request number `request`, in
 /// order; `None` for the end of its process, with code 3.
 fn script(request: u64, ready: &OutpostToCore) -> Vec<Option<OutpostToCore>> {
@@ -121,8 +102,8 @@ fn script(request: u64, ready: &OutpostToCore) -> Vec<Option<OutpostToCore>> {
                 .map(|index| Some(fault(&format!("filler{index}"), 48 * 1024)))
                 .collect();
             frames.extend([
-                Some(value_change("one")),
-                Some(value_change("two")),
+                Some(fault("one", 0)),
+                Some(fault("two", 0)),
                 Some(ready.clone()),
             ]);
             frames
@@ -252,12 +233,13 @@ fn stand_in(args: &[String]) -> ! {
                 }
                 std::process::exit(0)
             }
-            CoreToOutpost::CancelQuery { request_id } => {
-                if matches!(request_id.number, 8 | 9) {
+            CoreToOutpost::Cancel(cancel) => {
+                let request = cancel.number.0;
+                if matches!(request, 8 | 9) {
                     send_unreadable(&mut messages);
                 }
-                farewell |= request_id.number == 9;
-                for message in script(request_id.number, &ready) {
+                farewell |= request == 9;
+                for message in script(request, &ready) {
                     match message {
                         Some(message) => send(&mut messages, &message),
                         None => std::process::exit(3),
@@ -430,14 +412,6 @@ impl Reducer {
                         format!("{from}: {name}")
                     }
                     OutpostToCore::Ready { .. } => format!("{from}: ready"),
-                    OutpostToCore::Event {
-                        event: NormalizedEvent::ValueChanged { node_id, value },
-                        ..
-                    } => format!(
-                        "{from}: node {} value {}",
-                        node_id.number(),
-                        value.unwrap_or_default()
-                    ),
                     other => format!("{from}: {other:?}"),
                 }
             }
@@ -474,9 +448,10 @@ impl Reducer {
         self.supervisor
             .send_to_outpost(
                 outpost,
-                CoreToOutpost::CancelQuery {
-                    request_id: RequestId::shell(request),
-                },
+                CoreToOutpost::Cancel(Cancel {
+                    number: RequestNumber(request),
+                    reason: CancelReason::Withdrawn,
+                }),
             )
             .expect("the cue is queued");
     }
@@ -604,12 +579,8 @@ fn a_reducer_held_past_three_ping_intervals_ends_no_outpost(signal: &Signal) {
 
 /// While the reducer is held, the relay keeps draining an outpost's pipe:
 /// the outpost writes far more than the pipe holds, and each of its writes
-/// completes, so nothing it sends waits behind a write in flight, which is
-/// the only time its merge rules act; two value changes of one node both
-/// arrive, in order.
-fn while_the_reducer_is_held_the_relay_drains_every_frame_and_two_value_changes_both_arrive(
-    signal: &Signal,
-) {
+/// completes, and everything it sent arrives, in order.
+fn while_the_reducer_is_held_the_relay_drains_every_frame_in_order(signal: &Signal) {
     let (app, pid) = application();
     let mut reducer = Reducer::start();
     reducer.with_outposts(&[pid]);
@@ -620,8 +591,8 @@ fn while_the_reducer_is_held_the_relay_drains_every_frame_and_two_value_changes_
     signal.wait("everything the outpost wrote, up to Ready");
     let mut expected: Vec<String> = (0..8).map(|index| format!("O1: filler{index}")).collect();
     expected.extend([
-        "O1: node 7 value one".to_owned(),
-        "O1: node 7 value two".to_owned(),
+        "O1: one".to_owned(),
+        "O1: two".to_owned(),
         "O1: ready".to_owned(),
     ]);
     assert_eq!(reducer.take(expected.len()), expected);
@@ -725,9 +696,9 @@ fn main() -> std::process::ExitCode {
             },
         ),
         (
-            "while_the_reducer_is_held_the_relay_drains_every_frame_and_two_value_changes_both_arrive",
+            "while_the_reducer_is_held_the_relay_drains_every_frame_in_order",
             || {
-                while_the_reducer_is_held_the_relay_drains_every_frame_and_two_value_changes_both_arrive(&Signal::new());
+                while_the_reducer_is_held_the_relay_drains_every_frame_in_order(&Signal::new());
             },
         ),
         (

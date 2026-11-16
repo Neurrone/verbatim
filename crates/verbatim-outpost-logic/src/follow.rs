@@ -1,164 +1,21 @@
-//! What the outpost follows, and what a program's commit changes of it
-//! (`books/dev/src/explanation/design/ownership.md`): the follow state, the focus line's paths, the caret key's
-//! note, all reducer state with no application object. A
-//! program is given a copy ([`Facts`]) and applies its own commits to it
-//! with the same function the reducer applies them with ([`apply`]), so
-//! what it reads after a commit is what the reducer will hold.
+//! What a program's commit changes (`books/dev/src/explanation/design/ownership.md`):
+//! its message to Core and its changes of text facts, reducer state with no
+//! application object, and the focus line's paths a UI Automation
+//! completion finds its elements by. A program is given a copy ([`Facts`]),
+//! to which its text calls apply their changes as they make them, so what
+//! it reads after a commit is what the reducer will hold.
 
-use std::collections::BTreeSet;
 use std::sync::Arc;
-use verbatim_model::protocol::{OutpostToCore, UiaFocusRead};
-use verbatim_model::{NodeId, NodeSnapshot, Role, TraceId};
+use verbatim_model::protocol::OutpostToCore;
 
 use verbatim_reader_rules::Window;
 
-use super::intake::Object;
 use super::text::{RangeKey, TextChange, TextFacts};
 use verbatim_reader_rules::verdicts::Verdicts;
 
-/// The focus-following subscription's event handler groups, as the
-/// reducer names them (`verbatim_uia::Group`, variant for variant).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum Group {
-    #[default]
-    /// The events every focus is followed for.
-    Base,
-    /// The base events and a text control's text events.
-    Extended,
-    /// The extended events without the text events.
-    ExtendedWithoutTextEvents,
-}
-
-/// The last focus this outpost reported and adopted: the one whose caret,
-/// text and subscription it tracks. Replaced whole when a focus is adopted,
-/// so that no fact of an older focus survives beside a newer one. A cache of
-/// reads and of what was reported, which judges nothing Core was told.
-#[derive(Clone, Debug)]
-pub struct Followed {
-    /// The focus's node.
-    pub node: NodeId,
-    /// The focus's role, as last read, which decides how its text is read.
-    pub role: Role,
-    /// The object it is, as the intake records the focus.
-    pub object: Option<Object>,
-    /// The window it was reported in, for events on the focus, which then
-    /// need no call to find their window.
-    pub window: Option<isize>,
-    /// Its ancestors, outermost first, and itself: where the next focus's
-    /// ancestor walk can stop and reuse the rest, as NVDA's does.
-    pub chain: Vec<NodeSnapshot>,
-    /// The window text of each window entry of `chain`, the outpost's
-    /// ancestry cache, read when it was reported, which the title check
-    /// reads again before a walk reuses it
-    /// (`verbatim_reader_rules::ancestry_cache`).
-    pub titles: Vec<verbatim_reader_rules::ancestry_cache::SavedTitle>,
-    /// How the focus was read.
-    pub origin: Origin,
-    /// Whether it was reached by redirecting a control's own focus event to
-    /// the control's focused child, whose own event is still to come.
-    pub redirected: bool,
-    /// Whether the system caret's events are dropped as they are pushed:
-    /// the focus has caret events of its own.
-    pub system_caret_unused: bool,
-    /// Where the focus-following subscription follows it, `None` for
-    /// nothing.
-    pub subscription: Option<Subscribed>,
-}
-
-impl Followed {
-    /// The raw-view chain the focus listener read for this focus, by which
-    /// the outpost finds its own copies of its elements.
-    #[must_use]
-    pub fn focus_path(&self) -> Option<&FocusPath> {
-        match &self.origin {
-            Origin::Listener(path) => Some(path),
-            Origin::Msaa(_) | Origin::Answer | Origin::MenuOpening => None,
-        }
-    }
-
-    /// What a live re-read of this focus needs, when it is an MSAA focus.
-    #[must_use]
-    pub fn msaa_report(&self) -> Option<MsaaReport> {
-        match &self.origin {
-            Origin::Msaa(report) => Some(*report),
-            Origin::Listener(_) | Origin::Answer | Origin::MenuOpening => None,
-        }
-    }
-}
-
-/// How a followed focus was read.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Origin {
-    /// The listener's read of a UI Automation focus.
-    Listener(FocusPath),
-    /// An MSAA focus, which a live re-read finds again.
-    Msaa(MsaaReport),
-    /// A focus-now answer.
-    Answer,
-    /// An MSAA menu opening, whose chain is at most Core's hidden frame.
-    MenuOpening,
-}
-
-/// Where the focus-following subscription follows a focus: its group, its
-/// element by the shell's token, and the slider followed with it for its
-/// value changes, by node and token.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Subscribed {
-    /// The element's group.
-    pub group: Group,
-    /// The element's token.
-    pub element: u64,
-    /// The slider followed for its value changes.
-    pub slider: Option<(NodeId, u64)>,
-}
-
-/// The role of the focus or foreground window this outpost last
-/// reported. Outside [`Followed`]: a foreground report writes it and
-/// follows nothing.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct LastReported {
-    /// The role.
-    pub role: Role,
-}
-
-/// An MSAA focus report of the outpost's, as a live re-read finds it again
-/// ([`Origin::Msaa`]).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct MsaaReport {
-    /// The report's trace.
-    pub trace: TraceId,
-    /// Its event's address: window, object id and child id.
-    pub event: (isize, i32, i32),
-    /// Whether its object was acquired as a simple child.
-    pub simple_child: bool,
-    /// When its event was observed, on the run's shared clock.
-    pub observed_at_us: u64,
-}
-
-/// The node whose caret was last read in a committed read, and when that
-/// read began, in microseconds: a caret event observed before then changes
-/// nothing the read did not see, and one observed later (while the read
-/// was in flight included) may.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct CaretRead(Option<(u64, u64)>);
-
-impl CaretRead {
-    /// Notes a read of node `node`'s caret that began at `started_us`.
-    pub fn note(&mut self, node: u64, started_us: u64) {
-        self.0 = Some((node, started_us));
-    }
-
-    /// Whether the last read of node `node`'s caret began at or after
-    /// `observed_us`, so it saw what an event observed then reports.
-    pub fn covers(self, node: u64, observed_us: u64) -> bool {
-        self.0
-            .is_some_and(|(read, at)| read == node && at >= observed_us)
-    }
-}
-
-/// The raw-view chain of the UIA focus the outpost last reported from the
-/// listener's read: the focus, then its ancestors, nearest first, each with
-/// its runtime id and its own window, if it has one.
+/// The raw-view chain of a UI Automation element the listener read: the
+/// element, then its ancestors, nearest first, each with its runtime id
+/// and its own window, if it has one.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct FocusPath {
     chain: Vec<(Vec<i32>, Option<Window>)>,
@@ -190,27 +47,6 @@ pub struct Route {
 }
 
 impl FocusPath {
-    /// The chain of the focus `read` names.
-    #[must_use]
-    pub fn of(read: &UiaFocusRead) -> Self {
-        let chain = std::iter::once((read.snapshot.runtime_id.clone(), Window::new(read.hwnd)))
-            .chain(read.ancestors.iter().map(|ancestor| {
-                (
-                    ancestor.snapshot.runtime_id.clone(),
-                    Window::new(ancestor.hwnd),
-                )
-            }))
-            .collect();
-        let cut = read.ancestors_end != verbatim_model::protocol::AncestorsEnd::Top;
-        let nearest = read.window.and_then(Window::new).filter(|_| cut);
-        Self {
-            chain,
-            cut,
-            nearest,
-            above: None,
-        }
-    }
-
     /// The chain of `route`, the listener's route to an element it read
     /// for a request ([`verbatim_model::request::Route`]).
     #[must_use]
@@ -300,108 +136,24 @@ impl FocusPath {
     }
 }
 
-/// Where the focus-following subscription is to be moved for a focus,
-/// `None` for nothing: the element and the slider by the shell's tokens, so
-/// the reducer holds no element.
-pub type Target = Option<Subscribed>;
-
-/// A focus commit's one change of what is followed ([`Change::focus`]).
-#[derive(Clone, Debug)]
-pub enum FocusCommit {
-    /// A focus becoming the followed one, replacing the record whole, with
-    /// its report's role and batch.
-    Adopt {
-        /// The record.
-        followed: Box<Followed>,
-        /// Its report's role and batch.
-        reported: LastReported,
-    },
-    /// A focus-now answer naming the focus already followed: its
-    /// subscription changes, and nothing else.
-    Again {
-        /// Where the subscription is moved.
-        target: Target,
-    },
-}
-
-/// A commit's one change of the marks on the followed focus
-/// ([`Change::mark`]).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MarkChange {
-    /// The redirect mark is cleared.
-    ClearRedirect,
-}
-
-/// A commit asking for what the followed focus's state table says cannot
-/// occur: a logic error in a program, applied as nothing and passed up.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum LogicError {
-    /// A focus-now answer followed again with no focus followed: the
-    /// program adopts instead.
-    AgainWithNothingFollowed,
-    /// A change of a mark on the followed focus with no focus followed:
-    /// every site tests the focus first.
-    MarkWithNothingFollowed(MarkChange),
-}
-
 /// What one commit of a program changes, its pure part: built by the
 /// program with every call it needs already made, and applied by the
-/// reducer, after the shell has made its store writes, in the order today's
-/// commit applies them: its report recorded for Core's judgement, then its
-/// messages sent, then the rest.
+/// reducer, after the shell has made its store writes: its message sent,
+/// then its text facts' changes.
 #[derive(Clone, Debug, Default)]
 pub struct Change {
-    /// The program's result, which ends its query.
+    /// The program's message to Core: a tell.
     pub result: Option<OutpostToCore>,
-    /// The change of what is followed: a focus adopted, followed again, or
-    /// a foreground report.
-    pub focus: Option<FocusCommit>,
-    /// The focus's element found after its report, with its slider's when
-    /// found: the subscription is moved to them only while that node is
-    /// the followed focus.
-    pub element: Option<(NodeId, Subscribed)>,
-    /// A read of this node's caret began at the instant given, in
-    /// microseconds.
-    pub caret_read: Option<(NodeId, u64)>,
-    /// A change of the marks on the followed focus.
-    pub mark: Option<MarkChange>,
-
-    /// The node of a UIA focus whose earlier element, by the focus
-    /// listener's evidence, lost the focus or is gone, so a new element
-    /// stands under it: a key's note on it ends, as Core forgets the
-    /// key's query (`docs/parity/focus-events.md`, "Duplicate focus
-    /// suppression").
-    pub replaced: Option<NodeId>,
-    /// The program's changes of text facts, in order, applied before the
-    /// rest: a program applies each to its own copies as its text call
-    /// makes it, so its own commit carries them only for the reducer.
+    /// The program's changes of text facts, in order: a program applies
+    /// each to its own copies as its text call makes it, so its own commit
+    /// carries them only for the reducer.
     pub text: Vec<TextChange>,
-}
-
-/// What the outpost follows: changed only by a commit the reducer applies,
-/// and copied into each program.
-#[derive(Clone, Debug, Default)]
-pub struct FollowState {
-    /// The focus this outpost follows.
-    pub followed: Option<Followed>,
-    /// The role and batch of the last report of a focus or foreground
-    /// window.
-    pub last_reported: Option<LastReported>,
-    /// The elements of the outpost's older UIA reports, each with its node
-    /// and the group it was given, by token, which keep their groups until
-    /// the store releases their node, so the outpost hears the changes of
-    /// every node it has not released (`books/dev/src/explanation/design/ownership.md`).
-    pub kept_groups: Vec<(NodeId, Group, u64)>,
-    /// The last committed read of a caret.
-    pub caret_read: CaretRead,
 }
 
 /// What a program is given a copy of: everything it reads of what the
 /// outpost remembers.
 #[derive(Clone, Debug, Default)]
 pub struct Facts {
-    /// What the outpost follows.
-    pub follow: FollowState,
     /// The arbitrator's kept verdicts, a snapshot the reducer replaces on
     /// change ([`super::verdicts`]).
     pub verdicts: Arc<Verdicts>,
@@ -409,306 +161,57 @@ pub struct Facts {
     pub text: Arc<TextFacts>,
 }
 
-/// Where the subscription is to follow, by token: the newest focus's
-/// element with its group, the slider's with the value group, every
-/// kept element with its own group (`Followed::Subscribe`).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Subscription {
-    /// The newest focus's element, by token, with its group.
-    pub newest: Option<(u64, Group)>,
-    /// The slider's element, by token, followed for its value changes.
-    pub slider: Option<u64>,
-    /// Every kept element, by token, with its own group.
-    pub kept: Vec<(u64, Group)>,
-}
-
-/// What applying a commit asks of the shell besides the follow state
-/// itself.
-#[derive(Debug, Default)]
-pub struct Applied {
-    /// The subscription's new targets, when it is to move.
-    pub subscribe: Option<Subscription>,
-    /// The element tokens no longer followed, for the shell to drop.
-    pub unfollowed: Vec<u64>,
-    /// The UIA ranges no text fact names any more, by node and key, for
-    /// the store to let go of.
-    pub ranges: Vec<(u64, RangeKey)>,
-    /// What the commit asked that its state table says cannot occur.
-    pub logic_errors: Vec<LogicError>,
-}
-
-impl FollowState {
-    /// The focus-following subscription moved from `previous`, its node and
-    /// where it was, to `target` on the record of `node`, unless it is on
-    /// the same elements. The focus it followed before keeps its group on
-    /// its element, among [`kept_groups`](Self::kept_groups), until its
-    /// node is released; a focus that returns to an element that kept its
-    /// group is not given it again. The record already holds `target`.
-    fn subscription_moved(
-        &mut self,
-        previous: Option<(NodeId, Subscribed)>,
-        (node, target): (NodeId, Target),
-        applied: &mut Applied,
-    ) {
-        if previous == target.map(|subscribed| (node, subscribed)) {
-            return;
-        }
-        let mut dropped: Vec<u64> = Vec::new();
-        if let Some((before, subscribed)) = previous {
-            dropped.extend(subscribed.slider.map(|(_, slider)| slider));
-            let kept = self
-                .kept_groups
-                .iter_mut()
-                .find(|(kept, _, _)| *kept == before);
-            if let Some(kept) = kept {
-                let (_, _, replaced) =
-                    std::mem::replace(kept, (before, subscribed.group, subscribed.element));
-                dropped.push(replaced);
-            } else {
-                self.kept_groups
-                    .push((before, subscribed.group, subscribed.element));
-            }
-        }
-        // The newest focus's element is followed as the newest, not kept.
-        if target.is_some() {
-            dropped.extend(
-                self.kept_groups
-                    .extract_if(.., |(kept, _, _)| *kept == node)
-                    .map(|(_, _, element)| element),
-            );
-        }
-        self.unfollow(dropped, applied);
-        applied.subscribe = Some(self.subscription());
-    }
-
-    /// Whether `token` names an element the subscription still follows.
-    fn follows(&self, token: u64) -> bool {
-        self.followed
-            .as_ref()
-            .and_then(|followed| followed.subscription)
-            .is_some_and(|subscribed| {
-                subscribed.element == token
-                    || subscribed.slider.is_some_and(|(_, slider)| slider == token)
-            })
-            || self.kept_groups.iter().any(|&(_, _, kept)| kept == token)
-    }
-
-    /// Lets go of `tokens`, each once, but those the subscription still
-    /// follows: the shell gives one element one token, whatever it is
-    /// followed as.
-    fn unfollow(&self, tokens: impl IntoIterator<Item = u64>, applied: &mut Applied) {
-        for token in tokens {
-            if !self.follows(token) && !applied.unfollowed.contains(&token) {
-                applied.unfollowed.push(token);
-            }
-        }
-    }
-
-    /// Where the subscription follows now.
-    fn subscription(&self) -> Subscription {
-        let kept = self
-            .kept_groups
-            .iter()
-            .map(|&(_, group, element)| (element, group))
-            .collect();
-        let subscribed = self
-            .followed
-            .as_ref()
-            .and_then(|followed| followed.subscription);
-        Subscription {
-            newest: subscribed.map(|subscribed| (subscribed.element, subscribed.group)),
-            slider: subscribed.and_then(|subscribed| subscribed.slider.map(|(_, slider)| slider)),
-            kept,
-        }
-    }
-
-    /// The store released `released`, by node number: the elements of
-    /// those nodes lose their groups, the newest focus's too, with its
-    /// slider's, when its node is released, and the subscription is moved
-    /// once if anything changed. The rest of the record stays for the
-    /// walks.
-    pub fn release_groups(&mut self, released: &BTreeSet<u64>, applied: &mut Applied) {
-        let mut dropped: Vec<_> = self
-            .kept_groups
-            .extract_if(.., |(node, _, _)| released.contains(&node.number()))
-            .map(|(_, _, element)| element)
-            .collect();
-        if let Some(subscribed) = self
-            .followed
-            .as_mut()
-            .filter(|followed| released.contains(&followed.node.number()))
-            .and_then(|followed| followed.subscription.take())
-        {
-            dropped.push(subscribed.element);
-            dropped.extend(subscribed.slider.map(|(_, slider)| slider));
-        }
-        if !dropped.is_empty() {
-            self.unfollow(dropped, applied);
-            applied.subscribe = Some(self.subscription());
-        }
-    }
-
-    /// Applies a commit's change of what is followed.
-    fn apply_focus(&mut self, focus: &FocusCommit, applied: &mut Applied) {
-        match focus {
-            FocusCommit::Adopt { followed, reported } => {
-                let followed = followed.as_ref().clone();
-                let node = followed.node;
-                let target = followed.subscription;
-                let previous = self
-                    .followed
-                    .replace(followed)
-                    .and_then(|before| Some((before.node, before.subscription?)));
-                self.subscription_moved(previous, (node, target), applied);
-                self.last_reported = Some(*reported);
-            }
-            FocusCommit::Again { target } => {
-                let Some(followed) = self.followed.as_mut() else {
-                    applied
-                        .logic_errors
-                        .push(LogicError::AgainWithNothingFollowed);
-                    return;
-                };
-                let node = followed.node;
-                let previous = followed.subscription.map(|before| (node, before));
-                followed.subscription = *target;
-                self.subscription_moved(previous, (node, *target), applied);
-            }
-        }
-    }
-
-    /// The focus's element found after its report: the subscription is
-    /// moved to it only while `node` is followed, and its tokens are let go
-    /// otherwise.
-    fn element_found(&mut self, node: NodeId, target: Subscribed, applied: &mut Applied) {
-        let Some(followed) = self
-            .followed
-            .as_mut()
-            .filter(|followed| followed.node == node)
-        else {
-            self.unfollow(
-                std::iter::once(target.element).chain(target.slider.map(|(_, slider)| slider)),
-                applied,
-            );
-            return;
-        };
-        let previous = followed.subscription.map(|before| (node, before));
-        followed.subscription = Some(target);
-        self.subscription_moved(previous, (node, Some(target)), applied);
-    }
-
-    /// Applies a commit's change of the marks on the followed focus.
-    fn apply_mark(&mut self, mark: MarkChange, applied: &mut Applied) {
-        let set: fn(&mut Followed) = match mark {
-            MarkChange::ClearRedirect => |followed| followed.redirected = false,
-        };
-        match self.followed.as_mut() {
-            Some(followed) => set(followed),
-            None => applied
-                .logic_errors
-                .push(LogicError::MarkWithNothingFollowed(mark)),
-        }
-    }
-}
-
-/// Applies the pure part of a commit, `change`, but for
-/// its report and messages, which the caller records and sends first: to
-/// the reducer's follow state, reports and marks, by the shared clock
-/// (`clock`), or to a program's copies of them, with no clock.
-pub fn apply(facts: &mut Facts, change: &Change) -> Applied {
-    let mut applied = Applied::default();
+/// Applies the pure part of a commit, `change`, but for its message, which
+/// the caller sends first, to the reducer's facts. Returns the UIA ranges
+/// no text fact names any more, by node and key, for the store to let go
+/// of.
+pub fn apply(facts: &mut Facts, change: &Change) -> Vec<(u64, RangeKey)> {
+    let mut ranges = Vec::new();
     if !change.text.is_empty() {
         let text = Arc::make_mut(&mut facts.text);
         for text_change in &change.text {
-            applied.ranges.extend(text.apply(text_change));
+            ranges.extend(text.apply(text_change));
         }
     }
-    if let Some(node) = change.replaced {
-        Arc::make_mut(&mut facts.text).clear_note(node.number());
-    }
-    let follow_state = &mut facts.follow;
-    if let Some(focus) = &change.focus {
-        follow_state.apply_focus(focus, &mut applied);
-    }
-    if let Some((node, target)) = change.element {
-        follow_state.element_found(node, target, &mut applied);
-    }
-    if let Some((node, started_us)) = change.caret_read {
-        follow_state.caret_read.note(node.number(), started_us);
-    }
-    if let Some(mark) = change.mark {
-        follow_state.apply_mark(mark, &mut applied);
-    }
-    applied
-}
-
-/// Applies `change`, a program's commit, to a program's
-/// copies `facts`, as the program's own commit does: [`apply`], with no
-/// clock.
-pub fn apply_local(facts: &mut Facts, change: &Change) -> Applied {
-    apply(facts, change)
-}
-
-/// A record of `node`, of `role`, with nothing but its node and role, as
-/// the tests start from.
-#[cfg(test)]
-pub(crate) fn plain_followed(node: NodeId, role: Role) -> Followed {
-    Followed {
-        node,
-        role,
-        object: None,
-        window: None,
-        chain: Vec::new(),
-        titles: Vec::new(),
-        origin: Origin::Answer,
-        redirected: false,
-        system_caret_unused: false,
-        subscription: None,
-    }
+    ranges
 }
 
 #[cfg(test)]
 mod tests {
-    use verbatim_model::{CaretMotion, KeyFetch, TextUnit};
+    use verbatim_model::WindowHandle;
+    use verbatim_model::property::RuntimeId;
+    use verbatim_model::request::{Route as ReadRoute, RouteEnd, RouteStep};
 
     use super::*;
 
-    /// A focus, runtime id `[42, 1]`, in window `own` (0 for none), with
-    /// ancestors `[42, 2]` and `[42, 3]`, nearest first, in the windows
-    /// `windows` gives, its walk ending as `end` says.
-    fn focus_read(
-        own: isize,
-        windows: [isize; 2],
-        end: verbatim_model::protocol::AncestorsEnd,
-    ) -> verbatim_model::protocol::UiaFocusRead {
-        use verbatim_model::protocol::{UiaAncestorFact, UiaFocusRead, UiaSnapshotFact};
-        let snapshot = |id| UiaSnapshotFact {
-            runtime_id: vec![42, id],
-            role: verbatim_model::Role::Group,
-            name: None,
-            value: None,
-            states: verbatim_model::StateSet::new(),
-            details: verbatim_model::NodeDetails::default(),
+    /// The route to a focus, runtime id `[42, 1]`, in window `own` (0 for
+    /// none), with ancestors `[42, 2]` and `[42, 3]`, nearest first, in the
+    /// windows `windows` gives, its walk ending as `end` says, its nearest
+    /// window `nearest` (0 for none).
+    fn focus_route(own: isize, windows: [isize; 2], end: RouteEnd, nearest: isize) -> ReadRoute {
+        let handle = |hwnd: isize| WindowHandle(u64::from_ne_bytes(hwnd.to_ne_bytes()));
+        let step = |id, hwnd: isize| RouteStep {
+            runtime_id: RuntimeId(vec![42, id]),
+            window: (hwnd != 0).then(|| handle(hwnd)),
+            content: true,
         };
-        UiaFocusRead {
-            hwnd: own,
-            snapshot: snapshot(1),
-            ancestors: (2..=3)
-                .zip(windows)
-                .map(|(id, hwnd)| UiaAncestorFact {
-                    snapshot: snapshot(id),
-                    hwnd,
-                    content: true,
-                })
+        ReadRoute {
+            window: handle(nearest),
+            steps: std::iter::once(step(1, own))
+                .chain((2..=3).zip(windows).map(|(id, hwnd)| step(id, hwnd)))
                 .collect(),
-            ancestors_end: end,
-            selected_child: None,
-            value_from_selection: false,
-            window: None,
-            same_as_last: None,
-            answers: None,
-            cached_from: None,
+            end,
         }
+    }
+
+    /// [`focus_route`] with no nearest window.
+    fn focus_read(own: isize, windows: [isize; 2], end: RouteEnd) -> ReadRoute {
+        focus_route(own, windows, end, 0)
+    }
+
+    /// The window 70, where a cut walk goes on.
+    fn at_70() -> WindowHandle {
+        WindowHandle(70)
     }
 
     /// A chain is cut at its focus only when the walk up from it did not
@@ -716,18 +219,19 @@ mod tests {
     /// at an ancestor.
     #[test]
     fn a_chain_is_cut_at_a_windowless_focus_whose_walk_did_not_reach_the_top() {
-        use verbatim_model::protocol::AncestorsEnd;
         let focus = [42, 1];
-        let cut = FocusPath::of(&focus_read(0, [0, 0], AncestorsEnd::PlainFrom(70)));
+        let cut = FocusPath::of_route(&focus_read(0, [0, 0], RouteEnd::PlainFrom(at_70())));
         assert!(cut.is_cut_at(&focus));
         assert!(!cut.is_cut_at(&[42, 2]), "an ancestor is not the focus");
-        let failed = FocusPath::of(&focus_read(0, [0, 0], AncestorsEnd::ContinueFrom(70)));
+        let failed = FocusPath::of_route(&focus_read(0, [0, 0], RouteEnd::ContinueFrom(at_70())));
         assert!(failed.is_cut_at(&focus));
-        let whole = FocusPath::of(&focus_read(0, [0, 0], AncestorsEnd::Top));
+        let whole = FocusPath::of_route(&focus_read(0, [0, 0], RouteEnd::Root));
         assert!(!whole.is_cut_at(&focus));
-        let windowed_ancestor = FocusPath::of(&focus_read(0, [0, 80], AncestorsEnd::PlainFrom(70)));
+        let windowed_ancestor =
+            FocusPath::of_route(&focus_read(0, [0, 80], RouteEnd::PlainFrom(at_70())));
         assert!(!windowed_ancestor.is_cut_at(&focus));
-        let windowed_focus = FocusPath::of(&focus_read(60, [0, 0], AncestorsEnd::PlainFrom(70)));
+        let windowed_focus =
+            FocusPath::of_route(&focus_read(60, [0, 0], RouteEnd::PlainFrom(at_70())));
         assert!(!windowed_focus.is_cut_at(&focus));
         assert!(!FocusPath::default().is_cut_at(&focus));
     }
@@ -738,13 +242,10 @@ mod tests {
     /// own, has no route.
     #[test]
     fn a_cut_windowless_chain_is_routed_from_its_nearest_window() {
-        use verbatim_model::protocol::AncestorsEnd;
-        let nearest = |end| UiaFocusRead {
-            window: Some(70),
-            ..focus_read(0, [0, 0], end)
-        };
+        let nearest = |end| focus_route(0, [0, 0], end, 70);
         assert_eq!(
-            FocusPath::of(&nearest(AncestorsEnd::ContinueFrom(90))).route_to(&[42, 1]),
+            FocusPath::of_route(&nearest(RouteEnd::ContinueFrom(WindowHandle(90))))
+                .route_to(&[42, 1]),
             Some(Route {
                 window: Window::new(70).expect("70 is not 0"),
                 path: vec![vec![42, 3], vec![42, 2], vec![42, 1]],
@@ -752,7 +253,7 @@ mod tests {
             })
         );
         assert_eq!(
-            FocusPath::of(&nearest(AncestorsEnd::Top)).route_to(&[42, 1]),
+            FocusPath::of_route(&nearest(RouteEnd::Root)).route_to(&[42, 1]),
             None
         );
     }
@@ -763,14 +264,13 @@ mod tests {
     /// own is routed from that window still.
     #[test]
     fn a_windowless_chain_that_met_a_known_ancestor_is_routed_from_it() {
-        use verbatim_model::protocol::AncestorsEnd;
         let known = Route {
             window: Window::new(70).expect("70 is not 0"),
             path: vec![vec![42, 4]],
             runtime_id: vec![42, 4],
         };
         assert_eq!(
-            FocusPath::of(&focus_read(0, [0, 0], AncestorsEnd::Top))
+            FocusPath::of_route(&focus_read(0, [0, 0], RouteEnd::Root))
                 .above(Some(known.clone()))
                 .route_to(&[42, 2]),
             Some(Route {
@@ -780,7 +280,7 @@ mod tests {
             })
         );
         assert_eq!(
-            FocusPath::of(&focus_read(0, [0, 80], AncestorsEnd::Top))
+            FocusPath::of_route(&focus_read(0, [0, 80], RouteEnd::Root))
                 .above(Some(known))
                 .route_to(&[42, 1]),
             Some(Route {
@@ -789,190 +289,5 @@ mod tests {
                 runtime_id: vec![42, 1],
             })
         );
-    }
-
-    #[test]
-    fn an_event_observed_while_a_read_was_in_flight_is_not_covered() {
-        let mut read = CaretRead::default();
-        // A read of node 1 begins at 100 and returns at 200; a caret event
-        // is observed at 150, while it was in flight.
-        read.note(1, 100);
-        assert!(!read.covers(1, 150));
-        // One observed before the read began is covered; another node's
-        // never is.
-        assert!(read.covers(1, 100));
-        assert!(read.covers(1, 90));
-        assert!(!read.covers(2, 90));
-    }
-
-    /// A record of node 2, a slider's thumb, followed with `subscription`.
-    fn thumb_focused(subscription: Subscribed) -> Facts {
-        let mut facts = Facts::default();
-        facts.follow.followed = Some(Followed {
-            subscription: Some(subscription),
-            ..plain_followed(NodeId::new(2), Role::Button)
-        });
-        facts
-    }
-
-    /// Where a thumb is followed, on element `element` with its slider,
-    /// node 3, on element `slider`.
-    fn thumb(element: u64, slider: u64) -> Subscribed {
-        Subscribed {
-            group: Group::Base,
-            element,
-            slider: Some((NodeId::new(3), slider)),
-        }
-    }
-
-    /// The thumb followed again at `target`.
-    fn again(facts: &mut Facts, target: Subscribed) -> Applied {
-        let change = Change {
-            focus: Some(FocusCommit::Again {
-                target: Some(target),
-            }),
-            ..Change::default()
-        };
-        apply(facts, &change)
-    }
-
-    #[test]
-    fn a_focus_whose_element_was_replaced_is_followed_again() {
-        let mut facts = thumb_focused(thumb(5, 6));
-        // The same node, group and slider, the thumb's node now a new
-        // element: it is followed, and the old one let go of.
-        let replaced = again(&mut facts, thumb(8, 6));
-        assert_eq!(
-            (replaced.subscribe, replaced.unfollowed),
-            (
-                Some(Subscription {
-                    newest: Some((8, Group::Base)),
-                    slider: Some(6),
-                    kept: Vec::new(),
-                }),
-                vec![5]
-            )
-        );
-    }
-
-    #[test]
-    fn a_focus_whose_slider_element_was_replaced_is_followed_again() {
-        let mut facts = thumb_focused(thumb(5, 6));
-        // The same thumb and slider again: nothing moves.
-        let same = again(&mut facts, thumb(5, 6));
-        assert_eq!((same.subscribe, same.unfollowed), (None, Vec::new()));
-        // The same thumb, its slider's node now a new element.
-        let replaced = again(&mut facts, thumb(5, 7));
-        assert_eq!(
-            (replaced.subscribe, replaced.unfollowed),
-            (
-                Some(Subscription {
-                    newest: Some((5, Group::Base)),
-                    slider: Some(7),
-                    kept: Vec::new(),
-                }),
-                vec![6]
-            )
-        );
-    }
-
-    #[test]
-    fn the_followed_focus_released_lets_go_of_its_element_and_slider() {
-        let mut facts = thumb_focused(thumb(5, 6));
-        let mut applied = Applied::default();
-        facts
-            .follow
-            .release_groups(&BTreeSet::from([2]), &mut applied);
-        assert_eq!(
-            (
-                facts.follow.followed.expect("still followed").subscription,
-                applied.subscribe,
-                applied.unfollowed
-            ),
-            (
-                None,
-                Some(Subscription {
-                    newest: None,
-                    slider: None,
-                    kept: Vec::new(),
-                }),
-                vec![5, 6]
-            )
-        );
-    }
-
-    #[test]
-    fn the_followed_focus_keeps_its_slider_when_other_nodes_are_released() {
-        let mut facts = thumb_focused(thumb(5, 6));
-        facts
-            .follow
-            .kept_groups
-            .push((NodeId::new(9), Group::Base, 4));
-        let mut applied = Applied::default();
-        facts
-            .follow
-            .release_groups(&BTreeSet::from([9]), &mut applied);
-        assert_eq!(
-            (
-                facts.follow.followed.expect("still followed").subscription,
-                applied.subscribe,
-                applied.unfollowed
-            ),
-            (
-                Some(thumb(5, 6)),
-                Some(Subscription {
-                    newest: Some((5, Group::Base)),
-                    slider: Some(6),
-                    kept: Vec::new(),
-                }),
-                vec![4]
-            )
-        );
-    }
-
-    /// The commits the state table says cannot occur are returned as logic
-    /// errors and change nothing.
-    #[test]
-    fn a_commit_that_cannot_occur_is_returned_as_a_logic_error() {
-        let mut facts = Facts::default();
-        let change = Change {
-            focus: Some(FocusCommit::Again { target: None }),
-            mark: Some(MarkChange::ClearRedirect),
-            ..Change::default()
-        };
-        let applied = apply(&mut facts, &change);
-        assert_eq!(
-            applied.logic_errors,
-            vec![
-                LogicError::AgainWithNothingFollowed,
-                LogicError::MarkWithNothingFollowed(MarkChange::ClearRedirect)
-            ]
-        );
-        assert!(facts.follow.followed.is_none());
-    }
-
-    /// A focus's element replaced clears the note on its node, and only
-    /// that node's.
-    #[test]
-    fn a_focus_whose_element_was_replaced_clears_the_note_on_its_node() {
-        let mut facts = Facts::default();
-        let fetch = KeyFetch {
-            unit: TextUnit::Character,
-            motion: CaretMotion::NextCharacter,
-            details: verbatim_model::TextDetails::ALL,
-        };
-        Arc::make_mut(&mut facts.text).set_note(1, fetch, 0);
-        let elsewhere = Change {
-            replaced: Some(NodeId::new(2)),
-            ..Change::default()
-        };
-        apply(&mut facts, &elsewhere);
-        assert!(facts.text.live_note(1, 0).is_some());
-        let replaced = Change {
-            replaced: Some(NodeId::new(1)),
-            ..Change::default()
-        };
-        apply(&mut facts, &replaced);
-        assert_eq!(facts.text.live_note(1, 0), None);
     }
 }

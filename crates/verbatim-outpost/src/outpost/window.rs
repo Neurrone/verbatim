@@ -7,14 +7,12 @@ use std::ffi::c_void;
 
 use windows::Win32::Foundation::{CloseHandle, HWND};
 use windows::Win32::UI::WindowsAndMessaging::{
-    GA_ROOT, GA_ROOTOWNER, GWL_STYLE, GetAncestor, GetForegroundWindow, GetWindowLongPtrW,
-    WS_DISABLED, WS_SYSMENU,
+    GWL_STYLE, GetForegroundWindow, GetWindowLongPtrW, WS_DISABLED, WS_SYSMENU,
 };
 
-use verbatim_model::{Pid, WindowFacts, WindowHandle};
+use verbatim_model::WindowHandle;
 
-use verbatim_reader_rules::CONSOLE_WINDOW_CLASS;
-use verbatim_win32::window::{served_by, top_level_of, window_class_name, window_owner};
+use verbatim_win32::window::served_by;
 
 /// The observation `timing` holds, in microseconds on the run's shared
 /// clock; now, when `timing` holds none.
@@ -29,26 +27,6 @@ fn hwnd(handle: isize) -> HWND {
     HWND(handle as *mut c_void)
 }
 
-/// The application an event in `handle` belongs to when it is not
-/// `target_pid`, the outpost's target: for a window in a console window,
-/// which only the console host's outpost reports, the console's client,
-/// which Windows names as the console window's owner, as NVDA gives a
-/// console window and its text area the client's app module
-/// (`UIA._get_processID`, `NVDAObjects/UIA/__init__.py` 2336 to 2346;
-/// `appModuleHandler.getAppModuleForNVDAObject`, `appModuleHandler.py` 227
-/// to 238). `None` for every other window.
-pub(super) fn console_client(handle: isize, target_pid: u32) -> Option<Pid> {
-    let top = top_level_of(handle);
-    client_of(&window_class_name(top), window_owner(top).1, target_pid).map(Pid)
-}
-
-/// The client of a top-level window of class `class` that
-/// `GetWindowThreadProcessId` says `owner` owns, reported by `target_pid`'s
-/// outpost: the owner, for a console window that is not the target's own.
-fn client_of(class: &str, owner: u32, target_pid: u32) -> Option<u32> {
-    (class == CONSOLE_WINDOW_CLASS && owner != 0 && owner != target_pid).then_some(owner)
-}
-
 /// `handle` as the model's opaque window handle.
 pub(super) fn window_handle(handle: isize) -> WindowHandle {
     WindowHandle(u64::from_ne_bytes(handle.to_ne_bytes()))
@@ -57,76 +35,6 @@ pub(super) fn window_handle(handle: isize) -> WindowHandle {
 /// The window the model's `handle` names, as [`window_handle`] made it.
 pub(super) fn hwnd_of(handle: WindowHandle) -> isize {
     isize::from_ne_bytes(handle.0.to_ne_bytes())
-}
-
-/// Facts about `handle`'s window for the reducer's attention classification
-/// (`docs/parity/focus-events.md`, "Event acceptance"): its top-level window, the top of
-/// its owner chain, whether it or its top-level window is topmost, and, for a
-/// `Windows.UI.Core` window only, whether it is the input thread's active
-/// window or inside it — NVDA's test for UWP windows — whether it is in
-/// the system's foreground window right now, that foreground window, from
-/// the same read, and whether it is Program Manager's or the taskbar's, by which Core's title rule decides whether a focus has
-/// entered the window in front, and its class, which Core's rules for an
-/// application's windows match (decision D6).
-pub(super) fn window_facts(handle: isize) -> WindowFacts {
-    let window = hwnd(handle);
-    // SAFETY: GetAncestor tolerates any handle, returning null for an
-    // invalid one.
-    let root = unsafe { GetAncestor(window, GA_ROOT) };
-    // SAFETY: as above.
-    let root_owner = unsafe { GetAncestor(window, GA_ROOTOWNER) };
-    let root = if root.0.is_null() { window } else { root };
-    let root_owner = if root_owner.0.is_null() {
-        root
-    } else {
-        root_owner
-    };
-    let class = window_class_name(handle);
-    let foreground = verbatim_win32::window::foreground_window_handle();
-    // How the window stands to the foreground window, by the acceptance
-    // test's own rule (`acceptance::foreground_relation`), against the system's
-    // foreground window now.
-    // No window stands in no relation to it.
-    let relation = verbatim_reader_rules::Window::new(handle).map_or(
-        verbatim_core::focus_rules::ForegroundRelation {
-            in_foreground: false,
-            topmost: false,
-            under_active_window: None,
-        },
-        |window| {
-            verbatim_reader_rules::acceptance::foreground_relation(
-                window,
-                &class,
-                &verbatim_win32::window::SystemWindows { foreground },
-            )
-        },
-    );
-    WindowFacts {
-        top_level: window_handle(root.0 as isize),
-        root_owner: window_handle(root_owner.0 as isize),
-        topmost: relation.topmost,
-        under_active_window: relation.under_active_window,
-        in_foreground: relation.in_foreground,
-        foreground_window: window_handle(foreground),
-        class,
-        application: String::new(),
-        alt_held: false,
-        foreground_is_shell: verbatim_ia2::is_shell_foreground_class(&window_class_name(
-            foreground,
-        )),
-    }
-}
-
-/// Whether Alt is held now, by the system's asynchronous key state, as
-/// NVDA's File Explorer module reads it when it judges a task switching
-/// list item's container (`appModules/explorer.py`,
-/// `MultitaskingViewFrameListItem._get_container`): a local call.
-pub(super) fn alt_is_held() -> bool {
-    use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_MENU};
-    // SAFETY: GetAsyncKeyState takes any virtual-key code.
-    let state = unsafe { GetAsyncKeyState(i32::from(VK_MENU.0)) };
-    // The high bit, the sign, says the key is down.
-    state < 0
 }
 
 /// What window `handle`'s style says of it as a window read from Windows'
@@ -204,26 +112,5 @@ mod tests {
             ..verbatim_model::protocol::EventTiming::default()
         };
         assert_eq!(observed_us(&timing), 6_543_210);
-    }
-    #[test]
-    fn an_event_in_a_console_window_belongs_to_the_consoles_client() {
-        // The console host's outpost, 30, reports the window Windows says
-        // its client, 20, owns.
-        assert_eq!(client_of(CONSOLE_WINDOW_CLASS, 20, 30), Some(20));
-    }
-
-    #[test]
-    fn an_event_in_any_other_window_belongs_to_the_target() {
-        assert_eq!(client_of("Notepad", 20, 30), None);
-        assert_eq!(
-            client_of(CONSOLE_WINDOW_CLASS, 30, 30),
-            None,
-            "a console window that is the target's own"
-        );
-        assert_eq!(
-            client_of(CONSOLE_WINDOW_CLASS, 0, 30),
-            None,
-            "a window whose owner cannot be told"
-        );
     }
 }

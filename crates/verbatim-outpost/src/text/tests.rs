@@ -1,12 +1,10 @@
 //! The text protocol over an in-memory source: chunks, positions and
-//! anchors, a key's reads compared with the last read, selection changes, and
-//! reads.
+//! anchors, selection changes, reads, and a caret key's watch.
 
 use std::sync::atomic::AtomicU64;
 
 use verbatim_model::{
-    CaretMotion, CaretRead, CaretReply, Change, KeyFetch, ReadFacts, ReadPurpose,
-    SelectionDifference, SentenceMoved, TextDetails, WatchFinalRead, Watched,
+    CaretMotion, SelectionDifference, SentenceMoved, TextDetails, WatchFinalRead, Watched,
 };
 
 use super::*;
@@ -222,120 +220,12 @@ fn store() -> Anchors<usize> {
     Anchors::new(Arc::new(AtomicU64::new(0)))
 }
 
+/// The caret's report, read as a caret tell's read reads it, holding a
+/// baseline.
 fn report(source: &mut Fake, anchors: &mut Anchors<usize>) -> CaretReport {
-    caret_report(source, &mut anchors.node(1), REPORTED_AT, false)
+    held::read_selection(source, &mut anchors.node(1), REPORTED_AT, None)
         .expect("the fake answers")
-        .0
-}
-
-/// A report that compares its selection with the last read.
-fn compared(source: &mut Fake, anchors: &mut Anchors<usize>) -> ReportedCaret<usize> {
-    caret_report_since(
-        source,
-        &mut anchors.node(1),
-        REPORTED_AT + 1,
-        &ReportAsk {
-            formats: false,
-            since: None,
-            compare: true,
-            fetch: None,
-        },
-    )
-    .expect("the fake answers")
-}
-
-/// The ask of a caret read that compares its selection.
-fn comparing<'a>() -> ReportAsk<'a, usize> {
-    ReportAsk {
-        formats: false,
-        since: None,
-        compare: true,
-        fetch: None,
-    }
-}
-
-/// Pins `anchors`' last read for a key.
-fn pinned(anchors: &mut Anchors<usize>) -> LastRead<usize> {
-    anchors
-        .node(1)
-        .last_read()
-        .expect("a read made the baseline")
-}
-
-/// One check of a key of `motion` judged from `baseline`, on node 1.
-fn check(
-    source: &mut Fake,
-    anchors: &mut Anchors<usize>,
-    _baseline: &LastRead<usize>,
-    motion: CaretMotion,
-) -> KeyChecked {
-    check_key(
-        source,
-        &mut anchors.node(1),
-        &CheckKey {
-            note: NoteFetch {
-                unit: motion.unit(),
-                motion,
-                details: verbatim_model::TextDetails::ALL,
-            },
-            read_at_us: REPORTED_AT + 2,
-            final_read: false,
-            ended: || REPORTED_AT + 3,
-        },
-    )
-}
-
-/// A read for a key, its report and what it compared with apart.
-struct Evidence {
-    caret: verbatim_model::CaretReport,
-    selection_changes: Vec<SelectionChange>,
-    content_changed: bool,
-    new_selection: Option<SelectionChange>,
-    unit: verbatim_model::TextChunk,
-    before_line: verbatim_model::TextChunk,
-    on_baseline_line: bool,
-}
-
-impl Evidence {
-    fn of(read: Box<CaretReply>) -> Self {
-        let CaretReply {
-            caret,
-            selection_changes,
-            content_changed,
-            new_selection,
-            facts: ReadFacts { unit, change, .. },
-        } = *read;
-        let Change::Compared {
-            previous_line,
-            on_previous_line,
-            ..
-        } = change
-        else {
-            panic!("no comparison: {change:?}");
-        };
-        Evidence {
-            caret,
-            selection_changes,
-            content_changed,
-            new_selection,
-            unit: unit.expect("a unit"),
-            before_line: previous_line,
-            on_baseline_line: on_previous_line,
-        }
-    }
-}
-
-/// The read of a check that found evidence.
-fn answered(checked: KeyChecked) -> Evidence {
-    match checked {
-        KeyChecked::Read { read, effect: true } => Evidence::of(read),
-        other => panic!("no evidence: {other:?}"),
-    }
-}
-
-/// Whether a check found nothing.
-fn nothing(checked: &KeyChecked) -> bool {
-    matches!(checked, KeyChecked::Read { effect: false, .. })
+        .report
 }
 
 #[test]
@@ -412,281 +302,38 @@ fn an_anchor_is_kept_however_many_are_minted_until_it_is_forgotten() {
     ));
 }
 
-#[test]
-fn a_keys_request_is_not_carried_out_by_perform() {
-    // A key's check is made by `check_key`.
-    let mut source = Fake::new("one", 0);
-    let request = CaretRead {
-        fetch: KeyFetch {
-            unit: TextUnit::Character,
-            motion: CaretMotion::NextCharacter,
-            details: verbatim_model::TextDetails::ALL,
-        },
-        purpose: ReadPurpose::BeforeFieldKey,
-    };
-    let reply = perform(
-        &mut source,
-        &mut store().node(1),
-        &TextOp::ReadCaret(request),
-    );
-    assert_eq!(reply, TextReply::Unsupported);
-    assert_eq!(source.caret_reads, 0);
+/// A selection read's changes from the baseline held with `baseline`,
+/// what each became selected or unselected, its text and characters.
+fn changes_from(
+    source: &mut Fake,
+    anchors: &mut Anchors<usize>,
+    baseline: TextAnchor,
+) -> (Vec<(bool, String, u32)>, TextAnchor) {
+    let found = held::read_selection(source, &mut anchors.node(1), REPORTED_AT, Some(baseline))
+        .expect("the fake answers");
+    let changes = found
+        .difference
+        .expect("the baseline is held")
+        .changes
+        .into_iter()
+        .map(|change| (change.selected, change.text, change.characters))
+        .collect();
+    (changes, found.baseline)
 }
 
-#[test]
-fn a_caret_that_left_where_the_baseline_had_it_is_evidence_at_once() {
-    let mut source = Fake::new("one two\nthree", 0);
-    let mut anchors = store();
-    report(&mut source, &mut anchors);
-    let baseline = pinned(&mut anchors);
-    source.caret = 4;
-    source.caret_reads = 0;
-    let read = answered(check(
-        &mut source,
-        &mut anchors,
-        &baseline,
-        CaretMotion::NextWord,
-    ));
-    assert_eq!(source.caret_reads, 2, "the read and its recheck");
-    assert_eq!(read.unit.text, "two");
-    assert_eq!(read.caret.line.text, "one two\n");
-    assert_eq!(read.caret.line.offset, 4);
-    assert_eq!(read.before_line.text, "one two\n");
-    assert!(read.on_baseline_line);
-}
-
-#[test]
-fn with_no_evidence_the_check_reads_the_caret_once() {
-    let mut source = Fake::new("only", 2);
-    let mut anchors = store();
-    report(&mut source, &mut anchors);
-    let baseline = pinned(&mut anchors);
-    source.caret_reads = 0;
-    let checked = check(
-        &mut source,
-        &mut anchors,
-        &baseline,
-        CaretMotion::NextCharacter,
-    );
-    assert!(nothing(&checked), "{checked:?}");
-    assert_eq!(source.caret_reads, 1);
-}
-
-#[test]
-fn a_caret_moved_later_answers_a_later_check() {
-    let mut source = Fake::new("one\ntwo", 0);
-    let mut anchors = store();
-    report(&mut source, &mut anchors);
-    let baseline = pinned(&mut anchors);
-    source.caret_reads = 0;
-    source.moves_on_read = Some((2, 4));
-    let checked = check(&mut source, &mut anchors, &baseline, CaretMotion::NextLine);
-    assert!(nothing(&checked), "{checked:?}");
-    let read = answered(check(
-        &mut source,
-        &mut anchors,
-        &baseline,
-        CaretMotion::NextLine,
-    ));
-    assert_eq!(read.caret.line.text, "two");
-    assert_eq!(read.unit.unit, TextUnit::Line, "a line is the caret's line");
-}
-
-#[test]
-fn a_changed_character_beside_the_caret_is_evidence() {
-    // The position moved with the edit: only the characters beside it tell.
-    let mut source = Fake::new("abcx", 4);
-    let mut anchors = store();
-    report(&mut source, &mut anchors);
-    let baseline = pinned(&mut anchors);
-    source.text = "abcy".encode_utf16().collect();
-    let read = answered(check(
-        &mut source,
-        &mut anchors,
-        &baseline,
-        CaretMotion::NextCharacter,
-    ));
-    assert_eq!(read.caret.line.text, "abcy");
-}
-
-#[test]
-fn a_line_that_changed_away_from_the_caret_is_no_evidence() {
-    let mut source = Fake::new("one two", 4);
-    let mut anchors = store();
-    report(&mut source, &mut anchors);
-    let baseline = pinned(&mut anchors);
-    source.text = "one two three".encode_utf16().collect();
-    let checked = check(
-        &mut source,
-        &mut anchors,
-        &baseline,
-        CaretMotion::NextCharacter,
-    );
-    assert!(nothing(&checked), "{checked:?}");
-}
-
-#[test]
-fn a_delete_that_changes_the_text_at_the_caret_is_evidence() {
-    let mut source = Fake::new("abc", 1);
-    let mut anchors = store();
-    report(&mut source, &mut anchors);
-    let baseline = pinned(&mut anchors);
-    source.text = "ac".encode_utf16().collect();
-    let read = answered(check(
-        &mut source,
-        &mut anchors,
-        &baseline,
-        CaretMotion::Delete,
-    ));
-    assert_eq!(read.unit.text, "c");
-}
-
-#[test]
-fn a_deleting_key_in_a_run_of_one_character_is_evidence_by_its_line() {
-    // A password field's mask: deleting one star leaves the caret, the
-    // characters beside it, and the character at it as they were, and only
-    // the line, one star shorter, shows the key did something.
-    let mut source = Fake::new("******", 2);
-    let mut anchors = store();
-    report(&mut source, &mut anchors);
-    let baseline = pinned(&mut anchors);
-    source.text = "*****".encode_utf16().collect();
-    let checked = check(
-        &mut source,
-        &mut anchors,
-        &baseline,
-        CaretMotion::NextCharacter,
-    );
-    assert!(
-        nothing(&checked),
-        "no evidence but a deleting key's: {checked:?}"
-    );
-    // The check replaced the last read; the key's read compares with the
-    // field before it, as it would have with a key of its own.
-    source.text = "******".encode_utf16().collect();
-    report(&mut source, &mut anchors);
-    source.text = "*****".encode_utf16().collect();
-    let read = answered(check(
-        &mut source,
-        &mut anchors,
-        &baseline,
-        CaretMotion::Delete,
-    ));
-    assert_eq!(
-        (read.caret.line.text.as_str(), read.caret.line.offset),
-        ("*****", 2)
-    );
-}
-
-/// A caret event's report compared with the last after the text changed:
-/// the change in general terms, with no text, and the note cleared, so
-/// the next report compares as always.
-#[test]
-fn a_comparison_after_the_text_changed_is_in_general_terms_once() {
-    let mut source = Fake::new("hello world", 0);
-    source.selection = Some((0, 5));
-    let mut anchors = store();
-    report(&mut source, &mut anchors);
-    anchors.note_content_changed(1);
-    source.selection = None;
-    source.caret = 1;
-    let compare = |source: &mut Fake, anchors: &mut Anchors<usize>| {
-        let read = compared(source, anchors);
-        (
-            read.selection_changes,
-            read.content_changed,
-            read.new_selection,
-        )
-    };
-    assert_eq!(
-        compare(&mut source, &mut anchors),
-        (
-            vec![SelectionChange {
-                selected: false,
-                text: String::new(),
-                characters: 0,
-            }],
-            true,
-            None
-        )
-    );
-    source.selection = Some((1, 3));
-    assert_eq!(
-        compare(&mut source, &mut anchors),
-        (
-            vec![SelectionChange {
-                selected: true,
-                text: "el".to_owned(),
-                characters: 2,
-            }],
-            false,
-            None
-        )
-    );
-}
-
-/// A selecting key's answer after the text changed: the change in general
-/// terms, with the whole new selection's text.
-#[test]
-fn a_selecting_keys_answer_after_the_text_changed_is_in_general_terms() {
-    let mut source = Fake::new("hello world", 0);
-    source.selection = Some((0, 2));
-    let mut anchors = store();
-    let before = report(&mut source, &mut anchors);
-    assert!(before.selection.is_some());
-    anchors.note_content_changed(1);
-    source.selection = Some((0, 5));
-    let baseline = pinned(&mut anchors);
-    let reply = answered(check(
-        &mut source,
-        &mut anchors,
-        &baseline,
-        CaretMotion::NextCharacter,
-    ));
-    assert_eq!(
-        (
-            reply.selection_changes,
-            reply.content_changed,
-            reply.new_selection
-        ),
-        (
-            vec![SelectionChange {
-                selected: true,
-                text: String::new(),
-                characters: 0,
-            }],
-            true,
-            Some(SelectionChange {
-                selected: true,
-                text: "hello".to_owned(),
-                characters: 5,
-            })
-        )
-    );
-}
-
-/// A selecting key's reply, from a selection of `old` (equal ends for none,
-/// with the caret there), which the outpost reported and kept, to `new`.
+/// A selection read's changes, from a selection of `old` (equal ends for
+/// none, with the caret there), which a read held as its baseline, to
+/// `new`.
 fn selection_after(old: (usize, usize), new: Option<(usize, usize)>) -> Vec<(bool, String, u32)> {
     let mut source = Fake::new("hello world", old.0);
     source.selection = (old.0 != old.1).then_some(old);
     let mut anchors = store();
-    let _ = report(&mut source, &mut anchors);
-    let pinned_read = pinned(&mut anchors);
+    let baseline = held::read_selection(&mut source, &mut anchors.node(1), REPORTED_AT, None)
+        .expect("the fake answers")
+        .baseline;
     source.selection = new;
     source.caret = new.map_or(old.0, |(start, _)| start);
-    let baseline = pinned_read;
-    let reply = answered(check(
-        &mut source,
-        &mut anchors,
-        &baseline,
-        CaretMotion::NextCharacter,
-    ));
-    reply
-        .selection_changes
-        .into_iter()
-        .map(|change| (change.selected, change.text, change.characters))
-        .collect()
+    changes_from(&mut source, &mut anchors, baseline).0
 }
 
 #[test]
@@ -731,26 +378,17 @@ fn selecting_and_unselecting_report_what_changed_on_each_side() {
 fn a_selection_around_the_caret_is_one_change_each_way() {
     let mut source = Fake::new("hello world", 5);
     let mut anchors = store();
-    let _ = report(&mut source, &mut anchors);
-    let answer = |source: &mut Fake, anchors: &mut Anchors<usize>, baseline: &LastRead<usize>| {
-        answered(check(source, anchors, baseline, CaretMotion::NextCharacter))
-            .selection_changes
-            .into_iter()
-            .map(|change| (change.selected, change.text, change.characters))
-            .collect::<Vec<_>>()
-    };
-    let baseline = pinned(&mut anchors);
+    let baseline = held::read_selection(&mut source, &mut anchors.node(1), REPORTED_AT, None)
+        .expect("the fake answers")
+        .baseline;
     source.selection = Some((3, 8));
     source.caret = 8;
-    assert_eq!(
-        answer(&mut source, &mut anchors, &baseline),
-        [(true, "lo wo".to_owned(), 5)]
-    );
-    let baseline = pinned(&mut anchors);
+    let (changes, baseline) = changes_from(&mut source, &mut anchors, baseline);
+    assert_eq!(changes, [(true, "lo wo".to_owned(), 5)]);
     source.selection = None;
     source.caret = 5;
     assert_eq!(
-        answer(&mut source, &mut anchors, &baseline),
+        changes_from(&mut source, &mut anchors, baseline).0,
         [(false, "lo wo".to_owned(), 5)]
     );
 }
@@ -1002,152 +640,6 @@ fn text_cut_short_ends_at_a_whole_character() {
     );
     let (text, _, cut) = to_utf8(&units, 4, &[]);
     assert_eq!((text.as_str(), cut), ("ae\u{301}", true));
-}
-
-#[test]
-fn a_keys_read_says_whether_the_caret_stayed_on_its_line() {
-    for (moved_to, same_line) in [(2, true), (3, true), (6, false)] {
-        // The caret at "one"'s start; a key the caret table does not know
-        // moves it within the line, to its end, or onto the next.
-        let mut source = Fake::new("one\ntwo", 0);
-        let mut anchors = store();
-        report(&mut source, &mut anchors);
-        let baseline = pinned(&mut anchors);
-        source.caret = moved_to;
-        let read = answered(check(
-            &mut source,
-            &mut anchors,
-            &baseline,
-            CaretMotion::Other,
-        ));
-        assert_eq!(read.on_baseline_line, same_line, "moved to {moved_to}");
-    }
-}
-
-#[test]
-fn a_caret_read_before_the_key_with_its_line_after_is_no_answer() {
-    // A Backspace handled between the caret's read and its line's: the line
-    // has lost "y", the caret read first has not moved yet, and moves by
-    // the time it is read again. Nothing is answered until the next check.
-    let mut source = Fake::new("abcxy", 5);
-    let mut anchors = store();
-    report(&mut source, &mut anchors);
-    let baseline = pinned(&mut anchors);
-    source.text = "abcx".encode_utf16().collect();
-    source.moves_on_read = Some((source.caret_reads + 2, 4));
-    let first = check(&mut source, &mut anchors, &baseline, CaretMotion::Backspace);
-    assert!(matches!(first, KeyChecked::Moving), "{first:?}");
-    let read = answered(check(
-        &mut source,
-        &mut anchors,
-        &baseline,
-        CaretMotion::Backspace,
-    ));
-    assert_eq!(read.caret.line.text, "abcx");
-    assert_eq!(read.caret.line.offset, 4);
-}
-
-#[test]
-fn a_selection_read_before_a_cut_with_its_line_after_is_no_answer() {
-    // Control+X handled between the selection's read and its line's, as
-    // the Windows Forms text box can be: the line has lost the selected
-    // "abc", the selection read first is still there, and is gone by the
-    // time it is read again, its start, the caret, unmoved. Nothing is
-    // answered until the next check.
-    let mut source = Fake::new("abc def", 0);
-    source.selection = Some((0, 3));
-    let mut anchors = store();
-    report(&mut source, &mut anchors);
-    let baseline = pinned(&mut anchors);
-    source.text = " def".encode_utf16().collect();
-    source.moves_on_read = Some((source.caret_reads + 2, 0));
-    let first = check(&mut source, &mut anchors, &baseline, CaretMotion::NextWord);
-    assert!(matches!(first, KeyChecked::Moving), "{first:?}");
-    let read = answered(check(
-        &mut source,
-        &mut anchors,
-        &baseline,
-        CaretMotion::NextWord,
-    ));
-    assert_eq!(read.caret.line.text, " def");
-    assert_eq!(read.caret.selection, None);
-}
-
-/// A caret event's report with nothing selected before or after has no
-/// change to tell and nothing to ask about the text: it is not cut, so the
-/// caret move stays one program.
-#[test]
-fn a_caret_move_with_no_selection_is_not_cut() {
-    let mut source = Fake::new("hello world", 0);
-    let mut anchors = store();
-    report(&mut source, &mut anchors);
-    source.caret = 3;
-    let checked = caret_report_checking(
-        &mut source,
-        &mut anchors.node(1),
-        REPORTED_AT,
-        &comparing(),
-        true,
-    )
-    .expect("the fake answers");
-    let Checked::Done(read) = checked else {
-        panic!("the report is made whole");
-    };
-    assert_eq!(
-        (
-            read.selection_changes,
-            read.content_changed,
-            read.state.caret
-        ),
-        (Vec::new(), false, 3)
-    );
-}
-
-/// A caret event's report over a selection typed over is cut where it
-/// would ask whether the text's change waits, with the caret it read and
-/// the selection it compares with; finished with the change waiting, it
-/// says the change in general terms, as after a noted change.
-#[test]
-fn a_selection_typed_over_is_cut_then_finished_in_general_terms() {
-    let mut source = Fake::new("hello world", 0);
-    source.selection = Some((0, 5));
-    let mut anchors = store();
-    report(&mut source, &mut anchors);
-    source.selection = None;
-    source.caret = 1;
-    let checked = caret_report_checking(
-        &mut source,
-        &mut anchors.node(1),
-        REPORTED_AT,
-        &comparing(),
-        true,
-    )
-    .expect("the fake answers");
-    let Checked::Cut(cut) = checked else {
-        panic!("the report is cut");
-    };
-    assert_eq!(
-        (cut.caret, cut.selection, cut.last.ends, cut.last.collapsed),
-        (1, None, (0, 5), false)
-    );
-    let read = finish_report(&mut source, &mut anchors.node(1), cut, true, || 0)
-        .expect("the fake answers");
-    assert_eq!(
-        (
-            read.selection_changes,
-            read.content_changed,
-            read.new_selection
-        ),
-        (
-            vec![SelectionChange {
-                selected: false,
-                text: String::new(),
-                characters: 0,
-            }],
-            true,
-            None
-        )
-    );
 }
 
 /// A caret tell's read with no baseline named holds the next and compares

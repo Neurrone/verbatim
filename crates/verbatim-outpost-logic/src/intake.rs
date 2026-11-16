@@ -2,8 +2,8 @@
 //! (`docs/design/readers-tell-core-asks-build1.md`, "The outpost in this
 //! build"): its `Follow` subscription's UI Automation events, a console
 //! host's console events, a window Core named destroyed, and Core's
-//! queries, lists of held nodes and idle queries, handled in the order
-//! they arrived. The event queue is Core's: the intake keeps only the
+//! lists of held nodes and idle queries, handled in the order they
+//! arrived. The event queue is Core's: the intake keeps only the
 //! limiter on what the outpost hears, as NVDA's UIA event limiter keeps
 //! one event per element and kind.
 //!
@@ -21,13 +21,7 @@
 
 use std::collections::VecDeque;
 
-use verbatim_model::protocol::RequestId;
-use verbatim_model::{NotificationKind, NotificationProcessing, TraceId};
-
 use super::entry::{Asker, Entry, Item, UiaKind, WinKind};
-
-/// The kind number of a toast's [`Key::Uia`].
-const TOAST_KEY: u8 = 5;
 
 /// The object and kind an entry concerns, for the one-per-object rule.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -37,27 +31,8 @@ enum Key {
     /// A UIA event, by its kind number, its property for a property change,
     /// and its element's runtime id.
     Uia(u8, i32, Vec<i32>),
-    /// A UIA notification, by its element, kind, processing and activity
-    /// id, not its text, as NVDA's UIA limiter keys one (`eventRecord.h`),
-    /// so a newer notification of the same activity replaces one still
-    /// waiting.
-    UiaNotification(
-        Vec<i32>,
-        NotificationKind,
-        NotificationProcessing,
-        Option<String>,
-    ),
     /// The list of the nodes Core holds.
     NodesHeld,
-}
-
-/// An accessible object, by its event address or runtime id.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub enum Object {
-    /// An MSAA object, by its event address: window, object id and child id.
-    Msaa(isize, i32, i32),
-    /// A UIA element, by its runtime id.
-    Uia(Vec<i32>),
 }
 
 /// An entry with its key, computed when it is pushed.
@@ -65,19 +40,6 @@ pub enum Object {
 struct Waiting {
     key: Option<Key>,
     entry: Entry,
-}
-
-/// How a program is to handle its entry.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Handling {
-    /// On its own.
-    Run,
-    /// As a key's final read, clearing the note named by this end, the one
-    /// that lived when the read arrived, so a later key's note is safe.
-    FinalRead {
-        /// The end of the note it clears, if one lived.
-        note_until: Option<u64>,
-    },
 }
 
 /// The intake: what waits, and the batch being handed out. One owner, the
@@ -158,16 +120,6 @@ impl Intake {
         dropped.flat_map(|entry| entry.item.parked()).collect()
     }
 
-    /// Withdraws query `request_id` if it has not started. Returns the trace
-    /// it came with, Core's, when it was found.
-    pub fn cancel(&mut self, request_id: RequestId) -> Option<TraceId> {
-        let is_it = |entry: &Entry| matches!(entry.item, Item::Query { request_id: id, .. } if id == request_id);
-        let trace = self.entries().find(|entry| is_it(entry))?.trace;
-        self.waiting.retain(|waiting| !is_it(&waiting.entry));
-        self.batch.retain(|entry| !is_it(entry));
-        Some(trace)
-    }
-
     /// The entries waiting, then those planned and not yet handed out.
     fn entries(&self) -> impl Iterator<Item = &Entry> {
         self.waiting
@@ -219,24 +171,13 @@ fn key_of(item: &Item) -> Option<Key> {
             let runtime_id = event.parts.runtime_id.clone();
             Some(match &event.kind {
                 UiaKind::Property { id, .. } => Key::Uia(0, *id, runtime_id),
-                UiaKind::Selection => Key::Uia(1, 0, runtime_id),
                 UiaKind::TextSelection => Key::Uia(2, 0, runtime_id),
                 UiaKind::TextChanged => Key::Uia(3, 0, runtime_id),
-                // Only the newest position matters, as NVDA's limiter keeps
-                // one event per element and kind.
-                UiaKind::ActiveTextPosition(_) => Key::Uia(4, 0, runtime_id),
-                UiaKind::Notification(notification) => Key::UiaNotification(
-                    runtime_id,
-                    notification.kind,
-                    notification.processing,
-                    notification.activity_id.clone(),
-                ),
-                UiaKind::Toast => Key::Uia(TOAST_KEY, 0, runtime_id),
             })
         }
         // Only the newest list of held nodes matters.
         Item::NodesHeld { .. } => Some(Key::NodesHeld),
-        Item::Msaa { .. } | Item::Query { .. } | Item::Barrier { .. } => None,
+        Item::Msaa { .. } | Item::Barrier { .. } => None,
     }
 }
 
@@ -279,7 +220,6 @@ mod tests {
             kind,
             parts: snapshot(runtime_id.to_vec()),
             hwnd: 0,
-            focus_window: 0,
             element: None,
         })
     }
@@ -347,27 +287,5 @@ mod tests {
         push_item(&mut intake, console(WinKind::ConsoleUpdate, 7), 2);
         push_item(&mut intake, held(2), 3);
         assert_eq!(handed_out(&mut intake), [2, 3]);
-    }
-
-    #[test]
-    fn a_query_that_has_not_started_can_be_cancelled() {
-        let mut intake = Intake::default();
-        let trace = TraceId::from_raw(1);
-        let _ = intake.push(Entry::own(
-            Item::Query {
-                request_id: RequestId::shell(5),
-                query: verbatim_model::protocol::Query::ReadFocus {
-                    purpose: verbatim_model::protocol::FocusPurpose::Report,
-                    details: verbatim_model::property::NodeDetailSet::ALL,
-                    text: verbatim_model::TextDetails::ALL,
-                },
-            },
-            trace,
-            1,
-        ));
-        push_item(&mut intake, console(WinKind::ConsoleUpdate, 7), 2);
-        assert_eq!(intake.cancel(RequestId::shell(5)), Some(trace));
-        assert_eq!(intake.cancel(RequestId::shell(5)), None);
-        assert_eq!(handed_out(&mut intake), [2]);
     }
 }
