@@ -11,6 +11,7 @@ mod clipboard;
 mod datetime;
 mod error_sound;
 mod flight_dump;
+mod hang_check;
 mod harness;
 mod idle;
 mod key_reports;
@@ -1152,8 +1153,9 @@ impl ReducerThread<'_> {
     }
 
     /// The listener's report that `report`'s window came to the foreground:
-    /// Core's event queue takes it, with the window's class, and the hook's
-    /// view takes its integrity and keyboard thread.
+    /// Core's event queue takes it, with the window's class, a ghost window
+    /// mapped to the hung window it stands in for, and the hook's view takes
+    /// its integrity and keyboard thread.
     fn foreground(&mut self, report: &verbatim_supervisor::ForegroundReport) {
         let window = WindowHandle(u64::from_ne_bytes(report.window.to_ne_bytes()));
         let root_owner = WindowHandle(u64::from_ne_bytes(report.root_owner.to_ne_bytes()));
@@ -1168,13 +1170,33 @@ impl ReducerThread<'_> {
             integrity: report.integrity,
             own_integrity: verbatim_win32::integrity::own_integrity(),
         }));
-        self.queue(QueueInput::Foreground(ForegroundReport {
-            window,
-            root_owner,
-            process: Pid(report.process),
-            thread: report.thread,
-            class: verbatim_win32::window::window_class_name(report.window),
-        }));
+        // A ghost window in front stands in for a hung window of another
+        // process: Core's foreground test and attention judge the hung
+        // window and its application, so a request to it is stopped as
+        // hung and the hung window, not the ghost, joins the recovery set.
+        let judged = hang_check::judged(window);
+        let report = if judged == window {
+            ForegroundReport {
+                window,
+                root_owner,
+                process: Pid(report.process),
+                thread: report.thread,
+                class: verbatim_win32::window::window_class_name(report.window),
+            }
+        } else {
+            let handle = window_handle(judged);
+            let (thread, process) = verbatim_win32::window::window_owner(handle);
+            ForegroundReport {
+                window: judged,
+                root_owner: WindowHandle(u64::from_ne_bytes(
+                    verbatim_win32::window::root_owner_of(handle).to_ne_bytes(),
+                )),
+                process: Pid(process),
+                thread,
+                class: verbatim_win32::window::window_class_name(handle),
+            }
+        };
+        self.queue(QueueInput::Foreground(report));
     }
 
     /// No outpost will serve `target_pid` now: Core hears its launch failed,
@@ -1784,7 +1806,7 @@ impl ReducerThread<'_> {
             }
             QueueEffect::CheckHung(windows) => {
                 for window in windows {
-                    let hung = verbatim_win32::window::readability(window_handle(window)).is_hung();
+                    let hung = hang_check::hung(window);
                     self.follow_ups
                         .push(queued(QueueInput::HangCheck { window, hung }));
                 }
@@ -1839,7 +1861,7 @@ impl ReducerThread<'_> {
     /// effects are being carried out, so no reducer step re-enters itself.
     fn send_request(&mut self, to: Instance, ask: verbatim_model::request::Ask) {
         let number = ask.number;
-        if verbatim_win32::window::readability(window_handle(ask.window)).is_hung() {
+        if hang_check::hung(ask.window) {
             self.follow_ups
                 .push(queued(QueueInput::RefusedHung(number)));
             return;

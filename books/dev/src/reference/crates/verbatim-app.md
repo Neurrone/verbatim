@@ -403,7 +403,11 @@ knowing for review:
   the outpost generation Core names, unless Windows reports its window
   hung, when it is answered "not responding" unsent; one that cannot be
   written is answered "reader ended"; a cancel goes with its reason; a
-  hang check is answered with `IsHungAppWindow`; `StartOutpost` is
+  hang check is answered with `IsHungAppWindow`. The `hang_check` module
+  makes both checks: a ghost window is first mapped to the hung window it
+  stands in for (`HungWindowFromGhostWindow`), and so is a foreground
+  report naming a ghost before Core takes it, so Core judges the hung
+  window and its application, not the ghost's process. `StartOutpost` is
   `ensure_spawned`, `EndOutpost` is `end_outpost`, `WindowDestroyed` goes
   to the outpost Core names, and `WakeAt` is one of the thread's
   deadlines, its passing fed as `QueueInput::Due`. Each answer the shell

@@ -114,6 +114,16 @@ from its grace's end. A window message's window is tested before the
 send, `IsWindow`, the ghost lookup and `IsHungAppWindow`, all local; no
 call into an application and no wake-up is added.
 
+Core's shell checks a request's window live before sending it and every
+half second for each request out and each window Core watches for
+recovery (`verbatim-app`'s `hang_check`): the ghost mapping, `IsWindow`,
+the ghost lookup and `IsHungAppWindow`, all local. Measured 2026-11-16,
+release, over 13 visible top-level windows: one check at the median 1.3
+µs, at the 99th percentile 2.0 µs, at most 48 µs; a round of five
+windows at the median 6.2 µs, at the 99th percentile 11.1 µs. The round
+adds no wake-up of its own: it rides Core's half-second due time, armed
+only while a request is out or a window is watched.
+
 UIA's connection timeout is 2 seconds and its transaction timeout 10 in
 every Verbatim process (`verbatim_uia::UIA_CONNECTION_TIMEOUT` and
 `UIA_TRANSACTION_TIMEOUT`); only an unanswered call is affected.
