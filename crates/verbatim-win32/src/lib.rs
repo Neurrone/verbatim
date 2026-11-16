@@ -3,9 +3,7 @@
 //! Core's supervisor. None of them waits on an application, so each is safe
 //! on any thread, a hung application's windows included.
 //!
-//! - [`window`]: window queries by handle, and the system's windows as
-//!   NVDA's acceptance test asks for them
-//!   ([`window::SystemWindows`]).
+//! - [`window`]: window queries by handle.
 //! - [`provider`]: the process that serves a window's UI Automation, which
 //!   for a console window is its console host, not the client Windows names
 //!   as its owner.

@@ -1,11 +1,9 @@
 //! What both of Verbatim's readers, an outpost and the focus listener,
 //! apply before reading: NVDA's class verdict and the class name
-//! normalization it is judged on ([`class`]), NVDA's acceptance test
-//! ([`acceptance`]), the title check before a focus reader reuses its
-//! ancestry cache ([`ancestry_cache`]), a window's handle that is never 0 ([`Window`]), the
-//! kept verdicts on a window's provider ([`verdicts`]), NVDA's limit on a
-//! thread's events ([`NewestPerThread`]), and
-//! the console window's class. A
+//! normalization it is judged on ([`class`]), a window's handle that is
+//! never 0 ([`Window`]), the kept verdicts on a window's provider
+//! ([`verdicts`]), NVDA's limit on a thread's events ([`NewestPerThread`]),
+//! and the console window's class. A
 //! rule both apply is defined here once, since the two readers' crates may
 //! not depend on each other and no test could tie two copies (decision
 //! D14, "Where the rules run"). Pure: no Windows dependency, no call and
@@ -49,8 +47,6 @@
     )
 )]
 
-pub mod acceptance;
-pub mod ancestry_cache;
 pub mod class;
 mod newest_per_thread;
 pub mod verdicts;

@@ -26,8 +26,6 @@
 //! - [`event_thread`] — the thread that installs the `WinEvent` hooks and
 //!   runs the message loop they are delivered through, which an outpost
 //!   and the focus listener each run.
-//! - [`fact_of_win_event`] — the fact a `WinEvent` makes, whichever of
-//!   them took it in.
 //! - [`calls`] — the per-thread count of the cross-process calls
 //!   [`acquire`] makes, which the outpost's worker takes around each entry
 //!   it handles.
@@ -55,7 +53,6 @@ pub mod dialog;
 pub mod edit;
 pub mod equality;
 pub mod event_thread;
-mod fact;
 mod hook;
 pub mod list_view;
 pub mod map;
@@ -65,7 +62,6 @@ mod window;
 pub use window::classic_bar_percent;
 
 pub use com::CHILDID_SELF;
-pub use fact::fact_of_win_event;
 pub use hook::{
     APP_SUBSCRIPTIONS, CONSOLE_SUBSCRIPTIONS, LISTENER_SUBSCRIPTIONS, SyncMarker,
     SyncMarkerCallback, WinEvent, WinEventCallback, WinEventHook, WinEventKind, WindowCache,

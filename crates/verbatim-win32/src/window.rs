@@ -26,8 +26,6 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use windows::core::{BOOL, HSTRING, s, w};
 
 use verbatim_model::HIDDEN_FRAME_WINDOW_PROP;
-use verbatim_reader_rules::Window;
-use verbatim_reader_rules::acceptance::WindowQueries;
 use verbatim_reader_rules::class::WindowClasses;
 
 use crate::provider::provider_process;
@@ -54,20 +52,6 @@ pub fn window_text(handle: isize) -> Option<String> {
     let length = usize::try_from(length).ok()?;
     let text = String::from_utf16_lossy(buffer.get(..length.min(buffer.len()))?);
     (!text.trim().is_empty()).then_some(text)
-}
-
-/// `handle`'s window text as the ancestry cache's title check reads it
-/// ([`verbatim_reader_rules::ancestry_cache::title_check`]): gone for a
-/// window that no longer exists, else its text ([`window_text`]). Local
-/// calls.
-#[must_use]
-pub fn live_title(handle: isize) -> verbatim_reader_rules::ancestry_cache::LiveTitle {
-    use verbatim_reader_rules::ancestry_cache::LiveTitle;
-    if window_exists(handle) {
-        LiveTitle::Text(window_text(handle))
-    } else {
-        LiveTitle::Gone
-    }
 }
 
 /// Whether `handle` is a visible window; false for one that names no
@@ -568,64 +552,32 @@ pub fn top_level_windows(target_pid: u32) -> Vec<isize> {
     search.windows
 }
 
-/// The system's windows, read with local calls, with the foreground window
-/// given: the outpost's foreground reader's.
-pub struct SystemWindows {
-    /// The foreground window, as the caller's foreground reader read it.
-    pub foreground: isize,
+/// Whether `window` has the topmost extended style: a local call, false
+/// for no window.
+#[must_use]
+pub fn is_topmost(window: isize) -> bool {
+    if window == 0 {
+        return false;
+    }
+    // SAFETY: GetWindowLongW reads a window's style word; an invalid
+    // handle yields 0.
+    let style = unsafe { GetWindowLongW(hwnd(window), GWL_EXSTYLE) };
+    style.cast_unsigned() & WS_EX_TOPMOST.0 != 0
 }
 
-impl WindowQueries for SystemWindows {
-    fn class_name(&self, window: Window) -> String {
-        window_class_name(window.get())
+/// The active window of the thread that has the keyboard input
+/// (`GetGUIThreadInfo`), 0 for none: a local call.
+#[must_use]
+pub fn active_window() -> isize {
+    let mut info = GUITHREADINFO {
+        cbSize: u32::try_from(size_of::<GUITHREADINFO>()).unwrap_or(0),
+        ..Default::default()
+    };
+    // SAFETY: `info` has cbSize set before the call, which fails safely.
+    if unsafe { GetGUIThreadInfo(0, &raw mut info) }.is_err() {
+        return 0;
     }
-
-    fn process(&self, window: Window) -> u32 {
-        window_owner(window.get()).1
-    }
-
-    fn parent(&self, window: Window) -> Option<Window> {
-        Window::new(ancestor(window.get(), GA_PARENT))
-    }
-
-    fn root(&self, window: Window) -> Option<Window> {
-        Window::new(ancestor(window.get(), GA_ROOT))
-    }
-
-    fn root_owner(&self, window: Window) -> Option<Window> {
-        Window::new(ancestor(window.get(), GA_ROOTOWNER))
-    }
-
-    fn is_child(&self, parent: Window, child: Window) -> bool {
-        is_child(parent.get(), child.get())
-    }
-
-    fn is_topmost(&self, window: Window) -> bool {
-        // SAFETY: GetWindowLongW reads a window's style word; an invalid
-        // handle yields 0.
-        let style = unsafe { GetWindowLongW(hwnd(window.get()), GWL_EXSTYLE) };
-        style.cast_unsigned() & WS_EX_TOPMOST.0 != 0
-    }
-
-    fn desktop(&self) -> Option<Window> {
-        Window::new(desktop_window())
-    }
-
-    fn active_window(&self) -> Option<Window> {
-        let mut info = GUITHREADINFO {
-            cbSize: u32::try_from(size_of::<GUITHREADINFO>()).unwrap_or(0),
-            ..Default::default()
-        };
-        // SAFETY: `info` has cbSize set before the call, which fails safely.
-        if unsafe { GetGUIThreadInfo(0, &raw mut info) }.is_err() {
-            return None;
-        }
-        Window::new(info.hwndActive.0 as isize)
-    }
-
-    fn foreground(&self) -> Option<Window> {
-        Window::new(self.foreground)
-    }
+    info.hwndActive.0 as isize
 }
 
 /// Reads the foreground window's handle. An outpost reads the system's

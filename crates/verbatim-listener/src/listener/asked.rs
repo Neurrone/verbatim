@@ -42,7 +42,7 @@ use windows::Win32::UI::Accessibility::UIA_LegacyIAccessibleStatePropertyId;
 use super::Outgoing;
 use super::checking::Kept;
 use super::tells::SystemReads;
-use crate::focus_read::{CallLog, MAX_ANCESTORS};
+use crate::call_log::{CallLog, MAX_ANCESTORS};
 use crate::reading::Reading;
 
 /// One job of a reading thread.

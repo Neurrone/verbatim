@@ -9,10 +9,8 @@
 use verbatim_model::request::NodeWindow;
 use verbatim_model::tell::{AcceptanceFacts, Relation, WindowFacet};
 use verbatim_model::{Pid, WindowHandle};
-use verbatim_reader_rules::Window;
-use verbatim_reader_rules::acceptance::WindowQueries;
 
-use crate::window::{SystemWindows, window_class_name};
+use crate::window::window_class_name;
 
 /// The reads of Windows' own state the window facts are gathered with,
 /// every one a call to Windows and none into an application. A handle of
@@ -218,7 +216,7 @@ impl WindowReads for SystemReads {
     }
 
     fn topmost(&self, window: isize) -> bool {
-        Window::new(window).is_some_and(|window| SystemWindows { foreground: 0 }.is_topmost(window))
+        crate::window::is_topmost(window)
     }
 
     fn desktop(&self) -> isize {
@@ -230,9 +228,7 @@ impl WindowReads for SystemReads {
     }
 
     fn active_window(&self) -> isize {
-        SystemWindows { foreground: 0 }
-            .active_window()
-            .map_or(0, Window::get)
+        crate::window::active_window()
     }
 
     fn hidden_frame(&self, window: isize) -> bool {
