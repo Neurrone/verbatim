@@ -39,6 +39,15 @@
 //! deferred, or is swallowed, and the places of a mask; the machine's
 //! verdict and mask must equal it. Gesture naming, multi-press counting
 //! and the double tap are stated by `state.rs`'s unit tests.
+//!
+//! Which caret gestures are held is the model's own ([`MODEL_HELD`]):
+//! NVDA's caret scripts of editable text, without the selection keys
+//! (the Shift forms of the movement keys and Control+A), which pass at once
+//! and are deferred only behind a place in line, as every key is (ADR 0003,
+//! "Keys and commands": "Selection keys are not held"; NVDA binds them only
+//! in controls without automatic selection detection, which Verbatim does
+//! not read, `docs/design/readers-tell-core-asks-build1.md`, "The hook and
+//! Core's stroke line"). The machine's map holds what the app's map holds.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
@@ -133,14 +142,46 @@ const STEP_US: u64 = 33_000;
 /// The multi-press timeout, NVDA's default, in microseconds.
 const TIMEOUT_US: u64 = 500_000;
 
-/// The app's gesture map for `layout` with the walk's own bindings, and
-/// the caret gestures it holds.
+/// The caret gestures the model holds: NVDA's caret scripts of editable
+/// text (`nvda/source/editableText.py` 388 to 412), every one a key the
+/// application moves or deletes by; the selection keys NVDA binds only
+/// without automatic selection detection (495 to 509) are not among them,
+/// so they pass (ADR 0003, "Keys and commands").
+const MODEL_HELD: [&str; 25] = [
+    "kb:upArrow",
+    "kb:downArrow",
+    "kb:leftArrow",
+    "kb:rightArrow",
+    "kb:pageUp",
+    "kb:pageDown",
+    "kb:control+leftArrow",
+    "kb:control+rightArrow",
+    "kb:control+upArrow",
+    "kb:control+downArrow",
+    "kb:alt+upArrow",
+    "kb:alt+downArrow",
+    "kb:home",
+    "kb:end",
+    "kb:control+home",
+    "kb:control+end",
+    "kb:delete",
+    "kb:shift+delete",
+    "kb:numpadDelete",
+    "kb:shift+numpadDelete",
+    "kb:control+delete",
+    "kb:control+numpadDelete",
+    "kb:backspace",
+    "kb:shift+backspace",
+    "kb:control+backspace",
+];
+
+/// The app's gesture map for `layout` with the walk's own bindings, its
+/// caret keys held as the app holds them, and the caret gestures the model
+/// holds ([`MODEL_HELD`]).
 fn map_for(layout: KeyboardLayout) -> (GestureMap, BTreeSet<GestureId>) {
     let id = |raw| GestureId::parse(raw).expect("valid id");
-    let held: BTreeSet<GestureId> = caret_bindings()
-        .into_iter()
-        .map(|(gesture, _)| gesture)
-        .collect();
+    let app_held = caret_bindings().into_iter().map(|(gesture, _)| gesture);
+    let held: BTreeSet<GestureId> = MODEL_HELD.into_iter().map(id).collect();
     let map = GestureMap::new(
         bindings_for(layout)
             .into_iter()
@@ -159,7 +200,7 @@ fn map_for(layout: KeyboardLayout) -> (GestureMap, BTreeSet<GestureId>) {
             ),
     )
     .with_observed(clearing_keys())
-    .with_held(held.iter().cloned());
+    .with_held(app_held);
     (map, held)
 }
 
@@ -173,7 +214,7 @@ enum Meaning {
     Gesture,
     /// A Verbatim key acting as the Verbatim key.
     VerbatimKey,
-    /// It completed a held caret gesture.
+    /// It completed a caret gesture the model holds.
     Held,
     /// Anything else.
     Other,
@@ -272,7 +313,7 @@ enum Sent {
 /// The machine, the model, and what the application has received.
 #[derive(Clone)]
 struct World<'a> {
-    /// The caret gestures the map holds.
+    /// The caret gestures the model holds.
     held: &'a BTreeSet<GestureId>,
     machine: DecisionMachine,
     model: Model,
