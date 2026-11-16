@@ -179,7 +179,9 @@ fn listener_stand_in(
             CoreToListener::HookInstalled { .. }
             | CoreToListener::HookRemoved { .. }
             | CoreToListener::ApplicationExited { .. }
-            | CoreToListener::LiveReread { .. } => {}
+            | CoreToListener::LiveReread { .. }
+            | CoreToListener::Request(_)
+            | CoreToListener::Cancel(_) => {}
         }
     }
 }

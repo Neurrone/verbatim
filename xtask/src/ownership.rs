@@ -77,8 +77,10 @@ const CHECKED: [Checked; 7] = [
             "std::time::Duration",
             "verbatim_model",
             "verbatim_reader_rules",
-            // The listener's data types.
+            // The listener's data types, and the idle time the check
+            // threads share.
             "crate::focus",
+            "crate::check_threads",
             // The module's own tests.
             "super",
         ],
@@ -755,7 +757,7 @@ const DETERMINISM_ENTRIES: [&str; 122] = [
 /// the replay fixture's test, which reads its file; the mint's own test;
 /// the conformance corpus's reader and its test; and each generated test's
 /// exploration test, which reads its seed and case count.
-const EXPECT_EXCEPTIONS: [&str; 10] = [
+const EXPECT_EXCEPTIONS: [&str; 9] = [
     "crates/verbatim-text/tests/terminal_cost.rs",
     "crates/verbatim-core/tests/terminal_cost.rs",
     "crates/verbatim-core/tests/replay_fixture.rs",
@@ -764,13 +766,12 @@ const EXPECT_EXCEPTIONS: [&str; 10] = [
     "crates/verbatim-term-sim/tests/conformance.rs",
     "crates/verbatim-reader-rules/src/in_flight/tests/explore.rs",
     "crates/verbatim-outpost-logic/src/tests/explore.rs",
-    "crates/verbatim-listener-logic/src/schedule/explore.rs",
     "crates/verbatim-core/src/queries/explore.rs",
 ];
 
 /// The files the rule of whole modules excepts: the exceptions above but
 /// the mint's test, which names no module.
-const MODULE_EXCEPTIONS: [&str; 9] = [
+const MODULE_EXCEPTIONS: [&str; 8] = [
     "crates/verbatim-text/tests/terminal_cost.rs",
     "crates/verbatim-core/tests/terminal_cost.rs",
     "crates/verbatim-core/tests/replay_fixture.rs",
@@ -778,7 +779,6 @@ const MODULE_EXCEPTIONS: [&str; 9] = [
     "crates/verbatim-term-sim/tests/conformance.rs",
     "crates/verbatim-reader-rules/src/in_flight/tests/explore.rs",
     "crates/verbatim-outpost-logic/src/tests/explore.rs",
-    "crates/verbatim-listener-logic/src/schedule/explore.rs",
     "crates/verbatim-core/src/queries/explore.rs",
 ];
 

@@ -455,9 +455,7 @@ a walk of the window's whole tree would wait on its
   `listener_forces_uia` has the listener's reader skip no focus by its
   window's class (`FocusReader::forces_uia`), so it reads one in a window
   on NVDA's MSAA class list. The listener's reader has no clock: it waits
-  for every call. A test of the listener's watchdog can run the listener's
-  reading threads in its process
-  (`verbatim_listener::focus_read::ReadingThreads`).
+  for every call.
 - `tests/uia_bugs/` is one test binary (`main.rs` declares a module per
   file) holding the tests that reproduce a fault or limitation of UI
   Automation or show that Verbatim's workaround for one still holds, each

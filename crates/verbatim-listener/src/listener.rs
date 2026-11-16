@@ -1,130 +1,65 @@
 //! The focus-listener runtime (architecture section 1, "The focus listener
-//! (D13)"; decisions D13 and D14).
+//! (D13)"; decisions D13 and D14; ADR 0003, "Readers tell, Core asks";
+//! design `docs/design/readers-tell-core-asks-build1.md`, "The listener in
+//! this build").
 //!
-//! One permanent, stateless listener process holds the subscriptions that are
-//! global by nature and forwards each captured fact to Core, which routes it
-//! to the target application's own outpost:
+//! One permanent listener process holds the subscriptions that are global
+//! by nature and tells Core of every event it hears; Core judges each tell
+//! and asks what it needs:
 //!
-//! - MSAA focus, foreground, menu-popup, alert, and tooltip events for
-//!   every process whose outpost's own hook is not yet in, and the end of a
-//!   menu or of the Alt+Tab switcher, which go to Core rather than to an
-//!   application's outpost;
-//! - the desktop-wide UIA focus subscription, each event judged and read
-//!   from its own element on a thread for its application
-//!   ([`crate::focus_read`]);
-//! - desktop-wide UIA subscriptions for some of the events NVDA registers
-//!   globally on Windows 11: an element selected, a menu opened, and
-//!   notifications, each taken, as a focus event is, through its
-//!   application's reading thread behind a marker, the menu opening judged
-//!   and read as a focus, a selection and a notification checked by their
-//!   sender's nearest window (`FocusReader::check_fact`), so all keep the
-//!   order they came in. NVDA's global group also takes live regions, selection
-//!   added and removed, range values, windows and tool tips opened, system
-//!   alerts, layout invalidation, drag and drop, and the active text
-//!   position, which Verbatim does not yet subscribe to (`docs/parity/backends.md`,
-//!   "UIA event registration").
+//! - every `WinEvent` kind it hooks desktop-wide, but the console host's
+//!   five, which the console host's outpost hooks, each told after NVDA's
+//!   local drops, behind its foreground hold (`tells`);
+//! - the desktop-wide UI Automation focus handler and the global group NVDA
+//!   registers on Windows 11 (an element selected, a menu opened,
+//!   notifications, windows opened), each event checked on its
+//!   application's check thread with the calls NVDA's handler makes at
+//!   delivery, then told, its element kept behind the tell's token
+//!   (`checking`);
+//! - Core's requests on what it kept, and on an MSAA object at an event's
+//!   address, each answered once on the application's reading thread
+//!   (`asked`, `crate::reading`), and Core's Cancel of them;
+//! - the progress path: every progress bar's value change, from the
+//!   classic hook's value changes and the UIA range value changes, read on
+//!   the application's reading thread behind Core's requests and sent as a
+//!   bar's change, unasked;
+//! - the window that came to the foreground, for the keyboard hook's view
+//!   ([`ListenerToCore::Foreground`]; `verbatim_listener_logic::foreground`).
 //!
-//! The listener's callbacks, its writer, and its registering thread never
-//! make a cross-process call (decision D13, as amended on 2026-10-11),
-//! except the registering thread's registration calls themselves, which
-//! reach every application's provider and which UIA's timeouts bound. A UIA
-//! callback delivers the element with its properties already cached, so
-//! building a fact is local memory reads (plus `GetRuntimeId`, a local read
-//! on a cached element); an MSAA `WinEvent` delivers a raw window and object
-//! address, forwarded untouched; the only other reads are hang-safe local
-//! ones: `GetWindowThreadProcessId`, which names the owning process;
-//! `GetProcessIdOfThread` on the event's own thread, which names a console
-//! window's console host ([`routed_process`]); and, for a UIA focus on an
-//! element with no window of its own, `GetGUIThreadInfo`, which names the
-//! keyboard focus window; and, for the window in front, its class and its
-//! process's integrity level (`OpenProcess`, `OpenProcessToken`,
-//! `GetTokenInformation`, kernel calls that wait on no process); and, for a
-//! UIA event's sender, whether its cached window is hung or ghosted
-//! (`IsWindow`, `GhostWindowFromHungWindow`, `IsHungAppWindow`), which
-//! drops the event as it arrives, with no marker. A foreground
-//! event's fact is forwarded unchecked; the outpost's reducer thread tests
-//! that its window is the foreground as it takes it in, as NVDA's
-//! `processForegroundWinEvent` does. Core is told every foreground event
-//! whose window `GetForegroundWindow` names, with `GetAncestor` for its root
-//! owner, both local calls, as the only report that a window came to the
-//! foreground ([`ListenerToCore::Foreground`]; `verbatim_listener_logic::foreground`).
+//! The listener's callbacks and its writer never make a cross-process call
+//! (decision D13): a UI Automation callback delivers the element with its
+//! properties cached, and every call into an application is made on a
+//! check thread or a reading thread, one of each per application, so a
+//! hung application holds only its own. One exposure is UIA's own and
+//! cannot be contained here: a hung window named in a focus `WinEvent`
+//! holds UIA's delivery of every focus event to the listener until it
+//! answers, as it holds NVDA's (`books/dev/src/reference/uia-bugs.md`, "A
+//! hung window named in a system focus event holds a process's UIA
+//! events").
 //!
-//! The one place the listener calls into applications is the reading
-//! threads, one per application, which judge and read each UIA focus from
-//! the event's own element, as NVDA does, since no other process can hold
-//! that element (`books/dev/src/explanation/design/focus.md`, "One UI Automation focus, end to
-//! end"). The callback
-//! sends the application's outpost a marker at once and queues the element
-//! for its application's thread; the thread's read, or its drop, follows
-//! the marker by the same route. Each read is a few calls on elements the
-//! listener holds, each of which waits for the application up to UIA's
-//! call timeout, and a watchdog abandons a thread whose read runs past its
-//! deadline, or past half a second once the user has moved on to a window
-//! of the same application on another UI thread, which it judges at the
-//! half second and every half second after, so a slow or hung application
-//! holds only its own thread, and a focus in an application that hangs
-//! while it is read is spoken when it answers. One exposure is UIA's own and cannot be contained here: a
-//! hung window named in a focus `WinEvent` holds UIA's delivery of every
-//! focus event to the listener until it answers, as it holds NVDA's
-//! (`books/dev/src/reference/uia-bugs.md`, "A hung window named in a system focus event holds a
-//! process's UIA events").
-//!
-//! The hand-over of MSAA events (`books/dev/src/reference/crates/verbatim-outpost.md`, "The
-//! hand-over of an application's MSAA events"): every application's outpost takes
-//! its focus, foreground, menu, alert, and tooltip events from its own
-//! process-scoped hook, so they reach it by one route, in the order Windows
-//! raised them, with its other MSAA events. The listener forwards them only
-//! for an application whose outpost's hook is not yet in, so that the
-//! application's first events start its outpost and reach it. When the
-//! supervisor tells it an outpost's hook is in
-//! ([`CoreToListener::HookInstalled`]), the listener reads the event
-//! clock, forwards none of that application's events raised after it, and
-//! queues "forwarding ended" naming that tick behind every fact it has
-//! queued ([`ListenerToCore::ForwardingEnded`]); events raised at or
-//! before it, which can still reach its hook late, it forwards still. The
-//! outpost matches the two hooks' copies of an event by counting. When the
-//! application has no outpost with its hook in any more
-//! ([`CoreToListener::HookRemoved`]), the listener forwards its events
-//! again, and its reading thread ends once the events waiting for it are
-//! read. A listener that replaces another is told on its command line the
-//! applications whose outposts' hooks are in, and forwards none of their
-//! events from the start.
-//!
-//! A UIA focus that never comes is lost, as NVDA loses it: nothing waits
-//! for it, here or in the outpost. The listener makes no backend verdict; it skips a focus only by its window's class
-//! (`verbatim_listener_logic::focus::MSAA_CLASS`).
-//!
-//! Outgoing facts are coalesced with NVDA's UIA limiter rule before they are
-//! sent: one waiting fact per element and kind (for a notification, per
-//! element, kind, processing, and activity id; for a `WinEvent`'s fact
-//! other than a menu opening, per window or address and the thread that
-//! raised it, as NVDA's `WinEvent` limiter keys them), a newer one
-//! replacing it
-//! and moving to the back, so a flood from one busy process cannot pass through
-//! the listener and Core unthrottled. A UIA focus's marker, read, and drop
-//! are never replaced, since an outpost waits on the marker until its read
-//! or drop arrives. Pongs and `Ready` go ahead of facts.
+//! Tells are merged with NVDA's limiter's rule before they are sent: one
+//! waiting tell per object, kind and raising thread, a newer one replacing
+//! it and moving to the back. Pongs, `Ready` and faults go ahead of
+//! everything else; answers and reports go in the order they are made.
 //!
 //! The processes Verbatim ignores entirely (`IgnoredProcesses`, which the
-//! end-to-end harness names) are held open here too, and every fact from one
-//! of them is dropped before it is queued, so it is never routed and never
-//! starts an outpost. Their events still reach the listener: UIA and
-//! `WinEvent` delivery cannot be scoped to leave a process out.
+//! end-to-end harness names) are held open here too, and their progress
+//! bars are not read; their events are told, and Core drops a focus of
+//! one at its answer (a test-harness rule).
 //!
 //! Run as `verbatim-listener.exe --listener --pipe-in <handle> --pipe-out
-//! <handle> [--ignore-pids <pid,pid>] [--hooks-in <pid:outpost,pid:outpost>]`
-//! — its own executable, with no target pid, supervised by the same
-//! machinery as the outposts.
+//! <handle> [--ignore-pids <pid,pid>]` — its own executable, with no
+//! target pid, supervised by the same machinery as the outposts.
 
 use std::cell::RefCell;
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
 use std::convert::Infallible;
 use std::io;
 use std::os::windows::io::OwnedHandle;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender as FoundSender;
-use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -141,8 +76,9 @@ use windows::Win32::UI::Accessibility::{
 
 use verbatim_ia2::{LISTENER_SUBSCRIPTIONS, WinEvent, WinEventKind};
 use verbatim_model::event_kind::EventKind;
+use verbatim_model::request::{Answer, Ask, ObjectRef, Outcome, Purpose, Refusal, Request};
 use verbatim_model::tell::Payload;
-use verbatim_model::{BarChange, Notification, OutpostId, Percent, Pid, Role, StateSet, TraceId};
+use verbatim_model::{BarChange, Percent, Pid, Role, StateSet};
 use verbatim_process::scheduling::{ThreadPriority, prioritize_role};
 use verbatim_process::transport::{Backlog, ChildIo, SendError, Sender, Served, Serving};
 use verbatim_uia::map::{
@@ -151,30 +87,29 @@ use verbatim_uia::map::{
 };
 use verbatim_uia::served_only_by_uia_proxies;
 use verbatim_uia::{
-    Agile, Cached, ListenerEvent, ListenerProgress, ListenerSelection, Part, Registration, Scope,
+    Cached, ListenerEvent, ListenerProgress, ListenerSelection, Part, Registration, Scope,
     Subscription,
 };
 
-use crate::focus_read::{FocusReader, Readers, Reading, WatchedRead};
+use crate::reading::Readers;
 
+mod asked;
 mod checking;
 mod tells;
 
-use checking::{CheckEvent, Checks};
+use asked::{UiaJob, UiaReading};
+use checking::{CheckEvent, Checks, Kept};
 
 use crate::value_change::{Found, Judgement, ValueChange, ValueChangeKnowledge, probed_of};
-use tells::{Applications, Held, TellKey, Tells, tell_win_event};
+use tells::{Held, TellKey, Tells, tell_win_event};
 use verbatim_ia2::event_thread::{EventHandlers, EventThread, MakeHandlers, Nudger};
 use verbatim_listener_logic::focus::{
-    BAR_READ, BarObject, BarRaiser, BarVerdict, ClassicBarRead, FocusEvent, Judged, Meta,
-    WindowAnswer, arrival_of, classic_value_change,
+    BarObject, BarRaiser, BarVerdict, ClassicBarRead, WindowAnswer, classic_value_change,
 };
 use verbatim_listener_logic::foreground::{ForegroundWatch, Front, Step};
-use verbatim_listener_logic::schedule::{GraceEffect, GraceInput, GraceState, QueuePlace};
-use verbatim_model::DesktopNews;
+use verbatim_listener_logic::schedule::JobKind;
 use verbatim_model::protocol::{
-    CoreToListener, DeliveredFact, EventTiming, FactKey, ListenerFact, ListenerToCore, Responder,
-    UiaSnapshotFact, WinEventStamp, hop_us,
+    CoreToListener, EventTiming, ListenerToCore, Responder, UiaSnapshotFact, hop_us,
 };
 use verbatim_process::clock::now_us;
 use verbatim_process::held::IgnoredProcesses;
@@ -184,22 +119,7 @@ use verbatim_reader_rules::class::{
     ClassVerdict, PostProbeCheck, class_verdict, has_windows_forms_class, post_probe_check,
 };
 use verbatim_reader_rules::verdicts::Probe;
-use verbatim_win32::window::{Readability, WindowReadabilityReader, window_class_name};
-
-/// How long after a menu or the Alt+Tab switcher closes the listener waits
-/// before telling Core, so a focus event the end causes can arrive first:
-/// NVDA's fake-focus delay (`processFakeFocusWinEvent`).
-const MENU_END_GRACE: Duration = Duration::from_millis(50);
-
-/// How long after a switch back to the user's desktop the listener tells
-/// Core, as NVDA calls `_handleUserDesktop` 200 ms later
-/// (`processDesktopSwitchWinEvent`).
-const DESKTOP_RETURN_DELAY: Duration = Duration::from_millis(200);
-
-/// How long after the desktop window's name change the virtual desktop's
-/// name is due, as NVDA calls `handlePossibleDesktopNameChange` 250 ms
-/// later (`eventHandler.py` 338 to 346).
-const DESKTOP_NAME_DUE: Duration = Duration::from_millis(250);
+use verbatim_win32::window::{WindowReadabilityReader, window_class_name};
 
 /// The priority of the listener's main thread, its I/O thread, which reads
 /// Core's pipe, handles each command, and finishes the writes to Core that
@@ -213,25 +133,20 @@ const IO_PRIORITY: ThreadPriority = ThreadPriority::Highest;
 /// (`docs/design/communication.md`, sections 4.3 and 6.3).
 struct Outgoing {
     sender: Sender<Waiting>,
-    /// The processes whose facts are dropped.
+    /// The processes whose progress bars are not read.
     ignored: IgnoredProcesses,
-    /// Numbers the UIA focus events' markers.
-    markers: AtomicU64,
     /// Whether the desktop-wide UIA subscriptions have been installed, or
     /// their installation has failed: until then every UIA event is dropped
     /// ([`Self::uia_event_process`]).
     uia_installed: AtomicBool,
-    /// The clock the facts' stamps are read from.
+    /// The clock the stamps are read from.
     clock: Clock,
     /// The listener's order of tells and its foreground hold.
     tells: Arc<Tells>,
-    /// The end of a menu or of the Alt+Tab switcher waiting for its grace.
-    menu_end: Arc<MenuEnd>,
-    /// The threadpool timers that end the grace and the foreground hold,
-    /// kept until the listener is dropped, which closes them; none in a
-    /// test that fires the grace by hand ([`Outgoing::with_manual_grace`]),
-    /// whose hold ends only by the foreground or a later tell.
-    _timers: Option<(PoolTimer<MenuEnd>, PoolTimer<Tells>)>,
+    /// The threadpool timer that ends the foreground hold, kept until the
+    /// listener is dropped, which closes it; none in a test, whose hold
+    /// ends only by the foreground or a later tell.
+    _hold_timer: Option<PoolTimer<Tells>>,
 }
 
 /// The clock the listener's stamps are read from: the shared clock,
@@ -246,33 +161,15 @@ impl Default for Clock {
 }
 
 /// What waits while a write to Core is in flight: urgent messages first,
-/// then facts, coalesced one per element and kind, and for an MSAA event
-/// other than a menu opening per thread that raised it, then a menu or
-/// switcher end. The backlog of the listener's [`Sender`], which every
-/// message passes through, so the rules for "forwarding ended" are judged
-/// under the lock every fact is sent under.
+/// then tells, merged one per object, kind and raising thread, with the
+/// answers and reports in the order they were made. The backlog of the
+/// listener's [`Sender`], which every message passes through.
 #[derive(Default)]
 struct Waiting {
     urgent: VecDeque<ListenerToCore>,
-    facts: VecDeque<(Option<Merge>, ListenerToCore)>,
-    /// The end of a menu or of the Alt+Tab switcher whose grace has passed,
-    /// sent once no fact waits.
-    menu_end: Option<ListenerToCore>,
-    /// The applications whose outposts have their own hooks in, each with
-    /// the tick on the event clock after which none of its `WinEvent`
-    /// facts is forwarded.
-    hooked: HashMap<Pid, u32>,
-}
-
-/// What a waiting message is merged by: a newer message with the same key
-/// replaces it and goes to the back.
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum Merge {
-    /// A routed fact, by its application and key.
-    Fact(Pid, FactKey),
-    /// A tell, by its object, kind and raising thread, NVDA's limiter's
-    /// key (`orderedWinEventLimiter.py` 63, 79).
-    Tell(TellKey),
+    /// Tells, with the key each is merged by, answers and reports, and the
+    /// idle barrier's answers, in order.
+    queued: VecDeque<(Option<TellKey>, ListenerToCore)>,
 }
 
 /// One item the listener sends Core.
@@ -282,22 +179,8 @@ enum Sent {
     Urgent(ListenerToCore),
     /// A tell, with the key it is merged under.
     Tell(TellKey, ListenerToCore),
-    /// A fact, with the key it is coalesced under, and, for a `WinEvent`'s,
-    /// the application and the event's stamp.
-    Fact(
-        Option<(Pid, FactKey)>,
-        ListenerToCore,
-        Option<(Pid, WinEventStamp)>,
-    ),
-    /// "Forwarding ended" for an application whose outpost's hook is in,
-    /// from the tick `through` on.
-    ForwardingEnded {
-        pid: Pid,
-        outpost: OutpostId,
-        through: u32,
-    },
-    /// A menu's or the switcher's end, its grace passed.
-    MenuEnd(ListenerToCore),
+    /// An answer or a report, never merged.
+    Report(ListenerToCore),
     /// The idle barrier's answer for a round, behind everything waiting
     /// ([`Outgoing::idle_answer`]).
     IdleAnswer(u64),
@@ -312,43 +195,11 @@ impl Backlog for Waiting {
     fn push(&mut self, item: Sent) -> Result<(), Infallible> {
         match item {
             Sent::Urgent(message) | Sent::Message(message) => self.urgent.push_back(message),
-            Sent::Tell(key, message) => self.merged(Some(Merge::Tell(key)), message),
-            Sent::Fact(key, message, win_event) => {
-                // Judged under the lock that queues "forwarding ended", so
-                // no fact raised after its tick is ever queued behind it.
-                if let Some((pid, stamp)) = win_event
-                    && let Some(&through) = self.hooked.get(&pid)
-                    && stamp.raised_after(through)
-                {
-                    return Ok(());
-                }
-                self.merged(key.map(|(pid, key)| Merge::Fact(pid, key)), message);
-            }
-            Sent::ForwardingEnded {
-                pid,
-                outpost,
-                through,
-            } => {
-                self.hooked.insert(pid, through);
-                self.facts.push_back((
-                    None,
-                    ListenerToCore::ForwardingEnded {
-                        pid,
-                        outpost,
-                        through,
-                    },
-                ));
-            }
-            Sent::MenuEnd(message) => self.menu_end = Some(message),
-            Sent::IdleAnswer(round) => {
-                // A menu end waiting for no fact goes ahead of the answer,
-                // as it was sent before it.
-                if let Some(end) = self.menu_end.take() {
-                    self.facts.push_back((None, end));
-                }
-                self.facts
-                    .push_back((None, ListenerToCore::IdleAnswer { round }));
-            }
+            Sent::Tell(key, message) => self.merged(key, message),
+            Sent::Report(message) => self.queued.push_back((None, message)),
+            Sent::IdleAnswer(round) => self
+                .queued
+                .push_back((None, ListenerToCore::IdleAnswer { round })),
         }
         Ok(())
     }
@@ -356,13 +207,12 @@ impl Backlog for Waiting {
     fn pop(&mut self) -> Option<Sent> {
         self.urgent
             .pop_front()
-            .or_else(|| self.facts.pop_front().map(|(_, message)| message))
-            .or_else(|| self.menu_end.take())
+            .or_else(|| self.queued.pop_front().map(|(_, message)| message))
             .map(Sent::Message)
     }
 
     fn is_empty(&self) -> bool {
-        self.urgent.is_empty() && self.facts.is_empty() && self.menu_end.is_none()
+        self.urgent.is_empty() && self.queued.is_empty()
     }
 
     fn encode(&mut self, item: Sent, buffer: &mut Vec<u8>) -> io::Result<()> {
@@ -370,18 +220,8 @@ impl Backlog for Waiting {
             Sent::Urgent(message)
             | Sent::Message(message)
             | Sent::Tell(_, message)
-            | Sent::Fact(_, message, _)
-            | Sent::MenuEnd(message) => message,
+            | Sent::Report(message) => message,
             Sent::IdleAnswer(round) => ListenerToCore::IdleAnswer { round },
-            Sent::ForwardingEnded {
-                pid,
-                outpost,
-                through,
-            } => ListenerToCore::ForwardingEnded {
-                pid,
-                outpost,
-                through,
-            },
         };
         // The write's stamp, for the latency ledger's split of the
         // listener's time from the pipe's, taken as the write begins,
@@ -392,58 +232,26 @@ impl Backlog for Waiting {
 }
 
 impl Waiting {
-    /// Queues `message` behind every fact and tell waiting, replacing any
-    /// waiting one merged by the same `key`, but never across the idle
+    /// Queues the tell `message` behind everything waiting, replacing any
+    /// waiting tell merged by the same `key`, but never across the idle
     /// barrier's answer, which the one replaced would move behind.
-    fn merged(&mut self, key: Option<Merge>, message: ListenerToCore) {
-        if let Some(key) = &key {
-            let after_answer = self
-                .facts
-                .iter()
-                .rposition(|(_, waiting)| matches!(waiting, ListenerToCore::IdleAnswer { .. }))
-                .map_or(0, |answer| answer + 1);
-            let mut index = after_answer;
-            while index < self.facts.len() {
-                if self.facts[index].0.as_ref() == Some(key) {
-                    self.facts.remove(index);
-                } else {
-                    index += 1;
-                }
+    fn merged(&mut self, key: TellKey, message: ListenerToCore) {
+        let after_answer = self
+            .queued
+            .iter()
+            .rposition(|(_, waiting)| matches!(waiting, ListenerToCore::IdleAnswer { .. }))
+            .map_or(0, |answer| answer + 1);
+        let mut index = after_answer;
+        while index < self.queued.len() {
+            if self.queued[index].0.as_ref() == Some(&key) {
+                self.queued.remove(index);
+            } else {
+                index += 1;
             }
         }
-        self.facts.push_back((key, message));
+        self.queued.push_back((Some(key), message));
     }
 }
-
-/// The end of a menu or of the Alt+Tab switcher, waiting for its grace:
-/// when it ended, in microseconds since the Unix epoch for Core, and its
-/// observed and handled stamps. NVDA fakes a focus from such an end only
-/// when no focus event was validly processed with it; a focus fact can
-/// still be dropped or fail to read, so Core, which knows which focus it
-/// applied, decides, and every end is told.
-struct MenuEnd {
-    /// What waits for the grace, a pure transition
-    /// ([`GraceState::step`]).
-    waiting: Mutex<GraceState>,
-    /// Now, in the grace's microseconds: since the listener's sending side
-    /// was made, or a test's clock.
-    clock: GraceClock,
-    sender: Sender<Waiting>,
-    /// The listener's order of tells, through which the idle barrier's
-    /// answers go, so that one waits behind every tell the foreground
-    /// hold keeps.
-    tells: Arc<Tells>,
-    /// What sets the timer that ends the grace to go off after a time, set
-    /// once the timer is made, which the callback sets again when it runs
-    /// before the end's grace is over; a test's records the time instead.
-    timer: OnceLock<SetGraceTimer>,
-}
-
-/// The grace's clock ([`MenuEnd::clock`]).
-type GraceClock = Box<dyn Fn() -> u64 + Send + Sync>;
-
-/// What sets the grace's timer ([`MenuEnd::timer`]).
-type SetGraceTimer = Box<dyn Fn(Duration) + Send + Sync>;
 
 /// A threadpool timer's handle, shared with its own callback.
 struct TimerHandle(PTP_TIMER);
@@ -478,96 +286,6 @@ trait Timed: Send + Sync {
     fn fired(&self);
     /// The timer is being closed: it is set no more.
     fn closing(&self);
-}
-
-impl Timed for MenuEnd {
-    fn take_timer(&self, timer: TimerHandle) {
-        let _ = self.timer.set(Box::new(move |after| timer.set(after)));
-    }
-
-    fn fired(&self) {
-        self.grace_ended();
-    }
-
-    fn closing(&self) {
-        self.step(GraceInput::Close);
-    }
-}
-
-impl MenuEnd {
-    fn new(sender: Sender<Waiting>, tells: Arc<Tells>, clock: GraceClock) -> Self {
-        Self {
-            waiting: Mutex::new(GraceState::default()),
-            clock,
-            sender,
-            tells,
-            timer: OnceLock::new(),
-        }
-    }
-
-    /// Now, in the grace's microseconds.
-    fn now(&self) -> u64 {
-        (self.clock)()
-    }
-
-    /// Steps the grace with `input` and applies its effects, under the
-    /// grace's lock, so no answer can pass the end: the end is sent behind
-    /// every fact waiting, then the idle barrier's answers that waited for
-    /// it, and the timer is set when the step says so.
-    fn step(&self, input: GraceInput) {
-        let mut grace = self.waiting.lock().unwrap_or_else(PoisonError::into_inner);
-        for effect in grace.step(input, self.now()) {
-            match effect {
-                GraceEffect::SendEnd {
-                    ended_at_us,
-                    timing,
-                } => sent(
-                    &self
-                        .sender
-                        .send(Sent::MenuEnd(ListenerToCore::MenuOrSwitchEnded {
-                            ended_at_us,
-                            timing,
-                        })),
-                ),
-                GraceEffect::SendReturned(timing) => sent(&self.sender.send(Sent::Fact(
-                    None,
-                    ListenerToCore::Desktop {
-                        news: DesktopNews::Returned,
-                        timing,
-                    },
-                    None,
-                ))),
-                GraceEffect::SendNameDue(timing) => sent(&self.sender.send(Sent::Fact(
-                    None,
-                    ListenerToCore::Desktop {
-                        news: DesktopNews::NameDue,
-                        timing,
-                    },
-                    None,
-                ))),
-                GraceEffect::SendIdleAnswer(round) => {
-                    self.tells.place(Held::IdleAnswer(round));
-                }
-                GraceEffect::SetTimer(after) => {
-                    if let Some(timer) = self.timer.get() {
-                        timer(Duration::from_micros(after));
-                    }
-                }
-            }
-        }
-    }
-
-    /// The grace's timer went off: the end is sent once its grace is over,
-    /// and a callback that runs before then sets the timer again for the
-    /// rest of the grace.
-    fn grace_ended(&self) {
-        self.step(GraceInput::Fired);
-    }
-}
-
-/// `duration` in whole microseconds.
-fn micros(duration: Duration) -> u64 {
-    u64::try_from(duration.as_micros()).unwrap_or(u64::MAX)
 }
 
 /// A send's outcome: once the listener is shutting down, or Core's pipe
@@ -669,62 +387,39 @@ unsafe extern "system" fn fired<T: Timed>(
 }
 
 impl Outgoing {
-    /// Sends through `sender`, dropping the facts of the processes
+    /// Sends through `sender`, reading no progress bar of the processes
     /// `ignored` names.
     ///
     /// # Errors
     ///
-    /// Returns the error of creating the menu end's grace timer.
+    /// Returns the error of creating the foreground hold's timer.
     fn new(sender: Sender<Waiting>, ignored: IgnoredProcesses) -> io::Result<Self> {
-        let origin = Instant::now();
         let tells = Arc::new(Tells::new(sender.clone()));
         let hold = PoolTimer::new(&tells)?;
-        let menu_end = Arc::new(MenuEnd::new(
-            sender.clone(),
-            Arc::clone(&tells),
-            Box::new(move || u64::try_from(origin.elapsed().as_micros()).unwrap_or(u64::MAX)),
-        ));
-        let grace = PoolTimer::new(&menu_end)?;
-        Ok(Self::with_menu_end(
-            sender,
-            ignored,
-            (tells, menu_end),
-            Some((grace, hold)),
-        ))
+        Ok(Self::with_tells(sender, ignored, tells, Some(hold)))
     }
 
-    /// [`new`](Self::new) with the grace read from `clock` and its timer
-    /// set by `timer`, for a test that moves the clock and steps the
-    /// timer's going off by hand ([`MenuEnd::grace_ended`]), so no
-    /// threadpool timer races the test's own steps.
+    /// [`new`](Self::new) with no timer, for a test, whose hold ends only
+    /// by the foreground or a later tell.
     #[cfg(test)]
-    fn with_manual_grace(
-        sender: Sender<Waiting>,
-        ignored: IgnoredProcesses,
-        clock: GraceClock,
-        timer: SetGraceTimer,
-    ) -> Self {
+    fn untimed(sender: Sender<Waiting>, ignored: IgnoredProcesses) -> Self {
         let tells = Arc::new(Tells::new(sender.clone()));
-        let menu_end = Arc::new(MenuEnd::new(sender.clone(), Arc::clone(&tells), clock));
-        let _ = menu_end.timer.set(timer);
-        Self::with_menu_end(sender, ignored, (tells, menu_end), None)
+        Self::with_tells(sender, ignored, tells, None)
     }
 
-    fn with_menu_end(
+    fn with_tells(
         sender: Sender<Waiting>,
         ignored: IgnoredProcesses,
-        (tells, menu_end): (Arc<Tells>, Arc<MenuEnd>),
-        timers: Option<(PoolTimer<MenuEnd>, PoolTimer<Tells>)>,
+        tells: Arc<Tells>,
+        hold_timer: Option<PoolTimer<Tells>>,
     ) -> Self {
         Self {
             sender,
             ignored,
-            markers: AtomicU64::new(0),
             uia_installed: AtomicBool::new(false),
             clock: Clock::default(),
             tells,
-            menu_end,
-            _timers: timers,
+            _hold_timer: hold_timer,
         }
     }
 
@@ -732,45 +427,24 @@ impl Outgoing {
         sent(&self.sender.send(Sent::Urgent(message)));
     }
 
-    /// Sends a fact, replacing any waiting fact for the same element and
-    /// kind. `raised_ms_ago` is how long before now Windows raised the event,
-    /// and `win_event` which thread raised it and when, for a `WinEvent`'s
-    /// fact, and `observed_at_us` when the listener's callback began on it.
-    /// A `WinEvent`'s fact raised after the outpost of `pid` has its own
-    /// hook in is dropped: that hook took it in.
-    fn fact(
-        &self,
-        pid: Pid,
-        fact: DeliveredFact,
-        raised_ms_ago: Option<u32>,
-        win_event: Option<WinEventStamp>,
-        observed_at_us: u64,
-    ) {
-        let timing = EventTiming {
-            raised_ms_ago,
-            observed_at_us,
-            ..EventTiming::default()
-        };
-        self.queue(pid, fact, (TraceId::mint(), timing), win_event);
-    }
-
-    /// Sends `fact`, part of the read of the UIA focus event `meta`
-    /// describes: its marker, its read, or its drop, carrying the trace and
-    /// times of the event itself. Never replaced, since an outpost waits on
-    /// the marker until its read or drop arrives.
-    fn focus_read(&self, pid: Pid, fact: DeliveredFact, meta: Meta) {
-        self.queue(pid, fact, (meta.trace, meta.timing), None);
+    /// Sends Core the answer to one of its requests, in the order answers
+    /// are made, never merged.
+    fn answer(&self, answer: Answer) {
+        sent(
+            &self
+                .sender
+                .send(Sent::Report(ListenerToCore::Answer(answer))),
+        );
     }
 
     /// Sends Core the window that came to the foreground, `front`, with its
-    /// root owner, the process its facts go to, and that process's
+    /// root owner, the process holding attention and that process's
     /// integrity level, read here with local calls (`GetAncestor`,
     /// `GetWindowThreadProcessId`, `GetProcessIdOfThread` for a console
     /// window whose thread its event named, and the token's integrity).
     /// Sent for every process, ignored ones included, since Core takes from
     /// it the keyboard hook's view, attention and its foreground record;
-    /// none replaces another (`books/dev/src/reference/adr/0001-focus.md`, "The foreground and the
-    /// window title").
+    /// none replaces another.
     fn foreground(&self, front: Front) {
         let owner = window_pid(front.window);
         let process = if front.console && front.thread != 0 {
@@ -787,7 +461,7 @@ impl Outgoing {
             console: front.console,
             integrity: verbatim_win32::integrity::process_integrity(owner),
         };
-        sent(&self.sender.send(Sent::Fact(None, message, None)));
+        sent(&self.sender.send(Sent::Report(message)));
     }
 
     /// Marks the desktop-wide UIA subscriptions as installed, or as failed:
@@ -801,15 +475,7 @@ impl Outgoing {
     /// desktop-wide subscriptions were all installed, as NVDA's UIA
     /// handlers ignore every event received before the handler's
     /// initialization has finished, after its global handlers are
-    /// registered (`books/dev/src/reference/adr/0001-focus.md`, "The listener's checks, ported
-    /// from NVDA's focus handler"). Such an
-    /// event is the focus UI Automation reports to a new focus
-    /// registration, which can be an element that only holds its own
-    /// framework's focus, such as the taskbar's Start button while the
-    /// desktop is in front; Verbatim's start asks the foreground
-    /// application's outpost for its focus instead, as NVDA sets its
-    /// initial focus when it took no focus event. An event with no
-    /// process, or from an ignored one, is dropped too.
+    /// registered; an event with no process, or from an ignored one.
     fn uia_event_process(&self, process_id: Option<u32>) -> Option<Pid> {
         if !self.uia_installed.load(Ordering::Acquire) {
             tracing::debug!(
@@ -829,163 +495,23 @@ impl Outgoing {
         self.uia_installed.load(Ordering::Acquire)
     }
 
-    /// A new marker's number.
-    fn next_marker(&self) -> u64 {
-        self.markers.fetch_add(1, Ordering::Relaxed) + 1
-    }
-
-    /// A UIA event of kind `kind` the listener's callback received now: a
-    /// new marker and trace, and its observation, in microseconds from one
-    /// clock read, by which the focus it becomes is ordered.
-    fn received(&self, kind: FocusEvent) -> Meta {
-        Meta {
-            marker: self.next_marker(),
-            kind,
-            trace: TraceId::mint(),
-            timing: EventTiming {
-                observed_at_us: self.now(),
-                ..EventTiming::default()
-            },
-        }
-    }
-
-    /// Sends `fact` with its trace, the time it was observed, and its
-    /// timing, under the rules [`fact`](Self::fact) states. A fact no
-    /// reading thread finished with is stamped as handled now, as it is
-    /// sent.
-    fn queue(
-        &self,
-        pid: Pid,
-        fact: DeliveredFact,
-        (trace_id, mut timing): (TraceId, EventTiming),
-        win_event: Option<WinEventStamp>,
-    ) {
-        if self.ignored.contains(pid) {
-            return;
-        }
-        if timing.listener_handled_at_us == 0 {
-            timing.listener_handled_at_us = self.now();
-        }
-        let key = fact.key(win_event).map(|key| (pid, key));
-        let message = ListenerToCore::FocusFact {
-            trace_id,
-            timing,
-            fact: ListenerFact { pid, fact },
-            win_event,
-        };
-        sent(&self.sender.send(Sent::Fact(
-            key,
-            message,
-            win_event.map(|stamp| (pid, stamp)),
-        )));
-    }
-
-    /// The outpost `outpost` watching `pid` has its own hook in: none of
-    /// `pid`'s `WinEvent` facts raised after `through`, a tick on the event
-    /// clock read now or earlier, is forwarded from now on, and "forwarding
-    /// ended" is sent behind every fact already waiting. Facts raised at
-    /// or before it are still forwarded, since the outpost's hook may not
-    /// have taken them in, and the outpost matches any it did by counting.
-    fn hook_installed(&self, pid: Pid, outpost: OutpostId, through: u32) {
-        sent(&self.sender.send(Sent::ForwardingEnded {
-            pid,
-            outpost,
-            through,
-        }));
-    }
-
-    /// `pid` has no outpost with its hook in any more: its `WinEvent` facts
-    /// are forwarded again.
-    fn hook_removed(&self, pid: Pid) {
-        self.sender
-            .with_backlog(|waiting| waiting.hooked.remove(&pid));
-    }
-
-    /// Notes that a menu or the Alt+Tab switcher closed, which the
-    /// listener's callback observed at `observed_at_us`, and starts its
-    /// grace, which a later end starts again.
-    fn menu_or_switch_ended(&self, observed_at_us: u64) {
-        self.note_menu_end(observed_at_us, MENU_END_GRACE);
-    }
-
-    /// Notes that a menu or the Alt+Tab switcher closed, observed at
-    /// `observed_at_us`, to be sent once its grace, `grace` from now, is
-    /// over, and sets the timer for it, in place of any grace running.
-    fn note_menu_end(&self, observed_at_us: u64, grace: Duration) {
-        let timing = EventTiming {
-            observed_at_us,
-            listener_handled_at_us: self.now(),
-            ..EventTiming::default()
-        };
-        self.menu_end.step(GraceInput::Ended {
-            ended_at_us: observed_at_us,
-            timing,
-            grace: u64::try_from(grace.as_micros()).unwrap_or(u64::MAX),
-        });
-    }
-
-    /// The input desktop switched, as the listener's callback observed at
-    /// `observed_at_us`: when it is the user's desktop again, by NVDA's
-    /// test ([`verbatim_win32::window::input_desktop_opens`]), Core is told
-    /// 200 ms later, on the menu end's timer ([`DESKTOP_RETURN_DELAY`]). A
-    /// switch to the secure desktop is not told (M8.7).
-    fn desktop_switched(&self, observed_at_us: u64, users: bool) {
-        if !users {
-            tracing::debug!("the input desktop switched away from the user's desktop");
-            return;
-        }
-        let timing = EventTiming {
-            observed_at_us,
-            listener_handled_at_us: self.now(),
-            ..EventTiming::default()
-        };
-        self.menu_end.step(GraceInput::Returned {
-            timing,
-            after: micros(DESKTOP_RETURN_DELAY),
-        });
-    }
-
-    /// The virtual desktop's name `name`, read on csrss's reading thread
-    /// for the name change observed at `timing`'s observation: sent to
-    /// Core, followed by its due time 250 ms after the change
-    /// ([`DESKTOP_NAME_DUE`]), at once when that has passed, on the menu
-    /// end's timer.
-    fn desktop_name(&self, name: String, timing: EventTiming) {
-        let mut timing = timing;
-        let now = self.now();
-        timing.listener_handled_at_us = now;
-        sent(&self.sender.send(Sent::Fact(
-            None,
-            ListenerToCore::Desktop {
-                news: DesktopNews::Name(name),
-                timing,
-            },
-            None,
-        )));
-        let elapsed = now.saturating_sub(timing.observed_at_us);
-        self.menu_end.step(GraceInput::NameSent {
-            timing,
-            after: micros(DESKTOP_NAME_DUE).saturating_sub(elapsed),
-        });
-    }
-
     /// Sends Core a progress bar's change, read from the event observed at
     /// `timing`'s observation.
     fn progress(&self, change: BarChange, timing: EventTiming) {
         let mut timing = timing;
         timing.listener_handled_at_us = self.now();
-        sent(&self.sender.send(Sent::Fact(
-            None,
-            ListenerToCore::Progress { change, timing },
-            None,
-        )));
+        sent(
+            &self
+                .sender
+                .send(Sent::Report(ListenerToCore::Progress { change, timing })),
+        );
     }
 
-    /// Answers the idle barrier's round `round`, behind every fact sent
-    /// before, never merged and never ahead as urgent; behind a menu end
-    /// still in its grace too, once that is sent.
+    /// Answers the idle barrier's round `round`, behind every tell placed
+    /// before it, the ones the foreground hold keeps included, and every
+    /// answer and report sent before it.
     fn idle_answer(&self, round: u64) {
-        self.menu_end.step(GraceInput::IdleAnswer(round));
+        self.tells.place(Held::IdleAnswer(round));
     }
 
     /// Now, on the clock the listener's stamps are read from.
@@ -993,13 +519,20 @@ impl Outgoing {
         (self.clock.0)()
     }
 
+    /// The timing of an event the listener's callback observed now.
+    fn observed(&self) -> EventTiming {
+        EventTiming {
+            observed_at_us: self.now(),
+            ..EventTiming::default()
+        }
+    }
+
     fn fault(&self, detail: String) {
         self.urgent(ListenerToCore::Fault { detail });
     }
 
     /// Takes nothing more, and has what waits written and the pipe closed,
-    /// for the listener's shutdown; a menu end still in its grace is
-    /// dropped.
+    /// for the listener's shutdown.
     fn close(&self) {
         self.sender.close();
     }
@@ -1009,7 +542,7 @@ impl Outgoing {
 /// thread [`Listener::start`] starts for it, returning them, or `None`
 /// when their installation failed.
 type InstallSubscriptions = Box<
-    dyn FnOnce(&Arc<Outgoing>, &Arc<Readers<UiaFocusReading>>, &Arc<Checks>) -> Option<Registration>
+    dyn FnOnce(&Arc<Outgoing>, &Arc<Readers<UiaReading>>, &Arc<Checks>) -> Option<Registration>
         + Send,
 >;
 
@@ -1017,7 +550,11 @@ type InstallSubscriptions = Box<
 /// process.
 struct Listener {
     outgoing: Arc<Outgoing>,
-    readers: Arc<Readers<UiaFocusReading>>,
+    /// Every application's reading thread, which answers Core's requests
+    /// and reads bars.
+    readers: Arc<Readers<UiaReading>>,
+    /// The elements kept for tells (Table 6).
+    kept: Arc<Kept>,
     /// Every application's check thread, which checks and tells its UI
     /// Automation events.
     checks: Arc<Checks>,
@@ -1030,324 +567,6 @@ struct Listener {
     _event_thread: EventThread,
 }
 
-/// The reading threads' work in the listener: each UIA focus event judged
-/// and read from its own element ([`FocusReader`]), and what became of it
-/// sent to its application's outpost behind its marker, through the
-/// answer owed for it ([`MarkerOwed`]).
-struct UiaFocusReading {
-    /// What reads the desktop window's MSAA name for the virtual desktop's
-    /// name, at a name change's address: `AccessibleObjectFromEvent` and
-    /// `accName` ([`verbatim_ia2::acquire::name_at_event`]), unless a test
-    /// gives its own.
-    desktop_name: fn(isize, i32, i32) -> Option<String>,
-    /// The listener's window readability reader: the one judge of whether
-    /// a window is hung, by Windows' own state, which each reading thread's
-    /// reader, for the windows its walk reaches, and the UIA callbacks'
-    /// test on arrival are given ([`Readers::window_hung`]). The system's
-    /// ([`verbatim_win32::window::readability`]), unless a test gives its
-    /// own.
-    readability: WindowReadabilityReader,
-}
-
-impl UiaFocusReading {
-    /// The listener's reading, judging windows by the system's state.
-    fn new() -> Self {
-        Self {
-            desktop_name: verbatim_ia2::acquire::name_at_event,
-            readability: Arc::new(verbatim_win32::window::readability),
-        }
-    }
-}
-
-/// One job of a reading thread in the listener: a UIA event, or Core's
-/// live re-read of the thread's last read.
-#[expect(
-    clippy::large_enum_variant,
-    reason = "a job is made once per event and moved into the schedule's queue"
-)]
-pub(crate) enum UiaJob {
-    /// The event's element, its own window handle from the event's cache
-    /// (0 for an element that is not a window), its runtime id from the
-    /// event's cache, the kind of event, and, for a selection or a
-    /// notification, the fact captured from it.
-    Event(
-        Agile<ListenerEvent>,
-        isize,
-        Vec<i32>,
-        FocusEvent,
-        Option<DeliveredFact>,
-    ),
-    /// Core's live re-read `request`, of the read traced by the job's
-    /// trace ([`FocusReader::live_reread`]), and its report's top-level
-    /// window, 0 for none.
-    LiveReread(u64, isize),
-    /// The desktop window's name change at its address, whose MSAA name is
-    /// the virtual desktop's, read on csrss's reading thread, answered to
-    /// `name`: dropped unanswered, as when the read is abandoned, nothing is
-    /// sent.
-    DesktopName((isize, i32, i32), Responder<String>),
-    /// A value change the hook let through ([`value_change_event`]), to be
-    /// read as `read` says; a bar's change is sent to Core through
-    /// `report`, what a read found the object to be through `learn`, what
-    /// a [`ClassicBarRead::Probe`] found its window to be through `window`,
-    /// and with them `key`, the limiter's key, so a newer change of the
-    /// object replaces one still waiting, and `raiser`, the limits' count.
-    ClassicBar {
-        object: BarObject,
-        read: ClassicBarRead,
-        key: [i32; 4],
-        raiser: BarRaiser,
-        report: Responder<BarChange>,
-        learn: Responder<BarVerdict>,
-        window: Responder<WindowAnswer>,
-    },
-    /// A UIA progress bar's range value changed: `percent` from its event's
-    /// cache; its place and window are read here
-    /// ([`FocusReader::uia_bar_place`]), and its change sent through `report`.
-    UiaBar {
-        element: Agile<ListenerProgress>,
-        hwnd: isize,
-        runtime_id: Vec<i32>,
-        percent: Percent,
-        report: Responder<BarChange>,
-    },
-    /// The elements kept for tells and let go, released here, on their
-    /// application's reading thread, since a release can call into the
-    /// application ([`Checks`]).
-    Release(Vec<Agile<ListenerEvent>>),
-}
-
-impl Reading for UiaFocusReading {
-    type Job = UiaJob;
-    type Reader = FocusReader;
-
-    fn reader(&self, _pid: Pid) -> Option<FocusReader> {
-        match FocusReader::new() {
-            Ok(mut reader) => {
-                reader.set_window_readability_reader(Arc::clone(&self.readability));
-                Some(reader)
-            }
-            Err(error) => {
-                tracing::warn!(%error, "a reading thread could not create a UIA client");
-                None
-            }
-        }
-    }
-
-    fn read(
-        &self,
-        reader: Option<&mut FocusReader>,
-        meta: Meta,
-        job: Self::Job,
-        (watched, queue): (&WatchedRead, QueuePlace),
-    ) -> Judged {
-        if let UiaJob::ClassicBar {
-            object,
-            read,
-            report,
-            learn,
-            window,
-            ..
-        } = job
-        {
-            read_classic_bar(object, read, report, learn, window);
-            return Judged::Dropped(BAR_READ);
-        }
-        let Some(reader) = reader else {
-            return Judged::Dropped("its reading thread has no UIA client");
-        };
-        let (element, kind, fact) = match job {
-            UiaJob::ClassicBar { .. } => unreachable!("handled above"),
-            UiaJob::UiaBar {
-                element,
-                hwnd,
-                percent,
-                report,
-                ..
-            } => {
-                if let Ok(sender) = element.resolve()
-                    && let Some((place, window)) = reader.uia_bar_place(&sender, hwnd)
-                {
-                    report.answer(BarChange {
-                        percent,
-                        place,
-                        in_foreground: in_foreground(window),
-                    });
-                }
-                return Judged::Dropped(BAR_READ);
-            }
-            UiaJob::Event(element, _, _, kind, fact) => (element, kind, fact),
-            UiaJob::Release(elements) => {
-                drop(elements);
-                return Judged::Dropped(RELEASED);
-            }
-            UiaJob::LiveReread(request, _) => return reader.live_reread(request, meta.trace),
-            UiaJob::DesktopName((hwnd, id_object, id_child), name) => {
-                if let Some(read) = (self.desktop_name)(hwnd, id_object, id_child) {
-                    name.answer(read);
-                } else {
-                    tracing::debug!(hwnd, "the desktop window's name could not be read");
-                }
-                return Judged::Dropped(DESKTOP_NAME_READ);
-            }
-        };
-        match element.resolve() {
-            Ok(sender) => reader.judge_watched(
-                &sender,
-                (kind, fact),
-                (arrival_of(meta, queue), watched.clone()),
-            ),
-            Err(_) => Judged::Dropped("its element could not be resolved"),
-        }
-    }
-
-    /// A focus's or a menu opening's sender's own window, from the event's
-    /// cache: the moved-on rule judges the read of a focus once its window
-    /// is known, here or from the nearest-window lookup, and never a
-    /// selection's or a notification's check, which NVDA makes on UIA's
-    /// callback thread, whose calls its watchdog never cancels
-    /// (`docs/parity/focus-events.md`, "A slow read the user has moved on
-    /// from"). A live re-read is judged by its report's top-level window,
-    /// as the read it repeats was, so that a slow one the user has moved on
-    /// from ends answered gone instead of holding Core's focus queue.
-    fn window(&self, job: &Self::Job) -> Option<isize> {
-        match job {
-            UiaJob::Event(_, hwnd, _, FocusEvent::Focus | FocusEvent::MenuOpened, _) => Some(*hwnd),
-            // No lookup learns a re-read's window later: with none it is
-            // judged by its deadline alone.
-            UiaJob::LiveReread(_, hwnd) => (*hwnd != 0).then_some(*hwnd),
-            UiaJob::Event(..)
-            | UiaJob::DesktopName(..)
-            | UiaJob::ClassicBar { .. }
-            | UiaJob::UiaBar { .. }
-            | UiaJob::Release(..) => None,
-        }
-    }
-
-    fn forget_last(&self, reader: &mut FocusReader) {
-        reader.forget_last();
-    }
-
-    fn readability(&self, window: isize) -> Readability {
-        (self.readability)(window)
-    }
-
-    fn kind(&self, job: &Self::Job) -> FocusEvent {
-        match job {
-            UiaJob::Event(_, _, _, kind, _) => *kind,
-            UiaJob::LiveReread(..) => FocusEvent::LiveReread,
-            UiaJob::DesktopName(..) => FocusEvent::DesktopName,
-            UiaJob::ClassicBar { .. } => FocusEvent::ClassicBar,
-            UiaJob::UiaBar { .. } => FocusEvent::UiaBar,
-            UiaJob::Release(..) => FocusEvent::Release,
-        }
-    }
-
-    fn bar<'a>(&self, job: &'a Self::Job) -> Option<(BarRaiser, &'a [i32])> {
-        match job {
-            UiaJob::ClassicBar { key, raiser, .. } => Some((*raiser, key.as_slice())),
-            _ => None,
-        }
-    }
-
-    fn key<'a>(&self, job: &'a Self::Job) -> Option<(FocusEvent, &'a [i32])> {
-        // A notification is replaced only by one of the same kind,
-        // processing, and activity, as the intake replaces it; a live
-        // re-read never.
-        match job {
-            UiaJob::Event(_, _, runtime_id, kind, _) => {
-                (*kind != FocusEvent::Notification).then_some((*kind, runtime_id.as_slice()))
-            }
-            UiaJob::ClassicBar { key, .. } => Some((FocusEvent::ClassicBar, key.as_slice())),
-            UiaJob::UiaBar { runtime_id, .. } => Some((FocusEvent::UiaBar, runtime_id.as_slice())),
-            UiaJob::LiveReread(..) | UiaJob::DesktopName(..) | UiaJob::Release(..) => None,
-        }
-    }
-
-    fn finish(&self, reader: Option<FocusReader>) {
-        let joined = reader.is_some();
-        drop(reader);
-        verbatim_uia::release_thread_state();
-        if joined {
-            // Leaves the apartment the reader's client joined.
-            verbatim_uia::leave_mta();
-        }
-    }
-
-    type Owed = MarkerOwed;
-
-    fn outcome(&self, pid: Pid, meta: Meta, owed: MarkerOwed, judged: Judged) {
-        let Some(answer) = owed.answer else {
-            // The desktop's name read and a bar's owe nothing: each sent
-            // what it had.
-            return;
-        };
-        if let Some(reason) = judged.dropped_reason() {
-            tracing::debug!(%pid, marker = meta.marker, reason, "UIA focus dropped");
-        }
-        let fact = match owed.reread {
-            Some(request) => judged.into_reread_fact(meta.marker, request),
-            None => judged.into_fact(meta.marker, meta.kind),
-        };
-        answer.answer(fact);
-    }
-}
-
-/// What a release of kept elements' outcome is: no outpost waits for it.
-const RELEASED: &str = "a release of kept elements, owing no outpost anything";
-
-/// What a desktop name read's outcome is: no outpost waits for it.
-const DESKTOP_NAME_READ: &str = "a read of the desktop window's name, owing no outpost anything";
-
-/// The answer the listener owes an application's outpost for the UIA
-/// focus event whose marker it sent: made as the event is queued for its
-/// reading thread ([`queue_for_reading`]), kept by the readers' shell, and
-/// consumed by the event's outcome, which sends the read or the drop.
-/// Dropped unanswered, as when the readers are dropped with the event
-/// still waiting, it sends the marker's drop, as the drop of an element
-/// that could not be kept for its read does, so the outpost never waits on
-/// the marker.
-///
-/// For Core's live re-read `reread`, which has no marker the outpost waits
-/// on, it is the re-read's answer: the read, or gone, which it sends
-/// dropped unanswered too, as when the read was abandoned, so Core's
-/// pending live re-read always ends.
-pub(crate) struct MarkerOwed {
-    /// The answer, `None` for the desktop name's read or a bar's, which no
-    /// outpost waits on.
-    answer: Option<Responder<DeliveredFact>>,
-    reread: Option<u64>,
-}
-
-impl MarkerOwed {
-    /// The answer owed for `pid`'s event `meta`, or for Core's live re-read
-    /// `reread`, sent through `outgoing`.
-    fn new(outgoing: &Arc<Outgoing>, pid: Pid, meta: Meta, reread: Option<u64>) -> Self {
-        let outgoing = Arc::clone(outgoing);
-        Self {
-            answer: Some(Responder::new(move |fact: Option<DeliveredFact>| {
-                let fact = fact.unwrap_or_else(|| {
-                    let ended = Judged::Dropped("the listener ended before it was read");
-                    match reread {
-                        Some(request) => ended.into_reread_fact(meta.marker, request),
-                        None => ended.into_fact(meta.marker, meta.kind),
-                    }
-                });
-                outgoing.focus_read(pid, fact, meta);
-            })),
-            reread,
-        }
-    }
-
-    /// What the desktop name's read, or a bar's, owes: nothing.
-    fn nothing() -> Self {
-        Self {
-            answer: None,
-            reread: None,
-        }
-    }
-}
-
 impl Listener {
     /// Sets up the listener, sending through `sender`, with its
     /// desktop-wide UIA subscriptions ([`install_desktop_subscriptions`]):
@@ -1356,15 +575,10 @@ impl Listener {
     /// # Errors
     ///
     /// As [`Self::start`].
-    fn new(
-        sender: Sender<Waiting>,
-        ignored: IgnoredProcesses,
-        hooks_in: &[(Pid, OutpostId)],
-    ) -> io::Result<Self> {
+    fn new(sender: Sender<Waiting>, ignored: IgnoredProcesses) -> io::Result<Self> {
         Self::start(
             sender,
             ignored,
-            hooks_in,
             Box::new(|outgoing, readers, checks| {
                 install_desktop_subscriptions(
                     (outgoing, readers, checks),
@@ -1378,49 +592,41 @@ impl Listener {
     /// Sets up the listener, sending through `sender`: installs its
     /// `WinEvent` hooks, and then has `install` make the desktop-wide UIA
     /// subscriptions on a thread of their own, which announces readiness
-    /// once `install` returns, so the supervisor and Core know the
-    /// `WinEvent`s, menus included, and the UIA events are seen from then
-    /// on; Verbatim takes input only once the listener is ready, so a
-    /// scenario's first key waits for it. The hooks go in first, so MSAA
-    /// facts flow during the installation, and it runs on its own thread,
-    /// so the pipe thread answers the supervisor's pings meanwhile,
-    /// because UIA reads the system's focus for the focus registration and
-    /// waits on the foreground application for it, up to about 6 seconds
-    /// for one that does not answer
+    /// once `install` returns, so Core knows the `WinEvent`s and the UIA
+    /// events are heard from then on; Verbatim takes input only once the
+    /// listener is ready. The hooks go in first, and the installation runs
+    /// on its own thread, so the pipe thread answers the supervisor's pings
+    /// meanwhile, because UIA reads the system's focus for the focus
+    /// registration and waits on the foreground application for it, up to
+    /// about 6 seconds for one that does not answer
     /// (`docs/design/cross-process-calls-study.md`, instance 2). Their
     /// failure is reported as a fault, before the announcement. Every UIA
     /// event is dropped until `install` returns
-    /// ([`Outgoing::uia_event_process`]); a `WinEvent` focus whose UIA
-    /// focus is dropped meanwhile is lost, as NVDA loses one.
-    ///
-    /// The applications in `hooks_in` have outposts with their own hooks
-    /// in already: none of their `WinEvent`s is forwarded, and each outpost
-    /// is told so first, ending a hand-over the listener this one replaces
-    /// may have left unfinished.
+    /// ([`Outgoing::uia_event_process`]).
     ///
     /// # Errors
     ///
-    /// Returns the error of creating the menu end's grace timer, or of
+    /// Returns the error of creating the foreground hold's timer, or of
     /// starting the thread that installs the UIA subscriptions.
     fn start(
         sender: Sender<Waiting>,
         ignored: IgnoredProcesses,
-        hooks_in: &[(Pid, OutpostId)],
         install: InstallSubscriptions,
     ) -> io::Result<Self> {
         let outgoing = Arc::new(Outgoing::new(sender, ignored)?);
-        // Every event this listener's hook takes in is raised after the
-        // hook is installed, so after this tick: none is forwarded for
-        // these applications.
-        let before_the_hook = verbatim_ia2::event_clock().wrapping_sub(1);
-        for &(pid, outpost) in hooks_in {
-            outgoing.hook_installed(pid, outpost, before_the_hook);
-        }
-        let readers = Arc::new(Readers::new(
-            UiaFocusReading::new(),
-            verbatim_model::FOCUS_READ_DEADLINE,
-        ));
-        let checks = Arc::new(Checks::new(&outgoing, &readers));
+        Self::with_outgoing(outgoing, install)
+    }
+
+    /// [`start`](Self::start) sending through `outgoing`.
+    ///
+    /// # Errors
+    ///
+    /// Returns the error of starting the thread that installs the UIA
+    /// subscriptions.
+    fn with_outgoing(outgoing: Arc<Outgoing>, install: InstallSubscriptions) -> io::Result<Self> {
+        let kept = Arc::new(Kept::default());
+        let readers = Arc::new(Readers::new(UiaReading::new(&outgoing, &kept)));
+        let checks = Arc::new(Checks::new(&outgoing, &readers, &kept));
         let idle_checks = Arc::clone(&checks);
         let msaa_outgoing = Arc::clone(&outgoing);
         let idle_readers = Arc::clone(&readers);
@@ -1439,12 +645,12 @@ impl Listener {
             let knowledge = RefCell::new(ValueChangeKnowledge::new());
             // The executable name of each application that raised an
             // event, for its tells, on this thread alone.
-            let applications = RefCell::new(Applications::default());
+            let applications = RefCell::new(tells::Applications::default());
             EventHandlers {
                 win_event: Box::new(move |event: WinEvent| {
                     // Every event is told first, its arrival the time the
-                    // callback received it; today's routing follows, beside
-                    // it, until the build removes it.
+                    // callback received it; the foreground's watch and the
+                    // progress path follow.
                     tell_win_event(
                         &outgoing.tells,
                         &mut applications.borrow_mut(),
@@ -1478,12 +684,11 @@ impl Listener {
         // hooks' install, so a foreground event raised since is reported
         // after it.
         nudger.nudge((0, NUDGE_FOREGROUND_START));
-
         let registering = install_on_its_thread(&outgoing, &readers, &checks, install)?;
-
         Ok(Self {
             outgoing,
             readers,
+            kept,
             checks,
             registering,
             nudger,
@@ -1494,20 +699,17 @@ impl Listener {
     /// Shuts the listener down cleanly ([`CoreToListener::Shutdown`]),
     /// returning once it is done: the `WinEvent` hooks are removed with the
     /// thread that pumped them, the desktop-wide UIA subscriptions'
-    /// installation is waited for if it has not ended, the desktop-wide UIA
-    /// focus handler and the
-    /// other desktop-wide handlers are removed (the registering thread
-    /// waits for a callback in progress), every reading thread finishes the read in hand, each abandoned
-    /// one returning once UIA gives up on its call, what waits to be
-    /// written to Core is written, the I/O thread `io` serves waiting for
-    /// every write in flight to complete, and the pipe is closed, and the
-    /// process's hold on COM's multithreaded apartment is given back, the
-    /// registering thread releasing its client and leaving COM first.
+    /// installation is waited for if it has not ended, and the handlers
+    /// removed (the registering thread waits for a callback in progress);
+    /// the check and reading threads end, one inside a call let go; what
+    /// waits to be written to Core is written, the I/O thread `io` serves
+    /// waiting for every write in flight to complete, and the pipe closed.
     fn shutdown(self, io: &mut ChildIo) {
         let started = Instant::now();
         let Self {
             outgoing,
             readers,
+            kept: _,
             checks,
             registering,
             nudger: _,
@@ -1532,16 +734,11 @@ impl Listener {
         );
     }
 
-    /// Answers `Ping` with a `Pong` (the listener never abandons a worker, so
-    /// its count is always zero), takes the hand-over's news of outposts'
-    /// hooks, starts the idle barrier's round
-    /// ([`Self::idle_query`]). An application with no outpost
-    /// any more has its reading thread ended too
-    /// ([`Readers::outpost_ended`]). `received_at_us` is when the command
-    /// was read off Core's pipe: the hop from verbatim.exe's write is
-    /// logged at trace level, under `verbatim::stage`.
+    /// Handles one of Core's commands. `received_at_us` is when it was read
+    /// off Core's pipe: the hop from verbatim.exe's write is logged at trace
+    /// level, under `verbatim::stage`.
     #[deny(clippy::wildcard_enum_match_arm)]
-    fn handle_command(&self, command: &CoreToListener, received_at_us: u64) {
+    fn handle_command(&self, command: CoreToListener, received_at_us: u64) {
         if let Some(us) = hop_us(command.sent_at_us(), received_at_us) {
             tracing::trace!(target: "verbatim::stage", stage = "verbatim.exe to the listener", us, ?command);
         }
@@ -1552,69 +749,36 @@ impl Listener {
                     written_at_us: 0,
                 });
             }
-            CoreToListener::HookInstalled { pid, outpost, .. } => {
-                self.outgoing
-                    .hook_installed(*pid, *outpost, verbatim_ia2::event_clock());
-            }
-            CoreToListener::HookRemoved { pid, .. } => {
-                self.outgoing.hook_removed(*pid);
-                self.readers.outpost_ended(*pid);
-            }
+            // The listener hands no application's events over to an
+            // outpost, and keeps no unasked read to read again: every
+            // `WinEvent` is told, and Core asks what it needs. The serving
+            // loop ends on `Shutdown`, before it is handled here.
+            CoreToListener::HookInstalled { .. }
+            | CoreToListener::HookRemoved { .. }
+            | CoreToListener::LiveReread { .. }
+            | CoreToListener::Shutdown => {}
             CoreToListener::ApplicationExited { pid } => {
-                self.checks.application_exited(*pid);
-                self.readers.application_exited(*pid);
-                self.outgoing
-                    .urgent(ListenerToCore::ExitHandled { pid: *pid });
+                self.checks.application_exited(pid);
+                self.readers.application_exited(pid);
+                self.outgoing.urgent(ListenerToCore::ExitHandled { pid });
             }
-            CoreToListener::IdleQuery { round } => self.idle_query(*round),
-            CoreToListener::LiveReread {
-                request,
-                application,
-                trace_id,
-                window,
-            } => self.live_reread(*request, *application, (*trace_id, *window)),
-            // The serving loop ends on `Shutdown`, before it is handled here.
-            CoreToListener::Shutdown => {}
+            CoreToListener::IdleQuery { round } => self.idle_query(round),
+            CoreToListener::Request(ask) => self.request(ask),
+            CoreToListener::Cancel(cancel) => self.readers.cancel(cancel),
         }
     }
 
-    /// Core's live re-read `request` of the last read, traced `trace`, of
-    /// `application`'s reading thread: queued for that thread behind the
-    /// events waiting for it, as a job with a marker of its own that no
-    /// outpost waits on, the report's trace and its observation; answered
-    /// gone at once when the application has no reading thread, the thread
-    /// answering it gone when it no longer holds that read. Its answer
-    /// goes to the application's outpost, in order with its facts. `window`,
-    /// the report's top-level window, is what the moved-on rule judges it
-    /// by.
-    fn live_reread(&self, request: u64, application: Pid, (trace, window): (TraceId, isize)) {
-        let meta = Meta {
-            trace,
-            ..self.outgoing.received(FocusEvent::LiveReread)
-        };
-        tracing::debug!(%application, request, %trace, marker = meta.marker, "live re-read asked");
-        if !self.readers.has_reading_thread(application) {
-            self.outgoing.focus_read(
-                application,
-                Judged::Dropped(verbatim_listener_logic::focus::NO_READING_THREAD)
-                    .into_reread_fact(meta.marker, request),
-                meta,
-            );
-            return;
-        }
-        self.readers.push(
-            application,
-            meta,
-            UiaJob::LiveReread(request, window),
-            MarkerOwed::new(&self.outgoing, application, meta, Some(request)),
-        );
+    /// Core's request `ask` ([`ask`]).
+    fn request(&self, ask: Box<Ask>) {
+        self::ask((&self.readers, &self.kept, &self.checks), ask);
     }
 
     /// The idle barrier's query for `round` (`docs/design/communication.md`,
     /// section 6.7): handed to the `WinEvent` thread behind every event
-    /// delivered to it, then to the reading threads behind every event
-    /// queued for them, and answered once both have nothing in progress.
-    /// A `WinEvent` thread that has ended has nothing in progress.
+    /// delivered to it, then to the reading threads behind every job queued
+    /// for them, then to the check threads behind every event handed to
+    /// them, and answered behind every tell placed before. A `WinEvent`
+    /// thread that has ended has nothing in progress.
     fn idle_query(&self, round: u64) {
         let posted = usize::try_from(round).is_ok_and(|word| self.nudger.nudge((word, 0)));
         if !posted {
@@ -1623,15 +787,62 @@ impl Listener {
     }
 }
 
-/// Today's routing of a `WinEvent`, beside its tell until the build
-/// removes it: a value change or one of the desktop's events by its own
-/// path; a console's event and the shell's foreground for the watch of the
-/// window in front; and the kinds today's routing forwards, as facts to
-/// their application's outpost, a foreground event reported to Core once
-/// its window is in front.
+/// Core's request `ask`: queued for the reading thread of its object's
+/// application, or answered at once when the listener holds no such
+/// object or cannot read it. A focus read first names the readers' last
+/// focus, so every other element a focus read read is let go (Table 6,
+/// column C).
+fn ask((readers, kept, checks): (&Readers<UiaReading>, &Kept, &Checks), ask: Box<Ask>) {
+    let answer = |outcome: Outcome| {
+        readers.reading().outgoing.answer(Answer {
+            number: ask.number,
+            outcome,
+            probes: Vec::new(),
+            detail: String::new(),
+        });
+    };
+    let Request::ReadObject(read) = &ask.request else {
+        answer(Outcome::Refused(Refusal::Unsupported));
+        return;
+    };
+    let focus = match read.purpose {
+        Purpose::Focus { keep } => {
+            for (pid, released) in kept.focus_request(keep) {
+                checks.release(pid, released);
+            }
+            true
+        }
+        Purpose::Other => false,
+    };
+    let pid = match &read.object {
+        ObjectRef::Kept(token) => kept.owner(*token),
+        ObjectRef::Msaa { window, .. } => {
+            Some(Pid(window_pid(asked::hwnd_of(*window)))).filter(|pid| pid.0 != 0)
+        }
+        ObjectRef::Node(_) => {
+            answer(Outcome::Refused(Refusal::Unsupported));
+            return;
+        }
+    };
+    let Some(pid) = pid else {
+        answer(Outcome::NotThere);
+        return;
+    };
+    let number = ask.number;
+    readers.push(
+        pid,
+        JobKind::Request { number, focus },
+        UiaJob::Request(ask),
+    );
+}
+
+/// What the listener does with a `WinEvent` beside its tell: a value
+/// change goes the progress path's way; a console's event, the shell's
+/// foreground and a foreground event feed the watch of the window in
+/// front, and a focus finds a pending foreground's window in front.
 fn route_win_event(
     outgoing: &Arc<Outgoing>,
-    readers: &Arc<Readers<UiaFocusReading>>,
+    readers: &Arc<Readers<UiaReading>>,
     knowledge: &RefCell<ValueChangeKnowledge>,
     watch: &RefCell<ForegroundWatch>,
     event: WinEvent,
@@ -1639,75 +850,45 @@ fn route_win_event(
     if routed_elsewhere(outgoing, readers, knowledge, event) {
         return;
     }
-    if matches!(
-        event.kind,
-        WinEventKind::ConsoleUpdate | WinEventKind::ConsoleCaret
-    ) {
-        let step = watch
-            .borrow_mut()
-            .console_event(event.hwnd, event.thread, outgoing.now());
-        foreground_step(outgoing, step);
-        return;
-    }
-    // Program Manager or the taskbar in front: no foreground
-    // change to forward, as NVDA takes none, but a window
-    // that came to the foreground for Core.
-    if event.kind == WinEventKind::ShellForeground {
-        let front = Front {
-            window: event.hwnd,
-            thread: event.thread,
-            console: false,
-            observed_at_us: outgoing.now(),
-        };
-        let step = watch.borrow_mut().foreground(front, in_front(front.window));
-        foreground_step(outgoing, step);
-        return;
-    }
-    // Only the kinds today's routing forwards: the rest are
-    // told and nothing more.
-    if !matches!(
-        event.kind,
-        WinEventKind::Focus
-            | WinEventKind::Foreground
-            | WinEventKind::MenuPopupStart
-            | WinEventKind::MenuEnd
-            | WinEventKind::SwitchEnd
-            | WinEventKind::Alert
-            | WinEventKind::Show
-    ) {
-        return;
-    }
-    let (kind, window, thread) = (event.kind, event.hwnd, event.thread);
-    if kind == WinEventKind::Focus && watch.borrow().has_pending() {
-        // A window not in front at its foreground event is
-        // sent once an event finds it there, before the
-        // focus that found it.
-        let step = watch
-            .borrow_mut()
-            .event_seen(front_window(), outgoing.now());
-        foreground_step(outgoing, step);
-    }
-    // Its window's class, read to route it, tells a console.
-    let forwarded = forward_msaa_event(outgoing, event);
-    if kind == WinEventKind::Foreground {
-        let front = Front {
-            window,
-            thread,
-            console: forwarded.console,
-            observed_at_us: forwarded.observed_at_us,
-        };
-        let step = watch.borrow_mut().foreground(front, in_front(window));
-        foreground_step(outgoing, step);
-        // A foreground change moves away from a reading
-        // thread's last read of another window, for menu
-        // currentness; it judges no read in flight.
-        readers.foreground_changed(window);
-    }
-    let focus_of = forwarded.focus_of;
-    // Another process's MSAA focus moves away from every
-    // other application's last read, for menu currentness.
-    if let Some(pid) = focus_of {
-        readers.msaa_focus(pid);
+    let observed_at_us = outgoing.now();
+    match event.kind {
+        WinEventKind::ConsoleUpdate | WinEventKind::ConsoleCaret => {
+            let step = watch
+                .borrow_mut()
+                .console_event(event.hwnd, event.thread, observed_at_us);
+            foreground_step(outgoing, step);
+        }
+        // Program Manager or the taskbar in front: a window that came to
+        // the foreground for Core.
+        WinEventKind::ShellForeground => {
+            let front = Front {
+                window: event.hwnd,
+                thread: event.thread,
+                console: false,
+                observed_at_us,
+            };
+            let step = watch.borrow_mut().foreground(front, in_front(front.window));
+            foreground_step(outgoing, step);
+        }
+        // A window not in front at its foreground event is sent once an
+        // event finds it there, before the focus that found it.
+        WinEventKind::Focus if watch.borrow().has_pending() => {
+            let step = watch
+                .borrow_mut()
+                .event_seen(front_window(), observed_at_us);
+            foreground_step(outgoing, step);
+        }
+        WinEventKind::Foreground => {
+            let front = Front {
+                window: event.hwnd,
+                thread: event.thread,
+                console: event.hwnd != 0 && window_class_name(event.hwnd) == CONSOLE_WINDOW_CLASS,
+                observed_at_us,
+            };
+            let step = watch.borrow_mut().foreground(front, in_front(event.hwnd));
+            foreground_step(outgoing, step);
+        }
+        _ => {}
     }
 }
 
@@ -1722,7 +903,7 @@ fn route_win_event(
 /// Returns the error of starting the thread.
 fn install_on_its_thread(
     outgoing: &Arc<Outgoing>,
-    readers: &Arc<Readers<UiaFocusReading>>,
+    readers: &Arc<Readers<UiaReading>>,
     checks: &Arc<Checks>,
     install: InstallSubscriptions,
 ) -> io::Result<JoinHandle<Option<Registration>>> {
@@ -1750,13 +931,13 @@ fn install_on_its_thread(
         })
 }
 
-/// Answers the idle barrier's round `round` once no reading thread has an
-/// event waiting or being read, behind the outcome of every one queued
-/// before ([`Readers::when_idle`]), and then once no check thread has an
-/// event waiting or being checked, behind the tell of every one handed to
-/// it before ([`Checks::when_idle`]).
+/// Answers the idle barrier's round `round` once no reading thread has a
+/// job waiting or running, behind the answer of every request queued
+/// before ([`Readers::when_idle`]), then once no check thread has an event
+/// waiting or being checked, behind the tell of every one handed to it
+/// before ([`Checks::when_idle`]), behind every tell placed before it.
 fn answer_when_reads_are_done(
-    readers: &Readers<UiaFocusReading>,
+    readers: &Readers<UiaReading>,
     checks: &Arc<Checks>,
     outgoing: &Arc<Outgoing>,
     round: u64,
@@ -1815,14 +996,11 @@ fn snapshot_fact(parts: CachedUiaParts) -> UiaSnapshotFact {
 }
 
 /// The desktop-wide UIA focus subscription. Its callback makes no
-/// cross-process call: it drops an event whose sender's cached window is
-/// hung ([`queue_for_reading`]), and otherwise sends the application's
-/// outpost a marker for the event at once and queues the event's element
-/// for the application's reading thread ([`Readers`]), whose read or drop
-/// follows the marker.
+/// cross-process call: it hands the event to its application's check
+/// thread ([`arrived`]), which tells Core of it.
 fn focus_subscription(
     outgoing: &Arc<Outgoing>,
-    readers: &Arc<Readers<UiaFocusReading>>,
+    readers: &Arc<Readers<UiaReading>>,
     checks: &Arc<Checks>,
 ) -> Subscription<Cached<ListenerEvent>> {
     let outgoing = Arc::clone(outgoing);
@@ -1831,30 +1009,17 @@ fn focus_subscription(
     let callback = Arc::new(move |sender: &Cached<ListenerEvent>| {
         let fields = sender.read();
         let told = (EventKind::UiaFocus, None, Payload::None);
-        if let Some(pid) = arrived(&outgoing, &readers, &checks, (sender, &fields), told) {
-            queue_for_reading(
-                &outgoing,
-                &readers,
-                pid,
-                sender,
-                &fields,
-                FocusEvent::Focus,
-                None,
-            );
-        }
+        arrived(&outgoing, &readers, &checks, (sender, &fields), told);
     });
     Subscription::Focus { callback }
 }
 
-/// The desktop-wide subscription to UIA menu openings: each is judged and
-/// read as a focus on the menu by its application's reading thread, as
-/// NVDA's automation event handler maps it to a focus and judges it
-/// (`books/dev/src/reference/adr/0001-focus.md`, "The listener's checks, ported from NVDA's focus
-/// handler"), unless a focus is
-/// pending as it arrives, when NVDA drops it.
+/// The desktop-wide subscription to UIA menu openings, each handed to its
+/// application's check thread as a focus is: Core judges it, as NVDA's
+/// automation event handler maps it to a focus on the menu.
 fn menu_subscription(
     outgoing: &Arc<Outgoing>,
-    readers: &Arc<Readers<UiaFocusReading>>,
+    readers: &Arc<Readers<UiaReading>>,
     checks: &Arc<Checks>,
 ) -> Subscription<Cached<ListenerEvent>> {
     let outgoing = Arc::clone(outgoing);
@@ -1865,24 +1030,7 @@ fn menu_subscription(
         callback: Arc::new(move |sender: &Cached<ListenerEvent>| {
             let fields = sender.read();
             let told = (EventKind::UiaMenuOpened, None, Payload::None);
-            let Some(pid) = arrived(&outgoing, &readers, &checks, (sender, &fields), told) else {
-                return;
-            };
-            // The event's process from its cache, the pid its focuses are
-            // read under: no call.
-            if readers.focus_pending(Some(pid)) {
-                tracing::debug!("UIA menu opening dropped: a focus is pending");
-                return;
-            }
-            queue_for_reading(
-                &outgoing,
-                &readers,
-                pid,
-                sender,
-                &fields,
-                FocusEvent::MenuOpened,
-                None,
-            );
+            arrived(&outgoing, &readers, &checks, (sender, &fields), told);
         }),
     }
 }
@@ -1891,106 +1039,58 @@ fn menu_subscription(
 /// `fields`, arrived: with `states` and `payload`, what its kind carries
 /// beyond its cached properties. Dropped as NVDA's handlers drop it before
 /// any call: before the subscriptions are installed, with no process, or
-/// with its sender's cached window hung or ghosted as it arrives (a sender
-/// with no cached window is not tested). Otherwise handed to its
-/// application's check thread, which tells Core of it, and, unless its
-/// process is one Verbatim ignores, answered with that process for
-/// today's routing, which goes on beside the tell until the build removes
-/// it. Makes no cross-process call.
+/// with its sender's cached window hung or
+/// ghosted as it arrives (a sender with no cached window is not tested,
+/// `UIAHandler/utils.py` 446 to 450). Otherwise handed to its
+/// application's check thread, which tells Core of it. Makes no
+/// cross-process call.
 fn arrived(
     outgoing: &Outgoing,
-    readers: &Readers<UiaFocusReading>,
+    readers: &Readers<UiaReading>,
     checks: &Arc<Checks>,
     (sender, fields): (&Cached<ListenerEvent>, &ListenerEvent),
     (kind, states, payload): (EventKind, Option<StateSet>, Payload),
-) -> Option<Pid> {
+) {
     let at_us = outgoing.now();
     if !outgoing.uia_installed() {
         tracing::debug!(
             ?kind,
             "UIA event dropped: received before the listener's UIA subscriptions were installed"
         );
-        return None;
+        return;
     }
-    let pid = fields.process_id.filter(|&pid| pid != 0).map(Pid)?;
-    if readers.window_hung(fields.role.hwnd) {
+    let Some(pid) = fields.process_id.filter(|&pid| pid != 0).map(Pid) else {
+        return;
+    };
+    if window_hung(&readers.reading().readability, fields.role.hwnd) {
         tracing::debug!(%pid, ?kind, hwnd = fields.role.hwnd, "UIA event dropped as it arrived: its window is hung");
-        return None;
+        return;
     }
     if let Some(event) = CheckEvent::new(kind, (sender, fields), pid, at_us, (states, payload)) {
         checks.hand(pid, event);
     }
-    (!outgoing.ignored.contains(pid)).then_some(pid)
 }
 
-/// Queues the UIA event `kind` of `pid`'s whose sender is `sender`, read as
-/// `fields`, for its application's reading thread, after sending its
-/// marker; `fact`, for a selection or a notification, is what was captured
-/// from it. Called once [`arrived`] has taken it, so an event whose
-/// sender's cached window was hung or ghosted as it arrived sends no marker
-/// and queues nothing, as NVDA's UIA handlers drop it
-/// (`_shouldSkipEventForHungWindow`, `UIAHandler/utils.py` 438 to 455).
-/// Makes no cross-process call.
-fn queue_for_reading(
-    outgoing: &Arc<Outgoing>,
-    readers: &Readers<UiaFocusReading>,
-    pid: Pid,
-    sender: &Cached<ListenerEvent>,
-    fields: &ListenerEvent,
-    kind: FocusEvent,
-    fact: Option<DeliveredFact>,
-) {
-    let meta = outgoing.received(kind);
-    let runtime_id = sender.runtime_id();
-    // Every event's arrival, by its marker, whatever its read makes of it,
-    // so a delay before the listener received it shows.
-    tracing::debug!(%pid, marker = meta.marker, ?kind, ?runtime_id, "UIA focus event received");
-    // The marker goes first, so the read or the drop can only follow it.
-    outgoing.focus_read(
-        pid,
-        DeliveredFact::UiaFocusMarker {
-            marker: meta.marker,
-        },
-        meta,
-    );
-    match sender.agile() {
-        Ok(agile) => readers.push(
-            pid,
-            meta,
-            UiaJob::Event(agile, fields.role.hwnd, runtime_id, kind, fact),
-            MarkerOwed::new(outgoing, pid, meta, None),
-        ),
-        Err(error) => {
-            tracing::warn!(%error, "a UIA focus's element could not be kept for its read");
-            // Its drop resolves its marker.
-            outgoing.focus_read(
-                pid,
-                Judged::Dropped("its element could not be kept for its read")
-                    .into_fact(meta.marker, kind),
-                meta,
-            );
-        }
-    }
+/// Whether `window`, an event's sender's cached window, is hung or
+/// ghosted, by the listener's one readability reader; a sender with no
+/// window, 0, is not tested. Local calls.
+fn window_hung(readability: &WindowReadabilityReader, window: isize) -> bool {
+    window != 0 && readability(window).is_hung()
 }
 
 /// Installs the desktop-wide UIA subscriptions, some of those NVDA
-/// registers globally on Windows 11 (the module's documentation lists the
-/// rest): `focus` ([`focus_subscription`]) on the registration's
-/// client, then an element selected, `menu` ([`menu_subscription`]), and
-/// notifications as
-/// one event handler group on the desktop's root, all on one client as
-/// NVDA's global handlers are (`verbatim_uia::Subscription::Focus` says why
-/// they must share it), each part shaped as `verbatim_uia::ListenerEvent`:
-/// NVDA's base cache request, with the two properties that refine a role
-/// for dialogs and toggle buttons. The facts carry the
-/// element's process, window, runtime id, role, and name from that cache;
-/// anything else in their snapshots is not read here and is left empty,
-/// but for an element selected, whose part is shaped as
-/// `verbatim_uia::ListenerSelection`, which also carries the item's value,
-/// states, and details. A failure is reported as a fault and leaves the
-/// MSAA path running on its own.
+/// registers globally on Windows 11: `focus` ([`focus_subscription`]) on
+/// the registration's client, then an element selected, `menu`
+/// ([`menu_subscription`]), notifications, windows opened and range
+/// values, all on one client as NVDA's global handlers are
+/// (`verbatim_uia::Subscription::Focus` says why they must share it), each
+/// part shaped as `verbatim_uia::ListenerEvent`: NVDA's base cache
+/// request, with the two properties that refine a role for dialogs and
+/// toggle buttons; an element selected also carries the item's value,
+/// states, and details (`verbatim_uia::ListenerSelection`). A failure is
+/// reported as a fault and leaves the `WinEvent`s running on their own.
 fn install_desktop_subscriptions(
-    (outgoing, readers, checks): (&Arc<Outgoing>, &Arc<Readers<UiaFocusReading>>, &Arc<Checks>),
+    (outgoing, readers, checks): (&Arc<Outgoing>, &Arc<Readers<UiaReading>>, &Arc<Checks>),
     focus: Subscription<Cached<ListenerEvent>>,
     menu: Subscription<Cached<ListenerEvent>>,
 ) -> Option<Registration> {
@@ -1998,11 +1098,6 @@ fn install_desktop_subscriptions(
     let notifications = notification_subscription(outgoing, readers, checks);
     let toasts = toast_subscription(outgoing, readers, checks);
     let progress = progress_subscription(outgoing, readers);
-    // NVDA's base cache request, as its global group carries, with what
-    // refines a role (`ListenerEvent`): UIA fills only these in the
-    // application for each event, and for an element selected also what
-    // Core speaks of it (`ListenerSelection`), so the outpost reports the
-    // item with no call.
     let parts = vec![
         Part::shaped(focus),
         Part::shaped::<ListenerSelection>(selection),
@@ -2022,15 +1117,12 @@ fn install_desktop_subscriptions(
     }
 }
 
-/// The desktop-wide subscription to UIA element selected events. A
-/// selection goes through its application's reading thread, behind a
-/// marker, for NVDA's checks of its sender's nearest window
-/// (`FocusReader::check_fact`), in the order it came with the focus
-/// events, unless its sender's cached window is hung as it arrives
-/// ([`queue_for_reading`]).
+/// The desktop-wide subscription to UIA element selected events, each
+/// handed to its application's check thread with the item's states from
+/// its cache ([`arrived`]).
 fn selection_subscription(
     outgoing: &Arc<Outgoing>,
-    readers: &Arc<Readers<UiaFocusReading>>,
+    readers: &Arc<Readers<UiaReading>>,
     checks: &Arc<Checks>,
 ) -> Subscription<Cached<ListenerSelection>> {
     let outgoing = Arc::clone(outgoing);
@@ -2040,7 +1132,7 @@ fn selection_subscription(
         event: UIA_SelectionItem_ElementSelectedEventId,
         callback: Arc::new(move |sender: &Cached<ListenerSelection>| {
             let fields = sender.read();
-            let Some((hwnd, snapshot)) = capture_selection(sender, &fields) else {
+            let Some((_, snapshot)) = capture_selection(sender, &fields) else {
                 return;
             };
             let narrowed = sender.narrow();
@@ -2049,39 +1141,24 @@ fn selection_subscription(
                 Some(snapshot.states),
                 Payload::None,
             );
-            let Some(pid) = arrived(
+            arrived(
                 &outgoing,
                 &readers,
                 &checks,
                 (&narrowed, &fields.event),
                 told,
-            ) else {
-                return;
-            };
-            let fact = DeliveredFact::UiaSelection {
-                hwnd,
-                focus_window: 0,
-                snapshot,
-            };
-            queue_for_reading(
-                &outgoing,
-                &readers,
-                pid,
-                &narrowed,
-                &fields.event,
-                FocusEvent::Selection,
-                Some(fact),
             );
         }),
     }
 }
 
-/// The desktop-wide subscription to UIA notifications, which go through
-/// their application's reading thread as a selection does
-/// ([`selection_subscription`]).
+/// The desktop-wide subscription to UIA notifications, each handed to its
+/// application's check thread with its text, kind, processing and
+/// activity ([`arrived`]), but a terminal text area's, which Core's rule
+/// would drop, dropped here on its cached class and automation id.
 fn notification_subscription(
     outgoing: &Arc<Outgoing>,
-    readers: &Arc<Readers<UiaFocusReading>>,
+    readers: &Arc<Readers<UiaReading>>,
     checks: &Arc<Checks>,
 ) -> Subscription<Cached<ListenerEvent>> {
     let outgoing = Arc::clone(outgoing);
@@ -2101,58 +1178,31 @@ fn notification_subscription(
                 ) {
                     return;
                 }
-                if let Some((hwnd, snapshot)) = capture(sender, &fields) {
-                    let notification = Notification {
+                let told = (
+                    EventKind::UiaNotification,
+                    None,
+                    Payload::Notification {
+                        text: display_string.unwrap_or_default(),
                         kind: notification_kind_from_uia(kind),
                         processing: notification_processing_from_uia(processing),
-                        display_string,
-                        activity_id,
-                    };
-                    let told = (
-                        EventKind::UiaNotification,
-                        None,
-                        Payload::Notification {
-                            text: notification.display_string.clone().unwrap_or_default(),
-                            kind: notification.kind,
-                            processing: notification.processing,
-                            activity: notification.activity_id.clone().unwrap_or_default(),
-                        },
-                    );
-                    let Some(pid) = arrived(&outgoing, &readers, &checks, (sender, &fields), told)
-                    else {
-                        return;
-                    };
-                    queue_for_reading(
-                        &outgoing,
-                        &readers,
-                        pid,
-                        sender,
-                        &fields,
-                        FocusEvent::Notification,
-                        Some(DeliveredFact::UiaNotification {
-                            hwnd,
-                            snapshot,
-                            notification,
-                        }),
-                    );
-                }
+                        activity: activity_id.unwrap_or_default(),
+                    },
+                );
+                arrived(&outgoing, &readers, &checks, (sender, &fields), told);
             },
         ),
     }
 }
 
 /// The desktop-wide subscription to UIA window openings, kept only for a
-/// candidate for a Windows toast by what the event's cache answers of NVDA's
-/// rule ([`is_toast_candidate`]). A candidate goes through its application's
-/// reading thread as a notification does, so that its reading is ordered
-/// with the application's other events and dropped from a hung window, and
-/// the rest of the rule, the class of its nearest window, is tested there,
-/// since finding that window is a call into the application
-/// (`FocusReader::check_fact`). It runs once per window opened anywhere,
-/// makes no call, and wakes nothing else unless the window is a candidate.
+/// candidate for a Windows toast by what the event's cache answers of
+/// NVDA's rule ([`is_toast_candidate`]), which Core's rule would otherwise
+/// drop; a candidate is handed to its application's check thread
+/// ([`arrived`]). It runs once per window opened anywhere and makes no
+/// call.
 fn toast_subscription(
     outgoing: &Arc<Outgoing>,
-    readers: &Arc<Readers<UiaFocusReading>>,
+    readers: &Arc<Readers<UiaReading>>,
     checks: &Arc<Checks>,
 ) -> Subscription<Cached<ListenerEvent>> {
     let outgoing = Arc::clone(outgoing);
@@ -2170,23 +1220,8 @@ fn toast_subscription(
                 );
                 return;
             }
-            let Some((hwnd, snapshot)) = capture(sender, &fields) else {
-                tracing::debug!("a toast candidate has no owning process");
-                return;
-            };
             let told = (EventKind::UiaWindowOpened, None, Payload::None);
-            let Some(pid) = arrived(&outgoing, &readers, &checks, (sender, &fields), told) else {
-                return;
-            };
-            queue_for_reading(
-                &outgoing,
-                &readers,
-                pid,
-                sender,
-                &fields,
-                FocusEvent::Toast,
-                Some(DeliveredFact::UiaToast { hwnd, snapshot }),
-            );
+            arrived(&outgoing, &readers, &checks, (sender, &fields), told);
         }),
     }
 }
@@ -2198,12 +1233,11 @@ fn toast_subscription(
 /// a progress bar, whose window's provider is not native (UIA's proxy for a
 /// classic window, heard by the hook instead), or whose window is hung is
 /// dropped, and a range value that is not a number too, parsed once here;
-/// the bar is then queued for its application's reading thread, which reads
-/// where it is and sends it on, with no marker, so no outpost waits on it
-/// and none is started for it.
+/// the bar is then queued for its application's reading thread, behind
+/// Core's requests, which reads where it is and sends it on, unasked.
 fn progress_subscription(
     outgoing: &Arc<Outgoing>,
-    readers: &Arc<Readers<UiaFocusReading>>,
+    readers: &Arc<Readers<UiaReading>>,
 ) -> Subscription<Cached<ListenerProgress>> {
     let outgoing = Arc::clone(outgoing);
     let readers = Arc::clone(readers);
@@ -2218,24 +1252,23 @@ fn progress_subscription(
                 return;
             };
             let hwnd = fields.event.role.hwnd;
-            if readers.window_hung(hwnd) {
+            if window_hung(&readers.reading().readability, hwnd) {
                 tracing::debug!(%pid, hwnd, "a progress bar's change dropped: its window is hung");
                 return;
             }
-            let meta = outgoing.received(FocusEvent::UiaBar);
-            let runtime_id = sender.runtime_id();
+            let timing = outgoing.observed();
             match sender.agile() {
                 Ok(element) => readers.push(
                     pid,
-                    meta,
+                    JobKind::UiaBar {
+                        key: sender.runtime_id(),
+                    },
                     UiaJob::UiaBar {
                         element,
                         hwnd,
-                        runtime_id,
                         percent,
-                        report: report_bar(&outgoing, meta),
+                        report: report_bar(&outgoing, timing),
                     },
-                    MarkerOwed::nothing(),
                 ),
                 Err(error) => {
                     tracing::warn!(%error, "a progress bar's element could not be kept");
@@ -2276,26 +1309,26 @@ fn percent_of_bar(
 /// What a bar's change is reported through: sent to Core when the read
 /// answers it, dropped when it does not, with its stamp from the event's
 /// timing, handled now.
-fn report_bar(outgoing: &Arc<Outgoing>, meta: Meta) -> Responder<BarChange> {
+fn report_bar(outgoing: &Arc<Outgoing>, timing: EventTiming) -> Responder<BarChange> {
     let reported = Arc::clone(outgoing);
     Responder::new(move |change: Option<BarChange>| {
         if let Some(change) = change {
-            reported.progress(change, meta.timing);
+            reported.progress(change, timing);
         }
     })
 }
 
 /// A classic value change, for the listener's progress bar path (the
 /// hook's filter, `docs/design/progress-bars.md`, "Rules"), with no call
-/// into the application: its window is routed as [`forward_msaa_event`]
-/// routes it, and a hung window, an ignored process, a hidden window of a
-/// listed class, and what `knowledge` says is dropped are dropped here with
-/// no lock; the rest queued on the window's application's reading thread,
-/// one held per object, a newer change replacing it, with no marker, so
-/// that no outpost is started or asked and no fact is made of the event.
+/// into the application: its window is routed to its process, a console
+/// window's to its console host ([`routed_process`]), and a hung window,
+/// an ignored process, a hidden window of a listed class, and what
+/// `knowledge` says is dropped are dropped here with no lock; the rest
+/// queued on the window's application's reading thread, behind Core's
+/// requests, one held per object, a newer change replacing it.
 fn value_change_event(
     outgoing: &Arc<Outgoing>,
-    readers: &Arc<Readers<UiaFocusReading>>,
+    readers: &Arc<Readers<UiaReading>>,
     knowledge: &mut ValueChangeKnowledge,
     event: WinEvent,
 ) {
@@ -2321,7 +1354,7 @@ fn value_change_event(
     if outgoing.ignored.contains(pid) || outgoing.ignored.contains(Pid(owner)) {
         return;
     }
-    if readers.window_hung(hwnd) {
+    if window_hung(&readers.reading().readability, hwnd) {
         tracing::debug!(%pid, hwnd, "a value change dropped: its window is hung");
         return;
     }
@@ -2361,23 +1394,23 @@ fn value_change_event(
             ),
         }
     };
-    let meta = outgoing.received(FocusEvent::ClassicBar);
+    let timing = outgoing.observed();
     readers.push(
         pid,
-        meta,
-        UiaJob::ClassicBar {
-            object,
-            read,
-            key: bar_key(object),
+        JobKind::ClassicBar {
             raiser: BarRaiser {
                 raised_by: thread,
                 focused: knowledge.is_focused(object),
             },
-            report: report_bar(outgoing, meta),
+            key: bar_key(object).to_vec(),
+        },
+        UiaJob::ClassicBar {
+            object,
+            read,
+            report: report_bar(outgoing, timing),
             learn: learn_bar(knowledge.sender(), pid, object, owner_thread),
             window,
         },
-        MarkerOwed::nothing(),
     );
 }
 
@@ -2564,98 +1597,12 @@ fn in_foreground(window: isize) -> bool {
     front != 0 && (window == front || verbatim_win32::window::is_child(front, window))
 }
 
-/// Forwards one global MSAA `WinEvent` as a fact for the process
-/// [`routed_process`] names, with the thread that raised it and when, unless
-/// that process's outpost has its own hook in and took it in itself
-/// ([`Outgoing::fact`]). Drops a null window or a pid-zero owner; the raw
-/// object address is forwarded untouched, and the app outpost does the
-/// acquisition. Returns whether the event's window is a console host
-/// window, by the class read to route it, `false` for an event dropped
-/// before that read, whose window is null or has no owner; for an MSAA
-/// focus routed to a process, that process; and when the event was
-/// observed.
-fn forward_msaa_event(outgoing: &Outgoing, event: WinEvent) -> Forwarded {
-    // The observation, before the callback's local reads, which the
-    // listener's handling stage then holds.
-    let observed_at_us = outgoing.now();
-    let forwarded = |console, focus_of| Forwarded {
-        console,
-        focus_of,
-        observed_at_us,
-    };
-    let WinEvent {
-        kind,
-        hwnd,
-        id_object,
-        id_child,
-        thread,
-        time,
-        raised_ms_ago,
-        ..
-    } = event;
-    if matches!(kind, WinEventKind::MenuEnd | WinEventKind::SwitchEnd) {
-        // Not routed to an outpost: if no focus event follows, Core reads
-        // the focus of whichever application is then in front. NVDA accepts
-        // these from any window, even an invalid one.
-        outgoing.menu_or_switch_ended(observed_at_us);
-        return forwarded(false, None);
-    }
-    // NVDA takes a null window as the desktop window
-    // (`internalWinEventHandler.py` 113 to 129), whose process is the
-    // client server, whose objects NVDA's focused-state test refuses
-    // (`shouldAllowIAccessibleFocusEvent` on the desktop window's object)
-    // and Verbatim cannot open: dropping it here is the same outcome.
-    if hwnd == 0 {
-        return forwarded(false, None);
-    }
-    let owner = window_pid(hwnd);
-    if owner == 0 {
-        return forwarded(false, None);
-    }
-    let class = window_class_name(hwnd);
-    let console = class == CONSOLE_WINDOW_CLASS;
-    let Some(pid) = routed_process(&class, owner, || process_of_thread(thread)) else {
-        log_unread_console_once(hwnd, thread);
-        return forwarded(console, None);
-    };
-    if pid != owner {
-        if outgoing.ignored.contains(Pid(owner)) {
-            // The console of a process Verbatim ignores, whose events were
-            // dropped by its owner before they went to its console host.
-            return forwarded(console, None);
-        }
-        tracing::debug!(
-            hwnd,
-            ?kind,
-            console_host = pid,
-            client = owner,
-            "a console window's event goes to its console host"
-        );
-    }
-    // Every kind the listener subscribes to (LISTENER_SUBSCRIPTIONS) that
-    // reaches here is a fact: the console's and the shell's foreground
-    // events are handled before this.
-    let Some(fact) = verbatim_ia2::fact_of_win_event(kind, (hwnd, id_object, id_child)) else {
-        return forwarded(console, None);
-    };
-    outgoing.fact(
-        Pid(pid),
-        fact,
-        Some(raised_ms_ago),
-        Some(WinEventStamp { thread, time }),
-        observed_at_us,
-    );
-    let focus_of =
-        (kind == WinEventKind::Focus && !outgoing.ignored.contains(Pid(pid))).then_some(Pid(pid));
-    forwarded(console, focus_of)
-}
-
-/// A value change or one of the desktop's events, each taken by its own
-/// path: whether `event` was one of these, already handled. An MSAA focus
-/// is noted for the value changes' limits and goes on as ever.
+/// A value change, taken by the progress path: whether `event` was one,
+/// already handled. An MSAA focus is noted for the value changes' limits
+/// and goes on.
 fn routed_elsewhere(
     outgoing: &Arc<Outgoing>,
-    readers: &Arc<Readers<UiaFocusReading>>,
+    readers: &Arc<Readers<UiaReading>>,
     knowledge: &RefCell<ValueChangeKnowledge>,
     event: WinEvent,
 ) -> bool {
@@ -2666,67 +1613,14 @@ fn routed_elsewhere(
                 object: event.id_object,
                 child: event.id_child,
             });
-            return false;
+            false
         }
         WinEventKind::ValueChange => {
             value_change_event(outgoing, readers, &mut knowledge.borrow_mut(), event);
+            true
         }
-        WinEventKind::DesktopSwitch | WinEventKind::DesktopName => {
-            desktop_event(outgoing, readers, event);
-        }
-        _ => return false,
+        _ => false,
     }
-    true
-}
-
-/// The desktop's `WinEvent`s, for Core: a desktop switch, judged by NVDA's
-/// test, local calls; and the desktop window's name change, whose name is
-/// read on the reading thread of the desktop window's process, csrss's, as
-/// D13's callbacks make no cross-process call, behind every read that
-/// thread has waiting; its read is abandoned at its deadline, as any read
-/// is, and then nothing is sent.
-fn desktop_event(outgoing: &Arc<Outgoing>, readers: &Readers<UiaFocusReading>, event: WinEvent) {
-    let observed_at_us = outgoing.now();
-    if event.kind == WinEventKind::DesktopSwitch {
-        outgoing.desktop_switched(
-            observed_at_us,
-            verbatim_win32::window::input_desktop_opens(),
-        );
-        return;
-    }
-    let csrss = Pid(window_pid(event.hwnd));
-    let meta = Meta {
-        timing: EventTiming {
-            observed_at_us,
-            ..EventTiming::default()
-        },
-        ..outgoing.received(FocusEvent::DesktopName)
-    };
-    let named = Arc::clone(outgoing);
-    let name = Responder::new(move |name: Option<String>| {
-        if let Some(name) = name {
-            named.desktop_name(name, meta.timing);
-        }
-    });
-    tracing::debug!(%csrss, marker = meta.marker, "the desktop window's name changed");
-    readers.push(
-        csrss,
-        meta,
-        UiaJob::DesktopName((event.hwnd, event.id_object, event.id_child), name),
-        MarkerOwed::nothing(),
-    );
-}
-
-/// What [`forward_msaa_event`] found of an event it forwarded or dropped.
-#[derive(Clone, Copy)]
-struct Forwarded {
-    /// Whether the event's window is a console host window.
-    console: bool,
-    /// For an MSAA focus routed to a process, that process.
-    focus_of: Option<Pid>,
-    /// When the listener's callback observed the event, in microseconds on
-    /// the run's shared clock.
-    observed_at_us: u64,
 }
 
 /// The listener's nudge that starts the watch of the window in front
@@ -2818,23 +1712,6 @@ fn routed_process(class: &str, owner: u32, host: impl FnOnce() -> Option<u32>) -
     }
 }
 
-/// Logs, at debug and once per window, that the events of the console
-/// window `hwnd` are dropped because the process of its thread `thread`,
-/// its console host, cannot be read. Called only on the `WinEvent` thread.
-fn log_unread_console_once(hwnd: isize, thread: u32) {
-    thread_local! {
-        static LOGGED: std::cell::RefCell<std::collections::HashSet<isize>> =
-            std::cell::RefCell::default();
-    }
-    if LOGGED.with_borrow_mut(|logged| logged.insert(hwnd)) {
-        tracing::debug!(
-            hwnd,
-            thread,
-            "a console window's host cannot be read; its events are dropped"
-        );
-    }
-}
-
 /// The process `thread` belongs to, read with `GetProcessIdOfThread`, a
 /// local call; `None` when the thread cannot be opened, such as one that
 /// has ended.
@@ -2860,11 +1737,10 @@ fn process_of_thread(thread: u32) -> Option<u32> {
 /// (`docs/design/communication.md`, sections 4.6 and 6.3): the calling
 /// thread becomes its I/O thread, which reads Core's commands from
 /// `pipe_in` and finishes the writes to `pipe_out` that pend, while every
-/// thread that produces a fact writes it itself. Returns once Core asks it
-/// to shut down or its command pipe ends, after a clean shutdown that
+/// thread that produces a message writes it itself. Returns once Core asks
+/// it to shut down or its command pipe ends, after a clean shutdown that
 /// waits for every write in flight. Both ends must be overlapped.
-/// `ignored` names the processes whose facts are dropped, `hooks_in` the
-/// applications whose outposts have their own hooks in.
+/// `ignored` names the processes none of whose events is told.
 ///
 /// # Errors
 ///
@@ -2874,10 +1750,9 @@ pub fn run_listener(
     pipe_in: OwnedHandle,
     pipe_out: OwnedHandle,
     ignored: IgnoredProcesses,
-    hooks_in: &[(Pid, OutpostId)],
 ) -> io::Result<()> {
     let (mut io, sender) = ChildIo::new(pipe_in, pipe_out, Waiting::default())?;
-    let listener = Listener::new(sender.clone(), ignored, hooks_in)?;
+    let listener = Listener::new(sender.clone(), ignored)?;
     // This thread is the listener's I/O thread from here on.
     prioritize_role("listener I/O", IO_PRIORITY);
     let served = io.serve(&sender, |body| {
@@ -2886,7 +1761,7 @@ pub fn run_listener(
         let received_at_us = now_us();
         match decode_message::<CoreToListener>(body)? {
             CoreToListener::Shutdown => return Ok(Serving::Stop),
-            command => listener.handle_command(&command, received_at_us),
+            command => listener.handle_command(command, received_at_us),
         }
         Ok(Serving::Continue)
     });
@@ -2912,38 +1787,31 @@ pub fn run_listener(
 mod tests {
     use std::fs::File;
     use std::io::BufReader;
+    use std::sync::atomic::AtomicBool;
     use std::sync::mpsc;
+    use std::sync::{Mutex, PoisonError};
 
     use verbatim_process::overlapped::{End, Flow, pipe};
     use verbatim_process::transport::EVENT_PIPE_BUFFER;
 
     use super::*;
     use verbatim_model::WindowHandle;
-    use verbatim_model::property::RuntimeId;
+    use verbatim_model::property::{PropertyAnswer, PropertyId, PropertyValue, RuntimeId};
+    use verbatim_model::request::{NodeRead, ObjectRead, ReadObject, Reply, RequestNumber};
     use verbatim_model::tell::{ElementToken, EventObject, TellWindow};
     use verbatim_process::message::read_message;
-
-    /// A live re-read is judged by the moved-on rule by its report's
-    /// top-level window, as the read it repeats was, so a slow one the user
-    /// has moved on from ends answered gone; with no window it is judged
-    /// by its deadline alone.
-    #[test]
-    fn a_live_re_read_is_judged_by_its_reports_window() {
-        let reading = UiaFocusReading::new();
-        assert_eq!(reading.window(&UiaJob::LiveReread(4, 0x120)), Some(0x120));
-        assert_eq!(reading.window(&UiaJob::LiveReread(4, 0)), None);
-    }
+    use verbatim_win32::window::Readability;
 
     /// An `Outgoing` writing to a pipe with a buffer of `buffer` bytes, its
     /// writes that pend finished by a thread of the sender's own, as the
-    /// I/O thread finishes them, dropping the facts of the processes
+    /// I/O thread finishes them, telling nothing of the processes
     /// `ignored` holds; and the pipe's other end, which the test reads.
     fn outgoing_with(buffer: u32, ignored: IgnoredProcesses) -> (Outgoing, BufReader<File>) {
         let (ours, theirs) = pipe(Flow::Outbound, buffer, End::Synchronous).expect("a pipe");
         let (sender, _finishing) =
             Sender::start(ours, Waiting::default(), "listener-test", || {}).expect("a sender");
         (
-            Outgoing::new(sender, ignored).expect("the listener's sending side"),
+            Outgoing::untimed(sender, ignored),
             BufReader::new(File::from(theirs)),
         )
     }
@@ -2952,253 +1820,10 @@ mod tests {
         outgoing_with(EVENT_PIPE_BUFFER, IgnoredProcesses::default())
     }
 
-    /// A menu end's grace the test runs by hand: the clock it reads, in
-    /// microseconds, which the test moves, and every time its timer was
-    /// set for, which no timer acts on, so the test says when it goes off
-    /// ([`MenuEnd::grace_ended`]).
-    struct ManualGrace {
-        now: Arc<AtomicU64>,
-        set: Arc<Mutex<Vec<u64>>>,
-    }
-
-    impl ManualGrace {
-        /// Moves the clock to `now`.
-        fn at(&self, now: u64) {
-            self.now.store(now, Ordering::Relaxed);
-        }
-
-        /// Every time the timer was set for, in microseconds, in order.
-        fn set(&self) -> Vec<u64> {
-            self.set
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .clone()
-        }
-    }
-
-    /// [`outgoing_with`], its grace run by hand from a clock at 0.
-    fn outgoing_with_manual_grace(buffer: u32) -> (Outgoing, BufReader<File>, ManualGrace) {
-        let (ours, theirs) = pipe(Flow::Outbound, buffer, End::Synchronous).expect("a pipe");
-        let (sender, _finishing) =
-            Sender::start(ours, Waiting::default(), "listener-test", || {}).expect("a sender");
-        let grace = ManualGrace {
-            now: Arc::new(AtomicU64::new(0)),
-            set: Arc::new(Mutex::new(Vec::new())),
-        };
-        let (now, set) = (Arc::clone(&grace.now), Arc::clone(&grace.set));
-        let outgoing = Outgoing::with_manual_grace(
-            sender,
-            IgnoredProcesses::default(),
-            Box::new(move || now.load(Ordering::Relaxed)),
-            Box::new(move |after| {
-                set.lock()
-                    .unwrap_or_else(PoisonError::into_inner)
-                    .push(u64::try_from(after.as_micros()).unwrap_or(u64::MAX));
-            }),
-        );
-        (outgoing, BufReader::new(File::from(theirs)), grace)
-    }
-
-    /// The facts by process and the menu ends `messages` holds, in order.
-    fn facts_and_ends(messages: Vec<ListenerToCore>) -> Vec<String> {
-        messages
-            .into_iter()
-            .map(|message| match message {
-                ListenerToCore::FocusFact { fact, .. } => format!("fact {}", fact.pid.0),
-                ListenerToCore::MenuOrSwitchEnded { .. } => "menu end".to_owned(),
-                other => format!("{other:?}"),
-            })
-            .collect()
-    }
-
     /// Everything `outgoing` sent, which is closed first, as Core reads it.
     fn sent(outgoing: &Outgoing, reader: &mut BufReader<File>) -> Vec<ListenerToCore> {
         outgoing.close();
         std::iter::from_fn(|| read_message(reader).expect("read")).collect()
-    }
-
-    /// The stamp of an MSAA event raised at `time`.
-    fn raised_at(time: u32) -> WinEventStamp {
-        WinEventStamp { thread: 9, time }
-    }
-
-    #[test]
-    fn a_win_event_raised_after_the_outposts_hook_is_in_is_not_forwarded() {
-        let (outgoing, mut reader) = outgoing();
-        outgoing.fact(Pid(5), msaa_focus(), None, Some(raised_at(90)), 1_000);
-        outgoing.hook_installed(Pid(5), OutpostId(3), 100);
-        // Raised after the tick: the outpost's hook took it in.
-        outgoing.fact(Pid(5), msaa_focus(), None, Some(raised_at(101)), 1_000);
-        // Raised at the tick, and reaching the listener late: forwarded,
-        // for the outpost to match by counting.
-        outgoing.fact(
-            Pid(5),
-            DeliveredFact::Foreground { hwnd: 1 },
-            None,
-            Some(raised_at(100)),
-            1_000,
-        );
-        // Another application's, and a UIA fact: forwarded.
-        outgoing.fact(Pid(6), msaa_focus(), None, Some(raised_at(101)), 1_000);
-        outgoing.fact(
-            Pid(5),
-            DeliveredFact::UiaSelection {
-                hwnd: 1,
-                focus_window: 0,
-                snapshot: uia_snapshot(),
-            },
-            None,
-            None,
-            1_000,
-        );
-        let kinds: Vec<String> = sent(&outgoing, &mut reader)
-            .into_iter()
-            .map(|message| match message {
-                ListenerToCore::FocusFact {
-                    fact, win_event, ..
-                } => {
-                    format!("{} {:?}", fact.pid.0, fact.fact.key(win_event))
-                }
-                ListenerToCore::ForwardingEnded {
-                    pid,
-                    outpost,
-                    through,
-                } => format!("ended {} {} {through}", pid.0, outpost.0),
-                other => format!("{other:?}"),
-            })
-            .collect();
-        assert_eq!(
-            kinds,
-            [
-                "5 Some(MsaaFocus(1, -4, 0, 9))",
-                "ended 5 3 100",
-                "5 Some(Foreground(1, 9))",
-                "6 Some(MsaaFocus(1, -4, 0, 9))",
-                "5 Some(UiaSelection([42]))",
-            ],
-            "the fact sent first goes ahead of forwarding ended"
-        );
-    }
-
-    #[test]
-    fn a_focus_reads_marker_read_and_drop_are_never_replaced() {
-        let (outgoing, mut reader) = outgoing();
-        let meta = |marker| Meta {
-            marker,
-            kind: FocusEvent::Focus,
-            trace: TraceId::mint(),
-            timing: EventTiming::default(),
-        };
-        // Two focus events on one element, the first read, the second
-        // dropped: an outpost waits on each marker, so all four are sent,
-        // in order.
-        outgoing.focus_read(Pid(5), DeliveredFact::UiaFocusMarker { marker: 1 }, meta(1));
-        outgoing.focus_read(Pid(5), DeliveredFact::UiaFocusMarker { marker: 2 }, meta(2));
-        outgoing.focus_read(
-            Pid(5),
-            Judged::Dropped("read").into_fact(1, FocusEvent::Focus),
-            meta(1),
-        );
-        outgoing.focus_read(
-            Pid(5),
-            DeliveredFact::UiaFocusDropped {
-                marker: 2,
-                focus: true,
-            },
-            meta(2),
-        );
-        let facts: Vec<DeliveredFact> = sent(&outgoing, &mut reader)
-            .into_iter()
-            .filter_map(|message| match message {
-                ListenerToCore::FocusFact { fact, .. } => Some(fact.fact),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(
-            facts,
-            [
-                DeliveredFact::UiaFocusMarker { marker: 1 },
-                DeliveredFact::UiaFocusMarker { marker: 2 },
-                DeliveredFact::UiaFocusDropped {
-                    marker: 1,
-                    focus: true,
-                },
-                DeliveredFact::UiaFocusDropped {
-                    marker: 2,
-                    focus: true,
-                },
-            ]
-        );
-    }
-
-    #[test]
-    fn waiting_facts_are_coalesced_one_per_element_and_kind_behind_a_write_in_flight() {
-        // A pipe with a 4 KiB buffer, so a large fact's write pends until
-        // the test reads, and the facts sent meanwhile wait.
-        let (outgoing, mut reader) = outgoing_with(4096, IgnoredProcesses::default());
-        let mut large = uia_snapshot();
-        large.name = Some("x".repeat(20_000));
-        outgoing.fact(
-            Pid(7),
-            DeliveredFact::UiaSelection {
-                hwnd: 1,
-                focus_window: 0,
-                snapshot: large,
-            },
-            None,
-            None,
-            1_000,
-        );
-        outgoing.fact(Pid(5), msaa_focus(), None, None, 1_000);
-        outgoing.fact(Pid(6), msaa_focus(), None, None, 1_000);
-        // Replaces the waiting one for the same element and kind, and goes
-        // to the back.
-        outgoing.fact(Pid(5), msaa_focus(), None, None, 2_000);
-        outgoing.urgent(ListenerToCore::Pong {
-            parked_count: 0,
-            written_at_us: 0,
-        });
-        let order: Vec<String> = sent(&outgoing, &mut reader)
-            .into_iter()
-            .map(|message| match message {
-                ListenerToCore::FocusFact { fact, timing, .. } => {
-                    format!("{} {}", fact.pid.0, timing.observed_at_us)
-                }
-                ListenerToCore::Pong { .. } => "pong".to_owned(),
-                other => format!("{other:?}"),
-            })
-            .collect();
-        assert_eq!(order, ["7 1000", "pong", "6 1000", "5 2000"]);
-    }
-
-    #[test]
-    fn a_win_event_is_forwarded_again_once_the_hook_is_removed() {
-        let (outgoing, mut reader) = outgoing();
-        outgoing.hook_installed(Pid(5), OutpostId(3), 100);
-        outgoing.hook_removed(Pid(5));
-        outgoing.fact(Pid(5), msaa_focus(), None, Some(raised_at(101)), 1_000);
-        let sent = sent(&outgoing, &mut reader);
-        assert!(
-            matches!(
-                sent.as_slice(),
-                [
-                    ListenerToCore::ForwardingEnded { .. },
-                    ListenerToCore::FocusFact { .. }
-                ]
-            ),
-            "{sent:?}"
-        );
-    }
-
-    fn uia_snapshot() -> UiaSnapshotFact {
-        UiaSnapshotFact {
-            runtime_id: vec![42],
-            role: verbatim_model::Role::ListItem,
-            name: None,
-            value: None,
-            states: verbatim_model::StateSet::new(),
-            details: verbatim_model::NodeDetails::default(),
-        }
     }
 
     /// Reads the messages `reader` brings on another thread, since a read
@@ -3213,14 +1838,6 @@ mod tests {
             }
         });
         rx
-    }
-
-    fn msaa_focus() -> DeliveredFact {
-        DeliveredFact::MsaaFocus {
-            hwnd: 1,
-            id_object: -4,
-            id_child: 0,
-        }
     }
 
     #[test]
@@ -3253,33 +1870,16 @@ mod tests {
         assert_eq!(process_of_thread(thread), Some(std::process::id()));
     }
 
-    #[test]
-    fn a_fact_from_an_ignored_process_is_never_sent() {
-        // This process stands for the owner's Windows Terminal.
-        let own = Pid(std::process::id());
-        let (outgoing, mut reader) =
-            outgoing_with(EVENT_PIPE_BUFFER, IgnoredProcesses::hold([own]));
-        outgoing.fact(
-            own,
-            DeliveredFact::Foreground { hwnd: 1 },
-            None,
-            None,
-            1_000,
-        );
-        outgoing.fact(own, msaa_focus(), None, None, 1_000);
-        outgoing.fact(Pid(5), msaa_focus(), None, None, 1_000);
-        let sent = sent(&outgoing, &mut reader);
-        let [ListenerToCore::FocusFact { fact, .. }] = sent.as_slice() else {
-            panic!("one fact is sent, the other process's: {sent:?}");
-        };
-        assert_eq!(fact.pid, Pid(5));
-    }
-
     /// The desktop window, which the desktop's root element has as its
     /// own window.
     fn desktop_window() -> isize {
         // SAFETY: GetDesktopWindow has no preconditions.
         unsafe { windows::Win32::UI::WindowsAndMessaging::GetDesktopWindow() }.0 as isize
+    }
+
+    /// The desktop window as the model names it.
+    fn desktop_handle() -> WindowHandle {
+        WindowHandle(u64::try_from(desktop_window()).expect("a handle"))
     }
 
     /// The desktop's root element as the listener's registration delivers
@@ -3316,16 +1916,25 @@ mod tests {
         assert_eq!(of(bar, NATIVE, None), None, "a non-numeric value");
     }
 
+    /// Whether `readers` hold no job: the idle barrier's waiter runs at
+    /// once, under their lock.
+    fn nothing_queued(readers: &Readers<UiaReading>) -> bool {
+        let ran = Arc::new(AtomicBool::new(false));
+        let set = Arc::clone(&ran);
+        readers.when_idle(Box::new(move || set.store(true, Ordering::SeqCst)));
+        ran.load(Ordering::SeqCst)
+    }
+
     /// A hung window's value change is dropped in the hook, with no read
     /// queued, as a UIA event from one is dropped as it arrives.
     #[test]
     fn a_hung_windows_value_change_is_dropped_in_the_hook() {
         let asked = Arc::new(Mutex::new(Vec::new()));
-        let (outgoing, readers, _checks, _events) = listening(|_| Readability::Hung, &asked);
+        let parts = listening(|_| Readability::Hung, &asked);
         let hwnd = desktop_window();
         value_change_event(
-            &outgoing,
-            &readers,
+            &parts.outgoing,
+            &parts.readers,
             &mut ValueChangeKnowledge::new(),
             value_change(hwnd),
         );
@@ -3336,11 +1945,8 @@ mod tests {
                 .as_slice(),
             [hwnd]
         );
-        assert!(
-            !readers.has_reading_thread(Pid(window_pid(hwnd))),
-            "no read was queued"
-        );
-        readers.stop();
+        assert!(nothing_queued(&parts.readers), "no read was queued");
+        parts.stop();
     }
 
     /// A value change on a window of an ignored process is dropped before
@@ -3374,20 +1980,15 @@ mod tests {
             IgnoredProcesses::hold([Pid(window_pid(hwnd))]),
         );
         let outgoing = Arc::new(outgoing);
-        let readers = Arc::new(Readers::new(
-            UiaFocusReading::new(),
-            verbatim_model::FOCUS_READ_DEADLINE,
-        ));
+        let kept = Arc::new(Kept::default());
+        let readers = Arc::new(Readers::new(UiaReading::new(&outgoing, &kept)));
         value_change_event(
             &outgoing,
             &readers,
             &mut ValueChangeKnowledge::new(),
             value_change(hwnd),
         );
-        assert!(
-            !readers.has_reading_thread(Pid(window_pid(hwnd))),
-            "no read was queued"
-        );
+        assert!(nothing_queued(&readers), "no read was queued");
         readers.stop();
         // SAFETY: the window this test made, on its own thread.
         unsafe { DestroyWindow(window) }.expect("the window is destroyed");
@@ -3441,19 +2042,48 @@ mod tests {
         }
     }
 
-    /// The listener's sending side, taking UIA events, its pipe read on a
-    /// thread of its own, and its readers, whose readability reader
-    /// answers the `n`th window it is asked, counted from 0, as `answer`
-    /// says, each window asked kept in `asked`.
-    fn listening(
+    /// The listener's sending side, taking UIA events, its kept elements,
+    /// readers and check threads, and what it sends, read on a thread of
+    /// its own.
+    struct Listening {
+        outgoing: Arc<Outgoing>,
+        kept: Arc<Kept>,
+        readers: Arc<Readers<UiaReading>>,
+        checks: Arc<Checks>,
+        sent: mpsc::Receiver<ListenerToCore>,
+    }
+
+    impl Listening {
+        /// Stops the check and reading threads and closes the sending
+        /// side: every message sent from now on, in order.
+        fn stop(self) -> Vec<ListenerToCore> {
+            self.checks.stop();
+            self.readers.stop();
+            self.outgoing.close();
+            self.sent.iter().collect()
+        }
+
+        /// The next message sent within 20 seconds.
+        fn next(&self) -> ListenerToCore {
+            self.sent
+                .recv_timeout(Duration::from_secs(20))
+                .expect("a message")
+        }
+    }
+
+    /// [`Listening`], whose readability reader answers the `n`th window it
+    /// is asked, counted from 0, as `answer` says, each window asked kept in
+    /// `asked`, and whose MSAA name reader is the system's.
+    fn listening(answer: fn(usize) -> Readability, asked: &Arc<Mutex<Vec<isize>>>) -> Listening {
+        listening_named(answer, asked, verbatim_ia2::acquire::name_at_event)
+    }
+
+    /// [`listening`] with the MSAA name reader `name_at_event`.
+    fn listening_named(
         answer: fn(usize) -> Readability,
         asked: &Arc<Mutex<Vec<isize>>>,
-    ) -> (
-        Arc<Outgoing>,
-        Arc<Readers<UiaFocusReading>>,
-        Arc<Checks>,
-        mpsc::Receiver<ListenerToCore>,
-    ) {
+        name_at_event: fn(isize, i32, i32) -> Option<String>,
+    ) -> Listening {
         let (outgoing, reader) = outgoing();
         outgoing.uia_installation_ended();
         let asked = Arc::clone(asked);
@@ -3462,100 +2092,165 @@ mod tests {
             asked.push(window);
             answer(asked.len() - 1)
         });
-        let readers = Arc::new(Readers::new(
-            UiaFocusReading {
-                desktop_name: verbatim_ia2::acquire::name_at_event,
-                readability,
-            },
-            verbatim_model::FOCUS_READ_DEADLINE,
-        ));
         let outgoing = Arc::new(outgoing);
-        let checks = Arc::new(Checks::new(&outgoing, &readers));
-        (outgoing, readers, checks, drain(reader))
+        let kept = Arc::new(Kept::default());
+        let readers = Arc::new(Readers::new(UiaReading {
+            outgoing: Arc::clone(&outgoing),
+            kept: Arc::clone(&kept),
+            readability,
+            name_at_event,
+        }));
+        let checks = Arc::new(Checks::new(&outgoing, &readers, &kept));
+        Listening {
+            outgoing,
+            kept,
+            readers,
+            checks,
+            sent: drain(reader),
+        }
     }
 
-    /// The desktop window's name change, as the csrss-scoped hook delivers
-    /// it, injected here, is read on the reading thread of the desktop
-    /// window's process, csrss's, by the reading's name reader, which here
-    /// answers "Desktop 2" for the desktop window's own address: Core is
-    /// sent the name, then its due time, on the listener's timer, and
-    /// nothing else.
+    /// Core's generic read of `object`, the request `number`, naming
+    /// `window`.
+    fn read_of(number: u64, window: WindowHandle, read: ReadObject) -> Box<Ask> {
+        Box::new(Ask {
+            number: RequestNumber(number),
+            window,
+            verdict: verbatim_model::request::WindowVerdict::Uia,
+            request: Request::ReadObject(read),
+        })
+    }
+
+    /// The desktop window's name at its own address, which the injected
+    /// name reader answers "Desktop 2", is read for Core's request on the
+    /// reading thread of the desktop window's process, csrss's, and
+    /// answered with the window's facts; a set beyond the name is refused,
+    /// and an address with no name answered not there.
     #[test]
-    fn a_name_change_of_the_desktop_window_is_read_on_csrss_s_reading_thread() {
-        let (outgoing, reader) = outgoing();
-        let readers = Arc::new(Readers::new(
-            UiaFocusReading {
-                desktop_name: |hwnd, id_object, id_child| {
-                    (hwnd == desktop_window()
-                        && id_object == windows::Win32::UI::WindowsAndMessaging::OBJID_CLIENT.0
-                        && id_child == 0)
-                        .then(|| "Desktop 2".to_owned())
-                },
-                readability: Arc::new(|_| Readability::Readable),
-            },
-            verbatim_model::FOCUS_READ_DEADLINE,
-        ));
-        let outgoing = Arc::new(outgoing);
-        let sent = drain(reader);
-        let csrss = Pid(window_pid(desktop_window()));
-        desktop_event(
-            &outgoing,
-            &readers,
-            WinEvent {
-                kind: WinEventKind::DesktopName,
-                event: windows::Win32::UI::WindowsAndMessaging::EVENT_OBJECT_NAMECHANGE,
-                hwnd: desktop_window(),
-                id_object: windows::Win32::UI::WindowsAndMessaging::OBJID_CLIENT.0,
-                id_child: 0,
-                thread: 0,
-                time: 0,
-                raised_ms_ago: 0,
+    fn the_desktop_windows_name_is_read_for_cores_request() {
+        let asked = Arc::new(Mutex::new(Vec::new()));
+        let parts = listening_named(
+            |_| Readability::Readable,
+            &asked,
+            |hwnd, object, child| {
+                (hwnd == desktop_window()
+                    && object == windows::Win32::UI::WindowsAndMessaging::OBJID_CLIENT.0
+                    && child == 0)
+                    .then(|| "Desktop 2".to_owned())
             },
         );
-        let news = || match sent.recv_timeout(Duration::from_secs(10)) {
-            Ok(ListenerToCore::Desktop { news, .. }) => news,
-            other => panic!("news of the desktop: {other:?}"),
+        let name_of = |object, set| ReadObject {
+            object: ObjectRef::Msaa {
+                window: desktop_handle(),
+                object,
+                child: 0,
+            },
+            set,
+            relation: None,
+            descendants: false,
+            walk: None,
+            purpose: Purpose::Other,
         };
+        let client = windows::Win32::UI::WindowsAndMessaging::OBJID_CLIENT.0;
+        let request = |number, read| {
+            ask(
+                (&parts.readers, &parts.kept, &parts.checks),
+                read_of(number, desktop_handle(), read),
+            );
+        };
+        request(1, name_of(client, vec![PropertyId::Name]));
         assert_eq!(
-            [news(), news()],
+            parts.next(),
+            ListenerToCore::Answer(Answer {
+                number: RequestNumber(1),
+                outcome: Outcome::Result(Reply::Object(Box::new(ObjectRead {
+                    object: NodeRead {
+                        node: None,
+                        window: verbatim_listener_logic::tell::node_window(
+                            &tells::SystemReads,
+                            desktop_window()
+                        ),
+                        values: verbatim_model::property::PropertyValues(vec![PropertyAnswer {
+                            id: PropertyId::Name,
+                            value: Some(PropertyValue::Text("Desktop 2".to_owned())),
+                        }]),
+                    },
+                    relation: None,
+                    descendants: Vec::new(),
+                    ancestors: Vec::new(),
+                    met: None,
+                    route: None,
+                }))),
+                probes: Vec::new(),
+                detail: String::new(),
+            })
+        );
+        request(2, name_of(client, vec![PropertyId::Name, PropertyId::Role]));
+        let window = windows::Win32::UI::WindowsAndMessaging::OBJID_WINDOW.0;
+        request(3, name_of(window, vec![PropertyId::Name]));
+        let outcomes: Vec<(u64, Outcome)> = [parts.next(), parts.next()]
+            .into_iter()
+            .map(|message| match message {
+                ListenerToCore::Answer(answer) => (answer.number.0, answer.outcome),
+                other => panic!("an answer: {other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            outcomes,
             [
-                DesktopNews::Name("Desktop 2".to_owned()),
-                DesktopNews::NameDue
+                (2, Outcome::Refused(Refusal::Unsupported)),
+                (3, Outcome::NotThere)
             ]
         );
-        assert!(
-            readers.has_reading_thread(csrss),
-            "csrss's reading thread read it"
-        );
-        readers.stop();
-        drop(readers);
-        outgoing.close();
-        assert_eq!(sent.iter().collect::<Vec<_>>(), []);
+        assert_eq!(parts.stop(), []);
     }
 
-    /// The facts the listener sent once its readers are stopped and let go,
-    /// each event still queued then answering its marker, and its sending
-    /// side closed: every fact it sent, in order.
-    fn facts_once_stopped(
-        outgoing: &Outgoing,
-        readers: Arc<Readers<UiaFocusReading>>,
-        sent: &mpsc::Receiver<ListenerToCore>,
-    ) -> Vec<DeliveredFact> {
-        readers.stop();
-        drop(readers);
-        outgoing.close();
-        sent.iter()
-            .filter_map(|message| match message {
-                ListenerToCore::FocusFact { fact, .. } => Some(fact.fact),
-                _ => None,
+    /// A request on an element the listener does not keep, or a node it
+    /// does not hold, is answered at once.
+    #[test]
+    fn a_request_on_nothing_the_listener_holds_is_answered_at_once() {
+        let asked = Arc::new(Mutex::new(Vec::new()));
+        let parts = listening(|_| Readability::Readable, &asked);
+        let read = |object| ReadObject {
+            object,
+            set: vec![PropertyId::Name],
+            relation: None,
+            descendants: false,
+            walk: None,
+            purpose: Purpose::Other,
+        };
+        ask(
+            (&parts.readers, &parts.kept, &parts.checks),
+            read_of(1, desktop_handle(), read(ObjectRef::Kept(ElementToken(9)))),
+        );
+        ask(
+            (&parts.readers, &parts.kept, &parts.checks),
+            read_of(
+                2,
+                desktop_handle(),
+                read(ObjectRef::Node(verbatim_model::NodeId::new(1))),
+            ),
+        );
+        let outcomes: Vec<(u64, Outcome)> = parts
+            .stop()
+            .into_iter()
+            .map(|message| match message {
+                ListenerToCore::Answer(answer) => (answer.number.0, answer.outcome),
+                other => panic!("an answer: {other:?}"),
             })
-            .collect()
+            .collect();
+        assert_eq!(
+            outcomes,
+            [
+                (1, Outcome::NotThere),
+                (2, Outcome::Refused(Refusal::Unsupported))
+            ]
+        );
     }
 
     /// A UIA focus whose sender's cached window the listener's reader
-    /// answers hung as it arrives is dropped in the callback: no marker is
-    /// sent and nothing is queued, so nothing is sent once the readers stop,
-    /// and the reader was asked of the sender's window once.
+    /// answers hung as it arrives is dropped in the callback: nothing is
+    /// told, and the reader was asked of the sender's window once.
     #[test]
     fn a_focus_whose_window_is_hung_as_it_arrives_is_dropped_in_the_callback() {
         let uia = verbatim_uia::Uia::new().expect("a UIA client");
@@ -3565,31 +2260,30 @@ mod tests {
             "the sender has a process, so only its window can drop it"
         );
         let asked = Arc::new(Mutex::new(Vec::new()));
-        let (outgoing, readers, checks, sent) = listening(|_| Readability::Hung, &asked);
-        let Subscription::Focus { callback } = focus_subscription(&outgoing, &readers, &checks)
+        let parts = listening(|_| Readability::Hung, &asked);
+        let Subscription::Focus { callback } =
+            focus_subscription(&parts.outgoing, &parts.readers, &parts.checks)
         else {
             unreachable!("the focus subscription");
         };
         callback(&sender);
         drop(callback);
-        assert_eq!(facts_once_stopped(&outgoing, readers, &sent), []);
+        assert_eq!(parts.stop(), []);
         assert_eq!(
             *asked.lock().unwrap_or_else(PoisonError::into_inner),
             [desktop_window()]
         );
     }
 
-    /// A UIA focus whose sender's window hangs after it arrives is queued
-    /// behind its marker and read with no second test of its window: its
-    /// reading thread tests no window before its calls, so the reader is
-    /// asked once, as the focus arrived, and the read's outcome, here its
-    /// drop, takes the marker's place.
+    /// A UIA focus whose sender's window hangs after it arrives is checked
+    /// and told with no second test of its window by the listener's
+    /// readability reader: asked once, as the focus arrived.
     #[test]
-    fn a_focus_whose_window_hangs_after_it_arrives_is_read() {
+    fn a_focus_whose_window_hangs_after_it_arrives_is_told() {
         let uia = verbatim_uia::Uia::new().expect("a UIA client");
         let sender = desktop_sender::<ListenerEvent>(&uia);
         let asked = Arc::new(Mutex::new(Vec::new()));
-        let (outgoing, readers, checks, sent) = listening(
+        let parts = listening(
             |nth| {
                 if nth == 0 {
                     Readability::Readable
@@ -3599,40 +2293,31 @@ mod tests {
             },
             &asked,
         );
-        let Subscription::Focus { callback } = focus_subscription(&outgoing, &readers, &checks)
+        let Subscription::Focus { callback } =
+            focus_subscription(&parts.outgoing, &parts.readers, &parts.checks)
         else {
             unreachable!("the focus subscription");
         };
         callback(&sender);
         drop(callback);
-        // The focus's tell, which its check thread sends beside today's
-        // facts, is not what this test pins.
-        let timeout = Duration::from_secs(10);
-        let next_fact = || loop {
-            match sent.recv_timeout(timeout).expect("a fact") {
-                ListenerToCore::FocusFact { fact, .. } => return fact.fact,
-                ListenerToCore::Tell(_) => {}
-                other => panic!("the listener sent {other:?}, not a fact"),
-            }
+        let ListenerToCore::Tell(tell) = parts.next() else {
+            panic!("a tell");
         };
-        let marker = next_fact();
-        let outcome = next_fact();
-        assert_eq!(
-            [marker, outcome],
-            [
-                DeliveredFact::UiaFocusMarker { marker: 1 },
-                DeliveredFact::UiaFocusDropped {
-                    marker: 1,
-                    focus: true,
-                },
-            ]
-        );
-        assert_eq!(facts_once_stopped(&outgoing, readers, &sent), []);
+        assert_eq!(tell.kind, EventKind::UiaFocus);
+        assert_eq!(parts.stop(), []);
         assert_eq!(
             *asked.lock().unwrap_or_else(PoisonError::into_inner),
             [desktop_window()],
-            "asked as it arrived, and not by its read"
+            "asked as it arrived, and not by its check"
         );
+    }
+
+    /// The next tell `parts` sends.
+    fn next_tell(parts: &Listening) -> Box<verbatim_model::tell::Event> {
+        match parts.next() {
+            ListenerToCore::Tell(tell) => tell,
+            other => panic!("the listener sent {other:?}, not a tell"),
+        }
     }
 
     /// A UIA focus is checked on its application's check thread and told
@@ -3648,26 +2333,19 @@ mod tests {
         let uia = verbatim_uia::Uia::new().expect("a UIA client");
         let sender = desktop_sender::<ListenerEvent>(&uia);
         let asked = Arc::new(Mutex::new(Vec::new()));
-        let (outgoing, readers, checks, sent) = listening(|_| Readability::Readable, &asked);
-        let Subscription::Focus { callback } = focus_subscription(&outgoing, &readers, &checks)
+        let parts = listening(|_| Readability::Readable, &asked);
+        let Subscription::Focus { callback } =
+            focus_subscription(&parts.outgoing, &parts.readers, &parts.checks)
         else {
             unreachable!("the focus subscription");
         };
-        let timeout = Duration::from_secs(20);
-        let next_tell = || loop {
-            match sent.recv_timeout(timeout).expect("a tell") {
-                ListenerToCore::Tell(tell) => return tell,
-                ListenerToCore::FocusFact { .. } => {}
-                other => panic!("the listener sent {other:?}"),
-            }
-        };
         callback(&sender);
-        let first = next_tell();
+        let first = next_tell(&parts);
         callback(&sender);
-        let second = next_tell();
+        let second = next_tell(&parts);
         drop(callback);
         let runtime_id = RuntimeId(sender.runtime_id());
-        let desktop = WindowHandle(u64::try_from(desktop_window()).expect("a handle"));
+        let desktop = desktop_handle();
         let (desktop_thread, _) = verbatim_win32::window::window_owner(desktop_window());
         assert_eq!(first.kind, EventKind::UiaFocus);
         assert_eq!(
@@ -3708,14 +2386,102 @@ mod tests {
                 previous_sibling: None,
             })
         );
-        checks.stop();
-        readers.stop();
-        outgoing.close();
+        parts.stop();
+    }
+
+    /// Core's read of a kept element, here the desktop's root element a
+    /// focus event named, is answered on its application's reading thread
+    /// with its properties by the set, from the same element the event
+    /// carried; a read that is not a focus read lets the element go, so a
+    /// second read of its token is answered not there.
+    #[test]
+    fn a_kept_element_is_read_once_for_cores_request() {
+        let uia = verbatim_uia::Uia::new().expect("a UIA client");
+        let sender = desktop_sender::<ListenerEvent>(&uia);
+        let asked = Arc::new(Mutex::new(Vec::new()));
+        let parts = listening(|_| Readability::Readable, &asked);
+        let Subscription::Focus { callback } =
+            focus_subscription(&parts.outgoing, &parts.readers, &parts.checks)
+        else {
+            unreachable!("the focus subscription");
+        };
+        callback(&sender);
+        drop(callback);
+        let tell = next_tell(&parts);
+        let EventObject::Uia { token, .. } = tell.object else {
+            panic!("a kept element: {:?}", tell.object);
+        };
+        let set = vec![
+            PropertyId::Name,
+            PropertyId::NativeWindow,
+            PropertyId::Process,
+            PropertyId::RuntimeId,
+        ];
+        let read = ReadObject {
+            object: ObjectRef::Kept(token),
+            set: set.clone(),
+            relation: None,
+            descendants: false,
+            walk: None,
+            purpose: Purpose::Other,
+        };
+        for number in [1, 2] {
+            ask(
+                (&parts.readers, &parts.kept, &parts.checks),
+                read_of(number, desktop_handle(), read.clone()),
+            );
+        }
+        let fields = sender.read();
+        let pid = Pid(fields.process_id.expect("a process"));
+        let expected = verbatim_model::property::PropertyValues(vec![
+            PropertyAnswer {
+                id: PropertyId::Name,
+                value: fields
+                    .parts(sender.runtime_id())
+                    .name
+                    .map(PropertyValue::Text),
+            },
+            PropertyAnswer {
+                id: PropertyId::NativeWindow,
+                value: Some(PropertyValue::Window(desktop_handle())),
+            },
+            PropertyAnswer {
+                id: PropertyId::Process,
+                value: Some(PropertyValue::Process(pid)),
+            },
+            PropertyAnswer {
+                id: PropertyId::RuntimeId,
+                value: Some(PropertyValue::RuntimeId(RuntimeId(sender.runtime_id()))),
+            },
+        ]);
+        let ListenerToCore::Answer(first) = parts.next() else {
+            panic!("an answer");
+        };
+        let Outcome::Result(Reply::Object(object)) = first.outcome else {
+            panic!("a result: {:?}", first.outcome);
+        };
+        assert_eq!(first.number, RequestNumber(1));
+        assert_eq!(object.object.values, expected);
+        assert_eq!(
+            object.object.window,
+            verbatim_listener_logic::tell::node_window(&tells::SystemReads, desktop_window())
+        );
+        assert_eq!(object.route, None, "no walk asked");
+        assert_eq!(
+            parts.next(),
+            ListenerToCore::Answer(Answer {
+                number: RequestNumber(2),
+                outcome: Outcome::NotThere,
+                probes: Vec::new(),
+                detail: String::new(),
+            })
+        );
+        parts.stop();
     }
 
     /// A selection and a notification whose sender's cached window the
     /// listener's reader answers hung as they arrive are dropped in their
-    /// callbacks: no marker is sent and nothing is queued.
+    /// callbacks: nothing is told.
     #[test]
     fn a_selection_and_a_notification_whose_window_is_hung_are_dropped_in_their_callbacks() {
         let uia = verbatim_uia::Uia::new().expect("a UIA client");
@@ -3727,16 +2493,16 @@ mod tests {
             "both are captured, so only their window can drop them"
         );
         let asked = Arc::new(Mutex::new(Vec::new()));
-        let (outgoing, readers, checks, sent) = listening(|_| Readability::Hung, &asked);
+        let parts = listening(|_| Readability::Hung, &asked);
         let Subscription::Event { callback, .. } =
-            selection_subscription(&outgoing, &readers, &checks)
+            selection_subscription(&parts.outgoing, &parts.readers, &parts.checks)
         else {
             unreachable!("the selection subscription");
         };
         callback(&selected);
         drop(callback);
         let Subscription::Notifications { callback } =
-            notification_subscription(&outgoing, &readers, &checks)
+            notification_subscription(&parts.outgoing, &parts.readers, &parts.checks)
         else {
             unreachable!("the notification subscription");
         };
@@ -3748,7 +2514,7 @@ mod tests {
             None,
         );
         drop(callback);
-        assert_eq!(facts_once_stopped(&outgoing, readers, &sent), []);
+        assert_eq!(parts.stop(), []);
         assert_eq!(
             *asked.lock().unwrap_or_else(PoisonError::into_inner),
             [desktop_window(), desktop_window()]
@@ -3756,20 +2522,21 @@ mod tests {
     }
 
     /// A window opened that is not a toast by NVDA's rule costs only the
-    /// callback: no marker is sent and nothing is queued.
+    /// callback: nothing is told and no window is tested.
     #[test]
-    fn a_window_opened_that_is_no_toast_is_not_read() {
+    fn a_window_opened_that_is_no_toast_is_not_told() {
         let uia = verbatim_uia::Uia::new().expect("a UIA client");
         let opened = desktop_sender::<ListenerEvent>(&uia);
         let asked = Arc::new(Mutex::new(Vec::new()));
-        let (outgoing, readers, checks, sent) = listening(|_| Readability::Hung, &asked);
-        let Subscription::Event { callback, .. } = toast_subscription(&outgoing, &readers, &checks)
+        let parts = listening(|_| Readability::Hung, &asked);
+        let Subscription::Event { callback, .. } =
+            toast_subscription(&parts.outgoing, &parts.readers, &parts.checks)
         else {
             unreachable!("the window-opened subscription");
         };
         callback(&opened);
         drop(callback);
-        assert_eq!(facts_once_stopped(&outgoing, readers, &sent), []);
+        assert_eq!(parts.stop(), []);
         assert_eq!(
             *asked.lock().unwrap_or_else(PoisonError::into_inner),
             Vec::<isize>::new()
@@ -3787,8 +2554,8 @@ mod tests {
     /// The listener says `Ready` only once its UIA subscriptions'
     /// installation returns, as on a foreground application that does not
     /// answer, with its hooks in during the wait: an MSAA event raised
-    /// meanwhile is forwarded with no `Ready` before it, UIA events are
-    /// dropped, and `Ready` arrives once the installation is released.
+    /// meanwhile is told with no `Ready` before it, UIA events are dropped,
+    /// and `Ready` arrives once the installation is released.
     #[test]
     fn the_listener_is_ready_once_its_uia_subscriptions_are_installed() {
         use windows::Win32::UI::Accessibility::NotifyWinEvent;
@@ -3806,12 +2573,12 @@ mod tests {
         let (release, released) = mpsc::channel::<()>();
         let install: InstallSubscriptions = Box::new(move |_, _, _| {
             // Released once the test has read the alert below; the bound
-            // only ends a run whose alert is never forwarded, which then
-            // fails on the `Ready` that follows.
+            // only ends a run whose alert is never told, which then fails
+            // on the `Ready` that follows.
             let _ = released.recv_timeout(Duration::from_secs(10));
             None
         });
-        let listener = Listener::start(sender, IgnoredProcesses::default(), &[], install)
+        let listener = Listener::start(sender, IgnoredProcesses::default(), install)
             .expect("the listener starts");
 
         // A hidden window of this thread's, with no parent, to raise an
@@ -3843,21 +2610,22 @@ mod tests {
                 CHILDID_SELF.cast_signed(),
             );
         };
-        let alert = ListenerFact {
-            pid: Pid(std::process::id()),
-            fact: DeliveredFact::Alert {
-                hwnd: window.0 as isize,
-                id_object: OBJID_CLIENT.0,
-                id_child: CHILDID_SELF.cast_signed(),
-            },
+        let alert = EventObject::Msaa {
+            window: WindowHandle(u64::try_from(window.0 as isize).expect("a handle")),
+            object: OBJID_CLIENT.0,
+            child: CHILDID_SELF.cast_signed(),
         };
-        // The global hooks forward this desktop's events too: the first of
+        // The global hooks tell this desktop's events too: the first of
         // the alert and `Ready` to arrive, `Ready` as `None`.
         let first =
             std::iter::from_fn(|| read_message(&mut reader).expect("read")).find_map(|message| {
                 match message {
                     ListenerToCore::Ready { .. } => Some(None),
-                    ListenerToCore::FocusFact { fact, .. } if fact == alert => Some(Some(fact)),
+                    ListenerToCore::Tell(tell)
+                        if tell.kind == EventKind::Alert && tell.object == alert =>
+                    {
+                        Some(Some(tell.object))
+                    }
                     _ => None,
                 }
             });
@@ -3883,301 +2651,90 @@ mod tests {
         let Listener {
             outgoing,
             readers,
+            checks,
             registering,
             _event_thread: event_thread,
             ..
         } = listener;
         drop(event_thread);
         assert!(registering.join().expect("the installation ends").is_none());
+        checks.stop();
         readers.stop();
         outgoing.close();
         // SAFETY: the window made above, on this thread.
         unsafe { DestroyWindow(window) }.expect("the window destroyed");
     }
 
-    /// A menu end no focus follows is sent when its timer goes off at the
-    /// end of its grace, and not when it goes off a microsecond before,
-    /// which sets the timer again for the microsecond left.
+    /// The idle barrier's answer waits behind every answer and report sent
+    /// before it, a large one included whose write pends, and a pong goes
+    /// ahead of them.
     #[test]
-    fn a_menu_end_no_focus_follows_reaches_core_after_the_grace() {
-        let (outgoing, mut reader, grace) = outgoing_with_manual_grace(EVENT_PIPE_BUFFER);
-        outgoing.menu_or_switch_ended(1_000);
-        grace.at(49_999);
-        outgoing.menu_end.grace_ended();
-        grace.at(50_000);
-        outgoing.menu_end.grace_ended();
-        assert_eq!(grace.set(), [50_000, 1], "the timer set for the grace");
-        assert_eq!(facts_and_ends(sent(&outgoing, &mut reader)), ["menu end"]);
-    }
-
-    /// A grace timer's callback that runs as a newer end comes, taking the
-    /// lock only once that end is noted, sends nothing and sets the timer
-    /// for the whole grace again: the newer end is sent once its own grace
-    /// is over, after a fact sent meanwhile, and only once.
-    #[test]
-    fn a_menu_end_is_not_sent_before_its_grace_by_a_callback_of_an_earlier_one() {
-        let (outgoing, mut reader, grace) = outgoing_with_manual_grace(EVENT_PIPE_BUFFER);
-        outgoing.menu_or_switch_ended(1_000);
-        // As an earlier grace's callback does, run just as this end came.
-        outgoing.menu_end.grace_ended();
-        outgoing.fact(Pid(6), msaa_focus(), None, None, 1_000);
-        // As the timer does once the grace is over.
-        grace.at(50_000);
-        outgoing.menu_end.grace_ended();
-        assert_eq!(grace.set(), [50_000, 50_000], "the timer set for the grace");
-        assert_eq!(
-            facts_and_ends(sent(&outgoing, &mut reader)),
-            ["fact 6", "menu end"]
-        );
-    }
-
-    #[test]
-    fn a_menu_end_a_focus_follows_is_sent_after_the_focus() {
-        // Whether the focus was usable is Core's to judge: it may yet be
-        // dropped or fail to read.
-        let (outgoing, mut reader, grace) = outgoing_with_manual_grace(EVENT_PIPE_BUFFER);
-        outgoing.menu_or_switch_ended(1_000);
-        outgoing.fact(Pid(5), msaa_focus(), None, None, 1_000);
-        // As the timer does once the grace is over.
-        grace.at(50_000);
-        outgoing.menu_end.grace_ended();
-        assert_eq!(grace.set(), [50_000], "the timer set for the grace");
-        assert_eq!(
-            facts_and_ends(sent(&outgoing, &mut reader)),
-            ["fact 5", "menu end"]
-        );
-    }
-
-    #[test]
-    fn a_menu_end_whose_grace_ends_behind_a_write_in_flight_goes_after_every_waiting_fact() {
-        // The grace timer's callback sends the end through the sender the
-        // facts go through, so it waits behind the write in flight, and
-        // goes after every fact waiting when it is written, one sent after
-        // it included.
-        let (outgoing, mut reader, _grace) = outgoing_with_manual_grace(4096);
-        let mut large = uia_snapshot();
-        large.name = Some("x".repeat(20_000));
-        outgoing.fact(
-            Pid(7),
-            DeliveredFact::UiaSelection {
-                hwnd: 1,
-                focus_window: 0,
-                snapshot: large,
-            },
-            None,
-            None,
-            1_000,
-        );
-        outgoing.fact(Pid(5), msaa_focus(), None, None, 1_000);
-        outgoing.note_menu_end(1_000, Duration::ZERO);
-        // As the timer's callback does when the grace ends.
-        outgoing.menu_end.grace_ended();
-        outgoing.fact(Pid(6), msaa_focus(), None, None, 1_000);
-        let order: Vec<String> = sent(&outgoing, &mut reader)
-            .into_iter()
-            .map(|message| match message {
-                ListenerToCore::FocusFact { fact, .. } => format!("fact {}", fact.pid.0),
-                ListenerToCore::MenuOrSwitchEnded { .. } => "menu end".to_owned(),
-                other => format!("{other:?}"),
-            })
-            .collect();
-        assert_eq!(order, ["fact 7", "fact 5", "fact 6", "menu end"]);
-    }
-
-    /// The idle barrier's answer, sent behind a write in flight: it goes
-    /// after every fact waiting before it, a pong sent after it going
-    /// ahead of both; a newer fact for an element whose fact waits before
-    /// it is not coalesced into that one across it; and an answer sent
-    /// while a menu end waits for its grace goes after the end.
-    #[test]
-    fn the_idle_answer_waits_behind_every_fact_and_menu_end_before_it() {
-        let (outgoing, mut reader, _grace) = outgoing_with_manual_grace(4096);
-        let mut large = uia_snapshot();
-        large.name = Some("x".repeat(20_000));
-        outgoing.fact(
-            Pid(7),
-            DeliveredFact::UiaSelection {
-                hwnd: 1,
-                focus_window: 0,
-                snapshot: large,
-            },
-            None,
-            None,
-            1_000,
-        );
-        outgoing.fact(Pid(5), msaa_focus(), None, None, 1_000);
+    fn the_idle_answer_waits_behind_every_answer_and_report_before_it() {
+        let (outgoing, mut reader) = outgoing_with(4096, IgnoredProcesses::default());
+        let answer = |number, detail: String| Answer {
+            number: RequestNumber(number),
+            outcome: Outcome::NotThere,
+            probes: Vec::new(),
+            detail,
+        };
+        outgoing.answer(answer(1, "x".repeat(20_000)));
+        outgoing.answer(answer(2, String::new()));
         outgoing.idle_answer(1);
-        outgoing.fact(Pid(5), msaa_focus(), None, None, 2_000);
+        outgoing.progress(
+            BarChange {
+                percent: Percent::parse("41").expect("a number"),
+                place: (1, 2),
+                in_foreground: true,
+            },
+            EventTiming::default(),
+        );
         outgoing.urgent(ListenerToCore::Pong {
             parked_count: 0,
             written_at_us: 0,
         });
-        outgoing.note_menu_end(3_000, Duration::ZERO);
         outgoing.idle_answer(2);
-        outgoing.fact(Pid(6), msaa_focus(), None, None, 3_000);
-        // As the timer's callback does when the grace ends.
-        outgoing.menu_end.grace_ended();
         let order: Vec<String> = sent(&outgoing, &mut reader)
             .into_iter()
             .map(|message| match message {
-                ListenerToCore::FocusFact { fact, timing, .. } => {
-                    format!("{} {}", fact.pid.0, timing.observed_at_us)
-                }
+                ListenerToCore::Answer(answer) => format!("answer {}", answer.number.0),
+                ListenerToCore::Progress { .. } => "progress".to_owned(),
                 ListenerToCore::Pong { .. } => "pong".to_owned(),
                 ListenerToCore::IdleAnswer { round } => format!("idle {round}"),
-                ListenerToCore::MenuOrSwitchEnded { .. } => "menu end".to_owned(),
                 other => format!("{other:?}"),
             })
             .collect();
         assert_eq!(
             order,
             [
-                "7 1000", "pong", "5 1000", "idle 1", "5 2000", "6 3000", "menu end", "idle 2"
+                "answer 1", "pong", "answer 2", "idle 1", "progress", "idle 2"
             ]
         );
     }
 
-    /// An `Outgoing` whose clock always reads 7,000.
-    fn at_seven_thousand() -> (Outgoing, BufReader<File>) {
-        let (mut outgoing, reader) = outgoing();
-        outgoing.clock = Clock(|| 7_000);
-        (outgoing, reader)
-    }
-
-    /// The timing of the one fact `outgoing` sends.
-    fn timing_of_the_fact(outgoing: &Outgoing, reader: &mut BufReader<File>) -> EventTiming {
-        let sent = sent(outgoing, reader);
-        let [ListenerToCore::FocusFact { timing, .. }] = sent.as_slice() else {
-            panic!("one fact is sent: {sent:?}");
-        };
-        *timing
-    }
-
+    /// A bar's change carries its observation and is stamped handled as it
+    /// is sent.
     #[test]
-    fn a_win_events_fact_is_observed_by_its_callback_and_handled_as_it_is_sent() {
-        let (outgoing, mut reader) = at_seven_thousand();
-        outgoing.fact(Pid(5), msaa_focus(), None, None, 6_000);
-        let timing = timing_of_the_fact(&outgoing, &mut reader);
-        assert_eq!(
-            (timing.observed_at_us, timing.listener_handled_at_us),
-            (6_000, 7_000)
-        );
-    }
-
-    /// A `WinEvent`'s fact is stamped, in microseconds, at its callback's
-    /// observation, so the focus it becomes is ordered by when it happened.
-    #[test]
-    fn a_win_events_fact_is_stamped_at_its_callbacks_observation() {
-        let (outgoing, mut reader) = at_seven_thousand();
-        outgoing.fact(Pid(5), msaa_focus(), None, None, 6_543_210);
-        let sent = sent(&outgoing, &mut reader);
-        let [ListenerToCore::FocusFact { timing, .. }] = sent.as_slice() else {
-            panic!("one fact is sent: {sent:?}");
-        };
-        assert_eq!(timing.observed_at_us, 6_543_210);
-    }
-
-    /// A UIA event is stamped, in microseconds, from one clock read as the
-    /// callback received it, and its facts carry that stamp, so the focus
-    /// it becomes is ordered by when it happened.
-    #[test]
-    fn a_uia_events_facts_carry_one_clock_reads_stamp() {
-        static CLOCK: AtomicU64 = AtomicU64::new(6_543_900);
+    fn a_bars_change_carries_its_observation_and_handling() {
         let (mut outgoing, mut reader) = outgoing();
-        // Each read of the clock is 200 microseconds after the last, so a
-        // second read would stamp another time.
-        outgoing.clock = Clock(|| CLOCK.fetch_add(200, Ordering::Relaxed));
-        let meta = outgoing.received(FocusEvent::Focus);
-        outgoing.focus_read(
-            Pid(5),
-            DeliveredFact::UiaFocusMarker {
-                marker: meta.marker,
+        outgoing.clock = Clock(|| 7_000);
+        outgoing.progress(
+            BarChange {
+                percent: Percent::parse("41").expect("a number"),
+                place: (1, 2),
+                in_foreground: true,
             },
-            meta,
+            EventTiming {
+                observed_at_us: 1_000,
+                ..EventTiming::default()
+            },
         );
         let sent = sent(&outgoing, &mut reader);
-        let [ListenerToCore::FocusFact { timing, .. }] = sent.as_slice() else {
-            panic!("one fact is sent: {sent:?}");
-        };
-        assert_eq!(timing.observed_at_us, 6_543_900);
-    }
-
-    #[test]
-    fn a_marker_is_handled_as_it_is_sent() {
-        let (outgoing, mut reader) = at_seven_thousand();
-        let meta = Meta {
-            marker: 1,
-            kind: FocusEvent::Focus,
-            trace: TraceId::mint(),
-            timing: EventTiming {
-                observed_at_us: 6_000,
-                ..EventTiming::default()
-            },
-        };
-        outgoing.focus_read(Pid(5), DeliveredFact::UiaFocusMarker { marker: 1 }, meta);
-        assert_eq!(
-            timing_of_the_fact(&outgoing, &mut reader).listener_handled_at_us,
-            7_000
-        );
-    }
-
-    #[test]
-    fn a_reading_threads_outcome_keeps_the_threads_stamp() {
-        let (outgoing, mut reader) = at_seven_thousand();
-        let meta = Meta {
-            marker: 1,
-            kind: FocusEvent::Focus,
-            trace: TraceId::mint(),
-            timing: EventTiming {
-                observed_at_us: 6_000,
-                listener_handled_at_us: 6_500,
-                ..EventTiming::default()
-            },
-        };
-        outgoing.focus_read(
-            Pid(5),
-            DeliveredFact::UiaFocusDropped {
-                marker: 1,
-                focus: true,
-            },
-            meta,
-        );
-        assert_eq!(
-            timing_of_the_fact(&outgoing, &mut reader).listener_handled_at_us,
-            6_500
-        );
-    }
-
-    /// A menu's or the switcher's end is stamped when the callback observed
-    /// it, the time Core compares the focuses applied since with.
-    #[test]
-    fn a_menu_end_is_stamped_at_its_observation() {
-        let (outgoing, reader) = at_seven_thousand();
-        let messages = drain(reader);
-        outgoing.menu_or_switch_ended(6_543_210);
-        let message = messages
-            .recv_timeout(Duration::from_secs(5))
-            .expect("the menu end is sent");
-        let ListenerToCore::MenuOrSwitchEnded { ended_at_us, .. } = message else {
-            panic!("a menu end: {message:?}");
-        };
-        assert_eq!(ended_at_us, 6_543_210);
-    }
-
-    #[test]
-    fn a_menu_end_carries_its_observation_and_handling() {
-        let (outgoing, reader) = at_seven_thousand();
-        let messages = drain(reader);
-        outgoing.menu_or_switch_ended(6_000);
-        let message = messages
-            .recv_timeout(Duration::from_secs(5))
-            .expect("the menu end is sent");
-        let ListenerToCore::MenuOrSwitchEnded { timing, .. } = message else {
-            panic!("a menu end: {message:?}");
+        let [ListenerToCore::Progress { timing, .. }] = sent.as_slice() else {
+            panic!("one progress: {sent:?}");
         };
         assert_eq!(
             (timing.observed_at_us, timing.listener_handled_at_us),
-            (6_000, 7_000)
+            (1_000, 7_000)
         );
     }
 }

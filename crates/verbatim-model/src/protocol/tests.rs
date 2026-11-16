@@ -105,7 +105,26 @@ fn next_core_to_listener(previous: Option<&CoreToListener>) -> Option<CoreToList
             trace_id: TraceId::from_raw(4),
             window: 8,
         },
-        CoreToListener::LiveReread { .. } => return None,
+        CoreToListener::LiveReread { .. } => {
+            CoreToListener::Request(Box::new(crate::request::Ask {
+                number: crate::request::RequestNumber(1),
+                window: crate::WindowHandle(8),
+                verdict: crate::request::WindowVerdict::Uia,
+                request: crate::request::Request::ReadObject(crate::request::ReadObject {
+                    object: crate::request::ObjectRef::Kept(crate::tell::ElementToken(3)),
+                    set: vec![crate::property::PropertyId::Name],
+                    relation: None,
+                    descendants: false,
+                    walk: None,
+                    purpose: crate::request::Purpose::Other,
+                }),
+            }))
+        }
+        CoreToListener::Request(_) => CoreToListener::Cancel(crate::request::Cancel {
+            number: crate::request::RequestNumber(1),
+            reason: crate::request::CancelReason::Foreground,
+        }),
+        CoreToListener::Cancel(_) => return None,
     })
 }
 
@@ -185,7 +204,13 @@ fn next_listener_to_core(previous: Option<&ListenerToCore>) -> Option<ListenerTo
             window: crate::tell::TellWindow::NoWindow,
             checked: None,
         })),
-        ListenerToCore::Tell(_) => ListenerToCore::Pong {
+        ListenerToCore::Tell(_) => ListenerToCore::Answer(crate::request::Answer {
+            number: crate::request::RequestNumber(1),
+            outcome: crate::request::Outcome::NotThere,
+            probes: Vec::new(),
+            detail: String::new(),
+        }),
+        ListenerToCore::Answer(_) => ListenerToCore::Pong {
             parked_count: 0,
             written_at_us: 0,
         },
@@ -247,6 +272,8 @@ fn every_variant_has_its_reviewed_kind() {
             "IdleQuery: Ask",
             "Shutdown: Lifecycle",
             "LiveReread: Ask",
+            "Request: Ask",
+            "Cancel: Ask",
         ]
     );
     assert_eq!(
@@ -286,6 +313,7 @@ fn every_variant_has_its_reviewed_kind() {
             "Progress: Report",
             "Foreground: Report",
             "Tell: Report",
+            "Answer: Answer",
             "Pong: Lifecycle",
             "Fault: Report",
             "IdleAnswer: Answer",

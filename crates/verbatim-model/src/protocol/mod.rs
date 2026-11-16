@@ -921,6 +921,13 @@ pub enum CoreToListener {
     /// Shut down cleanly and exit, as an outpost does
     /// ([`CoreToOutpost::Shutdown`]).
     Shutdown,
+    /// A request of the shared list, answered once by
+    /// [`ListenerToCore::Answer`] (`docs/design/readers-tell-core-asks-build1.md`,
+    /// "The listener in this build" and Table 9).
+    Request(Box<crate::request::Ask>),
+    /// Cancel a request: one queued is dropped and answered cancelled; one
+    /// running is abandoned for the foreground, or else left alone.
+    Cancel(crate::request::Cancel),
     /// A live re-read of the last focus the reading thread of `application`
     /// read, traced `trace_id`, which Core set aside because it would have
     /// spoken a cached ancestor: the thread reads its held element again
@@ -953,7 +960,9 @@ impl CoreToListener {
             CoreToListener::IdleQuery { .. }
             | CoreToListener::ApplicationExited { .. }
             | CoreToListener::Shutdown
-            | CoreToListener::LiveReread { .. } => {}
+            | CoreToListener::LiveReread { .. }
+            | CoreToListener::Request(_)
+            | CoreToListener::Cancel(_) => {}
         }
     }
 
@@ -968,7 +977,9 @@ impl CoreToListener {
             CoreToListener::IdleQuery { .. }
             | CoreToListener::ApplicationExited { .. }
             | CoreToListener::Shutdown
-            | CoreToListener::LiveReread { .. } => 0,
+            | CoreToListener::LiveReread { .. }
+            | CoreToListener::Request(_)
+            | CoreToListener::Cancel(_) => 0,
         }
     }
 
@@ -976,7 +987,10 @@ impl CoreToListener {
     #[must_use]
     pub fn kind(&self) -> Kind {
         match self {
-            CoreToListener::IdleQuery { .. } | CoreToListener::LiveReread { .. } => Kind::Ask,
+            CoreToListener::IdleQuery { .. }
+            | CoreToListener::LiveReread { .. }
+            | CoreToListener::Request(_)
+            | CoreToListener::Cancel(_) => Kind::Ask,
             CoreToListener::HookInstalled { .. }
             | CoreToListener::HookRemoved { .. }
             | CoreToListener::ApplicationExited { .. }
@@ -1463,6 +1477,8 @@ pub enum ListenerToCore {
     /// foreground hold. Today's routed facts are sent beside it until the
     /// build removes them.
     Tell(Box<crate::tell::Event>),
+    /// The answer to a [`CoreToListener::Request`], one per request.
+    Answer(crate::request::Answer),
     /// Answer to [`CoreToListener::Ping`].
     Pong {
         /// Always 0: the listener abandons no workers.
@@ -1892,7 +1908,7 @@ impl ListenerToCore {
     #[must_use]
     pub fn kind(&self) -> Kind {
         match self {
-            ListenerToCore::IdleAnswer { .. } => Kind::Answer,
+            ListenerToCore::IdleAnswer { .. } | ListenerToCore::Answer(_) => Kind::Answer,
             ListenerToCore::Fault { .. }
             | ListenerToCore::MenuOrSwitchEnded { .. }
             | ListenerToCore::Desktop { .. }
@@ -1925,6 +1941,7 @@ impl ListenerToCore {
             | ListenerToCore::ExitHandled { .. }
             | ListenerToCore::Foreground { .. }
             | ListenerToCore::Tell(_)
+            | ListenerToCore::Answer(_)
             | ListenerToCore::Fault { .. }
             | ListenerToCore::IdleAnswer { .. } => {}
         }

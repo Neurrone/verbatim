@@ -3,13 +3,12 @@
 //! Spawned by Core's supervisor with `--listener --pipe-in <handle>
 //! --pipe-out <handle> [--ignore-pids <pid,pid>] [--hooks-in
 //! <pid:outpost,pid:outpost>]` (`verbatim_process::arguments::ListenerArguments`).
-//! It holds the desktop-global UIA focus registration and the global MSAA
-//! hooks, reads each UIA focus from the event's own element on a thread per
-//! application, and forwards each focus fact to Core, except those of the
-//! processes `--ignore-pids` names, which Verbatim ignores entirely, and
-//! the MSAA facts of the applications `--hooks-in` names, whose outposts
-//! have their own hooks in. Commands are read from `--pipe-in`, messages
-//! written to `--pipe-out`.
+//! It holds the desktop-global UIA registration and the global MSAA hooks,
+//! tells Core of every event it hears, but those of the processes
+//! `--ignore-pids` names, which Verbatim ignores entirely, and answers
+//! Core's requests on what it kept. `--hooks-in` is read and not used: no
+//! application's events are handed over to its outpost. Commands are read
+//! from `--pipe-in`, messages written to `--pipe-out`.
 
 use std::process::ExitCode;
 
@@ -49,7 +48,7 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    match run_listener(reader, writer, ignored, &arguments.hooks_in) {
+    match run_listener(reader, writer, ignored) {
         Ok(()) => end_without_detach(0),
         Err(error) => {
             report_error!("listener pipe loop ended with error: {error}");

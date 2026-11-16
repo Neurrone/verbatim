@@ -1,36 +1,46 @@
-//! The focus listener's vocabulary for a focus event, what its reading
-//! threads and its read scheduler ([`crate::schedule`]) are written in: the
-//! event's kind ([`FocusEvent`]), what the callback knew of it ([`Meta`])
-//! and where it was queued ([`Arrival`]), what became of it ([`Judged`]),
-//! and the reasons an event is dropped.
+//! The vocabulary of the listener's progress path, and of the unasked
+//! focus read that mockapp's integration harness still drives through
+//! `verbatim_listener::focus_read::FocusReader` until it moves onto the
+//! request driver (design `docs/design/readers-tell-core-asks-build1.md`,
+//! "The outpost in this build"): the event's kind ([`FocusEvent`]), where
+//! it was queued ([`Arrival`]), what became of it ([`Judged`]), and the
+//! reasons an event is dropped. The listener process itself makes no
+//! unasked focus read.
 
 use std::time::Duration;
 
 use verbatim_model::TraceId;
-use verbatim_model::protocol::{DeliveredFact, EventTiming, UiaFocusRead};
+use verbatim_model::protocol::{DeliveredFact, UiaFocusRead};
 
-use crate::schedule::QueuePlace;
-
-/// How many of an application's reading threads may be abandoned and still
-/// in their calls before it gets no new thread: its focus events then wait
-/// for the first of those threads whose call returns, within the bound
-/// the listener's read deadline (`verbatim_model::FOCUS_READ_DEADLINE`) states.
+/// How many of an application's reading threads may be abandoned to
+/// requests and still in their calls before it gets no new thread: its
+/// jobs then wait for the first of those threads whose call returns, Core's
+/// due time and Cancel bounding a request's wait.
 pub const ABANDONED_LIMIT: usize = 2;
 
-/// Why an event is dropped whose read the watchdog abandoned at the
-/// deadline.
-pub const NOT_IN_TIME: &str = "its read did not return in time";
+/// An event's place in the order the unasked focus reads' events were
+/// queued in, and the newest place at which the user moved away from its
+/// application before it was queued, for a menu opening's comparison with
+/// the thread's last read in mockapp's stand-in.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct QueuePlace {
+    /// The event's place.
+    pub place: u64,
+    /// Where its application was last moved away from.
+    pub left_at: u64,
+}
 
-/// Why an event is dropped whose read the watchdog abandoned because the
-/// user moved on from its window, as an outpost's watchdog says it.
-pub const MOVED_ON: &str = "the user moved on from a slow window";
+impl QueuePlace {
+    /// Whether a read of the event queued at `read_place` is still current
+    /// for this event: nothing moved away from the application since that
+    /// event was queued.
+    #[must_use]
+    pub fn current_since(self, read_place: u64) -> bool {
+        read_place != 0 && self.left_at < read_place
+    }
+}
 
-/// Why an event is dropped that waited for a thread while its application's
-/// abandoned threads were at [`ABANDONED_LIMIT`] until the bound
-/// the listener's read deadline (`verbatim_model::FOCUS_READ_DEADLINE`) states, or arrived after that bound.
-pub const WAITED_TOO_LONG: &str = "it waited too long behind its application's abandoned reads";
-
-/// The kind of UIA event a reading thread takes.
+/// The kind of UIA event an unasked focus read takes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FocusEvent {
     /// A focus change (`HandleFocusChangedEvent`).
@@ -45,8 +55,7 @@ pub enum FocusEvent {
     Selection,
     /// Core's live re-read of the thread's last read: its held element read
     /// again with no ancestry cache (the listener's
-    /// `FocusReader::live_reread`). It has no marker the outpost waits on,
-    /// moves away from no application, and is no pending focus.
+    /// `FocusReader::live_reread`).
     LiveReread,
     /// A notification, judged by its sender's nearest window
     /// (the listener's `FocusReader::check_fact`).
@@ -54,28 +63,6 @@ pub enum FocusEvent {
     /// A Windows toast's window opening, read on its application's reading
     /// thread (the listener's `FocusReader::check_fact`).
     Toast,
-    /// A progress bar's UIA value change, read for its place on its
-    /// application's reading thread. Like a live re-read, it has no marker
-    /// an outpost waits on, moves away from no application, and is no
-    /// pending focus; it starts no outpost and keeps its application's
-    /// reader alive only while it has work ([`crate::schedule`]).
-    UiaBar,
-    /// A classic window's value change, read on its application's reading
-    /// thread as a bar's percentage, or to learn whether the object is a
-    /// bar ([`BarVerdict`]). Like [`FocusEvent::UiaBar`].
-    ClassicBar,
-    /// The desktop window's name change, whose MSAA name csrss's reading
-    /// thread reads for the virtual desktop's name. Like a live re-read, it
-    /// has no marker an outpost waits on, moves away from no application,
-    /// and is no pending focus.
-    DesktopName,
-    /// The release of the UI Automation elements the listener kept for
-    /// its tells and let go ([`crate::kept`]), as a job on their
-    /// application's reading thread, since a release can call into the
-    /// application. Like a progress bar's change, it has no marker an
-    /// outpost waits on, moves away from no application, is no pending
-    /// focus, and starts and holds no outpost.
-    Release,
 }
 
 /// The reason a focus or selection is dropped when its sender has no
@@ -106,10 +93,6 @@ pub const TOAST_NOT_READ: &str = "the toast could not be read";
 /// focus when it is read, as NVDA drops it.
 pub const NOT_FOCUSED: &str = "its element no longer has the keyboard focus";
 
-/// The reason an event is dropped that a newer event of the same kind and
-/// element replaced while it waited, as NVDA's UIA limiter keeps one.
-pub const REPLACED: &str = "a newer focus event of its element replaced it";
-
 /// The reason a menu opening is dropped whose comparison with the current
 /// focus failed.
 pub const COMPARISON_FAILED: &str = "its comparison with the current focus failed";
@@ -118,20 +101,12 @@ pub const COMPARISON_FAILED: &str = "its comparison with the current focus faile
 /// holds the read it names, by trace, as after a later read or none.
 pub const NOT_THE_LAST_READ: &str = "its reading thread no longer holds the read it names";
 
-/// The reason a live re-read is answered gone when its application has no
-/// reading thread.
-pub const NO_READING_THREAD: &str = "its application has no reading thread";
-
 /// The reason a focus is dropped that fails NVDA's acceptance test.
 pub const NOT_RELATED: &str = "its window is not related to the foreground window";
 
 /// The reason a focus in Core's hidden frame is dropped, as its outpost
 /// would drop it once read.
 pub const HIDDEN_FRAME: &str = "Core's hidden frame";
-
-/// The reason a read returning for a process that has exited is dropped: a
-/// new process may have its id by then, and the read must not reach it.
-pub const PROCESS_EXITED: &str = "its process has exited";
 
 /// The reason the console window's own element's focus is dropped.
 pub const CONSOLE_OWN: &str = "the console window's own focus";
@@ -228,18 +203,6 @@ pub const BAR_READS_ABANDONED_LIMIT: usize = 2;
 /// thread does not bound a pool of raising threads.
 pub const BARS_PER_APPLICATION: usize = 64;
 
-/// Why a waiting classic value change is dropped by the limit per thread
-/// or the cap per application.
-pub const BAR_LIMITED: &str = "newer value changes of its thread or application came";
-
-/// Why a waiting classic value change is dropped when a focus of its
-/// application arrives, which is not to wait behind it.
-pub const BAR_FOCUS_CAME: &str = "a focus of its application came";
-
-/// Why a classic value change is dropped while its application's abandoned
-/// reads are at [`BAR_READS_ABANDONED_LIMIT`].
-pub const BAR_READS_OUT: &str = "its application's abandoned value change reads have not returned";
-
 /// The thread that raised a classic value change, and whether it is of
 /// the object with the MSAA focus, whose events the limit always keeps.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -265,9 +228,6 @@ pub enum WindowAnswer {
     /// The probe was not answered in time: no provider, for now.
     TimedOut,
 }
-
-/// What a read of a classic value change, or a UIA bar's, is dropped for.
-pub const BAR_READ: &str = "a read of a progress bar's change, owing no outpost anything";
 
 /// What became of one focus event.
 #[derive(Debug)]
@@ -317,15 +277,6 @@ impl Judged {
             Judged::Dropped(_) | Judged::Passed(_) => DeliveredFact::UiaLiveRereadGone { request },
         }
     }
-
-    /// Why it was not reported, for one that was dropped.
-    #[must_use]
-    pub fn dropped_reason(&self) -> Option<&'static str> {
-        match self {
-            Judged::Dropped(reason) => Some(reason),
-            Judged::Read(_) | Judged::Passed(_) => None,
-        }
-    }
 }
 
 /// The UIA event a focus came in: its trace, when the listener received
@@ -358,32 +309,6 @@ impl Arrival {
             place: self.place,
             left_at: self.left_at,
         }
-    }
-}
-
-/// What the listener knows of a focus event when its callback queues it:
-/// the marker it sent, and the trace and times its read or drop carries.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Meta {
-    /// The marker sent for the event.
-    pub marker: u64,
-    /// The event's kind, which its read or drop tells the outpost.
-    pub kind: FocusEvent,
-    /// The trace minted when the event arrived.
-    pub trace: TraceId,
-    /// When it arrived, its `observed_at_us` the observation by which its
-    /// fact is ordered, and the latency log's stamps.
-    pub timing: EventTiming,
-}
-
-/// The [`Arrival`] of the event `meta` describes, queued at `queue`.
-#[must_use]
-pub fn arrival_of(meta: Meta, queue: QueuePlace) -> Arrival {
-    Arrival {
-        trace: meta.trace,
-        observed_at_us: meta.timing.observed_at_us,
-        place: queue.place,
-        left_at: queue.left_at,
     }
 }
 

@@ -9,6 +9,7 @@
 //! so every case is a test here.
 
 use verbatim_model::event_kind::EventKind;
+use verbatim_model::request::NodeWindow;
 use verbatim_model::tell::{AcceptanceFacts, Relation, WindowFacet};
 use verbatim_model::{Pid, WindowHandle};
 
@@ -175,6 +176,22 @@ fn facet(reads: &impl WindowReads, window: isize, host: Option<(u32, u32)>) -> W
         class,
         process: Pid(process),
         thread,
+    }
+}
+
+/// The facts of `window` that a node read in it carries, by which a
+/// request on the node names it (`verbatim_model::request::NodeWindow`):
+/// read now, with calls to Windows only.
+#[must_use]
+pub fn node_window(reads: &impl WindowReads, window: isize) -> NodeWindow {
+    let (thread, process) = reads.owner(window);
+    NodeWindow {
+        handle: handle(window),
+        top_level: handle(reads.root(window)),
+        root_owner: handle(reads.root_owner(window)),
+        process: Pid(process),
+        thread,
+        desktop: window == reads.desktop(),
     }
 }
 
@@ -651,6 +668,30 @@ mod tests {
         assert_eq!(told.root.process, Pid(400));
         let unnamed = WindowPart::read(&desk, 9, None).with_foreground(&desk);
         assert_eq!(unnamed.window.process, Pid(300));
+    }
+
+    /// A node's window carries its top-level window, its root owner, its
+    /// owner's thread and process, and whether it is the desktop window.
+    #[test]
+    fn a_nodes_window_names_its_top_level_window_owner_and_the_desktop() {
+        let mut desk = Desk::default();
+        desk.add(DESKTOP, "#32769", 0, 0);
+        desk.add(1, "Notepad", DESKTOP, 0);
+        desk.add(2, "Edit", 1, 0);
+        desk.add(5, "#32770", DESKTOP, 1);
+        assert_eq!(
+            node_window(&desk, 2),
+            NodeWindow {
+                handle: WindowHandle(2),
+                top_level: WindowHandle(1),
+                root_owner: WindowHandle(1),
+                process: Pid(200),
+                thread: 100,
+                desktop: false,
+            }
+        );
+        assert_eq!(node_window(&desk, 5).root_owner, WindowHandle(1));
+        assert!(node_window(&desk, DESKTOP).desktop);
     }
 
     #[test]

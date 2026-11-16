@@ -269,6 +269,12 @@ impl<E> KeptElements<E> {
             .collect()
     }
 
+    /// Whether it keeps `token`, in whatever state.
+    #[must_use]
+    pub fn holds(&self, token: ElementToken) -> bool {
+        self.kept.contains_key(&token)
+    }
+
     /// Whether it keeps nothing.
     #[must_use]
     pub fn is_empty(&self) -> bool {

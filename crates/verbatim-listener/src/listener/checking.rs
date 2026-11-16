@@ -29,8 +29,8 @@ use windows::Win32::UI::Accessibility::UIA_MenuItemControlTypeId;
 
 use verbatim_listener_logic::check::{Call, Check, ProbeRecord, Walked};
 use verbatim_listener_logic::check_threads::{CheckThreads, Pushed, Take};
-use verbatim_listener_logic::focus::FocusEvent;
-use verbatim_listener_logic::kept::KeptElements;
+use verbatim_listener_logic::kept::{Ended, KeptElements, Start};
+use verbatim_listener_logic::schedule::JobKind;
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::{
     PropertyAnswer, PropertyId, PropertyValue, PropertyValues, RuntimeId,
@@ -42,9 +42,10 @@ use verbatim_process::clock::now_us;
 use verbatim_reader_rules::class::class_verdict;
 use verbatim_uia::{Agile, Cached, Direction, ElementExt, ListenerEvent, Uia};
 
+use super::Outgoing;
+use super::asked::{UiaJob, UiaReading};
 use super::tells::{Applications, Held, Pending, PendingWindow, SystemReads, Tells};
-use super::{MarkerOwed, Outgoing, UiaFocusReading, UiaJob};
-use crate::focus_read::{IdleWaiter, Readers};
+use crate::reading::{IdleWaiter, Readers};
 use verbatim_listener_logic::tell::WindowPart;
 
 /// The UI Automation class of the Office menu item NVDA's
@@ -152,6 +153,114 @@ fn cached_of(
     )
 }
 
+/// Every application's kept elements (Table 6), under their own lock,
+/// taken after the reading threads' and the check threads' locks, with no
+/// call made under it: an element let go is handed back, for release on
+/// its application's reading thread.
+#[derive(Default)]
+pub(crate) struct Kept {
+    kept: Mutex<HashMap<Pid, KeptElements<Agile<ListenerEvent>>>>,
+}
+
+impl Kept {
+    fn lock(&self) -> MutexGuard<'_, HashMap<Pid, KeptElements<Agile<ListenerEvent>>>> {
+        self.kept.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The application whose elements hold `token`.
+    pub(crate) fn owner(&self, token: ElementToken) -> Option<Pid> {
+        self.lock()
+            .iter()
+            .find(|(_, kept)| kept.holds(token))
+            .map(|(pid, _)| *pid)
+    }
+
+    /// `pid`'s reading thread starts the read of `token` (column A).
+    pub(crate) fn start_read(&self, pid: Pid, token: ElementToken) -> Start<Agile<ListenerEvent>> {
+        self.lock()
+            .get_mut(&pid)
+            .map_or(Start::NotThere, |kept| kept.start_read(token))
+    }
+
+    /// The read of `pid`'s `token` ended with `element` (column B): the
+    /// element to release, if any.
+    pub(crate) fn read_ended(
+        &self,
+        pid: Pid,
+        token: ElementToken,
+        element: Agile<ListenerEvent>,
+        focus: bool,
+    ) -> Option<Agile<ListenerEvent>> {
+        let mut kept = self.lock();
+        match kept.get_mut(&pid) {
+            Some(kept) => match kept.read_ended(token, element, focus) {
+                Ended::Kept => None,
+                Ended::Release(element) => Some(element),
+            },
+            None => Some(element),
+        }
+    }
+
+    /// A focus request names the readers' last focus, `named` (column C):
+    /// every other read element of every application, with its
+    /// application, to release.
+    pub(crate) fn focus_request(
+        &self,
+        named: Option<ElementToken>,
+    ) -> Vec<(Pid, Vec<Agile<ListenerEvent>>)> {
+        self.lock()
+            .iter_mut()
+            .map(|(pid, kept)| (*pid, kept.focus_request(named)))
+            .filter(|(_, released)| !released.is_empty())
+            .collect()
+    }
+
+    /// Keeps `element` of `pid`'s behind `token`, received at `at_us`, and
+    /// sweeps the application's kept elements at `now_us` (column D): the
+    /// elements to release.
+    fn keep(
+        &self,
+        (pid, token): (Pid, ElementToken),
+        (element, runtime_id): (Agile<ListenerEvent>, RuntimeId),
+        (at_us, now_us): (u64, u64),
+    ) -> Vec<Agile<ListenerEvent>> {
+        let mut kept = self.lock();
+        let kept = kept.entry(pid).or_default();
+        kept.keep(token, element, runtime_id, at_us);
+        kept.sweep(now_us)
+    }
+
+    /// The kept elements of `pid`'s with `runtime_id`, with their tokens.
+    fn with_runtime_id(
+        &self,
+        pid: Pid,
+        runtime_id: &RuntimeId,
+    ) -> Vec<(ElementToken, Agile<ListenerEvent>)> {
+        self.lock()
+            .get(&pid)
+            .map(|kept| {
+                kept.with_runtime_id(runtime_id)
+                    .map(|(token, element)| (token, element.clone()))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// `pid`'s application ended (column D): every element it keeps but
+    /// one in read.
+    fn ended(&self, pid: Pid) -> Vec<Agile<ListenerEvent>> {
+        self.lock()
+            .remove(&pid)
+            .map(|mut kept| kept.ended())
+            .unwrap_or_default()
+    }
+
+    /// Every element kept, for the listener's shutdown.
+    fn clear(&self) -> HashMap<Pid, KeptElements<Agile<ListenerEvent>>> {
+        std::mem::take(&mut *self.lock())
+    }
+}
+
 /// The records under the lock: the threads' decisions, and the wake of
 /// each application's thread.
 struct State {
@@ -163,23 +272,27 @@ struct State {
 /// and what the threads place tells and release elements through.
 pub(crate) struct Checks {
     state: Mutex<State>,
-    kept: Mutex<HashMap<Pid, KeptElements<Agile<ListenerEvent>>>>,
+    kept: Arc<Kept>,
     /// The last token minted.
     tokens: AtomicU64,
     /// Each application's executable name, for its tells.
     applications: Mutex<Applications>,
     outgoing: Arc<Outgoing>,
-    readers: Arc<Readers<UiaFocusReading>>,
+    readers: Arc<Readers<UiaReading>>,
 }
 
 impl Checks {
-    pub(super) fn new(outgoing: &Arc<Outgoing>, readers: &Arc<Readers<UiaFocusReading>>) -> Self {
+    pub(super) fn new(
+        outgoing: &Arc<Outgoing>,
+        readers: &Arc<Readers<UiaReading>>,
+        kept: &Arc<Kept>,
+    ) -> Self {
         Self {
             state: Mutex::new(State {
                 threads: CheckThreads::default(),
                 wakes: HashMap::new(),
             }),
-            kept: Mutex::new(HashMap::new()),
+            kept: Arc::clone(kept),
             tokens: AtomicU64::new(0),
             applications: Mutex::new(Applications::default()),
             outgoing: Arc::clone(outgoing),
@@ -258,13 +371,7 @@ impl Checks {
             waiter();
         }
         drop(state);
-        let kept = self
-            .kept
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .remove(&pid)
-            .map(|mut kept| kept.ended())
-            .unwrap_or_default();
+        let kept = self.kept.ended(pid);
         let released = dropped
             .into_iter()
             .map(|event| event.element)
@@ -284,18 +391,16 @@ impl Checks {
         }
         drop(state);
         drop(dropped);
-        let kept = std::mem::take(&mut *self.kept.lock().unwrap_or_else(PoisonError::into_inner));
-        drop(kept);
+        drop(self.kept.clear());
     }
 
     /// Releases `elements` of `pid`'s as a job on its reading thread.
-    fn release(&self, pid: Pid, elements: Vec<Agile<ListenerEvent>>) {
+    pub(super) fn release(&self, pid: Pid, elements: Vec<Agile<ListenerEvent>>) {
         if elements.is_empty() {
             return;
         }
-        let meta = self.outgoing.received(FocusEvent::Release);
         self.readers
-            .push(pid, meta, UiaJob::Release(elements), MarkerOwed::nothing());
+            .push(pid, JobKind::Release, UiaJob::Release(elements));
     }
 
     /// The kept elements of `pid`'s with `runtime_id`, with their tokens,
@@ -306,16 +411,7 @@ impl Checks {
         pid: Pid,
         runtime_id: &RuntimeId,
     ) -> Vec<(ElementToken, Agile<ListenerEvent>)> {
-        self.kept
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .get(&pid)
-            .map(|kept| {
-                kept.with_runtime_id(runtime_id)
-                    .map(|(token, element)| (token, element.clone()))
-                    .collect()
-            })
-            .unwrap_or_default()
+        self.kept.with_runtime_id(pid, runtime_id)
     }
 
     /// The end of `pid`'s thread `generation`'s check of `event`, which
@@ -329,12 +425,11 @@ impl Checks {
         let mut unplaced = None;
         if own {
             let token = ElementToken(self.tokens.fetch_add(1, Ordering::Relaxed).wrapping_add(1));
-            {
-                let mut kept = self.kept.lock().unwrap_or_else(PoisonError::into_inner);
-                let kept = kept.entry(pid).or_default();
-                kept.keep(token, event.element, event.runtime_id.clone(), event.at_us);
-                released = kept.sweep(now_us());
-            }
+            released = self.kept.keep(
+                (pid, token),
+                (event.element, event.runtime_id.clone()),
+                (event.at_us, now_us()),
+            );
             let application = self
                 .applications
                 .lock()
