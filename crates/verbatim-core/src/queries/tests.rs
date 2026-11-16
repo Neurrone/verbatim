@@ -12,14 +12,12 @@ use verbatim_model::{
     TextOp, TextReply, TextUnit, TraceId,
 };
 
-use crate::queries::{self, ModelAsk, Then};
+use crate::queries::Then;
 use crate::reduce;
 use crate::state::SrState;
 
 /// The text box's outpost.
 const EDIT_OUTPOST: OutpostId = OutpostId(1);
-/// The console's outpost.
-const CONSOLE_OUTPOST: OutpostId = OutpostId(2);
 /// Every held key's trace, so `HeldKeyDue` names the key held last.
 pub(super) const HELD: TraceId = TraceId::from_raw(50);
 
@@ -119,16 +117,6 @@ pub(super) fn console_read(read: u64, at_ms: u64) -> TerminalSnapshot {
     }
 }
 
-fn snapshot_event(node_id: NodeId, read: u64, at_ms: u64) -> Input {
-    event(
-        node_id.outpost(),
-        NormalizedEvent::TerminalSnapshot {
-            node_id,
-            snapshot: Box::new(console_read(read, at_ms)),
-        },
-    )
-}
-
 /// The text box focused with its caret, on [`EDIT_OUTPOST`].
 fn text_box() -> SrState {
     text_box_wired().0
@@ -197,21 +185,6 @@ fn started(inputs: &[Input]) -> (SrState, Wire) {
     (state, wire)
 }
 
-/// The console Core reads, focused, with its model, on
-/// [`CONSOLE_OUTPOST`].
-fn console() -> SrState {
-    console_wired().0
-}
-
-/// [`console`], with the wire's view of the requests it made.
-fn console_wired() -> (SrState, Wire) {
-    let terminal = node(CONSOLE_OUTPOST, 5, Role::Terminal, "Console");
-    let id = terminal.id;
-    let (state, wire) = started(&[focus(terminal, None, None), snapshot_event(id, 1, 10)]);
-    assert_eq!(state.terminals.len(), 1, "the console has its model");
-    (state, wire)
-}
-
 /// One step of the enumeration: an input, or several applied as one.
 #[derive(Clone, Debug)]
 enum Step {
@@ -226,9 +199,6 @@ enum Step {
     Typed,
     FocusElsewhere,
     Refocus,
-    /// The first snapshots of 16 other terminals, which evict the
-    /// console's model, then the focus back on the console.
-    OtherTerminals,
     OutpostEnded,
     /// An answer to the oldest open number, the newest, the last ended or
     /// one never asked, with an outcome of each group.
@@ -278,7 +248,6 @@ fn steps() -> Vec<Step> {
         Step::Typed,
         Step::FocusElsewhere,
         Step::Refocus,
-        Step::OtherTerminals,
         Step::OutpostEnded,
         Step::FromElsewhere,
     ];
@@ -415,18 +384,6 @@ impl Wire {
                 }),
                 Some(EarlierElement::NotFocused),
             )],
-            Step::OtherTerminals if start == CONSOLE_OUTPOST => {
-                let mut inputs = Vec::new();
-                for number in 10..26 {
-                    let other = node(CONSOLE_OUTPOST, number, Role::Terminal, "Other");
-                    let id = other.id;
-                    inputs.push(focus(other, None, None));
-                    inputs.push(snapshot_event(id, 1, 20));
-                }
-                inputs.push(focus(start_node, None, None));
-                inputs
-            }
-            Step::OtherTerminals => Vec::new(),
             Step::OutpostEnded => vec![Input::OutpostEnded {
                 trace_id: TraceId::from_raw(62),
                 outpost: start,
@@ -683,20 +640,6 @@ fn one_of(then: &Then) -> Option<String> {
     match then {
         Then::Text(_) => Some("text".to_owned()),
         Then::SayAll => Some("say-all".to_owned()),
-        Then::Terminal(ask) => Some(format!("terminal {ask:?}")),
-        Then::TerminalModel {
-            node,
-            generation,
-            ask,
-        } => Some(format!(
-            "model {node:?} {generation} {}",
-            match ask {
-                ModelAsk::Whole | ModelAsk::HistoryBlock => "owed",
-                ModelAsk::Fresh => "fresh",
-                ModelAsk::History(_) => "history",
-                ModelAsk::Find { .. } => "find",
-            }
-        )),
         Then::Key { .. } | Then::MovedCaret { .. } | Then::Review(_) | Then::Nothing => None,
     }
 }
@@ -714,23 +657,9 @@ pub(super) fn check(path: &[usize], visit: &Visit<'_>) {
     // The idle barrier waits for exactly the reads the wire has open.
     let reads = wire.open.len();
     assert_eq!(state.outstanding_queries(), reads, "{at}");
-    for (query_id, open) in state.queries.entries() {
-        // Every query an outpost answers is open on the wire.
-        if open.asked != queries::Asked::Memory {
-            assert!(wire.open.contains_key(&query_id), "{query_id:?} {at}");
-        }
-        // A query Core answers from memory is about a terminal it models.
-        if open.asked == queries::Asked::Memory
-            && let Then::Text(pending) = &open.then
-        {
-            assert!(
-                state
-                    .terminals
-                    .iter()
-                    .any(|model| model.node == pending.node),
-                "{query_id:?} {at}"
-            );
-        }
+    for (query_id, _) in state.queries.entries() {
+        // Every query is open on the wire.
+        assert!(wire.open.contains_key(&query_id), "{query_id:?} {at}");
     }
     // An outpost's end leaves none of its queries open.
     if let Input::OutpostEnded { outpost, .. } = input {
@@ -742,9 +671,9 @@ pub(super) fn check(path: &[usize], visit: &Visit<'_>) {
             "{at}"
         );
     }
-    // An answer the table does not take, to no open query, from another
-    // outpost or to a query Core answers from memory, changes nothing; one
-    // to a query nothing waits for changes nothing but the table.
+    // An answer the table does not take, to no open query or from another
+    // outpost, changes nothing; one to a query nothing waits for changes
+    // nothing but the table.
     if let Input::Answered {
         query_id, outpost, ..
     } = input
@@ -754,8 +683,7 @@ pub(super) fn check(path: &[usize], visit: &Visit<'_>) {
             .entries()
             .find(|(open, _)| open == query_id)
             .map(|(_, open)| open);
-        let taken = open
-            .is_some_and(|open| open.outpost == *outpost && open.asked != queries::Asked::Memory);
+        let taken = open.is_some_and(|open| open.outpost == *outpost);
         let waited_for = open.is_some_and(|open| open.then != Then::Nothing);
         if !taken || !waited_for {
             let mut after = (*state).clone();
@@ -784,7 +712,7 @@ type Start = (Wired, &'static str, OutpostId, &'static str);
 type Wired = fn() -> (SrState, Wire);
 
 /// The enumeration's starts.
-const STARTS: [Start; 3] = [
+const STARTS: [Start; 2] = [
     (
         text_box_wired,
         "text_box_wired",
@@ -797,17 +725,11 @@ const STARTS: [Start; 3] = [
         EDIT_OUTPOST,
         "EDIT_OUTPOST",
     ),
-    (
-        console_wired,
-        "console_wired",
-        CONSOLE_OUTPOST,
-        "CONSOLE_OUTPOST",
-    ),
 ];
 
 /// Every sequence of up to three steps from a text box with its caret,
-/// from the same with a held key's watch waited on, and from a console
-/// Core reads keeps the table's invariants after every input, against the
+/// and from the same with a held key's watch waited on, keeps the table's
+/// invariants after every input, against the
 /// wire's view of the requests. A failing sequence is printed as a line
 /// for [`found`] before the failure.
 #[test]
@@ -948,119 +870,5 @@ fn a_text_requests_failure_reads_as_unanswered() {
         );
         assert!(!speaks(&effects), "{effects:?}");
         assert_eq!(state.outstanding_queries(), 0);
-    }
-}
-
-/// A review command in a console Core reads is answered from the console's
-/// memory after a fresh read: only the fresh read is waited for, and the
-/// command's query ends at Core's answer.
-#[test]
-fn a_console_review_answered_from_memory_is_never_waited_for() {
-    let mut state = console();
-    // The first read told the outpost the screen's shape.
-    let before = state.outstanding_queries();
-    let asked = requests(&reduce(
-        &mut state,
-        &mut crate::Runtime::default(),
-        &command(ReviewCommand::ReviewCurrentLine),
-    ));
-    let [(fresh, Some(TextOp::TerminalReadNow(_)))] = asked[..] else {
-        panic!("one fresh read, not {asked:?}");
-    };
-    assert_eq!(
-        state.outstanding_queries(),
-        before + 1,
-        "the fresh read alone"
-    );
-    let effects = reduce(
-        &mut state,
-        &mut crate::Runtime::default(),
-        &answered(
-            fresh,
-            CONSOLE_OUTPOST,
-            QueryOutcome::Done(QueryResult::Text(TextReply::TerminalSnapshot(Box::new(
-                console_read(2, 20),
-            )))),
-        ),
-    );
-    assert!(speaks(&effects), "the line is read: {effects:?}");
-    assert_eq!(state.outstanding_queries(), before);
-    assert_eq!(
-        state.queries.numbers().count(),
-        before,
-        "the command's query has ended"
-    );
-}
-
-/// A console's model dropped while a review command waits for its fresh
-/// read, by a refocus that forgets its text or by its eviction past 16
-/// models: the command's query ends with it, the fresh read's answer is
-/// taken by no model, and the model made again for the console asks its
-/// own fresh read rather than wait for that one.
-#[test]
-fn a_dropped_models_review_ends_and_its_fresh_read_is_taken_by_no_model() {
-    let refocus = || {
-        vec![focus(
-            node(CONSOLE_OUTPOST, 5, Role::Terminal, "Console"),
-            None,
-            Some(EarlierElement::NotFocused),
-        )]
-    };
-    let evict = || {
-        let mut inputs = Vec::new();
-        for number in 10..26 {
-            let other = node(CONSOLE_OUTPOST, number, Role::Terminal, "Other");
-            let id = other.id;
-            inputs.push(focus(other, None, None));
-            inputs.push(snapshot_event(id, 1, 20));
-        }
-        inputs.push(focus(
-            node(CONSOLE_OUTPOST, 5, Role::Terminal, "Console"),
-            None,
-            None,
-        ));
-        inputs
-    };
-    for drop_model in [refocus(), evict()] {
-        let mut state = console();
-        let asked = requests(&reduce(
-            &mut state,
-            &mut crate::Runtime::default(),
-            &command(ReviewCommand::ReviewCurrentLine),
-        ));
-        let [(fresh, Some(_))] = asked[..] else {
-            panic!("one fresh read, not {asked:?}");
-        };
-        for input in &drop_model {
-            let _ = reduce(&mut state, &mut crate::Runtime::default(), input);
-        }
-        let _ = reduce(
-            &mut state,
-            &mut crate::Runtime::default(),
-            &snapshot_event(NodeId::in_outpost(CONSOLE_OUTPOST, 5), 3, 30),
-        );
-        let asked = requests(&reduce(
-            &mut state,
-            &mut crate::Runtime::default(),
-            &command(ReviewCommand::ReviewCurrentLine),
-        ));
-        let [(own, Some(TextOp::TerminalReadNow(_)))] = asked[..] else {
-            panic!("the new model's own fresh read, not {asked:?}");
-        };
-        assert_ne!(own, fresh);
-        let before = state.outstanding_queries();
-        let effects = reduce(
-            &mut state,
-            &mut crate::Runtime::default(),
-            &answered(
-                fresh,
-                CONSOLE_OUTPOST,
-                QueryOutcome::Done(QueryResult::Text(TextReply::TerminalSnapshot(Box::new(
-                    console_read(4, 40),
-                )))),
-            ),
-        );
-        assert!(!speaks(&effects), "{effects:?}");
-        assert_eq!(state.outstanding_queries(), before - 1);
     }
 }

@@ -34,7 +34,6 @@ use verbatim_model::{
     WindowFacts, WindowHandle,
 };
 
-use super::Asked as Waited;
 use super::Then;
 use super::tests::{self, Visit, Wire};
 use crate::foreground::{Attention, Front};
@@ -65,14 +64,6 @@ enum Action {
         windowed: bool,
         stamp: u8,
     },
-    /// The focused terminal's snapshot: its prompt alone, or (`growing`)
-    /// with a ruler above it whose line number grows by one each such
-    /// read, a row changed often enough that the reading rules hold it
-    /// until it settles, with their quiet-period timer.
-    Snapshot { growing: bool },
-    /// The first snapshots of 16 other terminals, which evict the oldest
-    /// models, then the focus back on the terminal.
-    OtherTerminals,
     /// An answer: to the oldest (0) or newest (1) open request, to the
     /// last ended (2), to one never asked (3), or to the newest from
     /// another outpost (4), done (0), gone (1) or failed (2).
@@ -92,9 +83,6 @@ enum Action {
     OutpostEnded(u8),
     /// A new generation starts.
     NewGeneration,
-    /// The terminal's quiet-period timer fires at its due time, as the
-    /// shell reads it from the state, the clock moved on to it.
-    Timer,
 }
 
 impl Action {
@@ -128,8 +116,6 @@ fn action() -> impl Strategy<Value = Action> {
                 stamp,
             }
         ),
-        4 => any::<bool>().prop_map(|growing| Action::Snapshot { growing }),
-        1 => Just(Action::OtherTerminals),
         10 => (prop_oneof![8 => 0..2u8, 1 => 2..5u8], 0..3u8)
             .prop_map(|(which, outcome)| Action::Answer { which, outcome }),
         6 => (0..3u8).prop_map(Action::Key),
@@ -138,7 +124,6 @@ fn action() -> impl Strategy<Value = Action> {
             .prop_map(|(window, tie)| Action::Foreground { window, tie }),
         2 => (0..2u8).prop_map(Action::OutpostEnded),
         2 => Just(Action::NewGeneration),
-        3 => Just(Action::Timer),
     ]
 }
 
@@ -150,34 +135,21 @@ struct Model {
     started: u64,
     /// The front: its window and when it was observed.
     front: Option<(WindowHandle, u64)>,
-    /// The terminal models, least recently read first, as node and
-    /// generation, and the newest generation made.
-    models: Vec<(NodeId, u64)>,
-    newest_made: Option<u64>,
     /// The ids of the queries ended.
     ended_ids: BTreeSet<QueryId>,
     /// The time, in microseconds.
     now: u64,
-    /// The terminal's snapshots read so far.
-    reads: u64,
-    /// How many of them showed a line of output growing.
-    grown: usize,
 }
 
 /// The listed states a gate's cases must reach.
-const LISTED: [&str; 13] = [
+const LISTED: [&str; 8] = [
     "a focus's text forgotten",
     "an outpost ended",
     "a focus dead with its outpost",
-    "a model made",
-    "a model evicted",
-    "a model dropped",
     "a query ended",
     "an answer from elsewhere",
     "an answer to an ended query",
     "an answer to a superseded query",
-    "an answer to a model no longer live",
-    "a request answered from memory",
     "an ended generation checked",
 ];
 
@@ -190,23 +162,6 @@ struct Run {
     /// Each input's effects, for the run twice.
     log: Vec<String>,
     reached: BTreeMap<&'static str, u32>,
-}
-
-/// `snapshot`, a terminal snapshot's event, with a ruler above its prompt
-/// showing line `length`.
-fn grow(snapshot: &mut Input, length: usize) {
-    let Input::Event {
-        event: NormalizedEvent::TerminalSnapshot { snapshot, .. },
-        ..
-    } = snapshot
-    else {
-        return;
-    };
-    let line = format!("{length},1 Top");
-    let text = verbatim_model::TerminalText::unpadded(&format!("{line}\r\nPS> "));
-    snapshot.text = text.clone();
-    snapshot.screen = text;
-    snapshot.first_row = verbatim_model::TerminalText::unpadded(&line);
 }
 
 /// The fields of Core's state that may still name an ended outpost
@@ -262,12 +217,6 @@ fn facts(top: WindowHandle) -> WindowFacts {
         alt_held: false,
         foreground_is_shell: false,
     }
-}
-
-/// The node numbered `number` of generation `outpost`: the text box (5),
-/// the button (6), the terminal (7) and other terminals (10 and over).
-fn node_of(outpost: OutpostId, number: u64) -> NodeId {
-    NodeId::in_outpost(outpost, number)
 }
 
 /// The requests `effects` make, each by its number and node, and the key
@@ -397,36 +346,6 @@ impl Run {
                 );
                 self.focus(&input, earlier);
             }
-            Action::Snapshot { growing } => {
-                if let Some(node) = self
-                    .state
-                    .focus
-                    .object()
-                    .map(|focus| focus.snapshot.id)
-                    .filter(|node| node.number() == 7)
-                {
-                    self.model.reads += 1;
-                    let mut input = self.snapshot(node);
-                    if growing {
-                        self.model.grown += 1;
-                        grow(&mut input, self.model.grown);
-                    }
-                    self.input(&input);
-                }
-            }
-            Action::OtherTerminals => {
-                let Some(outpost) = self.model.live.last().copied() else {
-                    return;
-                };
-                for number in 10..26 {
-                    let input = self.focus_input(outpost, number, None, false, 0);
-                    self.focus(&input, None);
-                    let snapshot = self.snapshot(node_of(outpost, number));
-                    self.input(&snapshot);
-                }
-                let input = self.focus_input(outpost, 7, None, false, 0);
-                self.focus(&input, None);
-            }
             Action::Answer { which, outcome } => {
                 let outcome = match outcome {
                     0 => tests::Outcome::Done,
@@ -553,27 +472,6 @@ impl Run {
                     self.model.live.insert(OutpostId(self.model.started));
                 }
             }
-            Action::Timer => {
-                let Some(due_ms) = self.state.terminal_timer_due() else {
-                    return;
-                };
-                self.model.now = self.model.now.max(due_ms * 1_000);
-                self.reach("a terminal timer fired");
-                self.input(&Input::TerminalTimer {
-                    trace_id: trace,
-                    at_ms: due_ms,
-                });
-                // The timer's due time moves past the time it fired at, or
-                // the shell, which fires it whenever the due time it reads
-                // is past, would fire it on every wake.
-                assert!(
-                    self.state
-                        .terminal_timer_due()
-                        .is_none_or(|due| due > due_ms),
-                    "the timer is due again at its own time: {:?}",
-                    self.trail
-                );
-            }
         }
         // The state round-trips through its serialisation.
         let json = serde_json::to_string(&self.state).expect("the state serializes");
@@ -626,25 +524,6 @@ impl Run {
         }
     }
 
-    /// The snapshot of terminal `node`, the model's next read.
-    fn snapshot(&self, node: NodeId) -> Input {
-        Input::Event {
-            trace_id: TraceId::from_raw(300 + self.trail.len() as u64),
-            observed_at_us: 0,
-            source: APPLICATION,
-            backend: Backend::Uia,
-            window: None,
-            event: NormalizedEvent::TerminalSnapshot {
-                node_id: node,
-                snapshot: Box::new(tests::console_read(
-                    self.model.reads + 1,
-                    self.model.now / 1_000,
-                )),
-            },
-            purpose: None,
-        }
-    }
-
     /// Gives `input`, a focus read with `earlier`, generated in the front
     /// or with no window facts.
     fn focus(&mut self, input: &Input, earlier: Option<EarlierElement>) {
@@ -669,7 +548,7 @@ impl Run {
         if matches!(
             earlier,
             Some(EarlierElement::NotFocused | EarlierElement::Gone)
-        ) && self.model.models.iter().any(|(model, _)| *model == node.id)
+        ) && self.state.focus_caret(node.id).is_some()
         {
             self.reach("a focus's text forgotten");
         }
@@ -845,7 +724,7 @@ impl Run {
             })
             .collect();
         for (query_id, open) in before.queries.entries() {
-            if open.outpost != outpost && open.asked != Waited::Memory {
+            if open.outpost != outpost {
                 assert!(
                     self.state.queries.entries().any(|(id, _)| id == query_id)
                         || withdrawn.contains(&query_id),
@@ -858,10 +737,6 @@ impl Run {
 
     /// Gives `input` and checks it: the table's invariants of the
     /// enumeration, then the slice's against the model. Its effects.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "one check for each part of the slice"
-    )]
     fn input(&mut self, input: &Input) -> Vec<Effect> {
         let before = self.state.clone();
         let effects = reduce(&mut self.state, &mut crate::Runtime::default(), input);
@@ -883,12 +758,10 @@ impl Run {
         // Every open entry but Core's own names a live generation, and no
         // effect asks an ended one.
         for (query_id, open) in state.queries.entries() {
-            if open.asked != Waited::Memory {
-                assert!(
-                    !model.ended.contains(&open.outpost),
-                    "{query_id:?} of an ended outpost: {trail}"
-                );
-            }
+            assert!(
+                !model.ended.contains(&open.outpost),
+                "{query_id:?} of an ended outpost: {trail}"
+            );
         }
         let asked = requests(&effects, None);
         for (query_id, node, _) in &asked {
@@ -944,180 +817,27 @@ impl Run {
                 "a held node of an ended outpost: {trail}"
             );
         }
-        // The terminal models: at most 16, each generation new when made
-        // and none of an ended outpost; one goes only when the oldest is
-        // evicted for a new one, its node's text is forgotten or its
-        // outpost ends; the others keep their order, one read moving to
-        // the back.
-        let models: Vec<(NodeId, u64)> = state
-            .terminals
-            .iter()
-            .map(|terminal| (terminal.node, terminal.generation))
-            .collect();
-        assert!(models.len() <= 16, "{trail}");
-        let made: Vec<(NodeId, u64)> = models
-            .iter()
-            .copied()
-            .filter(|model_made| !model.models.contains(model_made))
-            .collect();
-        for (node, generation) in &made {
-            assert!(
-                model.newest_made.is_none_or(|newest| *generation > newest),
-                "{trail}"
-            );
-            assert!(!model.ended.contains(&node.outpost()), "{trail}");
-            model.newest_made = Some(*generation);
-        }
-        let forgotten = match input {
-            Input::Event {
-                event:
-                    NormalizedEvent::FocusChanged {
-                        node,
-                        earlier: Some(EarlierElement::NotFocused | EarlierElement::Gone),
-                        ..
-                    },
-                ..
-            } => Some(node.id),
-            _ => None,
-        };
-        let ended_outpost = match input {
-            Input::OutpostEnded { outpost, .. } => Some(*outpost),
-            _ => None,
-        };
-        let gone: Vec<(NodeId, u64)> = model
-            .models
-            .iter()
-            .copied()
-            .filter(|before_model| !models.contains(before_model))
-            .collect();
-        for (at, (node, _)) in gone.iter().enumerate() {
-            if Some(*node) == forgotten || Some(node.outpost()) == ended_outpost {
-                *self.reached.entry("a model dropped").or_default() += 1;
-            } else {
-                assert!(
-                    !made.is_empty()
-                        && model.models.len() == 16
-                        && model.models.get(at) == Some(&(*node, gone[at].1)),
-                    "a model gone but evicted: {trail}"
-                );
-                *self.reached.entry("a model evicted").or_default() += 1;
-            }
-        }
-        let kept: Vec<(NodeId, u64)> = model
-            .models
-            .iter()
-            .copied()
-            .filter(|kept| models.contains(kept))
-            .collect();
-        let mut rest = models
-            .iter()
-            .copied()
-            .filter(|each| !made.contains(each))
-            .peekable();
-        for each in &kept {
-            if rest.peek() == Some(each) {
-                rest.next();
-            }
-        }
-        let moved: Vec<(NodeId, u64)> = rest.collect();
-        let tail_starts = models.len() - moved.len() - made.len();
-        assert!(
-            models[tail_starts..]
-                .iter()
-                .all(|each| moved.contains(each) || made.contains(each)),
-            "the models' order: {:?} after {:?}: {trail}",
-            models,
-            model.models
-        );
-        if !made.is_empty() {
-            *self.reached.entry("a model made").or_default() += 1;
-        }
-        model.models = models;
-        // Every memory entry is a live model's.
-        for (_, open) in state.queries.entries() {
-            if open.asked != Waited::Memory {
-                continue;
-            }
-            let node = match &open.then {
-                Then::Text(pending) => pending.node,
-                // A review read carries no node: the press it serves, the
-                // current key, has it.
-                Then::Review(_) => state
-                    .key_line_node()
-                    .expect("a review read's press is the current key"),
-                _ => continue,
-            };
-            assert!(
-                model.models.iter().any(|(each, _)| *each == node),
-                "{trail}"
-            );
-        }
         if ended > 0 {
             *self.reached.entry("a query ended").or_default() += 1;
         }
-        if before
-            .queries
-            .entries()
-            .any(|(_, open)| open.asked == Waited::Memory)
-            && !matches!(input, Input::OutpostEnded { .. })
-            && before
-                .queries
-                .entries()
-                .filter(|(_, open)| open.asked == Waited::Memory)
-                .any(|(id, _)| !state.queries.entries().any(|(now, _)| now == id))
-        {
-            *self
-                .reached
-                .entry("a request answered from memory")
-                .or_default() += 1;
-        }
-        // An answer: to an entry nothing waits for, or to a model no
-        // longer live, runs nothing.
+        // An answer to an entry nothing waits for runs nothing.
         if let Input::Answered {
             query_id, outpost, ..
         } = input
             && let Some((_, open)) = before.queries.entries().find(|(id, _)| id == query_id)
             && open.outpost == *outpost
-            && open.asked != Waited::Memory
+            && open.then == Then::Nothing
         {
-            match &open.then {
-                Then::Nothing => {
-                    *self
-                        .reached
-                        .entry("an answer to a superseded query")
-                        .or_default() += 1;
-                }
-                Then::TerminalModel {
-                    node, generation, ..
-                } if !before
-                    .terminals
-                    .iter()
-                    .any(|model| model.node == *node && model.generation == *generation) =>
-                {
-                    *self
-                        .reached
-                        .entry("an answer to a model no longer live")
-                        .or_default() += 1;
-                    if before.terminals.iter().any(|model| model.node == *node) {
-                        *self
-                            .reached
-                            .entry("an answer to a replaced model")
-                            .or_default() += 1;
-                    }
-                    let mut expected = before.clone();
-                    let _ = expected.queries.end(*query_id);
-                    assert_eq!(effects, [], "{trail}");
-                    assert_eq!(expected, self.state, "{trail}");
-                }
-                _ => {}
-            }
+            *self
+                .reached
+                .entry("an answer to a superseded query")
+                .or_default() += 1;
         }
         effects
     }
 
     /// Ends the case: every request still open answered, oldest first,
-    /// until none is; then nothing the idle barrier waits for is open, and
-    /// every entry left is Core's own, of a live model.
+    /// until none is; then nothing is left open.
     fn drain(&mut self) {
         for _ in 0..200 {
             let Some((query_id, (outpost, asked))) = self
@@ -1134,14 +854,12 @@ impl Run {
         }
         assert!(self.wire.open.is_empty(), "requests left: {:?}", self.trail);
         assert_eq!(self.state.outstanding_queries(), 0, "{:?}", self.trail);
-        for (query_id, open) in self.state.queries.entries() {
-            assert_eq!(
-                open.asked,
-                Waited::Memory,
-                "{query_id:?} left: {:?}",
-                self.trail
-            );
-        }
+        assert_eq!(
+            self.state.queries.entries().count(),
+            0,
+            "entries left: {:?}",
+            self.trail
+        );
     }
 }
 
@@ -1175,66 +893,26 @@ pub(super) fn run_generated(config: Config, again: &str) -> BTreeMap<&'static st
     }
 }
 
-/// A focus of the terminal of the oldest generation, with what its reader
-/// read of the element it held (0 nothing, 2 not focused).
-const fn terminal(earlier: u8) -> Action {
-    Action::Focus {
-        generation: 0,
-        node: 2,
-        earlier,
-        windowed: false,
-        stamp: 0,
-    }
-}
-
 /// The cases kept beside the generated ones, each reaching what the
-/// generated cases reach too seldom: a model's request answered after its
-/// model was replaced by a newer one of the same terminal, a foreground
-/// change observed when the newest focus was, and the terminal's timer
-/// fired after a row changed often enough for the rules to hold it.
+/// generated cases reach too seldom: a foreground change observed when
+/// the newest focus was.
 fn fixed() -> Vec<(Vec<Action>, &'static str)> {
-    vec![
-        (
-            vec![
-                terminal(0),
-                Action::Snapshot { growing: false },
-                Action::Command(0),
-                terminal(2),
-                Action::Snapshot { growing: false },
-                Action::Answer {
-                    which: 0,
-                    outcome: 0,
-                },
-            ],
-            "an answer to a replaced model",
-        ),
-        (
-            vec![
-                Action::Focus {
-                    generation: 0,
-                    node: 0,
-                    earlier: 0,
-                    windowed: true,
-                    stamp: 0,
-                },
-                Action::Foreground {
-                    window: 1,
-                    tie: true,
-                },
-            ],
-            "a foreground change at the newest focus's stamp",
-        ),
-        (
-            vec![
-                terminal(0),
-                Action::Snapshot { growing: true },
-                Action::Snapshot { growing: true },
-                Action::Snapshot { growing: true },
-                Action::Timer,
-            ],
-            "a terminal timer fired",
-        ),
-    ]
+    vec![(
+        vec![
+            Action::Focus {
+                generation: 0,
+                node: 0,
+                earlier: 0,
+                windowed: true,
+                stamp: 0,
+            },
+            Action::Foreground {
+                window: 1,
+                tie: true,
+            },
+        ],
+        "a foreground change at the newest focus's stamp",
+    )]
 }
 
 /// Every fixed case keeps the slice's rules, gives the same effects when
@@ -1252,8 +930,8 @@ fn fixed_cases_keep_the_reducers_rules() {
 const SEED: u64 = 20_261_103;
 const CASES: u32 = 300;
 
-/// Generated cases of focuses from live outpost generations, terminal
-/// snapshots, answers of every kind (from the outpost asked, another, to an
+/// Generated cases of focuses from live outpost generations, answers of
+/// every kind (from the outpost asked, another, to an
 /// ended query, to none), keys, commands, foreground changes,
 /// outposts' ends and new generations keep the query table's invariants and
 /// the slice's against the model after every input, round-trip through the
