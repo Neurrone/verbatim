@@ -131,7 +131,11 @@ fn a_slow_edit_control_answers_its_selection() {
     app.send("caret doc 6 10");
     let outpost = OutpostUnderTest::new(&app);
     let focus = outpost.msaa_focus_answer(MsaaIds {
-        window: WindowHandle(edit as u64),
+        window: WindowHandle(
+            i64::try_from(edit)
+                .expect("a window handle")
+                .cast_unsigned(),
+        ),
         object: OBJID_CLIENT.0,
         child: 0,
     });
