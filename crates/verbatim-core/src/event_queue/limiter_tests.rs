@@ -45,6 +45,9 @@ struct Msaa {
     object: i32,
     thread: u32,
     accepted: bool,
+    /// When the reader received it; the tests that do not name a time
+    /// give 0, so all their tells fall in one pump window.
+    at_us: u64,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -176,6 +179,7 @@ impl Logic for Limited {
                 key: key_of(tell),
                 class: class_of(tell.kind),
                 accepted: tell.accepted,
+                at_us: tell.at_us,
             },
             Entry::Other {
                 focus_kind,
@@ -235,6 +239,7 @@ fn tell(name: &'static str, kind: EventKind, object: i32) -> Entry {
         object,
         thread: 1,
         accepted: true,
+        at_us: 0,
     })
 }
 
@@ -354,6 +359,7 @@ fn an_msaa_tell_of_the_same_object_kind_and_thread_is_merged_and_of_another_thre
             object: 3,
             thread,
             accepted: true,
+            at_us: 0,
         })
     };
     assert_eq!(
@@ -419,6 +425,7 @@ fn a_foreground_tell_removes_a_waiting_focus_of_its_object_from_its_thread() {
         object: 0,
         thread: 2,
         accepted: true,
+        at_us: 0,
     });
     assert_eq!(
         said_after(
@@ -446,6 +453,68 @@ fn the_newest_four_candidates_are_kept() {
                 .collect()
         ),
         words(&["held", "run f6 f5 f4 f3"])
+    );
+}
+
+#[test]
+fn candidates_arriving_more_than_a_pump_window_apart_are_not_capped_together() {
+    // settings_dialog_keys: the desktop item's focus, then over 39 ms five
+    // focus events from Verbatim's closing dialog while a read is out.
+    // NVDA pumps at least every 10 ms, so they never meet in one flush of
+    // its limiter, and the desktop item is kept.
+    let at = |name, object, at_us| {
+        Entry::Msaa(Msaa {
+            name,
+            kind: EventKind::MsaaFocus,
+            window: 5,
+            object,
+            thread: 1,
+            accepted: true,
+            at_us,
+        })
+    };
+    assert_eq!(
+        said_after(
+            None,
+            vec![
+                at("desktop item", 1, 0),
+                at("d1", 2, 1_000),
+                at("d2", 3, 10_000),
+                at("d3", 4, 20_000),
+                at("d4", 5, 30_000),
+                at("d5", 6, 39_000),
+            ]
+        ),
+        words(&["held", "run d5 d4 d3 d2 d1 desktop item"])
+    );
+}
+
+#[test]
+fn candidates_within_one_pump_window_are_capped_at_four() {
+    let at = |name, object, at_us| {
+        Entry::Msaa(Msaa {
+            name,
+            kind: EventKind::MsaaFocus,
+            window: 5,
+            object,
+            thread: 1,
+            accepted: true,
+            at_us,
+        })
+    };
+    assert_eq!(
+        said_after(
+            None,
+            vec![
+                at("f1", 1, 0),
+                at("f2", 2, 30_000),
+                at("f3", 3, 32_000),
+                at("f4", 4, 35_000),
+                at("f5", 5, 38_000),
+                at("f6", 6, 40_000),
+            ]
+        ),
+        words(&["held", "run f6 f5 f4 f3 f1"])
     );
 }
 
@@ -575,6 +644,7 @@ fn a_foreground_change_ends_waiting_entries_outside_it_and_a_marker_joins_the_ba
             object: 1,
             thread: 1,
             accepted: true,
+            at_us: 0,
         })
     };
     let mut core = Core::<Limited>::default();

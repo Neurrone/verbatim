@@ -382,7 +382,13 @@ raise time; the hook takes an event on a window object as the client
 object, as NVDA's callback does. The limiter so keeps, in one run, the
 newest 4 focus and foreground events and every older foreground change
 of another window, or of the same window from another thread, that its
-thread's limit of 10 keeps.
+thread's limit of 10 keeps. Core, which has no pump, applies both limits
+each time an MSAA entry joins its queue, counting only the waiting MSAA
+entries whose tells' arrival times lie within 10 ms of the newest one's,
+the longest NVDA's core pump waits once requested (`core.py` 55,
+`PUMP_MAX_DELAY`), so entries spread over several pump cycles are never
+capped against each other, as in NVDA
+(`verbatim-core/src/event_queue/limiter.rs`, `PUMP_WINDOW_US`).
 
 Before an outpost hears them, the focus listener coalesces its facts one
 per object and kind, and for an MSAA event other than a menu opening,

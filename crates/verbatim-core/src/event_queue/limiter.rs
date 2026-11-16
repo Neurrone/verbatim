@@ -4,9 +4,12 @@
 //! Table 1; `docs/parity/backends.md`, "MSAA winevent flood control", "MSAA
 //! menu events in one flush").
 //!
-//! NVDA applies its limiter once per pump; Core has no pump and applies it
-//! each time an MSAA entry joins. Only waiting entries are merged, joined
-//! or counted; the asked front entry never is.
+//! NVDA applies its limiter once per pump, to the events gathered since
+//! the last; Core has no pump and applies it each time an MSAA entry joins,
+//! counting only the waiting MSAA entries that arrived within one pump
+//! window of the newest ([`PUMP_WINDOW_US`]), by the arrival times their
+//! tells carry. Only waiting entries are merged, joined or counted; the
+//! asked front entry never is.
 
 use std::collections::{BTreeMap, VecDeque};
 
@@ -22,6 +25,12 @@ pub(crate) const FOCUS_CAP: usize = 4;
 /// How many other MSAA entries of one raising thread wait at most, the
 /// newest kept.
 pub(crate) const THREAD_CAP: usize = 10;
+/// How far apart, in microseconds, two MSAA entries' arrivals may lie and
+/// still be counted by the caps together: NVDA's core pump runs at most
+/// 10 ms after a pump is requested (`PUMP_MAX_DELAY`, `core.py` 55), and its
+/// limiter is flushed once per pump, so entries further apart reach NVDA in
+/// different pumps and are never capped against each other.
+pub(crate) const PUMP_WINDOW_US: u64 = 10_000;
 
 /// An MSAA tell's key: its kind, its object's ids and the thread that
 /// raised it.
@@ -77,6 +86,10 @@ pub(crate) enum Place {
         /// Whether it passes acceptance on its tell's facts: an accepted
         /// MSAA tell other than a run candidate or a menu tell ends a run.
         accepted: bool,
+        /// When the reader received its tell, in microseconds on the run's
+        /// shared clock: the caps count it only with entries that arrived
+        /// within [`PUMP_WINDOW_US`] of the newest.
+        at_us: u64,
     },
     /// Anything else: a UI Automation tell, a key, a command, an entry
     /// Core makes.
@@ -115,7 +128,17 @@ fn msaa<L: Logic>(facts: &L::Facts, entry: &L::Entry) -> Option<(MsaaKey, MsaaCl
             key,
             class,
             accepted,
+            ..
         } => Some((key, class, accepted)),
+        Place::Other { .. } => None,
+    }
+}
+
+/// When the reader received `entry`'s tell, `None` for an entry of
+/// another kind.
+fn arrived<L: Logic>(facts: &L::Facts, entry: &L::Entry) -> Option<u64> {
+    match L::place(facts, entry) {
+        Place::Msaa { at_us, .. } => Some(at_us),
         Place::Other { .. } => None,
     }
 }
@@ -268,20 +291,38 @@ fn join_run<L: Logic>(
 /// a run when it is a run's candidate, its key and its part.
 type Counted = (usize, Option<usize>, MsaaKey, MsaaClass);
 
-/// NVDA's caps on the waiting MSAA entries: the newest four run candidates
-/// kept; the newest ten other MSAA entries of each raising thread kept,
-/// foreground tells counted among them, entries on the logic's exempt ids
-/// kept but counted. A foreground tell is dropped only when neither cap
-/// keeps it, as NVDA keeps a copy in each cache. The menu slot is outside
-/// both.
+/// NVDA's caps on the waiting MSAA entries of one pump window: the newest
+/// four run candidates kept; the newest ten other MSAA entries of each
+/// raising thread kept, foreground tells counted among them, entries on
+/// the logic's exempt ids kept but counted. A foreground tell is dropped
+/// only when neither cap keeps it, as NVDA keeps a copy in each cache. The
+/// menu slot is outside both. Only entries that arrived within
+/// [`PUMP_WINDOW_US`] of the newest waiting MSAA entry are counted or
+/// dropped: older ones would have left NVDA's limiter in an earlier pump.
 fn limit<L: Logic>(facts: &L::Facts, waiting: &mut VecDeque<Item<L::Entry>>) {
-    // Every MSAA entry waiting, by its place: (item, place in run).
+    let entries = waiting.iter().flat_map(|item| match item {
+        Item::Run(run) => run.iter().collect::<Vec<_>>(),
+        Item::One(entry) => vec![entry],
+        Item::Menu { .. } => Vec::new(),
+    });
+    let Some(newest) = entries.filter_map(|entry| arrived::<L>(facts, entry)).max() else {
+        return;
+    };
+    let in_window = |entry: &L::Entry| {
+        arrived::<L>(facts, entry)
+            .is_some_and(|at_us| at_us.saturating_add(PUMP_WINDOW_US) >= newest)
+    };
+    // Every MSAA entry waiting in the window, by its place: (item, place
+    // in run).
     let mut candidates = Vec::new();
     let mut by_thread: BTreeMap<u32, Vec<Counted>> = BTreeMap::new();
     for (place, item) in waiting.iter().enumerate() {
         match item {
             Item::Run(run) => {
                 for (inner, entry) in run.iter().enumerate() {
+                    if !in_window(entry) {
+                        continue;
+                    }
                     if let Some((key, class, _)) = msaa::<L>(facts, entry) {
                         candidates.push((place, inner));
                         if class == MsaaClass::Foreground {
@@ -296,6 +337,9 @@ fn limit<L: Logic>(facts: &L::Facts, waiting: &mut VecDeque<Item<L::Entry>>) {
                 }
             }
             Item::One(entry) => {
+                if !in_window(entry) {
+                    continue;
+                }
                 if let Some((key, class, _)) = msaa::<L>(facts, entry) {
                     by_thread
                         .entry(key.thread)

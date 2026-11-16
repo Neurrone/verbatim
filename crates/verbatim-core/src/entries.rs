@@ -719,6 +719,7 @@ impl Logic for Entries {
                     MsaaClass::Focus
                 },
                 accepted: acceptance::accept(candidate.tell.kind, candidate.facts(), false).is_ok(),
+                at_us: candidate.tell.at_us,
             },
             Entry::Menu(candidate) => Place::Msaa {
                 key: MsaaKey {
@@ -730,6 +731,7 @@ impl Logic for Entries {
                 },
                 class: MsaaClass::Menu,
                 accepted: acceptance::accept(candidate.tell.kind, candidate.facts(), false).is_ok(),
+                at_us: candidate.tell.at_us,
             },
             Entry::MsaaChange(change) => Place::Msaa {
                 key: MsaaKey {
@@ -746,6 +748,7 @@ impl Logic for Entries {
                     facts.settings.report_background_progress_bars,
                 )
                 .is_ok(),
+                at_us: change.tell.at_us,
             },
             Entry::UiaFocus(_) => Place::Other {
                 merges: true,
@@ -764,6 +767,7 @@ impl Logic for Entries {
                     class: MsaaClass::Other,
                     accepted: acceptance::accept(caret.tell.kind, window_facts(&caret.tell), false)
                         .is_ok(),
+                    at_us: caret.tell.at_us,
                 },
                 crate::caret_tell::Target::Uia(_) => Place::Other {
                     merges: true,

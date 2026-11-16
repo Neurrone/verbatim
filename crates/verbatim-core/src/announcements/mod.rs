@@ -210,6 +210,7 @@ impl Announcement {
             },
             class,
             accepted: acceptance::accept(self.tell.kind, window_facts(&self.tell), false).is_ok(),
+            at_us: self.tell.at_us,
         };
         match &self.kind {
             Kind::Alert { ids, .. } | Kind::DesktopName { ids } => msaa(ids, MsaaClass::Other),
