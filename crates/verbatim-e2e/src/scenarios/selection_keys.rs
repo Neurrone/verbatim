@@ -22,14 +22,16 @@
 //! name the line break before it, in
 //! `target/e2e-evidence/m42-text-captures-2026-10-23/` (items 1 and 2);
 //! each key has a line of its own, so each starts from the text its capture
-//! started from. Two
-//! differences are deliberate and declared where they occur: Verbatim has
-//! no delayed character description, the "Bravo" NVDA says after the "b"
-//! Delete reaches; and in Notepad, whose text is read through UI
-//! Automation, a selection whose old range no longer holds its text is
-//! said removed, where NVDA names what the range now holds or says
-//! nothing (Dickson, 2026-10-22). The clipboard is filled by the scenario's
-//! own Control+X, so Control+V pastes a word the scenario cut.
+//! started from. Both scenarios were compared with NVDA alpha-58022
+//! (732d1ce2, the pinned build) on 2026-11-17, running their own steps,
+//! in `target/e2e-evidence/rtca-selection-keys-2026-11-17/`
+//! (`cmp-text_box_selection_keys.txt`, `cmp-notepad_selection_keys.txt`),
+//! and every step asserts the words NVDA said there, with no difference
+//! declared (Dickson, 2026-11-16): in Notepad, whose text is read through
+//! UI Automation, a selection whose old range no longer holds its text is
+//! named as the range now holds it, or not at all when it is empty. The
+//! clipboard is filled by the scenario's own Control+X, so Control+V
+//! pastes a word the scenario cut.
 //!
 //! Every key is a real key press the keyboard hook sees and passes to the
 //! editor; each step waits for its speech to be heard in full before the
@@ -40,7 +42,6 @@ use std::io;
 
 use crate::registry::ScenarioState;
 use crate::scenario::{Document, Scenario, WINDOW_TIMEOUT};
-use crate::speech::{cut_off, heard};
 
 pub(crate) use super::no_teardown as teardown;
 
@@ -65,12 +66,10 @@ fn press(scenario: &mut Scenario, keys: &str, heard: &[&str]) {
     scenario.speech().expect(heard);
 }
 
-/// Presses `keys`, declared a deliberate difference from NVDA, and asserts
-/// exactly `heard`.
-fn press_deviating(scenario: &mut Scenario, keys: &str, heard: &[&str]) {
+/// Presses `keys`, after which NVDA says nothing: the next step's words,
+/// asserted exactly, show that Verbatim said nothing either.
+fn press_silent(scenario: &mut Scenario, keys: &str) {
     scenario.send_keys(&[keys]).expect("sends the key");
-    scenario.deviates_from_nvda("docs/parity/text.md", "TextInfo-equivalent layer");
-    scenario.speech().expect(heard);
 }
 
 /// Opens the scenario's document in the Windows Forms text box.
@@ -132,11 +131,11 @@ pub(crate) fn text_box_body(scenario: &mut Scenario, _state: &mut ScenarioState)
 
     // Delete and Control+Delete over the first word: the character and the
     // word now at the caret (`textbox-word-delete.txt`,
-    // `textbox-word-control-delete.txt`), with no delayed description.
+    // `textbox-word-control-delete.txt`, and the 2026-11-17 comparison).
     press(scenario, "downarrow", &[LINE]);
     press(scenario, "home", &["a"]);
     press(scenario, "shift+control+rightarrow", &["alpha  selected"]);
-    press_deviating(scenario, "delete", &["b", "selection removed"]);
+    press(scenario, "delete", &["b", "selection removed"]);
     press(scenario, "downarrow", &[LINE]);
     press(scenario, "shift+control+rightarrow", &["alpha  selected"]);
     press(scenario, "control+delete", &["beta", "selection removed"]);
@@ -171,23 +170,18 @@ pub(crate) fn text_box_body(scenario: &mut Scenario, _state: &mut ScenarioState)
 /// Shift+Right Arrow followed at once by Right Arrow, in one batch, so
 /// that Right is pressed before the application can have reported the
 /// selection Shift+Right made (`books/dev/src/explanation/design/key-holding.md`, "How often a
-/// key's effect was misjudged"): each key is judged from the caret it
-/// started from, so Shift+Right's selection is said, cut off by Right's
-/// character, "l", and then the selection Right cleared. NVDA says only "l"
-/// (a live capture), its Shift+Right script
-/// saying nothing while Right's waits and Right comparing with the
-/// selection before Shift+Right: Verbatim says every intermediate
-/// selection change (`docs/parity/text.md`, "TextInfo-equivalent layer").
+/// key's effect was misjudged"): NVDA says only Right's character, "l",
+/// Shift+Right saying nothing for itself and the selection compared only
+/// once both keys have been handled, when nothing is selected before or
+/// after (`docs/parity/text.md`, "A selection no key made"; the 2026-11-17
+/// comparison).
 fn shift_right_then_right(scenario: &mut Scenario) {
     press(scenario, "downarrow", &[LINE]);
     press(scenario, "home", &["a"]);
     scenario
         .send_keys(&["shift+rightarrow", "rightarrow"])
         .expect("sends shift+rightarrow and rightarrow");
-    scenario.deviates_from_nvda("docs/parity/text.md", "TextInfo-equivalent layer");
-    scenario
-        .speech()
-        .expect_sequence(&[cut_off("a selected"), heard("l"), heard("a unselected")]);
+    scenario.speech().expect(&["l"]);
 }
 
 /// The scenario in Windows 11 Notepad, read through UI Automation, whose
@@ -201,21 +195,18 @@ pub(crate) fn notepad_body(scenario: &mut Scenario, _state: &mut ScenarioState) 
     // (`notepad-word-control-backspace.txt`): nor does Verbatim, which
     // the next key's words, asserted exactly, show. Backspace over the
     // same selection then has nothing before the selection's start,
-    // "blank" (`notepad-first-word-backspace.txt`), then the selection
-    // removed, where NVDA says nothing more.
+    // "blank" (`notepad-first-word-backspace.txt`), and nothing more, the
+    // old range now empty, as nothing is selected.
     press(scenario, "shift+control+rightarrow", &["alpha  selected"]);
-    scenario
-        .send_keys(&["control+backspace"])
-        .expect("sends control+backspace");
-    press_deviating(scenario, "backspace", &["blank", "selection removed"]);
+    press_silent(scenario, "control+backspace");
+    press(scenario, "backspace", &["blank"]);
 
     // Backspace over the second word: the space before the selection's
-    // start (`notepad-second-word-backspace.txt`), then the selection
-    // removed, where NVDA says nothing more.
+    // start (`notepad-second-word-backspace.txt`), and nothing more.
     press(scenario, "downarrow", &[LINE]);
     press(scenario, "control+rightarrow", &["beta"]);
     press(scenario, "shift+control+rightarrow", &["beta  selected"]);
-    press_deviating(scenario, "backspace", &["space", "selection removed"]);
+    press(scenario, "backspace", &["space"]);
 
     // Control+Backspace over the second word: Notepad deletes the word
     // before the selection, which is said, and the selection's range still
@@ -235,8 +226,8 @@ pub(crate) fn notepad_body(scenario: &mut Scenario, _state: &mut ScenarioState) 
     // end: the word and the space before the selection's start
     // (`notepad-third-word-to-end-control-backspace.txt`,
     // `notepad-third-word-to-end-backspace.txt`), then the selection's
-    // change, as NVDA says it where the range still holds its text, and
-    // removed where it does not. Notepad's Shift+End selects the line
+    // change where the range still holds its text, and nothing where it
+    // is now empty. Notepad's Shift+End selects the line
     // break too, its caret then at the next line's start, so the Backspace
     // joins the next line to this one, as in its capture.
     press(scenario, "downarrow", &[LINE]);
@@ -253,28 +244,27 @@ pub(crate) fn notepad_body(scenario: &mut Scenario, _state: &mut ScenarioState) 
     press(scenario, "control+rightarrow", &["beta"]);
     press(scenario, "control+rightarrow", &["gamma"]);
     press(scenario, "shift+end", &["gamma  selected"]);
-    press_deviating(scenario, "backspace", &["space", "selection removed"]);
+    press(scenario, "backspace", &["space"]);
 
     // Delete and Control+Delete over the first word: the character and the
     // word now at the caret (`notepad-word-delete.txt`,
-    // `notepad-word-control-delete.txt`), with no delayed description,
-    // then the selection removed.
+    // `notepad-word-control-delete.txt`), and nothing more.
     press(scenario, "downarrow", &[LINE]);
     press(scenario, "home", &["a"]);
     press(scenario, "shift+control+rightarrow", &["alpha  selected"]);
-    press_deviating(scenario, "delete", &["b", "selection removed"]);
+    press(scenario, "delete", &["b"]);
     press(scenario, "downarrow", &[LINE]);
     press(scenario, "shift+control+rightarrow", &["alpha  selected"]);
-    press_deviating(scenario, "control+delete", &["beta", "selection removed"]);
+    press(scenario, "control+delete", &["beta"]);
 
-    // Control+X and Control+V: the selection removed, where NVDA says
-    // nothing (`m42-desktop-4-2026-10-22/notepad-cut-after-typing-over.txt`,
+    // Control+X and Control+V say nothing
+    // (`m42-desktop-4-2026-10-22/notepad-cut-after-typing-over.txt`,
     // `notepad-word-control-v.txt`); the word cut is the one pasted.
     press(scenario, "downarrow", &[LINE]);
     press(scenario, "shift+control+rightarrow", &["alpha  selected"]);
-    press_deviating(scenario, "control+x", &["selection removed"]);
+    press_silent(scenario, "control+x");
     press(scenario, "shift+control+rightarrow", &["beta  selected"]);
-    press_deviating(scenario, "control+v", &["selection removed"]);
+    press_silent(scenario, "control+v");
 
     shift_right_then_right(scenario);
 
@@ -293,17 +283,12 @@ pub(crate) fn notepad_body(scenario: &mut Scenario, _state: &mut ScenarioState) 
     );
 
     // Backspace over the first word of a later line: the line break before
-    // the selection's start, then the selection removed, where NVDA says
-    // nothing more
+    // the selection's start, and nothing more
     // (`m42-text-captures-2026-10-23/02b-notepad-docS-word-backspace-run1.txt`).
     press(scenario, "downarrow", &[LINE]);
     press(scenario, "home", &["a"]);
     press(scenario, "shift+control+rightarrow", &["alpha  selected"]);
-    press_deviating(
-        scenario,
-        "backspace",
-        &["carriage return", "selection removed"],
-    );
+    press(scenario, "backspace", &["carriage return"]);
 
     // Control+Backspace at a later line's start with nothing selected: the
     // line break it deletes
@@ -311,13 +296,13 @@ pub(crate) fn notepad_body(scenario: &mut Scenario, _state: &mut ScenarioState) 
     press(scenario, "downarrow", &[LINE]);
     press(scenario, "control+backspace", &["carriage return"]);
 
-    // Enter, typed: the selection removed, where NVDA names the line break
-    // now in the old range, "carriage return unselected"
-    // (`notepad-word-enter.txt`).
+    // Enter, typed: the line break now in the old range, unselected
+    // (`notepad-word-enter.txt`), its words exactly as the 2026-11-17
+    // comparison heard them.
     press(scenario, "downarrow", &[LINE]);
     press(scenario, "home", &["a"]);
     press(scenario, "shift+control+rightarrow", &["alpha  selected"]);
-    press_deviating(scenario, "enter", &["selection removed"]);
+    press(scenario, "enter", &["carriage return   unselected"]);
     scenario
         .save_document(NAME, WINDOW_TIMEOUT)
         .expect("saves the document");

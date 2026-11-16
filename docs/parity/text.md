@@ -339,7 +339,9 @@ the last selection with the one it last saw: Shift+Right followed at
 once by Right says only the character, its Shift+Right script saying
 nothing while Right's waits (`selection_keys` scenarios, captured
 2026-10-22 in
-`target/e2e-evidence/m42-key-holding-merge-2026-10-22/captures/`).
+`target/e2e-evidence/m42-key-holding-merge-2026-10-22/captures/` and
+compared again on 2026-11-17 with NVDA alpha-58022 in
+`target/e2e-evidence/rtca-selection-keys-2026-11-17/`).
 
 Verbatim: **matched** (Dickson, 2026-11-16). Every selection change, a
 key's or one no key made, such as one made with the mouse or by the
@@ -456,7 +458,11 @@ line's start Notepad deletes the line break before the selection, and
 "carriage return" then "alpha unselected" is said
 (`notepad-second-word-control-backspace.txt`,
 `notepad-third-word-to-end-control-backspace.txt` and
-`notepad-word-control-backspace.txt`, NVDA's captures).
+`notepad-word-control-backspace.txt`, NVDA's captures). Every step of
+`notepad_selection_keys` and `text_box_selection_keys` was compared with
+NVDA alpha-58022 on 2026-11-17, running the scenarios' own steps
+(`target/e2e-evidence/rtca-selection-keys-2026-11-17/`), and asserts
+the words NVDA said there, with no difference declared.
 
 ### NVDA's delayed character description at the caret
 
