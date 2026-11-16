@@ -591,3 +591,41 @@ fn a_menu_ends_trip_runs_from_the_listeners_write_to_verbatim_exes_read() {
     };
     assert_eq!(hop_us(timing.listener_written_at_us, 7_250), Some(250));
 }
+
+/// A terminal's change tell arriving on an outpost's pipe names its node by
+/// that pipe's generation, as every other message's node ids do: Core
+/// compares it with the focused terminal's node, and a tell left unstamped
+/// named no terminal Core follows.
+#[test]
+fn a_terminal_change_tell_is_stamped_with_its_outpost() {
+    use crate::event_kind::EventKind;
+    use crate::property::PropertyValues;
+    use crate::tell::{Event, EventObject, Payload, TellWindow};
+    let mut message = OutpostToCore::Tell(Box::new(Event {
+        trace_id: crate::TraceId::from_raw(1),
+        kind: EventKind::TerminalChanged,
+        process: crate::Pid(4),
+        application: "mockapp".to_owned(),
+        thread: 0,
+        at_us: 10,
+        object: EventObject::Terminal {
+            node: NodeId::in_outpost(OutpostId(0), 3),
+            window: crate::WindowHandle(9),
+        },
+        cached: PropertyValues(Vec::new()),
+        payload: Payload::None,
+        window: TellWindow::NoWindow,
+        checked: None,
+    }));
+    message.assign_outpost(OutpostId(7));
+    let OutpostToCore::Tell(tell) = message else {
+        panic!("still a tell");
+    };
+    assert_eq!(
+        tell.object,
+        EventObject::Terminal {
+            node: NodeId::in_outpost(OutpostId(7), 3),
+            window: crate::WindowHandle(9),
+        }
+    );
+}

@@ -1512,8 +1512,8 @@ impl OutpostToCore {
                 | QueryResult::ShellItemPosition(_) => {}
             },
             OutpostToCore::Answer(answer) => answer.assign_outpost(outpost),
+            OutpostToCore::Tell(tell) => tell.assign_outpost(outpost),
             OutpostToCore::Reply { .. }
-            | OutpostToCore::Tell(_)
             | OutpostToCore::Ready { .. }
             | OutpostToCore::SpareReady { .. }
             | OutpostToCore::Pong { .. }

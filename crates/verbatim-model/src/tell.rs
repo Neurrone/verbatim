@@ -236,6 +236,18 @@ pub struct Event {
     pub checked: Option<Checked>,
 }
 
+impl Event {
+    /// Stamps `outpost` on the node id the tell names, as
+    /// [`crate::protocol::OutpostToCore::assign_outpost`] stamps every
+    /// message on an outpost's pipe: a terminal's change tell names its
+    /// node by the generation whose pipe it arrived on.
+    pub fn assign_outpost(&mut self, outpost: crate::OutpostId) {
+        if let EventObject::Terminal { node, .. } = &mut self.object {
+            *node = node.with_outpost(outpost);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

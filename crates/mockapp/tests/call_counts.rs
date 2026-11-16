@@ -5341,10 +5341,11 @@ fn uia_text_focus(
 /// the states after the registration. Classically the read is the classic
 /// calls behind the same signature: 19 and 27 calls, where the caret
 /// report the outpost sent with its own focus report took 45 and 57. A terminal's caret is not read with its
-/// focus, its first read being build 3's baseline read, which Core asks
-/// once `Follow` names it ("Terminals in this build", Dickson,
-/// 2026-11-15): 8 and 10 calls, where its focus with its caret took 9 and
-/// 27.
+/// focus: its first read is build 3's baseline read, which Core sends with
+/// `Follow` as the focus commits (`docs/design/readers-tell-core-asks-build3.md`,
+/// "The focused terminal's life"), 2 calls remotely and 30 classically, so
+/// the focus and its baseline cost 10 and 40 calls, where its focus with
+/// its caret took 9 and 27.
 #[expect(
     clippy::too_many_lines,
     reason = "every text field focus and its pinned counts, listed in full"
@@ -5446,7 +5447,7 @@ fn text_field_focuses_cost_exactly() {
             true,
             &[][..],
             terminal_said.clone(),
-            first_focus(8),
+            first_focus(10),
         ),
         (
             "UIA terminal focus, classically",
@@ -5455,7 +5456,7 @@ fn text_field_focuses_cost_exactly() {
             false,
             &[][..],
             terminal_said.clone(),
-            first_focus(10),
+            first_focus(40),
         ),
     ] {
         let (said, measured) = uia_text_focus(fixture, id, remote, setup);

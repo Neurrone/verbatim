@@ -3,43 +3,54 @@
 //! node's text the way a terminal's buffer changes, here as a terminal
 //! gives it, every row padded to the width and ended by a carriage return
 //! and line feed, and whose `screen` command puts only the text's last
-//! rows on screen, as a terminal shows the end of its buffer. Each test
-//! drives `verbatim-outpost`'s terminal module on this thread exactly as
-//! the outpost's worker does once it has the focused terminal's text
-//! pattern, since the worker finds a UIA focus by reading the system's
-//! keyboard focus, which a test must not take from the desktop it runs on.
+//! rows on screen, as a terminal shows the end of its buffer.
 //!
-//! Each read is given to Core's reducer as the outpost sends it, and Core's
-//! requests of the terminal (the screen's shape, a read at once, the
-//! colours after a key) are answered as the worker answers them.
+//! The reading tests drive Core's reducer and a real outpost watching
+//! mockapp's Windows Terminal control (UIA class `TermControl`), through
+//! the request driver (`common::core_driver`): the terminal is focused and
+//! followed, each text change mockapp raises is told to Core, and Core
+//! reads the terminal when it chooses
+//! (`docs/design/readers-tell-core-asks-build3.md`), so a test asserts
+//! what Core says. The search tests drive `verbatim-outpost`'s terminal
+//! module on this thread, as the outpost's worker does.
 //!
 //! What is checked: Core says the new output a read shows, line by line,
-//! and the read costs one call remotely; and a terminal whose text changes
-//! with no caret event, as the console host's does while typing, has
-//! Core's reading rules echo the typing and say what Backspace deleted,
-//! the keys reaching them through Core; and "Report status bar" reads the
-//! rows below the caret after a fresh read.
+//! and the read costs one call remotely; a terminal's typing is echoed
+//! character by character and Backspace says what it deleted, the keys
+//! reaching the rules through Core; "Report status bar" reads the rows
+//! below the caret after a fresh read; and a command's line, marked when it
+//! was entered, is found by the outpost's search, and the history read
+//! counted from the start Core names, while output scrolls.
 
 mod common;
 #[path = "common/harness.rs"]
 mod harness;
 
-use verbatim_core::{SrState, reduce};
+use std::cell::RefCell;
+use std::rc::Rc;
+
+use verbatim_model::request::Request;
 use verbatim_model::{
-    Backend, CallCounts, CaretKey, CaretMotion, Effect, Input, NodeDetails, NodeId, NodeSnapshot,
-    NormalizedEvent, OutpostId, Pid, ReviewCommand, Role, SegmentContent, StateSet, TerminalScope,
-    TerminalSnapshot, TextOp, TextReply, TraceId,
+    CallCounts, CaretKey, CaretMotion, ReviewCommand, SegmentContent, TerminalScope,
+    TerminalSnapshot, TextOp,
 };
 use verbatim_outpost::terminal::{ReadAsk, read};
 use verbatim_outpost::text::uia::UiaText;
-use verbatim_process::clock::now_us;
+use verbatim_process::arguments::OutpostOptions;
 use verbatim_uia::Uia;
 use verbatim_uia_rops::CaretLineQuery;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Accessibility::{IUIAutomationElement, IUIAutomationTextRange};
 
+use common::core_driver::{CoreDriver, CoreTime, Utterance};
+use common::outpost::OutpostUnderTest;
+use verbatim_outpost::Heard;
+
 /// The terminal's width in cells.
 const WIDTH: usize = 12;
+
+/// What a step said that is nothing.
+const NOTHING: [Utterance; 0] = [];
 
 /// mockapp's terminal's element, found by its name
 /// (`common::named_element`), which passes the window's title bar by.
@@ -65,11 +76,21 @@ fn terminal_text(rows: &[&str]) -> (String, usize) {
 }
 
 /// Shows `rows` in mockapp's terminal, the caret at the end of the last
-/// row's text, raising no event: the console host's pattern while typing.
+/// row's text, raising no event.
 fn show(app: &mut common::MockApp, hwnd: HWND, rows: &[&str]) {
     let (text, caret) = terminal_text(rows);
     common::apply(app, hwnd, &format!("set-text term {text}"));
     common::apply(app, hwnd, &format!("caret term {caret} {caret}"));
+}
+
+/// Shows `rows` in mockapp's terminal with the caret at the end of row
+/// `caret`'s text, raising no event.
+fn show_caret_on(app: &mut common::MockApp, hwnd: HWND, rows: &[&str], caret: usize) {
+    let (text, _) = terminal_text(rows);
+    let row_units = WIDTH + 2;
+    let at = caret * row_units + rows[caret].encode_utf16().count();
+    common::apply(app, hwnd, &format!("set-text term {text}"));
+    common::apply(app, hwnd, &format!("caret term {at} {at}"));
 }
 
 /// What Core names in a terminal's reads: the start the last read minted,
@@ -95,14 +116,13 @@ impl Terminal {
     }
 }
 
-/// One read of the terminal of `scope` (a fresh read for `None`), from the
-/// start the last read minted, as the worker makes it, and the snapshot it
-/// sends Core.
+/// One fresh read of the terminal from the start the last read minted, as
+/// the worker makes it, and the snapshot it answers.
 fn read_terminal(
     uia: &Uia,
     source: &UiaText,
     terminal: &mut Terminal,
-    (scope, remote): (Option<TerminalScope>, bool),
+    remote: bool,
 ) -> TerminalSnapshot {
     let caret = CaretLineQuery {
         element: source.element(),
@@ -113,7 +133,7 @@ fn read_terminal(
     };
     let ask = ReadAsk {
         start: terminal.start.as_ref(),
-        scope: scope.unwrap_or(TerminalScope::Fresh),
+        scope: TerminalScope::Fresh,
         height: terminal.height,
         width: terminal.width,
         colours: false,
@@ -130,228 +150,11 @@ fn read_terminal(
     answer.snapshot
 }
 
-/// mockapp's terminal read by the outpost's terminal module, and Core's
-/// reducer it sends its reads to.
-struct Session<'a> {
-    uia: &'a Uia,
-    source: UiaText,
-    terminal: Terminal,
-    remote: bool,
-    state: SrState,
-    /// What Core said, each utterance's segments but its index marks.
-    spoken: Vec<Vec<SegmentContent>>,
-    /// Rows the terminal shows before the next search Core asks for, read
-    /// by a live read sent to Core before the search runs, as when a
-    /// program keeps printing while a search is on its way.
-    before_find: Option<(&'a mut common::MockApp, HWND, Vec<String>)>,
-    /// How many searches Core asked for.
-    finds: u32,
-    /// Rows the terminal shows before the next history read Core asks
-    /// for, as [`Session::before_find`] before a search.
-    before_history: Option<(&'a mut common::MockApp, HWND, Vec<String>)>,
-    /// How many history reads Core asked for.
-    histories: u32,
-}
-
-impl Session<'_> {
-    /// A live read, sent to Core as the outpost sends it.
-    fn live(&mut self) {
-        let input = self.live_input();
-        self.input(&input);
-    }
-
-    /// A live read, as the input that brings it to Core.
-    fn live_input(&mut self) -> Input {
-        let snapshot = read_terminal(
-            self.uia,
-            &self.source,
-            &mut self.terminal,
-            (None, self.remote),
-        );
-        Input::Event {
-            trace_id: TraceId::mint(),
-            observed_at_us: snapshot.started_ms * 1_000,
-            source: Pid(1),
-            backend: Backend::Uia,
-            window: None,
-            event: NormalizedEvent::TerminalSnapshot {
-                node_id: terminal_node(),
-                snapshot: Box::new(snapshot),
-            },
-            purpose: None,
-        }
-    }
-
-    /// Gives Core `input`, and handles what it does.
-    fn input(&mut self, input: &Input) {
-        let effects = reduce(
-            &mut self.state,
-            &mut verbatim_core::Runtime::default(),
-            input,
-        );
-        self.handle(effects);
-    }
-
-    /// Keeps what Core spoke of `effects` and answers its requests as the
-    /// worker does; a caret key's watch is answered as ended, with nothing
-    /// Core speaks.
-    fn handle(&mut self, effects: Vec<Effect>) {
-        let mut pending = effects;
-        while !pending.is_empty() {
-            let mut inputs = Vec::new();
-            for effect in pending {
-                match effect {
-                    Effect::ForKey(_, effect) => {
-                        if let Some(input) = self.effect(*effect) {
-                            inputs.push(input);
-                        }
-                    }
-                    effect => {
-                        if let Some(input) = self.effect(effect) {
-                            inputs.push(input);
-                        }
-                    }
-                }
-            }
-            pending = inputs
-                .iter()
-                .flat_map(|input| {
-                    reduce(
-                        &mut self.state,
-                        &mut verbatim_core::Runtime::default(),
-                        input,
-                    )
-                })
-                .collect();
-        }
-    }
-
-    /// One effect of Core's: speech kept, a request answered.
-    fn effect(&mut self, effect: Effect) -> Option<Input> {
-        let reply = match effect {
-            Effect::Text(request) => match &request.op {
-                TextOp::ReadCaret(_) => TextReply::Unanswered,
-                TextOp::TerminalHistory {
-                    above,
-                    whole,
-                    height,
-                    ..
-                } => {
-                    self.histories += 1;
-                    if let Some((app, hwnd, shown)) = self.before_history.take() {
-                        let shown: Vec<&str> = shown.iter().map(String::as_str).collect();
-                        show(app, hwnd, &shown);
-                        self.live();
-                    }
-                    let history = verbatim_outpost::terminal::history(
-                        self.uia,
-                        (self.source.element(), self.source.pattern()),
-                        self.terminal.start(),
-                        (*above, *whole, *height, self.remote),
-                    )
-                    .expect("the history is read");
-                    // The path asked for answered, never the fallback.
-                    let path = history.path.name();
-                    assert_eq!(path, if self.remote { "remote" } else { "classic" });
-                    TextReply::TerminalHistory {
-                        text: history.text,
-                        above: history.above,
-                        read: 0,
-                    }
-                }
-                TextOp::TerminalFind {
-                    needle, from, rows, ..
-                } => {
-                    self.finds += 1;
-                    if let Some((app, hwnd, shown)) = self.before_find.take() {
-                        let shown: Vec<&str> = shown.iter().map(String::as_str).collect();
-                        show(app, hwnd, &shown);
-                        self.live();
-                    }
-                    let found = verbatim_outpost::terminal::find(
-                        self.uia,
-                        (self.source.element(), self.source.pattern()),
-                        self.terminal.start(),
-                        (needle, *from, *rows),
-                        self.remote,
-                    )
-                    .expect("the terminal is searched");
-                    // The path asked for answered, never the fallback.
-                    let path = found.path.name();
-                    assert_eq!(path, if self.remote { "remote" } else { "classic" });
-                    TextReply::TerminalFound {
-                        matches: found.matches,
-                        read: 0,
-                    }
-                }
-                op => panic!("Core asked the terminal {op:?}"),
-            }
-            .into_input(request.query_id, request.node_id.outpost()),
-            Effect::Speak(utterance, _) => {
-                self.spoken.push(
-                    utterance
-                        .segments
-                        .iter()
-                        .map(|segment| segment.content.clone())
-                        .filter(|content| !matches!(content, SegmentContent::Mark(_)))
-                        .collect(),
-                );
-                return None;
-            }
-            _ => return None,
-        };
-        Some(reply)
-    }
-}
-
-/// An answer as the input that brings it to Core.
-trait IntoInput {
-    fn into_input(self, query_id: verbatim_model::QueryId, outpost: OutpostId) -> Input;
-}
-
-impl IntoInput for TextReply {
-    fn into_input(self, query_id: verbatim_model::QueryId, outpost: OutpostId) -> Input {
-        Input::Answered {
-            at_us: 0,
-            trace_id: TraceId::mint(),
-            query_id,
-            outpost,
-            outcome: verbatim_model::protocol::QueryOutcome::Done(
-                verbatim_model::protocol::QueryResult::Text(self),
-            ),
-        }
-    }
-}
-
-/// The focus on mockapp's terminal, as Core takes it.
-fn focus() -> Input {
-    Input::Event {
-        trace_id: TraceId::mint(),
-        observed_at_us: 0,
-        source: Pid(1),
-        backend: Backend::Uia,
-        window: None,
-        event: NormalizedEvent::FocusChanged {
-            node: NodeSnapshot {
-                id: terminal_node(),
-                backend: Backend::Uia,
-                role: Role::Terminal,
-                name: Some("Terminal".to_owned()),
-                value: None,
-                states: StateSet::new(),
-                details: NodeDetails::default(),
-            },
-            whole_window: false,
-            ancestors: Vec::new(),
-            selected_child: None,
-            text: None,
-            earlier: None,
-            group: None,
-            answers: None,
-            first_cached_ancestor: None,
-        },
-        purpose: None,
-    }
+/// The outpost's source for mockapp's terminal.
+fn source(uia: &Uia, hwnd: HWND, remote: bool) -> UiaText {
+    let element = terminal_element(uia, hwnd);
+    let (pattern, pattern2) = verbatim_uia::text::text_pattern(&element).expect("a text pattern");
+    UiaText::new(element, pattern, pattern2, true).remote(remote)
 }
 
 fn uia_calls(uia: u32) -> CallCounts {
@@ -363,66 +166,136 @@ fn uia_calls(uia: u32) -> CallCounts {
     }
 }
 
-/// The outpost's source for mockapp's terminal.
-fn source(uia: &Uia, hwnd: HWND, remote: bool) -> UiaText {
-    let element = terminal_element(uia, hwnd);
-    let (pattern, pattern2) = verbatim_uia::text::text_pattern(&element).expect("a text pattern");
-    UiaText::new(element, pattern, pattern2, true).remote(remote)
+/// An utterance of `text` alone.
+fn text(text: &str) -> Utterance {
+    vec![SegmentContent::Text(text.to_owned())]
 }
 
-/// Output written below the rows read is said line by line, and a read is
-/// one remote program, its own call.
-fn new_output_is_said_line_by_line(remote: bool) {
-    common::init_com();
-    let title = common::unique_title("mockapp-terminal-output");
-    let mut app = common::spawn("terminal.json", "uia", &title);
-    let hwnd = common::find_window(&title);
-    let uia = Uia::new().expect("a UIA client");
-    // The screen: three rows, and the empty last line.
-    common::apply(&mut app, hwnd, "screen term 4");
-    show(&mut app, hwnd, &["one", "two", "ready>"]);
-    let mut session = Session {
-        uia: &uia,
-        source: source(&uia, hwnd, remote),
-        terminal: Terminal::new(),
-        remote,
-        state: SrState::new(),
-        spoken: Vec::new(),
-        before_find: None,
-        finds: 0,
-        before_history: None,
-        histories: 0,
-    };
-    session.input(&focus());
-    session.spoken.clear();
-    session.live();
-    assert_eq!(
-        session.spoken,
-        Vec::<Vec<SegmentContent>>::new(),
-        "the first read says nothing"
-    );
-    show(&mut app, hwnd, &["one", "two", "three", "four", "ready>"]);
-    let _ = verbatim_uia::calls::take();
-    let snapshot = read_terminal(&uia, &session.source, &mut session.terminal, (None, remote));
-    let calls = verbatim_uia::calls::take();
-    if remote {
-        assert_eq!(calls, uia_calls(1), "one program, one call");
+/// An utterance of the character `text` alone.
+fn character(text: &str) -> Utterance {
+    vec![SegmentContent::Character(text.to_owned())]
+}
+
+/// mockapp's Windows Terminal control, its process shared with what a test
+/// does as Core sends a request ([`CoreDriver::observe_sends`]), and Core
+/// driving an outpost watching it, the terminal focused, followed and read
+/// for its baseline.
+struct Driven {
+    app: Rc<RefCell<common::MockApp>>,
+    hwnd: HWND,
+    core: CoreDriver,
+}
+
+impl Driven {
+    /// mockapp's terminal showing `rows` on a screen of `height` rows, the
+    /// caret at the end of the last, focused with Core driving its outpost,
+    /// which reads by remote operations when `remote`. Core's time is the
+    /// run's shared clock, on which the outpost stamps each read's start, so
+    /// a key's time and the reads after it compare as in a run.
+    fn start(name: &str, (rows, height): (&[&str], u32), remote: bool) -> Self {
+        common::init_com();
+        let title = common::unique_title(name);
+        let mut app = common::spawn("terminal_reading.json", "uia", &title);
+        let hwnd = common::find_window(&title);
+        common::apply(&mut app, hwnd, &format!("screen term {height}"));
+        show(&mut app, hwnd, rows);
+        let outpost = OutpostUnderTest::with_options(
+            &app,
+            OutpostOptions {
+                remote_operations: remote,
+            },
+        );
+        let mut core = CoreDriver::on_time(&app, outpost, CoreTime::Real);
+        app.send("set-focus term");
+        let uia = Uia::new().expect("a UIA client");
+        let _ = core.uia_focus(&common::listener_focus(&uia, hwnd.0 as isize));
+        Self {
+            app: Rc::new(RefCell::new(app)),
+            hwnd,
+            core,
+        }
     }
-    session.input(&Input::Event {
-        trace_id: TraceId::mint(),
-        observed_at_us: snapshot.started_ms * 1_000,
-        source: Pid(1),
-        backend: Backend::Uia,
-        window: None,
-        event: NormalizedEvent::TerminalSnapshot {
-            node_id: terminal_node(),
-            snapshot: Box::new(snapshot),
-        },
-        purpose: None,
-    });
-    let text = |text: &str| vec![SegmentContent::Text(text.to_owned())];
-    assert_eq!(session.spoken, [text("three"), text("four")]);
-    app.quit();
+
+    /// Shows `rows`, the caret at the end of the last, raising no event.
+    fn show(&self, rows: &[&str]) {
+        show(&mut self.app.borrow_mut(), self.hwnd, rows);
+    }
+
+    /// Raises the terminal's text change, which the outpost tells Core of;
+    /// what Core said once its read was answered.
+    fn changed(&mut self) -> Vec<Utterance> {
+        self.app.borrow_mut().send("text-changed term");
+        self.core.told(1).spoken()
+    }
+
+    /// Shows `rows` and raises the terminal's text change
+    /// ([`Self::changed`]).
+    fn write(&mut self, rows: &[&str]) -> Vec<Utterance> {
+        self.show(rows);
+        self.changed()
+    }
+
+    /// Has `act` run with mockapp, and the terminal's text change raised
+    /// after it, the first time Core sends the outpost a request that `of`
+    /// picks, before the outpost is handed it, which waits until the
+    /// outpost has heard the change: its tell then reaches Core while the
+    /// request is out. Counts in the counter returned each request `of`
+    /// picks.
+    fn before_first(
+        &mut self,
+        of: fn(&TextOp) -> bool,
+        act: impl FnOnce(&mut common::MockApp, HWND) + 'static,
+    ) -> Rc<RefCell<u32>> {
+        let app = Rc::clone(&self.app);
+        let hwnd = self.hwnd;
+        let count = Rc::new(RefCell::new(0));
+        let counted = Rc::clone(&count);
+        let mut act = Some(act);
+        self.core.observe_sends(Some(Box::new(move |ask, outpost| {
+            let Request::Text { op, .. } = &ask.request else {
+                return;
+            };
+            if !of(op) {
+                return;
+            }
+            *counted.borrow_mut() += 1;
+            if let Some(act) = act.take() {
+                act(&mut app.borrow_mut(), hwnd);
+                app.borrow_mut().send("text-changed term");
+                outpost.heard(&[Heard::UiaTextChanged]);
+            }
+        })));
+        count
+    }
+
+    fn quit(mut self) {
+        self.core.observe_sends(None);
+        let Self { app, core, .. } = self;
+        drop(core);
+        Rc::try_unwrap(app)
+            .unwrap_or_else(|_| panic!("mockapp is still shared"))
+            .into_inner()
+            .quit();
+    }
+}
+
+/// Output written below the rows read is said line by line, and Core's read
+/// of it is one remote program, its own call.
+fn new_output_is_said_line_by_line(remote: bool) {
+    // The screen: three rows, and the empty last line.
+    let mut driven = Driven::start(
+        "mockapp-terminal-output",
+        (&["one", "two", "ready>"], 4),
+        remote,
+    );
+    driven.show(&["one", "two", "three", "four", "ready>"]);
+    driven.app.borrow_mut().send("text-changed term");
+    let step = driven.core.told(1);
+    if remote {
+        assert_eq!(step.calls, uia_calls(1), "one program, one call");
+    }
+    assert_eq!(step.spoken(), [text("three"), text("four")]);
+    driven.quit();
 }
 
 fn new_output_is_said_line_by_line_remote() {
@@ -433,66 +306,22 @@ fn new_output_is_said_line_by_line_classic() {
     new_output_is_said_line_by_line(false);
 }
 
-/// Shows `rows` in mockapp's terminal with the caret at the end of row
-/// `caret`'s text.
-fn show_caret_on(app: &mut common::MockApp, hwnd: HWND, rows: &[&str], caret: usize) {
-    let (text, _) = terminal_text(rows);
-    let row_units = WIDTH + 2;
-    let at = caret * row_units + rows[caret].encode_utf16().count();
-    common::apply(app, hwnd, &format!("set-text term {text}"));
-    common::apply(app, hwnd, &format!("caret term {at} {at}"));
-}
-
-/// A session over mockapp's terminal, focused and read once.
-fn session(uia: &Uia, hwnd: HWND, remote: bool) -> Session<'_> {
-    let mut session = Session {
-        uia,
-        source: source(uia, hwnd, remote),
-        terminal: Terminal::new(),
-        remote,
-        state: SrState::new(),
-        spoken: Vec::new(),
-        before_find: None,
-        finds: 0,
-        before_history: None,
-        histories: 0,
-    };
-    session.input(&focus());
-    session.live();
-    session.spoken.clear();
-    session
-}
-
-/// A command's first press.
-fn command(command: ReviewCommand, repeat: u8) -> Input {
-    Input::Command {
-        pressed_at_ms: 0,
-        key_seq: verbatim_model::KeySeq::NONE_YET,
-        trace_id: TraceId::mint(),
-        command,
-        repeat,
-    }
-}
-
 /// "Report status bar" reads the rows below the caret, after the fresh read
 /// Core asks the outpost for, and nothing else.
 fn the_status_bar_is_read_below_the_caret(remote: bool) {
-    common::init_com();
-    let title = common::unique_title("mockapp-terminal-status-bar");
-    let mut app = common::spawn("terminal.json", "uia", &title);
-    let hwnd = common::find_window(&title);
-    let uia = Uia::new().expect("a UIA client");
-    common::apply(&mut app, hwnd, "screen term 5");
-    show_caret_on(&mut app, hwnd, &["one", "ready>", "status: busy"], 1);
-    let mut session = session(&uia, hwnd, remote);
-    show_caret_on(&mut app, hwnd, &["one", "ready>", "status: done"], 1);
-    session.input(&command(ReviewCommand::ReportStatusBar, 0));
-    let text = |text: &str| SegmentContent::Text(text.to_owned());
-    assert_eq!(
-        session.spoken,
-        [vec![text("done")], vec![text("status: done")]]
+    let rows = ["one", "ready>", "status: busy"];
+    let mut driven = Driven::start("mockapp-terminal-status-bar", (&rows, 5), remote);
+    show_caret_on(&mut driven.app.borrow_mut(), driven.hwnd, &rows, 1);
+    assert_eq!(driven.changed(), NOTHING, "the caret moved to the prompt");
+    show_caret_on(
+        &mut driven.app.borrow_mut(),
+        driven.hwnd,
+        &["one", "ready>", "status: done"],
+        1,
     );
-    app.quit();
+    let step = driven.core.command(ReviewCommand::ReportStatusBar);
+    assert_eq!(step.spoken(), [text("done"), text("status: done")]);
+    driven.quit();
 }
 
 fn the_status_bar_is_read_below_the_caret_remote() {
@@ -508,19 +337,12 @@ fn the_status_bar_is_read_below_the_caret_classic() {
 /// finds it with the outpost's search, moves the review cursor there and
 /// speaks it, and a second press, with no mark above, says nothing.
 fn command_marks_move_the_review_cursor(remote: bool) {
-    common::init_com();
-    let title = common::unique_title("mockapp-terminal-marks");
-    let mut app = common::spawn("terminal.json", "uia", &title);
-    let hwnd = common::find_window(&title);
-    let uia = Uia::new().expect("a UIA client");
-    let mut session = session_with_a_command(&uia, &mut app, hwnd, remote);
-    session.input(&command(ReviewCommand::PreviousCommandMark, 0));
-    let text = |text: &str| SegmentContent::Text(text.to_owned());
-    assert_eq!(session.spoken, [vec![text("ready>ls")]]);
-    session.spoken.clear();
-    session.input(&command(ReviewCommand::PreviousCommandMark, 0));
-    assert_eq!(session.spoken, Vec::<Vec<SegmentContent>>::new());
-    app.quit();
+    let mut driven = with_a_command("mockapp-terminal-marks", remote);
+    let step = driven.core.command(ReviewCommand::PreviousCommandMark);
+    assert_eq!(step.spoken(), [text("ready>ls")]);
+    let step = driven.core.command(ReviewCommand::PreviousCommandMark);
+    assert_eq!(step.spoken(), NOTHING);
+    driven.quit();
 }
 
 fn command_marks_move_the_review_cursor_remote() {
@@ -531,8 +353,8 @@ fn command_marks_move_the_review_cursor_classic() {
     command_marks_move_the_review_cursor(false);
 }
 
-/// The rows of [`session_with_a_command`]'s terminal: `ls` entered, and
-/// `lines` lines of output after its answer.
+/// The rows of [`with_a_command`]'s terminal: `ls` entered, and `lines`
+/// lines of output after its answer.
 fn rows_after_ls(lines: u32) -> Vec<String> {
     let mut rows: Vec<String> = ["one", "ready>ls", "a.txt"].map(str::to_owned).into();
     rows.extend((1..=lines).map(|line| format!("line {line}")));
@@ -540,30 +362,35 @@ fn rows_after_ls(lines: u32) -> Vec<String> {
     rows
 }
 
-/// As [`command_marks_move_the_review_cursor`], but the program prints three
-/// more lines before the outpost searches, read and sent to Core first: the
-/// search's answer is counted from that newer read, and the move still
-/// lands on the command's line, then says nothing past it.
+/// Shows [`rows_after_ls`]`(lines)`.
+fn show_after_ls(app: &mut common::MockApp, hwnd: HWND, lines: u32) {
+    let rows = rows_after_ls(lines);
+    let rows: Vec<&str> = rows.iter().map(String::as_str).collect();
+    show(app, hwnd, &rows);
+}
+
+/// As [`command_marks_move_the_review_cursor`], but the program prints
+/// three more lines as the search is on its way, told to Core while it is
+/// out: the search counts from the start Core named, and its answer is
+/// placed from the anchor Core holds at that start, which the read taken
+/// meanwhile moves; the move lands on the command's line, and the next line
+/// is the command's output. Converted from the test of a search counted
+/// from a newer read: every search names its start (build 3, "Searches and
+/// history reads count from a start Core names").
 fn command_marks_are_found_while_output_scrolls(remote: bool) {
-    common::init_com();
-    let title = common::unique_title("mockapp-terminal-marks-scrolling");
-    let mut app = common::spawn("terminal.json", "uia", &title);
-    let hwnd = common::find_window(&title);
-    let uia = Uia::new().expect("a UIA client");
-    {
-        let mut session = session_with_a_command(&uia, &mut app, hwnd, remote);
-        session.before_find = Some((&mut app, hwnd, rows_after_ls(13)));
-        session.input(&command(ReviewCommand::PreviousCommandMark, 0));
-        let text = |text: &str| vec![SegmentContent::Text(text.to_owned())];
-        assert_eq!(session.finds, 1);
-        // The new output waits in the flood policy's queue behind the
-        // earlier output, which this session never plays.
-        assert_eq!(session.spoken, [text("ready>ls")]);
-        session.spoken.clear();
-        session.input(&command(ReviewCommand::ReviewNextLine, 0));
-        assert_eq!(session.spoken, [text("a.txt")]);
-    }
-    app.quit();
+    let mut driven = with_a_command("mockapp-terminal-marks-scrolling", remote);
+    let finds = driven.before_first(
+        |op| matches!(op, TextOp::TerminalFind { .. }),
+        |app, hwnd| show_after_ls(app, hwnd, 13),
+    );
+    let step = driven.core.command(ReviewCommand::PreviousCommandMark);
+    assert_eq!(*finds.borrow(), 1);
+    // The new output waits in the flood policy's queue behind the earlier
+    // output, which this test never plays.
+    assert_eq!(step.spoken(), [text("ready>ls")]);
+    let step = driven.core.command(ReviewCommand::ReviewNextLine);
+    assert_eq!(step.spoken(), [text("a.txt")]);
+    driven.quit();
 }
 
 fn command_marks_are_found_while_output_scrolls_remote() {
@@ -576,69 +403,88 @@ fn command_marks_are_found_while_output_scrolls_classic() {
 
 /// The review cursor on the command's line above the rows Core keeps, as
 /// [`command_marks_move_the_review_cursor`] puts it there; the program
-/// prints three more lines before the outpost reads the history the next
-/// line needs, read and sent to Core first: the history's rows are
-/// counted from that newer read's start, the screen more Core asked for
-/// still holds the command's output, and the review cursor moves to it,
-/// with one history read on the remote path.
+/// prints three more lines as the history read the next line needs is on
+/// its way, told to Core while it is out: the history's rows are placed
+/// from the anchor Core holds at the start it named, the screen more Core
+/// asked for still holds the command's output, and the review cursor moves
+/// to it, with one history read on the remote path.
 fn the_history_is_placed_while_output_scrolls_remote() {
-    common::init_com();
-    let title = common::unique_title("mockapp-terminal-history-scrolling");
-    let mut app = common::spawn("terminal.json", "uia", &title);
-    let hwnd = common::find_window(&title);
-    let uia = Uia::new().expect("a UIA client");
-    {
-        let mut session = session_with_a_command(&uia, &mut app, hwnd, true);
-        session.input(&command(ReviewCommand::PreviousCommandMark, 0));
-        let text = |text: &str| vec![SegmentContent::Text(text.to_owned())];
-        assert_eq!(session.spoken, [text("ready>ls")]);
-        session.spoken.clear();
-        session.histories = 0;
-        session.before_history = Some((&mut app, hwnd, rows_after_ls(13)));
-        session.input(&command(ReviewCommand::ReviewNextLine, 0));
-        assert!(session.before_history.is_none(), "the history was read");
-        assert_eq!(session.histories, 1);
-        // The new output waits in the flood policy's queue, which this
-        // session never plays.
-        assert_eq!(session.spoken, [text("a.txt")]);
-    }
-    app.quit();
+    let mut driven = with_a_command("mockapp-terminal-history-scrolling", true);
+    let step = driven.core.command(ReviewCommand::PreviousCommandMark);
+    assert_eq!(step.spoken(), [text("ready>ls")]);
+    let histories = driven.before_first(
+        |op| matches!(op, TextOp::TerminalHistory { .. }),
+        |app, hwnd| show_after_ls(app, hwnd, 13),
+    );
+    let step = driven.core.command(ReviewCommand::ReviewNextLine);
+    assert_eq!(*histories.borrow(), 1);
+    // The new output waits in the flood policy's queue, which this test
+    // never plays.
+    assert_eq!(step.spoken(), [text("a.txt")]);
+    driven.quit();
 }
 
-/// A session on a terminal of four rows where `ls` was typed at the prompt
-/// and entered, so Core marked its line, and ten lines of output then
-/// carried it above the rows Core keeps.
-fn session_with_a_command<'a>(
-    uia: &'a Uia,
-    app: &mut common::MockApp,
-    hwnd: HWND,
-    remote: bool,
-) -> Session<'a> {
-    common::apply(app, hwnd, "screen term 4");
-    show(app, hwnd, &["one", "ready>"]);
-    let mut session = session(uia, hwnd, remote);
+/// A terminal of four rows where `ls` was typed at the prompt and entered,
+/// so Core marked its line, and ten lines of output then carried it above
+/// the rows Core keeps.
+fn with_a_command(name: &str, remote: bool) -> Driven {
+    let mut driven = Driven::start(name, (&["one", "ready>"], 4), remote);
     let mut prompt = "ready>".to_owned();
-    for character in ["l", "s", "\r"] {
-        session.input(&Input::CharacterTyped {
-            key_seq: verbatim_model::KeySeq::NONE_YET,
-            trace_id: TraceId::mint(),
-            text: character.to_owned(),
-            at_ms: now_us() / 1_000,
-        });
-        if character == "\r" {
-            show(app, hwnd, &["one", &prompt, "a.txt", "ready>"]);
+    for typed in ["l", "s", "\r"] {
+        let _ = driven.core.typed(typed);
+        if typed == "\r" {
+            let _ = driven.write(&["one", &prompt, "a.txt", "ready>"]);
         } else {
-            prompt.push_str(character);
-            show(app, hwnd, &["one", &prompt]);
+            prompt.push_str(typed);
+            let _ = driven.write(&["one", &prompt]);
         }
-        session.live();
     }
     let rows = rows_after_ls(10);
     let rows: Vec<&str> = rows.iter().map(String::as_str).collect();
-    show(app, hwnd, &rows);
-    session.live();
-    session.spoken.clear();
-    session
+    let _ = driven.write(&rows);
+    driven
+}
+
+/// Typing "helo" after the prompt is echoed character by character as the
+/// terminal shows it, each read for the terminal's text change, and
+/// Backspace then says exactly "o", from the key's final read, which shows
+/// its effect with no event; the text change raised after it is read
+/// again and says nothing more.
+fn backspace_says_what_it_deleted(remote: bool) {
+    // The screen: three rows, and the empty last line.
+    let mut driven = Driven::start(
+        "mockapp-terminal-backspace",
+        (&["one", "two", "ready>"], 4),
+        remote,
+    );
+    let mut prompt = "ready>".to_owned();
+    for typed in ["h", "e", "l", "o"] {
+        let _ = driven.core.typed(typed);
+        prompt.push_str(typed);
+        assert_eq!(driven.write(&["one", "two", &prompt]), [character(typed)]);
+    }
+    let backspace = CaretKey {
+        motion: CaretMotion::Backspace,
+        select: false,
+    };
+    prompt.pop();
+    let app = Rc::clone(&driven.app);
+    let hwnd = driven.hwnd;
+    let step = driven.core.caret_key(backspace, || {
+        show(&mut app.borrow_mut(), hwnd, &["one", "two", &prompt]);
+    });
+    drop(app);
+    assert_eq!(step.spoken(), [character("o")]);
+    assert_eq!(driven.changed(), NOTHING);
+    driven.quit();
+}
+
+fn backspace_says_what_it_deleted_remote() {
+    backspace_says_what_it_deleted(true);
+}
+
+fn backspace_says_what_it_deleted_classic() {
+    backspace_says_what_it_deleted(false);
 }
 
 /// The outpost's search for `needle` in `terminal`'s text, outward from the
@@ -687,7 +533,7 @@ fn a_failing_search_finds_nothing(remote: bool) {
     common::apply(&mut app, hwnd, "screen term 3");
     let source = source(&uia, hwnd, remote);
     let mut terminal = Terminal::new();
-    let _ = read_terminal(&uia, &source, &mut terminal, (None, remote));
+    let _ = read_terminal(&uia, &source, &mut terminal, remote);
     let found = find_on_path(&uia, &source, &terminal, ("two", 1), remote);
     assert_eq!(found, []);
     app.quit();
@@ -752,7 +598,7 @@ fn search_in(
     show(&mut app, hwnd, rows);
     let source = source(&uia, hwnd, remote);
     let mut terminal = Terminal::new();
-    let _ = read_terminal(&uia, &source, &mut terminal, (None, remote));
+    let _ = read_terminal(&uia, &source, &mut terminal, remote);
     let found = find_on_path(&uia, &source, &terminal, (needle, from), remote);
     app.quit();
     found
@@ -836,84 +682,6 @@ fn the_search_ends_after_its_calls_classic() {
     the_search_ends_after_its_calls(false);
 }
 
-/// The node Core knows mockapp's terminal by.
-fn terminal_node() -> NodeId {
-    NodeId::in_outpost(OutpostId(1), 1)
-}
-
-/// The console host raises no caret event for every character typed, only
-/// its text's change: typing "helo" after the prompt is echoed character
-/// by character as the terminal shows it, and Backspace says exactly "o".
-fn backspace_says_what_it_deleted_without_caret_events(remote: bool) {
-    common::init_com();
-    let title = common::unique_title("mockapp-terminal-backspace");
-    let mut app = common::spawn("terminal.json", "uia", &title);
-    let hwnd = common::find_window(&title);
-    let uia = Uia::new().expect("a UIA client");
-    // The screen: three rows, and the empty last line.
-    common::apply(&mut app, hwnd, "screen term 4");
-    show(&mut app, hwnd, &["one", "two", "ready>"]);
-    let mut session = Session {
-        uia: &uia,
-        source: source(&uia, hwnd, remote),
-        terminal: Terminal::new(),
-        remote,
-        state: SrState::new(),
-        spoken: Vec::new(),
-        before_find: None,
-        finds: 0,
-        before_history: None,
-        histories: 0,
-    };
-    session.input(&focus());
-    session.live();
-    session.spoken.clear();
-    let mut prompt = "ready>".to_owned();
-    for character in ["h", "e", "l", "o"] {
-        session.input(&Input::CharacterTyped {
-            key_seq: verbatim_model::KeySeq::NONE_YET,
-            trace_id: TraceId::mint(),
-            text: character.to_owned(),
-            at_ms: now_us() / 1_000,
-        });
-        prompt.push_str(character);
-        show(&mut app, hwnd, &["one", "two", &prompt]);
-        session.live();
-    }
-    session.input(&Input::CaretKey {
-        key_seq: verbatim_model::KeySeq::NONE_YET,
-        trace_id: TraceId::mint(),
-        key: CaretKey {
-            motion: CaretMotion::Backspace,
-            select: false,
-        },
-        pressed_at_ms: now_us() / 1_000,
-    });
-    prompt.pop();
-    show(&mut app, hwnd, &["one", "two", &prompt]);
-    session.live();
-    let character = |text: &str| vec![SegmentContent::Character(text.to_owned())];
-    assert_eq!(
-        session.spoken,
-        [
-            character("h"),
-            character("e"),
-            character("l"),
-            character("o"),
-            character("o"),
-        ]
-    );
-    app.quit();
-}
-
-fn backspace_says_what_it_deleted_without_caret_events_remote() {
-    backspace_says_what_it_deleted_without_caret_events(true);
-}
-
-fn backspace_says_what_it_deleted_without_caret_events_classic() {
-    backspace_says_what_it_deleted_without_caret_events(false);
-}
-
 /// Runs each test on a desktop of its own (`common/harness.rs`).
 fn main() {
     harness::run_isolated(&[
@@ -926,12 +694,12 @@ fn main() {
             new_output_is_said_line_by_line_classic,
         ),
         (
-            "backspace_says_what_it_deleted_without_caret_events_remote",
-            backspace_says_what_it_deleted_without_caret_events_remote,
+            "backspace_says_what_it_deleted_remote",
+            backspace_says_what_it_deleted_remote,
         ),
         (
-            "backspace_says_what_it_deleted_without_caret_events_classic",
-            backspace_says_what_it_deleted_without_caret_events_classic,
+            "backspace_says_what_it_deleted_classic",
+            backspace_says_what_it_deleted_classic,
         ),
         (
             "the_status_bar_is_read_below_the_caret_remote",

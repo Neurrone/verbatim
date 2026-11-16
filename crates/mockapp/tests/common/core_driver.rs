@@ -146,7 +146,14 @@ pub struct CoreDriver {
     log: Vec<String>,
     /// What the test does around the check's calls ([`Self::observe_check`]).
     check_observer: Option<CheckObserver>,
+    /// What the test does as Core sends the outpost a request
+    /// ([`Self::observe_sends`]).
+    send_observer: Option<SendObserver>,
 }
+
+/// A test's observer of each request Core sends the outpost, called with
+/// the outpost before it is handed the request.
+pub type SendObserver = Box<dyn FnMut(&Ask, &OutpostUnderTest)>;
 
 /// A moment of the stand-in for the listener's check thread, which a
 /// test's observer acts at.
@@ -278,6 +285,7 @@ impl CoreDriver {
             startup: Vec::new(),
             log: Vec::new(),
             check_observer: None,
+            send_observer: None,
         };
         driver.feed(QueueInput::Process(ProcessFact::ListenerStarted(1)));
         driver.feed(QueueInput::ReaderReady(LISTENER));
@@ -630,6 +638,22 @@ impl CoreDriver {
         self.take()
     }
 
+    /// The user types `text`, which reaches the application at once, as a
+    /// typed key does; what Core said once every answer came.
+    pub fn typed(&mut self, text: &str) -> Step {
+        self.next_key += 1;
+        self.feed(QueueInput::Press(Box::new(
+            verbatim_model::request::Press {
+                key_seq: verbatim_model::KeySeq::new(self.next_key),
+                pressed_at_us: self.now(),
+                action: verbatim_model::request::PressAction::Typed {
+                    text: text.to_owned(),
+                },
+            },
+        )));
+        self.take()
+    }
+
     /// The user presses the key of review `command`, its first press; what
     /// Core said once every answer came.
     pub fn command(&mut self, command: verbatim_model::ReviewCommand) -> Step {
@@ -756,6 +780,13 @@ impl CoreDriver {
         self.check_observer = observer;
     }
 
+    /// Has `observer` called with each request Core sends the outpost from
+    /// now on, before the outpost is handed it, as a test acts on mockapp
+    /// while a request is on its way; `None` stops it.
+    pub fn observe_sends(&mut self, observer: Option<SendObserver>) {
+        self.send_observer = observer;
+    }
+
     /// Core's state, for a test that reads what it committed.
     pub fn state(&self) -> &SrState {
         &self.state
@@ -831,8 +862,9 @@ impl CoreDriver {
                     answer,
                 }));
             }
-            OutpostToCore::Tell(tell) => {
+            OutpostToCore::Tell(mut tell) => {
                 self.tells += 1;
+                tell.assign_outpost(OutpostId(GENERATION));
                 inputs.push_back(self.queued(QueueInput::Tell {
                     from: self.outpost_instance(),
                     tell,
@@ -867,6 +899,8 @@ impl CoreDriver {
             )),
             Effect::StopSpeech => self.said.push(Said::Stop),
             Effect::PlayEarcon(earcon) => self.said.push(Said::Earcon(earcon)),
+            // A key's speech, fenced by its number: said as any other.
+            Effect::ForKey(_, effect) => self.effect(*effect, inputs),
             Effect::Queue(queue) => self.queue_effect(queue, inputs),
             _ => {}
         }
@@ -883,6 +917,9 @@ impl CoreDriver {
                     }));
                 }
                 Reader::Outpost(_) => {
+                    if let Some(observer) = &mut self.send_observer {
+                        observer(&ask, &self.outpost);
+                    }
                     self.open.push(ask.number);
                     self.outpost.forward(ask);
                 }
