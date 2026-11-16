@@ -9,12 +9,12 @@
 //! call into the application in `verbatim-outpost`, and the listener's
 //! reads. Each program answers from the world's field as it is when the
 //! program ends, after the latency the script gives its read, and answers
-//! exactly what `verbatim-outpost` answers today: a caret key's watch,
-//! which `verbatim-outpost` does not yet run (`outpost/text_reads.rs`,
-//! "The watch is answered by its own handler, not built yet"), is answered
-//! "unsupported". When the outpost's reducer gains the watch's checks and
-//! final read as programs of their own, this file learns to run them, in a
-//! commit of its own reviewed on its diff.
+//! exactly what `verbatim-outpost` answers: a watch's check compares the
+//! field with the field as the key's starting read found it, by the
+//! effect test `verbatim_model::had_effect` (`text/check.rs`), and with the
+//! effect, or at the bound, makes the final read in the same program; a
+//! watch's final read reads the caret and the key's unit. Checks and final
+//! reads take no time, as the model's reads.
 //!
 //! The hook stands in too: a key is held, bound to the field, exactly when
 //! the model says the committed focus is the field (Core publishes the
@@ -41,13 +41,14 @@ use verbatim_model::tell::{
     TellWindow, WindowFacet,
 };
 use verbatim_model::{
-    CaretKey, CaretMotion, CaretReport, Effect, Input as CoreInput, KeySeq, NodeDetails, NodeId,
-    OutpostId, Pid, Role, SegmentContent, Started, StateSet, TextAnchor, TextChunk, TextOp,
-    TextProvider, TextReply, TextUnit, TraceId, WindowHandle,
+    CaretKey, CaretMotion, CaretReport, Compared, Effect, Input as CoreInput, KeySeq, NodeDetails,
+    NodeId, OutpostId, Pid, Role, SegmentContent, Started, StateSet, TextAnchor, TextChunk, TextOp,
+    TextProvider, TextReply, TextUnit, TraceId, WatchFinalRead, Watched, WatchedRead, WindowHandle,
+    had_effect,
 };
 use verbatim_outpost_logic::{
     Effect as OutpostEffect, Entry, Input as OutpostInput, Item, Now, Reducer, Request, UiaEvent,
-    UiaKind, Work,
+    UiaKind, WatchProgram, WatchWork, Work,
 };
 
 use super::model::Heard;
@@ -84,6 +85,8 @@ pub enum Seen {
 enum Running {
     /// The outpost's program `0`, of Core's request `1`.
     Outpost(Request, Box<Ask>),
+    /// A watch's check or final read, program `0`.
+    Watch(Request, Box<WatchProgram>),
     /// Another program of the outpost's, which reads nothing Core asked.
     Own(Request),
     /// The listener's read for request `0`.
@@ -108,6 +111,8 @@ pub struct Seam {
     focus_us: (Us, Us),
     /// The anchors the stand-in minted.
     next_anchor: u64,
+    /// The field as each starting read found it, by its starting point.
+    points: BTreeMap<u64, App>,
     /// What crossed the seam, for a failure's report.
     pub log: Vec<String>,
 }
@@ -143,6 +148,7 @@ impl Seam {
             read_us,
             focus_us,
             next_anchor: 100,
+            points: BTreeMap::new(),
             log: Vec::new(),
         };
         let mut seen = Vec::new();
@@ -181,7 +187,18 @@ impl Seam {
     /// The next time something of Core's or the stand-ins' is due.
     pub fn next_due(&self) -> Option<Us> {
         let program = self.running.iter().map(|(at, _)| *at).min();
-        [self.wake, program].into_iter().flatten().min()
+        [self.wake, program, self.outpost_timer()]
+            .into_iter()
+            .flatten()
+            .min()
+    }
+
+    /// When the outpost's shell next ticks its reducer: the waiting
+    /// table's next check.
+    fn outpost_timer(&self) -> Option<Us> {
+        self.outpost
+            .next_timer(now_of(self.now))
+            .map(|at| u64::try_from(at.as_micros()).expect("a run's times fit"))
     }
 
     /// Key `key` pressed at `at`: held and bound to the field when `held`.
@@ -295,6 +312,14 @@ impl Seam {
             if self.wake.is_some_and(|wake| wake <= at) {
                 self.wake = None;
                 seen.extend(self.core(QueueInput::Due, app));
+                continue;
+            }
+            if self.outpost_timer().is_some_and(|due| due <= at) {
+                let effects = self.outpost.tick(now_of(at));
+                if effects.is_empty() {
+                    break;
+                }
+                seen.extend(self.outpost_effects(effects, app));
                 continue;
             }
             break;
@@ -429,6 +454,7 @@ impl Seam {
                     };
                     let running = match program.work {
                         Work::Ask(ask) => Running::Outpost(program.request, ask),
+                        Work::Watch(watch) => Running::Watch(program.request, watch),
                         _ => Running::Own(program.request),
                     };
                     self.running.push((self.now + ends, running));
@@ -538,6 +564,36 @@ impl Seam {
                 ));
                 self.outpost_effects(effects, app)
             }
+            Running::Watch(request, program) => {
+                let mut effects = Vec::new();
+                if let Some(watched) = self.watched(&program, app) {
+                    let answer = Answer {
+                        number: program.number,
+                        outcome: Outcome::Result(Reply::Text(TextReply::Watched(Box::new(
+                            watched,
+                        )))),
+                        probes: Vec::new(),
+                        detail: String::new(),
+                    };
+                    effects.extend(self.outpost.input(
+                        OutpostInput::Answered {
+                            request,
+                            answer: Box::new(answer),
+                        },
+                        now_of(self.now),
+                    ));
+                }
+                effects.extend(self.outpost.input(
+                    OutpostInput::Finished {
+                        request,
+                        reported: false,
+                        panicked: false,
+                        cut: None,
+                    },
+                    now_of(self.now),
+                ));
+                self.outpost_effects(effects, app)
+            }
             Running::Own(request) => {
                 let effects = self.outpost.input(
                     OutpostInput::Finished {
@@ -567,6 +623,7 @@ impl Seam {
                 ..
             } => {
                 let point = self.anchor();
+                self.points.insert(point.0, app.clone());
                 Reply::Text(TextReply::Started(Box::new(Started {
                     point,
                     caret: self.caret(app),
@@ -574,13 +631,43 @@ impl Seam {
                     word: read.word.then(|| self.unit(TextUnit::Word, app)),
                 })))
             }
-            // Not built in `verbatim-outpost` (`outpost/text_reads.rs`).
-            Wire::Text {
-                op: TextOp::Watch(_),
-                ..
-            } => Reply::Text(TextReply::Unsupported),
             other => panic!("the stand-in answers no request {other:?}"),
         }
+    }
+
+    /// What watch `program`'s check or final read answers, read from
+    /// `app`: `None` for a check that shows no effect before the bound.
+    fn watched(&mut self, program: &WatchProgram, app: &App) -> Option<Watched> {
+        let (unit, at_effect) = match program.watch.final_read {
+            WatchFinalRead::Unit { unit, .. } => (unit, false),
+            WatchFinalRead::UnitAtEffect { unit, .. } => (unit, true),
+        };
+        let effect = match program.work {
+            WatchWork::Final => true,
+            WatchWork::Check { word, .. } => {
+                let before = self
+                    .points
+                    .get(&program.watch.point.0)
+                    .expect("a watch names a starting point the stand-in minted");
+                had_effect(compared(before, app, word), program.watch.motion)
+            }
+        };
+        let last = matches!(program.work, WatchWork::Check { last: true, .. });
+        if !effect && !last {
+            return None;
+        }
+        if !effect && at_effect {
+            return Some(Watched::BoundUnread);
+        }
+        let read = WatchedRead {
+            caret: self.caret(app),
+            unit: self.unit(unit, app),
+        };
+        Some(if effect {
+            Watched::Effect(read)
+        } else {
+            Watched::Bound(read)
+        })
     }
 
     fn anchor(&mut self) -> TextAnchor {
@@ -635,6 +722,19 @@ impl Seam {
             difference: None,
         }));
         read
+    }
+}
+
+/// How `now` compares with `before`, as a check compares the caret with a
+/// key's starting point: the caret's place, the characters beside it, the
+/// line, and with `word` the word at the caret.
+fn compared(before: &App, now: &App, word: bool) -> Compared {
+    Compared {
+        caret_moved: now.caret != before.caret,
+        selection_moved: false,
+        beside_changed: now.before() != before.before() || now.character() != before.character(),
+        unit_changed: word && now.word() != before.word(),
+        line_changed: now.text != before.text,
     }
 }
 
