@@ -586,42 +586,14 @@ fn read_element(
             .flatten();
         add_legacy_checked_state(&mut element.parts.states, legacy);
     }
-    let windows =
-        || std::iter::once(hwnd).chain(walked.ancestors.iter().map(|ancestor| ancestor.hwnd));
-    let continue_from =
-        || verbatim_uia::parent_window(verbatim_uia::outermost_nearest_window(nearest, windows()));
-    let (end, met) = match &ended {
-        Ok(Some(FocusAncestry::Focused(ancestry))) => (
-            if let Some(plain) = ancestry.plain_window {
-                RouteEnd::ContinueFrom(handle(plain))
-            } else if ancestry.failed_hop.is_some() {
-                RouteEnd::ContinueFrom(handle(continue_from()))
-            } else if ancestry.depth_limited {
-                RouteEnd::PlainFrom(handle(verbatim_uia::plain_windows_start(
-                    nearest,
-                    windows(),
-                )))
-            } else {
-                RouteEnd::Top
-            },
-            ancestry.met_known,
-        ),
-        // Not asked for: the check read the keyboard focus.
-        Ok(Some(FocusAncestry::NotFocused)) => {
-            return Outcome::Refused(Refusal::NotFocused);
-        }
-        Ok(None) => (RouteEnd::Top, None),
-        Err(error) => {
-            tracing::debug!(%error, "a kept element's read failed; answered with what was read");
-            (RouteEnd::ContinueFrom(handle(continue_from())), None)
-        }
+    let known_met = |met: usize| {
+        let place = places.get(met).copied()?;
+        read.walk.as_deref()?.get(usize::try_from(place).ok()?).cloned()
     };
-    // The known ancestor the walk met is the last read, and not among the
-    // ancestors answered.
-    let met = met.and_then(|met| {
-        walked.ancestors.pop();
-        places.get(met).copied()
-    });
+    let end = match route_end(&ended, &mut walked, (hwnd, nearest), known_met) {
+        Ok(end) => end,
+        Err(outcome) => return outcome,
+    };
     let ancestor_windows = nearest_windows((hwnd, nearest), &walked.ancestors);
     let route = read.walk.as_ref().map(|_| Route {
         window: handle(nearest),
@@ -653,9 +625,73 @@ fn read_element(
                 values: ancestor.values(&read.set, pid),
             })
             .collect(),
-        met,
+        // A read with a route names what its walk met in the route's end.
+        met: None,
         route,
     })))
+}
+
+/// Where a walk that `ended` so ended, as its route says: `walked` loses
+/// the known ancestor it met, which `known_met` names by its place among
+/// the walk's known runtime ids; `hwnd` is the element's own window and
+/// `nearest` its nearest. An outcome answers the read instead.
+fn route_end(
+    ended: &Result<Option<FocusAncestry>, verbatim_uia_rops::Error>,
+    walked: &mut Walked,
+    (hwnd, nearest): (isize, isize),
+    known_met: impl Fn(usize) -> Option<KnownAncestor>,
+) -> Result<RouteEnd, Outcome> {
+    if let Ok(Some(FocusAncestry::Focused(ancestry))) = ended
+        && let Some(met) = ancestry.met_known
+    {
+        // The known ancestor the walk met is the last read, and not among
+        // the ancestors answered.
+        walked.ancestors.pop();
+        let Some(known) = known_met(met) else {
+            tracing::error!("a walk met a known ancestor the request did not name");
+            return Err(Outcome::Refused(Refusal::Unsupported));
+        };
+        return Ok(RouteEnd::Known(known));
+    }
+    let windows =
+        || std::iter::once(hwnd).chain(walked.ancestors.iter().map(|ancestor| ancestor.hwnd));
+    let continue_from =
+        || verbatim_uia::parent_window(verbatim_uia::outermost_nearest_window(nearest, windows()));
+    Ok(match ended {
+        Ok(Some(FocusAncestry::Focused(ancestry))) => {
+            if let Some(plain) = ancestry.plain_window {
+                RouteEnd::ContinueFrom(handle(plain))
+            } else if ancestry.failed_hop.is_some() {
+                RouteEnd::ContinueFrom(handle(continue_from()))
+            } else if ancestry.depth_limited {
+                RouteEnd::PlainFrom(handle(verbatim_uia::plain_windows_start(
+                    nearest,
+                    windows(),
+                )))
+            } else {
+                // The walk ends at the process's top-level window or at the
+                // window below the process boundary
+                // (`verbatim_uia_rops::Ancestry`).
+                let outermost = walked.ancestors.last().map_or(hwnd, |ancestor| ancestor.hwnd);
+                if outermost != 0 && verbatim_win32::window::top_level_of(outermost) != outermost
+                {
+                    RouteEnd::ProcessBoundary
+                } else {
+                    RouteEnd::Root
+                }
+            }
+        }
+        // Not asked for: the check read the keyboard focus.
+        Ok(Some(FocusAncestry::NotFocused)) => {
+            return Err(Outcome::Refused(Refusal::NotFocused));
+        }
+        // The element alone: no walk, so no route carries this end.
+        Ok(None) => RouteEnd::Root,
+        Err(error) => {
+            tracing::debug!(%error, "a kept element's read failed; answered with what was read");
+            RouteEnd::ContinueFrom(handle(continue_from()))
+        }
+    })
 }
 
 /// Reads `sender`, whose nearest window is `nearest`: with `walking`, its

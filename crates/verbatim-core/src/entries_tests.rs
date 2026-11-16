@@ -7,7 +7,7 @@ use verbatim_model::property::{
     PropertyAnswer, PropertyId, PropertyValue, PropertyValues, RuntimeId,
 };
 use verbatim_model::request::{
-    Answer, Ask, FocusAncestor, FocusCaret, FocusNode, FocusRead, HeldIds, NodeRead, ObjectClass,
+    Answer, Ask, CompleteUia, FocusAncestor, FocusCaret, KnownAncestor, FocusNode, FocusRead, HeldIds, NodeRead, ObjectClass,
     ObjectRead, Outcome as WireOutcome, Refusal, Reply, Request as Wire, RequestNumber, Route,
     RouteEnd, RouteStep, RunRead, Tried,
 };
@@ -422,6 +422,76 @@ fn a_refused_completion_ends_the_focus_unspoken() {
     );
     assert!(state.focus.object().is_none());
     assert_eq!(state.versions.committed, Committed::Nothing);
+    assert!(state.queue.front_for_tests().is_none());
+}
+
+/// The completion asked at `at_us` by `input`, as the outpost receives it.
+fn sent_completion(held: &mut Held, at_us: u64, input: Input<Entry>) -> Option<Box<CompleteUia>> {
+    feed(&mut held.state, &mut held.runtime, Timed { at_us, input })
+        .unwrap()
+        .into_iter()
+        .find_map(|effect| match effect {
+            Effect::Send { ask, .. } => match ask.request {
+                Wire::CompleteUia(complete) => Some(complete),
+                _ => None,
+            },
+            _ => None,
+        })
+}
+
+/// A second focus, of runtime id `[42, 2]`, asked of the listener after
+/// the focus "OK" was committed with its frame "Editor" known by the
+/// runtime id `[42, 4]`.
+fn second_focus_asked() -> Held {
+    let mut state = asked_completion();
+    let mut first = focus_read(None);
+    first.ancestors[0].node.runtime_id = Some(RuntimeId(vec![42, 4]));
+    feed_at(&mut state, 3_000, answer(OUTPOST, 2, Reply::Focus(Box::new(first))));
+    assert_eq!(
+        feed_at(&mut state, 4_000, entry(uia_tell(2, Vec::new()))),
+        ["send Listener ReadObject"]
+    );
+    state
+}
+
+#[test]
+fn the_known_ancestor_a_listeners_walk_met_is_named_in_the_completion() {
+    let mut state = second_focus_asked();
+    let met = KnownAncestor::Uia(RuntimeId(vec![42, 4]));
+    let mut object = listener_answer();
+    if let Some(route) = object.route.as_mut() {
+        route.end = RouteEnd::Known(met.clone());
+    }
+    let complete = sent_completion(
+        &mut state,
+        5_000,
+        answer(LISTENER, 4, Reply::Object(Box::new(object))),
+    )
+    .unwrap();
+    assert_eq!(complete.route.end, RouteEnd::Known(met.clone()));
+    assert!(complete.known.contains(&met));
+}
+
+#[test]
+fn a_walk_that_met_an_ancestor_core_no_longer_knows_ends_the_focus_unread() {
+    let mut state = ready();
+    assert_eq!(
+        feed_at(&mut state, 1_000, entry(uia_tell(1, Vec::new()))),
+        ["send Listener ReadObject"]
+    );
+    let mut object = listener_answer();
+    if let Some(route) = object.route.as_mut() {
+        route.end = RouteEnd::Known(KnownAncestor::Uia(RuntimeId(vec![42, 4])));
+    }
+    assert_eq!(
+        feed_at(
+            &mut state,
+            2_000,
+            answer(LISTENER, 1, Reply::Object(Box::new(object)))
+        ),
+        NOTHING
+    );
+    assert!(state.focus.object().is_none());
     assert!(state.queue.front_for_tests().is_none());
 }
 

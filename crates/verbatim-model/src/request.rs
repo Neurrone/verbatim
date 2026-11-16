@@ -364,7 +364,8 @@ pub struct ObjectRead {
     /// that the walk met, which is not among them.
     pub ancestors: Vec<NodeRead>,
     /// The place, in the request's list, of the known ancestor the walk
-    /// met; `None` when it walked to the top.
+    /// met; `None` when it walked to the top, and for a read with a route,
+    /// whose end names what the walk met ([`RouteEnd::Known`]).
     pub met: Option<u32>,
     /// For the listener's read of a UI Automation element, the element's
     /// route, from which the application's outpost completes the read.
@@ -384,12 +385,21 @@ pub struct RouteStep {
     pub content: bool,
 }
 
-/// Where the chain above a route goes on.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// Where the listener's walk above a route ended, which Core passes on in
+/// [`CompleteUia`] so that the outpost makes no read of its own to find
+/// it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RouteEnd {
-    /// It met an ancestor Core already knows ([`ObjectRead::met`]), the
-    /// desktop root or the process boundary.
-    Top,
+    /// It met this ancestor Core already knows, one of the request's list,
+    /// which is not among the route's steps.
+    Known(KnownAncestor),
+    /// It reached a window below the process boundary, the route's
+    /// outermost step: the chain goes on above the boundary by plain
+    /// windows.
+    ProcessBoundary,
+    /// It reached a top-level window, the route's outermost step, whose
+    /// parent is the desktop root.
+    Root,
     /// A step to a parent failed or found none below the root, or reached
     /// a ghost's or a hung application's window: the chain goes on from
     /// this window's own object.
@@ -581,7 +591,8 @@ pub struct FocusRead {
     /// that the walk met, which is not among them.
     pub ancestors: Vec<FocusAncestor>,
     /// The place, in the request's list, of the known ancestor the walk
-    /// met; `None` when it walked to the top.
+    /// met; `None` when it walked to the top, and for a read with a route,
+    /// whose end names what the walk met ([`RouteEnd::Known`]).
     pub met: Option<u32>,
     /// The foreground window it entered under, as the read found it;
     /// `None` when it could not be read.

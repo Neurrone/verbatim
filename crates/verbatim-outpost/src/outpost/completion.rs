@@ -9,24 +9,19 @@
 //! reads that way, and above the process boundary by plain windows.
 //!
 //! Where the listener's walk ended at an ancestor Core already knows, the
-//! route does not say which; the completion reads the parent of the
-//! route's outermost element to find it, one call, when it can find that
-//! element's copy, which a route with no window at or above it does not
-//! allow (a limit, reported with this build).
+//! route's end names it, so the completion makes no read to find it.
 
 #![forbid(unsafe_code)]
 
 use verbatim_model::property::PropertyValues;
 use verbatim_model::protocol::{UiaAncestorFact, UiaSnapshotFact};
 use verbatim_model::request::{
-    CompleteUia, CompletionFor, KnownAncestor, Outcome, Reply, RouteEnd,
+    CompleteUia, CompletionFor, Outcome, Refusal, Reply, RouteEnd,
 };
-use verbatim_model::{Backend, NodeId, NodeSnapshot, QueryKind, Role, State};
+use verbatim_model::{Backend, NodeId, NodeSnapshot, Role, State};
 use verbatim_uia::{Cached, Interning as _, Kept, Node, Scope};
 
-use super::asked::{
-    Focus, ancestors_end, cut_at_known, focus_read, is_known, known_stops, snapshot_of,
-};
+use super::asked::{Focus, ancestors_end, cut_at_known, focus_read, known_stops, snapshot_of};
 use super::focus_path;
 use super::read::{self, Client};
 use super::reducer::FocusPath;
@@ -71,7 +66,23 @@ pub(super) fn complete(
         }
     }
     let nearest = hwnd_of(route.window);
-    let Ok((ancestors, met)) = ancestors(context, client, complete, (&path, found.as_ref())) else {
+    let met = match &route.end {
+        RouteEnd::Known(known) => {
+            let Some(place) = complete
+                .known
+                .iter()
+                .position(|named| named == known)
+                .and_then(|place| u32::try_from(place).ok())
+            else {
+                // Core names the ancestor the walk met among those it sends.
+                tracing::error!("a route's end names an ancestor the completion does not");
+                return Outcome::Refused(Refusal::Unsupported);
+            };
+            Some(place)
+        }
+        _ => None,
+    };
+    let Ok((ancestors, met)) = ancestors(context, client, complete, met) else {
         return Outcome::NotThere;
     };
     Outcome::Result(Reply::Focus(Box::new(focus_read(
@@ -188,13 +199,14 @@ fn register(context: &RequestContext<'_>, element: &Cached<Node>, node: NodeId, 
 
 /// The element's ancestors, nearest first, up to the first Core already
 /// knows, and its place in the request's list: the route's ancestors as the
-/// listener read them, then, where the listener's walk went on to the
-/// top, the chain above them.
+/// listener read them, ending at `met`, the place of the known ancestor
+/// the listener's walk met, or, where its walk went on to the top, the
+/// chain above them.
 fn ancestors(
     context: &RequestContext<'_>,
     client: &mut Client,
     complete: &CompleteUia,
-    (path, found): (&FocusPath, Option<&Cached<Node>>),
+    met: Option<u32>,
 ) -> Result<(Vec<NodeSnapshot>, Option<u32>), read::FocusLost> {
     let route = &complete.route;
     let parents: Vec<UiaAncestorFact> = route
@@ -214,9 +226,7 @@ fn ancestors(
         .and_then(|step| step.window)
         .map_or(0, hwnd_of);
     let nearest = hwnd_of(route.window);
-    if route.end == RouteEnd::Top
-        && let Some(met) = met_by_listener(context, client, complete, (path, found))
-    {
+    if let Some(met) = met {
         let stops = known_stops(&complete.known);
         let known = |id: NodeId| stops.iter().any(|stop| stop.id == id);
         let read_by_msaa = |hwnd: isize| read::uia_walk_leaves(context, nearest, hwnd);
@@ -241,45 +251,11 @@ fn ancestors(
             &parents,
             own_window,
             Some(nearest),
-            ancestors_end(route.end),
+            ancestors_end(&route.end),
         ),
         &stops,
     )?;
     Ok(cut_at_known(context, chain, &complete.known))
-}
-
-/// The place, in the request's list, of the known ancestor the listener's
-/// walk met above the route, if it met one: the parent of the route's
-/// outermost element, read from the outpost's own copy of it. `None` when
-/// the outermost element is a top-level window's own, whose walk ends at
-/// the process boundary, or its copy cannot be found.
-fn met_by_listener(
-    context: &RequestContext<'_>,
-    client: &mut Client,
-    complete: &CompleteUia,
-    (path, found): (&FocusPath, Option<&Cached<Node>>),
-) -> Option<u32> {
-    let outermost = complete.route.steps.last()?;
-    if let Some(window) = outermost.window {
-        let hwnd = hwnd_of(window);
-        if verbatim_win32::window::top_level_of(hwnd) == hwnd {
-            return None;
-        }
-    }
-    let element = if complete.route.steps.len() == 1 {
-        found.cloned()
-    } else {
-        find(context, client, path, &outermost.runtime_id.0, false)
-    }?;
-    let (uia, nodes) = client.uia_with(context, Context::node_request).ok()?;
-    let parent = uia
-        .neighbor(element.live(), &nodes, context.nodes(), QueryKind::Parent)
-        .ok()??;
-    let place = complete
-        .known
-        .iter()
-        .position(|known: &KnownAncestor| is_known(context, &parent, known))?;
-    u32::try_from(place).ok()
 }
 
 /// What the listener read of an element, as the continuation above a route

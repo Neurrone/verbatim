@@ -350,7 +350,11 @@ impl FocusPath {
             .iter()
             .map(|step| (step.runtime_id.0.clone(), step.window.and_then(window)))
             .collect();
-        let cut = route.end != verbatim_model::request::RouteEnd::Top;
+        let cut = matches!(
+            route.end,
+            verbatim_model::request::RouteEnd::ContinueFrom(_)
+                | verbatim_model::request::RouteEnd::PlainFrom(_)
+        );
         Self {
             chain,
             cut,

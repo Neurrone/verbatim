@@ -12,6 +12,7 @@ use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::{PropertyId, PropertyValue};
 use verbatim_model::request::{
     CompleteUia, CompletionFor, FocusRead, ObjectRead, ObjectRef, Purpose, ReadObject, Reply,
+    RouteEnd,
     Request as Wire,
 };
 use verbatim_model::tell::{ElementToken, TellWindow};
@@ -183,6 +184,17 @@ pub(crate) async fn run(mut cx: Cx<Entries>, focus: UiaFocus) {
         .instance(Reader::Outpost(window.process))
         .map(|instance| OutpostId(instance.generation));
     let known = Known::of(&cx.facts(), generation);
+    if let RouteEnd::Known(met) = &route.end
+        && !known.sent.contains(met)
+    {
+        // The committed focus changed between the two reads (a desktop
+        // switch committed the sleeping focus, or its outpost generation
+        // ended): the ancestor the walk met is no longer one Core knows, so
+        // the chain cannot be completed against it, and the focus read
+        // after the return or the re-take reads the focus afresh.
+        cx.facts_mut().focus_read_failed();
+        return;
+    }
     let complete = Completion {
         window,
         complete: CompleteUia {

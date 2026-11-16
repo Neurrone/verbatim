@@ -1225,8 +1225,8 @@ no verdict in force is probed first and the probe carried in the answer.
   element on the registering thread and waited for, then the node's
   states are read; the ancestors are the listener's reads, completed
   above as a focus read's are. Where the listener's walk met an ancestor
-  Core already knows, the parent of the route's outermost element is
-  read to find which, one call.
+  Core already knows, the route's end names it, and the completion makes
+  no read to find it.
 - A focus answer's caret is not read yet: `NotRead` for a node that may
   have text, `NoText` otherwise. `Follow` is refused unsupported.
 

@@ -64,7 +64,8 @@ this shape are in `books/dev/src/explanation/architecture.md`, section 1
   id), the desktop root or the process boundary, with the element's route
   (`Route`: each element read with its runtime id, its own window and
   whether it is a control and content element, and where the chain goes
-  on: the top, from a window after a failed step or at a ghost's or hung
+  on: at the known ancestor it met, naming it, at the process boundary or
+  at the root, from a window after a failed step or at a ghost's or hung
   application's window, or by plain windows after the depth limit of
   64). Each node read carries its nearest window's facts (`NodeWindow`,
   `verbatim_listener_logic::tell::node_window`) and the properties of the
