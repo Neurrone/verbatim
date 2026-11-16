@@ -57,7 +57,13 @@ pub fn is_state_property(id: i32) -> bool {
 #[derive(Clone, Debug)]
 pub enum UiaKind {
     /// A property changed: name, value, or a state-bearing property.
-    Property(i32),
+    Property {
+        /// The UI Automation property id.
+        id: i32,
+        /// Whether the element has the Text pattern, from the event's
+        /// cache, which Core's rule for a value change reads.
+        text_pattern: bool,
+    },
     /// An element was selected within its container.
     Selection,
     /// An application-initiated notification.

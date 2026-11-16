@@ -29,7 +29,6 @@ mod harness;
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::{PropertyId, PropertyValue, PropertyValues};
 use verbatim_model::request::{FocusAncestor, MsaaIds};
-use verbatim_model::tell::Payload;
 use verbatim_model::{Role, SegmentContent, State, StateSet, WindowHandle};
 use verbatim_uia::Uia;
 use windows::Win32::Foundation::HWND;
@@ -629,7 +628,7 @@ fn a_uia_ancestors_class_makes_a_sensitive_slider_speak_its_value() {
 }
 
 /// Core speaks a `SensitiveSlider`'s value change while its thumb is the
-/// focus, told by the listener with the value it carries
+/// focus, told by the outpost following it with the value it carries
 /// (`docs/parity/focus-context.md`, "A slider that focuses its thumb"):
 /// mockapp's slider changes its value with its thumb focused, and Core
 /// says the value.
@@ -644,18 +643,8 @@ fn a_sensitive_slider_s_value_change_reaches_core_while_its_thumb_is_the_focus()
     let thumb = common::listener_focus(&uia, hwnd.0 as isize);
     let _ = core.uia_focus(&thumb);
     app.send("set-value slider 60");
-    let slider = common::listener_element(&uia, hwnd.0 as isize, "Volume");
     assert_eq!(
-        core.uia_event(
-            EventKind::UiaPropertyChanged,
-            &slider,
-            None,
-            Payload::PropertyChanged {
-                property: PropertyId::Value,
-                value: Some(PropertyValue::Text("60".to_owned())),
-            },
-        )
-        .spoken(),
+        core.told(1).spoken(),
         [vec![SegmentContent::Value("60".to_owned())]]
     );
     drop(core);

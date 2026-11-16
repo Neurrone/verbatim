@@ -167,6 +167,7 @@ impl Merge for OutpostToCore {
             OutpostToCore::Ready { .. }
             | OutpostToCore::SpareReady { .. }
             | OutpostToCore::Event { .. }
+            | OutpostToCore::Tell(_)
             | OutpostToCore::Pong { .. }
             | OutpostToCore::Fault { .. }
             | OutpostToCore::NotResponding { .. }

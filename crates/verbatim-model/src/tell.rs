@@ -28,6 +28,14 @@ pub enum EventObject {
         /// The element's runtime id, from the event's cache.
         runtime_id: RuntimeId,
     },
+    /// An element of a node `Follow` names, or of one of its ancestors,
+    /// whose event an outpost's `Follow` registration delivered, by its
+    /// cached runtime id: Core names it back by the node it committed with
+    /// that runtime id, so the outpost keeps nothing for the tell.
+    Followed {
+        /// The element's runtime id, from the event's cache.
+        runtime_id: RuntimeId,
+    },
     /// An MSAA object, by the ids the `WinEvent` named.
     Msaa {
         /// The window.

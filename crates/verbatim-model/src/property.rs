@@ -71,6 +71,22 @@ pub enum PropertyId {
     /// combo box without the `Value` pattern, or a looping selector, as
     /// NVDA's `ComboBoxWithoutValuePattern` reads it.
     ValueFromSelection,
+    /// Whether the object reports suggestions opening and closing and they
+    /// are open: absent when it reports none (neither editable text nor a
+    /// search field); else whether its controller-for relation names any
+    /// element, read live, as NVDA's `EditableTextWithSuggestions` reads
+    /// `controllerFor` when it handles the change.
+    Suggestions,
+    /// Whether the object has UI Automation's `Value` pattern.
+    HasValuePattern,
+    /// The class name of the object's own window, or of its nearest
+    /// ancestor's, as NVDA's `windowClassName` is: read from Windows with
+    /// no call into the application.
+    WindowClass,
+    /// For a classic .NET Framework Windows Forms combo box (NVDA's
+    /// `_NetFrameworkWinFormsComboBox`), the window of its drop-down list,
+    /// by `GetComboBoxInfo`; absent for any other object.
+    ComboBoxList,
 }
 
 impl PropertyId {
@@ -100,6 +116,10 @@ impl PropertyId {
             Self::TableCounts => &TABLE_COUNTS,
             Self::TextSummary => &TEXT_SUMMARY,
             Self::ValueFromSelection => &VALUE_FROM_SELECTION,
+            Self::Suggestions => &SUGGESTIONS,
+            Self::HasValuePattern => &HAS_VALUE_PATTERN,
+            Self::WindowClass => &WINDOW_CLASS,
+            Self::ComboBoxList => &COMBO_BOX_LIST,
         }
     }
 
@@ -208,6 +228,19 @@ pub enum UiaConversion {
     /// A combo box's control type with no `Value` pattern, or a list whose
     /// class name holds `LoopingSelector`.
     ValueFromSelection,
+    /// Absent unless the text pattern is available or the automation id
+    /// is `SearchTextBox` or `TextBox`; then whether the controller-for
+    /// relation names any element.
+    Suggestions,
+    /// The class name of the native window handle's window, else of the
+    /// nearest ancestor's window the reader knows, by `GetClassName`.
+    NearestWindowClass,
+    /// NVDA's test for a classic .NET Framework Windows Forms combo box:
+    /// a combo box's control type, framework `WinForm`, its window's class
+    /// normalized to `COMBOBOX`, a provider description naming
+    /// `System.Windows.Forms, Version=4.0.0.0`, the `Value` pattern and no
+    /// `Selection` pattern; then its window's `GetComboBoxInfo` list.
+    WinFormsComboBoxList,
 }
 
 /// How MSAA reads a property: an `IAccessible` call, or a read of the
@@ -294,7 +327,11 @@ mod uia {
     pub(super) const EXPAND_COLLAPSE_STATE: i32 = 30070;
     pub(super) const SELECTION_ITEM_IS_SELECTED: i32 = 30079;
     pub(super) const TOGGLE_STATE: i32 = 30086;
+    pub(super) const FRAMEWORK_ID: i32 = 30024;
+    pub(super) const IS_SELECTION_PATTERN_AVAILABLE: i32 = 30037;
     pub(super) const IS_DATA_VALID_FOR_FORM: i32 = 30103;
+    pub(super) const CONTROLLER_FOR: i32 = 30104;
+    pub(super) const PROVIDER_DESCRIPTION: i32 = 30107;
     pub(super) const POSITION_IN_SET: i32 = 30152;
     pub(super) const SIZE_OF_SET: i32 = 30153;
     pub(super) const LEVEL: i32 = 30154;
@@ -602,6 +639,69 @@ const VALUE_FROM_SELECTION: PropertyEntry = PropertyEntry {
     cost: Cost::Cheap,
 };
 
+const SUGGESTIONS: PropertyEntry = PropertyEntry {
+    id: PropertyId::Suggestions,
+    name: "suggestions",
+    kind: ValueKind::Flag,
+    uia: Some(UiaRead {
+        cached: &[
+            uia::IS_TEXT_PATTERN_AVAILABLE,
+            uia::AUTOMATION_ID,
+            uia::CONTROLLER_FOR,
+        ],
+        conversion: UiaConversion::Suggestions,
+    }),
+    msaa: None,
+    ia2: None,
+    cost: Cost::Alone,
+};
+
+const HAS_VALUE_PATTERN: PropertyEntry = PropertyEntry {
+    id: PropertyId::HasValuePattern,
+    name: "has value pattern",
+    kind: ValueKind::Flag,
+    uia: Some(UiaRead {
+        cached: &[uia::IS_VALUE_PATTERN_AVAILABLE],
+        conversion: UiaConversion::Flag,
+    }),
+    msaa: None,
+    ia2: None,
+    cost: Cost::Cheap,
+};
+
+const WINDOW_CLASS: PropertyEntry = PropertyEntry {
+    id: PropertyId::WindowClass,
+    name: "window class",
+    kind: ValueKind::Text,
+    uia: Some(UiaRead {
+        cached: &[uia::NATIVE_WINDOW_HANDLE],
+        conversion: UiaConversion::NearestWindowClass,
+    }),
+    msaa: Some(MsaaRead::WindowClass),
+    ia2: None,
+    cost: Cost::Cheap,
+};
+
+const COMBO_BOX_LIST: PropertyEntry = PropertyEntry {
+    id: PropertyId::ComboBoxList,
+    name: "combo box list",
+    kind: ValueKind::Window,
+    uia: Some(UiaRead {
+        cached: &[
+            uia::CONTROL_TYPE,
+            uia::FRAMEWORK_ID,
+            uia::NATIVE_WINDOW_HANDLE,
+            uia::PROVIDER_DESCRIPTION,
+            uia::IS_VALUE_PATTERN_AVAILABLE,
+            uia::IS_SELECTION_PATTERN_AVAILABLE,
+        ],
+        conversion: UiaConversion::WinFormsComboBoxList,
+    }),
+    msaa: None,
+    ia2: None,
+    cost: Cost::Alone,
+};
+
 /// The whole table, in [`PropertyId`] order.
 pub const PROPERTIES: &[PropertyEntry] = &[
     NAME,
@@ -626,6 +726,10 @@ pub const PROPERTIES: &[PropertyEntry] = &[
     TABLE_COUNTS,
     TEXT_SUMMARY,
     VALUE_FROM_SELECTION,
+    SUGGESTIONS,
+    HAS_VALUE_PATTERN,
+    WINDOW_CLASS,
+    COMBO_BOX_LIST,
 ];
 
 /// A UI Automation runtime id.
@@ -1091,7 +1195,7 @@ mod tests {
                 1
             );
         }
-        assert_eq!(PROPERTIES.len(), 22);
+        assert_eq!(PROPERTIES.len(), 26);
     }
 
     #[test]

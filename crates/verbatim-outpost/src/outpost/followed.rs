@@ -20,7 +20,8 @@ use verbatim_uia::{Group, Scope};
 use windows::Win32::UI::Accessibility::IUIAutomationElement;
 use windows::core::AgileReference;
 
-use super::Context;
+use super::read::Client;
+use super::{Context, RequestContext};
 
 /// What the newest `Follow` named, with the elements its registration was
 /// given.
@@ -53,17 +54,23 @@ fn uia_group(group: FollowGroup) -> Group {
 /// registration on the registering thread and waits for the move. A node
 /// the outpost no longer holds an element for is answered not there, with
 /// every registration removed.
-pub(super) fn follow(context: &Context, follow: &Follow) -> Outcome {
+pub(super) fn follow(
+    context: &RequestContext<'_>,
+    client: &mut Client,
+    follow: &Follow,
+) -> Outcome {
     let Some(registration) = context.focus_events.get() else {
         tracing::debug!("Follow with no registration to move");
         return Outcome::Ended;
     };
     let named = follow.node.as_ref().and_then(|followed| {
         let element = context.store.element_of(followed.node)?.reference();
+        // The extra object, the slider a focused thumb is in, is an
+        // ancestor the completion minted, whose element is found again by
+        // its route when the outpost keeps none.
         let extra = followed
             .extra
-            .and_then(|extra| context.store.element_of(extra))
-            .map(|extra| extra.reference());
+            .and_then(|extra| super::read::element_reference(context, client, extra));
         Some(Named {
             node: followed.node,
             element,

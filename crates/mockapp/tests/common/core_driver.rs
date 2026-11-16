@@ -118,6 +118,8 @@ pub struct CoreDriver {
     bar_windows: Vec<isize>,
     /// The outpost's requests not yet answered.
     open: Vec<RequestNumber>,
+    /// How many tells the outpost has sent.
+    tells: usize,
     /// The wake Core last asked for.
     wake: Option<u64>,
     /// Core's time is never behind this.
@@ -182,6 +184,7 @@ impl CoreDriver {
             bars: Vec::new(),
             bar_windows: Vec::new(),
             open: Vec::new(),
+            tells: 0,
             wake: None,
             floor_us: 0,
             said: Vec::new(),
@@ -472,6 +475,25 @@ impl CoreDriver {
         self.take()
     }
 
+    /// Waits for the outpost to tell Core of `count` more events its
+    /// `Follow` registration delivered, such as a change mockapp raised,
+    /// feeding Core each of its messages as it arrives; what Core said
+    /// meanwhile.
+    pub fn told(&mut self, count: usize) -> Step {
+        let target = self.tells + count;
+        while self.tells < target {
+            let message = self
+                .outpost
+                .messages
+                .recv_timeout(super::WAIT_TIMEOUT)
+                .expect("the outpost tells Core of the change");
+            let mut inputs = VecDeque::new();
+            self.message(message, &mut inputs);
+            self.run(inputs);
+        }
+        self.take()
+    }
+
     /// Wakes Core at the time it last asked to be woken at, when it asked.
     pub fn due(&mut self) -> Step {
         if let Some(wake) = self.wake.take() {
@@ -548,6 +570,13 @@ impl CoreDriver {
                 inputs.push_back(self.queued(QueueInput::Answer {
                     from: self.outpost_instance(),
                     answer,
+                }));
+            }
+            OutpostToCore::Tell(tell) => {
+                self.tells += 1;
+                inputs.push_back(self.queued(QueueInput::Tell {
+                    from: self.outpost_instance(),
+                    tell,
                 }));
             }
             mut message @ OutpostToCore::Event { .. } => {

@@ -357,7 +357,8 @@ fn a_stale_selection_after_a_replacement_reports_nothing_and_an_ordinary_one_the
         match &stale.object {
             verbatim_model::tell::EventObject::Uia { runtime_id, .. } =>
                 Some(runtime_id.0.as_slice()),
-            verbatim_model::tell::EventObject::Msaa { .. } => None,
+            verbatim_model::tell::EventObject::Msaa { .. }
+            | verbatim_model::tell::EventObject::Followed { .. } => None,
         },
         "the new item has a runtime id of its own"
     );
@@ -407,7 +408,7 @@ fn a_selection_of_the_focus_itself_is_reported_as_its_own() {
 }
 
 /// A controlled selection read the classic way, after a change of the
-/// focus's description told as the outpost tells one, reads nothing absent
+/// focus's description the outpost tells, reads nothing absent
 /// from a cache: the completion reads the focus's controller relation from
 /// the element it holds for the focus.
 fn a_controlled_selection_from_a_kept_event_element_reads_nothing_uncached() {
@@ -420,20 +421,8 @@ fn a_controlled_selection_from_a_kept_event_element_reads_nothing_uncached() {
     );
     let uia = Uia::new().expect("Uia::new");
     app.send("set-description search Type to search");
-    let search_box = common::listener_element(&uia, hwnd.0 as isize, "Search box");
     assert_eq!(
-        core.uia_event(
-            EventKind::UiaPropertyChanged,
-            &search_box,
-            None,
-            Payload::PropertyChanged {
-                property: verbatim_model::property::PropertyId::Description,
-                value: Some(verbatim_model::property::PropertyValue::Text(
-                    "Type to search".to_owned()
-                )),
-            }
-        )
-        .spoken(),
+        core.told(1).spoken(),
         [vec![SegmentContent::Description(
             "Type to search".to_owned()
         )]],

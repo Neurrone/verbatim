@@ -88,8 +88,8 @@ pub use nearest::{nearest_window_handle, nearest_window_lookup};
 pub use probe::{RawProbe, UIA_RAW_PROBE_TIMEOUT_MS, raw_probe, raw_probe_verdict};
 pub use registry::{Interning, NodeIdRegistry, Released};
 pub use shape::{
-    Absent, Agile, Ancestor, AncestorGates, Cached, Cell, Covers, Description, DialogText,
-    Direction, ElementValue, Fill, FocusInput, GridCounts, HelpTextRefresh, Kept,
+    Absent, Agile, Ancestor, AncestorGates, Cached, Cell, ComboBoxRefresh, Covers, Description,
+    DialogText, Direction, ElementValue, Fill, FocusInput, GridCounts, Kept,
     LEFT_OUT_WHEN_UNSUPPORTED, ListenerEvent, ListenerProgress, ListenerSelection, Live, Node,
     NodeGates, Place, Position, PropertyEvent, RecordedEvent, Request, RoleCore, SelectedItem,
     SelectionContainer, Shape, ShellButton, Shortcut, States, SuggestionsRefresh, TextAreaPattern,

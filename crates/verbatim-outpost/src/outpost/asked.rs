@@ -56,8 +56,8 @@ pub(super) fn answer(context: &RequestContext<'_>, client: &mut Client, ask: &As
     let mut probes = Vec::new();
     let outcome = match &ask.request {
         Request::ReadObject(read) => read_object(context, client, ask, read, &mut probes),
-        Request::Properties { node, set } => match read::read_node(context, client, *node) {
-            Ok(snapshot) => Outcome::Result(Reply::Properties(values(context, &snapshot, set))),
+        Request::Properties { node, set } => match properties(context, client, *node, set) {
+            Ok(values) => Outcome::Result(Reply::Properties(values)),
             Err(error) => failed(&error),
         },
         Request::Navigate {
@@ -116,7 +116,7 @@ pub(super) fn answer(context: &RequestContext<'_>, client: &mut Client, ask: &As
                 None => Outcome::NotThere,
             }
         }
-        Request::Follow(follow) => super::followed::follow(context, follow),
+        Request::Follow(follow) => super::followed::follow(context, client, follow),
     };
     Answer {
         number: ask.number,
@@ -251,17 +251,126 @@ pub(super) fn values(
                     }
                     PropertyId::Cell => details.cell.map(PropertyValue::Cell),
                     PropertyId::TableCounts => details.table_counts.map(PropertyValue::TableCounts),
-                    // Not in a snapshot: read by the listener, or by the
-                    // text requests.
+                    // Not in a snapshot: read by the listener, by the text
+                    // requests, or apart ([`read_apart`]).
                     PropertyId::AutomationId
                     | PropertyId::HasTextPattern
                     | PropertyId::RangeValue
                     | PropertyId::TextSummary
-                    | PropertyId::ValueFromSelection => None,
+                    | PropertyId::ValueFromSelection
+                    | PropertyId::Suggestions
+                    | PropertyId::HasValuePattern
+                    | PropertyId::WindowClass
+                    | PropertyId::ComboBoxList => None,
                 },
             })
             .collect(),
     )
+}
+
+/// Whether property `id` is read apart from a node's snapshot, by
+/// [`read_apart`].
+fn is_read_apart(id: PropertyId) -> bool {
+    matches!(
+        id,
+        PropertyId::Suggestions
+            | PropertyId::HasValuePattern
+            | PropertyId::WindowClass
+            | PropertyId::ComboBoxList
+    )
+}
+
+/// The properties of `set` of node `node_id`: its snapshot, read only when
+/// the set names a property the snapshot holds, and each property read
+/// apart from it ([`read_apart`]).
+fn properties(
+    context: &RequestContext<'_>,
+    client: &mut Client,
+    node_id: NodeId,
+    set: &[PropertyId],
+) -> Result<PropertyValues, ReadError> {
+    let mut answers = if set.iter().any(|&id| !is_read_apart(id)) {
+        values(context, &read::read_node(context, client, node_id)?, set)
+    } else {
+        PropertyValues(
+            set.iter()
+                .map(|&id| PropertyAnswer { id, value: None })
+                .collect(),
+        )
+    };
+    let apart: Vec<PropertyId> = set
+        .iter()
+        .copied()
+        .filter(|&id| is_read_apart(id))
+        .collect();
+    if !apart.is_empty() {
+        let read = read_apart(context, client, node_id, &apart)?;
+        for answer in &mut answers.0 {
+            if let Some(value) = read.answer(answer.id) {
+                answer.value.clone_from(&value.value);
+            }
+        }
+    }
+    Ok(answers)
+}
+
+/// The properties of `set` that no snapshot holds, of node `node_id`, each
+/// by the one read its table entry names: whether its suggestions are
+/// open, a refresh reading its controller-for relation live; whether it
+/// has the `Value` pattern; its nearest window's class, from Windows; and,
+/// for a classic .NET Framework Windows Forms combo box, its list's window
+/// by `GetComboBoxInfo`.
+fn read_apart(
+    context: &RequestContext<'_>,
+    client: &mut Client,
+    node_id: NodeId,
+    set: &[PropertyId],
+) -> Result<PropertyValues, ReadError> {
+    let wants = |id| set.contains(&id);
+    let suggestions = if wants(PropertyId::Suggestions) {
+        read::refreshed::<verbatim_uia::SuggestionsRefresh>(context, client, node_id)?
+    } else {
+        None
+    };
+    let combo_box = if wants(PropertyId::HasValuePattern) || wants(PropertyId::ComboBoxList) {
+        read::refreshed::<verbatim_uia::ComboBoxRefresh>(context, client, node_id)?
+    } else {
+        None
+    };
+    Ok(PropertyValues(
+        set.iter()
+            .map(|&id| PropertyAnswer {
+                id,
+                value: match id {
+                    PropertyId::Suggestions => suggestions.as_ref().and_then(|element| {
+                        let read = element.read();
+                        read.reports_suggestions()
+                            .then_some(PropertyValue::Flag(read.controls_any))
+                    }),
+                    PropertyId::HasValuePattern => combo_box
+                        .as_ref()
+                        .map(|element| PropertyValue::Flag(element.read().value_available)),
+                    PropertyId::WindowClass => read::kept_own_window(context, node_id)
+                        .or_else(|| known_nearest_of(context, node_id))
+                        .map(|hwnd| {
+                            PropertyValue::Text(verbatim_win32::window::window_class_name(hwnd))
+                        }),
+                    PropertyId::ComboBoxList => combo_box.as_ref().and_then(|element| {
+                        let read = element.read();
+                        let class = verbatim_reader_rules::class::normalize_class_name(
+                            &verbatim_win32::window::window_class_name(read.hwnd),
+                        );
+                        if !read.is_net_framework_win_forms(&class) {
+                            return None;
+                        }
+                        verbatim_win32::window::combo_box_list(read.hwnd)
+                            .map(|list| PropertyValue::Window(window_handle(list)))
+                    }),
+                    _ => None,
+                },
+            })
+            .collect(),
+    ))
 }
 
 /// The snapshot `values` describe of node `id`, read through `backend`:

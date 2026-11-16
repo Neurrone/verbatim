@@ -1574,6 +1574,11 @@ impl ReducerThread<'_> {
             OutpostToCore::Answer(answer) => {
                 tracing::debug!(%outpost, number = %answer.number, "an outpost's answer dropped");
             }
+            // A tell from an outpost's `Follow` group, which reaches Core's
+            // event queue with the listener's tells: dropped until then.
+            OutpostToCore::Tell(tell) => {
+                tracing::debug!(%outpost, kind = ?tell.kind, "an outpost's tell dropped");
+            }
             // The relay consumes these, and hands none of them on.
             OutpostToCore::Pong { .. }
             | OutpostToCore::TargetExited

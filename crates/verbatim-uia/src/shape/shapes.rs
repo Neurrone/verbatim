@@ -17,12 +17,13 @@ use windows::Win32::UI::Accessibility::{
     UIA_IsGridPatternAvailablePropertyId, UIA_IsKeyboardFocusablePropertyId,
     UIA_IsOffscreenPropertyId, UIA_IsPasswordPropertyId,
     UIA_IsRangeValuePatternAvailablePropertyId, UIA_IsRequiredForFormPropertyId,
-    UIA_IsSelectionItemPatternAvailablePropertyId, UIA_IsTextPatternAvailablePropertyId,
-    UIA_IsTogglePatternAvailablePropertyId, UIA_IsValuePatternAvailablePropertyId,
-    UIA_LevelPropertyId, UIA_LocalizedControlTypePropertyId, UIA_NamePropertyId,
-    UIA_NativeWindowHandlePropertyId, UIA_PATTERN_ID, UIA_PROPERTY_ID, UIA_PositionInSetPropertyId,
-    UIA_ProcessIdPropertyId, UIA_ProviderDescriptionPropertyId, UIA_RangeValueMaximumPropertyId,
-    UIA_RangeValueMinimumPropertyId, UIA_RangeValueValuePropertyId, UIA_RuntimeIdPropertyId,
+    UIA_IsSelectionItemPatternAvailablePropertyId, UIA_IsSelectionPatternAvailablePropertyId,
+    UIA_IsTextPatternAvailablePropertyId, UIA_IsTogglePatternAvailablePropertyId,
+    UIA_IsValuePatternAvailablePropertyId, UIA_LevelPropertyId, UIA_LocalizedControlTypePropertyId,
+    UIA_NamePropertyId, UIA_NativeWindowHandlePropertyId, UIA_PATTERN_ID, UIA_PROPERTY_ID,
+    UIA_PositionInSetPropertyId, UIA_ProcessIdPropertyId, UIA_ProviderDescriptionPropertyId,
+    UIA_RangeValueMaximumPropertyId, UIA_RangeValueMinimumPropertyId,
+    UIA_RangeValueValuePropertyId, UIA_RuntimeIdPropertyId,
     UIA_Selection2FirstSelectedItemPropertyId, UIA_SelectionItemIsSelectedPropertyId,
     UIA_SelectionPatternId, UIA_SizeOfSetPropertyId, UIA_TextPatternId,
     UIA_ToggleToggleStatePropertyId, UIA_ValueIsReadOnlyPropertyId, UIA_ValueValuePropertyId,
@@ -473,6 +474,8 @@ uia_shape! {
             name: UIA_NamePropertyId => string,
             /// The owning process.
             process_id: UIA_ProcessIdPropertyId => process_id,
+            /// Whether it has the Text pattern.
+            text_available: UIA_IsTextPatternAvailablePropertyId => bool,
         }
         prefetch {}
         covers { Kept }
@@ -1031,17 +1034,51 @@ impl SelectedItem {
 }
 
 uia_shape! {
-    /// An element refreshed for a help text change, which NVDA reports as a
-    /// description change.
-    pub struct HelpTextRefresh {
+    /// An element refreshed for NVDA's test of a classic .NET Framework
+    /// Windows Forms combo box (`_NetFrameworkWinFormsComboBox`,
+    /// `NVDAObjects/UIA/__init__.py` 1387 to 1399), in one call.
+    pub struct ComboBoxRefresh {
         gates: none;
-        groups {
-            /// Its description.
-            description: Description,
+        groups {}
+        properties {
+            /// The control type.
+            control_type: UIA_ControlTypePropertyId => i32,
+            /// The UIA framework, such as `WinForm`.
+            framework_id: UIA_FrameworkIdPropertyId => string,
+            /// The provider's description, naming each provider's module.
+            provider_description: UIA_ProviderDescriptionPropertyId => string,
+            /// Its own window, 0 for an element that is not one.
+            hwnd: UIA_NativeWindowHandlePropertyId => window_handle,
+            /// Whether it has the `Value` pattern.
+            value_available: UIA_IsValuePatternAvailablePropertyId => bool,
+            /// Whether it has the `Selection` pattern.
+            selection_available: UIA_IsSelectionPatternAvailablePropertyId => bool,
         }
-        properties {}
         prefetch {}
         covers {}
+    }
+}
+
+impl ComboBoxRefresh {
+    /// Whether NVDA takes the element for a classic .NET Framework Windows
+    /// Forms combo box, given its window's class normalized as NVDA
+    /// normalizes it (`window_class`): a combo box from the `WinForm`
+    /// framework in a `COMBOBOX` window, whose provider is version 4 of
+    /// `System.Windows.Forms`, with the `Value` pattern and without the
+    /// `Selection` pattern.
+    #[must_use]
+    pub fn is_net_framework_win_forms(&self, window_class: &str) -> bool {
+        self.control_type == Some(windows::Win32::UI::Accessibility::UIA_ComboBoxControlTypeId.0)
+            && self.value_available
+            && self.framework_id.as_deref() == Some("WinForm")
+            && window_class == "COMBOBOX"
+            && self
+                .provider_description
+                .as_deref()
+                .is_some_and(|description| {
+                    description.contains("System.Windows.Forms, Version=4.0.0.0")
+                })
+            && !self.selection_available
     }
 }
 

@@ -614,8 +614,8 @@ patterns its request holds.
   `Description`, `Shortcut`, `Position`, `Cell` and the level, 40
   properties, a `Node`'s without its `Place`; `parts(runtime_id)`),
   `PropertyEvent`
-  (`RoleCore`, name, `ValueSet`, `States` and the process id;
-  `parts(runtime_id)`), and `TextEvent` (process id, native window handle
+  (`RoleCore`, name, `ValueSet`, `States`, the process id and the Text
+  pattern's availability; `parts(runtime_id)`), and `TextEvent` (process id, native window handle
   and class name). All four cover `Kept`, `ListenerEvent` covers
   `FocusInput` and `TextAreaPattern`, and `ListenerSelection` covers
   `ListenerEvent` and both of those.
@@ -631,12 +631,15 @@ patterns its request holds.
   dialog's child; `SelectionContainer` (`SelectionPattern2`'s first
   selected item, read as an `ElementValue`, and the `Selection` pattern);
   `SelectedItem` (name and keyboard focus; `name()`), an item found among
-  a focused combo box's children; `HelpTextRefresh` (`Description`;
-  `description()`, the full description, else the help text) and
-  `SuggestionsRefresh` (Text pattern availability, automation id, and
-  whether `ControllerFor` names any element; `reports_suggestions()`,
-  `controls_any`), what a help text and a `ControllerFor` change of the
-  focus read; `WindowLookup` (native window handle); `TextAreaPattern`
+  a focused combo box's children; `SuggestionsRefresh` (Text pattern
+  availability, automation id, and whether `ControllerFor` names any
+  element; `reports_suggestions()`, `controls_any`), what the outpost
+  reads for Core's request of a node's `Suggestions` property;
+  `ComboBoxRefresh` (control type, framework, provider description,
+  native window handle, and the `Value` and `Selection` patterns'
+  availability; `is_net_framework_win_forms()`, NVDA's test of a classic
+  .NET Framework Windows Forms combo box), what it reads for a node's
+  `HasValuePattern` and `ComboBoxList` properties; `WindowLookup` (native window handle); `TextAreaPattern`
   (the Text pattern of an event's sender), the held console check's; and
   `ShellButton` (native window handle, control type, name, and whether it
   is off the screen), what File Explorer's outpost reads of each of the

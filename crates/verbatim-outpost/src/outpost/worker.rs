@@ -37,14 +37,15 @@ use std::thread;
 use std::time::Instant;
 
 use verbatim_ia2::{CHILDID_SELF, WinEventKind};
+use verbatim_model::property::{
+    PropertyAnswer, PropertyId, PropertyValue, PropertyValues, RuntimeId,
+};
 use verbatim_model::{
     Backend, CallCounts, CaretChanges, CaretRead, CaretReply, CaretReport, Change, FocusText,
-    NodeId, NodeSnapshot, NormalizedEvent, PropertyChange, ReadPurpose, Role, TextOp, TextPoint,
-    TextReply, TraceId, WindowFacts, WindowHandle, had_effect,
+    NodeId, NodeSnapshot, NormalizedEvent, ReadPurpose, Role, TextOp, TextPoint, TextReply,
+    TraceId, WindowFacts, WindowHandle, had_effect,
 };
-use verbatim_uia::{
-    Cached, Fill, HelpTextRefresh, Interning as _, Kept, SuggestionsRefresh, nearest_window_handle,
-};
+use verbatim_uia::{Cached, Fill, Interning as _, Kept, nearest_window_handle};
 use windows::Win32::UI::Accessibility::{
     UIA_ControllerForPropertyId, UIA_HelpTextPropertyId, UIA_NamePropertyId,
     UIA_RangeValueValuePropertyId, UIA_ValueValuePropertyId,
@@ -440,128 +441,45 @@ fn toast_id(runtime_id: &[i32]) -> ToastId {
 /// which NVDA's handlers for them never test (`UIAHandler/__init__.py`
 /// 1063 and 1158). A caret and a text change go through NVDA's automation
 /// event handler, which tests them as any other (`docs/parity/focus-events.md`, "Event
-/// acceptance").
+/// acceptance"). A property change is told to Core, which judges it
+/// ([`Worker::property_tell`]).
 fn uia_event_name(kind: &UiaKind) -> Option<EventName> {
     match kind {
-        UiaKind::Property(id) if *id == UIA_NamePropertyId.0 => Some(EventName::NameChange),
-        UiaKind::Property(id) if *id == UIA_HelpTextPropertyId.0 => {
-            Some(EventName::DescriptionChange)
-        }
-        UiaKind::Property(id)
-            if *id == UIA_ValueValuePropertyId.0 || *id == UIA_RangeValueValuePropertyId.0 =>
-        {
-            Some(EventName::ValueChange)
-        }
-        UiaKind::Property(_) => Some(EventName::StateChange),
         UiaKind::Selection => Some(EventName::Selection),
         UiaKind::TextSelection => Some(EventName::Caret),
         UiaKind::TextChanged => Some(EventName::TextChange),
-        UiaKind::Notification(_) | UiaKind::Toast | UiaKind::ActiveTextPosition(_) => None,
+        UiaKind::Property { .. }
+        | UiaKind::Notification(_)
+        | UiaKind::Toast
+        | UiaKind::ActiveTextPosition(_) => None,
     }
 }
 
-/// Whether a change of UIA property `id` is reported as a change of the
-/// element's states ([`property_event`]): every property but the name, the
-/// value, the range value, the help text and `ControllerFor`, such as the
-/// The event for a change of property `id` of the node read as `node`,
-/// whose element, for a help text or `ControllerFor` change, is
-/// `refreshed` with what that change reads ([`refreshed_for`]), or `None`
-/// when the change reports nothing.
-fn property_event(
-    id: i32,
-    node: NodeSnapshot,
-    refreshed: Option<&Refreshed>,
-) -> Option<NormalizedEvent> {
+/// The property and value a tell of a change of UI Automation property
+/// `id` carries, from the event's element `parts`: the states, name or
+/// value it carried; for a help text change a description change and for a
+/// `ControllerFor` change a suggestions change, each with no value, since
+/// Core asks the node for them (`docs/design/readers-tell-core-asks-build1.md`,
+/// "Changes on objects"). `None` for a property no `Follow` group
+/// registers.
+fn told_property(id: i32, parts: &UiaSnapshotFact) -> Option<(PropertyId, Option<PropertyValue>)> {
+    let text = |text: &Option<String>| text.clone().map(PropertyValue::Text);
     Some(match id {
-        id if is_state_property(id) => NormalizedEvent::PropertyChanged {
-            node_id: node.id,
-            change: PropertyChange::States(node.states),
-            child_count: None,
-        },
-        id if id == UIA_NamePropertyId.0 => NormalizedEvent::PropertyChanged {
-            node_id: node.id,
-            change: PropertyChange::Name(node.name),
-            child_count: None,
-        },
+        id if is_state_property(id) => (
+            PropertyId::States,
+            Some(PropertyValue::States(parts.states)),
+        ),
+        id if id == UIA_NamePropertyId.0 => (PropertyId::Name, text(&parts.name)),
         id if id == UIA_ValueValuePropertyId.0 || id == UIA_RangeValueValuePropertyId.0 => {
-            NormalizedEvent::ValueChanged {
-                node_id: node.id,
-                value: node.value,
-            }
+            (PropertyId::Value, text(&parts.value))
         }
         // NVDA maps the help text to a description change
-        // (`UIAPropertyIdsToNVDAEventNames`), whose description is the
-        // full description or the help text, read when it is handled.
-        id if id == UIA_HelpTextPropertyId.0 => NormalizedEvent::PropertyChanged {
-            node_id: node.id,
-            change: PropertyChange::Description(match refreshed {
-                Some(Refreshed::HelpText(element)) => element.read().description.description(),
-                _ => None,
-            }),
-            child_count: None,
-        },
-        id if id == UIA_ControllerForPropertyId.0 => {
-            let open = match refreshed {
-                Some(Refreshed::Suggestions(element)) => suggestions_open(element)?,
-                _ => return None,
-            };
-            NormalizedEvent::PropertyChanged {
-                node_id: node.id,
-                change: PropertyChange::Suggestions(open),
-                child_count: None,
-            }
-        }
+        // (`UIAPropertyIdsToNVDAEventNames`), whose description it reads
+        // when it handles it.
+        id if id == UIA_HelpTextPropertyId.0 => (PropertyId::Description, None),
+        id if id == UIA_ControllerForPropertyId.0 => (PropertyId::Suggestions, None),
         _ => return None,
     })
-}
-
-/// An element refreshed with what a change of one of its properties reads
-/// when it is handled ([`refreshed_for`]).
-enum Refreshed {
-    /// For a help text change: its description.
-    HelpText(Cached<HelpTextRefresh>),
-    /// For a `ControllerFor` change: whether it reports suggestions and
-    /// whether its relation names any element.
-    Suggestions(Cached<SuggestionsRefresh>),
-}
-
-/// `element` refreshed with what a change of property `id` reads when it is
-/// handled, in one call: the description for a help text change, and
-/// whether it is editable text or a search field and whether the relation
-/// names any element for a `ControllerFor` change. `None` for any other
-/// change, which is reported from the event's cache as it stands, and when
-/// the refresh fails.
-fn refreshed_for(
-    uia: Option<&verbatim_uia::Uia>,
-    id: i32,
-    element: Option<&Cached<Kept>>,
-) -> Option<Refreshed> {
-    let uia = uia?;
-    let live = element?.live();
-    if id == UIA_HelpTextPropertyId.0 {
-        let request = uia.request_fixed::<HelpTextRefresh>().ok()?;
-        live.refresh(&request).ok().map(Refreshed::HelpText)
-    } else if id == UIA_ControllerForPropertyId.0 {
-        let request = uia.request_fixed::<SuggestionsRefresh>().ok()?;
-        live.refresh(&request).ok().map(Refreshed::Suggestions)
-    } else {
-        None
-    }
-}
-
-/// For a `ControllerFor` change of `element`, whether its suggestions are
-/// now open, or `None` when it does not report them. Only editable text and
-/// search fields report suggestions
-/// (`EditableTextWithSuggestions.event_controllerForChange`,
-/// `NVDAObjects/behaviors.py` 231): whether the relation now names any
-/// element, read live by the refresh that read the rest, as NVDA reads
-/// `controllerFor` (not in its base cache). A relation the refresh could
-/// not read names none.
-fn suggestions_open(element: &Cached<SuggestionsRefresh>) -> Option<bool> {
-    let refreshed = element.read();
-    refreshed
-        .reports_suggestions()
-        .then_some(refreshed.controls_any)
 }
 
 /// One entry's handling, by the worker in charge.
@@ -1909,6 +1827,10 @@ impl Worker<'_> {
             .element
             .and_then(|key| self.context.store.take_parked(key))
             .and_then(super::store::Parked::element);
+        if let UiaKind::Property { id, text_pattern } = event.kind {
+            drop(element);
+            return self.property_tell(&event, (id, text_pattern), trace, observed_at_us);
+        }
         // An event whose own window's application the system reports hung
         // is dropped before any window lookup or read, as NVDA's UIA
         // handlers drop it first, a window of 0 passing untested
@@ -1998,13 +1920,6 @@ impl Worker<'_> {
             crate::gates::leave_out_unreported(&mut node.details, &self.context.fetches());
         }
         let normalized = match event.kind {
-            UiaKind::Property(id) => {
-                let refreshed = refreshed_for(self.client.uia(), id, element.as_ref());
-                let Some(normalized) = property_event(id, node, refreshed.as_ref()) else {
-                    return;
-                };
-                normalized
-            }
             UiaKind::Selection => NormalizedEvent::SelectionChanged { node },
             UiaKind::Notification(notification) => NormalizedEvent::Notification {
                 node_id: node.id,
@@ -2014,11 +1929,62 @@ impl Worker<'_> {
                 origin: AlertOrigin::ToastWindowOpened(toast_id(&event.parts.runtime_id)),
                 node,
             },
-            UiaKind::TextSelection | UiaKind::TextChanged | UiaKind::ActiveTextPosition(_) => {
+            UiaKind::Property { .. }
+            | UiaKind::TextSelection
+            | UiaKind::TextChanged
+            | UiaKind::ActiveTextPosition(_) => {
                 return;
             }
         };
         self.emit(trace, observed_at_us, Backend::Uia, hwnd, normalized);
+    }
+
+    /// Tells Core of the change of UI Automation property `id` that the
+    /// `Follow` registration delivered for `event`'s element, with the
+    /// value it carried and whether the element has the Text pattern
+    /// (`text_pattern`). The outpost judges nothing of it: Core finds the
+    /// node by its runtime id among the committed focus and its ancestors
+    /// (`docs/design/readers-tell-core-asks-build1.md`, "Readers' local
+    /// drops", "Changes on objects").
+    fn property_tell(
+        &self,
+        event: &UiaEvent,
+        (id, text_pattern): (i32, bool),
+        trace: TraceId,
+        observed_at_us: u64,
+    ) {
+        let Some((property, value)) = told_property(id, &event.parts) else {
+            return;
+        };
+        // The window that owns the element, by its own handle or else the
+        // window the outpost recorded for its focus: no call.
+        let window = (event.hwnd != 0)
+            .then_some(event.hwnd)
+            .or_else(|| self.context.tracked_window());
+        let thread = window.map_or(0, |window| verbatim_win32::window::window_owner(window).0);
+        let target = self.context.target_pid();
+        let tell = verbatim_model::tell::Event {
+            trace_id: trace,
+            kind: verbatim_model::event_kind::EventKind::UiaPropertyChanged,
+            process: verbatim_model::Pid(target),
+            application: self.context.application_name(target),
+            thread,
+            at_us: observed_at_us,
+            object: verbatim_model::tell::EventObject::Followed {
+                runtime_id: RuntimeId(event.parts.runtime_id.clone()),
+            },
+            cached: PropertyValues(vec![PropertyAnswer {
+                id: PropertyId::HasTextPattern,
+                value: Some(PropertyValue::Flag(text_pattern)),
+            }]),
+            payload: verbatim_model::tell::Payload::PropertyChanged { property, value },
+            window: verbatim_model::tell::TellWindow::NoWindow,
+            checked: None,
+        };
+        self.commit(Effects {
+            result: Some(OutpostToCore::Tell(Box::new(tell))),
+            ..Effects::default()
+        });
     }
 
     /// The window of the UIA event `event`, which is of the focus when

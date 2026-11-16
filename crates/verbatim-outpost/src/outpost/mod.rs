@@ -1472,7 +1472,10 @@ fn capture_property(
     let fields = event.read();
     let parts = fields.parts(event.runtime_id());
     UiaEvent {
-        kind: UiaKind::Property(property_id),
+        kind: UiaKind::Property {
+            id: property_id,
+            text_pattern: fields.text_available,
+        },
         parts: UiaSnapshotFact {
             runtime_id: parts.runtime_id,
             role: parts.role,

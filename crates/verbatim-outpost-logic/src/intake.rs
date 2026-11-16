@@ -333,7 +333,7 @@ fn key_of(item: &Item) -> Option<Key> {
         Item::Uia(event) => {
             let runtime_id = event.parts.runtime_id.clone();
             Some(match &event.kind {
-                UiaKind::Property(id) => Key::Uia(0, *id, runtime_id),
+                UiaKind::Property { id, .. } => Key::Uia(0, *id, runtime_id),
                 UiaKind::Selection => Key::Uia(1, 0, runtime_id),
                 UiaKind::TextSelection => Key::Uia(2, 0, runtime_id),
                 UiaKind::TextChanged => Key::Uia(3, 0, runtime_id),

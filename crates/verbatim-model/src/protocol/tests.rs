@@ -312,6 +312,7 @@ fn every_variant_has_its_reviewed_kind() {
             "TargetExited: Lifecycle",
             "IdleAnswer: Answer",
             "LiveRereadGone: Report",
+            "Tell: Report",
             "Answer: Answer",
         ]
     );
@@ -379,6 +380,7 @@ fn only_an_event_a_completed_reply_and_a_result_carry_nodes() {
             ("TargetExited".to_owned(), false),
             ("IdleAnswer".to_owned(), false),
             ("LiveRereadGone".to_owned(), false),
+            ("Tell".to_owned(), false),
             ("Answer".to_owned(), false),
         ]
     );

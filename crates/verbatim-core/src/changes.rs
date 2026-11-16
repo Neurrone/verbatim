@@ -14,9 +14,11 @@
 //! controls, or inside one, is spoken as a focus; any other is a state
 //! change of the selected object.
 //!
-//! A UI Automation property change on the committed focus's runtime id,
-//! or an ancestor's, runs on that node with no read, speaking the value
-//! its tell carries.
+//! A UI Automation property change, told by the outpost following the
+//! committed focus, on the committed focus's runtime id or an ancestor's,
+//! runs on that node with no read, speaking the value its tell carries;
+//! but a description (help text) change and a suggestions (controller-for)
+//! change, which Core asks one read for.
 //!
 //! What is spoken comes from today's announcement code
 //! ([`crate::reduce::property_changed`]), which compares each property with
@@ -454,19 +456,26 @@ fn uia_change(property: PropertyId, value: Option<&PropertyValue>) -> Option<Pro
         PropertyId::Name => Changed::Name,
         PropertyId::Value => Changed::Value,
         PropertyId::States => Changed::States,
-        PropertyId::Description => Changed::Description,
         _ => return None,
     };
     changed.change(value)
 }
 
+/// The node of the committed focus, or of one of its ancestors, that a UI
+/// Automation property change `change` is on, with what Core keeps of the
+/// committed focus; `None` for a change on anything else.
+fn uia_target(facts: &SrState, change: &UiaChange) -> Option<(Kept, NodeId)> {
+    let kept = facts.versions.committed_read()?;
+    let node = node_of(kept, &change.runtime_id)?;
+    Some((kept.clone(), node))
+}
+
 /// Judges a UI Automation property change on the committed focus, or on
-/// one of its ancestors, from the value its tell carries, with no read.
+/// one of its ancestors, from the value its tell carries, with no read: a
+/// name, value or state change. A description or suggestions change is
+/// asked ([`uia_entry`]) and says nothing here.
 pub(crate) fn uia_changed(facts: &mut SrState, change: &UiaChange) -> Vec<verbatim_model::Effect> {
-    let Some(kept) = facts.versions.committed_read() else {
-        return Vec::new();
-    };
-    let Some(node) = node_of(kept, &change.runtime_id) else {
+    let Some((_, node)) = uia_target(facts, change) else {
         return Vec::new();
     };
     // A value change of an element with a text pattern says nothing; only
@@ -491,12 +500,60 @@ pub(crate) fn uia_changed(facts: &mut SrState, change: &UiaChange) -> Vec<verbat
 }
 
 /// The function of a UI Automation property change entry, which asks
-/// nothing.
+/// nothing for a name, value or state change.
 pub(crate) fn uia(cx: &mut Cx<Entries>, change: &UiaChange) {
     let said = uia_changed(&mut cx.facts_mut(), change);
     for said in said {
         cx.emit(said);
     }
+}
+
+/// The function of a UI Automation property change entry at its turn. A
+/// help text change, told as a description change, and a controller-for
+/// change, told as a suggestions change, are the two Core asks for: one
+/// read of the node's description, which NVDA reads when it handles the
+/// change (the full description, else the help text), and one of whether
+/// its suggestions are open, NVDA reading `controllerFor` live
+/// (`NVDAObjects/behaviors.py` 231 to 236). A description change is asked
+/// only on the committed focus, the only node it is spoken for
+/// (`NVDAObjects/__init__.py` 1415 to 1417). Any other change speaks the
+/// value its tell carries ([`uia`]).
+pub(crate) async fn uia_entry(mut cx: Cx<Entries>, change: UiaChange) {
+    let asked = match change.property {
+        PropertyId::Description => PropertyId::Description,
+        PropertyId::Suggestions => PropertyId::Suggestions,
+        _ => return uia(&mut cx, &change),
+    };
+    let Some((kept, node)) = uia_target(&cx.facts(), &change) else {
+        return;
+    };
+    if asked == PropertyId::Description && node != kept.node {
+        return;
+    }
+    let read = crate::announcements::selection::NodeProperties {
+        window: kept.window,
+        node,
+        set: vec![asked],
+    };
+    let due_us = cx.due_in(OTHER_DUE_US);
+    let Outcome::Result(values) = cx.ask(read, due_us).await else {
+        return;
+    };
+    let value = values
+        .answer(asked)
+        .and_then(|answer| answer.value.as_ref());
+    let property = match (asked, value) {
+        (PropertyId::Suggestions, Some(PropertyValue::Flag(open))) => {
+            PropertyChange::Suggestions(*open)
+        }
+        // An object that reports no suggestions says nothing.
+        (PropertyId::Suggestions, _) => return,
+        (_, value) => match Changed::Description.change(value) {
+            Some(property) => property,
+            None => return,
+        },
+    };
+    speak_change(&mut cx, change.tell.trace_id, node, &property, None);
 }
 
 /// The UI Automation property change `tell` names, parsed; `None` for a

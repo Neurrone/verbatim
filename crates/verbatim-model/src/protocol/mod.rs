@@ -1336,6 +1336,10 @@ pub enum OutpostToCore {
         /// Core's request.
         request: u64,
     },
+    /// A tell (ADR 0003, "Readers tell, Core asks"): an event the outpost's
+    /// `Follow` registration delivered, with the value it carried. Sent in
+    /// order with the outpost's answers.
+    Tell(Box<crate::tell::Event>),
     /// The answer to a [`CoreToOutpost::Request`], one per request.
     Answer(crate::request::Answer),
 }
@@ -1513,6 +1517,7 @@ impl OutpostToCore {
             | OutpostToCore::IdleAnswer { .. }
             | OutpostToCore::Answer(_) => Kind::Answer,
             OutpostToCore::Event { .. }
+            | OutpostToCore::Tell(_)
             | OutpostToCore::Fault { .. }
             | OutpostToCore::NotResponding { .. }
             | OutpostToCore::LiveRereadGone { .. } => Kind::Report,
@@ -1546,6 +1551,7 @@ impl OutpostToCore {
             OutpostToCore::Ready { .. }
             | OutpostToCore::SpareReady { .. }
             | OutpostToCore::Pong { .. }
+            | OutpostToCore::Tell(_)
             | OutpostToCore::Fault { .. }
             | OutpostToCore::NotResponding { .. }
             | OutpostToCore::TargetExited
@@ -1565,6 +1571,7 @@ impl OutpostToCore {
             }
             OutpostToCore::Pong { written_at_us, .. } => *written_at_us = at_us,
             OutpostToCore::Answer(_)
+            | OutpostToCore::Tell(_)
             | OutpostToCore::Ready { .. }
             | OutpostToCore::SpareReady { .. }
             | OutpostToCore::Fault { .. }
@@ -1624,6 +1631,7 @@ impl OutpostToCore {
             },
             OutpostToCore::Answer(answer) => answer.assign_outpost(outpost),
             OutpostToCore::Reply { .. }
+            | OutpostToCore::Tell(_)
             | OutpostToCore::Ready { .. }
             | OutpostToCore::SpareReady { .. }
             | OutpostToCore::Pong { .. }
@@ -1880,6 +1888,7 @@ impl OutpostToCore {
             },
             OutpostToCore::Answer(answer) => named.answer(answer),
             OutpostToCore::Reply { .. }
+            | OutpostToCore::Tell(_)
             | OutpostToCore::Ready { .. }
             | OutpostToCore::SpareReady { .. }
             | OutpostToCore::Pong { .. }

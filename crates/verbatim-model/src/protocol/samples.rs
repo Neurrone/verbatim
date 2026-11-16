@@ -62,7 +62,25 @@ fn next(previous: Option<&OutpostToCore>) -> Option<OutpostToCore> {
         OutpostToCore::Fault { .. } => OutpostToCore::TargetExited,
         OutpostToCore::TargetExited => OutpostToCore::IdleAnswer { round: 1 },
         OutpostToCore::IdleAnswer { .. } => OutpostToCore::LiveRereadGone { request: 1 },
-        OutpostToCore::LiveRereadGone { .. } => OutpostToCore::Answer(crate::request::Answer {
+        OutpostToCore::LiveRereadGone { .. } => OutpostToCore::Tell(Box::new(crate::tell::Event {
+            trace_id: TraceId::from_raw(3),
+            kind: crate::event_kind::EventKind::UiaPropertyChanged,
+            process: Pid(2),
+            application: "notepad".to_owned(),
+            thread: 3,
+            at_us: 1,
+            object: crate::tell::EventObject::Followed {
+                runtime_id: crate::property::RuntimeId(vec![42, 1]),
+            },
+            cached: crate::property::PropertyValues(Vec::new()),
+            payload: crate::tell::Payload::PropertyChanged {
+                property: crate::property::PropertyId::Name,
+                value: Some(crate::property::PropertyValue::Text("Save".to_owned())),
+            },
+            window: crate::tell::TellWindow::NoWindow,
+            checked: None,
+        })),
+        OutpostToCore::Tell(_) => OutpostToCore::Answer(crate::request::Answer {
             number: crate::request::RequestNumber(1),
             outcome: crate::request::Outcome::NotThere,
             probes: Vec::new(),

@@ -43,7 +43,8 @@ Public API:
 
 - `window` — queries by window handle. The general ones: `window_exists`,
   `window_is_visible`, `is_enabled`, `is_child`, `desktop_window`,
-  `window_class_name`, `window_thread`, `style`, `rect`, `parent`,
+  `window_class_name`, `combo_box_list` (a combo box's drop-down list by
+  `GetComboBoxInfo`, a message to its application), `window_thread`, `style`, `rect`, `parent`,
   `top_child`, `related` and `is_multiline_edit`; `top_level_of`,
   `root_owner_of` (the top of the owner chain, `GA_ROOTOWNER`),
   `window_owner` (thread and process), `foreground_window_handle`,

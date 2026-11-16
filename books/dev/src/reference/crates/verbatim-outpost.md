@@ -1160,7 +1160,15 @@ Windows with no call into the application) and its properties by the
 request's set, from the snapshot the outpost's reads make. A window with
 no verdict in force is probed first and the probe carried in the answer.
 
-- The shared list: `Properties` (the node's live read), `Navigate`,
+- The shared list: `Properties` (the node's live read, made only when
+  the set names a property a snapshot holds; the four no snapshot holds
+  are read apart: `Suggestions` by one refresh reading the node's
+  `ControllerFor` live, absent for a node that is neither editable text
+  nor a search field; `HasValuePattern` and `ComboBoxList` by one
+  refresh, the latter by `GetComboBoxInfo` on the node's window when the
+  refresh finds NVDA's classic .NET Framework Windows Forms combo box;
+  and `WindowClass` from the node's own or nearest window, with no
+  call into the application), `Navigate`,
   `Children` (first child, then next siblings, at most 1000), `Find`
   (children, or descendants depth first, at most 1000 visited), `Text`
   (today's text answers) and `Activate`.
@@ -1198,7 +1206,9 @@ no verdict in force is probed first and the probe carried in the answer.
 - `Follow` (`outpost/followed.rs`, Table 10): what it names, the node,
   its group and any extra object, or nothing, is recorded when the worker
   takes it, then the registration is moved on the registering thread to
-  that node alone, the extra object given the value group, and waited
+  that node alone, the extra object given the value group (its element
+  found again by its route when the outpost keeps none, as an ancestor
+  the completion minted), and waited
   for; a node whose element the outpost no longer holds answers not
   there, with nothing registered. A console host's terminal takes the
   extended group without its text and caret events, and is the console
@@ -1206,6 +1216,13 @@ no verdict in force is probed first and the probe carried in the answer.
   replaced by a newer one, answered "ended or stopped"
   (`Asks::push`). The registering thread is the only one that registers:
   the reducer's own subscription moves are dropped.
+- A UI Automation property change the registration delivers is told
+  to Core (`OutpostToCore::Tell`, `Worker::property_tell`) with no
+  judging: its kind, the element's runtime id (`EventObject::Followed`),
+  whether it has the Text pattern, and the value it carried: the states,
+  name or value from the event's cache; a help text change as a
+  description change and a `ControllerFor` change as a suggestions
+  change, each with no value, which Core asks for.
 - `WindowDestroyed`: the requests queued on the window are answered not
   there at once (`Asks::destroyed`), and a program forgets the window's
   MSAA nodes and text facts, and the registration of a followed node in

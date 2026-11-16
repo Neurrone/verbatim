@@ -281,6 +281,7 @@ mod tests {
             | OutpostToCore::NotResponding { .. }
             | OutpostToCore::IdleAnswer { .. }
             | OutpostToCore::LiveRereadGone { .. }
+            | OutpostToCore::Tell(_)
             | OutpostToCore::Answer(_) => Peeked::Other,
         };
         let mut samples = verbatim_model::protocol::samples::outpost_to_core();

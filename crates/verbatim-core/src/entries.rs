@@ -315,7 +315,10 @@ impl Entry {
                 crate::caret_tell::CaretTell::of_tell(tell)
                     .map(|caret| Self::Caret(Box::new(caret)))
             }
-            (EventKind::UiaPropertyChanged, EventObject::Uia { runtime_id, .. }) => {
+            (
+                EventKind::UiaPropertyChanged,
+                EventObject::Uia { runtime_id, .. } | EventObject::Followed { runtime_id },
+            ) => {
                 let runtime_id = runtime_id.clone();
                 crate::changes::uia_of_tell(tell, runtime_id)
                     .map(|change| Self::UiaChange(Box::new(change)))
@@ -442,10 +445,7 @@ impl Logic for Entries {
                 Box::pin(crate::focus::msaa_run::run(cx, vec![*candidate]))
             }
             Entry::MsaaChange(change) => Box::pin(crate::changes::msaa(cx, *change)),
-            Entry::UiaChange(change) => Box::pin(async move {
-                let mut cx = cx;
-                crate::changes::uia(&mut cx, &change);
-            }),
+            Entry::UiaChange(change) => Box::pin(crate::changes::uia_entry(cx, *change)),
             Entry::Caret(caret) => Box::pin(crate::caret_tell::run(cx, *caret)),
             Entry::Press(press) => Box::pin(crate::keys::entry::run(cx, *press)),
             Entry::Mark(mark, _) => Box::pin(crate::say_all::mark_entry(cx, mark)),

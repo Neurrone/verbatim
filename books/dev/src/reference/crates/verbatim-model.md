@@ -293,7 +293,9 @@ them yet.
   and the properties its tell carries from the event's cache.
 - `tell`: `Event`, the one tell for both readers: its kind, process,
   raising thread, callback time, object (`EventObject`, a kept element's
-  `ElementToken` with its runtime id, or MSAA ids), cached properties, a
+  `ElementToken` with its runtime id, a followed element's runtime id
+  alone, which Core names back by its committed node, or MSAA ids),
+  cached properties, a
   kind's `Payload`, the window it is judged by (`TellWindow`, found with
   its `AcceptanceFacts`, none, or failed; the facts mark Verbatim's
   hidden frame and a window it owns through its owner chain) and what the
@@ -424,7 +426,10 @@ that carries them on the pipes, `Message`, is
     outpost's target), `Reply` (exactly one per accepted query, echoing
     its `RequestId`, with its `EventTiming` and a `QueryOutcome`: `Done` with a `QueryResult`,
     `Gone`, `Failed`, `NotStarted`, or `Abandoned`), `Pong`, `Fault`,
-    `TargetExited`, `IdleAnswer` and `Answer` (one per `Request`; its node
+    `TargetExited`, `IdleAnswer`, `Tell` (a tell its `Follow`
+    registration delivered, a UI Automation property change with the
+    value it carried, which verbatim.exe does not yet carry to Core) and
+    `Answer` (one per `Request`; its node
     ids are stamped by `Answer::assign_outpost`, named by `Answer::named`,
     and it counts toward `NodesHeld`'s positions when it carries a
     result).

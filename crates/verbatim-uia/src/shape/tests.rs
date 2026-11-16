@@ -11,7 +11,7 @@ use windows::Win32::UI::Accessibility::{
 use windows::core::IUnknown;
 
 use super::{
-    Absent, Ancestor, CachedReads, Cell, Description, DialogText, FocusInput, HelpTextRefresh,
+    Absent, Ancestor, CachedReads, Cell, ComboBoxRefresh, Description, DialogText, FocusInput,
     Kept, ListenerEvent, ListenerProgress, ListenerSelection, Node, Place, Position, PropertyEvent,
     ProviderOrigin, Reader, RecordedEvent, RoleCore, SelectionContainer, Shape, ShellButton,
     Shortcut, States, SuggestionsRefresh, TextAreaPattern, TextEvent, ValueSet, WindowLookup,
@@ -124,7 +124,7 @@ fn every_shape_reads_exactly_what_its_request_holds_for_every_combination_of_gat
         Ancestor,
         DialogText,
         SelectionContainer,
-        HelpTextRefresh,
+        ComboBoxRefresh,
         SuggestionsRefresh,
         WindowLookup,
         ShellButton,
@@ -143,7 +143,7 @@ fn a_shapes_properties_are_its_fields_union_without_repeats() {
     for (shape, properties, expected) in [
         ("Kept", Kept::PROPERTIES, 2),
         ("TextEvent", TextEvent::PROPERTIES, 3),
-        ("PropertyEvent", PropertyEvent::PROPERTIES, 23),
+        ("PropertyEvent", PropertyEvent::PROPERTIES, 24),
         ("ListenerEvent", ListenerEvent::PROPERTIES, 15),
         ("ListenerProgress", ListenerProgress::PROPERTIES, 18),
         // A node's, without its place, with the rest of the listener's.

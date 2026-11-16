@@ -254,6 +254,174 @@ fn a_uia_state_change_on_the_focus_speaks_the_states_its_tell_carries_with_no_re
     );
 }
 
+/// A UI Automation property change of `property`, carrying `value`, told
+/// by the outpost following the committed focus, whose runtime id is
+/// `[42, 1]`.
+fn followed_change(property: PropertyId, value: Option<PropertyValue>) -> Event {
+    Event {
+        kind: EventKind::UiaPropertyChanged,
+        object: EventObject::Followed {
+            runtime_id: RuntimeId(vec![42, 1]),
+        },
+        payload: Payload::PropertyChanged { property, value },
+        window: TellWindow::NoWindow,
+        ..msaa_change(EventKind::UiaPropertyChanged, 5)
+    }
+}
+
+/// The properties of a node the request out asks, by set.
+fn asked_properties(state: &Held) -> Option<Wire> {
+    state
+        .queue
+        .table_for_tests()
+        .into_iter()
+        .find(|request| matches!(request, Wire::Properties { .. }))
+}
+
+#[test]
+fn a_followed_name_change_on_the_focus_speaks_the_name_its_tell_carries_with_no_read() {
+    let mut state = committed();
+    assert_eq!(
+        feed_at(
+            &mut state,
+            4_000,
+            Input::Entry(
+                crate::entries::Entry::of_tell(
+                    OUTPOST,
+                    followed_change(
+                        PropertyId::Name,
+                        Some(PropertyValue::Text("Saved".to_owned()))
+                    )
+                )
+                .unwrap()
+            )
+        ),
+        ["Label(\"Saved\")"]
+    );
+}
+
+#[test]
+fn a_followed_help_text_change_reads_the_focus_s_description_and_speaks_it() {
+    let mut state = committed();
+    assert_eq!(
+        feed_at(
+            &mut state,
+            4_000,
+            Input::Entry(
+                crate::entries::Entry::of_tell(
+                    OUTPOST,
+                    followed_change(
+                        PropertyId::Description,
+                        Some(PropertyValue::Text("carried".to_owned()))
+                    )
+                )
+                .unwrap()
+            )
+        ),
+        ["send Outpost(Pid(40)) other"]
+    );
+    assert_eq!(
+        asked_properties(&state),
+        Some(Wire::Properties {
+            node: node(2),
+            set: vec![PropertyId::Description],
+        })
+    );
+    assert_eq!(
+        feed_at(
+            &mut state,
+            5_000,
+            answer(
+                OUTPOST,
+                4,
+                Reply::Properties(one(
+                    PropertyId::Description,
+                    PropertyValue::Text("Type to search".to_owned())
+                ))
+            )
+        ),
+        ["Description(\"Type to search\")"]
+    );
+}
+
+#[test]
+fn a_followed_help_text_change_on_an_ancestor_asks_nothing() {
+    let mut state = committed();
+    let tell = Event {
+        object: EventObject::Followed {
+            runtime_id: RuntimeId(vec![42, 9]),
+        },
+        ..followed_change(PropertyId::Description, None)
+    };
+    assert_eq!(
+        feed_at(
+            &mut state,
+            4_000,
+            Input::Entry(crate::entries::Entry::of_tell(OUTPOST, tell).unwrap())
+        ),
+        NOTHING
+    );
+    assert_eq!(asked_properties(&state), None);
+}
+
+#[test]
+fn a_followed_controller_for_change_reads_whether_suggestions_are_open() {
+    for (open, said) in [
+        (Some(true), vec!["Earcon(SuggestionsOpened)"]),
+        (Some(false), vec!["Earcon(SuggestionsClosed)"]),
+        (None, Vec::new()),
+    ] {
+        let mut state = committed();
+        assert_eq!(
+            feed_at(
+                &mut state,
+                4_000,
+                Input::Entry(
+                    crate::entries::Entry::of_tell(
+                        OUTPOST,
+                        followed_change(PropertyId::Suggestions, None)
+                    )
+                    .unwrap()
+                )
+            ),
+            ["send Outpost(Pid(40)) other"]
+        );
+        assert_eq!(
+            asked_properties(&state),
+            Some(Wire::Properties {
+                node: node(2),
+                set: vec![PropertyId::Suggestions],
+            })
+        );
+        let effects = crate::entries::feed(
+            &mut state.state,
+            &mut state.runtime,
+            crate::event_queue::Timed {
+                at_us: 5_000,
+                input: answer(
+                    OUTPOST,
+                    4,
+                    Reply::Properties(PropertyValues(vec![PropertyAnswer {
+                        id: PropertyId::Suggestions,
+                        value: open.map(PropertyValue::Flag),
+                    }])),
+                ),
+            },
+        )
+        .unwrap();
+        let earcons: Vec<String> = effects
+            .into_iter()
+            .filter_map(|effect| match effect {
+                crate::event_queue::Effect::Said(verbatim_model::Effect::PlayEarcon(earcon)) => {
+                    Some(format!("Earcon({earcon:?})"))
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(earcons, said, "suggestions read {open:?}");
+    }
+}
+
 fn uia_states(runtime: i32, states: StateSet) -> Event {
     Event {
         kind: EventKind::UiaPropertyChanged,

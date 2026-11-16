@@ -445,7 +445,7 @@ const UIA_PROPERTY_CHANGED: EventKindEntry = kind(
     "UI Automation property changed",
     Teller::OutpostFollowGroup,
     Source::Uia(uia_event::PROPERTY_CHANGED),
-    &[],
+    &[PropertyId::HasTextPattern],
 );
 
 const UIA_TEXT_CHANGED: EventKindEntry = kind(

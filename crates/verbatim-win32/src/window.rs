@@ -14,6 +14,7 @@ use windows::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS,
 };
 use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
+use windows::Win32::UI::Controls::{COMBOBOXINFO, GetComboBoxInfo};
 use windows::Win32::UI::Input::KeyboardAndMouse::IsWindowEnabled;
 use windows::Win32::UI::WindowsAndMessaging::{
     ES_MULTILINE, EnumWindows, GA_PARENT, GA_ROOT, GA_ROOTOWNER, GET_ANCESTOR_FLAGS,
@@ -110,6 +111,22 @@ pub fn window_class_name(handle: isize) -> String {
         return String::new();
     };
     String::from_utf16_lossy(&buffer[..len.min(buffer.len())])
+}
+
+/// The window of the drop-down list of combo box `handle`, by
+/// `GetComboBoxInfo`, which sends the combo box a message: a call into its
+/// application. `None` when the call fails or names no list.
+#[must_use]
+pub fn combo_box_list(handle: isize) -> Option<isize> {
+    let mut info = COMBOBOXINFO {
+        cbSize: u32::try_from(std::mem::size_of::<COMBOBOXINFO>()).ok()?,
+        ..COMBOBOXINFO::default()
+    };
+    // SAFETY: GetComboBoxInfo writes only the local structure, whose size
+    // it is given, and fails for a window that is no combo box.
+    unsafe { GetComboBoxInfo(hwnd(handle), &raw mut info) }.ok()?;
+    let list = info.hwndList.0 as isize;
+    (list != 0).then_some(list)
 }
 
 /// `handle`'s classes as the class verdict judges them: its own, normalized

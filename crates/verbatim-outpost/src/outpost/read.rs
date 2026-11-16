@@ -1805,9 +1805,60 @@ pub(super) fn read_node(
     Ok(snapshot)
 }
 
+/// The UI Automation element of node `node_id`, for a registration: the
+/// one the outpost keeps, else found again by the route to it, as an
+/// ancestor the completion minted from the listener's read is. `None` for
+/// an MSAA node or one whose element is gone.
+pub(super) fn element_reference(
+    context: &RequestContext<'_>,
+    client: &mut Client,
+    node_id: NodeId,
+) -> Option<windows::core::AgileReference<windows::Win32::UI::Accessibility::IUIAutomationElement>>
+{
+    if let Some(kept) = context.store.element_of(node_id) {
+        return Some(kept.reference());
+    }
+    context.store.runtime_id_of(node_id)?;
+    let (uia, nodes) = client.uia_with(context, Context::read_node_request).ok()?;
+    let element = resolve_uia_element(context, uia, &nodes, node_id).ok()?;
+    windows::core::AgileReference::new(element.live().element()).ok()
+}
+
+/// The UI Automation element of node `node_id` refreshed with shape `S`,
+/// in one call when the outpost keeps its element; `None` for an MSAA
+/// node, which UI Automation does not read.
+pub(super) fn refreshed<S: verbatim_uia::Ungated>(
+    context: &RequestContext<'_>,
+    client: &mut Client,
+    node_id: NodeId,
+) -> Result<Option<Cached<S>>, ReadError> {
+    if context.store.runtime_id_of(node_id).is_none() {
+        return Ok(None);
+    }
+    let kept = context
+        .store
+        .element_of(node_id)
+        .and_then(|agile| agile.resolve().ok());
+    let (uia, nodes) = client.uia_with(context, Context::read_node_request)?;
+    let request = uia
+        .request_fixed::<S>()
+        .map_err(|error| ReadError::Failed(format!("could not build a cache request: {error}")))?;
+    let refreshed = match kept {
+        Some(element) => element.live().refresh(&request),
+        None => resolve_uia_element(context, uia, &nodes, node_id)?
+            .live()
+            .refresh(&request),
+    };
+    match refreshed {
+        Ok(element) => Ok(Some(element)),
+        Err(error) if verbatim_uia::element_is_gone(&error) => Err(ReadError::Gone),
+        Err(error) => Err(ReadError::Failed(format!("reading the element: {error}"))),
+    }
+}
+
 /// The window handle the kept element of the UIA node `node_id` says it is,
 /// `None` for a windowless element or one no longer kept. No call.
-fn kept_own_window(context: &RequestContext<'_>, node_id: NodeId) -> Option<isize> {
+pub(super) fn kept_own_window(context: &RequestContext<'_>, node_id: NodeId) -> Option<isize> {
     context
         .store
         .element_of(node_id)

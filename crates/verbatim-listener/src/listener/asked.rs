@@ -485,7 +485,14 @@ impl Read {
                         PropertyId::ValueFromSelection => {
                             self.value_from_selection.map(PropertyValue::Flag)
                         }
-                        PropertyId::HasKeyboardFocus | PropertyId::TextSummary => None,
+                        // Read by the outpost that holds the node, when Core
+                        // asks it of a node.
+                        PropertyId::HasKeyboardFocus
+                        | PropertyId::TextSummary
+                        | PropertyId::Suggestions
+                        | PropertyId::HasValuePattern
+                        | PropertyId::WindowClass
+                        | PropertyId::ComboBoxList => None,
                     },
                 })
                 .collect(),
