@@ -6,7 +6,7 @@ Both UIA timeouts are settings of the client process, not of a client object: th
 
 ## What Verbatim relies on
 
-`set_process_timeouts` inside `ensure_ready` (`crates/verbatim-uia/src/client.rs`), which sets both timeouts once per process, and every deadline built from `CONNECTION_TIMEOUT` and `TRANSACTION_TIMEOUT` (`crates/verbatim-listener/src/focus_read.rs`, `crates/verbatim-outpost/src/outpost/read.rs`, `crates/verbatim-supervisor/src/retire.rs`). If the timeouts became per client object, Verbatim's other client objects would run on UIA's defaults (a 20-second transaction timeout) and those deadlines would abandon calls still waiting.
+`set_process_timeouts` inside `ensure_ready` (`crates/verbatim-uia/src/client.rs`), which sets both timeouts once per process, and every deadline built from `CONNECTION_TIMEOUT` and `TRANSACTION_TIMEOUT` (`crates/verbatim-model/src/limits.rs`, which Core's waits and the outposts' tasks take, and `crates/verbatim-supervisor/src/retire.rs`). If the timeouts became per client object, Verbatim's other client objects would run on UIA's defaults (a 20-second transaction timeout) and those deadlines would abandon calls still waiting.
 
 ## Method
 
