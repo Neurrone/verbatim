@@ -13,7 +13,7 @@ use verbatim_model::{Pid, WindowHandle};
 use super::driver::{Core, State, outcome_of, widen};
 use super::limiter::{self, Item};
 use super::request::Outcome;
-use super::table::{Asker, Dropped, Ended, Live, Owner, Stage};
+use super::table::{Asker, Dropped, Ended, Ending, Live, Owner, Stage};
 use super::{Foreground, Instance, Logic, Reader, RequestWindow};
 
 /// An input to Core, in the inbox's arrival order.
@@ -450,9 +450,15 @@ impl<L: Logic> Core<L> {
     /// resumed, or the asker outside the queue. A request sent carrying
     /// "probe first" whose answer brought no probe of its window counts as
     /// a probe that timed out, begun when it was sent (Table 4, row "MSAA
-    /// in force").
+    /// in force"); one its entry withdrew does not, since its reader runs
+    /// it on and its probe may yet answer, so its window keeps no verdict
+    /// and the next request or tell is judged by a probe of its own.
     fn deliver_probed(&mut self, ended: Ended, probed: bool) {
-        if let (Some(sent_us), false) = (ended.probing, probed) {
+        let withdrawn = matches!(
+            ended.ending,
+            Ending::NoLongerAwaited(CancelReason::Withdrawn)
+        );
+        if let (Some(sent_us), false, false) = (ended.probing, probed, withdrawn) {
             self.shared
                 .borrow_mut()
                 .state

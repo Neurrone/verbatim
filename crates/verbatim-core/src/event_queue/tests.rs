@@ -1382,12 +1382,16 @@ impl Request for ReadProbed {
 /// The logic of the probe tests: each entry reads the probed window once.
 struct Probing;
 
+/// A probe test's entry: whether, joining the back, it withdraws the
+/// front's request.
+type Withdraws = bool;
+
 impl Logic for Probing {
-    type Entry = ();
+    type Entry = Withdraws;
     type Facts = ();
     type Said = String;
 
-    fn run(mut cx: Cx<Self>, (): ()) -> Function {
+    fn run(mut cx: Cx<Self>, _: Withdraws) -> Function {
         Box::pin(async move {
             let due_us = cx.due_in(OTHER_DUE_US);
             let outcome = cx.ask(ReadProbed, due_us).await;
@@ -1395,25 +1399,25 @@ impl Logic for Probing {
         })
     }
 
-    fn exempt_from_foreground((): &(), _: &RequestWindow) -> bool {
+    fn exempt_from_foreground(_: &Withdraws, _: &RequestWindow) -> bool {
         false
     }
 
     fn withdraws(
         (): &(),
-        _: (&(), &verbatim_model::request::Request),
-        (): &(),
+        _: (&Withdraws, &verbatim_model::request::Request),
+        arriving: &Withdraws,
         _: &BackendCache,
         _: u64,
     ) -> bool {
-        false
+        *arriving
     }
 
-    fn recovered((): &(), _: &RequestWindow) -> Option<()> {
+    fn recovered((): &(), _: &RequestWindow) -> Option<Withdraws> {
         None
     }
 
-    fn place((): &(), (): &()) -> Place {
+    fn place((): &(), _: &Withdraws) -> Place {
         Place::Other {
             merges: false,
             focus_kind: false,
@@ -1421,7 +1425,7 @@ impl Logic for Probing {
         }
     }
 
-    fn merges((): &(), (): &(), (): &()) -> bool {
+    fn merges((): &(), _: &Withdraws, _: &Withdraws) -> bool {
         false
     }
 
@@ -1429,13 +1433,15 @@ impl Logic for Probing {
         false
     }
 
-    fn run_entry(_: Vec<()>) {}
-
-    fn ends_at_foreground((): &(), (): &(), _: &Foreground) -> bool {
+    fn run_entry(_: Vec<Withdraws>) -> Withdraws {
         false
     }
 
-    fn foreground_marker(_: &Foreground) -> Option<()> {
+    fn ends_at_foreground((): &(), _: &Withdraws, _: &Foreground) -> bool {
+        false
+    }
+
+    fn foreground_marker(_: &Foreground) -> Option<Withdraws> {
         None
     }
 }
@@ -1483,12 +1489,16 @@ fn probing_core() -> Core<Probing> {
 }
 
 /// Feeds `input` to a probe test's core at `at_us`.
-fn feed_probing(core: &mut Core<Probing>, at_us: u64, input: Input<()>) -> Vec<Effect<String>> {
+fn feed_probing(
+    core: &mut Core<Probing>,
+    at_us: u64,
+    input: Input<Withdraws>,
+) -> Vec<Effect<String>> {
     core.feed(Timed { at_us, input })
 }
 
 /// The answer to request `number` with `probes`.
-fn answer_probed(number: u64, probes: Vec<verbatim_model::request::Probe>) -> Input<()> {
+fn answer_probed(number: u64, probes: Vec<verbatim_model::request::Probe>) -> Input<Withdraws> {
     Input::Answer {
         from: OUTPOST,
         answer: Answer {
@@ -1504,7 +1514,7 @@ fn answer_probed(number: u64, probes: Vec<verbatim_model::request::Probe>) -> In
 fn a_request_to_a_window_with_no_verdict_carries_probe_first_and_its_probe_decides_the_next() {
     let mut core = probing_core();
     assert_eq!(
-        feed_probing(&mut core, 1_000, Input::Entry(())),
+        feed_probing(&mut core, 1_000, Input::Entry(false)),
         [send_probed(1, WindowVerdict::ProbeFirst)]
     );
     assert_eq!(
@@ -1512,7 +1522,7 @@ fn a_request_to_a_window_with_no_verdict_carries_probe_first_and_its_probe_decid
         [said_result()]
     );
     assert_eq!(
-        feed_probing(&mut core, 3_000, Input::Entry(())),
+        feed_probing(&mut core, 3_000, Input::Entry(false)),
         [send_probed(2, WindowVerdict::Uia)]
     );
 }
@@ -1521,7 +1531,7 @@ fn a_request_to_a_window_with_no_verdict_carries_probe_first_and_its_probe_decid
 fn a_probe_verdict_lapses_half_a_second_after_the_probe_began() {
     let mut core = probing_core();
     assert_eq!(
-        feed_probing(&mut core, 1_000, Input::Entry(())),
+        feed_probing(&mut core, 1_000, Input::Entry(false)),
         [send_probed(1, WindowVerdict::ProbeFirst)]
     );
     assert_eq!(
@@ -1529,7 +1539,7 @@ fn a_probe_verdict_lapses_half_a_second_after_the_probe_began() {
         [said_result()]
     );
     assert_eq!(
-        feed_probing(&mut core, 601_100, Input::Entry(())),
+        feed_probing(&mut core, 601_100, Input::Entry(false)),
         [send_probed(2, WindowVerdict::ProbeFirst)]
     );
 }
@@ -1538,7 +1548,7 @@ fn a_probe_verdict_lapses_half_a_second_after_the_probe_began() {
 fn a_probe_first_request_answered_with_no_probe_counts_as_one_that_timed_out() {
     let mut core = probing_core();
     assert_eq!(
-        feed_probing(&mut core, 1_000, Input::Entry(())),
+        feed_probing(&mut core, 1_000, Input::Entry(false)),
         [send_probed(1, WindowVerdict::ProbeFirst)]
     );
     assert_eq!(
@@ -1546,7 +1556,7 @@ fn a_probe_first_request_answered_with_no_probe_counts_as_one_that_timed_out() {
         [said_result()]
     );
     assert_eq!(
-        feed_probing(&mut core, 3_000, Input::Entry(())),
+        feed_probing(&mut core, 3_000, Input::Entry(false)),
         [send_probed(2, WindowVerdict::Msaa)]
     );
 }
@@ -1555,7 +1565,7 @@ fn a_probe_first_request_answered_with_no_probe_counts_as_one_that_timed_out() {
 fn a_probe_first_request_no_longer_awaited_counts_as_a_probe_that_timed_out_from_its_send() {
     let mut core = probing_core();
     assert_eq!(
-        feed_probing(&mut core, 1_000, Input::Entry(())),
+        feed_probing(&mut core, 1_000, Input::Entry(false)),
         [send_probed(1, WindowVerdict::ProbeFirst)]
     );
     assert_eq!(
@@ -1576,7 +1586,7 @@ fn a_probe_first_request_no_longer_awaited_counts_as_a_probe_that_timed_out_from
         []
     );
     assert_eq!(
-        feed_probing(&mut core, 4_000, Input::Entry(())),
+        feed_probing(&mut core, 4_000, Input::Entry(false)),
         [send_probed(2, WindowVerdict::Msaa)]
     );
     assert_eq!(
@@ -1584,8 +1594,36 @@ fn a_probe_first_request_no_longer_awaited_counts_as_a_probe_that_timed_out_from
         [said_result()]
     );
     assert_eq!(
-        feed_probing(&mut core, 501_001, Input::Entry(())),
+        feed_probing(&mut core, 501_001, Input::Entry(false)),
         [send_probed(3, WindowVerdict::ProbeFirst)]
+    );
+}
+
+/// A request withdrawn by its entry is left to run in its reader, which
+/// may still answer its probe: Core has not waited it out, so its window
+/// keeps no verdict and the next request probes again, and a UI
+/// Automation focus told from the window is judged by its own probe at
+/// its arrival.
+#[test]
+fn a_probe_first_request_withdrawn_leaves_its_window_with_no_verdict() {
+    let mut core = probing_core();
+    assert_eq!(
+        feed_probing(&mut core, 1_000, Input::Entry(false)),
+        [send_probed(1, WindowVerdict::ProbeFirst)]
+    );
+    assert_eq!(
+        feed_probing(&mut core, 2_000, Input::Entry(true)),
+        [
+            Effect::Cancel {
+                to: OUTPOST,
+                cancel: Cancel {
+                    number: RequestNumber(1),
+                    reason: CancelReason::Withdrawn
+                }
+            },
+            said("NoLongerAwaited(Withdrawn)"),
+            send_probed(2, WindowVerdict::ProbeFirst)
+        ]
     );
 }
 
@@ -1593,7 +1631,7 @@ fn a_probe_first_request_no_longer_awaited_counts_as_a_probe_that_timed_out_from
 fn a_destroyed_windows_probe_verdict_is_cleared() {
     let mut core = probing_core();
     assert_eq!(
-        feed_probing(&mut core, 1_000, Input::Entry(())),
+        feed_probing(&mut core, 1_000, Input::Entry(false)),
         [send_probed(1, WindowVerdict::ProbeFirst)]
     );
     assert_eq!(
@@ -1612,7 +1650,7 @@ fn a_destroyed_windows_probe_verdict_is_cleared() {
         []
     );
     assert_eq!(
-        feed_probing(&mut core, 3_000, Input::Entry(())),
+        feed_probing(&mut core, 3_000, Input::Entry(false)),
         [send_probed(2, WindowVerdict::ProbeFirst)]
     );
 }
