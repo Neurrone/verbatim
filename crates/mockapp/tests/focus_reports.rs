@@ -2258,24 +2258,74 @@ fn save_as_dialog(label: &str) -> (common::MockApp, HWND, HWND) {
     (app, host, child)
 }
 
-/// The roles and names of a reported focus's chain, outermost first.
-fn roles_and_names(reported: &common::outpost::Reported) -> Vec<(Role, Option<&str>)> {
-    reported
+/// Where the listener's walk for `focus` ended.
+fn route_end(focus: &common::outpost::ListenerFocus) -> RouteEnd {
+    focus
+        .object
+        .route
+        .as_ref()
+        .expect("a focus read answers its route")
+        .end
+        .clone()
+}
+
+/// The names of the ancestors the listener read for `focus`, nearest
+/// first.
+fn listener_names(focus: &common::outpost::ListenerFocus) -> Vec<Option<&str>> {
+    focus
+        .object
         .ancestors
         .iter()
-        .chain(std::iter::once(&reported.node))
-        .map(|node| (node.role, node.name.as_deref()))
+        .map(
+            |ancestor| match common::outpost::value(&ancestor.values, PropertyId::Name) {
+                Some(PropertyValue::Text(name)) => Some(name.as_str()),
+                _ => None,
+            },
+        )
         .collect()
 }
 
-/// The windows of a reported focus's chain, outermost first, as its nodes
-/// carry them (`NodeDetails::window`).
-fn windows_of(reported: &common::outpost::Reported) -> Vec<Option<WindowHandle>> {
-    reported
+/// The outpost's completion of the listener's read `focus`, which must
+/// answer a focus.
+fn completed(outpost: &OutpostUnderTest, focus: common::outpost::ListenerFocus) -> Focused {
+    let (outcome, calls) = outpost.complete_focus(focus);
+    Focused::of(outcome, calls)
+}
+
+/// The nodes of a focus answer's chain, outermost first, ending with the
+/// focus.
+fn chain_nodes(focused: &Focused) -> impl Iterator<Item = &verbatim_model::request::FocusNode> {
+    focused
+        .read
         .ancestors
         .iter()
-        .chain(std::iter::once(&reported.node))
-        .map(|node| node.details.window)
+        .rev()
+        .map(|ancestor| &ancestor.node)
+        .chain(std::iter::once(&focused.read.focus))
+}
+
+/// The roles and names of a focus answer's chain, outermost first.
+fn roles_and_names(focused: &Focused) -> Vec<(Role, Option<&str>)> {
+    chain_nodes(focused)
+        .map(|node| {
+            (
+                common::outpost::role_of(node),
+                common::outpost::name_of(node),
+            )
+        })
+        .collect()
+}
+
+/// The windows of a focus answer's chain, outermost first, as its nodes
+/// carry them: each node's own window, none for a node inside a window.
+fn windows_of(focused: &Focused) -> Vec<Option<WindowHandle>> {
+    chain_nodes(focused)
+        .map(
+            |node| match common::outpost::value(&node.read.values, PropertyId::NativeWindow) {
+                Some(PropertyValue::Window(window)) => Some(*window),
+                _ => None,
+            },
+        )
         .collect()
 }
 
@@ -2296,7 +2346,7 @@ fn a_uia_window_element_carries_its_window_and_its_content_none() {
     let client = Client::new(hwnd);
     let outpost = OutpostUnderTest::new(&app);
     app.send("set-focus btn1");
-    let reported = outpost.uia_focus(&client.focused());
+    let reported = outpost.uia_focus_answer(&client.focused());
     assert_eq!(
         (roles_and_names(&reported), windows_of(&reported)),
         (
@@ -2325,7 +2375,7 @@ fn save_as_chain_windows(identity: bool) -> (Vec<Option<WindowHandle>>, Option<W
     }
     let outpost = OutpostUnderTest::new(&app);
     // The button, index 1, at its object id in the dialog's window.
-    let reported = outpost.msaa_focus(hwnd, 1);
+    let reported = outpost.msaa_focus_answer(common::outpost::node_ids(hwnd, 1));
     assert_eq!(
         roles_and_names(&reported),
         [
@@ -2379,7 +2429,7 @@ fn an_msaa_ancestor_reached_with_no_identity_string_is_its_windows_client() {
     .expect("mockapp made the child window");
     let outpost = OutpostUnderTest::new(&app);
     // The button, index 1, at its object id in the child window.
-    let reported = outpost.msaa_focus(child, 1);
+    let reported = outpost.msaa_focus_answer(common::outpost::node_ids(child, 1));
     assert_eq!(
         (roles_and_names(&reported), windows_of(&reported)),
         (
@@ -2411,7 +2461,7 @@ fn a_focus_after_a_failed_acc_parent_reaches_its_dialog() {
     let outpost = OutpostUnderTest::new(&app);
     app.send("fail-acc-parent save");
     // The button, index 1, at its object id in the child window.
-    let reported = outpost.msaa_focus(child, 1);
+    let reported = outpost.msaa_focus_answer(common::outpost::node_ids(child, 1));
     assert_eq!(
         roles_and_names(&reported),
         [
@@ -2451,12 +2501,16 @@ fn the_focused_state_test_continues_past_a_failed_acc_parent() {
     app.send("fail-acc-parent save");
     common::reset_hits(host);
     // The button, index 1, at its object id in the child window.
-    outpost.deliver(DeliveredFact::MsaaFocus {
-        hwnd: child.0 as isize,
-        id_object: 2,
-        id_child: 0,
-    });
-    outpost.settled();
+    let (run, _) = outpost.msaa_run(&[(
+        common::outpost::node_ids(child, 1),
+        verbatim_model::request::CandidateKind::Focus,
+    )]);
+    assert_eq!(
+        run.tried,
+        [verbatim_model::request::Tried::Refused(
+            verbatim_model::request::Refusal::NotFocused
+        )]
+    );
     assert_eq!(
         common::read_get_objects(host)
             .into_iter()
@@ -2504,23 +2558,13 @@ fn a_depth_limited_chain_starts_at_its_unread_nearest_window() {
     let client = Client::new(hwnd);
     let outpost = OutpostUnderTest::new(&app);
     let far = client.focused();
-    let (judged, _) = outpost.listener_read(&far);
-    let Judged::Read(read) = judged else {
-        panic!("the listener dropped the focus: {judged:?}");
-    };
+    let (focus, _) = outpost.listener_focus(&far);
     assert_eq!(
-        (read.ancestors.len(), read.ancestors_end),
-        (
-            64,
-            verbatim_model::protocol::AncestorsEnd::PlainFrom(hwnd.0 as isize)
-        ),
+        (focus.object.ancestors.len(), route_end(&focus)),
+        (64, RouteEnd::PlainFrom(handle(hwnd))),
         "the listener's walk, cut at its depth limit"
     );
-    let reported = outpost.focus(DeliveredFact::UiaFocusRead {
-        marker: 0,
-        read,
-        focus: true,
-    });
+    let reported = completed(&outpost, focus);
     let chain = roles_and_names(&reported);
     assert_eq!(
         (chain.len(), chain[0], chain[1], chain[64], chain[65]),
@@ -2554,14 +2598,9 @@ fn a_hung_ancestor_window_is_named_by_its_text_with_no_call() {
     app.send("fail-acc-parent save");
     common::reset_hits(host);
     // The button, index 1, at its object id in the child window.
-    let reported = outpost.msaa_focus(child, 1);
+    let reported = outpost.msaa_focus_answer(common::outpost::node_ids(child, 1));
     assert_eq!(
-        reported
-            .ancestors
-            .iter()
-            .chain(std::iter::once(&reported.node))
-            .map(|node| (node.role, node.name.as_deref()))
-            .collect::<Vec<_>>(),
+        roles_and_names(&reported),
         [
             (Role::Window, Some(app.title.as_str())),
             (Role::Button, Some("Save"))
@@ -2618,43 +2657,32 @@ fn uia_island(label: &str) -> (common::MockApp, HWND, HWND) {
 /// the host window is judged hung, as Windows judges a window whose thread
 /// has not answered for five seconds: the listener keeps "Embedded" and not
 /// the host's element, and names the host window to go on from, which the
-/// outpost reports as a plain window, named by its title. The listener
-/// makes five calls: the button's nearest window, its keyboard focus, its
-/// fresh cache, and the two steps, to "Embedded" and to the host's
-/// element. Without the rule, it steps on from the host's element, a sixth
-/// call, and the host's element, named by its fixture, is the outermost
-/// ancestor.
+/// outpost reports as a plain window, named by its title. The listener's
+/// read makes three calls: the button's fresh cache, and the two steps, to
+/// "Embedded" and to the host's element. Without the rule, it steps on
+/// from the host's element, a fourth call, and the host's element, named
+/// by its fixture, is the outermost ancestor.
 fn a_hung_window_above_a_uia_focus_ends_the_listeners_walk() {
     let (app, host, island) = uia_island("mockapp-hung-uia-listener");
     let outpost = OutpostUnderTest::new(&app);
     outpost.judge_hung(host);
     let uia = Uia::new().expect("a UIA client");
     let ok = common::listener_focus(&uia, island.0 as isize);
-    let (judged, listener_calls) = outpost.listener_read(&ok);
-    let Judged::Read(read) = judged else {
-        panic!("the listener dropped the focus: {judged:?}");
-    };
+    let (focus, listener_calls) = outpost.listener_focus(&ok);
     assert_eq!(
         (
-            read.ancestors
-                .iter()
-                .map(|ancestor| ancestor.snapshot.name.as_deref())
-                .collect::<Vec<_>>(),
-            read.ancestors_end,
+            listener_names(&focus),
+            route_end(&focus),
             listener_calls.uia
         ),
         (
             vec![Some("Embedded")],
-            verbatim_model::protocol::AncestorsEnd::ContinueFrom(host.0 as isize),
-            5
+            RouteEnd::ContinueFrom(handle(host)),
+            3
         ),
         "the listener's walk and its calls"
     );
-    let reported = outpost.focus(DeliveredFact::UiaFocusRead {
-        marker: 0,
-        read,
-        focus: true,
-    });
+    let reported = completed(&outpost, focus);
     assert_eq!(
         roles_and_names(&reported),
         [
@@ -2761,16 +2789,9 @@ fn a_focus_in_a_hung_nearest_window_keeps_the_listeners_ancestors() {
     let outpost = OutpostUnderTest::new(&app);
     let uia = Uia::new().expect("a UIA client");
     let ok = common::listener_focus(&uia, island.0 as isize);
-    let (judged, _) = outpost.listener_read(&ok);
-    let Judged::Read(read) = judged else {
-        panic!("the listener dropped the focus: {judged:?}");
-    };
+    let (focus, _) = outpost.listener_focus(&ok);
     outpost.judge_hung(island);
-    let reported = outpost.focus(DeliveredFact::UiaFocusRead {
-        marker: 0,
-        read,
-        focus: true,
-    });
+    let reported = completed(&outpost, focus);
     assert_eq!(
         roles_and_names(&reported),
         [
@@ -2800,23 +2821,13 @@ fn a_failed_uia_read_continues_from_its_nearest_windows_parent() {
     let uia = Uia::new().expect("a UIA client");
     let ok = common::listener_focus(&uia, island.0 as isize);
     app.send("island answer-parent ok fail 1");
-    let (judged, _) = outpost.listener_read(&ok);
-    let Judged::Read(read) = judged else {
-        panic!("the listener did not report a focus whose step failed: {judged:?}");
-    };
+    let (focus, _) = outpost.listener_focus(&ok);
     assert_eq!(
-        (read.ancestors.len(), read.ancestors_end),
-        (
-            0,
-            verbatim_model::protocol::AncestorsEnd::ContinueFrom(host.0 as isize)
-        ),
+        (focus.object.ancestors.len(), route_end(&focus)),
+        (0, RouteEnd::ContinueFrom(handle(host))),
         "the listener's walk, going on from the host window"
     );
-    let reported = outpost.focus(DeliveredFact::UiaFocusRead {
-        marker: 0,
-        read,
-        focus: true,
-    });
+    let reported = completed(&outpost, focus);
     assert_eq!(
         (roles_and_names(&reported), windows_of(&reported)),
         (
@@ -2847,7 +2858,7 @@ fn a_failed_read_s_chain_carries_one_entry_per_window() {
     let uia = Uia::new().expect("a UIA client");
     let ok = common::listener_focus(&uia, island.0 as isize);
     app.send("island answer-parent embedded fail");
-    let reported = outpost.uia_focus(&ok);
+    let reported = outpost.uia_focus_answer(&ok);
     assert_eq!(
         (roles_and_names(&reported), windows_of(&reported)),
         (
@@ -2887,20 +2898,14 @@ fn a_uia_window_whose_element_cannot_be_read_loses_the_focus() {
         uia.window_element(host.0 as isize, &request).is_err(),
         "the host window's element cannot be made"
     );
-    let (judged, _) = outpost.listener_read(&ok);
-    let Judged::Read(read) = judged else {
-        panic!("the listener dropped the focus: {judged:?}");
-    };
+    let (focus, _) = outpost.listener_focus(&ok);
     assert_eq!(
-        read.ancestors_end,
-        verbatim_model::protocol::AncestorsEnd::ContinueFrom(host.0 as isize),
+        route_end(&focus),
+        RouteEnd::ContinueFrom(handle(host)),
         "the listener's walk goes on from the host window"
     );
-    outpost.deliver(DeliveredFact::UiaFocusRead {
-        marker: 0,
-        read,
-        focus: true,
-    });
+    let (outcome, _) = outpost.complete_focus(focus);
+    assert_eq!(outcome, verbatim_model::request::Outcome::NotThere);
     outpost.settled();
     drop(outpost);
     app.quit();
@@ -2920,16 +2925,19 @@ fn a_dialog_the_listener_read_has_its_text_on_its_first_report() {
     let uia = Uia::new().expect("a UIA client");
     let outpost = OutpostUnderTest::new(&app);
     app.send("set-focus yes");
-    let reported = outpost.uia_focus(&common::listener_focus(&uia, hwnd.0 as isize));
+    let reported = outpost.uia_focus_answer(&common::listener_focus(&uia, hwnd.0 as isize));
     assert_eq!(
         reported
+            .read
             .ancestors
             .iter()
-            .chain(std::iter::once(&reported.node))
-            .map(|node| (node.role, node.details.description.as_deref()))
+            .map(|ancestor| (
+                common::outpost::role_of(&ancestor.node),
+                ancestor.dialog_text.as_deref()
+            ))
             .collect::<Vec<_>>(),
-        [(Role::Dialog, Some(QUESTION)), (Role::Button, None)],
-        "the chain's descriptions"
+        [(Role::Dialog, Some(QUESTION))],
+        "the chain's dialog text"
     );
     outpost.settled();
     drop(outpost);

@@ -1094,18 +1094,17 @@ fn ancestor_fact(element: &Cached<Ancestor>) -> UiaAncestorFact {
 /// The listener's answer to Core's generic read `read` of `element`, the
 /// element a UI Automation event named, read on `uia`, of process `pid`,
 /// whose nearest window Core names, `nearest`: the read a reading thread
-/// makes for a kept element (`listener::asked`), judging windows by the
-/// system's state. For a test that stands in for the listener, holding
-/// the element itself.
+/// makes for a kept element (`listener::asked`), judging windows by
+/// `readability`, as the listener judges them by the system's state. For a
+/// test that stands in for the listener, holding the element itself.
 #[must_use]
 pub fn read_object(
-    uia: &Uia,
+    (uia, readability): (&Uia, &WindowReadabilityReader),
     element: &Cached<ListenerEvent>,
     (pid, nearest): (verbatim_model::Pid, isize),
     read: &verbatim_model::request::ReadObject,
 ) -> verbatim_model::request::Outcome {
-    let readability: WindowReadabilityReader = Arc::new(verbatim_win32::window::readability);
-    crate::listener::asked::read_element((uia, &readability), element, (pid, nearest), read)
+    crate::listener::asked::read_element((uia, readability), element, (pid, nearest), read)
 }
 
 #[cfg(test)]

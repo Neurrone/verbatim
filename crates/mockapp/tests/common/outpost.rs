@@ -501,6 +501,9 @@ pub struct OutpostUnderTest {
     /// The focus listener's reader, standing in for the listener's thread
     /// for mockapp's application.
     reader: RefCell<FocusReader>,
+    /// How the stand-in for the listener's reading thread judges whether a
+    /// window can be read ([`Self::judge_hung`]).
+    listener_readability: RefCell<verbatim_win32::window::WindowReadabilityReader>,
     /// The outpost's failed cached reads when last taken
     /// ([`Self::take_failed_reads`]).
     failed_reads_taken: Cell<u32>,
@@ -759,6 +762,7 @@ impl OutpostUnderTest {
             foreground_reads,
             focus_window,
             reader: RefCell::new(reader),
+            listener_readability: RefCell::new(Arc::new(verbatim_win32::window::readability)),
             listener_queued: Cell::new(0),
             listener_left_at: Cell::new(0),
             failed_reads_taken: Cell::new(0),
@@ -813,9 +817,16 @@ impl OutpostUnderTest {
         });
         self.outpost
             .set_window_readability_reader(Arc::clone(&reader));
+        *self.listener_readability.borrow_mut() = Arc::clone(&reader);
         self.reader
             .borrow_mut()
             .set_window_readability_reader(reader);
+    }
+
+    /// How the stand-in for the listener judges whether a window can be
+    /// read.
+    pub fn listener_readability(&self) -> verbatim_win32::window::WindowReadabilityReader {
+        Arc::clone(&self.listener_readability.borrow())
     }
 
     /// Has the listener's reader alone judge whether a window can be read
@@ -826,6 +837,7 @@ impl OutpostUnderTest {
         &self,
         reader: verbatim_win32::window::WindowReadabilityReader,
     ) {
+        *self.listener_readability.borrow_mut() = Arc::clone(&reader);
         self.reader
             .borrow_mut()
             .set_window_readability_reader(reader);
@@ -1097,11 +1109,17 @@ impl OutpostUnderTest {
         read: &ReadObject,
     ) -> (Outcome, CallCounts) {
         let uia = verbatim_uia::Uia::new().expect("a UIA client for the listener's reads");
+        // The nearest window the check thread's walk found at delivery,
+        // which Core's request names.
+        let nearest = verbatim_uia::nearest_window_lookup(element.live().element())
+            .expect("the check's walk to the nearest window")
+            .expect("the element has a nearest window");
         let _ = verbatim_uia::calls::take();
+        let readability = self.listener_readability();
         let outcome = verbatim_listener::focus_read::read_object(
-            &uia,
+            (&uia, &readability),
             element,
-            (Pid(self.app_pid), self.app_window.0 as isize),
+            (Pid(self.app_pid), nearest),
             read,
         );
         (outcome, verbatim_uia::calls::take())

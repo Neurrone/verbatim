@@ -703,8 +703,9 @@ impl CoreDriver {
             .expect("Core names an element the listener keeps")
             .1;
         let _ = verbatim_uia::calls::take();
+        let readability = self.outpost.listener_readability();
         let outcome = verbatim_listener::focus_read::read_object(
-            &self.uia,
+            (&self.uia, &readability),
             element,
             (
                 self.app,
