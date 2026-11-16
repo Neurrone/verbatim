@@ -656,25 +656,23 @@ Each file's module comment says exactly what it asserts; in outline:
   requires the `faults` feature and runs in `cargo xtask faults`.
 - `idle_barrier.rs`: the outpost's part of the harness's idle barrier
   (`docs/design/communication.md`, section 6.7): the answer to an idle
-  query goes behind every message the outpost sent before it, and a caret
-  key's note holds nothing back.
+  query goes behind every message the outpost sent before it.
 - `caret_watch.rs`, over `caret_watch.json` (a UIA document and a
-  button), through the outpost harness: a focus delivered while a caret
-  key's note lives is reported first; a caret moved and reported after
-  the note was set is reported with its facts, whose comparison shows the
-  key's effect; a caret event that shows no change is reported with no
-  effect; a selection made with no event is found
-  by a before read and by a repeated focus, once; a focus-now query's document is the
-  outpost's focus, so a caret event no key caused is reported; and
-  Verbatim+Tab's query's (`FocusPurpose::Report`, through
-  `OutpostUnderTest::focus_now_for`) is neither adopted nor followed, its
-  text not read and such a caret event reported with nothing. mockapp
-  acknowledges `caret-event` once the call that raised the event has
-  returned, but the outpost hears it later, on UI Automation's threads,
-  and again as the `WinEvent` UIA raises alongside it, in no fixed order;
-  so before each step moves on, the test waits until the outpost has heard
-  both (`OutpostUnderTest::heard`, from `Outpost::observe_heard`), or the
-  first step's event could be reported under the second key's note.
+  button), `reuse_text.json` and `text.json`'s classic edit control, with
+  Core's reducer driving the outpost (`common/core_driver.rs`, Core's time
+  the run's shared clock, on which the outpost times a watch): a caret
+  key's unit found by its watch's check, by a UI Automation caret event
+  within 60 ms of the pass, or said at its bound; its watch compared with
+  its starting read and withdrawn by a focus; a caret tell, the outpost's
+  for a UI Automation caret event or the listener's for the system
+  caret, saying the selection's change from Core's baseline, adopting its
+  event's element when the node answered no text pattern; an edit
+  control's value change making the terms general, waiting at the answer
+  or judged first, and counted. The outpost's reads that speech does not
+  show (where a selection starts, a baseline Verbatim's own selection or
+  move minted) are asked through the request driver.
+  `CoreDriver::raise_at_once` tells a burst of `WinEvent`s through the
+  listener's limiter before any answer is heard.
 - `text.rs` drives `verbatim-outpost`'s text module over `text.json` on
   both stacks: lines, words, and characters; movement stopping at the
   empty last line; UIA's missing sentence unit and the edit control's

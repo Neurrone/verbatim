@@ -1070,9 +1070,6 @@ alone judges them. The worker waits for nothing.
   did not answer was answered within 5 ms, caret reads for keys were 1.34
   a key, and caret keys reached speech at P95 9.0, P99 9.4 and maximum 9.4
   ms.
-- Nothing waits behind the key: a focus delivered just after a Right Arrow
-  the application ignored is taken 0.74 to 0.85 ms after the key
-  (`a_focus_change_during_a_caret_watch_is_handled_at_once`).
 
 ### A caret report, UIA
 

@@ -118,10 +118,8 @@ fn notes_focus(app: &mut common::MockApp, outpost: &OutpostUnderTest, hwnd: HWND
 
 /// Runs each test on a desktop of its own (`common/harness.rs`).
 fn main() {
-    harness::run_isolated(&[
-        (
-            "the_answer_goes_behind_a_message_in_the_pipe_and_one_in_the_backlog",
-            the_answer_goes_behind_a_message_in_the_pipe_and_one_in_the_backlog,
-        ),
-    ]);
+    harness::run_isolated(&[(
+        "the_answer_goes_behind_a_message_in_the_pipe_and_one_in_the_backlog",
+        the_answer_goes_behind_a_message_in_the_pipe_and_one_in_the_backlog,
+    )]);
 }

@@ -1613,15 +1613,15 @@ fn the_listener_makes_no_connection() {
             Some(name),
             "the element mockapp reports focused"
         );
-        let (judged, listener_calls) = outpost.listener_read(&focused);
-        let verbatim_listener_logic::focus::Judged::Read(_) = &judged else {
-            panic!("the listener did not read the focus on {name}: {judged:?}");
-        };
+        // Core asks the listener's read of the focus, then the outpost's
+        // completion from its route, which commits it.
+        let (read, listener_calls) = outpost.listener_focus(&focused);
         assert_eq!(
             listener_calls.connections, 0,
             "the listener's connections reading the focus on {name}"
         );
-        let _ = outpost.focus(judged.into_fact(0, FocusEvent::Focus));
+        let _ = outpost.complete_focus(read);
+        outpost.settled();
     }
     drop(outpost);
     app.quit();
