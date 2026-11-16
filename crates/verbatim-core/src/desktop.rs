@@ -6,27 +6,48 @@
 //! takes speaks it, as NVDA speaks it before any focus, or spoken as a
 //! message at its due time.
 
-use verbatim_model::protocol::FocusPurpose;
-use verbatim_model::{DesktopNews, Effect, SpeechPriority, TraceId, Utterance, UtteranceSegment};
+use serde::{Deserialize, Serialize};
+use verbatim_model::{Effect, SpeechPriority, TraceId, Utterance, UtteranceSegment};
 
 use crate::state::SrState;
 
-/// Takes `news` of the desktop, under `trace_id`.
-pub(crate) fn news(state: &mut SrState, trace_id: TraceId, news: &DesktopNews) -> Vec<Effect> {
-    match news {
-        DesktopNews::Returned => vec![Effect::ReadFocus(FocusPurpose::Again)],
-        // The newest name is kept, as NVDA keeps one.
-        DesktopNews::Name(name) => {
-            state.desktop_name = Some(name.clone());
-            Vec::new()
-        }
-        DesktopNews::NameDue => state
-            .desktop_name
-            .take()
-            .map(|name| name_utterance(trace_id, name))
-            .into_iter()
-            .collect(),
+/// The virtual desktop's name, kept until the next focus or its due time.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct DesktopName {
+    /// The name.
+    name: String,
+    /// The trace of the tell that changed it.
+    trace_id: TraceId,
+    /// When it is said alone, if no focus said it first.
+    due_us: u64,
+}
+
+/// The virtual desktop's name changed to `name` under `trace_id`: the
+/// newest name is kept, as NVDA keeps one, said alone at `due_us` unless a
+/// focus says it first.
+pub(crate) fn named(state: &mut SrState, trace_id: TraceId, name: String, due_us: u64) {
+    state.desktop_name = Some(DesktopName {
+        name,
+        trace_id,
+        due_us,
+    });
+}
+
+/// When the kept name is said alone.
+pub(crate) fn due(state: &SrState) -> Option<u64> {
+    state.desktop_name.as_ref().map(|name| name.due_us)
+}
+
+/// The time `now_us` came: a kept name whose due time has passed is said
+/// alone, queued, and no longer kept.
+pub(crate) fn tick(state: &mut SrState, now_us: u64) -> Option<Effect> {
+    if due(state).is_none_or(|due_us| due_us > now_us) {
+        return None;
     }
+    state
+        .desktop_name
+        .take()
+        .map(|name| name_utterance(name.trace_id, name.name))
 }
 
 /// The virtual desktop's name kept, for the focus Core is taking, which
@@ -36,7 +57,7 @@ pub(crate) fn name_for_focus(state: &mut SrState, trace_id: TraceId) -> Option<E
     state
         .desktop_name
         .take()
-        .map(|name| name_utterance(trace_id, name))
+        .map(|name| name_utterance(trace_id, name.name))
 }
 
 /// The name spoken as NVDA speaks a message: queued, about no object.

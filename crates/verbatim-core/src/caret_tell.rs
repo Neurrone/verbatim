@@ -311,8 +311,10 @@ fn answered(
             collapsed,
         }),
     );
-    if !segments.is_empty() {
-        cx.emit(crate::editing::speak(tell.tell.trace_id, segments));
+    // Each part is its own utterance, as NVDA speaks each selection
+    // message on its own.
+    for said in crate::editing::speak_each(tell.tell.trace_id, segments) {
+        cx.emit(said);
     }
 }
 

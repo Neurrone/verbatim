@@ -22,7 +22,7 @@ use crate::entries::Entries;
 use crate::entries::window_facts;
 use crate::event_queue::Cx;
 use crate::event_queue::RequestWindow;
-use crate::focus_queue::Report;
+use crate::focus::object::Report;
 use crate::foreground::ForegroundFact;
 use crate::state::SrState;
 
@@ -125,12 +125,34 @@ pub(crate) fn snapshot(node: &FocusNode, backend: Backend) -> Option<NodeSnapsho
     })
 }
 
+/// The backend that read `node` in an answer read through `backend`: an
+/// MSAA answer reads every node through MSAA; in a UI Automation answer, a
+/// node with no runtime id was read through MSAA, as the plain windows
+/// completing a walk cut at its depth limit are, and is another object
+/// than a UI Automation element of the same window
+/// (`docs/parity/focus-context.md`, "Focus-ancestry context").
+fn node_backend(node: &FocusNode, backend: Backend) -> Backend {
+    match backend {
+        Backend::Uia if node.runtime_id.is_none() => Backend::Msaa,
+        other => other,
+    }
+}
+
 /// The window facts today's announcement code reads, from the facts the
 /// tell carries. A window owned by Verbatim's hidden frame, as Verbatim's
 /// menu is, takes the frame, the top of its owner chain, as its top-level
 /// window, so that the focus enters the frame and says its title,
 /// "Verbatim" (Verbatim-only, design "Focus and foreground").
-fn window_of(tell: &Event, facts: &AcceptanceFacts) -> WindowFacts {
+///
+/// The window in front at the tell's check is Program Manager's or the
+/// taskbar's when the foreground record, `foreground`, names it with a
+/// shell class: Core sees the listener's foreground reports in the order
+/// of its tells.
+fn window_of(
+    tell: &Event,
+    facts: &AcceptanceFacts,
+    foreground: Option<crate::event_queue::Foreground>,
+) -> WindowFacts {
     let in_foreground = facts.window_to_foreground != Relation::Outside
         || facts.root_owner_to_foreground != Relation::Outside
         || facts.root_owner_is_foregrounds;
@@ -153,7 +175,8 @@ fn window_of(tell: &Event, facts: &AcceptanceFacts) -> WindowFacts {
         class: facts.window.class.clone(),
         application: tell.application.clone(),
         alt_held: false,
-        foreground_is_shell: false,
+        foreground_is_shell: foreground
+            .is_some_and(|front| front.shell && front.window == facts.foreground),
     }
 }
 
@@ -170,7 +193,10 @@ fn chain(
     let mut snapshots = Vec::new();
     let mut kept = Vec::new();
     for ancestor in ancestors {
-        snapshots.push(snapshot(&ancestor.node, backend)?);
+        snapshots.push(snapshot(
+            &ancestor.node,
+            node_backend(&ancestor.node, backend),
+        )?);
         kept.push(KeptAncestor {
             node: ancestor.node.read.node?,
             runtime_id: ancestor.node.runtime_id.clone(),
@@ -240,14 +266,19 @@ pub(crate) struct Origin {
 }
 
 impl Origin {
-    /// The origin of a focus a tell named, read on `asked`.
-    pub(crate) fn of_tell(tell: &Event, asked: RequestWindow) -> Self {
+    /// The origin of a focus a tell named, read on `asked`, with
+    /// `foreground` the foreground record.
+    pub(crate) fn of_tell(
+        tell: &Event,
+        asked: RequestWindow,
+        foreground: Option<crate::event_queue::Foreground>,
+    ) -> Self {
         let facts = window_facts(tell);
         Self {
             trace_id: tell.trace_id,
             source: tell.process,
             observed_at_us: tell.at_us,
-            window: facts.map(|facts| window_of(tell, facts)),
+            window: facts.map(|facts| window_of(tell, facts, foreground)),
             whole_window: tell.kind == verbatim_model::event_kind::EventKind::Foreground,
             top_process: facts.map_or(asked.process, |facts| facts.root.process),
             asked,
@@ -307,7 +338,7 @@ fn ready(
         .clone_from(&origin.parent_automation_id);
     let (nearest_first, kept_ancestors) = chain(state, &read.ancestors, read.met, known, backend)?;
     let read_foreground = match &read.foreground {
-        Some(foreground) => Some(snapshot(foreground, backend)?),
+        Some(foreground) => Some(snapshot(foreground, node_backend(foreground, backend))?),
         None => None,
     };
     let mut ancestors = nearest_first;
@@ -337,8 +368,8 @@ fn ready(
         selected_child: None,
         text: Some(focus_text(&read.caret)),
         earlier: read.runtime_id_reused.then_some(EarlierElement::Gone),
-        group: None,
         alive: true,
+        top_level: Some(origin.asked.top_level),
     };
     let place = Place {
         window: read.focus.read.window.handle,
@@ -356,7 +387,7 @@ fn ready(
         read_by,
         place,
         window: origin.asked,
-        ancestors: kept_ancestors,
+        ancestors: kept_ancestors.into(),
         redirected_to: read.redirected_to,
         foreground: read.foreground.as_ref().and_then(|node| node.read.node),
         value_from_selection: read.value_from_selection,
@@ -435,18 +466,29 @@ pub(crate) fn execute(
     let Some(mut ready) = ready(state, origin, read, known, read_by) else {
         return Executed::default();
     };
+    // A reused runtime id: the element the node held before is gone, so
+    // Core forgets the node's caret and its terminal's model, and the
+    // focus's text is taken afresh, as a new object's is (build 1's
+    // design, "The outpost in this build").
+    if read.runtime_id_reused {
+        let node = ready.kept.node;
+        if state.focus_caret(node).is_some() {
+            state.forget_caret();
+        }
+        state.drop_models(|model| model.node == node);
+    }
     let repeated = state
         .versions
         .committed_read()
         .filter(|committed| committed.node == ready.kept.node)
         .map(|committed| committed.selection);
+    // With the readers' last focus emptied by a foreground change to an
+    // unrelated window, the committed focus was left: the new focus is
+    // compared with no ancestors, so the window's title and the focus are
+    // said (design, "The ancestors spoken at execution").
+    let left = state.versions.last.is_none();
     let mut said = vec![observed(&ready.report)];
-    said.extend(crate::reduce::execute_report(
-        state,
-        &ready.report,
-        false,
-        0,
-    ));
+    said.extend(crate::reduce::execute_report(state, &ready.report, left));
     if read.met.is_none()
         && let Some(foreground) = &ready.foreground
     {
@@ -459,9 +501,7 @@ pub(crate) fn execute(
     }
     let change =
         crate::text_facts::focus_answered(&mut ready.kept.selection, &read.caret, repeated);
-    if !change.is_empty() {
-        said.push(crate::editing::speak(origin.trace_id, change));
-    }
+    said.extend(crate::editing::speak_each(origin.trace_id, change));
     let follows = commit(state, origin, ready);
     Executed {
         said,
@@ -484,7 +524,7 @@ fn observed(report: &Report) -> Effect {
             selected_child: report.selected_child.clone(),
             text: report.text.clone().map(Box::new),
             earlier: report.earlier,
-            group: report.group,
+            group: None,
             first_cached_ancestor: None,
             answers: None,
         },
@@ -574,10 +614,14 @@ pub(crate) fn again(state: &mut SrState, trace_id: TraceId) -> Vec<Effect> {
         selected_child: None,
         text: None,
         earlier: None,
-        group: None,
+
         alive: focus.alive,
+        top_level: state
+            .versions
+            .committed_kept()
+            .map(|kept| kept.place.top_level),
     };
-    crate::reduce::execute_report(state, &report, false, 0)
+    crate::reduce::execute_report(state, &report, false)
 }
 
 /// How a re-take's answer ended (design, "Focus and foreground", the

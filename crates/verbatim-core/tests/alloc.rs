@@ -1,26 +1,35 @@
 //! Core's allocation invariant: a reduce step allocates the same number of
-//! bytes whatever the size of the state it changes.
+//! bytes whatever the size of the state it changes, but a focus step, whose
+//! request carries the ancestors Core already knows and whose allocation
+//! grows no faster than the focus's depth.
 //!
 //! This test binary installs a global allocator that counts the bytes each
 //! thread asks for, so the test runner's parallel threads do not disturb
 //! one another's counts. Today the parts of the state that grow with the
 //! application are the focus ancestor chain (and the navigator that follows
 //! focus) and the text Core keeps for the caret and the review cursor (a
-//! line, up to 64 KB, and the lines of the caret's last 8 timed reports),
-//! and a terminal's output waiting to be spoken is bounded by the flood
-//! policy; the large state here has a previous focus with 10,000 ancestors
-//! and the small one has 10. Each step's input is the same in both cases,
-//! so only the state varies.
+//! line, up to 64 KB), and a terminal's output waiting to be spoken is
+//! bounded by the flood policy; the large state here has a previous focus
+//! with 10,000 ancestors and the small one has 10. Each step is one input
+//! to Core's event queue, the same in both cases, so only the state
+//! varies.
 
+mod desk;
 mod terminal_support;
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 
-use verbatim_core::{SrState, reduce};
+use desk::{Desk, LISTENER, ONE, focus_read_of, focus_tell, listener_read};
+use verbatim_model::request::{
+    Answer, FocusCaret, FocusCaretRead, Instance, Outcome, Press, PressAction, QueueEffect,
+    QueueInput, Reply, Request as Wire, RequestNumber,
+};
+use verbatim_model::stroke::{HeldStroke, Stroke};
 use verbatim_model::{
-    Backend, CaretKey, CaretMotion, CaretReport, Effect, Input, NodeDetails, NodeId, NodeSnapshot,
-    NormalizedEvent, Pid, ReviewCommand, Role, StateSet, TextAnchor, TextChunk, TextUnit, TraceId,
+    Backend, CaretKey, CaretMotion, CaretReport, Effect, KeySeq, NodeDetails, NodeSnapshot,
+    ReviewCommand, Role, SegmentContent, SpeechPriority, Started, StateSet, TextAnchor, TextChunk,
+    TextReply, TextUnit, TraceId, Utterance, UtteranceSegment, Watched, WatchedRead,
 };
 
 /// The system allocator, counting the bytes requested on each thread.
@@ -78,9 +87,9 @@ fn allocated_by<R>(work: impl FnOnce() -> R) -> (R, usize) {
 const SMALL_CHAIN: u64 = 10;
 const LARGE_CHAIN: u64 = 10_000;
 
-fn node(id: u64, role: Role, name: &str) -> NodeSnapshot {
+fn node(number: u64, role: Role, name: &str) -> NodeSnapshot {
     NodeSnapshot {
-        id: NodeId::new(id),
+        id: ONE.node(number),
         backend: Backend::Uia,
         role,
         name: Some(name.to_owned()),
@@ -90,70 +99,156 @@ fn node(id: u64, role: Role, name: &str) -> NodeSnapshot {
     }
 }
 
-fn focus_event(node: NodeSnapshot, ancestors: Vec<NodeSnapshot>) -> Input {
-    Input::Event {
-        trace_id: TraceId::from_raw(1),
-        observed_at_us: 0,
-        source: Pid(1),
-        backend: Backend::Uia,
-        window: None,
-        event: NormalizedEvent::FocusChanged {
-            node,
-            whole_window: false,
-            ancestors,
-            selected_child: None,
-            text: None,
-            earlier: None,
-            group: None,
-            answers: None,
-            first_cached_ancestor: None,
+/// A chain of `depth` named groups, outermost first. Its node numbers
+/// (from 100,000) never collide with the nodes the measured steps use.
+fn chain(depth: u64) -> Vec<NodeSnapshot> {
+    (0..depth)
+        .map(|index| node(100_000 + index, Role::Group, &format!("Group {index}")))
+        .collect()
+}
+
+/// A desk whose focus, and the navigator following it, sit under a chain
+/// of `depth` named groups.
+fn desk_with_chain(depth: u64) -> Desk {
+    let mut desk = Desk::new();
+    let _ = desk.focus(ONE, &node(1, Role::Button, "Previous"), &chain(depth));
+    desk
+}
+
+/// Feeds `input` to `small` and `large` at their next moment, the input
+/// built before either is fed: the effects they had, which must be the
+/// same, as must the bytes each step allocated.
+fn same(small: &mut Desk, large: &mut Desk, input: &QueueInput) -> Vec<Effect> {
+    small.at_us += 1_000;
+    large.at_us += 1_000;
+    let small_input = input.clone();
+    let large_input = input.clone();
+    let (small_effects, small_bytes) = allocated_by(|| small.feed(small_input));
+    let (large_effects, large_bytes) = allocated_by(|| large.feed(large_input));
+    assert_eq!(small_effects, large_effects);
+    assert!(small_bytes > 0, "the step allocates its effects");
+    assert_eq!(small_bytes, large_bytes, "{input:?}");
+    small_effects
+}
+
+/// The number of the one request of `kind` that `effects` sent.
+fn sent(effects: &[Effect], kind: fn(&Wire) -> bool) -> u64 {
+    let numbers: Vec<u64> = effects
+        .iter()
+        .filter_map(|effect| match effect {
+            Effect::Queue(QueueEffect::Send { ask, .. }) if kind(&ask.request) => {
+                Some(ask.number.0)
+            }
+            _ => None,
+        })
+        .collect();
+    let [number] = numbers[..] else {
+        panic!("one request asked: {effects:?}");
+    };
+    number
+}
+
+/// The answer to request `number` from `from`, `reply`.
+fn answer(from: Instance, number: u64, reply: Reply) -> QueueInput {
+    QueueInput::Answer {
+        from,
+        answer: Answer {
+            number: RequestNumber(number),
+            outcome: Outcome::Result(reply),
+            probes: Vec::new(),
+            detail: String::new(),
         },
-        purpose: None,
     }
 }
 
-/// A state whose focus, and the navigator following it, sit under a chain
-/// of `depth` named groups. The chain's node ids (from 100,000) never
-/// collide with the nodes the measured steps use.
-fn state_with_chain(depth: u64) -> SrState {
-    let ancestors = (0..depth)
-        .map(|index| node(100_000 + index, Role::Group, &format!("Group {index}")))
-        .collect();
-    let mut state = SrState::new();
-    let _ = reduce(
-        &mut state,
-        &mut verbatim_core::Runtime::default(),
-        &focus_event(node(1, Role::Button, "Previous"), ancestors),
+/// The chain depths a focus step is measured at, a tenfold step apart.
+const SHORTER_CHAIN: u64 = 1_000;
+
+/// Feeds `input` to `shorter` and `longer`, as [`same`] does, where the
+/// step may grow with the chain: what each said must be the same, and the
+/// bytes the longer step allocated no more than twice the depths' ratio
+/// times the shorter's, so that growth is at most proportional to the
+/// depth. The factor of two is a vector's growth by doubling, which this
+/// allocator counts at each reallocation; growth with the square of the
+/// depth would be a hundred times.
+fn proportional(shorter: &mut Desk, longer: &mut Desk, input: &QueueInput) -> Vec<Effect> {
+    shorter.at_us += 1_000;
+    longer.at_us += 1_000;
+    let shorter_input = input.clone();
+    let longer_input = input.clone();
+    let (shorter_effects, shorter_bytes) = allocated_by(|| shorter.feed(shorter_input));
+    let (longer_effects, longer_bytes) = allocated_by(|| longer.feed(longer_input));
+    let said = |effects: &[Effect]| -> Vec<Effect> {
+        effects
+            .iter()
+            .filter(|effect| matches!(effect, Effect::Speak(..)))
+            .cloned()
+            .collect()
+    };
+    assert_eq!(said(&shorter_effects), said(&longer_effects));
+    assert!(shorter_bytes > 0, "the step allocates its effects");
+    let ratio = usize::try_from(LARGE_CHAIN / SHORTER_CHAIN).expect("a small ratio");
+    assert!(
+        longer_bytes <= 2 * shorter_bytes * ratio,
+        "{longer_bytes} bytes at {LARGE_CHAIN} ancestors, {shorter_bytes} at {SHORTER_CHAIN}: {input:?}"
     );
-    state
+    shorter_effects
 }
 
-/// A focus moving to a new button under three new containers.
-fn next_focus() -> Input {
-    focus_event(
-        node(2, Role::Button, "Next"),
-        vec![
+#[test]
+fn a_focus_step_allocates_no_more_than_in_proportion_to_the_ancestor_chain() {
+    // ADR 0003's focus request carries the ancestors Core already knows,
+    // and its answer is joined to the committed chain, so a focus step's
+    // allocation grows with the depth of the focus: inherent, as NVDA walks
+    // the same chain, and an allocation is no cost to design around
+    // without a measurement (CLAUDE.md). What is pinned is that it grows
+    // no faster than the depth: a chain ten times deeper allocates at most
+    // ten times as much, with a vector's doubling allowed for.
+    //
+    // A focus moving to a new button under three new containers: told,
+    // read by the listener, and completed by the outpost.
+    let mut shorter = desk_with_chain(SHORTER_CHAIN);
+    let mut longer = desk_with_chain(LARGE_CHAIN);
+    let tell = QueueInput::Tell {
+        from: LISTENER,
+        tell: Box::new(focus_tell(ONE, 2, shorter.at_us + 1_000)),
+    };
+    let effects = proportional(&mut shorter, &mut longer, &tell);
+    let read = sent(&effects, |request| matches!(request, Wire::ReadObject(_)));
+    let effects = proportional(
+        &mut shorter,
+        &mut longer,
+        &answer(
+            LISTENER,
+            read,
+            Reply::Object(Box::new(listener_read(ONE, 2))),
+        ),
+    );
+    let completion = sent(&effects, |request| matches!(request, Wire::CompleteUia(_)));
+    let completed = focus_read_of(
+        ONE,
+        &node(2, Role::Button, "Next"),
+        &[
             node(3, Role::Dialog, "Options"),
             node(4, Role::Group, "General"),
             node(5, Role::Group, "Display"),
         ],
-    )
-}
-
-#[test]
-fn a_focus_step_allocates_the_same_whatever_the_ancestor_chain() {
-    let input = next_focus();
-    let mut small = state_with_chain(SMALL_CHAIN);
-    let mut large = state_with_chain(LARGE_CHAIN);
-
-    let (small_effects, small_bytes) =
-        allocated_by(|| reduce(&mut small, &mut verbatim_core::Runtime::default(), &input));
-    let (large_effects, large_bytes) =
-        allocated_by(|| reduce(&mut large, &mut verbatim_core::Runtime::default(), &input));
-
-    assert_eq!(small_effects, large_effects);
-    assert!(small_bytes > 0, "the step allocates its effects");
-    assert_eq!(small_bytes, large_bytes);
+    );
+    let effects = proportional(
+        &mut shorter,
+        &mut longer,
+        &answer(
+            ONE.instance(),
+            completion,
+            Reply::Focus(Box::new(completed)),
+        ),
+    );
+    assert!(
+        effects
+            .iter()
+            .any(|effect| matches!(effect, Effect::Speak(..))),
+        "the focus is spoken"
+    );
 }
 
 /// A long line of text, as the outpost sends the caret's line: just under
@@ -172,122 +267,126 @@ fn long_line(anchor: u64, offset: u32) -> TextChunk {
     }
 }
 
-/// A state whose focus is an edit field under a chain of `depth` groups,
-/// its caret on a long line, reported often enough to fill Core's history
-/// of timed caret reports.
-fn editing_with_chain(depth: u64) -> SrState {
-    let ancestors = (0..depth)
-        .map(|index| node(100_000 + index, Role::Group, &format!("Group {index}")))
-        .collect();
-    let mut state = SrState::new();
-    let _ = reduce(
-        &mut state,
-        &mut verbatim_core::Runtime::default(),
-        &focus_event(node(1, Role::EditableText, "Body"), ancestors),
-    );
-    for observed_at_ms in 1..=10 {
-        let _ = reduce(
-            &mut state,
-            &mut verbatim_core::Runtime::default(),
-            &caret_moved(long_line(10, 0), observed_at_ms),
-        );
+/// The character `text` at anchor `anchor`.
+fn character(text: &str, anchor: u64) -> TextChunk {
+    TextChunk {
+        unit: TextUnit::Character,
+        text: text.to_owned(),
+        ..long_line(anchor, 0)
     }
-    state
 }
 
-fn caret_moved(line: TextChunk, observed_at_ms: u64) -> Input {
-    Input::Event {
-        trace_id: TraceId::from_raw(4),
-        observed_at_us: observed_at_ms * 1_000,
-        source: Pid(1),
-        backend: Backend::Uia,
-        window: None,
-        event: NormalizedEvent::CaretMoved {
-            node_id: NodeId::new(1),
-            caret: CaretReport {
-                line,
-                selection: None,
-                read_at_us: observed_at_ms * 1_000,
-            },
-            selection_changes: Vec::new(),
-            content_changed: false,
-            new_selection: None,
-            facts: None,
-        },
-        purpose: None,
+fn caret_on(line: TextChunk) -> CaretReport {
+    CaretReport {
+        line,
+        selection: None,
+        read_at_us: 0,
     }
+}
+
+/// A desk whose focus is an edit field under a chain of `depth` groups,
+/// its caret on a long line.
+fn editing_with_chain(depth: u64) -> Desk {
+    let mut desk = Desk::new();
+    let mut read = focus_read_of(ONE, &node(1, Role::EditableText, "Body"), &chain(depth));
+    read.caret = FocusCaret::Read(Box::new(FocusCaretRead {
+        caret: caret_on(long_line(10, 0)),
+        selected_text: None,
+        baseline: TextAnchor(11),
+        difference: None,
+    }));
+    let _ = desk.focus_read(ONE, read);
+    desk
 }
 
 #[test]
 fn text_steps_allocate_the_same_whatever_the_ancestor_chain() {
     let mut small = editing_with_chain(SMALL_CHAIN);
     let mut large = editing_with_chain(LARGE_CHAIN);
-    let mut same = |input: &Input| {
-        let (small_effects, small_bytes) =
-            allocated_by(|| reduce(&mut small, &mut verbatim_core::Runtime::default(), input));
-        let (large_effects, large_bytes) =
-            allocated_by(|| reduce(&mut large, &mut verbatim_core::Runtime::default(), input));
-        assert_eq!(small_effects, large_effects);
-        assert_eq!(small_bytes, large_bytes, "{input:?}");
-        small_effects
-    };
-
-    let effects = same(&Input::CaretKey {
-        key_seq: verbatim_model::KeySeq::NONE_YET,
-        trace_id: TraceId::from_raw(5),
-        key: CaretKey {
-            motion: CaretMotion::NextCharacter,
-            select: false,
-        },
-        pressed_at_ms: 100,
-    });
-    assert!(
-        effects.iter().any(|effect| matches!(
-            effect,
-            Effect::ForKey(_, inner) if matches!(**inner, Effect::KeyNote(_))
-        )),
-        "expected a key's note, got {effects:?}"
-    );
-    let answer = long_line(10, 1);
-    let _ = same(&Input::Event {
-        trace_id: TraceId::from_raw(6),
-        observed_at_us: 101_000,
-        source: Pid(1),
-        backend: Backend::Uia,
-        window: None,
-        event: NormalizedEvent::CaretMoved {
-            node_id: NodeId::new(1),
-            caret: CaretReport {
-                line: answer.clone(),
-                selection: None,
-                read_at_us: 101_000,
+    // Right arrow, held by the hook and bound to the field: its starting
+    // read, its pass and watch, and its watch's answer, which speaks the
+    // character at the caret.
+    let binding = small.state.caret_binding().expect("the field has text");
+    assert_eq!(large.state.caret_binding(), Some(binding.clone()));
+    let press = QueueInput::Press(Box::new(Press {
+        key_seq: KeySeq::new(1),
+        pressed_at_us: small.at_us + 1_000,
+        action: PressAction::CaretKey {
+            key: CaretKey {
+                motion: CaretMotion::NextCharacter,
+                select: false,
             },
-            selection_changes: Vec::new(),
-            content_changed: false,
-            new_selection: None,
-            facts: Some(Box::new(verbatim_model::ReadFacts {
-                unit: Some(answer.clone()),
-                change: verbatim_model::Change::Compared {
-                    compared: verbatim_model::Compared {
-                        caret_moved: true,
-                        ..verbatim_model::Compared::default()
-                    },
-                    previous_line: answer,
-                    previous_selection: None,
-                    on_previous_line: true,
+            held: Some(HeldStroke {
+                stroke: Stroke {
+                    vk: 0x27,
+                    scan_code: 0x4D,
+                    extended: true,
+                    sequence: 1,
                 },
-                read_ended_at_us: u64::MAX / 2,
-            })),
+                modifiers: Vec::new(),
+            }),
+            bound: Some(Box::new(binding)),
         },
-        purpose: None,
-    });
-    let _ = same(&Input::Command {
-        pressed_at_ms: 0,
-        key_seq: verbatim_model::KeySeq::NONE_YET,
-        trace_id: TraceId::from_raw(7),
-        command: ReviewCommand::ReviewNextWord,
-        repeat: 0,
-    });
+    }));
+    let effects = same(&mut small, &mut large, &press);
+    let starting = sent(&effects, |request| matches!(request, Wire::Text { .. }));
+    let effects = same(
+        &mut small,
+        &mut large,
+        &answer(
+            ONE.instance(),
+            starting,
+            Reply::Text(TextReply::Started(Box::new(Started {
+                point: TextAnchor(50),
+                caret: caret_on(long_line(10, 0)),
+                unit: character("w", 12),
+                word: None,
+            }))),
+        ),
+    );
+    let watch = sent(&effects, |request| matches!(request, Wire::Text { .. }));
+    let effects = same(
+        &mut small,
+        &mut large,
+        &answer(
+            ONE.instance(),
+            watch,
+            Reply::Text(TextReply::Watched(Box::new(Watched::Effect(WatchedRead {
+                caret: caret_on(long_line(13, 1)),
+                unit: character("o", 14),
+            })))),
+        ),
+    );
+    assert_eq!(
+        effects,
+        [
+            Effect::Speak(
+                Utterance {
+                    trace_id: TraceId::from_raw(9),
+                    priority: SpeechPriority::Queued,
+                    segments: vec![UtteranceSegment::new(SegmentContent::Character(
+                        "o".to_owned()
+                    ))],
+                    source: None,
+                    validity: None,
+                    say_all: false,
+                },
+                Some(KeySeq::new(1)),
+            ),
+            Effect::Queue(QueueEffect::WakeAt(Some(505_000))),
+        ],
+        "the key's character spoken"
+    );
+    // The review cursor's next word, on the field's text.
+    let next_word = QueueInput::Press(Box::new(Press {
+        key_seq: KeySeq::new(2),
+        pressed_at_us: small.at_us + 1_000,
+        action: PressAction::Command {
+            command: ReviewCommand::ReviewNextWord,
+            repeat: 0,
+        },
+    }));
+    let _ = same(&mut small, &mut large, &next_word);
 }
 
 #[test]

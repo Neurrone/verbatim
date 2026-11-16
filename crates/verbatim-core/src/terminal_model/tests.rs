@@ -2,8 +2,7 @@
 //! the flood policy's speech, and each key input becomes the rules' key.
 
 use verbatim_model::{
-    Backend, CaretKey, CaretMotion, CaretReport, EarlierElement, FocusText, Input, NodeDetails,
-    NodeId, NodeSnapshot, NormalizedEvent, OutpostId, Pid, Role, StateSet, TextAnchor, TextChunk,
+    CaretKey, CaretMotion, CaretReport, NodeId, OutpostId, Pid, Role, TextAnchor, TextChunk,
     TextUnit, TraceId,
 };
 use verbatim_text::terminal_reading::{Settings, Speech, Step};
@@ -156,46 +155,23 @@ fn each_key_input_is_the_rules_key_and_a_clearing_key_forget() {
     );
 }
 
-/// A focus on terminal `node`, carrying `text` and what its reader read of
-/// the element it held before under the node's runtime id, `earlier`.
-fn terminal_focus(node: NodeId, text: Option<FocusText>, earlier: Option<EarlierElement>) -> Input {
-    Input::Event {
-        trace_id: TraceId::from_raw(5),
-        observed_at_us: 0,
-        source: Pid(1),
-        backend: Backend::Uia,
-        window: None,
-        event: NormalizedEvent::FocusChanged {
-            node: NodeSnapshot {
-                id: node,
-                backend: Backend::Uia,
-                role: Role::Terminal,
-                name: None,
-                value: None,
-                states: StateSet::new(),
-                details: NodeDetails::default(),
-            },
-            whole_window: false,
-            ancestors: Vec::new(),
-            selected_child: None,
-            text: text.map(Box::new),
-            earlier,
-            group: None,
-            answers: None,
-            first_cached_ancestor: None,
-        },
-        purpose: None,
-    }
-}
-
 /// A terminal focused with its caret and modelled, then focused again under
-/// the same node, whose report says the element its reader held under that
-/// runtime id is `earlier`: Core forgets the node's caret and its model, so
-/// the new element's text is taken afresh, as a new object's is
+/// the same node, whose read says its reader's runtime id now names
+/// another element: Core forgets the node's caret and its model, so the
+/// new element's text is taken afresh, as a new object's is
 /// (`docs/parity/focus-events.md`, "Duplicate focus suppression").
-fn a_replaced_element_forgets_its_nodes_caret_and_model(earlier: EarlierElement) {
-    let node = NodeId::in_outpost(OutpostId(1), 12);
-    let mut state = SrState::new();
+#[test]
+fn an_element_gone_under_the_same_node_forgets_its_caret_and_model() {
+    use crate::entries::tests::{focus_read, node, ready, uia_focus_read, uia_tell, values};
+    use verbatim_model::request::{FocusCaret, FocusCaretRead};
+    let mut held = ready();
+    let terminal = |caret: FocusCaret, reused: bool| {
+        let mut read = focus_read(None);
+        read.focus.read.values = values("Terminal", Role::Terminal);
+        read.caret = caret;
+        read.runtime_id_reused = reused;
+        read
+    };
     let caret = CaretReport {
         line: TextChunk {
             unit: TextUnit::Line,
@@ -211,46 +187,41 @@ fn a_replaced_element_forgets_its_nodes_caret_and_model(earlier: EarlierElement)
         selection: None,
         read_at_us: 1,
     };
-    let _ = crate::reduce(
-        &mut state,
-        &mut crate::Runtime::default(),
-        &terminal_focus(
-            node,
-            Some(FocusText::Caret {
-                caret,
-                selected_text: None,
-                changes: verbatim_model::CaretChanges::default(),
-                facts: None,
-            }),
-            None,
-        ),
+    let read = FocusCaret::Read(Box::new(FocusCaretRead {
+        caret,
+        selected_text: None,
+        baseline: TextAnchor(2),
+        difference: None,
+    }));
+    let _ = uia_focus_read(
+        &mut held,
+        1_000,
+        uia_tell(1, Vec::new()),
+        terminal(read, false),
     );
-    state.terminals.add(node, Settings::default());
+    held.state.terminals.add(node(2), Settings::default());
     assert_eq!(
-        (state.focus_caret(node).is_some(), state.terminals.len(),),
+        (
+            held.state.focus_caret(node(2)).is_some(),
+            held.state.terminals.len()
+        ),
         (true, 1),
         "the first element's caret and model are kept"
     );
 
-    let _ = crate::reduce(
-        &mut state,
-        &mut crate::Runtime::default(),
-        &terminal_focus(node, None, Some(earlier)),
+    let _ = uia_focus_read(
+        &mut held,
+        5_000,
+        uia_tell(1, Vec::new()),
+        terminal(FocusCaret::NotRead, true),
     );
     assert_eq!(
-        (state.focus_caret(node).is_some(), state.terminals.len(),),
+        (
+            held.state.focus_caret(node(2)).is_some(),
+            held.state.terminals.len()
+        ),
         (false, 0)
     );
-}
-
-#[test]
-fn an_element_that_lost_the_focus_under_the_same_node_forgets_its_caret_and_model() {
-    a_replaced_element_forgets_its_nodes_caret_and_model(EarlierElement::NotFocused);
-}
-
-#[test]
-fn an_element_gone_under_the_same_node_forgets_its_caret_and_model() {
-    a_replaced_element_forgets_its_nodes_caret_and_model(EarlierElement::Gone);
 }
 
 // "Identical reads" (`docs/design/readers-tell-core-asks-build3.md`): Core

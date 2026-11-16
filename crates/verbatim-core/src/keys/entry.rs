@@ -71,6 +71,16 @@ impl Arrivals {
 
 /// A key or command in the queue: the hook's report under its trace, and
 /// its fence, its own number.
+/// A press of a review command: the command and how many times it was
+/// repeated, which its function runs against.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct ReviewPress {
+    /// The key's trace.
+    pub(crate) trace_id: TraceId,
+    pub(crate) command: ReviewCommand,
+    pub(crate) repeat: u8,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct PressEntry {
     /// The trace minted when the hook saw the key.
@@ -127,7 +137,7 @@ pub(crate) async fn run(mut cx: Cx<Entries>, entry: PressEntry) {
         for effect in stopped {
             cx.emit(effect);
         }
-        let press = crate::key_line::ReviewPress {
+        let press = ReviewPress {
             trace_id,
             command,
             repeat,

@@ -569,9 +569,10 @@ pub(crate) fn uia(cx: &mut Cx<Entries>, change: &UiaChange) {
 /// read of the node's description, which NVDA reads when it handles the
 /// change (the full description, else the help text), and one of whether
 /// its suggestions are open, NVDA reading `controllerFor` live
-/// (`NVDAObjects/behaviors.py` 231 to 236). A description change is asked
-/// only on the committed focus, the only node it is spoken for
-/// (`NVDAObjects/__init__.py` 1415 to 1417). Any other change speaks the
+/// (`NVDAObjects/behaviors.py` 231 to 236). Both are asked only on the
+/// committed focus: a description change is spoken for no other node
+/// (`NVDAObjects/__init__.py` 1415 to 1417), and a suggestions change on
+/// any other plays the suggestions-closed indication unread. Any other change speaks the
 /// value its tell carries ([`uia`]).
 pub(crate) async fn uia_entry(mut cx: Cx<Entries>, change: UiaChange) {
     let asked = match change.property {
@@ -582,12 +583,19 @@ pub(crate) async fn uia_entry(mut cx: Cx<Entries>, change: UiaChange) {
     if !accepted(&change) {
         return;
     }
-    let Some((kept, node)) = uia_target(&cx.facts(), &change) else {
+    let target = uia_target(&cx.facts(), &change);
+    let Some((kept, node)) = target.filter(|(kept, node)| *node == kept.node) else {
+        // A suggestions change on anything but the committed focus plays
+        // the suggestions-closed indication with no read, the opening's
+        // test applying only to the focus (`NVDAObjects/behaviors.py`
+        // 231 to 236).
+        if asked == PropertyId::Suggestions {
+            cx.emit(verbatim_model::Effect::PlayEarcon(
+                verbatim_model::Earcon::SuggestionsClosed,
+            ));
+        }
         return;
     };
-    if asked == PropertyId::Description && node != kept.node {
-        return;
-    }
     let read = crate::announcements::selection::NodeProperties {
         window: kept.window,
         node,

@@ -261,6 +261,63 @@ pub(crate) fn feed_at(held: &mut Held, at_us: u64, input: Input<Entry>) -> Vec<S
         .collect()
 }
 
+/// The requests sent at `at_us` by `input`, by number, and what it said.
+pub(crate) fn sent_at(held: &mut Held, at_us: u64, input: Input<Entry>) -> (Vec<u64>, Vec<String>) {
+    let effects = feed(&mut held.state, &mut held.runtime, Timed { at_us, input }).unwrap();
+    let numbers = effects
+        .iter()
+        .filter_map(|effect| match effect {
+            Effect::Send { ask, .. } => Some(ask.number.0),
+            _ => None,
+        })
+        .collect();
+    let said = effects
+        .into_iter()
+        .filter_map(|effect| match effect {
+            Effect::Said(Said::Speak(utterance, _)) => Some(
+                utterance
+                    .segments
+                    .iter()
+                    .filter(|segment| !matches!(segment.content, SegmentContent::Mark(_)))
+                    .map(|segment| format!("{:?}", segment.content))
+                    .collect::<Vec<_>>()
+                    .join(" "),
+            ),
+            _ => None,
+        })
+        .collect();
+    (numbers, said)
+}
+
+/// A UI Automation focus told by the listener at `at_us` as `tell`, its
+/// listener read answered with [`listener_answer`] and its completion
+/// answered with `read`: what the completion's answer said.
+pub(crate) fn uia_focus_read(
+    held: &mut Held,
+    at_us: u64,
+    tell: Event,
+    read: FocusRead,
+) -> Vec<String> {
+    let (asked, _) = sent_at(held, at_us, entry(tell));
+    let [object] = asked[..] else {
+        panic!("one listener read asked: {asked:?}");
+    };
+    let (asked, _) = sent_at(
+        held,
+        at_us + 1,
+        answer(LISTENER, object, Reply::Object(Box::new(listener_answer()))),
+    );
+    let [completion] = asked[..] else {
+        panic!("one completion asked: {asked:?}");
+    };
+    sent_at(
+        held,
+        at_us + 2,
+        answer(OUTPOST, completion, Reply::Focus(Box::new(read))),
+    )
+    .1
+}
+
 pub(crate) fn kind(ask: &Ask) -> &'static str {
     match &ask.request {
         Wire::ReadObject(_) => "ReadObject",
@@ -670,7 +727,7 @@ fn an_msaa_duplicate_of_the_readers_last_focus_ends_the_run_with_no_read() {
             window: WindowHandle(5),
             top_level: WindowHandle(4),
             root_owner: WindowHandle(4),
-            ancestor_windows: Vec::new(),
+            ancestor_windows: Vec::new().into(),
         },
         class: ObjectClass::Plain,
         role: verbatim_model::Role::Button,
@@ -708,6 +765,7 @@ fn a_foreground_marker_empties_the_last_focus_for_an_unrelated_window() {
         process: Pid(41),
         thread: 0,
         by_class: None,
+        shell: false,
     };
     // The first foreground report appends the startup read, of an
     // application whose outpost has not started; the marker waits behind

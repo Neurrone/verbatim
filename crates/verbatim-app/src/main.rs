@@ -45,14 +45,14 @@ use verbatim_core::{ReducerRecorder, SrState, reduce};
 use verbatim_gui::{GuiCommand, GuiEvent, GuiHandle, ShellItemKind, run_gui};
 use verbatim_input::{DecisionConfig, GestureMap, KeyboardLayout};
 use verbatim_input_windows::{ForegroundView, InputHook};
-use verbatim_model::protocol::{CoreToListener, ListenerToCore, RequestId};
-use verbatim_model::protocol::{CoreToOutpost, EventTiming, OutpostToCore, Query, QueryOutcome};
+use verbatim_model::protocol::{CoreToListener, ListenerToCore};
+use verbatim_model::protocol::{CoreToOutpost, EventTiming, OutpostToCore};
 use verbatim_model::request::{
     Answer, ForegroundReport, Instance, Outcome, ProcessFact, QueueEffect, QueueInput, Reader,
 };
 use verbatim_model::{
     Earcon, Effect, ForegroundWindow, GestureId, GuiRequest, Input, LockKey, OutpostId, Pid,
-    ReaderSettings, TextRequest, TraceId, WindowHandle,
+    ReaderSettings, TraceId, WindowHandle,
 };
 use verbatim_process::arguments::OutpostOptions;
 use verbatim_process::clock::now_us;
@@ -320,7 +320,6 @@ fn run(
         Arc::clone(&outposts),
     ));
     let idle_line = Arc::new(harness::IdleLine::default());
-    let live_re_reads = Arc::new(std::sync::atomic::AtomicU64::new(0));
 
     // Core's generation record takes the harness's ignored processes, and
     // starts Verbatim's own outpost at once, before the
@@ -365,7 +364,6 @@ fn run(
             },
             readiness: Arc::clone(&readiness),
             idle_line: Arc::clone(&idle_line),
-            live_re_reads: Arc::clone(&live_re_reads),
             gui_handle: Arc::clone(&gui_handle),
         };
         // The only thread that speaks: it holds the speaking token, which
@@ -426,7 +424,6 @@ fn run(
         dumps_dir: dumps_dir.clone(),
         readiness: Arc::clone(&readiness),
         idle_line: Arc::clone(&idle_line),
-        live_re_reads: Arc::clone(&live_re_reads),
     }))?;
     server_slot
         .set(server)
@@ -862,10 +859,6 @@ struct ReducerContext {
     readiness: Arc<harness::Readiness>,
     /// The control plane's `AwaitIdle` waiters.
     idle_line: Arc<harness::IdleLine>,
-    /// How many live re-reads Core has asked for, as the control plane's
-    /// status reply reports it (`SrState::live_re_reads`), written after
-    /// each input.
-    live_re_reads: Arc<std::sync::atomic::AtomicU64>,
     /// The GUI's handle, once the GUI thread is up, which the menu and the
     /// shell's lists are shown through (`Effect::Show`).
     gui_handle: Arc<OnceLock<GuiHandle>>,
@@ -932,10 +925,6 @@ struct ReducerThread<'a> {
     /// Outpost generations that have started and not yet ended. A message
     /// from an outpost that has ended is dropped before the reducer sees it.
     live: LiveOutposts,
-    /// The outposts a focus report of which was handled since the views
-    /// were last sent, which are written the nodes Core holds in them
-    /// ([`send_views`](Self::send_views)).
-    focus_reported: BTreeSet<OutpostId>,
     /// Whether Core has known a focus, which readiness was told once.
     focus_known: bool,
     /// The highest numbered harness key handled so far.
@@ -943,11 +932,6 @@ struct ReducerThread<'a> {
     /// Turns the outposts' frames, which the supervisor's relay posts
     /// unparsed, into the messages they carry, in each outpost's order.
     frames: Frames,
-    /// The held key's one deadline, as Core set it
-    /// ([`Effect::BoundHeldKey`]): the key, and when its wait for the key
-    /// ahead or the read of its caret ends; one of the reducer thread's
-    /// deadlines, so it adds no wake-up source.
-    held_due: Option<(TraceId, Instant)>,
     /// When Core's event queue asked to be woken
     /// ([`QueueEffect::WakeAt`]), in microseconds on the run's shared
     /// clock: one of the reducer thread's deadlines.
@@ -994,7 +978,7 @@ impl ReducerThread<'_> {
                 target_pid,
                 ..
             } => {
-                self.live.started(outpost, target_pid);
+                self.live.started(outpost);
                 self.context.outposts.lock().expect("outposts lock").insert(
                     target_pid,
                     OutpostStatus {
@@ -1037,10 +1021,15 @@ impl ReducerThread<'_> {
                 // it is in the held nodes sent after this input.
                 let accepted = self.live.accept(outpost, position);
                 match *message {
-                    OutpostToCore::Tell(tell) => self.queue(QueueInput::Tell {
-                        from: outpost_instance(pid, outpost),
-                        tell,
-                    }),
+                    OutpostToCore::Tell(tell) => {
+                        // The latency timeline starts when the event was
+                        // first observed, and Core receives it now.
+                        self.tell_received(&tell);
+                        self.queue(QueueInput::Tell {
+                            from: outpost_instance(pid, outpost),
+                            tell,
+                        });
+                    }
                     OutpostToCore::Answer(answer) => self.queue(QueueInput::Answer {
                         from: outpost_instance(pid, outpost),
                         answer,
@@ -1067,17 +1056,8 @@ impl ReducerThread<'_> {
                     listener.0,
                 )));
             }
-            OutpostMessage::ListenerReady {
-                listener,
-                replacement,
-                ..
-            } => {
+            OutpostMessage::ListenerReady { listener, .. } => {
                 self.context.readiness.listener_ready();
-                // The live re-reads asked of the listener replaced end with
-                // no answer.
-                if replacement {
-                    self.apply(Input::ListenerReplaced);
-                }
                 self.queue(QueueInput::ReaderReady(listener_instance(listener)));
             }
             OutpostMessage::ListenerEnded { listener, .. } => {
@@ -1086,7 +1066,10 @@ impl ReducerThread<'_> {
             OutpostMessage::Listener { listener, message } => {
                 let from = listener_instance(listener);
                 match *message {
-                    ListenerToCore::Tell(tell) => self.queue(QueueInput::Tell { from, tell }),
+                    ListenerToCore::Tell(tell) => {
+                        self.tell_received(&tell);
+                        self.queue(QueueInput::Tell { from, tell });
+                    }
                     ListenerToCore::Answer(answer) => {
                         self.queue(QueueInput::Answer { from, answer });
                     }
@@ -1109,15 +1092,6 @@ impl ReducerThread<'_> {
                     instance,
                     abandoned,
                 }));
-            }
-            OutpostMessage::MenuOrSwitchEnded { ended_at_us } => {
-                self.apply(Input::MenuOrSwitchEnded { ended_at_us });
-            }
-            OutpostMessage::Desktop(news) => {
-                self.apply(Input::Desktop {
-                    trace_id: TraceId::mint(),
-                    news,
-                });
             }
             OutpostMessage::Progress(change) => {
                 self.apply(Input::Progress {
@@ -1145,6 +1119,21 @@ impl ReducerThread<'_> {
                 )));
             }
         }
+    }
+
+    /// Records in the latency ledger that Core received `tell`, observed
+    /// when its reader's callback received it.
+    fn tell_received(&self, tell: &verbatim_model::tell::Event) {
+        self.context
+            .ledger
+            .event_observed(tell.trace_id, tell.at_us);
+        self.context.ledger.event_received(
+            tell.trace_id,
+            EventTiming {
+                observed_at_us: tell.at_us,
+                ..EventTiming::default()
+            },
+        );
     }
 
     /// The listener's report that `report`'s window came to the foreground:
@@ -1222,48 +1211,6 @@ impl ReducerThread<'_> {
     #[deny(clippy::wildcard_enum_match_arm)]
     fn on_outpost_input(&mut self, source: Pid, outpost: OutpostId, message: OutpostToCore) {
         match message {
-            OutpostToCore::Event {
-                trace_id,
-                observed_at_us,
-                application,
-                timing,
-                ..
-            } => {
-                // The latency timeline starts when the event was first
-                // observed. That is `observed_at_us` except for a foreground
-                // change, which is ordered by when its window became the
-                // foreground, later than Windows raised it.
-                // An event in a console window, reported by the console
-                // host's outpost, belongs to the console's client, and so
-                // does that outpost from now on.
-                if let Some(application) = application {
-                    self.live.reports_for(outpost, application);
-                }
-                let first_observed_us = match timing.observed_at_us {
-                    0 => observed_at_us,
-                    us => us,
-                };
-                self.context
-                    .ledger
-                    .event_observed(trace_id, first_observed_us);
-                self.context.ledger.event_received(trace_id, timing);
-                if let Some(input) = verbatim_model::protocol::event_input(source, message) {
-                    self.apply(input);
-                }
-            }
-            OutpostToCore::Reply {
-                trace_id,
-                request_id,
-                outcome,
-                timing,
-            } => {
-                // A reply the worker answered carries its timing and calls;
-                // a withdrawn or abandoned query's carries none.
-                if timing.dequeued_at_us != 0 {
-                    self.context.ledger.event_received(trace_id, timing);
-                }
-                self.finish(trace_id, request_id, outpost, outcome);
-            }
             OutpostToCore::Ready {
                 outpost_pid,
                 target_pid,
@@ -1287,25 +1234,15 @@ impl ReducerThread<'_> {
                 tracing::warn!(%source, %outpost, detail, "outpost fault");
             }
             OutpostToCore::IdleAnswer { round } => self.barrier.answered(round, outpost),
-            OutpostToCore::LiveRereadGone { request } => {
-                self.apply(Input::LiveRereadGone { outpost, request });
-            }
-            OutpostToCore::NotResponding { window } => {
-                if let Some(input) = not_responding(&self.live, source, outpost, window) {
-                    self.apply(input);
-                } else {
-                    tracing::error!(
-                        %outpost,
-                        window,
-                        "an accepted outpost's hang report names no live generation, a logic bug; dropped"
-                    );
-                }
-            }
             // Core's event queue takes tells and answers before this
             // function is called ([`Self::on_outpost_message`]); the relay
             // consumes the rest, and hands none of them on.
             OutpostToCore::Answer(_)
             | OutpostToCore::Tell(_)
+            | OutpostToCore::Event { .. }
+            | OutpostToCore::Reply { .. }
+            | OutpostToCore::LiveRereadGone { .. }
+            | OutpostToCore::NotResponding { .. }
             | OutpostToCore::Pong { .. }
             | OutpostToCore::TargetExited
             | OutpostToCore::SpareReady { .. } => {}
@@ -1426,7 +1363,6 @@ impl ReducerThread<'_> {
         if let Some(round) = self.barrier.start(self.handled_input, clear) {
             self.context.supervisor.query_idle(round);
         }
-        let requests = self.state.outstanding_queries();
         let starting = self.live.starting();
         let standing = match self.barrier.standing() {
             idle::Standing::NoRound => "no round under way".to_owned(),
@@ -1446,7 +1382,7 @@ impl ReducerThread<'_> {
             .outstanding
             .lock()
             .unwrap_or_else(PoisonError::into_inner) = format!(
-            "handled input {}, {standing}, {requests} outpost requests outstanding, {starting} outposts starting, terminal timer {}",
+            "handled input {}, {standing}, {starting} outposts starting, terminal timer {}",
             self.handled_input,
             if self.state.terminal_timer_due().is_some() {
                 "armed"
@@ -1456,13 +1392,10 @@ impl ReducerThread<'_> {
         );
     }
 
-    /// The reducer's own conditions for the idle barrier: no request to an
-    /// outpost is outstanding, no outpost is starting (one still starting
-    /// has facts or a focus query waiting for it, as a replacement for a
-    /// crashed one does), no application's focus is wanted, no key the
-    /// hook held back is still waiting to reach its application
-    /// (`books/dev/src/explanation/design/key-holding.md`), no key or command waits in Core's
-    /// held-key line, no lock key's announcement is still to come, and no
+    /// The reducer's own conditions for the idle barrier: no outpost is
+    /// starting (one still starting has a request waiting for it, as a
+    /// replacement for a crashed one does), no lock key's announcement is
+    /// still to come, and no
     /// terminal's quiet-period timer is armed, since what waits for it is
     /// spoken when it ends; and Core's event queue is idle
     /// (`SrState::queue_idle`: no entry, no request waiting or out, no
@@ -1470,8 +1403,6 @@ impl ReducerThread<'_> {
     /// due).
     fn idle_conditions_clear(&self) -> bool {
         self.state.queue_idle()
-            && self.state.outstanding_queries() == 0
-            && !self.state.holds_inputs_back()
             && !self.state.announces_toggle_key()
             && self.state.terminal_timer_due().is_none()
             && self.live.starting() == 0
@@ -1487,20 +1418,6 @@ impl ReducerThread<'_> {
         self.context.reader.changed(settings);
     }
 
-    /// Delivers a query's outcome, traced `trace_id`, by its request id's
-    /// asker: to the reducer as `Input::Answered`.
-    fn finish(
-        &mut self,
-        trace_id: TraceId,
-        id: RequestId,
-        outpost: OutpostId,
-        outcome: QueryOutcome,
-    ) {
-        if let Some(input) = requests::reply_input(trace_id, id, outpost, outcome, now_us()) {
-            self.apply(input);
-        }
-    }
-
     /// Runs one input through the reducer, records it in the flight
     /// recorder, and executes the resulting effects.
     fn apply(&mut self, input: Input) {
@@ -1510,25 +1427,12 @@ impl ReducerThread<'_> {
         } else if let Input::Script { script, .. } = &input {
             tracing::info!(%trace_id, ?script, "gesture");
         }
-        // A focus report, taken or refused, has its outpost told the nodes
-        // Core holds there once the message is handled ([`send_views`]).
-        if let Input::Event {
-            event: verbatim_model::NormalizedEvent::FocusChanged { node, .. },
-            ..
-        } = &input
-        {
-            self.focus_reported.insert(node.id.outpost());
-        }
         let effects = reduce(&mut self.state, &mut self.runtime, &input);
         if !self.focus_known && self.state.focus_committed() {
             self.focus_known = true;
             self.context.readiness.focus_known();
         }
         self.context.ledger.reduced(trace_id);
-        self.context.live_re_reads.store(
-            self.state.live_re_reads(),
-            std::sync::atomic::Ordering::Relaxed,
-        );
         self.context.foreground.set(self.state.hook_foreground());
         {
             let mut recorder = self
@@ -1588,7 +1492,6 @@ impl ReducerThread<'_> {
                 .get(outpost)
                 .map(|anchors| anchors.iter().map(|anchor| anchor.0).collect())
                 .unwrap_or_default();
-            let reported = self.focus_reported.contains(outpost);
             match live.held_changed(&nodes, &outpost_anchors) {
                 live::HeldChange::None => {}
                 change => {
@@ -1596,7 +1499,7 @@ impl ReducerThread<'_> {
                         nodes.into_iter().collect(),
                         outpost_anchors.into_iter().collect(),
                     );
-                    if change == live::HeldChange::Nodes || reported {
+                    if change == live::HeldChange::Nodes {
                         self.context.supervisor.send_nodes_held(
                             *outpost,
                             nodes,
@@ -1614,7 +1517,6 @@ impl ReducerThread<'_> {
                 }
             }
         }
-        self.focus_reported.clear();
     }
 
     /// Fans an event Core took out to the control plane's event stream,
@@ -1648,43 +1550,7 @@ impl ReducerThread<'_> {
             }
             Effect::StopSpeech => self.context.manager.control().cancel(),
             Effect::DropExpiredSpeech(now) => self.context.manager.control().drop_expired(now),
-            Effect::Fetch(query) => self.ask_for_reducer(
-                trace_id,
-                query.query_id,
-                query.node_id.outpost(),
-                Query::Navigate {
-                    node_id: query.node_id,
-                    kind: query.kind,
-                    details: query.details,
-                },
-            ),
-            Effect::ReadNode {
-                query_id,
-                node_id,
-                details,
-            } => self.ask_for_reducer(
-                trace_id,
-                query_id,
-                node_id.outpost(),
-                Query::ReadNode { node_id, details },
-            ),
-            Effect::Activate { query_id, node_id } => self.ask_for_reducer(
-                trace_id,
-                query_id,
-                node_id.outpost(),
-                Query::Activate { node_id },
-            ),
             Effect::CopyToClipboard(text) => self.context.clipboard.copy(trace_id, text),
-            Effect::Text(TextRequest {
-                query_id,
-                node_id,
-                op,
-            }) => self.ask_for_reducer(
-                trace_id,
-                query_id,
-                node_id.outpost(),
-                Query::Text { node_id, op },
-            ),
             Effect::KeepDisplayOn(on) => keep_display_on(on),
             Effect::SettingsChanged(settings) => self.context.reader.changed(settings),
             // The exit sound is heard before Verbatim exits: the main thread
@@ -1699,39 +1565,7 @@ impl ReducerThread<'_> {
             }
             Effect::PlayEarcon(earcon) => self.context.manager.play_earcon(&mut self.token, earcon),
             Effect::Queue(effect) => self.execute_queue(effect),
-            // Core's event queue asks for the focus itself; today's paths
-            // that still name this read are no longer fed.
-            Effect::ReadFocus(purpose) => {
-                tracing::warn!(
-                    ?purpose,
-                    "a read of the focus outside Core's event queue is not asked"
-                );
-            }
-            Effect::BoundHeldKey(due) => {
-                self.held_due = due.map(|(key, within_ms)| {
-                    (key, Instant::now() + Duration::from_millis(within_ms))
-                });
-            }
-            Effect::KeyNote(note) => {
-                let outpost = note.node().outpost();
-                let command = CoreToOutpost::KeyNote(note);
-                if let Err(error) = self.context.supervisor.send_to_outpost(outpost, command) {
-                    // The key is still judged by its bound: nothing waits
-                    // on a note.
-                    tracing::debug!(%error, %outpost, "a key's note was refused");
-                }
-            }
-            Effect::Withdraw { outpost, query_id } => {
-                let command = CoreToOutpost::CancelQuery {
-                    request_id: RequestId::reducer(query_id.0),
-                };
-                if let Err(error) = self.context.supervisor.send_to_outpost(outpost, command) {
-                    // The outpost is going away; nothing waits for its answer.
-                    tracing::debug!(%error, %outpost, "a query of Core's could not be withdrawn");
-                }
-            }
             Effect::ForKey(key, effect) => self.execute(key, *effect),
-            Effect::LiveReread(reread) => self.live_reread(&reread),
             Effect::ReadClock { repeat } => {
                 self.follow_ups.push(read_clock(trace_id, repeat));
             }
@@ -1867,106 +1701,6 @@ impl ReducerThread<'_> {
         }
     }
 
-    /// Logs Core's live re-read `reread` and sends it to its focus reader:
-    /// the listener's reading thread of the outpost's application, or the
-    /// outpost itself. One that cannot reach its outpost is answered gone
-    /// at once, so the pending live re-read ends.
-    fn live_reread(&mut self, reread: &verbatim_model::LiveReread) {
-        let logged = &reread.logged;
-        tracing::info!(
-            request = reread.request,
-            outpost = %reread.outpost,
-            reader = ?reread.reader,
-            trace = %reread.trace_id,
-            focus = ?logged.focus,
-            cache_join = ?logged.cache_join,
-            lowest_common_ancestor = ?logged.lowest_common_ancestor,
-            reason = ?logged.reason,
-            "a focus report would speak a cached ancestor; it is read again live"
-        );
-        let sent = match reread.reader {
-            verbatim_model::FocusReaderKind::Listener => {
-                match self.live.target_of(reread.outpost) {
-                    Some(target) => {
-                        self.context.supervisor.live_reread(
-                            reread.request,
-                            target,
-                            (
-                                reread.trace_id,
-                                reread.window.map_or(0, |window| {
-                                    isize::try_from(window.0.cast_signed()).unwrap_or(0)
-                                }),
-                            ),
-                        );
-                        true
-                    }
-                    None => false,
-                }
-            }
-            verbatim_model::FocusReaderKind::Outpost => self
-                .context
-                .supervisor
-                .send_to_outpost(
-                    reread.outpost,
-                    CoreToOutpost::LiveReread {
-                        request: reread.request,
-                        trace_id: reread.trace_id,
-                    },
-                )
-                .is_ok(),
-        };
-        if !sent {
-            tracing::debug!(
-                request = reread.request,
-                "a live re-read could not be sent; answered gone"
-            );
-            self.follow_ups.push(Input::LiveRereadGone {
-                outpost: reread.outpost,
-                request: reread.request,
-            });
-        }
-    }
-
-    /// Sends the reducer's query `query_id`, which Core's reducer records,
-    /// to `outpost` under its own number; the answer re-enters the reducer
-    /// as `Input::Answered`.
-    fn ask_for_reducer(
-        &mut self,
-        trace_id: TraceId,
-        query_id: verbatim_model::QueryId,
-        outpost: OutpostId,
-        query: Query,
-    ) {
-        let id = RequestId::reducer(query_id.0);
-        let command = CoreToOutpost::Query {
-            trace_id,
-            request_id: id,
-            query,
-            timing: EventTiming::default(),
-        };
-        self.send(trace_id, outpost, id, command);
-    }
-
-    /// Sends request `id`, traced `trace_id`, to `outpost`, failing it at
-    /// once when it cannot be sent, so it still gets its one outcome.
-    fn send(
-        &mut self,
-        trace_id: TraceId,
-        outpost: OutpostId,
-        id: RequestId,
-        command: CoreToOutpost,
-    ) {
-        if let Err(error) = self.context.supervisor.send_to_outpost(outpost, command) {
-            tracing::warn!(%error, %outpost, "a query could not reach its outpost");
-            self.finish(
-                trace_id,
-                id,
-                outpost,
-                QueryOutcome::Failed(error.to_string()),
-            );
-        }
-    }
-
     /// Starts a control-plane tree dump of the application holding
     /// attention, each element's location read only with `locations`: a
     /// request of Core's from outside the event queue, naming the
@@ -2036,8 +1770,7 @@ impl ReducerThread<'_> {
 
     /// Handles the end of `outpost`, which watched `target_pid`, for
     /// `reason`: Core's generation record hears its reader ended, answers
-    /// what was asked of it and decides its replacement, and the requests
-    /// of today's table asked of it end.
+    /// what was asked of it and decides its replacement.
     fn on_outpost_ended(&mut self, outpost: OutpostId, target_pid: Pid, reason: EndReason) {
         tracing::info!(%outpost, %target_pid, %reason, "outpost ended");
         // Everything it sent is ahead of its end: in the idle
@@ -2058,16 +1791,12 @@ impl ReducerThread<'_> {
                 .expect("outposts lock")
                 .remove(&target_pid);
         }
-        self.apply(Input::OutpostEnded {
-            trace_id: TraceId::mint(),
-            outpost,
-        });
         if let Some(server) = self.context.server_slot.get() {
             server.broadcast_outpost_ended(target_pid, reason.to_string());
         }
     }
 
-    /// The earliest time the held key's one deadline passes, the focused
+    /// The earliest time Core's event queue asked to be woken, the focused
     /// terminal's quiet-period timer is due, or a lock key's state is read.
     /// The last two are views of Core's state, read here after each step,
     /// so a timer whose model is gone is gone with it.
@@ -2084,24 +1813,16 @@ impl ReducerThread<'_> {
             .min()
             .map(instant_at)
             .into_iter()
-            .chain(self.held_due.map(|(_, due)| due))
             .chain(self.queue_due.map(instant_at))
             .min()
     }
 
-    /// Tells Core once the held key's one deadline is past, and moves the
-    /// terminal's timer and the lock keys' reads on.
-    fn expire(&mut self, now: Instant) {
+    /// Tells Core once the time it asked to be woken at is past, and moves
+    /// the terminal's timer and the lock keys' reads on.
+    fn expire(&mut self) {
         let shared = now_us();
         if self.queue_due.take_if(|due| *due <= shared).is_some() {
             self.queue(QueueInput::Due);
-        }
-        if let Some((trace_id, _)) = self.held_due.take_if(|(_, due)| *due <= now) {
-            self.apply(Input::Queue {
-                trace_id,
-                at_us: shared,
-                input: QueueInput::HeldKeyDue,
-            });
         }
         // The terminal's timer, once its due time is past; the step moves
         // the due time past it (`SrState::terminal_timer_due`).
@@ -2161,26 +1882,6 @@ fn window_handle(window: WindowHandle) -> isize {
     isize::from_ne_bytes(window.0.to_ne_bytes())
 }
 
-/// The reducer input for `outpost`'s report that `window`, in `target`, the
-/// process it watches, stopped responding, which it sends once per hang:
-/// named for the application the outpost reports for, which for a console
-/// host's outpost is the console's client, as attention names it; Core
-/// decides whether the sound plays, by whether that application is
-/// attended. `None` when `outpost` is not a live generation, which no
-/// message `LiveOutposts::accept` let through can be, since nothing
-/// between the two ends a generation: a logic bug, which the caller logs
-/// as an error.
-fn not_responding(
-    live: &LiveOutposts,
-    target: Pid,
-    outpost: OutpostId,
-    window: isize,
-) -> Option<Input> {
-    let process = live.application_of(outpost)?;
-    tracing::info!(%outpost, %target, %process, window, "a window stopped responding");
-    Some(Input::ApplicationNotResponding { outpost, process })
-}
-
 /// Posts the supervisor's messages to the reducer thread's port, in line
 /// with its keys and commands, so the reducer takes them all in the order
 /// they arrived (`docs/design/communication.md`, section 4.5).
@@ -2210,13 +1911,11 @@ fn reducer_loop(
         runtime: verbatim_core::Runtime::default(),
         outside: requests::Outside::default(),
         live: LiveOutposts::default(),
-        focus_reported: BTreeSet::new(),
         focus_known: false,
         handled_input: 0,
         frames: context.supervisor.frames(),
         barrier: idle::IdleBarrier::default(),
         exit_sound: None,
-        held_due: None,
         queue_due: None,
         marks: idle::HeldMarks::default(),
         last_press: None,
@@ -2233,7 +1932,7 @@ fn reducer_loop(
         let next = next_command(&mut command_rx, due);
         let now = Instant::now();
         if due.is_some_and(|due| now >= due) {
-            thread.expire(now);
+            thread.expire();
         }
         match next {
             Next::Command(command) => thread.on_command(command),
@@ -2430,7 +2129,6 @@ struct ControlHandlersConfig {
     dumps_dir: PathBuf,
     readiness: Arc<harness::Readiness>,
     idle_line: Arc<harness::IdleLine>,
-    live_re_reads: Arc<std::sync::atomic::AtomicU64>,
 }
 
 /// Builds the control-plane handlers over the app's live pieces.
@@ -2446,7 +2144,6 @@ fn control_handlers(config: ControlHandlersConfig) -> ServerHandlers {
         dumps_dir,
         readiness,
         idle_line,
-        live_re_reads,
     } = config;
     let focus_tx = command_tx.clone();
     let idle_tx = command_tx.clone();
@@ -2466,7 +2163,9 @@ fn control_handlers(config: ControlHandlersConfig) -> ServerHandlers {
                 active_synth: Some(settings_host.active_synthesizer().id.0),
                 outposts,
                 ready,
-                live_re_reads: live_re_reads.load(std::sync::atomic::Ordering::Relaxed),
+                // The live re-read is gone (ADR 0003); version 4's
+                // status reply keeps the count, always zero.
+                live_re_reads: 0,
             }
         }),
         latency: Box::new(move |last_n| ledger.recent(last_n)),
@@ -2528,172 +2227,6 @@ fn request_dump_tree(command_tx: &Commands, locations: bool) -> DumpTreeResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// The focus listener's report that a window of `process` came to the
-    /// foreground, which gives it attention.
-    fn foreground(process: u32, window: u64) -> Input {
-        Input::Foreground(ForegroundWindow {
-            window: WindowHandle(window),
-            root_owner: WindowHandle(window),
-            process: Pid(process),
-            observed_at_us: 0,
-            own: false,
-            thread: 1,
-            console: false,
-            integrity: None,
-            own_integrity: None,
-        })
-    }
-
-    /// An answer to Core's query 7 from `outpost`, abandoned, routed as the
-    /// reducer thread routes it.
-    fn abandoned(outpost: OutpostId) -> Input {
-        let Some(input) = requests::reply_input(
-            TraceId::from_raw(9),
-            RequestId::reducer(7),
-            outpost,
-            QueryOutcome::Abandoned,
-            0,
-        ) else {
-            panic!("a reply to Core's query goes to the reducer");
-        };
-        input
-    }
-
-    /// An outpost's `NotResponding` plays the sound when its process holds
-    /// attention, and nothing when another does.
-    #[test]
-    fn not_responding_plays_the_sound_only_for_the_application_holding_attention() {
-        let mut live = LiveOutposts::default();
-        live.started(OutpostId(3), Pid(40));
-        live.started(OutpostId(4), Pid(41));
-        let mut state = SrState::new();
-        assert_eq!(
-            reduce(
-                &mut state,
-                &mut verbatim_core::Runtime::default(),
-                &foreground(40, 0x100)
-            ),
-            []
-        );
-        assert_eq!(
-            reduce(
-                &mut state,
-                &mut verbatim_core::Runtime::default(),
-                &not_responding(&live, Pid(40), OutpostId(3), 0x100).expect("live")
-            ),
-            [Effect::PlayEarcon(Earcon::AppNotResponding)]
-        );
-        assert_eq!(
-            reduce(
-                &mut state,
-                &mut verbatim_core::Runtime::default(),
-                &not_responding(&live, Pid(41), OutpostId(4), 0x200).expect("live")
-            ),
-            []
-        );
-    }
-
-    /// A generation that is not live has no hang report: the miss is passed
-    /// up, not defaulted to the watched process.
-    #[test]
-    fn a_hang_report_from_a_generation_not_live_is_passed_up() {
-        let live = LiveOutposts::default();
-        assert_eq!(not_responding(&live, Pid(40), OutpostId(3), 0x100), None);
-    }
-
-    /// A console host's outpost reports a hang for the console's client,
-    /// which attention names, so the sound plays though the outpost
-    /// watches the console host.
-    #[test]
-    fn a_console_hosts_hang_plays_the_sound_for_the_attended_client() {
-        let mut live = LiveOutposts::default();
-        live.started(OutpostId(3), Pid(50));
-        live.reports_for(OutpostId(3), Pid(40));
-        let mut state = SrState::new();
-        assert_eq!(
-            reduce(
-                &mut state,
-                &mut verbatim_core::Runtime::default(),
-                &foreground(40, 0x100)
-            ),
-            []
-        );
-        assert_eq!(
-            reduce(
-                &mut state,
-                &mut verbatim_core::Runtime::default(),
-                &not_responding(&live, Pid(50), OutpostId(3), 0x100).expect("live")
-            ),
-            [Effect::PlayEarcon(Earcon::AppNotResponding)]
-        );
-    }
-
-    /// An abandoned query, in the application holding attention, plays
-    /// nothing: only `NotResponding` does.
-    #[test]
-    fn an_abandoned_query_plays_nothing() {
-        let mut state = SrState::new();
-        assert_eq!(
-            reduce(
-                &mut state,
-                &mut verbatim_core::Runtime::default(),
-                &foreground(40, 0x100)
-            ),
-            []
-        );
-        assert_eq!(
-            reduce(
-                &mut state,
-                &mut verbatim_core::Runtime::default(),
-                &abandoned(OutpostId(3))
-            ),
-            []
-        );
-    }
-
-    /// A hang met while its application is in the background is never
-    /// sounded: not when it is reported, not when the user returns to the
-    /// application, and not when a key there is answered `Abandoned`, the
-    /// outpost sending no second `NotResponding` in the same hang.
-    #[test]
-    fn a_hang_met_in_the_background_plays_nothing_after_the_user_returns() {
-        let mut live = LiveOutposts::default();
-        live.started(OutpostId(4), Pid(41));
-        let mut state = SrState::new();
-        assert_eq!(
-            reduce(
-                &mut state,
-                &mut verbatim_core::Runtime::default(),
-                &foreground(40, 0x100)
-            ),
-            []
-        );
-        assert_eq!(
-            reduce(
-                &mut state,
-                &mut verbatim_core::Runtime::default(),
-                &not_responding(&live, Pid(41), OutpostId(4), 0x200).expect("live")
-            ),
-            []
-        );
-        assert_eq!(
-            reduce(
-                &mut state,
-                &mut verbatim_core::Runtime::default(),
-                &foreground(41, 0x200)
-            ),
-            []
-        );
-        assert_eq!(
-            reduce(
-                &mut state,
-                &mut verbatim_core::Runtime::default(),
-                &abandoned(OutpostId(4))
-            ),
-            []
-        );
-    }
 
     /// A wait for a deadline that runs out with no command wakes the
     /// reducer thread to check its deadlines rather than ending it, however

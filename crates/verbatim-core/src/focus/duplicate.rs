@@ -146,7 +146,7 @@ mod tests {
             window: WindowHandle(window),
             top_level: WindowHandle(1),
             root_owner: WindowHandle(1),
-            ancestor_windows: vec![WindowHandle(2), WindowHandle(1)],
+            ancestor_windows: vec![WindowHandle(2), WindowHandle(1)].into(),
         }
     }
 
@@ -320,7 +320,7 @@ mod tests {
             window: WindowHandle(8),
             top_level: WindowHandle(8),
             root_owner: WindowHandle(8),
-            ancestor_windows: Vec::new(),
+            ancestor_windows: Vec::new().into(),
         };
         assert_eq!(
             judge_candidate(Some(&last), &ids(9, 0, 0), true, Some(WindowHandle(9))),

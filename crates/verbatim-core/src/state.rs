@@ -16,7 +16,6 @@ use verbatim_model::{
 };
 
 use crate::foreground::Foreground;
-use crate::queries::Then;
 
 /// The focused node and what the reducer knows about where it sits.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -278,14 +277,6 @@ pub(crate) enum TextFollowUp {
     Copy { marker: u64 },
     /// A location report.
     Location,
-    /// A live read of the navigator object (`Query::ReadNode`), for a flat
-    /// review command or Report Current Object.
-    NodeRead,
-    /// The selected text of the navigator object was read: use it, or with
-    /// nothing selected read the caret's line.
-    NavigatorSelection(NavigatorRead),
-    /// The caret's line in the navigator object was read: use it.
-    NavigatorLine(NavigatorRead),
 }
 
 /// What the navigator object's text is read for: its announcement, or
@@ -458,8 +449,8 @@ pub(crate) struct SayAll {
     pub(crate) finished: bool,
     /// Whether the display was asked to stay on.
     pub(crate) display_held: bool,
-    /// How its reads and caret moves are made.
-    pub(crate) by: crate::say_all::SayAllBy,
+    /// Its run in the event queue, which makes its reads and caret moves.
+    pub(crate) run: crate::say_all::QueueRun,
 }
 
 /// The table, row and column last spoken of a cell, each valid alone
@@ -510,39 +501,22 @@ pub struct LastToast {
 /// recorded window replays from its start.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SrState {
-    /// Core's focus: the focus object and the last queued focus
-    /// (`crate::focus_queue`).
-    pub(crate) focus: crate::focus_queue::FocusState,
+    /// Core's focus object (`crate::focus::object`).
+    pub(crate) focus: crate::focus::object::FocusState,
     /// The foreground record: attention, the foreground window and object,
     /// and the stamps that order focuses, under the keys the state held
     /// before the record existed.
     #[serde(flatten)]
     pub(crate) foreground: Foreground,
-    /// The newest focus group whose report Core took: the generation of
-    /// the report's node, the group's number and the report's rank. An
-    /// older report of the same group is not taken
-    /// ([`verbatim_model::FocusGroup`]). Only the newest group taken is
-    /// kept: when another outpost's report is taken between two reports of
-    /// one group, the older entry was observed before that report, and the
-    /// stale rule drops it instead.
-    pub(crate) group_taken: Option<(OutpostId, verbatim_model::FocusGroup)>,
-    /// The live re-reads Core waits for, one per focus reader, and how
-    /// many it has asked for (`crate::live_reread`).
-    pub(crate) live_rereads: crate::live_reread::LiveRereads,
     /// The virtual desktop's name, kept until the next focus Core takes
     /// or its due time (`crate::desktop`).
-    pub(crate) desktop_name: Option<String>,
-    /// Core's queries not yet ended, each from its request to its one
-    /// ending (`crate::queries`).
-    pub(crate) queries: crate::queries::Queries,
+    pub(crate) desktop_name: Option<crate::desktop::DesktopName>,
     /// The navigator object and review cursor (roadmap M3). `None` until
     /// the first focus lands; from then it tracks focus unless an
     /// object-navigation command moves it away.
     pub(crate) navigator: Option<Navigator>,
     /// The reader settings (milestone M4).
     pub(crate) settings: ReaderSettings,
-    /// The caret keys in hand (`crate::key_line`).
-    pub(crate) key_line: crate::key_line::KeyLine,
     /// The key numbers of what recent user inputs caused, by trace, which
     /// Core stamps their speech with (`crate::keys`).
     pub(crate) key_origins: crate::keys::KeyOrigins,
@@ -694,25 +668,6 @@ impl SrState {
     #[must_use]
     pub fn caret_binding(&self) -> Option<verbatim_model::request::CaretBinding> {
         crate::keys::caret_key::binding(self)
-    }
-
-    /// How many of Core's queries an outpost has yet to answer that the
-    /// idle barrier waits for, with the report queued for a live re-read: a
-    /// request Core answers from a terminal's memory is not counted.
-    #[must_use]
-    pub fn outstanding_queries(&self) -> usize {
-        self.queries
-            .outstanding()
-            .saturating_add(self.focus.rereading())
-    }
-
-    /// How many live re-reads Core has asked for since it started: each a
-    /// focus report set aside because it would have spoken an ancestor its
-    /// focus reader took from its ancestry cache (`crate::live_reread`).
-    /// The control protocol's status reply carries it.
-    #[must_use]
-    pub fn live_re_reads(&self) -> u64 {
-        self.live_rereads.count()
     }
 
     /// Whether a lock key's new state is still to be announced: Verbatim is
@@ -920,13 +875,12 @@ impl SrState {
         )
     }
 
-    /// The application holding attention, if any foreground change has been
-    /// seen yet. The shell derives the supervisor's view of attention from this.
+    /// The application holding attention: the application of the window
+    /// the listener last reported in front, `None` before its first
+    /// report.
     #[must_use]
     pub fn attention(&self) -> Option<Pid> {
-        self.foreground
-            .attention()
-            .map(|attention| attention.source)
+        self.queue.foreground_process()
     }
 
     /// The reader settings as the reducer has them now: the last
@@ -980,16 +934,7 @@ impl SrState {
         if let Some(navigator) = &self.navigator {
             insert(navigator.object.id);
         }
-        for then in self.queries.continuations() {
-            match then {
-                Then::Key { node } | Then::Text(PendingText { node, .. }) => insert(*node),
-                _ => {}
-            }
-        }
         // Nodes whose text the state holds positions in or waits on.
-        if let Some(node) = self.key_line_node() {
-            insert(node);
-        }
         if let Some(marker) = self.start_marker {
             insert(marker.node());
         }

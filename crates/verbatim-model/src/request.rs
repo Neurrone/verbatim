@@ -1160,10 +1160,6 @@ pub enum QueueInput {
         /// first.
         marks: Vec<crate::SpeechMark>,
     },
-    /// The held key's one deadline Core set
-    /// ([`crate::Effect::BoundHeldKey`]) passed, at the input's time, under
-    /// the key's own trace.
-    HeldKeyDue,
     /// The focused terminal's quiet-period timer came due at `at_ms`, the
     /// due time Core's state gives.
     TerminalDue {

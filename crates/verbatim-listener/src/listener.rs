@@ -752,7 +752,7 @@ impl Listener {
             // The listener keeps no unasked read to read again: every
             // `WinEvent` is told, and Core asks what it needs. The serving
             // loop ends on `Shutdown`, before it is handled here.
-            CoreToListener::LiveReread { .. } | CoreToListener::Shutdown => {}
+            CoreToListener::Shutdown => {}
             CoreToListener::ApplicationExited { pid } => {
                 self.checks.application_exited(pid);
                 self.readers.application_exited(pid);

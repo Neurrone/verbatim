@@ -29,18 +29,16 @@ use verbatim_model::{
 use crate::editing::{is_grid, may_have_text, selection_segments, speak, speak_each};
 use crate::entries::Entries;
 use crate::event_queue::{Cx, OTHER_DUE_US, Outcome};
-use crate::key_line::{self, ReviewPress};
 use crate::keys::entry::Fence;
+use crate::keys::entry::ReviewPress;
 use crate::navigator::Found;
 use crate::proven;
-use crate::queries::{Ending, Then};
 use crate::state::{
     Landing, LandingPlace, PendingText, ReviewPosition, ReviewText, SharedChunk, SrState,
     StartMarker, TextFollowUp,
 };
 use crate::text;
 use crate::text_request::TextRequest;
-use verbatim_model::protocol::{QueryOutcome, QueryResult};
 
 /// Whether `command` is one this module runs: every review-cursor command
 /// over text, the start marker, select then copy, and say-all from the
@@ -113,8 +111,6 @@ pub(crate) enum ObjectRead {
     Read(Box<verbatim_model::NodeSnapshot>),
     /// The object is gone: it reviews as empty flat text.
     Gone,
-    /// No answer: nothing is said.
-    Unanswered,
 }
 
 /// What a review press does first against the navigator's text: the line
@@ -148,13 +144,6 @@ pub(crate) fn begin(state: &mut SrState, press: ReviewPress) -> Next {
             }
         }
     }
-}
-
-/// Runs a review press against the navigator's text through the reducer's
-/// own queries, until the shell feeds presses to the event queue.
-pub(crate) fn run(state: &mut SrState, press: ReviewPress) -> Vec<Effect> {
-    let next = begin(state, press);
-    asked_outside_queue(state, press, next)
 }
 
 /// A review press at its turn as an event-queue entry
@@ -276,18 +265,6 @@ async fn run_next(
     }
 }
 
-/// `next` made through the reducer's own queries.
-fn asked_outside_queue(state: &mut SrState, press: ReviewPress, next: Next) -> Vec<Effect> {
-    match next {
-        Next::Said(effects) => effects,
-        Next::Text(node, op, then) => request(state, press, node, op, then),
-        Next::ReadObject => read_object(state, press),
-        Next::SayAll(node, at) => {
-            crate::say_all::start(state, node, (false, at), crate::say_all::SayAllBy::Queries)
-        }
-    }
-}
-
 /// Moves the review cursor to the previous or next command mark of the
 /// focused terminal, the navigator (`books/dev/src/explanation/design/terminal-model.md`,
 /// "Features and settings"), as an event-queue entry: after the fresh
@@ -354,40 +331,6 @@ fn position_at(line: &SharedChunk, offset: usize, grid: bool) -> ReviewPosition 
         offset,
         column: text::column_of(content, offset, grid),
     }
-}
-
-/// `press` asks for the text read `op`, to be followed up by `then`: it
-/// stays current until the answer.
-fn request(
-    state: &mut SrState,
-    press: ReviewPress,
-    node: NodeId,
-    op: TextOp,
-    then: TextFollowUp,
-) -> Vec<Effect> {
-    let (query, effect) = state
-        .queries
-        .ask(crate::queries::Asking::Text(node, op), Then::Review(then));
-    let mut effects = key_line::press_read(state, node, query, press);
-    effects.push(effect);
-    effects
-}
-
-/// Reads the navigator object live, for a flat review command or Report
-/// Current Object.
-pub(crate) fn read_object(state: &mut SrState, press: ReviewPress) -> Vec<Effect> {
-    let Some(navigator) = state.navigator.as_ref() else {
-        return Vec::new();
-    };
-    let node = navigator.object.id;
-    let details = state.reported.node;
-    let (query, effect) = state.queries.ask(
-        crate::queries::Asking::ReadNode(node, details),
-        Then::Review(TextFollowUp::NodeRead),
-    );
-    let mut effects = key_line::press_read(state, node, query, press);
-    effects.push(effect);
-    effects
 }
 
 /// Reads the line at `at` to place the review cursor there, then runs the
@@ -876,32 +819,6 @@ fn move_column(
     )]
 }
 
-/// What ends a press's read, run against the press, the read being of
-/// `node`: an object read, a text follow-up, or the navigator's text.
-pub(crate) fn press_answer(
-    state: &mut SrState,
-    trace_id: TraceId,
-    node: NodeId,
-    press: ReviewPress,
-    then: TextFollowUp,
-    ending: Ending,
-) -> Vec<Effect> {
-    let next = match then {
-        TextFollowUp::NodeRead => {
-            let read = match ending {
-                Ending::Outcome(QueryOutcome::Done(QueryResult::Node(object))) => {
-                    ObjectRead::Read(Box::new(object))
-                }
-                Ending::Outcome(QueryOutcome::Gone) => ObjectRead::Gone,
-                Ending::Outcome(_) => ObjectRead::Unanswered,
-            };
-            return object_read(state, trace_id, press, read);
-        }
-        then => answered(state, trace_id, (node, press), then, ending.reply()),
-    };
-    asked_outside_queue(state, press, next)
-}
-
 /// What a press does with `reply`, the answer to its read of `node`'s text
 /// followed up by `then`.
 pub(crate) fn answered(
@@ -912,16 +829,6 @@ pub(crate) fn answered(
     reply: TextReply,
 ) -> Next {
     match (then, reply) {
-        (then @ (TextFollowUp::NavigatorSelection(_) | TextFollowUp::NavigatorLine(_)), reply) => {
-            let pending = PendingText { node, then };
-            Next::Said(crate::editing::navigator_text_reply(
-                state,
-                trace_id,
-                &pending,
-                reply,
-                Some(press),
-            ))
-        }
         // A dead object: one rule at the boundary, the press run on empty
         // flat text. A copy clears its marker as it does for any answer,
         // and says nothing.
@@ -967,16 +874,9 @@ pub(crate) fn object_read(
                     navigator.review_offset = 0;
                 }
             }
-            if press.command == ReviewCommand::ReportObject {
-                return crate::reduce::report_object(state, trace_id, press);
-            }
             flat
         }
-        ObjectRead::Gone if press.command == ReviewCommand::ReportObject => {
-            return Vec::new();
-        }
         ObjectRead::Gone => String::new(),
-        ObjectRead::Unanswered => return Vec::new(),
     };
     crate::reduce::flat_review_command(state, trace_id, press.command, press.repeat, &text)
 }

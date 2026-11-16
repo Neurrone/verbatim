@@ -13,29 +13,22 @@
 
 use std::sync::Arc;
 
-use verbatim_model::protocol::FocusPurpose;
 use verbatim_model::{
-    ActionName, AlertOrigin, BarChange, Earcon, EarlierElement, Effect, FetchResult,
-    ForegroundWindow, Input, Message, NodeId, NodeSnapshot, NormalizedEvent, Notification,
-    NotificationProcessing, OutpostId, Percent, Phrase, Pid, PropertyChange, QueryKind,
-    ReviewCommand, Role, SegmentContent, SpeechPriority, State, StateSet, TraceId, Utterance,
-    UtteranceSegment, UtteranceSource, WindowFacts,
+    ActionName, BarChange, Earcon, EarlierElement, Effect, ForegroundWindow, Input, Message,
+    NodeId, NodeSnapshot, Percent, Phrase, Pid, PropertyChange, QueryKind, ReviewCommand, Role,
+    SegmentContent, SpeechPriority, State, StateSet, TraceId, Utterance, UtteranceSegment,
+    UtteranceSource, WindowFacts,
 };
 use verbatim_model::{
-    Backend, FirstCachedAncestor, FocusGroup, FocusNow, FocusReaderKind, FocusText, FocusValidity,
-    LiveReread, LiveRereadLog, LiveRereadReason, ObjectKey, WindowHandle, WindowIdentity,
+    Backend, FocusNow, FocusText, FocusValidity, ObjectKey, WindowHandle, WindowIdentity,
 };
 
-use crate::focus_queue::{Entry, Front, Report};
+use crate::focus::object::Report;
 use crate::focus_rules::{
-    ChangeKind, ChangeTarget, RepeatEvidence, SelectionTarget, change_target, is_sensitive_slider,
-    lowest_common_ancestor, needs_live_ancestry, repeats_focus, selection_target,
+    ChangeKind, ChangeTarget, change_target, is_sensitive_slider, lowest_common_ancestor,
 };
-use crate::foreground::{Attention, ForegroundFact, LatestFocus};
-use crate::key_line::ReviewPress;
-use crate::queries::Then;
-use crate::state::PendingText;
-use crate::state::{CellMemory, FocusContext, Navigator, NavigatorRead, SpokenRecord, SrState};
+use crate::foreground::ForegroundFact;
+use crate::state::{CellMemory, FocusContext, Navigator, SpokenRecord, SrState};
 use crate::{editing, review, review_text, say_all, shell, terminal, terminal_model, text};
 
 /// The activity id of the shell's window-snap results notification, the one
@@ -60,7 +53,6 @@ pub fn reduce(state: &mut SrState, runtime: &mut crate::Runtime, input: &Input) 
     if state.exiting {
         return Vec::new();
     }
-    let first_query = state.queries.next();
     // A user input's number, recorded by its trace before anything it
     // causes is spoken (`crate::keys`).
     crate::keys::record(state, input);
@@ -88,18 +80,12 @@ pub fn reduce(state: &mut SrState, runtime: &mut crate::Runtime, input: &Input) 
     }
     // A press whose read ended with no answer, its terminal's model gone,
     // says nothing and ends.
-    effects.extend(crate::key_line::press_without_read(state));
     // Whatever cuts speech off drops the terminal output handed to it, and
     // with it the output still waiting, as a key press does in NVDA.
     if effects.iter().any(terminal::cuts_speech) {
         let cut = terminal::cut(state, 0);
         effects.extend(cut);
     }
-    // The queries asked run under the trace the shell runs their requests
-    // under (`crate::queries`).
-    state
-        .queries
-        .set_traces(first_query, &effects, input.trace_id());
     // Speech caused by a key carries the key's number.
     crate::keys::stamp(state, input, &mut effects);
     // A say-all in the event queue changed by an input outside it, such as
@@ -115,73 +101,11 @@ pub fn reduce(state: &mut SrState, runtime: &mut crate::Runtime, input: &Input) 
 /// [`reduce`]'s dispatch, by input.
 fn reduce_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
     match input {
-        Input::Event {
-            trace_id,
-            observed_at_us,
-            source,
-            window,
-            event,
-            purpose,
-            ..
-        } => reduce_event(
-            state,
-            (*trace_id, *purpose),
-            *observed_at_us,
-            *source,
-            window.as_ref(),
-            event,
-        ),
-        Input::Answered {
-            trace_id,
-            query_id,
-            outpost,
-            outcome,
-            at_us,
-        } => crate::queries::answered(state, *trace_id, *query_id, *outpost, outcome, *at_us),
-        Input::OutpostEnded { trace_id, outpost } => {
-            let mut effects = outpost_ended(state, *outpost);
-            effects.extend(crate::queries::outpost_gone(state, *trace_id, *outpost));
-            effects.extend(crate::key_line::outpost_ended(state, *outpost));
-            effects
-        }
-        // A key, a key command or script, or a menu's or the switcher's
-        // end, that reaches Core while focus reports wait is handled after
-        // them, in order, as NVDA queues gestures with events (Dickson,
-        // 2026-11-08).
-        Input::Command { .. }
-        | Input::Script { .. }
-        | Input::CaretKey { .. }
-        | Input::CharacterTyped { .. }
-        | Input::ClearingKey { .. }
-        | Input::EditingChord { .. }
-        | Input::HeldKey { .. }
-        | Input::MenuOrSwitchEnded { .. }
-            if state.focus.waiting() =>
-        {
-            state.focus.queue_input(input.clone());
-            Vec::new()
-        }
         Input::Command { .. } | Input::Script { .. } => command_arrived(state, input),
-        Input::CaretKey { .. }
-        | Input::CharacterTyped { .. }
-        | Input::ClearingKey { .. }
-        | Input::EditingChord { .. } => key_arrived(state, input),
-        Input::HeldKey {
-            trace_id,
-            key,
-            pressed_at_ms,
-            ..
-        } => crate::key_line::held_key(state, *trace_id, *key, *pressed_at_ms),
-        Input::HeldKeyDue { trace_id, at_us } => {
-            crate::key_line::deadline_passed(state, *trace_id, *at_us)
+        Input::CharacterTyped { .. } | Input::ClearingKey { .. } | Input::EditingChord { .. } => {
+            key_arrived(state, input)
         }
         Input::TerminalTimer { trace_id, at_ms } => terminal_model::timer(state, *trace_id, *at_ms),
-        Input::MarkReached { mark } => {
-            let mut effects = say_all::mark_reached(state, *mark);
-            effects.extend(terminal::mark_reached(state, *mark));
-            effects
-        }
-        Input::SpeechCancelled { at_us } => speech_cancelled(state, *at_us),
         Input::Settings(settings) => {
             let effects =
                 if state.settings.report_terminal_output && !settings.report_terminal_output {
@@ -197,9 +121,6 @@ fn reduce_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
             Vec::new()
         }
         Input::Foreground(change) => foreground_changed(state, *change),
-        Input::LiveRereadGone { .. } | Input::ListenerReplaced => {
-            crate::live_reread::ended(state, input)
-        }
         // Playback will reach none of a cut utterance's marks it had not
         // reached: say-all stops, as on any cut, and terminal output drops
         // what waits, as anything that cuts speech off does.
@@ -224,15 +145,6 @@ fn reduce_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
     }
 }
 
-/// A key press cut speech off at `at_us`: a key in the line marks it, a
-/// terminal drops what waits, and say-all stops.
-fn speech_cancelled(state: &mut SrState, at_us: u64) -> Vec<Effect> {
-    crate::key_line::mark_later(state, at_us);
-    let mut effects = terminal::cut(state, at_us / 1_000);
-    effects.extend(say_all::stop(state));
-    effects
-}
-
 /// Handles a key passed to the application that is not held: a caret key
 /// judged by where the caret lands, text typed, or a key that clears a
 /// terminal's line. Any other input does nothing here, an editing chord in
@@ -242,18 +154,6 @@ pub(crate) fn key_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
     // (`crate::keys::terminal`).
     let mut effects = Vec::new();
     effects.extend(match input {
-        Input::CaretKey {
-            trace_id,
-            key,
-            pressed_at_ms,
-            ..
-        } => crate::key_line::unheld_caret_key(
-            state,
-            *trace_id,
-            *key,
-            *pressed_at_ms,
-            crate::key_line::KEY_BOUND_MS,
-        ),
         Input::CharacterTyped { trace_id, text, .. } => {
             editing::character_typed(state, *trace_id, text)
         }
@@ -270,11 +170,8 @@ pub(crate) fn key_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
 pub(crate) fn command_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
     match input {
         Input::Command {
-            trace_id,
-            command,
-            repeat,
-            ..
-        } => reduce_command(state, *trace_id, *command, *repeat),
+            trace_id, command, ..
+        } => reduce_command(state, *trace_id, *command),
         Input::Script { repeat, script, .. } => shell::script(*script, *repeat),
         _ => Vec::new(),
     }
@@ -292,357 +189,6 @@ pub(crate) fn key_trace(input: &Input) -> Option<TraceId> {
     }
 }
 
-/// `input` with its press taken as no earlier than `at_ms`: a key behind
-/// a held key reaches the application only after it was passed on.
-pub(crate) fn pressed_no_earlier(input: Input, at_ms: u64) -> Input {
-    match input {
-        Input::CaretKey {
-            trace_id,
-            key_seq,
-            key,
-            pressed_at_ms,
-        } => Input::CaretKey {
-            trace_id,
-            key_seq,
-            key,
-            pressed_at_ms: pressed_at_ms.max(at_ms),
-        },
-        Input::CharacterTyped {
-            trace_id,
-            key_seq,
-            text,
-            at_ms: typed_at_ms,
-        } => Input::CharacterTyped {
-            trace_id,
-            key_seq,
-            text,
-            at_ms: typed_at_ms.max(at_ms),
-        },
-        Input::ClearingKey {
-            trace_id,
-            key_seq,
-            at_ms: cleared_at_ms,
-        } => Input::ClearingKey {
-            trace_id,
-            key_seq,
-            at_ms: cleared_at_ms.max(at_ms),
-        },
-        input => input,
-    }
-}
-
-/// How an event relates to the attention record (`docs/parity/focus-events.md`, "Event
-/// acceptance").
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Acceptance {
-    /// The event concerns what the user is attending to and is handled in
-    /// full.
-    Attended,
-    /// The event comes from elsewhere but is of a kind spoken from
-    /// anywhere: spoken queued, never moving focus or the navigator.
-    Background,
-    /// The event is dropped unheard.
-    Dropped,
-}
-
-/// Classifies one event, observed at `observed_at_us`, against the
-/// attention record, or, for a focus with window facts, against the
-/// record's front. With no attention yet, everything is attended, since
-/// there is nothing to compare against. The focus Core holds names the
-/// application UIA notifications are judged by.
-fn classify(
-    state: &SrState,
-    (source, observed_at_us): (Pid, u64),
-    window: Option<&WindowFacts>,
-    event: &NormalizedEvent,
-) -> Acceptance {
-    let Some(attention) = state.foreground.attention() else {
-        return Acceptance::Attended;
-    };
-    let focus_source = state.focus_source();
-    match event {
-        // A controlled selection is spoken only while its controller is the
-        // focus, which is attended wherever the controlled list's window
-        // is.
-        NormalizedEvent::ControlledSelection { .. } => Acceptance::Attended,
-        // Every focus with window facts, a whole-window focus among them,
-        // is judged against the record's front, the window the focus
-        // listener last reported in front: dropped when the front was
-        // observed after it and is a window it is unrelated to, so a
-        // popup, an owned dialog and a focus in an owned window pass. The
-        // reader's own test at the event cannot see a foreground change
-        // after it, and NVDA tests when it handles the event, so a focus
-        // whose read was held past a switch to an unrelated window is
-        // refused there (`docs/parity/focus-events.md`, "Event
-        // acceptance"). With no window facts, the application decides.
-        NormalizedEvent::FocusChanged { .. } => {
-            let attended = match window {
-                Some(facts) => !state.foreground.front().is_some_and(|front| {
-                    front.observed_after(observed_at_us) && !front.relates(facts)
-                }),
-                None => window_is_attended(state, attention, source, None),
-            };
-            if attended {
-                Acceptance::Attended
-            } else {
-                Acceptance::Dropped
-            }
-        }
-        // A toast is spoken from anywhere.
-        NormalizedEvent::Alert { .. } => {
-            if window_is_attended(state, attention, source, window) {
-                Acceptance::Attended
-            } else {
-                Acceptance::Background
-            }
-        }
-        // A UIA notification is spoken only from the focus's application,
-        // as NVDA drops notifications from any other ("background apps"),
-        // which is not always the attended one: in Settings the focus is in
-        // SystemSettings while ApplicationFrameHost holds attention. With no
-        // focus yet, the attended application stands in. The shell's
-        // window-snap results are spoken from anywhere and always queued,
-        // as NVDA's Explorer module speaks them, even when Explorer holds
-        // the focus.
-        NormalizedEvent::Notification { notification, .. } => {
-            if notification.activity_id.as_deref() == Some(SNAP_RESULTS_ACTIVITY) {
-                Acceptance::Background
-            } else if source == focus_source.unwrap_or(attention.source) {
-                Acceptance::Attended
-            } else {
-                Acceptance::Dropped
-            }
-        }
-        _ => {
-            if window_is_attended(state, attention, source, window) {
-                Acceptance::Attended
-            } else {
-                Acceptance::Dropped
-            }
-        }
-    }
-}
-
-/// Whether a focus event from outpost generation `outpost`, observed at
-/// `observed_at_us`, microseconds on the run's shared clock, was observed
-/// before the newest focus observation from another generation, the
-/// ordering stamp ([`LatestFocus::observed_after`]). Events from one
-/// generation arrive in order; across generations they can arrive out of
-/// order, which NVDA's single event queue never does. A replacement
-/// generation's report is judged against its predecessor's newest focus as
-/// another outpost's, which is safe because its first report, the
-/// focus-now answer, carries the time its read began, after the
-/// predecessor's last observation. An answer to a focus-now query is
-/// ordered with the events by that time; a report with no observation time
-/// (0) is never stale.
-///
-/// A focus is not made stale by a stamp a whole-window report of its own
-/// top-level window set: a foreground change is ordered by when its window
-/// became the foreground, after a focus inside it may have been observed,
-/// as a Settings page's content is inside `ApplicationFrameHost`'s frame.
-/// Two ordinary reports in one window shared by two processes follow the
-/// rule against each other (Dickson, 2026-11-08;
-/// `docs/parity/focus-events.md`, "Stale focus events").
-fn is_stale_focus(
-    state: &SrState,
-    outpost: OutpostId,
-    observed_at_us: u64,
-    window: Option<&WindowFacts>,
-) -> bool {
-    observed_at_us != 0
-        && state.foreground.stale(
-            outpost,
-            observed_at_us,
-            window.map(|window| window.top_level),
-        )
-}
-
-/// Core's duplicate-focus rule (`books/dev/src/explanation/design/focus.md`, "One UI Automation
-/// focus, end to end"; `docs/parity/focus-events.md`, "Duplicate focus suppression"): a focus whose
-/// element is the same as the last queued focus, while that element still
-/// has the keyboard focus, is no new focus. NVDA has no rule across its
-/// backends like it: each backend's own duplicate test, which the outposts
-/// and the focus listener make, is its only one, and a foreground or menu
-/// focus has none.
-///
-/// The last queued focus is NVDA's (`crate::focus_queue`): the focus
-/// object, or the report set aside for a live re-read while one waits. A
-/// focus Core refuses (stale, not in the foreground, or a foreground report
-/// for the window the last queued focus is in) changes nothing, as NVDA
-/// never queues those. A focus from another application in between is a
-/// different focus, so the one after it is announced.
-///
-/// The evidence of "same element" is the node id, which names one object
-/// in one outpost generation; a UI Automation runtime id keeps its node
-/// even when its application gave it to a new element after the one it
-/// named died (`books/dev/src/reference/adr/0001-focus.md`, "Object identity"). So "still focused"
-/// is `earlier`, what the reader read live
-/// with the focus of the element it held under that node: a duplicate only
-/// when that element still has the keyboard focus. With no such read, the
-/// reader holding no element for the node or its read cut before it, the
-/// report itself is the evidence, read while its generation ran even when
-/// that generation ended before Core decided it. An outpost reports an MSAA
-/// focus only once the object or an ancestor has the focused state, read
-/// live, and drops an event naming the address of its last focus itself.
-///
-/// A report judged `left`, the user having gone from the last queued focus
-/// to another top-level window since, has no duplicate: the return is
-/// spoken as the same switch with no stall is.
-///
-/// A repeat of a report waiting for its live re-read is no duplicate of
-/// it, as NVDA's would be, because the reader answers a live re-read only
-/// for the read it holds last, which the repeat replaced: the repeat is
-/// queued behind it as a new focus, and is executed against the focus
-/// spoken before it, so the user hears the focus once.
-fn is_duplicate(
-    state: &SrState,
-    node: &NodeSnapshot,
-    earlier: Option<EarlierElement>,
-    left: bool,
-) -> bool {
-    let Some(last) = state.focus.last_queued() else {
-        return false;
-    };
-    !left
-        && repeats_focus(RepeatEvidence {
-            same_element: last.node.id == node.id,
-            still_focused: earlier.is_none_or(|earlier| earlier == EarlierElement::Focused),
-        })
-}
-
-/// Whether a whole-window focus in `window`, judged `left` or not, is
-/// refused as one of the window the last queued focus is in
-/// (`crate::focus_queue`), compared by window handle because the same
-/// window has different node ids in different outposts. NVDA drops a
-/// foreground event when the last focus it queued is in that window
-/// (`docs/nvda/events.md`, "Foreground windows").
-fn refused_whole_window(state: &SrState, window: Option<&WindowFacts>, left: bool) -> bool {
-    let Some(window) = window else {
-        return false;
-    };
-    !left
-        && state.focus.last_queued().is_some_and(|last| {
-            last.window
-                .is_some_and(|focus_window| focus_window.top_level == window.top_level)
-        })
-}
-
-/// Forgets what Core keeps of the text of `node`, whose reader read that
-/// the element it held under that node lost the focus or is gone: its
-/// caret, a caret key waiting on it, and its terminal's model, so the
-/// focus's text is taken afresh, as a new object's is
-/// (`docs/parity/focus-events.md`, "Duplicate focus suppression").
-fn forget_text_of(state: &mut SrState, node: NodeId) {
-    if state.focus_caret(node).is_some() {
-        state.forget_caret();
-    }
-    state.drop_models(|model| model.node == node);
-}
-
-/// Keeps a duplicate focus's newer reading, unspoken: its states and name,
-/// which an earlier report can have read mid-change, and those of the
-/// entries of its chain, `ancestors`, that are nodes of the focus ancestry,
-/// but for its cached ancestors, which the caller leaves out: an entry its
-/// focus reader took from its ancestry cache never overwrites one of
-/// Core's own.
-/// Its chain does not replace the focus line, as NVDA keeps its line when
-/// the focus matches itself (`docs/parity/focus-context.md`,
-/// "Focus-ancestry context"), so a duplicate whose chain was cut at its
-/// bound leaves the containers the focus is in where they were. What was
-/// last spoken of the focus stays as it was ([`SpokenRecord`]), so a change
-/// the repeat carried in is still spoken when its own event comes. The
-/// selected item already announced is kept, so a selection event for a
-/// new one is still spoken; a navigator the user moved away stays where it
-/// is.
-fn keep_newer_reading(state: &mut SrState, node: &NodeSnapshot, ancestors: &[NodeSnapshot]) {
-    let Some(focus) = state.focus.object_mut() else {
-        return;
-    };
-    focus.reported_focused |= node.states.contains(State::Focused);
-    focus.snapshot = node.clone();
-    // An entry is matched as the lines are joined: by node, or by window
-    // handle for a window, which keeps its node.
-    let newer = |old: &NodeSnapshot| {
-        ancestors
-            .iter()
-            .find(|new| crate::focus_rules::same_object(old, *new))
-            .map(|new| NodeSnapshot {
-                id: old.id,
-                ..new.clone()
-            })
-    };
-    if focus
-        .ancestors
-        .iter()
-        .any(|old| newer(old).is_some_and(|new| new != *old))
-    {
-        focus.ancestors = focus
-            .ancestors
-            .iter()
-            .map(|old| newer(old).unwrap_or_else(|| old.clone()))
-            .collect();
-    }
-}
-
-/// Whether an event from elsewhere, observed at `observed_at_us`, was
-/// observed before the newest foreground change Core applied: its speech
-/// would have been queued before that change, which cancels it in NVDA
-/// (`books/dev/src/reference/adr/0001-focus.md`, "One input to Core, in arrival order"). An event
-/// with no
-/// observation time (0) is never judged so.
-fn observed_before_foreground_change(state: &SrState, observed_at_us: u64) -> bool {
-    observed_at_us != 0
-        && state
-            .foreground
-            .changed_at()
-            .is_some_and(|changed_at| observed_at_us < changed_at)
-}
-
-/// Whether an event's window is one the attention record covers: the same
-/// top-level window, the same root owner, a topmost window, or a
-/// `Windows.UI.Core` window under the input thread's active window — NVDA's
-/// foreground test, made against the attention record — or a window its
-/// outpost found in the system's foreground window when it read the event.
-/// When either side has no window facts there is nothing to compare, so the
-/// application decides: attention's, or that of Core's focus while that
-/// focus is in the attention window, as a Settings page's content is in
-/// `ApplicationFrameHost`'s frame, which attention names (`docs/parity/focus-events.md`,
-/// "Event acceptance"). Focus events with window facts are judged by the
-/// record's front instead ([`classify`]).
-fn window_is_attended(
-    state: &SrState,
-    attention: &Attention,
-    source: Pid,
-    window: Option<&WindowFacts>,
-) -> bool {
-    match (attention.window.as_ref(), window) {
-        (Some(attended), Some(event)) => {
-            event.top_level == attended.top_level
-                || event.root_owner == attended.root_owner
-                || event.topmost
-                || event.under_active_window == Some(true)
-                || event.in_foreground
-        }
-        _ => process_is_attended(state, attention, source),
-    }
-}
-
-/// Whether `process` is the application attention covers: attention's own
-/// process, or that of Core's focus while that focus is in the attention
-/// window, as a Settings page's content (`SystemSettings`) is in
-/// `ApplicationFrameHost`'s frame, which attention names
-/// (`docs/parity/focus-events.md`, "Event acceptance").
-pub(crate) fn process_is_attended(state: &SrState, attention: &Attention, process: Pid) -> bool {
-    process == attention.source
-        || state.focus.object().is_some_and(|focus| {
-            focus.source == process
-                && matches!(
-                    (focus.window.as_ref(), attention.window.as_ref()),
-                    (Some(focus), Some(attended)) if focus.top_level == attended.top_level
-                )
-        })
-}
-
 /// The focus listener's report that a window came to the foreground, the
 /// only report of one (`books/dev/src/reference/adr/0001-focus.md`, "The foreground and the window
 /// title"): it gives the keyboard
@@ -656,7 +202,6 @@ pub(crate) fn process_is_attended(state: &SrState, attention: &Attention, proces
 /// application that does not answer.
 fn foreground_changed(state: &mut SrState, change: ForegroundWindow) -> Vec<Effect> {
     state.foreground.apply(ForegroundFact::Changed(change));
-    state.focus.foreground_changed(&change);
     Vec::new()
 }
 
@@ -690,173 +235,6 @@ pub(crate) fn activation_completed(
     )]
 }
 
-/// Whether `event` is a focus dropped before anything else judges it: an
-/// older entry of a focus group whose newer report Core took
-/// ([`verbatim_model::FocusGroup`]), a focus an application's rule refuses
-/// whole ([`crate::applications::refuses_focus`]), or a stale focus from
-/// another outpost generation. The duplicate rule comes after the
-/// foreground test, so a duplicate that passes both still records its
-/// observation ([`focus_is_a_duplicate`]).
-fn focus_dropped_first(
-    state: &mut SrState,
-    observed_at_us: u64,
-    window: Option<&WindowFacts>,
-    event: &NormalizedEvent,
-) -> bool {
-    let NormalizedEvent::FocusChanged {
-        node,
-        whole_window,
-        earlier,
-        group,
-        ..
-    } = event
-    else {
-        return false;
-    };
-    if matches!(
-        earlier,
-        Some(EarlierElement::NotFocused | EarlierElement::Gone)
-    ) {
-        forget_text_of(state, node.id);
-    }
-    if group.is_some_and(|group| older_than_taken(state, node.id.outpost(), group)) {
-        return true;
-    }
-    if !whole_window && crate::applications::refuses_focus(window, node) {
-        return true;
-    }
-    is_stale_focus(state, node.id.outpost(), observed_at_us, window)
-}
-
-/// Whether `group`, of outpost generation `outpost`, is an older entry of
-/// the focus group whose report Core took last: NVDA's `pumpAll` processes
-/// no older event of a run once one is processed.
-fn older_than_taken(state: &SrState, outpost: OutpostId, group: FocusGroup) -> bool {
-    state.group_taken.is_some_and(|(taken_outpost, taken)| {
-        taken_outpost == outpost && taken.number == group.number && taken.rank < group.rank
-    })
-}
-
-/// Records that the focus of `report` was taken: its focus group, which ends the group for its older entries, and
-/// Verbatim+Tab's waiting press when
-/// it was observed after the press, whose answer would then be late
-/// (`crate::report_focus`).
-fn record_taken(state: &mut SrState, report: &FocusReport<'_>) {
-    record_group(state, report);
-}
-
-/// Records `report`'s focus group as taken, which ends the group for its
-/// older entries: for a report taken, and for one set aside for a live
-/// re-read, whose answer stands for it.
-fn record_group(state: &mut SrState, report: &FocusReport<'_>) {
-    if let Some(group) = report.group {
-        state.group_taken = Some((report.node.id.outpost(), group));
-    }
-}
-
-/// Whether Core's duplicate rule judges a focus of `node`, read for
-/// `purpose`: every report and a plain focus query's answer; a fake
-/// focus's answer only when it was read through MSAA, as NVDA tests a
-/// fake focus for duplicates only for MSAA objects; the desktop's return
-/// never, as NVDA queues that focus with no test
-/// (`books/dev/src/reference/adr/0001-focus.md`, "A focus UI Automation does not deliver").
-fn duplicate_rule_applies(purpose: Option<FocusPurpose>, node: &NodeSnapshot) -> bool {
-    match purpose {
-        None | Some(FocusPurpose::Plain | FocusPurpose::Report) => true,
-        Some(FocusPurpose::Fake) => node.backend == Backend::Msaa,
-        Some(FocusPurpose::Again) => false,
-    }
-}
-
-/// Keeps a duplicate's newer reading, unspoken, on the focus object when it
-/// is the duplicate's node, with its caret.
-fn keep_duplicate(state: &mut SrState, report: &Report, cached: Option<CachedFrom>) -> Vec<Effect> {
-    if state
-        .focus
-        .object()
-        .is_none_or(|focus| focus.snapshot.id != report.node.id)
-    {
-        return Vec::new();
-    }
-    // The entries below the innermost cached one were read live, and so
-    // was a window above the reader's process boundary, which is always
-    // described from Windows' state and never cached.
-    let live: Vec<NodeSnapshot> = report
-        .ancestors
-        .iter()
-        .enumerate()
-        .filter(|(index, ancestor)| {
-            cached.is_none_or(|cached| *index > cached.index_usize())
-                || ancestor.details.above_boundary
-        })
-        .map(|(_, ancestor)| ancestor.clone())
-        .collect();
-    keep_newer_reading(state, &report.node, &live);
-    sync_navigator_with_focus(state);
-    if let Some(effects) = crate::key_line::repeat_evidence(
-        state,
-        report.trace_id,
-        report.node.id,
-        report.text.as_ref(),
-    ) {
-        return effects;
-    }
-    editing::keep_focus_caret(state, report.node.id, report.text.as_ref());
-    let Some(FocusText::Caret { changes, caret, .. }) = report.text.as_ref() else {
-        return Vec::new();
-    };
-    let general = changes.content_changed.then_some(editing::General {
-        selection: changes.new_selection.as_ref(),
-        collapsed: caret.selection.is_none(),
-    });
-    editing::selection_changed(
-        state,
-        report.trace_id,
-        report.node.id,
-        (&changes.selection_changes, general),
-    )
-}
-
-/// The ordering stamps, which the stale rule judges: the observation of
-/// every report Core accepted into its order, whatever is then decided of
-/// it (Dickson, 2026-11-08).
-fn stamp_observed(state: &mut SrState, report: &Report) {
-    if report.observed_at_us != 0 {
-        state
-            .foreground
-            .apply(ForegroundFact::Observed(LatestFocus {
-                outpost: report.node.id.outpost(),
-                observed_at_us: report.observed_at_us,
-                top_level: report.window.as_ref().map(|window| window.top_level),
-                whole_window: report.whole_window,
-            }));
-    }
-}
-
-/// A report's [`FirstCachedAncestor`], when it names one of `ancestors`,
-/// the ancestors Core takes ([`focus_ancestors`]): void when nothing was
-/// cached, or when an application's rule dropped the chain.
-fn cached_ancestors(
-    first_cached: Option<FirstCachedAncestor>,
-    ancestors: &[NodeSnapshot],
-) -> Option<CachedFrom> {
-    first_cached
-        .map(CachedFrom)
-        .filter(|cached| cached.index_usize() < ancestors.len())
-}
-
-/// A report's cached ancestors as Core judges them: up to and including
-/// its innermost cached ancestor, by its index in the ancestors Core takes.
-#[derive(Clone, Copy, Debug)]
-struct CachedFrom(FirstCachedAncestor);
-
-impl CachedFrom {
-    /// The index of the innermost cached ancestor.
-    fn index_usize(self) -> usize {
-        usize::try_from(self.0.index).unwrap_or(usize::MAX)
-    }
-}
-
 /// A focus's ancestors as Core takes them: as the event reports them, but
 /// none for an item whose containers an application's rule drops
 /// ([`crate::applications::drops_ancestry`]).
@@ -872,135 +250,13 @@ pub(crate) fn focus_ancestors<'a>(
     }
 }
 
-/// A caret report of `node`: keeps Core's caret current and speaks the
-/// selection changes it carries, a selection no key made
-/// (`editing::selection_changed`). The focus's own caret comes with the
-/// focus (`editing::focus_text`).
-fn reduce_caret_moved(
-    state: &mut SrState,
-    trace_id: TraceId,
-    moved: &NormalizedEvent,
-) -> Vec<Effect> {
-    let NormalizedEvent::CaretMoved {
-        node_id: node,
-        caret,
-        selection_changes,
-        content_changed,
-        new_selection,
-        facts,
-    } = moved
-    else {
-        return Vec::new();
-    };
-    let general = content_changed.then_some(editing::General {
-        selection: new_selection.as_ref(),
-        collapsed: caret.selection.is_none(),
-    });
-    crate::key_line::caret_report(
-        state,
-        trace_id,
-        *node,
-        caret.clone(),
-        (selection_changes, general),
-        facts.as_deref(),
-    )
-}
-
-/// A live re-read's answer, `event` (`crate::live_reread`): taken only
-/// while its report waits for it, and judged by no rule its report already
-/// passed, since the report took its place in the order when it was
-/// queued. An answer from a window the user has left by then is refused,
-/// ending the report unanswered; any other is its report's reading, ready
-/// in its turn. Either way the queue runs on. An answer to no waiting
-/// report says nothing.
-fn live_reread_answered(
-    state: &mut SrState,
-    (trace_id, source): (TraceId, Pid),
-    observed_at_us: u64,
-    window: Option<&WindowFacts>,
-    event: &NormalizedEvent,
-) -> Vec<Effect> {
-    let NormalizedEvent::FocusChanged {
-        node,
-        whole_window,
-        ancestors,
-        selected_child,
-        text,
-        earlier,
-        group,
-        answers: Some(request),
-        ..
-    } = event
-    else {
-        return Vec::new();
-    };
-    let outpost = node.id.outpost();
-    if !state.focus.waits_for(outpost, *request) {
-        return Vec::new();
-    }
-    if matches!(
-        earlier,
-        Some(EarlierElement::NotFocused | EarlierElement::Gone)
-    ) {
-        forget_text_of(state, node.id);
-    }
-    if classify(state, (source, observed_at_us), window, event) == Acceptance::Dropped {
-        state.focus.unanswered(outpost, *request);
-    } else {
-        let answer = Report {
-            trace_id,
-            source,
-            observed_at_us,
-            window: window.cloned(),
-            node: node.clone(),
-            whole_window: *whole_window,
-            ancestors: Arc::from(focus_ancestors(window, node, ancestors)),
-            selected_child: selected_child.clone(),
-            text: text.as_deref().cloned(),
-            earlier: *earlier,
-            group: *group,
-            alive: true,
-        };
-        state.focus.answered(outpost, *request, answer);
-    }
-    run_queue(state)
-}
-
-/// Decides the reports at the queue's front in order, each against the
-/// last queued focus and the focus object the one before it left: an
-/// answered one is executed, one that ended unanswered becomes the last
-/// queued focus, and a pending one is judged and planned
-/// ([`decide_report`]), until one waits for its live re-read or none is
-/// left (`crate::focus_queue`).
-pub(crate) fn run_queue(state: &mut SrState) -> Vec<Effect> {
-    let mut effects = Vec::new();
-    loop {
-        match state.focus.front() {
-            Front::Wait => break,
-            Front::Execute(report, left, arrival) => {
-                effects.extend(execute_report(state, &report, left, arrival));
-            }
-            Front::Decide(entry, cached) => {
-                if decide_report(state, *entry, cached.map(CachedFrom), &mut effects) {
-                    break;
-                }
-            }
-            Front::Input(input) => effects.extend(waited_input(state, &input)),
-        }
-    }
-    let floor = state.foreground.stale_floor();
-    state.focus.let_go_of_changes(floor);
-    state.focus.restart_count_when_idle();
-    effects
-}
-
 /// A key command or script with no focus report waiting ahead of it: one
 /// pressed while a held key waits, or while the watch of the held key last
 /// passed on is open, runs after it, as NVDA runs scripts one at a time in
 /// the order queued (`books/dev/src/explanation/design/ownership.md`); any
 /// other runs now.
 fn command_arrived(state: &mut SrState, input: &Input) -> Vec<Effect> {
-    crate::key_line::command_arrived(state, input)
+    command_input(state, input)
 }
 
 /// An input that waited behind focus reports, handled in its turn
@@ -1013,17 +269,9 @@ pub(crate) fn waited_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
         Input::Command { .. } | Input::Script { .. } => {
             under_key(input.trace_id(), command_arrived(state, input))
         }
-        Input::CaretKey { .. }
-        | Input::CharacterTyped { .. }
-        | Input::ClearingKey { .. }
-        | Input::EditingChord { .. } => under_key(key_trace(input), key_arrived(state, input)),
-        // The held-key line carries a held key's effects under its trace.
-        Input::HeldKey {
-            trace_id,
-            key,
-            pressed_at_ms,
-            ..
-        } => crate::key_line::held_key(state, *trace_id, *key, *pressed_at_ms),
+        Input::CharacterTyped { .. } | Input::ClearingKey { .. } | Input::EditingChord { .. } => {
+            under_key(key_trace(input), key_arrived(state, input))
+        }
         _ => shell::reduce(state, input),
     }
 }
@@ -1033,7 +281,7 @@ pub(crate) fn waited_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
 /// (`books/dev/src/explanation/design/key-holding.md`, "Keys behind a held
 /// key"); any other now.
 fn key_arrived(state: &mut SrState, input: &Input) -> Vec<Effect> {
-    crate::key_line::key_arrived(state, input)
+    key_input(state, input)
 }
 
 /// `effects`, of a key or command handled after the input it reached Core
@@ -1049,201 +297,6 @@ fn under_key(trace_id: Option<TraceId>, effects: Vec<Effect>) -> Vec<Effect> {
             .collect(),
         None => effects,
     }
-}
-
-/// Decides `entry`, the report at the queue's front, with its cached
-/// ancestors from `cached`, as NVDA handles a focus at its place in its
-/// queue, every report ahead of it decided:
-///
-/// - Its verdict: whether a foreground change left the last queued focus
-///   for a window other than the report's own (the left mark).
-/// - A whole-window focus is refused when the last queued focus is in its
-///   window and the report is not judged left ([`refused_whole_window`]);
-///   it still makes its window the foreground object, as NVDA's is while
-///   its focus is in that window ([`change_on`]). It never moves
-///   attention, which only the focus listener's foreground change moves
-///   (D14).
-/// - A duplicate of the last queued focus is dropped, its newer reading
-///   kept ([`is_duplicate`], [`keep_duplicate`]). A repeat of the last
-///   queued focus that reached Core while that one still waited for its
-///   live re-read is no duplicate of it.
-/// - Any other is planned against the focus object ([`plan_focus`]): set
-///   aside for a live re-read when the plan would speak an ancestor its
-///   focus reader took from its ancestry cache, as entered or as the title
-///   ([`set_aside`]), which every report behind it waits for, returning
-///   true, unless its outpost generation has ended, when no re-read can be
-///   asked and it ends unanswered, the last queued focus, unspoken;
-///   otherwise executed.
-fn decide_report(
-    state: &mut SrState,
-    entry: Entry,
-    cached: Option<CachedFrom>,
-    effects: &mut Vec<Effect>,
-) -> bool {
-    let report = &entry.report;
-    let left = state.focus.left_against(&entry);
-    let repeats = state.focus.last_queued().is_some_and(|last| {
-        last.node.id == report.node.id && last.waited.is_some_and(|ended| ended > entry.arrival)
-    });
-    if report.whole_window && refused_whole_window(state, report.window.as_ref(), left) {
-        state
-            .foreground
-            .apply(ForegroundFact::Object(ObjectKey::of(&report.node)));
-        return false;
-    }
-    if duplicate_rule_applies(entry.purpose, &report.node)
-        && !repeats
-        && is_duplicate(state, &report.node, report.earlier, left)
-    {
-        effects.extend(keep_duplicate(state, report, cached));
-        return false;
-    }
-    // What the plan asks: nothing, a live re-read, or, when one is due but
-    // the report's outpost generation has ended, its end unanswered.
-    let asked = {
-        let view = report.view(cached);
-        let found = state
-            .focus
-            .object()
-            .cloned()
-            .map(|focus| Line { focus, left });
-        let plan = plan_focus(state, report.window.as_ref(), &view, found.as_ref());
-        match (plan.live_reread, cached) {
-            (Some(_), Some(_)) if !report.alive => Some(None),
-            (Some(reason), Some(cached)) => {
-                // Its answer stands for it, so the group's older entries
-                // are not then taken.
-                record_group(state, &view);
-                Some(Some(set_aside(state, report, (&plan, reason, cached))))
-            }
-            _ => None,
-        }
-    };
-    if let Some(asked) = asked {
-        // No live re-read is asked of an ended outpost generation: the
-        // report ends unanswered (Claude, 2026-11-08, accepted by Dickson).
-        match asked {
-            Some((reader, effect)) => {
-                effects.push(effect);
-                state.focus.reread_first(entry, left, reader);
-                return true;
-            }
-            None => state.focus.unanswered_now(entry),
-        }
-        false
-    } else {
-        effects.extend(execute_report(state, report, left, entry.arrival));
-        false
-    }
-}
-
-fn reduce_event(
-    state: &mut SrState,
-    (trace_id, purpose): (TraceId, Option<FocusPurpose>),
-    observed_at_us: u64,
-    source: Pid,
-    window: Option<&WindowFacts>,
-    event: &NormalizedEvent,
-) -> Vec<Effect> {
-    // Report focus reads the committed focus through the event queue
-    // (`crate::report_focus`) and asks no focus read of its own, so an
-    // answer for one is a shell's fault and is not taken as a focus.
-    if purpose == Some(FocusPurpose::Report) {
-        return Vec::new();
-    }
-    if let NormalizedEvent::FocusChanged {
-        answers: Some(_), ..
-    } = event
-    {
-        let effects =
-            live_reread_answered(state, (trace_id, source), observed_at_us, window, event);
-        sync_navigator_with_focus(state);
-        return effects;
-    }
-    if focus_dropped_first(state, observed_at_us, window, event) {
-        return Vec::new();
-    }
-    match classify(state, (source, observed_at_us), window, event) {
-        Acceptance::Dropped => return Vec::new(),
-        Acceptance::Background => return reduce_background(state, trace_id, observed_at_us, event),
-        Acceptance::Attended => {}
-    }
-
-    let effects = match event {
-        NormalizedEvent::FocusChanged {
-            node,
-            whole_window,
-            ancestors,
-            selected_child,
-            text,
-            earlier,
-            group,
-            first_cached_ancestor,
-            ..
-        } => {
-            let ancestors = focus_ancestors(window, node, ancestors);
-            let cached = cached_ancestors(*first_cached_ancestor, ancestors);
-            let report = Report {
-                trace_id,
-                source,
-                observed_at_us,
-                window: window.cloned(),
-                node: node.clone(),
-                whole_window: *whole_window,
-                ancestors: Arc::from(ancestors),
-                selected_child: selected_child.clone(),
-                text: text.as_deref().cloned(),
-                earlier: *earlier,
-                group: *group,
-                alive: true,
-            };
-            focus_reported(state, purpose, report, cached)
-        }
-        NormalizedEvent::SelectionChanged { node } => {
-            reduce_selection_changed(state, trace_id, node)
-        }
-        NormalizedEvent::ControlledSelection { controller, node } => {
-            reduce_controlled_selection(state, trace_id, *controller, node)
-        }
-        NormalizedEvent::Notification {
-            node_id: _,
-            notification,
-        } => reduce_notification(trace_id, notification),
-        NormalizedEvent::Alert { node, origin } => {
-            reduce_alert(state, (trace_id, observed_at_us), node, *origin)
-        }
-        NormalizedEvent::ValueChanged { node_id, value } => {
-            reduce_value_changed(state, trace_id, *node_id, value.clone())
-        }
-        moved @ NormalizedEvent::CaretMoved { .. } => reduce_caret_moved(state, trace_id, moved),
-        NormalizedEvent::PropertyChanged {
-            node_id,
-            change,
-            child_count,
-        } => match change {
-            PropertyChange::Name(name) => {
-                reduce_name_changed(state, trace_id, *node_id, name.as_ref())
-            }
-            PropertyChange::Value(value) => {
-                reduce_value_changed(state, trace_id, *node_id, value.clone())
-            }
-            PropertyChange::States(new_states) => {
-                states_event(state, trace_id, *node_id, *new_states, *child_count)
-            }
-            PropertyChange::Description(description) => {
-                reduce_description_changed(state, trace_id, *node_id, description.as_ref())
-            }
-            PropertyChange::Suggestions(open) => reduce_suggestions(state, *node_id, *open),
-            // `PropertyChange` is `#[non_exhaustive]`.
-            _ => Vec::new(),
-        },
-        // A text change says nothing of its own: typing is echoed as it is
-        // typed, and a terminal is read when its outpost tells a change.
-        // `NormalizedEvent` is `#[non_exhaustive]`.
-        _ => Vec::new(),
-    };
-    sync_navigator_with_focus(state);
-    effects
 }
 
 /// Keeps the navigator's copy of the focus current: a name, value, or state
@@ -1265,46 +318,6 @@ fn sync_navigator_with_focus(state: &mut SrState) {
     }
 }
 
-/// Speaks an event accepted from outside the attention record. Background
-/// events never move focus or the navigator and always queue behind current
-/// speech: a toast alert, and the shell's window-snap results notification.
-/// One observed before the newest foreground change is dropped unspoken
-/// ([`observed_before_foreground_change`]).
-fn reduce_background(
-    state: &mut SrState,
-    trace_id: TraceId,
-    observed_at_us: u64,
-    event: &NormalizedEvent,
-) -> Vec<Effect> {
-    if observed_before_foreground_change(state, observed_at_us) {
-        return Vec::new();
-    }
-    if let NormalizedEvent::Alert { node, origin } = event {
-        return reduce_alert(state, (trace_id, observed_at_us), node, *origin);
-    }
-    let NormalizedEvent::Notification { notification, .. } = event else {
-        return Vec::new();
-    };
-    let Some(text) = notification
-        .display_string
-        .as_ref()
-        .filter(|display| !display.is_empty())
-    else {
-        return Vec::new();
-    };
-    vec![Effect::Speak(
-        Utterance {
-            trace_id,
-            priority: SpeechPriority::Queued,
-            segments: vec![UtteranceSegment::text(text.clone())],
-            source: None,
-            say_all: false,
-            validity: None,
-        },
-        None,
-    )]
-}
-
 /// The parts of a `FocusChanged` event the focus handling reads.
 struct FocusReport<'a> {
     node: &'a NodeSnapshot,
@@ -1319,11 +332,6 @@ struct FocusReport<'a> {
     text: Option<&'a FocusText>,
     /// What its reader read of the element it held before under its node.
     earlier: Option<EarlierElement>,
-    /// Its place in its outpost's focus group.
-    group: Option<FocusGroup>,
-    /// Where its cached ancestors begin, when it has any and is no live
-    /// re-read's answer ([`cached_ancestors`]).
-    cached: Option<CachedFrom>,
 }
 
 impl FocusReport<'_> {
@@ -1338,9 +346,8 @@ impl FocusReport<'_> {
 }
 
 impl Report {
-    /// The report as the focus handling reads it, `cached` naming where its
-    /// cached ancestors begin.
-    fn view(&self, cached: Option<CachedFrom>) -> FocusReport<'_> {
+    /// The report as the focus handling reads it.
+    fn view(&self) -> FocusReport<'_> {
         FocusReport {
             node: &self.node,
             observed_at_us: self.observed_at_us,
@@ -1349,42 +356,26 @@ impl Report {
             selected_child: self.selected_child.as_ref(),
             text: self.text.as_ref(),
             earlier: self.earlier,
-            group: self.group,
-            cached,
         }
     }
-}
-
-/// Takes a focus `report` that passed the stale and foreground tests, read
-/// for `purpose`, into Core's order (`crate::focus_queue`): its
-/// observation is an ordering stamp, and it waits behind the reports not
-/// yet decided, with its cached ancestors from `cached`; then the queue
-/// runs.
-fn focus_reported(
-    state: &mut SrState,
-    purpose: Option<FocusPurpose>,
-    report: Report,
-    cached: Option<CachedFrom>,
-) -> Vec<Effect> {
-    stamp_observed(state, &report);
-    state
-        .focus
-        .queue(report, purpose, cached.map(|cached| cached.0));
-    run_queue(state)
 }
 
 /// Takes `owned`'s focus silently in place of a focus that reads the same:
 /// its new ids are taken, the navigator moved only if there is none, and
 /// the caret baseline kept (the silent re-take, `crate::focus::retake`).
 pub(crate) fn take_silently(state: &mut SrState, owned: &Report) {
-    let report = &owned.view(None);
+    let report = &owned.view();
     let window = owned.window.as_ref();
     let found = state
         .focus
         .object()
         .cloned()
         .map(|focus| Line { focus, left: false });
-    let line = focus_ancestry(found.as_ref(), window, report);
+    let line = focus_ancestry(
+        found.as_ref(),
+        (window, owned.top_level, committed_top(state)),
+        report,
+    );
     let previous = found.as_ref().map(|found| &found.focus);
     let mut new_focus = focus_context(
         (owned.trace_id, owned.source),
@@ -1393,8 +384,7 @@ pub(crate) fn take_silently(state: &mut SrState, owned: &Report) {
         (previous, Arc::clone(&line.ancestors)),
     );
     new_focus.alive = owned.alive;
-    state.focus.execute(new_focus, 0);
-    record_taken(state, report);
+    state.focus.execute(new_focus);
     if state.navigator.is_none() {
         state.navigator = Some(Navigator::on(report.node.clone()));
     }
@@ -1428,28 +418,8 @@ pub(crate) fn take_silently(state: &mut SrState, owned: &Report) {
 ///   title when its line does not already speak it ([`window_title`]).
 /// - A report judged left is executed as a focus from another top-level
 ///   window is (the left mark, `crate::focus_queue`).
-pub(crate) fn execute_report(
-    state: &mut SrState,
-    owned: &Report,
-    left: bool,
-    arrival: u64,
-) -> Vec<Effect> {
-    let node = owned.node.id;
-    let first = crate::key_line::before_focus(state, node);
-    let mut effects = execute_focus(state, owned, (left, arrival), first);
-    effects.extend(crate::key_line::focus_executed(state, node));
-    effects
-}
-
-/// [`execute_report`], the words of a key whose focus moved first said
-/// after the expired speech is dropped and before a new window cuts them.
-fn execute_focus(
-    state: &mut SrState,
-    owned: &Report,
-    (left, arrival): (bool, u64),
-    first: Vec<Effect>,
-) -> Vec<Effect> {
-    let report = &owned.view(None);
+pub(crate) fn execute_report(state: &mut SrState, owned: &Report, left: bool) -> Vec<Effect> {
+    let report = &owned.view();
     let window = owned.window.as_ref();
     let (trace_id, source) = (owned.trace_id, owned.source);
     let found = state
@@ -1457,7 +427,11 @@ fn execute_focus(
         .object()
         .cloned()
         .map(|focus| Line { focus, left });
-    let line = focus_ancestry(found.as_ref(), window, report);
+    let line = focus_ancestry(
+        found.as_ref(),
+        (window, owned.top_level, committed_top(state)),
+        report,
+    );
     if report.whole_window {
         state
             .foreground
@@ -1486,13 +460,12 @@ fn execute_focus(
     {
         // The silent re-read: the replacement outpost reports the focus the
         // user already heard, so take its ids without speaking.
-        state.focus.execute(new_focus, arrival);
-        record_taken(state, report);
+        state.focus.execute(new_focus);
         if state.navigator.is_none() {
             state.navigator = Some(Navigator::on(report.node.clone()));
         }
         editing::keep_focus_caret(state, report.node.id, report.text);
-        return first;
+        return Vec::new();
     }
 
     // The review cursor follows focus (roadmap M3): every focus change snaps
@@ -1508,11 +481,6 @@ fn execute_focus(
     // focus now is.
     let foreground_changed = line.cut;
     let line_met = line.met.is_some();
-    if foreground_changed && report.observed_at_us != 0 {
-        state
-            .foreground
-            .apply(ForegroundFact::LineCut(report.observed_at_us));
-    }
     let entered: Vec<&NodeSnapshot> = line.entered.iter().collect();
     let mut effects = vec![Effect::DropExpiredSpeech(FocusNow {
         focus: ObjectKey::of(report.node),
@@ -1520,7 +488,6 @@ fn execute_focus(
         foreground: state.foreground.object(),
         menu_item_of_focus: menu_item_of_focus(previous, report.node),
     })];
-    effects.extend(first);
     // Entering a menu cuts speech too, at its place among the entered
     // containers (`focus_speech`).
     end_text_activity(
@@ -1529,8 +496,7 @@ fn execute_focus(
         (foreground_changed, previous_left),
         &mut effects,
     );
-    state.focus.execute(new_focus, arrival);
-    record_taken(state, report);
+    state.focus.execute(new_focus);
     state.navigator = Some(navigator);
     // A nameless whole-window focus, and any focus in the shell's staging
     // windows, say nothing; speech was cut above if the foreground window
@@ -1654,105 +620,6 @@ fn entered_window(
         && window.top_level == window.foreground_window
         && (state.foreground.entered() != Some(window.top_level) || previous_left);
     enters.then_some(window.top_level)
-}
-
-/// What Core does with a focus report, computed once, purely, before
-/// anything is written ([`plan_focus`]).
-struct FocusPlan<'a> {
-    /// The report joined to the line it is planned against
-    /// ([`focus_ancestry`]).
-    ancestry: JoinedAncestry<'a>,
-    /// Why the report is set aside for a live re-read, when a cached
-    /// ancestor would be spoken (`focus_rules::needs_live_ancestry`).
-    live_reread: Option<LiveRereadReason>,
-}
-
-/// The plan for `report`, in `window` (`books/dev/src/reference/crates/verbatim-core.md`,
-/// "The ancestry cache"): its ancestry joined to `previous`, the line the
-/// reports before it will leave ([`provisional_line`]), with its verdict,
-/// the entry the title rule would speak, and whether a cached ancestor
-/// would be spoken, as entered or as that title. A report that says
-/// nothing, taken silently, speaks no cached ancestor. Writes nothing.
-fn plan_focus<'a>(
-    state: &SrState,
-    window: Option<&WindowFacts>,
-    report: &FocusReport<'a>,
-    previous: Option<&Line>,
-) -> FocusPlan<'a> {
-    let ancestry = focus_ancestry(previous, window, report);
-    let previous_left = previous.is_some_and(|line| line.left);
-    let silent = report.cached.is_none()
-        || (report.whole_window && !has_text(report.node.name.as_deref()))
-        || crate::applications::is_shell_staging_window(window)
-        || previous.filter(|line| !line.left).is_some_and(|line| {
-            !line.focus.alive && reads_the_same(&line.focus, report.node, report.ancestors)
-        });
-    let live_reread = if silent {
-        None
-    } else {
-        let entered: Vec<&NodeSnapshot> = ancestry.entered.iter().collect();
-        let title = entered_window(state, window, report, previous_left)
-            .filter(|_| window.is_some_and(|window| !window.foreground_is_shell))
-            .filter(|_| ancestry.met.is_none())
-            .and_then(|top_level| window_title(top_level, report.ancestors, &entered))
-            .and_then(|title| {
-                report
-                    .ancestors
-                    .iter()
-                    .position(|ancestor| std::ptr::eq(ancestor, title))
-            });
-        let entered_from = report
-            .ancestors
-            .len()
-            .saturating_sub(ancestry.entered.len());
-        needs_live_ancestry(
-            report.cached.map(CachedFrom::index_usize),
-            entered_from,
-            title,
-        )
-    };
-    FocusPlan {
-        ancestry,
-        live_reread,
-    }
-}
-
-/// Sets `report` aside for a live re-read of its element by the focus
-/// reader that read it, since `plan` found that a cached ancestor would be
-/// spoken, for `reason`: the live re-read is counted and asked for, with
-/// what the shell logs of it, and the report waits for its answer at the
-/// queue's front (`crate::focus_queue`). Nothing is said. Returns the reader
-/// and request, and the effect.
-fn set_aside(
-    state: &mut SrState,
-    report: &Report,
-    (plan, reason, cached): (&FocusPlan<'_>, LiveRereadReason, CachedFrom),
-) -> (((OutpostId, FocusReaderKind), u64), Effect) {
-    let outpost = report.node.id.outpost();
-    let reader = cached.0.reader;
-    let request = state.live_rereads.ask();
-    let join = report
-        .ancestors
-        .get(cached.index_usize().saturating_add(1))
-        .unwrap_or(&report.node);
-    let lowest_common_ancestor = plan
-        .ancestry
-        .met
-        .map(|at_new| report.ancestors.get(at_new).unwrap_or(&report.node).id);
-    let effect = Effect::LiveReread(LiveReread {
-        request,
-        outpost,
-        reader,
-        trace_id: report.trace_id,
-        window: report.window.as_ref().map(|window| window.top_level),
-        logged: LiveRereadLog {
-            focus: report.node.id,
-            cache_join: (join.id, join.name.clone()),
-            lowest_common_ancestor,
-            reason,
-        },
-    });
-    (((outpost, reader), request), effect)
 }
 
 /// The title a focus entering the top-level window `top_level` says: the
@@ -1993,46 +860,6 @@ pub(crate) fn same_reading(
             .all(|(old, new)| old.role == new.role && old.name == new.name)
 }
 
-/// Handles the end of an outpost generation: the focus and the reports
-/// waiting to be executed keep their copied data but their ids are dead,
-/// the reports waiting for its focus readers' live re-reads end unanswered
-/// and the queue runs on, and a navigator or pending navigation in that
-/// outpost is cleared. Navigation then does nothing until focus is reported
-/// again.
-fn outpost_ended(state: &mut SrState, outpost: OutpostId) -> Vec<Effect> {
-    state.focus.outpost_ended(outpost);
-    let mut effects = run_queue(state);
-    // Text positions die with the outpost that minted them.
-    effects.extend(say_all::outpost_ended(state, outpost));
-    if state
-        .focus
-        .object()
-        .is_some_and(|focus| focus.snapshot.id.outpost() == outpost)
-    {
-        state.forget_caret();
-    }
-    state.queries.forget(|then| match then {
-        Then::Text(PendingText { node, .. }) => node.outpost() == outpost,
-        _ => false,
-    });
-    crate::terminal::reading::outpost_ended(state, outpost);
-    if state
-        .start_marker
-        .is_some_and(|marker| marker.node().outpost() == outpost)
-    {
-        state.start_marker = None;
-    }
-    if state
-        .navigator
-        .as_ref()
-        .is_some_and(|navigator| navigator.object.id.outpost() == outpost)
-    {
-        state.navigator = None;
-    }
-    crate::key_line::forget_press_read(state, outpost);
-    effects
-}
-
 /// A state change of `node_id`, spoken on the focus or an ancestor
 /// ([`change_on`]), and on nothing else.
 /// A change of `node_id`'s property, judged by today's rules against the
@@ -2198,42 +1025,6 @@ fn reduce_name_changed(
     )]
 }
 
-/// Speaks a toast: the alerting object announced in full, queued behind
-/// current speech, as NVDA's notification behavior speaks it. A toast never
-/// moves focus or the navigator.
-fn reduce_alert(
-    state: &mut SrState,
-    (trace_id, observed_at_us): (TraceId, u64),
-    node: &NodeSnapshot,
-    origin: AlertOrigin,
-) -> Vec<Effect> {
-    if let AlertOrigin::ToastWindowOpened(id) = origin {
-        // A repeat of the last toast within a second is dropped, leaving
-        // the record, as NVDA records only one it speaks
-        // (`docs/parity/alerts.md`, "Toasts").
-        if state.last_toast.is_some_and(|last| {
-            last.id == id && observed_at_us.saturating_sub(last.at_us) < TOAST_REPEAT_US
-        }) {
-            return Vec::new();
-        }
-        state.last_toast = Some(crate::state::LastToast {
-            id,
-            at_us: observed_at_us,
-        });
-    }
-    // A toast is never a tree or list item, so the level spoken before it
-    // plays no part.
-    vec![Effect::Speak(
-        announce_node(
-            trace_id,
-            SpeechPriority::Queued,
-            node,
-            (Reason::Focus, &mut None, &mut CellMemory::default()),
-        ),
-        None,
-    )]
-}
-
 /// Announces `node`, an object an announcement read, with reason focus at
 /// `priority`, as NVDA speaks an alert's or a toast's object: it never
 /// moves the focus or the navigator, and the level spoken before plays no
@@ -2254,46 +1045,6 @@ pub(crate) fn announce_object(
     )
 }
 
-/// How long after a toast the same toast is dropped as a repeat: one second
-/// (`docs/parity/alerts.md`, "Toasts").
-const TOAST_REPEAT_US: u64 = 1_000_000;
-
-/// Handles a UIA `AutomationNotification` event (`docs/parity/alerts.md`,
-/// "UIA notification events") from the focus's application: announce the
-/// application-supplied display string, if any, and nothing when there is
-/// none — a notification with no text has nothing to say. The processing
-/// hint sets the priority: `MostRecent` and `ImportantMostRecent` supersede
-/// earlier speech and so interrupt; every other kind queues behind current
-/// speech, NVDA's exact split. The notification kind and activity id are not
-/// used here; the activity id matters only for acceptance (see
-/// [`classify`]).
-fn reduce_notification(trace_id: TraceId, notification: &Notification) -> Vec<Effect> {
-    let Some(text) = notification
-        .display_string
-        .as_ref()
-        .filter(|display| !display.is_empty())
-    else {
-        return Vec::new();
-    };
-    let priority = match notification.processing {
-        NotificationProcessing::MostRecent | NotificationProcessing::ImportantMostRecent => {
-            SpeechPriority::Interrupt
-        }
-        _ => SpeechPriority::Queued,
-    };
-    vec![Effect::Speak(
-        Utterance {
-            trace_id,
-            priority,
-            segments: vec![UtteranceSegment::text(text.clone())],
-            source: None,
-            say_all: false,
-            validity: None,
-        },
-        None,
-    )]
-}
-
 /// Runs a review or object-navigation command (roadmap M3) against the
 /// navigator object and its review cursor. A command with no navigator yet
 /// (nothing has ever been focused) does nothing. Object-navigation moves
@@ -2301,12 +1052,7 @@ fn reduce_notification(trace_id: TraceId, notification: &Notification) -> Vec<Ef
 /// they emit a `Fetch` to the owning outpost and the completion moves the
 /// navigator; everything else — report, activate, review text motion — is
 /// synchronous over state the reducer already holds.
-fn reduce_command(
-    state: &mut SrState,
-    trace_id: TraceId,
-    command: ReviewCommand,
-    repeat: u8,
-) -> Vec<Effect> {
+fn reduce_command(state: &mut SrState, trace_id: TraceId, command: ReviewCommand) -> Vec<Effect> {
     // Any command stops say-all, as any key does in NVDA; say-all's own
     // commands start it afresh.
     let mut stopped = say_all::stop(state);
@@ -2315,17 +1061,9 @@ fn reduce_command(
         | ReviewCommand::ToggleTypedCharacters
         | ReviewCommand::ToggleTypedWords => toggle_setting(state, trace_id, command),
         ReviewCommand::ToggleReportNewOutput => terminal::toggle(state, trace_id),
-        ReviewCommand::SayAllFromCaret => caret_command(state, trace_id),
-        // Report focus and the caret's location run as event-queue entries
-        // (`crate::report_focus`, `crate::caret_location`).
-        // So do the terminal's status bar and command marks
-        // (`crate::terminal::commands`).
-        ReviewCommand::ReportFocus
-        | ReviewCommand::ReportCaretLocation
-        | ReviewCommand::ReportStatusBar
-        | ReviewCommand::PreviousCommandMark
-        | ReviewCommand::NextCommandMark => Vec::new(),
-        _ => navigator_command(state, trace_id, command, repeat),
+        // Every other command runs as its own function on the event queue
+        // (`crate::keys::entry`).
+        _ => Vec::new(),
     };
     stopped.append(&mut effects);
     stopped
@@ -2361,103 +1099,6 @@ fn toggle_setting(state: &mut SrState, trace_id: TraceId, command: ReviewCommand
         editing::speak(trace_id, vec![UtteranceSegment::new(segment)]),
         Effect::SettingsChanged(state.settings),
     ]
-}
-
-/// Runs say-all from the focus's caret. A focus that cannot have text
-/// has no caret.
-fn caret_command(state: &mut SrState, trace_id: TraceId) -> Vec<Effect> {
-    let Some(focus) = state.focus.object().filter(|focus| focus.alive) else {
-        return vec![editing::speak(
-            trace_id,
-            review_text::message(Message::NoCaret),
-        )];
-    };
-    let node = focus.snapshot.id;
-    let has_text = editing::may_have_text(focus.snapshot.role) || state.focus_caret(node).is_some();
-    if !has_text {
-        return vec![editing::speak(
-            trace_id,
-            review_text::message(Message::NotSupported),
-        )];
-    }
-    say_all::start(
-        state,
-        node,
-        (true, verbatim_model::TextPoint::Caret),
-        say_all::SayAllBy::Queries,
-    )
-}
-
-/// Runs a command on the navigator object and its review cursor.
-fn navigator_command(
-    state: &mut SrState,
-    trace_id: TraceId,
-    command: ReviewCommand,
-    repeat: u8,
-) -> Vec<Effect> {
-    // Move to focus, object navigation, activate and report the current
-    // object run as event-queue entries (`crate::navigator`).
-    if matches!(
-        command,
-        ReviewCommand::ToFocus
-            | ReviewCommand::ReportObject
-            | ReviewCommand::Activate
-            | ReviewCommand::Parent
-            | ReviewCommand::NextSibling
-            | ReviewCommand::PreviousSibling
-            | ReviewCommand::FirstChild
-    ) {
-        return Vec::new();
-    }
-    let Some(navigator) = state.navigator.as_ref() else {
-        return vec![Effect::Speak(
-            Utterance {
-                trace_id,
-                priority: SpeechPriority::Queued,
-                segments: vec![UtteranceSegment::new(SegmentContent::Message(
-                    Message::NoNavigatorObject,
-                ))],
-                source: None,
-                say_all: false,
-                validity: None,
-            },
-            None,
-        )];
-    };
-
-    let press = ReviewPress {
-        trace_id,
-        command,
-        repeat,
-    };
-    let _ = navigator;
-    if review_text::handles(command) {
-        review_text::run(state, press)
-    } else {
-        Vec::new()
-    }
-}
-
-/// Announces the navigator object `object` after object navigation or on
-/// request: its full announcement, except that an object that may have
-/// text leaves its value out and says its text after the rest
-/// ([`editing::navigator_text`]), as a focus does.
-fn announce_navigator(
-    state: &mut SrState,
-    trace_id: TraceId,
-    object: &NodeSnapshot,
-    reason: Reason,
-    press: Option<ReviewPress>,
-) -> Vec<Effect> {
-    let mut effects = vec![navigator_utterance(state, trace_id, object, reason)];
-    effects.extend(editing::navigator_text(
-        state,
-        trace_id,
-        object,
-        NavigatorRead::Announce,
-        press,
-    ));
-    effects
 }
 
 /// The navigator object `object` announced, without its text: an object
@@ -2504,93 +1145,6 @@ pub(crate) fn focus_spoken_now(state: &mut SrState, object: &NodeSnapshot) {
     {
         let ancestors = Arc::clone(&focus.spoken().ancestors);
         focus.spoken = SpokenRecord::of(object, ancestors);
-    }
-}
-
-/// Announces `object` as [`announce_navigator`] does and, when it is the
-/// focus, moves what was last spoken of the focus to what is spoken now
-/// ([`SpokenRecord`]): a property is remembered whenever it is spoken of the
-/// object, whatever the reason (`docs/parity/changes-and-selection.md`,
-/// "Name change on the focus"; "When values and descriptions are spoken" in
-/// `docs/nvda/speech.md`), so a change a report has already spoken is not
-/// spoken again when its event comes. The ancestors' entries stay, since
-/// the announcement speaks none of them.
-///
-/// `object` is the focus only when it equals the focus's reading. A
-/// navigation that lands on the focus's node fetches a separate object with
-/// the same id, which may differ from the reading, and speaking that says
-/// nothing of what was spoken of the focus. A navigator seeded from the
-/// focus is kept equal to the reading after every event
-/// (`sync_navigator_with_focus`), and a fetched copy equal to the reading
-/// speaks the reading, so moving the record to it is right as well.
-fn announce_focus_object(
-    state: &mut SrState,
-    trace_id: TraceId,
-    object: &NodeSnapshot,
-    reason: Reason,
-    press: Option<ReviewPress>,
-) -> Vec<Effect> {
-    focus_spoken_now(state, object);
-    announce_navigator(state, trace_id, object, reason, press)
-}
-
-/// Reports the navigator object, read live for the press: on the first press its full announcement,
-/// on the second its text spelled character by character, on the third its
-/// name and value copied to the clipboard (NVDA's multi-press semantics).
-pub(crate) fn report_object(
-    state: &mut SrState,
-    trace_id: TraceId,
-    press: ReviewPress,
-) -> Vec<Effect> {
-    let Some(navigator) = state.navigator.as_ref() else {
-        return Vec::new();
-    };
-    let repeat = press.repeat;
-    match repeat {
-        0 => {
-            let object = navigator.object.clone();
-            announce_focus_object(state, trace_id, &object, Reason::Query, Some(press))
-        }
-        // An object with text spells or copies its name and the text it
-        // would announce, the selection or the caret's line, as NVDA does
-        // (`docs/nvda/speech.md`, "What an object with text says").
-        1 | 2 if editing::may_have_text(navigator.object.role) => {
-            let object = navigator.object.clone();
-            let read = if repeat == 1 {
-                NavigatorRead::Spell
-            } else {
-                NavigatorRead::Copy
-            };
-            editing::navigator_text(state, trace_id, &object, read, Some(press))
-        }
-        1 => {
-            // NVDA spells the name and value joined by a space.
-            let segments = spelled(&clipboard_text(&navigator.object));
-            if segments.is_empty() {
-                return Vec::new();
-            }
-            vec![Effect::Speak(
-                Utterance {
-                    trace_id,
-                    priority: SpeechPriority::Queued,
-                    segments,
-                    source: Some(source_of(&navigator.object)),
-                    say_all: false,
-                    validity: None,
-                },
-                None,
-            )]
-        }
-        _ => {
-            // Copy the object's name and value; the shell's clipboard
-            // helper owns the spoken confirmation (see the memory on a
-            // single shared copy path).
-            let text = clipboard_text(&navigator.object);
-            if text.is_empty() {
-                return Vec::new();
-            }
-            vec![Effect::CopyToClipboard(text)]
-        }
     }
 }
 
@@ -2802,63 +1356,6 @@ pub(crate) fn flat_review_command(
     )]
 }
 
-/// Handles a `SelectionChanged` event: a node was selected within its
-/// container. Announced only when the selection happened under the focused
-/// container — the event's outpost is the focused node's, focus
-/// sits on a selection container, and the selected node is neither the
-/// focused node itself nor the item most recently announced (the focus
-/// event's own `selected_child`, or the previous selection event). This is
-/// NVDA's generic selection behavior: arrowing through a list whose focus
-/// stays on the container speaks each newly selected item, and everything
-/// else stays quiet.
-fn reduce_selection_changed(
-    state: &mut SrState,
-    trace_id: TraceId,
-    node: &NodeSnapshot,
-) -> Vec<Effect> {
-    let Some(focus) = state.focus.object_mut().filter(|focus| focus.alive) else {
-        return Vec::new();
-    };
-    let target = selection_target(
-        node.id,
-        (focus.snapshot.id, focus.snapshot.role),
-        focus.ancestors.iter().map(|ancestor| ancestor.id),
-        |_| true,
-    );
-    match target {
-        // Selecting the focused item itself is a change of its state, as
-        // NVDA handles a selection on the focus: "selected" is spoken.
-        Some(SelectionTarget::FocusStates) => {
-            let states = node.states;
-            return reduce_states_changed(state, trace_id, node.id, states, None);
-        }
-        // So is selecting one of the focus's ancestors, as NVDA's base
-        // state change handler speaks it.
-        Some(SelectionTarget::AncestorStates) => {
-            return reduce_ancestor_states_changed(state, trace_id, node.id, node.states);
-        }
-        Some(SelectionTarget::Item) if focus.last_selection != Some(node.id) => {}
-        _ => return Vec::new(),
-    }
-    focus.last_selection = Some(node.id);
-    vec![Effect::Speak(
-        Utterance {
-            trace_id,
-            priority: SpeechPriority::Queued,
-            segments: node_segments(
-                node,
-                Reason::Focus,
-                &mut state.last_tree_level,
-                &mut state.cell_memory,
-            ),
-            source: Some(source_of(node)),
-            say_all: false,
-            validity: None,
-        },
-        None,
-    )]
-}
-
 /// A node selected inside an element the focus controls ("Selection in a
 /// list the focus controls" in `docs/nvda/events.md`): spoken as a focus,
 /// interrupting, with the navigator moved to it, while `controller` is
@@ -2877,7 +1374,7 @@ pub(crate) fn reduce_controlled_selection(
         return Vec::new();
     }
     state.navigator = Some(Navigator::on(node.clone()));
-    let mut effects = vec![Effect::Speak(
+    let effects = vec![Effect::Speak(
         announce_node(
             trace_id,
             SpeechPriority::Interrupt,
@@ -2890,7 +1387,6 @@ pub(crate) fn reduce_controlled_selection(
         ),
         None,
     )];
-    effects.extend(crate::key_line::controlled_selection(state, controller));
     effects
 }
 
@@ -3214,52 +1710,26 @@ fn reduce_description_changed(
     )]
 }
 
-/// Completes an object-navigation press with its answer
-/// (`crate::key_line`).
-///
-/// On `FetchResult::Node`, moves the navigator to the returned neighbor and
-/// announces it. On `FetchResult::NoNeighbor` or `FetchResult::Gone`, the
-/// navigator stays put and the direction's edge message is spoken, NVDA's
-/// wording: "No next", "No previous", "No containing object", "No objects
-/// inside" (`docs/parity/review.md`, "Dead objects"). Live testing found
-/// silence indistinguishable from a broken command, exactly as NVDA's
-/// spoken messages predict.
-pub(crate) fn navigate_completed(
-    state: &mut SrState,
-    trace_id: TraceId,
-    press: ReviewPress,
-    kind: QueryKind,
-    result: &FetchResult,
-) -> Vec<Effect> {
-    match result {
-        FetchResult::Node(snapshot) => {
-            state.navigator = Some(Navigator::on(snapshot.clone()));
-            announce_navigator(state, trace_id, snapshot, Reason::Focus, Some(press))
-        }
-        // The application did not answer: the navigator stays where it is,
-        // and nothing is known to speak.
-        FetchResult::Unanswered => Vec::new(),
-        // A tree edge or a dead object: the navigator stays put and the
-        // edge is spoken (NVDA's wording, chosen per direction). Any future
-        // `FetchResult` variant added under `#[non_exhaustive]` stays silent
-        // until given a meaning here.
-        _ => {
-            let Some(message) = edge_message_of(kind) else {
-                return Vec::new();
-            };
-            vec![Effect::Speak(
-                Utterance {
-                    trace_id,
-                    priority: SpeechPriority::Queued,
-                    segments: vec![UtteranceSegment::new(SegmentContent::Message(message))],
-                    source: None,
-                    say_all: false,
-                    validity: None,
-                },
-                None,
-            )]
-        }
-    }
+/// What a navigation in direction `kind` says when there is no neighbor
+/// that way, or the object it started from is not there: the direction's
+/// edge message, NVDA's wording, "No next", "No previous", "No containing
+/// object", "No objects inside" (`docs/parity/review.md`, "Dead objects");
+/// the navigator stays put.
+pub(crate) fn navigation_edge(trace_id: TraceId, kind: QueryKind) -> Vec<Effect> {
+    let Some(message) = edge_message_of(kind) else {
+        return Vec::new();
+    };
+    vec![Effect::Speak(
+        Utterance {
+            trace_id,
+            priority: SpeechPriority::Queued,
+            segments: vec![UtteranceSegment::new(SegmentContent::Message(message))],
+            source: None,
+            say_all: false,
+            validity: None,
+        },
+        None,
+    )]
 }
 
 /// The edge message a navigation `QueryKind` speaks when there is no
@@ -3335,7 +1805,11 @@ struct JoinedAncestry<'a> {
 /// focus, so the two lines meet at the focus itself.
 fn focus_ancestry<'a>(
     previous: Option<&Line>,
-    window: Option<&WindowFacts>,
+    (window, top_level, previous_top): (
+        Option<&WindowFacts>,
+        Option<WindowHandle>,
+        Option<WindowHandle>,
+    ),
     report: &FocusReport<'a>,
 ) -> JoinedAncestry<'a> {
     let Some(line) = previous else {
@@ -3376,8 +1850,8 @@ fn focus_ancestry<'a>(
         )
     };
     let Some((at_old, at_new)) = met else {
-        let old_top = ancestry_top(&previous.snapshot, previous.window.as_ref());
-        let new_top = ancestry_top(report.node, window);
+        let old_top = ancestry_top(&previous.snapshot, previous.window.as_ref(), previous_top);
+        let new_top = ancestry_top(report.node, window, top_level);
         let cut = old_top.is_none() || old_top != new_top;
         return JoinedAncestry {
             ancestors: Arc::from(report.ancestors),
@@ -3408,13 +1882,29 @@ fn focus_ancestry<'a>(
 
 /// The top-level window just below the desktop in the focus line of
 /// `focus`, as its window facts `window` name it, the entry a reader can
-/// leave out of the chain as not presentable ([`focus_ancestry`]): `None` with
-/// no facts, and for a focus whose containers an application's rule drops,
-/// whose container is the desktop, as the task switcher's item's is
-/// ([`crate::applications::drops_ancestry`]).
-fn ancestry_top(focus: &NodeSnapshot, window: Option<&WindowFacts>) -> Option<WindowHandle> {
-    let window = window?;
+/// leave out of the chain as not presentable ([`focus_ancestry`]): `None`
+/// for a focus whose containers an application's rule drops, whose
+/// container is the desktop, as the task switcher's item's is
+/// ([`crate::applications::drops_ancestry`]). A focus with no facts, one
+/// Core read itself, is in the top-level window its read named,
+/// `top_level`.
+fn ancestry_top(
+    focus: &NodeSnapshot,
+    window: Option<&WindowFacts>,
+    top_level: Option<WindowHandle>,
+) -> Option<WindowHandle> {
+    let Some(window) = window else {
+        return top_level;
+    };
     (!crate::applications::drops_ancestry(Some(window), focus)).then_some(window.top_level)
+}
+
+/// The top-level window of the committed focus's read, as Core keeps it.
+fn committed_top(state: &SrState) -> Option<WindowHandle> {
+    state
+        .versions
+        .committed_kept()
+        .map(|kept| kept.place.top_level)
 }
 
 /// Whether a focus ancestor adds context worth speaking when focus first

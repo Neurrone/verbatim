@@ -316,39 +316,6 @@ pub fn words(segments: &[verbatim_model::UtteranceSegment]) -> String {
         .join(" ")
 }
 
-/// The focus on the terminal as the reducer's earlier focus path reports
-/// it, with what the listener read of the element it held under the
-/// terminal's node before, `earlier`.
-pub fn focus_after(earlier: Option<verbatim_model::EarlierElement>) -> Input {
-    Input::Event {
-        trace_id: TraceId::from_raw(1),
-        observed_at_us: 0,
-        source: APP,
-        backend: verbatim_model::Backend::Uia,
-        window: None,
-        event: verbatim_model::NormalizedEvent::FocusChanged {
-            node: verbatim_model::NodeSnapshot {
-                id: node(),
-                backend: verbatim_model::Backend::Uia,
-                role: Role::Terminal,
-                name: Some("Terminal".to_owned()),
-                value: None,
-                states: verbatim_model::StateSet::new(),
-                details: verbatim_model::NodeDetails::default(),
-            },
-            whole_window: false,
-            ancestors: Vec::new(),
-            selected_child: None,
-            text: None,
-            earlier,
-            group: None,
-            answers: None,
-            first_cached_ancestor: None,
-        },
-        purpose: None,
-    }
-}
-
 /// The terminal's focus read, as the outpost answers Core's read of the
 /// application's focus at startup, inside `depth` groups, and inside a
 /// console host's window, outermost, when `console`.
@@ -1080,6 +1047,58 @@ impl Session {
                 self.queue(QueueInput::HangCheck { window, hung });
             }
         }
+    }
+
+    /// The terminal's focus read again under the same node, as the read
+    /// after a return to the user's desktop reads it: a switch to an input
+    /// desktop that opens is told by the listener, Core is woken when its read comes due,
+    /// and the outpost answers the read with `runtime_id_reused`, whether
+    /// the runtime id its reader held for the node now names another
+    /// element.
+    pub fn focus_after(&mut self, runtime_id_reused: bool) {
+        let tell = Event {
+            trace_id: TraceId::from_raw(4),
+            kind: EventKind::DesktopSwitch,
+            process: APP,
+            application: "terminal".to_owned(),
+            thread: 41,
+            at_us: self.at_ms * 1_000,
+            object: EventObject::Msaa {
+                window: WindowHandle(0),
+                object: 0,
+                child: 0,
+            },
+            cached: PropertyValues::default(),
+            payload: Payload::DesktopSwitch {
+                input_desktop_open: true,
+            },
+            window: TellWindow::NoWindow,
+            checked: None,
+        };
+        self.queue(QueueInput::Tell {
+            from: Instance {
+                reader: Reader::Listener,
+                generation: 1,
+            },
+            tell: Box::new(tell),
+        });
+        let wake = self.wake.take().expect("the read after the return timed");
+        self.at_ms = self.at_ms.max(wake.div_ceil(1_000));
+        let input = self.queued_input(TraceId::from_raw(1), QueueInput::Due);
+        let effects = self.step(input);
+        self.take(effects, None);
+        let ask = self.pending.pop_front().expect("the read after the return");
+        assert!(
+            matches!(ask.request, Wire::CurrentFocus { .. }),
+            "the read after the return: {ask:?}"
+        );
+        let mut read = focus_read(self.depth, self.console);
+        read.runtime_id_reused = runtime_id_reused;
+        self.reply(&ask, Outcome::Result(Reply::Focus(Box::new(read))));
+        while let Some(ask) = self.pending.pop_front() {
+            self.answer(ask);
+        }
+        self.settle();
     }
 
     /// What was heard since the last [`Session::heard`], taken.

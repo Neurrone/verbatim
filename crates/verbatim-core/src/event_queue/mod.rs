@@ -141,6 +141,9 @@ pub(crate) struct Foreground {
     pub(crate) thread: u32,
     /// The backend its class gives, `None` when probes decide.
     pub(crate) by_class: Option<Backend>,
+    /// Whether it is Program Manager's or the taskbar's window, judged once
+    /// from its class at the boundary: a focus entering it says no title.
+    pub(crate) shell: bool,
 }
 
 impl Foreground {
@@ -165,9 +168,13 @@ impl Foreground {
         }
     }
 
-    /// Whether `window`'s application holds attention.
+    /// Whether `window`'s application holds attention: it owns the
+    /// foreground window, or `window` is inside the foreground window, as a
+    /// Settings page's content (`SystemSettings`) is inside
+    /// `ApplicationFrameHost`'s frame, which the foreground names
+    /// (`docs/parity/focus-events.md`, "Event acceptance").
     pub(crate) fn attends(&self, window: &RequestWindow) -> bool {
-        self.process == window.process
+        self.process == window.process || window.top_level == self.window
     }
 }
 

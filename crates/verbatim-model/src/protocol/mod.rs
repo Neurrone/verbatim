@@ -847,25 +847,6 @@ pub enum CoreToListener {
     /// Cancel a request: one queued is dropped and answered cancelled; one
     /// running is abandoned for the foreground, or else left alone.
     Cancel(crate::request::Cancel),
-    /// A live re-read of the last focus the reading thread of `application`
-    /// read, traced `trace_id`, which Core set aside because it would have
-    /// spoken a cached ancestor: the thread reads its held element again
-    /// with no ancestry cache and sends the read, carrying `request`
-    /// ([`UiaFocusRead::answers`]), to the application's outpost, or
-    /// answers [`DeliveredFact::UiaLiveRereadGone`] there when it has no
-    /// such read.
-    LiveReread {
-        /// Core's request.
-        request: u64,
-        /// The application whose reading thread read the report.
-        application: Pid,
-        /// The report's trace.
-        trace_id: TraceId,
-        /// The report's top-level window, by which the reading thread's
-        /// moved-on rule judges the re-read; 0 for none.
-        #[serde(default)]
-        window: isize,
-    },
 }
 
 impl CoreToListener {
@@ -877,7 +858,6 @@ impl CoreToListener {
             CoreToListener::IdleQuery { .. }
             | CoreToListener::ApplicationExited { .. }
             | CoreToListener::Shutdown
-            | CoreToListener::LiveReread { .. }
             | CoreToListener::Request(_)
             | CoreToListener::Cancel(_) => {}
         }
@@ -892,7 +872,6 @@ impl CoreToListener {
             CoreToListener::IdleQuery { .. }
             | CoreToListener::ApplicationExited { .. }
             | CoreToListener::Shutdown
-            | CoreToListener::LiveReread { .. }
             | CoreToListener::Request(_)
             | CoreToListener::Cancel(_) => 0,
         }
@@ -903,7 +882,6 @@ impl CoreToListener {
     pub fn kind(&self) -> Kind {
         match self {
             CoreToListener::IdleQuery { .. }
-            | CoreToListener::LiveReread { .. }
             | CoreToListener::Request(_)
             | CoreToListener::Cancel(_) => Kind::Ask,
             CoreToListener::ApplicationExited { .. }
@@ -1285,35 +1263,6 @@ pub enum ListenerToCore {
         /// The process that exited.
         pid: Pid,
     },
-    /// A menu closed, menu mode ended, or the Alt+Tab switcher closed,
-    /// anywhere on the desktop, 50 milliseconds ago. Sent only by the
-    /// listener; the supervisor passes it to the app, which reads the
-    /// foreground application's focused control (NVDA's fake focus) unless a
-    /// focus observed since the end has already been applied.
-    MenuOrSwitchEnded {
-        /// When the menu or switcher ended, in microseconds since the Unix
-        /// epoch on the run's shared clock.
-        ended_at_us: u64,
-        /// When the listener observed the end and queued it, and when its
-        /// writer began writing this message, as a fact's are stamped;
-        /// verbatim.exe logs the listener's stages from them.
-        #[serde(default)]
-        timing: EventTiming,
-    },
-    /// News of the desktop, for Core
-    /// (`books/dev/src/reference/adr/0001-focus.md`, "The desktop's return and name"): the user's
-    /// desktop returned,
-    /// 200 ms after the switch; the virtual desktop's name, read on csrss's
-    /// reading thread; or that name's due time, 250 ms after its event and
-    /// after the name. Sent only by the listener; the supervisor passes it
-    /// to the app, which gives it to Core.
-    Desktop {
-        /// What happened.
-        news: crate::DesktopNews,
-        /// When the listener observed it and queued it, as a menu end's.
-        #[serde(default)]
-        timing: EventTiming,
-    },
     /// A progress bar's value changed, on the listener's one path for
     /// every bar (`docs/design/progress-bars.md`), read with no node since
     /// the bar need not be held to be heard. The supervisor passes it to
@@ -1321,7 +1270,9 @@ pub enum ListenerToCore {
     Progress {
         /// What changed.
         change: crate::BarChange,
-        /// When the listener observed it and queued it, as a menu end's.
+        /// When the listener observed it and queued it, and when its writer
+        /// began writing this message; verbatim.exe logs the listener's
+        /// stages from them.
         #[serde(default)]
         timing: EventTiming,
     },
@@ -1824,8 +1775,6 @@ impl ListenerToCore {
         match self {
             ListenerToCore::IdleAnswer { .. } | ListenerToCore::Answer(_) => Kind::Answer,
             ListenerToCore::Fault { .. }
-            | ListenerToCore::MenuOrSwitchEnded { .. }
-            | ListenerToCore::Desktop { .. }
             | ListenerToCore::Progress { .. }
             | ListenerToCore::Foreground { .. }
             | ListenerToCore::Tell(_) => Kind::Report,
@@ -1836,14 +1785,12 @@ impl ListenerToCore {
     }
 
     /// Records, in the timing the message carries, when its writer began
-    /// writing it to verbatim.exe's pipe: a menu end's
+    /// writing it to verbatim.exe's pipe: a bar's change's
     /// (`EventTiming::listener_written_at_us`), or a pong's. Nothing for
     /// any other message.
     pub fn written(&mut self, at_us: u64) {
         match self {
-            ListenerToCore::MenuOrSwitchEnded { timing, .. }
-            | ListenerToCore::Desktop { timing, .. }
-            | ListenerToCore::Progress { timing, .. } => {
+            ListenerToCore::Progress { timing, .. } => {
                 timing.listener_written_at_us = at_us;
             }
             ListenerToCore::Pong { written_at_us, .. } => *written_at_us = at_us,

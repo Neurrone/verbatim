@@ -23,6 +23,7 @@ const IN_FRONT: Foreground = Foreground {
     process: APP,
     thread: 41,
     by_class: None,
+    shell: false,
 };
 
 /// The startup read answered with `name` of `role` committed, node 2 in

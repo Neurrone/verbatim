@@ -248,9 +248,34 @@ mod tests {
         report(&contents, &Renderer::new(&sounds()), from, to)
     }
 
-    const FOCUS: &str = "3: Event FocusChanged, node Slider \"Rate\", whole_window false, trace 1, source 700, observed_at_us 0, backend \"Uia\". 2 effects: DropExpiredSpeech; Speak \"Rate slider 50\"";
-    const VALUE: &str = "4: Event ValueChanged, node_id 0:1, value \"55\", trace 2, source 700, observed_at_us 0, backend \"Uia\". 1 effect: Speak \"55\"";
-    const STATES: &str = "5: Event PropertyChanged, node_id 0:1, change States 64, trace 3, source 700, observed_at_us 0, backend \"Uia\". 1 effect: Speak \"unavailable\"";
+    /// Each input line of the fixture as it is replayed: the reader's
+    /// start, a listener's focus tell, its read and completion, and two
+    /// changes the outpost tells of the focus.
+    const LINE_3: &str =
+        "3: Queue trace 1, at_us 1000, input Process ListenerStarted 1. 1 effect: Queue";
+    const LINE_4: &str = "4: Queue trace 2, at_us 2000, input ReaderReady generation 1, reader \"Listener\". 1 effect: Queue";
+    const LINE_5: &str = "5: Queue trace 3, at_us 3000, input Tell from (generation 1, reader \"Listener\"), tell (application \"app\", at_us 3000, checked (keyboard_focus Answered true, probe (be... (749 characters). 2 effects: Queue Send (ask (number 1, request ReadObject descendants false, object Kept 1, purpose Foc... (144 characters); Queue WakeAt 503000";
+    const LINE_6: &str = "6: Queue trace 4, at_us 4000, input Answer answer (number 1, outcome Result Object (object (window (handle 4001, process 40, root_... (134 characters), from (generation 1, reader \"Listener\"). 2 effects: Queue StartOutpost 40; Queue WakeAt 13003000";
+    const LINE_7: &str = "7: Queue trace 5, at_us 5000, input Process OutpostStarted (generation 3, process 40). 1 effect: Queue WakeAt 9005000";
+    const LINE_8: &str = "8: Queue trace 6, at_us 6000, input ReaderReady generation 3, reader Outpost 40. 2 effects: Queue Send (ask (number 2, request CompleteUia completes \"Focus\", read 1 items, route (end ... (144 characters); Queue WakeAt 506000";
+    const LINE_9: &str = "9: Queue trace 7, at_us 7000, input Answer answer (number 2, outcome Result Focus (caret \"NoText\", class \"Plain\", focus (read (nod... (133 characters), from (generation 3, reader Outpost 40). 5 effects: Observed trace 7, source 40, backend \"Uia\", event FocusChanged node Slider \"Rate\", text \"NoText\", whole_window false, window (application \"app\", class \"AppPane\", foreground_window 4000, in_foreground true,... (128 characters); DropExpiredSpeech; Speak \"Rate slider 50\"; Queue Send (ask (number 3, request Follow node (group \"Base\", node 3:1), verdict \"Uia\", win... (143 characters); Queue WakeAt 506000";
+    const LINE_10: &str = "10: Queue trace 8, at_us 8000, input Tell from (generation 3, reader Outpost 40), tell (application \"app\", at_us 8000, kind \"UiaPropertyChanged\", object Followed runti... (204 characters). 2 effects: Speak \"55\"; Queue WakeAt 506000";
+    const LINE_11: &str = "11: Queue trace 9, at_us 9000, input Tell from (generation 3, reader Outpost 40), tell (application \"app\", at_us 9000, kind \"UiaPropertyChanged\", object Followed runti... (205 characters). 2 effects: Speak \"unavailable\"; Queue WakeAt 506000";
+
+    /// Line `number` of the fixture, its recorded effect count `from`, set
+    /// to `to`.
+    fn with_count(text: &str, number: usize, from: usize, to: usize) -> String {
+        let mut lines: Vec<String> = text.lines().map(str::to_owned).collect();
+        let line = &mut lines[number - 1];
+        let edited = line.replacen(
+            &format!("\"effect_count\":{from}}}"),
+            &format!("\"effect_count\":{to}}}"),
+            1,
+        );
+        assert_ne!(*line, edited, "the edit applies");
+        *line = edited;
+        lines.join("\n") + "\n"
+    }
 
     #[test]
     fn replaying_the_committed_fixture_prints_its_lines_and_flags_nothing() {
@@ -258,10 +283,16 @@ mod tests {
         assert_eq!(
             report.lines,
             [
-                FOCUS,
-                VALUE,
-                STATES,
-                "replayed 3 inputs, lines 3 to 5: none differs from the dump's effect counts",
+                LINE_3,
+                LINE_4,
+                LINE_5,
+                LINE_6,
+                LINE_7,
+                LINE_8,
+                LINE_9,
+                LINE_10,
+                LINE_11,
+                "replayed 9 inputs, lines 3 to 11: none differs from the dump's effect counts",
             ]
         );
         assert_eq!(report.differing, 0);
@@ -269,16 +300,14 @@ mod tests {
 
     #[test]
     fn a_dump_whose_recorded_count_was_edited_is_flagged() {
-        let text = fixture();
-        let edited = text.replacen("\"effect_count\":1}", "\"effect_count\":4}", 1);
-        assert_ne!(edited, text, "the edit applies");
-        let report = report_of(&edited, Some(4), None);
+        let edited = with_count(&fixture(), 10, 2, 4);
+        let report = report_of(&edited, Some(10), None);
         assert_eq!(
             report.lines,
             [
-                "4: Event ValueChanged, node_id 0:1, value \"55\", trace 2, source 700, observed_at_us 0, backend \"Uia\". 1 effect (differs: the dump recorded 4): Speak \"55\"",
-                STATES,
-                "replayed 2 inputs, lines 4 to 5: 1 differs from the dump's effect count",
+                "10: Queue trace 8, at_us 8000, input Tell from (generation 3, reader Outpost 40), tell (application \"app\", at_us 8000, kind \"UiaPropertyChanged\", object Followed runti... (204 characters). 2 effects (differs: the dump recorded 4): Speak \"55\"; Queue WakeAt 506000",
+                LINE_11,
+                "replayed 2 inputs, lines 10 to 11: 1 differs from the dump's effect count",
             ]
         );
         assert_eq!(report.differing, 1);
@@ -288,27 +317,25 @@ mod tests {
     /// outside them whose count differs is not counted.
     #[test]
     fn a_line_range_prints_and_counts_only_its_own_inputs() {
-        let text = fixture();
-        // The first input's recorded count, 2, becomes 5: it differs.
-        let edited = text.replacen("\"effect_count\":2}", "\"effect_count\":5}", 1);
-        assert_ne!(edited, text, "the edit applies");
-        let report = report_of(&edited, Some(4), Some(4));
+        // The focus answer's recorded count, 5, becomes 6: it differs.
+        let edited = with_count(&fixture(), 9, 5, 6);
+        let report = report_of(&edited, Some(10), Some(10));
         assert_eq!(
             report.lines,
             [
-                VALUE,
-                "replayed 1 inputs, lines 4 to 4: none differs from the dump's effect counts",
+                LINE_10,
+                "replayed 1 inputs, lines 10 to 10: none differs from the dump's effect counts",
             ]
         );
         assert_eq!(report.differing, 0);
 
-        let report = report_of(&edited, Some(3), Some(4));
+        let report = report_of(&edited, Some(9), Some(10));
         assert_eq!(
             report.lines,
             [
-                "3: Event FocusChanged, node Slider \"Rate\", whole_window false, trace 1, source 700, observed_at_us 0, backend \"Uia\". 2 effects (differs: the dump recorded 5): DropExpiredSpeech; Speak \"Rate slider 50\"",
-                VALUE,
-                "replayed 2 inputs, lines 3 to 4: 1 differs from the dump's effect count",
+                "9: Queue trace 7, at_us 7000, input Answer answer (number 2, outcome Result Focus (caret \"NoText\", class \"Plain\", focus (read (nod... (133 characters), from (generation 3, reader Outpost 40). 5 effects (differs: the dump recorded 6): Observed trace 7, source 40, backend \"Uia\", event FocusChanged node Slider \"Rate\", text \"NoText\", whole_window false, window (application \"app\", class \"AppPane\", foreground_window 4000, in_foreground true,... (128 characters); DropExpiredSpeech; Speak \"Rate slider 50\"; Queue Send (ask (number 3, request Follow node (group \"Base\", node 3:1), verdict \"Uia\", win... (143 characters); Queue WakeAt 506000",
+                LINE_10,
+                "replayed 2 inputs, lines 9 to 10: 1 differs from the dump's effect count",
             ]
         );
         assert_eq!(report.differing, 1);
@@ -350,10 +377,16 @@ mod tests {
         assert_eq!(
             report.lines,
             [
-                FOCUS,
-                VALUE,
-                "replayed 2 inputs, lines 3 to 4: none differs from the dump's effect counts",
-                "the dump ends mid-line: nothing after line 4 was read",
+                LINE_3,
+                LINE_4,
+                LINE_5,
+                LINE_6,
+                LINE_7,
+                LINE_8,
+                LINE_9,
+                LINE_10,
+                "replayed 8 inputs, lines 3 to 10: none differs from the dump's effect counts",
+                "the dump ends mid-line: nothing after line 10 was read",
             ]
         );
     }

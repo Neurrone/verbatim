@@ -95,27 +95,19 @@ fn next_core_to_listener(previous: Option<&CoreToListener>) -> Option<CoreToList
         CoreToListener::ApplicationExited { .. } => CoreToListener::Ping { sent_at_us: 0 },
         CoreToListener::Ping { .. } => CoreToListener::IdleQuery { round: 1 },
         CoreToListener::IdleQuery { .. } => CoreToListener::Shutdown,
-        CoreToListener::Shutdown => CoreToListener::LiveReread {
-            request: 1,
-            application: Pid(2),
-            trace_id: TraceId::from_raw(4),
-            window: 8,
-        },
-        CoreToListener::LiveReread { .. } => {
-            CoreToListener::Request(Box::new(crate::request::Ask {
-                number: crate::request::RequestNumber(1),
-                window: crate::WindowHandle(8),
-                verdict: crate::request::WindowVerdict::Uia,
-                request: crate::request::Request::ReadObject(crate::request::ReadObject {
-                    object: crate::request::ObjectRef::Kept(crate::tell::ElementToken(3)),
-                    set: vec![crate::property::PropertyId::Name],
-                    relation: None,
-                    descendants: false,
-                    walk: None,
-                    purpose: crate::request::Purpose::Other,
-                }),
-            }))
-        }
+        CoreToListener::Shutdown => CoreToListener::Request(Box::new(crate::request::Ask {
+            number: crate::request::RequestNumber(1),
+            window: crate::WindowHandle(8),
+            verdict: crate::request::WindowVerdict::Uia,
+            request: crate::request::Request::ReadObject(crate::request::ReadObject {
+                object: crate::request::ObjectRef::Kept(crate::tell::ElementToken(3)),
+                set: vec![crate::property::PropertyId::Name],
+                relation: None,
+                descendants: false,
+                walk: None,
+                purpose: crate::request::Purpose::Other,
+            }),
+        })),
         CoreToListener::Request(_) => CoreToListener::Cancel(crate::request::Cancel {
             number: crate::request::RequestNumber(1),
             reason: crate::request::CancelReason::Foreground,
@@ -144,15 +136,7 @@ fn next_listener_to_core(previous: Option<&ListenerToCore>) -> Option<ListenerTo
     };
     Some(match previous {
         ListenerToCore::Ready { .. } => ListenerToCore::ExitHandled { pid: Pid(1) },
-        ListenerToCore::ExitHandled { .. } => ListenerToCore::MenuOrSwitchEnded {
-            ended_at_us: 1,
-            timing: timing(),
-        },
-        ListenerToCore::MenuOrSwitchEnded { .. } => ListenerToCore::Desktop {
-            news: crate::DesktopNews::Returned,
-            timing: timing(),
-        },
-        ListenerToCore::Desktop { .. } => ListenerToCore::Progress {
+        ListenerToCore::ExitHandled { .. } => ListenerToCore::Progress {
             change: crate::BarChange {
                 percent: crate::Percent::parse("41").expect("a number"),
                 place: (10, 20),
@@ -249,7 +233,6 @@ fn every_variant_has_its_reviewed_kind() {
             "Ping: Lifecycle",
             "IdleQuery: Ask",
             "Shutdown: Lifecycle",
-            "LiveReread: Ask",
             "Request: Ask",
             "Cancel: Ask",
         ]
@@ -286,8 +269,6 @@ fn every_variant_has_its_reviewed_kind() {
         [
             "Ready: Lifecycle",
             "ExitHandled: Lifecycle",
-            "MenuOrSwitchEnded: Report",
-            "Desktop: Report",
             "Progress: Report",
             "Foreground: Report",
             "Tell: Report",
@@ -583,14 +564,18 @@ fn a_pongs_trip_back_runs_from_its_write_to_verbatim_exes_read() {
 }
 
 #[test]
-fn a_menu_ends_trip_runs_from_the_listeners_write_to_verbatim_exes_read() {
-    let mut ended = ListenerToCore::MenuOrSwitchEnded {
-        ended_at_us: 1,
+fn a_bar_changes_trip_runs_from_the_listeners_write_to_verbatim_exes_read() {
+    let mut changed = ListenerToCore::Progress {
+        change: crate::BarChange {
+            percent: crate::Percent::parse("41").expect("a number"),
+            place: (10, 20),
+            in_foreground: true,
+        },
         timing: EventTiming::default(),
     };
-    ended.written(7_000);
-    let ListenerToCore::MenuOrSwitchEnded { timing, .. } = ended else {
-        unreachable!("a menu end stays a menu end");
+    changed.written(7_000);
+    let ListenerToCore::Progress { timing, .. } = changed else {
+        unreachable!("a bar's change stays a bar's change");
     };
     assert_eq!(hop_us(timing.listener_written_at_us, 7_250), Some(250));
 }

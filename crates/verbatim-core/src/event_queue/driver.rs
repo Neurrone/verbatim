@@ -137,6 +137,14 @@ impl<E, F> Default for Queue<E, F> {
 }
 
 impl<E, F> Queue<E, F> {
+    /// The application of the window the listener last reported in front,
+    /// `None` before its first report.
+    pub(crate) fn foreground_process(&self) -> Option<verbatim_model::Pid> {
+        self.foreground.map(|foreground| foreground.process)
+    }
+}
+
+impl<E, F> Queue<E, F> {
     /// Whether the queue is idle for the test harness
     /// (`docs/design/readers-tell-core-asks-build1.md`, "The test
     /// harness's idle"): no entry at the front or waiting, none to be

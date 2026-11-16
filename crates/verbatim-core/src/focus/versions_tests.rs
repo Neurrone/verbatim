@@ -23,7 +23,7 @@ pub(crate) fn kept(top_level: u64) -> Kept {
             window: WindowHandle(top_level + 1),
             top_level: WindowHandle(top_level),
             root_owner: WindowHandle(top_level),
-            ancestor_windows: vec![WindowHandle(top_level)],
+            ancestor_windows: vec![WindowHandle(top_level)].into(),
         },
         window: crate::event_queue::RequestWindow {
             handle: WindowHandle(top_level + 1),
@@ -48,7 +48,8 @@ pub(crate) fn kept(top_level: u64) -> Kept {
                 simple_child: false,
                 dialog_text: None,
             },
-        ],
+        ]
+        .into(),
         redirected_to: None,
         foreground: None,
         value_from_selection: false,

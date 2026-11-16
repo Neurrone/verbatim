@@ -32,6 +32,7 @@ const IN_FRONT: Foreground = Foreground {
     process: APP,
     thread: 41,
     by_class: None,
+    shell: false,
 };
 
 /// The edit field "Body" committed through UI Automation, node 2 of

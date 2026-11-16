@@ -48,10 +48,7 @@ use super::process::{self, Launched, Role};
 use super::relay::{COMPLETIONS_PER_WAIT, CommandPipes, Inbox, Mailbox, Relay, Source, Taken};
 use super::retire::{Ending, ShutdownSummary, retire};
 use super::writer::{Outgoing, Received, ToChild, WriterHandle, received_now};
-use super::{
-    EndReason, EventSink, OutpostMessage, SPARES, Sealed, Timings,
-    Undelivered, Writers,
-};
+use super::{EndReason, EventSink, OutpostMessage, SPARES, Sealed, Timings, Undelivered, Writers};
 use verbatim_process::arguments::ListenerArguments;
 use verbatim_process::held::{IgnoredProcesses, NotHeld, Target};
 
@@ -69,7 +66,10 @@ pub(super) enum OwnerEvent {
     /// this clock from now on ([`Owner::backoff_clock`]).
     BackoffClock(BackoffClock),
     /// Read from a child's pipe: the child answered a ping.
-    Pong { outpost: OutpostId, abandoned: usize },
+    Pong {
+        outpost: OutpostId,
+        abandoned: usize,
+    },
     /// From the app's [`super::Frames`]: a frame `outpost` sent is not a
     /// message, so it is ended as though its pipe had failed.
     Unreadable(OutpostId),
@@ -82,8 +82,8 @@ pub(super) enum OwnerEvent {
     Retired(Ending),
     /// From the app: run the idle barrier's round through the children.
     IdleRound(u64),
-    /// From the app: a command for the listener, Core's live re-read
-    /// ([`CoreToListener::LiveReread`]) or a request or cancel of Core's.
+    /// From the app: a command for the listener, a request or cancel of
+    /// Core's.
     ToListener(CoreToListener),
     /// From the app, Core's effect: end this outpost generation.
     EndOutpost(OutpostId),
@@ -688,31 +688,6 @@ impl Owner {
                     outpost,
                     abandoned: 0,
                 });
-            }
-            ListenerToCore::MenuOrSwitchEnded {
-                ended_at_us,
-                timing,
-            } => {
-                tracing::trace!(
-                    target: "verbatim::stage",
-                    handling_us = hop_us(timing.observed_at_us, timing.listener_handled_at_us),
-                    queue_us = hop_us(timing.listener_handled_at_us, timing.listener_written_at_us),
-                    pipe_us = hop_us(timing.listener_written_at_us, received.at_us),
-                    "a menu or switcher end: listener handling, listener queue, listener's pipe to verbatim.exe"
-                );
-                self.outbox
-                    .send(OutpostMessage::MenuOrSwitchEnded { ended_at_us });
-            }
-            ListenerToCore::Desktop { news, timing } => {
-                tracing::trace!(
-                    target: "verbatim::stage",
-                    handling_us = hop_us(timing.observed_at_us, timing.listener_handled_at_us),
-                    queue_us = hop_us(timing.listener_handled_at_us, timing.listener_written_at_us),
-                    pipe_us = hop_us(timing.listener_written_at_us, received.at_us),
-                    ?news,
-                    "news of the desktop: listener handling, listener queue, listener's pipe to verbatim.exe"
-                );
-                self.outbox.send(OutpostMessage::Desktop(news));
             }
             ListenerToCore::Progress { change, timing } => {
                 tracing::trace!(
@@ -1442,10 +1417,8 @@ impl Owner {
         if let Some(round) = idle_query {
             ask_idle(&child.writer, round);
         }
-        self.records.insert(
-            pid,
-            Generation::Ready { outpost, child },
-        );
+        self.records
+            .insert(pid, Generation::Ready { outpost, child });
         if pid == self.own_pid {
             self.keep_spares();
         }

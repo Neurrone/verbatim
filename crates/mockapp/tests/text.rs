@@ -19,14 +19,16 @@ mod common;
 #[path = "common/harness.rs"]
 mod harness;
 
+use std::cell::Cell;
+use std::rc::Rc;
 use std::sync::Arc;
 
-use verbatim_core::{SrState, reduce};
+use common::core_driver::CoreDriver;
+use common::outpost::OutpostUnderTest;
+use verbatim_model::request::Request;
 use verbatim_model::{
-    Backend, CaretMotion, CaretReply, Effect, Input, NodeDetails, NodeId, NodeSnapshot,
-    NormalizedEvent, OutpostId, Pid, ReviewCommand, Role, SegmentContent, SpeechMark, StateSet,
-    TextChunk, TextMovement, TextOp, TextPoint, TextPosition, TextRead, TextReadAhead, TextReply,
-    TextUnit, TraceId,
+    CaretMotion, CaretReply, ReviewCommand, SegmentContent, SpeechMark, TextChunk, TextMovement,
+    TextOp, TextPoint, TextPosition, TextRead, TextReadAhead, TextReply, TextUnit,
 };
 use verbatim_outpost::text::edit::EditText;
 use verbatim_outpost::text::uia::UiaText;
@@ -1048,67 +1050,44 @@ enum Said {
     Text(String),
 }
 
-/// What Core did with one input to say-all, its text requests answered
-/// by mockapp through the outpost's text module and the answers given back
-/// to it: the utterances it spoke, each as its marks and texts, and the
-/// caret moves it asked for.
-#[derive(Debug, Default)]
+/// What one step of say-all did: its utterances, each as its marks and
+/// texts, how many caret moves Core asked the outpost for, and whether
+/// Core let the display go.
+#[derive(Debug)]
 struct SayAllStep {
     utterances: Vec<Vec<Said>>,
-    caret_moves: Vec<TextPoint>,
+    caret_moves: usize,
     display_released: bool,
 }
 
-/// Gives Core `input`, answering every text request it makes from
-/// `source`, until it asks for nothing more. Any other effect fails the
+/// `step` as say-all's step, its caret moves counted by `moves`, which the
+/// driver's send observer adds to. Any speech outside say-all fails the
 /// test, so nothing is skipped unchecked.
-fn say_all_step<S: TextSource>(
-    state: &mut SrState,
-    source: &mut S,
-    anchors: &mut NodeText<'_, S::Pos>,
-    input: &Input,
-) -> SayAllStep {
-    let mut step = SayAllStep::default();
-    let mut inputs = vec![input.clone()];
-    while let Some(input) = inputs.pop() {
-        for effect in reduce(state, &mut verbatim_core::Runtime::default(), &input) {
-            match effect {
-                Effect::Speak(utterance, _) => {
-                    assert!(utterance.say_all, "{utterance:?} is read by say-all");
-                    step.utterances.push(
-                        utterance
-                            .segments
-                            .iter()
-                            .map(|segment| match &segment.content {
-                                SegmentContent::Mark(mark) => Said::Mark(*mark),
-                                SegmentContent::Text(text) => Said::Text(text.clone()),
-                                _ => panic!("say-all speech is marks and text: {utterance:?}"),
-                            })
-                            .collect(),
-                    );
-                }
-                Effect::Text(request) => {
-                    if let TextOp::MoveCaret(point) = request.op {
-                        step.caret_moves.push(point);
-                    }
-                    let reply = perform(source, anchors, &request.op);
-                    inputs.push(Input::Answered {
-                        at_us: 0,
-                        trace_id: TraceId::mint(),
-                        query_id: request.query_id,
-                        outpost: request.node_id.outpost(),
-                        outcome: verbatim_model::protocol::QueryOutcome::Done(
-                            verbatim_model::protocol::QueryResult::Text(reply),
-                        ),
-                    });
-                }
-                Effect::KeepDisplayOn(false) => step.display_released = true,
-                Effect::KeepDisplayOn(true) => {}
-                other => panic!("an effect say-all does not make: {other:?}"),
-            }
-        }
+fn say_all_step(step: &common::core_driver::Step, moves: &Rc<Cell<usize>>) -> SayAllStep {
+    assert_eq!(
+        step.said.len(),
+        step.say_all.len(),
+        "say-all speaks only its own utterances: {:?}",
+        step.said
+    );
+    SayAllStep {
+        utterances: step
+            .say_all
+            .iter()
+            .map(|utterance| {
+                utterance
+                    .iter()
+                    .map(|content| match content {
+                        SegmentContent::Mark(mark) => Said::Mark(*mark),
+                        SegmentContent::Text(text) => Said::Text(text.clone()),
+                        other => panic!("say-all speech is marks and text: {other:?}"),
+                    })
+                    .collect()
+            })
+            .collect(),
+        caret_moves: moves.replace(0),
+        display_released: step.display_released,
     }
-    step
 }
 
 /// The marks of an utterance, in order.
@@ -1121,50 +1100,13 @@ fn marks_of(said: &[Said]) -> Vec<SpeechMark> {
         .collect()
 }
 
-/// Core's state with the focus on mockapp's "Notes" document.
-fn focused_notes() -> SrState {
-    let mut state = SrState::new();
-    let _ = reduce(
-        &mut state,
-        &mut verbatim_core::Runtime::default(),
-        &Input::Event {
-            trace_id: TraceId::mint(),
-            observed_at_us: 0,
-            source: Pid(1),
-            backend: Backend::Uia,
-            window: None,
-            event: NormalizedEvent::FocusChanged {
-                node: NodeSnapshot {
-                    id: NodeId::in_outpost(OutpostId(1), 1),
-                    backend: Backend::Uia,
-                    role: Role::Document,
-                    name: Some("Notes".to_owned()),
-                    value: None,
-                    states: StateSet::new(),
-                    details: NodeDetails::default(),
-                },
-                whole_window: false,
-                ancestors: Vec::new(),
-                selected_child: None,
-                text: None,
-                earlier: None,
-                group: None,
-                answers: None,
-                first_cached_ancestor: None,
-            },
-            purpose: None,
-        },
-    );
-    state
-}
-
 /// Say-all over UIA text, which has no sentence unit, reads it by line and
 /// speaks it by sentence without pauses: a line holding one sentence's end
 /// and the next one's start is spoken in two utterances, the sentence that
 /// runs on to the next line is spoken whole, and the caret moves to each
 /// line's start as its text starts playing, not as its utterance does.
-/// Core runs here with its text requests answered from
-/// mockapp's text provider, remotely, as the outpost answers them.
+/// Core runs here with its requests answered by a real outpost watching
+/// mockapp.
 fn uia_say_all_speaks_by_sentence_without_a_sentence_unit() {
     common::init_com();
     let title = common::unique_title("mockapp-text-say-all");
@@ -1176,27 +1118,32 @@ fn uia_say_all_speaks_by_sentence_without_a_sentence_unit() {
         r"set-text doc Verbatim is written in Rust. It is informed by NVDA\nbut not constrained by it.\n",
     );
     common::apply(&mut app, hwnd, "caret doc 0");
+    common::apply(&mut app, hwnd, "focus doc");
     let mut source = uia_notes(hwnd, true);
     let mut store = Anchors::new(Arc::default());
     let mut anchors = store.node(1);
 
-    let mut state = focused_notes();
-    let step = say_all_step(
-        &mut state,
-        &mut source,
-        &mut anchors,
-        &Input::Command {
-            pressed_at_ms: 0,
-            key_seq: verbatim_model::KeySeq::NONE_YET,
-            trace_id: TraceId::mint(),
-            command: ReviewCommand::SayAllFromCaret,
-            repeat: 0,
-        },
-    );
+    let mut core = CoreDriver::switched_to(&app, OutpostUnderTest::new(&app));
+    let uia = Uia::new().expect("a UIA client");
+    let _ = core.uia_focus(&common::listener_focus(&uia, hwnd.0 as isize));
+    let moves = Rc::new(Cell::new(0));
+    let counted = Rc::clone(&moves);
+    core.observe_sends(Some(Box::new(move |ask, _| {
+        if matches!(
+            &ask.request,
+            Request::Text {
+                op: TextOp::MoveCaret(_),
+                ..
+            }
+        ) {
+            counted.set(counted.get() + 1);
+        }
+    })));
+    let step = say_all_step(&core.command(ReviewCommand::SayAllFromCaret), &moves);
     // The first line up to its sentence end, then the sentence that runs
     // on to the second line, with the second line's mark where its text
     // starts. The empty line after the last line break says nothing.
-    assert_eq!(step.caret_moves, []);
+    assert_eq!(step.caret_moves, 0);
     assert!(!step.display_released);
     let [first, second] = step.utterances.as_slice() else {
         panic!("two utterances: {step:?}");
@@ -1221,7 +1168,6 @@ fn uia_say_all_speaks_by_sentence_without_a_sentence_unit() {
             Said::Text("but not constrained by it.".to_owned()),
         ]
     );
-    let reached = |mark| Input::MarkReached { mark };
     let caret_line = |source: &mut UiaText, anchors: &mut NodeText<'_, _>| {
         let (_, line) = chunk(read(
             source,
@@ -1235,8 +1181,8 @@ fn uia_say_all_speaks_by_sentence_without_a_sentence_unit() {
 
     // Each mark reached: the first line's moves the caret to its start;
     // the rest of the first line leaves it there.
-    let step = say_all_step(&mut state, &mut source, &mut anchors, &reached(first_mark));
-    assert_eq!(step.caret_moves.len(), 1, "{step:?}");
+    let step = say_all_step(&core.mark_reached(first_mark), &moves);
+    assert_eq!(step.caret_moves, 1, "{step:?}");
     assert_eq!(step.utterances, Vec::<Vec<Said>>::new());
     assert!(!step.display_released);
     assert_eq!(
@@ -1246,14 +1192,14 @@ fn uia_say_all_speaks_by_sentence_without_a_sentence_unit() {
             0
         )
     );
-    let step = say_all_step(&mut state, &mut source, &mut anchors, &reached(opening));
-    assert_eq!(step.caret_moves, []);
+    let step = say_all_step(&core.mark_reached(opening), &moves);
+    assert_eq!(step.caret_moves, 0);
     assert_eq!(step.utterances, Vec::<Vec<Said>>::new());
     assert!(!step.display_released);
     // The second line's text starts: the caret moves to its start, and
     // say-all, with nothing more to hand on, ends with it there.
-    let step = say_all_step(&mut state, &mut source, &mut anchors, &reached(second_line));
-    assert_eq!(step.caret_moves.len(), 1, "{step:?}");
+    let step = say_all_step(&core.mark_reached(second_line), &moves);
+    assert_eq!(step.caret_moves, 1, "{step:?}");
     assert_eq!(step.utterances, Vec::<Vec<Said>>::new());
     assert!(
         step.display_released,

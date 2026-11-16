@@ -1,7 +1,6 @@
 //! Core's focus rules under ADR 0003 ("Readers tell, Core asks"), each in
 //! its own module (`docs/design/readers-tell-core-asks-build1.md`, "How
-//! the code is organised"). Built beside the reducer's focus path, which
-//! the event queue replaces in a later step of build 1.
+//! the code is organised").
 
 #![cfg_attr(
     not(test),
@@ -19,6 +18,7 @@ pub(crate) mod follow;
 pub(crate) mod menus;
 pub(crate) mod msaa_run;
 pub(crate) mod narrow;
+pub(crate) mod object;
 pub(crate) mod pending;
 pub(crate) mod retake;
 pub(crate) mod uia_focus;

@@ -15,15 +15,15 @@
 use verbatim_model::property::{PropertyId, PropertyValues};
 use verbatim_model::request::{FocusNode, NodeRead, Reply, Request as Wire};
 use verbatim_model::{
-    ActionName, Effect, FetchResult, Message, NodeId, NodeSnapshot, QueryKind, SegmentContent,
-    TraceId, UtteranceSegment,
+    ActionName, Effect, Message, NodeId, NodeSnapshot, QueryKind, SegmentContent, TraceId,
+    UtteranceSegment,
 };
 
 use crate::editing::{self, NavigatorText};
 use crate::entries::Entries;
 use crate::event_queue::{Cx, OTHER_DUE_US, Outcome, Reader, Request, RequestWindow};
 use crate::focus::versions::Committed;
-use crate::key_line::ReviewPress;
+use crate::keys::entry::ReviewPress;
 use crate::reduce::{self, Reason};
 use crate::state::{Navigator, NavigatorRead, SrState};
 use crate::text_request::TextRequest;
@@ -262,7 +262,7 @@ pub(crate) async fn navigate(mut cx: Cx<Entries>, press: ReviewPress, kind: Quer
         set: crate::details::node_set(&cx.facts(), &crate::report_focus::ANNOUNCED_SET),
     };
     let due_us = cx.due_in(OTHER_DUE_US);
-    let result = match cx.ask(request, due_us).await {
+    match cx.ask(request, due_us).await {
         Outcome::Result(Some(read)) => {
             let window = RequestWindow::of_node(&read.window);
             let Some(reached) = snapshot(read, &on.object) else {
@@ -273,14 +273,16 @@ pub(crate) async fn navigate(mut cx: Cx<Entries>, press: ReviewPress, kind: Quer
                 ..Navigator::on(reached.clone())
             });
             announce(&mut cx, trace_id, (&reached, window), Reason::Focus).await;
-            return;
         }
-        Outcome::Result(None) => FetchResult::NoNeighbor,
-        Outcome::NotThere => FetchResult::Gone,
-        _ => return,
-    };
-    let said = reduce::navigate_completed(&mut cx.facts_mut(), trace_id, press, kind, &result);
-    emit_all(&mut cx, said);
+        // A tree edge or a node not there: the navigator stays put and the
+        // edge is said.
+        Outcome::Result(None) | Outcome::NotThere => {
+            emit_all(&mut cx, reduce::navigation_edge(trace_id, kind));
+        }
+        // No answer: the navigator stays where it is, and nothing is known
+        // to speak.
+        _ => {}
+    }
 }
 
 /// Activate at its turn: the navigator object's default action, its

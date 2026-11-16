@@ -1277,8 +1277,10 @@ ancestor carries its class name; and MSAA's invisible state is carried.
   line's, from the focus outward, until one matches, so at most the
   product of the two lines' lengths, a few dozen comparisons for chains of
   ten; the previous line's ancestors to the meeting point are cloned into
-  the new line
-  (`a_focus_step_allocates_the_same_whatever_the_ancestor_chain`). The
+  the new line, and the focus request names the ancestors Core already
+  knows, so a focus step allocates in proportion to the focus's depth and
+  no faster
+  (`a_focus_step_allocates_no_more_than_in_proportion_to_the_ancestor_chain`). The
   role-and-name match of the entered containers compares at most as many
   pairs as there are entered containers. A duplicate of the focus makes a
   new line only when it carries a newer reading of a node of the line,

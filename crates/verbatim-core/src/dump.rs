@@ -289,40 +289,22 @@ pub fn read_dump<R: BufRead>(reader: &mut R) -> Result<DumpContents, DumpReadErr
 #[cfg(test)]
 mod tests {
     use super::*;
-    use verbatim_model::{
-        Backend, Input, NodeDetails, NodeId, NodeSnapshot, NormalizedEvent, Pid, Role, StateSet,
-        TraceId,
+    use crate::entries::tests::{
+        LISTENER, OUTPOST, answer, asked_completion, feed_at, focus_read, uia_tell,
     };
+    use verbatim_model::request::{QueueInput, Reply};
+    use verbatim_model::{Input, TraceId};
 
     fn sample_inputs() -> Vec<RecordedInput> {
         vec![
             RecordedInput {
-                input: Input::Event {
+                input: Input::Queue {
                     trace_id: TraceId::from_raw(1),
-                    observed_at_us: 0,
-                    source: Pid(1),
-                    backend: Backend::Uia,
-                    window: None,
-                    event: NormalizedEvent::FocusChanged {
-                        whole_window: false,
-                        ancestors: Vec::new(),
-                        selected_child: None,
-                        node: NodeSnapshot {
-                            id: NodeId::new(1),
-                            backend: Backend::Uia,
-                            role: Role::Button,
-                            name: Some("OK".to_owned()),
-                            value: None,
-                            states: StateSet::new(),
-                            details: NodeDetails::default(),
-                        },
-                        text: None,
-                        earlier: None,
-                        group: None,
-                        answers: None,
-                        first_cached_ancestor: None,
+                    at_us: 4_000,
+                    input: QueueInput::Tell {
+                        from: LISTENER,
+                        tell: Box::new(uia_tell(2, Vec::new())),
                     },
-                    purpose: None,
                 },
                 effect_count: 1,
             },
@@ -333,15 +315,16 @@ mod tests {
         ]
     }
 
-    /// A state with a focus, so the base state line carries something.
+    /// A state with a focus committed through the event queue, so the base
+    /// state line carries something.
     fn sample_base() -> SrState {
-        let mut state = SrState::new();
-        let _ = crate::reduce(
-            &mut state,
-            &mut crate::Runtime::default(),
-            &sample_inputs()[0].input,
+        let mut held = asked_completion();
+        let _ = feed_at(
+            &mut held,
+            3_000,
+            answer(OUTPOST, 2, Reply::Focus(Box::new(focus_read(None)))),
         );
-        state
+        held.state
     }
 
     #[test]
@@ -446,17 +429,13 @@ mod tests {
         .expect("writes");
 
         let third = RecordedInput {
-            input: Input::Event {
+            input: Input::Queue {
                 trace_id: TraceId::from_raw(2),
-                observed_at_us: 0,
-                source: Pid(2),
-                backend: Backend::Uia,
-                window: None,
-                event: NormalizedEvent::ValueChanged {
-                    node_id: NodeId::new(9),
-                    value: Some("cut off here".to_owned()),
+                at_us: 5_000,
+                input: QueueInput::Tell {
+                    from: LISTENER,
+                    tell: Box::new(uia_tell(3, Vec::new())),
                 },
-                purpose: None,
             },
             effect_count: 1,
         };

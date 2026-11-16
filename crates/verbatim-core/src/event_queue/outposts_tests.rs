@@ -241,14 +241,7 @@ fn a_launch_failed_for_a_gone_application_ends_its_waiting_requests() {
 #[test]
 fn a_generation_with_no_pong_for_nine_seconds_is_ended_and_replaced() {
     let mut held = committed();
-    assert_eq!(
-        route(
-            &mut held,
-            5_000_000,
-            &pong(0)
-        ),
-        Vec::<String>::new()
-    );
+    assert_eq!(route(&mut held, 5_000_000, &pong(0)), Vec::<String>::new());
     assert_eq!(
         route(&mut held, 4_999_999 + LIVENESS_US, &QueueInput::Due),
         Vec::<String>::new()
@@ -412,14 +405,7 @@ fn an_idle_outpost_holding_nothing_is_kept() {
     let mut at_us = 1_300;
     while at_us < ten_minutes {
         at_us += 3_000_000;
-        assert_eq!(
-            route(
-                &mut held,
-                at_us,
-                &pong(0)
-            ),
-            Vec::<String>::new()
-        );
+        assert_eq!(route(&mut held, at_us, &pong(0)), Vec::<String>::new());
         assert_eq!(
             route(&mut held, at_us + 1, &QueueInput::Due),
             Vec::<String>::new()

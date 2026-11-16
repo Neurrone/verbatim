@@ -214,7 +214,7 @@ fn executed(cx: &mut Cx<Entries>, candidate: &Candidate, read: &FocusRead, known
         event: Some(held.event),
         held_child: held.held_child,
     };
-    let origin = Origin::of_tell(&candidate.tell, candidate.window);
+    let origin = Origin::of_tell(&candidate.tell, candidate.window, cx.foreground());
     let executed = {
         let mut facts = cx.facts_mut();
         let executed = execute(&mut facts, &origin, read, known, read_by);

@@ -54,6 +54,8 @@ mod applications;
 mod caret_location;
 mod caret_tell;
 mod changes;
+#[cfg(test)]
+mod desk_tests;
 mod desktop;
 mod details;
 pub mod dump;
@@ -62,16 +64,14 @@ mod entries;
 mod event_queue;
 pub mod flight_recorder;
 mod focus;
-mod focus_queue;
 pub mod focus_rules;
+#[cfg(test)]
+mod focus_speech_tests;
 mod foreground;
 mod input_desktop;
-mod key_line;
 mod keys;
-mod live_reread;
 mod navigator;
 mod proven;
-mod queries;
 mod recorder;
 mod reduce;
 mod report_focus;

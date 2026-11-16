@@ -12,10 +12,8 @@
 use std::collections::VecDeque;
 
 use verbatim_model::{
-    Backend, CaretKey, CaretMotion, Effect, Input, Message, NodeDetails, NodeId, NodeSnapshot,
-    NormalizedEvent, OutpostId, Phrase, Pid, QueryId, ReaderSettings, ReviewCommand, Role,
-    SegmentContent, SpeechMark, SpeechPriority, StateSet, TextOp, TextPoint, TextReply,
-    TextRequest, TraceId,
+    CaretKey, CaretMotion, Effect, Input, Message, NodeId, Phrase, ReaderSettings, ReviewCommand,
+    Role, SegmentContent, SpeechMark, SpeechPriority, TextOp, TextReply, TraceId,
 };
 
 use super::{
@@ -25,49 +23,47 @@ use super::{
 use crate::reduce::reduce;
 use crate::state::SrState;
 
-const OUTPOST: OutpostId = OutpostId(1);
-
-/// The outpost's answer `reply` to the text request `query_id`, traced
-/// `trace_id`.
-fn answered(trace_id: TraceId, query_id: QueryId, reply: TextReply) -> Input {
-    Input::Answered {
-        at_us: 0,
-        trace_id,
-        query_id,
-        outpost: OUTPOST,
-        outcome: verbatim_model::protocol::QueryOutcome::Done(
-            verbatim_model::protocol::QueryResult::Text(reply),
-        ),
-    }
-}
-const TERMINAL: u64 = 12;
+const TERMINAL: u64 = 2;
 
 fn id(number: u64) -> NodeId {
-    NodeId::in_outpost(OUTPOST, number)
+    crate::entries::tests::node(number)
 }
 
-fn event(event: NormalizedEvent) -> Input {
-    Input::Event {
-        trace_id: TraceId::from_raw(1),
-        observed_at_us: 0,
-        source: Pid(1),
-        backend: Backend::Uia,
-        window: None,
-        event,
-        purpose: None,
-    }
-}
-
-/// A state whose focus is the terminal, which Core models, as after its
-/// baseline: what its reads say is given as the model hands it on
-/// ([`Playback`]).
+/// A state whose focus is the terminal, node 2, committed by the startup
+/// read of its outpost through the event queue, which Core models, as
+/// after its baseline: what its reads say is given as the model hands it
+/// on ([`Playback`]).
 fn terminal() -> SrState {
-    let mut state = SrState::new();
-    let _ = reduce(
-        &mut state,
-        &mut crate::Runtime::default(),
-        &terminal_focus(None),
+    use crate::entries::tests::{OUTPOST, answer, feed_at, focus_read, ready, values};
+    let mut held = ready();
+    let _ = feed_at(
+        &mut held,
+        500,
+        crate::event_queue::Input::Foreground(crate::event_queue::Foreground {
+            window: verbatim_model::WindowHandle(4),
+            root_owner: verbatim_model::WindowHandle(4),
+            process: crate::entries::tests::APP,
+            thread: 41,
+            by_class: None,
+            shell: false,
+        }),
     );
+    let mut read = focus_read(None);
+    read.focus.read.values = values("Terminal", Role::Terminal);
+    let _ = feed_at(
+        &mut held,
+        600,
+        answer(
+            OUTPOST,
+            1,
+            verbatim_model::request::Reply::Focus(Box::new(read)),
+        ),
+    );
+    assert_eq!(
+        held.state.focused().map(|(_, node)| node.id),
+        Some(id(TERMINAL))
+    );
+    let mut state = held.state;
     super::reading::modelled_for_tests(&mut state, id(TERMINAL), window());
     state
 }
@@ -78,33 +74,10 @@ fn window() -> crate::event_queue::RequestWindow {
         handle: verbatim_model::WindowHandle(5),
         top_level: verbatim_model::WindowHandle(4),
         root_owner: verbatim_model::WindowHandle(4),
-        process: Pid(1),
+        process: crate::entries::tests::APP,
         thread: 41,
         by_class: None,
     }
-}
-
-/// The focus on the terminal, with what its caret read found, `text`.
-fn terminal_focus(text: Option<verbatim_model::FocusText>) -> Input {
-    event(NormalizedEvent::FocusChanged {
-        node: NodeSnapshot {
-            id: id(TERMINAL),
-            backend: Backend::Uia,
-            role: Role::Terminal,
-            name: Some("Terminal".to_owned()),
-            value: None,
-            states: StateSet::new(),
-            details: NodeDetails::default(),
-        },
-        whole_window: false,
-        ancestors: Vec::new(),
-        selected_child: None,
-        text: text.map(Box::new),
-        earlier: None,
-        group: None,
-        answers: None,
-        first_cached_ancestor: None,
-    })
 }
 
 fn lines(range: std::ops::RangeInclusive<u32>) -> Vec<String> {
@@ -207,6 +180,24 @@ fn said(node: u64, observed_at_ms: u64, speech: TerminalSpeech) -> Out {
         node,
         observed_at_ms,
         speech,
+    }
+}
+
+/// Speech reaching index mark `mark`, as the shell tells the queue.
+/// `input` as the shell gives it to the queue.
+fn queue_input(input: verbatim_model::request::QueueInput) -> Input {
+    Input::Queue {
+        trace_id: TraceId::from_raw(7),
+        at_us: 0,
+        input,
+    }
+}
+
+fn mark_reached(mark: SpeechMark) -> Input {
+    Input::Queue {
+        trace_id: TraceId::from_raw(0),
+        at_us: 0,
+        input: verbatim_model::request::QueueInput::MarkReached(mark),
     }
 }
 
@@ -392,7 +383,7 @@ impl Playback {
         }
         // Its opening mark as it starts, and its closing mark once heard.
         for mark in marks {
-            self.feed(state, &Input::MarkReached { mark });
+            self.feed(state, &mark_reached(mark));
         }
         true
     }
@@ -404,7 +395,7 @@ impl Playback {
         let opening = marks.remove(0);
         self.queued.push_front((marks, text));
         self.started = true;
-        self.feed(state, &Input::MarkReached { mark: opening });
+        self.feed(state, &mark_reached(opening));
     }
 
     /// Plays everything queued, and whatever that hands to speech.
@@ -1320,80 +1311,93 @@ fn typing_the_terminal_showed_is_echoed_by_the_typing_echo_settings() {
 
 #[test]
 fn the_review_cursor_reads_at_the_caret_once_it_followed_it() {
+    use verbatim_model::request::{
+        Answer, Outcome, Press, PressAction, QueueEffect, QueueInput, Reply, Request as Wire,
+    };
     let mut state = terminal();
-    let review = |state: &mut SrState| {
-        reduce(
+    // A review command pressed, its fresh read of the terminal answered
+    // showing "ready>": what it said.
+    let review = |state: &mut SrState| -> Vec<String> {
+        let effects = reduce(
             state,
             &mut crate::Runtime::default(),
-            &Input::Command {
-                pressed_at_ms: 0,
-                key_seq: verbatim_model::KeySeq::NONE_YET,
+            &Input::Queue {
                 trace_id: TraceId::from_raw(7),
-                command: ReviewCommand::ReviewCurrentLine,
-                repeat: 0,
+                at_us: 1_000,
+                input: QueueInput::Press(Box::new(Press {
+                    key_seq: verbatim_model::KeySeq::new(1),
+                    pressed_at_us: 1_000,
+                    action: PressAction::Command {
+                        command: ReviewCommand::ReviewCurrentLine,
+                        repeat: 0,
+                    },
+                })),
             },
-        )
-    };
-    let at = |effects: &[Effect]| -> Vec<TextPoint> {
-        effects
-            .iter()
+        );
+        let asked: Vec<_> = effects
+            .into_iter()
             .filter_map(|effect| match effect {
-                Effect::Text(TextRequest {
-                    op: TextOp::Read(read),
+                Effect::Queue(QueueEffect::Send { ask, .. }) => Some(ask),
+                _ => None,
+            })
+            .collect();
+        let [ask] = &asked[..] else {
+            panic!("one read asked: {asked:?}");
+        };
+        assert!(
+            matches!(
+                ask.request,
+                Wire::Text {
+                    op: TextOp::ReadTerminal(_),
                     ..
-                }) => Some(read.at),
+                }
+            ),
+            "{ask:?}"
+        );
+        let effects = reduce(
+            state,
+            &mut crate::Runtime::default(),
+            &Input::Queue {
+                trace_id: TraceId::from_raw(8),
+                at_us: 2_000,
+                input: QueueInput::Answer {
+                    from: crate::entries::tests::OUTPOST,
+                    answer: Answer {
+                        number: ask.number,
+                        outcome: Outcome::Result(Reply::Text(TextReply::TerminalRead(Box::new(
+                            read_reply("ready>"),
+                        )))),
+                        probes: Vec::new(),
+                        detail: String::new(),
+                    },
+                },
+            },
+        );
+        effects
+            .into_iter()
+            .map(|effect| match effect {
+                Effect::ForKey(_, effect) => *effect,
+                effect => effect,
+            })
+            .filter_map(|effect| match effect {
+                Effect::Speak(utterance, _) => Some(words(&utterance.segments)),
                 _ => None,
             })
             .collect()
     };
-    // The first review command reads where the caret is.
-    let effects = review(&mut state);
-    assert_eq!(at(&effects), [TextPoint::Caret]);
-    let Some(Effect::Text(request)) = effects.into_iter().next() else {
-        panic!("a read of the caret's line");
+    let text = |state: &SrState| {
+        state
+            .navigator
+            .as_ref()
+            .map(|navigator| navigator.text.clone())
     };
-    let chunk = verbatim_model::TextChunk {
-        unit: verbatim_model::TextUnit::Line,
-        text: "ready>".to_owned(),
-        start: verbatim_model::TextAnchor(7),
-        offset: 0,
-        languages: Vec::new(),
-        first: false,
-        last: true,
-        truncated: false,
-        formats: Vec::new(),
-    };
-    let effects = reduce(
-        &mut state,
-        &mut crate::Runtime::default(),
-        &answered(
-            TraceId::from_raw(8),
-            request.query_id,
-            TextReply::Read { moved: 0, chunk },
-        ),
-    );
-    assert_eq!(spoken(&effects), ["ready>"]);
-    // In a terminal every review command reads the line again first, at
-    // the review cursor's place.
-    let effects = review(&mut state);
-    assert_eq!(
-        at(&effects),
-        [TextPoint::At(verbatim_model::TextPosition {
-            anchor: verbatim_model::TextAnchor(7),
-            offset: 0,
-        })]
-    );
-    let Some(Effect::Text(request)) = effects.into_iter().next() else {
-        panic!("a read of the review cursor's place");
-    };
-    let _ = reduce(
-        &mut state,
-        &mut crate::Runtime::default(),
-        &answered(
-            TraceId::from_raw(8),
-            request.query_id,
-            TextReply::Unanswered,
-        ),
+    // The first review command reads where the caret is, and the review
+    // cursor stays at that place.
+    assert_eq!(review(&mut state), ["ready>"]);
+    assert!(
+        matches!(text(&state), Some(crate::state::ReviewText::At(_))),
+        "{:?}",
+        text(&state)
     );
     // The reading rules found that a key moved the caret, and the review
     // cursor followed it: the next command reads at the caret.
@@ -1402,7 +1406,7 @@ fn the_review_cursor_reads_at_the_caret_once_it_followed_it() {
         followed: true,
     };
     let _ = say(&mut state, &said(TERMINAL, 0, followed));
-    assert_eq!(at(&review(&mut state)), [TextPoint::Caret]);
+    assert_eq!(text(&state), Some(crate::state::ReviewText::Caret));
 }
 
 #[test]
@@ -1490,7 +1494,10 @@ fn keys_are_told_to_the_reading_rules_by_their_unit() {
 /// When the terminal's outpost ends with output waiting, what Core read is
 /// still spoken, as NVDA speaks the lines its monitor read, but nothing is
 /// asked of the ended outpost: its hold goes with the terminal's model, and
-/// once everything is heard nothing of the terminal is left.
+/// once everything is heard nothing of the terminal is left. The index
+/// marks of what was handed to speech wait in the event queue behind the
+/// re-take, which the replacement answers (design, "Focus and foreground",
+/// after a reader's replacement).
 #[test]
 fn output_read_before_the_outpost_ended_is_spoken_and_nothing_is_asked_of_it() {
     let mut state = terminal();
@@ -1503,10 +1510,45 @@ fn output_read_before_the_outpost_ended_is_spoken_and_nothing_is_asked_of_it() {
     playback.requests.clear();
     playback.feed(
         &mut state,
-        &Input::OutpostEnded {
+        &Input::Queue {
             trace_id: TraceId::from_raw(6),
-            outpost: OUTPOST,
+            at_us: 0,
+            input: verbatim_model::request::QueueInput::ReaderEnded(crate::entries::tests::OUTPOST),
         },
+    );
+    // The replacement starts and answers the re-take with the same
+    // terminal, taken silently; the index marks waiting behind the
+    // re-take then run.
+    let replacement = verbatim_model::request::Instance {
+        reader: verbatim_model::request::Reader::Outpost(crate::entries::tests::APP),
+        generation: crate::entries::tests::GENERATION + 1,
+    };
+    state.queue.start_for_tests(replacement);
+    playback.feed(
+        &mut state,
+        &queue_input(verbatim_model::request::QueueInput::ReaderReady(
+            replacement,
+        )),
+    );
+    let mut read = crate::entries::tests::focus_read(None);
+    read.focus.read.values = crate::entries::tests::values("Terminal", Role::Terminal);
+    read.focus.read.node = Some(NodeId::in_outpost(
+        verbatim_model::OutpostId(replacement.generation),
+        TERMINAL,
+    ));
+    playback.feed(
+        &mut state,
+        &queue_input(verbatim_model::request::QueueInput::Answer {
+            from: replacement,
+            answer: verbatim_model::request::Answer {
+                number: verbatim_model::request::RequestNumber(4),
+                outcome: verbatim_model::request::Outcome::Result(
+                    verbatim_model::request::Reply::Focus(Box::new(read)),
+                ),
+                probes: Vec::new(),
+                detail: String::new(),
+            },
+        }),
     );
     let mut heard = std::mem::take(&mut playback.heard);
     heard.extend(playback.play_all(&mut state));

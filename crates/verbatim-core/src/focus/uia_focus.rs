@@ -247,7 +247,7 @@ pub(crate) async fn run(mut cx: Cx<Entries>, focus: UiaFocus) {
         token: Some(focus.token),
     };
     super::narrow::judge_ahead(&mut cx, &read);
-    let origin = origin(&focus, window);
+    let origin = origin(&focus, window, cx.foreground());
     let executed = execute(&mut cx.facts_mut(), &origin, &read, &known, read_by);
     if !executed.committed {
         unexecuted(&mut cx, window);
@@ -257,8 +257,12 @@ pub(crate) async fn run(mut cx: Cx<Entries>, focus: UiaFocus) {
 
 /// The origin of `focus` read on `window`: its tell's, with Alt as Core's
 /// key state had it at the tell's arrival.
-fn origin(focus: &UiaFocus, window: RequestWindow) -> Origin {
-    let mut origin = Origin::of_tell(&focus.tell, window);
+fn origin(
+    focus: &UiaFocus,
+    window: RequestWindow,
+    foreground: Option<crate::event_queue::Foreground>,
+) -> Origin {
+    let mut origin = Origin::of_tell(&focus.tell, window, foreground);
     if let Some(facts) = origin.window.as_mut() {
         facts.alt_held = focus.alt_down;
     }

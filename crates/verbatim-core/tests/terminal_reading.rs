@@ -549,13 +549,11 @@ fn the_timer_goes_with_the_model_when_the_outpost_ends() {
 
 #[test]
 fn the_timer_goes_with_the_model_when_the_terminals_text_is_forgotten() {
-    // The listener reads that the element the terminal's node held is
-    // gone while the focus stays: its model goes, and the next read makes
-    // a new one, whose rules asked for no timer.
+    // The focus read again says the runtime id the terminal's node held
+    // now names another element while the focus stays: its model goes,
+    // and the next read makes a new one, whose rules asked for no timer.
     let mut session = timed();
-    session.input(&terminal_support::focus_after(Some(
-        verbatim_model::EarlierElement::Gone,
-    )));
+    session.focus_after(true);
     assert_eq!(session.armed(), None);
     session.write("more\r\n", 1100);
     assert_eq!(session.armed(), None);
@@ -853,12 +851,6 @@ fn a_line_recalled_with_up_arrow_and_entered_is_marked() {
         pressed_at_ms: at_ms,
     });
     session.write("echo one", at_ms + 5);
-    // Its 100 ms pass, as a key that moved no caret's do.
-    session.input(&Input::Queue {
-        trace_id: TraceId::from_raw(8),
-        at_us: (at_ms + 100) * 1_000,
-        input: verbatim_model::request::QueueInput::HeldKeyDue,
-    });
     let (_, input) = typed("\r", at_ms + 1000);
     session.input(&input);
     session.write("\r\none\r\n$ ", at_ms + 1005);

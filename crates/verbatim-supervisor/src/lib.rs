@@ -366,18 +366,6 @@ pub enum OutpostMessage {
         /// pong's `parked_count`; 0 for the listener.
         abandoned: usize,
     },
-    /// A menu closed, menu mode ended, or the Alt+Tab switcher closed,
-    /// somewhere on the desktop, at `ended_at_us`: unless a focus observed
-    /// since has been applied, the app asks the foreground application for
-    /// its focused control (NVDA's fake focus).
-    MenuOrSwitchEnded {
-        /// When it ended, in microseconds since the Unix epoch on the run's
-        /// shared clock.
-        ended_at_us: u64,
-    },
-    /// News of the desktop from the focus listener: the app gives it to
-    /// Core.
-    Desktop(verbatim_model::DesktopNews),
     /// A progress bar's value changed, as the focus listener read it: the
     /// app gives it to Core.
     Progress(verbatim_model::BarChange),
@@ -732,27 +720,6 @@ impl Supervisor {
     /// wakes the supervisor with any later command to have it act at once.
     pub fn set_backoff_clock(&self, clock: Arc<dyn Fn() -> u64 + Send + Sync>) {
         let _ = self.owner.send(owner::OwnerEvent::BackoffClock(clock));
-    }
-
-    /// Sends the focus listener Core's live re-read `request` of the last
-    /// read, traced `trace_id`, of `application`'s reading thread
-    /// ([`CoreToListener::LiveReread`]), behind every command sent to it
-    /// before, never dropped; held while a listener is launching, and
-    /// nothing with none, since Core ends the live re-reads asked of a
-    /// listener at its replacement. `window` is the report's top-level
-    /// window, by which the moved-on rule judges the re-read, 0 for none.
-    pub fn live_reread(
-        &self,
-        request: u64,
-        application: Pid,
-        (trace_id, window): (verbatim_model::TraceId, isize),
-    ) {
-        self.send_to_listener(CoreToListener::LiveReread {
-            request,
-            application,
-            trace_id,
-            window,
-        });
     }
 
     /// Sends the focus listener `command`, a request or cancel of Core's

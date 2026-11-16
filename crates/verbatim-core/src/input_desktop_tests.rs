@@ -23,6 +23,7 @@ const IN_FRONT: Foreground = Foreground {
     process: APP,
     thread: 41,
     by_class: None,
+    shell: false,
 };
 
 /// The button "OK" committed through UI Automation at startup and named

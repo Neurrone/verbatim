@@ -1,7 +1,6 @@
 //! The outpost generations the reducer thread treats as live (outpost
-//! redesign, "The app shell"): started and not yet ended, with the
-//! application each watches, whether it is ready, the bookkeeping for the
-//! nodes held in it and the details it was told to read.
+//! redesign, "The app shell"): started and not yet ended, whether it is
+//! ready, and the bookkeeping for the nodes held in it.
 //!
 //! This is the one owner of the rule that a message from an outpost that
 //! has ended never reaches the reducer, even when it arrives after its
@@ -11,15 +10,10 @@
 
 use std::collections::{BTreeSet, HashMap};
 
-use verbatim_model::{OutpostId, Pid};
+use verbatim_model::OutpostId;
 
 /// A live outpost generation.
 pub(crate) struct Live {
-    /// The process it watches.
-    pub(crate) target_pid: Pid,
-    /// The application it reports for when that is not its target: a
-    /// console host's console's client, which its events name.
-    application: Option<Pid>,
     /// The position of the last of its messages handled here.
     pub(crate) position: u64,
     /// The held nodes and text anchors last left for it, and the position
@@ -63,12 +57,6 @@ pub(crate) enum Generation {
 }
 
 impl Generation {
-    fn live(&self) -> &Live {
-        match self {
-            Generation::Starting(live) | Generation::Ready(live) => live,
-        }
-    }
-
     fn live_mut(&mut self) -> &mut Live {
         match self {
             Generation::Starting(live) | Generation::Ready(live) => live,
@@ -107,13 +95,11 @@ pub(crate) struct LiveOutposts {
 }
 
 impl LiveOutposts {
-    /// Records that `outpost` started, watching `target_pid`.
-    pub(crate) fn started(&mut self, outpost: OutpostId, target_pid: Pid) {
+    /// Records that `outpost` started.
+    pub(crate) fn started(&mut self, outpost: OutpostId) {
         self.outposts.insert(
             outpost,
             Generation::Starting(Live {
-                target_pid,
-                application: None,
                 position: 0,
                 held_left: (BTreeSet::new(), BTreeSet::new(), 0),
             }),
@@ -154,34 +140,6 @@ impl LiveOutposts {
             .count()
     }
 
-    /// Records that `outpost`'s events belong to `application`, which is not
-    /// its target: the console's client, for a console host's outpost
-    /// (`books/dev/src/reference/crates/verbatim-outpost.md`, "Console windows and frames of
-    /// another process").
-    pub(crate) fn reports_for(&mut self, outpost: OutpostId, application: Pid) {
-        if let Some(live) = self.outposts.get_mut(&outpost).map(Generation::live_mut) {
-            live.application = Some(application);
-        }
-    }
-
-    /// The application `outpost` reports for: the one its events last
-    /// named, else its target.
-    pub(crate) fn application_of(&self, outpost: OutpostId) -> Option<Pid> {
-        self.outposts
-            .get(&outpost)
-            .map(Generation::live)
-            .map(|live| live.application.unwrap_or(live.target_pid))
-    }
-
-    /// The application `outpost` watches, its target, while it is live:
-    /// the process whose focus listener's reading thread reads its UIA
-    /// focuses.
-    pub(crate) fn target_of(&self, outpost: OutpostId) -> Option<Pid> {
-        self.outposts
-            .get(&outpost)
-            .map(|generation| generation.live().target_pid)
-    }
-
     /// Every live generation, for sending the nodes held in each.
     pub(crate) fn iter_mut(&mut self) -> impl Iterator<Item = (&OutpostId, &mut Live)> {
         self.outposts
@@ -197,11 +155,11 @@ mod tests {
     #[test]
     fn a_message_from_a_replaced_generation_never_reaches_the_reducer() {
         let mut live = LiveOutposts::default();
-        live.started(OutpostId(3), Pid(40));
+        live.started(OutpostId(3));
         live.mark_ready(OutpostId(3));
         assert!(live.accept(OutpostId(3), 1));
         assert!(live.ended(OutpostId(3)));
-        live.started(OutpostId(4), Pid(40));
+        live.started(OutpostId(4));
 
         assert!(
             !live.accept(OutpostId(3), 2),
@@ -212,29 +170,9 @@ mod tests {
     }
 
     #[test]
-    fn a_console_hosts_outpost_serves_its_consoles_client() {
-        // The console host, 30, hosts the console of the client, 20, which
-        // also has an outpost of its own.
-        let mut live = LiveOutposts::default();
-        live.started(OutpostId(3), Pid(30));
-        live.mark_ready(OutpostId(3));
-        live.started(OutpostId(4), Pid(20));
-        live.mark_ready(OutpostId(4));
-        assert_eq!(
-            live.application_of(OutpostId(3)),
-            Some(Pid(30)),
-            "not yet known"
-        );
-
-        live.reports_for(OutpostId(3), Pid(20));
-        assert_eq!(live.application_of(OutpostId(3)), Some(Pid(20)));
-        assert_eq!(live.application_of(OutpostId(4)), Some(Pid(20)));
-    }
-
-    #[test]
     fn an_accepted_message_records_its_position() {
         let mut live = LiveOutposts::default();
-        live.started(OutpostId(2), Pid(7));
+        live.started(OutpostId(2));
         live.accept(OutpostId(2), 41);
         let (_, record) = live.iter_mut().next().expect("one live outpost");
         assert_eq!(record.position, 41);
@@ -247,7 +185,7 @@ mod tests {
     #[test]
     fn held_nodes_are_left_only_when_they_or_the_position_changed() {
         let mut live = LiveOutposts::default();
-        live.started(OutpostId(2), Pid(7));
+        live.started(OutpostId(2));
         let nodes = |numbers: &[u64]| numbers.iter().copied().collect::<BTreeSet<u64>>();
         let mut changes = Vec::new();
         let mut step =

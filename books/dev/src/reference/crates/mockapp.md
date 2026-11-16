@@ -682,7 +682,8 @@ Each file's module comment says exactly what it asserts; in outline:
   attribute over `formatting.json` and the unsupported ones over
   `text.json`; backward moves over `backward_moves.json`; and a caret key
   answered with the word it reached and with a selection. It also runs
-  Core's say-all over UIA text, which has no sentence unit
+  Core's say-all over UIA text, which has no sentence unit, through Core's
+  driver and a real outpost
   (`uia_say_all_speaks_by_sentence_without_a_sentence_unit`).
 - `terminal_snapshot.rs` reads `terminal.json`'s terminal with
   `verbatim-uia-rops`'s terminal read program remotely and classically,

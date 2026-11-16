@@ -299,6 +299,12 @@ impl Entry {
                     _ => Self::Menu(candidate),
                 })
             }
+            (EventKind::NameChange, EventObject::Msaa { .. })
+                if crate::announcements::on_desktop(&tell) =>
+            {
+                crate::announcements::Announcement::of_tell(from.generation, tell)
+                    .map(|announcement| Self::Announcement(Box::new(announcement)))
+            }
             (
                 kind,
                 EventObject::Msaa {
@@ -575,6 +581,7 @@ impl Logic for Entries {
             .next_release()
             .into_iter()
             .chain(crate::input_desktop::due(facts))
+            .chain(crate::desktop::due(facts))
             .min()
     }
 
@@ -586,6 +593,7 @@ impl Logic for Entries {
     ) -> Vec<Entry> {
         said.extend(facts.strokes.release_due(now_us).map(Said::Queue));
         crate::keys::terminal::released(facts, now_us / 1_000);
+        said.extend(crate::desktop::tick(facts, now_us));
         crate::input_desktop::tick(facts, now_us, foreground.map(|front| front.window()))
             .map(|read| Entry::CurrentFocus(Box::new(read)))
             .into_iter()
@@ -1071,6 +1079,7 @@ pub(crate) fn route(
             thread: report.thread,
             // The foreground window is top-level: its own root.
             by_class: by_class(&report.class, &report.class),
+            shell: crate::applications::is_shell_foreground_class(&report.class),
         }),
         QueueInput::ReaderReady(instance) => Input::ReaderReady(*instance),
         QueueInput::ReaderEnded(instance) => Input::ReaderEnded(*instance),
@@ -1131,7 +1140,13 @@ pub(crate) fn route(
         }
         QueueInput::Process(fact) => Input::Process(*fact),
         QueueInput::SpeechCut => {
-            return Routed::AtOnce(Box::new(verbatim_model::Input::SpeechCancelled { at_us }));
+            // A key press cut speech off: a terminal drops what waits, and
+            // say-all stops, as NVDA's stops on any key.
+            let mut said = crate::terminal::cut(state, at_us / 1_000);
+            said.extend(crate::say_all::stop(state));
+            // A say-all stopped with its read out withdraws it.
+            said.extend(settle(state, runtime, trace_id));
+            return Routed::Said(said);
         }
         QueueInput::UtteranceCancelled { marks, at_ms } => {
             return Routed::AtOnce(Box::new(verbatim_model::Input::UtteranceCancelled {
@@ -1142,12 +1157,6 @@ pub(crate) fn route(
         QueueInput::UtteranceFailed { marks } => {
             return Routed::AtOnce(Box::new(verbatim_model::Input::UtteranceFailed {
                 marks: marks.clone(),
-            }));
-        }
-        QueueInput::HeldKeyDue => {
-            return Routed::AtOnce(Box::new(verbatim_model::Input::HeldKeyDue {
-                trace_id,
-                at_us,
             }));
         }
         QueueInput::TerminalDue { at_ms } => {
@@ -1204,12 +1213,10 @@ fn desktop_switched(
 /// ([`settle`]).
 pub(crate) fn unsettled(state: &SrState) -> bool {
     crate::terminal::reading::wants(state)
-        || state.say_all.as_ref().is_some_and(|say_all| {
-            say_all
-                .by
-                .run()
-                .is_some_and(|run| run.read == crate::say_all::QueueRead::Wanted)
-        })
+        || state
+            .say_all
+            .as_ref()
+            .is_some_and(|say_all| say_all.run.read == crate::say_all::QueueRead::Wanted)
         || state
             .queue
             .asking()

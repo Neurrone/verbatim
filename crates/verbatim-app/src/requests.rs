@@ -8,17 +8,14 @@
 //! (`QueueEffect::Answered`); [`Outside`] holds each [`Asker`] by its token
 //! until then, and [`deliver`] carries the outcome out, into a
 //! control-plane reply or a dialog's responder.
-//!
-//! A reply to a query of Core's reducer, the queries it still sends
-//! itself, re-enters the reducer as `Input::Answered` ([`reply_input`]).
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crossbeam_channel::Sender;
-use verbatim_model::protocol::{QueryOutcome, RequestId, Requester, Responder};
+use verbatim_model::TreeNode;
+use verbatim_model::protocol::Responder;
 use verbatim_model::request::{OutsideOutcome, Reply};
-use verbatim_model::{Input, OutpostId, QueryId, TraceId, TreeNode};
 
 /// The answer a tree-dump request waits for: the walked tree and whether the
 /// walk was truncated, or a reason it failed.
@@ -100,50 +97,6 @@ impl Outside {
     }
 }
 
-/// The reducer input for the outcome of query `id`, traced `trace_id`,
-/// from `outpost`: a query of Core's reducer re-enters it as
-/// `Input::Answered` under the reply's trace, a failed outcome logged
-/// first, since Core does no logging. The shell asks no query of its own,
-/// so a reply to any other asker is dropped, `None`.
-pub(crate) fn reply_input(
-    trace_id: TraceId,
-    id: RequestId,
-    outpost: OutpostId,
-    outcome: QueryOutcome,
-    at_us: u64,
-) -> Option<Input> {
-    if !matches!(id.asker, Requester::Reducer) {
-        tracing::warn!(%id, "a reply to an asker the shell does not know is dropped");
-        return None;
-    }
-    if !matches!(outcome, QueryOutcome::Done(_)) {
-        tracing::debug!(
-            reason = describe_query(&outcome),
-            %id,
-            %outpost,
-            "a query of Core's was not answered"
-        );
-    }
-    Some(Input::Answered {
-        trace_id,
-        query_id: QueryId(id.number),
-        outpost,
-        outcome,
-        at_us,
-    })
-}
-
-/// A short description of a query's outcome other than success, for logs.
-fn describe_query(outcome: &QueryOutcome) -> String {
-    match outcome {
-        QueryOutcome::Gone => "the node or its outpost is gone".to_owned(),
-        QueryOutcome::Failed(reason) => reason.clone(),
-        QueryOutcome::NotStarted => "the query was withdrawn before it started".to_owned(),
-        QueryOutcome::Abandoned => "the query was abandoned: it passed its deadline, its window is not responding, or the user moved on".to_owned(),
-        QueryOutcome::Done(_) => "the query returned an unexpected answer".to_owned(),
-    }
-}
-
 /// A short description of an outcome other than the reply wanted, for logs
 /// and control-plane errors.
 fn describe(outcome: &OutsideOutcome) -> String {
@@ -202,7 +155,7 @@ mod tests {
     use crossbeam_channel::bounded;
     use verbatim_model::protocol::DumpedTree;
     use verbatim_model::request::CancelReason;
-    use verbatim_model::{Backend, NodeDetails, NodeId, NodeSnapshot, OutpostId, Role, StateSet};
+    use verbatim_model::{Backend, NodeDetails, NodeId, NodeSnapshot, Role, StateSet};
 
     use super::*;
 
@@ -303,40 +256,6 @@ mod tests {
         answer(&mut outside, failed, OutsideOutcome::NotResponding);
         assert_eq!(*outcomes.lock().expect("outcomes"), vec![Some(found), None]);
         assert!(outside.answered(answered).is_none(), "answered once");
-    }
-
-    /// A reply to a query of Core's reducer re-enters it as its answer,
-    /// under the reply's trace and the reducer's own number; one to a query
-    /// of the shell's, which asks none, goes nowhere.
-    #[test]
-    fn a_reducer_reply_goes_to_the_reducer_and_a_shell_reply_nowhere() {
-        let trace_id = TraceId::from_raw(9);
-        assert_eq!(
-            reply_input(
-                trace_id,
-                RequestId::reducer(7),
-                OutpostId(2),
-                QueryOutcome::Gone,
-                5
-            ),
-            Some(Input::Answered {
-                trace_id,
-                query_id: QueryId(7),
-                outpost: OutpostId(2),
-                outcome: QueryOutcome::Gone,
-                at_us: 5,
-            })
-        );
-        assert_eq!(
-            reply_input(
-                trace_id,
-                RequestId::shell(7),
-                OutpostId(2),
-                QueryOutcome::Gone,
-                5
-            ),
-            None
-        );
     }
 
     #[test]

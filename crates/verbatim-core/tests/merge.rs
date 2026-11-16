@@ -1,71 +1,49 @@
-//! The outpost's outbound merge against Core (`books/dev/src/explanation/design/ownership.md`): for every kind of event the outbound queue
-//! merges, every sequence of the older report, up to two other messages
-//! from a fixed set, and the newer report is reduced in order on one side,
-//! and on the other with the others first and the merged report at the
-//! newer one's place, as [`merge_into`] places it. Both leave Core in the
-//! same state, and the others say the same; the merged report says what
-//! Core says for it today. The older report's own speech is left out, since
-//! dropping it is what the merge is for.
+//! Core's merge in its event queue (`docs/design/readers-tell-core-asks-build1.md`,
+//! "The event queue"): a newer tell of the same object and kind, from the
+//! same thread, replaces one still waiting, the newest keeping its place.
+//! For every kind Core merges, each sequence of up to two other inputs
+//! from a fixed set between the older tell and the newer, both told while
+//! the front entry's request is out, does exactly what the same sequence
+//! does without the older tell: every effect and the focus Core holds
+//! are the same, so the older tell is gone and the newer is judged at its
+//! own place. What the newer tell says is asserted on its own.
 
-use serde_json::Value;
-use verbatim_core::SrState;
-use verbatim_model::protocol::{
-    EventTiming, Merge, OutpostToCore, QueryOutcome, QueryResult, RequestId, event_input,
-    merge_into,
+mod desk;
+
+use desk::{
+    Desk, Heard, LISTENER, ONE, focus_heard, focus_now_in, focus_read_of, focus_tell,
+    listener_read, queued, runtime_of,
 };
+use verbatim_model::event_kind::EventKind;
+use verbatim_model::property::{PropertyAnswer, PropertyId, PropertyValue, PropertyValues};
+use verbatim_model::request::{
+    Instance, NodeRead, NodeWindow, ObjectRead, ObjectRef, Outcome, Probe, Reader, RelationFound,
+    Reply, Request as Wire,
+};
+use verbatim_model::tell::{Checked, Event, EventObject, Payload, TellWindow};
 use verbatim_model::{
-    Backend, CaretReport, Earcon, Effect, Input, NodeDetails, NodeId, NodeSnapshot,
-    NormalizedEvent, OutpostId, Phrase, Pid, PropertyChange, QueryId, Role, SegmentContent,
-    SelectionChange, SelectionText, SpeechPriority, State, StateSet, TextAnchor, TextChunk,
-    TextPosition, TextUnit, TraceId, Utterance, UtteranceSegment, WindowFacts, WindowHandle,
+    Backend, Earcon, NodeDetails, NodeSnapshot, Role, SegmentContent, SpeechPriority, State,
+    StateSet, TraceId, UtteranceSegment, WindowHandle,
 };
 
-/// The application, and its outpost.
-const SOURCE: Pid = Pid(40);
-const OUTPOST: OutpostId = OutpostId(4);
+/// The focus's window, the pane in it, and the edit field "Notes" Core
+/// holds as its focus.
+const WINDOW: u64 = 1;
+const PANE: u64 = 2;
+const NOTES: u64 = 3;
 
-fn id(number: u64) -> NodeId {
-    NodeId::in_outpost(OUTPOST, number)
-}
+/// The MSAA object id of the alert another input may raise.
+const ALERT: i32 = 9;
 
 fn node(number: u64, role: Role, name: &str, states: StateSet) -> NodeSnapshot {
     NodeSnapshot {
-        id: id(number),
+        id: ONE.node(number),
         backend: Backend::Uia,
         role,
         name: Some(name.to_owned()),
         value: None,
         states,
         details: NodeDetails::default(),
-    }
-}
-
-/// The application's window, in the foreground.
-fn window() -> WindowFacts {
-    WindowFacts {
-        top_level: WindowHandle(100),
-        root_owner: WindowHandle(100),
-        topmost: false,
-        under_active_window: None,
-        in_foreground: true,
-        class: String::new(),
-        application: String::new(),
-        alt_held: false,
-        foreground_is_shell: false,
-        foreground_window: verbatim_model::WindowHandle(0),
-    }
-}
-
-/// The outpost's report of `event`.
-fn report(event: NormalizedEvent) -> OutpostToCore {
-    OutpostToCore::Event {
-        trace_id: TraceId::from_raw(1),
-        observed_at_us: 0,
-        backend: Backend::Uia,
-        window: Some(window()),
-        application: None,
-        timing: EventTiming::default(),
-        event,
     }
 }
 
@@ -76,143 +54,107 @@ fn focused() -> StateSet {
 /// The focus's line: the window, and the pane in it.
 fn line_ancestors() -> Vec<NodeSnapshot> {
     vec![
-        node(1, Role::Window, "Editor", StateSet::new()),
-        node(2, Role::Pane, "Pane", StateSet::new()),
+        node(WINDOW, Role::Window, "Editor", StateSet::new()),
+        node(PANE, Role::Pane, "Pane", StateSet::new()),
     ]
 }
 
-/// A focus on `node`, in the focus's line.
-fn focus_on(node: NodeSnapshot) -> NormalizedEvent {
-    NormalizedEvent::FocusChanged {
-        node,
-        whole_window: false,
-        ancestors: line_ancestors(),
-        selected_child: None,
-        text: None,
-        earlier: None,
-        group: None,
-        answers: None,
-        first_cached_ancestor: None,
-    }
-}
-
-/// A line of the focus's text with the caret at `offset`.
-fn text_line(offset: u32) -> TextChunk {
-    TextChunk {
-        unit: TextUnit::Line,
-        text: "alpha beta\n".to_owned(),
-        start: TextAnchor(100),
-        offset,
-        languages: Vec::new(),
-        first: true,
-        last: true,
-        truncated: false,
-        formats: Vec::new(),
-    }
-}
-
-/// A caret report of the focus at `offset`, with `changes` to its
-/// selection.
-fn caret(offset: u32, changes: &[(bool, &str)]) -> NormalizedEvent {
-    NormalizedEvent::CaretMoved {
-        node_id: id(3),
-        caret: CaretReport {
-            line: text_line(offset),
-            selection: None,
-            read_at_us: 0,
-        },
-        selection_changes: changes
-            .iter()
-            .map(|&(selected, text)| SelectionChange {
-                selected,
-                text: text.to_owned(),
-                characters: u32::try_from(text.len()).expect("short"),
-            })
-            .collect(),
-        content_changed: false,
-        new_selection: None,
-        facts: None,
-    }
-}
-
-/// Reduces `input` into `state`, returning what it said and played.
-fn reduce(state: &mut SrState, input: &Input) -> Vec<Effect> {
-    verbatim_core::reduce(state, &mut verbatim_core::Runtime::default(), input)
-        .into_iter()
-        .filter(|effect| matches!(effect, Effect::Speak(..) | Effect::PlayEarcon(_)))
-        .collect()
-}
-
 /// The fixed start: Core's focus on the edit field "Notes" in the pane in
-/// the window, all in one outpost, with its caret at the start of its
-/// line.
-fn start() -> SrState {
-    let mut state = SrState::new();
-    for message in [
-        report(focus_on(node(3, Role::EditableText, "Notes", focused()))),
-        report(caret(0, &[])),
-    ] {
-        let input = event_input(SOURCE, message).expect("an event");
-        let _ = reduce(&mut state, &input);
-    }
-    state
+/// the window.
+fn start() -> Desk {
+    let mut desk = Desk::new();
+    let _ = desk.focus(
+        ONE,
+        &node(NOTES, Role::EditableText, "Notes", focused()),
+        &line_ancestors(),
+    );
+    desk
 }
 
-/// One of the messages that may come between the older report and the
-/// newer, none of which concerns either report's node or line.
+/// The window of the application's alerts, under its top-level window,
+/// which has no UI Automation provider.
+fn alert_window() -> WindowHandle {
+    WindowHandle(ONE.top + 2)
+}
+
+/// The listener's MSAA alert tell on [`alert_window`], object `object`,
+/// its check's probe finding no UI Automation provider there.
+fn alert(object: i32) -> Event {
+    let mut facts = ONE.facts();
+    facts.window = ONE.facet(alert_window(), "AlertPane");
+    Event {
+        trace_id: TraceId::from_raw(20),
+        kind: EventKind::Alert,
+        process: ONE.pid,
+        application: "app".to_owned(),
+        thread: 41,
+        at_us: 0,
+        object: EventObject::Msaa {
+            window: alert_window(),
+            object,
+            child: 0,
+        },
+        cached: PropertyValues::default(),
+        payload: Payload::None,
+        window: TellWindow::Found(Box::new(facts)),
+        checked: Some(Checked {
+            probe: Some(Probe {
+                window: alert_window(),
+                thread: 41,
+                provider: false,
+                began_us: 0,
+            }),
+            keyboard_focus: None,
+            kept: Vec::new(),
+            previous_sibling: None,
+        }),
+    }
+}
+
+/// A tell, and the reader that told it.
+#[derive(Clone)]
+struct Told {
+    from: Instance,
+    tell: Event,
+}
+
+/// The outpost's tell of a UI Automation change of `property` on the
+/// focus, which it follows, carrying `value`.
+fn followed(property: PropertyId, value: Option<PropertyValue>) -> Told {
+    Told {
+        from: ONE.instance(),
+        tell: Event {
+            trace_id: TraceId::from_raw(21),
+            kind: EventKind::UiaPropertyChanged,
+            process: ONE.pid,
+            application: "app".to_owned(),
+            thread: 41,
+            at_us: 0,
+            object: EventObject::Followed {
+                runtime_id: runtime_of(NOTES),
+            },
+            cached: PropertyValues::default(),
+            payload: Payload::PropertyChanged { property, value },
+            window: TellWindow::NoWindow,
+            checked: None,
+        },
+    }
+}
+
+/// One of the inputs that may come between the older tell and the newer,
+/// none of which concerns either tell's object.
 #[derive(Clone, Copy, Debug)]
 enum Other {
-    /// An alert of a node outside both lines, which Core speaks from
-    /// anywhere.
+    /// An alert of an object outside the focus's line, which Core reads
+    /// and speaks from anywhere.
     Alert,
-    /// A reply to a query Core is not waiting for.
-    Reply,
-    /// A fault, which the app logs.
-    Fault,
+    /// An answer to a request Core is not waiting for, which it drops.
+    Late,
 }
 
-impl Other {
-    /// The message, and the input the app makes of it.
-    fn message(self) -> (OutpostToCore, Option<Input>) {
-        match self {
-            Other::Alert => {
-                let message = report(NormalizedEvent::Alert {
-                    node: node(9, Role::Alert, "Saved", StateSet::new()),
-                    origin: verbatim_model::AlertOrigin::MsaaAlert,
-                });
-                let input = event_input(SOURCE, message.clone());
-                (message, input)
-            }
-            Other::Reply => {
-                let trace_id = TraceId::from_raw(2);
-                let message = OutpostToCore::Reply {
-                    trace_id,
-                    request_id: RequestId::reducer(77),
-                    outcome: QueryOutcome::Done(QueryResult::Navigated(None)),
-                    timing: EventTiming::default(),
-                };
-                let input = Input::Answered {
-                    at_us: 0,
-                    trace_id,
-                    query_id: QueryId(77),
-                    outpost: OUTPOST,
-                    outcome: QueryOutcome::Done(QueryResult::Navigated(None)),
-                };
-                (message, Some(input))
-            }
-            Other::Fault => (
-                OutpostToCore::Fault {
-                    detail: "a fault".to_owned(),
-                },
-                None,
-            ),
-        }
-    }
-}
-
-/// Every sequence of zero to two others, each from the fixed set: 13.
+/// Every sequence of zero to two others, each from the fixed set: 7.
 fn sequences() -> Vec<Vec<Other>> {
-    let set = [Other::Alert, Other::Reply, Other::Fault];
+    let set = [Other::Alert, Other::Late];
     let mut sequences = vec![Vec::new()];
     for first in set {
         sequences.push(vec![first]);
@@ -225,198 +167,209 @@ fn sequences() -> Vec<Vec<Other>> {
     sequences
 }
 
-/// What the equivalence compares of Core's state: its focus and line,
-/// with each node's states, name and value, the nodes it holds, the last
-/// selection it announced, and its caret's node and position.
-fn projection(state: &SrState) -> Value {
-    let whole = serde_json::to_value(state).expect("the state serializes");
-    let focus = &whole["focus"];
-    let caret = &whole["caret"];
-    serde_json::json!({
-        "focus": focus["snapshot"],
-        "line": focus["ancestors"],
-        "last_selection": focus["last_selection"],
-        "held": format!("{:?}", state.held_nodes()),
-        "caret_node": caret["node"],
-        "caret_at": [caret["line"]["start"], caret["line"]["offset"]],
-    })
+/// The outpost's read of the alert, "Saved".
+fn alert_read() -> Outcome {
+    let values = PropertyValues(vec![
+        PropertyAnswer {
+            id: PropertyId::Name,
+            value: Some(PropertyValue::Text("Saved".to_owned())),
+        },
+        PropertyAnswer {
+            id: PropertyId::Role,
+            value: Some(PropertyValue::Role(Role::Alert)),
+        },
+    ]);
+    Outcome::Result(Reply::Object(Box::new(ObjectRead {
+        object: NodeRead {
+            node: Some(ONE.node(50)),
+            window: NodeWindow {
+                handle: alert_window(),
+                ..ONE.node_window()
+            },
+            values,
+        },
+        relation: Some(RelationFound::Unrelated),
+        descendants: Vec::new(),
+        ancestors: Vec::new(),
+        met: None,
+        route: None,
+    })))
 }
 
-/// What one sequence did on each side.
-struct Outcome {
-    /// Whether the newer report was merged into the older.
-    merged: bool,
-    /// What the merged report said, when it was merged.
-    merged_said: Vec<Effect>,
-}
-
-/// Runs `others` between `older` and `newer` on both sides and asserts
-/// what both sides share.
-fn run(older: &OutpostToCore, others: &[Other], newer: &OutpostToCore) -> Outcome {
-    let others: Vec<(OutpostToCore, Option<Input>)> =
-        others.iter().map(|other| other.message()).collect();
-    let input = |message: &OutpostToCore| event_input(SOURCE, message.clone()).expect("an event");
-
-    // In order, as Core reads them unmerged.
-    let mut unmerged = start();
-    let _ = reduce(&mut unmerged, &input(older));
-    let unmerged_said: Vec<Vec<Effect>> = others
-        .iter()
-        .map(|(_, other)| {
-            other
-                .as_ref()
-                .map(|other| reduce(&mut unmerged, other))
-                .unwrap_or_default()
-        })
-        .collect();
-    let _ = reduce(&mut unmerged, &input(newer));
-
-    // As the outbound queue places the newer report.
-    let mut waiting: Vec<OutpostToCore> = vec![older.clone()];
-    waiting.extend(others.iter().map(|(message, _)| message.clone()));
-    let place = merge_into(waiting.iter().enumerate(), newer);
-    let mut merged_state = start();
-    if place.is_none() {
-        let _ = reduce(&mut merged_state, &input(older));
-    } else {
-        assert_eq!(place, Some(0), "the newer report merges into the older");
-    }
-    let merged_said_others: Vec<Vec<Effect>> = others
-        .iter()
-        .map(|(_, other)| {
-            other
-                .as_ref()
-                .map(|other| reduce(&mut merged_state, other))
-                .unwrap_or_default()
-        })
-        .collect();
-    let last = match place {
-        Some(_) => OutpostToCore::merged(older.clone(), newer.clone()),
-        None => newer.clone(),
+/// A focus on another element, node 30, told by the listener, whose read
+/// is the front entry's request out while the tells under test arrive:
+/// its number.
+fn busy(desk: &mut Desk) -> u64 {
+    assert_eq!(
+        desk.tell(LISTENER, focus_tell(ONE, 30, 0)),
+        [Heard::Sent(Reader::Listener, "ReadObject")]
+    );
+    let [(front, _, _)] = desk.sent[..] else {
+        panic!("one read asked: {:?}", desk.sent);
     };
-    let merged_said = reduce(&mut merged_state, &input(&last));
-
-    assert_eq!(
-        projection(&unmerged),
-        projection(&merged_state),
-        "Core's state, with {others:?}"
-    );
-    assert_eq!(
-        unmerged_said, merged_said_others,
-        "what the others said, with {others:?}"
-    );
-    Outcome {
-        merged: place.is_some(),
-        merged_said,
-    }
+    front
 }
 
-/// The words and sounds of `effects`, without their traces.
-fn heard(effects: &[Effect]) -> Vec<String> {
-    effects
+/// What one sequence did: every effect after the start, and the focus
+/// Core holds at the end.
+#[derive(Debug, PartialEq)]
+struct Run {
+    heard: Vec<Heard>,
+    focus: Option<NodeSnapshot>,
+}
+
+/// From the start, with the front entry's request out ([`busy`]), `older`
+/// when given, `others`, and `newer` are told; the front's read then
+/// answers that the element is not there, and each request the queue sends next is
+/// answered, the alert's from [`alert_read`] and the rest by `answer`.
+fn run(
+    older: Option<&Told>,
+    others: &[Other],
+    newer: &Told,
+    answer: &dyn Fn(&Wire) -> Outcome,
+) -> Run {
+    let mut desk = start();
+    let front = busy(&mut desk);
+    let mut heard = Vec::new();
+    if let Some(older) = older {
+        heard.extend(desk.tell(older.from, older.tell.clone()));
+    }
+    for other in others {
+        heard.extend(match other {
+            Other::Alert => desk.tell(LISTENER, alert(ALERT)),
+            Other::Late => desk.answer(ONE.instance(), 999, Outcome::NotThere),
+        });
+    }
+    heard.extend(desk.tell(newer.from, newer.tell.clone()));
+    heard.extend(desk.answer(LISTENER, front, Outcome::NotThere));
+    while let Some((number, to, request)) = desk
+        .sent
         .iter()
-        .map(|effect| match effect {
-            Effect::Speak(
-                Utterance {
-                    priority, segments, ..
-                },
-                _,
-            ) => format!("{priority:?}: {segments:?}"),
-            other => format!("{other:?}"),
-        })
-        .collect()
-}
-
-/// Runs every sequence between `older` and `newer`, asserting that the
-/// newer report merges into the older in each, unless `refused` says the
-/// sequence's others bar it, and that the merged report says `said`.
-fn equivalent(
-    older: &OutpostToCore,
-    newer: &OutpostToCore,
-    refused: impl Fn(&[Other]) -> bool,
-    said: &[String],
-) {
-    for others in sequences() {
-        let outcome = run(older, &others, newer);
-        assert_eq!(outcome.merged, !refused(&others), "merged with {others:?}");
-        if outcome.merged {
-            assert_eq!(heard(&outcome.merged_said), said, "with {others:?}");
-        }
+        .find(|(_, _, request)| !matches!(request, Wire::Follow(_)))
+        .cloned()
+    {
+        let outcome = match &request {
+            Wire::ReadObject(read)
+                if matches!(read.object, ObjectRef::Msaa { object: ALERT, .. }) =>
+            {
+                alert_read()
+            }
+            other => answer(other),
+        };
+        heard.extend(desk.answer(to, number, outcome));
+    }
+    Run {
+        heard,
+        focus: desk.state.focused().map(|(_, node)| node.clone()),
     }
 }
 
-/// The merge is never refused.
-fn never(_: &[Other]) -> bool {
-    false
+/// For every sequence of others, `older` then `newer` does exactly what
+/// `newer` alone does; with no others, `newer` alone does `heard`.
+fn equivalent(older: &Told, newer: &Told, answer: &dyn Fn(&Wire) -> Outcome, heard: &[Heard]) {
+    for others in sequences() {
+        assert_eq!(
+            run(Some(older), &others, newer, answer),
+            run(None, &others, newer, answer),
+            "with {others:?}"
+        );
+    }
+    assert_eq!(run(None, &[], newer, answer).heard, heard);
 }
 
-fn segments(segments: &[UtteranceSegment]) -> String {
-    format!("{segments:?}")
-}
-
-fn queued(spoken: &[UtteranceSegment]) -> String {
-    format!("{:?}: {}", SpeechPriority::Queued, segments(spoken))
-}
-
-fn interrupting(spoken: &[UtteranceSegment]) -> String {
-    format!("{:?}: {}", SpeechPriority::Interrupt, segments(spoken))
-}
-
-fn played(earcon: Earcon) -> String {
-    format!("{:?}", Effect::PlayEarcon(earcon))
+/// No request is expected beside the front's and the alert's.
+fn unasked(request: &Wire) -> Outcome {
+    panic!("an unexpected request: {request:?}")
 }
 
 fn role(role: Role) -> UtteranceSegment {
     UtteranceSegment::new(SegmentContent::Role(role))
 }
 
-fn selected(text: &str) -> UtteranceSegment {
-    UtteranceSegment::new(SegmentContent::Phrase(Phrase::Selected(
-        SelectionText::Text(text.to_owned()),
-    )))
+/// The listener's UI Automation focus tell of node 4.
+fn focus_on_four() -> Told {
+    Told {
+        from: LISTENER,
+        tell: focus_tell(ONE, 4, 0),
+    }
 }
 
 #[test]
 fn a_focus_merged_is_the_newer_focus() {
-    let older = report(focus_on(node(4, Role::Button, "First", focused())));
-    let newer = report(focus_on(node(4, Role::Button, "Second", focused())));
+    let second = node(4, Role::Button, "Second", focused());
+    let answer = move |request: &Wire| match request {
+        Wire::ReadObject(_) => Outcome::Result(Reply::Object(Box::new(listener_read(ONE, 4)))),
+        Wire::CompleteUia(_) => Outcome::Result(Reply::Focus(Box::new(focus_read_of(
+            ONE,
+            &second,
+            &line_ancestors(),
+        )))),
+        other => unasked(other),
+    };
+    let mut heard = vec![Heard::Sent(Reader::Listener, "ReadObject")];
+    heard.push(Heard::Sent(Reader::Outpost(ONE.pid), "CompleteUia"));
+    heard.extend(focus_heard(
+        ONE,
+        focus_now_in(ONE, 4, &[WINDOW, PANE]),
+        vec![vec![UtteranceSegment::label("Second"), role(Role::Button)]],
+    ));
+    equivalent(&focus_on_four(), &focus_on_four(), &answer, &heard);
+}
+
+/// A property change of the focus, from `older` to `newer`, carried by the
+/// tells, merged: what `newer` alone says is `said`.
+fn property(property: PropertyId, (older, newer): (PropertyValue, PropertyValue), said: &[Heard]) {
     equivalent(
-        &older,
-        &newer,
-        never,
-        &[queued(&[
-            UtteranceSegment::label("Second"),
-            role(Role::Button),
-        ])],
+        &followed(property, Some(older)),
+        &followed(property, Some(newer)),
+        &unasked,
+        said,
     );
 }
 
-/// A property change of the focus, from `older` to `newer`, merged.
-fn property(older: PropertyChange, newer: PropertyChange, said: &[String]) {
-    let change = |change| {
-        report(NormalizedEvent::PropertyChanged {
-            node_id: id(3),
-            change,
-            child_count: None,
-        })
+/// A property change of the focus that its tells do not carry, merged:
+/// read once at its turn, its read answering `value`, after which it says
+/// `said`.
+fn read_property(property: PropertyId, value: PropertyValue, said: &[Heard]) {
+    let answer = move |request: &Wire| match request {
+        Wire::Properties { .. } => {
+            Outcome::Result(Reply::Properties(PropertyValues(vec![PropertyAnswer {
+                id: property,
+                value: Some(value.clone()),
+            }])))
+        }
+        other => unasked(other),
     };
-    equivalent(&change(older), &change(newer), never, said);
+    let mut heard = vec![Heard::Sent(Reader::Outpost(ONE.pid), "Properties")];
+    heard.extend_from_slice(said);
+    equivalent(
+        &followed(property, None),
+        &followed(property, None),
+        &answer,
+        &heard,
+    );
 }
 
 #[test]
 fn a_name_change_merged_is_the_newer_name() {
     property(
-        PropertyChange::Name(Some("Draft".to_owned())),
-        PropertyChange::Name(Some("Final".to_owned())),
-        &[queued(&[UtteranceSegment::label("Final")])],
+        PropertyId::Name,
+        (
+            PropertyValue::Text("Draft".to_owned()),
+            PropertyValue::Text("Final".to_owned()),
+        ),
+        &[queued(vec![UtteranceSegment::label("Final")])],
     );
 }
 
 #[test]
 fn a_value_property_change_merged_is_the_newer_value() {
     property(
-        PropertyChange::Value(Some("one".to_owned())),
-        PropertyChange::Value(Some("two".to_owned())),
+        PropertyId::Value,
+        (
+            PropertyValue::Text("one".to_owned()),
+            PropertyValue::Text("two".to_owned()),
+        ),
         &[],
     );
 }
@@ -424,9 +377,12 @@ fn a_value_property_change_merged_is_the_newer_value() {
 #[test]
 fn a_states_change_merged_is_the_newer_states() {
     property(
-        PropertyChange::States(focused().with(State::ReadOnly)),
-        PropertyChange::States(focused().with(State::Required)),
-        &[queued(&[UtteranceSegment::new(SegmentContent::State(
+        PropertyId::States,
+        (
+            PropertyValue::States(focused().with(State::ReadOnly)),
+            PropertyValue::States(focused().with(State::Required)),
+        ),
+        &[queued(vec![UtteranceSegment::new(SegmentContent::State(
             State::Required,
         ))])],
     );
@@ -434,10 +390,10 @@ fn a_states_change_merged_is_the_newer_states() {
 
 #[test]
 fn a_description_change_merged_is_the_newer_description() {
-    property(
-        PropertyChange::Description(Some("Older".to_owned())),
-        PropertyChange::Description(Some("Newer".to_owned())),
-        &[queued(&[UtteranceSegment::new(
+    read_property(
+        PropertyId::Description,
+        PropertyValue::Text("Newer".to_owned()),
+        &[queued(vec![UtteranceSegment::new(
             SegmentContent::Description("Newer".to_owned()),
         )])],
     );
@@ -445,174 +401,179 @@ fn a_description_change_merged_is_the_newer_description() {
 
 #[test]
 fn a_suggestions_change_merged_is_the_newer_one() {
-    property(
-        PropertyChange::Suggestions(false),
-        PropertyChange::Suggestions(true),
-        &[played(Earcon::SuggestionsOpened)],
+    read_property(
+        PropertyId::Suggestions,
+        PropertyValue::Flag(true),
+        &[Heard::Earcon(Earcon::SuggestionsOpened)],
     );
+}
+
+/// The listener's tell that node `number`'s element was selected.
+fn selected(number: u64) -> Told {
+    let mut tell = focus_tell(ONE, number, 0);
+    tell.kind = EventKind::UiaElementSelected;
+    tell.checked = None;
+    tell.cached = PropertyValues(vec![PropertyAnswer {
+        id: PropertyId::States,
+        value: Some(PropertyValue::States(StateSet::new().with(State::Selected))),
+    }]);
+    Told {
+        from: LISTENER,
+        tell,
+    }
+}
+
+/// The answers to a selected item's two reads: the listener's, and the
+/// outpost's completion, reading item `number` named `name` with
+/// `relation` to the focus.
+fn item_answer(
+    number: u64,
+    name: &'static str,
+    relation: RelationFound,
+) -> impl Fn(&Wire) -> Outcome {
+    move |request: &Wire| match request {
+        Wire::ReadObject(_) => Outcome::Result(Reply::Object(Box::new(listener_read(ONE, number)))),
+        Wire::CompleteUia(_) => Outcome::Result(Reply::Object(Box::new(ObjectRead {
+            object: NodeRead {
+                node: Some(ONE.node(number)),
+                window: ONE.node_window(),
+                values: desk::values_of(&node(
+                    number,
+                    Role::ListItem,
+                    name,
+                    StateSet::new().with(State::Selected),
+                )),
+            },
+            relation: Some(relation),
+            descendants: Vec::new(),
+            ancestors: Vec::new(),
+            met: None,
+            route: None,
+        }))),
+        other => unasked(other),
+    }
+}
+
+/// The two requests a selected item's reads send.
+fn item_reads() -> Vec<Heard> {
+    vec![
+        Heard::Sent(Reader::Listener, "ReadObject"),
+        Heard::Sent(Reader::Outpost(ONE.pid), "CompleteUia"),
+    ]
 }
 
 #[test]
 fn a_selection_merged_is_the_newer_selection() {
-    let selected = |name: &str| {
-        report(NormalizedEvent::SelectionChanged {
-            node: node(
-                5,
-                Role::ListItem,
-                name,
-                StateSet::new().with(State::Selected),
-            ),
-        })
-    };
-    equivalent(&selected("One"), &selected("One, renamed"), never, &[]);
+    equivalent(
+        &selected(5),
+        &selected(5),
+        &item_answer(5, "One, renamed", RelationFound::Unrelated),
+        &item_reads(),
+    );
 }
 
 #[test]
 fn a_controlled_selection_merged_is_the_newer_one() {
-    let selected = |name: &str| {
-        report(NormalizedEvent::ControlledSelection {
-            controller: id(3),
-            node: node(
-                6,
-                Role::ListItem,
-                name,
-                StateSet::new().with(State::Selected),
-            ),
-        })
-    };
-    equivalent(
-        &selected("Suggestion one"),
-        &selected("Suggestion two"),
-        never,
-        &[interrupting(&[
+    let mut heard = item_reads();
+    heard.push(Heard::Say(
+        SpeechPriority::Interrupt,
+        vec![
             UtteranceSegment::label("Suggestion two"),
             UtteranceSegment::new(SegmentContent::State(State::Selected)),
-        ])],
+        ],
+    ));
+    equivalent(
+        &selected(6),
+        &selected(6),
+        &item_answer(6, "Suggestion two", RelationFound::Controlled),
+        &heard,
     );
 }
 
 #[test]
 fn an_alert_merged_is_the_newer_alert() {
-    let alert = |name: &str| {
-        report(NormalizedEvent::Alert {
-            node: node(7, Role::Alert, name, StateSet::new()),
-            origin: verbatim_model::AlertOrigin::MsaaAlert,
-        })
+    let alert = || Told {
+        from: LISTENER,
+        tell: alert(7),
+    };
+    let answer = |request: &Wire| match request {
+        Wire::ReadObject(_) => {
+            let Outcome::Result(Reply::Object(mut read)) = alert_read() else {
+                unreachable!("an object read");
+            };
+            read.object.node = Some(ONE.node(7));
+            read.object.values =
+                desk::values_of(&node(7, Role::Alert, "Copied twice", StateSet::new()));
+            Outcome::Result(Reply::Object(read))
+        }
+        other => unasked(other),
     };
     equivalent(
-        &alert("Copied"),
-        &alert("Copied twice"),
-        never,
-        &[queued(&[
-            UtteranceSegment::label("Copied twice"),
-            role(Role::Alert),
-        ])],
+        &alert(),
+        &alert(),
+        &answer,
+        &[
+            Heard::Sent(Reader::Outpost(ONE.pid), "ReadObject"),
+            queued(vec![
+                UtteranceSegment::label("Copied twice"),
+                role(Role::Alert),
+            ]),
+        ],
     );
 }
 
 #[test]
 fn a_value_change_merged_is_the_newer_value() {
-    let value = |value: &str| {
-        report(NormalizedEvent::ValueChanged {
-            node_id: id(3),
-            value: Some(value.to_owned()),
-        })
-    };
-    equivalent(&value("50"), &value("51"), never, &[]);
-}
-
-/// A caret report that carries selection changes merges with a newer one
-/// except across a reply, which the reply's placements among the others
-/// test; the merged report carries the older's changes before its own.
-#[test]
-fn a_caret_report_merged_carries_both_selections_and_never_crosses_a_reply() {
-    let older = report(caret(5, &[(true, "alpha")]));
-    let newer = report(caret(10, &[(true, " beta")]));
-    equivalent(
-        &older,
-        &newer,
-        |others| others.iter().any(|other| matches!(other, Other::Reply)),
-        &[queued(&[selected("alpha")]), queued(&[selected(" beta")])],
+    property(
+        PropertyId::Value,
+        (
+            PropertyValue::Text("50".to_owned()),
+            PropertyValue::Text("51".to_owned()),
+        ),
+        &[],
     );
 }
 
-#[test]
-fn a_text_change_merged_is_the_newer_one() {
-    let changed = || report(NormalizedEvent::TextChanged { node_id: id(3) });
-    equivalent(&changed(), &changed(), never, &[]);
-}
-
-#[test]
-fn an_active_text_position_change_merged_is_the_newer_one() {
-    let moved = |offset| {
-        report(NormalizedEvent::ActiveTextPositionChanged {
-            node_id: id(3),
-            position: TextPosition {
-                anchor: TextAnchor(100),
-                offset,
-            },
-        })
-    };
-    equivalent(&moved(2), &moved(6), never, &[]);
-}
-
-/// What the merged side said, in order, for `between`, a report of the
-/// merged reports' node or line queued between them, which is not in the
-/// equivalence's set: the merge moves the newer report behind it, the
-/// merge's reordering.
-fn reordered(older: &OutpostToCore, between: &OutpostToCore, newer: &OutpostToCore) -> Vec<String> {
-    let waiting = [older.clone(), between.clone()];
-    assert_eq!(merge_into(waiting.iter().enumerate(), newer), Some(0));
-    let mut state = start();
-    [
-        between.clone(),
-        OutpostToCore::merged(older.clone(), newer.clone()),
-    ]
-    .into_iter()
-    .flat_map(|message| {
-        heard(&reduce(
-            &mut state,
-            &event_input(SOURCE, message).expect("an event"),
-        ))
-    })
-    .collect()
-}
-
-/// A name change of the focus the older report leaves, queued between two
-/// reports of the new focus, reaches Core before the merged focus, so Core
-/// judges it against the focus before: it is spoken as that focus's
-/// change, and the new focus announced after it.
+/// A name change of the focus the older focus tell leaves, told between
+/// two focus tells of the new focus: the merged focus takes the newer
+/// tell's place behind it, so Core judges the change against the focus
+/// before, speaking it as that focus's change, and announces the new
+/// focus after it.
 #[test]
 fn a_focus_merged_across_a_change_of_its_line_moves_behind_it() {
-    let older = report(focus_on(node(4, Role::Button, "First", focused())));
-    let newer = report(focus_on(node(4, Role::Button, "Second", focused())));
-    let between = report(NormalizedEvent::PropertyChanged {
-        node_id: id(3),
-        change: PropertyChange::Name(Some("Renamed".to_owned())),
-        child_count: None,
-    });
+    let mut desk = start();
+    let front = busy(&mut desk);
+    let older = focus_on_four();
+    let between = followed(
+        PropertyId::Name,
+        Some(PropertyValue::Text("Renamed".to_owned())),
+    );
+    let newer = focus_on_four();
+    assert_eq!(desk.tell(older.from, older.tell), []);
+    assert_eq!(desk.tell(between.from, between.tell), []);
+    assert_eq!(desk.tell(newer.from, newer.tell), []);
     assert_eq!(
-        reordered(&older, &between, &newer),
+        desk.answer(LISTENER, front, Outcome::NotThere),
         [
-            queued(&[UtteranceSegment::label("Renamed")]),
-            queued(&[UtteranceSegment::label("Second"), role(Role::Button)]),
+            queued(vec![UtteranceSegment::label("Renamed")]),
+            Heard::Sent(Reader::Listener, "ReadObject"),
         ]
     );
-}
-
-/// A value change of the caret's node queued between two caret reports
-/// reaches Core before the merged report, unspoken, as an edit field's
-/// value change is; the merged report then speaks both selections.
-#[test]
-fn a_caret_report_merged_across_a_change_of_its_node_moves_behind_it() {
-    let older = report(caret(5, &[(true, "alpha")]));
-    let newer = report(caret(10, &[(true, " beta")]));
-    let between = report(NormalizedEvent::ValueChanged {
-        node_id: id(3),
-        value: Some("alpha beta".to_owned()),
-    });
     assert_eq!(
-        reordered(&older, &between, &newer),
-        [queued(&[selected("alpha")]), queued(&[selected(" beta")])]
+        desk.reply(Reply::Object(Box::new(listener_read(ONE, 4)))),
+        [Heard::Sent(Reader::Outpost(ONE.pid), "CompleteUia")]
+    );
+    let said = focus_heard(
+        ONE,
+        focus_now_in(ONE, 4, &[WINDOW, PANE]),
+        vec![vec![UtteranceSegment::label("Second"), role(Role::Button)]],
+    );
+    assert_eq!(
+        desk.reply(Reply::Focus(Box::new(focus_read_of(
+            ONE,
+            &node(4, Role::Button, "Second", focused()),
+            &line_ancestors(),
+        )))),
+        said
     );
 }

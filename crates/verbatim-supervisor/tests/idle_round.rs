@@ -157,7 +157,6 @@ fn listener_stand_in(
                 send(&ListenerToCore::IdleAnswer { round });
             }
             CoreToListener::ApplicationExited { .. }
-            | CoreToListener::LiveReread { .. }
             | CoreToListener::Request(_)
             | CoreToListener::Cancel(_) => {}
         }

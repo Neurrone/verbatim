@@ -199,7 +199,9 @@ pub(crate) fn arrive<L: Logic>(
 }
 
 /// Removes the newest waiting single entry that `same` finds, searching
-/// from the back and stopping at a focus-kind item.
+/// from the back and stopping at a focus-kind item, which is itself
+/// reached: a focus tell merges a waiting one of its element, but nothing
+/// merges past one.
 fn merge_away<L: Logic>(
     facts: &L::Facts,
     waiting: &mut VecDeque<Item<L::Entry>>,
@@ -207,13 +209,13 @@ fn merge_away<L: Logic>(
 ) {
     let mut found = None;
     for (place, item) in waiting.iter().enumerate().rev() {
-        if focus_kind::<L>(facts, item) {
-            break;
-        }
         if let Item::One(entry) = item
             && same(entry)
         {
             found = Some(place);
+            break;
+        }
+        if focus_kind::<L>(facts, item) {
             break;
         }
     }

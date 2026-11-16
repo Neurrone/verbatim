@@ -8,6 +8,7 @@
 //! merge, its window and whether the foreground stop reaches it.
 
 pub(crate) mod alert;
+pub(crate) mod desktop_name;
 pub(crate) mod notification;
 pub(crate) mod selection;
 pub(crate) mod show;
@@ -68,6 +69,12 @@ pub(crate) enum Kind {
         /// Whether it was moved once behind the pending entries.
         moved: bool,
     },
+    /// An MSAA name change on the desktop window: the virtual desktop's
+    /// name changed.
+    DesktopName {
+        /// The ids its event named.
+        ids: MsaaIds,
+    },
     /// An MSAA show.
     Show {
         /// The ids its event named.
@@ -127,6 +134,21 @@ impl Announcement {
                 }
             }
             (
+                EventKind::NameChange,
+                EventObject::Msaa {
+                    window,
+                    object,
+                    child,
+                },
+                _,
+            ) if on_desktop(&tell) => Kind::DesktopName {
+                ids: MsaaIds {
+                    window: *window,
+                    object: *object,
+                    child: *child,
+                },
+            },
+            (
                 kind @ (EventKind::Alert | EventKind::Show),
                 EventObject::Msaa {
                     window,
@@ -171,6 +193,7 @@ impl Announcement {
             Kind::UiaSelection(_) => Box::pin(selection::run(cx, announcement)),
             Kind::Alert { .. } => Box::pin(alert::run(cx, announcement)),
             Kind::Show { .. } => Box::pin(show::run(cx, announcement)),
+            Kind::DesktopName { .. } => Box::pin(desktop_name::run(cx, announcement)),
         }
     }
 
@@ -189,7 +212,7 @@ impl Announcement {
             accepted: acceptance::accept(self.tell.kind, window_facts(&self.tell), false).is_ok(),
         };
         match &self.kind {
-            Kind::Alert { ids, .. } => msaa(ids, MsaaClass::Other),
+            Kind::Alert { ids, .. } | Kind::DesktopName { ids } => msaa(ids, MsaaClass::Other),
             Kind::Show { ids, .. } => msaa(ids, MsaaClass::Show),
             Kind::Notification { .. } | Kind::Toast(_) | Kind::UiaSelection(_) => Place::Other {
                 merges: true,
@@ -235,7 +258,9 @@ impl Announcement {
     pub(crate) fn window(&self) -> Option<RequestWindow> {
         match &self.kind {
             Kind::Notification { .. } => None,
-            Kind::Toast(_) | Kind::UiaSelection(_) => request_window(&self.tell),
+            Kind::Toast(_) | Kind::UiaSelection(_) | Kind::DesktopName { .. } => {
+                request_window(&self.tell)
+            }
             Kind::Alert { window, .. } | Kind::Show { window, .. } => Some(*window),
         }
     }
@@ -246,7 +271,7 @@ impl Announcement {
     pub(crate) fn exempt_from_foreground(&self) -> bool {
         match &self.kind {
             Kind::Notification { .. } | Kind::Toast(_) | Kind::Show { .. } => true,
-            Kind::UiaSelection(_) | Kind::Alert { .. } => matches!(
+            Kind::UiaSelection(_) | Kind::Alert { .. } | Kind::DesktopName { .. } => matches!(
                 acceptance::accept(self.tell.kind, window_facts(&self.tell), false),
                 Ok(Accepted::NoWindow
                     | Accepted::Toast
@@ -263,7 +288,10 @@ impl Announcement {
     pub(crate) fn probe(&self) -> Option<Probe> {
         match &self.kind {
             Kind::Toast(_) | Kind::UiaSelection(_) => self.tell.checked.as_ref()?.probe,
-            Kind::Notification { .. } | Kind::Alert { .. } | Kind::Show { .. } => None,
+            Kind::Notification { .. }
+            | Kind::Alert { .. }
+            | Kind::Show { .. }
+            | Kind::DesktopName { .. } => None,
         }
     }
 
@@ -271,9 +299,17 @@ impl Announcement {
     pub(crate) fn kept_by(&self, listener: u64) -> bool {
         match &self.kind {
             Kind::Toast(kept) | Kind::UiaSelection(kept) => kept.listener == listener,
-            Kind::Notification { .. } | Kind::Alert { .. } | Kind::Show { .. } => false,
+            Kind::Notification { .. }
+            | Kind::Alert { .. }
+            | Kind::Show { .. }
+            | Kind::DesktopName { .. } => false,
         }
     }
+}
+
+/// Whether `tell`'s window is the desktop window.
+pub(crate) fn on_desktop(tell: &Event) -> bool {
+    window_facts(tell).is_some_and(|facts| facts.desktop)
 }
 
 /// Whether a UI Automation tell's element is native, as the check's probe

@@ -1,111 +1,40 @@
 //! Scripted-input tests for milestone M4's text handling in the reducer:
 //! caret keys and the selection, typed character and word echo, the
 //! review cursor over text, say-all, and formatting spoken as it changes,
-//! each driven through the text protocol with scripted outpost replies.
+//! each driven through Core's event queue by the public reducer: a field
+//! committed through the outpost's focus read, keys and commands pressed,
+//! caret tells told, and each text request Core sends answered as the test
+//! scripts it.
 
-use verbatim_core::SrState;
-use verbatim_model::{
-    Backend, CaretKey, CaretMotion, CaretRead, CaretReport, CaretSelection, Change, Compared,
-    Effect, Input, Message, NodeDetails, NodeId, NodeSnapshot, NormalizedEvent, OutpostId, Phrase,
-    Pid, QueryId, ReadFacts, ReadPurpose, ReaderSettings, ReviewCommand, Role, SegmentContent,
-    Selection, SelectionChange, SelectionText, SpeechMark, SpeechPriority, State, StateSet,
-    TextAnchor, TextChunk, TextMovement, TextOp, TextPoint, TextPosition, TextRead, TextReadAhead,
-    TextReply, TextRequest, TextThrough, TextUnit, TraceId, TypingEcho, Utterance,
-    UtteranceSegment,
+mod desk;
+mod terminal_support;
+
+use desk::{App, Desk, ONE};
+use verbatim_model::event_kind::EventKind;
+use verbatim_model::request::{
+    FocusCaret, FocusCaretRead, FocusRead, Instance, Outcome, Press, PressAction, QueueEffect,
+    QueueInput, Reply, Request as Wire,
 };
-use verbatim_model::{BulletStyle, FocusText, FormatRun, LineStyle, TextAttributes, TextFormat};
+use verbatim_model::stroke::{HeldStroke, Stroke};
+use verbatim_model::tell::{AcceptanceFacts, Event, EventObject, Payload, Relation, TellWindow};
+use verbatim_model::{
+    Backend, CaretKey, CaretMotion, CaretReport, CaretSelection, EditSelection, Effect, Input,
+    KeySeq, Message, NodeDetails, NodeId, NodeSnapshot, Phrase, ReaderSettings, ReviewCommand,
+    Role, SegmentContent, Selection, SelectionChange, SelectionDifference, SelectionReadReply,
+    SelectionText, SpeechMark, SpeechPriority, Started, StateSet, TextAnchor, TextChunk, TextOp,
+    TextPoint, TextPosition, TextProvider, TextReply, TextUnit, TraceId, UtteranceSegment, Watched,
+    WatchedRead,
+};
 
-const OUTPOST: OutpostId = OutpostId(1);
+/// The edit field of most tests, node 5 of [`ONE`].
+const FIELD: u64 = 5;
 
-/// Runs the reducer and answers what an unchanged application answers
-/// without being asked anything new: a review command's read of the line
-/// the review cursor is already on, which the tests below do not script, and
-/// a live read of the navigator object.
-fn reduce(state: &mut SrState, input: &Input) -> Vec<Effect> {
-    let mut effects = verbatim_core::reduce(state, &mut verbatim_core::Runtime::default(), input);
-    settle_unchanged(state, input.trace_id(), &mut effects);
-    effects
-}
-
-/// [`reduce`]'s answers to `effects`, each put in the place of its request.
-fn settle_unchanged(state: &mut SrState, trace: Option<TraceId>, effects: &mut Vec<Effect>) {
-    let mut index = 0;
-    while index < effects.len() {
-        let Some((query_id, outpost, outcome)) = unchanged_answer(state, own(&effects[index]))
-        else {
-            index += 1;
-            continue;
-        };
-        let answer = Input::Answered {
-            at_us: 0,
-            trace_id: trace.unwrap_or(TraceId::from_raw(1)),
-            query_id,
-            outpost,
-            outcome,
-        };
-        let mut more =
-            verbatim_core::reduce(state, &mut verbatim_core::Runtime::default(), &answer);
-        settle_unchanged(state, trace, &mut more);
-        effects.splice(index..=index, more);
-    }
-}
-
-/// The answer an unchanged application gives `effect`: a read of the
-/// review cursor's own line, or a live read of the navigator object.
-fn unchanged_answer(
-    state: &SrState,
-    effect: &Effect,
-) -> Option<(QueryId, OutpostId, verbatim_model::protocol::QueryOutcome)> {
-    use verbatim_model::protocol::{QueryOutcome, QueryResult};
-    let whole = serde_json::to_value(state).expect("the state serializes");
-    let navigator = &whole["navigator"];
-    match effect {
-        Effect::ReadNode {
-            query_id, node_id, ..
-        } => {
-            let object = serde_json::from_value(navigator["object"].clone()).ok()?;
-            Some((
-                *query_id,
-                node_id.outpost(),
-                QueryOutcome::Done(QueryResult::Node(object)),
-            ))
-        }
-        Effect::Text(TextRequest {
-            query_id,
-            node_id,
-            op:
-                TextOp::Read(TextRead {
-                    at: TextPoint::At(position),
-                    movement: None,
-                    unit: TextUnit::Line,
-                }),
-        }) => {
-            let review_offset = navigator["text"]["At"]["offset"].as_u64();
-            if navigator["object"]["role"] == "Terminal"
-                || review_offset != Some(u64::from(position.offset))
-            {
-                return None;
-            }
-            let mut chunk: TextChunk =
-                serde_json::from_value(navigator["text"]["At"]["line"].clone()).ok()?;
-            if chunk.start != position.anchor {
-                return None;
-            }
-            chunk.offset = position.offset;
-            Some((
-                *query_id,
-                node_id.outpost(),
-                QueryOutcome::Done(QueryResult::Text(TextReply::Read { moved: 0, chunk })),
-            ))
-        }
-        _ => None,
-    }
-}
-
+/// Node `number` of [`ONE`].
 fn id(number: u64) -> NodeId {
-    NodeId::in_outpost(OUTPOST, number)
+    ONE.node(number)
 }
 
+/// Node `number`, named "Body", of `role` with `states`.
 fn node(number: u64, role: Role, states: StateSet) -> NodeSnapshot {
     NodeSnapshot {
         id: id(number),
@@ -116,35 +45,6 @@ fn node(number: u64, role: Role, states: StateSet) -> NodeSnapshot {
         states,
         details: NodeDetails::default(),
     }
-}
-
-fn event(event: NormalizedEvent) -> Input {
-    Input::Event {
-        trace_id: TraceId::from_raw(1),
-        observed_at_us: 0,
-        source: Pid(1),
-        backend: Backend::Uia,
-        window: None,
-        event,
-        purpose: None,
-    }
-}
-
-fn focus(state: &mut SrState, snapshot: NodeSnapshot) {
-    let _ = reduce(
-        state,
-        &event(NormalizedEvent::FocusChanged {
-            node: snapshot,
-            whole_window: false,
-            ancestors: Vec::new(),
-            selected_child: None,
-            text: None,
-            earlier: None,
-            group: None,
-            answers: None,
-            first_cached_ancestor: None,
-        }),
-    );
 }
 
 /// A line chunk starting at `anchor`, with the point of interest at
@@ -163,282 +63,12 @@ fn line(text: &str, anchor: u64, offset: u32) -> TextChunk {
     }
 }
 
-fn caret_event(state: &mut SrState, number: u64, line: TextChunk) {
-    let caret = CaretReport {
+/// The caret on `line`, with `selection`.
+fn caret_on(line: TextChunk, selection: Option<CaretSelection>) -> CaretReport {
+    CaretReport {
         line,
-        selection: None,
-        read_at_us: stamp(),
-    };
-    set_baseline(&caret);
-    let _ = reduce(
-        state,
-        &event(NormalizedEvent::CaretMoved {
-            node_id: id(number),
-            caret,
-            selection_changes: Vec::new(),
-            content_changed: false,
-            new_selection: None,
-            facts: None,
-        }),
-    );
-}
-
-/// An edit field with focus and its caret on `text` at `offset`.
-fn editing(text: &str, offset: u32) -> SrState {
-    let mut state = SrState::new();
-    focus(&mut state, node(5, Role::EditableText, StateSet::new()));
-    caret_event(&mut state, 5, line(text, 100, offset));
-    state
-}
-
-/// Answers the read of the line at the caret that a review command makes
-/// while the review cursor follows the caret, with `line`.
-fn read_at_caret(state: &mut SrState, effects: &[Effect], line: TextChunk) -> Vec<Effect> {
-    let asked = request(effects);
-    assert_eq!(
-        asked.op,
-        TextOp::Read(TextRead {
-            at: TextPoint::Caret,
-            movement: None,
-            unit: TextUnit::Line,
-        })
-    );
-    reduce(
-        state,
-        &completed(
-            asked.query_id,
-            TextReply::Read {
-                moved: 0,
-                chunk: line,
-            },
-        ),
-    )
-}
-
-/// Settles the review cursor, following the caret, on the caret's `line`,
-/// as the first review command after the caret moved does.
-fn settle(state: &mut SrState, line: TextChunk) {
-    let effects = reduce(state, &command(ReviewCommand::ReviewCurrentCharacter, 0));
-    let _ = read_at_caret(state, &effects, line);
-}
-
-/// An edit field as [`editing`] makes it, with the review cursor settled at
-/// the caret.
-fn reviewing(text: &str, offset: u32) -> SrState {
-    let mut state = editing(text, offset);
-    settle(&mut state, line(text, 100, offset));
-    state
-}
-
-/// When [`key`] says each key was pressed.
-const KEY_PRESSED_AT: u64 = 1_700_000_000_000;
-
-fn key(motion: CaretMotion, select: bool) -> Input {
-    Input::CaretKey {
-        key_seq: verbatim_model::KeySeq::NONE_YET,
-        trace_id: TraceId::from_raw(2),
-        key: CaretKey { motion, select },
-        pressed_at_ms: KEY_PRESSED_AT,
-    }
-}
-
-fn command(command: ReviewCommand, repeat: u8) -> Input {
-    Input::Command {
-        pressed_at_ms: 0,
-        key_seq: verbatim_model::KeySeq::NONE_YET,
-        trace_id: TraceId::from_raw(3),
-        command,
-        repeat,
-    }
-}
-
-fn completed(query_id: QueryId, reply: impl Into<Reply>) -> Input {
-    completed_on(query_id, id(5), reply)
-}
-
-/// [`completed`], a report of `node_id`.
-fn completed_on(query_id: QueryId, node_id: NodeId, reply: impl Into<Reply>) -> Input {
-    match reply.into() {
-        Reply::Text(reply) => completed_text(query_id, reply),
-        Reply::Key(reply) => {
-            let CaretReply {
-                moved,
-                caret,
-                read_at_ms,
-                unit,
-                selection_changes,
-                content_changed,
-                new_selection,
-                same_line,
-                ..
-            } = *reply;
-            let (before_line, before_selection) = baseline_taken();
-            let mut caret = caret;
-            if read_at_ms != 0 {
-                caret.read_at_us = read_at_ms * 1_000;
-            }
-            set_baseline(&caret);
-            let facts = key_facts(
-                unit.unwrap_or_else(|| caret.line.clone()),
-                moved,
-                (before_line, before_selection),
-                same_line.unwrap_or(true),
-            );
-            event(NormalizedEvent::CaretMoved {
-                node_id,
-                caret,
-                selection_changes,
-                content_changed,
-                new_selection,
-                facts: Some(Box::new(facts)),
-            })
-        }
-    }
-}
-
-/// When a report's read ended: after every key's pass in these tests.
-const READ_ENDED_AT_US: u64 = u64::MAX / 2;
-
-/// A key's read facts: `moved` says whether the caret left where it was,
-/// in the last read compared with.
-fn key_facts(
-    unit: TextChunk,
-    moved: bool,
-    (previous_line, previous_selection): (TextChunk, Option<CaretSelection>),
-    on_previous_line: bool,
-) -> ReadFacts {
-    ReadFacts {
-        unit: Some(unit),
-        change: Change::Compared {
-            compared: Compared {
-                caret_moved: moved,
-                ..Compared::default()
-            },
-            previous_line,
-            previous_selection,
-            on_previous_line,
-        },
-        read_ended_at_us: READ_ENDED_AT_US,
-    }
-}
-
-/// The answer of a read for a key, not an evidence, finding `line`.
-fn caret_read_reply(caret: CaretReport, unit: TextChunk) -> TextReply {
-    let facts = key_facts(unit, false, baseline_taken(), true);
-    TextReply::Caret(Box::new(verbatim_model::CaretReply {
-        caret,
-        selection_changes: Vec::new(),
-        content_changed: false,
-        new_selection: None,
-        facts,
-    }))
-}
-
-/// The key's bound passes and its final read, asked then, answers `line`
-/// showing no effect.
-fn bound_answer(state: &mut SrState, line: TextChunk) -> Vec<Effect> {
-    let due = reduce(
-        state,
-        &Input::Queue {
-            trace_id: TraceId::from_raw(2),
-            at_us: READ_ENDED_AT_US,
-            input: verbatim_model::request::QueueInput::HeldKeyDue,
-        },
-    );
-    let unit = line.clone();
-    let caret = CaretReport {
-        line,
-        selection: None,
-        read_at_us: stamp(),
-    };
-    reduce(
-        state,
-        &completed_text(request_of(&due), caret_read_reply(caret, unit)),
-    )
-}
-
-/// The key's bound passes and its final read goes unanswered: it ends.
-fn bound_unanswered(state: &mut SrState) -> Vec<Effect> {
-    let due = reduce(
-        state,
-        &Input::Queue {
-            trace_id: TraceId::from_raw(2),
-            at_us: READ_ENDED_AT_US,
-            input: verbatim_model::request::QueueInput::HeldKeyDue,
-        },
-    );
-    reduce(
-        state,
-        &completed_text(request_of(&due), TextReply::Unanswered),
-    )
-}
-
-/// A reply as a test gives it: a text reply, or a key's result, which the
-/// protocol sends as a report with its facts.
-enum Reply {
-    Text(TextReply),
-    Key(Box<CaretReply>),
-}
-
-impl From<TextReply> for Reply {
-    fn from(reply: TextReply) -> Self {
-        Self::Text(reply)
-    }
-}
-
-/// A key's result as these tests describe it.
-struct CaretReply {
-    moved: bool,
-    caret: CaretReport,
-    read_at_ms: u64,
-    unit: Option<TextChunk>,
-    selection_changes: Vec<SelectionChange>,
-    content_changed: bool,
-    new_selection: Option<SelectionChange>,
-    same_line: Option<bool>,
-}
-
-fn key_reply(reply: Box<CaretReply>) -> Reply {
-    Reply::Key(reply)
-}
-
-std::thread_local! {
-    /// The read the next key is judged from.
-    static BASELINE: std::cell::RefCell<Option<(TextChunk, Option<CaretSelection>)>> =
-        const { std::cell::RefCell::new(None) };
-    /// The next stamp a report takes.
-    static STAMP: std::cell::Cell<u64> = const { std::cell::Cell::new(1_000) };
-}
-
-/// A new, later stamp.
-fn stamp() -> u64 {
-    STAMP.with(|stamp| {
-        let next = stamp.get() + 1;
-        stamp.set(next);
-        next
-    })
-}
-
-fn set_baseline(caret: &CaretReport) {
-    BASELINE.with(|baseline| {
-        *baseline.borrow_mut() = Some((caret.line.clone(), caret.selection.clone()));
-    });
-}
-
-/// The baseline, as the outpost keeps it from the last caret it reported.
-fn baseline_taken() -> (TextChunk, Option<CaretSelection>) {
-    BASELINE.with(|baseline| {
-        baseline
-            .borrow()
-            .clone()
-            .unwrap_or_else(|| (line("", 100, 0), None))
-    })
-}
-
-fn selection_starting_on(selection: Selection, line: Option<Box<TextChunk>>) -> CaretSelection {
-    CaretSelection {
-        range: selection,
-        start_line: line,
+        selection,
+        read_at_us: 0,
     }
 }
 
@@ -449,77 +79,526 @@ fn caret_selection(selection: Selection) -> CaretSelection {
     }
 }
 
-/// `completed` for a reply to a text request.
-fn completed_text(query_id: QueryId, reply: TextReply) -> Input {
-    text_answer(TraceId::from_raw(4), query_id, reply)
+/// A focus's caret read of `caret`, with the text selected, baseline
+/// `baseline` minted, and the difference from the baseline named.
+fn caret_read(
+    caret: CaretReport,
+    selected_text: Option<&str>,
+    baseline: u64,
+    difference: Option<SelectionDifference>,
+) -> FocusCaret {
+    FocusCaret::Read(Box::new(FocusCaretRead {
+        caret,
+        selected_text: selected_text.map(str::to_owned),
+        baseline: TextAnchor(baseline),
+        difference,
+    }))
 }
 
-/// The outpost's answer `reply` to the text request `query_id`, traced
-/// `trace_id`.
-fn text_answer(trace_id: TraceId, query_id: QueryId, reply: TextReply) -> Input {
-    // Core passes a held key on as the answer reaches it, which here is as
-    // its read ended.
-    let at_us = match &reply {
-        TextReply::Caret(read) => read.facts.read_ended_at_us,
-        _ => 0,
-    };
-    Input::Answered {
-        at_us,
-        trace_id,
-        query_id,
-        outpost: OUTPOST,
-        outcome: verbatim_model::protocol::QueryOutcome::Done(
-            verbatim_model::protocol::QueryResult::Text(reply),
-        ),
-    }
+/// One effect as these tests compare it: every effect becomes exactly one
+/// of these, so comparing the whole list checks every effect a step had.
+#[derive(Clone, Debug, PartialEq)]
+enum Heard {
+    /// An utterance, not say-all's: its priority and segments.
+    Say(SpeechPriority, Vec<UtteranceSegment>),
+    /// A say-all utterance: its segments, its marks among them.
+    SayAll(Vec<UtteranceSegment>),
+    /// A text request: what it asks.
+    Asked(TextOp),
+    /// Another request, by its kind.
+    Sent(&'static str),
+    /// Held strokes sent to the application: how many.
+    Strokes(usize),
+    /// A request withdrawn.
+    Cancelled,
+    /// Speech stopped.
+    Stop,
+    /// Expired speech dropped.
+    Expire,
+    /// Text copied.
+    Copied(String),
+    /// Settings to save.
+    Settings(ReaderSettings),
+    /// The display kept on, or let sleep.
+    Display(bool),
 }
 
-/// `effect`, or the effect it carries on a key's behalf.
-fn own(effect: &Effect) -> &Effect {
+/// A queued utterance of `segments`.
+fn queued(segments: Vec<UtteranceSegment>) -> Heard {
+    Heard::Say(SpeechPriority::Queued, segments)
+}
+
+/// One effect as [`Heard`], `None` for the queue's own business and the
+/// control plane's stream.
+fn heard_of(effect: Effect) -> Option<Heard> {
     match effect {
-        Effect::ForKey(_, effect) => effect,
-        effect => effect,
+        Effect::ForKey(_, effect) => heard_of(*effect),
+        Effect::Speak(utterance, _) if utterance.say_all => Some(Heard::SayAll(utterance.segments)),
+        Effect::Speak(utterance, _) => Some(Heard::Say(utterance.priority, utterance.segments)),
+        Effect::StopSpeech => Some(Heard::Stop),
+        Effect::DropExpiredSpeech(_) => Some(Heard::Expire),
+        Effect::CopyToClipboard(text) => Some(Heard::Copied(text)),
+        Effect::SettingsChanged(settings) => Some(Heard::Settings(settings)),
+        Effect::KeepDisplayOn(on) => Some(Heard::Display(on)),
+        Effect::Queue(QueueEffect::Send { ask, .. }) => Some(match ask.request {
+            Wire::Text { op, .. } => Heard::Asked(op),
+            other => Heard::Sent(desk::kind(&other)),
+        }),
+        Effect::Queue(QueueEffect::SendStrokes(sent)) => Some(Heard::Strokes(sent.len())),
+        Effect::Queue(QueueEffect::Cancel { .. }) => Some(Heard::Cancelled),
+        Effect::Observed(_) | Effect::Queue(_) => None,
+        other => panic!("an effect these tests do not expect: {other:?}"),
     }
 }
 
-/// The one text request among `effects`.
-fn request(effects: &[Effect]) -> TextRequest {
-    if let Some(note) = effects.iter().find_map(|effect| match own(effect) {
-        Effect::KeyNote(note) => Some(*note),
-        _ => None,
-    }) {
-        // A key the hook passed sends a note and asks no query: its reports
-        // are matched by their node.
-        return TextRequest {
-            query_id: QueryId(0),
-            node_id: note.node(),
-            op: TextOp::ReadCaret(CaretRead {
-                fetch: note.fetch(),
-                purpose: ReadPurpose::BeforeFieldKey,
-            }),
+/// A desk with the field's application, each text request Core sends
+/// kept until the test answers it, and a read of the review cursor's own
+/// line, unchanged, answered as the state holds it.
+struct Text {
+    desk: Desk,
+    /// The requests not yet answered, but `Follow`: number, reader and
+    /// request.
+    out: Vec<(u64, Instance, Wire)>,
+    /// The last held stroke's sequence.
+    strokes: u32,
+    /// The caret as the application has it, which a key's starting read
+    /// finds.
+    caret: CaretReport,
+    /// The selection baseline the outpost minted last.
+    baseline: u64,
+    /// How the committed field's text is read: through UI Automation, or
+    /// through a classic edit control's messages.
+    provider: TextProvider,
+    /// The key number each utterance carried, since the last press or
+    /// answer.
+    stamps: Vec<Option<KeySeq>>,
+}
+
+impl Text {
+    fn new() -> Self {
+        Self {
+            desk: Desk::new(),
+            out: Vec::new(),
+            strokes: 0,
+            caret: caret_on(line("", 100, 0), None),
+            baseline: 1,
+            provider: TextProvider::Uia,
+            stamps: Vec::new(),
+        }
+    }
+
+    /// Focuses `snapshot` of [`ONE`] with `caret`: every utterance its
+    /// announcement spoke, each by its segments.
+    fn focus(&mut self, snapshot: &NodeSnapshot, caret: FocusCaret) -> Vec<Vec<UtteranceSegment>> {
+        if let FocusCaret::Read(read) = &caret {
+            self.caret = read.caret.clone();
+        }
+        let read = FocusRead {
+            caret,
+            ..desk::focus_read_of(ONE, snapshot, &[])
         };
+        self.focus_read(ONE, read)
     }
-    let requests: Vec<&TextRequest> = effects
-        .iter()
-        .filter_map(|effect| match own(effect) {
-            Effect::Text(request) => Some(request),
-            _ => None,
+
+    /// Focuses the outpost's `read` in `app`: every utterance spoken.
+    fn focus_read(&mut self, app: App, read: FocusRead) -> Vec<Vec<UtteranceSegment>> {
+        self.out.clear();
+        self.desk
+            .focus_read(app, read)
+            .into_iter()
+            .filter_map(|heard| match heard {
+                desk::Heard::Say(_, segments) => Some(segments),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Feeds `input` at the next moment: every effect.
+    fn step(&mut self, input: QueueInput) -> Vec<Heard> {
+        self.desk.at_us += 1_000;
+        let effects = self.desk.feed(input);
+        self.take(effects)
+    }
+
+    /// `effects` as heard, a read of the review cursor's line answered at
+    /// once in the place of its request.
+    fn take(&mut self, effects: Vec<Effect>) -> Vec<Heard> {
+        let mut heard = Vec::new();
+        for effect in effects {
+            if let Effect::Queue(QueueEffect::Send { to, ask }) = &effect
+                && let Wire::Text { op, .. } = &ask.request
+                && let Some(chunk) = self.unchanged(op)
+            {
+                let answer = QueueInput::Answer {
+                    from: *to,
+                    answer: verbatim_model::request::Answer {
+                        number: ask.number,
+                        outcome: Outcome::Result(Reply::Text(TextReply::Read { moved: 0, chunk })),
+                        probes: Vec::new(),
+                        detail: String::new(),
+                    },
+                };
+                heard.extend(self.step(answer));
+                continue;
+            }
+            if let Effect::Queue(QueueEffect::Send { to, ask }) = &effect
+                && !matches!(ask.request, Wire::Follow(_))
+            {
+                self.out.push((ask.number.0, *to, ask.request.clone()));
+            }
+            let own = match &effect {
+                Effect::ForKey(_, effect) => effect.as_ref(),
+                effect => effect,
+            };
+            if let Effect::Speak(_, key) = own {
+                self.stamps.push(*key);
+            }
+            if let Effect::Queue(QueueEffect::Cancel { cancel, .. }) = &effect {
+                self.out.retain(|(number, ..)| *number != cancel.number.0);
+            }
+            heard.extend(heard_of(effect));
+        }
+        heard
+    }
+
+    /// The review cursor's line as the state holds it, when `op` reads it
+    /// again where the review cursor is, in text that is not a terminal's.
+    fn unchanged(&self, op: &TextOp) -> Option<TextChunk> {
+        let TextOp::Read(verbatim_model::TextRead {
+            at: TextPoint::At(position),
+            movement: None,
+            unit: TextUnit::Line,
+        }) = op
+        else {
+            return None;
+        };
+        let whole = serde_json::to_value(&self.desk.state).expect("the state serializes");
+        let navigator = &whole["navigator"];
+        if navigator["object"]["role"] == "Terminal"
+            || navigator["text"]["At"]["offset"].as_u64() != Some(u64::from(position.offset))
+        {
+            return None;
+        }
+        let mut chunk: TextChunk =
+            serde_json::from_value(navigator["text"]["At"]["line"].clone()).ok()?;
+        if chunk.start != position.anchor {
+            return None;
+        }
+        chunk.offset = position.offset;
+        Some(chunk)
+    }
+
+    /// Answers the one request out with `outcome`: every effect.
+    fn outcome(&mut self, outcome: Outcome) -> Vec<Heard> {
+        let [(number, from, _)] = self.out[..] else {
+            panic!("one request out: {:?}", self.out);
+        };
+        self.out.clear();
+        self.stamps.clear();
+        self.step(QueueInput::Answer {
+            from,
+            answer: verbatim_model::request::Answer {
+                number: verbatim_model::request::RequestNumber(number),
+                outcome,
+                probes: Vec::new(),
+                detail: String::new(),
+            },
         })
-        .collect();
-    assert_eq!(requests.len(), 1, "one text request in {effects:?}");
-    requests[0].clone()
+    }
+
+    /// Answers the one request out, a live read of `snapshot`'s
+    /// properties, with its values.
+    fn properties(&mut self, snapshot: &NodeSnapshot) -> Vec<Heard> {
+        self.outcome(Outcome::Result(Reply::Properties(desk::values_of(
+            snapshot,
+        ))))
+    }
+
+    /// Answers the one text request out with `reply`.
+    fn reply(&mut self, reply: TextReply) -> Vec<Heard> {
+        self.outcome(Outcome::Result(Reply::Text(reply)))
+    }
+
+    /// A key press doing `action`.
+    fn press(&mut self, action: PressAction) -> Vec<Heard> {
+        self.stamps.clear();
+        self.desk.keys += 1;
+        let press = Press {
+            key_seq: KeySeq::new(self.desk.keys),
+            pressed_at_us: self.desk.at_us + 1_000,
+            action,
+        };
+        self.step(QueueInput::Press(Box::new(press)))
+    }
+
+    /// Caret key `motion`, held by the hook unless it selects, bound to
+    /// the committed focus's record.
+    fn key(&mut self, motion: CaretMotion, select: bool) -> Vec<Heard> {
+        self.strokes += 1;
+        let held = (!select).then(|| HeldStroke {
+            stroke: Stroke {
+                vk: 0x27,
+                scan_code: 0x4D,
+                extended: true,
+                sequence: self.strokes,
+            },
+            modifiers: Vec::new(),
+        });
+        let bound = self.desk.state.caret_binding().map(Box::new);
+        self.press(PressAction::CaretKey {
+            key: CaretKey { motion, select },
+            held,
+            bound,
+        })
+    }
+
+    /// Caret key `motion`, held, its starting read finding the caret where
+    /// the application has it, and its watch finding the key's effect: the
+    /// caret on `after`, with `unit` at it, by default the key's unit
+    /// there. Every effect of the watch's answer.
+    fn moved(
+        &mut self,
+        motion: CaretMotion,
+        after: TextChunk,
+        unit: Option<TextChunk>,
+    ) -> Vec<Heard> {
+        let unit = unit.unwrap_or_else(|| unit_at(&after, motion.unit()));
+        self.watched(
+            motion,
+            Watched::Effect(WatchedRead {
+                caret: caret_on(after, None),
+                unit,
+            }),
+        )
+    }
+
+    /// Caret key `motion`, held and passed as [`Text::moved`] says, its
+    /// watch answering `watched`: every effect of the answer.
+    fn watched(&mut self, motion: CaretMotion, watched: Watched) -> Vec<Heard> {
+        let passed = self.passed(motion);
+        assert_eq!(
+            passed,
+            [
+                Heard::Strokes(1),
+                Heard::Asked(watch(motion, self.provider, self.desk.at_us))
+            ]
+        );
+        if let Watched::Effect(read) | Watched::Bound(read) = &watched {
+            self.caret = read.caret.clone();
+        }
+        self.reply(TextReply::Watched(Box::new(watched)))
+    }
+
+    /// Caret key `motion`, held, and its starting read answered with the
+    /// caret where the application has it: every effect of the answer.
+    fn passed(&mut self, motion: CaretMotion) -> Vec<Heard> {
+        assert_eq!(
+            self.key(motion, false),
+            [Heard::Asked(starting_read(motion, self.provider))]
+        );
+        let before = self.caret.clone();
+        let at = unit_at(&before.line, motion.unit());
+        self.reply(TextReply::Started(Box::new(Started {
+            point: TextAnchor(50),
+            caret: before,
+            unit: at,
+            word: None,
+        })))
+    }
+
+    /// A UI Automation value change of node `number`, told by the outpost
+    /// following it.
+    fn value_changed(&mut self, number: u64) -> Vec<Heard> {
+        if self.provider == TextProvider::EditMessages {
+            let tell = self.edit_tell(EventKind::ValueChange, -4);
+            return self.step(QueueInput::Tell {
+                from: desk::LISTENER,
+                tell: Box::new(tell),
+            });
+        }
+        let tell = Event {
+            kind: EventKind::UiaPropertyChanged,
+            payload: Payload::PropertyChanged {
+                property: verbatim_model::property::PropertyId::Value,
+                value: Some(verbatim_model::property::PropertyValue::Text(String::new())),
+            },
+            ..self.followed(number, EventKind::UiaPropertyChanged)
+        };
+        self.step(QueueInput::Tell {
+            from: ONE.instance(),
+            tell: Box::new(tell),
+        })
+    }
+
+    /// A tell of `kind` of MSAA object `object` of [`ONE`]'s window, as
+    /// the listener tells one.
+    fn edit_tell(&self, kind: EventKind, object: i32) -> Event {
+        Event {
+            kind,
+            object: EventObject::Msaa {
+                window: ONE.window(),
+                object,
+                child: 0,
+            },
+            window: TellWindow::Found(Box::new(ONE.facts())),
+            ..self.followed(FIELD, kind)
+        }
+    }
+
+    /// A tell of `kind` of node `number`, as the outpost following it
+    /// tells one.
+    fn followed(&self, number: u64, kind: EventKind) -> Event {
+        Event {
+            trace_id: TraceId::from_raw(8),
+            kind,
+            process: ONE.pid,
+            application: "app".to_owned(),
+            thread: 41,
+            at_us: self.desk.at_us + 1_000,
+            object: EventObject::Followed {
+                runtime_id: desk::runtime_of(number),
+            },
+            cached: verbatim_model::property::PropertyValues::default(),
+            payload: Payload::None,
+            window: TellWindow::NoWindow,
+            checked: None,
+        }
+    }
+
+    /// The caret moved to `caret` by no key of Verbatim's: its caret tell,
+    /// whose read names the baseline, answered with `difference` from it
+    /// and the next baseline. Every effect of the answer.
+    fn selection(
+        &mut self,
+        caret: CaretReport,
+        difference: Option<SelectionDifference>,
+    ) -> Vec<Heard> {
+        assert_eq!(
+            self.caret_tell(FIELD),
+            [Heard::Asked(TextOp::ReadSelection(
+                verbatim_model::SelectionRead {
+                    provider: self.provider,
+                    baseline: Some(TextAnchor(self.baseline)),
+                    adopt: None,
+                }
+            ))]
+        );
+        self.baseline += 1;
+        self.caret = caret.clone();
+        let edit_selection = (self.provider == TextProvider::EditMessages).then(|| {
+            caret.selection.as_ref().map_or(
+                EditSelection {
+                    start: caret.line.offset,
+                    end: caret.line.offset,
+                },
+                |selection| {
+                    // A position on another line counts as past this one.
+                    let past = u32::try_from(caret.line.text.len()).expect("a short line");
+                    let offset = |position: TextPosition| {
+                        if position.anchor == caret.line.start {
+                            position.offset
+                        } else {
+                            past + position.offset
+                        }
+                    };
+                    EditSelection {
+                        start: offset(selection.range.start),
+                        end: offset(selection.range.end),
+                    }
+                },
+            )
+        });
+        self.reply(TextReply::SelectionRead(Box::new(SelectionReadReply {
+            caret,
+            baseline: TextAnchor(self.baseline),
+            difference,
+            edit_selection,
+        })))
+    }
+
+    /// Review command `command`, pressed `repeat` extra times.
+    fn command(&mut self, command: ReviewCommand, repeat: u8) -> Vec<Heard> {
+        self.press(PressAction::Command { command, repeat })
+    }
+
+    /// `text` typed.
+    fn typed(&mut self, text: &str) -> Vec<Heard> {
+        self.press(PressAction::Typed {
+            text: text.to_owned(),
+        })
+    }
+
+    /// The reader's settings changed to `settings`.
+    fn settings(&mut self, settings: ReaderSettings) {
+        let _ = verbatim_core::reduce(
+            &mut self.desk.state,
+            &mut self.desk.runtime,
+            &Input::Settings(settings),
+        );
+    }
+
+    /// A caret tell of node `number`, told by the outpost following it.
+    fn caret_tell(&mut self, number: u64) -> Vec<Heard> {
+        if self.provider == TextProvider::EditMessages {
+            let tell = self.edit_tell(EventKind::SystemCaret, -8);
+            return self.step(QueueInput::Tell {
+                from: desk::LISTENER,
+                tell: Box::new(tell),
+            });
+        }
+        let tell = self.followed(number, EventKind::UiaTextSelectionChanged);
+        self.step(QueueInput::Tell {
+            from: ONE.instance(),
+            tell: Box::new(tell),
+        })
+    }
 }
 
-/// Every segment spoken by `effects`, in order.
-fn spoken(effects: &[Effect]) -> Vec<UtteranceSegment> {
-    effects
-        .iter()
-        .filter_map(|effect| match own(effect) {
-            Effect::Speak(utterance, _) => Some(utterance.segments.clone()),
-            _ => None,
-        })
-        .flatten()
-        .collect()
+/// The starting read's answer: point 50, the caret on `line` with
+/// `selection`, `unit` at it.
+fn started(line: TextChunk, selection: Option<CaretSelection>, unit: TextChunk) -> TextReply {
+    TextReply::Started(Box::new(Started {
+        point: TextAnchor(50),
+        caret: caret_on(line, selection),
+        unit,
+        word: None,
+    }))
+}
+
+/// `text` read as `unit` at anchor `anchor`.
+fn unit(unit: TextUnit, text: &str, anchor: u64) -> TextChunk {
+    TextChunk {
+        unit,
+        ..line(text, anchor, 0)
+    }
+}
+
+/// The unit `unit` at the caret of `line`, as the outpost cuts it: a
+/// character (a carriage return and line feed as one), a word with its
+/// trailing spaces, or the line with its formatting.
+fn unit_at(line: &TextChunk, unit: TextUnit) -> TextChunk {
+    let rest = &line.text[line.offset as usize..];
+    let text = match unit {
+        TextUnit::Character if rest.starts_with("\r\n") => "\r\n",
+        TextUnit::Character => rest
+            .chars()
+            .next()
+            .map_or("", |first| &rest[..first.len_utf8()]),
+        TextUnit::Word => {
+            let end = rest.find(' ').map_or(rest.len(), |space| {
+                rest.len() - rest[space..].trim_start_matches(' ').len()
+            });
+            &rest[..end]
+        }
+        _ => {
+            return TextChunk {
+                unit,
+                offset: 0,
+                ..line.clone()
+            };
+        }
+    };
+    self::unit(unit, text, line.start.0 + 1_000)
 }
 
 fn character(text: &str) -> UtteranceSegment {
@@ -530,59 +609,168 @@ fn message(message: Message) -> UtteranceSegment {
     UtteranceSegment::new(SegmentContent::Message(message))
 }
 
-fn caret_reply(moved: bool, line: TextChunk, unit: Option<TextChunk>) -> Reply {
-    key_reply(Box::new(CaretReply {
-        same_line: None,
-        moved,
-        read_at_ms: 0,
-        caret: CaretReport {
-            line,
-            selection: None,
-            read_at_us: stamp(),
+fn phrase(phrase: Phrase) -> UtteranceSegment {
+    UtteranceSegment::new(SegmentContent::Phrase(phrase))
+}
+
+/// The edit field focused, its caret on `text` at `offset`, at anchor 100.
+fn editing(text: &str, offset: u32) -> Text {
+    let mut field = Text::new();
+    let _ = field.focus(
+        &node(FIELD, Role::EditableText, StateSet::new()),
+        caret_read(caret_on(line(text, 100, offset), None), None, 1, None),
+    );
+    field
+}
+
+/// What a key of `motion`'s reads fetch: everything, but no spelling or
+/// grammar errors for a paragraph.
+fn details(motion: CaretMotion) -> verbatim_model::TextDetails {
+    if motion.unit() == TextUnit::Paragraph {
+        verbatim_model::TextDetails {
+            spelling_errors: false,
+            grammar_errors: false,
+            ..verbatim_model::TextDetails::ALL
+        }
+    } else {
+        verbatim_model::TextDetails::ALL
+    }
+}
+
+/// A field's starting read for `motion`.
+fn starting_read(motion: CaretMotion, provider: TextProvider) -> TextOp {
+    TextOp::StartingRead(verbatim_model::StartingRead {
+        provider,
+        details: details(motion),
+        unit: motion.unit(),
+        word: matches!(motion, CaretMotion::Delete | CaretMotion::DeleteWord),
+    })
+}
+
+/// A field's watch for `motion`, passed at `passed_at_us`.
+fn watch(motion: CaretMotion, provider: TextProvider, passed_at_us: u64) -> TextOp {
+    TextOp::Watch(verbatim_model::Watch {
+        provider,
+        point: TextAnchor(50),
+        motion,
+        passed_at_us,
+        poll_us: 10_000,
+        events: provider == TextProvider::Uia,
+        bound_us: 100_000,
+        final_read: verbatim_model::WatchFinalRead::Unit {
+            unit: motion.unit(),
+            details: details(motion),
         },
-        unit,
-        selection_changes: Vec::new(),
-        content_changed: false,
-        new_selection: None,
-    }))
+    })
+}
+
+/// The one utterance of a key's words: `segments`, queued.
+fn words(segments: Vec<UtteranceSegment>) -> Vec<Heard> {
+    vec![queued(segments)]
+}
+
+/// The difference from the baseline: `changes`, each selected or not with
+/// its text, and the whole new selection's text.
+fn differing(changes: &[(bool, &str)], new_selection: Option<&str>) -> SelectionDifference {
+    let change = |selected, text: &str| SelectionChange {
+        selected,
+        text: text.to_owned(),
+        characters: u32::try_from(text.chars().count()).expect("a short text"),
+    };
+    SelectionDifference {
+        changes: changes
+            .iter()
+            .map(|&(selected, text)| change(selected, text))
+            .collect(),
+        new_selection: new_selection.map(|text| change(true, text)),
+    }
+}
+
+/// The edit field as [`editing`] makes it, with the review cursor
+/// settled at the caret by a review of the current character.
+fn reviewing(text: &str, offset: u32) -> Text {
+    let mut field = editing(text, offset);
+    field.settle(line(text, 100, offset));
+    field
+}
+
+impl Text {
+    /// Settles the review cursor, following the caret, on the caret's
+    /// `line`, as the first review command after the caret moved does.
+    fn settle(&mut self, line: TextChunk) {
+        assert_eq!(
+            self.command(ReviewCommand::ReviewCurrentCharacter, 0),
+            [Heard::Asked(line_read(TextPoint::Caret, None))]
+        );
+        let _ = self.reply(TextReply::Read {
+            moved: 0,
+            chunk: line,
+        });
+    }
+}
+
+/// A read of the line at `at`, after moving by `movement` when given.
+fn line_read(at: TextPoint, movement: Option<(TextUnit, i32)>) -> TextOp {
+    TextOp::Read(verbatim_model::TextRead {
+        at,
+        movement: movement.map(|(unit, count)| verbatim_model::TextMovement { unit, count }),
+        unit: TextUnit::Line,
+    })
+}
+
+/// A classic edit control focused, read through its messages, its caret
+/// on `text` at `offset`, at anchor 100.
+fn edit_control(text: &str, offset: u32) -> Text {
+    let mut field = Text::new();
+    field.provider = TextProvider::EditMessages;
+    field.desk.app(ONE);
+    let tell = field.edit_tell(EventKind::MsaaFocus, -4);
+    let _ = field.desk.tell(desk::LISTENER, tell);
+    let [(run, to, Wire::MsaaRun(_))] = field.desk.sent[..] else {
+        panic!("one run asked: {:?}", field.desk.sent);
+    };
+    let caret = caret_on(line(text, 100, offset), None);
+    let mut read = FocusRead {
+        caret: caret_read(caret.clone(), None, 1, None),
+        msaa: Some(verbatim_model::request::HeldIds {
+            event: verbatim_model::request::MsaaIds {
+                window: ONE.window(),
+                object: -4,
+                child: 0,
+            },
+            held_child: 0,
+        }),
+        ..desk::focus_read_of(ONE, &node(FIELD, Role::EditableText, StateSet::new()), &[])
+    };
+    read.focus.runtime_id = None;
+    let tried = verbatim_model::request::RunRead {
+        tried: vec![verbatim_model::request::Tried::Focus(Box::new(read))],
+    };
+    let _ = field
+        .desk
+        .answer(to, run, Outcome::Result(Reply::Run(tried)));
+    field.caret = caret;
+    field
 }
 
 #[test]
 fn an_arrow_key_watches_for_evidence_then_speaks_the_character_at_the_caret() {
-    let mut state = editing("Hello\r\n", 0);
-    let effects = reduce(&mut state, &key(CaretMotion::NextCharacter, false));
-    let request = request(&effects);
-    assert_eq!(request.node_id, id(5));
-
-    let effects = reduce(
-        &mut state,
-        &completed(
-            request.query_id,
-            caret_reply(true, line("Hello\r\n", 100, 1), None),
-        ),
+    let mut text = editing("Hello\r\n", 0);
+    assert_eq!(
+        text.moved(CaretMotion::NextCharacter, line("Hello\r\n", 100, 1), None),
+        words(vec![character("e")])
     );
-    assert_eq!(spoken(&effects), vec![character("e")]);
     // At the end of the line, the caret is on the line break, named by its
     // first character, as NVDA names it.
-    let effects = reduce(&mut state, &key(CaretMotion::EndOfLine, false));
-    let effects = reduce(
-        &mut state,
-        &completed(
-            request_of(&effects),
-            caret_reply(true, line("Hello\r\n", 100, 5), None),
-        ),
+    assert_eq!(
+        text.moved(CaretMotion::EndOfLine, line("Hello\r\n", 100, 5), None),
+        words(vec![character("\r")])
     );
-    assert_eq!(spoken(&effects), vec![character("\r")]);
     // At the end of the text there is no character: blank.
-    let effects = reduce(&mut state, &key(CaretMotion::EndOfLine, false));
-    let effects = reduce(
-        &mut state,
-        &completed(
-            request_of(&effects),
-            caret_reply(true, line("Bye", 101, 3), None),
-        ),
+    assert_eq!(
+        text.moved(CaretMotion::EndOfLine, line("Bye", 101, 3), None),
+        words(vec![message(Message::Blank)])
     );
-    assert_eq!(spoken(&effects), vec![message(Message::Blank)]);
 }
 
 #[test]
@@ -591,612 +779,228 @@ fn a_backspace_in_a_run_of_one_character_watches_its_line() {
     // characters beside the caret nor, where positions follow edits, the
     // caret: the watch says the key deletes, so the outpost takes the line
     // changing as evidence, and the star removed is spoken.
-    let mut state = editing("******", 5);
-    let effects = reduce(&mut state, &key(CaretMotion::Backspace, false));
-    let request = request(&effects);
-    let effects = reduce(
-        &mut state,
-        &completed(
-            request.query_id,
-            caret_reply(true, line("*****", 100, 4), None),
-        ),
-    );
+    let mut text = editing("******", 5);
     assert_eq!(
-        spoken(&effects),
-        vec![UtteranceSegment::new(SegmentContent::Character(
-            "*".to_owned()
-        ))]
+        text.moved(CaretMotion::Backspace, line("*****", 100, 4), None),
+        words(vec![character("*")])
     );
-}
-
-#[test]
-fn a_caret_key_that_moves_nothing_says_its_unit_at_its_bound() {
-    // Control+Home at the start of the text: the application moves nothing,
-    // so the final read finds no evidence, and the line is said as NVDA's
-    // script says it at its 100 ms.
-    let mut state = editing("one two\n", 0);
-    let effects = reduce(&mut state, &key(CaretMotion::Top, false));
-    let _ = request(&effects);
-    let effects = bound_answer(&mut state, line("one two\n", 100, 0));
-    assert_eq!(spoken(&effects), vec![UtteranceSegment::text("one two")]);
-}
-
-#[test]
-fn a_caret_keys_watch_ends_with_its_answer_and_with_typing() {
-    // Once a watch is answered, ended or not, the key waits for nothing: a
-    // second answer to the same request says nothing.
-    let mut state = editing("abc\n", 0);
-    let query = request_of(&reduce(&mut state, &key(CaretMotion::NextCharacter, false)));
-    let effects = bound_unanswered(&mut state);
-    assert_eq!(effects, [Effect::BoundHeldKey(None)]);
-    let effects = reduce(
-        &mut state,
-        &completed(query, caret_reply(true, line("abc\n", 100, 1), None)),
-    );
-    assert_eq!(effects, [], "the watch had ended");
-
-    // A key pressed while another is watched (here a character typed, its
-    // key cutting speech off first, as every key does): an answer read
-    // from then on may show the later key's effect, so it is not spoken
-    // for the earlier key, and only keeps the caret current.
-    let mut state = editing("abc\n", 0);
-    let query = request_of(&reduce(&mut state, &key(CaretMotion::StartOfLine, false)));
-    let _ = reduce(
-        &mut state,
-        &Input::Queue {
-            trace_id: verbatim_model::TraceId::from_raw(0),
-            at_us: (50) * 1_000,
-            input: verbatim_model::request::QueueInput::SpeechCut,
-        },
-    );
-    let effects = reduce(&mut state, &typed("x"));
-    assert_eq!(spoken(&effects), vec![character("x")]);
-    let effects = reduce(
-        &mut state,
-        &completed(query, caret_reply_at(line("xabc\n", 100, 1), 60)),
-    );
-    assert_eq!(
-        effects,
-        [Effect::BoundHeldKey(None)],
-        "the later key's effect is not the key's answer"
-    );
-    // Its caret is now the newest, so a Backspace deletes what it shows.
-    let query = request_of(&reduce(
-        &mut state,
-        &Input::CaretKey {
-            key_seq: verbatim_model::KeySeq::NONE_YET,
-            trace_id: TraceId::from_raw(5),
-            key: CaretKey {
-                motion: CaretMotion::Backspace,
-                select: false,
-            },
-            pressed_at_ms: 70,
-        },
-    ));
-    let effects = reduce(
-        &mut state,
-        &completed(query, caret_reply_at(line("abc\n", 100, 0), 80)),
-    );
-    assert_eq!(spoken(&effects), vec![character("x")]);
-
-    // An answer read before the later key was pressed is the key's own.
-    let mut state = editing("abc\n", 0);
-    let query = request_of(&reduce(&mut state, &key(CaretMotion::NextCharacter, false)));
-    let _ = reduce(
-        &mut state,
-        &Input::Queue {
-            trace_id: verbatim_model::TraceId::from_raw(0),
-            at_us: (50) * 1_000,
-            input: verbatim_model::request::QueueInput::SpeechCut,
-        },
-    );
-    let effects = reduce(
-        &mut state,
-        &completed(query, caret_reply_at(line("abc\n", 100, 1), 40)),
-    );
-    assert_eq!(spoken(&effects), vec![character("b")]);
 }
 
 #[test]
 fn a_line_break_the_caret_reaches_is_named_with_its_formatting_read() {
     // The outpost cuts the character from the line, a carriage return and
     // line feed as one cluster; it is named by its carriage return.
-    let mut state = editing("Hello\r\n", 0);
-    let effects = reduce(&mut state, &key(CaretMotion::EndOfLine, false));
+    let mut text = editing("Hello\r\n", 0);
     let unit = TextChunk {
         unit: TextUnit::Character,
-        formats: vec![FormatRun {
+        formats: vec![verbatim_model::FormatRun {
             start: 0,
             end: 2,
-            attributes: TextAttributes::default(),
+            attributes: verbatim_model::TextAttributes::default(),
         }],
         ..line("\r\n", 102, 0)
     };
-    let effects = reduce(
-        &mut state,
-        &completed(
-            request_of(&effects),
-            caret_reply(true, line("Hello\r\n", 100, 5), Some(unit)),
+    assert_eq!(
+        text.moved(
+            CaretMotion::EndOfLine,
+            line("Hello\r\n", 100, 5),
+            Some(unit)
         ),
+        words(vec![character("\r")])
     );
-    assert_eq!(spoken(&effects), vec![character("\r")]);
-}
-
-fn request_of(effects: &[Effect]) -> QueryId {
-    request(effects).query_id
 }
 
 #[test]
 fn line_word_and_paragraph_keys_speak_their_unit() {
-    let mut state = editing("one two\n", 0);
-    let effects = reduce(&mut state, &key(CaretMotion::NextLine, false));
-    let effects = reduce(
-        &mut state,
-        &completed(
-            request_of(&effects),
-            caret_reply(true, line("second line\n", 101, 0), None),
-        ),
-    );
+    let mut text = editing("one two\n", 0);
     assert_eq!(
-        spoken(&effects),
-        vec![UtteranceSegment::text("second line")]
+        text.moved(CaretMotion::NextLine, line("second line\n", 101, 0), None),
+        words(vec![UtteranceSegment::text("second line")])
     );
-
     // The provider's word, as the application moved the caret by it.
-    let effects = reduce(&mut state, &key(CaretMotion::NextWord, false));
-    let word = TextChunk {
-        unit: TextUnit::Word,
-        ..line("line ", 102, 0)
-    };
-    let effects = reduce(
-        &mut state,
-        &completed(
-            request_of(&effects),
-            caret_reply(true, line("second line\n", 101, 7), Some(word)),
+    assert_eq!(
+        text.moved(
+            CaretMotion::NextWord,
+            line("second line\n", 101, 7),
+            Some(unit(TextUnit::Word, "line ", 102))
         ),
+        words(vec![UtteranceSegment::text("line")])
     );
-    assert_eq!(spoken(&effects), vec![UtteranceSegment::text("line")]);
-
-    // A provider without paragraphs sends no unit: the line is spoken.
-    let effects = reduce(&mut state, &key(CaretMotion::NextParagraph, false));
-    let effects = reduce(
-        &mut state,
-        &completed(
-            request_of(&effects),
-            caret_reply(true, line("third\n", 103, 0), None),
-        ),
+    // A provider without paragraphs reads the line as the paragraph.
+    assert_eq!(
+        text.moved(CaretMotion::NextParagraph, line("third\n", 103, 0), None),
+        words(vec![UtteranceSegment::text("third")])
     );
-    assert_eq!(spoken(&effects), vec![UtteranceSegment::text("third")]);
 }
 
 #[test]
 fn a_word_of_one_character_is_spoken_as_that_character() {
     // Notepad's word unit makes a sentence's full stop a word of its own;
     // spoken as text, it would say nothing.
-    let mut state = editing("the river bank.\r\n", 11);
-    let effects = reduce(&mut state, &key(CaretMotion::NextWord, false));
-    let word = TextChunk {
-        unit: TextUnit::Word,
-        ..line(".\r\n", 102, 0)
-    };
-    let effects = reduce(
-        &mut state,
-        &completed(
-            request_of(&effects),
-            caret_reply(true, line("the river bank.\r\n", 101, 14), Some(word)),
+    let mut text = editing("the river bank.\r\n", 11);
+    assert_eq!(
+        text.moved(
+            CaretMotion::NextWord,
+            line("the river bank.\r\n", 101, 14),
+            Some(unit(TextUnit::Word, ".\r\n", 102))
         ),
+        words(vec![character(".")])
     );
-    assert_eq!(spoken(&effects), vec![character(".")]);
 }
 
 #[test]
 fn the_review_cursor_speaks_a_word_of_one_character_by_its_name() {
-    let mut state = reviewing("the river bank.\r\n", 11);
-    let effects = reduce(&mut state, &command(ReviewCommand::ReviewNextWord, 0));
-    assert_eq!(spoken(&effects), vec![character(".")]);
-    let effects = reduce(&mut state, &command(ReviewCommand::ReviewCurrentWord, 0));
-    assert_eq!(spoken(&effects), vec![character(".")]);
+    let mut text = reviewing("the river bank.\r\n", 11);
+    assert_eq!(
+        text.command(ReviewCommand::ReviewNextWord, 0),
+        words(vec![character(".")])
+    );
+    assert_eq!(
+        text.command(ReviewCommand::ReviewCurrentWord, 0),
+        words(vec![character(".")])
+    );
 }
 
 #[test]
 fn shift_movement_speaks_what_was_selected_and_unselected() {
-    let mut state = editing("hello, world\n", 5);
-    let effects = reduce(&mut state, &key(CaretMotion::NextCharacter, true));
-    let request = request(&effects);
-    assert!(matches!(request.op, TextOp::ReadCaret(_)));
-    let reply = key_reply(Box::new(CaretReply {
-        same_line: None,
-        moved: true,
-        read_at_ms: 0,
-        caret: CaretReport {
-            line: line("hello, world\n", 100, 6),
-            selection: None,
-            read_at_us: stamp(),
-        },
-        unit: None,
-        selection_changes: vec![
-            SelectionChange {
-                selected: true,
-                text: ",".to_owned(),
-                characters: 1,
-            },
-            SelectionChange {
-                selected: false,
-                text: "hello".to_owned(),
-                characters: 5,
-            },
-            SelectionChange {
-                selected: true,
-                text: "x".repeat(600),
-                characters: 600,
-            },
-        ],
-        content_changed: false,
-        new_selection: None,
-    }));
-    let effects = reduce(&mut state, &completed(request.query_id, reply));
+    // A selection key is passed at once and says nothing; its caret tell
+    // says what it selected and unselected, each part its own utterance,
+    // as NVDA speaks each selection message on its own.
+    let mut text = editing("hello, world\n", 5);
+    assert_eq!(text.key(CaretMotion::NextCharacter, true), []);
+    let long = "x".repeat(600);
     assert_eq!(
-        spoken(&effects),
-        vec![
-            UtteranceSegment::new(SegmentContent::Phrase(Phrase::Selected(
-                SelectionText::Character(",".to_owned())
-            ))),
-            UtteranceSegment::new(SegmentContent::Phrase(Phrase::Unselected(
-                SelectionText::Text("hello".to_owned())
-            ))),
-            UtteranceSegment::new(SegmentContent::Phrase(Phrase::Selected(
-                SelectionText::Characters(600)
-            ))),
+        text.selection(
+            caret_on(line("hello, world\n", 100, 6), None),
+            Some(differing(
+                &[(true, ","), (false, "hello"), (true, &long)],
+                None
+            ))
+        ),
+        [
+            queued(vec![phrase(Phrase::Selected(SelectionText::Character(
+                ",".to_owned()
+            )))]),
+            queued(vec![phrase(Phrase::Unselected(SelectionText::Text(
+                "hello".to_owned()
+            )))]),
+            queued(vec![phrase(Phrase::Selected(SelectionText::Characters(
+                600
+            )))]),
         ]
     );
 }
 
-#[test]
-fn a_movement_that_leaves_a_selection_speaks_the_unit_then_what_it_unselected() {
-    let mut state = editing(
-        "hello, world
-",
-        5,
-    );
+/// The selection of bytes `start` to `end` of the line at anchor 100.
+fn selected(start: u32, end: u32) -> CaretSelection {
     let at = |offset| TextPosition {
         anchor: TextAnchor(100),
         offset,
     };
-    let selected = Selection {
-        start: at(0),
-        end: at(5),
-    };
+    caret_selection(Selection {
+        start: at(start),
+        end: at(end),
+    })
+}
+
+#[test]
+fn a_movement_that_leaves_a_selection_speaks_the_unit_then_what_it_unselected() {
+    let text_line = |offset| line("hello, world\n", 100, offset);
+    let mut text = editing("hello, world\n", 5);
     // Shift+Home selects "hello".
-    let effects = reduce(&mut state, &key(CaretMotion::StartOfLine, true));
-    let reply = key_reply(Box::new(CaretReply {
-        same_line: None,
-        moved: true,
-        read_at_ms: 0,
-        caret: CaretReport {
-            line: line(
-                "hello, world
-",
-                100,
-                0,
-            ),
-            selection: Some(caret_selection(selected)),
-            read_at_us: stamp(),
-        },
-        unit: None,
-        selection_changes: Vec::new(),
-        content_changed: false,
-        new_selection: None,
-    }));
-    let _ = reduce(&mut state, &completed(request_of(&effects), reply));
-
-    // Right Arrow sends no selection of its own, its answer comparing with
-    // the selection the outpost kept, and speaks the character, then the
-    // text unselected.
-    let effects = reduce(&mut state, &key(CaretMotion::NextCharacter, false));
-    let asked = request(&effects);
-    let reply = key_reply(Box::new(CaretReply {
-        same_line: None,
-        moved: true,
-        read_at_ms: 0,
-        caret: CaretReport {
-            line: line(
-                "hello, world
-",
-                100,
-                5,
-            ),
-            selection: None,
-            read_at_us: stamp(),
-        },
-        unit: None,
-        selection_changes: vec![SelectionChange {
-            selected: false,
-            text: "hello".to_owned(),
-            characters: 5,
-        }],
-        content_changed: false,
-        new_selection: None,
-    }));
-    let effects = reduce(&mut state, &completed(asked.query_id, reply));
+    assert_eq!(text.key(CaretMotion::StartOfLine, true), []);
+    let _ = text.selection(
+        caret_on(text_line(0), Some(selected(0, 5))),
+        Some(differing(&[(true, "hello")], None)),
+    );
+    // Right Arrow speaks the character, then its caret tell the text
+    // unselected.
     assert_eq!(
-        spoken(&effects),
-        vec![
-            character(","),
-            UtteranceSegment::new(SegmentContent::Phrase(Phrase::Unselected(
-                SelectionText::Text("hello".to_owned())
-            ))),
-        ]
+        text.moved(CaretMotion::NextCharacter, text_line(5), None),
+        words(vec![character(",")])
     );
-
-    // Nor does a deletion.
-    let mut state = editing(
-        "hello, world
-",
-        0,
-    );
-    let effects = reduce(&mut state, &key(CaretMotion::NextWord, true));
-    let reply = key_reply(Box::new(CaretReply {
-        same_line: None,
-        moved: true,
-        read_at_ms: 0,
-        caret: CaretReport {
-            line: line(
-                "hello, world
-",
-                100,
-                5,
-            ),
-            selection: Some(caret_selection(selected)),
-            read_at_us: stamp(),
-        },
-        unit: None,
-        selection_changes: Vec::new(),
-        content_changed: false,
-        new_selection: None,
-    }));
-    let _ = reduce(&mut state, &completed(request_of(&effects), reply));
-    let effects = reduce(&mut state, &key(CaretMotion::Delete, false));
-    assert!(matches!(request(&effects).op, TextOp::ReadCaret(_)));
-}
-
-/// A caret event for node 5 observed at `observed_at_ms`, in milliseconds
-/// to compare with a key's `pressed_at_ms`.
-fn caret_event_at(state: &mut SrState, line: TextChunk, observed_at_ms: u64) -> Vec<Effect> {
-    reduce(
-        state,
-        &Input::Event {
-            trace_id: TraceId::from_raw(6),
-            observed_at_us: observed_at_ms * 1_000,
-            source: Pid(1),
-            backend: Backend::Uia,
-            window: None,
-            event: NormalizedEvent::CaretMoved {
-                node_id: id(5),
-                caret: CaretReport {
-                    line,
-                    selection: None,
-                    read_at_us: stamp(),
-                },
-                selection_changes: Vec::new(),
-                content_changed: false,
-                new_selection: None,
-                facts: None,
-            },
-            purpose: None,
-        },
-    )
-}
-
-/// A caret key pressed at `pressed_at_ms`.
-fn key_at(motion: CaretMotion, pressed_at_ms: u64) -> Input {
-    Input::CaretKey {
-        key_seq: verbatim_model::KeySeq::NONE_YET,
-        trace_id: TraceId::from_raw(7),
-        key: CaretKey {
-            motion,
-            select: false,
-        },
-        pressed_at_ms,
-    }
-}
-
-/// A caret reply the outpost read at `read_at_ms`.
-fn caret_reply_at(line: TextChunk, read_at_ms: u64) -> Reply {
-    key_reply(Box::new(CaretReply {
-        same_line: None,
-        moved: true,
-        caret: CaretReport {
-            line,
-            selection: None,
-            read_at_us: stamp(),
-        },
-        read_at_ms,
-        unit: None,
-        selection_changes: Vec::new(),
-        content_changed: false,
-        new_selection: None,
-    }))
-}
-
-#[test]
-fn a_late_reply_read_before_a_newer_caret_event_leaves_the_caret_newest() {
-    let mut state = SrState::new();
-    focus(&mut state, node(5, Role::EditableText, StateSet::new()));
-    let _ = caret_event_at(&mut state, line("abc", 100, 0), 300);
-    let effects = reduce(&mut state, &key_at(CaretMotion::NextCharacter, 400));
-    // A caret event observed after the reply was read reaches Core first.
-    let _ = caret_event_at(&mut state, line("abc", 100, 2), 500);
-    let _ = reduce(
-        &mut state,
-        &completed(
-            request_of(&effects),
-            caret_reply_at(line("abc", 100, 1), 450),
+    assert_eq!(
+        text.selection(
+            caret_on(text_line(5), None),
+            Some(differing(&[(false, "hello")], None))
         ),
+        words(vec![phrase(Phrase::Unselected(SelectionText::Text(
+            "hello".to_owned()
+        )))])
     );
-}
 
-#[test]
-fn a_review_cursor_moved_off_the_caret_reviews_from_where_it_is() {
-    let mut state = reviewing("one two\n", 0);
-    let effects = reduce(&mut state, &command(ReviewCommand::ReviewNextWord, 0));
-    assert_eq!(spoken(&effects), vec![UtteranceSegment::text("two")]);
-    let effects = reduce(
-        &mut state,
-        &command(ReviewCommand::ReviewCurrentCharacter, 0),
+    // A deletion's starting read compares no selection either.
+    let mut text = editing("hello, world\n", 0);
+    assert_eq!(text.key(CaretMotion::NextWord, true), []);
+    let _ = text.selection(
+        caret_on(text_line(5), Some(selected(0, 5))),
+        Some(differing(&[(true, "hello")], None)),
     );
-    assert!(
-        !effects
-            .iter()
-            .any(|effect| matches!(effect, Effect::Text(_)))
+    assert_eq!(
+        text.key(CaretMotion::Delete, false),
+        [Heard::Asked(starting_read(
+            CaretMotion::Delete,
+            TextProvider::Uia
+        ))]
     );
-    assert_eq!(spoken(&effects), vec![character("t")]);
-}
-
-#[test]
-fn backspace_speaks_what_it_deleted_once_the_caret_moved() {
-    let mut state = editing("abc\n", 2);
-    let effects = reduce(&mut state, &key(CaretMotion::Backspace, false));
-    let effects = reduce(
-        &mut state,
-        &completed(
-            request_of(&effects),
-            caret_reply(true, line("ac\n", 100, 1), None),
-        ),
-    );
-    assert_eq!(spoken(&effects), vec![character("b")]);
-
-    // At the start of the text nothing is deleted, and nothing is said.
-    let mut state = editing("abc\n", 0);
-    let effects = reduce(&mut state, &key(CaretMotion::Backspace, false));
-    let _ = request_of(&effects);
-    let effects = bound_answer(&mut state, line("abc\n", 100, 0));
-    assert_eq!(spoken(&effects), []);
 }
 
 #[test]
 fn backspace_at_a_lines_start_names_the_line_break_it_deleted() {
     // Windows 11 Notepad's text breaks lines with a carriage return.
-    let mut state = editing("def\r", 0);
-    let effects = reduce(&mut state, &key(CaretMotion::Backspace, false));
-    let effects = reduce(
-        &mut state,
-        &completed(
-            request_of(&effects),
-            caret_reply(true, line("abcdef\r", 99, 3), None),
-        ),
+    let mut text = editing("def\r", 0);
+    assert_eq!(
+        text.moved(CaretMotion::Backspace, line("abcdef\r", 99, 3), None),
+        words(vec![character("\r")])
     );
-    assert_eq!(spoken(&effects), vec![character("\r")]);
 
     // With Control too, as Notepad deletes the break before a line's start.
-    let mut state = editing("def\r", 0);
-    let effects = reduce(&mut state, &key(CaretMotion::BackspaceWord, false));
-    let effects = reduce(
-        &mut state,
-        &completed(
-            request_of(&effects),
-            caret_reply(true, line("abcdef\r", 99, 3), None),
-        ),
+    let mut text = editing("def\r", 0);
+    assert_eq!(
+        text.moved(CaretMotion::BackspaceWord, line("abcdef\r", 99, 3), None),
+        words(vec![character("\r")])
     );
-    assert_eq!(spoken(&effects), vec![character("\r")]);
 
     // A standard edit control's carriage return and line feed are spoken
     // as the line feed. On the text's last line, which has no break, the
     // break is the one the text was last seen to use.
-    let mut state = editing("abc\r\n", 1);
-    caret_event(&mut state, 5, line("def", 101, 0));
-    let effects = reduce(&mut state, &key(CaretMotion::Backspace, false));
-    let effects = reduce(
-        &mut state,
-        &completed(
-            request_of(&effects),
-            caret_reply(true, line("abcdef", 100, 3), None),
-        ),
+    let mut text = editing("abc\r\n", 1);
+    assert_eq!(
+        text.selection(caret_on(line("def", 101, 0), None), None),
+        []
     );
-    assert_eq!(spoken(&effects), vec![character("\n")]);
+    assert_eq!(
+        text.moved(CaretMotion::Backspace, line("abcdef", 100, 3), None),
+        words(vec![character("\n")])
+    );
 
     // On the text's first line there is no break to delete.
-    let mut state = SrState::new();
-    focus(&mut state, node(5, Role::EditableText, StateSet::new()));
-    caret_event(
-        &mut state,
-        5,
-        TextChunk {
-            first: true,
-            ..line("abc\r\n", 100, 0)
-        },
+    let mut text = Text::new();
+    let first = TextChunk {
+        first: true,
+        ..line("abc\r\n", 100, 0)
+    };
+    let _ = text.focus(
+        &node(FIELD, Role::EditableText, StateSet::new()),
+        caret_read(caret_on(first, None), None, 1, None),
     );
-    let effects = reduce(&mut state, &key(CaretMotion::Backspace, false));
-    let effects = reduce(
-        &mut state,
-        &completed(
-            request_of(&effects),
-            caret_reply(true, line("abc\r\n", 100, 0), None),
-        ),
+    let read = WatchedRead {
+        caret: caret_on(line("abc\r\n", 100, 0), None),
+        unit: unit(TextUnit::Character, "a", 101),
+    };
+    assert_eq!(
+        text.watched(CaretMotion::Backspace, Watched::Bound(read)),
+        []
     );
-    assert_eq!(spoken(&effects), []);
 }
 
 #[test]
 fn delete_compares_the_character_and_speaks_the_new_one() {
-    let mut state = editing("abc\n", 1);
-    let effects = reduce(&mut state, &key(CaretMotion::Delete, false));
-    let effects = reduce(
-        &mut state,
-        &completed(
-            request_of(&effects),
-            caret_reply(true, line("ac\n", 100, 1), None),
-        ),
+    let mut text = editing("abc\n", 1);
+    assert_eq!(
+        text.moved(CaretMotion::Delete, line("ac\n", 100, 1), None),
+        words(vec![character("c")])
     );
-    assert_eq!(spoken(&effects), vec![character("c")]);
-}
-
-/// A caret report of node 5 with `line` and `selection`, carrying
-/// `changes`, said in general terms when `content_changed`.
-fn selection_event(
-    state: &mut SrState,
-    (line, selection): (TextChunk, Option<Selection>),
-    (changes, content_changed): (Vec<SelectionChange>, bool),
-) -> Vec<Effect> {
-    let caret = CaretReport {
-        line,
-        selection: selection.map(caret_selection),
-        read_at_us: stamp(),
-    };
-    set_baseline(&caret);
-    reduce(
-        state,
-        &event(NormalizedEvent::CaretMoved {
-            node_id: id(5),
-            caret,
-            selection_changes: changes,
-            content_changed,
-            new_selection: None,
-            facts: None,
-        }),
-    )
-}
-
-/// The answer to a caret key: `line`, nothing selected, the selection
-/// removed in general terms.
-fn selection_removed_reply(line: TextChunk) -> Reply {
-    key_reply(Box::new(CaretReply {
-        same_line: None,
-        moved: true,
-        read_at_ms: 0,
-        caret: CaretReport {
-            line,
-            selection: None,
-            read_at_us: stamp(),
-        },
-        unit: None,
-        selection_changes: vec![SelectionChange {
-            selected: false,
-            text: String::new(),
-            characters: 0,
-        }],
-        content_changed: true,
-        new_selection: None,
-    }))
 }
 
 /// A selection from byte `start` of the line whose anchor is 100 (or of
@@ -1211,6 +1015,20 @@ fn selection_from(start: u32, on_line: bool) -> Selection {
             anchor: TextAnchor(201),
             offset: 0,
         },
+    }
+}
+
+impl Text {
+    /// Backspace or Control+Backspace, `motion`, over the selection the
+    /// caret has in a classic edit control, leaving the caret on `after`:
+    /// the key's words, then the words of the value change and caret tell
+    /// its edit raises, the selection's removal said in general terms, as
+    /// an edit control's offsets do not follow the edit.
+    fn deleted_selection(&mut self, motion: CaretMotion, after: TextChunk) -> [Vec<Heard>; 2] {
+        let said = self.moved(motion, after.clone(), None);
+        assert_eq!(self.value_changed(FIELD), []);
+        let removed = self.selection(caret_on(after, None), Some(differing(&[(false, "")], None)));
+        [said, removed]
     }
 }
 
@@ -1236,49 +1054,36 @@ fn backspace_over_a_selection_says_what_was_before_its_start_then_the_selection_
         (16, 11, CaretMotion::Backspace, &space),
         (16, 11, CaretMotion::BackspaceWord, &beta),
     ] {
-        let mut state = editing(text, 0);
-        let _ = selection_event(
-            &mut state,
-            (line(text, 100, caret), Some(selection_from(start, true))),
-            (Vec::new(), false),
-        );
-        let effects = reduce(&mut state, &key(motion, false));
-        let effects = reduce(
-            &mut state,
-            &completed(
-                request_of(&effects),
-                selection_removed_reply(line("alpha gamma\r\n", 100, 6)),
-            ),
+        let mut field = edit_control(text, 0);
+        let selection = Some(caret_selection(selection_from(start, true)));
+        assert_eq!(
+            field.selection(caret_on(line(text, 100, caret), selection), None),
+            []
         );
         assert_eq!(
-            spoken(&effects),
-            vec![said.clone(), message(Message::SelectionRemoved)],
+            field.deleted_selection(motion, line("alpha gamma\r\n", 100, 6)),
+            [
+                words(vec![said.clone()]),
+                words(vec![message(Message::SelectionRemoved)])
+            ],
             "{motion:?} with the caret at {caret} and the selection from {start}"
         );
     }
 
     // With nothing before the start, "blank" (`textbox-word-backspace.txt`).
-    let mut state = editing(text, 0);
+    let mut field = edit_control(text, 0);
     let first = TextChunk {
         first: true,
         ..line(text, 100, 0)
     };
-    let _ = selection_event(
-        &mut state,
-        (first, Some(selection_from(0, true))),
-        (Vec::new(), false),
-    );
-    let effects = reduce(&mut state, &key(CaretMotion::Backspace, false));
-    let effects = reduce(
-        &mut state,
-        &completed(
-            request_of(&effects),
-            selection_removed_reply(line("beta gamma\r\n", 100, 0)),
-        ),
-    );
+    let selection = Some(caret_selection(selection_from(0, true)));
+    assert_eq!(field.selection(caret_on(first, selection), None), []);
     assert_eq!(
-        spoken(&effects),
-        vec![message(Message::Blank), message(Message::SelectionRemoved)]
+        field.deleted_selection(CaretMotion::Backspace, line("beta gamma\r\n", 100, 0)),
+        [
+            words(vec![message(Message::Blank)]),
+            words(vec![message(Message::SelectionRemoved)])
+        ]
     );
 }
 
@@ -1296,142 +1101,46 @@ fn backspace_over_a_selection_from_an_earlier_line_says_what_was_before_its_star
         (CaretMotion::Backspace, &space),
         (CaretMotion::BackspaceWord, &beta),
     ] {
-        let mut state = editing(text, 0);
-        let caret = CaretReport {
-            line: line(text, 100, 0),
-            selection: Some(selection_starting_on(
-                Selection {
-                    start: TextPosition {
-                        anchor: TextAnchor(300),
-                        offset: 11,
-                    },
-                    end: TextPosition {
-                        anchor: TextAnchor(201),
-                        offset: 0,
-                    },
+        let mut field = edit_control(text, 0);
+        let selection = CaretSelection {
+            range: Selection {
+                start: TextPosition {
+                    anchor: TextAnchor(300),
+                    offset: 11,
                 },
-                Some(Box::new(line(text, 300, 11))),
-            )),
-            read_at_us: stamp(),
+                end: TextPosition {
+                    anchor: TextAnchor(201),
+                    offset: 0,
+                },
+            },
+            start_line: Some(Box::new(line(text, 300, 11))),
         };
-        set_baseline(&caret);
-        let _ = reduce(
-            &mut state,
-            &event(NormalizedEvent::CaretMoved {
-                node_id: id(5),
-                caret,
-                selection_changes: Vec::new(),
-                content_changed: false,
-                new_selection: None,
-                facts: None,
-            }),
-        );
-        let effects = reduce(&mut state, &key(motion, false));
-        let effects = reduce(
-            &mut state,
-            &completed(
-                request_of(&effects),
-                selection_removed_reply(line(text, 100, 0)),
-            ),
+        assert_eq!(
+            field.selection(caret_on(line(text, 100, 0), Some(selection)), None),
+            []
         );
         assert_eq!(
-            spoken(&effects),
-            vec![said.clone(), message(Message::SelectionRemoved)],
+            field.deleted_selection(motion, line(text, 100, 0)),
+            [
+                words(vec![said.clone()]),
+                words(vec![message(Message::SelectionRemoved)])
+            ],
             "{motion:?} over a selection from an earlier line"
         );
     }
 
     // A start in no line reported with it has nothing known before it:
     // only the selection's change is said.
-    let mut state = editing(text, 0);
-    let _ = selection_event(
-        &mut state,
-        (line(text, 100, 6), Some(selection_from(3, false))),
-        (Vec::new(), false),
-    );
-    let effects = reduce(&mut state, &key(CaretMotion::Backspace, false));
-    let effects = reduce(
-        &mut state,
-        &completed(
-            request_of(&effects),
-            selection_removed_reply(line("gamma\r\n", 100, 0)),
-        ),
-    );
-    assert_eq!(spoken(&effects), vec![message(Message::SelectionRemoved)]);
-}
-
-#[test]
-fn a_caret_reports_selection_change_while_a_key_waits_is_said_after_the_keys_words() {
-    let text = "alpha beta gamma\r\n";
-    let removed = vec![SelectionChange {
-        selected: false,
-        text: String::new(),
-        characters: 0,
-    }];
-    let selected = Some(Selection {
-        start: TextPosition {
-            anchor: TextAnchor(200),
-            offset: 0,
-        },
-        end: TextPosition {
-            anchor: TextAnchor(201),
-            offset: 0,
-        },
-    });
-    // The key's caret event reached the outpost before its watch, so its
-    // report compared the selection and the answer finds nothing more.
-    let mut state = editing(text, 0);
-    let _ = selection_event(
-        &mut state,
-        (line(text, 100, 6), selected),
-        (Vec::new(), false),
-    );
-    let effects = reduce(&mut state, &key(CaretMotion::Delete, false));
-    let asked = request_of(&effects);
-    let heard = selection_event(
-        &mut state,
-        (line("alpha gamma\r\n", 100, 6), None),
-        (removed.clone(), true),
-    );
-    assert_eq!(spoken(&heard), []);
-    let effects = reduce(
-        &mut state,
-        &completed(
-            asked,
-            caret_reply(true, line("alpha gamma\r\n", 100, 6), None),
-        ),
+    let mut field = edit_control(text, 0);
+    let selection = Some(caret_selection(selection_from(3, false)));
+    assert_eq!(
+        field.selection(caret_on(line(text, 100, 6), selection), None),
+        []
     );
     assert_eq!(
-        spoken(&effects),
-        vec![character("g"), message(Message::SelectionRemoved)]
+        field.deleted_selection(CaretMotion::Backspace, line("gamma\r\n", 100, 0)),
+        [Vec::new(), words(vec![message(Message::SelectionRemoved)])]
     );
-
-    // A watch that ends with no evidence still says the report's change.
-    let mut state = editing(text, 0);
-    let _ = selection_event(
-        &mut state,
-        (line(text, 100, 6), selected),
-        (Vec::new(), false),
-    );
-    let effects = reduce(&mut state, &key(CaretMotion::Other, false));
-    let asked = request_of(&effects);
-    let _ = selection_event(
-        &mut state,
-        (line("alpha gamma\r\n", 100, 6), None),
-        (removed.clone(), true),
-    );
-    let _ = asked;
-    let effects = bound_unanswered(&mut state);
-    assert_eq!(spoken(&effects), vec![message(Message::SelectionRemoved)]);
-}
-
-/// An editing chord as the shell reports it.
-fn chord(number: u64) -> Input {
-    Input::EditingChord {
-        trace_id: TraceId::from_raw(number),
-        key_seq: verbatim_model::KeySeq::NONE_YET,
-        pressed_at_ms: KEY_PRESSED_AT,
-    }
 }
 
 /// An undo that restores a selection, an editing chord, says the selection
@@ -1441,229 +1150,127 @@ fn chord(number: u64) -> Input {
 fn an_undo_restoring_a_selection_says_only_the_selection() {
     let after_cut = "beta gamma\r\n";
     let restored = "alpha beta gamma\r\n";
-    let mut state = editing(after_cut, 0);
-    let effects = reduce(&mut state, &chord(2));
-    assert_eq!(effects, [], "a chord sets no note and asks nothing");
-    let effects = reduce(
-        &mut state,
-        &event(NormalizedEvent::CaretMoved {
-            node_id: id(5),
-            caret: CaretReport {
-                line: line(restored, 100, 0),
-                selection: Some(caret_selection(selection_from(6, true))),
-                read_at_us: stamp(),
-            },
-            selection_changes: vec![SelectionChange {
-                selected: true,
-                text: "alpha ".to_owned(),
-                characters: 6,
-            }],
-            content_changed: true,
-            new_selection: Some(SelectionChange {
-                selected: true,
-                text: "alpha ".to_owned(),
-                characters: 6,
-            }),
-            facts: None,
-        }),
-    );
+    let mut text = editing(after_cut, 0);
     assert_eq!(
-        spoken(&effects),
-        vec![UtteranceSegment::new(SegmentContent::Phrase(
-            Phrase::Selected(SelectionText::Text("alpha ".to_owned()))
-        ))]
+        text.press(PressAction::EditingChord),
+        [],
+        "a chord asks nothing"
     );
-}
-
-/// Down Arrow in a search box moves its suggestions' selection: the key
-/// ends as the suggestion is said, and its bound says no line.
-#[test]
-fn a_suggestion_selected_for_a_key_ends_it_with_no_line() {
-    let mut state = editing(
-        "sound
-", 5,
+    assert_eq!(text.value_changed(FIELD), []);
+    let selection = Some(caret_selection(selection_from(6, true)));
+    assert_eq!(
+        text.selection(
+            caret_on(line(restored, 100, 0), selection),
+            Some(differing(&[(true, "alpha ")], Some("alpha ")))
+        ),
+        words(vec![phrase(Phrase::Selected(SelectionText::Text(
+            "alpha ".to_owned()
+        )))])
     );
-    let effects = reduce(&mut state, &key(CaretMotion::NextLine, false));
-    let _ = request(&effects);
-    let effects = reduce(
-        &mut state,
-        &event(NormalizedEvent::ControlledSelection {
-            controller: id(5),
-            node: node(6, Role::ListItem, StateSet::new()),
-        }),
-    );
-    assert!(
-        effects.contains(&Effect::BoundHeldKey(None)),
-        "the key ended: {effects:?}"
-    );
-    let due = reduce(
-        &mut state,
-        &Input::Queue {
-            trace_id: TraceId::from_raw(2),
-            at_us: READ_ENDED_AT_US,
-            input: verbatim_model::request::QueueInput::HeldKeyDue,
-        },
-    );
-    assert_eq!(due, []);
-}
-
-/// A caret report's selection change held while a key waited is said
-/// when the key's answer says the caret did not move, and when the answer
-/// was read once a later key was pressed, which is not this key's to
-/// speak.
-#[test]
-fn a_caret_reports_held_change_is_said_with_an_answer_not_spoken() {
-    let text = "alpha beta gamma\r\n";
-    let after = "alpha gamma\r\n";
-    let removed = vec![SelectionChange {
-        selected: false,
-        text: String::new(),
-        characters: 0,
-    }];
-    let selected = Some(Selection {
-        start: TextPosition {
-            anchor: TextAnchor(200),
-            offset: 0,
-        },
-        end: TextPosition {
-            anchor: TextAnchor(201),
-            offset: 0,
-        },
-    });
-    for later in [false, true] {
-        let mut state = editing(text, 0);
-        let _ = selection_event(
-            &mut state,
-            (line(text, 100, 6), selected),
-            (Vec::new(), false),
-        );
-        let effects = reduce(&mut state, &key(CaretMotion::Other, false));
-        let asked = request_of(&effects);
-        let _ = selection_event(
-            &mut state,
-            (line(after, 100, 6), None),
-            (removed.clone(), true),
-        );
-        if later {
-            let _ = reduce(
-                &mut state,
-                &Input::Queue {
-                    trace_id: verbatim_model::TraceId::from_raw(0),
-                    at_us: (50) * 1_000,
-                    input: verbatim_model::request::QueueInput::SpeechCut,
-                },
-            );
-        }
-        let effects = if later {
-            reduce(
-                &mut state,
-                &completed(asked, caret_reply_at(line(after, 100, 6), 60)),
-            )
-        } else {
-            bound_answer(&mut state, line(after, 100, 6))
-        };
-        assert_eq!(
-            spoken(&effects),
-            vec![message(Message::SelectionRemoved)],
-            "{}",
-            if later {
-                "an answer read after a later key"
-            } else {
-                "an answer that did not move"
-            }
-        );
-    }
 }
 
 #[test]
 fn a_newer_key_or_a_focus_change_supersedes_a_waiting_key() {
-    let mut state = editing("abc\n", 0);
-    let first = request_of(&reduce(&mut state, &key(CaretMotion::NextCharacter, false)));
-    let second = request_of(&reduce(&mut state, &key(CaretMotion::NextCharacter, false)));
-    // A read that ended after the later key was passed on and shows the first
-    // key's move is the later key's evidence: its landing is said, and the
-    // later key's own move goes unsaid (Dickson, 2026-11-09).
-    let effects = reduce(
-        &mut state,
-        &completed(first, caret_reply(true, line("abc\n", 100, 1), None)),
+    // A key with a later key behind it is sent silently at its starting
+    // read's answer; the later key says where it landed.
+    let mut text = editing("abc\n", 0);
+    let first = starting_read(CaretMotion::NextCharacter, TextProvider::Uia);
+    assert_eq!(
+        text.key(CaretMotion::NextCharacter, false),
+        [Heard::Asked(first.clone())]
     );
-    assert_eq!(spoken(&effects), vec![character("b")]);
-    focus(&mut state, node(6, Role::Button, StateSet::new()));
-    let effects = reduce(
-        &mut state,
-        &completed(second, caret_reply(true, line("abc\n", 100, 2), None)),
+    assert_eq!(text.key(CaretMotion::NextCharacter, false), []);
+    let at = |offset| line("abc\n", 100, offset);
+    assert_eq!(
+        text.reply(started(at(0), None, unit_at(&at(0), TextUnit::Character))),
+        [Heard::Strokes(1), Heard::Asked(first)]
     );
-    assert!(effects.is_empty(), "the focus moved on: {effects:?}");
+    assert_eq!(
+        text.reply(started(at(1), None, unit_at(&at(1), TextUnit::Character))),
+        [
+            Heard::Strokes(1),
+            Heard::Asked(watch(
+                CaretMotion::NextCharacter,
+                TextProvider::Uia,
+                text.desk.at_us
+            ))
+        ]
+    );
+    assert_eq!(
+        text.reply(TextReply::Watched(Box::new(Watched::Effect(WatchedRead {
+            caret: caret_on(at(1), None),
+            unit: unit_at(&at(1), TextUnit::Character),
+        })))),
+        words(vec![character("b")])
+    );
+    // A focus moving while a key is watched withdraws the watch, and the
+    // key says nothing.
+    text.caret = caret_on(at(1), None);
+    let _ = text.passed(CaretMotion::NextCharacter);
+    let focused = text
+        .desk
+        .focus(ONE, &node(6, Role::Button, StateSet::new()), &[]);
+    assert_eq!(
+        focused,
+        desk::focus_heard(
+            ONE,
+            desk::focus_now_in(ONE, 6, &[]),
+            vec![vec![
+                UtteranceSegment::label("Body"),
+                UtteranceSegment::new(SegmentContent::Role(Role::Button)),
+            ]]
+        )
+    );
 }
 
 #[test]
 fn caret_keys_are_watched_in_a_terminal_and_not_at_all_without_text() {
-    let mut state = SrState::new();
-    focus(&mut state, node(7, Role::Terminal, StateSet::new()));
-
-    let mut state = SrState::new();
-    focus(&mut state, node(8, Role::Button, StateSet::new()));
+    let mut text = Text::new();
+    let _ = text.focus(&node(8, Role::Button, StateSet::new()), FocusCaret::NoText);
+    // Bound to no text, the key is sent at once and says nothing.
     assert_eq!(
-        reduce(&mut state, &key(CaretMotion::PreviousLine, false)),
-        []
+        text.key(CaretMotion::PreviousLine, false),
+        [Heard::Strokes(1)]
     );
-}
-
-fn typed(text: &str) -> Input {
-    Input::CharacterTyped {
-        key_seq: verbatim_model::KeySeq::NONE_YET,
-        trace_id: TraceId::from_raw(8),
-        text: text.to_owned(),
-        at_ms: 0,
-    }
 }
 
 #[test]
 fn typed_characters_are_echoed_and_a_protected_field_echoes_stars() {
-    let mut state = editing("", 0);
-    assert_eq!(
-        spoken(&reduce(&mut state, &typed("a"))),
-        vec![character("a")]
-    );
+    let mut text = editing("", 0);
+    assert_eq!(text.typed("a"), words(vec![character("a")]));
     // Word echo is off by default.
-    assert_eq!(
-        spoken(&reduce(&mut state, &typed(" "))),
-        vec![character(" ")]
-    );
+    assert_eq!(text.typed(" "), words(vec![character(" ")]));
 
-    let mut state = SrState::new();
-    focus(
-        &mut state,
-        node(
-            9,
-            Role::EditableText,
-            StateSet::new().with(State::Protected),
-        ),
+    let mut text = Text::new();
+    let protected = node(
+        9,
+        Role::EditableText,
+        StateSet::new().with(verbatim_model::State::Protected),
     );
-    assert_eq!(
-        spoken(&reduce(&mut state, &typed("p"))),
-        vec![character("*")]
+    let _ = text.focus(
+        &protected,
+        caret_read(caret_on(line("", 100, 0), None), None, 1, None),
     );
+    assert_eq!(text.typed("p"), words(vec![character("*")]));
+}
+
+/// Word echo always on, character echo off.
+fn words_only() -> ReaderSettings {
+    ReaderSettings {
+        speak_typed_characters: verbatim_model::TypingEcho::Off,
+        speak_typed_words: verbatim_model::TypingEcho::Always,
+        ..ReaderSettings::default()
+    }
 }
 
 #[test]
 fn word_echo_speaks_a_word_when_it_ends() {
-    let mut state = editing("", 0);
-    let _ = reduce(
-        &mut state,
-        &Input::Settings(ReaderSettings {
-            speak_typed_characters: TypingEcho::Off,
-            speak_typed_words: TypingEcho::Always,
-            ..ReaderSettings::default()
-        }),
-    );
+    let mut text = editing("", 0);
+    text.settings(words_only());
     for letter in ["h", "i"] {
-        assert_eq!(spoken(&reduce(&mut state, &typed(letter))), []);
+        assert_eq!(text.typed(letter), []);
     }
-    assert_eq!(
-        spoken(&reduce(&mut state, &typed(" "))),
-        vec![UtteranceSegment::text("hi")]
-    );
+    assert_eq!(text.typed(" "), words(vec![UtteranceSegment::text("hi")]));
 }
 
 /// Combining marks and the zero-width non-joiner, each typed as a key of
@@ -1673,27 +1280,17 @@ fn word_echo_speaks_a_word_when_it_ends() {
 /// spoken as one word when a space ends it.
 #[test]
 fn word_echo_keeps_combining_marks_and_joiners_in_the_word() {
-    let mut state = editing("", 0);
-    let _ = reduce(
-        &mut state,
-        &Input::Settings(ReaderSettings {
-            speak_typed_characters: TypingEcho::Off,
-            speak_typed_words: TypingEcho::Always,
-            ..ReaderSettings::default()
-        }),
-    );
+    let mut text = editing("", 0);
+    text.settings(words_only());
     for (keys, word) in [
         (&["क", "\u{94D}", "ष"][..], "क्ष"),
         (&["ก", "\u{E48}", "า"][..], "ก่า"),
         (&["م", "ی", "\u{200C}", "خ"][..], "می\u{200C}خ"),
     ] {
         for key in keys {
-            assert_eq!(spoken(&reduce(&mut state, &typed(key))), [], "{word}");
+            assert_eq!(text.typed(key), [], "{word}");
         }
-        assert_eq!(
-            spoken(&reduce(&mut state, &typed(" "))),
-            vec![UtteranceSegment::text(word)]
-        );
+        assert_eq!(text.typed(" "), words(vec![UtteranceSegment::text(word)]));
     }
 }
 
@@ -1702,693 +1299,229 @@ fn word_echo_keeps_combining_marks_and_joiners_in_the_word() {
 /// (`docs/parity/input.md`, "Typed-character echo").
 #[test]
 fn word_echo_forgets_the_word_only_when_the_caret_moves_without_shift() {
-    let mut state = editing("", 0);
-    let _ = reduce(
-        &mut state,
-        &Input::Settings(ReaderSettings {
-            speak_typed_characters: TypingEcho::Off,
-            speak_typed_words: TypingEcho::Always,
-            ..ReaderSettings::default()
-        }),
-    );
-    let type_word = |state: &mut SrState, between: Input| {
+    let mut text = editing("", 0);
+    text.settings(words_only());
+    let type_word = |text: &mut Text, between: &mut dyn FnMut(&mut Text)| {
         for letter in ["h", "e", "l"] {
-            let _ = reduce(state, &typed(letter));
+            assert_eq!(text.typed(letter), []);
         }
-        let _ = reduce(state, &between);
+        between(text);
         for letter in ["l", "o"] {
-            let _ = reduce(state, &typed(letter));
+            assert_eq!(text.typed(letter), []);
         }
-        spoken(&reduce(state, &typed(" ")))
+        text.typed(" ")
     };
-    let other = key(CaretMotion::Other, false);
+    let mut other = |text: &mut Text| assert_eq!(text.press(PressAction::Passed), []);
     assert_eq!(
-        type_word(&mut state, other),
-        vec![UtteranceSegment::text("hello")]
+        type_word(&mut text, &mut other),
+        words(vec![UtteranceSegment::text("hello")])
     );
-    let selecting = key(CaretMotion::PreviousCharacter, true);
+    let mut selecting =
+        |text: &mut Text| assert_eq!(text.key(CaretMotion::PreviousCharacter, true), []);
     assert_eq!(
-        type_word(&mut state, selecting),
-        vec![UtteranceSegment::text("hello")]
+        type_word(&mut text, &mut selecting),
+        words(vec![UtteranceSegment::text("hello")])
     );
-    let moving = key(CaretMotion::PreviousCharacter, false);
+    let mut moving = |text: &mut Text| {
+        assert_eq!(
+            text.moved(CaretMotion::PreviousCharacter, line("hel", 100, 2), None),
+            words(vec![character("l")])
+        );
+    };
     assert_eq!(
-        type_word(&mut state, moving),
-        vec![UtteranceSegment::text("lo")]
+        type_word(&mut text, &mut moving),
+        words(vec![UtteranceSegment::text("lo")])
     );
 }
 
 #[test]
 fn control_characters_end_a_word_but_are_never_spelled() {
-    let mut state = editing("", 0);
-    let _ = reduce(
-        &mut state,
-        &Input::Settings(ReaderSettings {
-            speak_typed_words: TypingEcho::Always,
-            ..ReaderSettings::default()
-        }),
-    );
-    assert_eq!(
-        spoken(&reduce(&mut state, &typed("a"))),
-        vec![character("a")]
-    );
+    let mut text = editing("", 0);
+    text.settings(ReaderSettings {
+        speak_typed_words: verbatim_model::TypingEcho::Always,
+        ..ReaderSettings::default()
+    });
+    assert_eq!(text.typed("a"), words(vec![character("a")]));
     // Tab ends the word, which is spoken, and is not spelled itself.
-    assert_eq!(
-        spoken(&reduce(&mut state, &typed("\t"))),
-        vec![UtteranceSegment::text("a")]
-    );
-    assert_eq!(spoken(&reduce(&mut state, &typed("\r"))), []);
+    assert_eq!(text.typed("\t"), words(vec![UtteranceSegment::text("a")]));
+    assert_eq!(text.typed("\r"), []);
 }
 
 #[test]
 fn echo_only_in_edit_controls_stays_quiet_elsewhere() {
-    let mut state = SrState::new();
-    let _ = reduce(
-        &mut state,
-        &Input::Settings(ReaderSettings {
-            speak_typed_characters: TypingEcho::EditControls,
-            ..ReaderSettings::default()
-        }),
+    let mut text = Text::new();
+    text.settings(ReaderSettings {
+        speak_typed_characters: verbatim_model::TypingEcho::EditControls,
+        ..ReaderSettings::default()
+    });
+    let _ = text.focus(&node(10, Role::Button, StateSet::new()), FocusCaret::NoText);
+    assert_eq!(text.typed("a"), []);
+    let _ = text.focus(
+        &node(11, Role::EditableText, StateSet::new()),
+        caret_read(caret_on(line("", 100, 0), None), None, 1, None),
     );
-    focus(&mut state, node(10, Role::Button, StateSet::new()));
-    assert_eq!(spoken(&reduce(&mut state, &typed("a"))), []);
-    focus(&mut state, node(11, Role::EditableText, StateSet::new()));
-    assert_eq!(
-        spoken(&reduce(&mut state, &typed("a"))),
-        vec![character("a")]
+    assert_eq!(text.typed("a"), words(vec![character("a")]));
+}
+
+impl Text {
+    /// Answers the one text request out with a line read that moved
+    /// `moved` lines and found `chunk`.
+    fn read(&mut self, moved: i32, chunk: TextChunk) -> Vec<Heard> {
+        self.reply(TextReply::Read { moved, chunk })
+    }
+}
+
+/// Node `number` of `role` focused, its caret on `line`.
+fn focused(number: u64, role: Role, line: TextChunk) -> Text {
+    let mut field = Text::new();
+    let _ = field.focus(
+        &node(number, role, StateSet::new()),
+        caret_read(caret_on(line, None), None, 1, None),
     );
+    field
 }
 
 #[test]
-fn a_terminals_typing_waits_for_its_reading_rules_to_show_it() {
-    let mut state = SrState::new();
-    focus(&mut state, node(12, Role::Terminal, StateSet::new()));
-    // Its echo comes from the reading rules, once the terminal shows it
-    // (`tests/terminal.rs`); a text change alone says nothing.
-    assert_eq!(spoken(&reduce(&mut state, &typed("l"))), []);
-    let changed = event(NormalizedEvent::TextChanged { node_id: id(12) });
-    assert_eq!(spoken(&reduce(&mut state, &changed)), []);
-
-    // With terminal passwords spoken, typing is echoed at once.
-    let _ = reduce(
-        &mut state,
-        &Input::Settings(ReaderSettings {
-            speak_terminal_passwords: true,
-            ..ReaderSettings::default()
-        }),
+fn a_review_cursor_moved_off_the_caret_reviews_from_where_it_is() {
+    let mut text = reviewing("one two\n", 0);
+    assert_eq!(
+        text.command(ReviewCommand::ReviewNextWord, 0),
+        words(vec![UtteranceSegment::text("two")])
     );
     assert_eq!(
-        spoken(&reduce(&mut state, &typed("x"))),
-        vec![character("x")]
+        text.command(ReviewCommand::ReviewCurrentCharacter, 0),
+        words(vec![character("t")])
     );
 }
 
 #[test]
 fn the_review_cursor_follows_the_caret_and_keeps_its_column_across_lines() {
-    let mut state = editing("abcdef\n", 4);
+    let mut text = editing("abcdef\n", 4);
     // Following the caret: the line at the caret is read afresh.
-    let effects = reduce(
-        &mut state,
-        &command(ReviewCommand::ReviewCurrentCharacter, 0),
-    );
-    let effects = read_at_caret(&mut state, &effects, line("abcdef\n", 100, 4));
-    assert_eq!(spoken(&effects), vec![character("e")]);
-
-    let effects = reduce(&mut state, &command(ReviewCommand::ReviewNextLine, 0));
-    let request = request(&effects);
     assert_eq!(
-        request.op,
-        TextOp::Read(TextRead {
-            at: TextPoint::At(TextPosition {
-                anchor: TextAnchor(100),
-                offset: 0
-            }),
-            movement: Some(TextMovement {
-                unit: TextUnit::Line,
-                count: 1
-            }),
-            unit: TextUnit::Line,
-        })
+        text.command(ReviewCommand::ReviewCurrentCharacter, 0),
+        [Heard::Asked(line_read(TextPoint::Caret, None))]
+    );
+    assert_eq!(
+        text.read(0, line("abcdef\n", 100, 4)),
+        words(vec![character("e")])
+    );
+    assert_eq!(
+        text.command(ReviewCommand::ReviewNextLine, 0),
+        [Heard::Asked(line_read(
+            TextPoint::At(TextPosition::at(TextAnchor(100))),
+            Some((TextUnit::Line, 1))
+        ))]
     );
     // A shorter line puts the cursor on its last character.
-    let effects = reduce(
-        &mut state,
-        &completed(
-            request.query_id,
-            TextReply::Read {
-                moved: 1,
-                chunk: line("xy\n", 101, 0),
-            },
-        ),
+    assert_eq!(
+        text.read(1, line("xy\n", 101, 0)),
+        words(vec![UtteranceSegment::text("xy")])
     );
-    assert_eq!(spoken(&effects), vec![UtteranceSegment::text("xy")]);
-    let effects = reduce(
-        &mut state,
-        &command(ReviewCommand::ReviewCurrentCharacter, 0),
+    assert_eq!(
+        text.command(ReviewCommand::ReviewCurrentCharacter, 0),
+        words(vec![character("y")])
     );
-    assert_eq!(spoken(&effects), vec![character("y")]);
 
     // The next longer line returns to the remembered column.
-    let effects = reduce(&mut state, &command(ReviewCommand::ReviewNextLine, 0));
-    let _ = reduce(
-        &mut state,
-        &completed(
-            request_of(&effects),
-            TextReply::Read {
-                moved: 1,
-                chunk: line("012345678\n", 102, 0),
-            },
-        ),
+    let _ = text.command(ReviewCommand::ReviewNextLine, 0);
+    let _ = text.read(1, line("012345678\n", 102, 0));
+    assert_eq!(
+        text.command(ReviewCommand::ReviewCurrentCharacter, 0),
+        words(vec![character("4")])
     );
-    let effects = reduce(
-        &mut state,
-        &command(ReviewCommand::ReviewCurrentCharacter, 0),
-    );
-    assert_eq!(spoken(&effects), vec![character("4")]);
 }
 
 #[test]
 fn the_review_cursor_meets_each_character_of_a_line_break() {
     // A standard edit control's line: the end of the line is its line
     // feed, and moving by character crosses the carriage return first.
-    let mut state = reviewing("ab\r\n", 1);
-    let effects = reduce(&mut state, &command(ReviewCommand::ReviewEndOfLine, 0));
-    assert_eq!(spoken(&effects), vec![character("\n")]);
-    let effects = reduce(
-        &mut state,
-        &command(ReviewCommand::ReviewPreviousCharacter, 0),
-    );
-    assert_eq!(spoken(&effects), vec![character("\r")]);
-    let effects = reduce(
-        &mut state,
-        &command(ReviewCommand::ReviewPreviousCharacter, 0),
-    );
-    assert_eq!(spoken(&effects), vec![character("b")]);
-    let effects = reduce(&mut state, &command(ReviewCommand::ReviewNextCharacter, 0));
-    assert_eq!(spoken(&effects), vec![character("\r")]);
-    let effects = reduce(&mut state, &command(ReviewCommand::ReviewNextCharacter, 0));
-    assert_eq!(spoken(&effects), vec![character("\n")]);
-    // The line feed is the line's last character.
-    let effects = reduce(&mut state, &command(ReviewCommand::ReviewNextCharacter, 0));
-    assert_eq!(
-        spoken(&effects),
-        vec![message(Message::Right), character("\n")]
-    );
+    let mut text = reviewing("ab\r\n", 1);
+    for (command, said) in [
+        (ReviewCommand::ReviewEndOfLine, vec![character("\n")]),
+        (
+            ReviewCommand::ReviewPreviousCharacter,
+            vec![character("\r")],
+        ),
+        (ReviewCommand::ReviewPreviousCharacter, vec![character("b")]),
+        (ReviewCommand::ReviewNextCharacter, vec![character("\r")]),
+        (ReviewCommand::ReviewNextCharacter, vec![character("\n")]),
+        // The line feed is the line's last character.
+        (
+            ReviewCommand::ReviewNextCharacter,
+            vec![message(Message::Right), character("\n")],
+        ),
+    ] {
+        assert_eq!(text.command(command, 0), words(said), "{command:?}");
+    }
 
     // Windows 11 Notepad's line ends with a carriage return alone, and the
     // text's last line, with no break, ends on its last character.
-    let mut state = reviewing("ab\r", 0);
-    let effects = reduce(&mut state, &command(ReviewCommand::ReviewEndOfLine, 0));
-    assert_eq!(spoken(&effects), vec![character("\r")]);
-    let mut state = reviewing("ab", 0);
-    let effects = reduce(&mut state, &command(ReviewCommand::ReviewEndOfLine, 0));
-    assert_eq!(spoken(&effects), vec![character("b")]);
-}
-
-/// A terminal row's line ends at its last character: padding is never
-/// reviewed (`books/dev/src/explanation/design/terminal-model.md`, "Features and settings"), so moving on
-/// from the last character is at the edge, padded or not.
-#[test]
-fn a_terminal_rows_line_ends_at_its_last_character() {
-    for row in [
-        "ab",
-        "ab        
-",
-    ] {
-        let mut state = SrState::new();
-        focus(&mut state, node(15, Role::Terminal, StateSet::new()));
-        caret_event(&mut state, 15, line(row, 400, 1));
-        settle(&mut state, line(row, 400, 1));
-        let effects = reduce(&mut state, &command(ReviewCommand::ReviewNextCharacter, 0));
-        let read = request(&effects);
-        let effects = reduce(
-            &mut state,
-            &completed(
-                read.query_id,
-                TextReply::Read {
-                    moved: 0,
-                    chunk: line(row, 400, 1),
-                },
-            ),
-        );
-        assert_eq!(
-            spoken(&effects),
-            vec![message(Message::Right), character("b")],
-            "{row:?}"
-        );
-    }
-}
-
-#[test]
-fn a_terminal_keeps_a_cell_column_and_reads_past_the_text_as_blank() {
-    let mut state = SrState::new();
-    focus(&mut state, node(13, Role::Terminal, StateSet::new()));
-    // The caret on 中 at cells 2 and 3 of a padded row.
-    caret_event(&mut state, 13, line("ab中文cd    \r\n", 200, 2));
-    settle(&mut state, line("ab中文cd    \r\n", 200, 2));
-    // Every review command in a terminal reads the review cursor's line
-    // again first, where the cursor is (`books/dev/src/explanation/design/terminal-model.md`,
-    // "The review cursor"); a line read the same keeps its cell column.
-    let seeded = |state: &mut SrState, command: ReviewCommand, chunk: TextChunk| {
-        let effects = reduce(state, &self::command(command, 0));
-        let read = request(&effects);
-        let TextOp::Read(TextRead {
-            at, movement: None, ..
-        }) = read.op
-        else {
-            panic!("a read of the review cursor's line, not {:?}", read.op);
-        };
-        assert_eq!(
-            at,
-            TextPoint::At(TextPosition {
-                anchor: chunk.start,
-                offset: chunk.offset,
-            })
-        );
-        reduce(
-            state,
-            &completed(read.query_id, TextReply::Read { moved: 0, chunk }),
-        )
-    };
-    let effects = seeded(
-        &mut state,
-        ReviewCommand::ReviewNextCharacter,
-        line("ab中文cd    \r\n", 200, 2),
+    let mut text = reviewing("ab\r", 0);
+    assert_eq!(
+        text.command(ReviewCommand::ReviewEndOfLine, 0),
+        words(vec![character("\r")])
     );
-    assert_eq!(spoken(&effects), vec![character("文")]);
-    let effects = reduce(&mut state, &command(ReviewCommand::ReviewNextLine, 0));
-    let effects = reduce(
-        &mut state,
-        &completed(
-            request_of(&effects),
-            TextReply::Read {
-                moved: 1,
-                chunk: line("xy\r\n", 201, 0),
-            },
-        ),
+    let mut text = reviewing("ab", 0);
+    assert_eq!(
+        text.command(ReviewCommand::ReviewEndOfLine, 0),
+        words(vec![character("b")])
     );
-    assert_eq!(spoken(&effects), vec![UtteranceSegment::text("xy")]);
-    // Cell 4 is past "xy": a blank cell, and the column is kept exactly.
-    let effects = seeded(
-        &mut state,
-        ReviewCommand::ReviewCurrentCharacter,
-        line("xy\r\n", 201, 2),
-    );
-    assert_eq!(spoken(&effects), vec![message(Message::Blank)]);
-    let effects = reduce(&mut state, &command(ReviewCommand::ReviewPreviousLine, 0));
-    let _ = reduce(
-        &mut state,
-        &completed(
-            request_of(&effects),
-            TextReply::Read {
-                moved: -1,
-                chunk: line("ab中文cd    \r\n", 200, 0),
-            },
-        ),
-    );
-    let effects = seeded(
-        &mut state,
-        ReviewCommand::ReviewCurrentCharacter,
-        line("ab中文cd    \r\n", 200, 5),
-    );
-    assert_eq!(spoken(&effects), vec![character("文")]);
 }
 
 #[test]
 fn review_edges_are_known_from_the_line_or_from_a_movement_that_did_not_move() {
-    let mut state = SrState::new();
-    focus(&mut state, node(14, Role::EditableText, StateSet::new()));
-    caret_event(
-        &mut state,
-        14,
-        TextChunk {
-            first: true,
-            ..line("only\n", 300, 0)
-        },
-    );
-    settle(
-        &mut state,
-        TextChunk {
-            first: true,
-            ..line("only\n", 300, 0)
-        },
-    );
-    let effects = reduce(&mut state, &command(ReviewCommand::ReviewPreviousLine, 0));
-    let effects = reduce(
-        &mut state,
-        &completed(
-            request_of(&effects),
-            TextReply::Read {
-                moved: 0,
-                chunk: line("only\n", 300, 0),
-            },
-        ),
-    );
+    let only = TextChunk {
+        first: true,
+        ..line("only\n", 300, 0)
+    };
+    let mut text = focused(14, Role::EditableText, only.clone());
+    text.settle(only);
+    let _ = text.command(ReviewCommand::ReviewPreviousLine, 0);
     assert_eq!(
-        spoken(&effects),
-        vec![message(Message::Top), UtteranceSegment::text("only")]
+        text.read(0, line("only\n", 300, 0)),
+        words(vec![message(Message::Top), UtteranceSegment::text("only")])
     );
-    let effects = reduce(&mut state, &command(ReviewCommand::ReviewNextLine, 0));
-    let effects = reduce(
-        &mut state,
-        &completed(
-            request_of(&effects),
-            TextReply::Read {
-                moved: 0,
-                chunk: line("only\n", 300, 0),
-            },
-        ),
-    );
+    let _ = text.command(ReviewCommand::ReviewNextLine, 0);
     assert_eq!(
-        spoken(&effects),
-        vec![message(Message::Bottom), UtteranceSegment::text("only")]
+        text.read(0, line("only\n", 300, 0)),
+        words(vec![
+            message(Message::Bottom),
+            UtteranceSegment::text("only")
+        ])
     );
 }
 
 #[test]
 fn repeated_presses_describe_and_spell_with_descriptions() {
-    let mut state = reviewing("ab\n", 0);
-    let effects = reduce(
-        &mut state,
-        &command(ReviewCommand::ReviewCurrentCharacter, 1),
+    let mut text = reviewing("ab\n", 0);
+    let description =
+        |text: &str| UtteranceSegment::new(SegmentContent::CharacterDescription(text.to_owned()));
+    assert_eq!(
+        text.command(ReviewCommand::ReviewCurrentCharacter, 1),
+        words(vec![description("a")])
     );
     assert_eq!(
-        spoken(&effects),
-        vec![UtteranceSegment::new(SegmentContent::CharacterDescription(
-            "a".to_owned()
-        ))]
-    );
-    let effects = reduce(&mut state, &command(ReviewCommand::ReviewCurrentLine, 2));
-    assert_eq!(
-        spoken(&effects),
-        vec![
-            UtteranceSegment::new(SegmentContent::CharacterDescription("a".to_owned())),
-            UtteranceSegment::new(SegmentContent::CharacterDescription("b".to_owned())),
-        ]
+        text.command(ReviewCommand::ReviewCurrentLine, 2),
+        words(vec![description("a"), description("b")])
     );
 }
 
 #[test]
 fn a_navigator_without_a_caret_reads_its_line_first_and_falls_back_to_flat_text() {
-    let mut state = SrState::new();
+    let mut text = Text::new();
     let mut edit = node(15, Role::EditableText, StateSet::new());
     edit.value = Some("flat value".to_owned());
-    focus(&mut state, edit);
-    let effects = reduce(&mut state, &command(ReviewCommand::ReviewCurrentLine, 0));
-    let request = request(&effects);
+    let _ = text.focus(&edit, FocusCaret::NotRead);
     assert_eq!(
-        request.op,
-        TextOp::Read(TextRead {
-            at: TextPoint::Caret,
-            movement: None,
-            unit: TextUnit::Line,
-        })
+        text.command(ReviewCommand::ReviewCurrentLine, 0),
+        [Heard::Asked(line_read(TextPoint::Caret, None))]
     );
-    let effects = reduce(&mut state, &completed(request.query_id, TextReply::NoText));
-    assert_eq!(spoken(&effects), vec![UtteranceSegment::text("flat value")]);
-}
-
-#[test]
-fn select_then_copy_selects_from_the_start_marker_says_so_copies_and_clears_the_marker() {
-    let mut state = reviewing("hello world\n", 0);
-    let effects = reduce(&mut state, &command(ReviewCommand::SelectThenCopy, 0));
-    assert_eq!(spoken(&effects), vec![message(Message::NoStartMarker)]);
-    let effects = reduce(&mut state, &command(ReviewCommand::SetStartMarker, 0));
-    assert_eq!(spoken(&effects), vec![message(Message::StartMarked)]);
-    let _ = reduce(&mut state, &command(ReviewCommand::ReviewNextWord, 0));
-
-    let effects = reduce(&mut state, &command(ReviewCommand::SelectThenCopy, 0));
-    // The marker on "h" and the review cursor on "w", each with the point
-    // just past its character, for the range from the earlier through the
-    // character at the later.
-    let start = at(0);
-    let end = at(6);
-    let through = Some(TextThrough {
-        start: at(1),
-        end: at(7),
-    });
-    let select = request(&effects);
+    // With no text, the object is read afresh and its value reviewed.
+    assert_eq!(text.reply(TextReply::NoText), [Heard::Sent("Properties")]);
     assert_eq!(
-        select.op,
-        TextOp::Select {
-            start,
-            end,
-            through
-        }
-    );
-    // The selection made is spoken as a selecting key's is.
-    let effects = reduce(
-        &mut state,
-        &completed(
-            select.query_id,
-            TextReply::Selected(vec![SelectionChange {
-                selected: true,
-                text: "hello w".to_owned(),
-                characters: 7,
-            }]),
-        ),
-    );
-    assert_eq!(
-        spoken(&effects),
-        vec![UtteranceSegment::new(SegmentContent::Phrase(
-            Phrase::Selected(SelectionText::Text("hello w".to_owned()))
-        ))]
-    );
-    // The caret the selection moved takes the review cursor to the range's
-    // start; the second press still copies the range selected.
-    caret_event(
-        &mut state,
-        5,
-        line(
-            "hello world
-",
-            101,
-            0,
-        ),
-    );
-    let effects = reduce(&mut state, &command(ReviewCommand::SelectThenCopy, 1));
-    let effects = read_at_caret(
-        &mut state,
-        &effects,
-        line(
-            "hello world
-",
-            101,
-            0,
-        ),
-    );
-    let request = request(&effects);
-    assert_eq!(
-        request.op,
-        TextOp::ReadRange {
-            start,
-            end,
-            through
-        }
-    );
-    let effects = reduce(
-        &mut state,
-        &completed(
-            request.query_id,
-            TextReply::Range {
-                text: "hello w".to_owned(),
-                truncated: false,
-            },
-        ),
-    );
-    assert_eq!(effects, vec![Effect::CopyToClipboard("hello w".to_owned())]);
-    // The copy cleared the start marker: a further press has none.
-    let effects = reduce(&mut state, &command(ReviewCommand::SelectThenCopy, 0));
-    assert_eq!(spoken(&effects), vec![message(Message::NoStartMarker)]);
-}
-
-/// Whether `effects` ask the outpost for anything.
-fn requests_text(effects: &[Effect]) -> bool {
-    effects
-        .iter()
-        .any(|effect| matches!(effect, Effect::Text(_)))
-}
-
-/// A start marker on "h" of "hello world", the review cursor moved to
-/// "w", and select then copy's first press made, its selection of "hello
-/// w" answered; returns the range it selected.
-fn selected_from_the_marker(state: &mut SrState) -> TextOp {
-    let _ = reduce(state, &command(ReviewCommand::SetStartMarker, 0));
-    let _ = reduce(state, &command(ReviewCommand::ReviewNextWord, 0));
-    let effects = reduce(state, &command(ReviewCommand::SelectThenCopy, 0));
-    let select = request(&effects);
-    let _ = reduce(
-        state,
-        &completed(
-            select.query_id,
-            TextReply::Selected(vec![SelectionChange {
-                selected: true,
-                text: "hello w".to_owned(),
-                characters: 7,
-            }]),
-        ),
-    );
-    select.op
-}
-
-#[test]
-fn a_first_press_after_a_selection_not_yet_copied_asks_for_the_second() {
-    // NVDA keeps the range a first press selected: a further first press
-    // says so and selects nothing, and the second press copies that range
-    // (`docs/parity/review.md`, "Select then copy from the review cursor").
-    let mut state = reviewing("hello world\n", 0);
-    let TextOp::Select {
-        start,
-        end,
-        through,
-    } = selected_from_the_marker(&mut state)
-    else {
-        panic!("the first press selects");
-    };
-    let effects = reduce(&mut state, &command(ReviewCommand::SelectThenCopy, 0));
-    assert!(!requests_text(&effects));
-    assert_eq!(spoken(&effects), vec![message(Message::PressTwiceToCopy)]);
-    let effects = reduce(&mut state, &command(ReviewCommand::SelectThenCopy, 1));
-    assert_eq!(
-        request(&effects).op,
-        TextOp::ReadRange {
-            start,
-            end,
-            through
-        }
-    );
-}
-
-#[test]
-fn a_copy_keeps_a_start_marker_set_while_its_read_was_in_flight() {
-    // The copy clears the marker it copied from, not one set after the
-    // second press and before its read was answered
-    // (`docs/parity/review.md`, "Select then copy from the review cursor").
-    let mut state = reviewing(
-        "hello world
-",
-        0,
-    );
-    let _ = selected_from_the_marker(&mut state);
-    let effects = reduce(&mut state, &command(ReviewCommand::SelectThenCopy, 1));
-    let copy = request(&effects);
-    let effects = reduce(&mut state, &command(ReviewCommand::SetStartMarker, 0));
-    assert_eq!(spoken(&effects), [], "the press waits behind the copy");
-    let effects = reduce(
-        &mut state,
-        &completed(
-            copy.query_id,
-            TextReply::Range {
-                text: "hello w".to_owned(),
-                truncated: false,
-            },
-        ),
-    );
-    assert_eq!(
-        effects
-            .iter()
-            .filter(|effect| matches!(effect, Effect::CopyToClipboard(_)))
-            .count(),
-        1,
-        "{effects:?}"
-    );
-    assert_eq!(spoken(&effects), vec![message(Message::StartMarked)]);
-    // The new marker, on "w", is kept: a first press selects from it.
-    let effects = reduce(&mut state, &command(ReviewCommand::SelectThenCopy, 0));
-    assert_eq!(
-        request(&effects).op,
-        TextOp::Select {
-            start: at(6),
-            end: at(6),
-            through: Some(TextThrough {
-                start: at(7),
-                end: at(7),
-            }),
-        }
-    );
-}
-
-#[test]
-fn a_copy_of_nothing_clears_the_start_marker_and_says_nothing() {
-    let mut state = reviewing("hello world\n", 0);
-    let _ = selected_from_the_marker(&mut state);
-    let effects = reduce(&mut state, &command(ReviewCommand::SelectThenCopy, 1));
-    let effects = reduce(
-        &mut state,
-        &completed(
-            request(&effects).query_id,
-            TextReply::Range {
-                text: String::new(),
-                truncated: false,
-            },
-        ),
-    );
-    assert_eq!(effects, Vec::new());
-    let effects = reduce(&mut state, &command(ReviewCommand::SelectThenCopy, 0));
-    assert_eq!(spoken(&effects), vec![message(Message::NoStartMarker)]);
-}
-
-#[test]
-fn a_copy_the_text_cannot_answer_clears_the_start_marker() {
-    let mut state = reviewing("hello world\n", 0);
-    let _ = selected_from_the_marker(&mut state);
-    let effects = reduce(&mut state, &command(ReviewCommand::SelectThenCopy, 1));
-    let effects = reduce(
-        &mut state,
-        &completed(request(&effects).query_id, TextReply::NoText),
-    );
-    assert_eq!(spoken(&effects), vec![message(Message::NotSupported)]);
-    let effects = reduce(&mut state, &command(ReviewCommand::SelectThenCopy, 0));
-    assert_eq!(spoken(&effects), vec![message(Message::NoStartMarker)]);
-}
-
-#[test]
-fn the_start_marker_in_another_object_is_no_start_marker_and_is_kept() {
-    // NVDA says "No start marker set" with the navigator elsewhere, and
-    // the marker is there again when it returns.
-    let mut state = reviewing("hello world\n", 0);
-    let _ = reduce(&mut state, &command(ReviewCommand::SetStartMarker, 0));
-    focus(&mut state, node(6, Role::Button, StateSet::new()));
-    let effects = reduce(&mut state, &command(ReviewCommand::SelectThenCopy, 0));
-    assert!(!requests_text(&effects));
-    assert_eq!(spoken(&effects), vec![message(Message::NoStartMarker)]);
-    focus(&mut state, node(5, Role::EditableText, StateSet::new()));
-    let effects = reduce(&mut state, &command(ReviewCommand::SelectThenCopy, 0));
-    let effects = read_at_caret(&mut state, &effects, line("hello world\n", 100, 0));
-    assert_eq!(
-        request(&effects).op,
-        TextOp::Select {
-            start: at(0),
-            end: at(0),
-            through: Some(TextThrough {
-                start: at(1),
-                end: at(1),
-            }),
-        }
-    );
-}
-
-#[test]
-fn moving_to_the_start_marker_in_another_object_is_no_start_marker_and_keeps_it() {
-    // Verbatim+Shift+F9 with the navigator elsewhere says "No start marker
-    // set" and asks for no text; back in the text, the marker on "w" is
-    // there to move to, though the caret is now on "h".
-    let mut state = reviewing("hello world\n", 6);
-    let _ = reduce(&mut state, &command(ReviewCommand::SetStartMarker, 0));
-    focus(&mut state, node(6, Role::Button, StateSet::new()));
-    let effects = reduce(&mut state, &command(ReviewCommand::MoveToStartMarker, 0));
-    assert!(!requests_text(&effects));
-    assert_eq!(spoken(&effects), vec![message(Message::NoStartMarker)]);
-    focus(&mut state, node(5, Role::EditableText, StateSet::new()));
-    let effects = reduce(&mut state, &command(ReviewCommand::MoveToStartMarker, 0));
-    let effects = read_at_caret(&mut state, &effects, line("hello world\n", 100, 0));
-    assert_eq!(
-        request(&effects).op,
-        TextOp::Read(TextRead {
-            at: at(6),
-            movement: None,
-            unit: TextUnit::Line,
-        })
+        text.properties(&edit),
+        words(vec![UtteranceSegment::text("flat value")])
     );
 }
 
@@ -2400,6 +1533,257 @@ fn at(offset: u32) -> TextPoint {
     })
 }
 
+/// The range select then copy selects or copies: from the review cursor
+/// or the marker at `start` to the other at `end`, each with the point
+/// past its character.
+fn through(start: u32, end: u32) -> verbatim_model::TextThrough {
+    verbatim_model::TextThrough {
+        start: at(start + 1),
+        end: at(end + 1),
+    }
+}
+
+/// "Hello w" selected, as the outpost answers select then copy's first
+/// press.
+fn hello_w_selected() -> TextReply {
+    TextReply::Selected(vec![SelectionChange {
+        selected: true,
+        text: "hello w".to_owned(),
+        characters: 7,
+    }])
+}
+
+#[test]
+fn select_then_copy_selects_from_the_start_marker_says_so_copies_and_clears_the_marker() {
+    let mut text = reviewing("hello world\n", 0);
+    assert_eq!(
+        text.command(ReviewCommand::SelectThenCopy, 0),
+        words(vec![message(Message::NoStartMarker)])
+    );
+    assert_eq!(
+        text.command(ReviewCommand::SetStartMarker, 0),
+        words(vec![message(Message::StartMarked)])
+    );
+    let _ = text.command(ReviewCommand::ReviewNextWord, 0);
+
+    // The marker on "h" and the review cursor on "w", each with the point
+    // just past its character, for the range from the earlier through the
+    // character at the later.
+    assert_eq!(
+        text.command(ReviewCommand::SelectThenCopy, 0),
+        [Heard::Asked(TextOp::Select {
+            start: at(0),
+            end: at(6),
+            through: Some(through(0, 6)),
+        })]
+    );
+    // The selection made is spoken as a selecting key's is.
+    assert_eq!(
+        text.reply(hello_w_selected()),
+        words(vec![phrase(Phrase::Selected(SelectionText::Text(
+            "hello w".to_owned()
+        )))])
+    );
+    // The caret the selection moved takes the review cursor to the range's
+    // start; the second press still copies the range selected.
+    assert_eq!(
+        text.selection(caret_on(line("hello world\n", 101, 0), None), None),
+        []
+    );
+    assert_eq!(
+        text.command(ReviewCommand::SelectThenCopy, 1),
+        [Heard::Asked(line_read(TextPoint::Caret, None))]
+    );
+    assert_eq!(
+        text.read(0, line("hello world\n", 101, 0)),
+        [Heard::Asked(TextOp::ReadRange {
+            start: at(0),
+            end: at(6),
+            through: Some(through(0, 6)),
+        })]
+    );
+    assert_eq!(
+        text.reply(TextReply::Range {
+            text: "hello w".to_owned(),
+            truncated: false,
+        }),
+        [Heard::Copied("hello w".to_owned())]
+    );
+    // The copy cleared the start marker: a further press has none.
+    assert_eq!(
+        text.command(ReviewCommand::SelectThenCopy, 0),
+        words(vec![message(Message::NoStartMarker)])
+    );
+}
+
+/// A start marker on "h" of "hello world", the review cursor moved to
+/// "w", and select then copy's first press made, its selection of "hello
+/// w" answered.
+fn selected_from_the_marker(text: &mut Text) {
+    let _ = text.command(ReviewCommand::SetStartMarker, 0);
+    let _ = text.command(ReviewCommand::ReviewNextWord, 0);
+    assert_eq!(
+        text.command(ReviewCommand::SelectThenCopy, 0),
+        [Heard::Asked(TextOp::Select {
+            start: at(0),
+            end: at(6),
+            through: Some(through(0, 6)),
+        })]
+    );
+    let _ = text.reply(hello_w_selected());
+}
+
+#[test]
+fn a_first_press_after_a_selection_not_yet_copied_asks_for_the_second() {
+    // NVDA keeps the range a first press selected: a further first press
+    // says so and selects nothing, and the second press copies that range
+    // (`docs/parity/review.md`, "Select then copy from the review cursor").
+    let mut text = reviewing("hello world\n", 0);
+    selected_from_the_marker(&mut text);
+    assert_eq!(
+        text.command(ReviewCommand::SelectThenCopy, 0),
+        words(vec![message(Message::PressTwiceToCopy)])
+    );
+    assert_eq!(
+        text.command(ReviewCommand::SelectThenCopy, 1),
+        [Heard::Asked(TextOp::ReadRange {
+            start: at(0),
+            end: at(6),
+            through: Some(through(0, 6)),
+        })]
+    );
+}
+
+#[test]
+fn a_copy_keeps_a_start_marker_set_while_its_read_was_in_flight() {
+    // The copy clears the marker it copied from, not one set after the
+    // second press and before its read was answered
+    // (`docs/parity/review.md`, "Select then copy from the review cursor").
+    let mut text = reviewing("hello world\n", 0);
+    selected_from_the_marker(&mut text);
+    let _ = text.command(ReviewCommand::SelectThenCopy, 1);
+    assert_eq!(
+        text.command(ReviewCommand::SetStartMarker, 0),
+        [],
+        "the press waits behind the copy"
+    );
+    assert_eq!(
+        text.reply(TextReply::Range {
+            text: "hello w".to_owned(),
+            truncated: false,
+        }),
+        [
+            Heard::Copied("hello w".to_owned()),
+            queued(vec![message(Message::StartMarked)])
+        ]
+    );
+    // The new marker, on "w", is kept: a first press selects from it.
+    assert_eq!(
+        text.command(ReviewCommand::SelectThenCopy, 0),
+        [Heard::Asked(TextOp::Select {
+            start: at(6),
+            end: at(6),
+            through: Some(through(6, 6)),
+        })]
+    );
+}
+
+#[test]
+fn a_copy_of_nothing_clears_the_start_marker_and_says_nothing() {
+    let mut text = reviewing("hello world\n", 0);
+    selected_from_the_marker(&mut text);
+    let _ = text.command(ReviewCommand::SelectThenCopy, 1);
+    assert_eq!(
+        text.reply(TextReply::Range {
+            text: String::new(),
+            truncated: false,
+        }),
+        []
+    );
+    assert_eq!(
+        text.command(ReviewCommand::SelectThenCopy, 0),
+        words(vec![message(Message::NoStartMarker)])
+    );
+}
+
+#[test]
+fn a_copy_the_text_cannot_answer_clears_the_start_marker() {
+    let mut text = reviewing("hello world\n", 0);
+    selected_from_the_marker(&mut text);
+    let _ = text.command(ReviewCommand::SelectThenCopy, 1);
+    assert_eq!(
+        text.reply(TextReply::NoText),
+        words(vec![message(Message::NotSupported)])
+    );
+    assert_eq!(
+        text.command(ReviewCommand::SelectThenCopy, 0),
+        words(vec![message(Message::NoStartMarker)])
+    );
+}
+
+#[test]
+fn the_start_marker_in_another_object_is_no_start_marker_and_is_kept() {
+    // NVDA says "No start marker set" with the navigator elsewhere, and
+    // the marker is there again when it returns.
+    let mut text = reviewing("hello world\n", 0);
+    let _ = text.command(ReviewCommand::SetStartMarker, 0);
+    let _ = text.focus(&node(6, Role::Button, StateSet::new()), FocusCaret::NoText);
+    assert_eq!(
+        text.command(ReviewCommand::SelectThenCopy, 0),
+        [Heard::Sent("Properties")]
+    );
+    assert_eq!(
+        text.properties(&node(6, Role::Button, StateSet::new())),
+        words(vec![message(Message::NoStartMarker)])
+    );
+    let _ = text.focus(
+        &node(FIELD, Role::EditableText, StateSet::new()),
+        caret_read(caret_on(line("hello world\n", 100, 0), None), None, 1, None),
+    );
+    assert_eq!(
+        text.command(ReviewCommand::SelectThenCopy, 0),
+        [Heard::Asked(line_read(TextPoint::Caret, None))]
+    );
+    assert_eq!(
+        text.read(0, line("hello world\n", 100, 0)),
+        [Heard::Asked(TextOp::Select {
+            start: at(0),
+            end: at(0),
+            through: Some(through(0, 0)),
+        })]
+    );
+}
+
+#[test]
+fn moving_to_the_start_marker_in_another_object_is_no_start_marker_and_keeps_it() {
+    // Verbatim+Shift+F9 with the navigator elsewhere says "No start marker
+    // set" and asks for no text; back in the text, the marker on "w" is
+    // there to move to, though the caret is now on "h".
+    let mut text = reviewing("hello world\n", 6);
+    let _ = text.command(ReviewCommand::SetStartMarker, 0);
+    let _ = text.focus(&node(6, Role::Button, StateSet::new()), FocusCaret::NoText);
+    assert_eq!(
+        text.command(ReviewCommand::MoveToStartMarker, 0),
+        [Heard::Sent("Properties")]
+    );
+    assert_eq!(
+        text.properties(&node(6, Role::Button, StateSet::new())),
+        words(vec![message(Message::NoStartMarker)])
+    );
+    let _ = text.focus(
+        &node(FIELD, Role::EditableText, StateSet::new()),
+        caret_read(caret_on(line("hello world\n", 100, 0), None), None, 1, None),
+    );
+    assert_eq!(
+        text.command(ReviewCommand::MoveToStartMarker, 0),
+        [Heard::Asked(line_read(TextPoint::Caret, None))]
+    );
+    assert_eq!(
+        text.read(0, line("hello world\n", 100, 0)),
+        [Heard::Asked(line_read(at(6), None))]
+    );
+}
+
 #[test]
 fn select_then_copy_back_from_the_marker_runs_from_the_cursor_through_the_marker() {
     // The marker on "w", the review cursor moved back to "h": the range
@@ -2408,153 +1792,94 @@ fn select_then_copy_back_from_the_marker_runs_from_the_cursor_through_the_marker
     // copy from the review cursor"). The outpost, which alone can tell
     // which end comes first, is sent both ends and the points just past
     // their characters.
-    let mut state = reviewing("hello world\n", 6);
-    let _ = reduce(&mut state, &command(ReviewCommand::SetStartMarker, 0));
-    let _ = reduce(&mut state, &command(ReviewCommand::ReviewPreviousWord, 0));
-    let effects = reduce(&mut state, &command(ReviewCommand::SelectThenCopy, 0));
-    let through = Some(TextThrough {
-        start: at(7),
-        end: at(1),
-    });
-    let select = request(&effects);
+    let mut text = reviewing("hello world\n", 6);
+    let _ = text.command(ReviewCommand::SetStartMarker, 0);
+    let _ = text.command(ReviewCommand::ReviewPreviousWord, 0);
     assert_eq!(
-        select.op,
-        TextOp::Select {
+        text.command(ReviewCommand::SelectThenCopy, 0),
+        [Heard::Asked(TextOp::Select {
             start: at(6),
             end: at(0),
-            through
-        }
+            through: Some(through(6, 0)),
+        })]
     );
     // The text cannot be selected: said as NVDA says it, and the second
     // press copies the same range.
-    let effects = reduce(
-        &mut state,
-        &completed(select.query_id, TextReply::Unsupported),
-    );
-    assert_eq!(spoken(&effects), vec![message(Message::CannotSelect)]);
-    let effects = reduce(&mut state, &command(ReviewCommand::SelectThenCopy, 1));
     assert_eq!(
-        request(&effects).op,
-        TextOp::ReadRange {
+        text.reply(TextReply::Unsupported),
+        words(vec![message(Message::CannotSelect)])
+    );
+    assert_eq!(
+        text.command(ReviewCommand::SelectThenCopy, 1),
+        [Heard::Asked(TextOp::ReadRange {
             start: at(6),
             end: at(0),
-            through
-        }
+            through: Some(through(6, 0)),
+        })]
     );
+}
+
+/// The settings saved when `settings` differ from the defaults.
+fn saved(settings: ReaderSettings) -> Heard {
+    Heard::Settings(settings)
 }
 
 #[test]
 fn the_follow_caret_toggle_is_spoken_saved_and_obeyed() {
-    let mut state = reviewing("abc\n", 0);
-    let effects = reduce(&mut state, &command(ReviewCommand::ToggleFollowCaret, 0));
+    let mut text = reviewing("abc\n", 0);
     assert_eq!(
-        spoken(&effects),
-        vec![message(Message::CaretDoesNotMoveReview)]
-    );
-    assert!(effects.contains(&Effect::SettingsChanged(ReaderSettings {
-        follow_caret: false,
-        ..ReaderSettings::default()
-    })));
-    caret_event(&mut state, 5, line("xyz\n", 101, 2));
-    let effects = reduce(
-        &mut state,
-        &command(ReviewCommand::ReviewCurrentCharacter, 0),
+        text.command(ReviewCommand::ToggleFollowCaret, 0),
+        [
+            queued(vec![message(Message::CaretDoesNotMoveReview)]),
+            saved(ReaderSettings {
+                follow_caret: false,
+                ..ReaderSettings::default()
+            })
+        ]
     );
     assert_eq!(
-        spoken(&effects),
-        vec![character("a")],
+        text.selection(caret_on(line("xyz\n", 101, 2), None), None),
+        []
+    );
+    assert_eq!(
+        text.command(ReviewCommand::ReviewCurrentCharacter, 0),
+        words(vec![character("a")]),
         "the review stayed put"
-    );
-
-    let effects = reduce(
-        &mut state,
-        &command(ReviewCommand::ToggleTypedCharacters, 0),
     );
     // From the default, only in edit controls, the next setting is always.
     assert_eq!(
-        spoken(&effects),
-        vec![UtteranceSegment::new(SegmentContent::Phrase(
-            Phrase::SpeakTypedCharacters(TypingEcho::Always)
-        ))]
+        text.command(ReviewCommand::ToggleTypedCharacters, 0),
+        [
+            queued(vec![phrase(Phrase::SpeakTypedCharacters(
+                verbatim_model::TypingEcho::Always
+            ))]),
+            saved(ReaderSettings {
+                follow_caret: false,
+                speak_typed_characters: verbatim_model::TypingEcho::Always,
+                ..ReaderSettings::default()
+            })
+        ]
     );
 }
 
 #[test]
 fn a_unit_the_text_does_not_have_is_not_supported() {
-    let mut state = editing("abc\n", 0);
-    let effects = reduce(&mut state, &command(ReviewCommand::ReviewNextPage, 0));
-    let effects = reduce(
-        &mut state,
-        &completed(
-            request_of(&effects),
-            TextReply::UnsupportedUnit(TextUnit::Page),
-        ),
+    let mut text = editing("abc\n", 0);
+    let _ = text.command(ReviewCommand::ReviewNextPage, 0);
+    assert_eq!(
+        text.reply(TextReply::UnsupportedUnit(TextUnit::Page)),
+        words(vec![message(Message::NotSupported)])
     );
-    assert_eq!(spoken(&effects), vec![message(Message::NotSupported)]);
 }
 
 #[test]
 fn the_next_word_past_the_line_moves_to_the_next_line_first_word() {
-    let mut state = reviewing("last\n", 0);
-    let effects = reduce(&mut state, &command(ReviewCommand::ReviewNextWord, 0));
-    let effects = reduce(
-        &mut state,
-        &completed(
-            request_of(&effects),
-            TextReply::Read {
-                moved: 1,
-                chunk: line("  next one\n", 101, 0),
-            },
-        ),
+    let mut text = reviewing("last\n", 0);
+    let _ = text.command(ReviewCommand::ReviewNextWord, 0);
+    assert_eq!(
+        text.read(1, line("  next one\n", 101, 0)),
+        words(vec![UtteranceSegment::text("next")])
     );
-    assert_eq!(spoken(&effects), vec![UtteranceSegment::text("next")]);
-}
-
-/// The one effect of `effects`, a text request.
-fn only_request(effects: &[Effect]) -> TextRequest {
-    assert_eq!(effects.len(), 1, "one effect in {effects:?}");
-    request(effects)
-}
-
-/// One queued utterance of `segments`, traced `trace`: 3 for a command's
-/// own speech, 4 for speech an outpost's answer brought.
-fn said(trace: u64, segments: Vec<UtteranceSegment>) -> Vec<Effect> {
-    vec![Effect::Speak(
-        Utterance {
-            trace_id: TraceId::from_raw(trace),
-            priority: SpeechPriority::Queued,
-            segments,
-            source: None,
-            say_all: false,
-            validity: None,
-        },
-        None,
-    )]
-}
-
-/// A read of the line at `at`, after moving by `movement` when given.
-fn line_read(at: TextPoint, movement: Option<(TextUnit, i32)>) -> TextOp {
-    TextOp::Read(TextRead {
-        at,
-        movement: movement.map(|(unit, count)| TextMovement { unit, count }),
-        unit: TextUnit::Line,
-    })
-}
-
-/// Checks that `effects` are one request for `op` and answers it with a
-/// read of `chunk` that moved `moved` units.
-fn answer_read(
-    state: &mut SrState,
-    effects: &[Effect],
-    op: &TextOp,
-    (moved, chunk): (i32, TextChunk),
-) -> Vec<Effect> {
-    let asked = only_request(effects);
-    assert_eq!(&asked.op, op);
-    reduce(
-        state,
-        &completed(asked.query_id, TextReply::Read { moved, chunk }),
-    )
 }
 
 /// The start of the line anchored at `anchor`.
@@ -2562,48 +1887,21 @@ fn line_start(anchor: u64) -> TextPoint {
     TextPoint::At(TextPosition::at(TextAnchor(anchor)))
 }
 
-/// A terminal focused with its caret, and the review cursor settled, on
-/// `row` at `offset`, anchored at 400.
-fn reviewing_terminal(row: &str, offset: u32) -> SrState {
-    let mut state = SrState::new();
-    focus(&mut state, node(15, Role::Terminal, StateSet::new()));
-    caret_event(&mut state, 15, line(row, 400, offset));
-    settle(&mut state, line(row, 400, offset));
-    state
-}
-
 #[test]
 fn review_bottom_reads_the_last_line_from_its_start() {
-    let mut state = reviewing("first\n", 3);
-    let effects = reduce(&mut state, &command(ReviewCommand::ReviewBottom, 0));
-    let effects = answer_read(
-        &mut state,
-        &effects,
-        &line_read(TextPoint::End, None),
-        (0, line("last line", 102, 9)),
+    let mut text = reviewing("first\n", 3);
+    assert_eq!(
+        text.command(ReviewCommand::ReviewBottom, 0),
+        [Heard::Asked(line_read(TextPoint::End, None))]
     );
-    assert_eq!(effects, said(4, vec![UtteranceSegment::text("last line")]));
-    let effects = reduce(
-        &mut state,
-        &command(ReviewCommand::ReviewCurrentCharacter, 0),
+    assert_eq!(
+        text.read(0, line("last line", 102, 9)),
+        words(vec![UtteranceSegment::text("last line")])
     );
-    assert_eq!(effects, said(3, vec![character("l")]));
-}
-
-/// In a terminal, bottom first reads the review cursor's row again, as
-/// every review command there does (`books/dev/src/explanation/design/terminal-model.md`, "The
-/// review cursor"), then the text's last row.
-#[test]
-fn review_bottom_in_a_terminal_reads_the_last_row() {
-    let mut state = reviewing_terminal("$ ls", 2);
-    let effects = reduce(&mut state, &command(ReviewCommand::ReviewBottom, 0));
-    let effects = answer_read(
-        &mut state,
-        &effects,
-        &line_read(TextPoint::End, None),
-        (0, line("done", 405, 4)),
+    assert_eq!(
+        text.command(ReviewCommand::ReviewCurrentCharacter, 0),
+        words(vec![character("l")])
     );
-    assert_eq!(effects, said(4, vec![UtteranceSegment::text("done")]));
 }
 
 /// Page movement keeps the review cursor's column, as moving by line does
@@ -2615,125 +1913,113 @@ fn review_bottom_in_a_terminal_reads_the_last_row() {
 /// test asserts nothing about it.
 #[test]
 fn review_pages_keep_the_column_and_name_the_edges() {
-    let mut state = reviewing("abcdef\n", 2);
-    let effects = reduce(&mut state, &command(ReviewCommand::ReviewNextPage, 0));
-    let effects = answer_read(
-        &mut state,
-        &effects,
-        &line_read(line_start(100), Some((TextUnit::Page, 1))),
-        (1, line("012345\n", 140, 0)),
-    );
-    assert_eq!(effects, said(4, vec![UtteranceSegment::text("012345")]));
-    let effects = reduce(
-        &mut state,
-        &command(ReviewCommand::ReviewCurrentCharacter, 0),
-    );
-    assert_eq!(effects, said(3, vec![character("2")]));
-
-    let effects = reduce(&mut state, &command(ReviewCommand::ReviewNextPage, 0));
-    let effects = answer_read(
-        &mut state,
-        &effects,
-        &line_read(line_start(140), Some((TextUnit::Page, 1))),
-        (0, line("012345\n", 140, 0)),
+    let mut text = reviewing("abcdef\n", 2);
+    let page = |text: &mut Text, command, from: u64, count, (moved, chunk): (i32, TextChunk)| {
+        assert_eq!(
+            text.command(command, 0),
+            [Heard::Asked(line_read(
+                line_start(from),
+                Some((TextUnit::Page, count))
+            ))]
+        );
+        text.read(moved, chunk)
+    };
+    assert_eq!(
+        page(
+            &mut text,
+            ReviewCommand::ReviewNextPage,
+            100,
+            1,
+            (1, line("012345\n", 140, 0))
+        ),
+        words(vec![UtteranceSegment::text("012345")])
     );
     assert_eq!(
-        effects,
-        said(
-            4,
-            vec![message(Message::Bottom), UtteranceSegment::text("012345")]
-        )
-    );
-
-    let effects = reduce(&mut state, &command(ReviewCommand::ReviewPreviousPage, 0));
-    let effects = answer_read(
-        &mut state,
-        &effects,
-        &line_read(line_start(140), Some((TextUnit::Page, -1))),
-        (-1, line("abcdef\n", 100, 0)),
-    );
-    assert_eq!(effects, said(4, vec![UtteranceSegment::text("abcdef")]));
-    let effects = reduce(&mut state, &command(ReviewCommand::ReviewPreviousPage, 0));
-    let effects = answer_read(
-        &mut state,
-        &effects,
-        &line_read(line_start(100), Some((TextUnit::Page, -1))),
-        (0, line("abcdef\n", 100, 0)),
+        text.command(ReviewCommand::ReviewCurrentCharacter, 0),
+        words(vec![character("2")])
     );
     assert_eq!(
-        effects,
-        said(
-            4,
-            vec![message(Message::Top), UtteranceSegment::text("abcdef")]
-        )
+        page(
+            &mut text,
+            ReviewCommand::ReviewNextPage,
+            140,
+            1,
+            (0, line("012345\n", 140, 0))
+        ),
+        words(vec![
+            message(Message::Bottom),
+            UtteranceSegment::text("012345")
+        ])
     );
-    let effects = reduce(
-        &mut state,
-        &command(ReviewCommand::ReviewCurrentCharacter, 0),
+    assert_eq!(
+        page(
+            &mut text,
+            ReviewCommand::ReviewPreviousPage,
+            140,
+            -1,
+            (-1, line("abcdef\n", 100, 0))
+        ),
+        words(vec![UtteranceSegment::text("abcdef")])
     );
-    assert_eq!(effects, said(3, vec![character("c")]));
+    assert_eq!(
+        page(
+            &mut text,
+            ReviewCommand::ReviewPreviousPage,
+            100,
+            -1,
+            (0, line("abcdef\n", 100, 0))
+        ),
+        words(vec![
+            message(Message::Top),
+            UtteranceSegment::text("abcdef")
+        ])
+    );
+    assert_eq!(
+        text.command(ReviewCommand::ReviewCurrentCharacter, 0),
+        words(vec![character("c")])
+    );
 }
 
 /// The selection's start is its first character, and its end the
 /// character before the point past the selection, its last.
 #[test]
 fn the_review_cursor_moves_to_the_selections_first_and_last_characters() {
-    let mut state = reviewing("hello world\n", 0);
-    let effects = reduce(&mut state, &command(ReviewCommand::ReviewSelectionStart, 0));
-    let effects = answer_read(
-        &mut state,
-        &effects,
-        &line_read(TextPoint::SelectionStart, None),
-        (0, line("hello world\n", 100, 6)),
+    let mut text = reviewing("hello world\n", 0);
+    assert_eq!(
+        text.command(ReviewCommand::ReviewSelectionStart, 0),
+        [Heard::Asked(line_read(TextPoint::SelectionStart, None))]
     );
-    assert_eq!(effects, said(4, vec![character("w")]));
-
-    let effects = reduce(&mut state, &command(ReviewCommand::ReviewSelectionEnd, 0));
-    let effects = answer_read(
-        &mut state,
-        &effects,
-        &line_read(TextPoint::SelectionEnd, None),
-        (0, line("hello world\n", 100, 11)),
+    assert_eq!(
+        text.read(0, line("hello world\n", 100, 6)),
+        words(vec![character("w")])
     );
-    assert_eq!(effects, said(4, vec![character("d")]));
-    let effects = reduce(
-        &mut state,
-        &command(ReviewCommand::ReviewCurrentCharacter, 0),
+    assert_eq!(
+        text.command(ReviewCommand::ReviewSelectionEnd, 0),
+        [Heard::Asked(line_read(TextPoint::SelectionEnd, None))]
     );
-    assert_eq!(effects, said(3, vec![character("d")]));
+    assert_eq!(
+        text.read(0, line("hello world\n", 100, 11)),
+        words(vec![character("d")])
+    );
+    assert_eq!(
+        text.command(ReviewCommand::ReviewCurrentCharacter, 0),
+        words(vec![character("d")])
+    );
 }
 
-/// Start of line moves to the line's first character and says it, with no
-/// read: the review cursor holds its line.
+/// Start of line moves to the line's first character and says it, from
+/// the review cursor's line.
 #[test]
 fn start_of_line_says_the_lines_first_character() {
-    let mut state = reviewing("hello world\n", 8);
-    let effects = reduce(&mut state, &command(ReviewCommand::ReviewStartOfLine, 0));
-    assert_eq!(effects, said(3, vec![character("h")]));
-    let effects = reduce(&mut state, &command(ReviewCommand::ReviewNextCharacter, 0));
-    assert_eq!(effects, said(3, vec![character("e")]));
-}
-
-/// In a terminal, start of line reads the review cursor's row again first
-/// (`books/dev/src/explanation/design/terminal-model.md`, "The review cursor"), then says the
-/// row's first cell.
-#[test]
-fn start_of_line_in_a_terminal_says_the_rows_first_cell() {
-    let mut state = reviewing_terminal("ab cd", 3);
-    let effects = reduce(&mut state, &command(ReviewCommand::ReviewStartOfLine, 0));
-    let effects = answer_read(
-        &mut state,
-        &effects,
-        &line_read(
-            TextPoint::At(TextPosition {
-                anchor: TextAnchor(400),
-                offset: 3,
-            }),
-            None,
-        ),
-        (0, line("ab cd", 400, 3)),
+    let mut text = reviewing("hello world\n", 8);
+    assert_eq!(
+        text.command(ReviewCommand::ReviewStartOfLine, 0),
+        words(vec![character("h")])
     );
-    assert_eq!(effects, said(4, vec![character("a")]));
+    assert_eq!(
+        text.command(ReviewCommand::ReviewNextCharacter, 0),
+        words(vec![character("e")])
+    );
 }
 
 /// Previous word reads the word before on the line; from the line's first
@@ -2741,33 +2027,33 @@ fn start_of_line_in_a_terminal_says_the_rows_first_cell() {
 /// line it says "Top" and the word again.
 #[test]
 fn previous_word_crosses_a_line_start_and_stops_at_the_top() {
-    let mut state = reviewing("big world\n", 4);
-    let effects = reduce(&mut state, &command(ReviewCommand::ReviewPreviousWord, 0));
-    assert_eq!(effects, said(3, vec![UtteranceSegment::text("big")]));
-
-    let effects = reduce(&mut state, &command(ReviewCommand::ReviewPreviousWord, 0));
-    let effects = answer_read(
-        &mut state,
-        &effects,
-        &line_read(line_start(100), Some((TextUnit::Line, -1))),
-        (
-            -1,
-            TextChunk {
-                first: true,
-                ..line("one two\n", 90, 0)
-            },
-        ),
-    );
-    assert_eq!(effects, said(4, vec![UtteranceSegment::text("two")]));
-    let effects = reduce(&mut state, &command(ReviewCommand::ReviewPreviousWord, 0));
-    assert_eq!(effects, said(3, vec![UtteranceSegment::text("one")]));
-    let effects = reduce(&mut state, &command(ReviewCommand::ReviewPreviousWord, 0));
+    let mut text = reviewing("big world\n", 4);
     assert_eq!(
-        effects,
-        said(
-            3,
-            vec![message(Message::Top), UtteranceSegment::text("one")]
-        )
+        text.command(ReviewCommand::ReviewPreviousWord, 0),
+        words(vec![UtteranceSegment::text("big")])
+    );
+    assert_eq!(
+        text.command(ReviewCommand::ReviewPreviousWord, 0),
+        [Heard::Asked(line_read(
+            line_start(100),
+            Some((TextUnit::Line, -1))
+        ))]
+    );
+    let first = TextChunk {
+        first: true,
+        ..line("one two\n", 90, 0)
+    };
+    assert_eq!(
+        text.read(-1, first),
+        words(vec![UtteranceSegment::text("two")])
+    );
+    assert_eq!(
+        text.command(ReviewCommand::ReviewPreviousWord, 0),
+        words(vec![UtteranceSegment::text("one")])
+    );
+    assert_eq!(
+        text.command(ReviewCommand::ReviewPreviousWord, 0),
+        words(vec![message(Message::Top), UtteranceSegment::text("one")])
     );
 }
 
@@ -2775,23 +2061,15 @@ fn previous_word_crosses_a_line_start_and_stops_at_the_top() {
 /// caret, and said the same way.
 #[test]
 fn review_location_asks_for_the_review_cursors_place_and_says_it() {
-    let mut state = reviewing("hello world\n", 0);
-    let _ = reduce(&mut state, &command(ReviewCommand::ReviewNextWord, 0));
-    let effects = reduce(&mut state, &command(ReviewCommand::ReportReviewLocation, 0));
-    let asked = only_request(&effects);
-    assert_eq!(asked.op, TextOp::Location(at(6)));
-    let effects = reduce(
-        &mut state,
-        &completed(asked.query_id, TextReply::Location { x: 148, y: 200 }),
+    let mut text = reviewing("hello world\n", 0);
+    let _ = text.command(ReviewCommand::ReviewNextWord, 0);
+    assert_eq!(
+        text.command(ReviewCommand::ReportReviewLocation, 0),
+        [Heard::Asked(TextOp::Location(at(6)))]
     );
     assert_eq!(
-        effects,
-        said(
-            4,
-            vec![UtteranceSegment::new(SegmentContent::Phrase(
-                Phrase::Positioned { x: 148, y: 200 }
-            ))]
-        )
+        text.reply(TextReply::Location { x: 148, y: 200 }),
+        words(vec![phrase(Phrase::Positioned { x: 148, y: 200 })])
     );
 }
 
@@ -2799,19 +2077,21 @@ fn review_location_asks_for_the_review_cursors_place_and_says_it() {
 /// says the character at the marker, where the review cursor then is.
 #[test]
 fn moving_to_the_start_marker_in_the_same_text_says_its_character() {
-    let mut state = reviewing("hello world\n", 6);
-    let _ = reduce(&mut state, &command(ReviewCommand::SetStartMarker, 0));
-    let _ = reduce(&mut state, &command(ReviewCommand::ReviewPreviousWord, 0));
-    let effects = reduce(&mut state, &command(ReviewCommand::MoveToStartMarker, 0));
-    let effects = answer_read(
-        &mut state,
-        &effects,
-        &line_read(at(6), None),
-        (0, line("hello world\n", 100, 6)),
+    let mut text = reviewing("hello world\n", 6);
+    let _ = text.command(ReviewCommand::SetStartMarker, 0);
+    let _ = text.command(ReviewCommand::ReviewPreviousWord, 0);
+    assert_eq!(
+        text.command(ReviewCommand::MoveToStartMarker, 0),
+        [Heard::Asked(line_read(at(6), None))]
     );
-    assert_eq!(effects, said(4, vec![character("w")]));
-    let effects = reduce(&mut state, &command(ReviewCommand::ReviewNextCharacter, 0));
-    assert_eq!(effects, said(3, vec![character("o")]));
+    assert_eq!(
+        text.read(0, line("hello world\n", 100, 6)),
+        words(vec![character("w")])
+    );
+    assert_eq!(
+        text.command(ReviewCommand::ReviewNextCharacter, 0),
+        words(vec![character("o")])
+    );
 }
 
 /// Verbatim+3 cycles word echo from its default, off, through only in edit
@@ -2819,24 +2099,23 @@ fn moving_to_the_start_marker_in_the_same_text_says_its_character() {
 /// to save.
 #[test]
 fn the_typed_words_toggle_cycles_says_and_saves_each_setting() {
-    let mut state = editing("abc\n", 0);
+    let mut text = editing("abc\n", 0);
     for echo in [
-        TypingEcho::EditControls,
-        TypingEcho::Always,
-        TypingEcho::Off,
+        verbatim_model::TypingEcho::EditControls,
+        verbatim_model::TypingEcho::Always,
+        verbatim_model::TypingEcho::Off,
     ] {
-        let effects = reduce(&mut state, &command(ReviewCommand::ToggleTypedWords, 0));
-        let mut expected = said(
-            3,
-            vec![UtteranceSegment::new(SegmentContent::Phrase(
-                Phrase::SpeakTypedWords(echo),
-            ))],
+        assert_eq!(
+            text.command(ReviewCommand::ToggleTypedWords, 0),
+            [
+                queued(vec![phrase(Phrase::SpeakTypedWords(echo))]),
+                saved(ReaderSettings {
+                    speak_typed_words: echo,
+                    ..ReaderSettings::default()
+                })
+            ],
+            "{echo:?}"
         );
-        expected.push(Effect::SettingsChanged(ReaderSettings {
-            speak_typed_words: echo,
-            ..ReaderSettings::default()
-        }));
-        assert_eq!(effects, expected, "{echo:?}");
     }
 }
 
@@ -2845,575 +2124,1183 @@ fn the_typed_words_toggle_cycles_says_and_saves_each_setting() {
 /// caret again.
 #[test]
 fn the_follow_caret_toggle_turns_following_off_and_back_on() {
-    let mut state = reviewing("abc\n", 0);
-    let effects = reduce(&mut state, &command(ReviewCommand::ToggleFollowCaret, 0));
-    let mut expected = said(3, vec![message(Message::CaretDoesNotMoveReview)]);
-    expected.push(Effect::SettingsChanged(ReaderSettings {
-        follow_caret: false,
-        ..ReaderSettings::default()
-    }));
-    assert_eq!(effects, expected);
-    let effects = reduce(&mut state, &command(ReviewCommand::ToggleFollowCaret, 0));
-    let mut expected = said(3, vec![message(Message::CaretMovesReview)]);
-    expected.push(Effect::SettingsChanged(ReaderSettings::default()));
-    assert_eq!(effects, expected);
-
-    caret_event(&mut state, 5, line("xyz\n", 101, 2));
-    let effects = reduce(
-        &mut state,
-        &command(ReviewCommand::ReviewCurrentCharacter, 0),
+    let mut text = reviewing("abc\n", 0);
+    assert_eq!(
+        text.command(ReviewCommand::ToggleFollowCaret, 0),
+        [
+            queued(vec![message(Message::CaretDoesNotMoveReview)]),
+            saved(ReaderSettings {
+                follow_caret: false,
+                ..ReaderSettings::default()
+            })
+        ]
     );
-    let effects = answer_read(
-        &mut state,
-        &effects,
-        &line_read(TextPoint::Caret, None),
-        (0, line("xyz\n", 101, 2)),
+    assert_eq!(
+        text.command(ReviewCommand::ToggleFollowCaret, 0),
+        [
+            queued(vec![message(Message::CaretMovesReview)]),
+            saved(ReaderSettings::default())
+        ]
     );
-    assert_eq!(effects, said(4, vec![character("z")]));
+    assert_eq!(
+        text.selection(caret_on(line("xyz\n", 101, 2), None), None),
+        []
+    );
+    assert_eq!(
+        text.command(ReviewCommand::ReviewCurrentCharacter, 0),
+        [Heard::Asked(line_read(TextPoint::Caret, None))]
+    );
+    assert_eq!(
+        text.read(0, line("xyz\n", 101, 2)),
+        words(vec![character("z")])
+    );
 }
 
-/// The index mark and text of each say-all utterance among `effects`, each
-/// checked to be marked as read by say-all, so the theme's "play sounds
-/// during say all" setting applies to it. Any utterance of another shape
-/// fails the test, so no speech is skipped unchecked.
-fn say_all_pieces(effects: &[Effect]) -> Vec<(SpeechMark, String)> {
-    effects
-        .iter()
-        .filter_map(|effect| match effect {
-            Effect::Speak(utterance, _) => match utterance.segments.as_slice() {
-                [mark, text] => match (&mark.content, &text.content) {
-                    (SegmentContent::Mark(mark), SegmentContent::Text(text)) => {
-                        assert!(utterance.say_all, "{utterance:?} is read by say-all");
-                        Some((*mark, text.clone()))
-                    }
-                    _ => panic!("say-all speech is a mark and its text: {utterance:?}"),
-                },
-                _ => panic!("say-all speech is a mark and its text: {utterance:?}"),
-            },
-            _ => None,
-        })
+/// In plain text a line move leaves the column remembered, so a move
+/// back to a longer line finds it, whatever command read the short line.
+#[test]
+fn a_column_remembered_across_a_short_line_comes_back_in_plain_text() {
+    let mut text = reviewing("hello world\n", 7);
+    let _ = text.command(ReviewCommand::ReviewNextLine, 0);
+    assert_eq!(
+        text.read(1, line("ok\n", 101, 0)),
+        words(vec![UtteranceSegment::text("ok")])
+    );
+    // The line read again keeps the column past the short line's text.
+    assert_eq!(
+        text.command(ReviewCommand::ReviewCurrentCharacter, 0),
+        words(vec![character("k")])
+    );
+    let _ = text.command(ReviewCommand::ReviewPreviousLine, 0);
+    assert_eq!(
+        text.read(-1, line("hello world\n", 100, 0)),
+        words(vec![UtteranceSegment::text("hello world")])
+    );
+    assert_eq!(
+        text.command(ReviewCommand::ReviewCurrentCharacter, 0),
+        words(vec![character("o")])
+    );
+}
+
+/// The document node 5 holding `value`, with `states`.
+fn document_node(states: StateSet, value: &str) -> NodeSnapshot {
+    NodeSnapshot {
+        value: Some(value.to_owned()),
+        ..node(FIELD, Role::Document, states)
+    }
+}
+
+impl Text {
+    /// Focuses the document node 5 holding `value`, with what the
+    /// outpost's caret read found, `caret`: the segments of each utterance
+    /// its announcement spoke, in order.
+    fn focus_with_value(
+        &mut self,
+        states: StateSet,
+        value: &str,
+        caret: FocusCaret,
+    ) -> Vec<Vec<UtteranceSegment>> {
+        self.focus(&document_node(states, value), caret)
+    }
+}
+
+/// The caret read of a focus whose caret is on `text`, at its start, with
+/// `selection` and its `selected_text`, baseline 1 minted.
+fn text_read(selection: Option<Selection>, text: &str, selected_text: Option<&str>) -> FocusCaret {
+    caret_read(
+        caret_on(line(text, 100, 0), selection.map(caret_selection)),
+        selected_text,
+        1,
+        None,
+    )
+}
+
+/// The focus announcement of the document `focus_with_value` focuses.
+fn document() -> Vec<UtteranceSegment> {
+    vec![
+        UtteranceSegment::label("Body"),
+        UtteranceSegment::new(SegmentContent::Role(Role::Document)),
+    ]
+}
+
+#[test]
+fn a_focused_document_says_its_caret_line_and_not_its_value() {
+    let mut text = Text::new();
+    // The line the focus came with ends its announcement, from the one
+    // message.
+    assert_eq!(
+        text.focus_with_value(
+            StateSet::new(),
+            "gamma\rdelta\r",
+            text_read(None, "gamma\r", None)
+        ),
+        vec![document(), vec![UtteranceSegment::text("gamma")]]
+    );
+    // A later caret tell says nothing by itself.
+    assert_eq!(
+        text.selection(
+            caret_on(line("delta\r", 100, 0), None),
+            Some(differing(&[], None))
+        ),
+        []
+    );
+}
+
+#[test]
+fn an_empty_focused_field_is_blank() {
+    let mut text = Text::new();
+    assert_eq!(
+        text.focus_with_value(StateSet::new(), "", text_read(None, "", None)),
+        vec![document(), vec![message(Message::Blank)]]
+    );
+}
+
+#[test]
+fn a_focused_field_with_text_selected_says_the_selection() {
+    let mut text = Text::new();
+    let selection = Selection {
+        start: TextPosition::at(TextAnchor(101)),
+        end: TextPosition::at(TextAnchor(102)),
+    };
+    // Nothing is asked of the outpost beyond the focus's reads.
+    assert_eq!(
+        text.focus_with_value(
+            StateSet::new(),
+            "alpha\rdelta epsilon\r",
+            text_read(Some(selection), "delta epsilon\r", Some("delta epsilon"))
+        ),
+        vec![
+            document(),
+            vec![phrase(Phrase::Preselected(SelectionText::Text(
+                "delta epsilon".to_owned()
+            )))]
+        ]
+    );
+}
+
+/// The selection of "alpha" in "alpha beta\r".
+fn alpha_selected() -> Selection {
+    Selection {
+        start: TextPosition::at(TextAnchor(100)),
+        end: TextPosition {
+            anchor: TextAnchor(100),
+            offset: 5,
+        },
+    }
+}
+
+/// The caret at byte 5 of "alpha beta\r", with `selection`.
+fn after_alpha(selection: Option<Selection>) -> CaretReport {
+    caret_on(line("alpha beta\r", 100, 5), selection.map(caret_selection))
+}
+
+/// A focused field whose announcement has ended with its caret's line.
+fn announced_field() -> Text {
+    let mut text = Text::new();
+    assert_eq!(
+        text.focus_with_value(
+            StateSet::new(),
+            "alpha beta\r",
+            text_read(None, "alpha beta\r", None)
+        ),
+        vec![document(), vec![UtteranceSegment::text("alpha beta")]]
+    );
+    text
+}
+
+#[test]
+fn a_selection_no_key_made_says_what_was_selected() {
+    let mut text = announced_field();
+    assert_eq!(
+        text.selection(
+            after_alpha(Some(alpha_selected())),
+            Some(differing(&[(true, "alpha")], Some("alpha")))
+        ),
+        words(vec![phrase(Phrase::Selected(SelectionText::Text(
+            "alpha".to_owned()
+        )))])
+    );
+}
+
+#[test]
+fn a_caret_report_with_no_selection_change_says_nothing() {
+    let mut text = announced_field();
+    assert_eq!(
+        text.selection(after_alpha(None), Some(differing(&[], None))),
+        []
+    );
+}
+
+/// A change with no text: "x" typed over a selection, its old range in a
+/// UIA text holding nothing once the text it held was cut.
+#[test]
+fn a_selection_change_with_no_text_says_nothing() {
+    let mut text = announced_field();
+    assert_eq!(
+        text.selection(after_alpha(None), Some(differing(&[(false, "")], None))),
+        []
+    );
+}
+
+/// A classic edit control on "alpha beta\r" whose text changed: its value
+/// change told, so its next caret tell's changes are said in general
+/// terms.
+fn changed_edit_control() -> Text {
+    let mut text = edit_control("alpha beta\r", 0);
+    assert_eq!(text.value_changed(FIELD), []);
+    text
+}
+
+/// The changes `changes` (each selected or not, with no text), as the
+/// general terms judge them, and the new selection's text `new`.
+fn general(changes: &[bool], new: Option<&str>) -> SelectionDifference {
+    let changes: Vec<(bool, &str)> = changes.iter().map(|&selected| (selected, "")).collect();
+    differing(&changes, new)
+}
+
+#[test]
+fn a_selection_unselected_after_a_text_change_with_nothing_selected_says_selection_removed() {
+    let mut text = changed_edit_control();
+    assert_eq!(
+        text.selection(after_alpha(None), Some(general(&[false], None))),
+        words(vec![message(Message::SelectionRemoved)])
+    );
+}
+
+#[test]
+fn a_selection_unselected_after_a_text_change_with_another_selected_says_selected_instead() {
+    let mut text = changed_edit_control();
+    assert_eq!(
+        text.selection(
+            after_alpha(Some(alpha_selected())),
+            Some(general(&[false], Some("alpha")))
+        ),
+        words(vec![phrase(Phrase::SelectedInstead(SelectionText::Text(
+            "alpha".to_owned()
+        )))])
+    );
+}
+
+#[test]
+fn a_selection_extended_after_a_text_change_says_the_whole_new_selection_selected() {
+    let mut text = changed_edit_control();
+    assert_eq!(
+        text.selection(
+            after_alpha(Some(alpha_selected())),
+            Some(general(&[true], Some("alpha")))
+        ),
+        words(vec![phrase(Phrase::Selected(SelectionText::Text(
+            "alpha".to_owned()
+        )))])
+    );
+}
+
+/// A selection replaced by one apart from it after a text change: both
+/// general words, each with the whole new selection, each its own
+/// utterance.
+#[test]
+fn a_selection_replaced_after_a_text_change_says_selected_then_selected_instead() {
+    let mut text = changed_edit_control();
+    assert_eq!(
+        text.selection(
+            after_alpha(Some(alpha_selected())),
+            Some(general(&[false, true], Some("alpha")))
+        ),
+        [
+            queued(vec![phrase(Phrase::Selected(SelectionText::Text(
+                "alpha".to_owned()
+            )))]),
+            queued(vec![phrase(Phrase::SelectedInstead(SelectionText::Text(
+                "alpha".to_owned()
+            )))]),
+        ]
+    );
+}
+
+/// A selecting key's caret tell after a text change: the whole new
+/// selection, one character by its name.
+#[test]
+fn a_selecting_keys_answer_after_a_text_change_says_the_whole_new_selection() {
+    let mut text = edit_control("hello, world\n", 5);
+    assert_eq!(text.key(CaretMotion::NextCharacter, true), []);
+    assert_eq!(text.value_changed(FIELD), []);
+    assert_eq!(
+        text.selection(
+            caret_on(line("hello, world\n", 100, 6), Some(selected(5, 6))),
+            Some(general(&[true], Some(",")))
+        ),
+        words(vec![phrase(Phrase::Selected(SelectionText::Character(
+            ",".to_owned()
+        )))])
+    );
+}
+
+/// Control+X on a selected line in a classic edit control: the caret
+/// tell says the selection's change in general terms, and the text the
+/// key removed, the selection's, is not said as well, as NVDA says only
+/// "selection removed".
+#[test]
+fn a_keys_answer_removing_the_selection_with_its_text_says_only_selection_removed() {
+    let mut text = edit_control("hello world\n", 0);
+    assert_eq!(text.key(CaretMotion::EndOfLine, true), []);
+    let _ = text.selection(
+        caret_on(line("hello world\n", 100, 0), Some(selected(0, 11))),
+        Some(differing(&[(true, "hello world")], Some("hello world"))),
+    );
+    assert_eq!(text.press(PressAction::EditingChord), []);
+    assert_eq!(text.value_changed(FIELD), []);
+    assert_eq!(
+        text.selection(
+            caret_on(line("\n", 101, 0), None),
+            Some(general(&[false], None))
+        ),
+        words(vec![message(Message::SelectionRemoved)])
+    );
+}
+
+#[test]
+fn a_selecting_keys_change_reported_while_it_waits_is_said_with_its_answer() {
+    // A selecting key is passed at once; its caret tell says what it
+    // selected.
+    let mut text = announced_field();
+    assert_eq!(text.key(CaretMotion::StartOfLine, true), []);
+    assert_eq!(
+        text.selection(
+            caret_on(
+                line("alpha beta\r", 100, 0),
+                Some(caret_selection(alpha_selected()))
+            ),
+            Some(differing(&[(true, "alpha")], Some("alpha")))
+        ),
+        words(vec![phrase(Phrase::Selected(SelectionText::Text(
+            "alpha".to_owned()
+        )))])
+    );
+}
+
+#[test]
+fn a_focus_without_text_says_its_value_instead() {
+    let mut text = Text::new();
+    assert_eq!(
+        text.focus_with_value(StateSet::new(), "plain value", FocusCaret::NoText),
+        vec![document(), vec![UtteranceSegment::value("plain value")]]
+    );
+}
+
+#[test]
+fn a_focus_whose_text_was_not_read_says_neither_its_line_nor_its_value() {
+    let mut text = Text::new();
+    assert_eq!(
+        text.focus_with_value(StateSet::new(), "plain value", FocusCaret::NotRead),
+        vec![document()]
+    );
+}
+
+#[test]
+fn a_protected_field_says_its_masked_line_selection_or_value_as_any_field() {
+    // The masked text the control gives is read as any field's text
+    // (`docs/parity/focus-announcement.md`, "Text on focus").
+    let protected = StateSet::new().with(verbatim_model::State::Protected);
+    let announcement = vec![
+        UtteranceSegment::label("Body"),
+        UtteranceSegment::new(SegmentContent::Role(Role::Document)),
+        UtteranceSegment::new(SegmentContent::State(verbatim_model::State::Protected)),
+    ];
+    let mut text = Text::new();
+    assert_eq!(
+        text.focus_with_value(protected, "******", text_read(None, "******", None)),
+        vec![announcement.clone(), vec![UtteranceSegment::text("******")]]
+    );
+    let mut text = Text::new();
+    assert_eq!(
+        text.focus_with_value(
+            protected,
+            "******",
+            text_read(Some(selection_from(0, true)), "******", Some("******"))
+        ),
+        vec![
+            announcement.clone(),
+            vec![phrase(Phrase::Preselected(SelectionText::Text(
+                "******".to_owned()
+            )))]
+        ]
+    );
+    // With no text to read, its value is spoken as any field's.
+    let mut text = Text::new();
+    assert_eq!(
+        text.focus_with_value(protected, "******", FocusCaret::NoText),
+        vec![announcement, vec![UtteranceSegment::value("******")]]
+    );
+}
+
+/// The caret read of a focus whose caret is at the start of a line minted
+/// at `anchor`, with nothing selected, baseline `baseline` minted, and
+/// `difference` from the baseline named.
+fn caret_at_anchor(
+    anchor: u64,
+    baseline: u64,
+    difference: Option<SelectionDifference>,
+) -> FocusCaret {
+    caret_read(
+        caret_on(line("gamma\n", anchor, 0), None),
+        None,
+        baseline,
+        difference,
+    )
+}
+
+/// The text anchors the state holds, by outpost.
+fn anchors_held(text: &Text) -> Vec<(verbatim_model::OutpostId, Vec<TextAnchor>)> {
+    text.desk
+        .state
+        .held_anchors()
+        .into_iter()
+        .map(|(outpost, anchors)| (outpost, anchors.into_iter().collect()))
         .collect()
 }
 
-/// Say-all's read ahead from `at`, after `movement`, by `unit`.
-fn read_ahead(at: TextPoint, movement: Option<TextMovement>, unit: TextUnit) -> TextOp {
-    TextOp::ReadAhead(TextReadAhead {
-        at,
-        movement,
-        unit,
-        count: 20,
-    })
+#[test]
+fn held_anchors_name_every_position_the_state_keeps() {
+    let mut text = editing("abc\n", 1);
+    let _ = text.command(ReviewCommand::SetStartMarker, 0);
+    // The selection baseline, and the caret and the start marker both on
+    // the line at anchor 100, in the one edit field.
+    let outpost = verbatim_model::OutpostId(ONE.generation);
+    assert_eq!(
+        anchors_held(&text),
+        [(outpost, vec![TextAnchor(1), TextAnchor(100)])]
+    );
+    let nodes: Vec<(verbatim_model::OutpostId, Vec<NodeId>)> = text
+        .desk
+        .state
+        .held_nodes()
+        .into_iter()
+        .map(|(outpost, nodes)| (outpost, nodes.into_iter().collect()))
+        .collect();
+    assert_eq!(nodes, [(outpost, vec![id(FIELD)])]);
 }
 
-/// Playback reaching `mark`.
-fn reached(mark: SpeechMark) -> Input {
-    Input::MarkReached { mark }
+impl Text {
+    /// [`ONE`]'s outpost ended, and its replacement started and answered
+    /// its focus read with `snapshot`, in its own generation, and `caret`:
+    /// every utterance spoken.
+    fn replaced(
+        &mut self,
+        snapshot: &NodeSnapshot,
+        caret: FocusCaret,
+    ) -> Vec<Vec<UtteranceSegment>> {
+        let next = ONE.replaced();
+        self.desk.app(next);
+        let _ = self.desk.step(QueueInput::ReaderEnded(ONE.instance()));
+        let [(number, to, Wire::CurrentFocus { .. })] = self.desk.sent[..] else {
+            panic!("the replacement asked for the focus: {:?}", self.desk.sent);
+        };
+        let read = FocusRead {
+            caret,
+            ..desk::focus_read_of(next, snapshot, &[])
+        };
+        self.desk
+            .answer(to, number, Outcome::Result(Reply::Focus(Box::new(read))))
+            .into_iter()
+            .filter_map(|heard| match heard {
+                desk::Heard::Say(_, segments) => Some(segments),
+                _ => None,
+            })
+            .collect()
+    }
 }
 
 #[test]
-fn say_all_reads_by_line_where_there_are_no_sentences_and_moves_the_caret() {
-    let mut state = editing("First.\n", 0);
-    let effects = reduce(&mut state, &command(ReviewCommand::SayAllFromCaret, 0));
-    assert!(effects.contains(&Effect::KeepDisplayOn(true)));
-    let first = request(&effects);
+fn a_replacement_outposts_silent_re_read_takes_its_caret_without_speaking() {
+    let mut text = Text::new();
+    let _ = text.focus_with_value(StateSet::new(), "gamma\n", caret_at_anchor(100, 1, None));
+    // The replacement numbers its nodes and anchors afresh and reports the
+    // focus the user already heard: nothing is said, and its caret is
+    // Core's.
+    let next = ONE.replaced();
+    let snapshot = NodeSnapshot {
+        id: next.node(FIELD),
+        ..document_node(StateSet::new(), "gamma\n")
+    };
     assert_eq!(
-        first.op,
-        read_ahead(TextPoint::Caret, None, TextUnit::Sentence)
-    );
-    // UIA has no sentences: reading goes by line.
-    let effects = reduce(
-        &mut state,
-        &completed(
-            first.query_id,
-            TextReply::UnsupportedUnit(TextUnit::Sentence),
+        (
+            text.replaced(&snapshot, caret_at_anchor(200, 2, None)),
+            anchors_held(&text)
         ),
-    );
-    let by_line = request(&effects);
-    assert_eq!(
-        by_line.op,
-        read_ahead(TextPoint::Caret, None, TextUnit::Line)
-    );
-    let effects = reduce(
-        &mut state,
-        &completed(
-            by_line.query_id,
-            TextReply::Chunks {
-                moved: 0,
-                chunks: vec![line("First.\n", 100, 0)],
-            },
-        ),
-    );
-    let pieces = say_all_pieces(&effects);
-    assert_eq!(pieces.len(), 1);
-    assert_eq!(pieces[0].1, "First.");
-    // Little is left to speak, so the next batch is read at once, a line on
-    // from the last line read.
-    let next = request(&effects);
-    assert_eq!(
-        next.op,
-        read_ahead(
-            TextPoint::At(TextPosition::at(TextAnchor(100))),
-            Some(TextMovement {
-                unit: TextUnit::Line,
-                count: 1
-            }),
-            TextUnit::Line,
+        (
+            Vec::new(),
+            vec![(
+                verbatim_model::OutpostId(next.generation),
+                vec![TextAnchor(2), TextAnchor(200)]
+            )]
         )
     );
-    // Playback reaches the first line: the caret moves there.
-    let effects = reduce(&mut state, &reached(pieces[0].0));
+}
+
+/// `chunk` with formatting: each stretch a byte range and its attributes.
+fn formatted(
+    mut chunk: TextChunk,
+    stretches: Vec<(u32, u32, verbatim_model::TextAttributes)>,
+) -> TextChunk {
+    chunk.formats = stretches
+        .into_iter()
+        .map(|(start, end, attributes)| verbatim_model::FormatRun {
+            start,
+            end,
+            attributes,
+        })
+        .collect();
+    chunk
+}
+
+/// `chunk` with formatting: each stretch a byte range, a spelling error or
+/// not.
+fn with_errors(chunk: TextChunk, stretches: &[(u32, u32, bool)]) -> TextChunk {
+    formatted(
+        chunk,
+        stretches
+            .iter()
+            .map(|&(start, end, spelling_error)| {
+                let attributes = verbatim_model::TextAttributes {
+                    spelling_error,
+                    ..verbatim_model::TextAttributes::default()
+                };
+                (start, end, attributes)
+            })
+            .collect(),
+    )
+}
+
+fn format(format: verbatim_model::TextFormat) -> UtteranceSegment {
+    UtteranceSegment::new(SegmentContent::Format(format))
+}
+
+use verbatim_model::TextFormat;
+
+#[test]
+fn a_line_speaks_a_spelling_error_where_it_starts() {
+    let mut text = editing("first\n", 0);
+    let error_line = with_errors(
+        line("hello wrold there\n", 101, 0),
+        &[(0, 6, false), (6, 11, true), (11, 18, false)],
+    );
+    let said = words(vec![
+        UtteranceSegment::text("hello"),
+        format(TextFormat::SpellingError),
+        UtteranceSegment::text("wrold there"),
+    ]);
     assert_eq!(
-        request(&effects).op,
-        TextOp::MoveCaret(TextPoint::At(TextPosition::at(TextAnchor(100))))
+        text.moved(CaretMotion::NextLine, error_line.clone(), None),
+        said
     );
-    // The document ends: say-all is over, and the display may sleep.
-    let effects = reduce(
-        &mut state,
-        &completed(
-            next.query_id,
-            TextReply::Chunks {
-                moved: 0,
-                chunks: vec![line("First.\n", 100, 0)],
-            },
-        ),
-    );
-    assert_eq!(effects, vec![Effect::KeepDisplayOn(false)]);
+    // Leaving the error inside a line says nothing, and reading the same
+    // line again starts out of the error, as the last stretch left it.
+    assert_eq!(text.moved(CaretMotion::NextLine, error_line, None), said);
 }
 
 #[test]
-fn say_all_hands_out_a_batch_a_piece_at_a_time_and_ends_after_the_last() {
-    let mut state = editing("x\n", 0);
-    let effects = reduce(&mut state, &command(ReviewCommand::SayAllFromCaret, 0));
-    let effects = reduce(
-        &mut state,
-        &completed(
-            request_of(&effects),
-            TextReply::UnsupportedUnit(TextUnit::Sentence),
-        ),
+fn a_line_joins_its_stretches_as_the_text_has_them() {
+    let mut text = editing("first\n", 0);
+    let error_line = with_errors(
+        line("Ths line has a tset.\n", 101, 0),
+        &[
+            (0, 3, true),
+            (3, 15, false),
+            (15, 19, true),
+            (19, 21, false),
+        ],
     );
-    let last = TextChunk {
-        last: true,
-        ..line("Three.", 102, 0)
+    // Only a spoken change parts the text; the dot after the error follows
+    // it with no space, as NVDA says the line.
+    assert_eq!(
+        text.moved(CaretMotion::NextLine, error_line, None),
+        words(vec![
+            format(TextFormat::SpellingError),
+            UtteranceSegment::text("Ths line has a"),
+            format(TextFormat::SpellingError),
+            UtteranceSegment::text("tset."),
+        ])
+    );
+}
+
+#[test]
+fn characters_report_entering_and_leaving_an_error() {
+    let text_of = "ab cd\n";
+    let mut text = editing(text_of, 0);
+    let letter = |text: &str, error: bool| {
+        let length = u32::try_from(text.len()).expect("short");
+        with_errors(unit(TextUnit::Character, text, 200), &[(0, length, error)])
     };
-    let effects = reduce(
-        &mut state,
-        &completed(
-            request_of(&effects),
-            TextReply::Chunks {
-                moved: 0,
-                chunks: vec![line("One.\n", 100, 0), line("Two.\n", 101, 0), last],
-            },
+    let at = |offset| line(text_of, 100, offset);
+    assert_eq!(
+        text.moved(CaretMotion::NextCharacter, at(1), Some(letter("b", true))),
+        words(vec![format(TextFormat::SpellingError), character("b")])
+    );
+    // Within the error, the character alone.
+    assert_eq!(
+        text.moved(
+            CaretMotion::PreviousCharacter,
+            at(0),
+            Some(letter("a", true))
         ),
+        words(vec![character("a")])
     );
-    // Two pieces with speech, the third waiting; the text's end was read,
-    // so nothing more is asked for.
-    let pieces = say_all_pieces(&effects);
-    let texts: Vec<&str> = pieces.iter().map(|(_, text)| text.as_str()).collect();
-    assert_eq!(texts, ["One.", "Two."]);
-    assert_eq!(effects.len(), 2, "nothing but the two pieces: {effects:?}");
-    // Reaching the first moves the caret there and hands on the third,
-    // with its own mark.
-    let effects = reduce(&mut state, &reached(pieces[0].0));
+    // Out of it, said, as a character is extra detail.
     assert_eq!(
-        request(&effects).op,
-        TextOp::MoveCaret(TextPoint::At(TextPosition::at(TextAnchor(100))))
+        text.moved(CaretMotion::NextCharacter, at(2), Some(letter(" ", false))),
+        words(vec![format(TextFormat::NotSpellingError), character(" ")])
     );
-    let third = say_all_pieces(&effects);
-    assert_eq!(third.len(), 1);
-    assert_eq!(third[0].1, "Three.");
-    assert_eq!(effects.len(), 2, "{effects:?}");
-    // Reaching the second moves the caret on.
-    let effects = reduce(&mut state, &reached(pieces[1].0));
+}
+
+#[test]
+fn a_word_carries_the_change_its_trailing_space_makes() {
+    let mut text = editing("tset of it\n", 0);
+    let word = |text: &str, stretches: &[(u32, u32, bool)]| {
+        with_errors(unit(TextUnit::Word, text, 200), stretches)
+    };
+    let at = |offset| line("tset of it\n", 100, offset);
+    // The misspelt word, then its space, out of the error.
     assert_eq!(
-        request(&effects).op,
-        TextOp::MoveCaret(TextPoint::At(TextPosition::at(TextAnchor(101))))
+        text.moved(
+            CaretMotion::NextWord,
+            at(0),
+            Some(word("tset ", &[(0, 4, true), (4, 5, false)]))
+        ),
+        words(vec![
+            format(TextFormat::SpellingError),
+            UtteranceSegment::text("tset"),
+            format(TextFormat::NotSpellingError),
+        ])
     );
-    assert_eq!(effects.len(), 1, "{effects:?}");
-    // The last piece reached: the caret moves to it and say-all ends.
-    let effects = reduce(&mut state, &reached(third[0].0));
+    // The next word, already out of it, says only itself.
     assert_eq!(
-        effects,
+        text.moved(
+            CaretMotion::NextWord,
+            at(5),
+            Some(word("of ", &[(0, 3, false)]))
+        ),
+        words(vec![UtteranceSegment::text("of")])
+    );
+}
+
+#[test]
+fn a_focus_reports_the_formatting_at_its_line_start_afresh() {
+    let mut text = Text::new();
+    let error_line = with_errors(line("Ths is\r", 100, 0), &[(0, 3, true), (3, 7, false)]);
+    assert_eq!(
+        text.focus_with_value(
+            StateSet::new(),
+            "Ths is\r",
+            caret_read(caret_on(error_line, None), None, 1, None)
+        ),
         vec![
-            Effect::Text(TextRequest {
-                op: TextOp::MoveCaret(TextPoint::At(TextPosition::at(TextAnchor(102)))),
-                ..request(&effects)
-            }),
-            Effect::KeepDisplayOn(false),
+            document(),
+            vec![
+                format(TextFormat::SpellingError),
+                UtteranceSegment::text("Ths is"),
+            ]
         ]
     );
 }
 
 #[test]
-fn say_all_reads_the_next_batch_when_fewer_than_ten_pieces_are_left() {
-    let mut state = editing("x\n", 0);
-    let effects = reduce(&mut state, &command(ReviewCommand::SayAllFromCaret, 0));
-    let effects = reduce(
-        &mut state,
-        &completed(
-            request_of(&effects),
-            TextReply::UnsupportedUnit(TextUnit::Sentence),
-        ),
-    );
-    // Twelve lines to speak: two with speech, ten buffered, which is not
-    // yet fewer than ten.
-    let chunks: Vec<TextChunk> = (0..12)
-        .map(|index| line("A b.\n", 100 + index, 0))
-        .collect();
-    let effects = reduce(
-        &mut state,
-        &completed(request_of(&effects), TextReply::Chunks { moved: 0, chunks }),
-    );
-    let reads = |effects: &[Effect]| {
-        effects
-            .iter()
-            .filter(|effect| {
-                matches!(effect, Effect::Text(request) if matches!(request.op, TextOp::ReadAhead(_)))
-            })
-            .count()
+fn bold_starts_and_ends_and_a_font_change_is_named() {
+    let mut text = editing("first\n", 0);
+    let calibri = |bold| verbatim_model::TextAttributes {
+        bold: Some(bold),
+        font_name: Some("Calibri".to_owned()),
+        ..verbatim_model::TextAttributes::default()
     };
-    assert_eq!(reads(&effects), 0);
-    let mut marks: Vec<SpeechMark> = say_all_pieces(&effects)
-        .into_iter()
-        .map(|(mark, _)| mark)
-        .collect();
-    let mut reach = |state: &mut SrState, index: usize| {
-        let effects = reduce(state, &reached(marks[index]));
-        marks.extend(say_all_pieces(&effects).into_iter().map(|(mark, _)| mark));
-        reads(&effects)
+    let bold_line = formatted(
+        line("plain bold\n", 101, 0),
+        vec![(0, 6, calibri(false)), (6, 11, calibri(true))],
+    );
+    assert_eq!(
+        text.moved(CaretMotion::NextLine, bold_line, None),
+        words(vec![
+            format(TextFormat::FontName("Calibri".to_owned())),
+            UtteranceSegment::text("plain"),
+            format(TextFormat::Bold),
+            UtteranceSegment::text("bold"),
+        ])
+    );
+    let next = formatted(line("next\n", 102, 0), vec![(0, 5, calibri(false))]);
+    assert_eq!(
+        text.moved(CaretMotion::NextLine, next, None),
+        words(vec![
+            format(TextFormat::NotBold),
+            UtteranceSegment::text("next")
+        ])
+    );
+}
+
+/// `text` as a line all in bold.
+fn bold_line(text: &str, anchor: u64) -> TextChunk {
+    let end = u32::try_from(text.len()).expect("short");
+    let bold = verbatim_model::TextAttributes {
+        bold: Some(true),
+        ..verbatim_model::TextAttributes::default()
     };
-    // Each line reached leaves one fewer: eleven, then ten, then nine, when
-    // the next batch is read, once.
-    assert_eq!(reach(&mut state, 0), 0);
-    assert_eq!(reach(&mut state, 1), 0);
-    assert_eq!(reach(&mut state, 2), 1);
-    assert_eq!(reach(&mut state, 3), 0);
+    formatted(line(text, anchor, 0), vec![(0, end, bold)])
+}
+
+/// The formatting is kept on the focus object, so the silent re-take
+/// after an outpost is replaced, a new focus object, starts afresh and the
+/// next line says its bold again (Dickson, 2026-11-08).
+#[test]
+fn the_silent_re_take_after_a_replacement_reports_formatting_afresh() {
+    let mut text = editing("first\n", 0);
+    let bold = |said: &str| words(vec![format(TextFormat::Bold), UtteranceSegment::text(said)]);
+    assert_eq!(
+        text.moved(CaretMotion::NextLine, bold_line("first bold\n", 101), None),
+        bold("first bold")
+    );
+    let snapshot = NodeSnapshot {
+        id: ONE.replaced().node(FIELD),
+        ..node(FIELD, Role::EditableText, StateSet::new())
+    };
+    let caret = caret_on(bold_line("first bold\n", 200), None);
+    assert_eq!(
+        text.replaced(&snapshot, caret_read(caret.clone(), None, 2, None)),
+        Vec::<Vec<UtteranceSegment>>::new()
+    );
+    // The replacement answers the key.
+    text.caret = caret;
+    assert_eq!(
+        text.moved(CaretMotion::NextLine, bold_line("second line\n", 201), None),
+        bold("second line")
+    );
+}
+
+/// A heading's size and a list item's bullet: the key's words alone.
+#[test]
+fn a_heading_says_its_size_and_a_list_item_its_bullet_before_its_text() {
+    let mut text = editing("first\n", 0);
+    let size = |points: &str| verbatim_model::TextAttributes {
+        font_size: Some(points.to_owned()),
+        ..verbatim_model::TextAttributes::default()
+    };
+    let heading = formatted(
+        line("Title\n", 101, 0),
+        vec![(0, 5, size("28.0 pt")), (5, 6, size("11.0 pt"))],
+    );
+    assert_eq!(
+        text.moved(CaretMotion::NextLine, heading, None),
+        words(vec![
+            format(TextFormat::FontSize("28.0 pt".to_owned())),
+            UtteranceSegment::text("Title"),
+        ]),
+        "the line break, not part of the line's content, changes nothing"
+    );
+    let bulleted = verbatim_model::TextAttributes {
+        bullet: Some(verbatim_model::BulletStyle::FilledRound),
+        ..size("11.0 pt")
+    };
+    let item = || formatted(line("item\n", 102, 0), vec![(0, 5, bulleted.clone())]);
+    assert_eq!(
+        text.moved(CaretMotion::NextLine, item(), None),
+        words(vec![
+            format(TextFormat::FontSize("11.0 pt".to_owned())),
+            format(TextFormat::Bullet(verbatim_model::BulletStyle::FilledRound)),
+            UtteranceSegment::text("item"),
+        ]),
+        "the bullet after the changes"
+    );
+    // Every line read says its bullet, which is no change of formatting.
+    assert_eq!(
+        text.moved(CaretMotion::NextLine, item(), None),
+        words(vec![
+            format(TextFormat::Bullet(verbatim_model::BulletStyle::FilledRound)),
+            UtteranceSegment::text("item"),
+        ])
+    );
+    // A word says none.
+    let word = formatted(
+        unit(TextUnit::Word, "item", 201),
+        vec![(0, 4, bulleted.clone())],
+    );
+    assert_eq!(
+        text.moved(CaretMotion::NextWord, item(), Some(word)),
+        words(vec![UtteranceSegment::text("item")])
+    );
+    // A line out of the list says nothing of it.
+    let plain = formatted(
+        line("after\n", 103, 0),
+        vec![(
+            0,
+            6,
+            verbatim_model::TextAttributes {
+                bullet: Some(verbatim_model::BulletStyle::None),
+                ..size("11.0 pt")
+            },
+        )],
+    );
+    assert_eq!(
+        text.moved(CaretMotion::NextLine, plain, None),
+        words(vec![UtteranceSegment::text("after")])
+    );
 }
 
 #[test]
-fn say_all_splits_a_paragraph_into_sentences_and_stops_on_a_key() {
-    let mut state = editing("x\n", 0);
-    let effects = reduce(&mut state, &command(ReviewCommand::SayAllFromCaret, 0));
-    let paragraph = TextChunk {
-        unit: TextUnit::Paragraph,
-        ..line("One. Two? Three!\r\n", 400, 0)
+fn a_background_color_is_named_alone_or_after_the_color() {
+    let mut text = editing("first\n", 0);
+    let colored = |color: &str, background: &str| verbatim_model::TextAttributes {
+        color: Some(color.to_owned()),
+        background_color: Some(background.to_owned()),
+        ..verbatim_model::TextAttributes::default()
     };
-    let effects = reduce(
-        &mut state,
-        &completed(
-            request_of(&effects),
-            TextReply::Chunks {
-                moved: 0,
-                chunks: vec![paragraph],
-            },
-        ),
+    let colored_line = formatted(
+        line("one two three four\n", 101, 0),
+        vec![
+            (0, 4, colored("black", "white")),
+            (4, 8, colored("dark red", "light grey")),
+            (8, 14, colored("dark red", "white")),
+            (14, 19, colored("black", "white")),
+        ],
     );
-    // Two sentences with speech, the third waiting; so little is left that
-    // the next paragraph is read at once, a paragraph on.
-    let pieces = say_all_pieces(&effects);
-    let texts: Vec<&str> = pieces.iter().map(|(_, text)| text.as_str()).collect();
-    assert_eq!(texts, ["One. ", "Two? "]);
     assert_eq!(
-        request(&effects).op,
-        read_ahead(
-            TextPoint::At(TextPosition::at(TextAnchor(400))),
-            Some(TextMovement {
-                unit: TextUnit::Paragraph,
-                count: 1
-            }),
-            TextUnit::Sentence,
+        text.moved(CaretMotion::NextLine, colored_line, None),
+        words(vec![
+            format(TextFormat::Color("black".to_owned())),
+            format(TextFormat::OnBackgroundColor("white".to_owned())),
+            UtteranceSegment::text("one"),
+            format(TextFormat::Color("dark red".to_owned())),
+            format(TextFormat::OnBackgroundColor("light grey".to_owned())),
+            UtteranceSegment::text("two"),
+            format(TextFormat::BackgroundColor("white".to_owned())),
+            UtteranceSegment::text("three"),
+            format(TextFormat::Color("black".to_owned())),
+            UtteranceSegment::text("four"),
+        ])
+    );
+}
+
+#[test]
+fn strikethrough_and_the_kind_of_underline_start_change_and_end() {
+    use verbatim_model::LineStyle;
+    let mut text = editing("first\n", 0);
+    let drawn = |strikethrough, underline_style| verbatim_model::TextAttributes {
+        strikethrough: Some(strikethrough),
+        underline_style: Some(underline_style),
+        // Read for the font attributes too; the kind is reported instead.
+        underline: Some(underline_style != LineStyle::None),
+        ..verbatim_model::TextAttributes::default()
+    };
+    let drawn_line = formatted(
+        line("a b c d e\n", 101, 0),
+        vec![
+            (0, 2, drawn(LineStyle::None, LineStyle::None)),
+            (2, 4, drawn(LineStyle::Single, LineStyle::Double)),
+            (4, 6, drawn(LineStyle::Double, LineStyle::Wavy)),
+            (6, 8, drawn(LineStyle::Double, LineStyle::Single)),
+            (8, 10, drawn(LineStyle::None, LineStyle::None)),
+        ],
+    );
+    assert_eq!(
+        text.moved(CaretMotion::NextLine, drawn_line, None),
+        words(vec![
+            UtteranceSegment::text("a"),
+            format(TextFormat::Strikethrough(LineStyle::Single)),
+            format(TextFormat::UnderlineStyle(LineStyle::Double)),
+            UtteranceSegment::text("b"),
+            format(TextFormat::Strikethrough(LineStyle::Double)),
+            format(TextFormat::UnderlineStyle(LineStyle::Wavy)),
+            UtteranceSegment::text("c"),
+            format(TextFormat::UnderlineStyle(LineStyle::Single)),
+            UtteranceSegment::text("d"),
+            format(TextFormat::Strikethrough(LineStyle::None)),
+            format(TextFormat::UnderlineStyle(LineStyle::None)),
+            UtteranceSegment::text("e"),
+        ])
+    );
+}
+
+#[test]
+fn a_link_is_said_where_it_starts_and_where_it_ends() {
+    let mut text = editing("first\n", 0);
+    let linked = |link| verbatim_model::TextAttributes {
+        link,
+        ..verbatim_model::TextAttributes::default()
+    };
+    let linked_line = formatted(
+        line("see the page here\n", 101, 0),
+        vec![
+            (0, 8, linked(false)),
+            (8, 12, linked(true)),
+            (12, 18, linked(false)),
+        ],
+    );
+    assert_eq!(
+        text.moved(CaretMotion::NextLine, linked_line, None),
+        words(vec![
+            UtteranceSegment::text("see the"),
+            format(TextFormat::Link),
+            UtteranceSegment::text("page"),
+            format(TextFormat::NotLink),
+            UtteranceSegment::text("here"),
+        ])
+    );
+}
+
+#[test]
+fn a_focus_moving_while_the_before_read_runs_leaves_the_key_silent() {
+    // A focus pending while the key's starting read is out withdraws the
+    // read; the key is sent and says nothing, and the focus is taken.
+    let mut text = editing("abc\n", 0);
+    assert_eq!(
+        text.key(CaretMotion::NextCharacter, false),
+        [Heard::Asked(starting_read(
+            CaretMotion::NextCharacter,
+            TextProvider::Uia
+        ))]
+    );
+    let focused = text
+        .desk
+        .focus(ONE, &node(6, Role::Button, StateSet::new()), &[]);
+    assert_eq!(
+        focused,
+        desk::focus_heard(
+            ONE,
+            desk::focus_now_in(ONE, 6, &[]),
+            vec![vec![
+                UtteranceSegment::label("Body"),
+                UtteranceSegment::new(SegmentContent::Role(Role::Button)),
+            ]]
         )
     );
-    // Reaching the second sentence moves the caret there and hands on the
-    // third.
-    let effects = reduce(&mut state, &reached(pieces[1].0));
-    assert_eq!(
-        request(&effects).op,
-        TextOp::MoveCaret(TextPoint::At(TextPosition {
-            anchor: TextAnchor(400),
-            offset: 5
-        }))
-    );
-    let third = say_all_pieces(&effects);
-    assert_eq!(third.len(), 1);
-    assert_eq!(third[0].1, "Three!");
-    assert_eq!(effects.len(), 2, "{effects:?}");
-    // A key stops it, dropping what was waiting; a late mark is ignored.
-    let effects = reduce(
-        &mut state,
-        &Input::Queue {
-            trace_id: verbatim_model::TraceId::from_raw(0),
-            at_us: 0,
-            input: verbatim_model::request::QueueInput::SpeechCut,
-        },
-    );
-    assert_eq!(effects, vec![Effect::KeepDisplayOn(false)]);
-    assert_eq!(reduce(&mut state, &reached(third[0].0)), vec![]);
 }
 
-/// Speech the reducer did not cut off itself cuts say-all's utterances
-/// off: once the pipeline reports them, say-all stops, as on a key, rather
-/// than waiting for marks playback will never reach.
+/// A chord in a text field says nothing for the line it changes, and a
+/// paste's caret tell, with no change of selection, says nothing either
+/// (`docs/design/caret-selection-rework.md`).
 #[test]
-fn say_all_stops_when_its_utterance_is_cut_off_elsewhere() {
-    let mut state = editing(
-        "x
-", 0,
-    );
-    let effects = reduce(&mut state, &command(ReviewCommand::SayAllFromCaret, 0));
-    let effects = reduce(
-        &mut state,
-        &completed(
-            request_of(&effects),
-            TextReply::Chunks {
-                moved: 0,
-                chunks: vec![
-                    line(
-                        "One.
-", 100, 0,
-                    ),
-                    line(
-                        "Two.
-", 101, 0,
-                    ),
-                ],
-            },
-        ),
-    );
-    let pieces = say_all_pieces(&effects);
-    assert_eq!(pieces.len(), 2, "{pieces:?}");
-    // An utterance with no mark of say-all's changes nothing.
+fn a_paste_says_nothing_for_the_line_it_changes() {
+    let mut text = editing("Nam\n", 3);
+    assert_eq!(text.press(PressAction::EditingChord), []);
+    assert_eq!(text.value_changed(FIELD), []);
     assert_eq!(
-        reduce(
-            &mut state,
+        text.selection(
+            caret_on(line("Name\n", 100, 4), None),
+            Some(differing(&[], None))
+        ),
+        []
+    );
+}
+
+#[test]
+fn speech_is_stamped_with_the_number_of_the_key_on_whose_behalf_it_is_spoken() {
+    // A held Backspace, key 1, and "c" typed as key 2 behind it: the echo
+    // is spoken at the typed key's turn, after Backspace's starting read,
+    // and carries the letter's number.
+    let mut text = editing("ab", 2);
+    assert_eq!(
+        text.key(CaretMotion::Backspace, false),
+        [Heard::Asked(starting_read(
+            CaretMotion::Backspace,
+            TextProvider::Uia
+        ))]
+    );
+    assert_eq!(text.typed("c"), []);
+    let before = line("ab", 101, 2);
+    let at = unit_at(&before, TextUnit::Character);
+    assert_eq!(
+        text.reply(started(before, None, at)),
+        [Heard::Strokes(1), queued(vec![character("c")])]
+    );
+    assert_eq!(text.stamps, [Some(KeySeq::new(2))]);
+}
+
+#[test]
+fn speech_of_an_unkeyed_input_or_a_forgotten_key_carries_no_number() {
+    let mut text = editing("ab", 2);
+    let copied = |text: &mut Text, trace_id| {
+        let effects = verbatim_core::reduce(
+            &mut text.desk.state,
+            &mut text.desk.runtime,
+            &Input::ClipboardCopied {
+                trace_id,
+                text: "ab".to_owned(),
+                copied: true,
+            },
+        );
+        text.stamps.clear();
+        let _ = text.take(effects);
+        text.stamps.clone()
+    };
+    // Typed "c" as key 1, its press traced `first`.
+    let first = TraceId::from_raw(28);
+    let typed = |text: &mut Text, trace_id, key| {
+        let press = Press {
+            key_seq: KeySeq::new(key),
+            pressed_at_us: text.desk.at_us,
+            action: PressAction::Typed {
+                text: "c".to_owned(),
+            },
+        };
+        let effects = verbatim_core::reduce(
+            &mut text.desk.state,
+            &mut text.desk.runtime,
             &Input::Queue {
-                trace_id: verbatim_model::TraceId::from_raw(0),
-                at_us: 0,
-                input: verbatim_model::request::QueueInput::UtteranceCancelled {
-                    marks: vec![SpeechMark(9_999)],
-                    at_ms: 0
-                }
-            }
-        ),
-        vec![]
-    );
-    let effects = reduce(
-        &mut state,
-        &Input::Queue {
-            trace_id: verbatim_model::TraceId::from_raw(0),
-            at_us: 0,
-            input: verbatim_model::request::QueueInput::UtteranceCancelled {
-                marks: vec![pieces[0].0],
-                at_ms: 0,
+                trace_id,
+                at_us: text.desk.at_us,
+                input: QueueInput::Press(Box::new(press)),
             },
-        },
-    );
-    assert_eq!(effects, vec![Effect::KeepDisplayOn(false)]);
-    // Its other utterance's report, and a late mark, find nothing waiting.
-    assert_eq!(
-        reduce(
-            &mut state,
-            &Input::Queue {
-                trace_id: verbatim_model::TraceId::from_raw(0),
-                at_us: 0,
-                input: verbatim_model::request::QueueInput::UtteranceCancelled {
-                    marks: vec![pieces[1].0],
-                    at_ms: 0
-                }
-            }
-        ),
-        vec![]
-    );
-    assert_eq!(reduce(&mut state, &reached(pieces[1].0)), vec![]);
+        );
+        let _ = text.take(effects);
+    };
+    typed(&mut text, first, 1);
+    assert_eq!(copied(&mut text, first), [Some(KeySeq::new(1))]);
+    assert_eq!(copied(&mut text, TraceId::from_raw(29)), [None]);
+    // 1,024 newer keys push the first one's number out.
+    for key in 2..=1_025 {
+        typed(&mut text, TraceId::from_raw(30), key);
+    }
+    assert_eq!(copied(&mut text, first), [None]);
 }
 
-/// An utterance the synthesizer failed on counts as heard: say-all carries
-/// on past it, as NVDA's speech manager does when a later index arrives,
-/// leaving the caret where the last heard unit put it, and moves it again
-/// when playback reaches the next utterance.
+/// A console host's terminal, 20 cells wide and 4 rows high, showing
+/// `text`, its caret then placed by `caret`, an escape sequence, as Core
+/// reads it through its terminal model (`terminal_support`).
+fn terminal(text: &str, caret: &str) -> terminal_support::Session {
+    let mut outpost =
+        terminal_support::Outpost::new(verbatim_term_sim::Flavor::ConsoleHost, 20, 4, 100);
+    outpost.sim.write(text.as_bytes());
+    outpost.sim.write(caret.as_bytes());
+    terminal_support::Session::with(outpost)
+}
+
+/// Review command `command`, its first press, as the terminal session
+/// takes it.
+fn terminal_command(command: ReviewCommand) -> Input {
+    Input::Command {
+        pressed_at_ms: 0,
+        key_seq: KeySeq::NONE_YET,
+        trace_id: TraceId::from_raw(1),
+        command,
+        repeat: 0,
+    }
+}
+
+/// Heard in a terminal with no key: each utterance's words.
+fn terminal_heard(words: &[&str]) -> Vec<terminal_support::Said> {
+    words
+        .iter()
+        .map(|words| terminal_support::said(None, words))
+        .collect()
+}
+
+/// A terminal row's line ends at its last character: padding is never
+/// reviewed (`books/dev/src/explanation/design/terminal-model.md`, "Features and settings"), so moving on
+/// from the last character is at the edge, padded or not.
 #[test]
-fn say_all_carries_on_past_an_utterance_that_failed() {
-    let mut state = editing(
-        "x
-", 0,
-    );
-    let effects = reduce(&mut state, &command(ReviewCommand::SayAllFromCaret, 0));
-    let effects = reduce(
-        &mut state,
-        &completed(
-            request_of(&effects),
-            TextReply::Chunks {
-                moved: 0,
-                chunks: vec![
-                    line(
-                        "One.
-", 100, 0,
-                    ),
-                    line(
-                        "Two.
-", 101, 0,
-                    ),
-                    line(
-                        "Three.
-", 102, 0,
-                    ),
-                ],
-            },
-        ),
-    );
-    let pieces = say_all_pieces(&effects);
-    assert_eq!(pieces.len(), 2, "{pieces:?}");
-    // The first fails: nothing moves, and the third is handed on.
-    let effects = reduce(
-        &mut state,
-        &Input::Queue {
-            trace_id: verbatim_model::TraceId::from_raw(0),
-            at_us: 0,
-            input: verbatim_model::request::QueueInput::UtteranceFailed {
-                marks: vec![pieces[0].0],
-            },
-        },
-    );
-    let third = say_all_pieces(&effects);
-    assert_eq!(third.len(), 1, "{effects:?}");
-    assert_eq!(third[0].1, "Three.");
-    assert_eq!(effects.len(), 1, "{effects:?}");
-    // Playback reaches the second: the caret moves there.
-    let effects = reduce(&mut state, &reached(pieces[1].0));
-    assert_eq!(
-        request(&effects).op,
-        TextOp::MoveCaret(TextPoint::At(TextPosition::at(TextAnchor(101))))
-    );
+fn a_terminal_rows_line_ends_at_its_last_character() {
+    for row in ["ab", "ab        "] {
+        // The caret on "b".
+        let mut session = terminal(row, "\x1b[1;2H");
+        session.input(&terminal_command(ReviewCommand::ReviewNextCharacter));
+        assert_eq!(
+            session.heard(),
+            terminal_heard(&["Message(Right) b"]),
+            "{row:?}"
+        );
+    }
+}
+
+/// In a terminal, bottom reads the review cursor's row again, as every
+/// review command there does (`books/dev/src/explanation/design/terminal-model.md`, "The
+/// review cursor"), then the text's last row.
+#[test]
+fn review_bottom_in_a_terminal_reads_the_last_row() {
+    let mut session = terminal("$ ls\r\ndone", "\x1b[1;3H");
+    session.input(&terminal_command(ReviewCommand::ReviewBottom));
+    assert_eq!(session.heard(), terminal_heard(&["done"]));
+}
+
+/// In a terminal, start of line reads the review cursor's row again first
+/// (`books/dev/src/explanation/design/terminal-model.md`, "The review cursor"), then says the
+/// row's first cell.
+#[test]
+fn start_of_line_in_a_terminal_says_the_rows_first_cell() {
+    let mut session = terminal("ab cd", "\x1b[1;4H");
+    session.input(&terminal_command(ReviewCommand::ReviewStartOfLine));
+    assert_eq!(session.heard(), terminal_heard(&["a"]));
 }
 
 #[test]
-fn a_caret_key_after_say_all_starts_from_where_say_all_moved_the_caret() {
-    // From `notepad_say_all`: Notepad last reported the caret on the first
-    // line, say-all moves it to the second as playback reaches it, and a
-    // key stops say-all; Notepad's report of the move was observed in the
-    // key's millisecond, so it may show the key's effect. The key's watch
-    // starts from the second line's start, where say-all put the caret, as
-    // NVDA's say-all sets the caret before a key reads it.
-    let mut state = SrState::new();
-    focus(&mut state, node(5, Role::EditableText, StateSet::new()));
-    let _ = caret_event_at(&mut state, line("One.\n", 100, 0), KEY_PRESSED_AT - 1_000);
-    let effects = say_all_by_line(
-        &mut state,
-        vec![line("One.\n", 100, 0), line("Two.\n", 101, 0)],
-    );
-    let pieces = say_all_pieces(&effects);
-    assert_eq!(pieces.len(), 2);
-    let _ = reduce(&mut state, &reached(pieces[0].0));
-    let effects = reduce(&mut state, &reached(pieces[1].0));
-    assert_eq!(
-        caret_move(&effects),
-        Some(TextPoint::At(TextPosition::at(TextAnchor(101))))
-    );
-    let _ = reduce(
-        &mut state,
-        &Input::Queue {
-            trace_id: verbatim_model::TraceId::from_raw(0),
-            at_us: (KEY_PRESSED_AT - 2) * 1_000,
-            input: verbatim_model::request::QueueInput::SpeechCut,
-        },
-    );
-    let _ = caret_event_at(&mut state, line("Two.\n", 102, 0), KEY_PRESSED_AT);
-    let effects = reduce(&mut state, &key(CaretMotion::NextCharacter, false));
-    assert!(matches!(request(&effects).op, TextOp::ReadCaret(_)));
-}
+fn a_terminals_typing_waits_for_its_reading_rules_to_show_it() {
+    // Its echo comes from the reading rules, once the terminal shows it
+    // (`tests/terminal_reading.rs`); typing alone says nothing, nor does a
+    // change that shows nothing new.
+    let mut session = terminal("$ ", "");
+    let typed = |text: &str| Input::CharacterTyped {
+        key_seq: KeySeq::NONE_YET,
+        trace_id: TraceId::from_raw(8),
+        text: text.to_owned(),
+        at_ms: 0,
+    };
+    session.input(&typed("l"));
+    session.live(10);
+    assert_eq!(session.heard(), []);
 
-#[test]
-fn say_all_from_the_review_cursor_leaves_the_review_cursor_where_it_stopped() {
-    let mut state = reviewing("one\n", 0);
-    let effects = reduce(&mut state, &command(ReviewCommand::SayAllFromReview, 0));
-    let first = request(&effects);
+    // With terminal passwords spoken, typing is echoed at once.
+    session.input(&Input::Settings(ReaderSettings {
+        speak_terminal_passwords: true,
+        ..ReaderSettings::default()
+    }));
+    session.input(&typed("x"));
     assert_eq!(
-        first.op,
-        read_ahead(
-            TextPoint::At(TextPosition::at(TextAnchor(100))),
-            None,
-            TextUnit::Sentence,
-        )
-    );
-    let effects = reduce(
-        &mut state,
-        &completed(
-            first.query_id,
-            TextReply::Chunks {
-                moved: 0,
-                chunks: vec![TextChunk {
-                    unit: TextUnit::Paragraph,
-                    ..line("A b. C d.\n", 500, 0)
-                }],
-            },
-        ),
-    );
-    let pieces = say_all_pieces(&effects);
-    let _ = reduce(&mut state, &reached(pieces[1].0));
-    let _ = reduce(
-        &mut state,
-        &Input::Queue {
-            trace_id: verbatim_model::TraceId::from_raw(0),
-            at_us: 0,
-            input: verbatim_model::request::QueueInput::SpeechCut,
-        },
-    );
-    // The next review command reads the line where reading stopped.
-    let effects = reduce(&mut state, &command(ReviewCommand::ReviewCurrentLine, 0));
-    assert_eq!(
-        request(&effects).op,
-        TextOp::Read(TextRead {
-            at: TextPoint::At(TextPosition {
-                anchor: TextAnchor(500),
-                offset: 5
-            }),
-            movement: None,
-            unit: TextUnit::Line,
-        })
+        session.heard(),
+        [terminal_support::said(Some(TraceId::from_raw(8)), "x")]
     );
 }
 
 /// One part of a say-all utterance: an index mark, or text.
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 enum Said {
     Mark(SpeechMark),
     Text(String),
 }
 
-/// Every say-all utterance among `effects`, each as its marks and texts in
-/// order, checked to be marked as read by say-all and to open with a mark.
-/// Any other speech fails the test, so none is skipped unchecked.
-fn say_all_utterances(effects: &[Effect]) -> Vec<Vec<Said>> {
-    effects
-        .iter()
-        .filter_map(|effect| match effect {
-            Effect::Speak(utterance, _) => {
-                assert!(utterance.say_all, "{utterance:?} is read by say-all");
-                let said: Vec<Said> = utterance
-                    .segments
-                    .iter()
-                    .map(|segment| match &segment.content {
-                        SegmentContent::Mark(mark) => Said::Mark(*mark),
-                        SegmentContent::Text(text) => Said::Text(text.clone()),
-                        _ => panic!("say-all speech is marks and text: {utterance:?}"),
-                    })
-                    .collect();
-                assert!(
-                    matches!(said.first(), Some(Said::Mark(_))),
-                    "an utterance opens with a mark: {said:?}"
-                );
-                Some(said)
-            }
-            _ => None,
-        })
-        .collect()
+/// Say-all's utterances among `heard`, each as its marks and texts in
+/// order, checked to open with a mark, and every other effect, in order.
+/// Any other part of say-all's speech fails the test, so none is skipped
+/// unchecked.
+fn said_all(heard: Vec<Heard>) -> (Vec<Vec<Said>>, Vec<Heard>) {
+    let mut said = Vec::new();
+    let mut rest = Vec::new();
+    for heard in heard {
+        let Heard::SayAll(segments) = heard else {
+            rest.push(heard);
+            continue;
+        };
+        let parts: Vec<Said> = segments
+            .into_iter()
+            .map(|segment| match segment.content {
+                SegmentContent::Mark(mark) => Said::Mark(mark),
+                SegmentContent::Text(text) => Said::Text(text),
+                other => panic!("say-all speech is marks and text: {other:?}"),
+            })
+            .collect();
+        assert!(
+            matches!(parts.first(), Some(Said::Mark(_))),
+            "an utterance opens with a mark: {parts:?}"
+        );
+        said.push(parts);
+    }
+    (said, rest)
 }
 
-/// The texts of an utterance, without its marks.
-fn texts_of(said: &[Said]) -> Vec<&str> {
+/// The texts of each utterance, without their marks.
+fn texts_of(said: &[Vec<Said>]) -> Vec<Vec<&str>> {
     said.iter()
-        .filter_map(|part| match part {
-            Said::Text(text) => Some(text.as_str()),
-            Said::Mark(_) => None,
+        .map(|parts| {
+            parts
+                .iter()
+                .filter_map(|part| match part {
+                    Said::Text(text) => Some(text.as_str()),
+                    Said::Mark(_) => None,
+                })
+                .collect()
         })
         .collect()
 }
@@ -3428,125 +3315,387 @@ fn marks_of(said: &[Said]) -> Vec<SpeechMark> {
         .collect()
 }
 
-/// The caret move among `effects`, if there is one.
-fn caret_move(effects: &[Effect]) -> Option<TextPoint> {
-    let moves: Vec<TextPoint> = effects
-        .iter()
-        .filter_map(|effect| match effect {
-            Effect::Text(TextRequest {
-                op: TextOp::MoveCaret(point),
-                ..
-            }) => Some(*point),
-            _ => None,
-        })
-        .collect();
-    assert!(moves.len() <= 1, "one caret move at most: {effects:?}");
-    moves.first().copied()
+/// Say-all's read ahead from `at`, after `movement`, by `unit`.
+fn read_ahead(at: TextPoint, movement: Option<(TextUnit, i32)>, unit: TextUnit) -> TextOp {
+    TextOp::ReadAhead(verbatim_model::TextReadAhead {
+        at,
+        movement: movement.map(|(unit, count)| verbatim_model::TextMovement { unit, count }),
+        unit,
+        count: 20,
+    })
 }
 
-/// Starts say-all from the caret of a document with no sentence unit,
-/// answering its first read with `chunks`, and returns the effects.
-fn say_all_by_line(state: &mut SrState, chunks: Vec<TextChunk>) -> Vec<Effect> {
-    let effects = reduce(state, &command(ReviewCommand::SayAllFromCaret, 0));
-    let effects = reduce(
-        state,
-        &completed(
-            request_of(&effects),
-            TextReply::UnsupportedUnit(TextUnit::Sentence),
-        ),
+/// The caret moved to the start of the line at `anchor`.
+fn caret_to(anchor: u64) -> Heard {
+    Heard::Asked(TextOp::MoveCaret(line_start(anchor)))
+}
+
+/// Say-all's first read, from the caret by sentence.
+fn by_sentence_from_caret() -> Heard {
+    Heard::Asked(read_ahead(TextPoint::Caret, None, TextUnit::Sentence))
+}
+
+impl Text {
+    /// Say-all from the caret, its first read answered that there are no
+    /// sentences and its read by line answered with `lines`: that answer's
+    /// say-all utterances and other effects.
+    fn by_line(&mut self, lines: Vec<TextChunk>) -> (Vec<Vec<Said>>, Vec<Heard>) {
+        assert_eq!(
+            self.command(ReviewCommand::SayAllFromCaret, 0),
+            [Heard::Display(true), by_sentence_from_caret()]
+        );
+        assert_eq!(
+            self.reply(TextReply::UnsupportedUnit(TextUnit::Sentence)),
+            [Heard::Asked(read_ahead(
+                TextPoint::Caret,
+                None,
+                TextUnit::Line
+            ))]
+        );
+        said_all(self.chunks(lines))
+    }
+
+    /// Answers the one request out with `chunks`, moved by none.
+    fn chunks(&mut self, chunks: Vec<TextChunk>) -> Vec<Heard> {
+        self.reply(TextReply::Chunks { moved: 0, chunks })
+    }
+
+    /// Playback reached `mark`: say-all's utterances and other effects.
+    fn mark(&mut self, mark: SpeechMark) -> (Vec<Vec<Said>>, Vec<Heard>) {
+        said_all(self.step(QueueInput::MarkReached(mark)))
+    }
+
+    /// Answers the caret move out, minting the next baseline: every
+    /// effect.
+    fn placed(&mut self) -> Vec<Heard> {
+        self.baseline += 1;
+        let read_at_us = self.desk.at_us;
+        self.reply(TextReply::CaretPlaced {
+            read_at_us,
+            baseline: TextAnchor(self.baseline),
+        })
+    }
+
+    /// The speech side's cut, or `input` from it, handled at once.
+    fn speech(&mut self, input: QueueInput) -> Vec<Heard> {
+        self.step(input)
+    }
+}
+
+/// Nothing said and nothing else done.
+const NOTHING: (Vec<Vec<Said>>, Vec<Heard>) = (Vec::new(), Vec::new());
+
+#[test]
+fn say_all_reads_by_line_where_there_are_no_sentences_and_moves_the_caret() {
+    let mut text = editing("First.\n", 0);
+    let (said, rest) = text.by_line(vec![line("First.\n", 100, 0)]);
+    assert_eq!(texts_of(&said), [["First."]]);
+    // Little is left to speak, so the next batch is read at once, a line on
+    // from the last line read.
+    assert_eq!(
+        rest,
+        [Heard::Asked(read_ahead(
+            line_start(100),
+            Some((TextUnit::Line, 1)),
+            TextUnit::Line
+        ))]
     );
-    reduce(
-        state,
-        &completed(request_of(&effects), TextReply::Chunks { moved: 0, chunks }),
-    )
+    // Playback reaches the first line while that read is out: its entry
+    // waits its turn.
+    assert_eq!(text.mark(marks_of(&said[0])[0]), NOTHING);
+    // The document ends: at the mark's turn the caret moves to the line,
+    // say-all is over, and the display may sleep.
+    assert_eq!(
+        text.chunks(vec![line("First.\n", 100, 0)]),
+        [Heard::Display(false), caret_to(100)]
+    );
+}
+
+#[test]
+fn say_all_hands_out_a_batch_a_piece_at_a_time_and_ends_after_the_last() {
+    let mut text = editing("x\n", 0);
+    let last = TextChunk {
+        last: true,
+        ..line("Three.", 102, 0)
+    };
+    let (said, rest) = text.by_line(vec![line("One.\n", 100, 0), line("Two.\n", 101, 0), last]);
+    // Two pieces with speech, the third waiting; the text's end was read,
+    // so nothing more is asked for.
+    assert_eq!(texts_of(&said), [["One."], ["Two."]]);
+    assert_eq!(rest, []);
+    // Reaching the first moves the caret there and hands on the third,
+    // with its own mark.
+    let (third, rest) = text.mark(marks_of(&said[0])[0]);
+    assert_eq!(
+        (texts_of(&third), rest),
+        (vec![vec!["Three."]], vec![caret_to(100)])
+    );
+    assert_eq!(text.placed(), []);
+    // Reaching the second moves the caret on.
+    assert_eq!(
+        text.mark(marks_of(&said[1])[0]),
+        (Vec::new(), vec![caret_to(101)])
+    );
+    assert_eq!(text.placed(), []);
+    // The last piece reached: the caret moves to it and say-all ends.
+    assert_eq!(
+        text.mark(marks_of(&third[0])[0]),
+        (Vec::new(), vec![Heard::Display(false), caret_to(102)])
+    );
+}
+
+#[test]
+fn say_all_reads_the_next_batch_when_fewer_than_ten_pieces_are_left() {
+    let mut text = editing("x\n", 0);
+    // Twelve lines to speak: two with speech, ten buffered, which is not
+    // yet fewer than ten.
+    let lines: Vec<TextChunk> = (0..12)
+        .map(|index| line("A b.\n", 100 + index, 0))
+        .collect();
+    let (said, rest) = text.by_line(lines);
+    assert_eq!(rest, []);
+    let mut marks: Vec<SpeechMark> = said.iter().map(|parts| marks_of(parts)[0]).collect();
+    // Each mark reached moves the caret, holding the queue until the move
+    // is answered, and hands on the next line; a read it wants joins
+    // behind it.
+    let mut reach = |text: &mut Text, index: usize| {
+        let (said, rest) = text.mark(marks[index]);
+        marks.extend(said.iter().map(|parts| marks_of(parts)[0]));
+        assert_eq!(rest, [caret_to(100 + u64::try_from(index).expect("small"))]);
+        text.placed()
+    };
+    // Each line reached leaves one fewer: eleven, then ten, then nine, when
+    // the next batch is read, once.
+    assert_eq!(reach(&mut text, 0), []);
+    assert_eq!(reach(&mut text, 1), []);
+    assert_eq!(
+        reach(&mut text, 2),
+        [Heard::Asked(read_ahead(
+            line_start(111),
+            Some((TextUnit::Line, 1)),
+            TextUnit::Line
+        ))]
+    );
+}
+
+#[test]
+fn say_all_splits_a_paragraph_into_sentences_and_stops_on_a_key() {
+    let mut text = editing("x\n", 0);
+    assert_eq!(
+        text.command(ReviewCommand::SayAllFromCaret, 0),
+        [Heard::Display(true), by_sentence_from_caret()]
+    );
+    let paragraph = TextChunk {
+        unit: TextUnit::Paragraph,
+        ..line("One. Two? Three!\r\n", 400, 0)
+    };
+    // Two sentences with speech, the third waiting; so little is left that
+    // the next paragraph is read at once, a paragraph on.
+    let (said, rest) = said_all(text.chunks(vec![paragraph]));
+    assert_eq!(texts_of(&said), [["One. "], ["Two? "]]);
+    assert_eq!(
+        rest,
+        [Heard::Asked(read_ahead(
+            line_start(400),
+            Some((TextUnit::Paragraph, 1)),
+            TextUnit::Sentence
+        ))]
+    );
+    assert_eq!(said_all(text.chunks(Vec::new())), NOTHING);
+    // Reaching the second sentence moves the caret there and hands on the
+    // third.
+    let (third, rest) = text.mark(marks_of(&said[1])[0]);
+    assert_eq!(texts_of(&third), [["Three!"]]);
+    assert_eq!(
+        rest,
+        [Heard::Asked(TextOp::MoveCaret(TextPoint::At(
+            TextPosition {
+                anchor: TextAnchor(400),
+                offset: 5
+            }
+        )))]
+    );
+    assert_eq!(text.placed(), []);
+    // A key's cut stops it, dropping what was waiting; a late mark is
+    // ignored.
+    assert_eq!(text.speech(QueueInput::SpeechCut), [Heard::Display(false)]);
+    assert_eq!(text.mark(marks_of(&third[0])[0]), NOTHING);
+}
+
+/// Speech the reducer did not cut off itself cuts say-all's utterances
+/// off: once the pipeline reports them, say-all stops, as on a key, rather
+/// than waiting for marks playback will never reach.
+#[test]
+fn say_all_stops_when_its_utterance_is_cut_off_elsewhere() {
+    let mut text = editing("x\n", 0);
+    let _ = text.command(ReviewCommand::SayAllFromCaret, 0);
+    let (said, _) = said_all(text.chunks(vec![line("One.\n", 100, 0), line("Two.\n", 101, 0)]));
+    assert_eq!(texts_of(&said), [["One."], ["Two."]]);
+    let cut = |marks| QueueInput::UtteranceCancelled { marks, at_ms: 0 };
+    // An utterance with no mark of say-all's changes nothing.
+    assert_eq!(text.speech(cut(vec![SpeechMark(9_999)])), []);
+    // Its read out is withdrawn as it stops.
+    assert_eq!(
+        text.speech(cut(vec![marks_of(&said[0])[0]])),
+        [Heard::Display(false), Heard::Cancelled]
+    );
+    // Its other utterance's report, and a late mark, find nothing waiting.
+    assert_eq!(text.speech(cut(vec![marks_of(&said[1])[0]])), []);
+    assert_eq!(text.mark(marks_of(&said[1])[0]), NOTHING);
+}
+
+/// An utterance the synthesizer failed on counts as heard: say-all carries
+/// on past it, as NVDA's speech manager does when a later index arrives,
+/// leaving the caret where the last heard unit put it, and moves it again
+/// when playback reaches the next utterance.
+#[test]
+fn say_all_carries_on_past_an_utterance_that_failed() {
+    let mut text = editing("x\n", 0);
+    let last = TextChunk {
+        last: true,
+        ..line("Three.\n", 102, 0)
+    };
+    let (said, _) = text.by_line(vec![line("One.\n", 100, 0), line("Two.\n", 101, 0), last]);
+    assert_eq!(texts_of(&said), [["One."], ["Two."]]);
+    // The first fails: nothing moves, and the third is handed on.
+    let (third, rest) = said_all(text.speech(QueueInput::UtteranceFailed {
+        marks: vec![marks_of(&said[0])[0]],
+    }));
+    assert_eq!((texts_of(&third), rest), (vec![vec!["Three."]], Vec::new()));
+    // Playback reaches the second: the caret moves there.
+    assert_eq!(
+        text.mark(marks_of(&said[1])[0]),
+        (Vec::new(), vec![caret_to(101)])
+    );
+}
+
+#[test]
+fn a_caret_key_after_say_all_starts_from_where_say_all_moved_the_caret() {
+    // From `notepad_say_all`: say-all moves the caret to the second line as
+    // playback reaches it, and a key stops say-all; Notepad's caret tell
+    // of the move reaches Core after it. The key's starting read reads
+    // the caret where say-all put it.
+    let mut text = editing("One.\n", 0);
+    let last = TextChunk {
+        last: true,
+        ..line("Two.\n", 101, 0)
+    };
+    let (said, _) = text.by_line(vec![line("One.\n", 100, 0), last]);
+    assert_eq!(texts_of(&said), [["One."], ["Two."]]);
+    let _ = text.mark(marks_of(&said[0])[0]);
+    let _ = text.placed();
+    assert_eq!(
+        text.mark(marks_of(&said[1])[0]),
+        (Vec::new(), vec![Heard::Display(false), caret_to(101)])
+    );
+    let _ = text.placed();
+    assert_eq!(
+        text.selection(caret_on(line("Two.\n", 101, 0), None), None),
+        []
+    );
+    assert_eq!(
+        text.key(CaretMotion::NextCharacter, false),
+        [Heard::Asked(starting_read(
+            CaretMotion::NextCharacter,
+            TextProvider::Uia
+        ))]
+    );
+}
+
+#[test]
+fn say_all_from_the_review_cursor_leaves_the_review_cursor_where_it_stopped() {
+    let mut text = reviewing("one\n", 0);
+    assert_eq!(
+        text.command(ReviewCommand::SayAllFromReview, 0),
+        [
+            Heard::Display(true),
+            Heard::Asked(read_ahead(line_start(100), None, TextUnit::Sentence))
+        ]
+    );
+    let paragraph = TextChunk {
+        unit: TextUnit::Paragraph,
+        last: true,
+        ..line("A b. C d.\n", 500, 0)
+    };
+    let (said, _) = said_all(text.chunks(vec![paragraph]));
+    assert_eq!(texts_of(&said), [["A b. "], ["C d."]]);
+    // Reaching the second sentence, the last, moves the review cursor,
+    // asking nothing, and say-all ends.
+    assert_eq!(
+        text.mark(marks_of(&said[1])[0]),
+        (Vec::new(), vec![Heard::Display(false)])
+    );
+    // The next review command reads the line where reading stopped.
+    assert_eq!(
+        text.command(ReviewCommand::ReviewCurrentLine, 0),
+        [Heard::Asked(line_read(
+            TextPoint::At(TextPosition {
+                anchor: TextAnchor(500),
+                offset: 5
+            }),
+            None
+        ))]
+    );
 }
 
 #[test]
 fn say_all_splits_lines_at_their_last_sentence_end_and_joins_a_sentence_across_lines() {
-    let mut state = editing("x\n", 0);
+    let mut text = editing("x\n", 0);
     let last = TextChunk {
         last: true,
         ..line("line.\n", 102, 0)
     };
-    let effects = say_all_by_line(
-        &mut state,
-        vec![
-            line(
-                "Verbatim is written in Rust. It is informed by NVDA\n",
-                100,
-                0,
-            ),
-            line("but not constrained by it. A last\n", 101, 0),
-            last,
-        ],
-    );
+    let (said, rest) = text.by_line(vec![
+        line(
+            "Verbatim is written in Rust. It is informed by NVDA\n",
+            100,
+            0,
+        ),
+        line("but not constrained by it. A last\n", 101, 0),
+        last,
+    ]);
     // The first line up to its sentence end, then the sentence that runs
     // on to the second line spoken whole, with the second line's mark
     // where its text starts; the text's end was read, so nothing more is
     // asked for.
-    let utterances = say_all_utterances(&effects);
-    assert_eq!(utterances.len(), 2, "{effects:?}");
-    assert_eq!(effects.len(), 2, "{effects:?}");
-    let [first, second] = [&utterances[0], &utterances[1]];
-    assert!(matches!(first.as_slice(), [Said::Mark(_), Said::Text(_)]));
-    assert_eq!(texts_of(first), ["Verbatim is written in Rust. "]);
-    assert!(matches!(
-        second.as_slice(),
-        [Said::Mark(_), Said::Text(_), Said::Mark(_), Said::Text(_)]
-    ));
     assert_eq!(
-        texts_of(second),
-        ["It is informed by NVDA ", "but not constrained by it. "]
+        texts_of(&said),
+        [
+            vec!["Verbatim is written in Rust. "],
+            vec!["It is informed by NVDA ", "but not constrained by it. "]
+        ]
     );
-
+    assert_eq!(rest, []);
+    let [first, second] = [marks_of(&said[0]), marks_of(&said[1])];
+    assert_eq!((first.len(), second.len()), (1, 2));
     // The first line reached: the caret moves to its start, and the last
     // utterance is handed on, the text held back at the end spoken with
     // the last line.
-    let effects = reduce(&mut state, &reached(marks_of(first)[0]));
+    let (third, rest) = text.mark(first[0]);
     assert_eq!(
-        caret_move(&effects),
-        Some(TextPoint::At(TextPosition::at(TextAnchor(100))))
+        (texts_of(&third), rest),
+        (vec![vec!["A last ", "line."]], vec![caret_to(100)])
     );
-    let third = say_all_utterances(&effects);
-    assert_eq!(third.len(), 1);
-    assert_eq!(effects.len(), 2, "{effects:?}");
-    assert!(matches!(
-        third[0].as_slice(),
-        [Said::Mark(_), Said::Text(_), Said::Mark(_), Said::Text(_)]
-    ));
-    assert_eq!(texts_of(&third[0]), ["A last ", "line."]);
+    let third = marks_of(&third[0]);
+    assert_eq!(text.placed(), []);
     // The rest of the first line: the caret stays on the first line.
-    let effects = reduce(&mut state, &reached(marks_of(second)[0]));
-    assert_eq!(effects, vec![]);
+    assert_eq!(text.mark(second[0]), NOTHING);
     // The second line's text starts: the caret moves to its start.
-    let effects = reduce(&mut state, &reached(marks_of(second)[1]));
-    assert_eq!(
-        caret_move(&effects),
-        Some(TextPoint::At(TextPosition::at(TextAnchor(101))))
-    );
-    assert_eq!(effects.len(), 1, "{effects:?}");
+    assert_eq!(text.mark(second[1]), (Vec::new(), vec![caret_to(101)]));
+    assert_eq!(text.placed(), []);
     // The last utterance starts with the rest of the second line: the
     // caret stays there, and a key stops say-all with it there.
-    let effects = reduce(&mut state, &reached(marks_of(&third[0])[0]));
-    assert_eq!(effects, vec![]);
-    let effects = reduce(
-        &mut state,
-        &Input::Queue {
-            trace_id: verbatim_model::TraceId::from_raw(0),
-            at_us: 0,
-            input: verbatim_model::request::QueueInput::SpeechCut,
-        },
-    );
-    assert_eq!(effects, vec![Effect::KeepDisplayOn(false)]);
-    assert_eq!(reduce(&mut state, &reached(marks_of(&third[0])[1])), vec![]);
+    assert_eq!(text.mark(third[0]), NOTHING);
+    assert_eq!(text.speech(QueueInput::SpeechCut), [Heard::Display(false)]);
+    assert_eq!(text.mark(third[1]), NOTHING);
 }
 
 #[test]
 fn say_all_speaks_ten_lines_with_no_sentence_end_together() {
-    let mut state = editing("x\n", 0);
+    let mut text = editing("x\n", 0);
     // Twelve lines with no sentence end, the fifth blank, which says
     // nothing but counts among the ten.
-    let mut chunks: Vec<TextChunk> = (0..12)
+    let mut lines: Vec<TextChunk> = (0..12)
         .map(|index| {
             let text = if index == 4 {
                 "\n".to_owned()
@@ -3556,1078 +3705,96 @@ fn say_all_speaks_ten_lines_with_no_sentence_end_together() {
             line(&text, 100 + index, 0)
         })
         .collect();
-    chunks[11].last = true;
-    let effects = say_all_by_line(&mut state, chunks);
-    let utterances = say_all_utterances(&effects);
-    assert_eq!(utterances.len(), 2, "{effects:?}");
-    assert_eq!(effects.len(), 2, "{effects:?}");
-    // The first ten lines, the blank one silent, each with its mark.
+    lines[11].last = true;
+    let (said, rest) = text.by_line(lines);
+    assert_eq!(rest, []);
+    // The first ten lines, the blank one silent, each with its mark; the
+    // rest, spoken when the text ends.
     assert_eq!(
-        texts_of(&utterances[0]),
+        texts_of(&said),
         [
-            "word 0 ", "word 1 ", "word 2 ", "word 3 ", "word 5 ", "word 6 ", "word 7 ", "word 8 ",
-            "word 9",
-        ]
-    );
-    assert_eq!(marks_of(&utterances[0]).len(), 9);
-    // The rest, spoken when the text ends.
-    assert_eq!(texts_of(&utterances[1]), ["word 10 ", "word 11"]);
-    assert_eq!(marks_of(&utterances[1]).len(), 2);
-    // Each line's mark moves the caret to that line's start.
-    let effects = reduce(&mut state, &reached(marks_of(&utterances[0])[4]));
-    assert_eq!(
-        caret_move(&effects),
-        Some(TextPoint::At(TextPosition::at(TextAnchor(105))))
-    );
-}
-
-#[test]
-fn held_anchors_name_every_position_the_state_keeps() {
-    let mut state = editing("abc\n", 1);
-    let _ = reduce(&mut state, &command(ReviewCommand::SetStartMarker, 0));
-    // The caret and the start marker are both on the line at anchor 100,
-    // in the one edit field.
-    let anchors: Vec<(OutpostId, Vec<TextAnchor>)> = state
-        .held_anchors()
-        .into_iter()
-        .map(|(outpost, anchors)| (outpost, anchors.into_iter().collect()))
-        .collect();
-    assert_eq!(anchors, [(OUTPOST, vec![TextAnchor(100)])]);
-    let nodes: Vec<(OutpostId, Vec<NodeId>)> = state
-        .held_nodes()
-        .into_iter()
-        .map(|(outpost, nodes)| (outpost, nodes.into_iter().collect()))
-        .collect();
-    assert_eq!(nodes, [(OUTPOST, vec![id(5)])]);
-}
-
-/// The caret read of a focus whose caret is at the start of a line minted
-/// at `anchor`, with nothing selected.
-fn caret_at_anchor(anchor: u64) -> FocusText {
-    FocusText::Caret {
-        caret: CaretReport {
-            line: line("gamma\n", anchor, 0),
-            selection: None,
-            read_at_us: stamp(),
-        },
-        selected_text: None,
-        changes: verbatim_model::CaretChanges::default(),
-        facts: None,
-    }
-}
-
-/// The text anchors `state` holds, by outpost.
-fn anchors_held(state: &SrState) -> Vec<(OutpostId, Vec<TextAnchor>)> {
-    state
-        .held_anchors()
-        .into_iter()
-        .map(|(outpost, anchors)| (outpost, anchors.into_iter().collect()))
-        .collect()
-}
-
-#[test]
-fn a_duplicate_focus_takes_its_caret_without_speaking() {
-    let mut state = SrState::new();
-    let _ = focus_with_value(&mut state, StateSet::new(), "gamma\n", caret_at_anchor(100));
-    // The same node reported again is a duplicate: nothing is said, and
-    // its caret, read afresh, is Core's.
-    let announced = focus_with_value(&mut state, StateSet::new(), "gamma\n", caret_at_anchor(200));
-    assert_eq!(
-        (announced, anchors_held(&state)),
-        (Vec::new(), vec![(OUTPOST, vec![TextAnchor(200)])])
-    );
-}
-
-#[test]
-fn a_replacement_outposts_silent_re_read_takes_its_caret_without_speaking() {
-    let mut state = SrState::new();
-    let _ = focus_with_value(&mut state, StateSet::new(), "gamma\n", caret_at_anchor(100));
-    let _ = reduce(
-        &mut state,
-        &Input::OutpostEnded {
-            trace_id: TraceId::from_raw(90),
-            outpost: OUTPOST,
-        },
-    );
-    // The replacement numbers its nodes and anchors afresh and reports the
-    // focus the user already heard: nothing is said, and its caret is
-    // Core's.
-    let replacement = OutpostId(2);
-    let effects = reduce(
-        &mut state,
-        &event(NormalizedEvent::FocusChanged {
-            node: NodeSnapshot {
-                id: NodeId::in_outpost(replacement, 2),
-                value: Some("gamma\n".to_owned()),
-                ..node(5, Role::Document, StateSet::new())
-            },
-            whole_window: false,
-            ancestors: Vec::new(),
-            selected_child: None,
-            text: Some(Box::new(caret_at_anchor(200))),
-            earlier: None,
-            group: None,
-            answers: None,
-            first_cached_ancestor: None,
-        }),
-    );
-    assert_eq!(
-        (effects, anchors_held(&state)),
-        (Vec::new(), vec![(replacement, vec![TextAnchor(200)])])
-    );
-}
-
-/// Focuses a document holding `value`, with what the outpost's caret read
-/// found, `text`, returning the segments of each utterance the focus
-/// announcement spoke, in order.
-fn focus_with_value(
-    state: &mut SrState,
-    states: StateSet,
-    value: &str,
-    text: FocusText,
-) -> Vec<Vec<UtteranceSegment>> {
-    let snapshot = NodeSnapshot {
-        value: Some(value.to_owned()),
-        ..node(5, Role::Document, states)
-    };
-    let effects = reduce(
-        state,
-        &event(NormalizedEvent::FocusChanged {
-            node: snapshot,
-            whole_window: false,
-            ancestors: Vec::new(),
-            selected_child: None,
-            text: Some(Box::new(text)),
-            earlier: None,
-            group: None,
-            answers: None,
-            first_cached_ancestor: None,
-        }),
-    );
-    effects
-        .iter()
-        .filter_map(|effect| match effect {
-            Effect::Speak(utterance, _) => Some(utterance.segments.clone()),
-            _ => None,
-        })
-        .collect()
-}
-
-/// The caret read of a focus whose caret is on `text`, at its start, with
-/// `selection` and its `selected_text`.
-fn caret_read(selection: Option<Selection>, text: &str, selected_text: Option<&str>) -> FocusText {
-    FocusText::Caret {
-        caret: CaretReport {
-            line: line(text, 100, 0),
-            selection: selection.map(caret_selection),
-            read_at_us: stamp(),
-        },
-        selected_text: selected_text.map(str::to_owned),
-        changes: verbatim_model::CaretChanges::default(),
-        facts: None,
-    }
-}
-
-/// The focus announcement of the document `focus_with_value` focuses.
-fn document() -> Vec<UtteranceSegment> {
-    vec![
-        UtteranceSegment::label("Body"),
-        UtteranceSegment::new(SegmentContent::Role(Role::Document)),
-    ]
-}
-
-fn caret_moved(selection: Option<Selection>, text: &str) -> Input {
-    event(NormalizedEvent::CaretMoved {
-        node_id: id(5),
-        caret: CaretReport {
-            line: line(text, 100, 0),
-            selection: selection.map(caret_selection),
-            read_at_us: stamp(),
-        },
-        selection_changes: Vec::new(),
-        content_changed: false,
-        new_selection: None,
-        facts: None,
-    })
-}
-
-#[test]
-fn a_focused_document_says_its_caret_line_and_not_its_value() {
-    let mut state = SrState::new();
-    // The line the focus came with ends its announcement, from the one
-    // message.
-    let announced = focus_with_value(
-        &mut state,
-        StateSet::new(),
-        "gamma\rdelta\r",
-        caret_read(None, "gamma\r", None),
-    );
-    assert_eq!(
-        announced,
-        vec![document(), vec![UtteranceSegment::text("gamma")]]
-    );
-    // A later caret report says nothing by itself.
-    assert_eq!(
-        spoken(&reduce(&mut state, &caret_moved(None, "delta\r"))),
-        []
-    );
-}
-
-#[test]
-fn an_empty_focused_field_is_blank() {
-    let mut state = SrState::new();
-    assert_eq!(
-        focus_with_value(&mut state, StateSet::new(), "", caret_read(None, "", None)),
-        vec![document(), vec![message(Message::Blank)]]
-    );
-}
-
-#[test]
-fn a_focused_field_with_text_selected_says_the_selection() {
-    let mut state = SrState::new();
-    let selection = Selection {
-        start: TextPosition::at(TextAnchor(101)),
-        end: TextPosition::at(TextAnchor(102)),
-    };
-    let effects = reduce(
-        &mut state,
-        &event(NormalizedEvent::FocusChanged {
-            node: NodeSnapshot {
-                value: Some("alpha\rdelta epsilon\r".to_owned()),
-                ..node(5, Role::Document, StateSet::new())
-            },
-            whole_window: false,
-            ancestors: Vec::new(),
-            selected_child: None,
-            text: Some(Box::new(caret_read(
-                Some(selection),
-                "delta epsilon\r",
-                Some("delta epsilon"),
-            ))),
-            earlier: None,
-            group: None,
-            answers: None,
-            first_cached_ancestor: None,
-        }),
-    );
-    assert!(
-        !effects
-            .iter()
-            .any(|effect| matches!(effect, Effect::Text(_))),
-        "nothing is asked of the outpost: {effects:?}"
-    );
-    assert_eq!(
-        spoken(&effects),
-        vec![
-            UtteranceSegment::label("Body"),
-            UtteranceSegment::new(SegmentContent::Role(Role::Document)),
-            UtteranceSegment::new(SegmentContent::Phrase(Phrase::Preselected(
-                SelectionText::Text("delta epsilon".to_owned())
-            ))),
-        ]
-    );
-}
-
-/// A caret report of the focused field, observed at `observed_at_ms`, with
-/// `selection` and the selection changes `changes` (each selected or not,
-/// and its text, of as many characters as it has bytes).
-fn selection_report(
-    observed_at_ms: u64,
-    selection: Option<Selection>,
-    changes: &[(bool, &str)],
-) -> Input {
-    Input::Event {
-        trace_id: TraceId::from_raw(9),
-        observed_at_us: observed_at_ms * 1_000,
-        source: Pid(1),
-        backend: Backend::Uia,
-        window: None,
-        event: NormalizedEvent::CaretMoved {
-            node_id: id(5),
-            caret: CaretReport {
-                line: line("alpha beta\r", 100, 5),
-                selection: selection.map(caret_selection),
-                read_at_us: stamp(),
-            },
-            selection_changes: changes
-                .iter()
-                .map(|&(selected, text)| SelectionChange {
-                    selected,
-                    text: text.to_owned(),
-                    characters: u32::try_from(text.len()).expect("a short text"),
-                })
-                .collect(),
-            content_changed: false,
-            new_selection: None,
-            facts: None,
-        },
-        purpose: None,
-    }
-}
-
-/// The selection of "alpha" in [`selection_report`]'s line.
-fn alpha_selected() -> Selection {
-    Selection {
-        start: TextPosition::at(TextAnchor(100)),
-        end: TextPosition {
-            anchor: TextAnchor(100),
-            offset: 5,
-        },
-    }
-}
-
-/// A focused field whose announcement has ended with its caret's line.
-fn announced_field() -> SrState {
-    let mut state = SrState::new();
-    assert_eq!(
-        focus_with_value(
-            &mut state,
-            StateSet::new(),
-            "alpha beta\r",
-            caret_read(None, "alpha beta\r", None),
-        ),
-        vec![document(), vec![UtteranceSegment::text("alpha beta")]]
-    );
-    state
-}
-
-#[test]
-fn a_selection_no_key_made_says_what_was_selected() {
-    let mut state = announced_field();
-    let effects = reduce(
-        &mut state,
-        &selection_report(0, Some(alpha_selected()), &[(true, "alpha")]),
-    );
-    assert_eq!(effects.len(), 1, "one effect in {effects:?}");
-    assert_eq!(
-        spoken(&effects),
-        vec![UtteranceSegment::new(SegmentContent::Phrase(
-            Phrase::Selected(SelectionText::Text("alpha".to_owned()))
-        ))]
-    );
-}
-
-#[test]
-fn a_caret_report_with_no_selection_change_says_nothing() {
-    let mut state = announced_field();
-    let effects = reduce(&mut state, &selection_report(0, None, &[]));
-    assert_eq!(effects, []);
-}
-
-/// A change with no text: "x" typed over a selection, its old range in a
-/// UIA text holding nothing once the text it held was cut.
-#[test]
-fn a_selection_change_with_no_text_says_nothing() {
-    let mut state = announced_field();
-    let effects = reduce(&mut state, &selection_report(0, None, &[(false, "")]));
-    assert_eq!(effects, []);
-}
-
-/// A caret report of the focused field whose selection changes are said in
-/// general terms, the text having changed since the selection compared
-/// with was reported: with `selection`, the changes `changes` (each
-/// selected or not, with no text), and the new selection's text `new`.
-fn general_report(selection: Option<Selection>, changes: &[bool], new: Option<&str>) -> Input {
-    let Input::Event {
-        event: NormalizedEvent::CaretMoved { node_id, caret, .. },
-        ..
-    } = selection_report(0, selection, &[])
-    else {
-        unreachable!("selection_report makes a caret report");
-    };
-    Input::Event {
-        trace_id: TraceId::from_raw(10),
-        observed_at_us: 0,
-        source: Pid(1),
-        backend: Backend::Msaa,
-        window: None,
-        event: NormalizedEvent::CaretMoved {
-            node_id,
-            caret,
-            selection_changes: changes
-                .iter()
-                .map(|&selected| SelectionChange {
-                    selected,
-                    text: String::new(),
-                    characters: 0,
-                })
-                .collect(),
-            content_changed: true,
-            new_selection: new.map(|text| SelectionChange {
-                selected: true,
-                text: text.to_owned(),
-                characters: u32::try_from(text.len()).expect("a short text"),
-            }),
-            facts: None,
-        },
-        purpose: None,
-    }
-}
-
-#[test]
-fn a_selection_unselected_after_a_text_change_with_nothing_selected_says_selection_removed() {
-    let mut state = announced_field();
-    let effects = reduce(&mut state, &general_report(None, &[false], None));
-    assert_eq!(effects.len(), 1, "one effect in {effects:?}");
-    assert_eq!(spoken(&effects), vec![message(Message::SelectionRemoved)]);
-}
-
-#[test]
-fn a_selection_unselected_after_a_text_change_with_another_selected_says_selected_instead() {
-    let mut state = announced_field();
-    let effects = reduce(
-        &mut state,
-        &general_report(Some(alpha_selected()), &[false], Some("alpha")),
-    );
-    assert_eq!(effects.len(), 1, "one effect in {effects:?}");
-    assert_eq!(
-        spoken(&effects),
-        vec![UtteranceSegment::new(SegmentContent::Phrase(
-            Phrase::SelectedInstead(SelectionText::Text("alpha".to_owned()))
-        ))]
-    );
-}
-
-#[test]
-fn a_selection_extended_after_a_text_change_says_the_whole_new_selection_selected() {
-    let mut state = announced_field();
-    let effects = reduce(
-        &mut state,
-        &general_report(Some(alpha_selected()), &[true], Some("alpha")),
-    );
-    assert_eq!(effects.len(), 1, "one effect in {effects:?}");
-    assert_eq!(
-        spoken(&effects),
-        vec![UtteranceSegment::new(SegmentContent::Phrase(
-            Phrase::Selected(SelectionText::Text("alpha".to_owned()))
-        ))]
-    );
-}
-
-/// A selection replaced by one apart from it after a text change: both
-/// general words, each with the whole new selection, each its own
-/// utterance.
-#[test]
-fn a_selection_replaced_after_a_text_change_says_selected_then_selected_instead() {
-    let mut state = announced_field();
-    let effects = reduce(
-        &mut state,
-        &general_report(Some(alpha_selected()), &[false, true], Some("alpha")),
-    );
-    assert_eq!(effects.len(), 2, "two utterances in {effects:?}");
-    assert_eq!(
-        spoken(&effects),
-        vec![
-            UtteranceSegment::new(SegmentContent::Phrase(Phrase::Selected(
-                SelectionText::Text("alpha".to_owned())
-            ))),
-            UtteranceSegment::new(SegmentContent::Phrase(Phrase::SelectedInstead(
-                SelectionText::Text("alpha".to_owned())
-            ))),
-        ]
-    );
-}
-
-/// A selecting key's answer after a text change: the whole new selection,
-/// one character by its name.
-#[test]
-fn a_selecting_keys_answer_after_a_text_change_says_the_whole_new_selection() {
-    let mut state = editing("hello, world\n", 5);
-    let effects = reduce(&mut state, &key(CaretMotion::NextCharacter, true));
-    let request = request(&effects);
-    let reply = key_reply(Box::new(CaretReply {
-        same_line: None,
-        moved: true,
-        read_at_ms: 0,
-        caret: CaretReport {
-            line: line("hello, world\n", 100, 6),
-            selection: Some(caret_selection(Selection {
-                start: TextPosition {
-                    anchor: TextAnchor(100),
-                    offset: 5,
-                },
-                end: TextPosition {
-                    anchor: TextAnchor(100),
-                    offset: 6,
-                },
-            })),
-            read_at_us: stamp(),
-        },
-        unit: None,
-        selection_changes: vec![SelectionChange {
-            selected: true,
-            text: String::new(),
-            characters: 0,
-        }],
-        content_changed: true,
-        new_selection: Some(SelectionChange {
-            selected: true,
-            text: ",".to_owned(),
-            characters: 1,
-        }),
-    }));
-    let effects = reduce(&mut state, &completed(request.query_id, reply));
-    assert_eq!(
-        spoken(&effects),
-        vec![UtteranceSegment::new(SegmentContent::Phrase(
-            Phrase::Selected(SelectionText::Character(",".to_owned()))
-        ))]
-    );
-}
-
-/// Control+X on a selected line in a classic edit control: the answer
-/// says the selection's change in general terms, and the text the key
-/// removed, the selection's, is not said as well, as NVDA says only
-/// "selection removed".
-#[test]
-fn a_keys_answer_removing_the_selection_with_its_text_says_only_selection_removed() {
-    let mut state = editing("hello world\n", 0);
-    let effects = reduce(&mut state, &key(CaretMotion::EndOfLine, true));
-    let reply = key_reply(Box::new(CaretReply {
-        same_line: None,
-        moved: true,
-        read_at_ms: 0,
-        caret: CaretReport {
-            line: line("hello world\n", 100, 0),
-            selection: Some(caret_selection(Selection {
-                start: TextPosition {
-                    anchor: TextAnchor(100),
-                    offset: 0,
-                },
-                end: TextPosition {
-                    anchor: TextAnchor(100),
-                    offset: 11,
-                },
-            })),
-            read_at_us: stamp(),
-        },
-        unit: None,
-        selection_changes: Vec::new(),
-        content_changed: false,
-        new_selection: None,
-    }));
-    let _ = reduce(&mut state, &completed(request_of(&effects), reply));
-    let effects = reduce(&mut state, &key(CaretMotion::Other, false));
-    let reply = key_reply(Box::new(CaretReply {
-        same_line: Some(true),
-        moved: true,
-        read_at_ms: 0,
-        caret: CaretReport {
-            line: line("\n", 101, 0),
-            selection: None,
-            read_at_us: stamp(),
-        },
-        unit: None,
-        selection_changes: vec![SelectionChange {
-            selected: false,
-            text: String::new(),
-            characters: 0,
-        }],
-        content_changed: true,
-        new_selection: None,
-    }));
-    let effects = reduce(&mut state, &completed(request_of(&effects), reply));
-    assert_eq!(effects.len(), 2, "the speech and the deadline: {effects:?}");
-    assert_eq!(spoken(&effects), vec![message(Message::SelectionRemoved)]);
-}
-
-/// Control+X on a selected line in Windows 11 Notepad: the answer, from
-/// UIA, shows the selection removed with no change in general terms, and
-/// the text the key removed, the selection's, is not said, as NVDA says
-/// nothing for it.
-#[test]
-fn a_keys_answer_removing_the_selection_in_specific_terms_does_not_say_the_removed_text() {
-    let text = "xbeta gammaelta epsilon\n";
-    let mut state = editing(text, 0);
-    let effects = reduce(&mut state, &key(CaretMotion::EndOfLine, true));
-    let reply = key_reply(Box::new(CaretReply {
-        same_line: None,
-        moved: true,
-        read_at_ms: 0,
-        caret: CaretReport {
-            line: line(text, 100, 0),
-            selection: Some(caret_selection(Selection {
-                start: TextPosition {
-                    anchor: TextAnchor(100),
-                    offset: 0,
-                },
-                end: TextPosition {
-                    anchor: TextAnchor(100),
-                    offset: 24,
-                },
-            })),
-            read_at_us: stamp(),
-        },
-        unit: None,
-        selection_changes: Vec::new(),
-        content_changed: false,
-        new_selection: None,
-    }));
-    let _ = reduce(&mut state, &completed(request_of(&effects), reply));
-    let effects = reduce(&mut state, &key(CaretMotion::Other, false));
-    let reply = key_reply(Box::new(CaretReply {
-        same_line: Some(true),
-        moved: true,
-        read_at_ms: 0,
-        caret: CaretReport {
-            line: line("\n", 100, 0),
-            selection: None,
-            read_at_us: stamp(),
-        },
-        unit: None,
-        selection_changes: Vec::new(),
-        content_changed: false,
-        new_selection: None,
-    }));
-    let effects = reduce(&mut state, &completed(request_of(&effects), reply));
-    assert_eq!(effects, [Effect::BoundHeldKey(None)]);
-}
-
-#[test]
-fn a_selecting_keys_change_reported_while_it_waits_is_said_with_its_answer() {
-    // The key's caret event reaches Core while its watch waits: the
-    // outpost compared the report with the selection it kept and replaced
-    // it, so the answer has no change left, and the report's words are
-    // said with it.
-    let mut state = announced_field();
-    let effects = reduce(&mut state, &key(CaretMotion::StartOfLine, true));
-    let asked = request(&effects);
-    let effects = reduce(
-        &mut state,
-        &selection_report(
-            KEY_PRESSED_AT + 5,
-            Some(alpha_selected()),
-            &[(true, "alpha")],
-        ),
-    );
-    assert_eq!(effects, []);
-    let answer = caret_reply(true, line("alpha beta\r", 100, 0), None);
-    let effects = reduce(&mut state, &completed(asked.query_id, answer));
-    assert_eq!(
-        spoken(&effects),
-        vec![UtteranceSegment::new(SegmentContent::Phrase(
-            Phrase::Selected(SelectionText::Text("alpha".to_owned()))
-        ))]
-    );
-}
-
-#[test]
-fn a_focus_without_text_says_its_value_instead() {
-    let mut state = SrState::new();
-    assert_eq!(
-        focus_with_value(
-            &mut state,
-            StateSet::new(),
-            "plain value",
-            FocusText::NoText
-        ),
-        vec![document(), vec![UtteranceSegment::value("plain value")]]
-    );
-}
-
-#[test]
-fn a_focus_whose_text_was_not_read_says_neither_its_line_nor_its_value() {
-    let mut state = SrState::new();
-    assert_eq!(
-        focus_with_value(
-            &mut state,
-            StateSet::new(),
-            "plain value",
-            FocusText::NotRead
-        ),
-        vec![document()]
-    );
-}
-
-#[test]
-fn a_protected_field_says_its_masked_line_selection_or_value_as_any_field() {
-    // The masked text the control gives is read as any field's text
-    // (`docs/parity/focus-announcement.md`, "Text on focus").
-    let protected = StateSet::new().with(State::Protected);
-    let announcement = vec![
-        UtteranceSegment::label("Body"),
-        UtteranceSegment::new(SegmentContent::Role(Role::Document)),
-        UtteranceSegment::new(SegmentContent::State(State::Protected)),
-    ];
-    let mut state = SrState::new();
-    assert_eq!(
-        focus_with_value(
-            &mut state,
-            protected,
-            "******",
-            caret_read(None, "******", None)
-        ),
-        vec![announcement.clone(), vec![UtteranceSegment::text("******")]]
-    );
-    let mut state = SrState::new();
-    assert_eq!(
-        focus_with_value(
-            &mut state,
-            protected,
-            "******",
-            caret_read(Some(selection_from(0, true)), "******", Some("******"))
-        ),
-        vec![
-            announcement.clone(),
-            vec![UtteranceSegment::new(SegmentContent::Phrase(
-                Phrase::Preselected(SelectionText::Text("******".to_owned()))
-            ))]
-        ]
-    );
-    // With no text to read, its value is spoken as any field's.
-    let mut state = SrState::new();
-    assert_eq!(
-        focus_with_value(&mut state, protected, "******", FocusText::NoText),
-        vec![announcement, vec![UtteranceSegment::value("******")]]
-    );
-}
-
-/// `chunk` with formatting: each stretch a byte range, a spelling error or
-/// not.
-fn with_errors(mut chunk: TextChunk, stretches: &[(u32, u32, bool)]) -> TextChunk {
-    chunk.formats = stretches
-        .iter()
-        .map(|&(start, end, spelling_error)| FormatRun {
-            start,
-            end,
-            attributes: TextAttributes {
-                spelling_error,
-                ..TextAttributes::default()
-            },
-        })
-        .collect();
-    chunk
-}
-
-fn format(format: TextFormat) -> UtteranceSegment {
-    UtteranceSegment::new(SegmentContent::Format(format))
-}
-
-/// Answers a caret key with `line`, and with `unit` at the caret.
-fn answered(
-    state: &mut SrState,
-    motion: CaretMotion,
-    line: TextChunk,
-    unit: Option<TextChunk>,
-) -> Vec<UtteranceSegment> {
-    let effects = reduce(state, &key(motion, false));
-    spoken(&reduce(
-        state,
-        &completed(request_of(&effects), caret_reply(true, line, unit)),
-    ))
-}
-
-#[test]
-fn a_line_speaks_a_spelling_error_where_it_starts() {
-    let mut state = editing("first\n", 0);
-    let text = "hello wrold there\n";
-    let line = with_errors(
-        line(text, 101, 0),
-        &[(0, 6, false), (6, 11, true), (11, 18, false)],
-    );
-    assert_eq!(
-        answered(&mut state, CaretMotion::NextLine, line.clone(), None),
-        vec![
-            UtteranceSegment::text("hello"),
-            format(TextFormat::SpellingError),
-            UtteranceSegment::text("wrold there"),
-        ]
-    );
-    // Leaving the error inside a line says nothing, and reading the same
-    // line again starts out of the error, as the last stretch left it.
-    assert_eq!(
-        answered(&mut state, CaretMotion::NextLine, line, None),
-        vec![
-            UtteranceSegment::text("hello"),
-            format(TextFormat::SpellingError),
-            UtteranceSegment::text("wrold there"),
-        ]
-    );
-}
-
-#[test]
-fn a_line_joins_its_stretches_as_the_text_has_them() {
-    let mut state = editing(
-        "first
-", 0,
-    );
-    let line = with_errors(
-        line(
-            "Ths line has a tset.
-",
-            101,
-            0,
-        ),
-        &[
-            (0, 3, true),
-            (3, 15, false),
-            (15, 19, true),
-            (19, 21, false),
-        ],
-    );
-    // Only a spoken change parts the text; the dot after the error follows
-    // it with no space, as NVDA says the line.
-    assert_eq!(
-        answered(&mut state, CaretMotion::NextLine, line, None),
-        vec![
-            format(TextFormat::SpellingError),
-            UtteranceSegment::text("Ths line has a"),
-            format(TextFormat::SpellingError),
-            UtteranceSegment::text("tset."),
-        ]
-    );
-}
-
-#[test]
-fn characters_report_entering_and_leaving_an_error() {
-    let text = "ab cd\n";
-    let mut state = editing(text, 0);
-    let character = |text: &str, error: bool| {
-        let length = u32::try_from(text.len()).expect("short");
-        with_errors(
-            TextChunk {
-                unit: TextUnit::Character,
-                ..line(text, 200, 0)
-            },
-            &[(0, length, error)],
-        )
-    };
-    let at = |offset| line(text, 100, offset);
-    assert_eq!(
-        answered(
-            &mut state,
-            CaretMotion::NextCharacter,
-            at(1),
-            Some(character("b", true))
-        ),
-        vec![format(TextFormat::SpellingError), self::character("b")]
-    );
-    // Within the error, the character alone.
-    assert_eq!(
-        answered(
-            &mut state,
-            CaretMotion::PreviousCharacter,
-            at(0),
-            Some(character("a", true))
-        ),
-        vec![self::character("a")]
-    );
-    // Out of it, said, as a character is extra detail.
-    assert_eq!(
-        answered(
-            &mut state,
-            CaretMotion::NextCharacter,
-            at(2),
-            Some(character(" ", false))
-        ),
-        vec![format(TextFormat::NotSpellingError), self::character(" ")]
-    );
-}
-
-#[test]
-fn a_word_carries_the_change_its_trailing_space_makes() {
-    let mut state = editing("tset of it\n", 0);
-    let word = |text: &str, stretches: &[(u32, u32, bool)]| {
-        with_errors(
-            TextChunk {
-                unit: TextUnit::Word,
-                ..line(text, 200, 0)
-            },
-            stretches,
-        )
-    };
-    let at = |offset| line("tset of it\n", 100, offset);
-    // The misspelt word, then its space, out of the error.
-    assert_eq!(
-        answered(
-            &mut state,
-            CaretMotion::NextWord,
-            at(0),
-            Some(word("tset ", &[(0, 4, true), (4, 5, false)]))
-        ),
-        vec![
-            format(TextFormat::SpellingError),
-            UtteranceSegment::text("tset"),
-            format(TextFormat::NotSpellingError),
-        ]
-    );
-    // The next word, already out of it, says only itself.
-    assert_eq!(
-        answered(
-            &mut state,
-            CaretMotion::NextWord,
-            at(5),
-            Some(word("of ", &[(0, 3, false)]))
-        ),
-        vec![UtteranceSegment::text("of")]
-    );
-}
-
-#[test]
-fn a_focus_reports_the_formatting_at_its_line_start_afresh() {
-    let mut state = SrState::new();
-    let line = with_errors(line("Ths is\r", 100, 0), &[(0, 3, true), (3, 7, false)]);
-    let announced = focus_with_value(
-        &mut state,
-        StateSet::new(),
-        "Ths is\r",
-        FocusText::Caret {
-            caret: CaretReport {
-                line,
-                selection: None,
-                read_at_us: stamp(),
-            },
-            selected_text: None,
-            changes: verbatim_model::CaretChanges::default(),
-            facts: None,
-        },
-    );
-    assert_eq!(
-        announced,
-        vec![
-            document(),
             vec![
-                format(TextFormat::SpellingError),
-                UtteranceSegment::text("Ths is"),
-            ]
+                "word 0 ", "word 1 ", "word 2 ", "word 3 ", "word 5 ", "word 6 ", "word 7 ",
+                "word 8 ", "word 9",
+            ],
+            vec!["word 10 ", "word 11"],
         ]
     );
-}
-
-#[test]
-fn bold_starts_and_ends_and_a_font_change_is_named() {
-    let mut state = editing("first\n", 0);
-    let mut line = line("plain bold\n", 101, 0);
-    line.formats = vec![
-        FormatRun {
-            start: 0,
-            end: 6,
-            attributes: TextAttributes {
-                bold: Some(false),
-                font_name: Some("Calibri".to_owned()),
-                ..TextAttributes::default()
-            },
-        },
-        FormatRun {
-            start: 6,
-            end: 11,
-            attributes: TextAttributes {
-                bold: Some(true),
-                font_name: Some("Calibri".to_owned()),
-                ..TextAttributes::default()
-            },
-        },
-    ];
+    assert_eq!((marks_of(&said[0]).len(), marks_of(&said[1]).len()), (9, 2));
+    // Each line's mark moves the caret to that line's start.
     assert_eq!(
-        answered(&mut state, CaretMotion::NextLine, line, None),
-        vec![
-            format(TextFormat::FontName("Calibri".to_owned())),
-            UtteranceSegment::text("plain"),
-            format(TextFormat::Bold),
-            UtteranceSegment::text("bold"),
-        ]
-    );
-    let mut next = self::line("next\n", 102, 0);
-    next.formats = vec![FormatRun {
-        start: 0,
-        end: 5,
-        attributes: TextAttributes {
-            bold: Some(false),
-            font_name: Some("Calibri".to_owned()),
-            ..TextAttributes::default()
-        },
-    }];
-    assert_eq!(
-        answered(&mut state, CaretMotion::NextLine, next, None),
-        vec![format(TextFormat::NotBold), UtteranceSegment::text("next")]
+        text.mark(marks_of(&said[0])[4]),
+        (Vec::new(), vec![caret_to(105)])
     );
 }
-
-/// `text` as a line all in bold.
-fn bold_line(text: &str, anchor: u64) -> TextChunk {
-    let end = u32::try_from(text.len()).expect("short");
-    let bold = TextAttributes {
-        bold: Some(true),
-        ..TextAttributes::default()
-    };
-    formatted(line(text, anchor, 0), vec![(0, end, bold)])
-}
-
-/// A focus event for `node`, whole-window or not, with `text`.
-fn focus_event(node: NodeSnapshot, whole_window: bool, text: Option<FocusText>) -> Input {
-    event(NormalizedEvent::FocusChanged {
-        node,
-        whole_window,
-        ancestors: Vec::new(),
-        selected_child: None,
-        text: text.map(Box::new),
-        earlier: None,
-        group: None,
-        answers: None,
-        first_cached_ancestor: None,
-    })
-}
-
-/// The formatting is kept on the focus object, so the silent re-take
-/// after an outpost is replaced, a new focus object, starts afresh and the
-/// next line says its bold again (Dickson, 2026-11-08).
-#[test]
-fn the_silent_re_take_after_a_replacement_reports_formatting_afresh() {
-    let mut state = editing("first\n", 0);
-    assert_eq!(
-        answered(
-            &mut state,
-            CaretMotion::NextLine,
-            bold_line("first bold\n", 101),
-            None
-        ),
-        vec![
-            format(TextFormat::Bold),
-            UtteranceSegment::text("first bold")
-        ]
-    );
-    let _ = reduce(
-        &mut state,
-        &Input::OutpostEnded {
-            trace_id: TraceId::from_raw(90),
-            outpost: OUTPOST,
-        },
-    );
-    let effects = reduce(
-        &mut state,
-        &focus_event(
-            NodeSnapshot {
-                id: NodeId::in_outpost(OutpostId(2), 2),
-                ..node(5, Role::EditableText, StateSet::new())
+impl Text {
+    /// The foreground moved to `app`'s top-level window, told by the
+    /// listener as a whole-window focus, and the outpost's run read node
+    /// `number`, nameless editable text whose caret it did not read: every
+    /// utterance spoken.
+    fn whole_window(&mut self, app: App, number: u64) -> Vec<Vec<UtteranceSegment>> {
+        let _ = self.desk.step(QueueInput::Foreground(
+            verbatim_model::request::ForegroundReport {
+                window: app.top_level(),
+                root_owner: app.top_level(),
+                process: app.pid,
+                thread: 41,
+                class: "Frame".to_owned(),
             },
-            false,
-            Some(FocusText::Caret {
-                caret: CaretReport {
-                    line: bold_line("first bold\n", 200),
-                    selection: None,
-                    read_at_us: stamp(),
+        ));
+        let tell = Event {
+            object: EventObject::Msaa {
+                window: app.top_level(),
+                object: 0,
+                child: 0,
+            },
+            window: TellWindow::Found(Box::new(AcceptanceFacts {
+                window: app.facet(app.top_level(), "Frame"),
+                window_to_foreground: Relation::Equal,
+                window_to_active: Relation::Equal,
+                ..app.facts()
+            })),
+            ..self.edit_tell(EventKind::Foreground, 0)
+        };
+        // The listener's first foreground report asks for the focus at
+        // startup; the field's focus was told before it, so nothing is
+        // there to read again.
+        if let [(number, to, Wire::CurrentFocus { .. })] = self.desk.sent[..] {
+            let _ = self.desk.answer(to, number, Outcome::NotThere);
+        }
+        let _ = self.desk.tell(desk::LISTENER, tell);
+        let [(run, to, Wire::MsaaRun(_))] = self.desk.sent[..] else {
+            panic!("one run asked: {:?}", self.desk.sent);
+        };
+        let nameless = NodeSnapshot {
+            name: None,
+            ..node(number, Role::EditableText, StateSet::new())
+        };
+        let mut read = FocusRead {
+            caret: FocusCaret::NotRead,
+            msaa: Some(verbatim_model::request::HeldIds {
+                event: verbatim_model::request::MsaaIds {
+                    window: app.top_level(),
+                    object: 0,
+                    child: 0,
                 },
-                selected_text: None,
-                changes: verbatim_model::CaretChanges::default(),
-                facts: None,
+                held_child: 0,
             }),
-        ),
-    );
-    assert_eq!(effects, Vec::new());
-    // The replacement answers the key.
-    let effects = reduce(&mut state, &key(CaretMotion::NextLine, false));
-    let answer = completed_on(
-        request_of(&effects),
-        NodeId::in_outpost(OutpostId(2), 2),
-        caret_reply(true, bold_line("second line\n", 201), None),
-    );
-    assert_eq!(
-        spoken(&reduce(&mut state, &answer)),
-        vec![
-            format(TextFormat::Bold),
-            UtteranceSegment::text("second line")
-        ]
-    );
+            ..desk::focus_read_of(app, &nameless, &[])
+        };
+        read.focus.runtime_id = None;
+        let tried = verbatim_model::request::RunRead {
+            tried: vec![verbatim_model::request::Tried::Focus(Box::new(read))],
+        };
+        self.desk
+            .answer(to, run, Outcome::Result(Reply::Run(tried)))
+            .into_iter()
+            .filter_map(|heard| match heard {
+                desk::Heard::Say(_, segments) => Some(segments),
+                _ => None,
+            })
+            .collect()
+    }
 }
 
 /// A nameless whole-window focus is a new focus object too: when the focus
@@ -4636,1193 +3803,47 @@ fn the_silent_re_take_after_a_replacement_reports_formatting_afresh() {
 /// 2026-11-08).
 #[test]
 fn a_nameless_whole_window_focus_reports_formatting_afresh() {
-    let mut state = editing("first\n", 0);
+    let mut text = edit_control("first\n", 0);
+    let bold = |said: &str| words(vec![format(TextFormat::Bold), UtteranceSegment::text(said)]);
     assert_eq!(
-        answered(
-            &mut state,
-            CaretMotion::NextLine,
-            bold_line("first bold\n", 101),
-            None
-        ),
-        vec![
-            format(TextFormat::Bold),
-            UtteranceSegment::text("first bold")
-        ]
+        text.moved(CaretMotion::NextLine, bold_line("first bold\n", 101), None),
+        bold("first bold")
     );
-    let nameless = |number| NodeSnapshot {
-        name: None,
-        ..node(number, Role::EditableText, StateSet::new())
-    };
-    for number in [7, 5] {
-        let effects = reduce(&mut state, &focus_event(nameless(number), true, None));
-        assert_eq!(spoken(&effects), Vec::new());
-    }
-    assert_eq!(
-        answered(
-            &mut state,
-            CaretMotion::NextLine,
-            bold_line("second line\n", 102),
-            None
-        ),
-        vec![
-            format(TextFormat::Bold),
-            UtteranceSegment::text("second line")
-        ]
-    );
-}
-
-/// `chunk` with formatting: each stretch a byte range and its attributes.
-fn formatted(mut chunk: TextChunk, stretches: Vec<(u32, u32, TextAttributes)>) -> TextChunk {
-    chunk.formats = stretches
-        .into_iter()
-        .map(|(start, end, attributes)| FormatRun {
-            start,
-            end,
-            attributes,
-        })
-        .collect();
-    chunk
-}
-
-/// Answers a caret key with `line`, and with `unit` at the caret, checking
-/// that speech is its one effect, and returns what it says.
-fn answered_alone(
-    state: &mut SrState,
-    motion: CaretMotion,
-    line: TextChunk,
-    unit: Option<TextChunk>,
-) -> Vec<UtteranceSegment> {
-    let effects = reduce(state, &key(motion, false));
-    let effects = reduce(
-        state,
-        &completed(request_of(&effects), caret_reply(true, line, unit)),
-    );
-    assert!(
-        matches!(
-            effects.as_slice(),
-            [Effect::Speak(..), Effect::BoundHeldKey(None)]
-        ),
-        "speech alone: {effects:?}"
-    );
-    spoken(&effects)
-}
-
-#[test]
-fn a_heading_says_its_size_and_a_list_item_its_bullet_before_its_text() {
-    let mut state = editing("first\n", 0);
-    let size = |points: &str| TextAttributes {
-        font_size: Some(points.to_owned()),
-        ..TextAttributes::default()
-    };
-    let heading = formatted(
-        line("Title\n", 101, 0),
-        vec![(0, 5, size("28.0 pt")), (5, 6, size("11.0 pt"))],
-    );
-    assert_eq!(
-        answered_alone(&mut state, CaretMotion::NextLine, heading, None),
-        vec![
-            format(TextFormat::FontSize("28.0 pt".to_owned())),
-            UtteranceSegment::text("Title"),
-        ],
-        "the line break, not part of the line's content, changes nothing"
-    );
-    let bulleted = TextAttributes {
-        bullet: Some(BulletStyle::FilledRound),
-        ..size("11.0 pt")
-    };
-    let item = || formatted(line("item\n", 102, 0), vec![(0, 5, bulleted.clone())]);
-    assert_eq!(
-        answered_alone(&mut state, CaretMotion::NextLine, item(), None),
-        vec![
-            format(TextFormat::FontSize("11.0 pt".to_owned())),
-            format(TextFormat::Bullet(BulletStyle::FilledRound)),
-            UtteranceSegment::text("item"),
-        ],
-        "the bullet after the changes"
-    );
-    // Every line read says its bullet, which is no change of formatting.
-    assert_eq!(
-        answered_alone(&mut state, CaretMotion::NextLine, item(), None),
-        vec![
-            format(TextFormat::Bullet(BulletStyle::FilledRound)),
-            UtteranceSegment::text("item"),
-        ]
-    );
-    // A word says none.
-    let word = formatted(
-        TextChunk {
-            unit: TextUnit::Word,
-            ..line("item", 201, 0)
-        },
-        vec![(0, 4, bulleted.clone())],
-    );
-    assert_eq!(
-        answered_alone(&mut state, CaretMotion::NextWord, item(), Some(word)),
-        vec![UtteranceSegment::text("item")]
-    );
-    // A line out of the list says nothing of it.
-    let plain = formatted(
-        line("after\n", 103, 0),
-        vec![(
-            0,
-            6,
-            TextAttributes {
-                bullet: Some(BulletStyle::None),
-                ..size("11.0 pt")
-            },
-        )],
-    );
-    assert_eq!(
-        answered_alone(&mut state, CaretMotion::NextLine, plain, None),
-        vec![UtteranceSegment::text("after")]
-    );
-}
-
-#[test]
-fn a_background_color_is_named_alone_or_after_the_color() {
-    let mut state = editing("first\n", 0);
-    let colored = |color: &str, background: &str| TextAttributes {
-        color: Some(color.to_owned()),
-        background_color: Some(background.to_owned()),
-        ..TextAttributes::default()
-    };
-    let line = formatted(
-        line("one two three four\n", 101, 0),
-        vec![
-            (0, 4, colored("black", "white")),
-            (4, 8, colored("dark red", "light grey")),
-            (8, 14, colored("dark red", "white")),
-            (14, 19, colored("black", "white")),
-        ],
-    );
-    assert_eq!(
-        answered_alone(&mut state, CaretMotion::NextLine, line, None),
-        vec![
-            format(TextFormat::Color("black".to_owned())),
-            format(TextFormat::OnBackgroundColor("white".to_owned())),
-            UtteranceSegment::text("one"),
-            format(TextFormat::Color("dark red".to_owned())),
-            format(TextFormat::OnBackgroundColor("light grey".to_owned())),
-            UtteranceSegment::text("two"),
-            format(TextFormat::BackgroundColor("white".to_owned())),
-            UtteranceSegment::text("three"),
-            format(TextFormat::Color("black".to_owned())),
-            UtteranceSegment::text("four"),
-        ]
-    );
-}
-
-#[test]
-fn strikethrough_and_the_kind_of_underline_start_change_and_end() {
-    let mut state = editing("first\n", 0);
-    let drawn = |strikethrough, underline_style| TextAttributes {
-        strikethrough: Some(strikethrough),
-        underline_style: Some(underline_style),
-        // Read for the font attributes too; the kind is reported instead.
-        underline: Some(underline_style != LineStyle::None),
-        ..TextAttributes::default()
-    };
-    let line = formatted(
-        line("a b c d e\n", 101, 0),
-        vec![
-            (0, 2, drawn(LineStyle::None, LineStyle::None)),
-            (2, 4, drawn(LineStyle::Single, LineStyle::Double)),
-            (4, 6, drawn(LineStyle::Double, LineStyle::Wavy)),
-            (6, 8, drawn(LineStyle::Double, LineStyle::Single)),
-            (8, 10, drawn(LineStyle::None, LineStyle::None)),
-        ],
-    );
-    assert_eq!(
-        answered_alone(&mut state, CaretMotion::NextLine, line, None),
-        vec![
-            UtteranceSegment::text("a"),
-            format(TextFormat::Strikethrough(LineStyle::Single)),
-            format(TextFormat::UnderlineStyle(LineStyle::Double)),
-            UtteranceSegment::text("b"),
-            format(TextFormat::Strikethrough(LineStyle::Double)),
-            format(TextFormat::UnderlineStyle(LineStyle::Wavy)),
-            UtteranceSegment::text("c"),
-            format(TextFormat::UnderlineStyle(LineStyle::Single)),
-            UtteranceSegment::text("d"),
-            format(TextFormat::Strikethrough(LineStyle::None)),
-            format(TextFormat::UnderlineStyle(LineStyle::None)),
-            UtteranceSegment::text("e"),
-        ]
-    );
-}
-
-#[test]
-fn a_link_is_said_where_it_starts_and_where_it_ends() {
-    let mut state = editing("first\n", 0);
-    let linked = |link| TextAttributes {
-        link,
-        ..TextAttributes::default()
-    };
-    let line = formatted(
-        line("see the page here\n", 101, 0),
-        vec![
-            (0, 8, linked(false)),
-            (8, 12, linked(true)),
-            (12, 18, linked(false)),
-        ],
-    );
-    assert_eq!(
-        answered_alone(&mut state, CaretMotion::NextLine, line, None),
-        vec![
-            UtteranceSegment::text("see the"),
-            format(TextFormat::Link),
-            UtteranceSegment::text("page"),
-            format(TextFormat::NotLink),
-            UtteranceSegment::text("here"),
-        ]
-    );
-}
-
-/// The key numbers each utterance of `effects` carries, in order.
-fn stamps(effects: &[Effect]) -> Vec<Option<verbatim_model::KeySeq>> {
-    effects
-        .iter()
-        .filter_map(|effect| match own(effect) {
-            Effect::Speak(_, key) => Some(*key),
-            _ => None,
-        })
-        .collect()
-}
-
-/// A held key, its trace `trace_id`.
-fn held_at(trace_id: TraceId, motion: CaretMotion, pressed_at_ms: u64) -> Input {
-    Input::HeldKey {
-        trace_id,
-        key_seq: verbatim_model::KeySeq::NONE_YET,
-        key: CaretKey {
-            motion,
-            select: false,
-        },
-        pressed_at_ms,
-    }
-}
-
-/// The answer of a held key's before read, finding `line`.
-fn read_before(line: TextChunk, read_at_ms: u64) -> TextReply {
-    let micros = read_at_ms * 1_000;
-    TextReply::Caret(Box::new(verbatim_model::CaretReply {
-        caret: CaretReport {
-            line: line.clone(),
-            selection: None,
-            read_at_us: micros,
-        },
-        selection_changes: Vec::new(),
-        content_changed: false,
-        new_selection: None,
-        facts: ReadFacts {
-            unit: Some(line),
-            change: Change::NoPrevious,
-            read_ended_at_us: micros,
-        },
-    }))
-}
-
-/// How many final reads `effects` ask.
-fn final_reads(effects: &[Effect]) -> usize {
-    effects
-        .iter()
-        .filter(|effect| {
-            matches!(own(effect), Effect::Text(request) if matches!(
-                request.op,
-                TextOp::ReadCaret(CaretRead { purpose: ReadPurpose::Final, .. })
-            ))
-        })
-        .count()
-}
-
-/// A field on `text` at `offset`, and a held key of `motion` passed on after
-/// its before read, begun at 500 ms, found the same. Returns the state, and
-/// the key's request.
-fn key_passed_on(text: &str, offset: u32, motion: CaretMotion) -> (SrState, QueryId) {
-    let mut state = editing(text, offset);
-    let query = request_of(&reduce(
-        &mut state,
-        &held_at(TraceId::from_raw(2), motion, 499),
-    ));
-    let effects = reduce(
-        &mut state,
-        &completed(query, read_before(line(text, 100, offset), 500)),
-    );
-    assert!(
-        effects
-            .iter()
-            .any(|effect| matches!(own(effect), Effect::PassHeldKey(_))),
-        "passed on: {effects:?}"
-    );
-    (state, query)
-}
-
-/// The key's 100 ms passing, the input the deadline brings.
-fn key_bound_passed() -> Input {
-    Input::Queue {
-        trace_id: TraceId::from_raw(2),
-        at_us: 600_001,
-        input: verbatim_model::request::QueueInput::HeldKeyDue,
-    }
-}
-
-#[test]
-fn a_keys_bound_with_no_evidence_orders_the_final_read() {
-    let (mut state, _) = key_passed_on("abc\n", 0, CaretMotion::NextCharacter);
-    let effects = reduce(&mut state, &key_bound_passed());
-    assert_eq!(final_reads(&effects), 1);
-}
-
-#[test]
-fn evidence_before_a_keys_bound_leaves_no_final_read() {
-    let (mut state, query) = key_passed_on("abc\n", 0, CaretMotion::NextCharacter);
-    let effects = reduce(
-        &mut state,
-        &completed(query, caret_reply(true, line("abc\n", 100, 1), None)),
-    );
-    assert_eq!(spoken(&effects), vec![character("b")]);
-    assert_eq!(final_reads(&reduce(&mut state, &key_bound_passed())), 0);
-}
-
-#[test]
-fn a_focus_moving_within_the_bound_ends_the_watch_after_the_units_words() {
-    let (mut state, _) = key_passed_on("abc\n", 0, CaretMotion::NextCharacter);
-    let effects = reduce(
-        &mut state,
-        &focus_event(node(6, Role::Button, StateSet::new()), false, None),
-    );
-    assert_eq!(spoken(&effects)[0], character("a"));
-}
-
-#[test]
-fn a_focus_moving_within_a_backspaces_bound_says_the_removed_text() {
-    let (mut state, _) = key_passed_on("abc\n", 2, CaretMotion::Backspace);
-    let effects = reduce(
-        &mut state,
-        &focus_event(node(6, Role::Button, StateSet::new()), false, None),
-    );
-    assert_eq!(spoken(&effects)[0], character("b"));
-}
-
-#[test]
-fn a_focus_moving_first_says_what_the_watch_heard_before_the_focus() {
-    let (mut state, _) = key_passed_on("\n", 0, CaretMotion::PreviousLine);
-    let heard = reduce(&mut state, &selection_report(0, None, &[(true, "x")]));
-    assert_eq!(spoken(&heard), []);
-    let effects = reduce(
-        &mut state,
-        &focus_event(node(6, Role::Button, StateSet::new()), false, None),
-    );
-    assert_eq!(
-        spoken(&effects)[..2],
-        [
-            message(Message::Blank),
-            UtteranceSegment::new(SegmentContent::Phrase(Phrase::Selected(
-                SelectionText::Character("x".to_owned())
-            )))
-        ]
-    );
-}
-
-#[test]
-fn a_keys_final_read_follows_what_waits_and_a_key_taking_the_line_has_none() {
-    let (mut state, _) = key_passed_on("abc\n", 0, CaretMotion::NextCharacter);
-    assert_eq!(
-        reduce(
-            &mut state,
-            &held_at(TraceId::from_raw(3), CaretMotion::NextCharacter, 510),
-        ),
-        []
-    );
-    assert_eq!(final_reads(&reduce(&mut state, &key_bound_passed())), 0);
-}
-
-/// A review press that finds a key in its final read replaces it, as a
-/// held key does, since the press cuts speech and the key's bound answer
-/// would be cut with it (`docs/design/m42-parity.md`, "Build two").
-#[test]
-fn a_review_press_replaces_a_key_in_its_final_read() {
-    let (mut state, _) = key_passed_on("abc\n", 0, CaretMotion::NextCharacter);
-    let due = reduce(&mut state, &key_bound_passed());
-    let final_read = request_of(&due);
-    let effects = reduce(&mut state, &command(ReviewCommand::ReviewCurrentLine, 0));
-    let press_read = request(&effects);
-    assert_eq!(press_read.op, line_read(TextPoint::Caret, None));
-    let effects = reduce(
-        &mut state,
-        &completed_text(final_read, TextReply::Unanswered),
-    );
-    assert_eq!(spoken(&effects), Vec::new(), "the key says nothing");
-    let effects = reduce(
-        &mut state,
-        &completed(
-            press_read.query_id,
-            TextReply::Read {
-                moved: 0,
-                chunk: line("abc\n", 100, 0),
-            },
-        ),
-    );
-    assert_eq!(spoken(&effects), vec![UtteranceSegment::text("abc")]);
-}
-
-/// In plain text a line move leaves the column remembered, so a move
-/// back to a longer line finds it, whatever command read the short line.
-#[test]
-fn a_column_remembered_across_a_short_line_comes_back_in_plain_text() {
-    let mut state = reviewing("hello world\n", 7);
-    let effects = reduce(&mut state, &command(ReviewCommand::ReviewNextLine, 0));
-    let effects = reduce(
-        &mut state,
-        &completed(
-            request_of(&effects),
-            TextReply::Read {
-                moved: 1,
-                chunk: line("ok\n", 101, 0),
-            },
-        ),
-    );
-    assert_eq!(spoken(&effects), vec![UtteranceSegment::text("ok")]);
-    // The line read again keeps the column past the short line's text.
-    let effects = reduce(
-        &mut state,
-        &command(ReviewCommand::ReviewCurrentCharacter, 0),
-    );
-    assert_eq!(spoken(&effects), vec![character("k")]);
-    let effects = reduce(&mut state, &command(ReviewCommand::ReviewPreviousLine, 0));
-    let effects = reduce(
-        &mut state,
-        &completed(
-            request_of(&effects),
-            TextReply::Read {
-                moved: -1,
-                chunk: line("hello world\n", 100, 0),
-            },
-        ),
-    );
-    assert_eq!(
-        spoken(&effects),
-        vec![UtteranceSegment::text("hello world")]
-    );
-    let effects = reduce(
-        &mut state,
-        &command(ReviewCommand::ReviewCurrentCharacter, 0),
-    );
-    assert_eq!(spoken(&effects), vec![character("o")]);
-}
-
-#[test]
-fn a_new_window_taking_the_focus_cuts_the_keys_words() {
-    let (mut state, _) = key_passed_on("abc\n", 0, CaretMotion::NextCharacter);
-    let effects = reduce(
-        &mut state,
-        &focus_event(node(6, Role::Button, StateSet::new()), true, None),
-    );
-    let words = effects
-        .iter()
-        .position(|effect| spoken(std::slice::from_ref(effect)).first() == Some(&character("a")))
-        .expect("the unit is said");
-    let cut = effects
-        .iter()
-        .position(|effect| matches!(own(effect), Effect::StopSpeech))
-        .expect("the new window cuts speech");
-    assert!(words < cut, "{effects:?}");
-}
-
-#[test]
-fn a_focus_moving_while_the_before_read_runs_leaves_the_key_silent() {
-    let mut state = editing("abc\n", 0);
-    let query = request_of(&reduce(
-        &mut state,
-        &held_at(TraceId::from_raw(2), CaretMotion::NextCharacter, 499),
-    ));
-    focus(&mut state, node(6, Role::Button, StateSet::new()));
-    let effects = reduce(
-        &mut state,
-        &completed(query, read_before(line("abc\n", 100, 0), 500)),
-    );
-    assert_eq!(spoken(&effects), []);
-}
-
-#[test]
-fn a_selection_changed_before_a_keys_read_is_said_as_it_is_passed_on() {
-    let mut state = editing("alpha\n", 0);
-    let query = request_of(&reduce(
-        &mut state,
-        &held_at(TraceId::from_raw(2), CaretMotion::NextCharacter, 499),
-    ));
-    let TextReply::Caret(mut read) = read_before(line("alpha\n", 100, 0), 500) else {
-        unreachable!("a key's answer");
-    };
-    read.selection_changes = vec![SelectionChange {
-        selected: true,
-        text: "alpha".to_owned(),
-        characters: 5,
-    }];
-    let effects = reduce(&mut state, &completed(query, TextReply::Caret(read)));
-    assert_eq!(
-        spoken(&effects),
-        vec![UtteranceSegment::new(SegmentContent::Phrase(
-            Phrase::Selected(SelectionText::Text("alpha".to_owned()))
-        ))]
-    );
-}
-
-#[test]
-fn a_repeated_focus_says_the_selection_it_found_once() {
-    let mut state = SrState::new();
-    let _ = focus_with_value(&mut state, StateSet::new(), "gamma\n", caret_at_anchor(100));
-    let selected = |anchor| {
-        let FocusText::Caret {
-            caret,
-            selected_text,
-            ..
-        } = caret_at_anchor(anchor)
-        else {
-            unreachable!("a caret");
-        };
-        FocusText::Caret {
-            caret,
-            selected_text,
-            changes: verbatim_model::CaretChanges {
-                selection_changes: vec![SelectionChange {
-                    selected: true,
-                    text: "gamma".to_owned(),
-                    characters: 5,
-                }],
-                ..verbatim_model::CaretChanges::default()
-            },
-            facts: None,
-        }
-    };
-    assert_eq!(
-        focus_with_value(&mut state, StateSet::new(), "gamma\n", selected(200)),
-        vec![vec![UtteranceSegment::new(SegmentContent::Phrase(
-            Phrase::Selected(SelectionText::Text("gamma".to_owned()))
-        ))]]
-    );
-    assert_eq!(
-        focus_with_value(&mut state, StateSet::new(), "gamma\n", caret_at_anchor(300)),
-        Vec::<Vec<UtteranceSegment>>::new()
-    );
-}
-
-#[test]
-fn speech_is_stamped_with_the_number_of_the_key_on_whose_behalf_it_is_spoken() {
-    // A held Backspace, key 1, and "c" typed as key 2 behind it: the echo
-    // is reduced while Core handles Backspace's read, answered under
-    // Backspace's trace, and carries the letter's number, its `ForKey`
-    // trace's, not the input's.
-    let mut state = editing("ab", 2);
-    let (backspace, letter) = (TraceId::from_raw(26), TraceId::from_raw(27));
-    let mut held = held_at(backspace, CaretMotion::Backspace, 400);
-    if let Input::HeldKey { key_seq, .. } = &mut held {
-        *key_seq = verbatim_model::KeySeq::new(1);
-    }
-    let reading = request(&reduce(&mut state, &held)).query_id;
-    let typed_c = Input::CharacterTyped {
-        key_seq: verbatim_model::KeySeq::new(2),
-        trace_id: letter,
-        text: "c".to_owned(),
-        at_ms: 0,
-    };
-    assert_eq!(reduce(&mut state, &typed_c), []);
-    let effects = reduce(
-        &mut state,
-        &text_answer(backspace, reading, read_before(line("ab", 101, 2), 410)),
-    );
-    assert_eq!(stamps(&effects), [Some(verbatim_model::KeySeq::new(2))]);
-}
-
-#[test]
-fn speech_of_an_unkeyed_input_or_a_forgotten_key_carries_no_number() {
-    let mut state = editing("ab", 2);
-    let copied = |trace_id| Input::ClipboardCopied {
-        trace_id,
-        text: "ab".to_owned(),
-        copied: true,
-    };
-    let first = TraceId::from_raw(28);
-    let _ = reduce(
-        &mut state,
-        &Input::CharacterTyped {
-            key_seq: verbatim_model::KeySeq::new(1),
-            trace_id: first,
-            text: "c".to_owned(),
-            at_ms: 0,
-        },
-    );
-    assert_eq!(
-        stamps(&reduce(&mut state, &copied(first))),
-        [Some(verbatim_model::KeySeq::new(1))]
-    );
-    assert_eq!(
-        stamps(&reduce(&mut state, &copied(TraceId::from_raw(29)))),
-        [None]
-    );
-    // 1,024 newer keys push the first one's number out.
-    for number in 2..=1_025 {
-        let _ = reduce(
-            &mut state,
-            &Input::CharacterTyped {
-                key_seq: verbatim_model::KeySeq::new(number),
-                trace_id: TraceId::from_raw(30),
-                text: "c".to_owned(),
-                at_ms: 0,
-            },
+    // Another window of the application, then the field's own again, each
+    // a nameless whole-window focus, which says nothing. A classic edit
+    // control, as an MSAA foreground tell of a UI Automation window is
+    // dropped by its verdict.
+    for (app, number) in [(ONE.in_window(7_000), 7), (ONE, FIELD)] {
+        assert_eq!(
+            text.whole_window(app, number),
+            Vec::<Vec<UtteranceSegment>>::new()
         );
     }
-    assert_eq!(stamps(&reduce(&mut state, &copied(first))), [None]);
-}
-
-/// A report of node 5 with facts showing `moved`, read ending at
-/// `ended_at_us`.
-fn report_ended(line: TextChunk, moved: bool, ended_at_us: u64) -> Input {
-    event(NormalizedEvent::CaretMoved {
-        node_id: id(5),
-        caret: CaretReport {
-            line: line.clone(),
-            selection: None,
-            read_at_us: ended_at_us,
-        },
-        selection_changes: Vec::new(),
-        content_changed: false,
-        new_selection: None,
-        facts: Some(Box::new(ReadFacts {
-            read_ended_at_us: ended_at_us,
-            ..key_facts(line.clone(), moved, (line, None), true)
-        })),
-    })
-}
-
-#[test]
-fn a_report_read_before_the_key_was_passed_on_is_not_its_evidence() {
-    let (mut state, _) = key_passed_on("abc\n", 0, CaretMotion::NextCharacter);
-    // The before read ended at 500 ms; this read ended at 400 ms.
-    let effects = reduce(
-        &mut state,
-        &report_ended(line("abc\n", 100, 1), true, 400_000),
-    );
-    assert_eq!(spoken(&effects), []);
-    assert!(state.holds_inputs_back(), "the key still waits");
-}
-
-#[test]
-fn a_report_read_after_the_key_was_passed_on_with_no_effect_is_not_its_evidence() {
-    let (mut state, _) = key_passed_on("abc\n", 0, CaretMotion::NextCharacter);
-    let effects = reduce(
-        &mut state,
-        &report_ended(line("abc\n", 100, 0), false, 900_000),
-    );
-    assert_eq!(spoken(&effects), []);
-    assert!(state.holds_inputs_back(), "the key still waits");
-}
-
-#[test]
-fn a_report_of_another_node_is_not_the_keys_evidence() {
-    let (mut state, _) = key_passed_on("abc\n", 0, CaretMotion::NextCharacter);
-    let moved = event(NormalizedEvent::CaretMoved {
-        node_id: id(6),
-        caret: CaretReport {
-            line: line("x\n", 100, 1),
-            selection: None,
-            read_at_us: 900_000,
-        },
-        selection_changes: Vec::new(),
-        content_changed: false,
-        new_selection: None,
-        facts: Some(Box::new(key_facts(
-            line("x\n", 100, 1),
-            true,
-            (line("x\n", 100, 0), None),
-            true,
-        ))),
-    });
-    assert_eq!(spoken(&reduce(&mut state, &moved)), []);
-    assert!(state.holds_inputs_back(), "the key still waits");
-}
-
-#[test]
-fn a_report_read_after_the_pass_showing_a_change_is_the_keys_evidence() {
-    let (mut state, _) = key_passed_on("abc\n", 0, CaretMotion::NextCharacter);
-    let effects = reduce(
-        &mut state,
-        &report_ended(line("abc\n", 100, 1), true, 900_000),
-    );
-    assert_eq!(spoken(&effects), vec![character("b")]);
-    assert!(!state.holds_inputs_back(), "the key ended");
-}
-
-#[test]
-fn evidence_with_no_unit_waits_for_the_final_reads_unit() {
-    let (mut state, _) = key_passed_on("abc\n", 0, CaretMotion::NextLine);
-    let moved = event(NormalizedEvent::CaretMoved {
-        node_id: id(5),
-        caret: CaretReport {
-            line: line("next\n", 101, 0),
-            selection: None,
-            read_at_us: 900_000,
-        },
-        selection_changes: Vec::new(),
-        content_changed: false,
-        new_selection: None,
-        facts: Some(Box::new(ReadFacts {
-            unit: None,
-            ..key_facts(
-                line("next\n", 101, 0),
-                true,
-                (line("abc\n", 100, 0), None),
-                true,
-            )
-        })),
-    });
-    assert_eq!(spoken(&reduce(&mut state, &moved)), []);
-    let effects = bound_answer(&mut state, line("next\n", 101, 0));
-    assert_eq!(spoken(&effects), vec![UtteranceSegment::text("next")]);
-}
-
-#[test]
-fn a_final_read_showing_an_effect_is_the_keys_evidence() {
-    let (mut state, _) = key_passed_on("abc\n", 0, CaretMotion::NextCharacter);
-    let due = reduce(&mut state, &key_bound_passed());
-    let reply = TextReply::Caret(Box::new(verbatim_model::CaretReply {
-        caret: CaretReport {
-            line: line("abc\n", 100, 2),
-            selection: None,
-            read_at_us: 700_000,
-        },
-        selection_changes: Vec::new(),
-        content_changed: false,
-        new_selection: None,
-        facts: ReadFacts {
-            read_ended_at_us: 700_000,
-            ..key_facts(
-                line("abc\n", 100, 2),
-                true,
-                (line("abc\n", 100, 0), None),
-                true,
-            )
-        },
-    }));
-    let effects = reduce(&mut state, &completed_text(request_of(&due), reply));
-    assert_eq!(spoken(&effects), vec![character("c")]);
-}
-
-/// A chord in a text field says nothing for the line it changes, and a
-/// paste's caret event, an ordinary report with no change of selection,
-/// says nothing either (`docs/design/caret-selection-rework.md`).
-#[test]
-fn a_paste_says_nothing_for_the_line_it_changes() {
-    let mut state = editing("Nam\n", 3);
-    assert_eq!(spoken(&reduce(&mut state, &chord(2))), []);
-    let moved = event(NormalizedEvent::CaretMoved {
-        node_id: id(5),
-        caret: CaretReport {
-            line: line("Name\n", 100, 4),
-            selection: None,
-            read_at_us: stamp(),
-        },
-        selection_changes: Vec::new(),
-        content_changed: true,
-        new_selection: None,
-        facts: None,
-    });
-    assert_eq!(spoken(&reduce(&mut state, &moved)), []);
-    assert!(!state.holds_inputs_back(), "a chord is not the line's key");
-}
-
-/// A terminal keeps its handling of the chords, which is any other key
-/// passed: it sets its node's note and is watched to its bound.
-#[test]
-fn an_editing_chord_in_a_terminal_is_any_other_key_passed() {
-    let mut state = SrState::new();
-    focus(&mut state, node(7, Role::Terminal, StateSet::new()));
-    caret_event(&mut state, 7, line("ready> \n", 100, 7));
-    let effects = reduce(&mut state, &chord(2));
-    assert!(
-        effects
-            .iter()
-            .any(|effect| matches!(own(effect), Effect::KeyNote(_))),
-        "the note is set: {effects:?}"
-    );
-    assert!(state.holds_inputs_back());
-}
-
-/// A Control+Backspace that inserts a character, as the classic edit
-/// control's does in a password box, moves the caret forward with nothing
-/// removed, and says "blank" (`docs/design/caret-selection-rework.md`,
-/// Limits).
-#[test]
-fn a_backspace_that_moved_the_caret_forward_with_nothing_removed_says_blank() {
-    let (mut state, _) = key_passed_on("****\n", 2, CaretMotion::BackspaceWord);
-    let moved = event(NormalizedEvent::CaretMoved {
-        node_id: id(5),
-        caret: CaretReport {
-            line: line("*****\n", 100, 3),
-            selection: None,
-            read_at_us: stamp(),
-        },
-        selection_changes: Vec::new(),
-        content_changed: true,
-        new_selection: None,
-        facts: Some(Box::new(key_facts(
-            line("*****\n", 100, 3),
-            true,
-            (line("****\n", 100, 2), None),
-            true,
-        ))),
-    });
     assert_eq!(
-        spoken(&reduce(&mut state, &moved)),
-        vec![UtteranceSegment::new(SegmentContent::Message(
-            Message::Blank
-        ))]
+        text.moved(CaretMotion::NextLine, bold_line("second line\n", 102), None),
+        bold("second line")
     );
 }
 
-/// A sentence key in a text field past its bound: its final read asked.
-fn sentence_final_read(text: &str, offset: u32, motion: CaretMotion) -> (SrState, QueryId) {
-    let (mut state, _) = key_passed_on(text, offset, motion);
-    let due = reduce(&mut state, &key_bound_passed());
-    assert!(
-        due.contains(&Effect::BoundHeldKey(Some((TraceId::from_raw(2), 150)))),
-        "the step's 150 ms: {due:?}"
-    );
-    let asked = request(&due);
-    assert!(matches!(
-        asked.op,
-        TextOp::ReadCaret(CaretRead {
-            purpose: ReadPurpose::Final,
-            ..
-        })
-    ));
-    (state, asked.query_id)
-}
-
-/// The final read answering, showing no effect at `line`: its effects.
-fn sentence_no_effect(state: &mut SrState, query: QueryId, line: TextChunk) -> Vec<Effect> {
-    let unit = line.clone();
-    let caret = CaretReport {
-        line,
-        selection: None,
-        read_at_us: stamp(),
-    };
-    reduce(state, &completed_text(query, caret_read_reply(caret, unit)))
-}
-
-/// The request of a paragraph read, at `(anchor, offset)` moved by
-/// `count` paragraphs.
-fn paragraph_read(anchor: u64, offset: u32, count: Option<i32>) -> TextOp {
-    TextOp::Read(TextRead {
-        at: TextPoint::At(TextPosition {
-            anchor: TextAnchor(anchor),
-            offset,
-        }),
-        movement: count.map(|count| TextMovement {
-            unit: TextUnit::Sentence,
-            count,
-        }),
-        unit: TextUnit::Sentence,
-    })
-}
-
-/// The answer to a paragraph read.
-fn paragraph(query: QueryId, moved: i32, chunk: TextChunk) -> Input {
-    completed_text(query, TextReply::Read { moved, chunk })
-}
-
-const BANANA: &str = "Banana bread is warm. Cherry tart is sweet.\r\n";
-
-/// The caret moves to `(anchor, offset)` and `heard` is said: the move's
-/// answer's effects are checked.
-fn sentence_moved(
-    state: &mut SrState,
-    effects: &[Effect],
-    (anchor, offset): (u64, u32),
-    heard: &str,
-) {
-    let asked = request(effects);
+/// A terminal keeps the review cursor's cell column: moving down to a
+/// shorter row and back finds the same cell, and a cell past the row's
+/// text is read as blank.
+#[test]
+fn a_terminal_keeps_a_cell_column_and_reads_past_the_text_as_blank() {
+    // The caret on "d" at cell 3 of a padded row. The simulated terminal
+    // gives every character one cell, so the column is kept by cell here
+    // as for a wide character's two.
+    let mut session = terminal("abcdef    \r\nxy", "\x1b[1;4H");
+    session.input(&terminal_command(ReviewCommand::ReviewNextCharacter));
+    session.input(&terminal_command(ReviewCommand::ReviewNextLine));
+    // Cell 4 is past "xy": a blank cell, and the column is kept exactly.
+    session.input(&terminal_command(ReviewCommand::ReviewCurrentCharacter));
     assert_eq!(
-        asked.op,
-        TextOp::MoveCaret(TextPoint::At(TextPosition {
-            anchor: TextAnchor(anchor),
-            offset,
-        }))
+        session.heard(),
+        terminal_heard(&["e", "xy", "Message(Blank)"])
     );
-    let effects = reduce(
-        state,
-        &completed_text(
-            asked.query_id,
-            TextReply::Moved {
-                read_at_us: stamp(),
-            },
-        ),
-    );
-    assert_eq!(spoken(&effects), vec![UtteranceSegment::text(heard)]);
-    assert!(!state.holds_inputs_back(), "the key has ended");
-}
-
-#[test]
-fn alt_down_moves_to_the_next_sentence_in_the_paragraph() {
-    let (mut state, query) = sentence_final_read(BANANA, 3, CaretMotion::NextSentence);
-    let effects = sentence_no_effect(&mut state, query, line(BANANA, 100, 3));
-    let asked = request(&effects);
-    assert_eq!(asked.op, paragraph_read(100, 3, None));
-    let effects = reduce(
-        &mut state,
-        &paragraph(asked.query_id, 0, line(BANANA, 100, 3)),
-    );
-    sentence_moved(&mut state, &effects, (100, 22), "Cherry tart is sweet.");
-}
-
-#[test]
-fn alt_up_from_within_a_sentence_moves_to_its_start() {
-    let (mut state, query) = sentence_final_read(BANANA, 3, CaretMotion::PreviousSentence);
-    let effects = sentence_no_effect(&mut state, query, line(BANANA, 100, 3));
-    let effects = reduce(
-        &mut state,
-        &paragraph(request_of(&effects), 0, line(BANANA, 100, 3)),
-    );
-    sentence_moved(&mut state, &effects, (100, 0), "Banana bread is warm.");
-}
-
-#[test]
-fn a_sentence_move_crosses_into_the_paragraph_beside_it() {
-    // Alt+Down from the paragraph's last sentence: the next paragraph's first.
-    let (mut state, query) = sentence_final_read(BANANA, 30, CaretMotion::NextSentence);
-    let effects = sentence_no_effect(&mut state, query, line(BANANA, 100, 30));
-    let effects = reduce(
-        &mut state,
-        &paragraph(request_of(&effects), 0, line(BANANA, 100, 30)),
-    );
-    let asked = request(&effects);
-    assert_eq!(asked.op, paragraph_read(100, 0, Some(1)));
-    let effects = reduce(
-        &mut state,
-        &paragraph(asked.query_id, 1, line("Date cake is rich.\r\n", 101, 0)),
-    );
-    sentence_moved(&mut state, &effects, (101, 0), "Date cake is rich.");
-
-    // Alt+Up from the paragraph's start: the previous paragraph's last.
-    let (mut state, query) = sentence_final_read(BANANA, 0, CaretMotion::PreviousSentence);
-    let effects = sentence_no_effect(&mut state, query, line(BANANA, 100, 0));
-    let effects = reduce(
-        &mut state,
-        &paragraph(request_of(&effects), 0, line(BANANA, 100, 0)),
-    );
-    let asked = request(&effects);
-    assert_eq!(asked.op, paragraph_read(100, 0, Some(-1)));
-    let effects = reduce(
-        &mut state,
-        &paragraph(
-            asked.query_id,
-            -1,
-            line("Apple pie is good. Yes.\r\n", 99, 0),
-        ),
-    );
-    sentence_moved(&mut state, &effects, (99, 19), "Yes.");
-}
-
-#[test]
-fn alt_down_from_the_texts_last_sentence_moves_to_its_end_and_says_blank() {
-    let text = "Date cake is rich.";
-    let chunk = TextChunk {
-        last: true,
-        ..line(text, 102, 5)
-    };
-    let (mut state, query) = sentence_final_read(text, 5, CaretMotion::NextSentence);
-    let effects = sentence_no_effect(&mut state, query, line(text, 102, 5));
-    let effects = reduce(&mut state, &paragraph(request_of(&effects), 0, chunk));
-    let asked = request(&effects);
-    assert_eq!(asked.op, TextOp::MoveCaret(TextPoint::End));
-    let effects = reduce(
-        &mut state,
-        &completed_text(
-            asked.query_id,
-            TextReply::Moved {
-                read_at_us: stamp(),
-            },
-        ),
-    );
-    assert_eq!(
-        spoken(&effects),
-        vec![UtteranceSegment::new(SegmentContent::Message(
-            Message::Blank
-        ))]
-    );
-}
-
-#[test]
-fn alt_up_at_the_texts_start_stays_and_says_the_first_sentence() {
-    let text = "Apple pie is good.\r\n";
-    let (mut state, query) = sentence_final_read(text, 0, CaretMotion::PreviousSentence);
-    let effects = sentence_no_effect(&mut state, query, line(text, 100, 0));
-    // The outpost could not tell cheaply that this is the first paragraph,
-    // so the paragraph before it is read and nothing is there.
-    let effects = reduce(
-        &mut state,
-        &paragraph(request_of(&effects), 0, line(text, 100, 0)),
-    );
-    let effects = reduce(
-        &mut state,
-        &paragraph(request_of(&effects), 0, line(text, 100, 0)),
-    );
-    assert_eq!(
-        spoken(&effects),
-        vec![UtteranceSegment::text("Apple pie is good.")]
-    );
-    assert!(
-        !effects.iter().any(|effect| matches!(
-            own(effect),
-            Effect::Text(TextRequest {
-                op: TextOp::MoveCaret(_),
-                ..
-            })
-        )),
-        "the caret stays: {effects:?}"
-    );
-    assert!(!state.holds_inputs_back());
-}
-
-#[test]
-fn a_sentence_key_in_text_with_no_sentences_says_nothing() {
-    let (mut state, query) = sentence_final_read(BANANA, 3, CaretMotion::NextSentence);
-    let effects = sentence_no_effect(&mut state, query, line(BANANA, 100, 3));
-    let effects = reduce(
-        &mut state,
-        &completed_text(
-            request_of(&effects),
-            TextReply::UnsupportedUnit(TextUnit::Sentence),
-        ),
-    );
-    assert_eq!(spoken(&effects), []);
-    assert!(!state.holds_inputs_back());
-}
-
-#[test]
-fn a_sentence_keys_final_read_showing_a_move_says_the_line() {
-    let (mut state, query) = sentence_final_read("abc\n", 0, CaretMotion::NextSentence);
-    let reply = TextReply::Caret(Box::new(verbatim_model::CaretReply {
-        caret: CaretReport {
-            line: line("next\n", 101, 0),
-            selection: None,
-            read_at_us: 700_000,
-        },
-        selection_changes: Vec::new(),
-        content_changed: false,
-        new_selection: None,
-        facts: ReadFacts {
-            read_ended_at_us: 700_000,
-            ..key_facts(
-                line("next\n", 101, 0),
-                true,
-                (line("abc\n", 100, 0), None),
-                true,
-            )
-        },
-    }));
-    let effects = reduce(&mut state, &completed_text(query, reply));
-    assert_eq!(spoken(&effects), vec![UtteranceSegment::text("next")]);
-}
-
-#[test]
-fn a_sentence_move_past_its_150_ms_is_dropped() {
-    let (mut state, query) = sentence_final_read(BANANA, 3, CaretMotion::NextSentence);
-    let effects = sentence_no_effect(&mut state, query, line(BANANA, 100, 3));
-    let paragraph_query = request_of(&effects);
-    let due = reduce(&mut state, &key_bound_passed());
-    assert!(
-        due.iter().any(|effect| matches!(
-            own(effect),
-            Effect::Withdraw { query_id, .. } if *query_id == paragraph_query
-        )),
-        "the step's query withdrawn: {due:?}"
-    );
-    assert_eq!(spoken(&due), []);
-    let late = reduce(
-        &mut state,
-        &paragraph(paragraph_query, 0, line(BANANA, 100, 3)),
-    );
-    assert_eq!(late, [], "no move is made");
-}
-
-#[test]
-fn a_later_key_during_a_sentence_move_leaves_it_silent() {
-    let (mut state, query) = sentence_final_read(BANANA, 3, CaretMotion::NextSentence);
-    let effects = sentence_no_effect(&mut state, query, line(BANANA, 100, 3));
-    let _ = reduce(
-        &mut state,
-        &Input::Queue {
-            trace_id: verbatim_model::TraceId::from_raw(0),
-            at_us: 700_000,
-            input: verbatim_model::request::QueueInput::SpeechCut,
-        },
-    );
-    let effects = reduce(
-        &mut state,
-        &paragraph(request_of(&effects), 0, line(BANANA, 100, 3)),
-    );
-    let asked = request(&effects);
-    let effects = reduce(
-        &mut state,
-        &completed_text(
-            asked.query_id,
-            TextReply::Moved {
-                read_at_us: stamp(),
-            },
-        ),
-    );
-    assert_eq!(spoken(&effects), []);
-}
-
-#[test]
-fn a_sentence_key_with_others_behind_it_is_only_passed_on() {
-    let mut state = editing("abc\n", 0);
-    let first = request_of(&reduce(
-        &mut state,
-        &held_at(TraceId::from_raw(2), CaretMotion::NextCharacter, 499),
-    ));
-    let sentence = TraceId::from_raw(20);
-    let _ = reduce(
-        &mut state,
-        &held_at(sentence, CaretMotion::NextSentence, 500),
-    );
-    let _ = reduce(
-        &mut state,
-        &held_at(TraceId::from_raw(21), CaretMotion::NextCharacter, 501),
-    );
-    // The first key's read unanswered ends it, and the next is taken.
-    let effects = reduce(&mut state, &completed_text(first, TextReply::Unanswered));
-    assert!(
-        effects
-            .iter()
-            .any(|effect| matches!(own(effect), Effect::PassHeldKey(key) if *key == sentence)),
-        "the sentence key is passed on: {effects:?}"
-    );
-    assert_eq!(
-        request(&effects).op,
-        TextOp::ReadCaret(CaretRead {
-            fetch: verbatim_model::KeyFetch {
-                unit: TextUnit::Character,
-                motion: CaretMotion::NextCharacter,
-                details: verbatim_model::TextDetails::ALL,
-            },
-            purpose: ReadPurpose::BeforeFieldKey,
-        }),
-        "only the key behind it is read"
-    );
-}
-
-#[test]
-fn a_focus_that_moves_away_ends_a_sentence_move_silently() {
-    let (mut state, query) = sentence_final_read(BANANA, 3, CaretMotion::NextSentence);
-    let effects = sentence_no_effect(&mut state, query, line(BANANA, 100, 3));
-    let paragraph_query = request_of(&effects);
-    focus(&mut state, node(9, Role::Button, StateSet::new()));
-    assert!(!state.holds_inputs_back());
-    let late = reduce(
-        &mut state,
-        &paragraph(paragraph_query, 0, line(BANANA, 100, 3)),
-    );
-    assert_eq!(late, [], "no move is made");
+    session.input(&terminal_command(ReviewCommand::ReviewPreviousLine));
+    assert_eq!(session.heard(), terminal_heard(&["abcdef"]));
+    session.input(&terminal_command(ReviewCommand::ReviewCurrentCharacter));
+    assert_eq!(session.heard(), terminal_heard(&["e"]));
 }

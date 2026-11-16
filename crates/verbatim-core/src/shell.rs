@@ -12,11 +12,10 @@
 //! (`books/dev/src/explanation/design/ownership.md`).
 
 use verbatim_model::{
-    Earcon, Effect, GuiRequest, Input, LockKey, Message, Phrase, Pid, Script, SegmentContent,
+    Earcon, Effect, GuiRequest, Input, LockKey, Message, Phrase, Script, SegmentContent,
     ShellItemKind, SpeechPriority, TraceId, Utterance, UtteranceSegment,
 };
 
-use crate::reduce::process_is_attended;
 use crate::state::SrState;
 
 /// Handles one input the shell's threads produce; any other input does
@@ -25,13 +24,10 @@ pub(crate) fn reduce(state: &mut SrState, input: &Input) -> Vec<Effect> {
     match input {
         Input::Started => started(),
         Input::Exiting { replaced } => {
-            let mut effects = crate::key_line::exit(state);
             state.exiting = true;
-            effects.extend(exiting(*replaced));
-            effects
+            exiting(*replaced)
         }
         Input::ErrorLogged => error_logged(),
-        Input::ApplicationNotResponding { process, .. } => not_responding(state, *process),
         Input::ToggleKeyPressed {
             toggle,
             pressed_at_ms,
@@ -62,8 +58,6 @@ pub(crate) fn reduce(state: &mut SrState, input: &Input) -> Vec<Effect> {
         }
         Input::PreviewSpeech { trace_id, segments } => preview_speech(*trace_id, segments),
         Input::PreviewEarcon(earcon) => vec![Effect::PlayEarcon(*earcon)],
-        Input::MenuOrSwitchEnded { ended_at_us } => menu_or_switch_ended(state, *ended_at_us),
-        Input::Desktop { trace_id, news } => crate::desktop::news(state, *trace_id, news),
         Input::Progress { change, .. } => crate::reduce::reduce_bar_change(state, change),
         _ => Vec::new(),
     }
@@ -151,24 +145,6 @@ fn error_logged() -> Vec<Effect> {
     vec![Effect::PlayEarcon(Earcon::Error)]
 }
 
-/// A window of `process` stopped responding, which its outpost reports
-/// once per hang: the sound, only if `process` is attended now, judged as
-/// [`process_is_attended`] judges it, so a hang met while its application
-/// is in the background is never sounded, even after the user returns to
-/// it (Dickson, 2026-11-06). With no attention yet, no application holds
-/// it.
-fn not_responding(state: &SrState, process: Pid) -> Vec<Effect> {
-    if state
-        .foreground
-        .attention()
-        .is_some_and(|attention| process_is_attended(state, attention, process))
-    {
-        vec![Effect::PlayEarcon(Earcon::AppNotResponding)]
-    } else {
-        Vec::new()
-    }
-}
-
 /// A lock key's new state ("caps lock on"), interrupting, as NVDA
 /// announces it once the key has changed it.
 fn lock_key(trace_id: TraceId, key: LockKey, on: bool) -> Vec<Effect> {
@@ -236,24 +212,6 @@ fn preview_speech(trace_id: TraceId, segments: &[UtteranceSegment]) -> Vec<Effec
         SpeechPriority::Interrupt,
         segments.to_vec(),
     )]
-}
-
-/// A menu or the Alt+Tab switcher closed at `ended_at_us`: unless a focus
-/// observed since then has been applied, the application in front is asked
-/// for its focus, as NVDA's fake focus is queued when no focus event was
-/// validly processed with the end; a focus fact dropped or unreadable does
-/// not skip it (`docs/parity/backends.md`). An end that reaches Core while
-/// focus reports wait is judged once they are decided, in its turn in the
-/// focus queue, so a report that ended unanswered counts for nothing.
-fn menu_or_switch_ended(state: &SrState, ended_at_us: u64) -> Vec<Effect> {
-    let applied = state.latest_focus_observed_at();
-    if applied.is_some_and(|observed| observed >= ended_at_us) {
-        Vec::new()
-    } else {
-        vec![Effect::ReadFocus(
-            verbatim_model::protocol::FocusPurpose::Fake,
-        )]
-    }
 }
 
 #[cfg(test)]

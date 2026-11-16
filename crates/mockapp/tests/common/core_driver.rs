@@ -90,6 +90,10 @@ pub struct Step {
     /// The calls the stand-in for the listener's check thread made
     /// judging the UI Automation events told, before Core asked anything.
     pub checked: CallCounts,
+    /// Say-all's utterances whole, their marks included.
+    pub say_all: Vec<Vec<SegmentContent>>,
+    /// Whether Core let the display turn off again, as say-all's end does.
+    pub display_released: bool,
 }
 
 impl Step {
@@ -139,6 +143,10 @@ pub struct CoreDriver {
     said: Vec<Said>,
     calls: CallCounts,
     checked: CallCounts,
+    /// Say-all's utterances whole, and whether the display was let go,
+    /// since the last take.
+    say_all: Vec<Vec<SegmentContent>>,
+    display_released: bool,
     /// What Core said at its start.
     pub startup: Vec<Utterance>,
     /// Every input Core took and effect it gave, printed when a test
@@ -280,6 +288,8 @@ impl CoreDriver {
             wake: None,
             clock: Clock::new(time, start_us),
             said: Vec::new(),
+            say_all: Vec::new(),
+            display_released: false,
             calls: CallCounts::default(),
             checked: CallCounts::default(),
             startup: Vec::new(),
@@ -327,6 +337,8 @@ impl CoreDriver {
             said: std::mem::take(&mut self.said),
             calls: std::mem::take(&mut self.calls),
             checked: std::mem::take(&mut self.checked),
+            say_all: std::mem::take(&mut self.say_all),
+            display_released: std::mem::take(&mut self.display_released),
         }
     }
 
@@ -668,6 +680,13 @@ impl CoreDriver {
         self.take()
     }
 
+    /// Playback reached say-all's `mark`; what Core said once every answer
+    /// came.
+    pub fn mark_reached(&mut self, mark: verbatim_model::SpeechMark) -> Step {
+        self.feed(QueueInput::MarkReached(mark));
+        self.take()
+    }
+
     /// The user presses caret key `key` with the committed focus's record
     /// bound to it at its press, as the hook's view publishes it
     /// ([`SrState::caret_binding`]), held back from the application when
@@ -913,6 +932,26 @@ impl CoreDriver {
     /// Carries out one of Core's effects, queuing what it brings back.
     fn effect(&mut self, effect: Effect, inputs: &mut VecDeque<Input>) {
         match effect {
+            Effect::Speak(utterance, key) if utterance.say_all => {
+                self.say_all.push(
+                    utterance
+                        .segments
+                        .iter()
+                        .map(|segment| segment.content.clone())
+                        .collect(),
+                );
+                self.effect(
+                    Effect::Speak(
+                        verbatim_model::Utterance {
+                            say_all: false,
+                            ..utterance
+                        },
+                        key,
+                    ),
+                    inputs,
+                );
+            }
+            Effect::KeepDisplayOn(false) => self.display_released = true,
             Effect::Speak(utterance, _) => self.said.push(Said::Speech(
                 utterance
                     .segments

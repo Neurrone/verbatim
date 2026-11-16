@@ -10,6 +10,8 @@
 //! focus context, shared with today's announcement code; what Core keeps
 //! with it from the focus answer is [`Kept`], beside it here.
 
+use std::sync::Arc;
+
 use serde::{Deserialize, Serialize};
 use verbatim_model::property::RuntimeId;
 use verbatim_model::request::{KnownAncestor, MsaaIds, ObjectClass};
@@ -60,8 +62,9 @@ pub(crate) struct Place {
     pub(crate) top_level: WindowHandle,
     /// The top of its owner chain.
     pub(crate) root_owner: WindowHandle,
-    /// Each ancestor's own window, nearest first, for a window object.
-    pub(crate) ancestor_windows: Vec<WindowHandle>,
+    /// Each ancestor's own window, nearest first, for a window object;
+    /// shared, as the chain is, so a checkpoint copies a pointer.
+    pub(crate) ancestor_windows: Arc<[WindowHandle]>,
 }
 
 impl Place {
@@ -110,8 +113,10 @@ pub(crate) struct Kept {
     pub(crate) window: crate::event_queue::RequestWindow,
     /// Its ancestors as the next focus read's walk meets them, nearest
     /// first: each node, its runtime id for a UI Automation node, and its
-    /// own window for a window object.
-    pub(crate) ancestors: Vec<KeptAncestor>,
+    /// own window for a window object. The part that grows with the
+    /// application, so shared: a checkpoint, which every entry that asks
+    /// takes, copies a pointer, not the chain.
+    pub(crate) ancestors: Arc<[KeptAncestor]>,
     /// The focused child's ids, when a redirect from a list reached it.
     pub(crate) redirected_to: Option<MsaaIds>,
     /// The foreground window it entered under, when it could be read.
@@ -339,7 +344,7 @@ impl Versions {
         let mine = asked == Some(kept.outpost);
         let mut known = Vec::new();
         let focus = kept.as_ancestor(None);
-        let line = std::iter::once(&focus).chain(&kept.ancestors);
+        let line = std::iter::once(&focus).chain(kept.ancestors.iter());
         for (place, ancestor) in line.enumerate().skip(usize::from(!itself)) {
             if mine {
                 known.push((place, KnownAncestor::Node(ancestor.node)));

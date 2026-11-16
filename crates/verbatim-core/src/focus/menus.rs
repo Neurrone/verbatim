@@ -165,7 +165,7 @@ async fn start(cx: &mut Cx<Entries>, candidate: &Candidate, run_executed: bool) 
         event: Some(held.event),
         held_child: held.held_child,
     };
-    let origin = Origin::of_tell(&candidate.tell, candidate.window);
+    let origin = Origin::of_tell(&candidate.tell, candidate.window, cx.foreground());
     let executed = execute(&mut cx.facts_mut(), &origin, &read, &known, read_by);
     executed.deliver(cx);
 }
