@@ -49,6 +49,7 @@
     )
 )]
 
+mod announcements;
 mod applications;
 mod caret_location;
 mod caret_tell;

@@ -1794,10 +1794,22 @@ pub(super) fn read_node(
     }
     let (uia, nodes) = client.uia_with(context, Context::read_node_request)?;
     let element = resolve_uia_element(context, uia, &nodes, node_id)?;
-    Ok(with_legacy_checked_state(
+    let mut snapshot = with_legacy_checked_state(
         element.live().element(),
         element.snapshot_in_table(context.nodes()),
-    ))
+    );
+    // A combo box without the `Value` pattern, or a looping selector, has
+    // its first selected item's name as its value, read live, as NVDA's
+    // `ComboBoxWithoutValuePattern` reads it (`NVDAObjects/UIA/__init__.py`
+    // 1380 to 1392).
+    if element.read().value_from_selection() {
+        snapshot.value = uia
+            .selected(element.live(), &nodes)
+            .ok()
+            .flatten()
+            .and_then(|selected| selected.read().parts(selected.runtime_id()).name);
+    }
+    Ok(snapshot)
 }
 
 /// The window handle the kept element of the UIA node `node_id` says it is,

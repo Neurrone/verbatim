@@ -553,7 +553,9 @@ fn set_value(tree: &SharedTree, id: &str, text: String) -> Option<usize> {
 }
 
 /// Marks the node selected, moving the `Selected` state off any previously
-/// selected node — the single-selection model `select` scripts.
+/// selected node, and off its siblings, as a single-selection container
+/// moves its selection, a fixture's item selected from the start among
+/// them — the single-selection model `select` scripts.
 fn select_node(tree: &SharedTree, id: &str) -> Option<usize> {
     let mut guard = tree
         .lock()
@@ -563,6 +565,13 @@ fn select_node(tree: &SharedTree, id: &str) -> Option<usize> {
         guard.nodes[previous]
             .states
             .remove(verbatim_model::State::Selected);
+    }
+    if let Some(parent) = guard.nodes[index].parent {
+        for sibling in guard.nodes[parent].children.clone() {
+            guard.nodes[sibling]
+                .states
+                .remove(verbatim_model::State::Selected);
+        }
     }
     guard.nodes[index]
         .states

@@ -31,25 +31,24 @@ mod harness;
 use std::sync::Arc;
 use std::sync::mpsc;
 
-use verbatim_listener_logic::focus::{FocusEvent, Judged};
-use verbatim_model::protocol::{DeliveredFact, OutpostToCore, UiaSnapshotFact};
-use verbatim_model::{
-    CallCounts, FocusText, NodeId, NormalizedEvent, PropertyChange, Role, StateSet,
-};
-use verbatim_outpost::Heard;
+use verbatim_model::event_kind::EventKind;
+use verbatim_model::tell::Payload;
+use verbatim_model::{CallCounts, Role, SegmentContent, StateSet};
 use verbatim_process::arguments::OutpostOptions;
 use verbatim_uia::{
     Agile, Cached, Fill, ListenerEvent, ListenerSelection, Live, Node, Part, Registration, Shape,
     Subscription, Uia,
 };
 use verbatim_uia_rops::{ControlledQuery, Path, controlled_selection};
+use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::{
-    IUIAutomationElement, TreeScope_Descendants, UIA_HelpTextPropertyId, UIA_NamePropertyId,
+    IUIAutomationElement, TreeScope_Descendants, UIA_NamePropertyId,
     UIA_SelectionItem_ElementSelectedEventId,
 };
 use windows::core::BSTR;
 
+use common::core_driver::CoreDriver;
 use common::outpost::OutpostUnderTest;
 
 /// The element named `name` under `root`, for the remote program to import
@@ -217,89 +216,74 @@ fn a_selected_result_is_found_only_inside_the_list_the_search_box_controls() {
     app.quit();
 }
 
-/// Focuses mockapp's search box, as the listener reads and sends the
-/// focus, and returns its node once the outpost has reported it with the
-/// word that it has no text, and has nothing more to say.
-fn focus_search_box(
-    app: &mut common::MockApp,
-    outpost: &OutpostUnderTest,
-    uia: &Uia,
-    root: &Live,
-) -> NodeId {
+/// No speech.
+const NOTHING: [Vec<SegmentContent>; 0] = [];
+
+/// Core driving an outpost watching mockapp's `fixture`, with its search
+/// box focused and told to Core as the listener tells its focus: what
+/// Core said of the focus.
+fn search_box_focused(
+    fixture: &str,
+    prefix: &str,
+    options: OutpostOptions,
+) -> (common::MockApp, HWND, CoreDriver, Vec<Vec<SegmentContent>>) {
+    let title = common::unique_title(prefix);
+    let mut app = common::spawn(fixture, "uia", &title);
+    let hwnd = common::find_window(&title);
+    let mut core = CoreDriver::new(&app, OutpostUnderTest::with_options(&app, options));
     app.send("set-focus search");
-    let listener = uia
-        .request_fixed::<ListenerEvent>()
-        .expect("the listener's cache request");
-    let condition = uia
-        .property_condition(UIA_NamePropertyId, &VARIANT::from(BSTR::from("Search box")))
-        .expect("name condition");
-    let focused = root
-        .find_first(TreeScope_Descendants, &condition, &listener)
-        .expect("the search")
-        .expect("the search box");
-    let (judged, _) = outpost.listener_read(&focused);
-    outpost.deliver(judged.into_fact(0, FocusEvent::Focus));
-    // The search box has no text pattern in mockapp.
-    let search = match outpost.next() {
-        OutpostToCore::Event {
-            event:
-                NormalizedEvent::FocusChanged {
-                    node,
-                    text: Some(text),
-                    ..
-                },
-            ..
-        } if matches!(*text, FocusText::NoText) => node.id,
-        other => panic!("the outpost said {other:?}, not the focus on the search box with no text"),
-    };
-    outpost.settled();
-    search
+    let uia = Uia::new().expect("Uia::new");
+    let said = core
+        .uia_focus(&common::listener_element(
+            &uia,
+            hwnd.0 as isize,
+            "Search box",
+        ))
+        .spoken();
+    (app, hwnd, core, said)
 }
 
-/// The listener's selection fact for the element `runtime_id` names, of
-/// role `role` and named `name`, in mockapp's window `hwnd`.
-fn selection_fact(hwnd: isize, runtime_id: Vec<i32>, role: Role, name: &str) -> DeliveredFact {
-    DeliveredFact::UiaSelection {
-        hwnd,
-        focus_window: hwnd,
-        snapshot: UiaSnapshotFact {
-            runtime_id,
-            role,
-            name: Some(name.to_owned()),
-            value: None,
-            states: StateSet::new(),
-            details: verbatim_model::NodeDetails::default(),
-        },
-    }
+/// The states an element selected event's cache holds for mockapp's
+/// element `name`, as the listener's own `capture_selection` reads them,
+/// with the element as the listener tells it.
+fn selected(uia: &Uia, hwnd: HWND, name: &str) -> (Cached<ListenerEvent>, StateSet) {
+    let root = uia
+        .window_live(hwnd.0 as isize)
+        .expect("mockapp's window element");
+    let condition = uia
+        .property_condition(UIA_NamePropertyId, &VARIANT::from(BSTR::from(name)))
+        .expect("name condition");
+    let request = uia
+        .request_fixed::<ListenerSelection>()
+        .expect("the listener's selection cache request");
+    let element = root
+        .find_first(TreeScope_Descendants, &condition, &request)
+        .expect("the search")
+        .unwrap_or_else(|| panic!("no element named {name:?}"));
+    let (_, snapshot) = verbatim_listener::listener::capture_selection(&element, &element.read())
+        .expect("mockapp's element has its process");
+    (element.narrow(), snapshot.states)
 }
+
+/// An element selected event: its element, its cached name and states.
+type Selected = (Agile<ListenerSelection>, Option<String>, StateSet);
 
 /// mockapp's element selected events under its window `window`, each with
-/// its fact as the focus listener's callback captures it
-/// (`verbatim_listener::listener::capture_selection`) and its element in agile form,
-/// as the listener hands both to its reading thread. The subscription
-/// lasts as long as the registration returned.
-fn selections(
-    window: isize,
-) -> (
-    Registration,
-    mpsc::Receiver<(Agile<ListenerSelection>, DeliveredFact)>,
-) {
+/// its element as the listener's callback narrows it and the states its
+/// cache holds (`verbatim_listener::listener::capture_selection`). The
+/// subscription lasts as long as the registration returned.
+fn selections(window: isize) -> (Registration, mpsc::Receiver<Selected>) {
     let (sent, events) = mpsc::channel();
     let registration = Registration::with_parts(
         vec![Part::shaped::<ListenerSelection>(Subscription::Event {
             event: UIA_SelectionItem_ElementSelectedEventId,
             callback: Arc::new(move |element: &Cached<ListenerSelection>| {
-                let (hwnd, snapshot) =
+                let (_, snapshot) =
                     verbatim_listener::listener::capture_selection(element, &element.read())
                         .expect("mockapp's element has its process");
-                let fact = DeliveredFact::UiaSelection {
-                    hwnd,
-                    focus_window: 0,
-                    snapshot,
-                };
                 let agile = element.agile().expect("an agile reference");
                 // The test may have finished.
-                let _ = sent.send((agile, fact));
+                let _ = sent.send((agile, snapshot.name, snapshot.states));
             }),
         })],
         common::window_subtree(window),
@@ -308,302 +292,215 @@ fn selections(
     (registration, events)
 }
 
+/// The next selection event, which must be of the item named `name`, as
+/// the listener tells it.
+fn next_selection(
+    events: &mpsc::Receiver<Selected>,
+    name: &str,
+) -> (Cached<ListenerEvent>, StateSet) {
+    let (agile, cached_name, states) = events
+        .recv_timeout(common::WAIT_TIMEOUT)
+        .unwrap_or_else(|_| panic!("no element selected event for {name}"));
+    assert_eq!(cached_name.as_deref(), Some(name), "the selected item");
+    let element = agile.resolve().expect("the event's element");
+    (element.narrow(), states)
+}
+
+/// What Core says of the controlled selection of "Sound settings": the
+/// item, as a focus, with its position in its fixture's list of size,
+/// when its fixture gives one.
+fn sound_settings(size: Option<u32>) -> Vec<Vec<SegmentContent>> {
+    let mut said = vec![SegmentContent::Label("Sound settings".to_owned())];
+    if let Some(size) = size {
+        said.push(SegmentContent::Position {
+            position: 1,
+            set_size: Some(size),
+        });
+    }
+    vec![said]
+}
+
 /// Settings' replacing state, through a real outpost: the list's first
 /// item is selected, the list then replaces its items under new runtime
-/// ids, and the selection of the old item is delivered after that. Nothing
-/// is reported of the list for it: the item is in none of what the box
-/// controls, so it is an ordinary selection change, which Core does not
-/// speak on a search box (`reduce_selection_changed`). A selection of the
-/// new item that follows is a controlled selection, with its name and
-/// position. The old
-/// item's fact is the listener's own: captured in the event's callback and
-/// checked by the listener's reading thread's check
-/// (`OutpostUnderTest::listener_check`), which finds the windowless item's
-/// nearest window from its element. The check runs before the
-/// replacement, as the real listener's check precedes the outpost's
-/// handling, and as Settings' old element still answers then (the route's
-/// live firings, `docs/parity/changes-and-selection.md`); a check made
-/// after mockapp's item died would drop the event, its nearest-window call
-/// failing on the dead element.
+/// ids, and the selection of the old item reaches Core after that. Nothing
+/// is said of it: Core's read of the item finds it gone. The listener's
+/// check of the old item runs before the replacement, as the real
+/// listener's check precedes Core's read, and as Settings' old element
+/// still answers then (the route's live firings,
+/// `docs/parity/changes-and-selection.md`). A selection of the new item
+/// that follows is a controlled selection, spoken with its name and
+/// position.
 fn a_stale_selection_after_a_replacement_reports_nothing_and_an_ordinary_one_the_new_item() {
-    let title = common::unique_title("mockapp-controller-replaced");
-    let mut app = common::spawn("replaced_suggestions.json", "uia", &title);
-    let hwnd = common::find_window(&title);
-    let outpost = OutpostUnderTest::new(&app);
+    let (mut app, hwnd, mut core, _) = search_box_focused(
+        "replaced_suggestions.json",
+        "mockapp-controller-replaced",
+        OutpostOptions::default(),
+    );
     let uia = Uia::new().expect("Uia::new");
     let root = uia
         .window_live(hwnd.0 as isize)
         .expect("mockapp's window element");
-    let search = focus_search_box(&mut app, &outpost, &uia, &root);
-    let window = hwnd.0 as isize;
-    let (_registration, events) = selections(window);
+    let (_registration, events) = selections(hwnd.0 as isize);
 
     app.send("select sound");
-    let (agile, fact) = events
-        .recv_timeout(common::WAIT_TIMEOUT)
-        .expect("an element selected event for Sound settings");
-    let element = agile.resolve().expect("the event's element");
-    let fact = match outpost.listener_check(&element.narrow(), fact) {
-        Judged::Passed(fact) => *fact,
-        other => panic!("the listener's check made {other:?} of the selection"),
-    };
-    let replaced = match &fact {
-        DeliveredFact::UiaSelection {
-            hwnd,
-            focus_window,
-            snapshot,
-        } => {
-            assert_eq!(
-                (*hwnd, *focus_window, snapshot.name.as_deref()),
-                (0, window, Some("Sound settings")),
-                "the selected item's fact"
-            );
-            snapshot.runtime_id.clone()
-        }
-        other => panic!("{other:?} is no selection"),
-    };
+    let (element, states) = next_selection(&events, "Sound settings");
+    let stale = core.uia_tell(
+        EventKind::UiaElementSelected,
+        &element,
+        Some(states),
+        Payload::None,
+    );
     app.send("replace-items suggestions");
     let current = verbatim_uia::runtime_id(&find(&uia, &root, "Sound settings"));
     assert_ne!(
-        current, replaced,
+        Some(current.as_slice()),
+        match &stale.object {
+            verbatim_model::tell::EventObject::Uia { runtime_id, .. } =>
+                Some(runtime_id.0.as_slice()),
+            verbatim_model::tell::EventObject::Msaa { .. } => None,
+        },
         "the new item has a runtime id of its own"
     );
-    outpost.deliver(fact);
-    match outpost.next() {
-        OutpostToCore::Event {
-            event: NormalizedEvent::SelectionChanged { node },
-            ..
-        } => assert_eq!(node.name.as_deref(), Some("Sound settings")),
-        other => panic!("the outpost said {other:?}, not an ordinary selection change"),
-    }
-    outpost.settled();
+    assert_eq!(core.tell(stale).spoken(), NOTHING);
 
     app.send("select sound");
-    let (agile, fact) = events
-        .recv_timeout(common::WAIT_TIMEOUT)
-        .expect("an element selected event for the new Sound settings");
-    let element = agile.resolve().expect("the event's element");
-    let fact = match outpost.listener_check(&element.narrow(), fact) {
-        Judged::Passed(fact) => *fact,
-        other => panic!("the listener's check made {other:?} of the selection"),
-    };
-    outpost.deliver(fact);
-    match outpost.next() {
-        OutpostToCore::Event {
-            event: NormalizedEvent::ControlledSelection { controller, node },
-            ..
-        } => assert_eq!(
-            (
-                controller,
-                node.name.as_deref(),
-                node.details.position_in_set,
-                node.details.set_size
-            ),
-            (search, Some("Sound settings"), Some(1), Some(2))
-        ),
-        other => panic!("the outpost said {other:?}, not the controlled selection"),
-    }
-    outpost.settled();
-
-    drop(outpost);
+    let (element, states) = next_selection(&events, "Sound settings");
+    assert_eq!(
+        core.uia_event(
+            EventKind::UiaElementSelected,
+            &element,
+            Some(states),
+            Payload::None
+        )
+        .spoken(),
+        sound_settings(Some(2))
+    );
+    drop(core);
     app.quit();
 }
 
 /// A selection of the focus itself, while the list it controls has a
-/// selection, is the focus's own selection change, reported as one, and
-/// nothing more, as NVDA's base selection handler, finding it in none of
-/// the controlled elements, falls through to its state change handler; it
-/// is never answered with the list's current selection.
+/// selection, is the focus's own state change, judged on the states its
+/// event's cache holds, which are those already spoken: nothing is said,
+/// and it is never answered with the list's current selection.
 fn a_selection_of_the_focus_itself_is_reported_as_its_own() {
-    let title = common::unique_title("mockapp-controller-own");
-    let mut app = common::spawn("replaced_suggestions.json", "uia", &title);
-    let hwnd = common::find_window(&title);
-    let outpost = OutpostUnderTest::new(&app);
-    let uia = Uia::new().expect("Uia::new");
-    let root = uia
-        .window_live(hwnd.0 as isize)
-        .expect("mockapp's window element");
-    let search = focus_search_box(&mut app, &outpost, &uia, &root);
-
+    let (mut app, hwnd, mut core, _) = search_box_focused(
+        "replaced_suggestions.json",
+        "mockapp-controller-own",
+        OutpostOptions::default(),
+    );
     app.send("select sound");
-    let search_box = verbatim_uia::runtime_id(&find(&uia, &root, "Search box"));
-    outpost.deliver(selection_fact(
-        hwnd.0 as isize,
-        search_box,
-        Role::EditableText,
-        "Search box",
-    ));
-    match outpost.next() {
-        OutpostToCore::Event {
-            event: NormalizedEvent::SelectionChanged { node },
-            ..
-        } => assert_eq!(node.id, search, "the search box's own selection"),
-        other => panic!("the outpost said {other:?}, not the search box's selection"),
-    }
-    outpost.settled();
-
-    drop(outpost);
+    let uia = Uia::new().expect("Uia::new");
+    let (search_box, states) = selected(&uia, hwnd, "Search box");
+    assert_eq!(
+        core.uia_event(
+            EventKind::UiaElementSelected,
+            &search_box,
+            Some(states),
+            Payload::None
+        )
+        .spoken(),
+        NOTHING
+    );
+    drop(core);
     app.quit();
 }
 
-/// The outpost keeps the element of a property change on the focus, whose
-/// cache holds the focus's property events' properties and none of its
-/// details. A selection in the list the focus controls is then checked
-/// from that element: the controller's runtime id is UIA's own, kept with
-/// the element, so nothing absent from its cache is read. Read the classic
-/// way, so every cached read is the outpost's own.
+/// A controlled selection read the classic way, after a change of the
+/// focus's description told as the outpost tells one, reads nothing absent
+/// from a cache: the completion reads the focus's controller relation from
+/// the element it holds for the focus.
 fn a_controlled_selection_from_a_kept_event_element_reads_nothing_uncached() {
-    let title = common::unique_title("mockapp-controller-kept");
-    let mut app = common::spawn("controller.json", "uia", &title);
-    let hwnd = common::find_window(&title);
-    let outpost = OutpostUnderTest::with_options(
-        &app,
+    let (mut app, hwnd, mut core, _) = search_box_focused(
+        "controller.json",
+        "mockapp-controller-kept",
         OutpostOptions {
             remote_operations: false,
         },
     );
     let uia = Uia::new().expect("Uia::new");
-    let root = uia
-        .window_live(hwnd.0 as isize)
-        .expect("mockapp's window element");
-    let search = focus_search_box(&mut app, &outpost, &uia, &root);
-
     app.send("set-description search Type to search");
-    outpost.heard(&[Heard::UiaProperty(UIA_HelpTextPropertyId.0)]);
-    assert!(
-        matches!(
-            outpost.next(),
-            OutpostToCore::Event {
-                event: NormalizedEvent::PropertyChanged {
-                    change: PropertyChange::Description(_),
-                    ..
-                },
-                ..
+    let search_box = common::listener_element(&uia, hwnd.0 as isize, "Search box");
+    assert_eq!(
+        core.uia_event(
+            EventKind::UiaPropertyChanged,
+            &search_box,
+            None,
+            Payload::PropertyChanged {
+                property: verbatim_model::property::PropertyId::Description,
+                value: Some(verbatim_model::property::PropertyValue::Text(
+                    "Type to search".to_owned()
+                )),
             }
-        ),
+        )
+        .spoken(),
+        [vec![SegmentContent::Description(
+            "Type to search".to_owned()
+        )]],
         "the focus's new description"
     );
-    let _ = outpost.take_failed_reads();
+    let _ = core.outpost.take_failed_reads();
 
     app.send("select result2");
-    let result = find(&uia, &root, "Sound settings");
-    outpost.deliver(selection_fact(
-        hwnd.0 as isize,
-        verbatim_uia::runtime_id(&result),
-        Role::ListItem,
-        "Sound settings",
-    ));
-    match outpost.next() {
-        OutpostToCore::Event {
-            event: NormalizedEvent::ControlledSelection { controller, node },
-            ..
-        } => assert_eq!(
-            (controller, node.name.as_deref()),
-            (search, Some("Sound settings"))
-        ),
-        other => panic!("the outpost said {other:?}, not the controlled selection"),
-    }
-    assert_eq!(outpost.take_failed_reads(), 0, "no failed cached read");
-
-    drop(outpost);
+    let (result, states) = selected(&uia, hwnd, "Sound settings");
+    assert_eq!(
+        core.uia_event(
+            EventKind::UiaElementSelected,
+            &result,
+            Some(states),
+            Payload::None
+        )
+        .spoken(),
+        sound_settings(None)
+    );
+    assert_eq!(core.outpost.take_failed_reads(), 0, "no failed cached read");
+    drop(core);
     app.quit();
 }
 
 /// A focus on a search box holding text, followed by a selection in the
 /// list it controls, as Settings selects its first suggestion on a Shift+Tab
-/// into its search box: the selection's marker comes after the focus's, so
-/// the focus's read and the selection are planned as one batch, in that
-/// order. The outpost reports the focus with the line at its caret, which
-/// is part of the focus's announcement (`docs/nvda/speech.md`, "What an
-/// object with text says"), in the one message, then the controlled
-/// selection, and nothing more.
+/// into its search box: the focus is spoken with the line at its caret,
+/// which is part of the focus's announcement (`docs/nvda/speech.md`, "What
+/// an object with text says"), then the controlled selection.
 fn a_text_focus_carries_its_line_ahead_of_a_selection_that_followed_it() {
     let title = common::unique_title("mockapp-controller-typed");
     let mut app = common::spawn("typed_search.json", "uia", &title);
     let hwnd = common::find_window(&title);
-    let window = hwnd.0 as isize;
-    let outpost = OutpostUnderTest::new(&app);
+    let mut core = CoreDriver::new(&app, OutpostUnderTest::new(&app));
     let uia = Uia::new().expect("Uia::new");
-    let root = uia.window_live(window).expect("mockapp's window element");
 
     app.send("set-focus search");
     app.send("select sound");
-    let listener = uia
-        .request_fixed::<ListenerEvent>()
-        .expect("the listener's cache request");
-    let condition = uia
-        .property_condition(UIA_NamePropertyId, &VARIANT::from(BSTR::from("Search box")))
-        .expect("name condition");
-    let focused = root
-        .find_first(TreeScope_Descendants, &condition, &listener)
-        .expect("the search")
-        .expect("the search box");
-    let (judged, _) = outpost.listener_read(&focused);
-    let sound = verbatim_uia::runtime_id(&find(&uia, &root, "Sound settings"));
-
-    outpost.deliver(DeliveredFact::UiaFocusMarker { marker: 1 });
-    outpost.deliver(DeliveredFact::UiaFocusMarker { marker: 2 });
-    outpost.deliver(DeliveredFact::UiaMarked {
-        marker: 2,
-        fact: Box::new(selection_fact(
-            window,
-            sound,
-            Role::ListItem,
-            "Sound settings",
-        )),
-    });
-    outpost.deliver(judged.into_fact(1, FocusEvent::Focus));
-
-    let search = match outpost.next() {
-        OutpostToCore::Event {
-            event:
-                NormalizedEvent::FocusChanged {
-                    node,
-                    text: Some(text),
-                    ..
-                },
-            ..
-        } if matches!(*text, FocusText::Caret { .. }) => {
-            let FocusText::Caret {
-                caret,
-                selected_text,
-                ..
-            } = *text
-            else {
-                unreachable!("matched by the guard");
-            };
-            assert_eq!(
-                (
-                    node.name.as_deref(),
-                    caret.line.text.as_str(),
-                    caret.selection,
-                    selected_text
-                ),
-                (Some("Search box"), "sound", None, None),
-                "the focus with its line"
-            );
-            node.id
-        }
-        other => {
-            panic!("the outpost said {other:?}, not the focus on the search box with its line")
-        }
-    };
-    match outpost.next() {
-        OutpostToCore::Event {
-            event: NormalizedEvent::ControlledSelection { controller, node },
-            ..
-        } => assert_eq!(
-            (controller, node.name.as_deref()),
-            (search, Some("Sound settings"))
-        ),
-        other => panic!("the outpost said {other:?}, not the controlled selection"),
-    }
-    outpost.settled();
-
-    drop(outpost);
+    let focus = common::listener_element(&uia, hwnd.0 as isize, "Search box");
+    let (result, states) = selected(&uia, hwnd, "Sound settings");
+    let focus = core.uia_tell(EventKind::UiaFocus, &focus, None, Payload::None);
+    let selection = core.uia_tell(
+        EventKind::UiaElementSelected,
+        &result,
+        Some(states),
+        Payload::None,
+    );
+    let mut said = core.tell(focus).spoken();
+    said.extend(core.tell(selection).spoken());
+    assert_eq!(
+        said,
+        [
+            vec![
+                SegmentContent::Label("Mockapp Typed Search Fixture".to_owned()),
+                SegmentContent::Role(Role::Window),
+            ],
+            vec![
+                SegmentContent::Label("Search box".to_owned()),
+                SegmentContent::Role(Role::EditableText),
+            ],
+            vec![SegmentContent::Text("sound".to_owned())],
+            sound_settings(Some(1))[0].clone(),
+        ]
+    );
+    drop(core);
     app.quit();
 }
-
 /// Runs this file's tests through the UIA test runner, which explains why
 /// these binaries do not exit normally (`common/harness.rs`).
 fn main() {

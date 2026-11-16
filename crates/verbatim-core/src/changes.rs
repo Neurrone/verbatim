@@ -363,7 +363,7 @@ pub(crate) async fn msaa(mut cx: Cx<Entries>, change: MsaaChange) {
             speak_change(&mut cx, trace_id, node, &property, child_count);
         }
         (None, Some(RelationFound::Controlled | RelationFound::InsideControlled)) => {
-            controlled_selection(&mut cx, trace_id, kept.node, read.object);
+            controlled_selection(&mut cx, trace_id, kept.node, (read.object, Backend::Msaa));
         }
         _ => {}
     }
@@ -372,13 +372,18 @@ pub(crate) async fn msaa(mut cx: Cx<Entries>, change: MsaaChange) {
 /// A plain selection's item, `item`, is an object the committed focus
 /// `focus` controls or inside one: it is spoken as a focus, the navigator
 /// moved to it.
-fn controlled_selection(cx: &mut Cx<Entries>, trace_id: TraceId, focus: NodeId, item: NodeRead) {
+pub(crate) fn controlled_selection(
+    cx: &mut Cx<Entries>,
+    trace_id: TraceId,
+    focus: NodeId,
+    (item, backend): (NodeRead, Backend),
+) {
     let window = RequestWindow::of_node(&item.window);
     let item = FocusNode {
         read: item,
         runtime_id: None,
     };
-    let Some(item) = crate::focus::execute::snapshot(&item, Backend::Msaa) else {
+    let Some(item) = crate::focus::execute::snapshot(&item, backend) else {
         return;
     };
     let said = {
@@ -415,7 +420,7 @@ fn newly_expanded_tree_item(facts: &SrState, node: NodeId, states: StateSet) -> 
 }
 
 /// Speaks a change of `node` by today's announcement code.
-fn speak_change(
+pub(crate) fn speak_change(
     cx: &mut Cx<Entries>,
     trace_id: TraceId,
     node: NodeId,

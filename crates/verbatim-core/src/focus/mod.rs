@@ -48,4 +48,5 @@ pub(crate) const FOCUS_SET: &[PropertyId] = &[
     PropertyId::RangeValue,
     PropertyId::Cell,
     PropertyId::TableCounts,
+    PropertyId::ValueFromSelection,
 ];

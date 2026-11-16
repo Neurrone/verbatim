@@ -147,6 +147,8 @@ pub(crate) enum Entry {
     /// The next read of the say-all started by the press of this trace,
     /// with its speech fence.
     SayAllRead(TraceId, Fence),
+    /// A notification, toast, UI Automation selection, MSAA alert or show.
+    Announcement(Box<crate::announcements::Announcement>),
 }
 
 impl fmt::Debug for Entry {
@@ -208,6 +210,11 @@ impl fmt::Debug for Entry {
             ),
             Self::Mark(mark, _) => write!(formatter, "Mark({})", mark.0),
             Self::SayAllRead(run, _) => write!(formatter, "SayAllRead({run:?})"),
+            Self::Announcement(announcement) => write!(
+                formatter,
+                "Announcement({:?} {:?} of {})",
+                announcement.tell.kind, announcement.tell.object, announcement.tell.process.0
+            ),
         }
     }
 }
@@ -313,6 +320,15 @@ impl Entry {
                 crate::changes::uia_of_tell(tell, runtime_id)
                     .map(|change| Self::UiaChange(Box::new(change)))
             }
+            (
+                EventKind::UiaNotification
+                | EventKind::UiaWindowOpened
+                | EventKind::UiaElementSelected
+                | EventKind::Alert
+                | EventKind::Show,
+                _,
+            ) => crate::announcements::Announcement::of_tell(from.generation, tell)
+                .map(|announcement| Self::Announcement(Box::new(announcement))),
             _ => None,
         }
     }
@@ -325,6 +341,7 @@ impl Entry {
             Self::MsaaChange(change) => Some(&change.tell),
             Self::UiaChange(change) => Some(&change.tell),
             Self::Caret(caret) => Some(&caret.tell),
+            Self::Announcement(announcement) => Some(&announcement.tell),
             Self::Run(_)
             | Self::ForegroundMarker { .. }
             | Self::MenuCheck(_)
@@ -354,6 +371,7 @@ impl Entry {
             | Self::Mark(_, fence)
             | Self::SayAllRead(_, fence) => *fence,
             Self::Press(press) => press.fence,
+            Self::Announcement(announcement) => announcement.fence,
         }
     }
 
@@ -376,6 +394,7 @@ impl Entry {
             | Self::Mark(_, fence)
             | Self::SayAllRead(_, fence) => *fence = set,
             Self::Press(press) => press.fence = set,
+            Self::Announcement(announcement) => announcement.fence = set,
         }
     }
 }
@@ -431,6 +450,9 @@ impl Logic for Entries {
             Entry::Press(press) => Box::pin(crate::keys::entry::run(cx, *press)),
             Entry::Mark(mark, _) => Box::pin(crate::say_all::mark_entry(cx, mark)),
             Entry::SayAllRead(run, _) => Box::pin(crate::say_all::read_entry(cx, run)),
+            Entry::Announcement(announcement) => {
+                crate::announcements::Announcement::run(cx, *announcement)
+            }
             Entry::ForegroundMarker {
                 window, root_owner, ..
             } => Box::pin(async move {
@@ -449,6 +471,7 @@ impl Logic for Entries {
                 .rev()
                 .find(|candidate| candidate.window == *window)
                 .is_some_and(|candidate| accepted_apart_from_foreground(&candidate.tell)),
+            Entry::Announcement(announcement) => announcement.exempt_from_foreground(),
             other => other.tell().is_some_and(accepted_apart_from_foreground),
         }
     }
@@ -560,6 +583,10 @@ impl Logic for Entries {
             Entry::UiaFocus(focus) => {
                 instance.reader == crate::event_queue::Reader::Listener
                     && focus.listener == instance.generation
+            }
+            Entry::Announcement(announcement) => {
+                instance.reader == crate::event_queue::Reader::Listener
+                    && announcement.kept_by(instance.generation)
             }
             _ => false,
         }
@@ -699,6 +726,7 @@ impl Logic for Entries {
                 focus_kind: false,
                 ends_run: false,
             },
+            Entry::Announcement(announcement) => announcement.place(),
             Entry::CurrentFocus(_) | Entry::MenuCheck(_) => Place::Other {
                 merges: false,
                 focus_kind: true,
@@ -728,6 +756,9 @@ impl Logic for Entries {
             }
             (Entry::Caret(waiting), Entry::Caret(arriving)) => {
                 crate::caret_tell::merges(waiting, arriving)
+            }
+            (Entry::Announcement(waiting), Entry::Announcement(arriving)) => {
+                waiting.merged_by(arriving)
             }
             (Entry::UiaChange(waiting), Entry::UiaChange(arriving)) => {
                 (&waiting.runtime_id, waiting.property, waiting.tell.thread)
@@ -781,6 +812,11 @@ impl Logic for Entries {
             Entry::CurrentFocus(read) => Some(read.window),
             Entry::MsaaChange(change) => Some(change.window),
             Entry::Caret(caret) => caret.window(),
+            Entry::Announcement(announcement) => {
+                return announcement.window().is_some_and(|window| {
+                    !foreground.holds(&window) && !announcement.exempt_from_foreground()
+                });
+            }
             // A command resolves its object at its turn and is tested only
             // when it asks.
             Entry::Run(_)
@@ -799,6 +835,7 @@ impl Logic for Entries {
     fn probe(entry: &Entry) -> Option<Probe> {
         match entry {
             Entry::UiaFocus(focus) => focus.tell.checked.as_ref()?.probe,
+            Entry::Announcement(announcement) => announcement.probe(),
             Entry::Candidate(_)
             | Entry::Run(_)
             | Entry::ForegroundMarker { .. }
@@ -848,7 +885,8 @@ pub(crate) fn pending_focus(
         | Entry::ForegroundMarker { .. }
         | Entry::Press(_)
         | Entry::Mark(..)
-        | Entry::SayAllRead(..) => false,
+        | Entry::SayAllRead(..)
+        | Entry::Announcement(_) => false,
     }
 }
 

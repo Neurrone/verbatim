@@ -415,6 +415,9 @@ struct Read {
     hwnd: isize,
     /// Whether UIA counts it both a control and content.
     content: bool,
+    /// Whether its value is its first selected item's name, when the
+    /// element itself was read.
+    value_from_selection: Option<bool>,
 }
 
 impl Read {
@@ -432,6 +435,7 @@ impl Read {
             has_text: None,
             hwnd: read.node.role.hwnd,
             content: read.is_control_and_content(),
+            value_from_selection: None,
         }
     }
 
@@ -478,6 +482,9 @@ impl Read {
                         // Not read by the listener: the focus's keyboard
                         // focus is its check's, and an object's text is
                         // the outpost's.
+                        PropertyId::ValueFromSelection => {
+                            self.value_from_selection.map(PropertyValue::Flag)
+                        }
                         PropertyId::HasKeyboardFocus | PropertyId::TextSummary => None,
                     },
                 })
@@ -803,6 +810,7 @@ fn element_read(
                 has_text: None,
                 hwnd: fields.role.hwnd,
                 content: fields.content && fields.control,
+                value_from_selection: None,
             },
             false,
         )
@@ -818,6 +826,7 @@ fn element_read(
     if from_selection {
         read.parts.value = walked.selected_name.take();
     }
+    read.value_from_selection = Some(from_selection);
     if focus {
         read.parts.states = read.parts.states.with(State::Focused);
     }

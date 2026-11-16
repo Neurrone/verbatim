@@ -1,0 +1,71 @@
+//! A show at its turn (Table 12): of the six classes NVDA accepts a show
+//! from, only `tooltips_class32` is handled, with one outpost request for
+//! the object's snapshot, its role judged at the answer as NVDA tells them
+//! apart (`NVDAObjects/IAccessible/__init__.py` 2845 to 2846): a help
+//! balloon is spoken, from any application, as NVDA speaks it by default;
+//! an ordinary tooltip is not, as NVDA's tooltip reporting is off by
+//! default (`NVDAObjects/behaviors.py` 992, 1008). The other five classes'
+//! handling waits for application support (`docs/parity/focus-events.md`,
+//! "Background events"). Spoken queued, as today.
+
+use verbatim_model::request::{FocusNode, ObjectRef, Purpose, ReadObject};
+use verbatim_model::{Backend, Role, SpeechPriority};
+
+use super::{Announcement, Kind, msaa_passes};
+use crate::changes::ChangeRead;
+use crate::entries::{Entries, window_facts};
+use crate::event_queue::{Cx, OTHER_DUE_US, Outcome};
+use crate::focus::FOCUS_SET;
+
+/// The tooltip class, whose shows are read.
+const TOOLTIP_CLASS: &str = "tooltips_class32";
+
+/// The function of a show entry.
+pub(crate) async fn run(mut cx: Cx<Entries>, announcement: Announcement) {
+    let Kind::Show { ids, window } = announcement.kind else {
+        return;
+    };
+    let tell = &announcement.tell;
+    if window_facts(tell).is_none_or(|facts| facts.window.class != TOOLTIP_CLASS)
+        || !msaa_passes(&cx, tell, &window)
+    {
+        return;
+    }
+    let request = ChangeRead {
+        process: window.process,
+        window,
+        read: ReadObject {
+            object: ObjectRef::Msaa {
+                window: ids.window,
+                object: ids.object,
+                child: ids.child,
+            },
+            set: FOCUS_SET.to_vec(),
+            relation: None,
+            descendants: false,
+            walk: None,
+            purpose: Purpose::Other,
+        },
+    };
+    let due_us = cx.due_in(OTHER_DUE_US);
+    let Outcome::Result(read) = cx.ask(request, due_us).await else {
+        return;
+    };
+    let Some(node) = crate::focus::execute::snapshot(
+        &FocusNode {
+            read: read.object,
+            runtime_id: None,
+        },
+        Backend::Msaa,
+    ) else {
+        return;
+    };
+    if node.role != Role::HelpBalloon {
+        return;
+    }
+    cx.emit(crate::reduce::announce_object(
+        tell.trace_id,
+        &node,
+        SpeechPriority::Queued,
+    ));
+}

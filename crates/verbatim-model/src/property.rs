@@ -67,6 +67,10 @@ pub enum PropertyId {
     /// line at its caret, or its first line when it has no caret, as
     /// NVDA's object speech reads an object's text content.
     TextSummary,
+    /// Whether the object's value is its first selected item's name: a
+    /// combo box without the `Value` pattern, or a looping selector, as
+    /// NVDA's `ComboBoxWithoutValuePattern` reads it.
+    ValueFromSelection,
 }
 
 impl PropertyId {
@@ -95,6 +99,7 @@ impl PropertyId {
             Self::Cell => &CELL,
             Self::TableCounts => &TABLE_COUNTS,
             Self::TextSummary => &TEXT_SUMMARY,
+            Self::ValueFromSelection => &VALUE_FROM_SELECTION,
         }
     }
 
@@ -200,6 +205,9 @@ pub enum UiaConversion {
     /// it has one, absent otherwise: the selection's text when it is not
     /// empty, else the line at the caret, else the first line.
     TextSummary,
+    /// A combo box's control type with no `Value` pattern, or a list whose
+    /// class name holds `LoopingSelector`.
+    ValueFromSelection,
 }
 
 /// How MSAA reads a property: an `IAccessible` call, or a read of the
@@ -275,6 +283,7 @@ mod uia {
     pub(super) const NATIVE_WINDOW_HANDLE: i32 = 30020;
     pub(super) const IS_REQUIRED_FOR_FORM: i32 = 30025;
     pub(super) const IS_TEXT_PATTERN_AVAILABLE: i32 = 30040;
+    pub(super) const IS_VALUE_PATTERN_AVAILABLE: i32 = 30043;
     pub(super) const VALUE_VALUE: i32 = 30045;
     pub(super) const VALUE_IS_READ_ONLY: i32 = 30046;
     pub(super) const RANGE_VALUE_VALUE: i32 = 30047;
@@ -576,6 +585,23 @@ const TEXT_SUMMARY: PropertyEntry = PropertyEntry {
     cost: Cost::Alone,
 };
 
+const VALUE_FROM_SELECTION: PropertyEntry = PropertyEntry {
+    id: PropertyId::ValueFromSelection,
+    name: "value from selection",
+    kind: ValueKind::Flag,
+    uia: Some(UiaRead {
+        cached: &[
+            uia::CONTROL_TYPE,
+            uia::CLASS_NAME,
+            uia::IS_VALUE_PATTERN_AVAILABLE,
+        ],
+        conversion: UiaConversion::ValueFromSelection,
+    }),
+    msaa: None,
+    ia2: None,
+    cost: Cost::Cheap,
+};
+
 /// The whole table, in [`PropertyId`] order.
 pub const PROPERTIES: &[PropertyEntry] = &[
     NAME,
@@ -599,6 +625,7 @@ pub const PROPERTIES: &[PropertyEntry] = &[
     CELL,
     TABLE_COUNTS,
     TEXT_SUMMARY,
+    VALUE_FROM_SELECTION,
 ];
 
 /// A UI Automation runtime id.
@@ -934,6 +961,10 @@ pub mod props {
         /// [`PropertyId::TextSummary`].
         TextSummary, super::TextSummary, TextSummary
     );
+    marker!(
+        /// [`PropertyId::ValueFromSelection`].
+        ValueFromSelection, bool, Flag
+    );
 }
 
 /// Declares a set of properties fixed at compile time: a struct with one
@@ -1060,7 +1091,7 @@ mod tests {
                 1
             );
         }
-        assert_eq!(PROPERTIES.len(), 21);
+        assert_eq!(PROPERTIES.len(), 22);
     }
 
     #[test]

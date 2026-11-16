@@ -787,6 +787,15 @@ impl<L: Logic> Cx<L> {
         shared.state.queue.timers.push((at_us, entry));
     }
 
+    /// Moves `entry`, the front's own entry as it is to be judged again,
+    /// to the back of the queue, behind every entry waiting, keeping its
+    /// speech fence: the front's function then ends.
+    pub(crate) fn requeue(&mut self, entry: L::Entry) {
+        let mut shared = self.shared.borrow_mut();
+        let state = &mut shared.state;
+        super::limiter::arrive::<L>(&state.facts, &mut state.queue.waiting, entry);
+    }
+
     /// Emits `said`, stamped by its entry ([`Logic::stamp`]).
     pub(crate) fn emit(&mut self, mut said: L::Said) {
         let mut shared = self.shared.borrow_mut();

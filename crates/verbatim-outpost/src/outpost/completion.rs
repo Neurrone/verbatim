@@ -135,9 +135,13 @@ pub(super) fn complete(
             nearest: Some(nearest),
             msaa: None,
             foreground: foreground.as_ref(),
-            // The property table carries no such fact of the listener's
-            // read.
-            value_from_selection: false,
+            // As the listener read it.
+            value_from_selection: matches!(
+                first_read
+                    .answer(verbatim_model::property::PropertyId::ValueFromSelection)
+                    .and_then(|answer| answer.value.as_ref()),
+                Some(verbatim_model::property::PropertyValue::Flag(true))
+            ),
             runtime_id_reused: reused,
             baseline: complete.baseline,
         },

@@ -2251,6 +2251,26 @@ fn reduce_alert(
     )]
 }
 
+/// Announces `node`, an object an announcement read, with reason focus at
+/// `priority`, as NVDA speaks an alert's or a toast's object: it never
+/// moves the focus or the navigator, and the level spoken before plays no
+/// part.
+pub(crate) fn announce_object(
+    trace_id: TraceId,
+    node: &NodeSnapshot,
+    priority: SpeechPriority,
+) -> Effect {
+    Effect::Speak(
+        announce_node(
+            trace_id,
+            priority,
+            node,
+            (Reason::Focus, &mut None, &mut CellMemory::default()),
+        ),
+        None,
+    )
+}
+
 /// How long after a toast the same toast is dropped as a repeat: one second
 /// (`docs/parity/alerts.md`, "Toasts").
 const TOAST_REPEAT_US: u64 = 1_000_000;

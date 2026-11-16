@@ -136,7 +136,7 @@ impl Drop for CoreDriver {
     fn drop(&mut self) {
         if std::thread::panicking() {
             for line in &self.log {
-                eprintln!("{line:.600}");
+                eprintln!("{line:.3000}");
             }
         }
     }
@@ -693,12 +693,13 @@ impl CoreDriver {
     }
 
     /// The tell the listener sends for a UI Automation event of `kind` on
-    /// `element`, kept behind a new token, after its check thread's calls.
+    /// `element`, kept behind a new token, after its check thread's calls,
+    /// made now: [`Self::tell`] gives it to Core.
     #[expect(
         clippy::too_many_lines,
         reason = "the check thread's calls, one arm each, as the listener makes them"
     )]
-    fn uia_tell(
+    pub fn uia_tell(
         &mut self,
         kind: EventKind,
         element: &Cached<ListenerEvent>,

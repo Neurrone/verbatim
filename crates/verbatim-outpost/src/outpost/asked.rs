@@ -256,7 +256,8 @@ pub(super) fn values(
                     PropertyId::AutomationId
                     | PropertyId::HasTextPattern
                     | PropertyId::RangeValue
-                    | PropertyId::TextSummary => None,
+                    | PropertyId::TextSummary
+                    | PropertyId::ValueFromSelection => None,
                 },
             })
             .collect(),
