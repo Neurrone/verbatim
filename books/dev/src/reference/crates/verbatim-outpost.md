@@ -372,6 +372,10 @@ the same tables and code, which the arbitrator's own lists are built from.
   failed cached reads (`verbatim_uia::calls`), also logged at shutdown.
 - `Outpost::observe_heard` hands a `HeardObserver` each event the outpost's
   own handlers and hook take in, as a `Heard`, once queued.
+- `Outpost::observe_request_calls` hands a `RequestCallsObserver` the
+  calls into the application each of Core's requests made, by its
+  number, before its answer is sent, for a test that pins a request's
+  calls.
 
 Inside an outpost (`docs/design/communication.md`, section 6.4;
 `books/dev/src/explanation/design/ownership.md`):

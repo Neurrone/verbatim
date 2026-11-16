@@ -93,7 +93,7 @@ use verbatim_uia::{
 
 use crate::reading::Readers;
 
-mod asked;
+pub(crate) mod asked;
 mod checking;
 mod tells;
 

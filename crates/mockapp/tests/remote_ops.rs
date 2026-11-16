@@ -18,9 +18,9 @@ use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
 use std::time::Duration;
 
-use common::outpost::OutpostUnderTest;
+use common::outpost::{Focused, OutpostUnderTest};
 use verbatim_listener_logic::focus::Judged;
-use verbatim_model::protocol::{DeliveredFact, OutpostToCore};
+use verbatim_model::protocol::OutpostToCore;
 use verbatim_model::{CallCounts, NormalizedEvent};
 use verbatim_model::{Role, State};
 use verbatim_process::arguments::OutpostOptions;
@@ -794,17 +794,8 @@ fn a_focus_whose_walk_times_out_is_reported_below_its_window() {
         // transaction with it has timed out; a listener of its own does not
         // touch the outpost's.)
         let check = fixture.focus_delivered("check", "Remember");
-        outpost.deliver(outpost.listener_fact(&check));
-        assert!(
-            matches!(
-                outpost.next(),
-                OutpostToCore::Event {
-                    event: NormalizedEvent::FocusChanged { .. },
-                    ..
-                }
-            ),
-            "{path}: the focus before is reported"
-        );
+        let before = outpost.uia_focus_answer(&check);
+        assert_eq!(before.name(), Some("Remember"), "{path}: the focus before");
         outpost.settled();
         let deep = fixture.focus_delivered("deep", "Deep button");
         let client: IUIAutomation2 = fixture.uia.client().cast().expect("IUIAutomation2");
@@ -815,35 +806,21 @@ fn a_focus_whose_walk_times_out_is_reported_below_its_window() {
             .send(&format!("slow-patterns {}", SLOW_CALL.as_millis()));
         // The listener's read runs in this process, under the timeout set
         // for it.
-        let fact = outpost.listener_fact(&deep);
+        let (focus, _) = outpost.listener_focus(&deep);
         // Acknowledged once mockapp has answered the calls still queued,
         // among them the rest of a program UIA stopped waiting for: until
         // then its window, busy, answers the outpost's probe that it has no
         // UIA provider.
         fixture.app.send("slow-patterns 0");
         drop(restored);
-        outpost.deliver(fact);
-        let said = outpost.next();
-        match said {
-            OutpostToCore::Event {
-                event:
-                    NormalizedEvent::FocusChanged {
-                        node, ancestors, ..
-                    },
-                ..
-            } => {
-                assert_eq!(node.name.as_deref(), Some("Deep button"), "{path}");
-                assert_eq!(
-                    ancestors
-                        .iter()
-                        .map(|node| (node.role, node.name.clone(), node.details.window))
-                        .collect::<Vec<_>>(),
-                    [],
-                    "{path}: nothing above it, the chain going on from the desktop"
-                );
-            }
-            other => panic!("{path}: the outpost said {other:?}, not the focus"),
-        }
+        let (outcome, calls) = outpost.complete_focus(focus);
+        let focused = Focused::of(outcome, calls);
+        assert_eq!(focused.name(), Some("Deep button"), "{path}");
+        assert_eq!(
+            focused.ancestor_names(),
+            [] as [Option<&str>; 0],
+            "{path}: nothing above it, the chain going on from the desktop"
+        );
         outpost.settled();
         drop(outpost);
         fixture.app.quit();
@@ -866,7 +843,8 @@ fn a_focus_whose_walk_times_out_is_reported_below_its_window() {
 /// when it answers none (verified), so a step that fails with a code is
 /// covered by the walk's own unit test.
 fn a_focus_whose_parent_step_fails_goes_on_from_its_windows_parent() {
-    use verbatim_model::protocol::AncestorsEnd;
+    use verbatim_model::WindowHandle;
+    use verbatim_model::request::RouteEnd;
     use windows::Win32::UI::WindowsAndMessaging::GetDesktopWindow;
     // SAFETY: GetDesktopWindow has no preconditions.
     let desktop = unsafe { GetDesktopWindow() }.0 as isize;
@@ -875,45 +853,29 @@ fn a_focus_whose_parent_step_fails_goes_on_from_its_windows_parent() {
         let outpost = OutpostUnderTest::new(&fixture.app);
         // A focus before, in the same window, whose containers are known.
         let check = fixture.focus_delivered("check", "Remember");
-        outpost.deliver(outpost.listener_fact(&check));
-        assert!(
-            matches!(
-                outpost.next(),
-                OutpostToCore::Event {
-                    event: NormalizedEvent::FocusChanged { .. },
-                    ..
-                }
-            ),
-            "{case}: the focus before is reported"
-        );
+        let before = outpost.uia_focus_answer(&check);
+        assert_eq!(before.name(), Some("Remember"), "{case}: the focus before");
         outpost.settled();
         let deep = fixture.focus_delivered("deep", "Deep button");
-        // The listener's walk to the nearest window steps to the focus's
-        // parent once first; the step after it is the classic read's.
-        fixture.app.send(&format!("answer-parent deep {case} 1"));
-        let fact = outpost.listener_fact(&deep);
-        let DeliveredFact::UiaFocusRead { read, .. } = &fact else {
-            panic!("{case}: the listener sent {fact:?}, not its read");
-        };
+        // Core names the focus's nearest window, which the listener's
+        // check thread found, so the read's first step is its walk's.
+        fixture.app.send(&format!("answer-parent deep {case}"));
+        let (focus, _) = outpost.listener_focus(&deep);
         assert_eq!(
-            (read.ancestors.len(), read.ancestors_end),
-            (0, AncestorsEnd::ContinueFrom(desktop)),
+            (
+                focus.object.ancestors.len(),
+                focus.object.route.as_ref().map(|route| &route.end)
+            ),
+            (
+                0,
+                Some(&RouteEnd::ContinueFrom(WindowHandle(desktop.cast_unsigned() as u64)))
+            ),
             "{case}: the listener names the window its chain goes on from"
         );
-        outpost.deliver(fact);
-        match outpost.next() {
-            OutpostToCore::Event {
-                event:
-                    NormalizedEvent::FocusChanged {
-                        node, ancestors, ..
-                    },
-                ..
-            } => {
-                assert_eq!(node.name.as_deref(), Some("Deep button"), "{case}");
-                assert_eq!(ancestors, [], "{case}");
-            }
-            other => panic!("{case}: the outpost said {other:?}, not the focus"),
-        }
+        let (outcome, calls) = outpost.complete_focus(focus);
+        let focused = Focused::of(outcome, calls);
+        assert_eq!(focused.name(), Some("Deep button"), "{case}");
+        assert_eq!(focused.ancestor_names(), [] as [Option<&str>; 0], "{case}");
         outpost.settled();
         drop(outpost);
         fixture.app.quit();

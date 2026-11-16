@@ -88,9 +88,15 @@ use verbatim_model::protocol::{
     CoreToOutpost, DeliveredFact, EventTiming, FocusNow, FocusedControl, OutpostToCore, Query,
     QueryOutcome, QueryResult, RequestId, WinEventStamp,
 };
+use verbatim_model::property::{PropertyId, PropertyValue, PropertyValues};
+use verbatim_model::request::{
+    Answer, CandidateKind, CompleteUia, CompletionFor, FocusNode, FocusRead, KnownAncestor,
+    MsaaIds, MsaaRun, ObjectRead, ObjectRef, Outcome, Purpose, ReadObject, Reply, Request,
+    RequestNumber, RunCandidate, RunRead, Tried, WindowVerdict,
+};
 use verbatim_model::{
-    CallCounts, FocusText, NodeId, NodeSnapshot, NormalizedEvent, Pid, QueryKind, TraceId,
-    WindowFacts, WindowHandle,
+    CallCounts, FocusText, NodeId, NodeSnapshot, NormalizedEvent, Pid, QueryKind, Role, StateSet,
+    TraceId, WindowFacts, WindowHandle,
 };
 use verbatim_outpost::{Heard, Outpost};
 use verbatim_process::arguments::OutpostOptions;
@@ -522,7 +528,18 @@ pub struct OutpostUnderTest {
     moves_to: Arc<AtomicIsize>,
     /// The number of the last request the request driver sent
     /// ([`Self::request`]).
-    last_asked: Cell<verbatim_model::request::RequestNumber>,
+    last_asked: Cell<RequestNumber>,
+    /// The calls each request made, by its number, as the outpost tells
+    /// them before it answers ([`Outpost::observe_request_calls`]).
+    request_calls: Receiver<(RequestNumber, CallCounts)>,
+    /// The ancestors of the focus the stand-in for Core committed, nearest
+    /// first, each with the entries Core names it by in a request's list
+    /// of the ancestors it already knows ([`Self::known`]).
+    committed: RefCell<Vec<Vec<KnownAncestor>>>,
+    /// mockapp's window, which a request about its focus names.
+    app_window: HWND,
+    /// mockapp's process.
+    app_pid: u32,
 }
 
 impl OutpostUnderTest {
@@ -716,6 +733,11 @@ impl OutpostUnderTest {
             // The test may have finished with what the outpost hears.
             let _ = heard_tx.send(event);
         }));
+        let (calls_tx, request_calls) = mpsc::channel();
+        outpost.observe_request_calls(Arc::new(move |number, calls| {
+            // The test may have finished with the outpost's calls.
+            let _ = calls_tx.send((number, calls));
+        }));
         let mut reader = FocusReader::new().expect("a UIA client for the listener's reads");
         // The listener's acceptance test reads the same foreground window.
         let listener_foreground = Arc::clone(&foreground);
@@ -745,7 +767,11 @@ impl OutpostUnderTest {
             reader_trace: Cell::new(None),
             observation,
             moves_to,
-            last_asked: Cell::new(verbatim_model::request::RequestNumber(0)),
+            last_asked: Cell::new(RequestNumber(0)),
+            request_calls,
+            committed: RefCell::new(Vec::new()),
+            app_window: super::find_window(&app.title),
+            app_pid: pid,
         }
     }
 
@@ -930,18 +956,20 @@ impl OutpostUnderTest {
     /// request driver (`verbatim_outpost::driver`), as Core's request table
     /// sends it, with no verdict in force for the window, and returns its
     /// number.
-    pub fn request(
+    pub fn request(&self, window: HWND, request: Request) -> RequestNumber {
+        self.request_with(window, WindowVerdict::ProbeFirst, request)
+    }
+
+    /// [`Self::request`] with Core's verdict for the window, `verdict`.
+    pub fn request_with(
         &self,
         window: HWND,
-        request: verbatim_model::request::Request,
-    ) -> verbatim_model::request::RequestNumber {
+        verdict: WindowVerdict,
+        request: Request,
+    ) -> RequestNumber {
         let mut driver =
             verbatim_outpost::driver::Driver::after(&self.outpost, self.last_asked.get());
-        let number = driver.ask(
-            verbatim_model::WindowHandle(window.0 as u64),
-            verbatim_model::request::WindowVerdict::ProbeFirst,
-            request,
-        );
+        let number = driver.ask(WindowHandle(window.0 as u64), verdict, request);
         self.last_asked.set(driver.last());
         number
     }
@@ -949,7 +977,7 @@ impl OutpostUnderTest {
     /// Cancels request `number` for `reason`, as Core does.
     pub fn cancel_request(
         &self,
-        number: verbatim_model::request::RequestNumber,
+        number: RequestNumber,
         reason: verbatim_model::request::CancelReason,
     ) {
         verbatim_outpost::driver::Driver::after(&self.outpost, self.last_asked.get())
@@ -958,25 +986,251 @@ impl OutpostUnderTest {
 
     /// The answer to request `number`, which must be the next message the
     /// outpost writes.
-    pub fn answer(
-        &self,
-        number: verbatim_model::request::RequestNumber,
-    ) -> verbatim_model::request::Answer {
-        match self.next() {
+    pub fn answer(&self, number: RequestNumber) -> Answer {
+        self.answer_with_calls(number).0
+    }
+
+    /// [`Self::answer`], with the calls the request made into the
+    /// application, which the outpost tells before it answers.
+    pub fn answer_with_calls(&self, number: RequestNumber) -> (Answer, CallCounts) {
+        let answer = match self.next() {
             OutpostToCore::Answer(answer) if answer.number == number => answer,
-            other => panic!("the answer to request {number}, not {other:?}"),
-        }
+            other => panic!("the answer to {number}, not {other:?}"),
+        };
+        let calls = loop {
+            match self.request_calls.recv_timeout(super::WAIT_TIMEOUT) {
+                Ok((told, calls)) if told == number => break calls,
+                // An earlier request's, whose answer the test did not take.
+                Ok(_) => {}
+                Err(error) => panic!("the outpost told no calls of {number}: {error}"),
+            }
+        };
+        (answer, calls)
     }
 
     /// Sends `request` about `window` and returns its answer, the next
     /// message the outpost writes.
-    pub fn requested(
-        &self,
-        window: HWND,
-        request: verbatim_model::request::Request,
-    ) -> verbatim_model::request::Answer {
+    pub fn requested(&self, window: HWND, request: Request) -> Answer {
         let number = self.request(window, request);
         self.answer(number)
+    }
+
+    /// The ancestors Core already knows, as a request names them: those of
+    /// the focus the stand-in for Core committed last, nearest first, each
+    /// by its node, its runtime id and its own window.
+    pub fn known(&self) -> Vec<KnownAncestor> {
+        self.committed.borrow().iter().flatten().cloned().collect()
+    }
+
+    /// Stands in for Core committing the focus `read` answers to a request
+    /// that named `sent` as the ancestors it already knows: its ancestors
+    /// are the answer's, then the committed focus's from the one the walk
+    /// met.
+    pub fn commit_focus(&self, read: &FocusRead, sent: &[KnownAncestor]) {
+        let mut committed = self.committed.borrow_mut();
+        let mut ancestors: Vec<Vec<KnownAncestor>> = read
+            .ancestors
+            .iter()
+            .map(|ancestor| known_of(&ancestor.node))
+            .collect();
+        if let Some(met) = read.met {
+            let met = &sent[usize::try_from(met).expect("a small place")];
+            let place = committed
+                .iter()
+                .position(|entries| entries.contains(met))
+                .expect("the ancestor met is one Core knows");
+            ancestors.extend(committed.drain(place..));
+        }
+        *committed = ancestors;
+    }
+
+    /// Forgets the focus the stand-in for Core committed: Core's focus
+    /// moved to another application.
+    pub fn forget_focus(&self) {
+        self.committed.borrow_mut().clear();
+    }
+
+    /// What the listener answers for Core's read `read` of `element`, the
+    /// element a UI Automation event of mockapp named, which the test holds
+    /// as the listener keeps it: made with the listener's own read
+    /// (`verbatim_listener::focus_read::read_object`) on this thread, with
+    /// the calls it made.
+    pub fn listener_object(
+        &self,
+        element: &Cached<ListenerEvent>,
+        read: &ReadObject,
+    ) -> (Outcome, CallCounts) {
+        let uia = verbatim_uia::Uia::new().expect("a UIA client for the listener's reads");
+        let _ = verbatim_uia::calls::take();
+        let outcome = verbatim_listener::focus_read::read_object(
+            &uia,
+            element,
+            (Pid(self.app_pid), self.app_window.0 as isize),
+            read,
+        );
+        (outcome, verbatim_uia::calls::take())
+    }
+
+    /// The listener's read of a UI Automation focus on `element`, as Core
+    /// asks it: up to the ancestors Core already knows, answering its
+    /// route, which must come. With the calls it made.
+    pub fn listener_focus(&self, element: &Cached<ListenerEvent>) -> (ListenerFocus, CallCounts) {
+        let sent = self.known();
+        let (outcome, calls) = self.listener_object(
+            element,
+            &ReadObject {
+                object: ObjectRef::Kept(verbatim_model::tell::ElementToken(0)),
+                set: focus_set(),
+                relation: None,
+                descendants: false,
+                walk: Some(sent.clone()),
+                purpose: Purpose::Focus { keep: None },
+            },
+        );
+        let Outcome::Result(Reply::Object(object)) = outcome else {
+            panic!("the listener answered {outcome:?}, not the focus's read");
+        };
+        assert!(object.route.is_some(), "a focus read answers its route");
+        (
+            ListenerFocus {
+                object: *object,
+                sent,
+            },
+            calls,
+        )
+    }
+
+    /// The outpost's completion of the listener's read `focus` from its
+    /// route, as Core asks it, which the stand-in for Core commits when it
+    /// answers a focus; with its calls.
+    pub fn complete_focus(&self, focus: ListenerFocus) -> (Outcome, CallCounts) {
+        let ListenerFocus { object, sent } = focus;
+        let ObjectRead {
+            object,
+            ancestors,
+            route,
+            ..
+        } = object;
+        let route = route.expect("a focus read answers its route");
+        let window = hwnd(route.window);
+        let number = self.request(
+            window,
+            Request::CompleteUia(Box::new(CompleteUia {
+                route,
+                read: std::iter::once(object.values)
+                    .chain(ancestors.into_iter().map(|ancestor| ancestor.values))
+                    .collect(),
+                set: focus_set(),
+                known: sent.clone(),
+                completes: CompletionFor::Focus,
+                baseline: None,
+            })),
+        );
+        let (answer, calls) = self.answer_with_calls(number);
+        if let Outcome::Result(Reply::Focus(read)) = &answer.outcome {
+            self.commit_focus(read, &sent);
+        }
+        (answer.outcome, calls)
+    }
+
+    /// A UI Automation focus on `element`, which mockapp reports focused,
+    /// read as Core reads it: the listener's read
+    /// ([`Self::listener_focus`]), then the outpost's completion
+    /// ([`Self::complete_focus`]). Returns the completion's answer, with
+    /// the calls of both reads.
+    pub fn uia_focus_read(&self, element: &Cached<ListenerEvent>) -> (Outcome, CallCounts) {
+        let (focus, listener_calls) = self.listener_focus(element);
+        let (outcome, calls) = self.complete_focus(focus);
+        (outcome, listener_calls + calls)
+    }
+
+    /// [`Self::uia_focus_read`], which must answer a focus.
+    pub fn uia_focus_answer(&self, element: &Cached<ListenerEvent>) -> Focused {
+        let _ = verbatim_uia::calls::take_failed_reads();
+        let (outcome, calls) = self.uia_focus_read(element);
+        let listener_failed = verbatim_uia::calls::take_failed_reads();
+        match outcome {
+            Outcome::Result(Reply::Focus(read)) => Focused {
+                read: *read,
+                calls,
+                failed_reads: listener_failed + self.take_failed_reads(),
+            },
+            other => panic!("the completion answered {other:?}, not a focus"),
+        }
+    }
+
+    /// One MSAA run of mockapp's candidates, newest first, each by the ids
+    /// its event named and its kind, with no verdict in force for their
+    /// windows, as Core asks it with the ancestors it already knows; the
+    /// focus it finds is committed. Returns the run's answer and its calls.
+    pub fn msaa_run(&self, candidates: &[(MsaaIds, CandidateKind)]) -> (RunRead, CallCounts) {
+        let sent = self.known();
+        let window = candidates
+            .first()
+            .map_or(self.app_window, |(ids, _)| hwnd(ids.window));
+        let number = self.request(
+            window,
+            Request::MsaaRun(MsaaRun {
+                candidates: candidates
+                    .iter()
+                    .map(|&(ids, kind)| RunCandidate {
+                        ids,
+                        kind,
+                        verdict: WindowVerdict::ProbeFirst,
+                    })
+                    .collect(),
+                set: focus_set(),
+                known: sent.clone(),
+                baseline: None,
+            }),
+        );
+        let (answer, calls) = self.answer_with_calls(number);
+        let Outcome::Result(Reply::Run(run)) = answer.outcome else {
+            panic!("the run answered {:?}", answer.outcome);
+        };
+        if let Some(Tried::Focus(read)) = run.tried.last() {
+            self.commit_focus(read, &sent);
+        }
+        (run, calls)
+    }
+
+    /// The focus an MSAA run of one candidate, the focus event at `ids`,
+    /// finds, which it must: as [`Self::msaa_run`].
+    pub fn msaa_focus_answer(&self, ids: MsaaIds) -> Focused {
+        self.run_focus(ids, CandidateKind::Focus)
+    }
+
+    /// The focus an MSAA run of the one candidate `ids` of `kind` finds,
+    /// which it must.
+    pub fn run_focus(&self, ids: MsaaIds, kind: CandidateKind) -> Focused {
+        let (mut run, calls) = self.msaa_run(&[(ids, kind)]);
+        match run.tried.pop() {
+            Some(Tried::Focus(read)) => Focused {
+                read: *read,
+                calls,
+                failed_reads: self.take_failed_reads(),
+            },
+            other => panic!("the run tried {other:?}, not a focus"),
+        }
+    }
+
+    /// The application's current focus, asked as Core asks it with the
+    /// ancestors it already knows, which it commits; with its calls.
+    pub fn current_focus(&self) -> (Outcome, CallCounts) {
+        let sent = self.known();
+        let number = self.request(
+            self.app_window,
+            Request::CurrentFocus {
+                set: focus_set(),
+                known: sent.clone(),
+                baseline: None,
+            },
+        );
+        let (answer, calls) = self.answer_with_calls(number);
+        if let Outcome::Result(Reply::Focus(read)) = &answer.outcome {
+            self.commit_focus(read, &sent);
+        }
+        (answer.outcome, calls)
     }
 
     /// The outpost's next message, a focus in it judged as Core judges it
@@ -1565,4 +1819,168 @@ pub fn now_ms() -> u64 {
 /// listener stamps an event's arrival.
 pub fn now_us() -> u64 {
     verbatim_process::clock::now_us()
+}
+
+/// The properties Core reads of a focus and its ancestors.
+pub fn focus_set() -> Vec<PropertyId> {
+    vec![
+        PropertyId::Name,
+        PropertyId::Role,
+        PropertyId::Value,
+        PropertyId::States,
+        PropertyId::Description,
+        PropertyId::KeyboardShortcut,
+        PropertyId::PositionInSet,
+        PropertyId::SetSize,
+        PropertyId::Level,
+        PropertyId::Rect,
+        PropertyId::ClassName,
+        PropertyId::AutomationId,
+        PropertyId::NativeWindow,
+        PropertyId::Process,
+        PropertyId::RuntimeId,
+        PropertyId::HasTextPattern,
+        PropertyId::RangeValue,
+        PropertyId::Cell,
+        PropertyId::TableCounts,
+    ]
+}
+
+/// `window` as a window handle of this process's API.
+pub fn hwnd(window: WindowHandle) -> HWND {
+    HWND(isize::try_from(window.0).expect("a window handle") as _)
+}
+
+/// The MSAA ids mockapp raises an event of its node `index` with, in
+/// `window`: the node at its own object id.
+pub fn node_ids(window: HWND, index: usize) -> MsaaIds {
+    MsaaIds {
+        window: WindowHandle(window.0 as u64),
+        object: i32::try_from(index + 1).expect("a small index"),
+        child: 0,
+    }
+}
+
+/// The entries Core names an ancestor by in its list of the ancestors it
+/// already knows: its node, its runtime id and its own window.
+fn known_of(node: &FocusNode) -> Vec<KnownAncestor> {
+    let mut entries = Vec::new();
+    if let Some(id) = node.read.node {
+        entries.push(KnownAncestor::Node(id));
+    }
+    if let Some(runtime_id) = &node.runtime_id {
+        entries.push(KnownAncestor::Uia(runtime_id.clone()));
+    }
+    if let Some(PropertyValue::Window(window)) = value(&node.read.values, PropertyId::NativeWindow)
+        && window.0 != 0
+    {
+        entries.push(KnownAncestor::Window(*window));
+    }
+    entries
+}
+
+/// The value of property `id` among `values`, `None` when it has none or
+/// was not read.
+pub fn value(values: &PropertyValues, id: PropertyId) -> Option<&PropertyValue> {
+    values.answer(id).and_then(|answer| answer.value.as_ref())
+}
+
+/// The listener's answer to Core's read of a UI Automation focus, with
+/// the ancestors Core already knew when it asked, which its completion
+/// names again.
+pub struct ListenerFocus {
+    /// The listener's answer, with its route.
+    pub object: ObjectRead,
+    /// The ancestors Core already knew.
+    pub sent: Vec<KnownAncestor>,
+}
+
+/// A focus answer, as a test reads it.
+pub struct Focused {
+    /// The answer.
+    pub read: FocusRead,
+    /// The calls the reads made, the listener's and the outpost's.
+    pub calls: CallCounts,
+    /// The failed cached reads they made.
+    pub failed_reads: u32,
+}
+
+impl Focused {
+    /// The focus `outcome` answers, which it must, with `calls`.
+    pub fn of(outcome: Outcome, calls: CallCounts) -> Self {
+        match outcome {
+            Outcome::Result(Reply::Focus(read)) => Self {
+                read: *read,
+                calls,
+                failed_reads: 0,
+            },
+            other => panic!("the outpost answered {other:?}, not a focus"),
+        }
+    }
+
+    /// The names of the ancestors the answer carries, outermost first.
+    pub fn ancestor_names(&self) -> Vec<Option<&str>> {
+        self.read
+            .ancestors
+            .iter()
+            .rev()
+            .map(|ancestor| name_of(&ancestor.node))
+            .collect()
+    }
+
+    /// The focus's name.
+    pub fn name(&self) -> Option<&str> {
+        name_of(&self.read.focus)
+    }
+
+    /// The focus's node.
+    pub fn node(&self) -> NodeId {
+        self.read
+            .focus
+            .read
+            .node
+            .expect("an outpost mints the focus's node")
+    }
+
+    /// The focus's role.
+    pub fn role(&self) -> Role {
+        role_of(&self.read.focus)
+    }
+
+    /// The focus's states.
+    pub fn states(&self) -> StateSet {
+        match value(&self.read.focus.read.values, PropertyId::States) {
+            Some(PropertyValue::States(states)) => *states,
+            _ => StateSet::default(),
+        }
+    }
+
+    /// The names of the focus's chain, outermost first, ending with the
+    /// focus: the ancestors the answer carries, up to the one Core already
+    /// knows that its walk met.
+    pub fn chain(&self) -> Vec<Option<&str>> {
+        self.read
+            .ancestors
+            .iter()
+            .rev()
+            .map(|ancestor| name_of(&ancestor.node))
+            .chain(std::iter::once(self.name()))
+            .collect()
+    }
+}
+
+/// The name a focus answer's node was read with.
+pub fn name_of(node: &FocusNode) -> Option<&str> {
+    match value(&node.read.values, PropertyId::Name) {
+        Some(PropertyValue::Text(name)) => Some(name),
+        _ => None,
+    }
+}
+
+/// The role a focus answer's node was read with.
+pub fn role_of(node: &FocusNode) -> Role {
+    match value(&node.read.values, PropertyId::Role) {
+        Some(PropertyValue::Role(role)) => *role,
+        _ => Role::Unknown,
+    }
 }

@@ -549,7 +549,7 @@ fn known_runtime_ids(walk: &[KnownAncestor]) -> (Vec<Vec<i32>>, Vec<u32>) {
 /// rest, and the chain going on from the parent window of the outermost
 /// element's nearest window, as NVDA's failed parent read goes on by
 /// `Window._get_parent`.
-fn read_element(
+pub(crate) fn read_element(
     (uia, readability): (&Uia, &WindowReadabilityReader),
     sender: &Cached<ListenerEvent>,
     (pid, nearest): (Pid, isize),

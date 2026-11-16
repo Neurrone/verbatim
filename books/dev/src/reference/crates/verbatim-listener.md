@@ -97,6 +97,9 @@ this shape are in `books/dev/src/explanation/architecture.md`, section 1
   integration harness still drives as its stand-in for the listener,
   until that harness moves onto the request driver; the listener process
   does not use it.
+- `focus_read::read_object` is the listener's answer to Core's generic
+  read of an element, the read a reading thread makes for a kept element,
+  for a test that stands in for the listener holding the element itself.
 
 ## Progress bars
 

@@ -236,6 +236,9 @@ pub(crate) struct Context {
     /// Who is told of each event the outpost's own handlers take in
     /// ([`Outpost::observe_heard`]), if anyone.
     heard: OnceLock<HeardObserver>,
+    /// Who is told of the calls each of Core's requests made
+    /// ([`Outpost::observe_request_calls`]), if anyone.
+    request_calls: OnceLock<RequestCallsObserver>,
     /// Who is told, on the worker, of each foreground change a program is
     /// about to handle ([`Outpost::observe_foreground_programs`]), if
     /// anyone.
@@ -268,6 +271,12 @@ pub enum Heard {
 
 /// Told of each event an outpost takes in ([`Outpost::observe_heard`]).
 pub type HeardObserver = Arc<dyn Fn(Heard) + Send + Sync>;
+
+/// Told, on the worker, of the calls into the application each of Core's
+/// requests made, by its number, before its answer is sent
+/// ([`Outpost::observe_request_calls`]).
+pub type RequestCallsObserver =
+    Arc<dyn Fn(verbatim_model::request::RequestNumber, verbatim_model::CallCounts) + Send + Sync>;
 
 /// Told, on the worker, of the window of each foreground change a program
 /// is about to handle ([`Outpost::observe_foreground_programs`]).
@@ -928,6 +937,7 @@ impl Outpost {
             window_readability: Lock::new(Arc::new(verbatim_win32::window::readability)),
             requested_events: acceptance::RequestedEvents::default(),
             heard: OnceLock::new(),
+            request_calls: OnceLock::new(),
             foreground_programs: OnceLock::new(),
             failed_reads: AtomicU32::new(0),
             event_thread: OnceLock::new(),
@@ -1215,6 +1225,14 @@ impl Outpost {
     /// observer counts; later calls change nothing.
     pub fn observe_heard(&self, observer: HeardObserver) {
         let _ = self.context.heard.set(observer);
+    }
+
+    /// Tells `observer`, on the worker, the calls into the application
+    /// each of Core's requests made, by its number, before its answer is
+    /// sent, so that a test pins a request's calls. Only the first observer
+    /// counts; later calls change nothing.
+    pub fn observe_request_calls(&self, observer: RequestCallsObserver) {
+        let _ = self.context.request_calls.set(observer);
     }
 
     /// Tells `observer`, on the worker, the window of each foreground

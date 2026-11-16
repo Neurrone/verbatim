@@ -24,5 +24,5 @@ pub mod text;
 
 pub use outpost::{
     FocusWindowReader, FocusedElementReader, ForegroundProgramObserver, Heard, HeardObserver,
-    Outpost, run_attach, run_pipe,
+    Outpost, RequestCallsObserver, run_attach, run_pipe,
 };
