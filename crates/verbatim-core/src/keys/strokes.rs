@@ -137,6 +137,13 @@ impl StrokeLine {
         self.line.is_empty()
     }
 
+    /// Whether a held stroke whose key has not passed holds the line: a
+    /// key pressed now is deferred behind it, reaching the application at
+    /// its pass.
+    pub(crate) fn holds(&self) -> bool {
+        self.line.iter().any(InLine::holds)
+    }
+
     /// The earliest 150 ms release still to fire.
     pub(crate) fn next_release(&self) -> Option<u64> {
         self.line

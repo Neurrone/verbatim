@@ -174,7 +174,24 @@ pub(crate) async fn entry(mut cx: Cx<Entries>, press: ReviewPress, fence: Fence)
         Found::On(on) => on.window,
     };
     let due_us = cx.due_in(OTHER_DUE_US);
-    let mut next = begin(&mut cx.facts_mut(), press);
+    let next = begin(&mut cx.facts_mut(), press);
+    run_next(cx, (press, fence), window, next, (due_us, false)).await;
+}
+
+/// Runs a review press from `next` on: each read of its text, or the live
+/// read of the object for flat review, as the queue's request on the
+/// navigator's `window`, under the due time `due_us`; a read of the
+/// focused terminal's text is answered from Core's memory after one fresh
+/// read a command (`docs/design/readers-tell-core-asks-build3.md`,
+/// "Review commands as chained requests"), `fresh` when it was taken.
+async fn run_next(
+    mut cx: Cx<Entries>,
+    (press, fence): (ReviewPress, Fence),
+    window: crate::event_queue::RequestWindow,
+    mut next: Next,
+    (due_us, mut fresh): (u64, bool),
+) {
+    let trace_id = press.trace_id;
     loop {
         next = match next {
             Next::Said(effects) => {
@@ -182,6 +199,20 @@ pub(crate) async fn entry(mut cx: Cx<Entries>, press: ReviewPress, fence: Fence)
                     cx.emit(effect);
                 }
                 return;
+            }
+            Next::Text(node, op, then)
+                if crate::terminal::commands::answers(&cx.facts(), node, &op) =>
+            {
+                if !fresh {
+                    crate::terminal::commands::fresh(&mut cx, trace_id, node, due_us).await;
+                    fresh = true;
+                }
+                let Some(reply) =
+                    crate::terminal::commands::answer(&mut cx, (window, node), &op, due_us).await
+                else {
+                    return;
+                };
+                answered(&mut cx.facts_mut(), trace_id, (node, press), then, reply)
             }
             Next::Text(node, op, then) => {
                 let request = TextRequest {
@@ -257,25 +288,36 @@ fn asked_outside_queue(state: &mut SrState, press: ReviewPress, next: Next) -> V
 }
 
 /// Moves the review cursor to the previous or next command mark of the
-/// navigator's terminal (`books/dev/src/explanation/design/terminal-model.md`, "Features and
-/// settings"): Core's terminal model answers it as the line move it is,
-/// landing at the review cursor's column and speaking the line, so the
-/// review position and what is said follow a line move's; nothing is said
-/// past the last mark that way, or when the navigator is not a terminal
-/// Core models.
-pub(crate) fn command_mark(state: &mut SrState, press: ReviewPress) -> Vec<Effect> {
+/// focused terminal, the navigator (`books/dev/src/explanation/design/terminal-model.md`,
+/// "Features and settings"), as an event-queue entry: after the fresh
+/// read, Core's terminal model answers it as the line move it is, landing
+/// at the review cursor's column and speaking the line, so the review
+/// position and what is said follow a line move's; nothing is said past
+/// the last mark that way, or when the navigator is not the terminal Core
+/// models.
+pub(crate) async fn command_mark(mut cx: Cx<Entries>, press: ReviewPress, fence: Fence) {
     let command = press.command;
-    let Some(navigator) = state.navigator.as_ref() else {
-        return Vec::new();
+    let window = match crate::navigator::found(&cx.facts()) {
+        Found::On(on) => on.window,
+        Found::Nothing | Found::Unread => return,
     };
-    let node = navigator.object.id;
-    let (from, place) = match &navigator.text {
-        ReviewText::At(position) => (
-            TextPoint::At(point_of(position)),
-            LandingPlace::Column(position.column),
-        ),
-        _ => (TextPoint::Caret, LandingPlace::Start),
+    let (node, from, place) = {
+        let facts = cx.facts();
+        let Some(navigator) = facts.navigator.as_ref() else {
+            return;
+        };
+        let (from, place) = match &navigator.text {
+            ReviewText::At(position) => (
+                TextPoint::At(point_of(position)),
+                LandingPlace::Column(position.column),
+            ),
+            _ => (TextPoint::Caret, LandingPlace::Start),
+        };
+        (navigator.object.id, from, place)
     };
+    if crate::terminal::reading::modelled(&cx.facts()) != Some(node) {
+        return;
+    }
     let forward = command == ReviewCommand::NextCommandMark;
     let then = TextFollowUp::Land(Landing {
         place,
@@ -283,8 +325,22 @@ pub(crate) fn command_mark(state: &mut SrState, press: ReviewPress) -> Vec<Effec
         edge: None,
         command,
     });
-    crate::terminal_model::command_mark(state, node, press, (forward, from), then)
-        .unwrap_or_default()
+    let due_us = cx.due_in(OTHER_DUE_US);
+    crate::terminal::commands::fresh(&mut cx, press.trace_id, node, due_us).await;
+    let Some(reply) =
+        crate::terminal::commands::command_mark(&mut cx, (window, node), (forward, from), due_us)
+            .await
+    else {
+        return;
+    };
+    let next = answered(
+        &mut cx.facts_mut(),
+        press.trace_id,
+        (node, press),
+        then,
+        reply,
+    );
+    run_next(cx, (press, fence), window, next, (due_us, true)).await;
 }
 
 /// A review position on `line` at byte `offset`, which may be on its line
@@ -835,7 +891,7 @@ pub(crate) fn press_answer(
                     ObjectRead::Read(Box::new(object))
                 }
                 Ending::Outcome(QueryOutcome::Gone) => ObjectRead::Gone,
-                _ => ObjectRead::Unanswered,
+                Ending::Outcome(_) => ObjectRead::Unanswered,
             };
             return object_read(state, trace_id, press, read);
         }

@@ -8,6 +8,7 @@
 pub(crate) mod caret_key;
 pub(crate) mod entry;
 pub(crate) mod strokes;
+pub(crate) mod terminal;
 
 use std::collections::VecDeque;
 

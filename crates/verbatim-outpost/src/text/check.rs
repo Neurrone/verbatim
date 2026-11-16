@@ -67,6 +67,9 @@ pub fn check<S: TextSource>(
     let (unit, at_effect) = match ask.final_read {
         WatchFinalRead::Unit { unit, .. } => (unit, false),
         WatchFinalRead::UnitAtEffect { unit, .. } => (unit, true),
+        // A terminal's watch reads no unit at its end: Core's full read of
+        // the terminal follows (build 3).
+        WatchFinalRead::Terminal => (TextUnit::Character, true),
     };
     let extra = extra_unit(source, unit);
     let mut tries = 0;
@@ -94,6 +97,9 @@ pub fn check<S: TextSource>(
     };
     if !found.effect && at_effect {
         return Ok(Some(Watched::BoundUnread));
+    }
+    if ask.final_read == WatchFinalRead::Terminal {
+        return Ok(Some(Watched::EffectUnread));
     }
     let read = read_final(
         source,

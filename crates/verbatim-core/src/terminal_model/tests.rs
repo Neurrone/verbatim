@@ -61,57 +61,57 @@ fn what_the_rules_say_is_cores_speech_in_order() {
 }
 
 #[test]
-fn each_key_input_is_the_rules_key_and_a_clearing_key_forget_then_other() {
+fn each_key_input_is_the_rules_key_and_a_clearing_key_forget() {
     let node = NodeId::in_outpost(OutpostId(1), 12);
     let mut state = SrState::new();
-    let _ = crate::reduce(
-        &mut state,
-        &mut crate::Runtime::default(),
-        &Input::Event {
-            trace_id: TraceId::from_raw(1),
-            observed_at_us: 0,
-            source: Pid(1),
-            backend: Backend::Uia,
-            window: None,
-            event: NormalizedEvent::FocusChanged {
-                node: NodeSnapshot {
-                    id: node,
-                    backend: Backend::Uia,
-                    role: Role::Terminal,
-                    name: None,
-                    value: None,
-                    states: StateSet::new(),
-                    details: NodeDetails::default(),
-                },
-                whole_window: false,
-                ancestors: Vec::new(),
-                selected_child: None,
-                text: None,
-                earlier: None,
-                group: None,
-                answers: None,
-                first_cached_ancestor: None,
+    let window = crate::event_queue::RequestWindow {
+        handle: verbatim_model::WindowHandle(5),
+        top_level: verbatim_model::WindowHandle(4),
+        root_owner: verbatim_model::WindowHandle(4),
+        process: Pid(1),
+        thread: 41,
+        by_class: None,
+    };
+    crate::terminal::reading::modelled_for_tests(&mut state, node, window);
+    let binding = verbatim_model::request::CaretBinding {
+        node,
+        window: window.node_window(),
+        role: Role::Terminal,
+        provider: verbatim_model::TextProvider::Uia,
+    };
+    let press = |action, at_ms: u64| {
+        crate::keys::entry::PressEntry::new(
+            TraceId::from_raw(2),
+            verbatim_model::request::Press {
+                key_seq: verbatim_model::KeySeq::NONE_YET,
+                pressed_at_us: at_ms * 1_000,
+                action,
             },
-            purpose: None,
-        },
-    );
-    state.terminals.add(node, Settings::default());
-    let caret = |motion, at_ms| Input::CaretKey {
-        key_seq: verbatim_model::KeySeq::NONE_YET,
-        trace_id: TraceId::from_raw(2),
-        key: CaretKey {
-            motion,
-            select: false,
-        },
-        pressed_at_ms: at_ms,
+        )
     };
-    let typed = |text: &str, at_ms| Input::CharacterTyped {
-        key_seq: verbatim_model::KeySeq::NONE_YET,
-        trace_id: TraceId::from_raw(3),
-        text: text.to_owned(),
-        at_ms,
+    let caret = |motion, at_ms| {
+        press(
+            verbatim_model::request::PressAction::CaretKey {
+                key: CaretKey {
+                    motion,
+                    select: false,
+                },
+                held: None,
+                bound: Some(Box::new(binding.clone())),
+            },
+            at_ms,
+        )
     };
-    for input in [
+    let typed = |text: &str, at_ms| {
+        press(
+            verbatim_model::request::PressAction::Typed {
+                text: text.to_owned(),
+            },
+            at_ms,
+        )
+    };
+    // Each key is taken as it reaches the inbox.
+    for entry in [
         caret(CaretMotion::NextWord, 1),
         caret(CaretMotion::PreviousLine, 2),
         caret(CaretMotion::Delete, 3),
@@ -119,15 +119,10 @@ fn each_key_input_is_the_rules_key_and_a_clearing_key_forget_then_other() {
         typed("\r", 5),
         typed("\t", 6),
         typed("\u{1}", 7),
-        // Escape: the hook's clearing key, then the key passed.
-        Input::ClearingKey {
-            key_seq: verbatim_model::KeySeq::NONE_YET,
-            trace_id: TraceId::from_raw(4),
-            at_ms: 8,
-        },
-        caret(CaretMotion::Other, 8),
+        // Escape: the hook's clearing key.
+        press(verbatim_model::request::PressAction::Clearing, 8),
     ] {
-        let _ = crate::reduce(&mut state, &mut crate::Runtime::default(), &input);
+        crate::keys::terminal::arrived(&mut state, &entry);
     }
     let kept: Vec<_> = state.terminals[0]
         .pending
@@ -143,7 +138,6 @@ fn each_key_input_is_the_rules_key_and_a_clearing_key_forget_then_other() {
         (TerminalKeyKind::Forget, 6),
         (TerminalKeyKind::Other, 7),
         (TerminalKeyKind::Forget, 8),
-        (TerminalKeyKind::Other, 8),
     ]
     .iter()
     .map(|(kind, at_ms)| rules_key(kind, *at_ms))

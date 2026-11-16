@@ -570,9 +570,12 @@ pub struct SrState {
     /// 9), bounded by the flood policy's limits.
     pub(crate) terminal: crate::terminal::TerminalSpeechState,
     /// Core's model of each terminal it reads, the most recently read last,
-    /// at most 16 (`crate::terminal_model`): none until an outpost sends a
-    /// terminal snapshot.
+    /// at most 16 (`crate::terminal_model`): none until a terminal's first
+    /// read is taken.
     pub(crate) terminals: crate::terminal_model::Terminals,
+    /// The focused terminal's life and its reading
+    /// (`crate::terminal::reading`).
+    pub(crate) terminal_focus: crate::terminal::reading::TerminalFocus,
     /// The number of the last text anchor Core minted for a terminal's
     /// review answers, in a range no outpost mints from
     /// (`crate::terminal_model::TERMINAL_ANCHORS`).
@@ -1087,6 +1090,13 @@ impl SrState {
         if let Some((node, baseline)) = crate::text_facts::held(self) {
             insert(node, TextPosition::at(baseline));
         }
+        // Each terminal model's named start, which its next read, history
+        // read or search counts from (build 3, Table 7).
+        for model in self.terminals.iter() {
+            if let Some(start) = model.start {
+                insert(model.node, TextPosition::at(start));
+            }
+        }
         for request in self.queue.requests() {
             if let Some((node, anchors)) = crate::text_facts::named_by(request) {
                 for anchor in anchors {
@@ -1111,14 +1121,12 @@ impl SrState {
             .is_some_and(|focus| focus.alive && focus.snapshot.id == node_id)
     }
 
-    /// Removes every terminal model `which` picks, and with each the
-    /// review commands waiting for its answer, whose queries end with no
-    /// answer: the one way a model goes.
+    /// Removes every terminal model `which` picks: the one way a model
+    /// goes.
     pub(crate) fn drop_models(
         &mut self,
         which: impl Fn(&crate::terminal_model::TerminalModel) -> bool,
     ) {
-        let reviews = self.terminals.remove_where(which);
-        self.queries.forget_memory(reviews);
+        self.terminals.remove_where(which);
     }
 }

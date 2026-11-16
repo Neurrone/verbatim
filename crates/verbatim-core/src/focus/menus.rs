@@ -251,7 +251,8 @@ pub(crate) fn opening_dropped(
             | Entry::Press(_)
             | Entry::Mark(..)
             | Entry::SayAllRead(..)
-            | Entry::Announcement(_) => Vec::new(),
+            | Entry::Announcement(_)
+            | Entry::TerminalSpeech(_) => Vec::new(),
         })
         .any(|tell| {
             tell.at_us < opening.tell.at_us && counts_as_pending(tell, last, backend, now_us)

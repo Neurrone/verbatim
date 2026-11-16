@@ -187,6 +187,14 @@ pub(crate) trait Logic: Sized + 'static {
     /// The function of `entry`, run when it reaches the front.
     fn run(cx: Cx<Self>, entry: Self::Entry) -> Function;
 
+    /// Whether `entry`'s function asks nothing, ending in its first poll:
+    /// no checkpoint is taken for it. One that asks fails the driver's
+    /// check that a paused function has its checkpoint.
+    fn asks_nothing(entry: &Self::Entry) -> bool {
+        let _ = entry;
+        false
+    }
+
     /// Whether `entry`, whose request out names `window`, was accepted by
     /// something other than the foreground relation, which exempts that
     /// request from the foreground stop.
@@ -204,8 +212,32 @@ pub(crate) trait Logic: Sized + 'static {
     ) -> bool;
 
     /// The entry appended when `window`, in the recovery set, answers
-    /// again.
-    fn recovered(facts: &Self::Facts, window: &RequestWindow) -> Option<Self::Entry>;
+    /// again; what Core's facts keep of the window may change, as a
+    /// terminal is read again.
+    fn recovered(facts: &mut Self::Facts, window: &RequestWindow) -> Option<Self::Entry>;
+
+    /// The requests Core's facts want sent now, outside the queue, in
+    /// order with the queue's requests: taken whenever the queue settles,
+    /// and by a function that sends them at once ([`Cx::send_wanted`]).
+    fn wanted(facts: &mut Self::Facts) -> Vec<CoreRequest> {
+        let _ = facts;
+        Vec::new()
+    }
+
+    /// A request Core's facts asked under `token` ended with `outcome`, at
+    /// `now_us` with `foreground` the foreground record: what the facts
+    /// keep of it changes, what that says goes into `said`, and the
+    /// entries returned join the back.
+    fn facts_answered(
+        facts: &mut Self::Facts,
+        token: u64,
+        outcome: Outcome<verbatim_model::request::Reply>,
+        (now_us, foreground): (u64, Option<Foreground>),
+        said: &mut Vec<Self::Said>,
+    ) -> Vec<Self::Entry> {
+        let _ = (facts, token, outcome, now_us, foreground, said);
+        Vec::new()
+    }
 
     /// How `entry` waits: its part in the limiter, judged on its tell's
     /// facts.

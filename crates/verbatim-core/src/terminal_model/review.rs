@@ -30,7 +30,15 @@ use verbatim_model::{
 };
 use verbatim_text::terminal_rows::{Anchor, Row, rows_of};
 
-use super::{HistoryAsked, HistoryRead, TERMINAL_ANCHORS, TerminalModel};
+use super::{HistoryRead, TERMINAL_ANCHORS, TerminalModel};
+
+/// What a history read asked for: rows from `above` rows above the start,
+/// or the whole document when `whole`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct HistoryAsked {
+    pub(crate) above: u32,
+    pub(crate) whole: bool,
+}
 
 /// How many places a terminal keeps beyond those whose anchors Core holds.
 const KEPT_PLACES: usize = 64;
@@ -76,8 +84,9 @@ pub(crate) fn answers(model: &TerminalModel, op: &TextOp) -> bool {
 }
 
 /// Answers `op` from `model`'s memory ([`answers`] says which requests it
-/// answers), numbering new anchors from `next_anchor` and keeping the
-/// places of the anchors in `held`.
+/// answers), with `history`, the rows above the memory the command read,
+/// numbering new anchors from `next_anchor` and keeping the places of the
+/// anchors in `held`.
 ///
 /// # Errors
 ///
@@ -86,13 +95,13 @@ pub(crate) fn answers(model: &TerminalModel, op: &TextOp) -> bool {
 /// come.
 pub(crate) fn answer(
     model: &mut TerminalModel,
-    op: &TextOp,
+    (op, history): (&TextOp, Option<&HistoryRead>),
     next_anchor: &mut u64,
     held: &BTreeSet<TextAnchor>,
 ) -> Result<TextReply, Need> {
     let caret = model.caret;
     let plan = {
-        let above = model.history.as_ref().map(|read| {
+        let above = history.map(|read| {
             (
                 read.first,
                 read.rows.iter().map(Line::from).collect(),
@@ -660,8 +669,8 @@ pub(crate) struct Search {
 /// A search's answer, its rows placed among the memory's when it came
 /// ([`placed`]): the hash of the line sought, and the rows of its matches
 /// whose lines have that hash, each with its first row; `None` when the
-/// rows could not be placed, the search having been counted from a read
-/// the memory did not take.
+/// rows could not be placed, the row of the start the search counted from
+/// having left the memory.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Placed {
     pub(crate) hash: u64,
@@ -685,8 +694,10 @@ enum Resolved {
 /// mark not found is dropped, and the next one tried, with nothing said.
 /// The answer is a line move's ([`TextReply::Read`] at the start of the
 /// mark's row), the review position going there; `None` when no mark is
-/// left that way, when the move has made [`MARK_SEARCHES`] searches, or
-/// when a search's rows could not be placed, the marks not found kept.
+/// left that way, when the move has made [`MARK_SEARCHES`] searches
+/// (`searches` counts them), or when a search's rows could not be placed,
+/// the marks not found kept. `found` is the search that came for this
+/// move, taken when its mark is tried.
 ///
 /// # Errors
 ///
@@ -696,6 +707,7 @@ enum Resolved {
 pub(crate) fn mark(
     model: &mut TerminalModel,
     (forward, from): (bool, &TextPoint),
+    (found, searches): (&mut Option<Placed>, &mut u32),
     next_anchor: &mut u64,
     held: &BTreeSet<TextAnchor>,
 ) -> Result<Option<TextReply>, Search> {
@@ -739,16 +751,19 @@ pub(crate) fn mark(
     for candidate in candidates {
         let resolved = match within_memory(model, candidate) {
             Ok(resolved) => resolved,
-            Err(op) => match model.found.take() {
+            // No start to count a search from, as before the history block
+            // the first read asked for: the move ends, the mark kept.
+            Err(None) => return Ok(None),
+            Err(Some(op)) => match found.take() {
                 Some(found) if found.hash == candidate.line_hash => match found.rows {
                     Some(rows) => from_search(&rows, candidate),
-                    // Counted from a read the memory did not take: the
+                    // Counted from a start whose row left the memory: the
                     // move ends, saying nothing, the mark kept.
                     None => return Ok(None),
                 },
-                _ if model.mark_searches >= MARK_SEARCHES => return Ok(None),
+                _ if *searches >= MARK_SEARCHES => return Ok(None),
                 _ => {
-                    model.mark_searches = model.mark_searches.saturating_add(1);
+                    *searches = searches.saturating_add(1);
                     return Err(Search {
                         op,
                         hash: candidate.line_hash,
@@ -828,8 +843,9 @@ fn starts_at(model: &TerminalModel, row: isize, hash: u64) -> bool {
 /// starting at its row with its hash, or else the nearest line start with
 /// it, the higher at one distance; gone when the memory holds the whole
 /// document or its line's text is not known. Otherwise the search for it
-/// above the memory ([`mark_search`]).
-fn within_memory(model: &TerminalModel, mark: Anchor) -> Result<Resolved, TextOp> {
+/// above the memory ([`mark_search`]), `None` when the model names no
+/// start to count it from.
+fn within_memory(model: &TerminalModel, mark: Anchor) -> Result<Resolved, Option<TextOp>> {
     let rows = model.reader.memory().rows();
     let first_kept = isize_of(rows.first_kept());
     let len = isize_of(rows.len());
@@ -880,76 +896,67 @@ fn from_search(rows: &[(isize, Row)], mark: Anchor) -> Resolved {
 
 /// The search for command mark `sought`'s line, whose mark is on row `row`
 /// above the memory: its first row's text, outward from the mark's row,
-/// counted in rows above where the next read starts.
-fn mark_search(model: &TerminalModel, row: isize, sought: &super::MarkLine) -> TextOp {
-    TextOp::TerminalFind {
+/// counted in rows above the start the model names, which the search
+/// names too.
+fn mark_search(model: &TerminalModel, row: isize, sought: &super::MarkLine) -> Option<TextOp> {
+    Some(TextOp::TerminalFind {
         needle: sought.text.clone(),
         from: i32::try_from(start_row(model).saturating_sub(row)).unwrap_or(i32::MAX),
         rows: sought.rows,
-    }
+        start: model.start?,
+    })
 }
 
-/// The row of the memory's last read where the next read starts: the
+/// The row of the memory's last read where the start it names lies: the
 /// screen's top.
-fn start_row(model: &TerminalModel) -> isize {
+pub(crate) fn start_row(model: &TerminalModel) -> isize {
     let screen = isize_of(usize::try_from(model.height).unwrap_or(0));
     isize_of(model.reader.memory().rows().len())
         .saturating_sub(screen)
         .max(0)
 }
 
-/// Where the start of read `read` lies among the memory's rows, from which
-/// a search's or a history read's rows are counted: the start of the
-/// memory's last read when it is that read, as it is whenever the memory
-/// took every read the outpost took before answering, since the outpost
-/// answers after them; `None` otherwise, the rows counted from a read the
-/// memory did not take.
-fn start_of(model: &TerminalModel, read: u64) -> Option<isize> {
-    (read == model.read).then(|| start_row(model))
-}
-
 /// The history read `asked` for, its padded `text` holding `rows_above`
-/// rows above the start of read `read`, placed among the memory's rows as
-/// they are when it comes ([`start_of`]). A whole document's rows end where
-/// the memory's do, at the document's end. `None` when the rows cannot be
-/// placed.
-pub(super) fn placed_history(
+/// rows above its start, placed among the memory's rows as they are when it
+/// comes, its start on row `start`, where the anchor Core put at that
+/// start's row is now (`docs/design/readers-tell-core-asks-build3.md`,
+/// Table 5). A whole document's rows end where the memory's do, at the
+/// document's end.
+pub(crate) fn placed_history(
     model: &TerminalModel,
-    asked: &HistoryAsked,
+    asked: HistoryAsked,
     text: &str,
-    (rows_above, read): (u32, u64),
-) -> Option<HistoryRead> {
-    let start = start_of(model, read)?;
+    (rows_above, start): (u32, isize),
+) -> HistoryRead {
     let rows = rows_of(text, model.width);
     if asked.whole {
         let len = isize_of(model.reader.memory().rows().len());
-        return Some(HistoryRead {
-            review: asked.review,
+        return HistoryRead {
             first: len.saturating_sub(isize_of(rows.len())),
             rows,
             reached: true,
-        });
+        };
     }
-    Some(HistoryRead {
-        review: asked.review,
+    HistoryRead {
         first: start.saturating_sub(isize::try_from(rows_above).unwrap_or(isize::MAX)),
         rows,
         reached: rows_above < asked.above,
-    })
+    }
 }
 
 /// The answer to the search for the line with hash `hash`, its `matches`
-/// counted from the start of read `read`, placed among the memory's rows
-/// as they are when it comes ([`start_of`]): each match whose line has the
-/// hash, on its row of the memory's last read, a match within the memory
-/// only where a line starts.
+/// counted from the start on row `start`, where the anchor Core put at the
+/// start's row is now (Table 5), placed among the memory's rows as they are
+/// when it comes: each match whose line has the hash, on its row of the
+/// memory's last read, a match within the memory only where a line starts;
+/// `None` for `start` when the anchor's row left the memory.
 pub(crate) fn placed(
     model: &TerminalModel,
     hash: u64,
     matches: &[TerminalMatch],
-    read: u64,
+    start: Option<isize>,
 ) -> Placed {
-    let Some(start) = start_of(model, read) else {
+    let Some(start) = start else {
         return Placed { hash, rows: None };
     };
     let first_kept = isize_of(model.reader.memory().rows().first_kept());

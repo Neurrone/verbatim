@@ -292,47 +292,37 @@ fn text_steps_allocate_the_same_whatever_the_ancestor_chain() {
 
 #[test]
 fn a_terminal_line_allocates_the_same_whatever_the_ancestor_chain() {
-    let terminal_with_chain = |depth: u64| {
-        let ancestors = (0..depth)
-            .map(|index| node(100_000 + index, Role::Group, &format!("Group {index}")))
-            .collect();
-        let mut state = SrState::new();
-        let _ = reduce(
-            &mut state,
-            &mut verbatim_core::Runtime::default(),
-            &focus_event(node(1, Role::Terminal, "Terminal"), ancestors),
-        );
-        state
+    // The simulated terminal read as its outpost reads it, focused inside
+    // a chain of groups: a first read, then a line of output, told and
+    // read.
+    let session = |depth: u64| {
+        let mut outpost =
+            terminal_support::Outpost::new(verbatim_term_sim::Flavor::ConsoleHost, 40, 5, 20);
+        outpost.sim.write(b"PS> ");
+        let mut session = terminal_support::Session::inside(outpost, depth);
+        // Playback's marks are entries of their own, outside the line's
+        // step.
+        session.manual_play = true;
+        session
     };
-    let mut small = terminal_with_chain(SMALL_CHAIN);
-    let mut large = terminal_with_chain(LARGE_CHAIN);
-    // The simulated terminal read as its outpost reads it: a first read,
-    // then a line of output and a read of it.
-    let mut outpost =
-        terminal_support::Outpost::new(verbatim_term_sim::Flavor::ConsoleHost, 40, 5, 20);
-    let snapshot = |outpost: &mut terminal_support::Outpost, at_ms: u64| Input::Event {
-        trace_id: TraceId::from_raw(8),
-        observed_at_us: at_ms * 1_000,
-        source: Pid(1),
-        backend: Backend::Uia,
-        window: None,
-        event: NormalizedEvent::TerminalSnapshot {
-            node_id: NodeId::new(1),
-            snapshot: Box::new(outpost.read(None, at_ms).1),
-        },
-        purpose: None,
-    };
-    outpost.sim.write(b"PS> ");
-    let first = snapshot(&mut outpost, 100);
-    let _ = reduce(&mut small, &mut verbatim_core::Runtime::default(), &first);
-    let _ = reduce(&mut large, &mut verbatim_core::Runtime::default(), &first);
-    outpost.sim.write(b"\r\ntotal 42\r\nPS> ");
-    let output = snapshot(&mut outpost, 200);
-    let (small_effects, small_bytes) =
-        allocated_by(|| reduce(&mut small, &mut verbatim_core::Runtime::default(), &output));
-    let (large_effects, large_bytes) =
-        allocated_by(|| reduce(&mut large, &mut verbatim_core::Runtime::default(), &output));
-    assert_eq!(small_effects, large_effects);
-    assert!(!small_effects.is_empty(), "the line is spoken");
+    let mut small = session(SMALL_CHAIN);
+    let mut large = session(LARGE_CHAIN);
+    let ((), small_bytes) = allocated_by(|| small.write("\r\ntotal 42\r\nPS> ", 200));
+    let ((), large_bytes) = allocated_by(|| large.write("\r\ntotal 42\r\nPS> ", 200));
+    small.play();
+    large.play();
+    let heard = small.heard();
+    assert_eq!(
+        heard,
+        [
+            terminal_support::said(None, "total 42"),
+            terminal_support::said(None, "PS>")
+        ]
+    );
+    assert_eq!(large.heard(), heard);
+    assert_eq!(
+        small.log.last().map(|(_, effects)| effects.clone()),
+        large.log.last().map(|(_, effects)| effects.clone())
+    );
     assert_eq!(small_bytes, large_bytes);
 }

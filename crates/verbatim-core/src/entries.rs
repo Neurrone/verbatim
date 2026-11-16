@@ -151,6 +151,9 @@ pub(crate) enum Entry {
     SayAllRead(TraceId, Fence),
     /// A notification, toast, UI Automation selection, MSAA alert or show.
     Announcement(Box<crate::announcements::Announcement>),
+    /// A full read's speech, spoken at its turn
+    /// (`docs/design/readers-tell-core-asks-build3.md`, Table 3).
+    TerminalSpeech(Box<crate::terminal::reading::SpeechEntry>),
 }
 
 impl fmt::Debug for Entry {
@@ -217,6 +220,9 @@ impl fmt::Debug for Entry {
                 "Announcement({:?} {:?} of {})",
                 announcement.tell.kind, announcement.tell.object, announcement.tell.process.0
             ),
+            Self::TerminalSpeech(speech) => {
+                write!(formatter, "TerminalSpeech({:?})", speech.node)
+            }
         }
     }
 }
@@ -354,7 +360,8 @@ impl Entry {
             | Self::CurrentFocus(_)
             | Self::Press(_)
             | Self::Mark(..)
-            | Self::SayAllRead(..) => None,
+            | Self::SayAllRead(..)
+            | Self::TerminalSpeech(_) => None,
         }
     }
 
@@ -378,6 +385,7 @@ impl Entry {
             | Self::SayAllRead(_, fence) => *fence,
             Self::Press(press) => press.fence,
             Self::Announcement(announcement) => announcement.fence,
+            Self::TerminalSpeech(speech) => speech.fence,
         }
     }
 
@@ -401,6 +409,7 @@ impl Entry {
             | Self::SayAllRead(_, fence) => *fence = set,
             Self::Press(press) => press.fence = set,
             Self::Announcement(announcement) => announcement.fence = set,
+            Self::TerminalSpeech(speech) => speech.fence = set,
         }
     }
 }
@@ -456,6 +465,10 @@ impl Logic for Entries {
             Entry::Announcement(announcement) => {
                 crate::announcements::Announcement::run(cx, *announcement)
             }
+            Entry::TerminalSpeech(speech) => Box::pin(async move {
+                let mut cx = cx;
+                crate::terminal::reading::speech_turn(&mut cx, *speech);
+            }),
             Entry::ForegroundMarker {
                 window, root_owner, ..
             } => Box::pin(async move {
@@ -465,6 +478,10 @@ impl Logic for Entries {
                     .foreground_marker(window, root_owner);
             }),
         }
+    }
+
+    fn asks_nothing(entry: &Entry) -> bool {
+        matches!(entry, Entry::TerminalSpeech(_))
     }
 
     fn exempt_from_foreground(entry: &Entry, window: &RequestWindow) -> bool {
@@ -482,6 +499,11 @@ impl Logic for Entries {
     fn arrival(facts: &mut SrState, entry: &mut Entry) {
         if let Entry::Press(press) = entry {
             facts.arrivals.key_joined(press.press.key_seq);
+            // A key reaching the focused terminal is taken by its model as
+            // it reaches the inbox, a held caret key's at its pass
+            // (`docs/design/readers-tell-core-asks-build3.md`, "Keys and
+            // ordering").
+            crate::keys::terminal::arrived(facts, press);
             // A held key's stroke joins the stroke line as its report
             // arrives, in the hook's order.
             if let PressAction::CaretKey {
@@ -563,16 +585,34 @@ impl Logic for Entries {
         said: &mut Vec<Said>,
     ) -> Vec<Entry> {
         said.extend(facts.strokes.release_due(now_us).map(Said::Queue));
+        crate::keys::terminal::released(facts, now_us / 1_000);
         crate::input_desktop::tick(facts, now_us, foreground.map(|front| front.window()))
             .map(|read| Entry::CurrentFocus(Box::new(read)))
             .into_iter()
             .collect()
     }
 
-    fn recovered(facts: &SrState, window: &RequestWindow) -> Option<Entry> {
+    fn recovered(facts: &mut SrState, window: &RequestWindow) -> Option<Entry> {
+        let now_us = facts.terminal_focus.now_us;
+        crate::terminal::reading::recovered(facts, window, now_us);
         Some(Entry::CurrentFocus(Box::new(
             crate::focus::retake::recovered(facts, window),
         )))
+    }
+
+    fn wanted(facts: &mut SrState) -> Vec<crate::event_queue::CoreRequest> {
+        crate::terminal::reading::wanted(facts)
+    }
+
+    fn facts_answered(
+        facts: &mut SrState,
+        token: u64,
+        outcome: Outcome<verbatim_model::request::Reply>,
+        (now_us, _): (u64, Option<Foreground>),
+        said: &mut Vec<Said>,
+    ) -> Vec<Entry> {
+        let trace = facts.queue_trace.0;
+        crate::terminal::reading::answered(facts, token, outcome, (now_us, trace), said)
     }
 
     fn started(facts: &SrState, foreground: &Foreground) -> Option<Entry> {
@@ -604,6 +644,9 @@ impl Logic for Entries {
         if let crate::event_queue::Reader::Outpost(process) = instance.reader {
             let outpost = verbatim_model::OutpostId(instance.generation);
             facts.follows.outpost_ended(process, outpost);
+            // The focused terminal and the models of the generation's
+            // terminals go with it (Table 1, column I).
+            crate::terminal::reading::outpost_ended(facts, outpost);
             // Say-all's positions are anchors of the outpost's, which end
             // with it: say-all stops, its read withdrawn.
             said.extend(crate::say_all::outpost_ended(facts, outpost));
@@ -648,7 +691,8 @@ impl Logic for Entries {
         backend: &BackendCache,
         now_us: u64,
     ) -> bool {
-        crate::focus::menus::opening_dropped(facts, ahead, arriving, backend, now_us)
+        crate::caret_tell::dropped_in_console(facts, arriving)
+            || crate::focus::menus::opening_dropped(facts, ahead, arriving, backend, now_us)
     }
 
     fn place(facts: &SrState, entry: &Entry) -> Place {
@@ -734,7 +778,8 @@ impl Logic for Entries {
             | Entry::ForegroundMarker { .. }
             | Entry::Press(_)
             | Entry::Mark(..)
-            | Entry::SayAllRead(..) => Place::Other {
+            | Entry::SayAllRead(..)
+            | Entry::TerminalSpeech(_) => Place::Other {
                 merges: false,
                 focus_kind: false,
                 ends_run: false,
@@ -823,7 +868,8 @@ impl Logic for Entries {
             | Entry::UiaChange(_)
             | Entry::Press(_)
             | Entry::Mark(..)
-            | Entry::SayAllRead(..) => None,
+            | Entry::SayAllRead(..)
+            | Entry::TerminalSpeech(_) => None,
         };
         window.is_some_and(|window| {
             !foreground.holds(&window) && !entry.tell().is_some_and(accepted_apart_from_foreground)
@@ -845,7 +891,8 @@ impl Logic for Entries {
             | Entry::Caret(_)
             | Entry::Press(_)
             | Entry::Mark(..)
-            | Entry::SayAllRead(..) => None,
+            | Entry::SayAllRead(..)
+            | Entry::TerminalSpeech(_) => None,
         }
     }
 
@@ -884,7 +931,8 @@ pub(crate) fn pending_focus(
         | Entry::Press(_)
         | Entry::Mark(..)
         | Entry::SayAllRead(..)
-        | Entry::Announcement(_) => false,
+        | Entry::Announcement(_)
+        | Entry::TerminalSpeech(_) => false,
     }
 }
 
@@ -971,6 +1019,7 @@ pub(crate) fn route(
     (trace_id, at_us): (TraceId, u64),
     input: &QueueInput,
 ) -> Routed {
+    state.terminal_focus.now_us = at_us;
     let input = match input {
         QueueInput::Tell { tell, .. } if tell.kind == EventKind::DesktopSwitch => {
             let Payload::DesktopSwitch { input_desktop_open } = tell.payload else {
@@ -988,6 +1037,15 @@ pub(crate) fn route(
         // is dropped (design, "The outpost generation record").
         QueueInput::Tell { from, .. } if !state.queue.admits(*from) => {
             return Routed::Said(vec![Said::Queue(QueueEffect::StaleFrame(*from))]);
+        }
+        // A terminal's change is handled at once in the inbox
+        // (`docs/design/readers-tell-core-asks-build3.md`, "Core's inbox:
+        // the change tell"): its read is sent as the queue settles.
+        QueueInput::Tell { tell, .. } if tell.kind == EventKind::TerminalChanged => {
+            if let EventObject::Terminal { node, .. } = tell.object {
+                crate::terminal::reading::told(state, node, tell.at_us, at_us);
+            }
+            Input::Settle
         }
         QueueInput::Tell { from, tell } => match Entry::of_tell(*from, (**tell).clone()) {
             Some(Entry::UiaFocus(mut focus)) => {
@@ -1124,6 +1182,7 @@ fn desktop_switched(
         .follows
         .into_iter()
         .map(|follow| crate::event_queue::CoreRequest {
+            token: None,
             reader: Reader::Outpost(follow.process),
             window: follow.window,
             request: Wire::Follow(follow.follow),
@@ -1144,15 +1203,17 @@ fn desktop_switched(
 /// say-all wants its next read, or stopped while its read was out
 /// ([`settle`]).
 pub(crate) fn unsettled(state: &SrState) -> bool {
-    state.say_all.as_ref().is_some_and(|say_all| {
-        say_all
-            .by
-            .run()
-            .is_some_and(|run| run.read == crate::say_all::QueueRead::Wanted)
-    }) || state
-        .queue
-        .asking()
-        .is_some_and(|(front, request)| <Entries as Logic>::unneeded(state, front, request))
+    crate::terminal::reading::wants(state)
+        || state.say_all.as_ref().is_some_and(|say_all| {
+            say_all
+                .by
+                .run()
+                .is_some_and(|run| run.read == crate::say_all::QueueRead::Wanted)
+        })
+        || state
+            .queue
+            .asking()
+            .is_some_and(|(front, request)| <Entries as Logic>::unneeded(state, front, request))
 }
 
 /// Settles the queue under `trace_id` after Core's facts changed outside

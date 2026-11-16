@@ -199,6 +199,10 @@ pub(crate) fn named_by(request: &Wire) -> Option<(NodeId, Vec<TextAnchor>)> {
             .chain(through(past))
             .collect(),
         TextOp::MoveCaret(at) | TextOp::Location(at) => point(at).into_iter().collect(),
+        TextOp::ReadTerminal(read) => read.start.into_iter().collect(),
+        TextOp::TerminalHistory { start, .. } | TextOp::TerminalFind { start, .. } => {
+            vec![*start]
+        }
         _ => Vec::new(),
     };
     Some((*node, anchors))

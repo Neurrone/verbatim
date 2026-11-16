@@ -364,12 +364,28 @@ fn ready(
         role: node.role,
         own_window: own_window(&read.focus.read.values),
         selection: crate::text_facts::SelectionFacts::default(),
+        console_terminal: node.role == Role::Terminal && in_console(origin, &report.ancestors),
     };
     Some(Ready {
         report,
         kept,
         foreground,
     })
+}
+
+/// Whether a focus of `origin` with `ancestors`, outermost first, is in a
+/// console window: its tell's window is one, or, for a focus Core read
+/// itself, its nearest ancestor with a window of its own is.
+fn in_console(origin: &Origin, ancestors: &[NodeSnapshot]) -> bool {
+    let console = Some(super::follow::CONSOLE_WINDOW_CLASS);
+    if let Some(window) = &origin.window {
+        return Some(window.class.as_str()) == console;
+    }
+    ancestors
+        .iter()
+        .rev()
+        .find(|ancestor| ancestor.details.window.is_some())
+        .is_some_and(|ancestor| ancestor.details.class_name.as_deref() == console)
 }
 
 /// The text today's announcement code speaks of a focus whose answer
@@ -461,29 +477,55 @@ pub(crate) struct Executed {
 }
 
 impl Executed {
-    /// Emits what it said and sends its `Follow`s.
+    /// Emits what it said and sends its `Follow`s, with a terminal's
+    /// baseline after them (`docs/design/readers-tell-core-asks-build3.md`,
+    /// "The focused terminal's life").
     pub(crate) fn deliver(self, cx: &mut Cx<Entries>) {
         for said in self.said {
             cx.emit(said);
         }
         super::follow::send(cx, self.follows);
+        cx.send_wanted();
     }
 }
 
 /// Commits `ready`: both versions of the focus become it, and the
 /// `Follow`s the commit sends are returned (Table 10, columns A and B).
+/// The focused terminal's state follows the commit: a terminal committed
+/// is baselining, its `Follow` and baseline wanted in order, and every
+/// `Follow` of the commit is wanted with them, so none is returned to
+/// send.
 fn commit(state: &mut SrState, origin: &Origin, ready: Ready) -> Vec<FollowRequest> {
-    let class = origin.window.as_ref().map(|window| window.class.as_str());
     let follows = state.follows.committed(
         Some((
             &ready.kept,
             &ready.report.node,
             ready.report.ancestors.last(),
         )),
-        class,
+        ready.kept.console_terminal,
     );
+    let terminal = matches!(ready.kept.read_by, ReadBy::Uia { .. })
+        .then(|| {
+            crate::terminal::reading::terminal_of(
+                ready.report.node.role,
+                ready.kept.node,
+                ready.kept.window,
+                ready.kept.console_terminal,
+            )
+        })
+        .flatten();
     state.versions.execute(ready.kept);
-    follows
+    let follows = follows
+        .into_iter()
+        .map(|follow| {
+            (
+                follow.window,
+                verbatim_model::request::Request::Follow(follow.follow),
+            )
+        })
+        .collect();
+    crate::terminal::reading::committed(state, terminal, follows, origin.observed_at_us);
+    Vec::new()
 }
 
 /// Executes the committed focus again, as a UI Automation menu opening on

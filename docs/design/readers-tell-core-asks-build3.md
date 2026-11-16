@@ -333,3 +333,12 @@ M1, M2: void (no flag; told is Core's alone). M3: void (late and withdrawn answe
 - ADR 0003 by Dickson's rulings: "A reader keeps nothing for Core between requests but held objects and the requests waiting in an outpost's table"; "What this decision adds" without the two-place told and changed; the requests outside the event queue gain a terminal's reads for its output; the late answer as the uniform rule (with build 1).
 - The terminal model: "Where it runs", rule 1, rule 10 (the start Core names), rule 23 and "Lists and colours", "Keys", "The review cursor" (placement from an anchor), "Core's flood policy" (the hold Core's).
 - `performance.md`, crate guides, `test-coverage.md`'s terminal and hung application rows, `docs/parity/terminals.md`, `docs/roadmap.md` (M6.4's first item done here).
+
+## Appendix: tests removed in build 3
+
+Each pinned a mechanism this build removes; the behaviour it covered, where any remains, is pinned by the test named.
+
+- `crates/verbatim-core/src/queries/tests.rs`, `a_console_review_answered_from_memory_is_never_waited_for` and `a_dropped_models_review_ends_and_its_fresh_read_is_taken_by_no_model`: Core's queries answered from a terminal's memory, and the model's request kinds, go; a review command in a terminal is one entry (`crates/verbatim-core/tests/terminal_reading.rs`, the review tests).
+- `crates/verbatim-core/src/queries/tests.rs`, the console start of `every_sequence_keeps_the_query_tables_invariants` and its step of 16 other terminals' snapshots: the terminal's unasked snapshots and the queries a model made go.
+- `crates/verbatim-core/src/queries/generated.rs`, the terminal's snapshot, other terminals' and timer actions, the model's terminal models and its checks of answers from memory, its listed states of models made, evicted and dropped, of an answer to a model no longer live and of a request answered from memory, and the fixed cases of an answer to a replaced model and of the terminal's timer: the same mechanisms; the timer is pinned by `the_timer_gives_the_keys_that_reached_the_program_by_then_first`.
+- `crates/verbatim-core/tests/terminal_reading.rs`, `the_read_before_a_held_key_is_aligned_and_its_caret_answers_it`: the read before a held key goes; its successor, `a_held_keys_starting_read_is_aligned_and_its_output_spoken`, pins a terminal key's starting read.

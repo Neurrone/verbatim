@@ -60,8 +60,6 @@ pub fn reduce(state: &mut SrState, runtime: &mut crate::Runtime, input: &Input) 
     if state.exiting {
         return Vec::new();
     }
-    let focus = state.focus.object().map(|focus| focus.snapshot.id);
-    let was_left = state.focus.object_left();
     let first_query = state.queries.next();
     // A user input's number, recorded by its trace before anything it
     // causes is spoken (`crate::keys`).
@@ -84,24 +82,9 @@ pub fn reduce(state: &mut SrState, runtime: &mut crate::Runtime, input: &Input) 
         },
         _ => (input, reduce_input(state, input)),
     };
-    // The terminals Core reads (`terminal_model`): told when the focus
-    // reaches or leaves them, given the settings, and their text answered
-    // from their memory.
+    // The terminals Core reads (`terminal_model`) are given the settings.
     if !state.terminals.is_empty() {
-        let now = state.focus.object().map(|focus| focus.snapshot.id);
-        // A left focus taken again is blurred and focused anew, as the same
-        // switch with no stall leaves it (`crate::focus_queue`, the left mark).
-        let taken_again = was_left && state.focus.applied_unmarked();
-        if now != focus || taken_again {
-            // The terminal's reading rules count in milliseconds.
-            let at_ms = match input {
-                Input::Event { observed_at_us, .. } => whole_ms(*observed_at_us),
-                _ => 0,
-            };
-            terminal_model::focus_moved(state, (focus, now), at_ms);
-        }
         terminal_model::sync_settings(state);
-        effects = terminal_model::intercept(state, effects, terminal_model::input_trace(input));
     }
     // A press whose read ended with no answer, its terminal's model gone,
     // says nothing and ends.
@@ -255,8 +238,9 @@ fn speech_cancelled(state: &mut SrState, at_us: u64) -> Vec<Effect> {
 /// terminal's line. Any other input does nothing here, an editing chord in
 /// a text field among them: the hook's cut of speech was all it does.
 pub(crate) fn key_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
-    // A terminal Core reads keeps the key for its reading rules.
-    let mut effects = terminal_model::key_input(state, input);
+    // A terminal Core reads took the key as it reached the inbox
+    // (`crate::keys::terminal`).
+    let mut effects = Vec::new();
     effects.extend(match input {
         Input::CaretKey {
             trace_id,
@@ -612,13 +596,6 @@ fn observed_before_foreground_change(state: &SrState, observed_at_us: u64) -> bo
             .foreground
             .changed_at()
             .is_some_and(|changed_at| observed_at_us < changed_at)
-}
-
-/// `observed_at_us` in whole milliseconds, for the caret history and the
-/// terminal's reading rules, which compare it with a key's `pressed_at_ms`
-/// and the terminal's own times in milliseconds.
-fn whole_ms(observed_at_us: u64) -> u64 {
-    observed_at_us / 1_000
 }
 
 /// Whether an event's window is one the attention record covers: the same
@@ -1239,9 +1216,6 @@ fn reduce_event(
             reduce_value_changed(state, trace_id, *node_id, value.clone())
         }
         moved @ NormalizedEvent::CaretMoved { .. } => reduce_caret_moved(state, trace_id, moved),
-        NormalizedEvent::TerminalSnapshot { node_id, snapshot } => {
-            terminal_model::snapshot_event(state, trace_id, *node_id, snapshot)
-        }
         NormalizedEvent::PropertyChanged {
             node_id,
             change,
@@ -1264,7 +1238,7 @@ fn reduce_event(
             _ => Vec::new(),
         },
         // A text change says nothing of its own: typing is echoed as it is
-        // typed, and a terminal's outpost reads its text changes itself.
+        // typed, and a terminal is read when its outpost tells a change.
         // `NormalizedEvent` is `#[non_exhaustive]`.
         _ => Vec::new(),
     };
@@ -2041,7 +2015,7 @@ fn outpost_ended(state: &mut SrState, outpost: OutpostId) -> Vec<Effect> {
         Then::Text(PendingText { node, .. }) => node.outpost() == outpost,
         _ => false,
     });
-    terminal_model::outpost_ended(state, outpost);
+    crate::terminal::reading::outpost_ended(state, outpost);
     if state
         .start_marker
         .is_some_and(|marker| marker.node().outpost() == outpost)
@@ -2344,20 +2318,13 @@ fn reduce_command(
         ReviewCommand::SayAllFromCaret => caret_command(state, trace_id),
         // Report focus and the caret's location run as event-queue entries
         // (`crate::report_focus`, `crate::caret_location`).
-        ReviewCommand::ReportFocus | ReviewCommand::ReportCaretLocation => Vec::new(),
-        ReviewCommand::ReportStatusBar => {
-            terminal_model::report_status_bar(state, trace_id, repeat)
-        }
-        ReviewCommand::PreviousCommandMark | ReviewCommand::NextCommandMark => {
-            review_text::command_mark(
-                state,
-                ReviewPress {
-                    trace_id,
-                    command,
-                    repeat,
-                },
-            )
-        }
+        // So do the terminal's status bar and command marks
+        // (`crate::terminal::commands`).
+        ReviewCommand::ReportFocus
+        | ReviewCommand::ReportCaretLocation
+        | ReviewCommand::ReportStatusBar
+        | ReviewCommand::PreviousCommandMark
+        | ReviewCommand::NextCommandMark => Vec::new(),
         _ => navigator_command(state, trace_id, command, repeat),
     };
     stopped.append(&mut effects);

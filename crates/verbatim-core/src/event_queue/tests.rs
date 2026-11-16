@@ -184,7 +184,7 @@ impl Logic for Test {
         matches!(front, Entry::Read { .. }) && *arriving == Entry::Key
     }
 
-    fn recovered(_: &u32, window: &RequestWindow) -> Option<Entry> {
+    fn recovered(_: &mut u32, window: &RequestWindow) -> Option<Entry> {
         Some(Entry::Recovered(window.handle))
     }
 
@@ -1413,7 +1413,7 @@ impl Logic for Probing {
         *arriving
     }
 
-    fn recovered((): &(), _: &RequestWindow) -> Option<Withdraws> {
+    fn recovered((): &mut (), _: &RequestWindow) -> Option<Withdraws> {
         None
     }
 

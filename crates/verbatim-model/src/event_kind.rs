@@ -83,6 +83,12 @@ pub enum EventKind {
     ConsoleUpdateScroll,
     /// The console's layout changed.
     ConsoleLayout,
+    /// A change signal of the terminal `Follow` names: Windows Terminal's
+    /// text-changed or caret event of the terminal's element, or one of the
+    /// console host's five console events of its console window
+    /// (`docs/design/readers-tell-core-asks-build3.md`, "The outpost: change
+    /// tells").
+    TerminalChanged,
 }
 
 impl EventKind {
@@ -125,6 +131,7 @@ impl EventKind {
             Self::ConsoleUpdateSimple => &CONSOLE_UPDATE_SIMPLE,
             Self::ConsoleUpdateScroll => &CONSOLE_UPDATE_SCROLL,
             Self::ConsoleLayout => &CONSOLE_LAYOUT,
+            Self::TerminalChanged => &TERMINAL_CHANGED,
         }
     }
 }
@@ -143,6 +150,8 @@ pub enum Teller {
     OutpostFollowGroup,
     /// A console host's outpost, which keeps the console's five events.
     ConsoleHost,
+    /// An outpost, of the terminal Core names in `Follow`.
+    OutpostTerminal,
 }
 
 /// The interface event a kind comes from, by the number Windows gives it.
@@ -160,6 +169,10 @@ pub enum Source {
     },
     /// A UI Automation event, by its event id.
     Uia(i32),
+    /// Any change signal of a followed terminal: the console host's five
+    /// console events, or Windows Terminal's text-changed and caret
+    /// events of its element.
+    TerminalSignals,
 }
 
 /// One kind's entry: everything about it, declared in one place.
@@ -496,6 +509,14 @@ const CONSOLE_LAYOUT: EventKindEntry = console(
     win_event::CONSOLE_LAYOUT,
 );
 
+const TERMINAL_CHANGED: EventKindEntry = kind(
+    EventKind::TerminalChanged,
+    "terminal changed",
+    Teller::OutpostTerminal,
+    Source::TerminalSignals,
+    &[],
+);
+
 /// The whole table, in [`EventKind`] order.
 pub const EVENT_KINDS: &[EventKindEntry] = &[
     MSAA_FOCUS,
@@ -533,6 +554,7 @@ pub const EVENT_KINDS: &[EventKindEntry] = &[
     CONSOLE_UPDATE_SIMPLE,
     CONSOLE_UPDATE_SCROLL,
     CONSOLE_LAYOUT,
+    TERMINAL_CHANGED,
 ];
 
 #[cfg(test)]
@@ -541,7 +563,7 @@ mod tests {
 
     /// Every kind, listed by hand, so that a kind added to the enum and
     /// not to the table fails here.
-    const ALL: [EventKind; 35] = [
+    const ALL: [EventKind; 36] = [
         EventKind::MsaaFocus,
         EventKind::Foreground,
         EventKind::ShellForeground,
@@ -577,6 +599,7 @@ mod tests {
         EventKind::ConsoleUpdateSimple,
         EventKind::ConsoleUpdateScroll,
         EventKind::ConsoleLayout,
+        EventKind::TerminalChanged,
     ];
 
     #[test]

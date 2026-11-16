@@ -663,8 +663,12 @@ pub(super) fn watch(context: &RequestContext<'_>, program: &WatchProgram) -> Opt
     let node_id = program.node;
     let named = [program.watch.point.0];
     let read_at_us = context.observed_now();
-    let (WatchFinalRead::Unit { unit, .. } | WatchFinalRead::UnitAtEffect { unit, .. }) =
-        program.watch.final_read;
+    // A terminal's watch reads no unit at its end: Core's full read of the
+    // terminal follows (build 3).
+    let unit = match program.watch.final_read {
+        WatchFinalRead::Unit { unit, .. } | WatchFinalRead::UnitAtEffect { unit, .. } => unit,
+        WatchFinalRead::Terminal => verbatim_model::TextUnit::Character,
+    };
     let ran = on_text!(
         context,
         node_id,
@@ -682,6 +686,9 @@ pub(super) fn watch(context: &RequestContext<'_>, program: &WatchProgram) -> Opt
                 },
                 read_at_us,
             ),
+            WatchWork::Final if program.watch.final_read == WatchFinalRead::Terminal => {
+                Ok(Some(Watched::EffectUnread))
+            }
             WatchWork::Final => {
                 text::check::final_read(source, text, unit, read_at_us)
                     .map(|read| Some(Watched::Effect(read)))

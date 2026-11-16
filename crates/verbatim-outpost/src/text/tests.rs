@@ -1480,6 +1480,7 @@ fn said(watched: Option<Watched>) -> Option<(&'static str, u32, String)> {
         Watched::Effect(read) => Some(("effect", read.caret.line.offset, read.unit.text)),
         Watched::Bound(read) => Some(("bound", read.caret.line.offset, read.unit.text)),
         Watched::BoundUnread => Some(("bound unread", 0, String::new())),
+        Watched::EffectUnread => Some(("effect unread", 0, String::new())),
     }
 }
 

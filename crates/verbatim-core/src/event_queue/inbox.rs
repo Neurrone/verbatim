@@ -86,9 +86,12 @@ pub(crate) enum Input<E> {
 }
 
 /// A request Core sends outside the queue, in order with the queue's
-/// requests, awaiting no answer.
+/// requests: awaiting no answer, or awaited by Core's facts under a token.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct CoreRequest {
+    /// The token Core's facts await its ending by
+    /// ([`Logic::facts_answered`]); `None` when nothing awaits it.
+    pub(crate) token: Option<u64>,
     /// The reader asked.
     pub(crate) reader: Reader,
     /// The window it names.
@@ -273,9 +276,14 @@ impl<L: Logic> Core<L> {
     }
 
     /// Sends `requests` as Core's own, outside the queue, each awaiting no
-    /// answer.
+    /// answer or awaited by Core's facts under its token.
     fn send_core(&mut self, requests: Vec<CoreRequest>) {
         let mut shared = self.shared.borrow_mut();
+        Self::begin_core(&mut shared, requests);
+    }
+
+    /// Begins `requests` as Core's own, outside the queue, in order.
+    pub(super) fn begin_core(shared: &mut super::driver::Shared<L>, requests: Vec<CoreRequest>) {
         let now_us = shared.state.queue.now_us;
         let mut orders = Vec::new();
         for sent in requests {
@@ -287,7 +295,7 @@ impl<L: Logic> Core<L> {
                     window: sent.window,
                     due_us: now_us.saturating_add(sent.due_after_us),
                     request: sent.request,
-                    owner: Owner::Core,
+                    owner: sent.token.map_or(Owner::Core, Owner::Facts),
                     stage: Stage::Waiting,
                     probing: None,
                 },
@@ -297,7 +305,7 @@ impl<L: Logic> Core<L> {
                 &mut orders,
             );
         }
-        Self::order(&mut shared, orders);
+        Self::order(shared, orders);
     }
 
     /// A reader's answer: the request it names ends with it, and the
@@ -391,6 +399,8 @@ impl<L: Logic> Core<L> {
     pub(super) fn settle(&mut self) {
         let unneeded = {
             let mut shared = self.shared.borrow_mut();
+            let wanted = L::wanted(&mut shared.state.facts);
+            Self::begin_core(&mut shared, wanted);
             let state = &mut shared.state;
             for entry in L::joining(&mut state.facts) {
                 join::<L>(state, entry);
@@ -469,6 +479,28 @@ impl<L: Logic> Core<L> {
         match ended.owner {
             Owner::Queue => self.resume(ended.ending),
             Owner::Core => {}
+            Owner::Facts(token) => {
+                let outcome = match outcome_of(ended.ending) {
+                    Ok(reply) => Outcome::Result(reply),
+                    Err(outcome) => widen(outcome),
+                };
+                let mut shared = self.shared.borrow_mut();
+                let foreground = shared.state.queue.foreground;
+                let now_us = shared.state.queue.now_us;
+                let mut said = Vec::new();
+                let state = &mut shared.state;
+                let joining = L::facts_answered(
+                    &mut state.facts,
+                    token,
+                    outcome,
+                    (now_us, foreground),
+                    &mut said,
+                );
+                for entry in joining {
+                    join::<L>(state, entry);
+                }
+                shared.effects.extend(said.into_iter().map(Effect::Said));
+            }
             Owner::Outside(asker) => {
                 let outcome = match outcome_of(ended.ending) {
                     Ok(reply) => Outcome::Result(reply),
@@ -498,7 +530,7 @@ impl<L: Logic> Core<L> {
             return;
         };
         let state = &mut shared.state;
-        if let Some(entry) = L::recovered(&state.facts, &recovered) {
+        if let Some(entry) = L::recovered(&mut state.facts, &recovered) {
             join::<L>(state, entry);
         }
     }

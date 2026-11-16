@@ -201,7 +201,7 @@ impl Session<'_> {
                 TextOp::ReadCaret(_) => TextReply::Unanswered,
                 // The session reads only when a test or Core asks.
                 TextOp::TerminalHold => TextReply::Done,
-                TextOp::TerminalHistory { above, whole } => {
+                TextOp::TerminalHistory { above, whole, .. } => {
                     self.histories += 1;
                     if let Some((app, hwnd, shown)) = self.before_history.take() {
                         let shown: Vec<&str> = shown.iter().map(String::as_str).collect();
@@ -244,7 +244,9 @@ impl Session<'_> {
                     }
                     TextReply::Done
                 }
-                TextOp::TerminalFind { needle, from, rows } => {
+                TextOp::TerminalFind {
+                    needle, from, rows, ..
+                } => {
                     self.finds += 1;
                     if let Some((app, hwnd, shown)) = self.before_find.take() {
                         let shown: Vec<&str> = shown.iter().map(String::as_str).collect();

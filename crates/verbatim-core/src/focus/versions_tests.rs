@@ -56,6 +56,7 @@ pub(crate) fn kept(top_level: u64) -> Kept {
         role: verbatim_model::Role::Button,
         own_window: None,
         selection: crate::text_facts::SelectionFacts::default(),
+        console_terminal: false,
     }
 }
 

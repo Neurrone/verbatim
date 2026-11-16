@@ -2293,6 +2293,7 @@ impl Worker<'_> {
     /// read before a held key, a read Core asks for at once, rows of the
     /// history, the colours after a key, the screen's shape, and Core's
     /// on-demand reading. Returns whether it answered.
+    #[expect(clippy::too_many_lines, reason = "one arm per terminal request")]
     fn terminal_query(
         &mut self,
         request_id: RequestId,
@@ -2322,7 +2323,7 @@ impl Worker<'_> {
                 }
                 return true;
             }
-            TextOp::TerminalHistory { above, whole } => {
+            TextOp::TerminalHistory { above, whole, .. } => {
                 let seen = self.terminal_seen(node_id);
                 let reply = match self.client.uia() {
                     Some(uia) if focused => text_reads::terminal_history(
@@ -2336,7 +2337,9 @@ impl Worker<'_> {
                 self.reply_text(request, reply);
                 return true;
             }
-            TextOp::TerminalFind { needle, from, rows } => {
+            TextOp::TerminalFind {
+                needle, from, rows, ..
+            } => {
                 let seen = self.terminal_seen(node_id);
                 let reply = match self.client.uia() {
                     Some(uia) if focused => text_reads::terminal_find(

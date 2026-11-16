@@ -1,108 +1,110 @@
 //! A terminal Core reads, for the tests and measurements of Core's terminal
 //! model: the simulated terminal (`verbatim-term-sim`) read as the outpost
-//! reads a real one once it reads for Core (`books/dev/src/explanation/design/terminal-model.md`,
-//! "Where it runs"), and a reducer driven with its snapshots, answering
-//! Core's requests for reads, history, colours and the screen's shape, and
-//! playing the speech Core queues by reaching each utterance's marks.
+//! reads a real one (`docs/design/readers-tell-core-asks-build3.md`), and a
+//! reducer driven through its event queue: the terminal committed as the
+//! focus at startup, every write told to Core as the outpost tells a
+//! change, Core's requests for full reads, history reads and searches
+//! answered from the simulated terminal from the start anchors Core names,
+//! in the order Core sends them, and the speech Core queues played by
+//! reaching each utterance's marks.
 
 #![allow(dead_code, reason = "each test file uses part of the support")]
 
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 
 use verbatim_core::{SrState, reduce, snapshot_of};
+use verbatim_model::event_kind::EventKind;
+use verbatim_model::property::{
+    PropertyAnswer, PropertyId, PropertyValue, PropertyValues, RuntimeId,
+};
+use verbatim_model::request::{
+    Answer, Ask, CaretBinding, FocusCaret, FocusNode, FocusRead, ForegroundReport, Instance,
+    NodeRead, NodeWindow, ObjectClass, Outcome, Press, PressAction, QueueEffect, QueueInput,
+    Reader, Refusal, Reply, Request as Wire,
+};
+use verbatim_model::tell::{Event, EventObject, Payload, TellWindow};
 use verbatim_model::{
-    Backend, Effect, Input, NodeDetails, NodeId, NodeSnapshot, NormalizedEvent, OutpostId, Pid,
-    QueryId, Role, SegmentContent, SpeechMark, StateSet, TerminalScope, TerminalSnapshot, TextOp,
-    TextReply, TextRequest, TraceId,
+    Effect, Input, KeySeq, NodeId, OutpostId, Pid, Role, SegmentContent, SpeechMark, TerminalRead,
+    TerminalReadReply, TerminalScope, TextAnchor, TextOp, TextReply, TraceId, WindowHandle,
 };
 use verbatim_term_sim::{Flavor, Query, Range, Terminal};
-use verbatim_text::terminal_rows::{Read, ReadText, shows_text};
+use verbatim_text::terminal_rows::{Read, ReadText};
 
-pub const OUTPOST: OutpostId = OutpostId(1);
 pub const TERMINAL: u64 = 12;
+
+/// The terminal's application.
+pub const APP: Pid = Pid(1);
+
+/// The terminal's outpost.
+pub const OUTPOST: Instance = Instance {
+    reader: Reader::Outpost(APP),
+    generation: 1,
+};
 
 /// The terminal's node.
 pub fn node() -> NodeId {
-    NodeId::in_outpost(OUTPOST, TERMINAL)
+    NodeId::in_outpost(OutpostId(OUTPOST.generation), TERMINAL)
 }
 
-/// An event from the terminal's outpost.
-pub fn event(event: NormalizedEvent) -> Input {
-    Input::Event {
-        trace_id: TraceId::from_raw(1),
-        observed_at_us: 0,
-        source: Pid(1),
-        backend: Backend::Uia,
-        window: None,
-        event,
-        purpose: None,
+/// The terminal's window, as a request names it.
+pub fn window() -> NodeWindow {
+    NodeWindow {
+        handle: WindowHandle(5),
+        top_level: WindowHandle(4),
+        root_owner: WindowHandle(4),
+        process: APP,
+        thread: 41,
+        desktop: false,
     }
 }
 
-/// The focus on the terminal.
-pub fn focus() -> Input {
-    focus_after(None)
+/// The record a caret key pressed in the terminal is bound to.
+pub fn binding() -> CaretBinding {
+    CaretBinding {
+        node: node(),
+        window: window(),
+        role: Role::Terminal,
+        provider: verbatim_model::TextProvider::Uia,
+    }
 }
 
-/// The focus on the terminal, with what the listener read of the element it
-/// held under the terminal's node before, `earlier`.
-pub fn focus_after(earlier: Option<verbatim_model::EarlierElement>) -> Input {
-    event(NormalizedEvent::FocusChanged {
-        node: NodeSnapshot {
-            id: node(),
-            backend: Backend::Uia,
-            role: Role::Terminal,
-            name: Some("Terminal".to_owned()),
-            value: None,
-            states: StateSet::new(),
-            details: NodeDetails::default(),
-        },
-        whole_window: false,
-        ancestors: Vec::new(),
-        selected_child: None,
-        text: None,
-        earlier,
-        group: None,
-        answers: None,
-        first_cached_ancestor: None,
-    })
+/// What Core asked of the terminal beside its output reads: a full read
+/// inside the event queue (a review command's fresh read or a caret key's
+/// final read), a caret key's starting read, a read the rules owe (the
+/// whole document or a first read again with its history block), a
+/// history read, a search, or a caret key's watch.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Asked {
+    Fresh,
+    Starting,
+    Whole,
+    HistoryBlock(u32),
+    History {
+        above: u32,
+        whole: bool,
+    },
+    Find {
+        needle: String,
+        from: i32,
+        rows: u32,
+    },
+    Watch,
 }
 
 /// The simulated terminal read as the outpost reads it for Core: each read
-/// starts where the last read whose screen showed text said to start, a
-/// screen of rows above it, at the height Core told; the first read takes
-/// the screen alone; every read that begins by the latest end of a key's
-/// window Core asked colours for takes them, and a request that comes after
-/// a read ended at or after its key without them has a read taken at once
-/// with them, sent as a live read; and a live read identical to the last
-/// read sent, but for its times and caret, is not sent.
+/// starts a screen above the start anchor Core names, at the height Core
+/// names, and mints the anchor at the top of its own screen; a first read
+/// takes the screen alone; a read Core asks the colours of takes them.
 pub struct Outpost {
     pub sim: Terminal,
     /// The screen's width in cells.
     width: usize,
-    /// Where the next read starts.
-    start: Option<Range>,
+    /// The start anchors minted, by number.
+    anchors: BTreeMap<u64, Range>,
+    /// The last anchor minted.
+    minted: u64,
     /// The reads taken, which number each.
     reads: u64,
-    /// The read whose start is kept, as Core knows it: the last read sent
-    /// when the read that set it was not sent, being identical to it.
-    start_read: u64,
-    /// The number of the last read sent.
-    sent_read: u64,
-    /// The screen's height Core told, 0 before it did.
-    height: u32,
-    /// Whether the last read kept for its start showed text.
-    showed_text: bool,
-    /// The latest end of a key's window Core asked colours for.
-    colours_until: u64,
-    /// Whether the next read takes the colours whenever it begins.
-    colours_now: bool,
-    /// When the last read ended, and whether it took the colours.
-    read_ended: Option<(u64, bool)>,
-    /// The last read sent, its times and caret cleared.
-    sent: Option<TerminalSnapshot>,
-    /// A read taken at once for a colours request, for Core as a live read.
-    pub reread: Option<TerminalSnapshot>,
 }
 
 impl Outpost {
@@ -111,76 +113,45 @@ impl Outpost {
         Self {
             sim: Terminal::new(flavor, width, height, history),
             width,
-            start: None,
+            anchors: BTreeMap::new(),
+            minted: 0,
             reads: 0,
-            start_read: 0,
-            sent_read: 0,
-            height: 0,
-            showed_text: false,
-            colours_until: 0,
-            colours_now: false,
-            read_ended: None,
-            sent: None,
-            reread: None,
         }
     }
 
-    /// A snapshot as compared with the last sent: without its times, its
-    /// number and its caret.
-    fn compared(snapshot: &TerminalSnapshot) -> TerminalSnapshot {
-        TerminalSnapshot {
-            started_ms: 0,
-            ended_ms: 0,
-            read: 0,
-            caret: None,
-            ..snapshot.clone()
-        }
+    /// The range Core names by `anchor`.
+    fn range(&self, anchor: Option<TextAnchor>) -> Option<Range> {
+        anchor.and_then(|anchor| self.anchors.get(&anchor.0).copied())
     }
 
-    /// Whether a live read is sent, noting it as the last sent when it is.
-    pub fn sends(&mut self, snapshot: &TerminalSnapshot) -> bool {
-        let compared = Self::compared(snapshot);
-        if !snapshot.waited && self.sent.as_ref() == Some(&compared) {
-            if self.start_read == snapshot.read {
-                self.start_read = self.sent_read;
-            }
-            return false;
-        }
-        self.sent = Some(compared);
-        self.sent_read = snapshot.read;
-        true
+    /// Mints an anchor at `range`.
+    fn mint(&mut self, range: Range) -> TextAnchor {
+        self.minted += 1;
+        self.anchors.insert(self.minted, range);
+        TextAnchor(self.minted)
     }
 
-    /// Notes an answer, which is always sent, as the last sent.
-    pub fn answered(&mut self, snapshot: &TerminalSnapshot) {
-        self.sent = Some(Self::compared(snapshot));
-        self.sent_read = snapshot.read;
-    }
-
-    /// The read the rules take of a read of `scope` begun at `at_ms`, and
-    /// the snapshot it is sent as; `None` for a live read.
-    pub fn read(&mut self, scope: Option<TerminalScope>, at_ms: u64) -> (Read, TerminalSnapshot) {
-        let query = match scope {
-            Some(TerminalScope::Whole) => Query {
+    /// The read `request` asks, begun at `at_ms`: the rules' read and the
+    /// answer the outpost sends.
+    pub fn read(&mut self, request: &TerminalRead, at_ms: u64) -> (Read, TerminalReadReply) {
+        let query = match request.scope {
+            TerminalScope::Whole => Query {
                 start: None,
-                screen_rows: self.height,
+                screen_rows: request.height,
                 whole: true,
                 above: 0,
             },
-            Some(TerminalScope::HistoryBlock { height }) => {
-                self.height = height;
-                Query {
-                    start: None,
-                    screen_rows: height,
-                    whole: false,
-                    above: height,
-                }
-            }
-            None | Some(TerminalScope::Fresh) => Query {
-                start: self.start,
-                screen_rows: self.height,
+            TerminalScope::HistoryBlock { height } => Query {
+                start: None,
+                screen_rows: height,
                 whole: false,
-                above: self.height,
+                above: height,
+            },
+            TerminalScope::Fresh => Query {
+                start: self.range(request.start),
+                screen_rows: request.height,
+                whole: false,
+                above: request.height,
             },
         };
         let snapshot = self.sim.snapshot(&query).expect("a simulated read");
@@ -198,35 +169,49 @@ impl Outpost {
             at_ms,
             above: usize::try_from(snapshot.above).expect("rows"),
         };
-        // A read whose screen shows no text where the last kept read's did
-        // leaves where the next read starts ("A read with no text").
-        let shows = shows_text(&read.screen);
         self.reads += 1;
-        if shows || !self.showed_text {
-            self.start = Some(snapshot.next_start);
-            self.start_read = self.reads;
-            self.showed_text = shows;
-        }
-        let colours = (self.colours_now || at_ms <= self.colours_until).then(|| self.colours());
-        self.colours_now = false;
-        self.read_ended = Some((at_ms, colours.is_some()));
+        let colours = request.colours.then(|| self.colours());
         let mut wire = snapshot_of(&read, false, colours.as_deref());
         wire.read = self.reads;
-        (read, wire)
+        let start = self.mint(snapshot.next_start);
+        let point = request.starting.map(|_| self.mint(snapshot.next_start));
+        let reply = TerminalReadReply {
+            snapshot: wire,
+            start,
+            started_us: at_ms * 1_000,
+            point,
+        };
+        (read, reply)
+    }
+
+    /// The history read from `above` rows above the start `start`, or the
+    /// whole document.
+    fn history(&self, start: TextAnchor, (above, whole, height): (u32, bool, u32)) -> TextReply {
+        let query = Query {
+            start: if whole { None } else { self.range(Some(start)) },
+            screen_rows: height,
+            whole,
+            above: if whole { 0 } else { above },
+        };
+        let snapshot = self.sim.snapshot(&query).expect("a simulated history read");
+        TextReply::TerminalHistory {
+            text: snapshot.text,
+            above: snapshot.above,
+            read: 0,
+        }
     }
 
     /// The search the outpost's find program makes
     /// (`verbatim_uia_rops::terminal_find`): the rows starting with
-    /// `needle`, outward from the row `from` rows above where the next read
-    /// starts, alternately the next at or below it and the next above it,
-    /// at most 20, each with `rows` rows of text read from it, and the read
-    /// whose start they are counted from.
-    fn find(&self, needle: &str, from: i32, rows: u32) -> TextReply {
+    /// `needle`, outward from the row `from` rows above the start `start`,
+    /// alternately the next at or below it and the next above it, at most
+    /// 20, each with `rows` rows of text read from it.
+    fn find(&self, start: TextAnchor, needle: &str, (from, rows): (i32, u32)) -> TextReply {
         // The document from its start, and how many rows lie above the
         // start, read by moving that far up from it.
         let query = Query {
-            start: self.start,
-            screen_rows: self.height,
+            start: self.range(Some(start)),
+            screen_rows: 0,
             whole: false,
             above: u32::MAX / 2,
         };
@@ -275,7 +260,7 @@ impl Outpost {
                     text: text_of(row),
                 })
                 .collect(),
-            read: self.start_read,
+            read: 0,
         }
     }
 
@@ -295,49 +280,6 @@ impl Outpost {
                     .collect()
             })
             .collect()
-    }
-
-    /// The outpost's answer to a request Core makes of a terminal it reads,
-    /// a read begun at `at_ms`; `None` for any other request.
-    pub fn answer(&mut self, op: &TextOp, at_ms: u64) -> Option<TextReply> {
-        Some(match op {
-            TextOp::TerminalReadNow(scope) => {
-                let (_, snapshot) = self.read(Some(*scope), at_ms);
-                self.answered(&snapshot);
-                TextReply::TerminalSnapshot(Box::new(snapshot))
-            }
-            TextOp::TerminalHistory { above, whole } => {
-                let query = Query {
-                    start: if *whole { None } else { self.start },
-                    screen_rows: self.height,
-                    whole: *whole,
-                    above: if *whole { 0 } else { *above },
-                };
-                let snapshot = self.sim.snapshot(&query).expect("a simulated history read");
-                TextReply::TerminalHistory {
-                    text: snapshot.text,
-                    above: snapshot.above,
-                    read: self.start_read,
-                }
-            }
-            TextOp::TerminalFind { needle, from, rows } => self.find(needle, *from, *rows),
-            TextOp::TerminalShape { height, .. } => {
-                self.height = *height;
-                TextReply::Done
-            }
-            TextOp::TerminalColours { from_ms, until_ms } => {
-                self.colours_until = self.colours_until.max(*until_ms);
-                if self
-                    .read_ended
-                    .is_some_and(|(ended, colours)| ended >= *from_ms && !colours)
-                {
-                    self.colours_now = true;
-                    self.reread = Some(self.read(None, at_ms).1);
-                }
-                TextReply::Done
-            }
-            _ => return None,
-        })
     }
 }
 
@@ -371,7 +313,105 @@ pub fn words(segments: &[verbatim_model::UtteranceSegment]) -> String {
         .join(" ")
 }
 
-/// A reducer reading the simulated terminal through Core's terminal model,
+/// The focus on the terminal as the reducer's earlier focus path reports
+/// it, with what the listener read of the element it held under the
+/// terminal's node before, `earlier`.
+pub fn focus_after(earlier: Option<verbatim_model::EarlierElement>) -> Input {
+    Input::Event {
+        trace_id: TraceId::from_raw(1),
+        observed_at_us: 0,
+        source: APP,
+        backend: verbatim_model::Backend::Uia,
+        window: None,
+        event: verbatim_model::NormalizedEvent::FocusChanged {
+            node: verbatim_model::NodeSnapshot {
+                id: node(),
+                backend: verbatim_model::Backend::Uia,
+                role: Role::Terminal,
+                name: Some("Terminal".to_owned()),
+                value: None,
+                states: verbatim_model::StateSet::new(),
+                details: verbatim_model::NodeDetails::default(),
+            },
+            whole_window: false,
+            ancestors: Vec::new(),
+            selected_child: None,
+            text: None,
+            earlier,
+            group: None,
+            answers: None,
+            first_cached_ancestor: None,
+        },
+        purpose: None,
+    }
+}
+
+/// The terminal's focus read, as the outpost answers Core's read of the
+/// application's focus at startup, inside `depth` groups.
+fn focus_read(depth: u64) -> FocusRead {
+    let value = |name: String, role: Role| {
+        PropertyValues(vec![
+            PropertyAnswer {
+                id: PropertyId::Name,
+                value: Some(PropertyValue::Text(name)),
+            },
+            PropertyAnswer {
+                id: PropertyId::Role,
+                value: Some(PropertyValue::Role(role)),
+            },
+        ])
+    };
+    let ancestors = (0..depth)
+        .map(|index| verbatim_model::request::FocusAncestor {
+            node: FocusNode {
+                read: NodeRead {
+                    node: Some(NodeId::in_outpost(
+                        OutpostId(OUTPOST.generation),
+                        100_000 + index,
+                    )),
+                    window: window(),
+                    values: value(format!("Group {index}"), Role::Group),
+                },
+                runtime_id: Some(RuntimeId(vec![
+                    42,
+                    100_000 + i32::try_from(index).expect("depth"),
+                ])),
+            },
+            simple_child: false,
+            dialog_text: None,
+        })
+        .collect();
+    FocusRead {
+        focus: FocusNode {
+            read: NodeRead {
+                node: Some(node()),
+                window: window(),
+                values: PropertyValues(vec![
+                    PropertyAnswer {
+                        id: PropertyId::Name,
+                        value: Some(PropertyValue::Text("Terminal".to_owned())),
+                    },
+                    PropertyAnswer {
+                        id: PropertyId::Role,
+                        value: Some(PropertyValue::Role(Role::Terminal)),
+                    },
+                ]),
+            },
+            runtime_id: Some(RuntimeId(vec![42, 12])),
+        },
+        msaa: None,
+        redirected_to: None,
+        ancestors,
+        met: None,
+        foreground: None,
+        value_from_selection: false,
+        class: ObjectClass::Plain,
+        runtime_id_reused: false,
+        caret: FocusCaret::NotRead,
+    }
+}
+
+/// A reducer reading the simulated terminal through Core's event queue,
 /// with playback that reaches each utterance's marks as it plays.
 #[expect(
     clippy::struct_excessive_bools,
@@ -379,11 +419,15 @@ pub fn words(segments: &[verbatim_model::UtteranceSegment]) -> String {
 )]
 pub struct Session {
     pub state: SrState,
+    runtime: verbatim_core::Runtime,
     pub outpost: Outpost,
     /// What was said, in order.
     pub heard: Vec<Said>,
-    /// Every request Core made, in order.
-    pub requests: Vec<TextOp>,
+    /// Every request Core made of the terminal but its output reads, in
+    /// order.
+    pub requests: Vec<Asked>,
+    /// How many output reads Core asked.
+    pub output_reads: usize,
     /// Every due time of the quiet-period timer, as the shell reads it
     /// after each step that changed it, in order.
     pub timers: Vec<Option<u64>>,
@@ -397,42 +441,41 @@ pub struct Session {
     /// Whether the outpost holds back a whole read Core asks for, until
     /// [`Session::answer_held`].
     pub hold_whole: bool,
-    held: Option<(QueryId, TerminalScope)>,
-    /// The caret read before a held key, held back until
-    /// [`Session::release_held`].
-    caret_read: Option<QueryId>,
-    /// Whether the outpost holds back Core's colours requests, as they
-    /// travel to it, until [`Session::deliver_colours`].
-    pub hold_colours: bool,
-    /// Whether the outpost answers Core's searches unanswered, as its
-    /// worker does when the terminal lost the focus before searching.
+    held: Option<Ask>,
+    /// Whether the outpost answers Core's searches refused, as its worker
+    /// does when the terminal lost the focus before searching.
     pub unanswered_finds: bool,
     /// Output the terminal prints before each search Core asks for, the
-    /// next taken for each: written, and read by a live read sent to Core,
-    /// at its time, before the outpost searches, as when a program keeps
-    /// printing while a search is on its way.
+    /// next taken for each: written, and told to Core, at its time, before
+    /// the outpost searches, as when a program keeps printing while a
+    /// search is on its way.
     pub output_before_finds: VecDeque<(String, u64)>,
     /// Output the terminal prints before each history read Core asks for,
     /// the next taken for each, as [`Session::output_before_finds`] is
     /// before a search.
     pub output_before_histories: VecDeque<(String, u64)>,
-    held_colours: VecDeque<(QueryId, TextOp)>,
-    /// Whether the outpost holds the terminal's reading for Core's flood
-    /// policy ([`TextOp::TerminalHold`]), and if so whether the text
-    /// changed since: while it holds, a write is only noted, as the
-    /// outpost's reading state does (`verbatim_outpost::terminal::reading`).
-    holding: Option<bool>,
     /// Whether what Core queues is played only when the test calls
     /// [`Session::play`] or [`Session::play_one`], so that output can be
     /// written while a group plays.
     pub manual_play: bool,
-    /// Requests not yet answered, in the order Core made them: the outpost
-    /// answers each once Core's step is done, in order.
-    pending: VecDeque<(QueryId, TextOp)>,
+    /// Requests sent and not yet answered, in the order Core sent them:
+    /// the outpost answers each once Core's step is done, in order.
+    pending: VecDeque<Ask>,
     /// Utterances queued and their marks, not yet played.
     queued: VecDeque<(Vec<SpeechMark>, Said)>,
     /// The time reads Core asks for begin at.
     pub at_ms: u64,
+    /// The last key's number.
+    keys: u64,
+    /// How many groups the terminal is inside.
+    depth: u64,
+    /// When the next full read the outpost answers began, when earlier
+    /// than when it ended, the session's time.
+    pub next_read_began: Option<u64>,
+    /// Whether the outpost holds back Core's output reads, until
+    /// [`Session::release_output`].
+    pub hold_output: bool,
+    held_output: VecDeque<Ask>,
 }
 
 impl Session {
@@ -442,37 +485,60 @@ impl Session {
         Self::with(Outpost::new(flavor, width, height, history))
     }
 
-    /// `outpost`'s terminal, focused and read once at time 0, all of which
-    /// is let pass unasserted: the focus and the first read say nothing of
-    /// the terminal's output.
+    /// `outpost`'s terminal, focused at startup and read once at time 0,
+    /// all of which is let pass unasserted: the focus and the first read
+    /// say nothing of the terminal's output.
     pub fn with(outpost: Outpost) -> Self {
+        Self::inside(outpost, 0)
+    }
+
+    /// [`Session::with`], the terminal inside `depth` groups.
+    pub fn inside(outpost: Outpost, depth: u64) -> Self {
         let mut session = Self {
             state: SrState::new(),
+            runtime: verbatim_core::Runtime::default(),
             outpost,
             heard: Vec::new(),
             requests: Vec::new(),
+            output_reads: 0,
             timers: Vec::new(),
             armed: None,
             copied: Vec::new(),
             log: Vec::new(),
             hold_whole: false,
             held: None,
-            caret_read: None,
-            hold_colours: false,
             unanswered_finds: false,
             output_before_finds: VecDeque::new(),
             output_before_histories: VecDeque::new(),
-            held_colours: VecDeque::new(),
-            holding: None,
             manual_play: false,
             pending: VecDeque::new(),
             queued: VecDeque::new(),
             at_ms: 0,
+            keys: 0,
+            depth,
+            next_read_began: None,
+            hold_output: false,
+            held_output: VecDeque::new(),
         };
-        session.input(&focus());
-        session.live(0);
+        // The terminal's window in front: Core starts the application's
+        // outpost to read its focus, which commits the terminal.
+        session.queue(QueueInput::Foreground(ForegroundReport {
+            window: WindowHandle(4),
+            root_owner: WindowHandle(4),
+            process: APP,
+            thread: 41,
+            class: "CASCADIA_HOSTING_WINDOW_CLASS".to_owned(),
+        }));
+        session.queue(QueueInput::Process(
+            verbatim_model::request::ProcessFact::OutpostStarted {
+                process: APP,
+                generation: OUTPOST.generation,
+            },
+        ));
+        session.queue(QueueInput::ReaderReady(OUTPOST));
         session.heard.clear();
         session.requests.clear();
+        session.output_reads = 0;
         session.timers.clear();
         session
     }
@@ -480,11 +546,7 @@ impl Session {
     /// One step of the reducer, logged, with the timer's due time read
     /// after it, as the shell reads it.
     fn step(&mut self, input: Input) -> Vec<Effect> {
-        let effects = reduce(
-            &mut self.state,
-            &mut verbatim_core::Runtime::default(),
-            &input,
-        );
+        let effects = reduce(&mut self.state, &mut self.runtime, &input);
         self.log.push((input, effects.clone()));
         let due = self.state.terminal_timer_due();
         if due != self.armed {
@@ -494,9 +556,114 @@ impl Session {
         effects
     }
 
+    /// `input`, an input of Core's event queue, at the session's time.
+    fn queued_input(&self, trace_id: TraceId, input: QueueInput) -> Input {
+        Input::Queue {
+            trace_id,
+            at_us: self.at_ms * 1_000,
+            input,
+        }
+    }
+
+    /// Feeds `input` to the event queue, takes in its effects, answers what
+    /// they asked, and plays what was queued.
+    pub fn queue(&mut self, input: QueueInput) {
+        let input = self.queued_input(TraceId::from_raw(1), input);
+        let effects = self.step(input);
+        self.run(effects);
+        self.settle();
+    }
+
+    /// The event queue's input a test's input stands for: a key or command
+    /// as the hook reports it, numbered in turn.
+    fn as_queued(&mut self, input: &Input) -> Input {
+        let next = self.keys + 1;
+        let mut press = |trace_id: TraceId, at_ms: u64, action: PressAction| {
+            self.keys += 1;
+            Input::Queue {
+                trace_id,
+                at_us: at_ms * 1_000,
+                input: QueueInput::Press(Box::new(Press {
+                    key_seq: KeySeq::new(self.keys),
+                    pressed_at_us: at_ms * 1_000,
+                    action,
+                })),
+            }
+        };
+        match input {
+            Input::Command {
+                trace_id,
+                command,
+                pressed_at_ms,
+                repeat,
+                ..
+            } => press(
+                *trace_id,
+                *pressed_at_ms,
+                PressAction::Command {
+                    command: *command,
+                    repeat: *repeat,
+                },
+            ),
+            Input::CharacterTyped {
+                trace_id,
+                text,
+                at_ms,
+                ..
+            } => press(*trace_id, *at_ms, PressAction::Typed { text: text.clone() }),
+            Input::CaretKey {
+                trace_id,
+                key,
+                pressed_at_ms,
+                ..
+            } => press(
+                *trace_id,
+                *pressed_at_ms,
+                PressAction::CaretKey {
+                    key: *key,
+                    held: None,
+                    bound: Some(Box::new(binding())),
+                },
+            ),
+            Input::ClearingKey {
+                trace_id, at_ms, ..
+            } => press(*trace_id, *at_ms, PressAction::Clearing),
+            Input::HeldKey {
+                trace_id,
+                key,
+                pressed_at_ms,
+                ..
+            } => {
+                let sequence = u32::try_from(next).expect("keys");
+                press(
+                    *trace_id,
+                    *pressed_at_ms,
+                    PressAction::CaretKey {
+                        key: *key,
+                        held: Some(verbatim_model::stroke::HeldStroke {
+                            stroke: verbatim_model::stroke::Stroke {
+                                vk: 0x26,
+                                scan_code: 0x48,
+                                extended: true,
+                                sequence,
+                            },
+                            modifiers: Vec::new(),
+                        }),
+                        bound: Some(Box::new(binding())),
+                    },
+                )
+            }
+            Input::MarkReached { mark } => {
+                self.queued_input(TraceId::from_raw(1), QueueInput::MarkReached(*mark))
+            }
+            other => other.clone(),
+        }
+    }
+
     /// Feeds `input`, takes in its effects, and plays what it queued.
     pub fn input(&mut self, input: &Input) {
-        let effects = self.step(input.clone());
+        let input = self.as_queued(input);
+        let effects = self.step(input);
         self.run(effects);
         self.settle();
     }
@@ -506,7 +673,8 @@ impl Session {
     /// answers those requests, in order, and plays what they queued.
     pub fn inputs(&mut self, inputs: &[Input]) {
         for input in inputs {
-            let effects = self.step(input.clone());
+            let input = self.as_queued(input);
+            let effects = self.step(input);
             self.take(effects, None);
         }
         self.run(Vec::new());
@@ -517,160 +685,200 @@ impl Session {
     /// made, in order.
     fn run(&mut self, effects: Vec<Effect>) {
         self.take(effects, None);
-        while let Some((query_id, op)) = self.pending.pop_front() {
-            self.answer(query_id, &op);
+        while let Some(ask) = self.pending.pop_front() {
+            self.answer(ask);
         }
     }
 
-    /// The outpost's answer to `op`, and the read it took at once for it,
-    /// if any, sent as a live read.
-    fn answer(&mut self, query_id: QueryId, op: &TextOp) {
-        let before = match op {
-            TextOp::TerminalFind { .. } => self.output_before_finds.pop_front(),
-            TextOp::TerminalHistory { .. } => self.output_before_histories.pop_front(),
-            _ => None,
+    /// The outpost's answer to `ask`.
+    fn answer(&mut self, ask: Ask) {
+        let outcome = match &ask.request {
+            Wire::Follow(_) => Outcome::Result(Reply::Followed),
+            Wire::CurrentFocus { .. } => {
+                Outcome::Result(Reply::Focus(Box::new(focus_read(self.depth))))
+            }
+            Wire::Text { op, .. } => match op {
+                TextOp::ReadTerminal(read) => {
+                    if self.hold_whole && read.scope == TerminalScope::Whole {
+                        self.held = Some(ask);
+                        return;
+                    }
+                    if self.hold_output && read.output {
+                        self.held_output.push_back(ask);
+                        return;
+                    }
+                    Outcome::Result(Reply::Text(TextReply::TerminalRead(Box::new(
+                        self.full_read(read),
+                    ))))
+                }
+                TextOp::TerminalHistory {
+                    above,
+                    whole,
+                    start,
+                    height,
+                } => {
+                    if let Some((output, at_ms)) = self.output_before_histories.pop_front() {
+                        self.write(&output, at_ms);
+                    }
+                    Outcome::Result(Reply::Text(
+                        self.outpost.history(*start, (*above, *whole, *height)),
+                    ))
+                }
+                TextOp::TerminalFind {
+                    needle,
+                    from,
+                    rows,
+                    start,
+                } => {
+                    if let Some((output, at_ms)) = self.output_before_finds.pop_front() {
+                        self.write(&output, at_ms);
+                    }
+                    if self.unanswered_finds {
+                        Outcome::Refused(Refusal::Unsupported)
+                    } else {
+                        Outcome::Result(Reply::Text(self.outpost.find(
+                            *start,
+                            needle,
+                            (*from, *rows),
+                        )))
+                    }
+                }
+                TextOp::Watch(_) => Outcome::Result(Reply::Text(TextReply::Watched(Box::new(
+                    verbatim_model::Watched::EffectUnread,
+                )))),
+                other => panic!("an unexpected text request: {other:?}"),
+            },
+            other => panic!("an unexpected request: {other:?}"),
         };
-        if let Some((output, at_ms)) = before {
-            self.write(&output, at_ms);
-        }
-        if self.unanswered_finds && matches!(op, TextOp::TerminalFind { .. }) {
-            self.reply(query_id, TextReply::Unanswered);
-        } else if let Some(reply) = self.flood_answer(op) {
-            self.reply(query_id, reply);
-        } else if let Some(reply) = self.outpost.answer(op, self.at_ms) {
-            self.reply(query_id, reply);
-        }
-        if let Some(snapshot) = self.outpost.reread.take() {
-            self.send(snapshot);
-        }
+        self.reply(&ask, outcome);
     }
 
-    /// The outpost's answer to a request of Core's flood policy, as its
-    /// reading state answers it: a hold only noted; a read of what is new,
-    /// taken only when the text changed while held; a cancel reading what
-    /// changed while held. `None` for any other request.
-    fn flood_answer(&mut self, op: &TextOp) -> Option<TextReply> {
-        let changed = self.holding == Some(true);
-        let (read, waited) = match op {
-            TextOp::TerminalHold => {
-                self.holding = Some(self.holding.unwrap_or(false));
-                return Some(TextReply::TerminalUnchanged);
-            }
-            TextOp::TerminalRead { hold } => {
-                self.holding = hold.then_some(false);
-                (changed, true)
-            }
-            TextOp::TerminalCancel => {
-                self.holding = None;
-                (changed, false)
-            }
-            _ => return None,
-        };
-        if !read {
-            return Some(TextReply::TerminalUnchanged);
+    /// The full read `read`, taken at the session's time, begun then or at
+    /// [`Session::next_read_began`].
+    fn full_read(&mut self, read: &TerminalRead) -> TerminalReadReply {
+        let (_, mut reply) = self.outpost.read(read, self.at_ms);
+        if let Some(began) = self.next_read_began.take() {
+            reply.snapshot.started_ms = began;
+            reply.started_us = began * 1_000;
         }
-        let (_, mut snapshot) = self.outpost.read(None, self.at_ms);
-        snapshot.waited = waited;
-        self.outpost.answered(&snapshot);
-        Some(TextReply::TerminalSnapshot(Box::new(snapshot)))
+        reply
     }
 
-    /// Delivers the colours requests held back, arriving at `at_ms`.
-    pub fn deliver_colours(&mut self, at_ms: u64) {
+    /// Answers the output reads held back, taken at `at_ms`.
+    pub fn release_output(&mut self, at_ms: u64) {
         self.at_ms = at_ms;
-        while let Some((query_id, op)) = self.held_colours.pop_front() {
-            self.answer(query_id, &op);
+        while let Some(ask) = self.held_output.pop_front() {
+            self.answer(ask);
         }
+        self.run(Vec::new());
         self.settle();
     }
 
-    /// Writes `bytes` to the terminal, then a live read begun at `at_ms`.
+    /// Sends the answer to `ask`, `outcome`, and takes in its effects.
+    fn reply(&mut self, ask: &Ask, outcome: Outcome) {
+        let input = self.queued_input(
+            TraceId::from_raw(2),
+            QueueInput::Answer {
+                from: OUTPOST,
+                answer: Answer {
+                    number: ask.number,
+                    outcome,
+                    probes: Vec::new(),
+                    detail: String::new(),
+                },
+            },
+        );
+        let effects = self.step(input);
+        self.take(effects, None);
+    }
+
+    /// Writes `bytes` to the terminal, its change told to Core at `at_ms`.
     pub fn write(&mut self, bytes: &str, at_ms: u64) {
         self.outpost.sim.write(bytes.as_bytes());
         self.live(at_ms);
     }
 
-    /// A live read begun at `at_ms`, sent to Core as the outpost sends it.
+    /// The terminal's change told to Core at `at_ms`, as its outpost tells
+    /// one: Core reads it when it chooses.
     pub fn live(&mut self, at_ms: u64) {
         self.at_ms = at_ms;
-        if let Some(changed) = &mut self.holding {
-            *changed = true;
-            return;
-        }
-        let (_, snapshot) = self.outpost.read(None, at_ms);
-        self.send(snapshot);
-    }
-
-    /// Sends a live read to Core, unless it is the one last sent.
-    fn send(&mut self, snapshot: TerminalSnapshot) {
-        if self.outpost.sends(&snapshot) {
-            self.input(&event(NormalizedEvent::TerminalSnapshot {
-                node_id: node(),
-                snapshot: Box::new(snapshot),
-            }));
-        }
+        let tell = Event {
+            trace_id: TraceId::from_raw(3),
+            kind: EventKind::TerminalChanged,
+            process: APP,
+            application: "terminal".to_owned(),
+            thread: 41,
+            at_us: at_ms * 1_000,
+            object: EventObject::Terminal {
+                node: node(),
+                window: WindowHandle(5),
+            },
+            cached: PropertyValues::default(),
+            payload: Payload::None,
+            window: TellWindow::NoWindow,
+            checked: None,
+        };
+        self.queue(QueueInput::Tell {
+            from: OUTPOST,
+            tell: Box::new(tell),
+        });
     }
 
     /// Answers the whole read held back.
     pub fn answer_held(&mut self) {
-        let (query_id, scope) = self.held.take().expect("a whole read held back");
-        let reply = self
-            .outpost
-            .answer(&TextOp::TerminalReadNow(scope), self.at_ms)
-            .expect("the outpost answers its reads");
-        let effects = self.completed(query_id, reply);
-        self.run(effects);
+        let ask = self.held.take().expect("a whole read held back");
+        let Wire::Text {
+            op: TextOp::ReadTerminal(read),
+            ..
+        } = &ask.request
+        else {
+            panic!("a read held back");
+        };
+        let read = *read;
+        let reply = self.full_read(&read);
+        let outcome = Outcome::Result(Reply::Text(TextReply::TerminalRead(Box::new(reply))));
+        self.reply(&ask, outcome);
+        self.run(Vec::new());
         self.settle();
     }
 
-    /// Answers the caret read before a held key as failed, so the key is
-    /// passed on with the hook's time.
-    pub fn release_held(&mut self) {
-        let query_id = self.caret_read.take().expect("a caret read held back");
-        let effects = self.completed(query_id, TextReply::Unanswered);
-        self.run(effects);
-        self.settle();
-    }
-
-    /// Answers the caret read before a held key as a terminal's outpost
-    /// does, with a read begun at `at_ms` that carries `caret`.
-    pub fn answer_caret_read(&mut self, at_ms: u64, caret: verbatim_model::CaretReport) {
-        let query_id = self.caret_read.take().expect("a caret read held back");
-        self.at_ms = at_ms;
-        let (_, mut snapshot) = self.outpost.read(None, at_ms);
-        snapshot.caret = Some(caret);
-        self.outpost.answered(&snapshot);
-        let reply = TextReply::TerminalSnapshot(Box::new(snapshot));
-        let effects = self.completed_at(query_id, reply, at_ms * 1_000);
-        self.run(effects);
-        self.settle();
-    }
-
-    fn completed(&mut self, query_id: QueryId, reply: TextReply) -> Vec<Effect> {
-        self.completed_at(query_id, reply, 0)
-    }
-
-    fn completed_at(&mut self, query_id: QueryId, reply: TextReply, at_us: u64) -> Vec<Effect> {
-        self.step(Input::Answered {
-            at_us,
-            trace_id: TraceId::from_raw(2),
-            query_id,
-            outpost: OUTPOST,
-            outcome: verbatim_model::protocol::QueryOutcome::Done(
-                verbatim_model::protocol::QueryResult::Text(reply),
-            ),
-        })
-    }
-
-    fn reply(&mut self, query_id: QueryId, reply: TextReply) {
-        let effects = self.completed(query_id, reply);
-        self.take(effects, None);
+    /// Records what `ask` asks of the terminal.
+    fn record(&mut self, ask: &Ask) {
+        let Wire::Text { op, .. } = &ask.request else {
+            return;
+        };
+        let asked = match op {
+            TextOp::ReadTerminal(read) => match (read.scope, read.output, read.starting) {
+                (TerminalScope::Whole, ..) => Asked::Whole,
+                (TerminalScope::HistoryBlock { height }, ..) => Asked::HistoryBlock(height),
+                (TerminalScope::Fresh, true, _) => {
+                    self.output_reads += 1;
+                    return;
+                }
+                (TerminalScope::Fresh, false, Some(_)) => Asked::Starting,
+                (TerminalScope::Fresh, false, None) => Asked::Fresh,
+            },
+            TextOp::TerminalHistory { above, whole, .. } => Asked::History {
+                above: *above,
+                whole: *whole,
+            },
+            TextOp::TerminalFind {
+                needle, from, rows, ..
+            } => Asked::Find {
+                needle: needle.clone(),
+                from: *from,
+                rows: *rows,
+            },
+            TextOp::Watch(_) => Asked::Watch,
+            _ => return,
+        };
+        self.requests.push(asked);
     }
 
     /// Takes in effects: speech is queued, or heard at once when it has no
-    /// marks; requests are kept for the outpost, which answers those of the
-    /// terminal and leaves others, such as a caret key's watch, unanswered;
-    /// copies are recorded. Any other effect fails the test.
+    /// marks and nothing is queued ahead of it; requests are kept for the
+    /// outpost, which answers them in order; copies are recorded. Any
+    /// other effect fails the test.
     fn take(&mut self, effects: Vec<Effect>, key: Option<TraceId>) {
         for effect in effects {
             match effect {
@@ -688,7 +896,10 @@ impl Session {
                         key,
                         words: words(&utterance.segments),
                     };
-                    if marks.is_empty() {
+                    // Speech plays in the order it was queued: an utterance
+                    // with no marks is heard at once only when nothing is
+                    // queued ahead of it.
+                    if marks.is_empty() && self.queued.is_empty() {
                         self.heard.push(said);
                     } else {
                         self.queued.push_back((marks, said));
@@ -696,30 +907,20 @@ impl Session {
                 }
                 Effect::StopSpeech => self.queued.clear(),
                 Effect::CopyToClipboard(text) => self.copied.push(text),
-                Effect::Text(TextRequest { query_id, op, .. }) => {
-                    self.requests.push(op.clone());
-                    match op {
-                        TextOp::TerminalReadNow(scope @ TerminalScope::Whole)
-                            if self.hold_whole =>
-                        {
-                            self.held = Some((query_id, scope));
-                        }
-                        TextOp::ReadCaret(verbatim_model::CaretRead {
-                            purpose: verbatim_model::ReadPurpose::BeforeTerminalKey,
-                            ..
-                        }) => self.caret_read = Some(query_id),
-                        op @ TextOp::TerminalColours { .. } if self.hold_colours => {
-                            self.held_colours.push_back((query_id, op));
-                        }
-                        op => self.pending.push_back((query_id, op)),
-                    }
+                Effect::Queue(QueueEffect::Send { to, ask }) => {
+                    assert_eq!(to, OUTPOST, "a request to the terminal's outpost");
+                    self.record(&ask);
+                    self.pending.push_back(ask);
                 }
-                // Passing a held key on and timing its deadline are the
-                // shell's; the focus's own effects are not these tests'.
-                Effect::PassHeldKey(_)
-                | Effect::BoundHeldKey(_)
-                | Effect::KeyNote(_)
-                | Effect::ReadTerminal(_)
+                // The event queue's own business: cancels, wakes, strokes
+                // sent, answers dropped by number.
+                Effect::Queue(
+                    QueueEffect::Cancel { .. }
+                    | QueueEffect::WakeAt(_)
+                    | QueueEffect::SendStrokes(_)
+                    | QueueEffect::AnswerDropped { .. }
+                    | QueueEffect::StartOutpost(_),
+                )
                 | Effect::DropExpiredSpeech(_)
                 | Effect::Fetch(_)
                 | Effect::PlayEarcon(_) => {}
@@ -749,7 +950,8 @@ impl Session {
         };
         self.heard.push(said);
         for mark in marks {
-            let effects = self.step(Input::MarkReached { mark });
+            let input = self.queued_input(TraceId::from_raw(1), QueueInput::MarkReached(mark));
+            let effects = self.step(input);
             self.run(effects);
         }
         true
@@ -766,7 +968,7 @@ impl Session {
     }
 
     /// The requests made since the last [`Session::requests`], taken.
-    pub fn requests(&mut self) -> Vec<TextOp> {
+    pub fn requests(&mut self) -> Vec<Asked> {
         std::mem::take(&mut self.requests)
     }
 }

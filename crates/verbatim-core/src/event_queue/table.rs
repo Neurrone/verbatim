@@ -38,6 +38,11 @@ pub(crate) enum Owner {
     /// whose ending changes nothing in Core, such as `Follow`, answered
     /// only for the test harness's idle.
     Core,
+    /// Core's facts, which await the ending by the token they gave the
+    /// request ([`super::Logic::facts_answered`]): a terminal's reads for
+    /// its output, its `Follow` and its baseline
+    /// (`docs/design/readers-tell-core-asks-build3.md`).
+    Facts(u64),
 }
 
 /// Where a live request is.

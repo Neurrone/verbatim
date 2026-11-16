@@ -169,8 +169,9 @@ pub(crate) fn counts_as_pending(
                     },
                 )
         }
-        // A focus is never told by an outpost's `Follow` group.
-        EventObject::Followed { .. } => false,
+        // A focus is never told by an outpost's `Follow` group, nor as a
+        // terminal's change.
+        EventObject::Followed { .. } | EventObject::Terminal { .. } => false,
     }
 }
 

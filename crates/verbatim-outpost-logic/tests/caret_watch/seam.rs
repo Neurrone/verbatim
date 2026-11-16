@@ -641,6 +641,7 @@ impl Seam {
         let (unit, at_effect) = match program.watch.final_read {
             WatchFinalRead::Unit { unit, .. } => (unit, false),
             WatchFinalRead::UnitAtEffect { unit, .. } => (unit, true),
+            WatchFinalRead::Terminal => panic!("the stand-in is asked no terminal's watch"),
         };
         let effect = match program.work {
             WatchWork::Final => true,

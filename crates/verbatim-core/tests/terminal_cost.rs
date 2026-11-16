@@ -31,7 +31,8 @@ use std::time::{Duration, Instant};
 
 use terminal_support::Session;
 use verbatim_core::reduce;
-use verbatim_model::{Input, NormalizedEvent, TerminalSnapshot, TerminalText, TextReply};
+use verbatim_model::request::{Answer, Outcome, QueueInput, Reply};
+use verbatim_model::{Input, TerminalReadReply, TerminalSnapshot, TerminalText, TextReply};
 use verbatim_term_sim::Flavor;
 use verbatim_term_sim::conformance::history;
 
@@ -84,22 +85,21 @@ const CASES: &[Case] = &[
     },
 ];
 
-/// The read an input carries, if any.
+/// The read an input carries, if any: a full read's answer.
 fn read_of(input: &Input) -> Option<&TerminalSnapshot> {
     match input {
-        Input::Event {
-            event: NormalizedEvent::TerminalSnapshot { snapshot, .. },
+        Input::Queue {
+            input:
+                QueueInput::Answer {
+                    answer:
+                        Answer {
+                            outcome: Outcome::Result(Reply::Text(TextReply::TerminalRead(read))),
+                            ..
+                        },
+                    ..
+                },
             ..
-        }
-        | Input::Answered {
-            outcome:
-                verbatim_model::protocol::QueryOutcome::Done(
-                    verbatim_model::protocol::QueryResult::Text(TextReply::TerminalSnapshot(
-                        snapshot,
-                    )),
-                ),
-            ..
-        } => Some(snapshot),
+        } => Some(&read.snapshot),
         _ => None,
     }
 }
@@ -119,21 +119,27 @@ fn padded(snapshot: &TerminalSnapshot) -> TerminalSnapshot {
     }
 }
 
-/// The JSON of `snapshot` as its input carries it: the event, or the
-/// reply.
+/// The JSON of `snapshot` as its answer carries it.
 fn encoded(input: &Input, snapshot: TerminalSnapshot) -> String {
-    match input {
-        Input::Event { event, .. } => {
-            let NormalizedEvent::TerminalSnapshot { node_id, .. } = event else {
-                unreachable!("an input that carries a read");
-            };
-            serde_json::to_string(&NormalizedEvent::TerminalSnapshot {
-                node_id: *node_id,
-                snapshot: Box::new(snapshot),
-            })
-        }
-        _ => serde_json::to_string(&TextReply::TerminalSnapshot(Box::new(snapshot))),
-    }
+    let Input::Queue {
+        input:
+            QueueInput::Answer {
+                answer:
+                    Answer {
+                        outcome: Outcome::Result(Reply::Text(TextReply::TerminalRead(read))),
+                        ..
+                    },
+                ..
+            },
+        ..
+    } = input
+    else {
+        unreachable!("an input that carries a read");
+    };
+    serde_json::to_string(&TextReply::TerminalRead(Box::new(TerminalReadReply {
+        snapshot,
+        ..(**read).clone()
+    })))
     .expect("a read serializes")
 }
 

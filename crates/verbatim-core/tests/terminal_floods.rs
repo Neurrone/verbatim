@@ -10,8 +10,8 @@ mod terminal_support;
 
 use std::fmt::Write as _;
 
-use terminal_support::{Outpost, Said, Session, said};
-use verbatim_model::{Input, ReaderSettings, TerminalScope, TextOp};
+use terminal_support::{Asked, Outpost, Said, Session, said};
+use verbatim_model::{Input, ReaderSettings};
 use verbatim_term_sim::Flavor;
 use verbatim_term_sim::conformance::history;
 
@@ -51,18 +51,10 @@ fn terminal(flavor: Flavor, text: &str, limit: u16) -> Session {
     session
 }
 
-/// The requests of a burst read in two groups: the hold once a group's
-/// worth waits, a read as each group's last line is handed to speech, the
-/// whole document when `lost`, after the first, and the last read letting
-/// the outpost read live again.
-fn requests(lost: bool) -> Vec<TextOp> {
-    let read = |hold| TextOp::TerminalRead { hold };
-    let mut requests = vec![TextOp::TerminalHold, read(true)];
-    if lost {
-        requests.push(TextOp::TerminalReadNow(TerminalScope::Whole));
-    }
-    requests.extend([read(true), read(false)]);
-    requests
+/// What a burst read in two groups asks beside its output reads: the
+/// whole document when `lost`.
+fn requests(lost: bool) -> Vec<Asked> {
+    if lost { vec![Asked::Whole] } else { Vec::new() }
 }
 
 /// The speech of a burst: `first` heard in full, the skip `phrase`, then
@@ -353,11 +345,8 @@ fn a_flood_after_windows_terminals_clear_says_more_than_it_holds() {
             heard("fill line", 9087..=9100)
         )
     );
-    // The read at the before lines' group's end, holding again for the
-    // cleared lines' group, then that group's requests, its read lost.
-    let mut both = vec![TextOp::TerminalHold, TextOp::TerminalRead { hold: true }];
-    both.extend(requests(true).into_iter().skip(1));
-    assert_eq!(session.requests(), both);
+    // The cleared lines' group's read is lost.
+    assert_eq!(session.requests(), requests(true));
 }
 
 /// A fresh console host, with no history, taking 9,100 lines in one write
@@ -382,9 +371,7 @@ fn a_flood_onto_a_fresh_console_host_says_more_than_it_holds() {
             heard("fill line", 9092..=9100)
         )
     );
-    let mut lost = vec![TextOp::TerminalReadNow(TerminalScope::Whole)];
-    lost.extend(requests(false));
-    assert_eq!(session.requests(), lost);
+    assert_eq!(session.requests(), requests(true));
 }
 
 /// The console host with the screen cleared, its last row a footer below a

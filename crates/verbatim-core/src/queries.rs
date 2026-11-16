@@ -31,8 +31,6 @@ use crate::state::{PendingText, SrState};
 pub(crate) enum Asked {
     /// The outpost, to a read the idle barrier waits for.
     Read,
-    /// Core, from a terminal's memory: never sent, and never waited for.
-    Memory,
 }
 
 /// What the answer to a query continues.
@@ -50,51 +48,8 @@ pub(crate) enum Then {
     Review(crate::state::TextFollowUp),
     /// Say-all's read.
     SayAll,
-    /// The flood policy's request of the focused terminal.
-    Terminal(TerminalAsk),
-    /// A terminal model's request, for the model of `node` made as
-    /// `generation`.
-    TerminalModel {
-        node: NodeId,
-        generation: u64,
-        ask: ModelAsk,
-    },
     /// Nothing: superseded, cleared, or never awaited.
     Nothing,
-}
-
-/// Which of the flood policy's requests.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) enum TerminalAsk {
-    /// What is new.
-    Read,
-    /// The cancel sent to the outpost.
-    Cancel,
-    /// What is new, asked before a cancel overtook it.
-    Overtaken,
-}
-
-/// What a terminal model asked for.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) enum ModelAsk {
-    /// The whole document, after a lost read, which the model is owed.
-    Whole,
-    /// A first read again with its history block, which the model is owed.
-    HistoryBlock,
-    /// The fresh read asked for before a review answer.
-    Fresh,
-    /// The history read asked for by the review answer in progress.
-    History(crate::terminal_model::HistoryAsked),
-    /// The search asked for by the command mark move in progress, for the
-    /// line whose hash this is.
-    Find { hash: u64 },
-}
-
-impl ModelAsk {
-    /// Whether it is a read the model is owed.
-    pub(crate) fn owed(self) -> bool {
-        matches!(self, Self::Whole | Self::HistoryBlock)
-    }
 }
 
 /// One query not yet ended.
@@ -158,35 +113,6 @@ impl Queries {
         (query_id, effect)
     }
 
-    /// Records a query about `node`'s text that only Core answers, from a
-    /// terminal's memory, whose answer continues `then`, and returns its
-    /// number: no request is made.
-    pub(crate) fn ask_memory(&mut self, node: NodeId, then: Then) -> QueryId {
-        let query_id = QueryId(self.next);
-        self.next = self.next.saturating_add(1);
-        self.open.insert(
-            query_id,
-            Open {
-                outpost: node.outpost(),
-                trace_id: None,
-                asked: Asked::Memory,
-                then,
-            },
-        );
-        query_id
-    }
-
-    /// Core takes query `query_id`'s request out of the effects and
-    /// answers it from a terminal's memory: it is not sent, and not waited
-    /// for. It keeps `trace`, the trace its request would have been sent
-    /// under, since no effect is left to give it one.
-    pub(crate) fn answer_from_memory_later(&mut self, query_id: QueryId, trace: Option<TraceId>) {
-        if let Some(open) = self.open.get_mut(&query_id) {
-            open.asked = Asked::Memory;
-            open.trace_id = trace;
-        }
-    }
-
     /// The first open query, in number order, whose continuation `which`
     /// picks: its number and continuation. A query turned to
     /// [`Then::Nothing`] is never picked.
@@ -202,26 +128,15 @@ impl Queries {
         self.find(which).is_some()
     }
 
-    /// Gives open query `query_id` the continuation `then`, returning the
-    /// one it had; nothing for a query not open.
-    pub(crate) fn replace(&mut self, query_id: QueryId, then: Then) -> Option<Then> {
-        self.open
-            .get_mut(&query_id)
-            .map(|open| std::mem::replace(&mut open.then, then))
-    }
-
     /// Turns every open query whose continuation `which` picks to
-    /// [`Then::Nothing`], superseded or cleared: one an outpost answers
-    /// keeps its entry until its answer, which runs nothing; one Core
-    /// answers from memory, which nothing else would end, is removed.
+    /// [`Then::Nothing`], superseded or cleared: it keeps its entry until
+    /// its answer, which runs nothing.
     pub(crate) fn forget(&mut self, which: impl Fn(&Then) -> bool) {
-        self.open.retain(|_, open| {
-            if open.then == Then::Nothing || !which(&open.then) {
-                return true;
+        for open in self.open.values_mut() {
+            if open.then != Then::Nothing && which(&open.then) {
+                open.then = Then::Nothing;
             }
-            open.then = Then::Nothing;
-            open.asked != Asked::Memory
-        });
+        }
     }
 
     /// Whether query `query_id` is still open.
@@ -247,20 +162,6 @@ impl Queries {
             outpost: open.outpost,
             query_id,
         })
-    }
-
-    /// Ends the queries Core answers from memory among `query_ids`, whose
-    /// terminal's model is gone, with no continuation.
-    pub(crate) fn forget_memory(&mut self, query_ids: impl IntoIterator<Item = QueryId>) {
-        for query_id in query_ids {
-            if self
-                .open
-                .get(&query_id)
-                .is_some_and(|open| open.asked == Asked::Memory)
-            {
-                self.open.remove(&query_id);
-            }
-        }
     }
 
     /// How many queries the idle barrier waits for: those an outpost
@@ -313,19 +214,6 @@ impl Queries {
         }
     }
 
-    /// Ends query `query_id` with no continuation run, for a test that
-    /// runs it itself, returning it.
-    #[cfg(test)]
-    pub(crate) fn end(&mut self, query_id: QueryId) -> Option<Then> {
-        self.open.remove(&query_id).map(|open| open.then)
-    }
-
-    /// The numbers of the open queries, in order.
-    #[cfg(test)]
-    pub(crate) fn numbers(&self) -> impl Iterator<Item = QueryId> + '_ {
-        self.open.keys().copied()
-    }
-
     /// The open queries, in number order.
     #[cfg(test)]
     pub(crate) fn entries(&self) -> impl Iterator<Item = (QueryId, &Open)> {
@@ -333,15 +221,9 @@ impl Queries {
     }
 }
 
-/// What a query's ending gives its continuation: an outpost's outcome, or
-/// Core's own answer.
-#[expect(
-    clippy::large_enum_variant,
-    reason = "an ending is built once and moved into its continuation"
-)]
+/// What a query's ending gives its continuation: an outpost's outcome.
 pub(crate) enum Ending {
     Outcome(QueryOutcome),
-    Reply(TextReply),
 }
 
 impl Ending {
@@ -349,9 +231,7 @@ impl Ending {
     /// "unanswered" and a gone node as gone.
     pub(crate) fn reply(self) -> TextReply {
         match self {
-            Self::Reply(reply) | Self::Outcome(QueryOutcome::Done(QueryResult::Text(reply))) => {
-                reply
-            }
+            Self::Outcome(QueryOutcome::Done(QueryResult::Text(reply))) => reply,
             Self::Outcome(QueryOutcome::Gone) => TextReply::Gone,
             Self::Outcome(_) => TextReply::Unanswered,
         }
@@ -374,7 +254,7 @@ pub(crate) fn answered(
         .queries
         .open
         .get(&query_id)
-        .is_none_or(|open| open.outpost != outpost || open.asked == Asked::Memory)
+        .is_none_or(|open| open.outpost != outpost)
     {
         return Vec::new();
     }
@@ -391,28 +271,6 @@ pub(crate) fn answered(
     )
 }
 
-/// Core's answer `reply` from a terminal's memory to query `query_id`,
-/// under `trace_id`: ends the query and runs what it continues.
-pub(crate) fn answer_from_memory(
-    state: &mut SrState,
-    trace_id: TraceId,
-    query_id: QueryId,
-    reply: TextReply,
-) -> Vec<Effect> {
-    let Some(open) = state.queries.open.remove(&query_id) else {
-        return Vec::new();
-    };
-    // No key's read is answered from memory, so no pass is made from this.
-    ended(
-        state,
-        trace_id,
-        query_id,
-        open.then,
-        Ending::Reply(reply),
-        0,
-    )
-}
-
 /// Ends every query still open at `outpost`, whose end Core has handled,
 /// "gone", in number order, each under its own trace or else `trace_id`,
 /// the end's.
@@ -425,7 +283,7 @@ pub(crate) fn outpost_gone(
         .queries
         .open
         .iter()
-        .filter(|(_, open)| open.outpost == outpost && open.asked != Asked::Memory)
+        .filter(|(_, open)| open.outpost == outpost)
         .map(|(query_id, _)| *query_id)
         .collect();
     let mut effects = Vec::new();
@@ -458,20 +316,6 @@ pub(crate) fn ended(
     match then {
         Then::Key { node } => {
             let reply = ending.reply();
-            // In a terminal Core reads, the read before a key is a read of
-            // the terminal, aligned first, whose caret answers it.
-            if let TextReply::TerminalSnapshot(snapshot) = &reply {
-                let (mut effects, answer) =
-                    crate::terminal_model::before_key(state, trace_id, node, snapshot);
-                effects.extend(crate::key_line::request_answered(
-                    state,
-                    trace_id,
-                    (query_id, node),
-                    answer,
-                    at_us,
-                ));
-                return effects;
-            }
             crate::key_line::request_answered(state, trace_id, (query_id, node), reply, at_us)
         }
         Then::MovedCaret { node, line } => {
@@ -497,12 +341,6 @@ pub(crate) fn ended(
             crate::key_line::press_answered(state, trace_id, query_id, then, ending)
         }
         Then::SayAll => crate::say_all::reply(state, trace_id, ending.reply()),
-        Then::Terminal(ask) => crate::terminal::reply(state, trace_id, ask, &ending.reply()),
-        Then::TerminalModel {
-            node,
-            generation,
-            ask,
-        } => crate::terminal_model::reply(state, trace_id, (node, generation, ask), ending.reply()),
         Then::Nothing => Vec::new(),
     }
 }

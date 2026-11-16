@@ -1667,7 +1667,7 @@ impl Named {
                     self.caret(&read.caret);
                     self.chunk(&read.unit);
                 }
-                crate::Watched::BoundUnread => {}
+                crate::Watched::BoundUnread | crate::Watched::EffectUnread => {}
             },
             TextReply::Sentence(moved) => match &**moved {
                 crate::SentenceMoved::Moved { line, baseline, .. }
@@ -1692,6 +1692,13 @@ impl Named {
             }
             TextReply::TerminalSnapshot(snapshot) => {
                 if let Some(caret) = &snapshot.caret {
+                    self.caret(caret);
+                }
+            }
+            TextReply::TerminalRead(read) => {
+                self.anchors.push(read.start);
+                self.anchors.extend(read.point);
+                if let Some(caret) = &read.snapshot.caret {
                     self.caret(caret);
                 }
             }

@@ -118,6 +118,14 @@ pub(crate) struct Kept {
     /// Its selection baseline and text-changed flag (Table 17).
     #[serde(default)]
     pub(crate) selection: crate::text_facts::SelectionFacts,
+    /// Whether it is a console host's terminal: a terminal whose tell's
+    /// window, or, for a focus Core read itself, whose nearest ancestor
+    /// with a window of its own, is a console window. The console's caret
+    /// event is its caret, so the system caret's tells are dropped while
+    /// it is committed (`docs/design/readers-tell-core-asks-build1.md`,
+    /// "Terminals in this build").
+    #[serde(default)]
+    pub(crate) console_terminal: bool,
 }
 
 /// One ancestor of a committed focus, as Core keeps it.

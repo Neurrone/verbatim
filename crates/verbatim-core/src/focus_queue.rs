@@ -345,22 +345,6 @@ impl FocusState {
             })
     }
 
-    /// Whether the last queued focus is marked left by every change that
-    /// reached Core, for a report yet to come.
-    pub(crate) fn last_left(&self) -> bool {
-        self.left_for(0, u64::MAX).is_some()
-    }
-
-    /// Whether the focus object is the last queued focus and marked left.
-    pub(crate) fn object_left(&self) -> bool {
-        matches!(self.last, Last::Executed { .. }) && self.last_left()
-    }
-
-    /// Whether the focus object is the last queued focus, not left.
-    pub(crate) fn applied_unmarked(&self) -> bool {
-        matches!(self.last, Last::Executed { .. }) && !self.last_left()
-    }
-
     /// The next input the queue orders: its number.
     fn next_input(&mut self) -> u64 {
         self.inputs = self.inputs.saturating_add(1);

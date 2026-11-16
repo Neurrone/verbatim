@@ -97,6 +97,8 @@ pub(crate) fn switched(state: &mut SrState, open: bool, now_us: u64) -> Switched
     state.desktop.input = InputDesktop::Other;
     state.desktop.switches_away = state.desktop.switches_away.wrapping_add(1);
     state.versions.commit_own(true);
+    // The focused terminal, if any, is left (build 3, Table 1, column H).
+    crate::terminal::reading::committed(state, None, Vec::new(), now_us);
     state.focus.sleep();
     // The keys held before the switch never reach the application: the
     // hook's line is cleared with its modifiers, and the front's
@@ -104,7 +106,7 @@ pub(crate) fn switched(state: &mut SrState, open: bool, now_us: u64) -> Switched
     state.strokes.drop_unsent();
     Switched {
         said: vec![Effect::StopSpeech],
-        follows: state.follows.committed(None, None),
+        follows: state.follows.committed(None, false),
     }
 }
 

@@ -12,9 +12,7 @@
 //! [`crate::navigator`], [`crate::review_text`], [`crate::say_all`]), each
 //! holding the queue until its last answer;
 //! every other action runs today's handling of the key or command at its
-//! turn, and a caret key runs its own entry ([`crate::keys::caret_key`]),
-//! but one bound to a terminal, which runs today's handling until
-//! terminals' keys take the watch.
+//! turn, and a caret key runs its own entry ([`crate::keys::caret_key`]).
 
 use serde::{Deserialize, Serialize};
 use verbatim_model::request::{Press, PressAction};
@@ -118,7 +116,7 @@ pub(crate) async fn run(mut cx: Cx<Entries>, entry: PressEntry) {
         fence,
     } = entry;
     let own = match press.action {
-        PressAction::Command { command, .. } => Own::of(command, &cx.facts()),
+        PressAction::Command { command, .. } => Own::of(command),
         _ => None,
     };
     if let PressAction::Command { command, repeat } = press.action
@@ -143,7 +141,8 @@ pub(crate) async fn run(mut cx: Cx<Entries>, entry: PressEntry) {
             Own::ToFocus => crate::navigator::to_focus(cx, trace_id).await,
             Own::ReviewText => crate::review_text::entry(cx, press, fence).await,
             Own::SayAllFromCaret => crate::say_all::from_caret(&mut cx, trace_id, fence),
-            Own::CommandMark => {}
+            Own::CommandMark => crate::review_text::command_mark(cx, press, fence).await,
+            Own::StatusBar => crate::terminal::commands::status_bar(cx, trace_id, repeat).await,
         }
         return;
     }
@@ -158,8 +157,7 @@ pub(crate) async fn run(mut cx: Cx<Entries>, entry: PressEntry) {
     };
     let effects = {
         let mut facts = cx.facts_mut();
-        // A key bound to a terminal runs today's handling until terminals'
-        // keys take the watch: its held stroke is sent at its turn.
+        // A held stroke is sent at its turn.
         let mut effects: Vec<Effect> = facts
             .strokes
             .pass(press.key_seq)
@@ -189,30 +187,23 @@ enum Own {
     ToFocus,
     ReviewText,
     SayAllFromCaret,
-    /// A move between command marks in a terminal Core does not model,
-    /// which has none to move between: it says nothing.
+    /// A move between command marks, in the focused terminal Core models;
+    /// elsewhere it says nothing.
     CommandMark,
+    /// "Report status bar".
+    StatusBar,
 }
 
 impl Own {
     /// The command's own function at its turn, `None` for one that runs
-    /// today's handling: a review command or a move between command marks
-    /// on a terminal Core models, which its model answers from Core's
-    /// memory until build 3's terminal requests.
-    fn of(command: ReviewCommand, state: &crate::state::SrState) -> Option<Self> {
-        let modelled = || {
-            state
-                .navigator
-                .as_ref()
-                .is_some_and(|navigator| crate::terminal_model::models(state, navigator.object.id))
-        };
+    /// today's handling.
+    fn of(command: ReviewCommand) -> Option<Self> {
         match command {
-            command if crate::review_text::handles(command) => {
-                (!modelled()).then_some(Self::ReviewText)
-            }
+            command if crate::review_text::handles(command) => Some(Self::ReviewText),
             ReviewCommand::PreviousCommandMark | ReviewCommand::NextCommandMark => {
-                (!modelled()).then_some(Self::CommandMark)
+                Some(Self::CommandMark)
             }
+            ReviewCommand::ReportStatusBar => Some(Self::StatusBar),
             ReviewCommand::SayAllFromCaret => Some(Self::SayAllFromCaret),
             ReviewCommand::ReportFocus => Some(Self::ReportFocus),
             ReviewCommand::ReportCaretLocation => Some(Self::CaretLocation),

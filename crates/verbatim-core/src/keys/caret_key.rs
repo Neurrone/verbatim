@@ -42,6 +42,16 @@ const BOUND_US: u32 = 100_000;
 /// its tries (`docs/parity/text.md`).
 const POLL_US: u32 = 10_000;
 
+/// How often a watch checks the console host's caret: Verbatim-only
+/// (ruled 2026-10-26).
+const CONSOLE_POLL_US: u32 = 5_000;
+
+/// How long a watch looks in Windows Terminal: NVDA's bound multiplied by
+/// its terminal's 3 (`NVDAObjects/UIA/winConsoleUIA.py` 470, 486); the
+/// console host's is NVDA's own, its multiplier 1 on consoles of the
+/// improved interface (374 to 376).
+const TERMINAL_BOUND_US: u32 = 300_000;
+
 /// A caret key's entry, as its function takes it.
 #[derive(Clone, Debug)]
 pub(crate) struct CaretPress {
@@ -49,6 +59,8 @@ pub(crate) struct CaretPress {
     pub(crate) trace_id: TraceId,
     /// Its number.
     pub(crate) key_seq: KeySeq,
+    /// When the hook saw it, in microseconds on the shared clock.
+    pub(crate) pressed_at_us: u64,
     /// Which key.
     pub(crate) key: CaretKey,
     /// Whether the hook held it back.
@@ -188,21 +200,22 @@ impl Request for SentenceRequest {
 /// `request`: its starting read, once its stroke went by its 150 ms
 /// release or was dropped. Table 7, S3, columns D and H.
 pub(crate) fn unneeded(state: &SrState, front: &CaretPress, request: &Wire) -> bool {
-    matches!(
-        request,
-        Wire::Text {
-            op: TextOp::StartingRead(_),
-            ..
-        }
-    ) && front.held
-        && state.strokes.status(front.key_seq) != StrokeStatus::Unsent
+    let starting = match request {
+        Wire::Text { op, .. } => match op {
+            TextOp::StartingRead(_) => true,
+            TextOp::ReadTerminal(read) => read.starting.is_some(),
+            _ => false,
+        },
+        _ => false,
+    };
+    starting && front.held && state.strokes.status(front.key_seq) != StrokeStatus::Unsent
 }
 
 /// Whether `arriving`, joining behind the front caret key `front`, withdraws
 /// `request`. A later key, command or key Core sends withdraws its watch
-/// (Table 7, S4, column B); a focus counting as pending withdraws its
-/// starting read, but Backspace's and Control+Backspace's, its watch and
-/// its sentence move (column C).
+/// (Table 7, S4, column B), and a terminal's final read; a focus counting
+/// as pending withdraws its starting read, but Backspace's and
+/// Control+Backspace's, its watch and its sentence move (column C).
 pub(crate) fn withdrawn_by(
     front: &CaretPress,
     request: &Wire,
@@ -213,7 +226,8 @@ pub(crate) fn withdrawn_by(
     };
     match op {
         TextOp::StartingRead(_) => arriving_focus && !front.key.motion.deletes_back(),
-        TextOp::Watch(_) => arriving_key || arriving_focus,
+        TextOp::ReadTerminal(read) if read.starting.is_some() => arriving_focus,
+        TextOp::Watch(_) | TextOp::ReadTerminal(_) => arriving_key || arriving_focus,
         TextOp::MoveBySentence(_) => arriving_focus,
         _ => false,
     }
@@ -233,7 +247,21 @@ pub(crate) async fn run(mut cx: Cx<Entries>, press: CaretPress) {
         }
         StrokeStatus::Sent => {
             // S2: released by its 150 ms timer, or never held. Its selection
-            // words, if any, come from its caret tell.
+            // words, if any, come from its caret tell. A held key bound to
+            // the focused terminal passed at its release, which its model
+            // takes now.
+            if press.held && press.terminal_bound(&cx.facts()) {
+                let released_at_us = press
+                    .pressed_at_us
+                    .saturating_add(crate::keys::strokes::RELEASE_AFTER_US)
+                    .min(cx.now_us());
+                crate::keys::terminal::passed(
+                    &mut cx.facts_mut(),
+                    crate::terminal::caret_key_kind(press.key),
+                    released_at_us,
+                    press.trace_id,
+                );
+            }
             stop_say_all(&mut cx);
             if !editing::selects(press.key) {
                 cx.facts_mut().typed_word.clear();
@@ -250,6 +278,10 @@ pub(crate) async fn run(mut cx: Cx<Entries>, press: CaretPress) {
         pass(&mut cx, &press);
         return;
     };
+    if editing::is_grid(binding.role) {
+        terminal_key(&mut cx, &press, &binding).await;
+        return;
+    }
     if marked(&cx, &press) {
         pass(&mut cx, &press);
         return;
@@ -297,6 +329,110 @@ pub(crate) async fn run(mut cx: Cx<Entries>, press: CaretPress) {
     .await;
 }
 
+/// A terminal's caret key at its turn (`docs/design/readers-tell-core-asks-build1.md`,
+/// "A terminal's caret key"): its starting read is the terminal's full
+/// read, which mints the caret starting point; the key passes, its model
+/// takes it, and the watch looks for its effect with no event shortcut;
+/// then the final read, another full read, whose answer the model takes.
+/// The key says nothing itself: the reading rules speak each read, the
+/// terminal's speech waiting in the queue ahead of the first focus first
+/// (build 3, "Answers and speech").
+async fn terminal_key(cx: &mut Cx<Entries>, press: &CaretPress, binding: &CaretBinding) {
+    if marked(cx, press) || focus_pending(cx) {
+        terminal_pass(cx, press);
+        return;
+    }
+    let due_us = cx.due_in(OTHER_DUE_US);
+    let Some(started) = terminal_read(
+        cx,
+        press,
+        binding.node,
+        Some(press.key.motion.unit()),
+        due_us,
+    )
+    .await
+    else {
+        terminal_pass(cx, press);
+        return;
+    };
+    let passed_at_us = cx.now_us();
+    terminal_pass(cx, press);
+    if marked(cx, press) || focus_pending(cx) {
+        return;
+    }
+    // The starting point is the read's; a read that minted none, a
+    // reader's fault, leaves the key's effect to the change it tells.
+    let Some(point) = started else {
+        return;
+    };
+    let console = crate::terminal::reading::focused(&cx.facts())
+        .is_some_and(|terminal| terminal.node == binding.node && terminal.console);
+    let watch = Watch {
+        provider: binding.provider,
+        point,
+        motion: press.key.motion,
+        passed_at_us,
+        poll_us: if console { CONSOLE_POLL_US } else { POLL_US },
+        events: false,
+        bound_us: if console { BOUND_US } else { TERMINAL_BOUND_US },
+        final_read: WatchFinalRead::Terminal,
+    };
+    let request = WatchRequest(OnNode::of(binding, TextOp::Watch(watch)));
+    match cx.ask(request, due_us).await {
+        Outcome::Result(_) => {}
+        Outcome::Refused(_)
+        | Outcome::NotThere
+        | Outcome::NotResponding
+        | Outcome::ReaderEnded
+        | Outcome::NoLongerAwaited(_) => return,
+    }
+    let _ = terminal_read(cx, press, binding.node, None, due_us).await;
+}
+
+/// A terminal key's full read of `node`, its starting read when `starting`
+/// names the key's unit: the model takes its answer, and the terminal's
+/// waiting speech, then the read's own, is said. `None` when it brought no
+/// read; else the caret starting point it minted, if any.
+async fn terminal_read(
+    cx: &mut Cx<Entries>,
+    press: &CaretPress,
+    node: NodeId,
+    starting: Option<verbatim_model::TextUnit>,
+    due_us: u64,
+) -> Option<Option<verbatim_model::TextAnchor>> {
+    let now_us = cx.now_us();
+    let asked = crate::terminal::reading::entry_read(&mut cx.facts_mut(), node, starting, now_us)?;
+    let reply = match cx.ask(asked, due_us).await {
+        Outcome::Result(reply) => Some(reply),
+        _ => None,
+    };
+    let now_us = cx.now_us();
+    let entry = crate::terminal::reading::entry_read_ended(
+        &mut cx.facts_mut(),
+        &asked,
+        reply.as_deref(),
+        (now_us, press.trace_id),
+    );
+    crate::terminal::reading::speak_read(cx, entry);
+    reply.map(|reply| reply.point)
+}
+
+/// A terminal's held key passes: its stroke is sent, and the focused
+/// terminal's model takes it at its pass.
+fn terminal_pass(cx: &mut Cx<Entries>, press: &CaretPress) {
+    let unsent = press.held && cx.facts().strokes.status(press.key_seq) == StrokeStatus::Unsent;
+    pass(cx, press);
+    if unsent {
+        let now_us = cx.now_us();
+        crate::keys::terminal::passed(
+            &mut cx.facts_mut(),
+            crate::terminal::caret_key_kind(press.key),
+            now_us,
+            press.trace_id,
+        );
+    }
+}
+
 /// S4: the watch, then the key's words by its script.
 async fn watching(
     cx: &mut Cx<Entries>,
@@ -339,7 +475,7 @@ async fn watching(
             let words = bound_words(&mut cx.facts_mut(), binding, press.key, &read);
             finish(cx, press, binding, read, words);
         }
-        Outcome::Result(Watched::BoundUnread) => {
+        Outcome::Result(Watched::BoundUnread | Watched::EffectUnread) => {
             if moves_by_sentence(press, binding) {
                 sentence(cx, press, (binding, started), due_us).await;
             }
@@ -578,27 +714,28 @@ pub(crate) fn of_entry(entry: &Entry) -> Option<CaretPress> {
 }
 
 impl CaretPress {
-    /// The caret key `press` is, `None` for another press and for a key
-    /// bound to a terminal, which runs today's handling until terminals'
-    /// keys take the watch.
+    /// The caret key `press` is, `None` for another press.
     pub(crate) fn of(press: &crate::keys::entry::PressEntry) -> Option<Self> {
         let verbatim_model::request::PressAction::CaretKey { key, held, bound } =
             &press.press.action
         else {
             return None;
         };
-        if bound
-            .as_deref()
-            .is_some_and(|bound| editing::is_grid(bound.role))
-        {
-            return None;
-        }
         Some(Self {
             trace_id: press.trace_id,
             key_seq: press.press.key_seq,
+            pressed_at_us: press.press.pressed_at_us,
             key: *key,
             held: held.is_some(),
             bound: bound.as_deref().cloned(),
+        })
+    }
+
+    /// Whether it is bound to the focused terminal.
+    fn terminal_bound(&self, state: &SrState) -> bool {
+        self.bound.as_ref().is_some_and(|bound| {
+            editing::is_grid(bound.role)
+                && crate::terminal::reading::modelled(state) == Some(bound.node)
         })
     }
 }

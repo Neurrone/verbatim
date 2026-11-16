@@ -1081,13 +1081,6 @@ fn before_read_answered(
     editing::update_caret(state, node, read.caret);
     let mut effects =
         editing::selection_changed(state, trace_id, node, (&changes, general.as_general()));
-    let tk = crate::terminal::caret_key_kind(held.key);
-    effects.extend(crate::terminal_model::key(
-        state,
-        tk,
-        passed_at_us.div_ceil(1_000),
-        held.trace_id,
-    ));
     effects.extend(key_taking_effect(state, held.key, node));
     effects.push(Effect::BoundHeldKey(Some((held.trace_id, KEY_BOUND_MS))));
     let passed = PassedKey {
@@ -1252,13 +1245,6 @@ fn before_read_given_up(
         effects.extend(end_current(state, trace_id, None));
         return effects;
     }
-    let tk = crate::terminal::caret_key_kind(key.key);
-    effects.extend(crate::terminal_model::key(
-        state,
-        tk,
-        at_us / 1_000,
-        trace_id,
-    ));
     effects.extend(watch_from_last_read(
         state,
         key,

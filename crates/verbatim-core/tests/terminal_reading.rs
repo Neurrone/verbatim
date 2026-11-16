@@ -21,11 +21,11 @@ mod terminal_support;
 use std::fmt::Write as _;
 use std::io::BufReader;
 
-use terminal_support::{Outpost, Said, Session, said};
+use terminal_support::{Asked, Outpost, Said, Session, said};
 use verbatim_core::{RecordedInput, SrState, dump, read_of, replay, snapshot_of};
 use verbatim_model::{
     CaretKey, CaretMotion, Effect, Input, Message, ReaderSettings, ReviewCommand, SegmentContent,
-    TerminalScope, TextOp, TraceId, TypingEcho,
+    TraceId, TypingEcho,
 };
 use verbatim_term_sim::conformance::{history, streams};
 use verbatim_term_sim::{Flavor, Query};
@@ -52,7 +52,7 @@ fn pressed(command: ReviewCommand, repeat: u8) -> Input {
     }
 }
 
-const FRESH: TextOp = TextOp::TerminalReadNow(TerminalScope::Fresh);
+const FRESH: Asked = Asked::Fresh;
 
 /// A session whose terminal shows `text`, written before its first read.
 fn showing(width: usize, height: usize, history: usize, text: &str) -> Session {
@@ -100,7 +100,7 @@ fn the_review_position_moves_with_its_row_as_output_scrolls_it() {
     session.input(&command(ReviewCommand::ReviewNextLine));
     assert_eq!(session.heard(), plain(&["three"]));
     // Each history read asks for a screen more than the command needs.
-    let history = TextOp::TerminalHistory {
+    let history = Asked::History {
         above: 13,
         whole: false,
     };
@@ -136,7 +136,7 @@ fn output_arriving_while_a_history_read_is_out_is_covered_by_the_screen_more_it_
         session.requests(),
         [
             FRESH,
-            TextOp::TerminalHistory {
+            Asked::History {
                 above: 13,
                 whole: false,
             }
@@ -147,11 +147,14 @@ fn output_arriving_while_a_history_read_is_out_is_covered_by_the_screen_more_it_
 }
 
 #[test]
-fn more_than_a_screen_arriving_while_a_history_read_is_out_ends_the_command() {
-    // Five more lines, more than the screen more the command asked for: the
-    // history read does not reach "two", so the command says nothing and
-    // reads no more history. The review position stays on "two", which the
-    // next command reads.
+fn more_than_a_screen_arriving_while_a_history_read_is_out_is_placed_from_the_anchor() {
+    // Five more lines, more than the screen more the command asked for,
+    // read while the history read is out: the history is counted from the
+    // start the command named, and placed from the anchor Core put at that
+    // start's row, which the read moved with its row
+    // (`docs/design/readers-tell-core-asks-build3.md`, Table 5), so the
+    // command reads "two" after the output read before it; the next
+    // command reads it again.
     let mut session = reviewing_two();
     session.output_before_histories = [(
         "ten\r\neleven\r\ntwelve\r\nthirteen\r\nfourteen\r\n".to_owned(),
@@ -159,15 +162,17 @@ fn more_than_a_screen_arriving_while_a_history_read_is_out_ends_the_command() {
     )]
     .into();
     session.input(&command(ReviewCommand::ReviewCurrentLine));
+    // The output's first two lines are handed to speech ahead of the
+    // command's words, the rest as playback reaches them.
     assert_eq!(
         session.heard(),
-        plain(&["ten", "eleven", "twelve", "thirteen", "fourteen"])
+        plain(&["ten", "eleven", "two", "twelve", "thirteen", "fourteen"])
     );
     assert_eq!(
         session.requests(),
         [
             FRESH,
-            TextOp::TerminalHistory {
+            Asked::History {
                 above: 13,
                 whole: false,
             }
@@ -178,14 +183,16 @@ fn more_than_a_screen_arriving_while_a_history_read_is_out_ends_the_command() {
 }
 
 #[test]
-fn a_history_answer_counted_from_a_read_core_did_not_take_ends_the_command() {
+fn a_history_answer_after_a_flood_is_placed_from_the_anchor() {
     // The review position on "line 4", in the history above the memory's
     // rows; before the outpost reads the history, a flood carries the last
-    // read's rows out of the buffer. Core does not take the read that shows
-    // it, asking for the whole document instead, which comes after the
-    // history; the history is counted from the start of the read Core did
-    // not take, so it cannot be placed: the command says nothing, and the
-    // next one reads where the whole document left the review position.
+    // read's rows out of the buffer. The read that shows it is lost, and
+    // Core owes the whole document, which comes after the history; the
+    // history is counted from the start the command named and placed from
+    // the anchor at its row (`docs/design/readers-tell-core-asks-build3.md`,
+    // Table 5): the review position's line is gone, so it keeps its place
+    // and reads the row there now, "line 32" ("Limits"), and the next
+    // command reads it again.
     let mut session = showing(20, 3, 9, &numbered(1..=12));
     session.input(&command(ReviewCommand::ReviewTop));
     session.input(&command(ReviewCommand::ReviewNextLine));
@@ -196,7 +203,10 @@ fn a_history_answer_counted_from_a_read_core_did_not_take_ends_the_command() {
     session.hold_whole = true;
     session.input(&command(ReviewCommand::ReviewCurrentLine));
     session.answer_held();
-    let mut flood = vec!["Phrase(SkippedUncountedLines)".to_owned()];
+    let mut flood = vec![
+        "line 32".to_owned(),
+        "Phrase(SkippedUncountedLines)".to_owned(),
+    ];
     flood.extend((30..=40).map(|line| format!("line {line}")));
     let heard: Vec<String> = session.heard().into_iter().map(|said| said.words).collect();
     assert_eq!(heard, flood);
@@ -204,11 +214,11 @@ fn a_history_answer_counted_from_a_read_core_did_not_take_ends_the_command() {
         session.requests(),
         [
             FRESH,
-            TextOp::TerminalHistory {
+            Asked::History {
                 above: 13,
                 whole: false,
             },
-            TextOp::TerminalReadNow(TerminalScope::Whole)
+            Asked::Whole
         ]
     );
     session.input(&command(ReviewCommand::ReviewCurrentLine));
@@ -267,7 +277,7 @@ fn moving_above_the_memorys_rows_reads_the_history_up_to_its_start() {
         session.requests(),
         [
             FRESH,
-            TextOp::TerminalHistory {
+            Asked::History {
                 above: 0,
                 whole: true
             }
@@ -329,13 +339,8 @@ fn a_key_whose_time_is_after_a_reads_start_is_given_to_the_rules_after_that_read
     let mut session = showing(20, 4, 100, "$ ");
     let (key, input) = typed("l", 1000);
     session.input(&input);
-    assert_eq!(
-        session.requests(),
-        [TextOp::TerminalColours {
-            from_ms: 1000,
-            until_ms: 1300
-        }]
-    );
+    // The colours travel in the reads themselves: nothing else is asked.
+    assert_eq!(session.requests(), Vec::<Asked>::new());
     // The program's own output, in a read that began before the key: no
     // key's window holds it.
     session.write("\r\nbuild done\r\n$ ", 990);
@@ -353,7 +358,7 @@ fn a_reads_speech_goes_out_for_the_newest_key_whose_window_holds_it() {
     // "x", whose number the speech manager's fence keeps.
     let mut session = showing(20, 3, 10, "$ ");
     let up = TraceId::from_raw(3);
-    session.input(&Input::HeldKey {
+    let held = Input::HeldKey {
         key_seq: verbatim_model::KeySeq::NONE_YET,
         trace_id: up,
         key: CaretKey {
@@ -361,12 +366,12 @@ fn a_reads_speech_goes_out_for_the_newest_key_whose_window_holds_it() {
             select: false,
         },
         pressed_at_ms: 200,
-    });
+    };
     let (x, input) = typed("x", 210);
-    session.input(&input);
-    // The held key's caret read, answered as failed: Up is passed on with
-    // the hook's time, and "x" after it.
-    session.release_held();
+    // Up's starting read is answered at 205: Up is passed on then, and
+    // "x" after it.
+    session.at_ms = 205;
+    session.inputs(&[held, input]);
     session.write("echo onex", 250);
     assert_eq!(session.heard(), [said(Some(x), "echo onex")]);
 }
@@ -381,7 +386,7 @@ fn a_character_shown_after_the_recalled_line_is_heard_with_typing_echo_off() {
         speak_typed_characters: TypingEcho::Off,
         ..ReaderSettings::default()
     }));
-    session.input(&Input::HeldKey {
+    let held = Input::HeldKey {
         key_seq: verbatim_model::KeySeq::NONE_YET,
         trace_id: TraceId::from_raw(4),
         key: CaretKey {
@@ -389,10 +394,10 @@ fn a_character_shown_after_the_recalled_line_is_heard_with_typing_echo_off() {
             select: false,
         },
         pressed_at_ms: 200,
-    });
+    };
     let (x, input) = typed("x", 210);
-    session.input(&input);
-    session.release_held();
+    session.at_ms = 205;
+    session.inputs(&[held, input]);
     session.write("echo one", 220);
     assert_eq!(session.heard(), [said(Some(x), "echo one")]);
     session.write("x", 250);
@@ -421,16 +426,11 @@ fn with_passwords_spoken_a_character_is_heard_as_typed_and_its_asterisk_as_shown
     }));
     let (key, input) = typed("s", 1000);
     session.input(&input);
-    assert_eq!(session.heard(), plain(&["s"]));
+    assert_eq!(session.heard(), [said(Some(key), "s")]);
     session.write("*", 1050);
     assert_eq!(session.heard(), [said(Some(key), "*")]);
-    assert_eq!(
-        session.requests(),
-        [TextOp::TerminalColours {
-            from_ms: 1000,
-            until_ms: 1300
-        }]
-    );
+    // The colours travel in the reads themselves: nothing else is asked.
+    assert_eq!(session.requests(), Vec::<Asked>::new());
 }
 
 #[test]
@@ -449,13 +449,8 @@ fn lines_of_one_and_two_characters_after_enter_are_output_not_echo() {
             said(None, "ready>")
         ]
     );
-    assert_eq!(
-        session.requests(),
-        [TextOp::TerminalColours {
-            from_ms: 1000,
-            until_ms: 1300
-        }]
-    );
+    // The colours travel in the reads themselves: nothing else is asked.
+    assert_eq!(session.requests(), Vec::<Asked>::new());
 }
 
 #[test]
@@ -466,10 +461,7 @@ fn live_snapshots_that_arrive_while_a_whole_read_is_owed_are_dropped() {
     // keeps nothing, and the rules ask for the whole document.
     session.write(&numbered(4..=40), 100);
     assert_eq!(session.heard(), []);
-    assert_eq!(
-        session.requests(),
-        [TextOp::TerminalReadNow(TerminalScope::Whole)]
-    );
+    assert_eq!(session.requests(), [Asked::Whole]);
     // A live read begun before the whole read: dropped.
     session.write(&numbered(41..=41), 110);
     assert_eq!(session.heard(), []);
@@ -549,10 +541,9 @@ fn timed() -> Session {
 #[test]
 fn the_timer_goes_with_the_model_when_the_outpost_ends() {
     let mut session = timed();
-    session.input(&Input::OutpostEnded {
-        trace_id: TraceId::from_raw(6),
-        outpost: terminal_support::OUTPOST,
-    });
+    session.queue(verbatim_model::request::QueueInput::ReaderEnded(
+        terminal_support::OUTPOST,
+    ));
     assert_eq!(session.armed(), None);
 }
 
@@ -763,18 +754,37 @@ fn outside_a_terminal_no_status_line_is_found() {
     let effects = verbatim_core::reduce(
         &mut state,
         &mut verbatim_core::Runtime::default(),
-        &command(STATUS_BAR),
+        &Input::Queue {
+            trace_id: TraceId::from_raw(1),
+            at_us: 0,
+            input: verbatim_model::request::QueueInput::Press(Box::new(
+                verbatim_model::request::Press {
+                    key_seq: verbatim_model::KeySeq::new(1),
+                    pressed_at_us: 0,
+                    action: verbatim_model::request::PressAction::Command {
+                        command: STATUS_BAR,
+                        repeat: 0,
+                    },
+                },
+            )),
+        },
     );
-    let [Effect::Speak(utterance, _)] = effects.as_slice() else {
-        panic!("one utterance, not {effects:?}");
-    };
+    let spoken: Vec<Vec<SegmentContent>> = effects
+        .iter()
+        .filter_map(|effect| match effect {
+            Effect::Speak(utterance, _) => Some(
+                utterance
+                    .segments
+                    .iter()
+                    .map(|segment| segment.content.clone())
+                    .collect(),
+            ),
+            _ => None,
+        })
+        .collect();
     assert_eq!(
-        utterance
-            .segments
-            .iter()
-            .map(|segment| segment.content.clone())
-            .collect::<Vec<_>>(),
-        [SegmentContent::Message(Message::NoStatusLineFound)]
+        spoken,
+        [vec![SegmentContent::Message(Message::NoStatusLineFound)]]
     );
 }
 
@@ -803,8 +813,8 @@ fn enter(session: &mut Session, command: &str, output: &str, at_ms: u64) -> u64 
 }
 
 /// The search for a mark's line Core asks for.
-fn find(needle: &str, from: i32) -> TextOp {
-    TextOp::TerminalFind {
+fn find(needle: &str, from: i32) -> Asked {
+    Asked::Find {
         needle: needle.to_owned(),
         from,
         rows: 1,
@@ -1024,7 +1034,7 @@ fn every_copy_of_a_command_entered_many_times_is_reached() {
         let finds = session
             .requests()
             .iter()
-            .filter(|op| matches!(op, TextOp::TerminalFind { .. }))
+            .filter(|op| matches!(op, Asked::Find { .. }))
             .count();
         assert_eq!(finds, 1, "press {press}");
         // The line below is the next copy's, or the output's for the newest.
@@ -1074,19 +1084,23 @@ fn output_arriving_while_a_search_is_out_moves_to_the_mark_with_one_search() {
         (numbered(26..=30), at_ms + 2000),
     ]
     .into();
-    // The output read before the search is spoken as any output is.
+    // The output read before the search is spoken as any output is, before
+    // the move's words: its first two lines handed to speech ahead of them,
+    // the rest as playback reaches them.
     let spoken = |range: std::ops::RangeInclusive<u32>, mark: &str| {
-        let mut spoken: Vec<String> = range.map(|line| format!("line {line}")).collect();
+        let lines: Vec<String> = range.map(|line| format!("line {line}")).collect();
+        let mut spoken = lines[..2].to_vec();
         spoken.push(mark.to_owned());
+        spoken.extend_from_slice(&lines[2..]);
         spoken
     };
     session.input(&command(UP));
     let heard: Vec<String> = session.heard().into_iter().map(|said| said.words).collect();
     assert_eq!(heard, spoken(21..=25, "$ echo two"));
-    let searched = |requests: &[TextOp]| {
+    let searched = |requests: &[Asked]| {
         requests
             .iter()
-            .filter(|op| matches!(op, TextOp::TerminalFind { .. }))
+            .filter(|op| matches!(op, Asked::Find { .. }))
             .count()
     };
     assert_eq!(searched(&session.requests()), 1);
@@ -1126,7 +1140,7 @@ fn a_press_makes_at_most_three_searches() {
         .requests()
         .into_iter()
         .filter_map(|op| match op {
-            TextOp::TerminalFind { needle, .. } => Some(needle),
+            Asked::Find { needle, .. } => Some(needle),
             _ => None,
         })
         .collect();
@@ -1159,33 +1173,39 @@ fn a_line_move_after_a_mark_move_while_output_scrolls_reads_its_own_line() {
         command(UP),
         command(ReviewCommand::ReviewPreviousLine),
     ]);
+    // The first command's fresh read shows lines 21 to 26, spoken before
+    // its words, the first two handed to speech ahead of them and the
+    // rest, with what the search's output read shows, as playback reaches
+    // them.
     assert_eq!(
         session.heard(),
         plain(&[
-            "line 2",
             "line 21",
             "line 22",
+            "line 2",
+            "$ echo one",
+            "intro",
             "line 23",
             "line 24",
             "line 25",
             "line 26",
             "line 27",
-            "line 28",
-            "$ echo one",
-            "intro"
+            "line 28"
         ])
     );
-    let history = |above| TextOp::TerminalHistory {
+    let history = |above| Asked::History {
         above,
         whole: false,
     };
     assert_eq!(
         session.requests(),
+        // Each press reads afresh, presses waiting together too.
         [
             FRESH,
             history(31),
             FRESH,
             find("$ echo one", 25),
+            FRESH,
             history(35)
         ]
     );
@@ -1231,8 +1251,8 @@ fn a_mark_whose_line_is_gone_is_dropped_and_the_next_one_tried() {
     assert_eq!(session.heard(), plain(&["$ echo one"]));
     let requests = session.requests();
     assert_eq!(requests.len(), 3, "{requests:?}");
-    assert!(matches!(&requests[1], TextOp::TerminalFind { needle, .. } if needle == "$ echo two"));
-    assert!(matches!(&requests[2], TextOp::TerminalFind { needle, .. } if needle == "$ echo one"));
+    assert!(matches!(&requests[1], Asked::Find { needle, .. } if needle == "$ echo two"));
+    assert!(matches!(&requests[2], Asked::Find { needle, .. } if needle == "$ echo one"));
     // The dropped mark is not looked for again.
     session.input(&command(UP));
     assert_eq!(session.heard(), []);
@@ -1301,8 +1321,13 @@ fn a_terminal_session_survives_a_flight_recorders_dump_and_replay() {
 }
 
 #[test]
-fn the_read_before_a_held_key_is_aligned_and_its_caret_answers_it() {
+fn a_held_keys_starting_read_is_aligned_and_its_output_spoken() {
+    // Output the program wrote before Up's starting read: the read is
+    // aligned as any read, and its output spoken; then the key passes, its
+    // watch looks for its effect, and its final read is taken.
     let mut session = showing(20, 4, 10, "$ ls");
+    session.outpost.sim.write(b"\r\nfile\r\n$ ");
+    session.at_ms = 300;
     session.input(&Input::HeldKey {
         key_seq: verbatim_model::KeySeq::NONE_YET,
         trace_id: TraceId::from_raw(9),
@@ -1312,56 +1337,21 @@ fn the_read_before_a_held_key_is_aligned_and_its_caret_answers_it() {
         },
         pressed_at_ms: 200,
     });
-    assert!(matches!(
-        session.requests().as_slice(),
-        [TextOp::ReadCaret(verbatim_model::CaretRead {
-            purpose: verbatim_model::ReadPurpose::BeforeTerminalKey,
-            ..
-        })]
-    ));
-    // Output the program wrote before the read: the read is aligned as any
-    // read, and its output spoken.
-    session.outpost.sim.write(b"\r\nfile\r\n$ ");
-    let line = verbatim_model::TextChunk {
-        unit: verbatim_model::TextUnit::Line,
-        text: "$ ".to_owned(),
-        start: verbatim_model::TextAnchor(7),
-        offset: 2,
-        languages: Vec::new(),
-        first: false,
-        last: true,
-        truncated: false,
-        formats: Vec::new(),
-    };
-    session.answer_caret_read(
-        300,
-        verbatim_model::CaretReport {
-            line,
-            selection: None,
-            read_at_us: 300_000,
-        },
-    );
     assert_eq!(session.heard(), plain(&["file", "$"]));
-    // The key is passed on as the answer reaches Core, its colours asked
-    // for from then.
-    let requests = session.requests();
-    assert_eq!(requests.len(), 1, "{requests:?}");
     assert_eq!(
-        requests[0],
-        TextOp::TerminalColours {
-            from_ms: 300,
-            until_ms: 600
-        }
+        session.requests(),
+        [Asked::Starting, Asked::Watch, Asked::Fresh]
     );
 }
 
 #[test]
 fn a_key_deferred_behind_a_held_key_reaches_the_rules_at_the_held_keys_pass() {
-    // "x" typed at 210 while Up, pressed at 200, waits for the read before
-    // it; the read began at 300, so Up is passed on at 301, and "x", sent
-    // with it, reached the program then too.
+    // "x" typed at 210 while Up, pressed at 200, waits for its starting
+    // read, answered at 300: Up is passed on at 300, and "x", sent with
+    // it, reached the program then too, the newer of the two keys, so the
+    // read that shows them is spoken for "x".
     let mut session = showing(20, 4, 10, "$ ");
-    session.input(&Input::HeldKey {
+    let held = Input::HeldKey {
         key_seq: verbatim_model::KeySeq::NONE_YET,
         trace_id: TraceId::from_raw(10),
         key: CaretKey {
@@ -1369,51 +1359,13 @@ fn a_key_deferred_behind_a_held_key_reaches_the_rules_at_the_held_keys_pass() {
             select: false,
         },
         pressed_at_ms: 200,
-    });
-    let (_, x) = typed("x", 210);
-    session.input(&x);
-    assert!(matches!(
-        session.requests().as_slice(),
-        [TextOp::ReadCaret(verbatim_model::CaretRead {
-            purpose: verbatim_model::ReadPurpose::BeforeTerminalKey,
-            ..
-        })]
-    ));
-    let line = verbatim_model::TextChunk {
-        unit: verbatim_model::TextUnit::Line,
-        text: "$ ".to_owned(),
-        start: verbatim_model::TextAnchor(7),
-        offset: 2,
-        languages: Vec::new(),
-        first: false,
-        last: true,
-        truncated: false,
-        formats: Vec::new(),
     };
-    session.answer_caret_read(
-        300,
-        verbatim_model::CaretReport {
-            line,
-            selection: None,
-            read_at_us: 300_000,
-        },
-    );
-    let requests = session.requests();
-    assert_eq!(requests.len(), 2, "{requests:?}");
-    assert_eq!(
-        requests[0],
-        TextOp::TerminalColours {
-            from_ms: 300,
-            until_ms: 600
-        }
-    );
-    assert_eq!(
-        requests[1],
-        TextOp::TerminalColours {
-            from_ms: 300,
-            until_ms: 600
-        }
-    );
+    let (x, input) = typed("x", 210);
+    session.at_ms = 300;
+    session.inputs(&[held, input]);
+    assert_eq!(session.requests(), [Asked::Starting]);
+    session.write("echo onex", 320);
+    assert_eq!(session.heard(), [said(Some(x), "echo onex")]);
 }
 
 #[test]
@@ -1449,15 +1401,8 @@ fn a_key_that_reached_the_program_while_a_read_was_taken_is_given_before_it() {
     session.input(&input);
     let _ = session.requests();
     session.outpost.sim.write(b"l");
-    session.at_ms = 1002;
-    let (_, mut snapshot) = session.outpost.read(None, 1002);
-    snapshot.started_ms = 1000;
-    session.input(&terminal_support::event(
-        verbatim_model::NormalizedEvent::TerminalSnapshot {
-            node_id: terminal_support::node(),
-            snapshot: Box::new(snapshot),
-        },
-    ));
+    session.next_read_began = Some(1000);
+    session.live(1002);
     assert_eq!(session.heard(), [said(Some(key), "l")]);
 }
 
@@ -1477,9 +1422,8 @@ fn a_read_not_sent_as_the_last_one_again_leaves_the_colours_to_the_echos_read() 
     let _ = session.heard();
     let (b, input) = typed("b", 2000);
     session.input(&input);
-    let inputs = session.log.len();
     session.live(2001);
-    assert_eq!(session.log.len(), inputs, "the read is the last one again");
+    assert_eq!(session.heard(), [], "the read is the last one again");
     session.write("b", 2010);
     assert_eq!(session.heard(), [said(Some(b), "b")]);
 }
@@ -1492,11 +1436,12 @@ fn a_read_taken_at_once_before_the_program_draws_the_key_leaves_the_echo_to_the_
     // echo and the suggestion after it has the colours too, and tells them
     // apart.
     let mut session = showing(20, 3, 10, "$ e");
-    session.hold_colours = true;
+    session.hold_output = true;
+    session.live(999);
     let (c, input) = typed("c", 1000);
     session.input(&input);
-    session.live(1001);
-    session.deliver_colours(1002);
+    session.hold_output = false;
+    session.release_output(1001);
     assert_eq!(session.heard(), []);
     session.write("c\x1b[90mho hi\x1b[0m\x1b[5D", 1010);
     assert_eq!(

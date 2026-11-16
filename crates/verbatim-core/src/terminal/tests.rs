@@ -58,28 +58,30 @@ fn event(event: NormalizedEvent) -> Input {
     }
 }
 
-/// A state whose focus is a terminal Core does not model yet, for what the
-/// reducer does beside the flood policy with no request of the model's own
-/// (a key's colours, a review answered from its memory).
-fn unmodelled() -> SrState {
+/// A state whose focus is the terminal, which Core models, as after its
+/// baseline: what its reads say is given as the model hands it on
+/// ([`Playback`]).
+fn terminal() -> SrState {
     let mut state = SrState::new();
     let _ = reduce(
         &mut state,
         &mut crate::Runtime::default(),
         &terminal_focus(None),
     );
+    super::reading::modelled_for_tests(&mut state, id(TERMINAL), window());
     state
 }
 
-/// A state whose focus is a terminal Core models, as after its first
-/// read.
-fn terminal() -> SrState {
-    let mut state = unmodelled();
-    state.terminals.add(
-        id(TERMINAL),
-        verbatim_text::terminal_reading::Settings::default(),
-    );
-    state
+/// The terminal's window, which its requests name.
+fn window() -> crate::event_queue::RequestWindow {
+    crate::event_queue::RequestWindow {
+        handle: verbatim_model::WindowHandle(5),
+        top_level: verbatim_model::WindowHandle(4),
+        root_owner: verbatim_model::WindowHandle(4),
+        process: Pid(1),
+        thread: 41,
+        by_class: None,
+    }
 }
 
 /// The focus on the terminal, with what its caret read found, `text`.
@@ -121,7 +123,8 @@ struct TerminalSpeech {
     followed: bool,
 }
 
-/// What terminal `node` said in a read that began at `observed_at_ms`.
+/// What terminal `node` wrote, which a read begun at `observed_at_ms` or
+/// later says.
 struct Out {
     node: u64,
     observed_at_ms: u64,
@@ -137,8 +140,8 @@ fn said_of(speech: TerminalSpeech) -> Said {
 }
 
 /// Gives the flood policy what `out` said, as the terminal model does
-/// with a read's speech, and cuts speech off when that does, as the
-/// reducer does after each input.
+/// with a read's speech at its turn, and cuts speech off when that does,
+/// as the reducer does after each input.
 fn say(state: &mut SrState, out: &Out) -> Vec<Effect> {
     let mut effects = super::speech(
         state,
@@ -154,10 +157,10 @@ fn say(state: &mut SrState, out: &Out) -> Vec<Effect> {
 }
 
 /// Something the test feeds: an input to the reducer, or what a terminal
-/// said.
+/// wrote.
 trait Fed {
-    /// Feeds it to `state`, or keeps it in `playback` when the outpost
-    /// holds what a terminal says.
+    /// Feeds it to `state`, `playback` keeping what a terminal wrote until
+    /// Core reads it.
     fn fed(&self, state: &mut SrState, playback: &mut Playback) -> Vec<Effect>;
 }
 
@@ -168,12 +171,16 @@ impl Fed for Input {
 }
 
 impl Fed for Out {
+    /// The terminal wrote: its change is told to Core at once, and a read
+    /// Core makes from then on says it.
     fn fed(&self, state: &mut SrState, playback: &mut Playback) -> Vec<Effect> {
-        if playback.held {
+        playback.clock_us = (playback.clock_us + 1).max(self.observed_at_ms * 1_000);
+        if self.node == TERMINAL {
             playback.unread.push(self.speech.clone());
-            return Vec::new();
         }
-        say(state, self)
+        let now_us = playback.clock_us;
+        super::reading::told(state, id(self.node), now_us, now_us);
+        Vec::new()
     }
 }
 
@@ -193,7 +200,8 @@ fn output_from(node: u64, skipped: Option<Skipped>, lines: Vec<String>) -> Out {
     said(node, 0, speech_of(skipped, lines))
 }
 
-/// What terminal `node` said in a read that began at `observed_at_ms`.
+/// What terminal `node` wrote, which a read begun at `observed_at_ms` or
+/// later says.
 fn said(node: u64, observed_at_ms: u64, speech: TerminalSpeech) -> Out {
     Out {
         node,
@@ -238,38 +246,50 @@ fn words(segments: &[verbatim_model::UtteranceSegment]) -> String {
         .join(" ")
 }
 
+/// An output read, by its mark, as the tests name it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Read {
+    /// Spoken.
+    Spoken,
+    /// Waited for Core's speech queue, at a group's last line.
+    Release,
+    /// Waited, not the release.
+    Waited,
+    /// Speaking only its answers to keys.
+    Silent,
+}
+
 /// A speech queue that plays utterances in order, reaching each one's
-/// index mark as it starts, and the terminal's outpost as on-demand reading
-/// drives it: output the terminal writes reaches Core at once while the
-/// outpost reads live, and waits in the outpost while it holds, until Core
-/// asks for it. Requests are answered at once, unless `answer_late` holds
-/// a read request back until the test answers it; a cancel sent while one
-/// is held back waits behind it, as the outpost answers them in order.
+/// index mark as it starts, and the terminal: what it writes is told to
+/// Core at once, and each output read Core asks says everything written
+/// since the last read, at once, its speech spoken at its turn, unless
+/// `answer_late` holds a release read back until the test answers it.
 #[derive(Default)]
 struct Playback {
     queued: VecDeque<(Vec<SpeechMark>, String)>,
     heard: Vec<String>,
-    /// Whether the outpost holds.
-    held: bool,
-    /// What the terminal said while the outpost held.
+    /// What the terminal wrote that no read has said yet.
     unread: Vec<TerminalSpeech>,
-    /// Every terminal request Core made, in order.
-    requests: Vec<TextOp>,
-    /// Whether read requests wait for [`Playback::answer`].
+    /// Every output read Core asked, in order.
+    requests: Vec<Read>,
+    /// Whether release reads wait for [`Playback::answer`].
     answer_late: bool,
-    /// A read request held back.
-    late: Option<QueryId>,
-    /// A cancel sent while a read request was held back.
-    late_cancel: Option<QueryId>,
+    /// A release read held back, by its token.
+    late: Option<u64>,
     /// Whether the front utterance has started playing.
     started: bool,
+    /// The terminal's clock, in microseconds: each write and each read a
+    /// moment later than the last.
+    clock_us: u64,
+    /// The output reads answered or held back, by their tokens.
+    served: std::collections::BTreeSet<u64>,
 }
 
 impl Playback {
-    /// Takes in a step's effects. Terminal speech is queued, and starts
-    /// with its index mark when it has one; terminal requests are answered
-    /// as the outpost would; any other effect fails the test, since none of
-    /// these steps should produce one unasserted.
+    /// Takes in a step's effects, then answers the reads Core wants.
+    /// Terminal speech is queued, and starts with its index mark when it
+    /// has one; any other effect fails the test, since none of these steps
+    /// should produce one unasserted.
     fn take(&mut self, state: &mut SrState, effects: Vec<Effect>) {
         for effect in effects {
             match effect {
@@ -290,41 +310,37 @@ impl Playback {
                     self.queued.push_back((marks, words(&utterance.segments)));
                 }
                 Effect::StopSpeech => self.queued.clear(),
-                Effect::Text(TextRequest { query_id, op, .. }) => {
-                    self.requests.push(op.clone());
-                    match op {
-                        TextOp::TerminalHold => {
-                            self.held = true;
-                            self.reply(state, query_id, TextReply::Done);
-                        }
-                        TextOp::TerminalRead { hold } => {
-                            self.held = hold;
-                            if self.answer_late {
-                                self.late = Some(query_id);
-                            } else {
-                                let output = self.take_unread();
-                                self.answer_with(state, query_id, output);
-                            }
-                        }
-                        TextOp::TerminalCancel => {
-                            self.held = false;
-                            self.unread.clear();
-                            if self.late.is_some() {
-                                self.late_cancel = Some(query_id);
-                            } else {
-                                self.answer_with(state, query_id, TerminalSpeech::default());
-                            }
-                        }
-                        other => panic!("unexpected text request: {other:?}"),
-                    }
-                }
+                Effect::ForKey(_, effect) => self.take(state, vec![*effect]),
+                // The event queue's own effects as it settles: the
+                // outpost's start and the next wake.
+                Effect::Queue(_) => {}
                 other => panic!("unexpected effect: {other:?}"),
             }
         }
+        self.serve(state);
     }
 
-    /// What the terminal wrote while the outpost held, as one read finds
-    /// it.
+    /// Answers the output read Core has out, as the outpost's worker
+    /// makes it, until none is new.
+    fn serve(&mut self, state: &mut SrState) {
+        let _ = super::reading::wanted_for_tests(state);
+        loop {
+            let Some((token, read)) = out_read(state) else {
+                return;
+            };
+            if !self.served.insert(token) {
+                return;
+            }
+            self.requests.push(read);
+            if self.answer_late && read == Read::Release {
+                self.late = Some(token);
+                return;
+            }
+            self.answer_with(state, token, None);
+        }
+    }
+
+    /// What the terminal wrote since the last read, as one read finds it.
     fn take_unread(&mut self) -> TerminalSpeech {
         let mut all = TerminalSpeech::default();
         for speech in self.unread.drain(..) {
@@ -333,39 +349,32 @@ impl Playback {
         all
     }
 
-    /// Answers request `query_id` with `reply`.
-    fn reply(&mut self, state: &mut SrState, query_id: QueryId, reply: TextReply) {
-        let effects = reduce(
-            state,
-            &mut crate::Runtime::default(),
-            &answered(TraceId::from_raw(4), query_id, reply),
-        );
-        self.take(state, effects);
-    }
-
-    /// Answers the read request held back.
+    /// Answers the release read held back.
     fn answer(&mut self, state: &mut SrState) {
-        let query_id = self.late.take().expect("a read request held back");
-        let output = self.take_unread();
-        self.answer_with(state, query_id, output);
+        let token = self.late.take().expect("a release read held back");
+        self.answer_with(state, token, None);
     }
 
-    /// Answers the terminal read request `query_id` with what the read
-    /// said, as the terminal model hands an answer's speech to the flood
-    /// policy.
-    fn answer_with(&mut self, state: &mut SrState, query_id: QueryId, output: TerminalSpeech) {
-        let Some(crate::queries::Then::Terminal(ask)) = state.queries.end(query_id) else {
-            panic!("a terminal request of the flood policy's");
+    /// Answers output read `token` with what the terminal wrote since the
+    /// last read, or with `read` when given, its speech spoken at its turn
+    /// at once.
+    fn answer_with(&mut self, state: &mut SrState, token: u64, read: Option<TerminalSpeech>) {
+        let output = read.unwrap_or_else(|| self.take_unread());
+        self.clock_us += 1;
+        let Some(entry) =
+            super::reading::answered_with(state, token, said_of(output), self.clock_us)
+        else {
+            self.serve(state);
+            return;
         };
-        let mut effects = super::answered(state, TraceId::from_raw(5), ask, said_of(output), None);
+        let mut effects = super::reading::speak(state, entry);
         if effects.iter().any(super::cuts_speech) {
             effects.extend(super::cut(state, 0));
         }
         self.take(state, effects);
     }
 
-    /// Feeds `input` and takes in its effects. What a terminal says while
-    /// the outpost holds waits in it instead.
+    /// Feeds `input` and takes in its effects.
     fn feed<T: Fed>(&mut self, state: &mut SrState, input: &T) {
         let effects = input.fed(state, self);
         self.take(state, effects);
@@ -402,6 +411,26 @@ impl Playback {
     fn play_all(&mut self, state: &mut SrState) -> Vec<String> {
         while self.play_one(state) {}
         std::mem::take(&mut self.heard)
+    }
+}
+
+/// The output read out, by its token and mark.
+fn out_read(state: &SrState) -> Option<(u64, Read)> {
+    use super::reading::{FocusedTerminal, Mark, Reading};
+    match state.terminal_focus.focused {
+        FocusedTerminal::Modelled {
+            reading: Reading::Out { token, mark, .. },
+            ..
+        } => Some((
+            token,
+            match mark {
+                Mark::Spoken => Read::Spoken,
+                Mark::Waited { release: true } => Read::Release,
+                Mark::Waited { release: false } => Read::Waited,
+                Mark::Silent => Read::Silent,
+            },
+        )),
+        _ => None,
     }
 }
 
@@ -463,9 +492,9 @@ fn a_held_flood_is_read_when_the_group_s_last_line_is_handed_to_speech() {
         ..Playback::default()
     };
     playback.feed(&mut state, &output(lines(1..=30)));
-    // A group's worth waits: the outpost is told to hold, and what the
-    // terminal writes from then on waits in it.
-    assert_eq!(playback.requests, [TextOp::TerminalHold]);
+    // A group's worth waits: Core holds, and what the terminal writes from
+    // then on is only told.
+    assert_eq!(playback.requests, [Read::Spoken]);
     playback.feed(
         &mut state,
         &output_from(TERMINAL, Some(Skipped::Count(1000)), lines(1031..=1060)),
@@ -474,10 +503,7 @@ fn a_held_flood_is_read_when_the_group_s_last_line_is_handed_to_speech() {
     for _ in 0..28 {
         assert!(playback.play_one(&mut state));
     }
-    assert_eq!(
-        playback.requests,
-        [TextOp::TerminalHold, TextOp::TerminalRead { hold: true }]
-    );
+    assert_eq!(playback.requests, [Read::Spoken, Read::Release]);
     // Lines 29 and 30 are heard before the answer comes: the backlog is
     // looked at only once it is in.
     assert!(playback.play_one(&mut state));
@@ -502,38 +528,55 @@ fn a_read_answered_after_the_focus_moved_to_another_console_is_not_taken() {
         ..Playback::default()
     };
     playback.feed(&mut state, &output(lines(1..=30)));
+    playback.feed(&mut state, &output(lines(31..=31)));
     for _ in 0..28 {
         assert!(playback.play_one(&mut state));
     }
     let read = playback.late.take().expect("a read request held back");
-    let other = event(NormalizedEvent::FocusChanged {
-        node: NodeSnapshot {
-            id: id(TERMINAL + 1),
-            backend: Backend::Uia,
-            role: Role::Terminal,
-            name: Some("Other".to_owned()),
-            value: None,
-            states: StateSet::new(),
-            details: NodeDetails::default(),
-        },
-        whole_window: false,
-        ancestors: Vec::new(),
-        selected_child: None,
-        text: None,
-        earlier: None,
-        group: None,
-        answers: None,
-        first_cached_ancestor: None,
-    });
-    let _ = reduce(&mut state, &mut crate::Runtime::default(), &other);
-    assert_eq!(
-        reduce(
-            &mut state,
-            &mut crate::Runtime::default(),
-            &answered(TraceId::from_raw(4), read, TextReply::TerminalUnchanged)
-        ),
-        []
+    let other = super::reading::Terminal {
+        node: id(TERMINAL + 1),
+        window: window(),
+        console: false,
+    };
+    super::reading::committed(&mut state, Some(other), Vec::new(), 0);
+    let _ = super::reading::wanted_for_tests(&mut state);
+    let before = state.clone();
+    let mut said = Vec::new();
+    let entries = super::reading::answered(
+        &mut state,
+        read,
+        crate::event_queue::Outcome::Result(verbatim_model::request::Reply::Text(
+            TextReply::TerminalRead(Box::new(read_reply("line 31"))),
+        )),
+        (1_000, TraceId::from_raw(4)),
+        &mut said,
     );
+    assert_eq!((entries, said), (Vec::new(), Vec::new()));
+    assert_eq!(state, before);
+}
+
+/// A read of the terminal showing `text` on its one row.
+fn read_reply(text: &str) -> verbatim_model::TerminalReadReply {
+    let read = verbatim_text::terminal_rows::Read {
+        text: verbatim_text::terminal_rows::ReadText::unpadded(text),
+        screen: text.to_owned(),
+        from_start: false,
+        shrank: false,
+        at_document_start: true,
+        alternate: true,
+        first_row: text.to_owned(),
+        caret_rows_to_end: 1,
+        caret_line: text.to_owned(),
+        caret_column: 0,
+        at_ms: 1,
+        above: 0,
+    };
+    verbatim_model::TerminalReadReply {
+        snapshot: crate::snapshot_of(&read, false, None),
+        start: verbatim_model::TextAnchor(1),
+        started_us: 1_000,
+        point: None,
+    }
 }
 
 #[test]
@@ -670,7 +713,7 @@ fn a_later_read_that_skips_a_lost_read_s_lines_is_counted_as_about() {
             speech_of(Some(Skipped::About(0)), lines(1..=150)),
         ),
     );
-    assert_eq!(playback.requests, [TextOp::TerminalHold]);
+    assert_eq!(playback.requests, [Read::Spoken]);
     playback.feed(&mut state, &output(lines(151..=550)));
     let mut expected = lines(1..=100);
     expected.push("skipped about 420".to_owned());
@@ -748,21 +791,15 @@ fn a_lost_read_with_none_of_its_lines_skipped_says_only_its_lines() {
         ),
     );
     assert_eq!(playback.play_all(&mut state), lines(1..=20));
-    assert_eq!(playback.requests, []);
+    assert_eq!(playback.requests, [Read::Spoken]);
     playback.feed(&mut state, &output(lines(21..=120)));
     let mut expected = lines(21..=50);
     expected.push("skipped 40".to_owned());
     expected.extend(lines(91..=120));
     assert_eq!(playback.play_all(&mut state), expected);
-    assert_eq!(
-        playback.requests,
-        [
-            TextOp::TerminalHold,
-            TextOp::TerminalRead { hold: true },
-            TextOp::TerminalRead { hold: true },
-            TextOp::TerminalRead { hold: false }
-        ]
-    );
+    // Nothing more was written while Core held: no release read is
+    // needed.
+    assert_eq!(playback.requests, [Read::Spoken, Read::Spoken]);
 }
 
 #[test]
@@ -870,11 +907,9 @@ fn a_cut_while_held_reads_to_the_end_without_speaking() {
             input: verbatim_model::request::QueueInput::SpeechCut,
         },
     );
-    assert_eq!(
-        playback.requests,
-        [TextOp::TerminalHold, TextOp::TerminalCancel]
-    );
-    assert!(playback.unread.is_empty(), "what the outpost held is gone");
+    // The changes held unread are read by a silent read.
+    assert_eq!(playback.requests, [Read::Spoken, Read::Silent]);
+    assert!(playback.unread.is_empty(), "what was held unread is read");
     // Reading is live again: output after the cut is spoken as it comes.
     playback.feed(&mut state, &output(lines(51..=51)));
     assert_eq!(playback.play_all(&mut state), ["line 1", "line 51"]);
@@ -906,18 +941,13 @@ fn a_read_a_cut_overtakes_speaks_only_its_answers_to_keys() {
             input: verbatim_model::request::QueueInput::SpeechCut,
         },
     );
-    assert_eq!(
-        playback.requests,
-        [
-            TextOp::TerminalHold,
-            TextOp::TerminalRead { hold: true },
-            TextOp::TerminalCancel
-        ]
-    );
+    // The release read out at the cut becomes silent: nothing more is
+    // asked.
+    assert_eq!(playback.requests, [Read::Spoken, Read::Release]);
     let overtaken = playback
         .late
         .take()
-        .expect("the request the cancel overtook");
+        .expect("the release read out at the cut");
     let read = TerminalSpeech {
         items: vec![
             TerminalItem::Output("line 41".to_owned()),
@@ -925,12 +955,7 @@ fn a_read_a_cut_overtakes_speaks_only_its_answers_to_keys() {
         ],
         followed: false,
     };
-    playback.answer_with(&mut state, overtaken, read);
-    let cancel = playback
-        .late_cancel
-        .take()
-        .expect("the cancel, answered after");
-    playback.answer_with(&mut state, cancel, TerminalSpeech::default());
+    playback.answer_with(&mut state, overtaken, Some(read));
     assert_eq!(playback.play_all(&mut state), ["> banana"]);
 }
 
@@ -1267,7 +1292,7 @@ fn the_answers_to_keys_are_spoken_at_once_ahead_of_output() {
 
 #[test]
 fn typing_the_terminal_showed_is_echoed_by_the_typing_echo_settings() {
-    let mut state = unmodelled();
+    let mut state = terminal();
     let echo = TerminalSpeech {
         items: vec![TerminalItem::Echo("ls".to_owned())],
         followed: false,
@@ -1295,7 +1320,7 @@ fn typing_the_terminal_showed_is_echoed_by_the_typing_echo_settings() {
 
 #[test]
 fn the_review_cursor_reads_at_the_caret_once_it_followed_it() {
-    let mut state = unmodelled();
+    let mut state = terminal();
     let review = |state: &mut SrState| {
         reduce(
             state,
@@ -1471,7 +1496,7 @@ fn output_read_before_the_outpost_ended_is_spoken_and_nothing_is_asked_of_it() {
     let mut state = terminal();
     let mut playback = Playback::default();
     playback.feed(&mut state, &output(lines(1..=40)));
-    assert_eq!(playback.requests, [TextOp::TerminalHold]);
+    assert_eq!(playback.requests, [Read::Spoken]);
     for _ in 0..10 {
         assert!(playback.play_one(&mut state));
     }
@@ -1491,7 +1516,7 @@ fn output_read_before_the_outpost_ended_is_spoken_and_nothing_is_asked_of_it() {
     assert_eq!(
         state.terminal,
         super::TerminalSpeechState {
-            trace: Some(TraceId::from_raw(2)),
+            trace: Some(TraceId::from_raw(5)),
             ..super::TerminalSpeechState::default()
         }
     );

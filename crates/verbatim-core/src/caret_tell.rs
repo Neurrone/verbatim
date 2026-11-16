@@ -190,9 +190,29 @@ pub(crate) fn sets_text_changed(kept: &Kept, change: &MsaaChange) -> bool {
         && value_change_of(kept, change)
 }
 
+/// Whether the committed focus is a console host's terminal, whose caret
+/// event is its caret.
+fn console_terminal_committed(state: &crate::state::SrState) -> bool {
+    matches!(&state.versions.committed, Committed::Read(kept) if kept.console_terminal)
+}
+
+/// Whether `entry` is a system caret tell, dropped at its arrival while
+/// the committed focus is a console host's terminal
+/// (`docs/design/readers-tell-core-asks-build1.md`, "Terminals in this
+/// build"). Verbatim-only: the terminal model.
+pub(crate) fn dropped_in_console(state: &crate::state::SrState, entry: &Entry) -> bool {
+    matches!(entry, Entry::Caret(caret) if matches!(caret.target, Target::System(_)))
+        && console_terminal_committed(state)
+}
+
 /// The caret tell's function at its turn.
 pub(crate) async fn run(mut cx: Cx<Entries>, tell: CaretTell) {
     if acceptance::accept(tell.tell.kind, window_facts(&tell.tell), false).is_err() {
+        return;
+    }
+    // Dropped again at its turn while a console host's terminal is the
+    // committed focus.
+    if matches!(tell.target, Target::System(_)) && console_terminal_committed(&cx.facts()) {
         return;
     }
     if crate::keys::caret_key::focus_pending(&cx) {

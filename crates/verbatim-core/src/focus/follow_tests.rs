@@ -67,7 +67,7 @@ const OTHER: Pid = Pid(50);
 /// Commits `kept` as a button with no parent.
 fn commit(follows: &mut Follows, kept: &Kept) -> Vec<FollowRequest> {
     let node = snapshot(kept.node, Role::Button, None);
-    follows.committed(Some((kept, &node, None)), None)
+    follows.committed(Some((kept, &node, None)), false)
 }
 
 /// A UI Automation focus of `APP` committed: its node named.
@@ -94,7 +94,7 @@ fn nothing_named_then_a_commit_of_a_uia_node_names_it() {
 fn nothing_named_then_a_commit_with_no_uia_element_sends_nothing() {
     let mut follows = Follows::default();
     assert_eq!(commit(&mut follows, &msaa()), []);
-    assert_eq!(follows.committed(None, None), []);
+    assert_eq!(follows.committed(None, false), []);
     assert_eq!(follows, Follows::default());
 }
 
@@ -132,7 +132,7 @@ fn a_node_named_then_a_focus_with_no_uia_element_or_cores_own_names_nothing() {
     assert_eq!(commit(&mut follows, &msaa()), [nothing(APP)]);
     assert_eq!(follows.named(APP), None);
     let mut follows = named();
-    assert_eq!(follows.committed(None, None), [nothing(APP)]);
+    assert_eq!(follows.committed(None, false), [nothing(APP)]);
 }
 
 #[test]
@@ -167,27 +167,27 @@ fn the_outposts_generation_ending_names_nothing() {
 fn the_group_follows_the_role_and_a_console_window() {
     let focus = uia(APP);
     let cases = [
-        (Role::EditableText, None, FollowGroup::Extended),
-        (Role::Document, None, FollowGroup::Extended),
+        (Role::EditableText, false, FollowGroup::Extended),
+        (Role::Document, false, FollowGroup::Extended),
         (
             Role::Terminal,
-            Some(CONSOLE_WINDOW_CLASS),
+            true,
             FollowGroup::Terminal { console: true },
         ),
         (
             Role::Terminal,
-            Some("CASCADIA_HOSTING_WINDOW_CLASS"),
+            false,
             FollowGroup::Terminal { console: false },
         ),
-        (Role::ListItem, None, FollowGroup::Base),
+        (Role::ListItem, false, FollowGroup::Base),
     ];
-    for (role, class, group) in cases {
+    for (role, console, group) in cases {
         let mut follows = Follows::default();
         let node = snapshot(focus.node, role, None);
         assert_eq!(
-            follows.committed(Some((&focus, &node, None)), class),
+            follows.committed(Some((&focus, &node, None)), console),
             [naming(APP, focus.node, group)],
-            "{role:?} in {class:?}"
+            "{role:?}, a console host's: {console}"
         );
     }
 }
@@ -202,7 +202,7 @@ fn a_slider_that_focuses_its_thumb_is_followed_as_the_extra_object() {
         Some("SensitiveSlider"),
     );
     let mut follows = Follows::default();
-    let sent = follows.committed(Some((&focus, &thumb, Some(&slider))), None);
+    let sent = follows.committed(Some((&focus, &thumb, Some(&slider))), false);
     assert_eq!(
         sent.first()
             .and_then(|request| request.follow.node.as_ref())
@@ -211,7 +211,7 @@ fn a_slider_that_focuses_its_thumb_is_followed_as_the_extra_object() {
     );
     let plain = snapshot(slider.id, Role::Slider, None);
     let mut follows = Follows::default();
-    let sent = follows.committed(Some((&focus, &thumb, Some(&plain))), None);
+    let sent = follows.committed(Some((&focus, &thumb, Some(&plain))), false);
     assert_eq!(
         sent.first()
             .and_then(|request| request.follow.node.as_ref())

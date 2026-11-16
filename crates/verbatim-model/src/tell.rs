@@ -36,6 +36,14 @@ pub enum EventObject {
         /// The element's runtime id, from the event's cache.
         runtime_id: RuntimeId,
     },
+    /// The terminal a `Follow` names, by its node, whose change signal
+    /// an outpost tells, with the terminal's window.
+    Terminal {
+        /// The terminal's node.
+        node: crate::NodeId,
+        /// Its window.
+        window: WindowHandle,
+    },
     /// An MSAA object, by the ids the `WinEvent` named.
     Msaa {
         /// The window.

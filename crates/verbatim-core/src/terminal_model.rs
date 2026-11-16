@@ -1,87 +1,66 @@
 //! Core's model of each terminal it reads (`books/dev/src/explanation/design/terminal-model.md`,
 //! "Where it runs"): the reading rules, with their memory of the terminal's
 //! rows, run here in the reducer, and the outpost only reads what Core asks
-//! for and sends each read back as a snapshot ([`TerminalSnapshot`]).
+//! for and sends each read back ([`TerminalReadReply`]).
 //!
 //! For each terminal node it reads, Core keeps the rules
 //! ([`TerminalReader`], behind an `Arc` so that a checkpoint's clone of the
 //! state shares it), the keys it took in and has not yet given the rules,
-//! what the rules asked for and Core is owed (a whole read, a history-block
-//! read, a fresh read before a review command, history rows above the
-//! memory), the review cursor's places, the caret and the screen's shape as
-//! the last read found them, and when the quiet-period timer is due.
+//! the start anchor its reads count from, the scope the rules owe, what the
+//! last read showed of the caret and the screen's shape, and when the
+//! quiet-period timer is due. Which reads Core asks, and when, is the
+//! focused terminal's reading's ([`crate::terminal::reading`]).
 //!
 //! - Keys. Every key Core takes in while it reads the focused terminal is
 //!   kept, in the order Core took it in, with when it reached the program
-//!   and its trace. Before a read taken at time S is given to the rules,
-//!   they are given every kept key whose time is at or before S, in order,
-//!   stopping at the first later one; a key in S's own millisecond counts
-//!   as before it. A read is taken as of when it ended ([`read_at`]): the
-//!   terminal answered it at some moment before then, so a key whose
-//!   effect it shows reached the program no later. Before the timer at T,
-//!   likewise up to T. The
-//!   arrival of a message decides nothing. With each key Core asks the
-//!   outpost for the screen's colours in every read that begins within the
-//!   key's window, from the key's time to `KEY_WINDOW_MS` after it
-//!   ([`TextOp::TerminalColours`]), and takes the answer, which is always
-//!   done, as nothing: a read the outpost takes at once for it comes as a
-//!   live read.
+//!   and its trace. Before a read is given to the rules, they are given
+//!   every kept key whose time is at or before the read's end, in order,
+//!   stopping at the first later one ([`read_at`]): the terminal answered
+//!   the read at some moment before then, so a key whose effect it shows
+//!   reached the program no later. Before the timer at T, likewise up to
+//!   T. The arrival of a message decides nothing.
 //! - A read's speech key: once the keys up to its time are given, the
 //!   newest key given, when its window (`KEY_WINDOW_MS` after it) holds
 //!   the read's time. The read's speech is spoken under that key's trace
-//!   ([`Effect::ForKey`]), and the flood policy speaks the read's output
-//!   under it later too, so a key deferred behind a held key, which the
-//!   read's speech answers, does not cut it off. A read with no speech key
-//!   and the timer's speech carry the input's own trace.
-//! - What is owed. When the rules ask for the whole document, or a first
-//!   read again with its history block, Core asks for it
-//!   ([`TextOp::TerminalReadNow`]) and drops the terminal's live snapshots
-//!   until it comes: the outpost answers in order on one pipe, so each of
-//!   them began before the read asked for, which holds everything it
-//!   showed.
-//! - Review commands. A request for the terminal's text that Core can
-//!   answer from its memory ([`review::answers`]) is not sent: Core asks for
-//!   a fresh read, aligns it, and answers the request from the memory,
-//!   asking for the rows above the memory when the answer needs them
-//!   ([`TextOp::TerminalHistory`]) with a screen more than it needs, and
-//!   answering again once they come, placed among the memory's rows only
-//!   when its last read is the one they were counted from; rows that
-//!   cannot be placed, or fall short of the row the answer needs, end the
-//!   command, saying nothing ([`review::placed_history`]). The
-//!   rows it answers with carry text anchors from a range reserved for Core
-//!   ([`TERMINAL_ANCHORS`]), which no outpost mints.
+//!   ([`Effect::ForKey`]).
+//! - The start (`docs/design/readers-tell-core-asks-build3.md`, Table 7):
+//!   every read names the start anchor of the last read the memory took
+//!   whose screen showed text, which Core holds; a read whose start is no
+//!   longer that one when it answers is given to the rules as reading from
+//!   another start, so its rows are found by their text.
+//! - What is owed (Table 4): when the rules ask for the whole document, or
+//!   a first read again with its history block, the next full read sent
+//!   takes that scope.
+//! - Identical reads: a read identical to the last one given, but for its
+//!   times, number, start and caret, is not given to the rules, unless it
+//!   waited for Core's speech queue or is the first after the focus
+//!   arrived (Dickson, 2026-10-26).
 //!
-//! - The read before a held key. A terminal's outpost answers Core's read
-//!   of the caret before a held key ([`ReadPurpose::BeforeTerminalKey`](verbatim_model::ReadPurpose::BeforeTerminalKey)) with a
-//!   snapshot, which is aligned as a live read is and whose caret answers
-//!   the read ([`before_key`]).
-//!
-//! A terminal's model is made with its first snapshot.
+//! A terminal's model is made with its first read.
 
-mod review;
+pub(crate) mod review;
 
 use std::collections::VecDeque;
+use std::hash::{Hash as _, Hasher as _};
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use verbatim_model::{
-    CaretReply, Effect, Input, NodeId, OutpostId, QueryId, TerminalColourRun, TerminalScope,
-    TerminalSnapshot, TerminalText, TextOp, TextPoint, TextReply, TextRequest, TraceId,
+    Effect, NodeId, OutpostId, TerminalColourRun, TerminalReadReply, TerminalScope,
+    TerminalSnapshot, TerminalText, TextAnchor, TraceId,
 };
 use verbatim_text::terminal_reading::{
     ColourRun, KEY_WINDOW_MS, Key, KeyKind, QUIET_MS, Settings, Speech, Step, TerminalReader, Unit,
 };
 use verbatim_text::terminal_rows::{Anchor, Lost, MARKS, NewRow, Read, ReadText};
 
-use crate::key_line::ReviewPress;
-use crate::queries::{ModelAsk, Then};
-use crate::state::{SrState, TextFollowUp};
+use crate::state::SrState;
 use crate::terminal::{Said, SaidItem, Skipped, TerminalItem, TerminalKeyKind, TerminalUnit};
 
 pub(crate) use review::CaretAt;
 
 /// How many terminals Core keeps a model of, the most recently read: a
-/// terminal's memory lives while its node does, as the outpost kept it.
+/// terminal's memory lives while its node does.
 const MODELS: usize = 16;
 
 /// How many keys wait for a read at most; past it the oldest is given to
@@ -102,22 +81,6 @@ pub(crate) struct PendingKey {
     trace: TraceId,
 }
 
-/// What a review command waiting for the fresh read asks of the memory.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-enum Review {
-    /// A request for the terminal's text, answered as the outpost would.
-    Text { query_id: QueryId, op: TextOp },
-    /// "Report status bar", with the press's repeat count.
-    StatusBar { repeat: u8 },
-    /// A move to the previous or next command mark, from the review
-    /// position at `from`, answered as the line move whose request it is.
-    Mark {
-        query_id: QueryId,
-        forward: bool,
-        from: TextPoint,
-    },
-}
-
 /// A command mark's line as it was when the mark was set: the text of its
 /// first row, which a search above the memory looks for, and how many rows
 /// it held ("Features and settings").
@@ -128,37 +91,26 @@ pub(crate) struct MarkLine {
     pub(crate) rows: u32,
 }
 
-/// A review command waiting for an answer from the memory.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-struct Waiting {
-    /// The trace of the input that asked for it, when it had one; the
-    /// answer's otherwise.
-    trace: Option<TraceId>,
-    review: Review,
-}
-
 /// Rows of the history above the memory, read for a review answer and
 /// placed among the rows of the memory's last read when they came
-/// ([`review::placed_history`]): the review request they were read for,
-/// the row where the first of them is, the rows, and whether they start
-/// at the document's start.
+/// ([`review::placed_history`]): the row where the first of them is, the
+/// rows, and whether they start at the document's start.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct HistoryRead {
-    review: QueryId,
-    first: isize,
-    rows: Vec<verbatim_text::terminal_rows::Row>,
-    reached: bool,
+    pub(crate) first: isize,
+    pub(crate) rows: Vec<verbatim_text::terminal_rows::Row>,
+    pub(crate) reached: bool,
 }
 
-/// The history read asked for by the review answer in progress
-/// ([`crate::queries::ModelAsk::History`]): the review request it is for,
-/// and what it asked for (rows above the start the next read takes, or the
-/// whole document).
+/// The last full read the model took: when it ended, whether it took the
+/// screen's colours, and how many full reads had been sent when it was
+/// taken, so that colours are owed only while none has been sent since
+/// (`docs/design/readers-tell-core-asks-build3.md`, "Colours").
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct HistoryAsked {
-    review: QueryId,
-    above: u32,
-    whole: bool,
+pub(crate) struct LastRead {
+    pub(crate) ended_ms: u64,
+    pub(crate) coloured: bool,
+    pub(crate) sends: u64,
 }
 
 /// Core's model of one terminal.
@@ -174,26 +126,28 @@ pub(crate) struct TerminalModel {
     last_key: Option<(TraceId, u64)>,
     /// Which model made for its node this is: a model forgotten or
     /// evicted and made again for the same node has a newer one, so the
-    /// answers to the older one's requests are taken by neither.
+    /// speech of the older one's reads is said by neither.
     pub(crate) generation: u64,
-    /// The review commands waiting for an answer from the memory, oldest
-    /// first.
-    reviews: VecDeque<Waiting>,
-    /// The history read that came for the review answers in progress,
-    /// placed among the rows of the memory's last read; cleared whenever
-    /// the memory takes a read, so no answer reads it among another read's
-    /// rows.
-    pub(crate) history: Option<HistoryRead>,
-    /// The search that came for the command mark move in progress and has
-    /// not yet been used, its rows placed when it came.
-    pub(crate) found: Option<review::Placed>,
-    /// How many searches the command mark move in progress has asked for
-    /// ([`review::MARK_SEARCHES`]).
-    pub(crate) mark_searches: u32,
-    /// The number of the read the memory last took
-    /// ([`verbatim_model::TerminalSnapshot::read`]), by which a search's
-    /// answer is placed; 0 before any.
-    pub(crate) read: u64,
+    /// The start anchor the next read names: the start of the last read
+    /// the memory took whose screen showed text, or of the first
+    /// (Table 7).
+    pub(crate) start: Option<TextAnchor>,
+    /// The scope the rules asked for, which the next full read sent takes
+    /// (Table 4); `None` for a fresh read.
+    pub(crate) owed: Option<TerminalScope>,
+    /// The last read taken, for the colours owed.
+    pub(crate) last_read: Option<LastRead>,
+    /// How many full reads of the terminal Core has sent.
+    pub(crate) sends: u64,
+    /// When the newest read taken began, in microseconds on the shared
+    /// clock: a change observed before it is covered by it.
+    pub(crate) started_us: u64,
+    /// A hash of the last read given to the rules, its times, number,
+    /// start and caret left out.
+    given: Option<u64>,
+    /// Whether the next read is the first after the focus arrived, which
+    /// is given to the rules even when identical to the last.
+    pub(crate) focus_arrived: bool,
     /// The lines of the command marks set, newest last, at most twice
     /// [`MARKS`], for the marks the memory and the aside screen keep.
     pub(crate) mark_lines: VecDeque<MarkLine>,
@@ -213,21 +167,12 @@ pub(crate) struct TerminalModel {
     /// found them.
     pub(crate) height: u32,
     pub(crate) width: usize,
-    /// The shape last told to the outpost.
-    told: Option<(u32, u32)>,
     /// When the rules' quiet-period timer is due.
     due_ms: Option<u64>,
-    /// Whether the outpost was told to hold this terminal's reading for
-    /// Core's flood policy ([`TextOp::TerminalHold`]): it holds only while
-    /// the terminal has the focus, and goes with the model, so an ended
-    /// outpost's hold goes with it.
-    pub(crate) held: bool,
 }
 
 /// Core's models of the terminals it reads, the most recently read last,
-/// at most [`MODELS`]. A model goes only through
-/// [`SrState::drop_models`], which ends the queries of the review commands
-/// waiting for its answer.
+/// at most [`MODELS`].
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Terminals {
     models: Vec<TerminalModel>,
@@ -266,29 +211,9 @@ impl Terminals {
         self.models.push_mut(model)
     }
 
-    /// Removes every model `which` picks, returning the queries of the
-    /// review commands that waited for their answers
-    /// ([`SrState::drop_models`]).
-    pub(crate) fn remove_where(&mut self, which: impl Fn(&TerminalModel) -> bool) -> Vec<QueryId> {
-        let mut reviews = Vec::new();
-        self.models.retain(|model| {
-            if !which(model) {
-                return true;
-            }
-            reviews.extend(
-                model
-                    .reviews
-                    .iter()
-                    .filter_map(|waiting| match waiting.review {
-                        Review::Text { query_id, .. } | Review::Mark { query_id, .. } => {
-                            Some(query_id)
-                        }
-                        Review::StatusBar { .. } => None,
-                    }),
-            );
-            false
-        });
-        reviews
+    /// Removes every model `which` picks.
+    pub(crate) fn remove_where(&mut self, which: impl Fn(&TerminalModel) -> bool) {
+        self.models.retain(|model| !which(model));
     }
 }
 
@@ -300,11 +225,13 @@ impl TerminalModel {
             pending: VecDeque::new(),
             last_key: None,
             generation,
-            reviews: VecDeque::new(),
-            history: None,
-            found: None,
-            mark_searches: 0,
-            read: 0,
+            start: None,
+            owed: None,
+            last_read: None,
+            sends: 0,
+            started_us: 0,
+            given: None,
+            focus_arrived: true,
             mark_lines: VecDeque::new(),
             pending_mark: None,
             places: VecDeque::new(),
@@ -312,14 +239,12 @@ impl TerminalModel {
             at_document_start: false,
             height: 0,
             width: 0,
-            told: None,
             due_ms: None,
-            held: false,
         }
     }
 
     /// The rules, to change: copied first when a checkpoint shares them.
-    fn rules(&mut self) -> &mut TerminalReader {
+    pub(crate) fn rules(&mut self) -> &mut TerminalReader {
         Arc::make_mut(&mut self.reader)
     }
 
@@ -344,6 +269,39 @@ impl TerminalModel {
         let step = self.rules().key(rules_key(&key.kind, key.at_ms));
         self.due_ms = step.timer;
         self.last_key = Some((key.trace, key.at_ms));
+    }
+
+    /// When the newest key Core took in reached the program, given to the
+    /// rules or not.
+    pub(crate) fn newest_key_ms(&self) -> Option<u64> {
+        self.pending
+            .back()
+            .map(|key| key.at_ms)
+            .or_else(|| self.last_key.map(|(_, at_ms)| at_ms))
+    }
+
+    /// Whether the colours are owed: the last read taken ended at or after
+    /// the newest key's time, within its window, without the colours, and
+    /// no full read has been sent since it was taken
+    /// (`docs/design/readers-tell-core-asks-build3.md`, "Colours").
+    pub(crate) fn colours_owed(&self) -> bool {
+        let (Some(last), Some(key_ms)) = (self.last_read, self.newest_key_ms()) else {
+            return false;
+        };
+        !last.coloured
+            && last.sends == self.sends
+            && last.ended_ms >= key_ms
+            && last.ended_ms <= key_ms.saturating_add(KEY_WINDOW_MS)
+    }
+
+    /// Whether a full read sent at `now_ms` takes the screen's colours:
+    /// within a key's window of the newest key's time, or when they are
+    /// owed.
+    pub(crate) fn takes_colours(&self, now_ms: u64) -> bool {
+        self.colours_owed()
+            || self
+                .newest_key_ms()
+                .is_some_and(|key_ms| now_ms <= key_ms.saturating_add(KEY_WINDOW_MS))
     }
 
     /// Enter at `at_ms` on the caret's line, which holds input: the line is
@@ -437,6 +395,23 @@ impl TerminalModel {
             .filter(|(_, key_ms)| key_ms.saturating_add(KEY_WINDOW_MS) >= at_ms)
             .map(|(trace, _)| trace)
     }
+
+    /// The focus arrived at the terminal at `at_ms`: the rules are told,
+    /// and its next read is given to them whatever it shows.
+    pub(crate) fn focused(&mut self, at_ms: u64) {
+        let step = self.rules().focus(at_ms);
+        self.due_ms = step.timer;
+        self.focus_arrived = true;
+    }
+
+    /// The focus left the terminal: the rules are told, and its waiting
+    /// keys dropped.
+    pub(crate) fn blurred(&mut self) {
+        let step = self.rules().blur();
+        self.due_ms = step.timer;
+        self.pending.clear();
+        self.last_key = None;
+    }
 }
 
 /// The reading rules' settings from the reader settings.
@@ -448,21 +423,16 @@ fn settings_of(state: &SrState) -> Settings {
 }
 
 /// The model of terminal `node`.
-fn model_mut(state: &mut SrState, node: NodeId) -> Option<&mut TerminalModel> {
+pub(crate) fn model_mut(state: &mut SrState, node: NodeId) -> Option<&mut TerminalModel> {
     state.terminals.iter_mut().find(|model| model.node == node)
 }
 
-/// Whether Core models terminal `node`, so its model answers review
-/// commands on it.
-pub(crate) fn models(state: &SrState, node: NodeId) -> bool {
-    model_of(state, node).is_some()
-}
-
-fn model_of(state: &SrState, node: NodeId) -> Option<&TerminalModel> {
+/// The model of terminal `node`.
+pub(crate) fn model_of(state: &SrState, node: NodeId) -> Option<&TerminalModel> {
     state.terminals.iter().find(|model| model.node == node)
 }
 
-/// The model of terminal `node`, made with its first snapshot; the least
+/// The model of terminal `node`, made with its first read; the least
 /// recently read model is forgotten past [`MODELS`].
 fn model_or_new(state: &mut SrState, node: NodeId) -> &mut TerminalModel {
     if let Some(at) = state.terminals.iter().position(|model| model.node == node) {
@@ -471,89 +441,16 @@ fn model_or_new(state: &mut SrState, node: NodeId) -> &mut TerminalModel {
     if state.terminals.len() >= MODELS
         && let Some(oldest) = state.terminals.first().map(|model| model.node)
     {
-        state.drop_models(|model| model.node == oldest);
+        state.terminals.remove_where(|model| model.node == oldest);
     }
     let settings = settings_of(state);
     state.terminals.add(node, settings)
 }
 
-/// The focused terminal, when Core models it: the one the flood policy
-/// asks, and whose quiet-period timer counts.
+/// The focused terminal, when Core models it: the one whose quiet-period
+/// timer counts.
 pub(crate) fn focused(state: &SrState) -> Option<NodeId> {
-    crate::terminal::terminal_focus(state).filter(|node| model_of(state, *node).is_some())
-}
-
-/// Whether the outpost holds the focused terminal's reading for the flood
-/// policy ([`TerminalModel::held`]).
-pub(crate) fn holds(state: &SrState) -> bool {
-    focused(state)
-        .and_then(|node| model_of(state, node))
-        .is_some_and(|model| model.held)
-}
-
-/// Notes whether the outpost holds the focused terminal's reading.
-pub(crate) fn set_held(state: &mut SrState, held: bool) {
-    if let Some(node) = focused(state)
-        && let Some(model) = model_mut(state, node)
-    {
-        model.held = held;
-    }
-}
-
-/// A text request about terminal `node` whose answer nothing waits for.
-fn request(state: &mut SrState, node: NodeId, op: TextOp) -> Effect {
-    state
-        .queries
-        .ask(crate::queries::Asking::Text(node, op), Then::Nothing)
-        .1
-}
-
-/// Asks `op` of terminal `node` for its model, the request `ask`. A read
-/// owed while an older one is open is the one owed: the older one's answer
-/// is taken by nothing. A fresh read, a history read or a search is asked
-/// only when none of them is out.
-fn ask_model(state: &mut SrState, node: NodeId, op: TextOp, ask: ModelAsk) -> Effect {
-    let generation = model_of(state, node).map_or(0, |model| model.generation);
-    if ask.owed() {
-        state.queries.forget(|then| {
-            matches!(then, Then::TerminalModel { node: asked, generation: made, ask }
-                if *asked == node && *made == generation && ask.owed())
-        });
-    } else {
-        debug_assert!(
-            !model_asks(state, node, |asked| !asked.owed()),
-            "a model's fresh read, history read or search asked while one is out"
-        );
-    }
-    state
-        .queries
-        .ask(
-            crate::queries::Asking::Text(node, op),
-            Then::TerminalModel {
-                node,
-                generation,
-                ask,
-            },
-        )
-        .1
-}
-
-/// Whether the model of terminal `node` has a request out that `which`
-/// picks.
-fn model_asks(state: &SrState, node: NodeId, which: impl Fn(ModelAsk) -> bool) -> bool {
-    let Some(generation) = model_of(state, node).map(|model| model.generation) else {
-        return false;
-    };
-    state.queries.has(|then| {
-        matches!(then, Then::TerminalModel { node: asked, generation: made, ask }
-            if *asked == node && *made == generation && which(*ask))
-    })
-}
-
-/// Whether the model of terminal `node` is owed a read the rules asked
-/// for.
-fn owed(state: &SrState, node: NodeId) -> bool {
-    model_asks(state, node, ModelAsk::owed)
+    crate::terminal::reading::modelled(state)
 }
 
 /// When the quiet-period timer is due: the focused terminal's model's due
@@ -564,27 +461,14 @@ pub(crate) fn due(state: &SrState) -> Option<u64> {
 }
 
 /// A key of `kind` that reached the focused terminal at `at_ms`, with its
-/// trace: kept until a read taken at or after it, and the colours
-/// asked for over its window. Nothing when Core does not read the focus.
-pub(crate) fn key(
-    state: &mut SrState,
-    kind: TerminalKeyKind,
-    at_ms: u64,
-    trace: TraceId,
-) -> Vec<Effect> {
+/// trace: kept until a read taken at or after it. Nothing when Core does
+/// not model the focus.
+pub(crate) fn key(state: &mut SrState, kind: TerminalKeyKind, at_ms: u64, trace: TraceId) {
     let Some(node) = focused(state) else {
-        return Vec::new();
+        return;
     };
-    let effect = request(
-        state,
-        node,
-        TextOp::TerminalColours {
-            from_ms: at_ms,
-            until_ms: at_ms.saturating_add(KEY_WINDOW_MS),
-        },
-    );
     let Some(model) = model_mut(state, node) else {
-        return Vec::new();
+        return;
     };
     if model.pending.len() >= PENDING_KEYS
         && let Some(oldest) = model.pending.pop_front()
@@ -592,37 +476,6 @@ pub(crate) fn key(
         model.give(&oldest);
     }
     model.pending.push_back(PendingKey { kind, at_ms, trace });
-    vec![effect]
-}
-
-/// The keys a key input is to the reading rules
-/// (`books/dev/src/explanation/design/terminal-model.md`, "Keys"): a caret key by its unit, any
-/// other key passed as `Other`, text typed by what it types, and a key that
-/// clears the line as `Forget`, the caret key that follows it as `Other`.
-pub(crate) fn key_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
-    match input {
-        Input::CaretKey {
-            trace_id,
-            key: caret,
-            pressed_at_ms,
-            ..
-        } => key(
-            state,
-            crate::terminal::caret_key_kind(*caret),
-            *pressed_at_ms,
-            *trace_id,
-        ),
-        Input::CharacterTyped {
-            trace_id,
-            text,
-            at_ms,
-            ..
-        } => key(state, crate::terminal::typed_kind(text), *at_ms, *trace_id),
-        Input::ClearingKey {
-            trace_id, at_ms, ..
-        } => key(state, TerminalKeyKind::Forget, *at_ms, *trace_id),
-        _ => Vec::new(),
-    }
 }
 
 /// The reading rules' key for `kind`, reaching the program at `at_ms`.
@@ -787,55 +640,135 @@ fn speech_of(step: Step) -> Said {
     }
 }
 
-/// What aligning a snapshot gave.
-struct Taken {
-    /// What the rules said, unless they asked for another read instead.
-    speech: Option<Said>,
-    /// The read's speech key.
-    key: Option<TraceId>,
-    /// The requests and the timer it caused.
-    effects: Vec<Effect>,
+/// A hash of every field of `snapshot` but when it began and ended, its
+/// number, and the caret read with it, by which an identical read is
+/// known.
+fn fingerprint(snapshot: &TerminalSnapshot) -> u64 {
+    let TerminalSnapshot {
+        text,
+        screen,
+        from_start,
+        shrank,
+        at_document_start,
+        alternate,
+        first_row,
+        caret_rows_to_end,
+        caret_line,
+        caret_column,
+        above,
+        started_ms: _,
+        ended_ms: _,
+        waited,
+        read: _,
+        colours,
+        caret: _,
+    } = snapshot;
+    let mut hasher = std::hash::DefaultHasher::new();
+    for text in [text, screen, first_row, caret_line] {
+        text.text.hash(&mut hasher);
+        text.lengths.hash(&mut hasher);
+    }
+    (
+        from_start,
+        shrank,
+        at_document_start,
+        alternate,
+        caret_rows_to_end,
+        caret_column,
+        above,
+        waited,
+    )
+        .hash(&mut hasher);
+    match colours {
+        None => 0u8.hash(&mut hasher),
+        Some(rows) => {
+            1u8.hash(&mut hasher);
+            rows.len().hash(&mut hasher);
+            for row in rows {
+                row.len().hash(&mut hasher);
+                for run in row {
+                    (run.column, run.length, run.foreground, run.background).hash(&mut hasher);
+                }
+            }
+        }
+    }
+    hasher.finish()
 }
 
-/// Gives terminal `node`'s rules `snapshot`, after the keys that reached
-/// the program by its start: asks for the whole document or the history
-/// block when the rules ask, keeps the caret and the shape the read found,
-/// tells the outpost a new shape, and takes the read's caret as Core's.
-fn take_snapshot(state: &mut SrState, node: NodeId, snapshot: &TerminalSnapshot) -> Taken {
+/// What taking a read gave.
+#[derive(Debug, Default)]
+pub(crate) struct Taken {
+    /// What the rules said; `None` when the read was not given to them,
+    /// being identical to the last, or when they asked for another scope
+    /// instead ([`TerminalModel::owed`]).
+    pub(crate) speech: Option<Said>,
+    /// The read's speech key.
+    pub(crate) key: Option<TraceId>,
+    /// The model's generation.
+    pub(crate) generation: u64,
+}
+
+/// Takes `reply`, a full read of terminal `node` that named the start
+/// `named` and `waited` for Core's speech queue: covers the changes told
+/// before it began, gives the rules the keys that reached the program by
+/// its end and the read, keeps the scope they ask for, the start, the
+/// caret and the shape it found, and takes the read's caret as Core's. A
+/// read identical to the last given is not given, unless it waited or is
+/// the first after the focus arrived.
+pub(crate) fn take(
+    state: &mut SrState,
+    node: NodeId,
+    reply: &TerminalReadReply,
+    (named, waited): (Option<TextAnchor>, bool),
+) -> Taken {
+    let snapshot = &reply.snapshot;
     let at_ms = read_at(snapshot);
     let model = model_or_new(state, node);
+    model.started_us = model.started_us.max(reply.started_us);
+    model.last_read = Some(LastRead {
+        ended_ms: at_ms,
+        coloured: snapshot.colours.is_some(),
+        sends: model.sends,
+    });
+    let generation = model.generation;
+    let mut fingerprinted = snapshot.clone();
+    fingerprinted.waited = waited;
+    let print = fingerprint(&fingerprinted);
+    if !waited && !model.focus_arrived && model.given == Some(print) {
+        return Taken {
+            speech: None,
+            key: None,
+            generation,
+        };
+    }
+    model.given = Some(print);
+    model.focus_arrived = false;
     model.give_keys(at_ms);
-    let read = read_of(snapshot);
+    let mut read = read_of(snapshot);
+    // A read named a start other than the memory's: its rows are found by
+    // their text, as after a refused start (Table 7; rules 2 and 4).
+    if named != model.start {
+        read.from_start = false;
+    }
     let colours = snapshot.colours.as_deref().map(colours_of);
-    let step = model
-        .rules()
-        .read(&read, snapshot.waited, colours.as_deref());
+    let step = model.rules().read(&read, waited, colours.as_deref());
     model.due_ms = step.timer;
     let key = model.speech_key(at_ms);
     let height = step.outcome.as_ref().map_or(0, |outcome| {
         u32::try_from(outcome.height).unwrap_or(u32::MAX)
     });
-    let mut effects = Vec::new();
     if step.whole_document || step.history_block {
-        let scope = if step.whole_document {
+        model.owed = Some(if step.whole_document {
             TerminalScope::Whole
         } else {
             TerminalScope::HistoryBlock { height }
-        };
-        let ask = if step.whole_document {
-            ModelAsk::Whole
-        } else {
-            ModelAsk::HistoryBlock
-        };
-        let effect = ask_model(state, node, TextOp::TerminalReadNow(scope), ask);
-        effects.push(effect);
+        });
         return Taken {
             speech: None,
             key,
-            effects,
+            generation,
         };
     }
-    let mut shape = None;
     if let Some(outcome) = &step.outcome {
         model.height = height;
         model.width = outcome.width;
@@ -845,40 +778,24 @@ fn take_snapshot(state: &mut SrState, node: NodeId, snapshot: &TerminalSnapshot)
         });
         if !outcome.blank {
             model.settle_mark(&outcome.rows, at_ms);
-            model.read = snapshot.read;
-            model.history = None;
         }
-        let width = u32::try_from(outcome.width).unwrap_or(u32::MAX);
-        if model.told != Some((height, width)) && !outcome.blank {
-            model.told = Some((height, width));
-            shape = Some(TextOp::TerminalShape { height, width });
+        // The start of a read whose screen shows text, or of the first,
+        // is the one the next read names (Table 7).
+        if !outcome.blank || model.start.is_none() {
+            model.start = Some(reply.start);
         }
+    } else if model.start.is_none() {
+        model.start = Some(reply.start);
     }
     model.at_document_start = read.at_document_start;
-    if let Some(op) = shape {
-        effects.push(request(state, node, op));
-    }
     if let Some(caret) = &snapshot.caret {
         crate::editing::update_caret(state, node, caret.clone());
     }
     Taken {
         speech: Some(speech_of(step)),
         key,
-        effects,
+        generation,
     }
-}
-
-/// Hands what a read said to the flood policy, under its speech key when
-/// it has one, as a live read's speech is.
-fn speak(
-    state: &mut SrState,
-    trace_id: TraceId,
-    (node, started_ms): (NodeId, u64),
-    speech: Said,
-    key: Option<TraceId>,
-) -> Vec<Effect> {
-    let effects = crate::terminal::speech(state, key.unwrap_or(trace_id), started_ms, node, speech);
-    under(key, effects)
 }
 
 /// `effects`, each on behalf of `key` when there is one.
@@ -890,536 +807,6 @@ pub(crate) fn under(key: Option<TraceId>, effects: Vec<Effect>) -> Vec<Effect> {
             .collect(),
         None => effects,
     }
-}
-
-/// A live read of terminal `node` (`NormalizedEvent::TerminalSnapshot`):
-/// taken only for the focus, and dropped while a read the rules asked for
-/// is owed.
-pub(crate) fn snapshot_event(
-    state: &mut SrState,
-    trace_id: TraceId,
-    node: NodeId,
-    snapshot: &TerminalSnapshot,
-) -> Vec<Effect> {
-    if !state.focus_matches(node) || crate::terminal::terminal_focus(state) != Some(node) {
-        return Vec::new();
-    }
-    if owed(state, node) {
-        return Vec::new();
-    }
-    let taken = take_snapshot(state, node, snapshot);
-    let mut effects = taken.effects;
-    if let Some(speech) = taken.speech {
-        effects.extend(speak(
-            state,
-            trace_id,
-            (node, snapshot.started_ms),
-            speech,
-            taken.key,
-        ));
-    }
-    effects
-}
-
-/// The speech of a snapshot answering the flood policy's own request
-/// (`TextOp::TerminalRead` or `TextOp::TerminalCancel`), the requests it
-/// caused, and its speech key; `None` for any other answer.
-pub(crate) fn answered_read(
-    state: &mut SrState,
-    reply: &TextReply,
-) -> Option<(Said, Option<TraceId>, Vec<Effect>)> {
-    let node = crate::terminal::terminal_focus(state)?;
-    // While a read the rules asked for is owed, a read begun before it
-    // says nothing: the owed read holds everything it showed.
-    if owed(state, node) {
-        return Some((Said::default(), None, Vec::new()));
-    }
-    match reply {
-        TextReply::TerminalSnapshot(snapshot) => {
-            let taken = take_snapshot(state, node, snapshot);
-            Some((taken.speech.unwrap_or_default(), taken.key, taken.effects))
-        }
-        TextReply::TerminalUnchanged => Some((Said::default(), None, Vec::new())),
-        _ => None,
-    }
-}
-
-/// The read before a held key in terminal `node`
-/// (`books/dev/src/explanation/design/key-holding.md`), a snapshot: aligned as a live read is,
-/// and its caret given as the answer the key line takes. Without a caret, the
-/// read is unanswered.
-pub(crate) fn before_key(
-    state: &mut SrState,
-    trace_id: TraceId,
-    node: NodeId,
-    snapshot: &TerminalSnapshot,
-) -> (Vec<Effect>, TextReply) {
-    let effects = snapshot_event(state, trace_id, node, snapshot);
-    let reply = match &snapshot.caret {
-        Some(caret) => TextReply::Caret(Box::new(CaretReply {
-            caret: caret.clone(),
-            selection_changes: Vec::new(),
-            content_changed: false,
-            new_selection: None,
-            facts: verbatim_model::ReadFacts {
-                unit: Some(caret.line.clone()),
-                change: verbatim_model::Change::NoPrevious,
-                // The snapshot carries when its read began; it ended after.
-                read_ended_at_us: caret.read_at_us.saturating_add(1),
-            },
-        })),
-        None => TextReply::Unanswered,
-    };
-    (effects, reply)
-}
-
-/// Handles the answer to request `ask` of terminal `node`'s model made as
-/// `generation`: taken only when the model holding the node now is that
-/// one, since a model forgotten, evicted or ended takes its requests with
-/// it.
-pub(crate) fn reply(
-    state: &mut SrState,
-    trace_id: TraceId,
-    (node, generation, ask): (NodeId, u64, ModelAsk),
-    reply: TextReply,
-) -> Vec<Effect> {
-    if model_of(state, node).is_none_or(|model| model.generation != generation) {
-        return Vec::new();
-    }
-    let mut effects = Vec::new();
-    match ask {
-        ModelAsk::Whole | ModelAsk::HistoryBlock => {
-            let mut effects = match reply {
-                TextReply::TerminalSnapshot(snapshot) => {
-                    snapshot_event(state, trace_id, node, &snapshot)
-                }
-                _ => Vec::new(),
-            };
-            // Review answers that waited for it.
-            if !model_asks(state, node, |_| true)
-                && model_of(state, node).is_some_and(|model| !model.reviews.is_empty())
-            {
-                effects.extend(answer_reviews(state, node, trace_id));
-            }
-            return effects;
-        }
-        ModelAsk::Fresh => {
-            // A read owed by the rules first: this one, begun before it, is
-            // dropped as a live one is, and the review answers wait for it.
-            if owed(state, node) {
-                return effects;
-            }
-            if let TextReply::TerminalSnapshot(snapshot) = reply {
-                let taken = take_snapshot(state, node, &snapshot);
-                effects.extend(taken.effects);
-                if let Some(speech) = taken.speech
-                    && state.focus_matches(node)
-                {
-                    effects.extend(speak(
-                        state,
-                        trace_id,
-                        (node, snapshot.started_ms),
-                        speech,
-                        taken.key,
-                    ));
-                }
-            }
-            // The read asked for another first: the review answers wait for it.
-            if owed(state, node) {
-                return effects;
-            }
-        }
-        ModelAsk::History(asked) => {
-            let Some(model) = model_mut(state, node) else {
-                return effects;
-            };
-            let (text, rows_above, read) = match reply {
-                TextReply::TerminalHistory { text, above, read } => (text, above, read),
-                // A read that never ran, as when the terminal lost the focus:
-                // no rows above the start of the memory's last read.
-                _ => (String::new(), 0, model.read),
-            };
-            match review::placed_history(model, &asked, &text, (rows_above, read)) {
-                Some(history) => model.history = Some(history),
-                // Counted from a read the memory did not take: the command
-                // ends, saying nothing.
-                None => effects.extend(abandon(state, node, trace_id)),
-            }
-        }
-        ModelAsk::Find { hash } => {
-            let Some(model) = model_mut(state, node) else {
-                return effects;
-            };
-            match reply {
-                TextReply::TerminalFound { matches, read } => {
-                    model.found = Some(review::placed(model, hash, &matches, read));
-                }
-                // A search that never ran, as when the terminal lost the focus:
-                // only a search that ran drops a mark, so the move is abandoned,
-                // saying nothing, and the marks are kept.
-                _ => effects.extend(abandon(state, node, trace_id)),
-            }
-        }
-    }
-    effects.extend(answer_reviews(state, node, trace_id));
-    effects
-}
-
-/// Abandons terminal `node`'s first review command waiting, saying
-/// nothing: a command mark's move whose search never ran, its line move
-/// answered as when no mark is left that way, or a request whose history
-/// rows could not be placed or fell short, answered unanswered.
-fn abandon(state: &mut SrState, node: NodeId, trace_id: TraceId) -> Vec<Effect> {
-    let Some(model) = model_mut(state, node) else {
-        return Vec::new();
-    };
-    model.found = None;
-    model.mark_searches = 0;
-    model.history = None;
-    let (trace, query_id, reply) = match model.reviews.front().cloned() {
-        Some(Waiting {
-            trace,
-            review: Review::Mark { query_id, .. },
-        }) => (trace, query_id, TextReply::NoText),
-        Some(Waiting {
-            trace,
-            review: Review::Text { query_id, .. },
-        }) => (trace, query_id, TextReply::Unanswered),
-        _ => return Vec::new(),
-    };
-    model.reviews.pop_front();
-    let trace = trace.unwrap_or(trace_id);
-    let caused = crate::queries::answer_from_memory(state, trace, query_id, reply);
-    queue_only(state, caused, trace)
-}
-
-/// The trace of an input, for a request it causes that Core answers later.
-pub(crate) fn input_trace(input: &Input) -> Option<TraceId> {
-    match input {
-        Input::Event { trace_id, .. }
-        | Input::Answered { trace_id, .. }
-        | Input::Command { trace_id, .. }
-        | Input::CaretKey { trace_id, .. }
-        | Input::HeldKey { trace_id, .. }
-        | Input::HeldKeyDue { trace_id, .. }
-        | Input::CharacterTyped { trace_id, .. }
-        | Input::ClearingKey { trace_id, .. }
-        | Input::TerminalTimer { trace_id, .. } => Some(*trace_id),
-        _ => None,
-    }
-}
-
-/// The request `effect` makes of a terminal Core models that Core answers
-/// from its memory.
-/// The trace of the key `effect` was made for ([`Effect::ForKey`]), if it
-/// was made for one.
-fn key_trace(effect: &Effect) -> Option<TraceId> {
-    match effect {
-        Effect::ForKey(key, _) => Some(*key),
-        _ => None,
-    }
-}
-
-fn answerable(state: &SrState, effect: &Effect) -> Option<(QueryId, NodeId, TextOp)> {
-    match effect {
-        Effect::Text(TextRequest {
-            query_id,
-            node_id,
-            op,
-        }) => {
-            let model = model_of(state, *node_id)?;
-            review::answers(model, op).then(|| (*query_id, *node_id, op.clone()))
-        }
-        Effect::ForKey(_, effect) => answerable(state, effect),
-        _ => None,
-    }
-}
-
-/// `effects` with each request for a terminal's text that Core answers from
-/// its memory taken out and kept for the answer, after a fresh read that
-/// Core asks for here.
-pub(crate) fn intercept(
-    state: &mut SrState,
-    effects: Vec<Effect>,
-    trace: Option<TraceId>,
-) -> Vec<Effect> {
-    if state.terminals.is_empty() {
-        return effects;
-    }
-    let mut kept = Vec::with_capacity(effects.len());
-    for effect in effects {
-        let Some((query_id, node, op)) = answerable(state, &effect) else {
-            kept.push(effect);
-            continue;
-        };
-        // A key's request keeps the key's trace: its review waits under it,
-        // and the fresh read it asks for is sent for the key.
-        let key = key_trace(&effect);
-        let trace = key.or(trace);
-        state.queries.answer_from_memory_later(query_id, trace);
-        let asked = queue(
-            state,
-            node,
-            Waiting {
-                trace,
-                review: Review::Text { query_id, op },
-            },
-        );
-        kept.extend(asked.into_iter().map(|asked| match key {
-            Some(key) => Effect::ForKey(key, Box::new(asked)),
-            None => asked,
-        }));
-    }
-    kept
-}
-
-/// Keeps `waiting` for terminal `node`'s answer from its memory, asking
-/// for the fresh read it waits for unless a read or history is already
-/// asked for, which it then waits for too.
-fn queue(state: &mut SrState, node: NodeId, waiting: Waiting) -> Vec<Effect> {
-    let Some(model) = model_mut(state, node) else {
-        return Vec::new();
-    };
-    model.reviews.push_back(waiting);
-    if model_asks(state, node, |ask| !ask.owed()) {
-        return Vec::new();
-    }
-    vec![ask_model(
-        state,
-        node,
-        TextOp::TerminalReadNow(TerminalScope::Fresh),
-        ModelAsk::Fresh,
-    )]
-}
-
-/// "Report status bar" (`books/dev/src/explanation/design/terminal-model.md`, "Features and
-/// settings"): in the focused terminal Core reads, its footer, answered
-/// after a fresh read as every review command is, and spelled on the
-/// second press and copied on the third; elsewhere "No status line found",
-/// until milestone M5's general status bar.
-pub(crate) fn report_status_bar(state: &mut SrState, trace_id: TraceId, repeat: u8) -> Vec<Effect> {
-    let Some(node) = focused(state) else {
-        return vec![crate::editing::speak(
-            trace_id,
-            crate::review_text::message(verbatim_model::Message::NoStatusLineFound),
-        )];
-    };
-    queue(
-        state,
-        node,
-        Waiting {
-            trace: Some(trace_id),
-            review: Review::StatusBar { repeat },
-        },
-    )
-}
-
-/// A move to the previous or next command mark in terminal `node`
-/// (`books/dev/src/explanation/design/terminal-model.md`, "Features and settings"), the review
-/// position at `from`: answered as request `query_id`, the line move the
-/// caller waits on, after a fresh read. `None` when Core does not model
-/// the terminal.
-pub(crate) fn command_mark(
-    state: &mut SrState,
-    node: NodeId,
-    press: ReviewPress,
-    (forward, from): (bool, TextPoint),
-    then: TextFollowUp,
-) -> Option<Vec<Effect>> {
-    model_of(state, node)?;
-    let query_id = state.queries.ask_memory(node, Then::Review(then));
-    let mut effects = crate::key_line::press_read(state, node, query_id, press);
-    effects.extend(queue(
-        state,
-        node,
-        Waiting {
-            trace: Some(press.trace_id),
-            review: Review::Mark {
-                query_id,
-                forward,
-                from,
-            },
-        },
-    ));
-    Some(effects)
-}
-
-/// What "Report status bar" says of `footer`, its lines, on press
-/// `repeat`: the lines, one segment each, on the first; spelled on the
-/// second, joined by a space; copied to the clipboard, joined by line
-/// breaks, on the third and later; "no status bar information" when there
-/// are none.
-fn status_bar(trace_id: TraceId, repeat: u8, footer: &[String]) -> Effect {
-    use verbatim_model::UtteranceSegment;
-    if footer.is_empty() {
-        return crate::editing::speak(
-            trace_id,
-            crate::review_text::message(verbatim_model::Message::NoStatusBarInformation),
-        );
-    }
-    match repeat {
-        0 => crate::editing::speak(
-            trace_id,
-            footer
-                .iter()
-                .map(|line| UtteranceSegment::text(line.clone()))
-                .collect(),
-        ),
-        // Spelled as one text, its lines joined by a space as a status
-        // bar's parts are (`docs/parity/terminals.md`, "Reading a
-        // terminal on demand"), so the space is spelled between them.
-        1 => crate::editing::speak(
-            trace_id,
-            crate::review_text::spell_or_blank(&footer.join(" "), false, None),
-        ),
-        _ => Effect::CopyToClipboard(footer.join("\r\n")),
-    }
-}
-
-/// Answers terminal `node`'s waiting requests from its memory, in order,
-/// until one needs rows of the history that have not come, which are then
-/// asked for. A request an answer causes is answered in turn. An answer
-/// whose request came with no trace is spoken under `trace_id`, the trace
-/// of the read or history that came.
-fn answer_reviews(state: &mut SrState, node: NodeId, trace_id: TraceId) -> Vec<Effect> {
-    let mut effects = Vec::new();
-    loop {
-        let held = held_anchors(state, node);
-        let mut mint = state.next_terminal_anchor;
-        let Some(model) = model_mut(state, node) else {
-            break;
-        };
-        let Some(waiting) = model.reviews.front().cloned() else {
-            model.history = None;
-            model.found = None;
-            break;
-        };
-        let trace = waiting.trace.unwrap_or(trace_id);
-        let (query_id, op) = match waiting.review {
-            Review::Text { query_id, op } => (query_id, op),
-            Review::StatusBar { repeat } => {
-                let footer = review::footer(model);
-                model.reviews.pop_front();
-                effects.push(status_bar(trace, repeat, &footer));
-                continue;
-            }
-            Review::Mark {
-                query_id,
-                forward,
-                from,
-            } => {
-                let moved = review::mark(model, (forward, &from), &mut mint, &held);
-                state.next_terminal_anchor = mint;
-                match moved {
-                    Ok(reply) => {
-                        if let Some(model) = model_mut(state, node) {
-                            model.reviews.pop_front();
-                            model.found = None;
-                            model.mark_searches = 0;
-                        }
-                        // No mark that way: the line move says nothing.
-                        let reply = reply.unwrap_or(TextReply::NoText);
-                        let caused =
-                            crate::queries::answer_from_memory(state, trace, query_id, reply);
-                        effects.extend(queue_only(state, caused, trace));
-                        continue;
-                    }
-                    Err(search) => {
-                        effects.push(ask_model(
-                            state,
-                            node,
-                            search.op,
-                            ModelAsk::Find { hash: search.hash },
-                        ));
-                        break;
-                    }
-                }
-            }
-        };
-        let answer = review::answer(model, &op, &mut mint, &held);
-        state.next_terminal_anchor = mint;
-        match answer {
-            Ok(reply) => {
-                if let Some(model) = model_mut(state, node) {
-                    model.reviews.pop_front();
-                }
-                let caused = crate::queries::answer_from_memory(state, trace, query_id, reply);
-                effects.extend(queue_only(state, caused, trace));
-                // Answering a press ran the next press in the line, which
-                // waits for a fresh read of its own.
-                if model_asks(state, node, |ask| !ask.owed()) {
-                    break;
-                }
-            }
-            // The history read for this request does not hold the row it
-            // needs, as when more than a screen of output scrolled while it
-            // was out: the command ends, saying nothing, as a mark's does.
-            Err(_)
-                if model_of(state, node)
-                    .and_then(|model| model.history.as_ref())
-                    .is_some_and(|read| read.review == query_id) =>
-            {
-                effects.extend(abandon(state, node, trace_id));
-            }
-            Err(review::Need { above, whole }) => {
-                // A screen more than the answer needs, for output that
-                // scrolls while the request is out.
-                let height = model_of(state, node).map_or(0, |model| model.height);
-                let above = if whole {
-                    0
-                } else {
-                    above.saturating_add(height)
-                };
-                effects.push(ask_model(
-                    state,
-                    node,
-                    TextOp::TerminalHistory { above, whole },
-                    ModelAsk::History(HistoryAsked {
-                        review: query_id,
-                        above,
-                        whole,
-                    }),
-                ));
-                break;
-            }
-        }
-    }
-    effects
-}
-
-/// `effects` with each request Core answers from a terminal's memory kept
-/// for [`answer_reviews`], which is answering already, with no fresh read.
-fn queue_only(state: &mut SrState, effects: Vec<Effect>, trace: TraceId) -> Vec<Effect> {
-    let mut kept = Vec::with_capacity(effects.len());
-    for effect in effects {
-        match answerable(state, &effect) {
-            Some((query_id, node, op)) => {
-                let trace = key_trace(&effect).unwrap_or(trace);
-                state
-                    .queries
-                    .answer_from_memory_later(query_id, Some(trace));
-                if let Some(model) = model_mut(state, node) {
-                    model.reviews.push_back(Waiting {
-                        trace: Some(trace),
-                        review: Review::Text { query_id, op },
-                    });
-                }
-            }
-            None => kept.push(effect),
-        }
-    }
-    kept
-}
-
-/// The anchors Core holds of terminal `node`'s outpost.
-fn held_anchors(
-    state: &SrState,
-    node: NodeId,
-) -> std::collections::BTreeSet<verbatim_model::TextAnchor> {
-    state
-        .held_anchors()
-        .remove(&node.outpost())
-        .unwrap_or_default()
 }
 
 /// The quiet-period timer came due at `at_ms`: the focused terminal's rules
@@ -1441,32 +828,7 @@ pub(crate) fn timer(state: &mut SrState, trace_id: TraceId, at_ms: u64) -> Vec<E
         "the quiet-period timer fired at {at_ms} is due again at {:?}",
         model.due_ms
     );
-    speak(state, trace_id, (node, at_ms), speech_of(step), None)
-}
-
-/// The focus moved from `from` to `to` at `at_ms`: a terminal Core models
-/// that lost it is told so and its waiting keys dropped; one that gained
-/// it is told so. The timer follows the focus ([`due`]).
-pub(crate) fn focus_moved(
-    state: &mut SrState,
-    (from, to): (Option<NodeId>, Option<NodeId>),
-    at_ms: u64,
-) {
-    if let Some(from) = from
-        && let Some(model) = model_mut(state, from)
-    {
-        let step = model.rules().blur();
-        model.due_ms = step.timer;
-        model.pending.clear();
-        model.last_key = None;
-        model.held = false;
-    }
-    if let Some(to) = to
-        && let Some(model) = model_mut(state, to)
-    {
-        let step = model.rules().focus(at_ms);
-        model.due_ms = step.timer;
-    }
+    crate::terminal::speech(state, trace_id, at_ms, node, speech_of(step))
 }
 
 /// Gives every model's rules the reader settings when they changed:

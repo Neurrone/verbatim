@@ -80,14 +80,12 @@ impl Request for FollowRequest {
     }
 }
 
-/// The event group of a focus node of `role` in a window of `class`: a
-/// terminal's, with whether its window is a console host's; the extended
-/// group for a node that may have text; the base group otherwise.
-fn group(role: Role, class: Option<&str>) -> FollowGroup {
+/// The event group of a focus node of `role`: a terminal's, with whether
+/// it is a console host's; the extended group for a node that may have
+/// text; the base group otherwise.
+fn group(role: Role, console: bool) -> FollowGroup {
     match role {
-        Role::Terminal => FollowGroup::Terminal {
-            console: class == Some(CONSOLE_WINDOW_CLASS),
-        },
+        Role::Terminal => FollowGroup::Terminal { console },
         Role::EditableText | Role::Document => FollowGroup::Extended,
         _ => FollowGroup::Base,
     }
@@ -100,16 +98,16 @@ impl Follows {
     }
 
     /// A focus is committed (columns A and B). `committed` is what Core
-    /// keeps of it when it is a reader's focus, with its node `node`, its
-    /// innermost ancestor `parent` and its window's class; `None` for a
-    /// focus Core committed itself. A UI Automation node is named to its
-    /// outpost; every other outpost whose node was followed is named
-    /// nothing, as is that outpost when the focus has no UI Automation
-    /// element.
+    /// keeps of it when it is a reader's focus, with its node `node` and
+    /// its innermost ancestor `parent`, and whether it is a console host's
+    /// terminal; `None` for a focus Core committed itself. A UI Automation
+    /// node is named to its outpost; every other outpost whose node was
+    /// followed is named nothing, as is that outpost when the focus has no
+    /// UI Automation element.
     pub(crate) fn committed(
         &mut self,
         committed: Option<(&Kept, &NodeSnapshot, Option<&NodeSnapshot>)>,
-        class: Option<&str>,
+        console: bool,
     ) -> Vec<FollowRequest> {
         let named = committed.and_then(|(kept, node, parent)| {
             matches!(kept.read_by, ReadBy::Uia { .. }).then(|| {
@@ -122,7 +120,7 @@ impl Follows {
                         generation: kept.outpost,
                         followed: Followed {
                             node: kept.node,
-                            group: group(node.role, class),
+                            group: group(node.role, console),
                             extra,
                         },
                         window: kept.window,

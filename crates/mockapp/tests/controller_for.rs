@@ -358,7 +358,8 @@ fn a_stale_selection_after_a_replacement_reports_nothing_and_an_ordinary_one_the
             verbatim_model::tell::EventObject::Uia { runtime_id, .. } =>
                 Some(runtime_id.0.as_slice()),
             verbatim_model::tell::EventObject::Msaa { .. }
-            | verbatim_model::tell::EventObject::Followed { .. } => None,
+            | verbatim_model::tell::EventObject::Followed { .. }
+            | verbatim_model::tell::EventObject::Terminal { .. } => None,
         },
         "the new item has a runtime id of its own"
     );
