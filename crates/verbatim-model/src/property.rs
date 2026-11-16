@@ -95,6 +95,12 @@ pub enum PropertyId {
     /// (`docs/parity/windows-and-processes.md`, "The Alt+Tab switcher's
     /// pane").
     ParentAutomationId,
+    /// How many children an expanded tree view item holds, which Core says
+    /// as the focus newly expands, as NVDA's `SysTreeView32` item counts
+    /// its children with the control's messages
+    /// (`docs/nvda/speech.md`, "How many items an expanded tree view item
+    /// holds").
+    ChildCount,
 }
 
 impl PropertyId {
@@ -129,6 +135,7 @@ impl PropertyId {
             Self::WindowClass => &WINDOW_CLASS,
             Self::ComboBoxList => &COMBO_BOX_LIST,
             Self::ParentAutomationId => &PARENT_AUTOMATION_ID,
+            Self::ChildCount => &CHILD_COUNT,
         }
     }
 
@@ -283,6 +290,10 @@ pub enum MsaaRead {
     /// The text of an edit control's window, by its messages: the
     /// selection's text when it is not empty, else the line at the caret.
     TextSummary,
+    /// A `SysTreeView32` item's children, counted by the control's
+    /// messages from its first child (`TVGN_CHILD`) through each next
+    /// sibling (`TVGN_NEXT`); absent for any other object.
+    TreeViewChildCount,
 }
 
 /// How `IAccessible2` reads a property. Empty until `IAccessible2` is read
@@ -729,6 +740,16 @@ const PARENT_AUTOMATION_ID: PropertyEntry = PropertyEntry {
     cost: Cost::Alone,
 };
 
+const CHILD_COUNT: PropertyEntry = PropertyEntry {
+    id: PropertyId::ChildCount,
+    name: "child count",
+    kind: ValueKind::Count,
+    uia: None,
+    msaa: Some(MsaaRead::TreeViewChildCount),
+    ia2: None,
+    cost: Cost::Alone,
+};
+
 /// The whole table, in [`PropertyId`] order.
 pub const PROPERTIES: &[PropertyEntry] = &[
     NAME,
@@ -758,6 +779,7 @@ pub const PROPERTIES: &[PropertyEntry] = &[
     WINDOW_CLASS,
     COMBO_BOX_LIST,
     PARENT_AUTOMATION_ID,
+    CHILD_COUNT,
 ];
 
 /// A UI Automation runtime id.
@@ -1223,7 +1245,7 @@ mod tests {
                 1
             );
         }
-        assert_eq!(PROPERTIES.len(), 27);
+        assert_eq!(PROPERTIES.len(), 28);
     }
 
     #[test]

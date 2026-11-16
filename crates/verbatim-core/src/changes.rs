@@ -193,16 +193,17 @@ impl Request for ChangeRead {
     }
 }
 
-/// A node's children, read to count them.
+/// How many children a node holds, read as one property
+/// ([`PropertyId::ChildCount`]), with no read of a child.
 #[derive(Debug)]
-struct ChildrenRead {
+struct ChildCountRead {
     process: verbatim_model::Pid,
     window: RequestWindow,
     node: NodeId,
 }
 
-impl Request for ChildrenRead {
-    type Reply = Vec<NodeRead>;
+impl Request for ChildCountRead {
+    type Reply = Option<u32>;
 
     fn reader(&self) -> Reader {
         Reader::Outpost(self.process)
@@ -213,15 +214,23 @@ impl Request for ChildrenRead {
     }
 
     fn wire(&self) -> Wire {
-        Wire::Children {
+        Wire::Properties {
             node: self.node,
-            set: Vec::new(),
+            set: vec![PropertyId::ChildCount],
         }
     }
 
     fn decode(reply: Reply) -> Option<Self::Reply> {
         match reply {
-            Reply::Children(children) => Some(children),
+            Reply::Properties(values) => Some(
+                match values
+                    .answer(PropertyId::ChildCount)
+                    .and_then(|answer| answer.value.as_ref())
+                {
+                    Some(PropertyValue::Count(count)) => Some(*count),
+                    _ => None,
+                },
+            ),
             _ => None,
         }
     }
@@ -353,13 +362,13 @@ pub(crate) async fn msaa(mut cx: Cx<Entries>, change: MsaaChange) {
                 PropertyChange::States(states)
                     if newly_expanded_tree_item(&cx.facts(), node, *states) =>
                 {
-                    let request = ChildrenRead {
+                    let request = ChildCountRead {
                         process,
                         window: change.window,
                         node,
                     };
                     match cx.ask(request, due_us).await {
-                        Outcome::Result(children) => u32::try_from(children.len()).ok(),
+                        Outcome::Result(count) => count,
                         _ => None,
                     }
                 }

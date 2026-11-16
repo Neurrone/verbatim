@@ -284,7 +284,8 @@ pub(super) fn values(
                     | PropertyId::HasValuePattern
                     | PropertyId::WindowClass
                     | PropertyId::ComboBoxList
-                    | PropertyId::ParentAutomationId => None,
+                    | PropertyId::ParentAutomationId
+                    | PropertyId::ChildCount => None,
                 },
             })
             .collect(),
@@ -300,6 +301,7 @@ fn is_read_apart(id: PropertyId) -> bool {
             | PropertyId::HasValuePattern
             | PropertyId::WindowClass
             | PropertyId::ComboBoxList
+            | PropertyId::ChildCount
     )
 }
 
@@ -342,7 +344,9 @@ fn properties(
 /// open, a refresh reading its controller-for relation live; whether it
 /// has the `Value` pattern; its nearest window's class, from Windows; and,
 /// for a classic .NET Framework Windows Forms combo box, its list's window
-/// by `GetComboBoxInfo`.
+/// by `GetComboBoxInfo`; and how many children a `SysTreeView32` item
+/// holds, by the control's messages, as NVDA's tree view item counts them
+/// (`NVDAObjects/IAccessible/sysTreeView32.py`), with no read of a child.
 fn read_apart(
     context: &RequestContext<'_>,
     client: &mut Client,
@@ -389,6 +393,13 @@ fn read_apart(
                         verbatim_win32::window::combo_box_list(read.hwnd)
                             .map(|list| PropertyValue::Window(window_handle(list)))
                     }),
+                    PropertyId::ChildCount => context
+                        .store
+                        .key_of(node_id)
+                        .and_then(|(hwnd, _, child)| {
+                            verbatim_ia2::acquire::tree_view_child_count(hwnd, child)
+                        })
+                        .map(PropertyValue::Count),
                     _ => None,
                 },
             })

@@ -494,7 +494,8 @@ impl Read {
                         | PropertyId::HasValuePattern
                         | PropertyId::WindowClass
                         | PropertyId::ComboBoxList
-                        | PropertyId::ParentAutomationId => None,
+                        | PropertyId::ParentAutomationId
+                        | PropertyId::ChildCount => None,
                     },
                 })
                 .collect(),
