@@ -20,6 +20,7 @@ mod live;
 mod requests;
 mod saver;
 mod screen_reader_flag;
+mod session_lock;
 mod single_instance;
 mod speech_events;
 mod speech_settings;
@@ -345,6 +346,9 @@ fn run(
             input: fact,
         })));
     }
+    // The session's lock state: queried now, then followed by Windows'
+    // session notifications (Table 8).
+    session_lock::start(command_tx.clone())?;
 
     // Core's view of the window in front, for the keyboard hook: whether
     // it may hold keys there, whether the focus has text whose caret keys

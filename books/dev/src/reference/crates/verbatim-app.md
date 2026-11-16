@@ -396,7 +396,12 @@ knowing for review:
   the window's class; the hook's presses, deferred transitions and Alt
   changes; and, posted before Verbatim starts, the harness's retirement
   and ignored processes and Verbatim's own process, whose outpost Core
-  starts at once. A press's caret key is bound to the committed focus
+  starts at once; and the session's lock state (`QueueInput::Lock`), from
+  the `session_lock` module's thread, which registers a message-only
+  window for the session's notifications, then queries the state
+  (`WTSQuerySessionInformationW`, `WTSSessionInfoEx`; unknown when the
+  query fails or its flags are mixed) and posts it before any lock or
+  unlock notification, so none between the two is lost. A press's caret key is bound to the committed focus
   (`SrState::caret_binding`) as the thread takes it, in the order of the
   inputs before it. Core's effects are carried out: a request
   (`QueueEffect::Send`) goes to the listener (`send_to_listener`) or to
