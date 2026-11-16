@@ -109,7 +109,9 @@ A UIA bar's range value change arrives in the desktop-wide group with its
 range cached; `bar_percent` drops anything but a progress bar, with no
 call, as it does UIA's proxy for a classic window, and the reading thread
 of the bar's application reads its place and its nearest window, once per
-change and memoised by runtime id, and sends a`BarChange`. A classic
+change and memoised by runtime id, and sends a `BarChange`; a bar that
+reports no rectangle is placed at (0, 0), as NVDA places one whose location
+it cannot read, and only an off-screen bar is dropped. A classic
 window's `EVENT_OBJECT_VALUECHANGE` reaches the global hook. A window of
 a class NVDA names as a bar, visible, is read by its window messages. Any
 other is judged on the event thread by `value_change.rs`, the one record of
@@ -207,6 +209,6 @@ section 6.3).
   it; abandoned threads do not count.
 - `listener::capture` and `listener::capture_selection` are what the
   notification and element-selected callbacks capture of their event's
-  element, and `listener::bar_percent` and `listener::read_classic_bar`
-  what the progress path reads, public so mockapp's tests make them as the
+  element, and `listener::bar_percent`, `listener::uia_bar_place` and
+  `listener::read_classic_bar` what the progress path reads, public so mockapp's tests make them as the
   listener does.

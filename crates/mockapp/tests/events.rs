@@ -971,6 +971,49 @@ fn the_listeners_callback_keeps_a_progress_bar_and_drops_a_slider() {
     app.quit();
 }
 
+/// A UIA progress bar that reports no rectangle, as mockapp's bar with no
+/// fixture location does, is placed by the listener's reading thread at
+/// (0, 0) in its nearest window, as NVDA places a bar whose location it
+/// cannot read, rather than dropped.
+fn a_uia_bar_with_no_rectangle_is_placed_at_the_origin_of_its_window() {
+    common::init_com();
+    let title = common::unique_title("mockapp-listener-bar-place");
+    let mut app = common::spawn("progress.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let (sender, bars) = mpsc::channel();
+    let _registration = Registration::with_parts(
+        vec![Part::shaped::<verbatim_uia::ListenerProgress>(
+            Subscription::Properties {
+                properties: vec![windows::Win32::UI::Accessibility::UIA_RangeValueValuePropertyId],
+                callback: Arc::new(move |element: &Cached<verbatim_uia::ListenerProgress>, _| {
+                    if verbatim_listener::listener::bar_percent(&element.read()).is_some() {
+                        let _ = sender.send(element.agile().expect("an agile reference"));
+                    }
+                }),
+            },
+        )],
+        common::window_subtree(hwnd.0 as isize),
+    )
+    .expect("Registration::with_parts");
+    app.send("set-range bar 40");
+    let bar = bars
+        .recv_timeout(common::WAIT_TIMEOUT)
+        .expect("the bar's change")
+        .resolve()
+        .expect("the bar's element");
+    let uia = Uia::new().expect("a UIA client");
+    assert_eq!(
+        verbatim_listener::listener::uia_bar_place(
+            &uia,
+            &mut std::collections::VecDeque::new(),
+            &bar,
+            0
+        ),
+        Some(((0, 0), hwnd.0 as isize))
+    );
+    app.quit();
+}
+
 /// What `read_classic_bar` reports and learns for `object`, read
 /// synchronously here as the listener's reading thread reads it.
 fn classic_read(
@@ -1126,6 +1169,10 @@ fn main() {
         (
             "the_listeners_callback_keeps_a_progress_bar_and_drops_a_slider",
             the_listeners_callback_keeps_a_progress_bar_and_drops_a_slider,
+        ),
+        (
+            "a_uia_bar_with_no_rectangle_is_placed_at_the_origin_of_its_window",
+            a_uia_bar_with_no_rectangle_is_placed_at_the_origin_of_its_window,
         ),
         (
             "a_native_uia_windows_value_change_is_remembered_as_no_bar",

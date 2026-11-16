@@ -97,6 +97,7 @@ pub(crate) mod asked;
 mod checking;
 mod tells;
 
+pub use asked::uia_bar_place;
 use asked::{UiaJob, UiaReading};
 use checking::{CheckEvent, Checks, Kept};
 

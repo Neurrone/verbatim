@@ -327,9 +327,13 @@ fn handle(window: isize) -> WindowHandle {
 
 /// Where the UIA progress bar `sender` is, by one read of its [`Place`],
 /// and its nearest window: its own, `hwnd`, when it has one, or else by
-/// UIA's lookup, remembered by runtime id in `bar_windows`. `None` when it
-/// cannot be read, is off screen, or has no window above it.
-pub(crate) fn uia_bar_place(
+/// UIA's lookup, remembered by runtime id in `bar_windows`. A bar that
+/// reports no rectangle is placed at (0, 0), as NVDA places a bar whose
+/// location it cannot read (`nvda/source/NVDAObjects/behaviors.py` 62 to
+/// 67) and as the classic path does. `None` when it cannot be read, is off
+/// screen, or has no window above it. Public so that mockapp's tests place
+/// mockapp's own bars as the listener's reading thread does.
+pub fn uia_bar_place(
     uia: &Uia,
     bar_windows: &mut VecDeque<(Vec<i32>, isize)>,
     sender: &Cached<ListenerProgress>,
@@ -340,11 +344,12 @@ pub(crate) fn uia_bar_place(
     if place.offscreen {
         return None;
     }
-    let rect = place.rect?;
-    let centre = (
-        rect.left.saturating_add(rect.width / 2),
-        rect.top.saturating_add(rect.height / 2),
-    );
+    let centre = place.rect.map_or((0, 0), |rect| {
+        (
+            rect.left.saturating_add(rect.width / 2),
+            rect.top.saturating_add(rect.height / 2),
+        )
+    });
     if hwnd != 0 {
         return Some((centre, hwnd));
     }
