@@ -54,6 +54,12 @@ const MAX_NODES: usize = 1000;
 /// The answer to `ask`, read on the worker.
 pub(super) fn answer(context: &RequestContext<'_>, client: &mut Client, ask: &Ask) -> Answer {
     let mut probes = Vec::new();
+    // A request that carries "probe first" and whose handling consults no
+    // verdict of its own still answers its window's probe, so that Core
+    // records the verdict rather than count the probe timed out.
+    if !consults_verdict(&ask.request) {
+        let _ = verdict(context, hwnd_of(ask.window), ask.verdict, &mut probes);
+    }
     let outcome = match &ask.request {
         Request::ReadObject(read) => read_object(context, client, ask, read, &mut probes),
         Request::Properties { node, set } => match properties(context, client, *node, set) {
@@ -124,6 +130,21 @@ pub(super) fn answer(context: &RequestContext<'_>, client: &mut Client, ask: &As
         probes,
         detail: String::new(),
     }
+}
+
+/// Whether `request`'s handling consults its window's verdict itself,
+/// probing when it carries "probe first": a completion, an MSAA run by
+/// each candidate's, and a read of an MSAA object.
+fn consults_verdict(request: &Request) -> bool {
+    matches!(
+        request,
+        Request::CompleteUia(_)
+            | Request::MsaaRun(_)
+            | Request::ReadObject(ReadObject {
+                object: ObjectRef::Msaa { .. },
+                ..
+            })
+    )
 }
 
 /// The outcome of a read that failed: not there for a node gone, else

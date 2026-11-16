@@ -47,10 +47,13 @@ pub(super) fn complete(
     let focus = complete.completes == CompletionFor::Focus;
     let path = FocusPath::of_route(route).above(known_route(context, &route.end));
     let runtime_id = first.runtime_id.0.clone();
-    let (found, window_element) = find(context, client, &path, &runtime_id, focus);
-    let reused = found
-        .as_ref()
-        .is_some_and(|found| replaced_stale(context, client, &runtime_id, found));
+    let text_focus = focus && may_have_text(first_read);
+    let (found, window_element) = find(context, client, &path, &runtime_id, text_focus);
+    // A focus whose own element is not found still has the element kept
+    // under its runtime id judged, so that a stale one's text is never
+    // read as the focus's.
+    let reused = (focus || found.is_some())
+        && replaced_stale(context, client, &runtime_id, found.as_ref());
     let node = match &found {
         Some(element) => context
             .nodes()
@@ -154,36 +157,56 @@ pub(super) fn complete(
     ))))
 }
 
+/// Whether the element the listener read as `read` may have text, by its
+/// role: a text focus whose walk the listener cut is looked for as the
+/// application's focused element when no route leads to it ([`find`]).
+fn may_have_text(read: &PropertyValues) -> bool {
+    matches!(
+        snapshot_of(NodeId::new(0), Backend::Uia, read).role,
+        Role::EditableText | Role::Document | Role::Terminal
+    )
+}
+
 /// The outpost's own copy of the element `runtime_id` names, by the route:
 /// from the nearest element at or above it with a window of its own; for a
-/// focus whose route reaches no window, the application's focused element
-/// when its runtime id is the focus's.
+/// text focus whose route the listener's walk cut, the application's
+/// focused element when its runtime id is the focus's.
 fn find(
     context: &RequestContext<'_>,
     client: &mut Client,
     path: &FocusPath,
     runtime_id: &[i32],
-    focus: bool,
+    text_focus: bool,
 ) -> (Option<Cached<Node>>, Option<Cached<Node>>) {
+    let mut window_element = None;
     if let Some(route) = path.route_to(runtime_id) {
         let Ok((uia, nodes)) = client.uia_with(context, Context::node_request) else {
             return (None, None);
         };
         let remote = context.tries_remote(Some(route.window.get()));
-        let (found, import_failed, window_element) =
+        let (found, import_failed, read_window) =
             focus_path::find_from_window(uia, &route, &nodes, remote);
         if import_failed {
             context.read_classically(route.window.get());
         }
-        return (found.ok().flatten(), window_element);
+        if let Ok(Some(found)) = found {
+            return (Some(found), read_window);
+        }
+        window_element = read_window;
     }
-    if !focus {
-        return (None, None);
+    // Only a text focus whose walk the listener cut, so that no element of
+    // its chain has a window of its own, and that the route did not find,
+    // is read as the application's focused element: a walk down from the
+    // nearest window finds it only as that window's child
+    // (`books/dev/src/reference/adr/0001-focus.md`, "The outpost's own
+    // element").
+    if !text_focus || !path.is_cut_at(runtime_id) {
+        return (None, window_element);
     }
     let element = read::focused_element_in(context, client, read::FocusRead::CutWalk).ok();
     (
         element.filter(|element| element.runtime_id() == runtime_id),
-        None,
+        window_element,
     )
 }
 
@@ -258,15 +281,16 @@ fn keep_window_element(
 }
 
 /// Whether the element kept under `runtime_id` is no longer the one the id
-/// names: gone, or without the keyboard focus that the element found has.
-/// Its element is then evicted and its text forgotten, so the node keeps
-/// its id and the found element replaces it (`docs/parity/focus-events.md`,
-/// "Duplicate focus suppression").
+/// names: gone, or without the keyboard focus that the element found has,
+/// or that the focus has when its own element was not found (`found` is
+/// `None`). Its element is then evicted and its text forgotten, so the
+/// node keeps its id and the found element, if any, replaces it
+/// (`docs/parity/focus-events.md`, "Duplicate focus suppression").
 fn replaced_stale(
     context: &RequestContext<'_>,
     client: &mut Client,
     runtime_id: &[i32],
-    found: &Cached<Node>,
+    found: Option<&Cached<Node>>,
 ) -> bool {
     let Some(node) = context.nodes().existing(runtime_id) else {
         return false;
@@ -274,12 +298,13 @@ fn replaced_stale(
     let Some(kept) = context.store.element_of(node) else {
         return false;
     };
-    let Ok(found) = found.agile() else {
-        return false;
-    };
-    let found = found.reference();
-    if kept.reference() == found {
-        return false;
+    if let Some(found) = found {
+        let Ok(found) = found.agile() else {
+            return false;
+        };
+        if kept.reference() == found.reference() {
+            return false;
+        }
     }
     let stale = match kept.resolve() {
         Err(_) => true,

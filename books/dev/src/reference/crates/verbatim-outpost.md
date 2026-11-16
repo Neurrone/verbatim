@@ -1158,7 +1158,10 @@ Each `CoreToOutpost::Request` is one program on the worker
 node read with its nearest window's facts (`NodeWindow`, read from
 Windows with no call into the application) and its properties by the
 request's set, from the snapshot the outpost's reads make. A window with
-no verdict in force is probed first and the probe carried in the answer.
+no verdict in force is probed first and the probe carried in the answer,
+by every request: a completion, an MSAA run and a read of an MSAA object
+consult the verdict themselves, and every other request probes its
+window before it is handled.
 
 - The shared list: `Properties` (the node's live read, made only when
   the set names a property a snapshot holds; the four no snapshot holds
@@ -1194,8 +1197,11 @@ no verdict in force is probed first and the probe carried in the answer.
   when its window is; else the outpost's own copy of the element is found
   by the route, which goes on, when the listener's walk met an ancestor
   Core already knows, from that ancestor: a window's own element, or the
-  route kept for its node (`FocusPath::above`); a focus with no window on
-  its route as the application's focused element; an element kept under its runtime id that is gone or
+  route kept for its node (`FocusPath::above`); a text focus whose walk
+  the listener cut, which no route finds, as the application's focused
+  element when its runtime id is the focus's; an element kept under the
+  focus's runtime id is judged stale when it is gone or lacks the keyboard
+  focus, whether or not the focus's own was found; an element kept under its runtime id that is gone or
   lost the keyboard focus is evicted with its text, and the answer says
   the id was reused; a focus's event registration is moved to the
   element on the registering thread and waited for, keeping the node
