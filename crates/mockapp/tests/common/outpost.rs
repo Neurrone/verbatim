@@ -504,6 +504,10 @@ pub struct OutpostUnderTest {
     /// How the stand-in for the listener's reading thread judges whether a
     /// window can be read ([`Self::judge_hung`]).
     listener_readability: RefCell<verbatim_win32::window::WindowReadabilityReader>,
+    /// Told each call the stand-in for the listener's reading thread is
+    /// about to make reading an element Core names
+    /// ([`Self::listener_observes_calls`]).
+    read_observer: RefCell<Option<verbatim_listener::focus_read::CallObserver>>,
     /// The outpost's failed cached reads when last taken
     /// ([`Self::take_failed_reads`]).
     failed_reads_taken: Cell<u32>,
@@ -664,6 +668,10 @@ impl OutpostUnderTest {
     }
 
     /// An outpost for `app`, watching it from the start, or a spare.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the harness's every field, set once as the outpost is made"
+    )]
     fn build(
         app: &super::MockApp,
         options: OutpostOptions,
@@ -765,6 +773,7 @@ impl OutpostUnderTest {
             focus_window,
             reader: RefCell::new(reader),
             listener_readability: RefCell::new(Arc::new(verbatim_win32::window::readability)),
+            read_observer: RefCell::new(None),
             listener_queued: Cell::new(0),
             listener_left_at: Cell::new(0),
             failed_reads_taken: Cell::new(0),
@@ -799,9 +808,11 @@ impl OutpostUnderTest {
     }
 
     /// Tells `observer` the name of each call the listener's reader's
-    /// classic walk is about to make, before it makes it, so a test can
-    /// change mockapp's windows between two of them.
+    /// classic walk, and its read of an element Core names
+    /// ([`Self::listener_object`]), are about to make, before each is
+    /// made, so a test can change mockapp's windows between two of them.
     pub fn listener_observes_calls(&self, observer: verbatim_listener::focus_read::CallObserver) {
+        *self.read_observer.borrow_mut() = Some(Arc::clone(&observer));
         self.reader.borrow_mut().observe_calls(observer);
     }
 
@@ -1126,12 +1137,21 @@ impl OutpostUnderTest {
         let uia = verbatim_uia::Uia::new().expect("a UIA client for the listener's reads");
         let _ = verbatim_uia::calls::take();
         let readability = self.listener_readability();
-        let outcome = verbatim_listener::focus_read::read_object(
-            (&uia, &readability),
-            element,
-            (Pid(self.app_pid), nearest),
-            read,
-        );
+        let outcome = match self.read_observer.borrow().clone() {
+            Some(observer) => verbatim_listener::focus_read::read_object_observed(
+                (&uia, &readability),
+                element,
+                (Pid(self.app_pid), nearest),
+                read,
+                observer,
+            ),
+            None => verbatim_listener::focus_read::read_object(
+                (&uia, &readability),
+                element,
+                (Pid(self.app_pid), nearest),
+                read,
+            ),
+        };
         (outcome, verbatim_uia::calls::take())
     }
 

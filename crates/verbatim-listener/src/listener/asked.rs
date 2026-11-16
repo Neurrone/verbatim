@@ -180,6 +180,7 @@ impl UiaReading {
                 &sender,
                 (pid, hwnd_of(window)),
                 read,
+                &CallLog::default(),
             ),
             (None, _) => Outcome::Ended,
             (_, Err(_)) => Outcome::NotThere,
@@ -565,12 +566,13 @@ fn known_runtime_ids(walk: &[KnownAncestor]) -> (Vec<Vec<i32>>, Vec<u32>) {
 /// read fails is answered with what it read, the event's cache giving the
 /// rest, and the chain going on from the parent window of the outermost
 /// element's nearest window, as NVDA's failed parent read goes on by
-/// `Window._get_parent`.
+/// `Window._get_parent`. `calls` logs each call the read makes.
 pub(crate) fn read_element(
     (uia, readability): (&Uia, &WindowReadabilityReader),
     sender: &Cached<ListenerEvent>,
     (pid, nearest): (Pid, isize),
     read: &ReadObject,
+    calls: &CallLog,
 ) -> Outcome {
     if read.relation.is_some() || read.descendants {
         return Outcome::Refused(Refusal::Unsupported);
@@ -579,14 +581,13 @@ pub(crate) fn read_element(
     let hwnd = fields.role.hwnd;
     let nearest = if hwnd == 0 { nearest } else { hwnd };
     let focus = matches!(read.purpose, Purpose::Focus { .. });
-    let calls = CallLog::default();
     let (known, places) = known_runtime_ids(read.walk.as_deref().unwrap_or_default());
     let (ended, mut walked) = walk(
         (uia, readability),
         sender,
         nearest,
         (read.walk.is_some(), &known),
-        &calls,
+        calls,
     );
     let mut element = element_read(&fields, sender, &mut walked, focus);
     if read.set.contains(&PropertyId::States)

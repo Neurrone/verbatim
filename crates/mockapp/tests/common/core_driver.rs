@@ -87,6 +87,9 @@ pub struct Step {
     /// The calls of the requests answered, the listener's and the
     /// outpost's.
     pub calls: CallCounts,
+    /// The calls the stand-in for the listener's check thread made
+    /// judging the UI Automation events told, before Core asked anything.
+    pub checked: CallCounts,
 }
 
 impl Step {
@@ -135,6 +138,7 @@ pub struct CoreDriver {
     /// What Core said and the calls its requests made since the last take.
     said: Vec<Said>,
     calls: CallCounts,
+    checked: CallCounts,
     /// What Core said at its start.
     pub startup: Vec<Utterance>,
     /// Every input Core took and effect it gave, printed when a test
@@ -270,6 +274,7 @@ impl CoreDriver {
             clock: Clock::new(time, start_us),
             said: Vec::new(),
             calls: CallCounts::default(),
+            checked: CallCounts::default(),
             startup: Vec::new(),
             log: Vec::new(),
             check_observer: None,
@@ -313,6 +318,7 @@ impl CoreDriver {
         Step {
             said: std::mem::take(&mut self.said),
             calls: std::mem::take(&mut self.calls),
+            checked: std::mem::take(&mut self.checked),
         }
     }
 
@@ -362,6 +368,7 @@ impl CoreDriver {
         );
         step.said.extend(told.said);
         step.calls += told.calls;
+        step.checked += told.checked;
         step
     }
 
@@ -391,6 +398,7 @@ impl CoreDriver {
             let told = self.win_event(&event);
             step.said.extend(told.said);
             step.calls += told.calls;
+            step.checked += told.checked;
         }
         step
     }
@@ -410,6 +418,7 @@ impl CoreDriver {
             let bar = self.bar_change(event);
             step.said.extend(bar.said);
             step.calls += bar.calls;
+            step.checked += bar.checked;
         }
         step
     }
@@ -577,6 +586,7 @@ impl CoreDriver {
             let bar = self.bar_change(event);
             step.said.extend(bar.said);
             step.calls += bar.calls;
+            step.checked += bar.checked;
         }
         step
     }
@@ -1024,6 +1034,7 @@ impl CoreDriver {
         let clock = self.clock;
         let now = move || clock.now();
         let mut observer = self.check_observer.take();
+        let _ = verbatim_uia::calls::take();
         while let Some(call) = check.next(record, now()) {
             if let Some(observer) = observer.as_mut() {
                 observer(CheckMoment::Calling(call));
@@ -1083,6 +1094,7 @@ impl CoreDriver {
                 Call::KeyboardFocus => check.keyboard_focus(keyboard_focus(element)),
             }
         }
+        self.checked += verbatim_uia::calls::take();
         if let Some(observer) = observer.as_mut() {
             observer(CheckMoment::Checked);
         }

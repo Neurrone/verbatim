@@ -73,11 +73,14 @@ pub(crate) const MAX_ANCESTORS: u32 = 64;
 /// the slowest calls of a read can be seen (Dickson, 2026-10-20). Each
 /// call costs one clock reading, at its start, which is also the end of
 /// the call before it; the last ends when the log is dropped, at the
-/// read's end. It ends nothing.
+/// read's end. It ends nothing. A test may observe each call as it begins
+/// ([`read_object_observed`]).
 #[derive(Default)]
 pub(crate) struct CallLog {
     /// The call under way, by name, and when it began.
     call: Cell<Option<(&'static str, Instant)>>,
+    /// Told each call's name as it begins, in a test.
+    observer: Option<CallObserver>,
 }
 
 /// How long one call of a focus read may take before it is logged at info.
@@ -90,6 +93,17 @@ impl CallLog {
         let now = Instant::now();
         self.call_ended(now);
         self.call.set(Some((name, now)));
+        if let Some(observer) = &self.observer {
+            observer(name);
+        }
+    }
+
+    /// A log that tells `observer` each call's name as it begins.
+    pub(crate) fn observed(observer: Option<CallObserver>) -> Self {
+        Self {
+            call: Cell::new(None),
+            observer,
+        }
     }
 
     /// The call under way, if any, ended at `now`: logged if it was slow.
@@ -1104,7 +1118,33 @@ pub fn read_object(
     (pid, nearest): (verbatim_model::Pid, isize),
     read: &verbatim_model::request::ReadObject,
 ) -> verbatim_model::request::Outcome {
-    crate::listener::asked::read_element((uia, readability), element, (pid, nearest), read)
+    crate::listener::asked::read_element(
+        (uia, readability),
+        element,
+        (pid, nearest),
+        read,
+        &CallLog::default(),
+    )
+}
+
+/// [`read_object`], telling `observer` the name of each call the read is
+/// about to make, before it makes it, so a test can change the
+/// application's windows between two of them.
+#[must_use]
+pub fn read_object_observed(
+    (uia, readability): (&Uia, &WindowReadabilityReader),
+    element: &Cached<ListenerEvent>,
+    (pid, nearest): (verbatim_model::Pid, isize),
+    read: &verbatim_model::request::ReadObject,
+    observer: CallObserver,
+) -> verbatim_model::request::Outcome {
+    crate::listener::asked::read_element(
+        (uia, readability),
+        element,
+        (pid, nearest),
+        read,
+        &CallLog::observed(Some(observer)),
+    )
 }
 
 #[cfg(test)]
