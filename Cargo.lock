@@ -1060,6 +1060,7 @@ dependencies = [
  "verbatim-model",
  "verbatim-outpost",
  "verbatim-process",
+ "verbatim-reader-rules",
  "verbatim-uia",
  "verbatim-uia-rops",
  "verbatim-win32",

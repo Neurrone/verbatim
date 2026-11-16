@@ -998,15 +998,38 @@ impl OutpostUnderTest {
             OutpostToCore::Answer(answer) if answer.number == number => answer,
             other => panic!("the answer to {number}, not {other:?}"),
         };
-        let calls = loop {
+        (answer, self.calls_of(number))
+    }
+
+    /// The calls request `number` made into the application, which the
+    /// outpost tells before it answers.
+    pub fn calls_of(&self, number: RequestNumber) -> CallCounts {
+        loop {
             match self.request_calls.recv_timeout(super::WAIT_TIMEOUT) {
                 Ok((told, calls)) if told == number => break calls,
                 // An earlier request's, whose answer the test did not take.
                 Ok(_) => {}
                 Err(error) => panic!("the outpost told no calls of {number}: {error}"),
             }
-        };
-        (answer, calls)
+        }
+    }
+
+    /// Hands the outpost `ask`, a request Core numbered itself, through
+    /// the request driver, as Core's shell sends it, and returns at once.
+    pub fn forward(&self, mut ask: verbatim_model::request::Ask) {
+        ask.unstamp();
+        verbatim_outpost::driver::Driver::new(&self.outpost).send(ask);
+    }
+
+    /// mockapp's window.
+    pub fn app_window(&self) -> HWND {
+        self.app_window
+    }
+
+    /// The window the outpost and the listener's reader read as the
+    /// foreground.
+    pub fn foreground(&self) -> isize {
+        self.foreground.load(Ordering::Relaxed)
     }
 
     /// Sends `request` about `window` and returns its answer, the next

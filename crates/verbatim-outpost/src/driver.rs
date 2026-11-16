@@ -68,6 +68,14 @@ impl<'a> Driver<'a> {
         number
     }
 
+    /// Sends `ask`, a request Core's request table numbered itself, as the
+    /// I/O thread hands it on: for a harness that runs Core, whose
+    /// numbers this driver's own must not be mixed with.
+    pub fn send(&self, ask: Ask) {
+        self.outpost
+            .handle_command(&CoreToOutpost::Request(Box::new(ask)));
+    }
+
     /// Cancels request `number` for `reason`.
     pub fn cancel(&self, number: RequestNumber, reason: CancelReason) {
         self.outpost

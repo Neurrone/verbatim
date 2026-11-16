@@ -479,6 +479,9 @@ pub fn find_window(title: &str) -> HWND {
 /// A real outpost in the test process, watching mockapp.
 pub mod outpost;
 
+/// Core's reducer driving the real outpost, standing in for the listener.
+pub mod core_driver;
+
 /// The real tree view of `tests/fixtures/tree_view.json`.
 pub mod tree_view;
 
