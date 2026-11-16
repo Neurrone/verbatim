@@ -46,7 +46,7 @@ fn focus_notes(
 ) -> NodeId {
     app.send("set-focus notes");
     let focused = common::listener_focus(uia, window);
-    outpost.uia_focus(&focused).node.id
+    outpost.uia_focus_answer(&focused).node()
 }
 
 /// The navigator on an element that goes away: next, previous and first
@@ -117,13 +117,13 @@ fn a_dead_element_s_parent_is_its_own_window_s_parent_with_its_own_role() {
     let mut outpost = OutpostUnderTest::new(&app);
     let uia = Uia::new().expect("a UIA client");
     let focused = common::listener_focus(&uia, island.0 as isize);
-    let ok = outpost.uia_focus(&focused).node.id;
+    let ok = outpost.uia_focus_answer(&focused).node();
     let (inner, _) = outpost.navigate(ok, QueryKind::Parent);
     assert_eq!(inner.name.as_deref(), Some("Inner"));
 
     app.send("set-focus apply");
     let focused = common::listener_focus(&uia, host.0 as isize);
-    let _ = outpost.uia_focus(&focused);
+    let _ = outpost.uia_focus_answer(&focused);
 
     app.send("island disconnect inner");
     let (parent, _) = outpost.navigate(inner.id, QueryKind::Parent);
@@ -158,11 +158,11 @@ fn a_dead_focus_keeps_the_window_it_was_found_in() {
     let uia = Uia::new().expect("a UIA client");
     app.send("set-focus apply");
     let focused = common::listener_focus(&uia, host.0 as isize);
-    let apply = outpost.uia_focus(&focused).node.id;
+    let apply = outpost.uia_focus_answer(&focused).node();
 
     app.send("island set-focus ok");
     let focused = common::listener_focus(&uia, island.0 as isize);
-    let _ = outpost.uia_focus(&focused);
+    let _ = outpost.uia_focus_answer(&focused);
 
     app.send("disconnect apply");
     let (parent, _) = outpost.navigate(apply, QueryKind::Parent);
@@ -187,7 +187,7 @@ fn a_live_read_of_a_menu_item_reads_its_legacy_state() {
     let uia = Uia::new().expect("a UIA client");
     app.send("set-focus copy");
     let focused = common::listener_focus(&uia, window);
-    let copy = outpost.uia_focus(&focused).node.id;
+    let copy = outpost.uia_focus_answer(&focused).node();
     // The element, found by the focus's route, is kept for the read below.
     let _ = read_node(&mut outpost, copy);
 
@@ -211,7 +211,7 @@ fn a_text_read_of_a_dead_object_says_gone() {
     let uia = Uia::new().expect("a UIA client");
     app.send("set-focus doc");
     let focused = common::listener_focus(&uia, window);
-    let doc = outpost.uia_focus(&focused).node.id;
+    let doc = outpost.uia_focus_answer(&focused).node();
 
     app.send("disconnect doc");
     let request = outpost.ask(Query::Text {
@@ -250,7 +250,7 @@ fn a_navigator_node_keeps_its_element_after_the_focus_moves_on() {
 
     app.send("set-focus apple");
     let focused = common::listener_focus(&uia, window);
-    let _ = outpost.uia_focus(&focused);
+    let _ = outpost.uia_focus_answer(&focused);
 
     let (name, calls) = read_node(&mut outpost, group.id);
     assert_eq!(

@@ -69,6 +69,12 @@ pub(super) fn complete(
         }
     }
     let nearest = hwnd_of(route.window);
+    // The node's window, fixed as it is made, as NVDA's object fixes its
+    // own (`NVDAObjects/UIA/__init__.py` 1604 to 1607), for a step from it
+    // once it is dead.
+    context
+        .store
+        .record_nearest_window(node, snapshot.details.window.map_or(nearest, hwnd_of));
     let met = match &route.end {
         RouteEnd::Known(known) => {
             let Some(place) = complete
