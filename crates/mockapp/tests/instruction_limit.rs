@@ -25,16 +25,16 @@ use verbatim_uia_rops::{
     Attributes, Builder, CaretLineQuery, CaretQuery, Comparison, ControlledQuery, Error,
     FocusAncestry, FocusQuery, FormatSpan, MOST_RUNS, Movement, NavigationDirection, PathQuery,
     Position, RangeAction, RangeEnd, RangeQuery, RowsQuery, SnapshotQuery, Status, StepQuery,
-    TextAttribute, TextFrom, TextTarget, TreeQuery, UnitsQuery, caret_read_remote,
+    TextAttribute, TextFrom, TextTarget, TreeQuery, UnitsQuery, WatchQuery, caret_read_remote,
     controlled_selection_remote, counting, element_by_path_remote, focus_ancestry_remote,
     navigation_step_remote, terminal_rows_remote, terminal_snapshot_remote, text_range_remote,
-    text_units_remote, tree_dump_remote,
+    text_units_remote, tree_dump_remote, watch_check_remote,
 };
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::{
     IUIAutomationElement, IUIAutomationTextPattern, IUIAutomationTextPattern2, TextUnit_Line,
-    TextUnit_Word, TreeScope_Descendants, UIA_NamePropertyId,
+    TextUnit_Paragraph, TextUnit_Word, TreeScope_Descendants, UIA_NamePropertyId,
 };
 use windows::core::BSTR;
 
@@ -910,6 +910,79 @@ fn tree_dumps_execute_exactly() {
     );
 }
 
+/// A caret key's watch check (`docs/design/readers-tell-core-asks-build1.md`,
+/// "The watch"), with a selection made since the starting point: at its
+/// worst, the check at the bound of a deleting key, reading the word and a
+/// paragraph as its unit; a check that finds the caret moved and reads the
+/// word as its unit; and, typically, a check that finds nothing; and the
+/// final read after an event, the caret read of the line and a word with
+/// no formatting.
+fn watch_checks_execute_exactly() {
+    common::init_com();
+    let mut fixture = Fixture::start("text.json", "mockapp-instructions-watch");
+    let notes = fixture.find("Notes");
+    let (pattern, pattern2) = verbatim_uia::text::text_pattern(&notes).expect("a text pattern");
+    common::apply(&mut fixture.app, fixture.hwnd, "caret doc 0");
+    let before = verbatim_uia::text::caret_range(pattern2.as_ref().expect("TextPattern2"))
+        .expect("the caret");
+    let start = RangeEnd {
+        range: &before,
+        endpoint: Endpoint::Start,
+    };
+    let query = |word: bool, unit, last: bool| WatchQuery {
+        element: &notes,
+        pattern: &pattern,
+        pattern2: pattern2.as_ref(),
+        start,
+        start_selection: (start, start),
+        word,
+        unit: Some(unit),
+        last,
+        max_text: 1024,
+    };
+    let typical = counted(|| {
+        let answer = watch_check_remote(&query(false, TextUnit_Word, false)).expect("the check");
+        assert!(!answer.caret_moved && answer.unit.is_none());
+    });
+    common::apply(&mut fixture.app, fixture.hwnd, "caret doc 6 10");
+    let moved = counted(|| {
+        let answer = watch_check_remote(&query(true, TextUnit_Word, false)).expect("the check");
+        assert!(answer.caret_moved && answer.unit.is_some());
+    });
+    let worst = counted(|| {
+        let answer = watch_check_remote(&query(true, TextUnit_Paragraph, true)).expect("the check");
+        assert!(answer.selection.is_some() && answer.unit.is_some());
+    });
+    let final_read = counted(|| {
+        let answer = caret_read_remote(&CaretQuery {
+            element: &notes,
+            pattern: &pattern,
+            pattern2: pattern2.as_ref(),
+            since: None,
+            previous_selection: None,
+            previous_collapsed: false,
+            unit: Some(TextUnit_Word),
+            formats: None,
+            attributes: Attributes::NONE,
+            learning: Attributes::NONE,
+            max_text: 1024,
+            max_change_text: 1024,
+            recheck: false,
+            read_selection_text: false,
+            read_previous_text: false,
+        })
+        .expect("the final read");
+        assert!(answer.unit.is_some());
+    });
+    fixture.app.quit();
+    assert_eq!(
+        [worst, moved, typical, final_read],
+        [118, 110, 91, 67],
+        "watch check worst, moved and typical, and the final read"
+    );
+    assert!(worst < LIMIT / 2);
+}
+
 /// `count` numbered lines, `line 000` on, as mockapp's `set-text` takes
 /// them, each line feed escaped.
 fn numbered(count: u32) -> String {
@@ -966,5 +1039,6 @@ fn main() {
             terminal_colours_execute_exactly,
         ),
         ("tree_dumps_execute_exactly", tree_dumps_execute_exactly),
+        ("watch_checks_execute_exactly", watch_checks_execute_exactly),
     ]);
 }

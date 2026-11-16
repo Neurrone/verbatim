@@ -526,6 +526,27 @@ attribute whose read fails is not supported on both paths. Both read the
 whole answer on every call, so each check of a caret key's watch costs
 one round trip remotely (`books/dev/src/reference/performance.md`, "A caret move, UIA").
 
+## Layer 3: a caret key's watch check
+
+`watch_check(query, remote)` (`src/watch.rs`) is one check of a caret
+key's watch (`docs/design/readers-tell-core-asks-build1.md`, "The
+watch"), with `watch_check_remote` and `watch_check_classic` behind it as
+the caret read has. A `WatchQuery` names the text element, the caret and
+the selection's ends at the key's starting point, whether to read the word
+at the caret (a deleting key's check, 30 ms after its pass), the key's unit
+for its final read, and whether the check is the last before the bound. A
+`WatchAnswer` says whether the caret and the selection's ends moved from
+the starting point, a compare the provider refuses counting as a move,
+gives the caret, the selection, the caret's line with the caret's offset,
+the word when asked, and whether the caret read again at the end moved
+while the check read. The key's unit is read in the same program once the
+caret or the selection moved, or at the bound, so a key whose move a
+check finds costs one round trip with its final read. The comparisons of
+text (the characters beside the caret, the line, the word) are the
+caller's, made on the texts returned. The worst check, at the bound of a
+deleting key reading the word and a paragraph, executes 118 instructions
+(`crates/mockapp/tests/instruction_limit.rs`).
+
 ## Layer 3: the text protocol's other reads
 
 `text_units`, `text_range`, and `text_location` (`TextUnitsFn`,

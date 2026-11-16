@@ -177,3 +177,7 @@ harness = false
 name = "failure_paths"
 harness = false
 required-features = ["faults"]
+
+[[test]]
+name = "watch_checks"
+harness = false

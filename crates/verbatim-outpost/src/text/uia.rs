@@ -52,12 +52,14 @@ use verbatim_uia::text::{Endpoint, TextPatternExt, TextRangeExt, caret_range, ui
 use verbatim_uia_rops::{
     Attributes, CaretAnswer, CaretQuery, FoundPoint, LocationQuery, Movement, Path, Position,
     RangeEnd, RangeQuery, RunAttributes, TextAttribute, TextFrom, TextTarget, UnitsQuery,
+    WatchQuery,
 };
 
 use super::{
     CaretRead, CaretRequest, CaretState, FormatSpan, Located, MAX_CHUNK_UNITS, MAX_RANGE_UNITS,
     PastEnds, PointFrom, RangeAction, RangeRead, SelectionAfter, SelectionStart, Sentences,
     TextError, TextResult, TextSource, Unit, UnitRead, UnitsAnswer, UnitsRead, UnitsRequest,
+    WatchRead, WatchRequest,
 };
 
 /// A position in UIA text: an end of a range.
@@ -699,6 +701,54 @@ impl TextSource for UiaText {
                 line: answer.selection_line.map(unit_read).transpose()?,
                 first: answer.start_first,
             },
+        }))
+    }
+
+    fn watch_read(
+        &mut self,
+        request: &WatchRequest<'_, UiaPos>,
+    ) -> TextResult<Option<WatchRead<UiaPos>>> {
+        let start = (request.start.range()?, request.start.endpoint);
+        let start_selection = (
+            (
+                request.start_selection.0.range()?,
+                request.start_selection.0.endpoint,
+            ),
+            (
+                request.start_selection.1.range()?,
+                request.start_selection.1.endpoint,
+            ),
+        );
+        let query = WatchQuery {
+            element: &self.element,
+            pattern: &self.pattern,
+            pattern2: self.pattern2.as_ref(),
+            start: end_of(&start),
+            start_selection: (end_of(&start_selection.0), end_of(&start_selection.1)),
+            word: request.word,
+            unit: request.unit.and_then(|unit| self.unit(unit)),
+            last: request.last,
+            max_text: i32::try_from(MAX_CHUNK_UNITS + 1).unwrap_or(i32::MAX),
+        };
+        let (answer, path) =
+            verbatim_uia_rops::watch_check(&query, self.remote).map_err(rops_failed)?;
+        self.note(path);
+        let caret = UiaPos::new(&answer.caret, Endpoint::Start, answer.collapsed)?;
+        let selection = match &answer.selection {
+            Some(range) => Some((
+                UiaPos::new(range, Endpoint::Start, false)?,
+                UiaPos::new(range, Endpoint::End, false)?,
+            )),
+            None => None,
+        };
+        Ok(Some(WatchRead {
+            state: CaretState { caret, selection },
+            caret_moved: answer.caret_moved,
+            selection_moved: answer.selection_moved,
+            line: unit_read(answer.line)?,
+            word: answer.word.map(unit_read).transpose()?,
+            unit: answer.unit.map(unit_read).transpose()?,
+            moved_while_read: answer.moved_while_read,
         }))
     }
 

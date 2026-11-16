@@ -60,6 +60,7 @@ mod terminal_rows;
 mod terminal_snapshot;
 mod text;
 mod tree;
+mod watch;
 
 pub use builder::{Builder, Index, Numeric, Ordered, Reg, kind};
 pub use caret::{
@@ -112,4 +113,7 @@ pub use text::{
 };
 pub use tree::{
     CHILDREN_PER_RUN, TreeDumpFn, TreeQuery, tree_dump, tree_dump_classic, tree_dump_remote,
+};
+pub use watch::{
+    WatchAnswer, WatchCheckFn, WatchQuery, watch_check, watch_check_classic, watch_check_remote,
 };

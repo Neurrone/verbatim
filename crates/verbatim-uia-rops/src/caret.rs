@@ -636,7 +636,7 @@ impl Constants {
 
     /// Emits the `unit` at `point` (a collapsed range at the caret): its
     /// range, its text, and how much of the text comes before the caret.
-    fn unit_at(
+    pub(crate) fn unit_at(
         &self,
         b: &mut Builder,
         point: Reg<kind::TextRange>,
@@ -659,14 +659,14 @@ impl Constants {
 
 /// The registers of a unit read.
 #[derive(Clone, Copy)]
-struct UnitRegisters {
-    range: Reg<kind::TextRange>,
-    text: Reg<kind::Str>,
-    offset: Reg<kind::Uint>,
+pub(crate) struct UnitRegisters {
+    pub(crate) range: Reg<kind::TextRange>,
+    pub(crate) text: Reg<kind::Str>,
+    pub(crate) offset: Reg<kind::Uint>,
 }
 
 impl UnitRegisters {
-    fn read(self, outcome: &Outcome) -> Result<UnitRead, Error> {
+    pub(crate) fn read(self, outcome: &Outcome) -> Result<UnitRead, Error> {
         Ok(UnitRead {
             range: outcome
                 .get(self.range)?
@@ -1716,14 +1716,14 @@ pub(crate) fn emit_caret_with(
 }
 
 /// A copy of `range` collapsed to its start. Two calls.
-fn collapsed(range: &IUIAutomationTextRange) -> Result<IUIAutomationTextRange, Error> {
+pub(crate) fn collapsed(range: &IUIAutomationTextRange) -> Result<IUIAutomationTextRange, Error> {
     let copy = range.clone_range()?;
     copy.move_endpoint_to(Endpoint::End, &copy, Endpoint::Start)?;
     Ok(copy)
 }
 
 /// The `unit` at `point`, as [`Constants::unit_at`] emits it. Five calls.
-fn unit_at(
+pub(crate) fn unit_at(
     point: &IUIAutomationTextRange,
     unit: TextUnit,
     max_text: i32,
@@ -2074,7 +2074,7 @@ fn classic_start(
 
 /// The caret, whether it is collapsed, and the selection, read the
 /// classic way as [`emit_caret`] emits them.
-fn classic_caret(
+pub(crate) fn classic_caret(
     query: &CaretQuery<'_>,
 ) -> Result<(IUIAutomationTextRange, bool, Option<IUIAutomationTextRange>), Error> {
     let ranges = query.pattern.selection()?;
