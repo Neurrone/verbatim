@@ -534,7 +534,7 @@ pub struct OutpostUnderTest {
     last_asked: Cell<RequestNumber>,
     /// The calls each request made, by its number, as the outpost tells
     /// them before it answers ([`Outpost::observe_request_calls`]).
-    request_calls: Receiver<(RequestNumber, CallCounts)>,
+    pub request_calls: Receiver<(RequestNumber, CallCounts)>,
     /// The focus the stand-in for Core committed, then its ancestors
     /// nearest first, each by its name and the entries Core names it by in
     /// a request's list of the ancestors it already knows

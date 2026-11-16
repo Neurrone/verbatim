@@ -1,7 +1,9 @@
 //! An outpost's clean shutdown, against mockapp's UIA provider: told to
 //! shut down while a read into mockapp is in progress, a remote operation
 //! in one test and classic reads in the other, the outpost lets the read
-//! finish and sends its answer, then removes every UIA event handler it
+//! finish and drops its answer, as the design's worker table has it
+//! (`docs/design/readers-tell-core-asks-build1.md`, Table 14, "Shutdown"),
+//! then removes every UIA event handler it
 //! registered, which mockapp sees through the registrations UIA reports
 //! to its fragment root (`IRawElementProviderAdviseEvents`), and closes
 //! its pipe. mockapp keeps running and answers another client afterwards.
@@ -29,11 +31,9 @@ mod harness;
 use std::sync::mpsc::{self, RecvTimeoutError};
 
 use verbatim_faults::Fault;
-use verbatim_model::protocol::{CoreToOutpost, OutpostToCore, Query, QueryOutcome, QueryResult};
-use verbatim_model::{
-    CallCounts, FocusText, NodeId, NormalizedEvent, TextOp, TextPoint, TextRead, TextReply,
-    TextUnit,
-};
+use verbatim_model::protocol::{CoreToOutpost, OutpostToCore};
+use verbatim_model::request::{Answer, Follow, FollowGroup, Followed, Outcome, Reply, Request};
+use verbatim_model::{CallCounts, NodeId, TextOp, TextPoint, TextRead, TextReply, TextUnit};
 use verbatim_process::arguments::OutpostOptions;
 use verbatim_uia::{Node, Shape, Uia};
 use windows::Win32::Foundation::HWND;
@@ -69,28 +69,49 @@ fn focused(hwnd: HWND) -> verbatim_uia::Cached<verbatim_uia::ListenerEvent> {
     common::listener_focus(&uia, hwnd.0 as isize)
 }
 
-/// Focuses mockapp's "Notes" document and returns its node, once the
-/// outpost has reported the focus with its caret, which must be all it
-/// said.
+/// Focuses mockapp's "Notes" document and returns its node: the focus
+/// read as Core reads it, then Core's `Follow` of the committed document
+/// with the extended group, which must answer applied, as Core sends it at
+/// the commit.
 fn focus_notes(app: &mut common::MockApp, outpost: &OutpostUnderTest, hwnd: HWND) -> NodeId {
     app.send("set-focus doc");
-    let element = focused(hwnd);
-    outpost.deliver(outpost.listener_fact(&element));
-    let node = match outpost.next() {
-        OutpostToCore::Event {
-            event:
-                NormalizedEvent::FocusChanged {
-                    node,
-                    text: Some(text),
-                    ..
-                },
-            ..
-        } if matches!(*text, FocusText::Caret { .. }) => node,
-        other => panic!("the outpost said {other:?}, not the document's focus with its caret"),
-    };
-    assert_eq!(node.name.as_deref(), Some("Notes"));
+    let focus = outpost.uia_focus_answer(&focused(hwnd));
+    assert_eq!(focus.name(), Some("Notes"));
+    let node = focus.node();
+    let followed = outpost.requested(
+        hwnd,
+        Request::Follow(Follow {
+            node: Some(Followed {
+                node,
+                group: FollowGroup::Extended,
+                extra: None,
+            }),
+        }),
+    );
+    assert_eq!(followed.outcome, Outcome::Result(Reply::Followed));
     outpost.settled();
-    node.id
+    node
+}
+
+/// Core's read of the line at the caret of `node`.
+fn read_line(node: NodeId) -> Request {
+    Request::Text {
+        node,
+        op: TextOp::Read(TextRead {
+            at: TextPoint::Caret,
+            movement: None,
+            unit: TextUnit::Line,
+        }),
+    }
+}
+
+/// The line `answer` read, which must be a read of the line at the caret
+/// that did not move.
+fn line_of(answer: Answer) -> (i32, String) {
+    match answer.outcome {
+        Outcome::Result(Reply::Text(TextReply::Read { moved, chunk })) => (moved, chunk.text),
+        other => panic!("the outpost answered {other:?}, not the read's line"),
+    }
 }
 
 /// What a test reads, and what it expects of the read.
@@ -104,7 +125,7 @@ struct Read {
 }
 
 /// The scenario both tests run: the outpost is told to shut down while
-/// `read`'s first provider call is held, and must finish the read, send its
+/// `read`'s first provider call is held, and must finish the read, drop its
 /// answer, remove its handlers, and close its pipe, leaving mockapp
 /// running.
 fn shut_down_during(name: &str, read: &Read) {
@@ -118,7 +139,7 @@ fn shut_down_during(name: &str, read: &Read) {
         "nothing has registered on mockapp's window before the outpost"
     );
 
-    let mut outpost = OutpostUnderTest::with_options(
+    let outpost = OutpostUnderTest::with_options(
         &app,
         OutpostOptions {
             remote_operations: read.remote,
@@ -132,14 +153,7 @@ fn shut_down_during(name: &str, read: &Read) {
     );
 
     app.hold();
-    let request = outpost.ask(Query::Text {
-        node_id: notes,
-        op: TextOp::Read(TextRead {
-            at: TextPoint::Caret,
-            movement: None,
-            unit: TextUnit::Line,
-        }),
-    });
+    let request = outpost.request(hwnd, read_line(notes));
     assert_eq!(
         app.held(),
         read.first_call,
@@ -156,6 +170,7 @@ fn shut_down_during(name: &str, read: &Read) {
         1,
     );
     let messages = outpost.messages;
+    let request_calls = outpost.request_calls;
     let under_shutdown = outpost.outpost;
     let (shut_down_tx, shut_down) = mpsc::channel();
     std::thread::spawn(move || {
@@ -173,22 +188,16 @@ fn shut_down_during(name: &str, read: &Read) {
     );
     app.release();
 
-    // The read finished, and its answer was sent before the pipe closed.
-    match messages.recv_timeout(common::WAIT_TIMEOUT) {
-        Ok(OutpostToCore::Reply {
-            request_id,
-            outcome: QueryOutcome::Done(QueryResult::Text(TextReply::Read { moved, chunk })),
-            timing,
-            ..
-        }) if request_id == request => {
-            assert_eq!((moved, chunk.text.as_str()), (0, "alpha beta\n"));
-            assert_eq!(timing.calls, read.calls, "the read's calls");
-        }
-        other => panic!("the outpost said {other:?}, not the read's answer"),
-    }
+    // The read finished, the shutdown waiting for it, and its answer was
+    // dropped (Table 14, "Shutdown" with a program running).
     shut_down
         .recv_timeout(common::WAIT_TIMEOUT)
         .expect("the shutdown ends once the call has returned");
+    assert_eq!(
+        request_calls.recv_timeout(common::WAIT_TIMEOUT),
+        Ok((request, read.calls)),
+        "the read's calls"
+    );
     assert_eq!(
         messages.recv_timeout(common::WAIT_TIMEOUT),
         Err(RecvTimeoutError::Disconnected),
@@ -258,7 +267,7 @@ fn a_ping_is_answered_while_the_worker_is_held_in_a_call() {
     let title = common::unique_title("mockapp-ping-held");
     let mut app = common::spawn_counting_registrations("caret_watch.json", &title);
     let hwnd = common::find_window(&title);
-    let mut outpost = OutpostUnderTest::with_options(
+    let outpost = OutpostUnderTest::with_options(
         &app,
         OutpostOptions {
             remote_operations: false,
@@ -267,14 +276,7 @@ fn a_ping_is_answered_while_the_worker_is_held_in_a_call() {
     let notes = focus_notes(&mut app, &outpost, hwnd);
 
     app.hold();
-    let request = outpost.ask(Query::Text {
-        node_id: notes,
-        op: TextOp::Read(TextRead {
-            at: TextPoint::Caret,
-            movement: None,
-            unit: TextUnit::Line,
-        }),
-    });
+    let request = outpost.request(hwnd, read_line(notes));
     assert_eq!(
         app.held(),
         "TextGetSelection",
@@ -292,16 +294,10 @@ fn a_ping_is_answered_while_the_worker_is_held_in_a_call() {
         other => panic!("the outpost said {other:?}, not the pong"),
     }
     app.release();
-    match outpost.next() {
-        OutpostToCore::Reply {
-            request_id,
-            outcome: QueryOutcome::Done(QueryResult::Text(TextReply::Read { moved, chunk })),
-            ..
-        } if request_id == request => {
-            assert_eq!((moved, chunk.text.as_str()), (0, "alpha beta\n"));
-        }
-        other => panic!("the outpost said {other:?}, not the read's answer"),
-    }
+    assert_eq!(
+        line_of(outpost.answer(request)),
+        (0, "alpha beta\n".to_owned())
+    );
     outpost.settled();
     app.quit();
 }
