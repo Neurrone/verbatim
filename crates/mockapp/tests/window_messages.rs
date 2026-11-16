@@ -16,9 +16,10 @@ use std::time::Duration;
 
 use verbatim_faults::{Fault, Guard};
 use verbatim_ia2::edit::EditError;
-use verbatim_model::protocol::{DeliveredFact, OutpostToCore, Query, QueryOutcome, QueryResult};
+use verbatim_model::request::{FocusCaret, MsaaIds, Outcome, Reply, Request};
 use verbatim_model::{
-    CaretMotion, CaretRead, FocusText, KeyFetch, ReadPurpose, TextAnchor, TextOp, TextReply,
+    CaretMotion, StartingRead, TextAnchor, TextDetails, TextOp, TextProvider, TextReply,
+    WindowHandle,
 };
 use windows::Win32::Foundation::{CloseHandle, HANDLE, HWND};
 use windows::Win32::System::Memory::{MEM_COMMIT, MEMORY_BASIC_INFORMATION, VirtualQueryEx};
@@ -113,8 +114,8 @@ fn child(host: HWND, class: PCWSTR) -> isize {
         .0 as isize
 }
 
-/// A text query on an edit control whose `EM_GETSEL` waits past twice the
-/// old half-second message limit, real time, answers its caret
+/// A caret key's starting read on an edit control whose `EM_GETSEL` waits
+/// past twice the old half-second message limit, real time, answers its caret
 /// and selection exactly as the focus read them, and its send was made
 /// with no time limit.
 fn a_slow_edit_control_answers_its_selection() {
@@ -128,11 +129,11 @@ fn a_slow_edit_control_answers_its_selection() {
     app.send("set-focus root");
     // "beta" selected, the caret at its end.
     app.send("caret doc 6 10");
-    let mut outpost = OutpostUnderTest::new(&app);
-    let focus = outpost.focus(DeliveredFact::MsaaFocus {
-        hwnd: edit,
-        id_object: OBJID_CLIENT.0,
-        id_child: 0,
+    let outpost = OutpostUnderTest::new(&app);
+    let focus = outpost.msaa_focus_answer(MsaaIds {
+        window: WindowHandle(edit as u64),
+        object: OBJID_CLIENT.0,
+        child: 0,
     });
     // The caret as read, its anchors, which each read mints anew, and when
     // it was read left out.
@@ -146,10 +147,10 @@ fn a_slow_edit_control_answers_its_selection() {
         }
         caret
     };
-    let Some(FocusText::Caret { caret, .. }) = &focus.text else {
-        panic!("the focus read no caret: {:?}", focus.text);
+    let FocusCaret::Read(read) = &focus.read.caret else {
+        panic!("the focus read no caret: {:?}", focus.read.caret);
     };
-    let expected = unanchored(caret);
+    let expected = unanchored(&read.caret);
     assert!(expected.selection.is_some(), "the focus read the selection");
 
     let (sends, guard) = watch_sends(edit, EM_GETSEL, 1);
@@ -158,23 +159,23 @@ fn a_slow_edit_control_answers_its_selection() {
     // mockapp prints, is the evidence that the old limit passed.
     let stall = Duration::from_secs(1);
     app.stall(stall);
-    let request_id = outpost.ask(Query::Text {
-        node_id: focus.node.id,
-        op: TextOp::ReadCaret(CaretRead {
-            fetch: KeyFetch {
+    let answer = outpost.requested(
+        HWND(edit as _),
+        Request::Text {
+            node: focus.node(),
+            op: TextOp::StartingRead(StartingRead {
+                provider: TextProvider::EditMessages,
+                details: TextDetails::ALL,
                 unit: CaretMotion::NextCharacter.unit(),
-                motion: CaretMotion::NextCharacter,
-            },
-            purpose: ReadPurpose::BeforeFieldKey,
-        }),
-    });
-    match outpost.next() {
-        OutpostToCore::Reply {
-            request_id: answered,
-            outcome: QueryOutcome::Done(QueryResult::Text(TextReply::Caret(reply))),
-            ..
-        } if answered == request_id => assert_eq!(unanchored(&reply.caret), expected),
-        other => panic!("the outpost said {other:?}, not the caret"),
+                word: false,
+            }),
+        },
+    );
+    match answer.outcome {
+        Outcome::Result(Reply::Text(TextReply::Started(started))) => {
+            assert_eq!(unanchored(&started.caret), expected);
+        }
+        other => panic!("the outpost answered {other:?}, not the caret"),
     }
     app.stall_ended(stall);
     assert_eq!(sent(&sends), [(None, None)], "sent with no time limit");
