@@ -498,7 +498,11 @@ fn toast_child(app: &mut common::MockApp, title: &str) -> HWND {
 
 /// An MSAA alert from a child of a `ToastChildWindowClass` parent is
 /// spoken, from any application, as a toast's alert is, when its window is
-/// read through MSAA.
+/// read through MSAA. NVDA speaks an MSAA alert only when its object's role
+/// is alert (`NVDAObjects/IAccessible/__init__.py` 2025 to 2066), so
+/// `toast_host.json`'s object has the alert role, and speaks it as a focus,
+/// role included (`speech.speakObject` with reason focus); whether a real
+/// toast's object has the alert role awaits a recording of one.
 fn an_alert_from_a_toast_window_is_reported() {
     common::init_com();
     let title = common::unique_title("mockapp-msaa-toast");
@@ -508,7 +512,10 @@ fn an_alert_from_a_toast_window_is_reported() {
     assert_eq!(
         core.msaa_event(EventKind::Alert, child, (OBJID_CLIENT.0, 0))
             .spoken(),
-        [vec![SegmentContent::Label("Download complete".to_owned())]]
+        [vec![
+            SegmentContent::Label("Download complete".to_owned()),
+            SegmentContent::Role(Role::Alert)
+        ]]
     );
     drop(core);
     app.quit();

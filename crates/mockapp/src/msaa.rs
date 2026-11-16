@@ -614,7 +614,7 @@ fn role_to_msaa(role: Role) -> u32 {
         ROLE_SYSTEM_PAGETAB, ROLE_SYSTEM_PAGETABLIST, ROLE_SYSTEM_PROGRESSBAR,
         ROLE_SYSTEM_PROPERTYPAGE, ROLE_SYSTEM_PUSHBUTTON, ROLE_SYSTEM_RADIOBUTTON,
         ROLE_SYSTEM_SLIDER, ROLE_SYSTEM_SPINBUTTON, ROLE_SYSTEM_STATICTEXT, ROLE_SYSTEM_STATUSBAR,
-        ROLE_SYSTEM_TEXT, ROLE_SYSTEM_TOOLBAR, ROLE_SYSTEM_TOOLTIP, ROLE_SYSTEM_WINDOW,
+        ROLE_SYSTEM_ALERT, ROLE_SYSTEM_TEXT, ROLE_SYSTEM_TOOLBAR, ROLE_SYSTEM_TOOLTIP, ROLE_SYSTEM_WINDOW,
     };
     match role {
         Role::Button => ROLE_SYSTEM_PUSHBUTTON,
@@ -643,6 +643,7 @@ fn role_to_msaa(role: Role) -> u32 {
         Role::ProgressBar => ROLE_SYSTEM_PROGRESSBAR,
         Role::ToolTip => ROLE_SYSTEM_TOOLTIP,
         Role::HelpBalloon => ROLE_SYSTEM_HELPBALLOON,
+        Role::Alert => ROLE_SYSTEM_ALERT,
         // `Role` is `#[non_exhaustive]`; Pane, MenuBar, Unknown, and
         // anything added later have no MSAA counterpart in the current
         // `verbatim_ia2` forward map.

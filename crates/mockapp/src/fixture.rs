@@ -557,6 +557,7 @@ fn role_from_fixture_str(name: &str) -> Option<Role> {
         "progress_bar" => Role::ProgressBar,
         "tool_tip" => Role::ToolTip,
         "help_balloon" => Role::HelpBalloon,
+        "alert" => Role::Alert,
         "unknown" => Role::Unknown,
         _ => return None,
     })
@@ -661,6 +662,7 @@ mod tests {
             ("progress_bar", Role::ProgressBar),
             ("tool_tip", Role::ToolTip),
             ("help_balloon", Role::HelpBalloon),
+            ("alert", Role::Alert),
             ("unknown", Role::Unknown),
         ] {
             assert_eq!(
