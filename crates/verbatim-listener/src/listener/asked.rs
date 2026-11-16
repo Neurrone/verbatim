@@ -486,13 +486,15 @@ impl Read {
                             self.value_from_selection.map(PropertyValue::Flag)
                         }
                         // Read by the outpost that holds the node, when Core
-                        // asks it of a node.
+                        // asks it of a node; the parent's automation id by
+                        // the check thread, for a focus tell alone.
                         PropertyId::HasKeyboardFocus
                         | PropertyId::TextSummary
                         | PropertyId::Suggestions
                         | PropertyId::HasValuePattern
                         | PropertyId::WindowClass
-                        | PropertyId::ComboBoxList => None,
+                        | PropertyId::ComboBoxList
+                        | PropertyId::ParentAutomationId => None,
                     },
                 })
                 .collect(),

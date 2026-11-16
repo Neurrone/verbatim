@@ -1148,3 +1148,59 @@ fn a_request_from_outside_the_queue_withdrawn_by_its_asker_is_cancelled() {
         "{effects:?}"
     );
 }
+
+/// A focus on the task switcher's item, in File Explorer, its tell
+/// carrying its parent's automation id, told after the hook reported Alt
+/// `down` (or up), read and answered: what Core says.
+fn switcher_item_said(down: bool) -> Vec<String> {
+    use verbatim_model::request::QueueInput;
+    let mut held = ready();
+    shell_feeds(&mut held, 500, QueueInput::Alt { down });
+    let mut tell = uia_tell(1, Vec::new());
+    tell.application = "explorer".to_owned();
+    tell.cached.0.push(PropertyAnswer {
+        id: PropertyId::ParentAutomationId,
+        value: Some(PropertyValue::Text("SwitchItemListControl".to_owned())),
+    });
+    let sent = shell_feeds(
+        &mut held,
+        1_000,
+        QueueInput::Tell {
+            from: LISTENER,
+            tell: Box::new(tell),
+        },
+    );
+    assert_eq!(sent.len(), 1, "the listener's read: {sent:?}");
+    feed_at(
+        &mut held,
+        2_000,
+        answer(LISTENER, 1, Reply::Object(Box::new(listener_answer()))),
+    );
+    let mut read = focus_read(None);
+    read.focus.read.values = values("Window B", Role::ListItem);
+    feed_at(
+        &mut held,
+        3_000,
+        answer(OUTPOST, 2, Reply::Focus(Box::new(read))),
+    )
+}
+
+/// The task switcher's item reached with Alt down says only itself, its
+/// containers dropped, by Core's own Alt state at its tell's arrival; with
+/// Alt up its window is spoken as any focus's is
+/// (`docs/parity/windows-and-processes.md`, "The Alt+Tab switcher's pane").
+#[test]
+fn the_switchers_item_with_alt_down_at_its_arrival_says_only_itself() {
+    assert_eq!(
+        switcher_item_said(true),
+        ["Label(\"Window B\")", "send Outpost(Pid(40)) Follow"]
+    );
+    assert_eq!(
+        switcher_item_said(false),
+        [
+            "Label(\"Editor\") Role(Window)",
+            "Label(\"Window B\")",
+            "send Outpost(Pid(40)) Follow"
+        ]
+    );
+}

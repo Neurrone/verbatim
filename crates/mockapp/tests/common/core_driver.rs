@@ -748,11 +748,20 @@ impl CoreDriver {
             && fields.role.control_type
                 == Some(windows::Win32::UI::Accessibility::UIA_MenuItemControlTypeId.0)
             && name.is_empty();
+        let switcher_item = fields.role.class_name.as_deref()
+            == Some(verbatim_listener_logic::check::SWITCHER_ITEM_CLASS)
+            && fields.role.control_type
+                == Some(windows::Win32::UI::Accessibility::UIA_ListItemControlTypeId.0);
         let mut check = Check::new(
             kind,
             placeholder,
             kept.iter().map(|(token, _)| *token).collect(),
-        );
+        )
+        .reading_parent(switcher_item);
+        let parent_request = self
+            .uia
+            .request_fixed::<ListenerEvent>()
+            .expect("the parent's cache request");
         let record = &mut self.probes;
         let walker = self.uia.raw_view_walker().ok();
         let keyboard_focus = |element: &Cached<ListenerEvent>| {
@@ -803,10 +812,23 @@ impl CoreDriver {
                     },
                     None => Read::Failed,
                 }),
+                Call::ParentAutomationId => check.parent_automation_id(match &walker {
+                    Some(walker) => {
+                        match element
+                            .live()
+                            .walk(walker, Direction::Parent, &parent_request)
+                        {
+                            Ok(parent) => Read::Answered(parent.read().automation_id),
+                            Err(error) if error.code().is_ok() => Read::Answered(None),
+                            Err(_) => Read::Failed,
+                        }
+                    }
+                    None => Read::Failed,
+                }),
                 Call::KeyboardFocus => check.keyboard_focus(keyboard_focus(element)),
             }
         }
-        let (found, checked) = check.finish();
+        let (found, checked, parent) = check.finish();
         let window = match found {
             Walked::Found(window) => Some(window),
             Walked::NotWalked => (fields.role.hwnd != 0).then_some(fields.role.hwnd),
@@ -826,7 +848,16 @@ impl CoreDriver {
             thread: window.map_or(0, |window| verbatim_win32::window::window_owner(window).0),
             at_us: self.now(),
             object: EventObject::Uia { token, runtime_id },
-            cached: cached_of(kind, &fields, self.app, states),
+            cached: {
+                let mut cached = cached_of(kind, &fields, self.app, states);
+                if let Some(parent) = parent {
+                    match cached.0.iter_mut().find(|answer| answer.id == parent.id) {
+                        Some(place) => *place = parent,
+                        None => cached.0.push(parent),
+                    }
+                }
+                cached
+            },
             payload,
             window: match (window, found) {
                 (Some(window), _) => TellWindow::Found(Box::new(

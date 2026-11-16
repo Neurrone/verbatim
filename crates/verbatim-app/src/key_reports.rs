@@ -196,7 +196,7 @@ fn key_of(report: &KeyReport) -> Option<KeySeq> {
         | KeyReport::Passed { key_seq, .. }
         | KeyReport::Typed { key_seq, .. }
         | KeyReport::Gesture { key_seq, .. } => Some(*key_seq),
-        KeyReport::Deferred { .. } | KeyReport::Handled(_) => None,
+        KeyReport::Deferred { .. } | KeyReport::Handled(_) | KeyReport::Alt { .. } => None,
     }
 }
 
@@ -345,6 +345,13 @@ fn commands_for(report: KeyReport, tables: &Tables, mut post: impl FnMut(ShellCo
             }
         }
         KeyReport::Handled(number) => post(ShellCommand::InputHandled(number)),
+        // Alt joins Core's key state at once, in the order of the inputs
+        // the reducer takes, so a tell reads it at its arrival.
+        KeyReport::Alt { down } => post(ShellCommand::Input(Box::new(Input::Queue {
+            trace_id: verbatim_model::TraceId::mint(),
+            at_us: verbatim_process::clock::now_us(),
+            input: verbatim_model::request::QueueInput::Alt { down },
+        }))),
     }
 }
 
@@ -423,6 +430,27 @@ mod tests {
                 _ => "something else".to_owned(),
             })
             .collect()
+    }
+
+    /// Alt's report is Core's queue input, Alt down or up, and nothing
+    /// else.
+    #[test]
+    fn alt_is_one_queue_input_to_core() {
+        for down in [true, false] {
+            let mut commands = Vec::new();
+            commands_for(
+                KeyReport::Alt { down },
+                &Tables::for_layout(KeyboardLayout::Desktop),
+                |command| commands.push(command),
+            );
+            let [ShellCommand::Input(input)] = commands.as_slice() else {
+                panic!("one input: {} commands", commands.len());
+            };
+            let Input::Queue { input, .. } = input.as_ref() else {
+                panic!("a queue input: {input:?}");
+            };
+            assert_eq!(*input, verbatim_model::request::QueueInput::Alt { down });
+        }
     }
 
     fn emitted(trace_id: TraceId, gesture: &str, repeat: u8) -> EmittedGesture {

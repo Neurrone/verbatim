@@ -87,6 +87,14 @@ pub enum PropertyId {
     /// `_NetFrameworkWinFormsComboBox`), the window of its drop-down list,
     /// by `GetComboBoxInfo`; absent for any other object.
     ComboBoxList,
+    /// The automation id of the element's raw-view parent, which a UI
+    /// Automation focus tell carries for the task switcher's item alone:
+    /// no cache holds a parent's property, so the listener's check thread
+    /// reads it with one call, as NVDA's File Explorer module reads the
+    /// item's parent when it chooses the item's class
+    /// (`docs/parity/windows-and-processes.md`, "The Alt+Tab switcher's
+    /// pane").
+    ParentAutomationId,
 }
 
 impl PropertyId {
@@ -120,6 +128,7 @@ impl PropertyId {
             Self::HasValuePattern => &HAS_VALUE_PATTERN,
             Self::WindowClass => &WINDOW_CLASS,
             Self::ComboBoxList => &COMBO_BOX_LIST,
+            Self::ParentAutomationId => &PARENT_AUTOMATION_ID,
         }
     }
 
@@ -702,6 +711,17 @@ const COMBO_BOX_LIST: PropertyEntry = PropertyEntry {
     cost: Cost::Alone,
 };
 
+const PARENT_AUTOMATION_ID: PropertyEntry = PropertyEntry {
+    id: PropertyId::ParentAutomationId,
+    name: "parent automation id",
+    kind: ValueKind::Text,
+    // Read by a call to the parent, never from a cache.
+    uia: None,
+    msaa: None,
+    ia2: None,
+    cost: Cost::Alone,
+};
+
 /// The whole table, in [`PropertyId`] order.
 pub const PROPERTIES: &[PropertyEntry] = &[
     NAME,
@@ -730,6 +750,7 @@ pub const PROPERTIES: &[PropertyEntry] = &[
     HAS_VALUE_PATTERN,
     WINDOW_CLASS,
     COMBO_BOX_LIST,
+    PARENT_AUTOMATION_ID,
 ];
 
 /// A UI Automation runtime id.

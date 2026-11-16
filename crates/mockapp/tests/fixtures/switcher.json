@@ -13,12 +13,14 @@
           "id": "window_a",
           "role": "list_item",
           "name": "Window A",
+          "class_name": "ListViewItem",
           "states": ["focusable", "selectable"]
         },
         {
           "id": "window_b",
           "role": "list_item",
           "name": "Window B",
+          "class_name": "ListViewItem",
           "states": ["focusable", "selectable"]
         }
       ]

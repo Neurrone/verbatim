@@ -282,7 +282,8 @@ pub(super) fn values(
                     | PropertyId::Suggestions
                     | PropertyId::HasValuePattern
                     | PropertyId::WindowClass
-                    | PropertyId::ComboBoxList => None,
+                    | PropertyId::ComboBoxList
+                    | PropertyId::ParentAutomationId => None,
                 },
             })
             .collect(),

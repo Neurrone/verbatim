@@ -72,6 +72,8 @@ pub(crate) struct UiaFocus {
     pub(crate) runtime_id: RuntimeId,
     /// The generation of the listener that keeps the element.
     pub(crate) listener: u64,
+    /// Whether Alt was down at its tell's arrival, by Core's key state.
+    pub(crate) alt_down: bool,
     /// Its speech fence, set when it joins the queue.
     pub(crate) fence: Fence,
 }
@@ -256,6 +258,7 @@ impl Entry {
                     token,
                     runtime_id,
                     listener: from.generation,
+                    alt_down: false,
                     fence: Fence::default(),
                 })))
             }
@@ -958,6 +961,10 @@ pub(crate) fn route(
             return vec![Said::Queue(QueueEffect::StaleFrame(*from))];
         }
         QueueInput::Tell { from, tell } => match Entry::of_tell(*from, (**tell).clone()) {
+            Some(Entry::UiaFocus(mut focus)) => {
+                focus.alt_down = state.alt_down;
+                Input::Entry(Entry::UiaFocus(focus))
+            }
             Some(entry) => Input::Entry(entry),
             None => return Vec::new(),
         },
@@ -1013,6 +1020,10 @@ pub(crate) fn route(
                 .map(Said::Queue)
                 .into_iter()
                 .collect();
+        }
+        QueueInput::Alt { down } => {
+            state.alt_down = *down;
+            return Vec::new();
         }
         QueueInput::StrokesReset => {
             // The front's starting read, its stroke now dropped, is

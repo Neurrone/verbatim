@@ -546,35 +546,39 @@ fn a_focus_whose_element_lost_the_keyboard_focus_before_it_was_read_is_dropped()
     app.quit();
 }
 
-/// A UIA focus's snapshot carries its raw-view parent's automation id,
-/// which Core's rule for the task switcher's items matches
-/// (`docs/parity/windows-and-processes.md`, "The Alt+Tab switcher's pane"),
-/// from the listener's read; its ancestors carry none.
+/// A UIA focus on the task switcher's item, a `ListViewItem` list item,
+/// carries its raw-view parent's automation id among its cached
+/// properties, read by the check thread with one call, which Core's rule
+/// for the switcher's items matches (`docs/parity/windows-and-processes.md`,
+/// "The Alt+Tab switcher's pane"); a focus of another class carries none.
 fn a_focus_carries_its_parents_automation_id() {
     let title = common::unique_title("mockapp-parent-automation-id");
     let mut app = common::spawn("switcher.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let client = Client::new(hwnd);
-    let outpost = OutpostUnderTest::new(&app);
+    let mut core = CoreDriver::new(&app, OutpostUnderTest::new(&app));
 
     app.send("set-focus window_b");
     let item = client.focused();
-    let reported = outpost.uia_focus(&item);
+    let tell = core.uia_tell(EventKind::UiaFocus, &item, None, Payload::None);
     assert_eq!(
-        (
-            reported.node.name.as_deref(),
-            reported.node.details.parent_automation_id.as_deref(),
-        ),
-        (Some("Window B"), Some("SwitchItemListControl"))
-    );
-    assert!(
-        reported
-            .ancestors
-            .iter()
-            .all(|ancestor| ancestor.details.parent_automation_id.is_none())
+        tell.cached
+            .answer(PropertyId::ParentAutomationId)
+            .and_then(|answer| answer.value.clone()),
+        Some(PropertyValue::Text("SwitchItemListControl".to_owned()))
     );
 
-    drop(outpost);
+    app.send("set-focus switch_list");
+    let list = client.focused();
+    let tell = core.uia_tell(EventKind::UiaFocus, &list, None, Payload::None);
+    assert_eq!(
+        tell.cached
+            .answer(PropertyId::ParentAutomationId)
+            .map(|answer| answer.value.clone()),
+        Some(None)
+    );
+
+    drop(core);
     app.quit();
 }
 

@@ -247,12 +247,22 @@ pub(crate) async fn run(mut cx: Cx<Entries>, focus: UiaFocus) {
         token: Some(focus.token),
     };
     super::narrow::judge_ahead(&mut cx, &read);
-    let origin = Origin::of_tell(&focus.tell, window);
+    let origin = origin(&focus, window);
     let executed = execute(&mut cx.facts_mut(), &origin, &read, &known, read_by);
     if !executed.committed {
         unexecuted(&mut cx, window);
     }
     executed.deliver(&mut cx);
+}
+
+/// The origin of `focus` read on `window`: its tell's, with Alt as Core's
+/// key state had it at the tell's arrival.
+fn origin(focus: &UiaFocus, window: RequestWindow) -> Origin {
+    let mut origin = Origin::of_tell(&focus.tell, window);
+    if let Some(facts) = origin.window.as_mut() {
+        facts.alt_held = focus.alt_down;
+    }
+    origin
 }
 
 /// A completion the outpost of `window`'s application answered, or Core

@@ -234,6 +234,9 @@ pub(crate) struct Origin {
     /// Whether the tell's window is owned by Verbatim's hidden frame, whose
     /// focus takes the frame as its foreground.
     pub(crate) frame_owned: bool,
+    /// The automation id of the focus's parent, which a UI Automation tell
+    /// carries for the task switcher's item alone.
+    pub(crate) parent_automation_id: Option<String>,
 }
 
 impl Origin {
@@ -249,6 +252,14 @@ impl Origin {
             top_process: facts.map_or(asked.process, |facts| facts.root.process),
             asked,
             frame_owned: facts.is_some_and(|facts| facts.hidden_frame_owned),
+            parent_automation_id: match tell
+                .cached
+                .answer(PropertyId::ParentAutomationId)
+                .and_then(|answer| answer.value.as_ref())
+            {
+                Some(PropertyValue::Text(id)) => Some(id.clone()),
+                _ => None,
+            },
         }
     }
 
@@ -263,6 +274,7 @@ impl Origin {
             top_process: asked.process,
             asked,
             frame_owned: false,
+            parent_automation_id: None,
         }
     }
 }
@@ -289,7 +301,10 @@ fn ready(
         ReadBy::Uia { .. } => Backend::Uia,
         ReadBy::Msaa { .. } => Backend::Msaa,
     };
-    let node = snapshot(&read.focus, backend)?;
+    let mut node = snapshot(&read.focus, backend)?;
+    node.details
+        .parent_automation_id
+        .clone_from(&origin.parent_automation_id);
     let (nearest_first, kept_ancestors) = chain(state, &read.ancestors, read.met, known, backend)?;
     let read_foreground = match &read.foreground {
         Some(foreground) => Some(snapshot(foreground, backend)?),

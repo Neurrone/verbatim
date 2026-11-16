@@ -1014,6 +1014,15 @@ pub enum QueueInput {
         /// A press, or else a release.
         pressed: bool,
     },
+    /// Alt went down, or up: the hook reports each change of whether
+    /// either Alt key is down, which joins Core's key state at once, so a
+    /// tell reads it at its arrival in the inbox's order (design
+    /// `docs/design/readers-tell-core-asks-build1.md`, "Keys and commands in
+    /// this build").
+    Alt {
+        /// Whether Alt is now down.
+        down: bool,
+    },
     /// The hook's line was reset (its reinstall): every stroke not yet
     /// sent is dropped.
     StrokesReset,

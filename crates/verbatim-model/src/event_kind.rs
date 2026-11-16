@@ -225,7 +225,8 @@ mod uia_event {
 
 /// What a UI Automation focus or menu opening carries: what Core's
 /// native-element test, its overrides and its rules for an application's
-/// elements read.
+/// elements read. The parent's automation id is the check thread's read,
+/// present only for the task switcher's item.
 const UIA_FOCUS_CACHED: &[PropertyId] = &[
     PropertyId::Name,
     PropertyId::Role,
@@ -234,6 +235,7 @@ const UIA_FOCUS_CACHED: &[PropertyId] = &[
     PropertyId::NativeWindow,
     PropertyId::Process,
     PropertyId::HasTextPattern,
+    PropertyId::ParentAutomationId,
 ];
 
 /// Declares one kind.

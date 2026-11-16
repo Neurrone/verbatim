@@ -52,6 +52,9 @@ pub(crate) struct HookState {
     /// The view's desktop part as last read: how many switches away from
     /// the user's input desktop Core has handled.
     desktop_switches: u32,
+    /// Which Alt keys are down, left and right, as their transitions
+    /// reached the hook.
+    alt: (bool, bool),
 }
 
 impl HookState {
@@ -73,6 +76,7 @@ impl HookState {
                 unsafe { GetForegroundWindow() }
             },
             desktop_switches: 0,
+            alt: (false, false),
         }
     }
 
@@ -252,6 +256,35 @@ fn report_mask(state: &HookState, mask: Option<(u32, u32)>) {
     }
 }
 
+/// The left and right Alt keys' virtual-key codes, and the generic one.
+const VK_LMENU: u16 = 0xA4;
+const VK_RMENU: u16 = 0xA5;
+const VK_MENU: u16 = 0x12;
+
+/// Who sent a key, by its event's extra information.
+fn source_of(extra_info: usize) -> KeySource {
+    if extra_info == OWN_INPUT_TAG {
+        KeySource::Own
+    } else {
+        KeySource::User
+    }
+}
+
+/// Reports a change of whether either Alt key is down, which `event`
+/// makes.
+fn report_alt(state: &mut HookState, event: KeyEvent) {
+    let was = state.alt.0 || state.alt.1;
+    match event.vk {
+        VK_LMENU | VK_MENU if !event.extended => state.alt.0 = event.pressed,
+        VK_RMENU | VK_MENU => state.alt.1 = event.pressed,
+        _ => return,
+    }
+    let down = state.alt.0 || state.alt.1;
+    if down != was {
+        (state.reports)(KeyReport::Alt { down });
+    }
+}
+
 /// Reads Core's view for a key. No release reaches the hook for a key
 /// down before a switch away from the user's input desktop: on the first
 /// key after Core handled one, as the view's desktop part counts them,
@@ -285,11 +318,8 @@ pub(crate) fn decide(
         state.machine.passed_on(place);
         return KeyDecision::Pass;
     }
-    let source = if extra_info == OWN_INPUT_TAG {
-        KeySource::Own
-    } else {
-        KeySource::User
-    };
+    report_alt(state, event);
+    let source = source_of(extra_info);
     // Num Lock decides what the numpad's operator keys are: the
     // keyboard's own state, read locally before each key.
     // SAFETY: GetKeyState takes any virtual-key code.
@@ -566,8 +596,41 @@ mod tests {
                 KeyReport::Typed { text, .. } => format!("typed {text}"),
                 KeyReport::Gesture { gesture, .. } => format!("gesture {}", gesture.gesture),
                 KeyReport::Handled(number) => format!("handled {number}"),
+                KeyReport::Alt { down } => format!("alt {}", if *down { "down" } else { "up" }),
             })
             .collect()
+    }
+
+    /// Each change of whether either Alt key is down is reported once,
+    /// before what the key did: the repeat of a key down and the second
+    /// Alt's press while one is down change nothing; Tab between them
+    /// reports only its typing.
+    #[test]
+    fn alt_is_reported_as_it_goes_down_and_up_and_only_then() {
+        let reports = Arc::new(Mutex::new(Vec::new()));
+        let mut state = holding_state(&reports);
+        let key = |vk, extended, pressed| KeyEvent {
+            vk,
+            scan_code: 0,
+            extended,
+            injected: false,
+            pressed,
+        };
+        for (vk, extended, pressed) in [
+            (VK_LMENU, false, true),
+            (VK_LMENU, false, true),
+            (0x09, false, true),
+            (0x09, false, false),
+            (VK_RMENU, true, true),
+            (VK_LMENU, false, false),
+            (VK_RMENU, true, false),
+        ] {
+            decide(&mut state, key(vk, extended, pressed), 0, 0);
+        }
+        assert_eq!(
+            described(&reports.lock().unwrap()),
+            ["alt down", "typed 	", "alt up"]
+        );
     }
 
     /// An editing chord is passed to the application and reported with its
@@ -784,13 +847,17 @@ mod tests {
         assert_eq!(
             described(&reports),
             [
+                "alt down",
                 "gesture kb:alt+home+verbatim",
                 "deferred 0xff down #1",
                 "deferred 0xff up #2",
+                "alt up",
                 "deferred 0xa4 up #3",
+                "alt down",
                 "gesture kb:alt+home+verbatim",
                 "deferred 0xff down #4",
                 "deferred 0xff up #5",
+                "alt up",
                 "deferred 0xa4 up #6",
             ]
         );

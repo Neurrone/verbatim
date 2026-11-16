@@ -255,6 +255,15 @@ pub enum KeyReport {
         /// As [`KeyReport::Observed`]'s.
         pressed_at_us: u64,
     },
+    /// Whether either Alt key is down changed, reported before anything
+    /// else the transition caused, for Core's key state, which the task
+    /// switcher's item reads (`docs/design/readers-tell-core-asks-build1.md`,
+    /// "Keys and commands in this build"). Repeats, and keys Verbatim
+    /// passes on itself, change nothing and are not reported.
+    Alt {
+        /// Whether Alt is now down.
+        down: bool,
+    },
     /// An end-to-end harness's numbered key stroke has been handled by the
     /// hook (`verbatim_input::harness`): everything it caused was reported
     /// before this.

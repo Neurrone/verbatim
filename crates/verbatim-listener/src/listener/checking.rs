@@ -25,9 +25,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
-use windows::Win32::UI::Accessibility::UIA_MenuItemControlTypeId;
+use windows::Win32::UI::Accessibility::{
+    IUIAutomationTreeWalker, UIA_ListItemControlTypeId, UIA_MenuItemControlTypeId,
+};
 
-use verbatim_listener_logic::check::{Call, Check, ProbeRecord, Walked};
+use verbatim_listener_logic::check::{Call, Check, ProbeRecord, SWITCHER_ITEM_CLASS, Walked};
 use verbatim_listener_logic::check_threads::{CheckThreads, Pushed, Take};
 use verbatim_listener_logic::kept::{Ended, KeptElements, Start};
 use verbatim_listener_logic::schedule::JobKind;
@@ -40,7 +42,7 @@ use verbatim_model::tell::{ElementToken, EventObject, Payload, Read};
 use verbatim_model::{Pid, StateSet, TraceId, WindowHandle};
 use verbatim_process::clock::now_us;
 use verbatim_reader_rules::class::class_verdict;
-use verbatim_uia::{Agile, Cached, Direction, ElementExt, ListenerEvent, Uia};
+use verbatim_uia::{Agile, Cached, Direction, ElementExt, ListenerEvent, Request, Uia};
 
 use super::Outgoing;
 use super::asked::{UiaJob, UiaReading};
@@ -74,6 +76,9 @@ pub(super) struct CheckEvent {
     /// Whether its cache names a `NetUITWMenuItem` menu item with no name,
     /// whose previous sibling NVDA's object reads.
     placeholder_candidate: bool,
+    /// Whether its cache names a list item of the task switcher's class,
+    /// whose parent's automation id the check reads.
+    switcher_item: bool,
 }
 
 impl CheckEvent {
@@ -111,6 +116,8 @@ impl CheckEvent {
                 == Some(NET_UI_MENU_ITEM_CLASS)
                 && fields.role.control_type == Some(UIA_MenuItemControlTypeId.0)
                 && name.is_empty(),
+            switcher_item: fields.role.class_name.as_deref() == Some(SWITCHER_ITEM_CLASS)
+                && fields.role.control_type == Some(UIA_ListItemControlTypeId.0),
         })
     }
 }
@@ -151,6 +158,17 @@ fn cached_of(
             })
             .collect(),
     )
+}
+
+/// `cached` with `answer` in its property's place, when there is one.
+fn with_answer(mut cached: PropertyValues, answer: Option<PropertyAnswer>) -> PropertyValues {
+    if let Some(answer) = answer {
+        match cached.0.iter_mut().find(|cached| cached.id == answer.id) {
+            Some(place) => *place = answer,
+            None => cached.0.push(answer),
+        }
+    }
+    cached
 }
 
 /// Every application's kept elements (Table 6), under their own lock,
@@ -446,7 +464,7 @@ impl Checks {
                     token,
                     runtime_id: event.runtime_id,
                 },
-                cached: event.cached,
+                cached: with_answer(event.cached, told.parent),
                 payload: event.payload,
                 window: told.window,
                 checked: Some(told.checked),
@@ -470,6 +488,9 @@ struct Told {
     /// The thread that owns the window found, 0 for none.
     thread: u32,
     checked: verbatim_model::tell::Checked,
+    /// The parent's automation id the check read, which the tell carries
+    /// among its cached properties.
+    parent: Option<PropertyAnswer>,
 }
 
 /// A check thread: checks `pid`'s events in order while its record is its
@@ -486,11 +507,20 @@ fn run(checks: &Arc<Checks>, pid: Pid, generation: u64, wake: &Arc<Condvar>) {
         )
         .ok();
     let walker = uia.as_ref().and_then(|uia| uia.raw_view_walker().ok());
+    let parent_request = uia
+        .as_ref()
+        .and_then(|uia| uia.request_fixed::<ListenerEvent>().ok());
     let mut record = ProbeRecord::default();
     while let Some(event) = next(checks, pid, generation, wake) {
-        let told = check(checks, pid, &event, walker.as_ref(), &mut record);
+        let told = check(
+            checks,
+            (pid, &event),
+            (walker.as_ref(), parent_request.as_ref()),
+            &mut record,
+        );
         checks.checked((pid, generation), event, told);
     }
+    drop(parent_request);
     drop(walker);
     let joined = uia.is_some();
     drop(uia);
@@ -534,9 +564,11 @@ fn next(checks: &Checks, pid: Pid, generation: u64, wake: &Arc<Condvar>) -> Opti
 /// timeout, and gathers what its tell carries.
 fn check(
     checks: &Checks,
-    pid: Pid,
-    event: &CheckEvent,
-    walker: Option<&windows::Win32::UI::Accessibility::IUIAutomationTreeWalker>,
+    (pid, event): (Pid, &CheckEvent),
+    (walker, parent_request): (
+        Option<&IUIAutomationTreeWalker>,
+        Option<&Request<ListenerEvent>>,
+    ),
     record: &mut ProbeRecord,
 ) -> Told {
     let sender = event.element.resolve().ok();
@@ -545,7 +577,8 @@ fn check(
         event.kind,
         event.placeholder_candidate,
         kept.iter().map(|(token, _)| *token).collect(),
-    );
+    )
+    .reading_parent(event.switcher_item);
     let failed = || Read::Failed;
     while let Some(call) = check.next(record, now_us()) {
         match call {
@@ -594,12 +627,26 @@ fn check(
                 };
                 check.previous_sibling(has);
             }
+            Call::ParentAutomationId => {
+                let id = match (sender.as_ref(), walker, parent_request) {
+                    (Some(sender), Some(walker), Some(request)) => {
+                        match sender.live().walk(walker, Direction::Parent, request) {
+                            Ok(parent) => Read::Answered(parent.read().automation_id),
+                            // The null element `windows` reports for none.
+                            Err(error) if error.code().is_ok() => Read::Answered(None),
+                            Err(_) => Read::Failed,
+                        }
+                    }
+                    _ => Read::Failed,
+                };
+                check.parent_automation_id(id);
+            }
             Call::KeyboardFocus => {
                 check.keyboard_focus(sender.as_ref().map_or_else(failed, keyboard_focus));
             }
         }
     }
-    let (found, checked) = check.finish();
+    let (found, checked, parent) = check.finish();
     let window = match found {
         Walked::Found(window) => Some(window),
         Walked::NotWalked => (event.own_window != 0).then_some(event.own_window),
@@ -613,6 +660,7 @@ fn check(
         },
         thread: window.map_or(0, |window| verbatim_win32::window::window_owner(window).0),
         checked,
+        parent,
     }
 }
 

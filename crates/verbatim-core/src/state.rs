@@ -621,6 +621,10 @@ pub struct SrState {
     /// The key transitions the hook held or deferred that Core has not yet
     /// sent (`crate::keys::strokes`).
     pub(crate) strokes: crate::keys::strokes::StrokeLine,
+    /// Whether Alt is down, as the hook's last report of it said: a tell
+    /// reads it at its arrival, in the inbox's order (the task switcher's
+    /// item, `crate::applications::drops_ancestry`).
+    pub(crate) alt_down: bool,
     /// The selection offsets of the last caret tell's answer read through
     /// an edit control's messages, which the next one is compared with
     /// (`crate::text_facts::edit_selection_repeated`).
