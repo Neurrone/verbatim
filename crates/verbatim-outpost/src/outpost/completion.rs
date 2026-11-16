@@ -52,8 +52,8 @@ pub(super) fn complete(
     // A focus whose own element is not found still has the element kept
     // under its runtime id judged, so that a stale one's text is never
     // read as the focus's.
-    let reused = (focus || found.is_some())
-        && replaced_stale(context, client, &runtime_id, found.as_ref());
+    let reused =
+        (focus || found.is_some()) && replaced_stale(context, client, &runtime_id, found.as_ref());
     let node = match &found {
         Some(element) => context
             .nodes()
