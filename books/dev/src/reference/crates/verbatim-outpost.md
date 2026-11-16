@@ -337,7 +337,9 @@ the same tables and code, which the arbitrator's own lists are built from.
   ([ADR 0001: Focus](../adr/0001-focus.md), "Spare outposts"). It serves until
   `Shutdown` or the end of the command pipe, then shuts down cleanly, and a
   thread waiting on the target sends `TargetExited`.
-- `run_attach` watches a pid, asks for its focus, and prints each outbound
+- `run_attach` watches a pid, asks for its focus through the request driver
+  (`driver::Driver`, a `Request::CurrentFocus` of its main window, as Core
+  asks at its start), and prints each outbound
   message as the model's JSON on stdout: the development mode.
 - `OutpostOptions::remote_operations` (`verbatim_process::arguments`) says whether a UIA focus's ancestry
   may be read with a remote operation (on; `--classic-uia` turns it off).

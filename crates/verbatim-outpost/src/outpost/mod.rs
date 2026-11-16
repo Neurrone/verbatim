@@ -88,7 +88,7 @@ use verbatim_uia::{
 use crate::arbitration::Arbitrator;
 use verbatim_ia2::event_thread::{EventHandlers, EventThread, MakeHandlers, Nudger};
 use verbatim_model::protocol::{
-    CoreToOutpost, EventTiming, OutpostToCore, Query, RequestId, UiaSnapshotFact, Urgent,
+    CoreToOutpost, EventTiming, OutpostToCore, Query, UiaSnapshotFact, Urgent,
 };
 use verbatim_process::arguments::OutpostOptions;
 use verbatim_process::clock::now_us;
@@ -1801,14 +1801,11 @@ pub fn run_attach(target_pid: u32, options: OutpostOptions) -> io::Result<()> {
             }
         })?;
     let outpost = Outpost::with_options(written, target_pid, options);
-    outpost.handle_command(&CoreToOutpost::Query {
-        trace_id: TraceId::mint(),
-        request_id: RequestId::shell(0),
-        query: Query::ReadFocus {
-            purpose: verbatim_model::protocol::FocusPurpose::Plain,
-        },
-        timing: EventTiming::default(),
-    });
+    // The application's focus, asked of its main window as Core asks it of
+    // the foreground window at its start.
+    let main = window::main_window_of(target_pid)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "the application has no window"))?;
+    crate::driver::Driver::new(&outpost).current_focus(window::window_handle(main));
     loop {
         thread::park();
     }

@@ -520,6 +520,9 @@ pub struct OutpostUnderTest {
     /// The window the keyboard focus moves to during the outpost's next
     /// read of the focused element, 0 for none.
     moves_to: Arc<AtomicIsize>,
+    /// The number of the last request the request driver sent
+    /// ([`Self::request`]).
+    last_asked: Cell<verbatim_model::request::RequestNumber>,
 }
 
 impl OutpostUnderTest {
@@ -742,6 +745,7 @@ impl OutpostUnderTest {
             reader_trace: Cell::new(None),
             observation,
             moves_to,
+            last_asked: Cell::new(verbatim_model::request::RequestNumber(0)),
         }
     }
 
@@ -921,6 +925,58 @@ impl OutpostUnderTest {
     /// [`run_out_of_time_after`](Self::run_out_of_time_after)).
     pub fn follow_the_system_clock(&self) {
         self.system_time.store(true, Ordering::Relaxed);
+    }
+    /// Sends Core's `request` about window `window` through the outpost's
+    /// request driver (`verbatim_outpost::driver`), as Core's request table
+    /// sends it, with no verdict in force for the window, and returns its
+    /// number.
+    pub fn request(
+        &self,
+        window: HWND,
+        request: verbatim_model::request::Request,
+    ) -> verbatim_model::request::RequestNumber {
+        let mut driver =
+            verbatim_outpost::driver::Driver::after(&self.outpost, self.last_asked.get());
+        let number = driver.ask(
+            verbatim_model::WindowHandle(window.0 as u64),
+            verbatim_model::request::WindowVerdict::ProbeFirst,
+            request,
+        );
+        self.last_asked.set(driver.last());
+        number
+    }
+
+    /// Cancels request `number` for `reason`, as Core does.
+    pub fn cancel_request(
+        &self,
+        number: verbatim_model::request::RequestNumber,
+        reason: verbatim_model::request::CancelReason,
+    ) {
+        verbatim_outpost::driver::Driver::after(&self.outpost, self.last_asked.get())
+            .cancel(number, reason);
+    }
+
+    /// The answer to request `number`, which must be the next message the
+    /// outpost writes.
+    pub fn answer(
+        &self,
+        number: verbatim_model::request::RequestNumber,
+    ) -> verbatim_model::request::Answer {
+        match self.next() {
+            OutpostToCore::Answer(answer) if answer.number == number => answer,
+            other => panic!("the answer to request {number}, not {other:?}"),
+        }
+    }
+
+    /// Sends `request` about `window` and returns its answer, the next
+    /// message the outpost writes.
+    pub fn requested(
+        &self,
+        window: HWND,
+        request: verbatim_model::request::Request,
+    ) -> verbatim_model::request::Answer {
+        let number = self.request(window, request);
+        self.answer(number)
     }
 
     /// The outpost's next message, a focus in it judged as Core judges it
