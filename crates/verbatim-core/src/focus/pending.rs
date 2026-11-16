@@ -150,9 +150,8 @@ pub(crate) fn counts_as_pending(
                 .checked
                 .as_ref()
                 .and_then(|checked| checked.keyboard_focus);
-            let through = overridden == Override::NetUiMenuItem
-                || tell.kind == EventKind::UiaMenuOpened
-                || focused != Some(Read::Answered(false));
+            let through =
+                overridden == Override::NetUiMenuItem || focused != Some(Read::Answered(false));
             through && !uia_duplicate(last, runtime_id, tell.checked.as_ref())
         }
         EventObject::Msaa {

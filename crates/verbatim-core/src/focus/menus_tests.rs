@@ -162,6 +162,37 @@ fn a_menu_opening_on_the_committed_focus_executes_it_again() {
     assert_eq!(again, ["Label(\"OK\") Role(Button)"]);
 }
 
+#[test]
+fn a_menu_opening_on_the_committed_focus_that_lost_the_keyboard_focus_is_dropped() {
+    let mut state = asked_completion();
+    feed_at(
+        &mut state,
+        3_000,
+        answer(OUTPOST, 2, Reply::Focus(Box::new(focus_read(None)))),
+    );
+    assert_eq!(feed_at(&mut state, 4_000, lost_opening(1, 4_000)), NOTHING);
+    assert!(state.queue.front_for_tests().is_none());
+}
+
+#[test]
+fn a_menu_opening_on_another_element_that_lost_the_keyboard_focus_asks_nothing() {
+    let mut state = ready();
+    assert_eq!(feed_at(&mut state, 1_000, lost_opening(2, 1_000)), NOTHING);
+    assert!(state.queue.front_for_tests().is_none());
+}
+
+/// [`opening`], whose element the check thread found without the keyboard
+/// focus.
+fn lost_opening(runtime: i32, at_us: u64) -> Input<crate::entries::Entry> {
+    let mut tell = uia_tell(runtime, vec![(ElementToken(3), Read::Answered(true))]);
+    tell.kind = EventKind::UiaMenuOpened;
+    tell.at_us = at_us;
+    if let Some(checked) = tell.checked.as_mut() {
+        checked.keyboard_focus = Some(Read::Answered(false));
+    }
+    entry(tell)
+}
+
 /// An MSAA menu start tell on window 5.
 fn menu_start() -> Input<crate::entries::Entry> {
     let mut tell = msaa_tell(-4);

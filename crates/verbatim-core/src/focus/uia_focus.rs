@@ -14,7 +14,7 @@ use verbatim_model::request::{
     CompleteUia, CompletionFor, FocusRead, ObjectRead, ObjectRef, Purpose, ReadObject, Reply,
     Request as Wire, RouteEnd,
 };
-use verbatim_model::tell::{ElementToken, TellWindow};
+use verbatim_model::tell::{ElementToken, Read, TellWindow};
 
 use super::FOCUS_SET;
 use super::execute::{Known, Origin, again, execute};
@@ -134,6 +134,19 @@ fn on_hidden_frame(focus: &UiaFocus) -> bool {
 /// unspoken and clears Core's caret baseline.
 pub(crate) async fn run(mut cx: Cx<Entries>, focus: UiaFocus) {
     if opens_on_committed(&cx, &focus) {
+        // The opening is a focus on the committed focus, subject to the
+        // keyboard-focus answer the check thread read at delivery, as any
+        // focus is (`docs/parity/focus-events.md`): one whose element lost
+        // the keyboard focus is dropped.
+        let lost = focus
+            .tell
+            .checked
+            .as_ref()
+            .and_then(|checked| checked.keyboard_focus)
+            == Some(Read::Answered(false));
+        if lost {
+            return;
+        }
         let said = again(&mut cx.facts_mut(), focus.tell.trace_id);
         for said in said {
             cx.emit(said);
