@@ -2920,7 +2920,7 @@ mod tests {
     use super::*;
     use verbatim_model::WindowHandle;
     use verbatim_model::property::RuntimeId;
-    use verbatim_model::tell::{ElementToken, EventObject, Read, TellWindow};
+    use verbatim_model::tell::{ElementToken, EventObject, TellWindow};
     use verbatim_process::message::read_message;
 
     /// A live re-read is judged by the moved-on rule by its report's
@@ -3637,10 +3637,12 @@ mod tests {
 
     /// A UIA focus is checked on its application's check thread and told
     /// with what the check found: the walk to its nearest window, here the
-    /// desktop's own, the probe of that window, which is on neither of
-    /// NVDA's lists, and its keyboard focus read live; its element is kept
-    /// behind the token the tell names. A second focus on the same element
-    /// has the first one's kept element's keyboard focus read too.
+    /// desktop's own, and the probe of that window, which is on neither of
+    /// NVDA's lists and has no provider, so the check makes no other call,
+    /// as NVDA's handler returns at a window read through MSAA; its element
+    /// is kept behind the token the tell names. A second focus on the same
+    /// element finds the probe's answer in the thread's record and makes no
+    /// call past the walk.
     #[test]
     fn a_focus_is_told_from_its_check_thread_with_what_its_check_found() {
         let uia = verbatim_uia::Uia::new().expect("a UIA client");
@@ -3683,8 +3685,11 @@ mod tests {
         assert!(facts.desktop);
         let checked = first.checked.as_ref().expect("checked");
         let probe = checked.probe.expect("the desktop window probed");
-        assert_eq!((probe.window, probe.thread), (desktop, desktop_thread));
-        assert!(matches!(checked.keyboard_focus, Some(Read::Answered(_))));
+        assert_eq!(
+            (probe.window, probe.thread, probe.provider),
+            (desktop, desktop_thread, false)
+        );
+        assert_eq!(checked.keyboard_focus, None);
         assert_eq!(checked.kept, Vec::new());
         assert_eq!(checked.previous_sibling, None);
         assert_eq!(
@@ -3694,18 +3699,15 @@ mod tests {
                 runtime_id,
             }
         );
-        let kept: Vec<ElementToken> = second
-            .checked
-            .as_ref()
-            .expect("checked")
-            .kept
-            .iter()
-            .map(|&(token, focused)| {
-                assert!(matches!(focused, Read::Answered(_)), "{focused:?}");
-                token
+        assert_eq!(
+            second.checked,
+            Some(verbatim_model::tell::Checked {
+                probe: None,
+                keyboard_focus: None,
+                kept: Vec::new(),
+                previous_sibling: None,
             })
-            .collect();
-        assert_eq!(kept, [ElementToken(1)]);
+        );
         checks.stop();
         readers.stop();
         outgoing.close();

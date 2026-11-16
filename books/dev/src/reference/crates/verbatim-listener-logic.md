@@ -136,16 +136,18 @@ Public API:
   each kept element's keyboard focus, the previous sibling, the element's
   keyboard focus) and the thread records each answer. `Handler::of` maps a
   kind to its handler: a focus or menu opening makes every call, a walk
-  that finds no window ending it; an element selected, a window opened
-  and a property change walk and probe; a notification walks alone, a
-  failed walk telling no window. A window on one of NVDA's lists is not
-  probed, nor one whose probe in the thread's `ProbeRecord` began within
-  `PROBE_RECORD_US` (half a second). A nameless `NetUITWMenuItem` menu
-  item has its previous sibling read, and with none, or none read, its
-  keyboard focus is not, as NVDA's placeholder allows its focus.
-  `Check::finish` answers what the walk found (`Walked`) and the
-  `Checked` the tell carries. Every read but the walk is made whatever the
-  probe answered, since Core holds the verdict.
+  that finds no window, or a window read through MSAA, ending it; an
+  element selected, a window opened and a property change walk and probe;
+  a notification walks alone, a failed walk telling no window. A window on
+  one of NVDA's lists is not probed, nor one whose probe in the thread's
+  `ProbeRecord` began within `PROBE_RECORD_US` (half a second), the record
+  keeping whether a provider answered. A window on NVDA's MSAA list, or
+  one the probe or the record finds with no provider, ends the check, as
+  NVDA's native-element test fails and its handler returns. A nameless
+  `NetUITWMenuItem` menu item has its previous sibling read, and with
+  none, or none read, its keyboard focus is not, as NVDA's placeholder
+  allows its focus. `Check::finish` answers what the walk found (`Walked`)
+  and the `Checked` the tell carries.
 - `check_threads` — the check threads' records (`CheckThreads`), one per
   application, keyed by its generation, under the listener's one lock:
   `push` queues an event, starting a thread when there is no record or

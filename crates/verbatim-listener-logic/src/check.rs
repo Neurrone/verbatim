@@ -21,9 +21,10 @@
 //!   (`NVDAObjects/UIA/__init__.py` 1227 to 1231); and the element's own
 //!   keyboard focus (`shouldAllowUIAFocusEvent`, 1632 to 1636), which NVDA
 //!   does not read for the placeholder menu item its class makes of one
-//!   with no previous sibling (2905 to 2908). A walk that finds no window
-//!   ends the check, as NVDA's native-element test then returns false and
-//!   its handler returns (887 to 899);
+//!   with no previous sibling (2905 to 2908). A walk that finds no window,
+//!   or a window the class lists, the probe or the probe record find read
+//!   through MSAA, ends the check, as NVDA's native-element test then
+//!   returns false and its handler returns (887 to 899);
 //! - an element selected, a window opened and a property change, NVDA's
 //!   automation-event and property-change handlers: the walk and the probe
 //!   of its native-element test (819 to 824);
@@ -31,10 +32,9 @@
 //!   that fails telling no window, as it finds none (1063 onward,
 //!   1114 to 1119).
 //!
-//! The kept elements' and the element's keyboard focus, and the previous
-//! sibling, are read whatever the probe answered: Core holds the verdict
-//! that decides whether NVDA would have read them, and a read Core does not
-//! need costs only a call, where one not made could change what is spoken.
+//! The probe record keeps each probe's answer with when it began, so a
+//! window the record finds read through MSAA ends the check as the probe
+//! would.
 
 use std::collections::BTreeMap;
 
@@ -119,42 +119,50 @@ pub enum Walked {
 }
 
 /// A check thread's record of the probes it made: when each window's last
-/// probe began, as NVDA's `UIAWindowHandleCache` keeps its answers
-/// (`UIAHandler/__init__.py` 1368 to 1381). A probe begun within
-/// [`PROBE_RECORD_US`] stands, and the window is not probed again.
+/// probe began and whether a provider answered, as NVDA's
+/// `UIAWindowHandleCache` keeps its answers (`UIAHandler/__init__.py` 1368
+/// to 1381). A probe begun within [`PROBE_RECORD_US`] stands, and the
+/// window is not probed again.
 #[derive(Debug, Default)]
 pub struct ProbeRecord {
-    began: BTreeMap<isize, u64>,
+    probes: BTreeMap<isize, (u64, bool)>,
 }
 
 impl ProbeRecord {
-    /// Whether the record holds a probe of `window` begun within the last
-    /// [`PROBE_RECORD_US`] at `now_us`.
+    /// Whether a provider answered the probe of `window` the record holds
+    /// begun within the last [`PROBE_RECORD_US`] at `now_us`; `None` when
+    /// no such probe stands.
     #[must_use]
-    pub fn stands(&self, window: isize, now_us: u64) -> bool {
-        self.began
+    pub fn standing(&self, window: isize, now_us: u64) -> Option<bool> {
+        self.probes
             .get(&window)
-            .is_some_and(|&began| now_us.saturating_sub(began) <= PROBE_RECORD_US)
+            .filter(|&&(began, _)| now_us.saturating_sub(began) <= PROBE_RECORD_US)
+            .map(|&(_, provider)| provider)
     }
 
-    /// Records a probe of `window` begun at `began_us`, letting go of every
-    /// probe that no longer stands.
-    fn record(&mut self, window: isize, began_us: u64) {
-        self.began
-            .retain(|_, &mut began| began_us.saturating_sub(began) <= PROBE_RECORD_US);
-        self.began.insert(window, began_us);
+    /// Records a probe of `window` begun at `began_us`, answered
+    /// `provider`, letting go of every probe that no longer stands.
+    fn record(&mut self, window: isize, began_us: u64, provider: bool) {
+        self.probes
+            .retain(|_, &mut (began, _)| began_us.saturating_sub(began) <= PROBE_RECORD_US);
+        self.probes.insert(window, (began_us, provider));
     }
 }
 
-/// Whether the probe of the nearest window is made, decided once its
+/// What the check knows of the nearest window's backend, decided once its
 /// class verdict is known.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Probing {
-    /// The class is on one of NVDA's lists, or the record's answer stands.
-    Skipped,
-    /// To be made.
+    /// Read through UI Automation, by NVDA's lists or the record, with no
+    /// probe made.
+    Uia,
+    /// Read through MSAA, by NVDA's lists or the record, with no probe
+    /// made: the check ends.
+    Msaa,
+    /// The probe is to be made.
     Due,
-    /// Made, with its answer.
+    /// Made, with its answer: a provider reads the window through UI
+    /// Automation, none through MSAA, which ends the check.
     Made(Probe),
 }
 
@@ -211,15 +219,22 @@ impl Check {
         if self.handler == Handler::Notification {
             return None;
         }
-        match self.probing {
-            None => return Some(Call::Classes(window)),
-            Some(Probing::Due) if record.stands(window, now_us) => {
-                self.probing = Some(Probing::Skipped);
+        if self.probing == Some(Probing::Due) {
+            match record.standing(window, now_us) {
+                Some(true) => self.probing = Some(Probing::Uia),
+                Some(false) => self.probing = Some(Probing::Msaa),
+                None => return Some(Call::Probe(window)),
             }
-            Some(Probing::Due) => return Some(Call::Probe(window)),
-            Some(Probing::Skipped | Probing::Made(_)) => {}
         }
-        if self.handler != Handler::Focus {
+        let native = match self.probing {
+            None => return Some(Call::Classes(window)),
+            Some(Probing::Uia) => true,
+            Some(Probing::Made(probe)) => probe.provider,
+            Some(Probing::Msaa | Probing::Due) => false,
+        };
+        // A window read through MSAA fails NVDA's native-element test, and
+        // its handler returns before any other call.
+        if self.handler != Handler::Focus || !native {
             return None;
         }
         if let Some(&token) = self.kept.get(self.kept_answers.len()) {
@@ -251,14 +266,15 @@ impl Check {
     pub fn classed(&mut self, verdict: ClassVerdict) {
         self.probing = Some(match verdict {
             ClassVerdict::Unknown => Probing::Due,
-            ClassVerdict::Uia | ClassVerdict::NonUia => Probing::Skipped,
+            ClassVerdict::Uia => Probing::Uia,
+            ClassVerdict::NonUia => Probing::Msaa,
         });
     }
 
     /// Records the probe's answer, in the thread's `record` too.
     pub fn probed(&mut self, probe: Probe, record: &mut ProbeRecord) {
         if let Ok(window) = isize::try_from(probe.window.0.cast_signed()) {
-            record.record(window, probe.began_us);
+            record.record(window, probe.began_us, probe.provider);
         }
         self.probing = Some(Probing::Made(probe));
     }
@@ -290,7 +306,7 @@ impl Check {
         };
         let probe = match self.probing {
             Some(Probing::Made(probe)) => Some(probe),
-            Some(Probing::Skipped | Probing::Due) | None => None,
+            Some(Probing::Uia | Probing::Msaa | Probing::Due) | None => None,
         };
         (
             walked,
@@ -442,25 +458,97 @@ mod tests {
         }
     }
 
-    /// A window on one of NVDA's lists is not probed, and the focus's
-    /// keyboard focus is read all the same.
+    /// A window on one of NVDA's lists is not probed: on the UI Automation
+    /// list the focus's checks go on, and on the MSAA list the check ends
+    /// there, as NVDA's handler returns.
     #[test]
-    fn a_window_on_a_list_is_not_probed() {
-        for verdict in [ClassVerdict::Uia, ClassVerdict::NonUia] {
-            let check = Check::new(EventKind::UiaFocus, false, Vec::new());
+    fn a_window_on_a_list_is_not_probed_and_the_msaa_list_ends_the_check() {
+        for (verdict, goes_on) in [(ClassVerdict::Uia, true), (ClassVerdict::NonUia, false)] {
+            let check = Check::new(EventKind::UiaFocus, true, vec![ElementToken(2)]);
             let (calls, _, checked) =
                 run(check, &mut ProbeRecord::default(), 0, |call| match call {
                     Call::NearestWindow => Answer::Nearest(Read::Answered(Some(5))),
                     Call::Classes(_) => Answer::Class(verdict),
                     _ => Answer::Focus(Read::Answered(true)),
                 });
-            assert_eq!(
-                calls,
-                [Call::NearestWindow, Call::Classes(5), Call::KeyboardFocus],
-                "{verdict:?}"
-            );
+            let mut expected = vec![Call::NearestWindow, Call::Classes(5)];
+            if goes_on {
+                expected.extend([
+                    Call::KeptFocus(ElementToken(2)),
+                    Call::PreviousSibling,
+                    Call::KeyboardFocus,
+                ]);
+            }
+            assert_eq!(calls, expected, "{verdict:?}");
             assert_eq!(checked.probe, None);
         }
+    }
+
+    /// A probe that finds no provider ends a focus's check before the kept
+    /// elements' and its own keyboard focus, and so does the record of such
+    /// a probe within half a second.
+    #[test]
+    fn a_window_the_probe_finds_read_through_msaa_ends_the_check() {
+        let mut record = ProbeRecord::default();
+        let checked = |record: &mut ProbeRecord, now_us| {
+            let check = Check::new(EventKind::UiaFocus, false, vec![ElementToken(4)]);
+            run(check, record, now_us, |call| match call {
+                Call::NearestWindow => Answer::Nearest(Read::Answered(Some(5))),
+                Call::Classes(_) => Answer::Class(ClassVerdict::Unknown),
+                Call::Probe(_) => Answer::Provider(false),
+                _ => Answer::Focus(Read::Answered(true)),
+            })
+        };
+        let (calls, _, told) = checked(&mut record, 1_000);
+        assert_eq!(
+            calls,
+            [Call::NearestWindow, Call::Classes(5), Call::Probe(5)]
+        );
+        assert_eq!(
+            told,
+            Checked {
+                probe: Some(Probe {
+                    window: WindowHandle(5),
+                    thread: 7,
+                    provider: false,
+                    began_us: 1_000,
+                }),
+                keyboard_focus: None,
+                kept: Vec::new(),
+                previous_sibling: None,
+            }
+        );
+        let (calls, _, told) = checked(&mut record, 2_000);
+        assert_eq!(calls, [Call::NearestWindow, Call::Classes(5)]);
+        assert_eq!(
+            told,
+            Checked {
+                probe: None,
+                keyboard_focus: None,
+                kept: Vec::new(),
+                previous_sibling: None,
+            }
+        );
+    }
+
+    /// The record of a probe that found a provider has the focus's checks
+    /// go on with no probe made.
+    #[test]
+    fn a_recorded_provider_goes_on_with_no_probe() {
+        let mut record = ProbeRecord::default();
+        record.record(5, 1_000, true);
+        let check = Check::new(EventKind::UiaFocus, false, Vec::new());
+        let (calls, _, told) = run(check, &mut record, 1_200, |call| match call {
+            Call::NearestWindow => Answer::Nearest(Read::Answered(Some(5))),
+            Call::Classes(_) => Answer::Class(ClassVerdict::Unknown),
+            _ => Answer::Focus(Read::Answered(true)),
+        });
+        assert_eq!(
+            calls,
+            [Call::NearestWindow, Call::Classes(5), Call::KeyboardFocus]
+        );
+        assert_eq!(told.probe, None);
+        assert_eq!(told.keyboard_focus, Some(Read::Answered(true)));
     }
 
     /// A probe begun within the last half second stands: the window is
