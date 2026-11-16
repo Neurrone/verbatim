@@ -195,8 +195,10 @@ is collected in
 [Main loop and watchdog](https://github.com/Neurrone/verbatim/blob/main/docs/nvda/main-loop-and-watchdog.md); it is the
 justification for D9's per-application process isolation and D13's
 rule that the focus listener's callbacks never make a cross-process call
-(its reads of a UIA focus are made on a thread per application, each
-under UIA's call timeout and a watchdog).
+(its calls are made on a check thread and a reading thread per
+application, each under UIA's call timeout, and only Core stops waiting
+for a read, [ADR 0003](../reference/adr/0003-readers-tell-core-asks.md),
+"A frozen window").
 
 Verbatim runs as four kinds of process:
 
@@ -212,26 +214,27 @@ Verbatim runs as four kinds of process:
      which owns which version of each extension is active (D6);
      `verbatim-ext` is a skeleton today.
 2. **Outpost processes (`verbatim-outpost.exe`), one per target application**
-   (D9), each containing an event thread (WinEvent message loop and UIA
-   callbacks), one worker, the only thread that calls into the
-   application, a reducer thread that decides what the worker takes next
-   and abandons and replaces a worker past its deadline, a registering
-   thread that subscribes to UI Automation events, a target-watch thread,
-   and an I/O thread that reads Core's commands, answers pings, and
-   finishes the writes to Core that pended; every other thread writes
-   its own messages to Core (`docs/design/communication.md`, section 6.4).
+   (D9), each containing one worker, the only thread that calls into the
+   application, taking Core's requests one at a time; UIA callback
+   threads for the objects Core names it to follow; a registering thread
+   that makes its UI Automation registrations; in a console host's
+   outpost only, an event thread holding the console's five `WinEvent`s;
+   a reducer thread; a target-watch thread; and an I/O thread that reads
+   Core's requests, answers pings, and finishes the writes to Core that
+   pended; every other thread writes its own messages to Core
+   (`docs/design/communication.md`, section 6.4).
 3. **The focus listener process (`verbatim-listener.exe`)** (D13), one
    for the desktop, containing its `WinEvent` thread, its UIA event
-   threads, a reading thread for each application whose UIA focus it
-   reads, with their watchdog, and an I/O thread that reads Core's
-   commands; like an outpost's, every other thread writes its own
+   threads, a check thread and a reading thread for each application
+   whose UIA events it hears, and an I/O thread that reads Core's
+   requests; like an outpost's, every other thread writes its own
    messages.
 4. **Extension host processes** (D6, D18), one per extension in use,
    Verbatim's built-ins being one extension whose host always runs, and
    each built-in engine one more from M6, each in a kill-on-close job, with one thread
    per lane: each outpost the host serves, and each global module. A
-   host's reads go to the claiming outpost over a pipe the supervisor
-   makes; a synthesizer's host streams PCM to Core over a pipe. Every
+   host's reads go through Core as ordinary requests from the shared
+   list, outside the event queue; a synthesizer's host streams PCM to Core over a pipe. Every
    extension's host is contained in an AppContainer from M5, and native
    synthesizers' from M6.
 
@@ -290,53 +293,44 @@ plane (section 10) fronts Core for dev tooling and, later, remote support.
 ### Outposts
 
 An **outpost** is an actor responsible for one target application: it owns the
-accessibility subscriptions for that app (UIA event registrations and a
-per-process out-of-context WinEvent hook), maintains the cached/normalized
-tree fragment for it, and answers queries about it — from its own process.
+UI Automation subscriptions Core names for that app (a console host's
+outpost also keeps the console's five `WinEvent`s), holds the objects
+behind the node ids Core holds, and makes every call into the application,
+only on Core's request — from its own process.
 Outposts are created when an app first gains focus (or raises a subscribed
 event), retired when the app exits, and may be retired early when idle to
 bound memory use; state rebuilds from live queries on demand.
 
 Every fact has one owner, one thread or one state machine run by one
 thread, and others learn it from one-way reports or views
-([the ownership model](design/ownership.md)). Core owns every word and
-every fact across applications. Each outpost's reducer owns what its
-application remembers: the order of its two routes, verdicts, the hang notice,
-the reports Core may hold and each node's note for a caret key. A caret
-key's effect is such a decision: the outpost compares and reports, and
-Core judges. The object store owns node
+([the ownership model](design/ownership.md)). Core owns every word, every
+rule and every fact across applications: readers tell, Core asks
+([ADR 0003](../reference/adr/0003-readers-tell-core-asks.md)). An outpost
+does mechanical work on objects it holds, only on Core's request: read,
+compare a caret with a starting point, report how a selection differs
+from one Core names, move the caret; its table of waiting requests, such
+as a caret key's watch, is what it keeps for Core between requests. The
+object store owns node
 identity and its release. The hook thread owns the key number. The
-threads that call into applications are the focus listener's reading
-threads and each outpost's workers; no other thread makes such a call.
+threads that call into applications are the focus listener's check and
+reading threads and each outpost's workers; no other thread makes such a
+call.
 
-Inside, an outpost is one pure state machine, the reducer, on a thread of
-its own. Workers run whole call programs on copies of what they read and
-post their results back; the reducer's timed wait keeps every timer.
-Every test the outpost makes against the foreground, an MSAA focus's
-acceptance test and a foreground change's in-front test, is made on the
-reducer's thread from Windows' state as the entry is taken in, never on
-a worker, which can wait behind a call into a held application
-([ADR 0001](../reference/adr/0001-focus.md), "The foreground and the
-window title"; Dickson, 2026-11-02). Nothing is said for an application
-while it does not answer ([How focus works](design/focus.md), "Slow and
-hung applications"). What it says to
-Core waits in one queue, written by a thread of its own; queuing never
-waits, nothing is queued while a lock the watchdog takes is held, and
-waiting messages are merged by object and kind, but never a terminal's
-reads, each of which starts where the last said to, while answers to Core's requests keep
-their order. Intake callbacks
-only add entries to one queue, which applies NVDA's limiter rules (one
-waiting entry per object and event kind, and for an MSAA event other than
-the console host's or a menu opening, per thread that raised it too, of
-menu openings only the newest, and per batch the newest four
-focus events and ten other events per UI thread). One worker thread takes
-the entries in order and is the only thread that calls into the
-application, so events and query replies leave the outpost in the order
-they were queued. Every query gets exactly one reply: done, gone, failed,
-not started, or abandoned. The outpost keeps the live UIA element or MSAA
-object behind every node Core still holds, and releases the rest when Core
-reports which nodes it holds; a node id names its outpost generation, so
-an id from a replaced outpost can never reach its successor.
+Inside, an outpost's one worker takes Core's requests in the order Core
+sent them, the event queue's ahead of every queued request from outside
+it, so an application's answers leave the outpost in order. It makes no
+drop and no hang check of its own before a call, and keeps a limiter only
+for the events it still hears. Every request gets exactly one answer: a
+result, refused with a reason, not there, not responding, or ended. Nothing
+is said for an application while it does not answer
+([How focus works](design/focus.md), "Slow and hung applications"). What
+it says to Core waits in one queue, written by a thread of its own;
+queuing never waits, and waiting tells are merged by object and kind,
+while answers to Core's requests keep their order. The outpost keeps the
+live UIA element or MSAA object behind every node Core still holds, and
+releases the rest when Core reports which nodes it holds; a node id names
+its outpost generation, so an id from a replaced outpost can never reach
+its successor.
 
 The outposts are built on four rules, adopted on 2026-10-01 to replace
 mechanisms that had each been added for one live failure and covered
@@ -374,26 +368,31 @@ application after a visit elsewhere.
 
 Recovery is a ladder, cheapest rung first:
 
-1. **Deadline expiry.** Every entry the worker handles carries a deadline,
-   watched by a watchdog thread.
+1. **Core stops waiting.** Only Core stops waiting for a request: when
+   its shell finds the request's window hung, live, before sending it or
+   at its half-second check while it is out; at its due time, 11 seconds
+   or 13 for a focus read; or when the foreground leaves the request's
+   window ([ADR 0003](../reference/adr/0003-readers-tell-core-asks.md),
+   "A frozen window"). The readers keep no deadline of their own.
 2. **Thread abandonment.** A thread blocked inside a hung app's COM call
    cannot be safely reclaimed: `ICancelMethodCalls` is unreliable and
    `TerminateThread` corrupts the calling process (abandoned locks, broken
-   apartment state). So when the worker passes its deadline the watchdog
-   abandons it, answers its query "abandoned" if it was running one, and
-   starts a replacement worker that continues with the rest of the queue.
-   The abandoned thread publishes nothing if its call ever returns, and
-   stays parked (roughly a megabyte of stack and a handle) until then or
-   until the outpost exits.
+   apartment state). So when Core stops waiting because the foreground
+   moved away from the request's window, a worker still inside the call is
+   abandoned and a replacement continues with the rest of the requests;
+   when the window is hung or the due time passed the thread is left
+   alone, since a fresh one would stick in the same window, and its late
+   answer is dropped. An abandoned thread publishes nothing if its call
+   ever returns, and stays parked (roughly a megabyte of stack and a
+   handle) until then or until the outpost exits.
 3. **Kill and replace.** Every outpost failure takes one path, whatever
    its cause: it crashes, its hook fails, it stops answering pings for
    nine seconds (stuck: the process itself does not answer, which a
    worker waiting on a slow application never causes, since the I/O
-   thread answers pings), or it accumulates eight abandoned workers
-   (unless its application's windows are reported hung). The supervisor
-   ends it, and, if its application is still running, gives the
-   application the next spare outpost, or starts one for it, whether or
-   not it holds attention, with the facts held for it; Core asks the
+   thread answers pings), or its pong reports eight workers abandoned on
+   windows not found hung. Core's generation record ends it, and, if its
+   application is still running, gives the application the next spare
+   outpost, or starts one for it, whether or not it holds attention; Core asks the
    replacement for the current focus where it needs to, and its
    references to the old outpost's nodes are dead. Nothing is ever given
    up: an application's repeated failures are spaced by an exponential
@@ -435,19 +434,17 @@ that are global by nature:
   client in NVDA's order; one listener holding them, rather than every
   outpost, means one callback per focus change system-wide instead of one
   per outpost;
-- global MSAA WinEvent hooks (process id zero) for focus, foreground,
-  menu-popup opens, the end of a menu or of the Alt+Tab switcher, alerts,
-  tooltips shown and the desktop switch, NVDA's own arrangement, and a
-  hook scoped to csrss's process for the desktop window's name change, so
-  the virtual desktop's name is read on csrss's reading thread. Every foreground change
-  whose window is in front is also reported to Core, with when it was
-  observed, its process, its root owner, the thread its event names and
-  its process's integrity level, none replacing another: it is the only
-  report that a window came to the foreground, from which Core takes the
-  keyboard hook's view of the foreground (section 5), attention and its
-  foreground record (section 2); and the end of a menu or switcher goes to
-  Core, which asks the foreground application for its focus if its own
-  has not changed shortly after, as NVDA's fake focus does.
+- every `WinEvent` hook, desktop-wide (process id zero), as NVDA hooks
+  them in one process, but the console host's five events, which the
+  console host's outpost keeps, and a hook scoped to csrss's process for
+  the desktop window's name change. Every foreground change whose window
+  is in front is told to Core with its process, its root owner, the
+  thread its event names and its process's integrity level: it is the
+  only report that a window came to the foreground, from which Core takes
+  the keyboard hook's view of the foreground (section 5), attention and
+  its foreground record (section 2); and the end of a menu or switcher is
+  told to Core, which asks the foreground application for its focus if
+  its own has not changed shortly after, as NVDA's fake focus does.
 
 The listener's contract: **its callbacks and its writer never make a
 cross-process call**; its registration thread's one desktop-wide
@@ -462,98 +459,65 @@ focus is dropped so is lost, as NVDA loses it. It says `Ready` only once the
 registration has returned, because the listener's `Ready` gates
 Verbatim's readiness to take input, and no input may be taken before UIA
 focus events can arrive. An MSAA
-WinEvent delivers raw window and object ids, which are forwarded
-untouched; the only other reads in the callbacks and the writer are
-hang-safe local ones (the window's owning process id, its class name, and
-for the window in front its process's integrity level, read from the
-kernel). No application, hung or not, can stall them.
+WinEvent delivers raw window and object ids, which are told untouched;
+the only other reads in the callbacks and the writer are hang-safe local
+ones (the window's owning process id, its class name, the facts the
+acceptance test reads, and for the window in front its process's
+integrity level, read from the kernel). No application, hung or not, can
+stall them.
 
-Detection and announcement are deliberately split. The listener forwards
-each captured fact to Core; the supervisor ensures the target's own
-outpost exists, giving the application a waiting spare outpost where it
-can, so a start merely delays the announcement, and hands the fact to it.
-Facts for an outpost still starting are held in arrival order, merged with
-NVDA's one-per-object rule, and released in that order when it is ready.
-The outpost's worker then acquires, arbitrates, enriches with ancestry and
-selection, and reports the focus event once it is complete, saying
-nothing while the application does not answer. Node identity never crosses processes:
-the navigator, object navigation, and every fetch route to the per-app
+Detection and announcement are deliberately split. The listener tells
+Core of each event; Core judges it in its event queue, and when it needs
+the application, asks: an MSAA focus is read by the application's outpost
+in one request, which Core's generation record starts where there is
+none, usually by giving the application a waiting spare, so a start
+merely delays the announcement; a UIA focus is read in two requests, the
+listener reading the element it kept, then the outpost completing the
+read ([ADR 0003](../reference/adr/0003-readers-tell-core-asks.md), "A UI
+Automation focus read"). Node identity never crosses processes: the
+navigator, object navigation, and every read route to the per-app
 outpost, and D9's isolation bounds every call that can block.
 
-All of an application's MSAA events reach its outpost by one route, in the
-order Windows raised them: the outpost's process-scoped hook takes in its
-application's focus, foreground, menu-popup, alert, and tooltip events
-besides value, state, name, selection, and window destruction. The
-listener forwards those events only for an application whose outpost's
-hook is not yet in, so that an application's first events start its
-outpost; once told the hook is in, it says "forwarding ended" behind its
-last forwarded fact, and the outpost holds its own hook's events until
-then and drops its copies of what was forwarded, so each event is handled
-once and none is dropped.
+One desktop-wide hook keeps Windows' order of events across
+applications, so every MSAA event reaches Core by one route; a UIA
+element cannot be handed to another process, so the listener keeps the
+element of each UIA event and its check thread for the application makes,
+as the event is delivered, the calls NVDA's handler for that event makes,
+and the tell carries their results for Core to judge. A reading thread
+per application reads a focus when Core asks, its ancestors one step
+each up to an ancestor Core already knows, the desktop's root or the
+process boundary, with calls on elements it holds only. A hung
+application stalls only its own check and reading threads. An
+application whose abandoned reading threads reach a small cap gets no
+new thread until one returns. [ADR 0003](../reference/adr/0003-readers-tell-core-asks.md)
+gives the options weighed and the reasons, and [How focus works](design/focus.md)
+the whole path of a focus.
 
-A UIA focus is judged and read by the listener, because a UIA element
-cannot be handed to another process and the listener is the one process
-that receives the event's own element. Its callback sends the
-application's outpost a marker the moment the event arrives and queues the
-element for that application's reading thread, one per application,
-created on its first focus event and ended when the application's outpost
-ends. The thread judges the focus as NVDA's focus handler does, in its
-order: the hung window, whether the element is native UIA, NVDA's
-duplicate test against the element it read before, the acceptance test against
-the element's nearest window, the object's own refusals, and the element's
-`HasKeyboardFocus` read plainly, a focus that has lost it dropped as NVDA
-drops it. It then reads the element's value, states, and details afresh,
-and its ancestors, one step each, up to the first one known from the
-focus before (its ancestry cache, used only while the cached windows'
-titles are unchanged), the desktop's root, or the process boundary, with
-calls on elements it holds only. A UIA menu opening takes the same route. The
-read, or its drop, follows the marker through verbatim.exe, the only route
-between the listener and the outposts. The outpost holds every entry that
-arrives after a marker until the read takes the marker's place, so a
-change raised after a focus is never handled before it, as in NVDA's
-single flusher thread; reports the focus from the read at once, its
-ancestors filtered and continued through MSAA where a window is MSAA's;
-and only then finds its own copy of the element by the chain's runtime
-ids, from the nearest window in the chain, for the subscriptions, text,
-and review. Each reading thread has a watchdog: a read past its deadline,
-or a focus's or menu opening's read that has taken half a second once the
-user has moved on to another thread of its application, is reported
-dropped, and a new thread takes the application's later events. An
-application whose abandoned threads reach a small cap gets no new thread:
-its focus events wait for the first of them to return, until the deadline
-after the cap was reached, when every waiting event is dropped, and each
-later one as it arrives, until a thread returns. When the listener is
-replaced, the supervisor tells every outpost to wait on none of its
-markers. [ADR 0001](../reference/adr/0001-focus.md) gives the options
-weighed and the reasons, and [How focus works](design/focus.md) the whole
-path of a focus.
+Which backend speaks for a window is a per-window verdict Core keeps,
+from NVDA's class lists or the probe a tell or a request carries, so
+deduplication does not depend on the UIA and MSAA events for one focus
+arriving together, or at all. A request on a window with no verdict in
+force carries "probe first", and its answer returns the verdict. A UIA
+event is never discarded in favour of an MSAA event that may follow,
+because modern XAML surfaces fire no MSAA focus event at all (the Start
+menu's search box), and a focus event fires once, with nothing to retry.
 
-Which backend speaks for a window is a per-window verdict the app outpost
-keeps, which each fact consults independently whenever it arrives, so
-deduplication does not depend on the UIA and MSAA facts for one focus
-arriving together, or at all. For a window with no verdict yet, the fact
-resolves the real verdict on the spot, on the outpost's deadline-guarded
-worker, so exactly one backend announces, deterministically, in either
-arrival order. A UIA fact is never discarded in favour of an MSAA fact
-that may follow, because modern XAML surfaces fire no MSAA focus event at
-all (the Start menu's search box), and a focus event fires once, with
-nothing to retry.
-
-Nothing polls. After the listener is replaced, Core reads the foreground
-window itself and asks that application's outpost for its current focus
-once; desktop-wide UIA events raised while no listener was running are lost. A window that has no
+Nothing polls. After the listener is replaced, Core asks the outpost of
+the application holding attention for its current focus once; events
+raised while no listener was running are lost. A window that has no
 name when focus enters it is not announced later, as in NVDA.
 
-The per-app outposts hold no UIA focus registration. Besides their
-process-scoped MSAA hooks, each holds one UIA property subscription that
-follows the focus (NVDA's selective registration on Windows 11, on the
-focus alone, since the reducer acts only on its changes); selection and
-notifications come desktop-wide from the listener. One extra hop
-(listener to Core to app outpost) costs well under a millisecond against
-the tens of milliseconds acquisition already costs.
+The per-app outposts hold no UIA focus registration and no `WinEvent`
+hook but a console host's. Each holds the UIA property subscription Core
+names after each commit, on the committed focus and its ancestors
+(NVDA's selective registration on Windows 11), and tells Core of those
+changes and of text and caret events; selection and notifications come
+desktop-wide from the listener. One extra hop (a tell to Core and a
+request back) costs well under a millisecond against the tens of
+milliseconds acquisition already costs.
 
-Of the listener's threads the reading threads call into applications, each
-call one on an element the listener holds, and the registration thread's
+Of the listener's threads the check and reading threads call into
+applications, each call one on an element the listener holds, and the registration thread's
 registration reads the foreground application's focus, with no remote
 operation and no connection by handle. Only an application's own outpost
 sends it a remote operation or connects to one of its windows, and an
@@ -623,19 +587,22 @@ fn reduce(state: &mut SrState, input: &Input) -> Vec<Effect>
   navigator), speech-relevant config.
 - `Input`: normalized accessibility events, gesture invocations, effect
   completions (e.g., a property fetch finishing), timers.
-- `Effect`: `Speak(Utterance)`, `Braille(..)`, `PlayEarcon(..)`,
-  `Fetch(Query)` (more tree data), `SetHighlight(rect)`, `ExtHook(..)`, etc.
+- `Effect`: `Speak(Utterance)`, `Braille(..)`, `PlayEarcon(..)`, a
+  request to a reader, `SetHighlight(rect)`, `ExtHook(..)`, etc.
 
-The shell (imperative, async) executes effects: `Fetch` goes to the relevant
-outpost and its completion re-enters the reducer as an `Input`; `Speak` enters
-the speech pipeline. A timer whose due time the state keeps is a view, not an
+Core's features are async functions run on its thread by its event queue
+([ADR 0003](../reference/adr/0003-readers-tell-core-asks.md), "Core's code
+is async functions"): only a request to a reader can be awaited, and the
+shell (imperative) sends it, checking its window for a hang first, and
+enters the answer as an `Input`; `Speak` enters the speech pipeline. A timer whose due time the state keeps is a view, not an
 effect: after each step the shell reads the focused terminal's quiet-period
 timer and the next lock key's read from `SrState` and waits for the earlier,
 entering its `Input` once it is past, so a timer whose owner the state dropped
 is gone with it. Only the focused terminal's timer counts, and a step that
 fires a timer moves its due time past the time it fired at, or the view would
-fire on every wake. A held key's deadline stays an effect, since it is
-measured from when the shell runs it and the state keeps no due time.
+fire on every wake. Core keeps every other due time on its own clock
+(requests' due times, the half-second hang round, held keys' 150 ms
+releases), and the shell keeps one timer for the earliest.
 Amended 2026-11-03 (Dickson: timers the state keeps are views).
 Consequences:
 
@@ -644,9 +611,8 @@ Consequences:
   captures exactly these triples from live sessions, turning field bugs into
   unit tests.
 - **No blocking in the core.** Anything slow is an effect by construction.
-- Outposts have their own small, separately-tested state machine (translating
-  raw backend events into normalized ones, maintaining the cache); the
-  reducer never sees COM.
+- Readers translate raw backend events into tells and answer Core's
+  requests; the reducer never sees COM.
 - **Only the reducer speaks** (Dickson, 2026-10-24). Every utterance and
   earcon is an `Effect` of `reduce`; the shell's other threads (the
   clipboard, the GUI, the watchdog) turn what they learn into `Input`s and
@@ -667,58 +633,46 @@ Consequences:
 
 ### Attention and acceptance (D14)
 
-The reducer tracks an attention record: the process and window the focus
-listener last reported in the foreground. Attention moves only on the
-listener's foreground change, never on a focus or an outpost's report; an
-outpost's report of a foreground change is a focus on the window, a
-whole-window focus, taken only while the record's front is its window, or
-was observed no later than it, so a topmost popup that takes focus does
-not take attention. The foreground is announced, never used as a gate.
+Core keeps a foreground record: the window the focus listener last
+reported in front, its root owner and its process, the application
+holding attention. Attention moves only on the listener's foreground
+change, never on a focus or an outpost's answer, so a topmost popup that
+takes focus does not take attention. The foreground is announced, never
+used as a gate. A foreground change into a top-level window unrelated to
+the committed focus empties the readers' last focus at its turn in the
+event queue, so the return to an application is spoken as the switch is
+([ADR 0003](../reference/adr/0003-readers-tell-core-asks.md), "The
+ancestors Core already knows and leaving a window").
 
 Acceptance follows NVDA's rules (`docs/parity/focus-events.md`, "Event
-acceptance"). Each reader tests a focus once, before it reads it: the
-listener a UIA focus by its nearest window, an outpost's reducer thread an
-MSAA focus and a foreground change, against the system's foreground
-window. Core judges a focus with window facts against its record's
-front, the window the listener last reported in front, with when it was
-observed: a focus is dropped when the front was observed after it and is
-a window it is unrelated to (neither its top-level window nor its root
-owner is the front's window or root owner), as NVDA, testing when it
-handles the event, refuses a focus whose read was held past a switch; a
-focus with no window facts is judged by its application. A foreground
-change into an unrelated window observed after every report Core has
-judged marks Core's focus left, so the return to it is spoken as the same
-switch with no stall is. Of the alerts, only toasts are reported for now. UIA
-notifications are accepted from the attention application only, except
-the shell's window-snap results; menu popups, tooltip and
-notification-bar classes, configured progress bars and toast alerts are
-accepted from anywhere as background. Background events never move focus
-or the navigator, are spoken at Queued priority, and are to sit under a
-per-source flood cap, not implemented yet.
+acceptance"), judged in Core as a pure rule over facts about the event's
+window and the foreground that the tell carries, gathered by the listener
+as it sends the tell, and judged at the entry's turn in the event queue,
+as NVDA tests an event when it handles it
+([ADR 0003](../reference/adr/0003-readers-tell-core-asks.md), "Acceptance
+judged in Core"). UIA notifications are accepted from the attention
+application only, except the shell's window-snap results; menu popups,
+tooltip and notification-bar classes, configured progress bars and toast
+alerts are accepted from anywhere as background. Background events never
+move focus or the navigator and are spoken at Queued priority.
 
 ### Where the rules run (D14)
 
-Each rule (acceptance, a repeated focus, which property changes,
-selections and dialog texts are spoken) is defined once, in a
-platform-neutral crate unless it is ported from NVDA, in which case once
-in `verbatim-reader-rules`, the GPL-tier crate with no Windows dependency
-that the judges before a read, an outpost and the focus listener, share,
-and every place that applies it calls that one definition. Words and every fact
-across applications are judged in Core. What to read for one application
-is judged by its reader, from its own observations of the event, and by
-its outpost's verdict rule, which the listener applies only in its
-probe-free part (NVDA's MSAA class list and the override), because a UIA
-element cannot pass to another process. No state of Core is sent back for
-a reader to judge against: an outpost reads changes for every node it has
-not released, and Core's targeting decides what is spoken. Everything
-decided after the read is decided in the reducer, from facts the
-outposts report.
+Every rule that decides what is spoken is Core's, written from the
+parity docs in a platform-neutral crate or, where it is ported from
+NVDA, in a GPL-tier logic crate with no Windows dependency. A reader
+judges nothing but NVDA's local drops, which cannot hang, and the
+listener's drops on an event's own cached class and automation id, which
+make no call; every other rule, the acceptance test included, is judged
+in Core on the facts the tells carry and the answers return. No state of
+Core is sent for a reader to judge against: facts Core carries in a
+request are used only inside that request's answer.
 
-Focuses reach Core from several processes, and a slow read in one can
-deliver an earlier focus after a later one. Core orders them by when they
-happened on the shared clock, to the microsecond, since focus events
-arrive in bursts within one millisecond, so a focus that happened before
-the focus Core has applied never replaces it.
+Events from every reader join Core's one event queue in the order they
+arrive, with every key and command, and Core judges them in that order,
+as NVDA's one queue does; only the queue's front may have a request out
+([ADR 0003](../reference/adr/0003-readers-tell-core-asks.md), "Core's
+inbox and the event queue").
 
 ## 3. Normalized accessibility model
 
@@ -743,7 +697,7 @@ Two client stacks feed one model. Per-app (occasionally per-window)
 **arbitration** chooses the event and query source: IA2 where offered
 (Firefox, Chromium, LibreOffice), UIA where it is the native or only API
 (WinUI, Terminal, modern Office surfaces), MSAA as the floor for legacy
-Win32. Arbitration lives in the outpost, is config-overridable per app (and
+Win32. Arbitration is Core's per-window verdict, is config-overridable per app (and
 tweakable by app-module extensions), and is invisible above the normalized
 model. A third backend, JAB, joins the same arbitration later (D1, roadmap
 M16) for Java applications.
@@ -768,7 +722,8 @@ M16) for Java applications.
   buttons with the clicked item's runtime id or name, normally one
   (Dickson, 2026-10-24).
 - **Threading.** Per UIA guidance, event callbacks arrive on dedicated MTA
-  threads separate from threads that make UIA calls; each outpost owns both.
+  threads separate from threads that make UIA calls; the listener and each
+  outpost own both.
   Multiple UIA client threads are a supported, intended part of the design.
 - **Remote Operations.** Windows' own remote operations API (the WinRT
   `Windows.UI.UIAutomation.Core.CoreAutomationRemoteOperation`, which NVDA
@@ -779,8 +734,9 @@ M16) for Java applications.
   attribute runs, terminal text-range walking, and browse-mode buffer batch
   fetches. ARM64 behavior is still to be verified (R3, deferred on
   2026-10-06).
-- **Terminals.** TextPattern plus remote ops. The outpost reads the
-  terminal and sends each read to Core, whose terminal memory aligns it
+- **Terminals.** TextPattern plus remote ops. The outpost tells Core of
+  every change of the focused terminal and reads it when Core asks,
+  sending each read to Core, whose terminal memory aligns it
   with the last read and whose reading rules decide what it says
   (`books/dev/src/explanation/design/terminal-model.md`); new output is spoken in order, one
   line per utterance; newer output never cancels older output
@@ -789,9 +745,9 @@ M16) for Java applications.
   in full" lines of a burst (30 by default) are spoken whole, and once
   that group has been heard, when more lines wait than the limit, all but
   the newest "Last lines to speak" become one "skipped N lines", and the
-  decision repeats after each group. While Core's queue is full the
-  outpost only notes that the terminal changed and reads it on demand,
-  when Core asks as it hands a group's last line to speech. Core's waiting
+  decision repeats after each group. While the flood policy holds, Core
+  asks no read for the changes told until it hands a group's last line
+  to speech. Core's waiting
   output is bounded in bytes (10 MB), never an unbounded backlog. Details
   are in `books/dev/src/reference/crates/verbatim-core.md`, "Terminals", and
   `books/dev/src/reference/crates/verbatim-outpost.md`, "Terminals". This is a headline
@@ -813,9 +769,10 @@ M16) for Java applications.
 
 ### MSAA / IA2
 
-- **Events** arrive as WinEvents via *out-of-context* `SetWinEventHook`
-  scoped to the outpost's process id — asynchronous delivery in our process,
-  no injection required.
+- **Events** arrive as WinEvents via the focus listener's desktop-wide
+  *out-of-context* `SetWinEventHook`s, as NVDA hooks them — asynchronous
+  delivery, no injection required — and are told to Core, which asks the
+  application's outpost for the reads it needs.
 - **IA2 acquisition**: starting from the `IAccessible` carried by the
   WinEvent, call `IServiceProvider::QueryService` to obtain `IAccessible2`,
   then the IA2 text, hypertext, and relation interfaces as needed
@@ -825,8 +782,7 @@ M16) for Java applications.
   then MSAA-only apps are read through plain MSAA.
 - **Cost model**: unlike UIA there are no cache requests and no remote ops;
   every property is a cross-process COM round trip. Mitigations, in order:
-  fetch discipline (only what the reducer asked for), aggressive outpost-side
-  caching keyed to WinEvent invalidations, incremental browse-mode builds,
+  fetch discipline (only what the reducer asked for), incremental browse-mode builds,
   and the D2 in-process helper for batching, which lands with browse mode
   (M7).
 - **MSAA-only apps** are normalized at "usable" fidelity through the same
@@ -863,9 +819,11 @@ correctness path; the application's own text events were the other
 candidate, rejected because they cannot tell typing from a paste or an
 autocompletion and echo an input method's composition key by key. The
 reasoning is in `books/dev/src/reference/crates/verbatim-input-windows.md`, "Typed text".
-The hook also reports the caret keys it passes, which the reducer answers
-by asking the focus's outpost for the caret once the application has
-moved it.
+Caret keys are held by the hook and sent at their turn in Core's event
+queue, or 150 ms after their press, whichever is first; the outpost
+watches for each key's effect at Core's request, and Core decides what it
+says ([ADR 0003](../reference/adr/0003-readers-tell-core-asks.md), "Keys
+and commands"; [holding caret keys](design/key-holding.md)).
 
 ## 6. Speech and audio
 
@@ -1167,7 +1125,7 @@ otherwise.
 - `verbatim-outpost` — the outpost actor and per-app outpost binary;
   `verbatim-outpost-logic`, its reducer, pure.
 - `verbatim-listener` — the focus listener and its binary (D13);
-  `verbatim-listener-logic`, its read scheduler, grace, foreground watch
+  `verbatim-listener-logic`, its read scheduler, check threads, foreground watch
   and focus vocabulary, pure.
 - `verbatim-supervisor` — the Core-side supervisor of the outposts and the
   listener, whose pure decisions are `verbatim-core`'s `supervisor`
