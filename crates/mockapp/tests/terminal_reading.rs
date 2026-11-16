@@ -1,62 +1,21 @@
-//! A focused terminal's on-demand reading (`books/dev/src/explanation/design/terminal-model.md`,
-//! "Reading rules", rule 1) through a real outpost's worker, against mockapp's UIA text
-//! provider presenting a Windows Terminal control (UIA class
-//! `TermControl`), its text given as a terminal gives it, every row padded
-//! to the width and ended by a carriage return and line feed: each
-//! transition of `verbatim_outpost::terminal::reading` as the worker drives
-//! it, by text change events and Core's requests.
+//! A focused terminal's reading through a real outpost's worker
+//! (`docs/design/readers-tell-core-asks-build3.md`), against mockapp's UIA
+//! text provider presenting a Windows Terminal control (UIA class
+//! `TermControl`) or a console host's text area, its text given as a
+//! terminal gives it, every row padded to the width and ended by a carriage
+//! return and line feed. Core's requests reach the outpost as Core sends
+//! them, through the request driver the integration harness shares with
+//! Core's own (`common::core_driver`).
 //!
-//! - Live, a text change is read at once and the read sent to Core as a
-//!   snapshot, with the caret read with it; a read identical to the last
-//!   one sent is not sent again.
-//! - Held (`TerminalHold`), a change is only noted: nothing is sent.
-//! - `TerminalRead` answers with a read when the text changed since the
-//!   last read, and reading is live again; asked with nothing changed, it
-//!   answers that nothing changed without reading, and asked to hold, the
-//!   terminal stays held.
-//! - `TerminalCancel` answers with a read of what changed while held, and
-//!   reading is live again.
-//! - Core's requests for a read at once (`TerminalReadNow`), for rows of
-//!   the history (`TerminalHistory`), for the colours after a key
-//!   (`TerminalColours`) and the screen's shape (`TerminalShape`) are
-//!   answered, a colours request with a read with colours at once when a
-//!   read began after the key without them.
-//! - The read before a held key (`ReadPurpose::BeforeTerminalKey`) is a snapshot with the caret.
-//! - A caret event waiting ahead of a text change in one batch is planned
-//!   after it, so the terminal is read once, the caret with the text.
-//! - Held with its text changed, a caret event is only noted, and the read
-//!   Core asks for reads the caret with the text.
-//! - The console host's text area, in a window of the console's class,
-//!   takes its caret event from its console (`EVENT_CONSOLE_CARET`), and
-//!   UI Automation's caret event is not subscribed for it, and the system
-//!   caret's events are not used for it.
-//! - A caret key's watch that knows no caret before the key is answered by
-//!   a read that covers a caret event waiting behind it.
-//! - A caret key's watch whose read finds the caret moved while the
-//!   terminal writes between the read's calls, so that the line shows a
-//!   character the caret was read before, answers nothing; the text change
-//!   that follows answers it, whether the read is one remote operation or
-//!   the classic read's separate calls, and its read says what the line
-//!   shows the line with the caret past what it gained.
-//! - While the console's window is the application's focus window and its
-//!   foreground window, both read through UI Automation, the outpost's
-//!   hook leaves out the change events of windows read through MSAA, UI
-//!   Automation's `WinEvent` copies of its events among them, and hooks
-//!   them again once the focus is in a Win32 button read through MSAA.
-//! - A terminal that a focus-now query answered with, and no focus event
-//!   reported, is the outpost's focus: its text change is read and sent;
-//!   so is a focused terminal's text change after a
-//!   foreground report of another window, which names a window and not the
-//!   control focus is in, both before and after the same query answers with
-//!   the terminal.
-//!
-//! While the terminal is held, the evidence that the outpost has taken a
-//! text change is the report of a caret event raised after it: UI
-//! Automation delivers one client's events from a provider in the order
-//! they were raised, and the outpost reads the caret of a caret event noted
-//! while held once it has nothing else to do. The two tests of one batch
-//! hold the outpost's worker ([`OutpostUnderTest::hold_worker`]) while
-//! mockapp raises the batch's events.
+//! - Every change signal of the terminal `Follow` names is told to Core as
+//!   one "terminal changed" tell, with no call: Windows Terminal's text
+//!   change and caret event.
+//! - Core's "read the terminal" request reads from a screen above the
+//!   start anchor Core names and mints the start of its own screen; a
+//!   history read and a search count from the start Core names; the read
+//!   takes the colours only when Core asks; the whole document and a
+//!   history block are read when asked; a caret key's starting read mints
+//!   the key's caret starting point with the caret.
 //!
 //! Each test runs on a desktop of its own (`harness::run_isolated`), so no
 //! other client sees mockapp's window or raises its events.
@@ -65,23 +24,17 @@ mod common;
 #[path = "common/harness.rs"]
 mod harness;
 
-use verbatim_ia2::WinEventKind;
-use verbatim_model::protocol::DeliveredFact;
-use verbatim_model::protocol::{
-    FocusedControl, OutpostToCore, Query, QueryOutcome, QueryResult, RequestId,
-};
+use verbatim_model::event_kind::EventKind;
+use verbatim_model::request::{Follow, FollowGroup, Followed, Outcome, Reply, Request};
+use verbatim_model::tell::EventObject;
 use verbatim_model::{
-    CaretMotion, CaretRead, CaretReply, Change, FocusText, KeyFetch, NodeId, NormalizedEvent,
-    NoteRequest, PropertyChange, ReadPurpose, Role, TerminalScope, TerminalSnapshot, TextOp,
-    TextReply,
+    NodeId, TerminalRead, TerminalReadReply, TerminalScope, TerminalSnapshot, TextAnchor, TextOp,
+    TextReply, TextUnit,
 };
 use verbatim_outpost::Heard;
 use verbatim_process::arguments::OutpostOptions;
 use verbatim_uia::{Cached, ListenerEvent, Uia};
 use windows::Win32::Foundation::HWND;
-use windows::Win32::UI::Accessibility::UIA_HelpTextPropertyId;
-use windows::Win32::UI::WindowsAndMessaging::{FindWindowExW, OBJID_CLIENT};
-use windows::core::w;
 
 use common::outpost::OutpostUnderTest;
 
@@ -110,79 +63,144 @@ fn focused(hwnd: HWND) -> Cached<ListenerEvent> {
     common::listener_focus(&uia, hwnd.0 as isize)
 }
 
-/// The caret the outpost reports, which must be its next message.
-fn caret_read(outpost: &OutpostUnderTest, node: NodeId) {
-    match outpost.next() {
-        OutpostToCore::Event {
-            event: NormalizedEvent::CaretMoved { node_id, .. },
-            ..
-        } if node_id == node => {}
-        other => panic!("the outpost said {other:?}, not the terminal's caret"),
+/// mockapp's terminal, an outpost watching it, the terminal's node, and
+/// the start anchor of its baseline read.
+struct Terminal {
+    app: common::MockApp,
+    hwnd: HWND,
+    outpost: OutpostUnderTest,
+    node: NodeId,
+    /// Whether its window is a console host's.
+    console: bool,
+    /// The start the baseline minted.
+    start: TextAnchor,
+}
+
+impl Terminal {
+    /// A full read Core asks from `start` in `scope`, the screen's shape
+    /// `(height, width)` from Core's model, taking the colours when
+    /// `colours`.
+    fn ask(
+        &self,
+        start: Option<TextAnchor>,
+        scope: TerminalScope,
+        (height, width): (u32, u32),
+        colours: bool,
+    ) -> TerminalRead {
+        TerminalRead {
+            start,
+            scope,
+            height,
+            width,
+            colours,
+            console: self.console,
+            starting: None,
+            output: true,
+        }
+    }
+
+    /// The answer to `read`, a full read, which must be a read.
+    fn read(&self, read: TerminalRead) -> TerminalReadReply {
+        let op = TextOp::ReadTerminal(read);
+        match self.text(op) {
+            TextReply::TerminalRead(reply) => *reply,
+            other => panic!("the outpost answered {other:?}, not a read"),
+        }
+    }
+
+    /// A fresh read from the start Core names, the screen's shape not yet
+    /// known to Core.
+    fn fresh_from(&self, start: TextAnchor) -> TerminalReadReply {
+        self.read(self.ask(Some(start), TerminalScope::Fresh, (0, 0), false))
+    }
+
+    /// The text reply to `op` on the terminal, asked as Core asks it.
+    fn text(&self, op: TextOp) -> TextReply {
+        let number = self.outpost.request(
+            self.hwnd,
+            Request::Text {
+                node: self.node,
+                op,
+            },
+        );
+        match self.outpost.answer(number).outcome {
+            Outcome::Result(Reply::Text(reply)) => reply,
+            other => panic!("the outpost answered {other:?}, not a text reply"),
+        }
+    }
+
+    /// The tell the outpost sends next, which must be a change tell of the
+    /// terminal.
+    fn told(&self) {
+        match self.outpost.next() {
+            verbatim_model::protocol::OutpostToCore::Tell(tell) => {
+                assert_eq!(tell.kind, EventKind::TerminalChanged);
+                match tell.object {
+                    EventObject::Terminal { node, .. } => assert_eq!(node, self.node),
+                    other => panic!("the change tell named {other:?}, not the terminal"),
+                }
+            }
+            other => panic!("the outpost said {other:?}, not the terminal's change"),
+        }
+    }
+
+    fn quit(self) {
+        let Self { app, outpost, .. } = self;
+        drop(outpost);
+        app.quit();
     }
 }
 
-/// mockapp's terminal fixture in its UIA backend, with an outpost watching
-/// it and the terminal focused: its focus said with its caret, and nothing
-/// else.
-fn start(name: &str) -> (common::MockApp, OutpostUnderTest, NodeId) {
-    start_with(
-        name,
-        "terminal_reading.json",
-        "term",
-        OutpostOptions::default(),
-    )
+/// mockapp's Windows Terminal fixture in its UIA backend, with an outpost
+/// watching it, its terminal completed as Core's focus, followed and read
+/// for its baseline.
+fn start(name: &str) -> Terminal {
+    start_with(name, "terminal_reading.json", "term", false)
 }
 
-/// [`start`] for the terminal `id` of fixture `fixture`, the outpost
-/// reading as `options` say.
-fn start_with(
-    name: &str,
-    fixture: &str,
-    id: &str,
-    options: OutpostOptions,
-) -> (common::MockApp, OutpostUnderTest, NodeId) {
+/// [`start`] for the terminal `id` of fixture `fixture`, a console host's
+/// text area when `console`.
+fn start_with(name: &str, fixture: &str, id: &str, console: bool) -> Terminal {
     common::init_com();
     let title = common::unique_title(name);
     let mut app = common::spawn(fixture, "uia", &title);
     let hwnd = common::find_window(&title);
-    let outpost = OutpostUnderTest::with_options(&app, options);
+    let outpost = OutpostUnderTest::with_options(&app, OutpostOptions::default());
     // The screen: the text's last three rows, and the empty last line.
     app.send(&format!("screen {id} 4"));
     app.send(&format!("set-focus {id}"));
-    let element = focused(hwnd);
-    outpost.deliver(outpost.listener_fact(&element));
-    let node = match outpost.next() {
-        OutpostToCore::Event {
-            event:
-                NormalizedEvent::FocusChanged {
-                    node,
-                    text: Some(text),
-                    ..
-                },
-            ..
-        } if matches!(*text, FocusText::Caret { .. }) => node,
-        other => panic!("the outpost said {other:?}, not the terminal's focus with its caret"),
+    let node = outpost.uia_focus_answer(&focused(hwnd)).node();
+    let follow = outpost.request(
+        hwnd,
+        Request::Follow(Follow {
+            node: Some(Followed {
+                node,
+                group: FollowGroup::Terminal { console },
+                extra: None,
+            }),
+        }),
+    );
+    assert_eq!(
+        outpost.answer(follow).outcome,
+        Outcome::Result(Reply::Followed)
+    );
+    let mut terminal = Terminal {
+        app,
+        hwnd,
+        outpost,
+        node,
+        console,
+        start: TextAnchor(0),
     };
-    assert_eq!(node.role, Role::Terminal);
-    // The terminal's first read, with its caret.
-    let first = reported(&outpost, node.id);
-    assert!(first.caret.is_some());
-    outpost.settled();
-    (app, outpost, node.id)
-}
-
-/// Writes `lines` after [`START`] as the terminal's whole text and raises
-/// its text changed event, with the outpost's worker held until it has
-/// taken in both the event and the `WinEvent` UI Automation raises for MSAA
-/// clients beside it, so that one read covers both.
-fn write(app: &mut common::MockApp, outpost: &OutpostUnderTest, lines: &[&str]) {
-    outpost.hold_worker();
-    write_text(app, lines);
-    outpost.heard(&[
-        Heard::UiaTextChanged,
-        Heard::Msaa(WinEventKind::ValueChange),
-    ]);
-    outpost.release_worker();
+    // The baseline: a first read, taking the screen alone.
+    let baseline = terminal.read(TerminalRead {
+        output: false,
+        ..terminal.ask(None, TerminalScope::Fresh, (0, 0), false)
+    });
+    assert!(baseline.snapshot.caret.is_some());
+    terminal.start = baseline.start;
+    terminal.outpost.settled();
+    terminal
 }
 
 /// Writes `lines` after [`START`] as the terminal's whole text and raises
@@ -193,61 +211,13 @@ fn write_text(app: &mut common::MockApp, lines: &[&str]) {
     app.send("text-changed term");
 }
 
-/// Writes `lines` as [`write`] does while the terminal is held, then moves
-/// the caret to `caret` and raises its caret event, and takes its report:
-/// the evidence that the outpost has taken the text change.
-fn write_held(
-    app: &mut common::MockApp,
-    outpost: &OutpostUnderTest,
-    node: NodeId,
-    lines: &[&str],
-    caret: usize,
-) {
-    write_text(app, lines);
-    app.send(&format!("caret term {caret}"));
-    app.send("caret-event term");
-    outpost.heard(&[
-        Heard::UiaTextChanged,
-        Heard::Msaa(WinEventKind::ValueChange),
-        Heard::UiaTextSelection,
-        Heard::Msaa(WinEventKind::TextSelectionChange),
-    ]);
-    caret_read(outpost, node);
-    outpost.settled();
-}
-
-/// The read of the terminal the outpost sends live, which must be its
-/// next message.
-fn reported(outpost: &OutpostUnderTest, node: NodeId) -> TerminalSnapshot {
-    match outpost.next() {
-        OutpostToCore::Event {
-            event: NormalizedEvent::TerminalSnapshot { node_id, snapshot },
-            ..
-        } if node_id == node => *snapshot,
-        other => panic!("the outpost said {other:?}, not the terminal's read"),
-    }
-}
-
-/// The answer to request `request`, which must be the outpost's next
-/// message.
-fn answer_to(outpost: &OutpostUnderTest, request: RequestId) -> TextReply {
-    match outpost.next() {
-        OutpostToCore::Reply {
-            request_id,
-            outcome: QueryOutcome::Done(QueryResult::Text(reply)),
-            ..
-        } if request_id == request => reply,
-        other => panic!("the outpost said {other:?}, not the answer to {request}"),
-    }
-}
-
-/// The read answering request `request`, which must be the outpost's next
-/// message.
-fn read_answer(outpost: &OutpostUnderTest, request: RequestId) -> TerminalSnapshot {
-    match answer_to(outpost, request) {
-        TextReply::TerminalSnapshot(snapshot) => *snapshot,
-        other => panic!("the outpost answered {other:?}, not with a read"),
-    }
+/// Writes `lines` as [`write_text`] does and takes the change tell the
+/// outpost sends for it.
+fn write(terminal: &mut Terminal, lines: &[&str]) {
+    write_text(&mut terminal.app, lines);
+    terminal.outpost.heard(&[Heard::UiaTextChanged]);
+    terminal.told();
+    terminal.outpost.settled();
 }
 
 /// A read's text, its lines without their padding.
@@ -273,652 +243,102 @@ fn rows(rows: &[&str]) -> String {
     rows.iter().map(|row| [row, "\r\n"].concat()).collect()
 }
 
-/// The focused control the outpost answers a focus-now query with, a
-/// terminal, which it then reads first, as it reads a terminal that gains
-/// the focus.
-fn focus_now(outpost: &mut OutpostUnderTest) -> FocusedControl {
-    let request = outpost.ask(Query::ReadFocus {
-        purpose: verbatim_model::protocol::FocusPurpose::Plain,
-    });
-    let control = match outpost.next() {
-        OutpostToCore::Reply {
-            request_id,
-            outcome: QueryOutcome::Done(QueryResult::Focus(now)),
-            ..
-        } if request_id == request => now.focus.expect("the focus now has a focused control"),
-        other => panic!("the outpost said {other:?}, not the focus now"),
-    };
-    let first = reported(outpost, control.node.id);
-    assert!(first.caret.is_some());
-    outpost.settled();
-    control
+/// The followed terminal's text change is told to Core as one change tell,
+/// with no read; Core's read from the baseline's start then shows the new
+/// output with the caret read with it. Converted from
+/// `a_focus_now_terminal_reports_its_output` and
+/// `a_held_terminal_notes_changes_and_a_read_answers_them`: the outpost
+/// reads only when Core asks (build 3, "The outpost: change tells").
+fn a_text_change_is_told_and_core_reads_it_from_its_start() {
+    let mut terminal = start("mockapp-terminal-told");
+    write(&mut terminal, &["three"]);
+    let read = terminal.fresh_from(terminal.start);
+    assert_eq!(text(&read.snapshot), after(&["three"]));
+    assert!(read.snapshot.caret.is_some());
+    terminal.outpost.settled();
+    terminal.quit();
 }
 
-/// A terminal key's fetch.
-fn terminal_fetch(motion: CaretMotion) -> KeyFetch {
-    KeyFetch {
-        unit: motion.unit(),
-        motion,
-    }
+/// A caret event of the followed terminal is told, as its text change is,
+/// and the tells of one terminal are each told: the caret event waiting
+/// ahead of a text change is no longer planned after it, since Core's
+/// coverage rule reads once for both. Converted from
+/// `a_caret_event_ahead_of_a_text_change_is_read_with_it` (build 3, "Core's
+/// inbox: the change tell").
+fn a_caret_event_is_told_as_a_text_change_is() {
+    let mut terminal = start("mockapp-terminal-caret-told");
+    terminal.app.send("caret term 1");
+    terminal.app.send("caret-event term");
+    terminal.outpost.heard(&[Heard::UiaTextSelection]);
+    terminal.told();
+    terminal.outpost.settled();
+    write(&mut terminal, &["three"]);
+    let read = terminal.fresh_from(terminal.start);
+    assert_eq!(caret_at(&read.snapshot), ("one\r\n", 1));
+    terminal.quit();
 }
 
-/// A held key's before read of terminal `node`.
-fn before_read(motion: CaretMotion) -> TextOp {
-    TextOp::ReadCaret(CaretRead {
-        fetch: terminal_fetch(motion),
-        purpose: ReadPurpose::BeforeTerminalKey,
-    })
-}
-
-/// A key's note on `node`, from its last read.
-fn watch_key(outpost: &OutpostUnderTest, node: NodeId, motion: CaretMotion) {
-    outpost.key_note(NoteRequest::Terminal {
-        node,
-        fetch: terminal_fetch(motion),
-    });
-}
-
-/// The outpost's next message, a report with a key's facts showing its
-/// effect.
-fn evidence(outpost: &OutpostUnderTest) -> CaretReply {
-    match outpost.next() {
-        OutpostToCore::Event {
-            event:
-                NormalizedEvent::CaretMoved {
-                    caret,
-                    selection_changes,
-                    content_changed,
-                    new_selection,
-                    facts: Some(facts),
-                    ..
-                },
-            ..
-        } if matches!(facts.change, Change::Compared { .. }) => CaretReply {
-            caret,
-            selection_changes,
-            content_changed,
-            new_selection,
-            facts: *facts,
-        },
-        other => panic!("the outpost said {other:?}, not the key's report"),
-    }
-}
-
-/// Asks the outpost `op` about `node`.
-fn ask(outpost: &mut OutpostUnderTest, node: NodeId, op: TextOp) -> RequestId {
-    outpost.ask(Query::Text { node_id: node, op })
-}
-
-/// Holds the terminal, which is answered at once.
-fn hold(outpost: &mut OutpostUnderTest, node: NodeId) {
-    let hold = ask(outpost, node, TextOp::TerminalHold);
-    assert_eq!(answer_to(outpost, hold), TextReply::Done);
-    outpost.settled();
-}
-
-/// A terminal the outpost was asked for with a focus-now query, as Core
-/// asks at its start and after an outpost is replaced, with no focus event
-/// for it, becomes the outpost's focus as a reported focus does: its new
-/// line is reported as the terminal's speech.
-fn a_focus_now_terminal_reports_its_output() {
-    common::init_com();
-    let title = common::unique_title("mockapp-terminal-focus-now");
-    let mut app = common::spawn("terminal_reading.json", "uia", &title);
-    let hwnd = common::find_window(&title);
-    let mut outpost = OutpostUnderTest::new(&app);
-    app.send("screen term 4");
-    app.send("set-focus term");
-    outpost.read_focus_as(focused(hwnd).live().element());
-    let control = focus_now(&mut outpost);
-    assert_eq!(control.node.role, Role::Terminal);
-    let term = control.node.id;
-    write(&mut app, &outpost, &["three"]);
-    assert_eq!(text(&reported(&outpost, term)), after(&["three"]));
-    outpost.settled();
-    drop(outpost);
-    app.quit();
-}
-
-/// A focused terminal stays the outpost's terminal through a foreground
-/// report that no focus event follows, which names a window, here the
-/// window's Win32 button, and not the control focus is in: its text change
-/// after the report is terminal output, and a focus-now answer for the
-/// terminal after it, as Core asks for one after Alt+Tab with no focus
-/// event, leaves the terminal reporting its output.
-fn a_terminal_stays_followed_through_a_foreground_report() {
-    let (mut app, mut outpost, term) = start_with(
-        "mockapp-terminal-foreground",
-        "terminal_reading_button.json",
-        "term",
-        OutpostOptions::default(),
-    );
-    let window = common::find_window(&app.title);
-    // SAFETY: a local search of the window's children.
-    let find = unsafe { FindWindowExW(Some(window), None, w!("Button"), w!("Find")) }
-        .expect("mockapp made the button");
-    outpost.set_foreground(find);
-    outpost.deliver(DeliveredFact::Foreground {
-        hwnd: find.0 as isize,
-    });
-    match outpost.next() {
-        OutpostToCore::Event {
-            event:
-                NormalizedEvent::FocusChanged {
-                    whole_window: true, ..
-                },
-            ..
-        } => {}
-        other => panic!("the outpost said {other:?}, not the button's window as the foreground"),
-    }
-    outpost.settled();
-    write_text(&mut app, &["three"]);
-    assert_eq!(text(&reported(&outpost, term)), after(&["three"]));
-    outpost.settled();
-    outpost.set_foreground(window);
-    outpost.read_focus_as(focused(window).live().element());
-    let control = focus_now(&mut outpost);
-    assert_eq!(control.node.id, term);
-    write_text(&mut app, &["three", "four"]);
+/// Core's read from a start it names reads a screen above that start, and
+/// mints the start of its own screen, which the next read names: two reads
+/// from the same start read the same text, and a read from the newer
+/// start begins at the newer screen. Converted from
+/// `a_fresh_read_is_taken_while_held_and_reads_what_was_held` (M6.4's
+/// first item: every read names its start).
+fn a_read_counts_from_the_start_core_names() {
+    let mut terminal = start("mockapp-terminal-named-start");
+    write(&mut terminal, &["nine"]);
+    let first = terminal.fresh_from(terminal.start);
+    assert_eq!(text(&first.snapshot), after(&["nine"]));
+    let again = terminal.fresh_from(terminal.start);
+    assert_eq!(text(&again.snapshot), after(&["nine"]));
+    write(&mut terminal, &["nine", "ten", "eleven"]);
+    let newer = terminal.fresh_from(first.start);
     assert_eq!(
-        text(&reported(&outpost, term)),
-        rows(&["two", "ready>", "three", "four"])
+        text(&newer.snapshot),
+        rows(&["two", "ready>", "nine", "ten", "eleven"])
     );
-    outpost.settled();
-    drop(outpost);
-    app.quit();
+    terminal.outpost.settled();
+    terminal.quit();
 }
 
-/// Live, then held, then read: a change while held says nothing, and the
-/// read answers with it; reading is then live again.
-fn a_held_terminal_notes_changes_and_a_read_answers_them() {
-    let (mut app, mut outpost, term) = start("mockapp-terminal-held");
-    write(&mut app, &outpost, &["three"]);
-    assert_eq!(text(&reported(&outpost, term)), after(&["three"]));
-    outpost.settled();
-
-    hold(&mut outpost, term);
-    write_held(&mut app, &outpost, term, &["three", "four"], 1);
-    let read = ask(&mut outpost, term, TextOp::TerminalRead { hold: false });
-    let answer = read_answer(&outpost, read);
-    assert_eq!(text(&answer), rows(&["two", "ready>", "three", "four"]));
-    // It waited for Core's speech queue.
-    assert!(answer.waited);
-    outpost.settled();
-
-    // Live again.
-    write(&mut app, &outpost, &["three", "four", "five"]);
+/// The whole document and a history block are read when Core asks for
+/// them, in place of a fresh read.
+fn the_whole_document_and_a_history_block_are_read_when_asked() {
+    let mut terminal = start("mockapp-terminal-whole");
+    write(&mut terminal, &["three", "four", "five"]);
+    let whole =
+        terminal.read(terminal.ask(Some(terminal.start), TerminalScope::Whole, (2, 20), false));
+    assert_eq!(text(&whole.snapshot), after(&["three", "four", "five"]));
+    assert!(whole.snapshot.at_document_start);
+    let block = terminal.read(terminal.ask(
+        Some(terminal.start),
+        TerminalScope::HistoryBlock { height: 2 },
+        (2, 20),
+        false,
+    ));
     assert_eq!(
-        text(&reported(&outpost, term)),
+        text(&block.snapshot),
         rows(&["ready>", "three", "four", "five"])
     );
-    outpost.settled();
-    drop(outpost);
-    app.quit();
+    assert_eq!(block.snapshot.above, 2);
+    terminal.outpost.settled();
+    terminal.quit();
 }
 
-/// A read asked with nothing changed since the last answers that nothing
-/// changed, and one asked to hold again leaves the terminal held.
-fn a_read_with_nothing_new_answers_empty_and_may_hold_again() {
-    let (mut app, mut outpost, term) = start("mockapp-terminal-empty");
-    hold(&mut outpost, term);
-    let read = ask(&mut outpost, term, TextOp::TerminalRead { hold: true });
-    assert_eq!(answer_to(&outpost, read), TextReply::TerminalUnchanged);
-    outpost.settled();
-    // Still held: a change is only noted.
-    write_held(&mut app, &outpost, term, &["six"], 1);
-    let read = ask(&mut outpost, term, TextOp::TerminalRead { hold: false });
-    assert_eq!(text(&read_answer(&outpost, read)), after(&["six"]));
-    outpost.settled();
-    drop(outpost);
-    app.quit();
-}
-
-/// A cancel answers with what changed while held, and reading is live
-/// again.
-fn a_cancel_answers_what_is_new_and_reading_is_live_again() {
-    let (mut app, mut outpost, term) = start("mockapp-terminal-cancel");
-    hold(&mut outpost, term);
-    write_held(&mut app, &outpost, term, &["seven"], 1);
-    let cancel = ask(&mut outpost, term, TextOp::TerminalCancel);
-    let answer = read_answer(&outpost, cancel);
-    assert_eq!(text(&answer), after(&["seven"]));
-    assert!(!answer.waited);
-    outpost.settled();
-    write(&mut app, &outpost, &["seven", "eight"]);
-    assert_eq!(
-        text(&reported(&outpost, term)),
-        rows(&["two", "ready>", "seven", "eight"])
-    );
-    outpost.settled();
-    drop(outpost);
-    app.quit();
-}
-
-/// Waits for the outpost to take in the caret event and the text change
-/// mockapp raised, each by both routes: UIA's own event, and the
-/// `WinEvent` UIA raises for MSAA clients alongside it.
-fn heard_caret_and_text(outpost: &OutpostUnderTest) {
-    outpost.heard(&[
-        Heard::UiaTextSelection,
-        Heard::Msaa(WinEventKind::TextSelectionChange),
-        Heard::UiaTextChanged,
-        Heard::Msaa(WinEventKind::ValueChange),
-    ]);
-}
-
-/// A caret event waiting ahead of a text change in one batch is planned
-/// after it: the text change's read reads the caret with the text, and the
-/// caret event, which that read saw, reads nothing more: one read, with
-/// the caret moved.
-fn a_caret_event_ahead_of_a_text_change_is_read_with_it() {
-    let (mut app, outpost, term) = start("mockapp-terminal-caret-first");
-    outpost.hold_worker();
-    app.send("caret term 1");
-    app.send("caret-event term");
-    write_text(&mut app, &["three"]);
-    heard_caret_and_text(&outpost);
-    outpost.release_worker();
-    let read = reported(&outpost, term);
-    assert_eq!(text(&read), after(&["three"]));
-    assert_eq!(caret_at(&read), ("one\r\n", 1));
-    outpost.settled();
-    drop(outpost);
-    app.quit();
-}
-
-/// Held, a caret event after a text change is only noted: the read Core
-/// asks for in the same batch reads the caret with the text, and the noted
-/// caret, which that read saw, reads nothing more: the answer, with the
-/// caret moved, and nothing else.
-fn a_held_terminals_caret_event_is_read_with_the_text() {
-    let (mut app, mut outpost, term) = start("mockapp-terminal-held-caret");
-    hold(&mut outpost, term);
-    outpost.hold_worker();
-    write_text(&mut app, &["three"]);
-    app.send("caret term 1");
-    app.send("caret-event term");
-    heard_caret_and_text(&outpost);
-    let read = ask(&mut outpost, term, TextOp::TerminalRead { hold: false });
-    outpost.release_worker();
-    let answer = read_answer(&outpost, read);
-    assert_eq!(text(&answer), after(&["three"]));
-    assert_eq!(caret_at(&answer), ("one\r\n", 1));
-    outpost.settled();
-    drop(outpost);
-    app.quit();
-}
-
-/// The console host's text area, in a window of the console's class,
-/// takes its caret event from its console: UI Automation's caret event
-/// reaches the outpost only as the `WinEvent` UIA raises for MSAA clients,
-/// which the outpost drops, as the subscription leaves UIA's out for it,
-/// and a description change UIA delivers after it is reported alone; the
-/// console's own caret event (`EVENT_CONSOLE_CARET`) reads the terminal,
-/// and the read is sent with the caret.
-fn the_console_hosts_caret_comes_from_its_console() {
-    let (mut app, outpost, text) = start_with(
-        "mockapp-console-caret",
-        "console_terminal.json",
-        "text",
-        OutpostOptions::default(),
-    );
-    app.send("caret text 1");
-    app.send("caret-event text");
-    app.send("set-description text moved");
-    outpost.heard(&[
-        Heard::Msaa(WinEventKind::TextSelectionChange),
-        Heard::UiaProperty(UIA_HelpTextPropertyId.0),
-    ]);
-    match outpost.next() {
-        OutpostToCore::Event {
-            event:
-                NormalizedEvent::PropertyChanged {
-                    node_id,
-                    change: PropertyChange::Description(description),
-                    child_count: None,
-                },
-            ..
-        } => assert_eq!((node_id, description.as_deref()), (text, Some("moved"))),
-        other => panic!("the outpost said {other:?}, not the text area's description"),
-    }
-    outpost.settled();
-    app.send("console-caret 1 0");
-    outpost.heard(&[Heard::Msaa(WinEventKind::ConsoleCaret)]);
-    assert_eq!(caret_at(&reported(&outpost, text)), ("one\r\n", 1));
-    outpost.settled();
-    drop(outpost);
-    app.quit();
-}
-
-/// A console host's caret move with no text change reaches Core: its caret
-/// event reads the terminal, as Windows Terminal's caret events do, and the
-/// read, its text as before, carries the moved caret, so Core's reading
-/// rules judge the next key from it (`books/dev/src/explanation/design/terminal-model.md`,
-/// "Where it runs": one caret).
-fn a_console_caret_move_with_no_text_change_is_read() {
-    let (mut app, outpost, area) = start_with(
-        "mockapp-console-caret-move",
-        "console_terminal.json",
-        "text",
-        OutpostOptions::default(),
-    );
-    app.send("caret text 24");
-    app.send("console-caret 2 1");
-    outpost.heard(&[Heard::Msaa(WinEventKind::ConsoleCaret)]);
-    let read = reported(&outpost, area);
-    assert_eq!(text(&read), rows(&["one", "two", "ready>"]));
-    assert_eq!(caret_at(&read), ("two\r\n", 2));
-    outpost.settled();
-    drop(outpost);
-    app.quit();
-}
-
-/// In the focused console host's text area the system caret's events tell
-/// of the caret its console caret event tells of, at the same tick, and are
-/// not used: the console's caret event alone has the caret read.
-fn the_console_hosts_system_caret_is_not_its_caret_event() {
-    let (mut app, outpost, text) = start_with(
-        "mockapp-console-system-caret",
-        "console_terminal.json",
-        "text",
-        OutpostOptions::default(),
-    );
-    app.send("caret text 1");
-    app.send("system-caret");
-    outpost.heard(&[Heard::Msaa(WinEventKind::Caret)]);
-    outpost.settled();
-    app.send("console-caret 1 0");
-    outpost.heard(&[Heard::Msaa(WinEventKind::ConsoleCaret)]);
-    assert_eq!(caret_at(&reported(&outpost, text)), ("one\r\n", 1));
-    outpost.settled();
-    drop(outpost);
-    app.quit();
-}
-
-/// A caret key's watch that knows no caret before the key (no `since`,
-/// and no press time to find the outpost's own report before it by)
-/// takes a caret event as its evidence. One waiting behind a text change in one batch is
-/// planned after it, and the change's read reads the caret, covering the
-/// event, which then checks nothing: the watch, checked after that read,
-/// is answered by it as the event would have answered it. The answer,
-/// then the read.
-fn a_read_covering_a_caret_event_answers_a_watch_with_no_caret() {
-    let (mut app, outpost, term) = start("mockapp-terminal-covered-caret");
-    watch_key(&outpost, term, CaretMotion::NextCharacter);
-    // The watch is open: nothing is said.
-    outpost.settled();
-    outpost.hold_worker();
-    app.send("caret term 1");
-    app.send("caret-event term");
-    write_text(&mut app, &["three"]);
-    heard_caret_and_text(&outpost);
-    outpost.release_worker();
-    let reply = evidence(&outpost);
-    assert_eq!(
-        (reply.caret.line.text.as_str(), reply.caret.line.offset),
-        ("one                 \r\n", 1)
-    );
-    assert_eq!(reply.facts.unit.as_ref().expect("a unit").text, "n");
-    assert_eq!(text(&reported(&outpost, term)), after(&["three"]));
-    outpost.settled();
-    drop(outpost);
-    app.quit();
-}
-
-/// A read identical to the last one sent, its caret included, is not sent
-/// again (`verbatim_outpost::terminal::Terminal::sends`): not for a caret
-/// event that moved nothing; a read finding the caret moved is sent.
-fn an_identical_read_is_not_sent_again() {
-    let (mut app, outpost, term) = start("mockapp-terminal-identical-read");
-    write(&mut app, &outpost, &["three"]);
-    assert_eq!(text(&reported(&outpost, term)), after(&["three"]));
-    outpost.settled();
-    // Windows Terminal's caret event reads the terminal: from where the
-    // last read said to start, the screen's top, which moved down a row.
-    caret_event(&mut app, &outpost);
-    assert_eq!(
-        text(&reported(&outpost, term)),
-        rows(&["two", "ready>", "three"])
-    );
-    outpost.settled();
-    // The same read again is not sent.
-    caret_event(&mut app, &outpost);
-    outpost.settled();
-    // Moved, the caret is a change of its own.
-    app.send("caret term 1");
-    caret_event(&mut app, &outpost);
-    let read = reported(&outpost, term);
-    assert_eq!(text(&read), rows(&["two", "ready>", "three"]));
-    assert_eq!(caret_at(&read), ("one\r\n", 1));
-    outpost.settled();
-    drop(outpost);
-    app.quit();
-}
-
-/// Raises the terminal's caret event and waits for the outpost to take it
-/// in by both routes.
-fn caret_event(app: &mut common::MockApp, outpost: &OutpostUnderTest) {
-    outpost.hold_worker();
-    app.send("caret-event term");
-    outpost.heard(&[
-        Heard::UiaTextSelection,
-        Heard::Msaa(WinEventKind::TextSelectionChange),
-    ]);
-    outpost.release_worker();
-}
-
-/// While the console's window is both the focus window and the
-/// foreground window, as the listener routes them for the console host,
-/// and is read through UI Automation, UI Automation's `WinEvent` copy of
-/// the text area's caret event does not reach the outpost: the hook has
-/// left those events out, and the console's caret event, raised after it
-/// and always hooked, is the first event heard. Once a Win32 button in the
-/// window, read through MSAA, has the focus, the copy is heard again,
-/// before the console's caret event.
-fn the_hooks_change_events_wait_for_a_window_read_through_msaa() {
-    let (mut app, outpost, area) = start_with(
-        "mockapp-console-narrowed",
-        "console_terminal_button.json",
-        "text",
-        OutpostOptions::default(),
-    );
-    let console = common::find_window(&app.title);
-    // UI Automation owns the window: neither is reported.
-    outpost.deliver(DeliveredFact::Foreground {
-        hwnd: console.0 as isize,
-    });
-    outpost.deliver(DeliveredFact::MsaaFocus {
-        hwnd: console.0 as isize,
-        id_object: OBJID_CLIENT.0,
-        id_child: 0,
-    });
-    outpost.settled();
-    app.send("caret-event text");
-    app.send("console-caret 0 0");
-    outpost.heard(&[Heard::Msaa(WinEventKind::ConsoleCaret)]);
-    // The console's caret event reads the terminal: the caret has not
-    // moved, and the read, from where the first said to start, is sent
-    // once.
-    assert_eq!(caret_at(&reported(&outpost, area)), ("one\r\n", 0));
-    outpost.settled();
-
-    // The window has the focused state, which an MSAA focus in it needs,
-    // as when a dialog's button takes the focus.
-    app.send("set-focus root");
-    // SAFETY: a local search of the console window's children.
-    let find = unsafe { FindWindowExW(Some(console), None, w!("Button"), w!("Find")) }
-        .expect("mockapp made the button");
-    let focus = outpost.focus(DeliveredFact::MsaaFocus {
-        hwnd: find.0 as isize,
-        id_object: OBJID_CLIENT.0,
-        id_child: 0,
+/// The history above the start Core names is read by place, counted from
+/// that start.
+fn history_above_the_start_core_names_is_read_by_place() {
+    let mut terminal = start("mockapp-terminal-history");
+    write(&mut terminal, &["three", "four", "five"]);
+    let read = terminal.fresh_from(terminal.start);
+    let history = terminal.text(TextOp::TerminalHistory {
+        above: 2,
+        whole: false,
+        start: read.start,
+        height: 0,
     });
     assert_eq!(
-        focus.chain(),
-        [Some("Mockapp Console Terminal Fixture"), Some("Find")]
-    );
-    app.send("caret-event text");
-    app.send("console-caret 0 0");
-    outpost.heard(&[
-        Heard::Msaa(WinEventKind::TextSelectionChange),
-        Heard::Msaa(WinEventKind::ConsoleCaret),
-    ]);
-    // The text area is no longer the focus.
-    outpost.settled();
-    drop(outpost);
-    app.quit();
-}
-
-/// Up Arrow and "x" pressed at once in the console host: the shell has
-/// drawn the recalled line and put
-/// the caret after it, and writes the "x" between the calls of the caret
-/// key's read, after its caret and before its line. The line read shows
-/// "x" with the caret before it, a state the terminal never had; read again
-/// at the read's end, the caret is past the "x", so the read answers
-/// nothing. The text change that follows reads again, and the watch is
-/// answered with the caret past the "x"; the caret read with the text is
-/// that answer's, so it is not reported again, and the output follows.
-/// The read is one remote operation.
-fn a_watch_read_while_the_terminal_writes_waits_for_its_change() {
-    watch_read_while_the_terminal_writes(
-        "mockapp-terminal-written-while-read",
-        OutpostOptions::default(),
-    );
-}
-
-/// [`a_watch_read_while_the_terminal_writes_waits_for_its_change`] with
-/// remote operations off, so the read is the classic one, its caret and
-/// its line separate cross-process calls, and the "x" is written between
-/// them as the line's text is read.
-fn a_classic_watch_read_while_the_terminal_writes_waits_for_its_change() {
-    watch_read_while_the_terminal_writes(
-        "mockapp-terminal-written-while-read-classic",
-        OutpostOptions {
-            remote_operations: false,
-        },
-    );
-}
-
-/// The body of the two tests of a watch read while the terminal writes,
-/// the outpost reading as `options` say.
-fn watch_read_while_the_terminal_writes(name: &str, options: OutpostOptions) {
-    let (mut app, outpost, term) = start_with(name, "terminal_reading.json", "term", options);
-    // The prompt's trailing space, which the padding hides, and the caret
-    // after it: a caret event's read finds the text as it was and the
-    // caret moved.
-    app.send(&format!(
-        "set-text term {}",
-        terminal_text(&["one", "two", "ready> "])
-    ));
-    let row = WIDTH + 2;
-    app.send(&format!("caret term {}", 2 * row + 7));
-    app.send("caret-event term");
-    let caret = reported(&outpost, term).caret.expect("the read's caret");
-    assert_eq!(caret.line.offset, 7);
-    outpost.settled();
-    app.send(&format!(
-        "set-text term {}",
-        terminal_text(&["one", "two", "ready> echo one"])
-    ));
-    app.send(&format!("caret term {}", 2 * row + 15));
-    app.send("write-on-read term x");
-    watch_key(&outpost, term, CaretMotion::NextLine);
-    // The read saw the caret move while it read: nothing is said.
-    outpost.settled();
-    app.send("text-changed term");
-    let reply = evidence(&outpost);
-    assert_eq!(
-        (reply.caret.line.text.as_str(), reply.caret.line.offset),
-        ("ready> echo onex    \r\n", 16)
-    );
-    // The read that answered the watch is sent, the caret past the "x".
-    assert_eq!(
-        caret_at(&reported(&outpost, term)),
-        ("ready> echo onex\r\n", 16)
-    );
-    outpost.settled();
-    drop(outpost);
-    app.quit();
-}
-
-/// Core's read at once before a review command
-/// (`TerminalReadNow(Fresh)`) reads whatever the on-demand state, and a
-/// held terminal's change it reads is no longer waiting: the read Core asks
-/// for after it finds nothing changed.
-fn a_fresh_read_is_taken_while_held_and_reads_what_was_held() {
-    let (mut app, mut outpost, term) = start("mockapp-terminal-fresh");
-    hold(&mut outpost, term);
-    write_held(&mut app, &outpost, term, &["nine"], 1);
-    let fresh = ask(
-        &mut outpost,
-        term,
-        TextOp::TerminalReadNow(TerminalScope::Fresh),
-    );
-    assert_eq!(text(&read_answer(&outpost, fresh)), after(&["nine"]));
-    outpost.settled();
-    let read = ask(&mut outpost, term, TextOp::TerminalRead { hold: false });
-    assert_eq!(answer_to(&outpost, read), TextReply::TerminalUnchanged);
-    outpost.settled();
-    drop(outpost);
-    app.quit();
-}
-
-/// With the screen's shape told (`TerminalShape`), the whole document is
-/// read from its start when Core asks, and a history block counted up from
-/// the document's end by the height asked for with as many rows above it.
-fn the_whole_document_and_a_history_block_are_read_when_asked() {
-    let (mut app, mut outpost, term) = start("mockapp-terminal-whole");
-    write(&mut app, &outpost, &["three", "four", "five"]);
-    let _ = reported(&outpost, term);
-    outpost.settled();
-    let shape = ask(
-        &mut outpost,
-        term,
-        TextOp::TerminalShape {
-            height: 2,
-            width: 20,
-        },
-    );
-    assert_eq!(answer_to(&outpost, shape), TextReply::Done);
-    let whole = ask(
-        &mut outpost,
-        term,
-        TextOp::TerminalReadNow(TerminalScope::Whole),
-    );
-    let answer = read_answer(&outpost, whole);
-    assert_eq!(text(&answer), after(&["three", "four", "five"]));
-    assert!(answer.at_document_start);
-    let block = ask(
-        &mut outpost,
-        term,
-        TextOp::TerminalReadNow(TerminalScope::HistoryBlock { height: 2 }),
-    );
-    let answer = read_answer(&outpost, block);
-    assert_eq!(text(&answer), rows(&["ready>", "three", "four", "five"]));
-    assert_eq!(answer.above, 2);
-    outpost.settled();
-    drop(outpost);
-    app.quit();
-}
-
-/// Rows of the history above where the next read starts are read by place
-/// when Core asks (`TerminalHistory`), padding kept, with how many rows
-/// above that start the read holds and the read whose start it is.
-fn history_above_the_next_reads_start_is_read_by_place() {
-    let (mut app, mut outpost, term) = start("mockapp-terminal-history");
-    write(&mut app, &outpost, &["three", "four", "five"]);
-    let read = reported(&outpost, term).read;
-    outpost.settled();
-    let history = ask(
-        &mut outpost,
-        term,
-        TextOp::TerminalHistory {
-            above: 2,
-            whole: false,
-        },
-    );
-    assert_eq!(
-        answer_to(&outpost, history),
+        history,
         TextReply::TerminalHistory {
             text: [
                 "two                 \r\n",
@@ -929,310 +349,78 @@ fn history_above_the_next_reads_start_is_read_by_place() {
             ]
             .concat(),
             above: 2,
-            read,
+            read: 0,
         }
     );
-    outpost.settled();
-    drop(outpost);
-    app.quit();
+    terminal.outpost.settled();
+    terminal.quit();
 }
 
-/// A key's colours request (`TerminalColours`) that comes after a read
-/// that ended at or after its key without the colours is answered done
-/// after a read at once that has them, sent as a live read, even when the
-/// request came after its window ended; one whose key came after the last
-/// read is answered done, and every read that begins within its window
-/// takes them.
-fn a_colours_request_after_a_read_without_them_reads_at_once() {
-    let (mut app, mut outpost, term) = start("mockapp-terminal-colours");
-    let colours = ask(
-        &mut outpost,
-        term,
-        TextOp::TerminalColours {
-            from_ms: 0,
-            until_ms: 1,
-        },
-    );
-    assert!(reported(&outpost, term).colours.is_some());
-    assert_eq!(answer_to(&outpost, colours), TextReply::Done);
-    outpost.settled();
-    let later = verbatim_process::clock::now_us() / 1_000 + 1;
-    let colours = ask(
-        &mut outpost,
-        term,
-        TextOp::TerminalColours {
-            from_ms: later,
-            until_ms: later + 60_000,
-        },
-    );
-    assert_eq!(answer_to(&outpost, colours), TextReply::Done);
-    write(&mut app, &outpost, &["three"]);
-    let read = reported(&outpost, term);
-    assert_eq!(text(&read), after(&["three"]));
-    assert!(read.colours.is_some());
-    outpost.settled();
-    write(&mut app, &outpost, &["three", "four"]);
-    let read = reported(&outpost, term);
-    assert_eq!(text(&read), rows(&["two", "ready>", "three", "four"]));
-    assert!(read.colours.is_some());
-    outpost.settled();
-    drop(outpost);
-    app.quit();
+/// A read takes the screen's colours when Core asks, and only then.
+/// Converted from `a_colours_request_after_a_read_without_them_reads_at_once`:
+/// whether a read takes the colours is Core's decision, sent with the read
+/// (build 3, "Colours").
+fn a_read_takes_the_colours_when_core_asks() {
+    let mut terminal = start("mockapp-terminal-colours");
+    let without = terminal.fresh_from(terminal.start);
+    assert!(without.snapshot.colours.is_none());
+    write(&mut terminal, &["three"]);
+    let read =
+        terminal.read(terminal.ask(Some(terminal.start), TerminalScope::Fresh, (0, 20), true));
+    assert_eq!(text(&read.snapshot), after(&["three"]));
+    assert!(read.snapshot.colours.is_some());
+    terminal.outpost.settled();
+    terminal.quit();
 }
 
-/// The read before a held key (`ReadPurpose::BeforeTerminalKey`) in a terminal is a read of it,
-/// whose caret answers the request.
-fn the_read_before_a_held_key_is_a_read_with_its_caret() {
-    let (mut app, mut outpost, term) = start("mockapp-terminal-before-key");
-    app.send("caret term 1");
-    let op = before_read(CaretMotion::NextCharacter);
-    let before = ask(&mut outpost, term, op);
-    let answer = read_answer(&outpost, before);
-    assert_eq!(caret_at(&answer), ("one\r\n", 1));
-    assert!(answer.caret.is_some());
-    outpost.settled();
-    drop(outpost);
-    app.quit();
-}
-
-/// The console host's text area, with an outpost watching it, and a caret
-/// key's watch on it from the caret as a held key's read before it finds
-/// it, opened and checked once with the caret where it was.
-fn console_watch(name: &str) -> (common::MockApp, OutpostUnderTest, NodeId) {
-    let (app, mut outpost, area) = start_with(
-        name,
-        "console_terminal.json",
-        "text",
-        OutpostOptions::default(),
-    );
-    let op = before_read(CaretMotion::NextCharacter);
-    let before = ask(&mut outpost, area, op);
-    read_answer(&outpost, before)
-        .caret
-        .expect("the read's caret");
-    (app, outpost, area)
-}
-
-/// The console host raises its caret event only on its cursor's blink
-/// timer, so its caret key's watch re-reads the caret every 5 ms
-/// (`books/dev/src/explanation/design/key-holding.md`, "The console host's caret poll"): a
-/// caret the application moves after the watch's first check, with no
-/// event, answers the key, and the terminal is read after it.
-fn a_console_hosts_caret_moved_without_an_event_answers_its_watch() {
-    let (mut app, outpost, area) = console_watch("mockapp-console-polled-caret");
-    // Held after the watch's first check, the worker's next read is the
-    // poll's.
-    outpost.hold_worker();
-    app.send("caret text 1");
-    outpost.release_worker();
-    let reply = evidence(&outpost);
-    assert_eq!(
-        (reply.caret.line.text.as_str(), reply.caret.line.offset),
-        ("one                 \r\n", 1)
-    );
-    assert_eq!(caret_at(&reported(&outpost, area)), ("one\r\n", 1));
-    outpost.settled();
-    drop(outpost);
-    app.quit();
-}
-
-/// Core's word after passing a key on in a terminal has the outpost read
-/// it, with no event of the terminal's and no reply.
-fn a_read_terminal_message_reads_the_terminal() {
-    let (mut app, outpost, term) = start("mockapp-terminal-read-message");
-    let rows: Vec<&str> = START.iter().copied().chain(["three"]).collect();
-    app.send(&format!("set-text term {}", terminal_text(&rows)));
-    outpost
-        .outpost
-        .handle_command(&verbatim_model::protocol::CoreToOutpost::ReadTerminal {
-            node: term,
-            trace_id: verbatim_model::TraceId::from_raw(7),
-        });
-    assert_eq!(text(&reported(&outpost, term)), after(&["three"]));
-    outpost.settled();
-    drop(outpost);
-    app.quit();
-}
-
-/// A key's read of its terminal reads the caret under the key's note
-/// first, reporting the key's effect, and then the screen, both under the
-/// key's trace, as Core asks it at the key's pass.
-fn a_read_terminal_message_reads_the_caret_first_under_the_keys_trace() {
-    let (mut app, mut outpost, term) = start("mockapp-terminal-read-caret-first");
-    let before = ask(&mut outpost, term, before_read(CaretMotion::NextCharacter));
-    read_answer(&outpost, before)
-        .caret
-        .expect("the read's caret");
-    app.send("caret term 1");
-    let trace = verbatim_model::TraceId::from_raw(7);
-    outpost
-        .outpost
-        .handle_command(&verbatim_model::protocol::CoreToOutpost::ReadTerminal {
-            // As Core sends it, stamped with this outpost's generation.
-            node: term.with_outpost(verbatim_model::OutpostId(4)),
-            trace_id: trace,
-        });
-    match outpost.next() {
-        OutpostToCore::Event {
-            trace_id,
-            event: NormalizedEvent::CaretMoved { facts: Some(_), .. },
-            ..
-        } => assert_eq!(trace_id, trace),
-        other => panic!("the outpost said {other:?}, not the key's report"),
-    }
-    match outpost.next() {
-        OutpostToCore::Event {
-            trace_id,
-            event: NormalizedEvent::TerminalSnapshot { node_id, .. },
-            ..
-        } => {
-            assert_eq!((node_id, trace_id), (term, trace));
-        }
-        other => panic!("the outpost said {other:?}, not the terminal's read"),
-    }
-    outpost.settled();
-    drop(outpost);
-    app.quit();
-}
-
-/// The console's caret event for a noted node whose read finds no move,
-/// such as a blink tick left over from an earlier cursor set, leaves the
-/// poll reading: a caret moved after it, with no event, is the key's
-/// evidence. The worker is held before the before read, because the poll's
-/// 50 ms run from its end.
-fn a_console_caret_event_without_a_move_leaves_the_poll_reading() {
-    let (mut app, mut outpost, area) = start_with(
-        "mockapp-console-event-then-move",
-        "console_terminal.json",
-        "text",
-        OutpostOptions::default(),
-    );
-    outpost.hold_worker();
-    let before = ask(&mut outpost, area, before_read(CaretMotion::NextCharacter));
-    app.send("console-caret 0 0");
-    outpost.heard(&[Heard::Msaa(WinEventKind::ConsoleCaret)]);
-    // A foreground change behind them holds the worker again once it has
-    // made the before read and handled the event, whose read finds the
-    // caret where it was and whose read of the terminal finds nothing new
-    // to report.
-    outpost.deliver(DeliveredFact::Foreground {
-        hwnd: common::another_applications_window().0 as isize,
+/// A caret key's starting read in a terminal is a full read with its
+/// caret, and mints the key's caret starting point. Converted from
+/// `the_read_before_a_held_key_is_a_read_with_its_caret` (build 1, "A
+/// terminal's caret key").
+fn a_starting_read_reads_the_caret_and_mints_the_starting_point() {
+    let mut terminal = start("mockapp-terminal-starting-read");
+    terminal.app.send("caret term 1");
+    let read = terminal.read(TerminalRead {
+        starting: Some(TextUnit::Character),
+        output: false,
+        ..terminal.ask(Some(terminal.start), TerminalScope::Fresh, (0, 0), false)
     });
-    outpost.step_worker(1);
-    read_answer(&outpost, before)
-        .caret
-        .expect("the read's caret");
-    app.send("caret text 1");
-    outpost.release_worker();
-    let reply = evidence(&outpost);
-    assert_eq!(
-        (reply.caret.line.text.as_str(), reply.caret.line.offset),
-        ("one                 \r\n", 1)
-    );
-    assert_eq!(caret_at(&reported(&outpost, area)), ("one\r\n", 1));
-    outpost.settled();
-    drop(outpost);
-    app.quit();
+    assert_eq!(caret_at(&read.snapshot), ("one\r\n", 1));
+    assert!(read.snapshot.caret.is_some());
+    assert!(read.point.is_some());
+    terminal.outpost.settled();
+    terminal.quit();
 }
 
-/// Runs each test on a desktop of its own (`common/harness.rs`).
 fn main() {
     harness::run_isolated(&[
         (
-            "a_fresh_read_is_taken_while_held_and_reads_what_was_held",
-            a_fresh_read_is_taken_while_held_and_reads_what_was_held,
+            "a_text_change_is_told_and_core_reads_it_from_its_start",
+            a_text_change_is_told_and_core_reads_it_from_its_start,
+        ),
+        (
+            "a_caret_event_is_told_as_a_text_change_is",
+            a_caret_event_is_told_as_a_text_change_is,
+        ),
+        (
+            "a_read_counts_from_the_start_core_names",
+            a_read_counts_from_the_start_core_names,
         ),
         (
             "the_whole_document_and_a_history_block_are_read_when_asked",
             the_whole_document_and_a_history_block_are_read_when_asked,
         ),
         (
-            "history_above_the_next_reads_start_is_read_by_place",
-            history_above_the_next_reads_start_is_read_by_place,
+            "history_above_the_start_core_names_is_read_by_place",
+            history_above_the_start_core_names_is_read_by_place,
         ),
         (
-            "a_colours_request_after_a_read_without_them_reads_at_once",
-            a_colours_request_after_a_read_without_them_reads_at_once,
+            "a_read_takes_the_colours_when_core_asks",
+            a_read_takes_the_colours_when_core_asks,
         ),
         (
-            "the_read_before_a_held_key_is_a_read_with_its_caret",
-            the_read_before_a_held_key_is_a_read_with_its_caret,
-        ),
-        (
-            "a_console_hosts_caret_moved_without_an_event_answers_its_watch",
-            a_console_hosts_caret_moved_without_an_event_answers_its_watch,
-        ),
-        (
-            "a_read_terminal_message_reads_the_terminal",
-            a_read_terminal_message_reads_the_terminal,
-        ),
-        (
-            "a_read_terminal_message_reads_the_caret_first_under_the_keys_trace",
-            a_read_terminal_message_reads_the_caret_first_under_the_keys_trace,
-        ),
-        (
-            "a_console_caret_event_without_a_move_leaves_the_poll_reading",
-            a_console_caret_event_without_a_move_leaves_the_poll_reading,
-        ),
-        (
-            "a_focus_now_terminal_reports_its_output",
-            a_focus_now_terminal_reports_its_output,
-        ),
-        (
-            "a_terminal_stays_followed_through_a_foreground_report",
-            a_terminal_stays_followed_through_a_foreground_report,
-        ),
-        (
-            "a_held_terminal_notes_changes_and_a_read_answers_them",
-            a_held_terminal_notes_changes_and_a_read_answers_them,
-        ),
-        (
-            "a_read_with_nothing_new_answers_empty_and_may_hold_again",
-            a_read_with_nothing_new_answers_empty_and_may_hold_again,
-        ),
-        (
-            "a_cancel_answers_what_is_new_and_reading_is_live_again",
-            a_cancel_answers_what_is_new_and_reading_is_live_again,
-        ),
-        (
-            "a_caret_event_ahead_of_a_text_change_is_read_with_it",
-            a_caret_event_ahead_of_a_text_change_is_read_with_it,
-        ),
-        (
-            "a_held_terminals_caret_event_is_read_with_the_text",
-            a_held_terminals_caret_event_is_read_with_the_text,
-        ),
-        (
-            "the_console_hosts_caret_comes_from_its_console",
-            the_console_hosts_caret_comes_from_its_console,
-        ),
-        (
-            "a_console_caret_move_with_no_text_change_is_read",
-            a_console_caret_move_with_no_text_change_is_read,
-        ),
-        (
-            "the_console_hosts_system_caret_is_not_its_caret_event",
-            the_console_hosts_system_caret_is_not_its_caret_event,
-        ),
-        (
-            "a_read_covering_a_caret_event_answers_a_watch_with_no_caret",
-            a_read_covering_a_caret_event_answers_a_watch_with_no_caret,
-        ),
-        (
-            "a_watch_read_while_the_terminal_writes_waits_for_its_change",
-            a_watch_read_while_the_terminal_writes_waits_for_its_change,
-        ),
-        (
-            "a_classic_watch_read_while_the_terminal_writes_waits_for_its_change",
-            a_classic_watch_read_while_the_terminal_writes_waits_for_its_change,
-        ),
-        (
-            "an_identical_read_is_not_sent_again",
-            an_identical_read_is_not_sent_again,
-        ),
-        (
-            "the_hooks_change_events_wait_for_a_window_read_through_msaa",
-            the_hooks_change_events_wait_for_a_window_read_through_msaa,
+            "a_starting_read_reads_the_caret_and_mints_the_starting_point",
+            a_starting_read_reads_the_caret_and_mints_the_starting_point,
         ),
     ]);
 }
