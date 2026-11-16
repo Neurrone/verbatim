@@ -43,14 +43,13 @@ The outpost:
 - **Worker**: catches each program's panic, answers it "panicked" and keeps running, as today. A Rust panic is raised between calls, never inside a COM call, so the UIA client holds no state for one call and stays usable, and unwinding releases the program's objects on the worker, a thread allowed to block. The worker is therefore not retired as an abandoned one is. The exception: a panic that unwound while the object store's lock was held leaves the store poisoned; the worker checks it after catching and, if poisoned, starts the clean shutdown, because the store is state the whole process depends on.
 - **UIA callback threads**: the callback is contained and its event dropped.
 - **The target watch**: `Continue`; its wait on the application's process handle starts again.
-- **`win_event_proc`**: contained per event, the event dropped. Its closure takes `try_borrow_mut`, and a nested event, possible only if handling dispatched sent messages, is dropped with an error log, because the intake makes no such call and queuing nested events would add a second ordering path that hides that defect.
+- **`win_event_proc`**, which runs only in a console host's outpost, the one outpost that hooks events: contained per event, the event dropped. Its closure takes `try_borrow_mut`, and a nested event, possible only if handling dispatched sent messages, is dropped with an error log, because handling an event makes no such call and queuing nested events would add a second ordering path that hides that defect.
 - **Threads owning process-wide state**, which start the clean shutdown: the shell (reducer) thread, the WinEvent event thread, the I/O thread and the writer, which owns the one queue to Core.
 
 The listener:
 
 - **Reading threads**: the read is answered as failed, judged "dropped", so the thread stays in charge of its application with a new reader. It is never counted as abandoned, because counting it held an application at the abandonment limit for good after two panics.
 - **UIA callback threads**: contained, the event dropped.
-- **`grace_ended`**: contained, and the next step ends the grace.
 - **Threads owning process-wide state**, which start the clean shutdown: the scheduler and its watchdog, the WinEvent thread, the I/O thread, the writer, and the registration thread, which holds the desktop-wide registration the listener exists for.
 
 The synthesizer host:
