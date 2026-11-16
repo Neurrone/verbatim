@@ -430,7 +430,8 @@ pub enum CompletionFor {
     /// states are read.
     Focus,
     /// A selection's item, with its relation to the committed focus, read
-    /// live from the focus's controller-for relation.
+    /// live from the focus's controller-for relation: answered
+    /// [`Reply::Object`], its ancestors the item's parent first.
     SelectionItem {
         /// The committed focus.
         focus: NodeId,

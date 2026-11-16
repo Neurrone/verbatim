@@ -41,10 +41,10 @@ use verbatim_model::{
 };
 use verbatim_process::clock::now_us;
 
-use super::RequestContext;
 use super::read::{self, Client, ReadError};
 use super::text_reads;
 use super::window::{hwnd_of, window_handle};
+use super::{Context, RequestContext};
 
 /// How many children a request reads of one node at most, and how many
 /// nodes a find of descendants visits: a bound on a request into a list
@@ -390,9 +390,6 @@ fn read_object(
     read: &ReadObject,
     probes: &mut Vec<Probe>,
 ) -> Outcome {
-    if read.descendants {
-        return Outcome::Refused(Refusal::Unsupported);
-    }
     let (snapshot, relation, nearest) = match &read.object {
         // The listener's.
         ObjectRef::Kept(_) => return Outcome::Refused(Refusal::Unsupported),
@@ -400,8 +397,14 @@ fn read_object(
             let relation = match &read.relation {
                 None => None,
                 Some(RelationQuery::OneOf(nodes)) => Some(one_of(*node, nodes)),
-                Some(RelationQuery::ControlledBy(_) | RelationQuery::Selection { .. }) => {
-                    return Outcome::Refused(Refusal::Unsupported);
+                Some(RelationQuery::ControlledBy(focus)) => {
+                    Some(controlled_by(context, client, *focus, *node))
+                }
+                Some(RelationQuery::Selection { focus, nodes }) => {
+                    Some(match controlled_by(context, client, *focus, *node) {
+                        RelationFound::Unrelated => one_of(*node, nodes),
+                        found => found,
+                    })
                 }
             };
             match read::read_node(context, client, *node) {
@@ -449,16 +452,126 @@ fn read_object(
             Err(read::FocusLost) => return Outcome::NotThere,
         },
     };
+    let descendants = if read.descendants {
+        match descendants(context, client, snapshot.id) {
+            Ok(descendants) => descendants,
+            Err(error) => return failed(&error),
+        }
+    } else {
+        Vec::new()
+    };
     let nearest = nearest.or_else(|| known_nearest(context, &snapshot));
     let ancestor_reads = ancestor_reads(context, &ancestors, nearest, &read.set);
     Outcome::Result(Reply::Object(Box::new(ObjectRead {
         object: node_read(context, &snapshot, nearest, &read.set),
         relation,
-        descendants: Vec::new(),
+        descendants: descendants
+            .iter()
+            .map(|descendant| node_read(context, descendant, nearest, &read.set))
+            .collect(),
         ancestors: ancestor_reads,
         met,
         route: None,
     })))
+}
+
+/// `node`'s descendants, depth first in document order, NVDA's
+/// `recursiveDescendants`, at most [`MAX_NODES`]; a child gone as it was
+/// read is left out with what is below it.
+fn descendants(
+    context: &RequestContext<'_>,
+    client: &mut Client,
+    node: NodeId,
+) -> Result<Vec<NodeSnapshot>, ReadError> {
+    let mut found = Vec::new();
+    let mut stack = vec![children(context, client, node)?.into_iter()];
+    while let Some(level) = stack.last_mut() {
+        let Some(child) = level.next() else {
+            stack.pop();
+            continue;
+        };
+        if found.len() >= MAX_NODES {
+            break;
+        }
+        let below = match children(context, client, child.id) {
+            Ok(below) => below,
+            Err(ReadError::Gone) => Vec::new(),
+            Err(error) => return Err(error),
+        };
+        found.push(child);
+        stack.push(below.into_iter());
+    }
+    Ok(found)
+}
+
+/// Whether `object` is, or is inside, an element the committed focus
+/// `focus` names in its `ControllerFor` relation, read live, as NVDA's
+/// `event_selection` reads `focus.controllerFor` at the selection
+/// (`NVDAObjects/__init__.py` 1314 to 1330). A focus or an object that is
+/// not a UI Automation node, or a focus whose element the outpost no
+/// longer holds, controls nothing, as NVDA's object of either backend
+/// equals no object of the other and a dead focus names no relation.
+pub(super) fn controlled_by(
+    context: &RequestContext<'_>,
+    client: &mut Client,
+    focus: NodeId,
+    object: NodeId,
+) -> RelationFound {
+    let (Some(runtime_id), Some(focused)) = (
+        context.store.runtime_id_of(object),
+        context
+            .store
+            .element_of(focus)
+            .and_then(|agile| agile.resolve().ok()),
+    ) else {
+        return RelationFound::Unrelated;
+    };
+    let Ok((uia, nodes)) = client.uia_with(context, Context::node_request) else {
+        return RelationFound::Unrelated;
+    };
+    let fill = verbatim_uia::Fill::new(&nodes);
+    let query = verbatim_uia_rops::ControlledQuery {
+        focused: focused.live().element(),
+        selected: &runtime_id,
+        fill: &fill,
+    };
+    let window = known_nearest_of(context, focus);
+    let remote = context.tries_remote(window);
+    let (answer, path) = match verbatim_uia_rops::controlled_selection(uia, &query, remote) {
+        Ok(found) => found,
+        Err(error) => {
+            tracing::debug!(%error, "the focus's controller-for relation could not be read");
+            return RelationFound::Unrelated;
+        }
+    };
+    if let (verbatim_uia_rops::Path::Fallback(verbatim_uia_rops::Error::Import(_)), Some(hwnd)) =
+        (&path, window)
+    {
+        context.read_classically(verbatim_win32::window::top_level_of(hwnd));
+    }
+    match answer.selected {
+        None => RelationFound::Unrelated,
+        // The relation's elements are listed up to the one it was found
+        // in: the last is the object itself when it is one of them.
+        Some(_) if answer.controlled.last() == Some(&verbatim_uia::runtime_id_key(&runtime_id)) => {
+            RelationFound::Controlled
+        }
+        Some(_) => RelationFound::InsideControlled,
+    }
+}
+
+/// The nearest window of node `node` known without a call, by its id.
+fn known_nearest_of(context: &RequestContext<'_>, node: NodeId) -> Option<isize> {
+    context
+        .store
+        .key_of(node)
+        .map(|(hwnd, _, _)| hwnd)
+        .or_else(|| context.store.nearest_window_of(node))
+        .or_else(|| match context.store.runtime_id_of(node).as_deref() {
+            Some([42, hwnd]) => isize::try_from(*hwnd).ok(),
+            _ => None,
+        })
+        .filter(|&hwnd| hwnd != 0)
 }
 
 /// `node`'s place among `nodes`, by its id.
@@ -473,7 +586,7 @@ fn one_of(node: NodeId, nodes: &[NodeId]) -> RelationFound {
 /// `ancestors`, nearest first, as an answer carries them, each with its
 /// nearest window: its own, or the next one above it, or above the
 /// outermost that is a window, `nearest`.
-fn ancestor_reads(
+pub(super) fn ancestor_reads(
     context: &RequestContext<'_>,
     ancestors: &[NodeSnapshot],
     nearest: Option<isize>,

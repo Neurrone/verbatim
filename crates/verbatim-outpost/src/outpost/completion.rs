@@ -15,11 +15,16 @@
 
 use verbatim_model::property::PropertyValues;
 use verbatim_model::protocol::{UiaAncestorFact, UiaSnapshotFact};
-use verbatim_model::request::{CompleteUia, CompletionFor, Outcome, Refusal, Reply, RouteEnd};
+use verbatim_model::request::{
+    CompleteUia, CompletionFor, ObjectRead, Outcome, Refusal, Reply, RouteEnd,
+};
 use verbatim_model::{Backend, NodeId, NodeSnapshot, Role, State};
 use verbatim_uia::{Cached, Interning as _, Kept, Node};
 
-use super::asked::{Focus, ancestors_end, cut_at_known, focus_read, known_stops, snapshot_of};
+use super::asked::{
+    Focus, ancestor_reads, ancestors_end, controlled_by, cut_at_known, focus_read, known_stops,
+    node_read, snapshot_of,
+};
 use super::focus_path;
 use super::read::{self, Client};
 use super::reducer::FocusPath;
@@ -83,6 +88,18 @@ pub(super) fn complete(
     let Ok((ancestors, met)) = ancestors(context, client, complete, met) else {
         return Outcome::NotThere;
     };
+    if let CompletionFor::SelectionItem { focus } = complete.completes {
+        // A selection's item: its relation to the committed focus, read
+        // live, and its ancestors, its parent first (Table 12).
+        return Outcome::Result(Reply::Object(Box::new(ObjectRead {
+            object: node_read(context, &snapshot, Some(nearest), &complete.set),
+            relation: Some(controlled_by(context, client, focus, node)),
+            descendants: Vec::new(),
+            ancestors: ancestor_reads(context, &ancestors, Some(nearest), &complete.set),
+            met,
+            route: None,
+        })));
+    }
     Outcome::Result(Reply::Focus(Box::new(focus_read(
         context,
         &Focus {

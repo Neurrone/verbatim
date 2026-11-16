@@ -1204,11 +1204,15 @@ no verdict in force is probed first and the probe carried in the answer.
   (today's text answers) and `Activate`.
 - `ReadObject` of an MSAA object at an event's address, refused "read
   through UI Automation" when its window is, or of a node it holds: its
-  relation to the nodes Core names by NVDA's equality, an MSAA object
-  never controlled, and its ancestors up to the first Core already
-  knows, the walk stopping at a known node of this outpost. A UI
-  Automation node's controller-for relation and an object's descendants
-  are refused unsupported.
+  relation to the nodes Core names by NVDA's equality, its ancestors up to
+  the first Core already knows, the walk stopping at a known node of this
+  outpost, and with `descendants` its recursive descendants depth first,
+  at most 1000. The relation to what the committed focus controls is
+  read live from the focus's `ControllerFor` (`controlled_by`, one remote
+  program where the window allows), the object itself (`Controlled`) or
+  inside one (`InsideControlled`); an MSAA object, or a focus that is not
+  a UI Automation node, controls nothing. A selection's relation falls
+  back to its place among the nodes Core names.
 - `MsaaRun`: each candidate newest first, skipped when its window is read
   through UI Automation, not there when no object is at its address,
   refused "not focused" for a focus event whose object and ancestors lack
@@ -1224,7 +1228,9 @@ no verdict in force is probed first and the probe carried in the answer.
   the id was reused; a focus's event registration is moved to the
   element on the registering thread and waited for, keeping the node
   `Follow` named, then the node's states are read; the ancestors are the listener's reads, completed
-  above as a focus read's are. Where the listener's walk met an ancestor
+  above as a focus read's are; a selection's item is answered as an
+  object read, with its relation to the committed focus read live and its
+  ancestors, its parent first. Where the listener's walk met an ancestor
   Core already knows, the route's end names it, and the completion makes
   no read to find it.
 - A focus answer's caret is not read yet: `NotRead` for a node that may
