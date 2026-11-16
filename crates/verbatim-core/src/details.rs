@@ -16,6 +16,28 @@ pub(crate) fn node_set(state: &SrState, base: &[PropertyId]) -> Vec<PropertyId> 
     state.reported.node.choose(base)
 }
 
+/// The property set of a listener read whose walk a completion judges
+/// ([`node_set`]), with the description kept whatever the settings: the
+/// completion judges each ancestor's layout with it, as NVDA's
+/// presentation type reads it whatever the theme, so an unnamed grouping
+/// with a description stays focus context
+/// (`books/dev/src/explanation/design/uia-shapes.md`, decision 4). The
+/// completion reports the description only as [`node_set`] names it. The
+/// listener reads it with every element of the walk in any case, so this
+/// adds no call.
+pub(crate) fn walk_set(state: &SrState, base: &[PropertyId]) -> Vec<PropertyId> {
+    base.iter()
+        .copied()
+        .filter(|id| {
+            *id == PropertyId::Description
+                || id
+                    .entry()
+                    .detail
+                    .is_none_or(|detail| state.reported.node.contains(detail))
+        })
+        .collect()
+}
+
 /// Why a text read is made, which decides what it fetches.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum TextReason {
@@ -44,7 +66,7 @@ mod tests {
     use verbatim_model::property::{NodeDetail, NodeDetailSet, PropertyId};
     use verbatim_model::{FormatSet, ReportedDetails, TextDetails, TextUnit};
 
-    use super::{TextReason, node_set, text_details};
+    use super::{TextReason, node_set, text_details, walk_set};
     use crate::state::SrState;
 
     fn state(reported: ReportedDetails) -> SrState {
@@ -122,6 +144,32 @@ mod tests {
         );
         assert_eq!(without(NodeDetail::Level), less(&[PropertyId::Level]));
         assert_eq!(without(NodeDetail::Cell), less(&[PropertyId::Cell]));
+    }
+
+    /// A walked read keeps the description with descriptions off, for the
+    /// completion's layout judgment, and leaves out every other detail
+    /// turned off.
+    #[test]
+    fn a_walked_read_keeps_the_description_whatever_the_settings() {
+        let off = state(ReportedDetails {
+            node: NodeDetailSet::ALL
+                .without(NodeDetail::Description)
+                .without(NodeDetail::Level),
+            ..ReportedDetails::ALL
+        });
+        assert_eq!(
+            walk_set(&off, BASE),
+            [
+                PropertyId::Name,
+                PropertyId::Description,
+                PropertyId::KeyboardShortcut,
+                PropertyId::PositionInSet,
+                PropertyId::SetSize,
+                PropertyId::Cell,
+                PropertyId::Rect,
+            ]
+        );
+        assert_eq!(walk_set(&state(ReportedDetails::ALL), BASE), BASE);
     }
 
     /// A caret key's paragraph read leaves out spelling and

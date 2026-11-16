@@ -484,7 +484,9 @@ pub struct CompleteUia {
     /// What the listener read of the element and each ancestor on the
     /// route, nearest first, which the completion keeps.
     pub read: Vec<PropertyValues>,
-    /// The properties of each node: the set the listener read.
+    /// The properties reported of each node, as Core's settings choose
+    /// them: the listener's read holds these, and the description too,
+    /// which the completion's layout judgment reads whatever the settings.
     pub set: Vec<PropertyId>,
     /// The ancestors Core already knows.
     pub known: Vec<KnownAncestor>,

@@ -429,6 +429,9 @@ pub struct OutpostUnderTest {
     /// about to make reading an element Core names
     /// ([`Self::listener_observes_calls`]).
     read_observer: RefCell<Option<verbatim_listener::CallObserver>>,
+    /// The properties a focus read reports, as Core's settings choose them
+    /// ([`Self::read_with`]): [`focus_set`] until a test names others.
+    reported_set: RefCell<Vec<PropertyId>>,
     /// The outpost's failed cached reads when last taken
     /// ([`Self::take_failed_reads`]).
     failed_reads_taken: Cell<u32>,
@@ -669,6 +672,7 @@ impl OutpostUnderTest {
             focus_window,
             listener_readability: RefCell::new(Arc::new(verbatim_win32::window::readability)),
             read_observer: RefCell::new(None),
+            reported_set: RefCell::new(focus_set()),
             failed_reads_taken: Cell::new(0),
             position: Cell::new(0),
             observation,
@@ -680,6 +684,15 @@ impl OutpostUnderTest {
             app_window: super::find_window(&app.title),
             app_pid: pid,
         }
+    }
+
+    /// Reads each later focus reporting `set`, as Core asks with settings
+    /// that leave the other properties out: the listener's read takes
+    /// `set` with the description, which the completion's layout judgment
+    /// reads whatever the settings, as Core's walked read does, and the
+    /// completion reports `set`.
+    pub fn read_with(&self, set: Vec<PropertyId>) {
+        *self.reported_set.borrow_mut() = set;
     }
 
     /// Moves the keyboard focus, as the outpost reads it, to `hwnd` while
@@ -1030,7 +1043,13 @@ impl OutpostUnderTest {
             nearest,
             &ReadObject {
                 object: ObjectRef::Kept(verbatim_model::tell::ElementToken(0)),
-                set: focus_set(),
+                set: {
+                    let mut set = self.reported_set.borrow().clone();
+                    if !set.contains(&PropertyId::Description) {
+                        set.push(PropertyId::Description);
+                    }
+                    set
+                },
                 relation: None,
                 descendants: false,
                 walk: Some(sent.clone()),
@@ -1073,7 +1092,7 @@ impl OutpostUnderTest {
                 read: std::iter::once(object.values)
                     .chain(ancestors.into_iter().map(|ancestor| ancestor.values))
                     .collect(),
-                set: focus_set(),
+                set: self.reported_set.borrow().clone(),
                 known: sent.clone(),
                 completes: CompletionFor::Focus,
                 baseline: None,

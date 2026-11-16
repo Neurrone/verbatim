@@ -705,6 +705,121 @@ fn a_focus_walk_that_times_out_fails() {
     fixture.app.quit();
 }
 
+/// The check thread's walk to a focus's nearest window answers a lookup
+/// that does not answer within UIA's transaction timeout as failed, by the
+/// timeout and not by the application's late answer, with that lookup its
+/// one call; the check then drops the focus with no other call into the
+/// application (`verbatim-listener-logic`'s
+/// `a_focus_whose_walk_finds_no_window_makes_no_other_call`). NVDA's
+/// lookup answers no window when it fails, and NVDA drops a focus with
+/// none (`UIAHandler/__init__.py` 1437 to 1444). The lookup's first step
+/// to the parent waits past the timeout (`slow-parent`), and returns
+/// before mockapp's wait ends.
+fn a_timed_out_nearest_window_lookup_fails_at_the_timeout_with_one_call() {
+    const TIMEOUT: Duration = Duration::from_millis(1_200);
+    const SLOW_PARENT: Duration = Duration::from_millis(1_800);
+    let mut fixture = Fixture::start("mockapp-rops-lookup-timed-out");
+    let deep = fixture.focus_delivered("deep", "Deep button");
+    let client: IUIAutomation2 = fixture.uia.client().cast().expect("IUIAutomation2");
+    let restored = ProcessTimeout::set(&client, Kind::Transaction, TIMEOUT);
+    fixture
+        .app
+        .send(&format!("slow-parent deep {}", SLOW_PARENT.as_millis()));
+    let _ = verbatim_uia::calls::take();
+    let lookup = verbatim_uia::nearest_window_lookup(deep.live().element());
+    let calls = verbatim_uia::calls::take();
+    let returned = common::now_us();
+    let ended = {
+        fixture.app.stamped_line("slow-parent started");
+        fixture.app.stamped_line("slow-parent ended")
+    };
+    fixture.app.send("slow-parent deep 0");
+    drop(restored);
+    assert!(
+        returned < ended,
+        "the transaction timeout ended the lookup: it returned at {returned} us, after the wait ended at {ended} us"
+    );
+    match lookup {
+        Err(error) => assert!(
+            verbatim_uia::timed_out(&error),
+            "the lookup failed by the timeout, not by {error}"
+        ),
+        Ok(found) => panic!("the lookup answered {found:?}, not its timeout"),
+    }
+    assert_eq!(
+        calls,
+        verbatim_model::CallCounts {
+            uia: 1,
+            msaa: 0,
+            window_messages: 0,
+            connections: 0,
+        },
+        "the lookup is the walk's only call"
+    );
+    fixture.app.quit();
+}
+
+/// A focus whose read fails is answered by the listener's read and the
+/// outpost's completion as the focus, from its event, its only state
+/// focused, whatever the event's cache says of its keyboard focus: NVDA's
+/// last check reads the sender's keyboard focus live
+/// (`shouldAllowUIAFocusEvent`), and once that has said it has the focus,
+/// nothing NVDA does consults the event's cached value. Here the event's
+/// cache is filled before the sender has the focus, the focus then moves to
+/// it, raising no event, so that its live read says it has it, and the read
+/// times out, every pattern request slow (`slow-patterns`) as in
+/// `a_focus_whose_walk_times_out_is_reported_below_its_window`, which
+/// reads a focus before it for the reason given there. Its chain goes on
+/// from the parent window of mockapp's window, its nearest, no ancestor
+/// read.
+fn a_focus_whose_read_fails_is_answered_whatever_its_event_says_of_its_focus() {
+    const TIMEOUT: Duration = Duration::from_millis(300);
+    const SLOW_CALL: Duration = Duration::from_millis(40);
+    let mut fixture = Fixture::start("mockapp-rops-failed-unfocused");
+    let outpost = OutpostUnderTest::new(&fixture.app);
+    let check = fixture.focus_delivered("check", "Remember");
+    let before = outpost.uia_focus_answer(&check);
+    assert_eq!(before.name(), Some("Remember"), "the focus before");
+    outpost.settled();
+    let deep = fixture.delivered("Deep button");
+    assert_eq!(
+        deep.live().element().has_keyboard_focus().ok(),
+        Some(false),
+        "the event's cache is filled before the sender has the keyboard focus"
+    );
+    fixture.app.send("set-focus deep");
+    assert_eq!(
+        deep.live().element().has_keyboard_focus().ok(),
+        Some(true),
+        "the sender has the keyboard focus, read live"
+    );
+    let client: IUIAutomation2 = fixture.uia.client().cast().expect("IUIAutomation2");
+    let restored = ProcessTimeout::set(&client, Kind::Transaction, TIMEOUT);
+    fixture
+        .app
+        .send(&format!("slow-patterns {}", SLOW_CALL.as_millis()));
+    let (focus, _) = outpost.listener_focus(&deep);
+    // Acknowledged once mockapp has answered the calls still queued.
+    fixture.app.send("slow-patterns 0");
+    drop(restored);
+    let (outcome, calls) = outpost.complete_focus(focus);
+    let focused = Focused::of(outcome, calls);
+    assert_eq!(focused.name(), Some("Deep button"));
+    assert_eq!(
+        focused.states(),
+        verbatim_model::StateSet::new().with(State::Focused),
+        "answered as the focus, whatever its event's cache said"
+    );
+    assert_eq!(
+        focused.ancestor_names(),
+        [] as [Option<&str>; 0],
+        "nothing above it, the chain going on from the parent window of mockapp's window"
+    );
+    outpost.settled();
+    drop(outpost);
+    fixture.app.quit();
+}
+
 /// The focus listener, the focus walk's caller, and the outpost handle a
 /// walk that timed out: with every pattern request slow (`slow-patterns`),
 /// so that filling an element's cache outlasts UIA's transaction timeout
@@ -715,7 +830,7 @@ fn a_focus_walk_that_times_out_fails() {
 /// failed parent read goes on by `Window._get_parent`, so that window is
 /// not in it, whether remote operations are on or off. (With every provider call slow, the walk to the nearest
 /// window times out first, and the focus is dropped, as
-/// `a_timed_out_nearest_window_lookup_reads_nothing_into_the_application`
+/// `a_timed_out_nearest_window_lookup_fails_at_the_timeout_with_one_call`
 /// shows.)
 /// The timeout is short, and the requests only a little slow, since
 /// mockapp goes on answering a timed-out program's calls, each that much
@@ -1464,6 +1579,14 @@ fn main() {
         (
             "a_focus_whose_walk_times_out_is_reported_below_its_window",
             a_focus_whose_walk_times_out_is_reported_below_its_window,
+        ),
+        (
+            "a_timed_out_nearest_window_lookup_fails_at_the_timeout_with_one_call",
+            a_timed_out_nearest_window_lookup_fails_at_the_timeout_with_one_call,
+        ),
+        (
+            "a_focus_whose_read_fails_is_answered_whatever_its_event_says_of_its_focus",
+            a_focus_whose_read_fails_is_answered_whatever_its_event_says_of_its_focus,
         ),
         (
             "a_focus_whose_parent_step_fails_goes_on_from_its_windows_parent",

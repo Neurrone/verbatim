@@ -181,7 +181,7 @@ pub(crate) async fn run(mut cx: Cx<Entries>, focus: UiaFocus) {
         window,
         read: ReadObject {
             object: ObjectRef::Kept(focus.token),
-            set: crate::details::node_set(&cx.facts(), FOCUS_SET),
+            set: crate::details::walk_set(&cx.facts(), FOCUS_SET),
             relation: None,
             descendants: false,
             walk: Some(walk),

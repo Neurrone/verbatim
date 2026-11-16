@@ -1914,6 +1914,54 @@ fn a_windowless_selection_is_given_its_nearest_window() {
     app.quit();
 }
 
+/// An unnamed grouping with a description is focus context whatever the
+/// theme, as NVDA's layout judgment reads the description whatever its
+/// setting (`books/dev/src/explanation/design/uia-shapes.md`, decision 4): with a theme that
+/// reports descriptions as off, Core's walked read keeps the description
+/// for the layout judgment and its completion reports no description, so
+/// the outpost's completion of the focus's ancestors reports the grouping,
+/// without the description.
+fn an_unnamed_grouping_with_a_description_is_focus_context_with_descriptions_off() {
+    let title = common::unique_title("mockapp-described-group");
+    let mut app = common::spawn("described_group.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let client = Client::new(hwnd);
+    let outpost = OutpostUnderTest::new(&app);
+    outpost.read_with(
+        common::outpost::focus_set()
+            .into_iter()
+            .filter(|id| *id != PropertyId::Description)
+            .collect(),
+    );
+
+    app.send("set-focus louder");
+    let focus = outpost.uia_focus_answer(&client.focused());
+    assert_eq!(focus.name(), Some("Louder"));
+    let reported: Vec<(Role, Option<&str>, Option<&PropertyValue>)> = focus
+        .read
+        .ancestors
+        .iter()
+        .rev()
+        .map(|ancestor| {
+            (
+                common::outpost::role_of(&ancestor.node),
+                common::outpost::name_of(&ancestor.node),
+                common::outpost::value(&ancestor.node.read.values, PropertyId::Description),
+            )
+        })
+        .collect();
+    assert_eq!(
+        reported,
+        [
+            (Role::Window, Some("Mockapp Described Group Fixture"), None),
+            (Role::Group, None, None),
+        ]
+    );
+
+    drop(outpost);
+    app.quit();
+}
+
 /// A protected (password) field focused with something selected comes
 /// with its caret and its selected text, as any field's does: Core reads a
 /// protected field's text, masked as the control gives it
@@ -2800,6 +2848,10 @@ fn main() {
         (
             "the_listener_skips_a_focus_in_a_class_listed_window",
             the_listener_skips_a_focus_in_a_class_listed_window,
+        ),
+        (
+            "an_unnamed_grouping_with_a_description_is_focus_context_with_descriptions_off",
+            an_unnamed_grouping_with_a_description_is_focus_context_with_descriptions_off,
         ),
         (
             "a_windowless_selection_is_given_its_nearest_window",
