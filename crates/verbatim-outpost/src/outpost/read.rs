@@ -1589,10 +1589,13 @@ pub(super) fn focus_now(
 /// NVDA reads `objectInForeground` when the focus difference level is 1
 /// or less (`docs/design/readers-tell-core-asks-build1.md`, "Focus and
 /// foreground"): the client object of the window the outpost's
-/// foreground reader names, when that window is the target application's
-/// and not Verbatim's hidden frame, a plain window when it cannot be read;
-/// `None` for another application's foreground window, which this outpost
-/// does not read, or for none.
+/// foreground reader names, when that window is the target application's,
+/// a plain window when it cannot be read; `None` for another
+/// application's foreground window, which this outpost does not read, or
+/// for none. Verbatim's hidden frame is read too: it is in front only
+/// while its menu is open, and a focus in the menu takes the frame, titled
+/// "Verbatim", as its foreground (Verbatim-only, design "Focus and
+/// foreground").
 pub(super) fn foreground_object(
     context: &RequestContext<'_>,
     client: &mut Client,
@@ -1609,7 +1612,7 @@ pub(super) fn foreground_object_among(
     chain: &[NodeSnapshot],
 ) -> Option<NodeSnapshot> {
     let hwnd = context.foreground_window();
-    if hwnd == 0 || !served_by(hwnd, context.target_pid()) || window_is_hidden_frame(hwnd) {
+    if hwnd == 0 || !served_by(hwnd, context.target_pid()) {
         return None;
     }
     if let Some(own) = chain.iter().find(|node| {

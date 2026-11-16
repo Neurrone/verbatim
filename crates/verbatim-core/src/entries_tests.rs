@@ -894,6 +894,59 @@ fn a_focus_in_a_window_the_hidden_frame_owns_takes_the_frame_as_its_foreground()
     );
 }
 
+/// Verbatim's popup menu as Windows makes it: a window of its own with no
+/// owner, outside the frame in front, marked by the listener as the
+/// frame's (`verbatim_win32::window_facts`); the answer reads the frame as
+/// its foreground, which the focus enters, saying its title.
+#[test]
+fn a_focus_in_the_hidden_frames_popup_menu_with_no_owner_says_the_frames_title() {
+    let mut state = ready();
+    let mut tell = msaa_tell(-4);
+    tell.window = TellWindow::Found(Box::new(AcceptanceFacts {
+        window: facet(6, "#32768"),
+        root: facet(6, "#32768"),
+        root_owner: facet(6, "#32768"),
+        foreground: WindowHandle(8),
+        foreground_root_owner: WindowHandle(8),
+        window_to_foreground: Relation::Outside,
+        root_owner_to_foreground: Relation::Outside,
+        root_owner_is_foregrounds: false,
+        window_to_active: Relation::Outside,
+        root_topmost: true,
+        window_topmost: true,
+        hidden_frame_owned: true,
+        ..facts("#32768")
+    }));
+    assert_eq!(
+        feed_at(&mut state, 1_000, entry(tell)),
+        ["send Outpost(Pid(40)) MsaaRun"]
+    );
+    let mut read = focus_read(Some(held(-4)));
+    read.focus.read.values = values("Context", Role::Menu);
+    read.focus.read.window = win(6);
+    read.ancestors.clear();
+    let mut frame = values("Verbatim", Role::Pane);
+    frame.0.push(PropertyAnswer {
+        id: PropertyId::NativeWindow,
+        value: Some(PropertyValue::Window(WindowHandle(8))),
+    });
+    read.foreground = Some(FocusNode {
+        read: NodeRead {
+            node: Some(node(1)),
+            window: win(8),
+            values: frame,
+        },
+        runtime_id: None,
+    });
+    let tried = RunRead {
+        tried: vec![Tried::Focus(Box::new(read))],
+    };
+    assert_eq!(
+        feed_at(&mut state, 2_000, answer(OUTPOST, 1, Reply::Run(tried))),
+        ["Label(\"Verbatim\")", "Label(\"Context\") Role(Menu)"]
+    );
+}
+
 #[test]
 fn a_focus_whose_top_level_window_is_an_ignored_processs_is_dropped_at_its_answer() {
     let mut state = asked_completion();

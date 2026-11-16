@@ -47,6 +47,21 @@ pub trait WindowReads {
 /// The class of a console host's window.
 const CONSOLE_CLASS: &str = "ConsoleWindowClass";
 
+/// The class of a popup menu's window.
+const MENU_CLASS: &str = "#32768";
+
+/// Whether `window` is a popup menu Verbatim's hidden frame shows: a
+/// popup menu has no owner, so its owner chain does not reach the frame,
+/// but the frame is in front while its menu is open, and the menu's window
+/// belongs to the thread that owns the frame.
+fn frame_menu(reads: &impl WindowReads, window: isize) -> bool {
+    if reads.class(window) != MENU_CLASS {
+        return false;
+    }
+    let front = reads.foreground();
+    front != 0 && reads.hidden_frame(front) && reads.owner(front).0 == reads.owner(window).0
+}
+
 /// The part of a tell window's facts that depends on the window alone,
 /// gathered as the event arrives, before a hold could let the window go.
 #[expect(
@@ -135,7 +150,9 @@ impl WindowPart {
             root_topmost: reads.topmost(root),
             desktop: window == reads.desktop(),
             hidden_frame,
-            hidden_frame_owned: !hidden_frame && root_owner != 0 && reads.hidden_frame(root_owner),
+            hidden_frame_owned: !hidden_frame
+                && ((root_owner != 0 && reads.hidden_frame(root_owner))
+                    || frame_menu(reads, window)),
         }
     }
 
@@ -402,6 +419,30 @@ mod tests {
         let frame = WindowPart::read(&desk, 1, None).with_foreground(&desk);
         assert!(frame.hidden_frame);
         assert!(!frame.hidden_frame_owned);
+    }
+
+    /// Verbatim's popup menu has no owner, as Windows makes a popup menu's
+    /// window, but its thread owns the frame, which is in front: it
+    /// carries the mark. Another thread's popup menu does not, nor does
+    /// the frame's menu once the frame is not in front.
+    #[test]
+    fn the_hidden_frames_popup_menu_with_no_owner_carries_the_mark() {
+        let mut desk = Desk::default();
+        desk.add(1, "wxWindowNR", DESKTOP, 0);
+        desk.add(5, MENU_CLASS, DESKTOP, 0);
+        desk.frame = 1;
+        desk.foreground = 1;
+        let menu = WindowPart::read(&desk, 5, None).with_foreground(&desk);
+        assert!(menu.hidden_frame_owned);
+        assert_eq!(menu.root_owner.handle, WindowHandle(5));
+        desk.windows.get_mut(&5).unwrap().thread = 101;
+        let other = WindowPart::read(&desk, 5, None).with_foreground(&desk);
+        assert!(!other.hidden_frame_owned);
+        desk.windows.get_mut(&5).unwrap().thread = 100;
+        desk.add(2, "Notepad", DESKTOP, 0);
+        desk.foreground = 2;
+        let behind = WindowPart::read(&desk, 5, None).with_foreground(&desk);
+        assert!(!behind.hidden_frame_owned);
     }
 
     #[test]

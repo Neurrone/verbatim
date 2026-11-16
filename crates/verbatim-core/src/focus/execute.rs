@@ -344,12 +344,17 @@ fn ready(
     let mut ancestors = nearest_first;
     // A focus in a window Verbatim's hidden frame owns takes the frame,
     // which the answer read as its foreground, as its outermost ancestor,
-    // so that it enters the frame and says its title.
+    // so that it enters the frame and says its title. The frame is a
+    // top-level window, read through MSAA as its client pane, which stands
+    // for it; the answer's values do not carry that mark, so it is set
+    // here, or the pane would be structure and say nothing.
     if origin.frame_owned
         && let Some(frame) = &read_foreground
         && !ancestors.iter().any(|ancestor| ancestor.id == frame.id)
     {
-        ancestors.push(frame.clone());
+        let mut frame = frame.clone();
+        frame.details.top_level_client = frame.role == Role::Pane;
+        ancestors.push(frame);
     }
     ancestors.reverse();
     let ancestors =
