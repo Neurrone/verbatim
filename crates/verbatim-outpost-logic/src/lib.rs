@@ -71,12 +71,14 @@ mod intake;
 mod tests;
 mod text;
 mod waiting;
+mod watch;
 
 use std::collections::{BTreeSet, VecDeque};
 use std::sync::Arc;
 use std::time::Duration;
 
 use self::charge::{Abandoned, InCharge};
+use self::watch::WatchCancelled;
 use verbatim_model::protocol::{
     DeliveredFact, EventTiming, FrontWindow, OutpostToCore, Query, QueryOutcome, QueryResult,
     RequestId,
@@ -101,6 +103,7 @@ pub use self::text::{
     ReportCut, TerminalReads, TextChange, TextFacts,
 };
 pub use self::waiting::{Asks, Cancelled};
+pub use self::watch::{EVENT_WINDOW_US, WORD_AFTER_US, WatchProgram, WatchWork, Watches};
 pub use verbatim_reader_rules::verdicts::{Probe, Probed, VerdictChange, Verdicts};
 
 /// The time an input comes at: the shell's monotonic clock, from the
@@ -148,6 +151,9 @@ pub enum Work {
     FindBar(isize),
     /// Core's request, answered once ([`waiting`]).
     Ask(Box<verbatim_model::request::Ask>),
+    /// A caret key's watch's check or final read ([`watch`]), answered
+    /// with [`Input::Answered`] when it ends the watch.
+    Watch(Box<WatchProgram>),
     /// Finishes the caret read `cut`, cut at its value change check, with
     /// the reducer's decision: whether a value change of its edit control
     /// waited when the read part ended (`waiting`).
@@ -428,6 +434,9 @@ struct GroupTry {
 pub struct Reducer {
     /// Core's requests, run ahead of everything else.
     asks: Asks,
+    /// The watches waiting, whose checks and final reads run ahead of
+    /// Core's other requests.
+    watches: Watches,
     intake: intake::Intake,
     facts: Facts,
     /// The program in flight, and the worker generation in charge.
@@ -524,6 +533,14 @@ impl Reducer {
             // A time past the clock's range never comes.
             times.extend(now.at.checked_add(Duration::from_micros(left)));
         }
+        if !self.busy()
+            && !self.releasing
+            && !self.stopping
+            && let Some(due_us) = self.watches.next_due()
+        {
+            let left = due_us.saturating_sub(now.wall_us);
+            times.extend(now.at.checked_add(Duration::from_micros(left)));
+        }
         times.into_iter().min()
     }
 
@@ -574,11 +591,12 @@ impl Reducer {
             | Input::CancelAsk(_)
             | Input::Answered { .. }
             | Input::WindowDestroyed(_) => {
-                self.asked(input, &mut effects);
+                self.asked(input, now, &mut effects);
             }
             Input::Close => {
                 self.stopping = true;
                 self.asks.close();
+                self.watches.close();
                 let unparked = self.intake.close();
                 if !unparked.is_empty() {
                     effects.push(Effect::Unpark(unparked));
@@ -601,26 +619,54 @@ impl Reducer {
         effects
     }
 
-    /// Core's request, its cancel, or a program's answer to it (Table 14).
-    fn asked(&mut self, input: Input, effects: &mut Vec<Effect>) {
+    /// Core's request, its cancel, or a program's answer to it (Tables 14
+    /// and 15).
+    fn asked(&mut self, input: Input, now: Now, effects: &mut Vec<Effect>) {
         match input {
             Input::Ask(ask) => {
-                if !self.stopping {
-                    for replaced in self.asks.push(ask) {
-                        effects.push(Effect::Send(Box::new(OutpostToCore::Answer(replaced))));
+                if self.stopping {
+                    return;
+                }
+                match &ask.request {
+                    verbatim_model::request::Request::Text {
+                        node,
+                        op: TextOp::Watch(watch),
+                    } => {
+                        self.watches
+                            .arrive((ask.number, ask.window, *node), *watch, now.wall_us);
+                        return;
                     }
+                    verbatim_model::request::Request::Text {
+                        op: TextOp::StartingRead(_),
+                        ..
+                    } => self.watches.starting_asked(ask.number, now.wall_us),
+                    _ => {}
+                }
+                for replaced in self.asks.push(ask) {
+                    effects.push(Effect::Send(Box::new(OutpostToCore::Answer(replaced))));
                 }
             }
             Input::WindowDestroyed(window) => {
-                for gone in self.asks.destroyed(window) {
+                let mut gone = self.watches.destroyed(window);
+                gone.extend(self.asks.destroyed(window));
+                for gone in gone {
                     effects.push(Effect::Send(Box::new(OutpostToCore::Answer(gone))));
                 }
             }
             Input::CancelAsk(cancel) => self.cancel_ask(cancel, effects),
             Input::Answered { request, answer } => {
-                if self.accepts(request)
-                    && let Some(answer) = self.asks.answered(*answer)
-                {
+                if !self.accepts(request) {
+                    return;
+                }
+                let answer = if self.watches.runs(request) {
+                    self.watches.answered(request, *answer)
+                } else {
+                    if let Some(point) = started_point(&answer) {
+                        self.watches.starting_answered(answer.number, point);
+                    }
+                    self.asks.answered(*answer)
+                };
+                if let Some(answer) = answer {
                     effects.push(Effect::Send(Box::new(OutpostToCore::Answer(answer))));
                 }
             }
@@ -632,6 +678,21 @@ impl Reducer {
     /// abandoned with its worker when the foreground moved away, or left
     /// alone (Table 14).
     fn cancel_ask(&mut self, cancel: verbatim_model::request::Cancel, effects: &mut Vec<Effect>) {
+        match self.watches.cancel(cancel) {
+            WatchCancelled::NotHere => {}
+            WatchCancelled::Answered(answer) => {
+                effects.push(Effect::Send(Box::new(OutpostToCore::Answer(answer))));
+                return;
+            }
+            WatchCancelled::Abandon(answer) => {
+                if let Some(abandoned) = self.flight.abandon() {
+                    self.abandoned(abandoned, effects);
+                }
+                effects.push(Effect::Send(Box::new(OutpostToCore::Answer(answer))));
+                return;
+            }
+            WatchCancelled::Nothing => return,
+        }
         match self.asks.cancel(cancel) {
             Cancelled::Dropped(answer) => {
                 effects.push(Effect::Send(Box::new(OutpostToCore::Answer(answer))));
@@ -679,6 +740,15 @@ impl Reducer {
 
     /// Takes in `entry`, pushed into the intake.
     fn entry(&mut self, entry: Entry, now: Now, effects: &mut Vec<Effect>) {
+        // The `Follow` subscription's caret and text changes are of the
+        // followed node alone: a watch's event rule reads them.
+        if let Item::Uia(UiaEvent {
+            kind: UiaKind::TextSelection | UiaKind::TextChanged,
+            ..
+        }) = &entry.item
+        {
+            self.watches.heard(now.wall_us);
+        }
         if self.key_arrived(&entry, now) {
             return;
         }
@@ -942,6 +1012,11 @@ impl Reducer {
             self.dispatch_finish(cut, effects);
             return;
         }
+        if self.watches.runs(request)
+            && let Some(answer) = self.watches.ended(request)
+        {
+            effects.push(Effect::Send(Box::new(OutpostToCore::Answer(answer))));
+        }
         let Some(current) = self.flight.end(request) else {
             return;
         };
@@ -988,10 +1063,11 @@ impl Reducer {
     /// the query is reached only with none in flight, so a program in
     /// flight then handles an entry that arrived after the query.
     fn answer_idle(&mut self, effects: &mut Vec<Effect>) {
-        if self
-            .flight
-            .running()
-            .is_some_and(|(_, current)| current.deferred)
+        if !self.watches.is_empty()
+            || self
+                .flight
+                .running()
+                .is_some_and(|(_, current)| current.deferred)
         {
             return;
         }
@@ -1018,6 +1094,12 @@ impl Reducer {
     /// handled on the way.
     fn pump(&mut self, now: Now, effects: &mut Vec<Effect>) {
         while !self.busy() && !self.stopping && !self.releasing {
+            if let Some(program) = self.watches.due(now.wall_us) {
+                let program = Box::new(program);
+                let request = self.dispatch(Work::Watch(program.clone()), None, None, effects);
+                self.watches.running(&program, request, now.wall_us);
+                continue;
+            }
             if let Some(ask) = self.asks.take_next() {
                 self.dispatch(Work::Ask(ask), None, None, effects);
                 continue;
@@ -1151,9 +1233,11 @@ impl Reducer {
             }
             Item::NodesHeld {
                 nodes,
-                anchors,
+                mut anchors,
                 acknowledged,
             } => {
+                // The anchors a waiting watch names are spared (Table 15, I).
+                anchors.extend(self.watches.anchors());
                 let live = self.live();
                 self.releasing = true;
                 effects.push(Effect::Release {
@@ -1234,7 +1318,7 @@ impl Reducer {
         running: Option<(RequestId, TraceId)>,
         group: Option<GroupTry>,
         effects: &mut Vec<Effect>,
-    ) {
+    ) -> Request {
         if let Some(moved) = verbatims_caret_move(&work) {
             Arc::make_mut(&mut self.facts.text).clear_note(moved.number());
         }
@@ -1245,7 +1329,8 @@ impl Reducer {
             | Work::NoteRead(_)
             | Work::Finish { .. }
             | Work::FindBar(_)
-            | Work::Ask(_) => None,
+            | Work::Ask(_)
+            | Work::Watch(_) => None,
         };
         let current = Current {
             asked: match &work {
@@ -1263,6 +1348,7 @@ impl Reducer {
             facts: self.facts.clone(),
             work,
         })));
+        request
     }
 
     /// Dispatches the program that finishes `cut`, the caret read the
@@ -1379,6 +1465,16 @@ fn live_reread_answer(message: &OutpostToCore) -> Option<u64> {
             ..
         } => *answers,
         OutpostToCore::LiveRereadGone { request } => Some(*request),
+        _ => None,
+    }
+}
+
+/// The starting point a starting read's `answer` minted, if it is one.
+fn started_point(answer: &verbatim_model::request::Answer) -> Option<verbatim_model::TextAnchor> {
+    match &answer.outcome {
+        verbatim_model::request::Outcome::Result(verbatim_model::request::Reply::Text(
+            verbatim_model::TextReply::Started(started),
+        )) => Some(started.point),
         _ => None,
     }
 }

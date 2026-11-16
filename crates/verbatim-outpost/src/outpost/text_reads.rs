@@ -33,10 +33,10 @@ use windows::Win32::UI::WindowsAndMessaging::OBJID_CLIENT;
 use windows::core::AgileReference;
 
 use verbatim_ia2::CHILDID_SELF;
-use verbatim_model::request::{FocusCaret, FocusCaretRead};
+use verbatim_model::request::{FocusCaret, FocusCaretRead, Outcome, Reply};
 use verbatim_model::{
     CaretRead, CaretReply, CaretReport, NodeId, ReadFacts, Role, SelectionChange,
-    SelectionReadReply, TextOp, TextReply,
+    SelectionReadReply, TextOp, TextReply, WatchFinalRead, Watched,
 };
 use verbatim_uia::map::is_terminal_class;
 use verbatim_uia::{Cached, Interning as _, Kept};
@@ -51,6 +51,8 @@ use crate::text::{
 use verbatim_reader_rules::CONSOLE_WINDOW_CLASS;
 use verbatim_reader_rules::class::normalize_class_name;
 use verbatim_win32::window::window_class_name;
+
+use verbatim_outpost_logic::{WatchProgram, WatchWork};
 
 use super::commit::Effects;
 use super::reducer::{AnswerCut, NodeAnchors, NoteFetch, RangeKey, ReportCut, TextChange};
@@ -619,13 +621,60 @@ pub(super) fn answer_asked(
             text::sentence::move_by_sentence(source, text, (moved.point, moved.forward))
                 .unwrap_or_else(failed_reply)
         }),
-        // The watch is answered by its own handler, not built yet.
+        // A watch waits in the reducer's table, which runs its checks and
+        // final read as programs of their own ([`watch`]).
         TextOp::Watch(_) => Ok(TextReply::Unsupported),
         other => on_text!(context, node_id, &named, |source, text| {
             text::held::perform_placed(source, text, other)
         }),
     };
     replied.unwrap_or_else(|reply| reply)
+}
+
+/// Runs a watch's check or final read
+/// (`docs/design/readers-tell-core-asks-build1.md`, "The watch", Table 15):
+/// the watch's answer when the program ends it, `None` for a check that
+/// shows no effect before the bound or whose read failed, which counts as
+/// no effect. A final read that fails answers nothing, and the reducer
+/// answers the watch failed.
+pub(super) fn watch(context: &RequestContext<'_>, program: &WatchProgram) -> Option<Outcome> {
+    let node_id = program.node;
+    let named = [program.watch.point.0];
+    let read_at_us = context.observed_now();
+    let (WatchFinalRead::Unit { unit, .. } | WatchFinalRead::UnitAtEffect { unit, .. }) =
+        program.watch.final_read;
+    let ran = on_text!(
+        context,
+        node_id,
+        &named,
+        |source, text| match program.work {
+            WatchWork::Check { word, last } => text::check::check(
+                source,
+                text,
+                text::check::CheckAsk {
+                    point: program.watch.point,
+                    motion: program.watch.motion,
+                    word,
+                    last,
+                    final_read: program.watch.final_read,
+                },
+                read_at_us,
+            ),
+            WatchWork::Final => {
+                text::check::final_read(source, text, unit, read_at_us)
+                    .map(|read| Some(Watched::Effect(read)))
+            }
+        }
+    );
+    match ran {
+        Err(_) | Ok(Err(TextError::Gone)) => Some(Outcome::NotThere),
+        Ok(Err(TextError::Failed(reason))) => {
+            tracing::debug!(reason, "a watch's read failed");
+            None
+        }
+        Ok(Ok(watched)) => watched
+            .map(|watched| Outcome::Result(Reply::Text(TextReply::Watched(Box::new(watched))))),
+    }
 }
 
 /// A focus's caret, read after its states (Table 17, columns A to C): the

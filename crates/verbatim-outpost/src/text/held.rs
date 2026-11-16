@@ -150,7 +150,9 @@ pub fn starting_read<S: TextSource>(
     } else {
         None
     };
-    keep_unit(anchors, Some(&unit_read));
+    // Delete's check compares the word at the caret with the word read
+    // here; every other check compares the character, cut from the line.
+    keep_unit(anchors, Some(word.as_ref().unwrap_or(&unit_read)));
     let point = anchors.hold_last()?;
     Ok(Started {
         point,

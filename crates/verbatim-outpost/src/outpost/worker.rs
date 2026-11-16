@@ -69,7 +69,7 @@ use super::reducer::{
     MarkChange, MsaaReport, Object, Origin, Owed, OwedProgram, OwedWork, Program, Report, UiaEvent,
     UiaKind, VerdictChange, WinKind, Work,
 };
-use super::reducer::{KeyNote, NoteFetch, NoteReads};
+use super::reducer::{KeyNote, NoteFetch, NoteReads, Request, WatchProgram};
 use super::shell::{Garbage, Posted};
 use super::text_reads;
 use super::window::{alt_is_held, console_client, window_facts};
@@ -293,6 +293,7 @@ fn run_job(context: &Arc<Context>, client: &mut Client, job: Job, charge: &Arc<C
                 answer: Box::new(answer),
             });
         }
+        Work::Watch(watch) => run_watch(context, &mut request_context, request, &watch),
     });
     // Text writes no commit after them carried: a program's text calls
     // write nothing but through a commit.
@@ -325,6 +326,28 @@ fn run_job(context: &Arc<Context>, client: &mut Client, job: Job, charge: &Arc<C
     });
 }
 
+/// Runs a watch's check or final read, posting the watch's answer when the
+/// program ends it.
+fn run_watch(
+    context: &Context,
+    request_context: &mut RequestContext<'_>,
+    request: Request,
+    watch: &WatchProgram,
+) {
+    request_context.judge_at(context.observed_now());
+    if let Some(outcome) = super::text_reads::watch(request_context, watch) {
+        context.mailbox.post(Posted::Answered {
+            request,
+            answer: Box::new(verbatim_model::request::Answer {
+                number: watch.number,
+                outcome,
+                probes: Vec::new(),
+                detail: String::new(),
+            }),
+        });
+    }
+}
+
 /// The observation `entry`'s verdicts are judged at: its event's, for an
 /// event the outpost's hook or subscriptions took in or a fact the listener
 /// sent; for anything else, which has no event, now, on the arbitrator's
@@ -349,6 +372,7 @@ fn describe(work: &Work) -> String {
         Work::FindBar(window) => format!("the foreground window {window:#x}'s element"),
         Work::Finish { cut, .. } => format!("the finish of a caret read of {:?}", cut.node),
         Work::Ask(ask) => format!("{}", ask.number),
+        Work::Watch(watch) => format!("the watch {}'s {:?}", watch.number, watch.work),
     }
 }
 

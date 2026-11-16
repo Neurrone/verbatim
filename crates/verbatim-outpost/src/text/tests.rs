@@ -6,7 +6,7 @@ use std::sync::atomic::AtomicU64;
 
 use verbatim_model::{
     CaretMotion, CaretRead, CaretReply, Change, KeyFetch, ReadFacts, ReadPurpose,
-    SelectionDifference, SentenceMoved,
+    SelectionDifference, SentenceMoved, TextDetails, WatchFinalRead, Watched,
 };
 
 use super::*;
@@ -1248,8 +1248,8 @@ fn an_empty_baseline_and_selection_differ_by_nothing_and_a_lost_one_by_none() {
     assert_eq!(lost.difference, None);
 }
 
-/// A caret key's starting read holds its starting point with the key's
-/// unit and, for Delete, the word at the caret.
+/// A caret key's starting read holds its starting point with, for
+/// Delete, the word at the caret, which its check compares.
 #[test]
 fn a_starting_read_holds_the_point_with_the_keys_unit_and_word() {
     let mut source = Fake::new("alpha beta\n", 6);
@@ -1275,7 +1275,7 @@ fn a_starting_read_holds_the_point_with_the_keys_unit_and_word() {
                 read.unit.as_ref().map(|unit| unit.text.clone()),
             )
         });
-    assert_eq!(held, Some((6, Some("b".to_owned()))));
+    assert_eq!(held, Some((6, Some("beta".to_owned()))));
 }
 
 /// Verbatim's own caret move and selection answer with the next baseline,
@@ -1437,4 +1437,171 @@ fn a_sentence_move_without_sentences_or_its_point_moves_nothing() {
         Ok(TextReply::UnsupportedUnit(TextUnit::Sentence))
     );
     assert_eq!(source.caret, 0);
+}
+
+/// A watch's check of the key in `source` from its starting read made on
+/// `before`, at the bound when `last`.
+fn watched(
+    before: &mut Fake,
+    after: impl FnOnce(&mut Fake),
+    (motion, last, final_read): (CaretMotion, bool, WatchFinalRead),
+) -> TextResult<Option<Watched>> {
+    let mut anchors = store();
+    let started = held::starting_read(
+        before,
+        &mut anchors.node(1),
+        REPORTED_AT,
+        (motion.unit(), motion.compares_unit()),
+    )
+    .expect("the fake answers");
+    after(before);
+    check::check(
+        before,
+        &mut anchors.node(1),
+        check::CheckAsk {
+            point: started.point,
+            motion,
+            word: motion.compares_unit(),
+            last,
+            final_read,
+        },
+        REPORTED_AT + 1,
+    )
+}
+
+const CHARACTER: WatchFinalRead = WatchFinalRead::Unit {
+    unit: TextUnit::Character,
+    details: TextDetails::ALL,
+};
+
+/// The caret and the unit a watch answered.
+fn said(watched: Option<Watched>) -> Option<(&'static str, u32, String)> {
+    match watched? {
+        Watched::Effect(read) => Some(("effect", read.caret.line.offset, read.unit.text)),
+        Watched::Bound(read) => Some(("bound", read.caret.line.offset, read.unit.text)),
+        Watched::BoundUnread => Some(("bound unread", 0, String::new())),
+    }
+}
+
+/// A check that finds the caret moved from the starting point answers the
+/// effect with the final read made in the same program.
+#[test]
+fn a_check_that_finds_the_caret_moved_answers_the_effect_with_its_final_read() {
+    let found = watched(
+        &mut Fake::new("alpha beta\n", 2),
+        |fake| fake.caret = 3,
+        (CaretMotion::NextCharacter, false, CHARACTER),
+    );
+    assert_eq!(
+        said(found.expect("read")),
+        Some(("effect", 3, "h".to_owned()))
+    );
+}
+
+/// A check that finds nothing before the bound answers nothing; at the
+/// bound it answers with its final read, or nothing read for a final
+/// read only at the effect.
+#[test]
+fn a_check_with_no_effect_waits_until_the_bound() {
+    let early = watched(
+        &mut Fake::new("alpha\n", 5),
+        |_| {},
+        (CaretMotion::NextCharacter, false, CHARACTER),
+    );
+    assert_eq!(said(early.expect("read")), None);
+    let last = watched(
+        &mut Fake::new("alpha\n", 0),
+        |_| {},
+        (CaretMotion::PreviousCharacter, true, CHARACTER),
+    );
+    assert_eq!(
+        said(last.expect("read")),
+        Some(("bound", 0, "a".to_owned()))
+    );
+    let unread = watched(
+        &mut Fake::new("alpha\n", 0),
+        |_| {},
+        (
+            CaretMotion::NextSentence,
+            true,
+            WatchFinalRead::UnitAtEffect {
+                unit: TextUnit::Line,
+                details: TextDetails::ALL,
+            },
+        ),
+    );
+    assert_eq!(unread.expect("read"), Some(Watched::BoundUnread));
+}
+
+/// Delete's effect: the character at the caret changed, the caret not.
+#[test]
+fn deletes_effect_is_the_character_at_the_caret_changing() {
+    let found = watched(
+        &mut Fake::new("alpha\n", 1),
+        |fake| {
+            fake.text.remove(1);
+        },
+        (CaretMotion::Delete, false, CHARACTER),
+    );
+    assert_eq!(
+        said(found.expect("read")),
+        Some(("effect", 1, "p".to_owned()))
+    );
+}
+
+/// A caret that moved while the check read it is read again rather than
+/// answered torn.
+#[test]
+fn a_check_whose_caret_moved_while_read_reads_again() {
+    let mut source = Fake::new("alpha\n", 0);
+    let found = watched(
+        &mut source,
+        |fake| {
+            fake.caret = 1;
+            fake.moves_on_read = Some((fake.caret_reads + 2, 2));
+        },
+        (CaretMotion::NextCharacter, false, CHARACTER),
+    );
+    assert_eq!(
+        said(found.expect("read")),
+        Some(("effect", 2, "p".to_owned()))
+    );
+}
+
+/// A starting point the outpost no longer holds answers the node gone.
+#[test]
+fn a_check_of_a_point_no_longer_held_is_gone() {
+    let mut source = Fake::new("alpha\n", 0);
+    let mut anchors = store();
+    let checked = check::check(
+        &mut source,
+        &mut anchors.node(1),
+        check::CheckAsk {
+            point: TextAnchor(9_999),
+            motion: CaretMotion::NextCharacter,
+            word: false,
+            last: false,
+            final_read: CHARACTER,
+        },
+        REPORTED_AT,
+    );
+    assert!(matches!(checked, Err(TextError::Gone)), "{checked:?}");
+}
+
+/// The final read after an event reads the caret and the key's unit.
+#[test]
+fn a_final_read_reads_the_caret_and_the_keys_unit() {
+    let mut source = Fake::new("alpha beta\n", 6);
+    let mut anchors = store();
+    let read = check::final_read(
+        &mut source,
+        &mut anchors.node(1),
+        TextUnit::Word,
+        REPORTED_AT,
+    )
+    .expect("the fake answers");
+    assert_eq!(
+        (read.caret.line.offset, read.unit.text),
+        (6, "beta".to_owned())
+    );
 }

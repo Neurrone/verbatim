@@ -29,6 +29,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod check;
 mod color;
 pub mod edit;
 pub mod held;
