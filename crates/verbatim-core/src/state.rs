@@ -682,6 +682,16 @@ impl SrState {
         crate::editing::text_focus(self).is_some()
     }
 
+    /// The committed focus's record a caret key pressed now is bound to,
+    /// as the hook's view publishes it
+    /// (`docs/design/readers-tell-core-asks-build1.md`, "A caret key at its
+    /// turn"): `None` with nothing committed, a focus whose reader ended,
+    /// Core's own focus, or a focus that cannot have text.
+    #[must_use]
+    pub fn caret_binding(&self) -> Option<verbatim_model::request::CaretBinding> {
+        crate::keys::caret_key::binding(self)
+    }
+
     /// How many of Core's queries an outpost has yet to answer that the
     /// idle barrier waits for, with the report queued for a live re-read: a
     /// request Core answers from a terminal's memory is not counted.

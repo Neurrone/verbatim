@@ -171,6 +171,12 @@ pub enum Purpose {
         /// not this reader's.
         keep: Option<ElementToken>,
     },
+    /// A change of a property of one of the nodes its relation names
+    /// (`docs/design/readers-tell-core-asks-build1.md`, "Changes on
+    /// objects"): an object that is none of them answers not there, read
+    /// no further, and one that is reads the set's properties alone, as
+    /// NVDA reads only the property its event names.
+    Change,
     /// Any other read.
     Other,
 }

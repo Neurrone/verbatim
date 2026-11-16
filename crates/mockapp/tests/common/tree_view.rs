@@ -9,9 +9,9 @@ use windows::Win32::UI::Controls::{
 use windows::Win32::UI::WindowsAndMessaging::{FindWindowExW, OBJID_CLIENT, SendMessageW};
 use windows::core::{PCWSTR, w};
 
-use verbatim_model::protocol::DeliveredFact;
+use verbatim_model::event_kind::EventKind;
 
-use super::outpost::{OutpostUnderTest, Reported};
+use super::core_driver::{CoreDriver, Step};
 
 /// The tree view's items, depth first, in the fixture's order.
 pub const ITEMS: [&str; 8] = [
@@ -80,13 +80,10 @@ pub fn item(tree: HWND, name: &str) -> isize {
     items(tree)[index_of(name)].0
 }
 
-/// Hands `outpost` a focus on the tree item `name`, as the listener would
-/// for the control's own focus event, and returns what it reports.
-pub fn focus_item(outpost: &OutpostUnderTest, tree: HWND, name: &str) -> Reported {
+/// Tells Core of a focus on the tree item `name`, as the listener tells
+/// the control's own focus event: what Core said and the calls of its
+/// requests.
+pub fn focus_item(core: &mut CoreDriver, tree: HWND, name: &str) -> Step {
     let id_child = child_id(tree, name);
-    outpost.focus(DeliveredFact::MsaaFocus {
-        hwnd: tree.0 as isize,
-        id_object: OBJID_CLIENT.0,
-        id_child,
-    })
+    core.msaa_event(EventKind::MsaaFocus, tree, (OBJID_CLIENT.0, id_child))
 }

@@ -15,8 +15,15 @@
 //! ([`OutpostUnderTest::set_foreground`]), since nothing takes the
 //! foreground on the desktop a test runs on.
 //!
-//! Core's time is the run's shared clock, never behind the last wake it
-//! was given ([`CoreDriver::due`]).
+//! Core's time is the test's ([`CoreTime`]): the outpost's observation
+//! clock when the driver was made, moved on only by the time the test
+//! passes ([`CoreDriver::pass_time`]), which moves the outpost's clocks on
+//! with it, and by a wake it has Core take
+//! ([`CoreDriver::due`]), so that no verdict in Core's backend cache, no
+//! verdict in the check thread's record of its probes and no timer lapses
+//! with the wall clock; or, for a test whose outpost watches a caret key's
+//! effect on the run's shared clock, as the outpost does, that clock moved
+//! on by the time the test passes.
 
 use std::collections::VecDeque;
 use std::sync::mpsc::TryRecvError;
@@ -35,10 +42,11 @@ use verbatim_model::request::{
     Answer, Ask, ForegroundReport, Instance, ObjectRef, Probe, ProcessFact, QueueEffect,
     QueueInput, Reader, Request, RequestNumber,
 };
+use verbatim_model::stroke::{HeldStroke, Stroke};
 use verbatim_model::tell::{ElementToken, Event, EventObject, Payload, Read, TellWindow};
 use verbatim_model::{
-    BarChange, CallCounts, Earcon, Effect, Input, OutpostId, Pid, SegmentContent, StateSet,
-    TraceId, WindowHandle,
+    BarChange, CallCounts, CaretKey, Earcon, Effect, Input, OutpostId, Pid, SegmentContent,
+    StateSet, TraceId, WindowHandle,
 };
 use verbatim_reader_rules::acceptance::WindowQueries;
 use verbatim_uia::{Cached, Direction, ElementExt, ListenerEvent, Uia};
@@ -122,8 +130,8 @@ pub struct CoreDriver {
     tells: usize,
     /// The wake Core last asked for.
     wake: Option<u64>,
-    /// Core's time is never behind this.
-    floor_us: u64,
+    /// Core's time.
+    clock: Clock,
     /// What Core said and the calls its requests made since the last take.
     said: Vec<Said>,
     calls: CallCounts,
@@ -149,6 +157,58 @@ pub enum CheckMoment {
 /// A test's observer of the check's moments.
 pub type CheckObserver = Box<dyn FnMut(CheckMoment)>;
 
+/// Which clock Core reads, chosen once, as the test makes the driver.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CoreTime {
+    /// The outpost's observation clock when the driver was made, on which
+    /// it stamps its probes, moved on only by the time the test passes and
+    /// the wakes it has Core take: nothing lapses while the test runs,
+    /// however slowly.
+    Frozen,
+    /// The run's shared clock moved on by the time the test passes, for a
+    /// test whose caret key's watch the outpost times by the run's shared
+    /// clock from the pass Core stamps
+    /// (`docs/design/readers-tell-core-asks-build1.md`, "The watch").
+    Real,
+}
+
+/// Core's time in a test ([`CoreTime`]).
+#[derive(Clone, Copy, Debug)]
+struct Clock {
+    time: CoreTime,
+    /// The outpost's observation clock when the driver was made, in
+    /// microseconds.
+    start_us: u64,
+    /// How much time the test has passed, in microseconds.
+    passed_us: u64,
+}
+
+impl Clock {
+    fn new(time: CoreTime, start_us: u64) -> Self {
+        Self {
+            time,
+            start_us,
+            passed_us: 0,
+        }
+    }
+
+    /// Now on the clock.
+    fn now(self) -> u64 {
+        match self.time {
+            CoreTime::Frozen => self.start_us + self.passed_us,
+            CoreTime::Real => verbatim_process::clock::now_us() + self.passed_us,
+        }
+    }
+
+    /// Moves the clock on to `at_us` at least.
+    fn reach(&mut self, at_us: u64) {
+        let now = self.now();
+        if at_us > now {
+            self.passed_us += at_us - now;
+        }
+    }
+}
+
 impl Drop for CoreDriver {
     fn drop(&mut self) {
         if std::thread::panicking() {
@@ -167,7 +227,12 @@ impl CoreDriver {
     /// foreground application's focus is made. What Core said at its start
     /// is kept in [`Self::startup`].
     pub fn new(app: &super::MockApp, outpost: OutpostUnderTest) -> Self {
-        Self::start(app, outpost)
+        Self::start(app, outpost, CoreTime::Frozen)
+    }
+
+    /// [`Self::new`], with Core's time on `time`.
+    pub fn on_time(app: &super::MockApp, outpost: OutpostUnderTest, time: CoreTime) -> Self {
+        Self::start(app, outpost, time)
     }
 
     /// [`Self::new`] with another application's window in front at Core's
@@ -177,14 +242,15 @@ impl CoreDriver {
     pub fn switched_to(app: &super::MockApp, outpost: OutpostUnderTest) -> Self {
         let window = outpost.app_window();
         outpost.set_foreground(super::another_applications_window());
-        let mut driver = Self::start(app, outpost);
+        let mut driver = Self::start(app, outpost, CoreTime::Frozen);
         driver.outpost.set_foreground(window);
         let switched = driver.foreground_report().spoken();
         driver.startup.extend(switched);
         driver
     }
 
-    fn start(app: &super::MockApp, outpost: OutpostUnderTest) -> Self {
+    fn start(app: &super::MockApp, outpost: OutpostUnderTest, time: CoreTime) -> Self {
+        let start_us = outpost.observed_now();
         let mut driver = Self {
             outpost,
             state: SrState::default(),
@@ -201,7 +267,7 @@ impl CoreDriver {
             open: Vec::new(),
             tells: 0,
             wake: None,
-            floor_us: 0,
+            clock: Clock::new(time, start_us),
             said: Vec::new(),
             calls: CallCounts::default(),
             startup: Vec::new(),
@@ -485,6 +551,60 @@ impl CoreDriver {
         self.take()
     }
 
+    /// The user presses caret key `key` with the committed focus's record
+    /// bound to it at its press, as the hook's view publishes it
+    /// ([`SrState::caret_binding`]), held back from the application when
+    /// the view holds it (a key bound to text that does not select), and
+    /// `application` handles the key when it reaches the application: at
+    /// once for a key passed at once, else when Core sends its stroke. What
+    /// Core said once every answer it waits on without the outpost's watch
+    /// came; [`Self::answered`] waits for the watch.
+    pub fn caret_key(&mut self, key: CaretKey, mut application: impl FnMut()) -> Step {
+        self.next_key += 1;
+        let bound = self.state.caret_binding();
+        let held = (bound.is_some() && !key.select).then(|| HeldStroke {
+            stroke: Stroke {
+                vk: 0,
+                scan_code: 0,
+                extended: false,
+                sequence: u32::try_from(self.next_key).expect("a small key number"),
+            },
+            modifiers: Vec::new(),
+        });
+        if held.is_none() {
+            application();
+        }
+        let press = QueueInput::Press(Box::new(verbatim_model::request::Press {
+            key_seq: verbatim_model::KeySeq::new(self.next_key),
+            pressed_at_us: self.now(),
+            action: verbatim_model::request::PressAction::CaretKey {
+                key,
+                held,
+                bound: bound.map(Box::new),
+            },
+        }));
+        let input = self.queued(press);
+        self.run_handling(VecDeque::from([input]), &mut application);
+        self.take()
+    }
+
+    /// Waits for the outpost to answer every request Core has out to it,
+    /// such as a caret key's watch, feeding Core each of its messages as it
+    /// arrives; what Core said meanwhile.
+    pub fn answered(&mut self) -> Step {
+        while !self.open.is_empty() {
+            let message = self
+                .outpost
+                .messages
+                .recv_timeout(super::WAIT_TIMEOUT)
+                .expect("the outpost answers Core's requests");
+            let mut inputs = VecDeque::new();
+            self.message(message, &mut inputs);
+            self.run(inputs);
+        }
+        self.take()
+    }
+
     /// Feeds Core what the outpost has answered since, once it has handled
     /// everything handed to it: the answer to a `Follow` waiting for a
     /// change mockapp raised.
@@ -514,13 +634,21 @@ impl CoreDriver {
         self.take()
     }
 
-    /// Wakes Core at the time it last asked to be woken at, when it asked.
+    /// Wakes Core at the time it last asked to be woken at, when it asked,
+    /// moving its clock on to that time.
     pub fn due(&mut self) -> Step {
         if let Some(wake) = self.wake.take() {
-            self.floor_us = self.floor_us.max(wake);
+            self.clock.reach(wake);
             self.feed(QueueInput::Due);
         }
         self.take()
+    }
+
+    /// Moves Core's clock and the outpost's on by `by`, waking Core at
+    /// none of its timers.
+    pub fn pass_time(&mut self, by: std::time::Duration) {
+        self.clock.passed_us += u64::try_from(by.as_micros()).expect("a short time");
+        self.outpost.pass_time(by);
     }
 
     /// Whether Core has asked to be woken.
@@ -540,9 +668,9 @@ impl CoreDriver {
         &self.state
     }
 
-    /// Core's time: the run's shared clock, never behind its floor.
+    /// Core's time ([`CoreTime`]).
     fn now(&self) -> u64 {
-        verbatim_process::clock::now_us().max(self.floor_us)
+        self.clock.now()
     }
 
     /// Feeds Core `input`, and everything its effects bring back, in
@@ -555,7 +683,12 @@ impl CoreDriver {
         }]));
     }
 
-    fn run(&mut self, mut inputs: VecDeque<Input>) {
+    fn run(&mut self, inputs: VecDeque<Input>) {
+        self.run_handling(inputs, &mut || {});
+    }
+
+    /// [`Self::run`], with `application` handling each key Core sends it.
+    fn run_handling(&mut self, mut inputs: VecDeque<Input>, application: &mut dyn FnMut()) {
         loop {
             while let Some(input) = inputs.pop_front() {
                 let effects = reduce(&mut self.state, &mut self.runtime, &input);
@@ -564,6 +697,9 @@ impl CoreDriver {
                     self.log.push(format!("Core gives {effect:?}"));
                 }
                 for effect in effects {
+                    if matches!(effect, Effect::Queue(QueueEffect::SendStrokes(_))) {
+                        application();
+                    }
                     self.effect(effect, &mut inputs);
                 }
             }
@@ -592,7 +728,10 @@ impl CoreDriver {
         match message {
             OutpostToCore::Answer(mut answer) => {
                 self.open.retain(|open| *open != answer.number);
-                self.calls += self.outpost.calls_of(answer.number);
+                let calls = self.outpost.calls_of(answer.number);
+                self.log
+                    .push(format!("The calls of {}: {calls:?}", answer.number));
+                self.calls += calls;
                 answer.assign_outpost(OutpostId(GENERATION));
                 inputs.push_back(self.queued(QueueInput::Answer {
                     from: self.outpost_instance(),
@@ -799,7 +938,8 @@ impl CoreDriver {
                 .has_keyboard_focus()
                 .map_or(Read::Failed, Read::Answered)
         };
-        let now = verbatim_process::clock::now_us;
+        let clock = self.clock;
+        let now = move || clock.now();
         let mut observer = self.check_observer.take();
         while let Some(call) = check.next(record, now()) {
             if let Some(observer) = observer.as_mut() {

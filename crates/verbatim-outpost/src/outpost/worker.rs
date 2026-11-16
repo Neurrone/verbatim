@@ -308,8 +308,9 @@ fn run_job(context: &Arc<Context>, client: &mut Client, job: Job, charge: &Arc<C
     });
 }
 
-/// Runs a watch's check or final read, posting the watch's answer when the
-/// program ends it.
+/// Runs a watch's check or final read, telling the observer of Core's
+/// requests' calls of the program's, and posting the watch's answer when
+/// the program ends it.
 fn run_watch(
     context: &Context,
     request_context: &mut RequestContext<'_>,
@@ -317,7 +318,11 @@ fn run_watch(
     watch: &WatchProgram,
 ) {
     request_context.judge_at(context.observed_now());
-    if let Some(outcome) = super::text_reads::watch(request_context, watch) {
+    let outcome = super::text_reads::watch(request_context, watch);
+    if let Some(observer) = context.request_calls.get() {
+        observer(watch.number, take_calls());
+    }
+    if let Some(outcome) = outcome {
         context.mailbox.post(Posted::Answered {
             request,
             answer: Box::new(verbatim_model::request::Answer {

@@ -33,13 +33,12 @@ use verbatim_model::property::{
 use verbatim_model::request::{
     Answer, Ask, FindScope, FocusAncestor, FocusCaret, FocusNode, FocusRead, HeldIds,
     KnownAncestor, MsaaIds, MsaaRun, NodeRead, NodeWindow, ObjectClass, ObjectRead, ObjectRef,
-    Outcome, Probe, ReadObject, Refusal, RelationFound, RelationQuery, Reply, Request, RouteEnd,
-    RunRead, Tried, WindowVerdict,
+    Outcome, Probe, Purpose, ReadObject, Refusal, RelationFound, RelationQuery, Reply, Request,
+    RouteEnd, RunRead, Tried, WindowVerdict,
 };
 use verbatim_model::{
     Backend, NodeDetails, NodeId, NodeSnapshot, Pid, QueryKind, Role, State, StateSet, TextAnchor,
 };
-use verbatim_process::clock::now_us;
 
 use super::read::{self, Client, ReadError};
 use super::text_reads;
@@ -160,9 +159,11 @@ fn failed(error: &ReadError) -> Outcome {
 }
 
 /// Whether window `hwnd` is read through UI Automation, by `verdict`, or,
-/// with none in force, by a probe, which `probes` records: `None` for a
-/// window the outpost's application does not serve, which is neither
-/// probed nor read.
+/// with none in force, by a probe, which `probes` records, begun at now on
+/// the clock the outpost stamps its observations with, the run's shared
+/// clock but in a test that sets its own: `None` for a window the
+/// outpost's application does not serve, which is neither probed nor
+/// read.
 fn verdict(
     context: &RequestContext<'_>,
     hwnd: isize,
@@ -176,7 +177,7 @@ fn verdict(
             if !read::serves(context, hwnd) {
                 return None;
             }
-            let began_us = now_us();
+            let began_us = context.observed_now();
             let uia = read::window_uses_uia(context, hwnd);
             probes.push(Probe {
                 window: window_handle(hwnd),
@@ -591,6 +592,9 @@ fn read_object(
                         .map_or(RelationFound::Unrelated, RelationFound::Is),
                 ),
             };
+            if read.purpose == Purpose::Change {
+                return changed(context, &mut object, hwnd, read, relation);
+            }
             let snapshot = object.read(context.nodes(), verbatim_ia2::acquire::Purpose::Announce);
             (snapshot, relation, Some(hwnd))
         }
@@ -621,6 +625,62 @@ fn read_object(
             .collect(),
         ancestors: ancestor_reads,
         met,
+        route: None,
+    })))
+}
+
+/// The answer to a change read of the MSAA object `object` in `hwnd`,
+/// whose relation to the nodes Core named is `relation`: not there when
+/// it is none of them, read no further; else the properties of its set
+/// alone, each read as a full read gives it, as NVDA reads only the
+/// property its event names (`docs/design/readers-tell-core-asks-build1.md`,
+/// "Changes on objects").
+fn changed(
+    context: &RequestContext<'_>,
+    object: &mut verbatim_ia2::acquire::EventObject,
+    hwnd: isize,
+    read: &ReadObject,
+    relation: Option<RelationFound>,
+) -> Outcome {
+    let Some(place) = (match (&read.relation, relation) {
+        (
+            Some(RelationQuery::OneOf(nodes) | RelationQuery::Selection { nodes, .. }),
+            Some(RelationFound::Is(place)),
+        ) => usize::try_from(place)
+            .ok()
+            .and_then(|place| nodes.get(place).copied()),
+        _ => None,
+    }) else {
+        return Outcome::NotThere;
+    };
+    let nodes = context.nodes();
+    let role = object.role();
+    let text = |text: Option<String>| text.map(PropertyValue::Text);
+    let values = read
+        .set
+        .iter()
+        .map(|&id| PropertyAnswer {
+            id,
+            value: match id {
+                PropertyId::Name => text(object.name(role, nodes)),
+                PropertyId::Value => text(object.value(role)),
+                PropertyId::Description => text(object.description(role, nodes)),
+                PropertyId::Role => Some(PropertyValue::Role(role)),
+                PropertyId::States => Some(PropertyValue::States(object.states(role))),
+                _ => None,
+            },
+        })
+        .collect();
+    Outcome::Result(Reply::Object(Box::new(ObjectRead {
+        object: NodeRead {
+            node: Some(place),
+            window: node_window(hwnd),
+            values: PropertyValues(values),
+        },
+        relation,
+        descendants: Vec::new(),
+        ancestors: Vec::new(),
+        met: None,
         route: None,
     })))
 }

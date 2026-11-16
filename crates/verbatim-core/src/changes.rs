@@ -295,13 +295,16 @@ pub(crate) async fn msaa(mut cx: Cx<Entries>, change: MsaaChange) {
         return;
     }
     let nodes = candidates(&kept, changed);
+    // An MSAA object controls nothing, so a plain selection's item is
+    // only ever one of the nodes, whose states alone are judged; neither
+    // read goes further for an object that is none of them.
     let (set, relation) = match changed {
         Some(changed) => (
             vec![changed.property()],
             RelationQuery::OneOf(nodes.clone()),
         ),
         None => (
-            crate::focus::FOCUS_SET.to_vec(),
+            vec![PropertyId::States],
             RelationQuery::Selection {
                 focus: kept.node,
                 nodes: nodes.clone(),
@@ -321,7 +324,7 @@ pub(crate) async fn msaa(mut cx: Cx<Entries>, change: MsaaChange) {
             relation: Some(relation),
             descendants: false,
             walk: None,
-            purpose: Purpose::Other,
+            purpose: Purpose::Change,
         },
     };
     let due_us = cx.due_in(OTHER_DUE_US);

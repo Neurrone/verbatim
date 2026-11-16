@@ -275,7 +275,8 @@ pub type HeardObserver = Arc<dyn Fn(Heard) + Send + Sync>;
 
 /// Told, on the worker, of the calls into the application each of Core's
 /// requests made, by its number, before its answer is sent
-/// ([`Outpost::observe_request_calls`]).
+/// ([`Outpost::observe_request_calls`]): once for a request answered by one
+/// program, once for each program of a caret key's watch.
 pub type RequestCallsObserver =
     Arc<dyn Fn(verbatim_model::request::RequestNumber, verbatim_model::CallCounts) + Send + Sync>;
 
@@ -1232,7 +1233,8 @@ impl Outpost {
 
     /// Tells `observer`, on the worker, the calls into the application
     /// each of Core's requests made, by its number, before its answer is
-    /// sent, so that a test pins a request's calls. Only the first observer
+    /// sent, so that a test pins a request's calls: a watch's in one telling
+    /// per check or final read. Only the first observer
     /// counts; later calls change nothing.
     pub fn observe_request_calls(&self, observer: RequestCallsObserver) {
         let _ = self.context.request_calls.set(observer);

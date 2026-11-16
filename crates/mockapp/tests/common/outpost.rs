@@ -535,6 +535,8 @@ pub struct OutpostUnderTest {
     /// The calls each request made, by its number, as the outpost tells
     /// them before it answers ([`Outpost::observe_request_calls`]).
     pub request_calls: Receiver<(RequestNumber, CallCounts)>,
+    /// The calls told of requests whose answer the test has not taken.
+    told_calls: RefCell<std::collections::HashMap<RequestNumber, CallCounts>>,
     /// The focus the stand-in for Core committed, then its ancestors
     /// nearest first, each by its name and the entries Core names it by in
     /// a request's list of the ancestors it already knows
@@ -774,6 +776,7 @@ impl OutpostUnderTest {
             moves_to,
             last_asked: Cell::new(RequestNumber(0)),
             request_calls,
+            told_calls: RefCell::default(),
             committed: RefCell::new(Vec::new()),
             app_window: super::find_window(&app.title),
             app_pid: pid,
@@ -1008,16 +1011,16 @@ impl OutpostUnderTest {
     }
 
     /// The calls request `number` made into the application, which the
-    /// outpost tells before it answers.
+    /// outpost tells before it answers: every telling for it, a watch's
+    /// one per program, is in hand once its answer is, and a request ended
+    /// with no program, as one cancelled while it waited, made none.
+    /// Tellings of other requests are kept for theirs.
     pub fn calls_of(&self, number: RequestNumber) -> CallCounts {
-        loop {
-            match self.request_calls.recv_timeout(super::WAIT_TIMEOUT) {
-                Ok((told, calls)) if told == number => break calls,
-                // An earlier request's, whose answer the test did not take.
-                Ok(_) => {}
-                Err(error) => panic!("the outpost told no calls of {number}: {error}"),
-            }
+        let mut told = self.told_calls.borrow_mut();
+        while let Ok((request, calls)) = self.request_calls.try_recv() {
+            *told.entry(request).or_default() += calls;
         }
+        told.remove(&number).unwrap_or_default()
     }
 
     /// Hands the outpost `ask`, a request Core numbered itself, through

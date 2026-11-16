@@ -60,13 +60,6 @@ pub(crate) struct CaretPress {
 /// The committed focus's record a caret key pressed now is bound to, as
 /// the hook's view publishes it: `None` with nothing committed, a focus
 /// whose reader ended, Core's own focus, or a focus that cannot have text.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "the hook's view publishes it in the shell's step of build 1"
-    )
-)]
 pub(crate) fn binding(state: &SrState) -> Option<CaretBinding> {
     let Committed::Read(kept) = &state.versions.committed else {
         return None;

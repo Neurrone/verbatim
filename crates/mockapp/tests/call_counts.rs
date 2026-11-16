@@ -61,13 +61,13 @@ use std::sync::{Arc, mpsc};
 use verbatim_listener_logic::focus::{FocusEvent, Judged};
 use verbatim_model::protocol::{CoreToOutpost, DeliveredFact, OutpostToCore, Query};
 use verbatim_model::{
-    CallCounts, Fetches, FocusText, NodeSnapshot, NormalizedEvent, QueryKind, Role, WindowHandle,
+    CallCounts, Fetches, FocusText, NodeSnapshot, NormalizedEvent, QueryKind, Role, SegmentContent,
+    WindowHandle,
 };
 use verbatim_model::{
     CaretMotion, CaretReply, LineStyle, SelectionChange, TextAttributes, TextMovement, TextOp,
     TextPoint, TextPosition, TextRead, TextReadAhead, TextReply, TextThrough, TextUnit, Theme,
 };
-use verbatim_outpost::arbitration::NEGATIVE_VERDICT_LIFETIME;
 use verbatim_outpost::dialog_text::{UiaDialog, dialog_text};
 use verbatim_outpost::text::edit::EditText;
 use verbatim_outpost::text::uia::{UiaPos, UiaText};
@@ -95,7 +95,11 @@ use windows::Win32::UI::Accessibility::{
 use windows::Win32::UI::Controls::{TVE_COLLAPSE, TVE_EXPAND, TVM_EXPAND};
 use windows::core::AgileReference;
 
+use common::core_driver::{CoreDriver, Utterance};
 use common::outpost::{OutpostUnderTest, Reported};
+use verbatim_ia2::WinEventKind;
+use verbatim_model::ReviewCommand;
+use verbatim_model::event_kind::EventKind;
 
 /// The fixture's nodes, by their index in mockapp's tree (depth first, the
 /// root at 0): mockapp answers `WM_GETOBJECT` for index `i` at object id
@@ -105,6 +109,20 @@ const SECOND: usize = 3;
 const LIST: usize = 4;
 const ITEM_ONE: usize = 5;
 const ITEM_TWO: usize = 6;
+
+/// A label's words.
+fn label(name: &str) -> SegmentContent {
+    SegmentContent::Label(name.to_owned())
+}
+
+/// Nothing said.
+const NOTHING: [Utterance; 0] = [];
+
+/// Long enough for a window's verdict of no UIA provider, which Core keeps
+/// from the probe's start, to have lapsed.
+const VERDICT_LAPSED: std::time::Duration = std::time::Duration::from_micros(
+    verbatim_reader_rules::verdicts::NEGATIVE_VERDICT_LIFETIME_US + 1_000,
+);
 
 /// The dialog fixture's first button, by its index in mockapp's tree.
 const YES: usize = 3;
@@ -125,6 +143,7 @@ fn calls(uia: u32, msaa: u32, window_messages: u32) -> CallCounts {
 }
 
 /// What one operation cost: the client's calls and the providers' hits.
+#[derive(Debug)]
 struct Cost {
     calls: CallCounts,
     hits: Vec<(&'static str, u32)>,
@@ -179,22 +198,24 @@ impl Ratchet {
     }
 }
 
-/// Moves mockapp's focus to `id`, hands the outpost the focus on `index`,
-/// and measures it.
+/// Moves mockapp's focus to `id`, tells Core of the MSAA focus event on
+/// `index` in `hwnd`, as the listener tells it, and measures what Core's
+/// requests cost: what Core said, and the cost.
 fn measure_msaa_focus(
     app: &mut common::MockApp,
     hwnd: HWND,
-    outpost: &OutpostUnderTest,
+    core: &mut CoreDriver,
     (id, index): (&str, usize),
-) -> (Reported, Cost) {
+) -> (Vec<Utterance>, Cost) {
     common::apply(app, hwnd, &format!("set-focus {id}"));
-    let reported = outpost.msaa_focus(hwnd, index);
+    let _ = core.outpost.take_failed_reads();
+    let step = core.msaa_focus(hwnd, index);
     let cost = Cost {
-        calls: reported.calls,
+        calls: step.calls,
         hits: common::read_hits(hwnd),
-        failed_reads: reported.failed_reads,
+        failed_reads: core.outpost.take_failed_reads(),
     };
-    (reported, cost)
+    (step.spoken(), cost)
 }
 
 #[expect(
@@ -206,42 +227,51 @@ fn msaa_focus_changes_cost_exactly() {
     let title = common::unique_title("mockapp-counts-msaa-focus");
     let mut app = common::spawn("counts.json", "msaa", &title);
     let hwnd = common::find_window(&title);
-    let window = Some(WindowHandle(hwnd.0 as u64));
-    let outpost = OutpostUnderTest::on_frozen_time(&app);
+    let mut core = CoreDriver::new(&app, OutpostUnderTest::on_frozen_time(&app));
     let mut ratchet = Ratchet::default();
 
-    // The fixture's root has the window role, and an MSAA window object
-    // above a control is layout, left out of the chain (`msaa_ancestors`
-    // in the outpost's `read.rs`).
-    let (reported, cost) = measure_msaa_focus(&mut app, hwnd, &outpost, ("first", FIRST));
-    assert_eq!(reported.chain(), [Some("Settings"), Some("First")]);
-    assert_eq!(reported.node.role, Role::Button);
-    assert_eq!(reported.selected_child, None);
-    assert_eq!(reported.window, window);
+    // Core's start read the application's focus, its window object, and
+    // probed the window, so the first focus event finds the window's
+    // verdict in force and meets that object, which Core names among the
+    // ancestors it knows: the walk compares each ancestor it reaches with
+    // it by location, role and name, as NVDA's `IAccessible._isEqual`
+    // compares objects (`NVDAObjects/IAccessible/__init__.py` 906 to 959),
+    // reading each ancestor's location too, which a focus answer carries
+    // for every node. The fixture's root has the window role, and an MSAA
+    // window object above a control is layout, left out of the chain.
+    let (said, cost) = measure_msaa_focus(&mut app, hwnd, &mut core, ("first", FIRST));
+    assert_eq!(
+        said,
+        [
+            vec![label("Settings"), SegmentContent::Role(Role::Group)],
+            vec![label("First"), SegmentContent::Role(Role::Button)],
+        ]
+    );
     ratchet.check(
-        "MSAA focus, cold",
+        "MSAA focus, after Core's start",
         &cost,
-        calls(0, 28, 1),
+        calls(0, 40, 0),
         0,
         &[
             ("WM_GETOBJECT", 2),
-            ("accParent", 10),
-            ("get_accChild", 1),
-            ("get_accName", 3),
-            ("get_accValue", 3),
-            ("get_accDescription", 3),
-            ("get_accRole", 3),
-            ("get_accState", 3),
-            ("get_accKeyboardShortcut", 3),
+            ("accParent", 11),
+            ("get_accChild", 2),
+            ("get_accName", 4),
+            ("get_accValue", 4),
+            ("get_accDescription", 4),
+            ("get_accRole", 5),
+            ("get_accState", 4),
+            ("get_accKeyboardShortcut", 4),
             ("accFocus", 1),
-            ("accLocation", 1),
+            ("accLocation", 4),
         ],
     );
 
-    let (reported, cost) = measure_msaa_focus(&mut app, hwnd, &outpost, ("second", SECOND));
-    assert_eq!(reported.chain(), [Some("Settings"), Some("Second")]);
-    assert_eq!(reported.selected_child, None);
-    assert_eq!(reported.window, window);
+    let (said, cost) = measure_msaa_focus(&mut app, hwnd, &mut core, ("second", SECOND));
+    assert_eq!(
+        said,
+        [vec![label("Second"), SegmentContent::Role(Role::Button)]]
+    );
     ratchet.check(
         "MSAA focus, steady state",
         &cost,
@@ -262,45 +292,44 @@ fn msaa_focus_changes_cost_exactly() {
         ],
     );
 
-    let (reported, cost) = measure_msaa_focus(&mut app, hwnd, &outpost, ("list", LIST));
-    assert_eq!(reported.chain(), [Some("Options")]);
-    assert_eq!(reported.node.role, Role::List);
+    // The list's walk meets the window object Core knows, compared as the
+    // first focus's walk compares it.
+    let (said, cost) = measure_msaa_focus(&mut app, hwnd, &mut core, ("list", LIST));
     assert_eq!(
-        reported
-            .selected_child
-            .and_then(|child| child.name)
-            .as_deref(),
-        Some("One"),
-        "the list's selected item"
+        said,
+        [vec![label("Options"), SegmentContent::Role(Role::List)]]
     );
-    assert_eq!(reported.window, window);
     ratchet.check(
         "MSAA focus into a list",
         &cost,
-        calls(0, 29, 0),
+        calls(0, 40, 0),
         0,
         &[
-            ("WM_GETOBJECT", 1),
-            ("accParent", 6),
-            ("get_accChild", 1),
-            ("get_accName", 3),
-            ("get_accValue", 3),
-            ("get_accDescription", 3),
-            ("get_accRole", 3),
-            ("get_accState", 3),
-            ("get_accKeyboardShortcut", 3),
+            ("WM_GETOBJECT", 2),
+            ("accParent", 7),
+            ("get_accChild", 2),
+            ("get_accName", 4),
+            ("get_accValue", 4),
+            ("get_accDescription", 4),
+            ("get_accRole", 5),
+            ("get_accState", 4),
+            ("get_accKeyboardShortcut", 4),
             ("accFocus", 1),
             ("accSelection", 1),
-            ("accLocation", 2),
+            ("accLocation", 3),
         ],
     );
 
-    let (reported, _) = measure_msaa_focus(&mut app, hwnd, &outpost, ("item1", ITEM_ONE));
-    assert_eq!(reported.chain(), [Some("Options"), Some("One")]);
-    let (reported, cost) = measure_msaa_focus(&mut app, hwnd, &outpost, ("item2", ITEM_TWO));
-    assert_eq!(reported.chain(), [Some("Options"), Some("Two")]);
-    assert_eq!(reported.selected_child, None);
-    assert_eq!(reported.window, window);
+    let (said, _) = measure_msaa_focus(&mut app, hwnd, &mut core, ("item1", ITEM_ONE));
+    assert_eq!(said, [vec![label("One")]]);
+    let (said, cost) = measure_msaa_focus(&mut app, hwnd, &mut core, ("item2", ITEM_TWO));
+    assert_eq!(
+        said,
+        [vec![
+            label("Two"),
+            SegmentContent::NegatedState(verbatim_model::State::Selected)
+        ]]
+    );
     ratchet.check(
         "MSAA arrow to the next list item",
         &cost,
@@ -322,15 +351,15 @@ fn msaa_focus_changes_cost_exactly() {
     );
 
     // The window's verdict of no UIA provider runs out once its lifetime
-    // has passed by the outpost's clock, which the test moves: the next
-    // focus probes the window again, and the arrow back to the second item
-    // then finds the verdict renewed. The two differ by the probe alone,
-    // one window message and one `WM_GETOBJECT`. Each reads one role more
-    // than the arrow above, whose previous focus was reached from the list
-    // rather than by an arrow.
-    outpost.pass_time(NEGATIVE_VERDICT_LIFETIME);
-    let (reported, cost) = measure_msaa_focus(&mut app, hwnd, &outpost, ("item1", ITEM_ONE));
-    assert_eq!(reported.chain(), [Some("Options"), Some("One")]);
+    // has passed by the test's clock, which Core and the outpost read: the
+    // next focus's request carries "probe first", and the arrow back to the
+    // second item then finds the verdict renewed. The two differ by the
+    // probe alone, one window message and one `WM_GETOBJECT`. Each reads
+    // one role more than the arrow above, whose previous focus was reached
+    // from the list rather than by an arrow.
+    core.pass_time(VERDICT_LAPSED);
+    let (said, cost) = measure_msaa_focus(&mut app, hwnd, &mut core, ("item1", ITEM_ONE));
+    assert_eq!(said, [vec![label("One")]]);
     ratchet.check(
         "MSAA arrow to the previous list item, the probe renewed",
         &cost,
@@ -350,8 +379,14 @@ fn msaa_focus_changes_cost_exactly() {
             ("accLocation", 3),
         ],
     );
-    let (reported, cost) = measure_msaa_focus(&mut app, hwnd, &outpost, ("item2", ITEM_TWO));
-    assert_eq!(reported.chain(), [Some("Options"), Some("Two")]);
+    let (said, cost) = measure_msaa_focus(&mut app, hwnd, &mut core, ("item2", ITEM_TWO));
+    assert_eq!(
+        said,
+        [vec![
+            label("Two"),
+            SegmentContent::NegatedState(verbatim_model::State::Selected)
+        ]]
+    );
     ratchet.check(
         "MSAA arrow to the next list item, the probe kept",
         &cost,
@@ -372,52 +407,32 @@ fn msaa_focus_changes_cost_exactly() {
         ],
     );
 
-    // The same focus event again: read in full and reported, since whether
-    // it repeats the focus is Core's verdict
-    // (`books/dev/src/explanation/design/ownership.md`).
-    let (reported, cost) = measure_msaa_focus(&mut app, hwnd, &outpost, ("item2", ITEM_TWO));
-    assert_eq!(reported.chain(), [Some("Options"), Some("Two")]);
-    ratchet.check(
-        "MSAA focus repeated",
-        &cost,
-        calls(0, 23, 0),
-        0,
-        &[
-            ("WM_GETOBJECT", 1),
-            ("accParent", 9),
-            ("get_accChild", 1),
-            ("get_accName", 2),
-            ("get_accValue", 2),
-            ("get_accDescription", 2),
-            ("get_accRole", 3),
-            ("get_accState", 2),
-            ("get_accKeyboardShortcut", 2),
-            ("accFocus", 1),
-            ("accLocation", 3),
-        ],
-    );
-    // Core writes the nodes it holds after the report: the outpost releases
-    // the buttons it reported before, so their changes are no longer read.
-    outpost.release_to_core_line();
-    outpost.settled();
+    // The same focus event again: a duplicate of the readers' last focus
+    // by its ids, which Core drops with no request, as NVDA drops a focus
+    // event for the object it last queued as the focus
+    // (`docs/parity/focus-events.md`, "Duplicate focus suppression"), so
+    // nothing is read or said where the outpost once read it in full.
+    let (said, cost) = measure_msaa_focus(&mut app, hwnd, &mut core, ("item2", ITEM_TWO));
+    assert_eq!(said, NOTHING);
+    ratchet.check("MSAA focus repeated", &cost, CallCounts::default(), 0, &[]);
 
     // A focus event on an object that neither has the focused state nor
     // is inside one that has: NVDA reads the states, the object's and then
-    // each ancestor's, and goes no further, and the outpost says nothing:
-    // again only mockapp's hits are known. The outpost reads each object's
-    // role too, which tells it the step that leaves a window, so that it
-    // never steps into a window it reads as a plain window.
+    // each ancestor's, and goes no further, and Core says nothing. The
+    // outpost reads each object's role too, which tells it the step that
+    // leaves a window, so that it never steps into a window it reads as a
+    // plain window.
     common::reset_hits(hwnd);
-    outpost.deliver(msaa_focus_fact(hwnd, FIRST));
-    outpost.settled();
+    let step = core.msaa_focus(hwnd, FIRST);
+    assert_eq!(step.said, []);
     ratchet.check(
         "MSAA focus without the focused state",
         &Cost {
-            calls: CallCounts::default(),
+            calls: step.calls,
             hits: common::read_hits(hwnd),
-            failed_reads: outpost.take_failed_reads(),
+            failed_reads: core.outpost.take_failed_reads(),
         },
-        CallCounts::default(),
+        calls(0, 14, 0),
         0,
         &[
             ("WM_GETOBJECT", 1),
@@ -429,46 +444,50 @@ fn msaa_focus_changes_cost_exactly() {
         ],
     );
 
-    // A value change on an object that is not the focus is told from the
-    // focus by its identity, and only its role is read, to know whether it
-    // is a progress bar, whose changes are reported off the focus too: its
-    // acquisition and role are counted before the focus's own value
-    // change, which comes after it from the same hook and has its value
-    // read alone and reported.
+    // A value change on an object that is not the focus, in the focus's
+    // window, and then one on the focus, told by the listener: Core asks
+    // whether each object is the focus or one of its ancestors and reads
+    // its value (`docs/design/readers-tell-core-asks-build1.md`, "Changes
+    // on objects", Dickson's rule of 2026-11-12). The first is not, told
+    // apart from the focus by the ids of its event, as NVDA's equality
+    // tells them apart before reading anything, and is read no further;
+    // the second is met by NVDA's equality, its location, role and name
+    // read, and its value read and spoken. The listener's progress path
+    // reads each object's role, to know whether it is a progress bar,
+    // among mockapp's hits.
     common::reset_hits(hwnd);
-    app.send("set-value first Changed");
-    app.send("set-value item2 Picked");
-    let calls_made = match outpost.next() {
-        OutpostToCore::Event {
-            event: NormalizedEvent::ValueChanged { value, .. },
-            timing,
-            ..
-        } => {
-            assert_eq!(value.as_deref(), Some("Picked"));
-            timing.calls
-        }
-        other => panic!("the outpost said {other:?}, not the focus's value change"),
-    };
-    outpost.settled();
+    let step = core.raise(
+        &mut app,
+        &["set-value first Changed", "set-value item2 Picked"],
+        &[WinEventKind::ValueChange],
+        2,
+    );
+    assert_eq!(
+        step.spoken(),
+        [vec![SegmentContent::Value("Picked".to_owned())]]
+    );
     ratchet.check(
         "MSAA value changes off and on the focus",
         &Cost {
-            calls: calls_made,
+            calls: step.calls,
             hits: common::read_hits(hwnd),
-            failed_reads: outpost.take_failed_reads(),
+            failed_reads: core.outpost.take_failed_reads(),
         },
-        calls(0, 2, 0),
+        calls(0, 7, 0),
         0,
         &[
-            ("WM_GETOBJECT", 2),
-            ("accParent", 2),
-            ("get_accChild", 2),
+            ("WM_GETOBJECT", 5),
+            ("accParent", 3),
+            ("get_accChild", 4),
+            ("get_accName", 1),
             ("get_accValue", 1),
-            ("get_accRole", 1),
+            ("get_accRole", 3),
+            ("accLocation", 2),
         ],
     );
 
     ratchet.finish();
+    drop(core);
     app.quit();
 }
 
@@ -485,133 +504,139 @@ fn msaa_focus_changes_cost_exactly() {
     reason = "every change on the focus and its pinned provider hits, listed in full"
 )]
 fn msaa_state_change_costs_exactly() {
-    use verbatim_ia2::WinEventKind;
-    use verbatim_outpost::Heard;
     common::init_com();
     let title = common::unique_title("mockapp-counts-msaa-state-change");
     let mut app = common::spawn("counts.json", "msaa", &title);
     let hwnd = common::find_window(&title);
-    let outpost = OutpostUnderTest::on_frozen_time(&app);
+    let mut core = CoreDriver::new(&app, OutpostUnderTest::on_frozen_time(&app));
     let mut ratchet = Ratchet::default();
-    let _ = measure_msaa_focus(&mut app, hwnd, &outpost, ("item2", ITEM_TWO));
-    outpost.pass_time(NEGATIVE_VERDICT_LIFETIME);
+    let _ = measure_msaa_focus(&mut app, hwnd, &mut core, ("item2", ITEM_TWO));
+    core.pass_time(VERDICT_LAPSED);
 
+    // Another application's window in front: the listener tells the
+    // change with its window's facts, and Core's acceptance drops it.
     let front = common::another_applications_window();
-    outpost.set_foreground(front);
+    core.outpost.set_foreground(front);
+    let _ = core.foreground_report();
     common::reset_hits(hwnd);
-    app.send("set-states item2 focusable selectable selected");
-    outpost.heard(&[Heard::Msaa(WinEventKind::StateChange)]);
-    outpost.settled();
+    let step = core.raise(
+        &mut app,
+        &["set-states item2 focused focusable selectable selected"],
+        &[WinEventKind::StateChange],
+        1,
+    );
+    assert_eq!((step.said, step.calls), (Vec::new(), CallCounts::default()));
     assert_eq!(common::read_hits(hwnd), [], "mockapp answered nothing");
 
-    outpost.set_foreground(hwnd);
-    // The focus's change, which must be the next thing the outpost says,
-    // and what it cost.
-    let mut change = |command: &str| {
+    core.outpost.set_foreground(hwnd);
+    let _ = core.foreground_report();
+    // The focus's change, told by the listener, and what Core's request
+    // cost: the object acquired at the event's address, met as the focus
+    // by NVDA's equality, its location, role and name read, as NVDA's
+    // `IAccessible._isEqual` reads them to direct an event to the focus
+    // object (`IAccessibleHandler/__init__.py` 678 to 687;
+    // `NVDAObjects/IAccessible/__init__.py` 906 to 959), and then the one
+    // property the event names. The window's verdict is Core's, renewed
+    // by the outpost's probe before the first.
+    let mut change = |command: &str, kind: WinEventKind| {
         common::reset_hits(hwnd);
-        app.send(command);
-        let (change, calls_made) = match outpost.next() {
-            OutpostToCore::Event {
-                event: NormalizedEvent::PropertyChanged { change, .. },
-                timing,
-                ..
-            } => (change, timing.calls),
-            other => panic!("the outpost said {other:?}, not the focus's change"),
-        };
-        outpost.settled();
+        let step = core.raise(&mut app, &[command], &[kind], 1);
         let cost = Cost {
-            calls: calls_made,
+            calls: step.calls,
             hits: common::read_hits(hwnd),
-            failed_reads: outpost.take_failed_reads(),
+            failed_reads: core.outpost.take_failed_reads(),
         };
-        (change, cost)
+        (step.spoken(), cost)
     };
-    let (states, cost) = change("set-states item2 focusable selectable");
-    assert_eq!(
-        states,
-        verbatim_model::PropertyChange::States(
-            [
-                verbatim_model::State::Focusable,
-                verbatim_model::State::Selectable
-            ]
-            .into_iter()
-            .collect()
-        )
+    // Only the states that differ from those last spoken are said: the
+    // item, spoken "not selected" with its focus, is still not selected.
+    let (said, cost) = change(
+        "set-states item2 focused focusable selectable",
+        WinEventKind::StateChange,
     );
+    assert_eq!(said, NOTHING);
     ratchet.check(
         "MSAA state change on the focus, the probe renewed",
         &cost,
-        calls(0, 2, 1),
+        calls(0, 6, 1),
         0,
         &[
             ("WM_GETOBJECT", 2),
             ("accParent", 1),
             ("get_accChild", 1),
+            ("get_accName", 1),
+            ("get_accRole", 1),
             ("get_accState", 1),
+            ("accLocation", 2),
         ],
     );
-    let (name, cost) = change("set-name item2 Renamed");
-    assert_eq!(
-        name,
-        verbatim_model::PropertyChange::Name(Some("Renamed".to_owned()))
-    );
+    let (said, cost) = change("set-name item2 Renamed", WinEventKind::NameChange);
+    assert_eq!(said, [vec![label("Renamed")]]);
     ratchet.check(
         "MSAA name change on the focus",
         &cost,
-        calls(0, 2, 0),
+        calls(0, 7, 0),
+        0,
+        &[
+            ("WM_GETOBJECT", 1),
+            ("accParent", 1),
+            ("get_accChild", 1),
+            ("get_accName", 3),
+            ("get_accRole", 1),
+            ("accLocation", 2),
+        ],
+    );
+    let (said, cost) = change(
+        "set-description item2 Second choice",
+        WinEventKind::DescriptionChange,
+    );
+    assert_eq!(
+        said,
+        [vec![SegmentContent::Description(
+            "Second choice".to_owned()
+        )]]
+    );
+    ratchet.check(
+        "MSAA description change on the focus",
+        &cost,
+        calls(0, 6, 0),
         0,
         &[
             ("WM_GETOBJECT", 1),
             ("accParent", 1),
             ("get_accChild", 1),
             ("get_accName", 1),
-        ],
-    );
-    let (description, cost) = change("set-description item2 Second choice");
-    assert_eq!(
-        description,
-        verbatim_model::PropertyChange::Description(Some("Second choice".to_owned()))
-    );
-    ratchet.check(
-        "MSAA description change on the focus",
-        &cost,
-        calls(0, 2, 0),
-        0,
-        &[
-            ("WM_GETOBJECT", 1),
-            ("accParent", 1),
-            ("get_accChild", 1),
             ("get_accDescription", 1),
+            ("get_accRole", 1),
+            ("accLocation", 2),
         ],
     );
-    // Selecting the focus is a change of its state, as NVDA handles it.
-    let (states, cost) = change("select item2");
+    // Selecting the focus is a change of its state, as NVDA handles it
+    // (`NVDAObjects/__init__.py` 1314 to 1354), "selected" said as a
+    // change (`controlTypes/processAndLabelStates.py` 70 to 83).
+    let (said, cost) = change("select item2", WinEventKind::Selection);
     assert_eq!(
-        states,
-        verbatim_model::PropertyChange::States(
-            [
-                verbatim_model::State::Focusable,
-                verbatim_model::State::Selectable,
-                verbatim_model::State::Selected
-            ]
-            .into_iter()
-            .collect()
-        )
+        said,
+        [vec![SegmentContent::State(verbatim_model::State::Selected)]]
     );
     ratchet.check(
         "MSAA selection of the focus",
         &cost,
-        calls(0, 2, 0),
+        calls(0, 6, 0),
         0,
         &[
             ("WM_GETOBJECT", 1),
             ("accParent", 1),
             ("get_accChild", 1),
+            ("get_accName", 1),
+            ("get_accRole", 1),
             ("get_accState", 1),
+            ("accLocation", 2),
         ],
     );
 
     ratchet.finish();
+    drop(core);
     // SAFETY: the window this thread made above.
     unsafe { windows::Win32::UI::WindowsAndMessaging::DestroyWindow(front) }
         .expect("the test's window is destroyed");
@@ -628,17 +653,6 @@ fn msaa_focus_fact(hwnd: HWND, index: usize) -> DeliveredFact {
     }
 }
 
-/// The description the dialog among `ancestors` was reported with.
-fn dialog_description(ancestors: &[NodeSnapshot]) -> Option<&str> {
-    ancestors
-        .iter()
-        .find(|ancestor| ancestor.role == Role::Dialog)
-        .expect("the dialog is an ancestor")
-        .details
-        .description
-        .as_deref()
-}
-
 /// A focus entering a message box gathers its text
 /// (`verbatim_outpost::dialog_text`): the dialog's children, each child's
 /// role and states, and the question's name, value, and description, on top
@@ -652,40 +666,49 @@ fn msaa_dialog_text_costs_exactly() {
     let title = common::unique_title("mockapp-counts-msaa-dialog");
     let mut app = common::spawn("dialog.json", "msaa", &title);
     let hwnd = common::find_window(&title);
-    let outpost = OutpostUnderTest::on_frozen_time(&app);
+    let mut core = CoreDriver::new(&app, OutpostUnderTest::on_frozen_time(&app));
     let mut ratchet = Ratchet::default();
 
-    common::apply(&mut app, hwnd, "set-focus yes");
-    let reported = outpost.msaa_focus(hwnd, YES);
-    let cost = Cost {
-        calls: reported.calls,
-        hits: common::read_hits(hwnd),
-        failed_reads: reported.failed_reads,
-    };
-    assert_eq!(reported.node.name.as_deref(), Some("Yes"));
-    assert_eq!(dialog_description(&reported.ancestors), Some(QUESTION));
+    // Core's start read the application's focus, its window object, and
+    // probed the window; the focus's walk meets that object, compared by
+    // location, role and name as NVDA's `IAccessible._isEqual` compares
+    // (`NVDAObjects/IAccessible/__init__.py` 906 to 959), each node's
+    // location read as a focus answer carries it.
+    let (said, cost) = measure_msaa_focus(&mut app, hwnd, &mut core, ("yes", YES));
+    assert_eq!(
+        said,
+        [
+            vec![
+                label("Remove Theme"),
+                SegmentContent::Role(Role::Dialog),
+                SegmentContent::Description(QUESTION.to_owned()),
+            ],
+            vec![label("Yes"), SegmentContent::Role(Role::Button)],
+        ]
+    );
     ratchet.check(
         "MSAA focus into a message box",
         &cost,
-        calls(0, 42, 1),
+        calls(0, 54, 0),
         0,
         &[
             ("WM_GETOBJECT", 2),
-            ("accParent", 13),
+            ("accParent", 14),
             ("accChildCount", 2),
-            ("get_accChild", 4),
-            ("get_accName", 4),
-            ("get_accValue", 4),
-            ("get_accDescription", 4),
-            ("get_accRole", 6),
-            ("get_accState", 6),
-            ("get_accKeyboardShortcut", 3),
+            ("get_accChild", 5),
+            ("get_accName", 5),
+            ("get_accValue", 5),
+            ("get_accDescription", 5),
+            ("get_accRole", 8),
+            ("get_accState", 7),
+            ("get_accKeyboardShortcut", 4),
             ("accFocus", 1),
-            ("accLocation", 1),
+            ("accLocation", 4),
         ],
     );
 
     ratchet.finish();
+    drop(core);
     app.quit();
 }
 
@@ -718,47 +741,37 @@ fn msaa_form_focus_costs_exactly() {
     // SAFETY: a local search of the form's children.
     let child = unsafe { FindWindowExW(Some(hwnd), None, None, None) }
         .expect("mockapp made the child window");
-    let outpost = OutpostUnderTest::on_frozen_time(&app);
+    let mut core = CoreDriver::new(&app, OutpostUnderTest::on_frozen_time(&app));
     let mut ratchet = Ratchet::default();
 
-    let (reported, cost) = measure_msaa_focus(&mut app, child, &outpost, ("ok", FORM_OK));
+    // Core's start read the application's focus, the button at the form's
+    // own window, and probed that window: the focus event in the child
+    // window probes the child window alone, and its walk stops at the
+    // form's client area Core knows.
+    let (said, cost) = measure_msaa_focus(&mut app, child, &mut core, ("ok", FORM_OK));
     assert_eq!(
-        reported.chain(),
-        [
-            Some("Mockapp Form Fixture"),
-            Some("Mockapp Form Fixture"),
-            Some("OK")
-        ]
+        said,
+        [vec![label("OK"), SegmentContent::Role(Role::Button)]]
     );
-    assert_eq!(
-        reported
-            .ancestors
-            .iter()
-            .map(|node| node.details.top_level_client)
-            .collect::<Vec<_>>(),
-        [true, false],
-        "the form's client area, read at its address, and the child window's"
+    ratchet.check_calls(
+        "MSAA focus in a form, after Core's start",
+        cost.calls,
+        calls(0, 48, 1),
     );
-    ratchet.check_calls("MSAA focus in a form, cold", cost.calls, calls(0, 57, 2));
-    outpost.settled();
 
-    let (reported, cost) = measure_msaa_focus(&mut app, child, &outpost, ("cancel", FORM_CANCEL));
+    let (said, cost) = measure_msaa_focus(&mut app, child, &mut core, ("cancel", FORM_CANCEL));
     assert_eq!(
-        reported.chain(),
-        [
-            Some("Mockapp Form Fixture"),
-            Some("Mockapp Form Fixture"),
-            Some("Cancel")
-        ]
+        said,
+        [vec![label("Cancel"), SegmentContent::Role(Role::Button)]]
     );
     ratchet.check_calls(
         "MSAA focus in a form, steady state",
         cost.calls,
         calls(0, 25, 0),
     );
-    outpost.settled();
 
     ratchet.finish();
+    drop(core);
     app.quit();
 }
 
@@ -771,60 +784,69 @@ fn msaa_tree_view_costs_exactly() {
     let title = common::unique_title("mockapp-counts-msaa-tree-view");
     let app = common::spawn("tree_view.json", "msaa", &title);
     let tree = common::tree_view::tree_view(common::find_window(&title));
-    let outpost = OutpostUnderTest::on_frozen_time(&app);
+    let mut core = CoreDriver::new(&app, OutpostUnderTest::on_frozen_time(&app));
     let mut ratchet = Ratchet::default();
 
-    let _ = common::tree_view::focus_item(&outpost, tree, "Settings");
-    let reported = common::tree_view::focus_item(&outpost, tree, "Disks");
+    let _ = common::tree_view::focus_item(&mut core, tree, "Settings");
+    let step = common::tree_view::focus_item(&mut core, tree, "Disks");
     assert_eq!(
-        reported.chain(),
-        [
-            Some("Mockapp Tree View Fixture"),
-            None,
-            Some("Hardware"),
-            Some("Disks")
-        ]
+        step.spoken(),
+        [vec![
+            SegmentContent::Level(1),
+            label("Disks"),
+            SegmentContent::State(verbatim_model::State::Checked),
+            SegmentContent::Position {
+                position: 1,
+                set_size: Some(2)
+            },
+        ]]
     );
     ratchet.check_calls(
         "MSAA focus on a tree view item",
-        reported.calls,
+        step.calls,
         calls(0, 35, 12),
     );
 
-    // The focus expands, and its children are counted with the change, for
-    // Core to say how many it holds; collapsing it counts nothing. The
-    // control raises its own state change event for each, which the
-    // outpost hears through its hooks.
-    let _ = common::tree_view::focus_item(&outpost, tree, "Software");
+    let _ = common::tree_view::focus_item(&mut core, tree, "Software");
     let software = common::tree_view::item(tree, "Software");
-    let state_change = |action: u32| {
-        common::tree_view::send(tree, TVM_EXPAND, action as usize, software);
-        let change = match outpost.next() {
-            OutpostToCore::Event {
-                event:
-                    NormalizedEvent::PropertyChanged {
-                        child_count,
-                        change: verbatim_model::PropertyChange::States(states),
-                        ..
-                    },
-                timing,
-                ..
-            } => (child_count, states, timing.calls),
-            other => panic!("the outpost said {other:?}, not the focus's state change"),
-        };
-        outpost.settled();
-        change
+    let pid = app.pid();
+    let mut state_change = |action: u32| {
+        let events = common::core_driver::win_events(
+            pid,
+            || {
+                common::tree_view::send(tree, TVM_EXPAND, action as usize, software);
+            },
+            &[WinEventKind::StateChange],
+            1,
+        );
+        core.win_event(&events[0])
     };
-    let (count, states, calls_made) = state_change(TVE_EXPAND.0);
-    assert!(states.contains(verbatim_model::State::Expanded));
-    assert_eq!(count, Some(3), "Software holds three items");
-    ratchet.check_calls("MSAA tree view item expanded", calls_made, calls(0, 2, 7));
-    let (count, states, calls_made) = state_change(TVE_COLLAPSE.0);
-    assert!(states.contains(verbatim_model::State::Collapsed));
-    assert_eq!(count, None, "nothing is counted for a collapse");
-    ratchet.check_calls("MSAA tree view item collapsed", calls_made, calls(0, 2, 2));
+    // The control's own state change event, told by the listener: the
+    // item met as the focus by NVDA's equality, its location, role and name
+    // read (`NVDAObjects/IAccessible/__init__.py` 906 to 959), then its
+    // states; newly expanded, its children are counted, for Core to say
+    // how many it holds, as NVDA's tree view item counts them with the
+    // control's messages (`NVDAObjects/IAccessible/sysTreeView32.py`).
+    let step = state_change(TVE_EXPAND.0);
+    assert_eq!(
+        step.spoken(),
+        [
+            vec![SegmentContent::State(verbatim_model::State::Expanded)],
+            vec![SegmentContent::Phrase(verbatim_model::Phrase::Items(3))],
+        ]
+    );
+    ratchet.check_calls("MSAA tree view item expanded", step.calls, calls(0, 6, 7));
+    let step = state_change(TVE_COLLAPSE.0);
+    assert_eq!(
+        step.spoken(),
+        [vec![SegmentContent::State(
+            verbatim_model::State::Collapsed
+        )]]
+    );
+    ratchet.check_calls("MSAA tree view item collapsed", step.calls, calls(0, 6, 2));
 
     ratchet.finish();
+    drop(core);
     app.quit();
 }
 
@@ -851,27 +873,30 @@ fn msaa_list_view_costs_exactly() {
         )
     }
     .expect("mockapp made the list view");
-    let outpost = OutpostUnderTest::on_frozen_time(&app);
+    let mut core = CoreDriver::new(&app, OutpostUnderTest::on_frozen_time(&app));
     let mut ratchet = Ratchet::default();
-    let focus = |child: i32| {
-        outpost.focus(DeliveredFact::MsaaFocus {
-            hwnd: list.0 as isize,
-            id_object: OBJID_CLIENT.0,
-            id_child: child,
-        })
-    };
+    let mut focus =
+        |child: i32| core.msaa_event(EventKind::MsaaFocus, list, (OBJID_CLIENT.0, child));
     let _ = focus(2);
-    let reported = focus(1);
+    let step = focus(1);
     assert_eq!(
-        reported.node.name.as_deref(),
-        Some("readme.txt; Size: 1 KB; Type: Text Document")
+        step.spoken(),
+        [vec![
+            label("readme.txt; Size: 1 KB; Type: Text Document"),
+            SegmentContent::NegatedState(verbatim_model::State::Selected),
+            SegmentContent::Position {
+                position: 1,
+                set_size: Some(2)
+            },
+        ]]
     );
     ratchet.check_calls(
         "MSAA focus on a report view item",
-        reported.calls,
+        step.calls,
         calls(0, 30, 14),
     );
     ratchet.finish();
+    drop(core);
     app.quit();
 }
 
@@ -981,19 +1006,26 @@ fn msaa_navigation_steps_cost_exactly() {
     let title = common::unique_title("mockapp-counts-msaa-navigation");
     let mut app = common::spawn("counts.json", "msaa", &title);
     let hwnd = common::find_window(&title);
-    let mut outpost = OutpostUnderTest::on_frozen_time(&app);
+    let mut core = CoreDriver::new(&app, OutpostUnderTest::on_frozen_time(&app));
     let mut ratchet = Ratchet::default();
-    let (first, _) = measure_msaa_focus(&mut app, hwnd, &outpost, ("first", FIRST));
-    let first = first.node;
-
-    common::reset_hits(hwnd);
-    let (second, calls_made) = outpost.navigate(first.id, QueryKind::NextSibling);
-    assert_eq!(second.name.as_deref(), Some("Second"));
-    let cost = Cost {
-        calls: calls_made,
-        hits: common::read_hits(hwnd),
-        failed_reads: outpost.take_failed_reads(),
+    // The navigator follows the focus to "First".
+    let _ = measure_msaa_focus(&mut app, hwnd, &mut core, ("first", FIRST));
+    let step = |core: &mut CoreDriver, command: ReviewCommand| {
+        common::reset_hits(hwnd);
+        let step = core.command(command);
+        let cost = Cost {
+            calls: step.calls,
+            hits: common::read_hits(hwnd),
+            failed_reads: core.outpost.take_failed_reads(),
+        };
+        (step.spoken(), cost)
     };
+
+    let (said, cost) = step(&mut core, ReviewCommand::NextSibling);
+    assert_eq!(
+        said,
+        [vec![label("Second"), SegmentContent::Role(Role::Button)]]
+    );
     ratchet.check(
         "MSAA next sibling",
         &cost,
@@ -1012,14 +1044,11 @@ fn msaa_navigation_steps_cost_exactly() {
         ],
     );
 
-    common::reset_hits(hwnd);
-    let (group, calls_made) = outpost.navigate(second.id, QueryKind::Parent);
-    assert_eq!(group.name.as_deref(), Some("Settings"));
-    let cost = Cost {
-        calls: calls_made,
-        hits: common::read_hits(hwnd),
-        failed_reads: outpost.take_failed_reads(),
-    };
+    let (said, cost) = step(&mut core, ReviewCommand::Parent);
+    assert_eq!(
+        said,
+        [vec![label("Settings"), SegmentContent::Role(Role::Group)]]
+    );
     ratchet.check(
         "MSAA parent",
         &cost,
@@ -1037,25 +1066,28 @@ fn msaa_navigation_steps_cost_exactly() {
         ],
     );
 
-    // A theme reporting descriptions and shortcuts as off: the outpost no
-    // longer asks for them, and saves their calls. The reader thread takes
-    // the change at once, before the step is queued.
-    outpost
+    // A theme reporting descriptions and shortcuts as off, which the shell
+    // sends the outpost as it sends Core's fetches: the outpost no longer
+    // reads them, and saves their calls. The navigator moved back to the
+    // focus, which Core holds, with no call, takes the step from it again.
+    core.outpost
         .outpost
         .handle_command(&CoreToOutpost::Fetches(Fetches {
             description: false,
             shortcut: false,
             ..Fetches::default()
         }));
-    common::reset_hits(hwnd);
-    let (second, calls_made) = outpost.navigate(first.id, QueryKind::NextSibling);
-    assert_eq!(second.name.as_deref(), Some("Second"));
-    assert_eq!(second.details.description, None);
-    let cost = Cost {
-        calls: calls_made,
-        hits: common::read_hits(hwnd),
-        failed_reads: outpost.take_failed_reads(),
-    };
+    let (_, cost) = step(&mut core, ReviewCommand::ToFocus);
+    assert_eq!(
+        cost.calls,
+        CallCounts::default(),
+        "moving to the focus reads nothing"
+    );
+    let (said, cost) = step(&mut core, ReviewCommand::NextSibling);
+    assert_eq!(
+        said,
+        [vec![label("Second"), SegmentContent::Role(Role::Button)]]
+    );
     ratchet.check(
         "MSAA next sibling, descriptions and shortcuts off",
         &cost,
@@ -1073,6 +1105,7 @@ fn msaa_navigation_steps_cost_exactly() {
     );
 
     ratchet.finish();
+    drop(core);
     app.quit();
 }
 

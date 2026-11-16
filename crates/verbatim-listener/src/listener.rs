@@ -812,7 +812,7 @@ fn ask((readers, kept, checks): (&Readers<UiaReading>, &Kept, &Checks), ask: Box
             }
             true
         }
-        Purpose::Other => false,
+        Purpose::Change | Purpose::Other => false,
     };
     let pid = match &read.object {
         ObjectRef::Kept(token) => kept.owner(*token),
