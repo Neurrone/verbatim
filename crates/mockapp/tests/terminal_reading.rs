@@ -33,8 +33,8 @@ use verbatim_model::property::PropertyId;
 use verbatim_model::request::{Answer, Follow, FollowGroup, Followed, Outcome, Reply, Request};
 use verbatim_model::tell::{EventObject, Payload};
 use verbatim_model::{
-    CallCounts, NodeId, TerminalRead, TerminalReadReply, TerminalScope, TerminalSnapshot, TextAnchor, TextOp,
-    TextReply, TextUnit,
+    CallCounts, NodeId, TerminalRead, TerminalReadReply, TerminalScope, TerminalSnapshot,
+    TextAnchor, TextOp, TextReply, TextUnit,
 };
 use verbatim_outpost::Heard;
 use verbatim_process::arguments::OutpostOptions;
@@ -467,7 +467,9 @@ fn the_console_hosts_caret_comes_from_its_console() {
     }
     terminal.outpost.settled();
     terminal.app.send("console-caret 1 0");
-    terminal.outpost.heard(&[Heard::Msaa(WinEventKind::ConsoleCaret)]);
+    terminal
+        .outpost
+        .heard(&[Heard::Msaa(WinEventKind::ConsoleCaret)]);
     terminal.told();
     terminal.outpost.settled();
     let read = terminal.fresh_from(terminal.start);
@@ -488,7 +490,9 @@ fn a_console_caret_move_with_no_text_change_is_told() {
     let mut terminal = start_console("mockapp-console-caret-move");
     terminal.app.send("caret text 24");
     terminal.app.send("console-caret 2 1");
-    terminal.outpost.heard(&[Heard::Msaa(WinEventKind::ConsoleCaret)]);
+    terminal
+        .outpost
+        .heard(&[Heard::Msaa(WinEventKind::ConsoleCaret)]);
     terminal.told();
     terminal.outpost.settled();
     let read = terminal.fresh_from(terminal.start);
@@ -508,7 +512,9 @@ fn the_console_hosts_system_caret_is_not_its_caret_event() {
     terminal.app.send("caret text 1");
     terminal.app.send("system-caret");
     terminal.app.send("console-caret 1 0");
-    terminal.outpost.heard(&[Heard::Msaa(WinEventKind::ConsoleCaret)]);
+    terminal
+        .outpost
+        .heard(&[Heard::Msaa(WinEventKind::ConsoleCaret)]);
     terminal.told();
     terminal.outpost.settled();
     let read = terminal.fresh_from(terminal.start);
