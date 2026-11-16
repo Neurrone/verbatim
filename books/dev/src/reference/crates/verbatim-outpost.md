@@ -391,8 +391,7 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
 - The reducer ([verbatim-outpost-logic](verbatim-outpost-logic.md)), a
   pure state machine on a thread of
   its own, run by its shell (`outpost::shell`): it holds Core's requests
-  queued for the worker, the intake's order (`reducer::intake`), the
-  reports Core may hold (`reducer::held`), the follow state
+  queued for the worker, the intake's order (`reducer::intake`), the follow state
   (`reducer::follow`), the arbitrator's verdicts
   (`reducer::verdicts`), each node's text facts (`reducer::text`), the
   program in flight with the worker generation in charge, and the queries
@@ -762,13 +761,6 @@ and the inherited pipe handles.
   runtime id is the focus's (`Worker::element_after_cut_walk`). It
   finds the element only while the element still has the keyboard focus,
   a limit; a focus without text is not looked for this way.
-- While the focus's value is its selected item
-  (`UiaFocusRead::value_from_selection`), a selection of one of its children
-  (found by one `FindFirstBuildCache`, `verbatim_uia::SelectedItem`) is
-  reported as `ValueChanged` on the focus (`Worker::selection_as_value`)
-  unless the item has the keyboard focus. NVDA's rules for a
-  `Windows.UI.Core` combo box with `Value` and the .NET Windows Forms combo
-  box are not built (`docs/parity/changes-and-selection.md`).
 - A UIA selection fact's `focus_window` is the window its acceptance is
   tested with. Notifications are not tested, as NVDA tests none, nor are a
   text focus's caret, text, and active text position events.
@@ -780,26 +772,13 @@ and the inherited pipe handles.
   reported, and every focus report carries window facts.
   A child's own focus event from the same `SetFocus` as its control's
   redirected one is dropped (`Followed::redirected`).
-- The reports (`reducer::held`;
-  `books/dev/src/explanation/design/ownership.md`):
-  every focus or foreground report whose focus node the outpost has not
-  released, added at a program's commit and removed by a release, one
-  per node and line. Core's focus line is always among them. With each
-  the outpost keeps its MSAA address, whether a simple child, the window in
-  front as it was entered, and the text each dialog of its line was
-  given. The program reports the evidence (`InFront`: a foreground
-  change's window, or any other focus's top-level window when it was read
-  as the foreground window), and the rule runs as the report is recorded
-  (`Held::entered_in_front`), on the program's copy and in the reducer
-  alike: a foreground change sets it to its window, any other focus
-  inherits it from the newest report in its top-level window, and
-  otherwise it is the read. The two agree at each commit, since only the
-  program in flight and a release with no program in flight write the
-  reports. The newest is `expected()`. A report of
-  the newest report's node whose own evidence says the same element still
-  has the focus leaves the states last read as they were. The followed
-  focus (`Followed`'s `node`, `role`, `window`, `chain`) is the newest
-  report of a control, which the caret, text and terminal output follow.
+- A selection is read against the committed focus Core's `Follow` names
+  (`followed::node`), as NVDA reads it against its focus object; a
+  console's events are its terminal's when `Follow` names that terminal.
+  A focus walk stops at the ancestors Core already knows, which its
+  request names, comparing what it reads with them by NVDA's equality,
+  and gathers the text of every dialog below them, which the focus
+  enters (`read::describe_dialogs`).
 - MSAA name, value, and state changes are read for the nodes the outpost
   has not released, and Core targets what is spoken
   (`focus_rules::change_target`): name, description, and value for a
@@ -898,9 +877,7 @@ foreground application for its focus unless a newer focus was applied.
   by window handle (`Nodes::window`, `Nodes::client`), as their MSAA keys.
   The lines a walk copies are tagged too: the previous focus's chain it may
   splice from (`read::held_prefix`, `Store::held_prefix`), which keeps only
-  the entries above the outermost one no longer held, and the reports'
-  MSAA lines it compares with (`read::msaa_candidates`,
-  `Store::tag_copied`). Every ordinary message is sent as a
+  the entries above the outermost one no longer held. Every ordinary message is sent as a
   `store::Recorded`, which only the store makes, listing the nodes and
   anchors it names (`OutpostToCore::named`); each message that carries
   node ids (`OutpostToCore::carries_nodes`) takes the next position as it
@@ -1323,10 +1300,7 @@ by the commit that sends its report or the listener's `UiaLiveRereadGone`;
 one the program ends, panics or is abandoned without answering, its object
 gone or its report dropped, is answered `OutpostToCore::LiveRereadGone`
 there, the one answer path. A newer focus of the same element never
-replaces a waiting answer in the intake. A foreground change makes its window the window every
-older report in it entered in front (`Held::reported`), and the
-selection-as-value mark is each held report's own
-(`Held::value_from_selection`).
+replaces a waiting answer in the intake.
 
 ## Messages to Core
 

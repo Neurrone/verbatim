@@ -8,11 +8,10 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 use verbatim_model::protocol::{EventTiming, FrontWindow, OutpostToCore, UiaFocusRead};
-use verbatim_model::{CaretReport, NodeId, NodeSnapshot, Role, StateSet, TraceId};
+use verbatim_model::{CaretReport, NodeId, NodeSnapshot, Role, TraceId};
 
 use verbatim_reader_rules::Window;
 
-use super::held::{self, Held};
 use super::intake::{Marks, Object, TerminalMark};
 use super::text::{RangeKey, TextChange, TextFacts};
 use verbatim_reader_rules::verdicts::Verdicts;
@@ -461,18 +460,6 @@ pub enum LogicError {
     MarkWithNothingFollowed(MarkChange),
 }
 
-/// The report to record among those the outpost reads changes for
-/// ([`Change::report`]).
-#[derive(Clone, Debug)]
-pub enum Report {
-    /// A focus or foreground change reported, with its own evidence of
-    /// whether it repeats the newest report.
-    Reported(held::Focus, held::Evidence),
-    /// A focus-now answer's control, which keeps the event of the same
-    /// focus judged against before it.
-    Answered(held::Focus),
-}
-
 /// What one commit of a program changes, its pure part: built by the
 /// program with every call it needs already made, and applied by the
 /// reducer, after the shell has made its store writes, in the order today's
@@ -482,8 +469,6 @@ pub enum Report {
 pub struct Change {
     /// The program's result, which ends its query.
     pub result: Option<OutpostToCore>,
-    /// The report to record for Core's judgement.
-    pub report: Option<Report>,
     /// The change of what is followed: a focus adopted, followed again, or
     /// a foreground report.
     pub focus: Option<FocusCommit>,
@@ -498,8 +483,6 @@ pub struct Change {
     pub caret_read: Option<(NodeId, u64)>,
     /// A change of the marks on the followed focus.
     pub mark: Option<MarkChange>,
-    /// A held node's states, as an MSAA state change read them.
-    pub states: Option<(NodeId, StateSet)>,
     /// A held terminal's caret event, noted to be read once nothing else
     /// is waiting, with its event's timing, which the read of the caret
     /// judges the caret reads since the event by.
@@ -556,8 +539,6 @@ pub struct FollowState {
 /// outpost remembers.
 #[derive(Clone, Debug, Default)]
 pub struct Facts {
-    /// The reports whose focus node the outpost has not released.
-    pub held: Held,
     /// What the outpost follows.
     pub follow: FollowState,
     /// The arbitrator's kept verdicts, a snapshot the reducer replaces on
@@ -927,49 +908,14 @@ pub fn apply(facts: &mut Facts, generation: u64, change: &Change) -> Applied {
     if let Some(mark) = change.mark {
         follow_state.apply_mark(mark, &mut applied);
     }
-    if let Some((node, states)) = change.states {
-        let _ = facts.held.replace_states(node, states);
-    }
     applied
 }
 
 /// Applies `change`, a program's commit of `generation`, to a program's
-/// copies `facts`, as the program's own commit does: its report recorded,
-/// then [`apply`], with no clock.
+/// copies `facts`, as the program's own commit does: [`apply`], with no
+/// clock.
 pub fn apply_local(facts: &mut Facts, generation: u64, change: &Change) -> Applied {
-    if let Some(report) = &change.report {
-        record(&mut facts.held, report);
-    }
     apply(facts, generation, change)
-}
-
-/// Records `report` among the reports changes are read for.
-pub fn record(held: &mut Held, report: &Report) {
-    match report {
-        Report::Reported(focus, evidence) => held.reported(focus.clone(), *evidence),
-        Report::Answered(focus) => {
-            let focus = answer_to_judge(held.expected(), focus.clone());
-            // An answer of the newest report's node is the same element
-            // read again.
-            held.reported(focus, held::Evidence::Uia(None));
-        }
-    }
-}
-
-/// A focus-now answer's control, `answered`, as the outpost records it
-/// among its reports, given `before`, the newest report: an answer for the
-/// same node keeps the MSAA event address and the simple-child mark its
-/// report recorded, as NVDA's fake focus leaves its last queued focus's
-/// event as it was.
-pub fn answer_to_judge(before: Option<&held::Focus>, answered: held::Focus) -> held::Focus {
-    match before.filter(|before| before.node.id == answered.node.id) {
-        Some(before) => held::Focus {
-            event: before.event,
-            simple_child: before.simple_child,
-            ..answered
-        },
-        None => answered,
-    }
 }
 
 /// A record of `node`, of `role`, with nothing but its node and role, as

@@ -150,3 +150,9 @@ pub(super) fn terminal(context: &Context) -> Option<(NodeId, bool)> {
         .as_ref()
         .and_then(|named| named.terminal.map(|console| (named.node, console)))
 }
+
+/// The node Core's newest `Follow` names: the committed focus's, when it
+/// is this outpost's.
+pub(super) fn node(context: &Context) -> Option<NodeId> {
+    context.named.lock().as_ref().map(|named| named.node)
+}

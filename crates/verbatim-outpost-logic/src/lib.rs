@@ -6,7 +6,7 @@
 //! a logic crate: in the GPL tier, with no Windows dependency, so it builds
 //! and is tested on any host.
 //!
-//! It holds the intake's order ([`intake`]), the reports Core may hold ([`held`]), the follow state ([`follow`]),
+//! It holds the intake's order ([`intake`]), the follow state ([`follow`]),
 //! the arbitrator's verdicts
 //! ([`Verdicts`]), Core's requests ([`waiting`]), the program in flight
 //! with the worker generation in charge ([`charge`]), the queries not yet
@@ -65,7 +65,6 @@
 mod charge;
 mod entry;
 mod follow;
-mod held;
 mod intake;
 #[cfg(test)]
 mod tests;
@@ -91,9 +90,8 @@ pub use self::entry::{Asker, Entry, Item, UiaEvent, UiaKind, WinKind, is_state_p
 pub use self::follow::{
     Applied, BarWatch, Change, DialogMemo, Facts, FocusCommit, FocusPath, FollowState, Followed,
     Group, LastReported, LogicError, MarkChange, MsaaReport, Origin, Owed, OwedProgram, OwedWork,
-    Report, Route, Subscribed, Subscription, Target, apply_local,
+    Route, Subscribed, Subscription, Target, apply_local,
 };
-pub use self::held::{Evidence, Focus, Held, InFront};
 pub use self::intake::{Handling, Marks, Object, TerminalMark};
 pub use self::text::{
     Anchor, AnswerCut, CutLine, FieldReads, KeptSelection, KeyNote, LastRead, NOTE_LIFE,
@@ -797,12 +795,9 @@ impl Reducer {
         effects.push(Effect::Send(Box::new(message)));
     }
 
-    /// Applies the commit of `request`'s program: its report recorded for
-    /// Core's judgement, then its messages sent, then the rest.
+    /// Applies the commit of `request`'s program: its messages sent, then
+    /// the rest.
     fn commit(&mut self, request: Request, change: &Change, now: Now, effects: &mut Vec<Effect>) {
-        if let Some(report) = &change.report {
-            follow::record(&mut self.facts.held, report);
-        }
         if let Some(mut message) = change.result.clone() {
             self.attach_note_facts(&mut message, now);
             if let Some(current) = self.current_of(request) {
@@ -919,7 +914,6 @@ impl Reducer {
         effects: &mut Vec<Effect>,
     ) {
         self.releasing = false;
-        self.facts.held.release(nodes);
         let ranges = Arc::make_mut(&mut self.facts.text).release(nodes, anchors);
         if !ranges.is_empty() {
             effects.push(Effect::ForgetRanges(ranges));

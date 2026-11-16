@@ -24,7 +24,6 @@ use verbatim_uia_rops::{
     navigation_step,
 };
 
-use verbatim_core::focus_rules::{HeldNode, already_entered_ancestors};
 
 use crate::dialog_text::is_dialog;
 
@@ -1181,49 +1180,6 @@ pub(super) fn msaa_enrichment(
     Ok((ancestors, selected))
 }
 
-/// The kept MSAA nodes a focus walk compares what it reads with, by NVDA's
-/// equality (`verbatim_ia2::equality`): the line of every report whose
-/// focus node this outpost has not released, one of which is Core's, the
-/// newest first, each innermost first. The lines are the walk's copies,
-/// their nodes tagged with its request, so no release frees one while the
-/// walk may name it ([`super::store::Store::tag_copied`]).
-pub(super) fn msaa_candidates(context: &RequestContext<'_>) -> Candidates {
-    let lines: Vec<Vec<NodeId>> = {
-        let held = context.held();
-        let line = |focus: &super::reducer::Focus| {
-            std::iter::once(&focus.node)
-                .chain(focus.ancestors.iter().rev())
-                .filter(|node| node.backend == verbatim_model::Backend::Msaa)
-                .map(|node| node.id)
-                .collect::<Vec<NodeId>>()
-        };
-        held.focuses().rev().map(line).collect()
-    };
-    context
-        .store
-        .tag_copied(context.tag(), lines.iter().flatten().copied());
-    Candidates::new(lines)
-}
-
-/// How many of `nodes`, a new focus line outermost first ending with its
-/// focus, the focus had already entered from any report's line: those above
-/// or at where the line meets one of theirs
-/// (`verbatim_core::focus_rules::already_entered_ancestors`).
-fn entered_before<'a>(
-    focuses: impl IntoIterator<Item = &'a super::reducer::Focus>,
-    nodes: &[&mut NodeSnapshot],
-) -> usize {
-    let line: Vec<HeldNode> = nodes.iter().map(|node| HeldNode::of(node)).collect();
-    let Some((focus, ancestors)) = line.split_last() else {
-        return 0;
-    };
-    focuses
-        .into_iter()
-        .map(|held| already_entered_ancestors((&held.ancestors, &held.node), (ancestors, focus)))
-        .max()
-        .unwrap_or(0)
-}
-
 /// The dialog this outpost last gathered text for in a foreground report,
 /// and the text: the focus that follows it into the dialog reuses it rather
 /// than reading the dialog again.
@@ -1232,24 +1188,20 @@ pub(super) type DialogMemo = Option<(NodeId, Option<String>)>;
 /// Gives every dialog among `nodes`, the chain of a focus, outermost first,
 /// that has no description of its own, its own text as its description
 /// (`docs/nvda/object-model.md`, "A dialog's own text"), while descriptions
-/// are read at all. A dialog no report's line is already inside is read,
-/// by the rule the reducer speaks entered containers by
-/// (`verbatim_core::focus_rules::already_entered_ancestors`); one a report's line is
-/// already inside, a superset of Core's line, is given the text that
-/// report carried for it, with no call, so Core, which speaks it only when
-/// its own line enters the dialog, always has it
-/// (`books/dev/src/explanation/design/ownership.md`).
+/// are read at all. The chain a request answers stops below the ancestors
+/// Core already knows, whose dialogs' text Core already has, so every
+/// dialog in it is one the focus enters and is read
+/// (`docs/design/readers-tell-core-asks-build1.md`, "The focus answers").
 ///
 /// `memo` is taken: a dialog it names is given its text without reading it
 /// again. With `remember`, the last text read is kept in it for the next
 /// report, which is how a foreground report hands its dialog to the focus
 /// inside it. A UIA dialog's text is gathered on the worker's own client,
 /// `client`, inside the program, as NVDA gathers a dialog's text inside its
-/// focus event: the program's deadline bounds it. A UIA dialog whose
-/// element this outpost does not hold is found by `path`, the path the
-/// focus listener read for the report these nodes are, before it is
-/// committed: the report in hand, not the one before it, owns the path,
-/// so a dialog has its text on the first report the listener read for it.
+/// focus event. A UIA dialog whose element this outpost does not hold is
+/// found by `path`, the path the focus listener read for the focus these
+/// nodes are, so a dialog has its text on the first focus the listener
+/// read for it.
 pub(super) fn describe_dialogs<'a>(
     context: &RequestContext<'_>,
     client: &mut Client,
@@ -1263,25 +1215,7 @@ pub(super) fn describe_dialogs<'a>(
     if !context.fetches().description {
         return;
     }
-    let mut nodes: Vec<&mut NodeSnapshot> = nodes.into_iter().collect();
-    // The reports the focus enters a dialog from, one of whose lines is
-    // Core's. A dialog at or above where the new line meets any of them is
-    // not read again: it carries the text a report gave it.
-    let (entered, carried) = {
-        let held = context.held();
-        let entered = entered_before(held.focuses(), &nodes);
-        let carried: Vec<Option<Option<String>>> = nodes
-            .iter()
-            .take(entered)
-            .map(|node| {
-                is_dialog(node.role)
-                    .then(|| held.dialog_text(node.id))
-                    .flatten()
-            })
-            .collect();
-        (entered, carried)
-    };
-    for (index, node) in nodes.iter_mut().enumerate() {
+    for node in nodes {
         if !is_dialog(node.role)
             || node
                 .details
@@ -1289,12 +1223,6 @@ pub(super) fn describe_dialogs<'a>(
                 .as_deref()
                 .is_some_and(|description| !description.trim().is_empty())
         {
-            continue;
-        }
-        if index < entered {
-            if let Some(Some(text)) = carried.get(index) {
-                node.details.description.clone_from(text);
-            }
             continue;
         }
         let text = match &remembered {
@@ -1404,22 +1332,24 @@ fn dialog_text_of(
 /// and `None` is answered, so a stray element is never reported, followed,
 /// or sent a remote operation. `trigger`, what asked for the read, is
 /// logged with it. Answering nothing, it says whether these checks refused
-/// the read or the read failed ([`FocusReadMiss`]).
+/// the read or the read failed ([`FocusReadMiss`]). An MSAA focus's walk
+/// up stops at one of `known`, the ancestors Core already knows that the
+/// request names.
 pub(super) fn focused_control_in(
     context: &RequestContext<'_>,
     client: &mut Client,
     (trigger, fake): (FocusRead, bool),
+    known: &[NodeSnapshot],
 ) -> Result<(isize, FocusedControl), FocusReadMiss> {
     let hwnd = checked_focus_window(context)?;
     // The focused element is read from the window's provider at once.
     if window_uses_uia(context, hwnd) {
         uia_focused_control(context, client, hwnd, trigger)
     } else {
-        // A focus-now answer has no chain to splice from, so it walks to
-        // the desktop, comparing what it reads with Core's line and the
-        // newest focus it waits for (`books/dev/src/reference/adr/0001-focus.md`, "Object
-        // identity").
-        let candidates = msaa_candidates(context);
+        // The walk stops at an ancestor Core already knows, `known`,
+        // comparing what it reads with them by NVDA's equality
+        // (`books/dev/src/reference/adr/0001-focus.md`, "Object identity").
+        let candidates = Candidates::new(vec![known.iter().map(|node| node.id).collect()]);
         let mut object =
             verbatim_ia2::acquire::focused_object(hwnd, &|window| serves(context, window))
                 .ok_or(FocusReadMiss::Failed(None))?;
@@ -1438,7 +1368,7 @@ pub(super) fn focused_control_in(
         }
         let node = object.read(context.nodes(), Some(&candidates));
         let (ancestors, selected_child) =
-            msaa_enrichment(context, client, (&node, &[], Some(&candidates)))
+            msaa_enrichment(context, client, (&node, known, Some(&candidates)))
                 .map_err(|FocusLost| FocusReadMiss::Failed(None))?;
         Ok((
             hwnd,
@@ -1667,11 +1597,13 @@ fn console_text_area_in(node: &mut NodeSnapshot, window_class: impl FnOnce() -> 
 /// empty, no window and no control, as NVDA refuses the object before it
 /// is queued (`books/dev/src/reference/adr/0001-focus.md`, "A focus UI Automation does not
 /// deliver"); a fake focus with no control is no input, whatever its
-/// window, so the window is not tested.
+/// window, so the window is not tested. An MSAA focus's walk up stops at
+/// one of `known` ([`focused_control_in`]).
 pub(super) fn focus_now(
     context: &RequestContext<'_>,
     client: &mut Client,
     fake: bool,
+    known: &[NodeSnapshot],
 ) -> (FocusNow, Option<isize>) {
     let observed_at_us = now_us();
     // A foreground window that cannot be read is a plain window, with no
@@ -1686,7 +1618,7 @@ pub(super) fn focus_now(
             };
             (node, window_facts(hwnd))
         });
-    let control = focused_control_in(context, client, (FocusRead::FocusNow, fake));
+    let control = focused_control_in(context, client, (FocusRead::FocusNow, fake), known);
     if control == Err(FocusReadMiss::Unfocused) {
         return (
             FocusNow {
@@ -2278,14 +2210,12 @@ pub(super) fn dump_tree(
 
 #[cfg(test)]
 mod tests {
-    use verbatim_core::focus_rules::HeldNode;
     use verbatim_model::{
-        Backend, NodeDetails, NodeId, NodeSnapshot, Role, StateSet, WindowHandle,
+        Backend, NodeDetails, NodeId, NodeSnapshot, Role, StateSet,
     };
 
-    use super::super::reducer::{Evidence, Focus, Held, InFront};
     use super::{
-        CONSOLE_WINDOW_CLASS, console_text_area_in, control_window, entered_before,
+        CONSOLE_WINDOW_CLASS, console_text_area_in, control_window,
         join_cache_onto, window_read_without_its_handle,
     };
     use verbatim_win32::window::window_owner;
@@ -2380,63 +2310,5 @@ mod tests {
             None
         );
         assert_eq!(window_read_without_its_handle(0, &[7, 76_482_230]), None);
-    }
-
-    /// The focus Core holds is a button in a child dialog "Remove", window
-    /// 20, of the top-level window 7. A second dialog "Remove", window 21,
-    /// in the same top-level window, is newly entered, as Core judges it,
-    /// so its text is gathered; a node of window 20 is the dialog the focus
-    /// is already in.
-    #[test]
-    fn a_dialog_above_where_the_lines_meet_is_not_newly_entered() {
-        let held_node = |id, role, name: Option<&str>, window: Option<u64>| HeldNode {
-            id: NodeId::new(id),
-            backend: Backend::Msaa,
-            role,
-            name: name.map(str::to_owned),
-            states: StateSet::new(),
-            window: window.map(WindowHandle),
-            above_boundary: false,
-        };
-        let mut held = Held::default();
-        held.reported(
-            Focus {
-                node: held_node(2, Role::Button, Some("OK"), None),
-                ancestors: vec![held_node(1, Role::Dialog, Some("Remove"), Some(20))],
-                top_level: verbatim_reader_rules::Window::new(7),
-                in_front: InFront::Read(None),
-                entered_in_front: None,
-                event: None,
-                simple_child: false,
-                dialog_texts: Vec::new(),
-                value_from_selection: false,
-            },
-            Evidence::Msaa,
-        );
-        let node = |id, role, window: Option<u64>| NodeSnapshot {
-            id: NodeId::new(id),
-            backend: Backend::Msaa,
-            role,
-            name: Some("Remove".to_owned()),
-            value: None,
-            states: StateSet::new(),
-            details: NodeDetails {
-                window: window.map(WindowHandle),
-                ..NodeDetails::default()
-            },
-        };
-        let mut cancel = node(4, Role::Button, None);
-        let mut other = node(3, Role::Dialog, Some(21));
-        assert_eq!(
-            entered_before(held.focuses(), &[&mut other, &mut cancel]),
-            0,
-            "a dialog of another window with the same role and name"
-        );
-        let mut same = node(3, Role::Dialog, Some(20));
-        assert_eq!(
-            entered_before(held.focuses(), &[&mut same, &mut cancel]),
-            1,
-            "the dialog window the lines meet at"
-        );
     }
 }

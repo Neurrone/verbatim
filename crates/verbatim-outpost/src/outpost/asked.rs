@@ -862,7 +862,14 @@ fn try_candidate(
     else {
         return Tried::NotThere;
     };
-    let (ancestors, met) = cut_at_known(context, chain, &run.known);
+    let (mut ancestors, met) = cut_at_known(context, chain, &run.known);
+    let mut node = node;
+    read::describe_dialogs(
+        context,
+        client,
+        (ancestors.iter_mut().chain(std::iter::once(&mut node)), None),
+        (&mut None, false),
+    );
     let msaa = HeldIds {
         event: ids,
         held_child,
@@ -902,11 +909,20 @@ fn current_focus(
     set: &[PropertyId],
     (known, baseline): (&[KnownAncestor], Option<TextAnchor>),
 ) -> Outcome {
-    let (now, control_window) = read::focus_now(context, client, false);
-    let Some(control) = now.focus else {
+    let (now, control_window) = read::focus_now(context, client, false, &known_stops(known));
+    let Some(mut control) = now.focus else {
         return Outcome::NotThere;
     };
-    let (ancestors, met) = cut_at_known(context, control.ancestors, known);
+    let (mut ancestors, met) = cut_at_known(context, control.ancestors, known);
+    read::describe_dialogs(
+        context,
+        client,
+        (
+            ancestors.iter_mut().chain(std::iter::once(&mut control.node)),
+            None,
+        ),
+        (&mut None, false),
+    );
     let msaa = (control.node.backend == Backend::Msaa)
         .then(|| held_ids(context, &control.node))
         .flatten();

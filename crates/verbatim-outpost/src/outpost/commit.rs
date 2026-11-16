@@ -15,14 +15,13 @@
 
 #![forbid(unsafe_code)]
 
-use verbatim_model::{CaretReport, NodeId, StateSet, TraceId};
+use verbatim_model::{CaretReport, NodeId, TraceId};
 use verbatim_uia::{Agile, Kept};
 
 use verbatim_model::protocol::{EventTiming, OutpostToCore};
 
 use super::reducer::{
-    Change, DialogMemo, FocusCommit, Followed, Group, LastReported, MarkChange, OwedWork, Report,
-    Subscribed,
+    Change, DialogMemo, FocusCommit, Followed, Group, LastReported, MarkChange, OwedWork, Subscribed,
 };
 use super::store::TextWrite;
 
@@ -182,8 +181,6 @@ impl FocusEffects {
 pub(super) struct Effects {
     /// The program's result, which ends its query.
     pub(super) result: Option<OutpostToCore>,
-    /// The report to record for Core's judgement.
-    pub(super) report: Option<Report>,
     /// A focus adopted or followed again, or a foreground report.
     pub(super) focus: Option<FocusEffects>,
     /// The focus's element found after its report, with its slider's when
@@ -201,8 +198,6 @@ pub(super) struct Effects {
     pub(super) caret_read: Option<(NodeId, u64)>,
     /// A change of the marks on the followed focus.
     pub(super) mark: Option<MarkChange>,
-    /// A held node's states, as an MSAA state change read them.
-    pub(super) states: Option<(NodeId, StateSet)>,
     /// A UIA focus's stale element, evicted before the focus is followed.
     pub(super) stale: Option<Stale>,
     /// A held terminal's caret event, noted to be read once nothing else is
@@ -225,13 +220,11 @@ impl Effects {
     pub(super) fn local(&self) -> Change {
         Change {
             result: None,
-            report: self.report.clone(),
             focus: self.focus.as_ref().map(FocusEffects::local),
             element: None,
             owed_done: self.owed_done,
             caret_read: self.caret_read,
             mark: self.mark,
-            states: self.states,
             noted_caret: self.noted_caret,
             replaced: self.stale.as_ref().map(|stale| stale.node),
             text: Vec::new(),
@@ -245,12 +238,10 @@ impl Effects {
         let change = Change {
             focus: None,
             element: None,
-            report: self.report,
             result: self.result,
             owed_done: self.owed_done,
             caret_read: self.caret_read,
             mark: self.mark,
-            states: self.states,
             noted_caret: self.noted_caret,
             replaced: self.stale.as_ref().map(|stale| stale.node),
             text: Vec::new(),

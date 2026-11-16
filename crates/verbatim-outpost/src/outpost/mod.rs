@@ -366,10 +366,6 @@ impl<'a> RequestContext<'a> {
         &self.program
     }
 
-    fn tag(&self) -> store::Tag {
-        self.nodes.tag()
-    }
-
     /// The store's handle for this request, through which walks issue and
     /// look up nodes.
     fn nodes(&self) -> &store::Nodes<'a> {
@@ -389,11 +385,6 @@ impl<'a> RequestContext<'a> {
     /// Reads the follow state with `read`.
     fn follow<T>(&self, read: impl FnOnce(&FollowState) -> T) -> T {
         read(&self.facts().follow)
-    }
-
-    /// The reports whose focus node this outpost has not released.
-    fn held(&self) -> Ref<'_, reducer::Held> {
-        Ref::map(self.facts(), |facts| &facts.held)
     }
 
     /// The object last reported as the focus.

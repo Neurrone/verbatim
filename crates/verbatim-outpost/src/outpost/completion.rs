@@ -85,9 +85,22 @@ pub(super) fn complete(
         }
         _ => None,
     };
-    let Ok((ancestors, met)) = ancestors(context, client, complete, met) else {
+    let Ok((mut ancestors, met)) = ancestors(context, client, complete, met) else {
         return Outcome::NotThere;
     };
+    if focus {
+        // Every dialog of the chain below the ancestors Core already knows
+        // is one the focus enters.
+        read::describe_dialogs(
+            context,
+            client,
+            (
+                ancestors.iter_mut().chain(std::iter::once(&mut snapshot)),
+                Some(&path),
+            ),
+            (&mut None, false),
+        );
+    }
     if let CompletionFor::SelectionItem { focus } = complete.completes {
         // A selection's item: its relation to the committed focus, read
         // live, and its ancestors, its parent first (Table 12).

@@ -84,8 +84,7 @@ Public API:
   intake's `Entry`, `Item`, `Marks` (with `TerminalMark`) and `Object`; the follow
   state (`FollowState`, `Followed`, `Origin`, `Subscribed`, `LastReported`,
   `Owed`, and a commit's `FocusCommit` and `MarkChange`, below); the caret key's
-  watch (`Watch`, `OpenWatch`, `Checked`, below); the
-  reports Core may hold (`Held`, `Focus`, `Evidence`, `InFront`); the verdicts
+  watch (`Watch`, `OpenWatch`, `Checked`, below); the verdicts
   (`Verdicts`, `VerdictChange`, `Probe`, `Probed`, from `verbatim-reader-rules`, and
   `KeptFromAnyGeneration`, this crate's rule of which a generation no
   longer in charge may record); each node's text facts

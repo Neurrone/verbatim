@@ -26,9 +26,6 @@
 //!   issued or looked up through it is tagged with it, in the same hold of
 //!   the store's lock. An element a lookup replaces is kept in the handle
 //!   for its holder to drop ([`Nodes::take_removed`]).
-//!   The nodes of the lines a walk copies, the focus chain it may stop at
-//!   and the reports' lines it compares with, are tagged as it copies them
-//!   ([`Store::held_prefix`], [`Store::tag_copied`]).
 //! - A message is sent as a [`Recorded`], which only the store makes,
 //!   listing the nodes and anchors the message names
 //!   ([`OutpostToCore::named`]); the outbound queue records them at the
@@ -436,19 +433,6 @@ impl Store {
         element: &Agile<Kept>,
     ) -> Option<Agile<Kept>> {
         self.uia.evict_element_if(node, element)
-    }
-
-    // The lines a program copies.
-
-    /// Tags each of `nodes` the store holds with request `tag`: the lines
-    /// it copied, which it may name.
-    pub(super) fn tag_copied(&self, tag: Tag, nodes: impl IntoIterator<Item = NodeId>) {
-        let mut state = self.lock();
-        for node in nodes {
-            if self.holds(node) {
-                state.tag_node(node, tag);
-            }
-        }
     }
 
     // Messages and release.
