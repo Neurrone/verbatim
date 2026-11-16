@@ -3035,6 +3035,14 @@ fn uia_event_caches_cost_exactly() {
             ("FragmentRoot", 3),
         ],
     );
+    // The property changes' request caches whether the element has the
+    // Text pattern, one pattern more, which the outpost's tell carries:
+    // Core says nothing for a value change of an element with text, as
+    // NVDA's UIA value change handler returns for one
+    // (`NVDAObjects/UIA/__init__.py` 2511 to 2514, added with the tells
+    // of a followed node's property changes;
+    // `docs/design/readers-tell-core-asks-build1.md`, "Selection and the
+    // caret's text facts").
     let (_, cost) = under_test.measure(hwnd, |_| {
         live.refresh(&property)
             .expect("the element's cache is filled")
@@ -3046,7 +3054,7 @@ fn uia_event_caches_cost_exactly() {
         0,
         &[
             ("ProviderOptions", 5),
-            ("GetPatternProvider", 11),
+            ("GetPatternProvider", 12),
             ("GetPropertyValue", 12),
             ("HostRawElementProvider", 3),
             ("GetRuntimeId", 2),
