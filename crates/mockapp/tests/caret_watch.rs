@@ -510,13 +510,16 @@ fn a_duplicate_focus_says_nothing_and_the_caret_tell_says_the_selection() {
 /// `NVDAObjects/behaviors.py` 331 to 360).
 fn a_selecting_keys_selection_is_said_by_its_caret_tell() {
     let (mut app, _, mut core) = on_notes("mockapp-caret-watch-key-selection");
+    // The caret event's tell is the evidence, counted from before the key:
+    // it may reach Core within the key's step or after it.
+    let before = core.tells();
     let mut said = core
         .caret_key(selecting(CaretMotion::NextWord), || {
             app.send("caret doc 0 5");
             app.send("caret-event doc");
         })
         .spoken();
-    said.extend(core.told(1).spoken());
+    said.extend(core.until_told(before + 1).spoken());
     assert_eq!(said, selected("alpha"));
     assert_eq!(caret_event(&mut app, &mut core, &[]), NOTHING);
     drop(core);

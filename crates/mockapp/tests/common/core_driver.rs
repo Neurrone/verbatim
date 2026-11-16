@@ -738,7 +738,23 @@ impl CoreDriver {
     /// meanwhile.
     pub fn told(&mut self, count: usize) -> Step {
         let target = self.tells + count;
-        while self.tells < target {
+        self.until_told(target)
+    }
+
+    /// How many tells the outpost has sent Core so far.
+    pub fn tells(&self) -> usize {
+        self.tells
+    }
+
+    /// Waits until the outpost has told Core of `total` events in all
+    /// since the driver was made ([`Self::tells`]), feeding Core each of its
+    /// messages as it arrives; what Core said meanwhile. For an event the
+    /// test caused during a step that may or may not have taken in its tell
+    /// by its end, as a caret event mockapp raises while it handles a key:
+    /// UI Automation delivers it on a thread of its own, so the step's last
+    /// settle may come before or after the outpost hears it.
+    pub fn until_told(&mut self, total: usize) -> Step {
+        while self.tells < total {
             let message = self
                 .outpost
                 .messages
