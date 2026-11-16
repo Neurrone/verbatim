@@ -430,7 +430,6 @@ impl Run {
                 front: Front::Untested,
             },
             &self.marks,
-            std::time::Duration::ZERO,
         );
         if !self.closed {
             self.check_push(trace, kind, resolved, &before);

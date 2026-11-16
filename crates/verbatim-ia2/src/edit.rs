@@ -25,10 +25,9 @@
 //! returns and never before, so the application never writes into memory
 //! freed or reused while its message waited.
 //!
-//! Every message goes through `crate::window::send_message`: a hung or
-//! ghosted window fails at once ([`EditError::NotResponding`]), a message
-//! an abandoned worker would send is refused ([`EditError::Abandoned`]),
-//! and the message is sent with no time limit of its own. Each counts as
+//! Every message goes through `crate::window::send_message`: a message an
+//! abandoned worker would send is refused ([`EditError::Abandoned`]), and
+//! the message is sent with no time limit of its own. Each counts as
 //! one window message (`books/dev/src/reference/performance.md`);
 //! allocating and copying the target's memory are calls into the kernel,
 //! not into the application, and are not counted. A password field's text reads as
@@ -75,8 +74,6 @@ const MAX_LINE_UNITS: usize = 0xFFFF;
 pub enum EditError {
     /// The window no longer exists.
     Gone,
-    /// The window is hung or ghosted, so nothing was sent to it.
-    NotResponding,
     /// The control did not answer, or its process could not be read.
     Failed(String),
     /// The worker sending the message was abandoned, so its call gate
@@ -459,7 +456,6 @@ fn window(hwnd: isize) -> HWND {
 pub(crate) fn message_error(unanswered: Unanswered, what: &str, msg: u32) -> EditError {
     match unanswered {
         Unanswered::Gone => EditError::Gone,
-        Unanswered::NotResponding => EditError::NotResponding,
         Unanswered::Failed => EditError::Failed(format!("{what} did not answer message {msg:#x}")),
         Unanswered::Abandoned => EditError::Abandoned,
     }

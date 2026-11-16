@@ -523,10 +523,6 @@ pub struct Change {
     /// rest: a program applies each to its own copies as its text call
     /// makes it, so its own commit carries them only for the reducer.
     pub text: Vec<TextChange>,
-    /// The window the program's check before a call found hung or ghosted,
-    /// with no call made into it, when it found one: confirmed live before
-    /// it counts ([`Effect::CheckHung`](crate::Effect::CheckHung)).
-    pub found: Option<Window>,
     /// The foreground window's element found, by its window and the
     /// shell's token.
     pub bar_found: Option<(isize, u64)>,

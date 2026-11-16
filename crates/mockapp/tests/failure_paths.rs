@@ -98,42 +98,6 @@ fn a_first_worker_that_cannot_start_answers_its_program_and_starts_with_the_next
     app.quit();
 }
 
-/// A replacement worker that cannot start: generation 0 is abandoned at its
-/// deadline, shortened from 11 seconds to 2, while mockapp holds its call,
-/// and generation 1's start fails;
-/// once the call is let go, the next program's dispatch starts generation
-/// 1's worker, which answers it with its read.
-fn a_replacement_worker_that_cannot_start_answers_the_next_program() {
-    let title = common::unique_title("mockapp-replacement-worker");
-    let mut app = common::spawn("small.json", "uia", &title);
-    let mut outpost = OutpostUnderTest::new(&app);
-    outpost
-        .outpost
-        .set_handling_deadline(Duration::from_secs(2));
-    focus_button(&mut app, &outpost, &title);
-    let refusal = fail_worker_start(1, 1);
-
-    app.hold();
-    let held = outpost.ask(Query::ReadFocus {
-        purpose: verbatim_model::protocol::FocusPurpose::Plain,
-    });
-    let call = app.held();
-    assert_eq!(
-        outcome(&outpost, held),
-        QueryOutcome::Abandoned,
-        "the held query, abandoned at its deadline ({call} held)"
-    );
-    app.release();
-    assert_eq!(
-        focused_name(&mut outpost).as_deref(),
-        Some("Original Name"),
-        "generation 1's worker, started at the dispatch, read the next query"
-    );
-    drop(refusal);
-    outpost.outpost.shutdown();
-    app.quit();
-}
-
 /// A registration on `scope` for name changes, sending each changed name
 /// it hears.
 fn name_changes(scope: Scope) -> (Registration, mpsc::Receiver<Option<String>>) {
@@ -329,10 +293,6 @@ fn main() {
         (
             "a_first_worker_that_cannot_start_answers_its_program_and_starts_with_the_next",
             a_first_worker_that_cannot_start_answers_its_program_and_starts_with_the_next,
-        ),
-        (
-            "a_replacement_worker_that_cannot_start_answers_the_next_program",
-            a_replacement_worker_that_cannot_start_answers_the_next_program,
         ),
         (
             "a_group_a_move_failed_to_remove_is_removed_at_close",

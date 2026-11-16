@@ -5,7 +5,7 @@
 //! ancestry cache ([`ancestry_cache`]), a window's handle that is never 0 ([`Window`]), the
 //! kept verdicts on a window's provider ([`verdicts`]), NVDA's limit on a
 //! thread's events ([`NewestPerThread`]), and
-//! the constants both readers wait and judge by. A
+//! the console window's class. A
 //! rule both apply is defined here once, since the two readers' crates may
 //! not depend on each other and no test could tie two copies (decision
 //! D14, "Where the rules run"). Pure: no Windows dependency, no call and
@@ -49,12 +49,9 @@
     )
 )]
 
-use std::time::Duration;
-
 pub mod acceptance;
 pub mod ancestry_cache;
 pub mod class;
-pub mod in_flight;
 mod newest_per_thread;
 pub mod verdicts;
 mod window;
@@ -66,17 +63,3 @@ pub use window::Window;
 /// console host, the process of the window's thread, while
 /// `GetWindowThreadProcessId` names the console's client as its owner.
 pub const CONSOLE_WINDOW_CLASS: &str = "ConsoleWindowClass";
-
-/// How long a slow call into an application is waited for before it is
-/// abandoned because the user has moved on to a window of the same
-/// application on another UI thread: NVDA's `MIN_CORE_ALIVE_TIMEOUT`,
-/// after which NVDA cancels a slow call once the foreground has changed.
-/// One application can own windows on several threads (File Explorer's
-/// folder windows, the taskbar, and the Alt+Tab switcher), and those must
-/// not wait behind a slow window the user has left. It also sets when work
-/// in flight is judged hung, by the same question. An outpost's reducer
-/// judges its programs by it (`books/dev/src/reference/adr/0001-focus.md`, "The listener's checks,
-/// ported from NVDA's focus handler"), and the focus listener's reading threads their reads, each
-/// judged by `verbatim_win32::window::is_another_thread_of_its_application`
-/// against the window with the keyboard focus.
-pub const MOVED_ON_GRACE: Duration = Duration::from_millis(500);

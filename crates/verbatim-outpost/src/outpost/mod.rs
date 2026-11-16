@@ -65,7 +65,7 @@ use std::sync::{Arc, OnceLock};
 
 use lock::{Lock, LockGuard};
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use windows::Win32::UI::Accessibility::{
     IUIAutomationTextRange, UIA_RangeValueValuePropertyId, UIA_Text_TextChangedEventId,
@@ -165,17 +165,6 @@ impl ApplicationNames {
     }
 }
 
-/// The abandoned workers that have not returned, as one value, so that a
-/// pong counts each once: written together when a worker is parked or
-/// returns, read once per ping.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-struct Parked {
-    /// Those not parked on a window seen hung.
-    other: usize,
-    /// Those parked on a window seen hung: their program's hang mark.
-    on_hung: usize,
-}
-
 /// What the outpost's threads share.
 pub(crate) struct Context {
     /// The application, set once ([`Outpost::assign`]); 0 until then, a
@@ -195,7 +184,7 @@ pub(crate) struct Context {
     epoch: Instant,
     /// The abandoned workers that have not yet returned, as the pong
     /// reports them. The lock is held only to assign or copy the value.
-    parked: Lock<Parked>,
+    parked: Lock<usize>,
     /// The reducer's thread, which returns every worker thread started.
     shell: Lock<Option<JoinHandle<Vec<JoinHandle<()>>>>>,
     /// Every application object the outpost keeps, and the identity it
@@ -395,11 +384,6 @@ impl<'a> RequestContext<'a> {
         &self.nodes
     }
 
-    /// The program's request.
-    fn request(&self) -> reducer::Request {
-        self.program().request
-    }
-
     /// The program's worker's charge.
     fn charge(&self) -> &Charge {
         &self.program().charge
@@ -499,9 +483,7 @@ impl<'a> RequestContext<'a> {
     /// request is live. Returns what was done.
     fn commit(&self, effects: Effects) -> Committed {
         let program = self.program();
-        let mut effects = self.program_text.borrow_mut().seal(effects);
-        // Each commit names the program's window and what it found there.
-        effects.found = program.charge.found(program.request);
+        let effects = self.program_text.borrow_mut().seal(effects);
         if program.charge.is_dead() {
             drop(effects);
             return Committed::Refused;
@@ -603,10 +585,10 @@ impl Context {
 
     /// The answer to a ping.
     fn pong(&self) -> Urgent {
-        let parked = *self.parked.lock();
         Urgent::Pong {
-            parked_count: parked.other,
-            parked_on_hung: parked.on_hung,
+            parked_count: *self.parked.lock(),
+            // The outpost judges no hang.
+            parked_on_hung: 0,
         }
     }
 
@@ -1110,7 +1092,7 @@ impl Outpost {
             outbound,
             mailbox: Mailbox::default(),
             epoch: Instant::now(),
-            parked: Lock::new(Parked::default()),
+            parked: Lock::new(0),
             shell: Lock::new(None),
             store: store::Store::new(),
             arbitrator: Lock::new(Arbitrator::new(&[])),
@@ -1395,17 +1377,6 @@ impl Outpost {
     /// decides when a walk's time is up, however long its calls take.
     pub fn set_clock(&self, clock: verbatim_process::clock::Clock) {
         self.context.arbitrator().set_clock(clock);
-    }
-
-    /// Gives the programs dispatched from now on `deadline` in place of
-    /// the deadline for handling an event, a focus or a query
-    /// (`verbatim_outpost_logic::HANDLING_DEADLINE`, 11 seconds), for a
-    /// test that waits out a worker's abandonment at it. Verbatim never
-    /// calls it.
-    pub fn set_handling_deadline(&self, deadline: Duration) {
-        self.context
-            .mailbox
-            .post(Posted::HandlingDeadline(deadline));
     }
 
     /// Stamps the observation of every event the outpost's own hook and

@@ -57,20 +57,6 @@ fn explored(test: &str) -> (Config, String) {
 
 #[test]
 #[ignore = "exploration: run by the nightly workflow with its own seed (books/dev/src/reference/testing.md, Exploration tests)"]
-fn explore_reducer() {
-    let (config, again) = explored("explore_reducer");
-    let _ = super::reducer::run_generated(config, &again);
-}
-
-#[test]
-#[ignore = "exploration: run by the nightly workflow with its own seed (books/dev/src/reference/testing.md, Exploration tests)"]
-fn explore_caret_lease() {
-    let (config, again) = explored("explore_caret_lease");
-    let _ = super::caret_lease::run_generated(config, &again);
-}
-
-#[test]
-#[ignore = "exploration: run by the nightly workflow with its own seed (books/dev/src/reference/testing.md, Exploration tests)"]
 fn explore_intake() {
     let (config, again) = explored("explore_intake");
     let _ = super::intake_order::run_generated(config, &again);

@@ -145,8 +145,7 @@ Public API:
   `line_start`, `line_length`, `line_count`, `text_length`, `line_text`,
   `text_range`, `find_word_break`, `position_of` (screen coordinates), and
   `is_password`, each an `EditResult` whose `EditError` is `Gone` when the
-  window no longer exists, `NotResponding` when it is hung or ghosted,
-  `Abandoned` when the thread's call gate refused the message
+  window no longer exists, `Abandoned` when the thread's call gate refused the message
   (`verbatim_win32::calls`), never a fact about the control, and `Failed`
   otherwise. Offsets are the
   control's UTF-16 code units. The line messages' answers are read as
@@ -472,14 +471,8 @@ by Core on entering the window: one acquisition; `progress`, an
   bidirectional formatting characters (`verbatim_text::strip_bidi_controls`),
   as NVDA strips the direction marks from list view items and the clock.
 - Window messages (`window::send_message`): every message this crate sends
-  to an application, the list view's, tree view's and edit control's.
-  The window's readability is tested first, by local calls
-  (`verbatim_win32::window::readability`): a hung or ghosted window fails
-  at once, unsent, as NVDA's `SMTO_ABORTIFHUNG` refuses it, and a
-  destroyed one is gone. A message from `WM_APP` to `0xBFFF`, which NVDA
-  exempts from that flag, is sent untested (`refused_when_hung`); none of
-  the crate's messages is one, which a unit test checks for every message
-  it sends. A message carrying the
+  to an application, the list view's, tree view's and edit control's,
+  whatever the window's state: Core judges a hang. A message carrying the
   address of a buffer in the target's memory is sent with no check that
   the window is still in the buffer's process: a window handle carries a
   16-bit reuse counter, so a handle's value recurs only after about
@@ -488,8 +481,8 @@ by Core on entering the window: one acquisition; `progress`, an
   no time limit of its own, the largest that `SendMessageTimeoutW` waits,
   `i32::MAX` milliseconds (it takes a larger one as passed at once),
   without `SMTO_ABORTIFHUNG`: only a send with no time limit tells when its
-  message was answered, so its program's deadline is its bound
-  (`books/dev/src/reference/crates/verbatim-model.md`, "Time limits"). A
+  message was answered, and Core's due time for its request is its bound.
+  A
   failed send is gone when the window no longer exists, as it does once
   its thread ends, which `SMTO_ERRORONEXIT` fails the send for. Under the
   `faults` feature each send reaches the observation point
@@ -499,10 +492,7 @@ by Core on entering the window: one acquisition; `progress`, an
   thread like `verbatim-uia`'s: `calls::count(kind)`, which fails with
   `CallError::Abandoned`, making and counting no call, once the thread's
   call gate's worker is abandoned (`verbatim_win32::calls`), and
-  `calls::take()`. A window message's readability test goes through the
-  gate too (`verbatim_win32::calls::message_readability`): an outpost's
-  worker tests it with the outpost's reader, which names the window hung
-  in the worker's charge.
+  `calls::take()`.
   `count`, and the making of an object's agile reference, call the
   debug-build lock check (`verbatim_win32::held_locks::check`), which
   fails when the thread holds one of the outpost's locks.

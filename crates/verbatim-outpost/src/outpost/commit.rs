@@ -241,9 +241,6 @@ pub(super) struct Effects {
     /// text facts' changes, which it applied to its own copies as it made
     /// them, with the ranges they name, and its patterns and support.
     pub(super) text: Vec<TextWrite>,
-    /// The window the program found hung, from its charge, set as the
-    /// commit is posted (`RequestContext::commit`).
-    pub(super) found: Option<verbatim_reader_rules::Window>,
     /// The foreground window whose element the program found, and the
     /// element, kept under a token by the shell.
     pub(super) bar_found: Option<(isize, Agile<Kept>)>,
@@ -267,7 +264,6 @@ impl Effects {
             noted_caret: self.noted_caret,
             replaced: self.stale.as_ref().map(|stale| stale.node),
             text: Vec::new(),
-            found: self.found,
             bar_found: None,
         }
     }
@@ -284,7 +280,6 @@ impl Effects {
             caret_read: self.caret_read,
             mark: self.mark,
             states: self.states,
-            found: self.found,
             noted_caret: self.noted_caret,
             replaced: self.stale.as_ref().map(|stale| stale.node),
             text: Vec::new(),

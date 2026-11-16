@@ -1089,58 +1089,6 @@ fn a_focus_whose_walk_was_not_cut_is_not_read_as_the_focused_element() {
 }
 
 /// An ancestor of the focus, whose element the outpost does not hold, is
-/// found by the focus's route; a walk down that route held past the
-/// query's deadline, as against a slow application, has not shown the
-/// element gone, so the query is abandoned rather than answered gone, and
-/// Core keeps its navigator there. The ancestor is "Inner group", four
-/// levels below mockapp's window; the walk is the classic one, which has
-/// no time budget of its own, and mockapp holds its first call until the
-/// query has been answered. The test shortens the deadline of the programs
-/// dispatched after the focus's to a second.
-fn a_route_walk_held_past_its_deadline_is_abandoned_rather_than_answered_gone() {
-    let title = common::unique_title("mockapp-route-held");
-    let mut app = common::spawn("ancestry.json", "uia", &title);
-    let client = Client::new(common::find_window(&title));
-    let mut outpost = OutpostUnderTest::with_options(
-        &app,
-        OutpostOptions {
-            remote_operations: false,
-        },
-    );
-
-    app.send("set-focus notes");
-    let reported = outpost.uia_focus(&client.focused());
-    let group = reported
-        .ancestors
-        .iter()
-        .find(|ancestor| ancestor.name.as_deref() == Some("Inner group"))
-        .expect("the focus's chain has the inner group")
-        .clone();
-    outpost
-        .outpost
-        .set_handling_deadline(Duration::from_secs(1));
-    app.hold();
-    let request_id = outpost.ask(Query::Navigate {
-        node_id: group.id,
-        kind: QueryKind::FirstChild,
-    });
-    app.held();
-    match outpost.next() {
-        OutpostToCore::Reply {
-            request_id: answered,
-            outcome,
-            ..
-        } if answered == request_id => assert_eq!(outcome, QueryOutcome::Abandoned),
-        other => panic!("the outpost said {other:?}, not the step's answer"),
-    }
-    app.release();
-    outpost.settled();
-
-    drop(outpost);
-    app.quit();
-}
-
-/// An ancestor of the focus, whose element the outpost does not hold, is
 /// answered gone when the walk down the focus's route shows it gone: once
 /// mockapp has disconnected "Inner group", four levels below its window,
 /// a call on the element fails as on one that is gone. The walk is the
@@ -4550,10 +4498,6 @@ fn main() {
         (
             "a_focus_whose_walk_was_not_cut_is_not_read_as_the_focused_element",
             a_focus_whose_walk_was_not_cut_is_not_read_as_the_focused_element,
-        ),
-        (
-            "a_route_walk_held_past_its_deadline_is_abandoned_rather_than_answered_gone",
-            a_route_walk_held_past_its_deadline_is_abandoned_rather_than_answered_gone,
         ),
         (
             "a_route_walk_that_finds_its_element_gone_answers_gone",

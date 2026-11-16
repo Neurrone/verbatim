@@ -24,7 +24,7 @@ use std::sync::mpsc;
 
 use super::lock::{Lock, LockGuard};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use verbatim_model::NoteRequest;
 use verbatim_model::TraceId;
@@ -89,8 +89,6 @@ pub(super) enum Posted {
     },
     /// An abandoned worker of this generation returned from its call.
     Returned(u64),
-    /// A test shortens the deadline for handling an entry.
-    HandlingDeadline(Duration),
     /// Core's request.
     Ask(Box<verbatim_model::request::Ask>),
     /// Core cancels a request.
@@ -153,7 +151,6 @@ impl Mailbox {
                     | Posted::Cancel(_)
                     | Posted::Front(_)
                     | Posted::KeyNote(_)
-                    | Posted::HandlingDeadline(_)
             )
         {
             return;
@@ -269,12 +266,10 @@ pub(super) struct Shell {
     /// The generation in charge, and the threads of every worker started.
     generations: HashMap<u64, Generation>,
     threads: Vec<thread::JoinHandle<()>>,
-    /// The abandoned workers that have not returned, by generation, with
-    /// whether each is parked on a window seen hung, its program's hang
-    /// mark: one
+    /// The abandoned workers that have not returned, by generation: one
     /// more as the shell carries out an abandonment, one fewer as one
     /// returns.
-    parked: HashMap<u64, bool>,
+    parked: HashSet<u64>,
     closing: bool,
     /// Whether a worker creates its UIA client at once, as the first one
     /// was started: a worker started at a dispatch, its generation's start
@@ -468,7 +463,7 @@ impl Shell {
             garbage: Garbage::default(),
             generations: HashMap::new(),
             threads: Vec::new(),
-            parked: HashMap::new(),
+            parked: HashSet::new(),
             closing: false,
             warm,
         };
@@ -642,7 +637,6 @@ impl Shell {
                 );
                 return;
             }
-            Posted::HandlingDeadline(deadline) => Input::HandlingDeadline(deadline),
             Posted::Close => {
                 self.closing = true;
                 self.context.mailbox.close();
@@ -709,27 +703,6 @@ impl Shell {
                 acknowledged,
                 live,
             } => return vec![self.release(&nodes, &anchors, acknowledged, &live)],
-            Effect::AskJudge { request, window } => return self.judge(request, window),
-            Effect::CheckFront => return self.check_front().into_iter().collect(),
-            Effect::JudgeTold { window, waiting } => {
-                return vec![Input::ToldJudged {
-                    window,
-                    waiting,
-                    hung: self.context.readability(window.get()).is_hung(),
-                }];
-            }
-            Effect::CheckHung { window } => {
-                return self
-                    .context
-                    .readability(window.get())
-                    .is_hung()
-                    .then_some(Input::HangSeen {
-                        window,
-                        request: None,
-                    })
-                    .into_iter()
-                    .collect();
-            }
             Effect::Subscribe(subscription) => self.subscribe(&subscription),
             Effect::Unfollow(tokens) => {
                 for token in tokens {
@@ -750,17 +723,11 @@ impl Shell {
                         .extend(self.context.store.take_parked(key));
                 }
             }
-            Effect::Abandon {
-                dead,
-                replacement,
-                reason,
-                on_hung,
-            } => {
-                self.parked.insert(dead, on_hung);
+            Effect::Abandon { dead, replacement } => {
+                self.parked.insert(dead);
                 tracing::warn!(
                     abandoned = self.parked.len(),
-                    reason,
-                    "the worker is abandoned and replaced"
+                    "Core cancelled its request as the foreground moved away: the worker is abandoned and replaced"
                 );
                 if let Some(generation) = self.generations.remove(&dead) {
                     generation.charge.abandon();
@@ -786,75 +753,9 @@ impl Shell {
         Vec::new()
     }
 
-    /// The pong's counts of the abandoned workers that have not returned,
-    /// written together.
+    /// The pong's count of the abandoned workers that have not returned.
     fn count_parked(&self) {
-        let on_hung = self.parked.values().filter(|&&on_hung| on_hung).count();
-        let other = self.parked.len().saturating_sub(on_hung);
-        *self.context.parked.lock() = super::Parked { other, on_hung };
-    }
-
-    /// Checks `request`'s program by `window`, or by the window its worker
-    /// named in its charge: whether it is hung or ghosted, by the outpost's
-    /// reader, which is told as a hang seen, and whether the user has left
-    /// it for another thread of its application, the window with the
-    /// keyboard focus by the outpost's reader
-    /// ([`Outpost::set_focus_window_reader`](super::Outpost::set_focus_window_reader)),
-    /// which abandons it. Local calls, the charge's lock and the focus
-    /// window reader's lock. With no window, the program stays.
-    fn judge(&self, request: Request, window: Option<verbatim_reader_rules::Window>) -> Vec<Input> {
-        let window = window.or_else(|| {
-            self.generations
-                .get(&request.generation)
-                .and_then(|generation| generation.charge.named(request))
-        });
-        let Some(window) = window else {
-            return vec![Input::Judged {
-                request,
-                moved_on: false,
-            }];
-        };
-        let hang = self
-            .context
-            .readability(window.get())
-            .is_hung()
-            .then_some(Input::HangSeen {
-                window,
-                request: Some(request),
-            });
-        let moved_on = self.context.focus_window().is_some_and(|front| {
-            verbatim_win32::window::is_another_thread_of_its_application(window.get(), front)
-        });
-        hang.into_iter()
-            .chain([Input::Judged { request, moved_on }])
-            .collect()
-    }
-
-    /// Checks the window in front while a listener read's marker waits: the
-    /// foreground window, by the outpost's reader
-    /// ([`Outpost::set_foreground_reader`](super::Outpost::set_foreground_reader)),
-    /// a ghost mapped to the hung window it stands in for, since the
-    /// ghost's own process is the desktop window manager's, and, when the
-    /// outpost's application serves that window, its readability: a hang
-    /// seen when it is hung or ghosted, readable when it can be read, and
-    /// nothing for another application's window or one gone. Local calls
-    /// only, never into the application.
-    fn check_front(&self) -> Option<Input> {
-        let front = self.context.foreground_window();
-        let window = verbatim_win32::window::hung_window_from_ghost(front).unwrap_or(front);
-        if !super::read::serves(&self.context, window) {
-            return None;
-        }
-        let window = verbatim_reader_rules::Window::new(window)?;
-        match self.context.readability(window.get()) {
-            verbatim_win32::window::Readability::Readable => Some(Input::FrontReadable { window }),
-            verbatim_win32::window::Readability::Gone => None,
-            verbatim_win32::window::Readability::Ghosted
-            | verbatim_win32::window::Readability::Hung => Some(Input::HangSeen {
-                window,
-                request: None,
-            }),
-        }
+        *self.context.parked.lock() = self.parked.len();
     }
 
     /// Checks, in debug builds, that the shell's tables match the
@@ -1180,7 +1081,7 @@ mod tests {
             garbage: Garbage::default(),
             generations: HashMap::new(),
             threads: Vec::new(),
-            parked: HashMap::new(),
+            parked: HashSet::new(),
             closing: false,
             warm: false,
         }
@@ -1196,76 +1097,15 @@ mod tests {
         }
     }
 
-    /// The shell answers a program's check at once, as the reducer's next
-    /// inputs, before it returns to its mailbox: asked of a focus read
-    /// whose window its reader answers hung, it answers that the hang was
-    /// seen, which sets the program's hang mark, so the program abandoned
-    /// at its deadline is counted parked on a hung window, its replacement
-    /// started and its query answered.
-    #[test]
-    fn an_ask_is_answered_before_the_shell_takes_another_message() {
-        let mut shell = shell();
-        shell.take(Posted::Entry {
-            entry: Entry::own(
-                Item::Query {
-                    request_id: RequestId::shell(1),
-                    query: Query::ReadFocus {
-                        purpose: verbatim_model::protocol::FocusPurpose::Plain,
-                    },
-                },
-                TraceId::from_raw(1),
-                1,
-            ),
-            source: Source::Other,
-        });
-        let request = Request {
-            generation: 0,
-            number: 1,
-        };
-        assert!(
-            shell.reducer.accepts(request),
-            "the query's program in flight"
-        );
-        assert_eq!(shell.tokens.len(), 1);
-        *shell.context.window_readability.lock() =
-            Arc::new(|_| verbatim_win32::window::Readability::Hung);
-        shell.apply(vec![Effect::AskJudge {
-            request,
-            window: verbatim_reader_rules::Window::new(5),
-        }]);
-        assert!(shell.reducer.accepts(request), "a hang abandons nothing");
-        let past = Now {
-            at: shell.context.epoch.elapsed() + std::time::Duration::from_secs(60),
-            ..shell.now()
-        };
-        let effects = shell.reducer.tick(past);
-        shell.apply(effects);
-        assert_eq!(
-            shell.parked,
-            HashMap::from([(0, true)]),
-            "parked on a hung window"
-        );
-        assert!(!shell.reducer.accepts(request), "abandoned at its deadline");
-        assert_eq!(shell.reducer.generation(), 1);
-        assert!(shell.tokens.is_empty(), "its query answered");
-        assert!(
-            shell.generations.contains_key(&1),
-            "its replacement started"
-        );
-        end_workers(&mut shell);
-    }
-
-    /// A worker abandoned on a window seen hung and one abandoned otherwise
-    /// are each counted once in a pong, in their own count, and a worker
-    /// that returns leaves its count.
+    /// Each abandoned worker is counted once in a pong, none of them on a
+    /// hung window, since the outpost judges no hang, and a worker that
+    /// returns leaves the count.
     #[test]
     fn each_parked_worker_is_counted_once_in_a_pong() {
         let mut shell = shell();
-        let abandon = |dead, on_hung| Effect::Abandon {
+        let abandon = |dead| Effect::Abandon {
             dead,
             replacement: dead + 1,
-            reason: "a test's abandonment",
-            on_hung,
         };
         let counts = |shell: &Shell| match shell.context.pong() {
             Urgent::Pong {
@@ -1275,12 +1115,12 @@ mod tests {
             other => panic!("not the ping's pong: {other:?}"),
         };
         assert_eq!(counts(&shell), (0, 0));
-        shell.apply(vec![abandon(0, true)]);
-        assert_eq!(counts(&shell), (0, 1), "the one on a hung window");
-        shell.apply(vec![abandon(1, false)]);
-        assert_eq!(counts(&shell), (1, 1), "one more, not on a hung window");
+        shell.apply(vec![abandon(0)]);
+        assert_eq!(counts(&shell), (1, 0));
+        shell.apply(vec![abandon(1)]);
+        assert_eq!(counts(&shell), (2, 0), "one more");
         shell.take(Posted::Returned(0));
-        assert_eq!(counts(&shell), (1, 0), "the one on a hung window returned");
+        assert_eq!(counts(&shell), (1, 0), "one returned");
         end_workers(&mut shell);
     }
 }

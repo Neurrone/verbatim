@@ -8,30 +8,22 @@
 //!
 //! It holds the intake's order ([`intake`]), the reports Core may hold ([`held`]), the follow state ([`follow`]),
 //! the hand-over's hold ([`hold`]), the arbitrator's verdicts
-//! ([`Verdicts`]), the record of hung windows, the program in flight with the worker generation in
-//! charge, its deadline and its moved-on rule, kept by the work in flight
-//! both readers share ([`verbatim_reader_rules::in_flight`]), with its
-//! hang mark beside it, the queries not yet answered, and the idle
-//! barrier's round.
+//! ([`Verdicts`]), Core's requests ([`waiting`]), the program in flight
+//! with the worker generation in charge ([`charge`]), the queries not yet
+//! answered, and the idle barrier's round.
 //! Programs, run by a worker on copies ([`Facts`]), make every call into
 //! the application; their commits come back as inputs, and the reducer
 //! applies a commit only while its request is live: the program in flight
 //! of the generation in charge.
 //!
-//! A hang is a notice, never a reason to abandon: the shell's check of the
-//! program in flight's window, every half second from its start, and of
-//! the window in front while a listener read's marker has waited half a
-//! second, give [`Input::HangSeen`], which tells Core once per hang
-//! ([`OutpostToCore::NotResponding`]) and keeps the window told ([`Hang`]).
-//! A program is abandoned only at its deadline or once the user moved on.
+//! A program runs until it ends, with no deadline: Core judges a hang and
+//! bounds its requests by their due times, and a worker is abandoned only
+//! when Core cancels the request it runs because the foreground moved away
+//! (`docs/design/readers-tell-core-asks-build1.md`, Table 14).
 //!
 //! What it never does: make a call of any kind, wait, read a clock, or
-//! keep an object. What it needs of Windows' own state it asks for by an
-//! effect, which the shell answers with an input before it takes another
-//! message ([`Effect::AskJudge`], [`Effect::CheckFront`],
-//! [`Effect::JudgeTold`], [`Effect::CheckHung`]). Time is the
-//! shell's: a [`Now`] given with each input, and [`Reducer::next_timer`]
-//! for the shell's timed wait.
+//! keep an object. Time is the shell's: a [`Now`] given with each input,
+//! and [`Reducer::next_timer`] for the shell's timed wait.
 
 // Non-test code never panics, overflows or truncates silently: arithmetic
 // is checked or saturating, indexing goes through `get`, and casts through
@@ -70,6 +62,7 @@
     )
 )]
 
+mod charge;
 mod entry;
 mod follow;
 mod held;
@@ -84,6 +77,7 @@ use std::collections::{BTreeSet, VecDeque};
 use std::sync::Arc;
 use std::time::Duration;
 
+use self::charge::{Abandoned, InCharge};
 use verbatim_model::protocol::{
     DeliveredFact, EventTiming, FrontWindow, OutpostToCore, Query, QueryOutcome, QueryResult,
     RequestId,
@@ -92,9 +86,8 @@ use verbatim_model::{
     CallCounts, FocusGroup, FocusText, KeyFetch, NodeId, NormalizedEvent, ReadPurpose, TextOp,
     TraceId,
 };
-use verbatim_reader_rules::Window;
-use verbatim_reader_rules::in_flight::{Abandoned, Ask, Decision, InFlight, RuleWindow};
 
+pub use self::charge::Request;
 pub use self::entry::{
     Asker, Entry, Front, Item, Source, UiaEvent, UiaKind, WinKind, is_state_property,
 };
@@ -112,23 +105,6 @@ pub use self::text::{
 };
 pub use self::waiting::{Asks, Cancelled};
 pub use verbatim_reader_rules::verdicts::{Probe, Probed, VerdictChange, Verdicts};
-
-/// The deadline of every program but a focus read and a listener read's
-/// report: one UIA request and a margin
-/// ([`verbatim_model::HANDLING_DEADLINE`]), one constant for the outpost
-/// and Core.
-pub use verbatim_model::HANDLING_DEADLINE;
-
-/// The deadline of a focus read ([`Query::ReadFocus`]) and of a listener
-/// read's report ([`verbatim_model::FOCUS_READ_DEADLINE`]).
-pub use verbatim_model::FOCUS_READ_DEADLINE;
-
-/// One request of one worker generation: what a program's commits and the
-/// store's mint tags name it by.
-pub use verbatim_reader_rules::in_flight::Request;
-
-/// Why a program in flight was abandoned.
-pub use verbatim_reader_rules::in_flight::Reason;
 
 /// The time an input comes at: the shell's monotonic clock, from the
 /// outpost's start, and the observation clock events are stamped with, in
@@ -255,10 +231,6 @@ pub enum Finish {
 pub struct Program {
     /// The request it runs as.
     pub request: Request,
-    /// The window its entry names, which its worker names in its charge at
-    /// once; `None` for a program whose worker names the window it calls
-    /// into, or that is never judged by one.
-    pub window: Option<Window>,
     /// Its copies of the reducer's facts.
     pub facts: Facts,
     /// What it does.
@@ -320,18 +292,12 @@ pub enum Effect {
     /// which no text fact names any more, for a worker to drop.
     ForgetRanges(Vec<(u64, RangeKey)>),
     /// Mark the generation dead in its charge and start `replacement`: the
-    /// shell counts the abandoned workers that have not returned, those
-    /// parked on a window seen hung apart from the rest.
+    /// shell counts the abandoned workers that have not returned.
     Abandon {
         /// The generation marked dead.
         dead: u64,
         /// The generation started in its place.
         replacement: u64,
-        /// Why the generation was abandoned, for the log.
-        reason: &'static str,
-        /// Whether it is parked on a hung window: its program's hang mark,
-        /// set by an [`Input::HangSeen`] of its request.
-        on_hung: bool,
     },
     /// The push-time copy of the facts' marks, given after a transition
     /// that changed them, ahead of the transition's other effects so that
@@ -348,44 +314,6 @@ pub enum Effect {
     /// A verdict of UIA for a window's lifetime was recorded: the event
     /// thread may narrow its hook (the outpost's `narrowing`).
     Narrow,
-    /// Check `request`'s program by its window, `window`, or, for `None`,
-    /// the window its worker named in its charge for that request, if any:
-    /// whether the window is hung or ghosted, by the outpost's readability
-    /// reader, answered by [`Input::HangSeen`] when it is, then whether
-    /// the user has left it for another thread of its application,
-    /// answered by [`Input::Judged`], both before the shell takes another
-    /// message.
-    AskJudge {
-        /// The program in flight asked about.
-        request: Request,
-        /// Its window, `None` for one its worker names.
-        window: Option<Window>,
-    },
-    /// Check the window in front while a listener read's marker has waited
-    /// past the grace: the foreground window, a ghost mapped to the window
-    /// it stands in for, and, when the outpost's application serves that
-    /// window, its readability, answered by [`Input::HangSeen`] with no
-    /// request when it is hung or ghosted and by [`Input::FrontReadable`]
-    /// when it can be read, before the shell takes another message. Local
-    /// calls only; it judges the hang, never the read.
-    CheckFront,
-    /// Judge the told window `window` by the outpost's one judge of whether
-    /// a window is hung, a local call, answered by [`Input::ToldJudged`]
-    /// before the shell takes another message.
-    JudgeTold {
-        /// The window judged.
-        window: Window,
-        /// The window found hung while `window` was told, which is told in
-        /// its place if `window` is not hung.
-        waiting: Option<Window>,
-    },
-    /// Confirm that a window a commit named hung is hung now, by the
-    /// outpost's one judge, a local call, answered by [`Input::HangSeen`]
-    /// with no request when it is, before the shell takes another message.
-    CheckHung {
-        /// The window the commit named.
-        window: Window,
-    },
 }
 
 /// Inputs, in mailbox order.
@@ -464,49 +392,6 @@ pub enum Input {
         /// Whether there are objects to drop.
         objects: bool,
     },
-    /// A test that waits out a program's deadline shortens it: entries
-    /// dispatched from now on that would have [`HANDLING_DEADLINE`] have
-    /// this one. Verbatim never sends it.
-    HandlingDeadline(Duration),
-    /// The shell's answer to [`Effect::AskJudge`]: whether the user has
-    /// moved on from the program's window, which abandons it; never while
-    /// no window is named.
-    Judged {
-        /// The program asked about.
-        request: Request,
-        /// Whether the user moved on.
-        moved_on: bool,
-    },
-    /// A window the shell found hung or ghosted: by the check of program
-    /// `request`'s window ([`Effect::AskJudge`]), or, with no request, in
-    /// front while a marker waits ([`Effect::CheckFront`]) or named hung by
-    /// a commit ([`Effect::CheckHung`]). It is told as [`Hang`] says, and
-    /// sets the program's hang mark when `request` is the program in
-    /// flight; nothing is abandoned.
-    HangSeen {
-        /// The window found hung.
-        window: Window,
-        /// The program whose window it is, when its check found it.
-        request: Option<Request>,
-    },
-    /// The shell's answer to [`Effect::CheckFront`] for a window of the
-    /// outpost's application in front that can be read: if it is the
-    /// window told, its hang has ended.
-    FrontReadable {
-        /// The window in front.
-        window: Window,
-    },
-    /// The shell's answer to [`Effect::JudgeTold`], which brings back the
-    /// effect's two windows. An answer for a window no longer told changes
-    /// nothing.
-    ToldJudged {
-        /// The window judged.
-        window: Window,
-        /// The window waiting on the answer, if any.
-        waiting: Option<Window>,
-        /// Whether `window` is hung.
-        hung: bool,
-    },
     /// Core's request, queued for the worker ([`waiting`]).
     Ask(Box<verbatim_model::request::Ask>),
     /// Core cancels a request ([`waiting`]).
@@ -542,19 +427,6 @@ struct Current {
     /// the console poll, which may still read the terminal under the key's
     /// trace.
     deferred: bool,
-    /// Whether the user moving on from its window abandons it: not for a
-    /// query that is not about the focus, a tree dump or a shell item
-    /// query, which is bounded by its deadline alone, as NVDA's watchdog
-    /// judges a moved-on user against the focus object only
-    /// (`docs/nvda/main-loop-and-watchdog.md`). Its window is still checked
-    /// for a hang.
-    moved_on_abandons: bool,
-    /// Its hang mark: an [`Input::HangSeen`] of its request found its
-    /// window hung, so its worker, once abandoned, counts as parked on a
-    /// hung window ([`Effect::Abandon`]'s `on_hung`). [`Hang`] cannot tell
-    /// it at abandonment, since a program whose worker names its window has
-    /// no window to compare with the one told.
-    hang_mark: bool,
 }
 
 /// One try of a focus group, and what is left of it.
@@ -564,25 +436,6 @@ struct GroupTry {
     rank: u32,
     batch: u64,
     older: VecDeque<Entry>,
-}
-
-/// The outpost's record of hung windows: one value per outpost, ended with
-/// its generation. One hang is told per application, so a second window seen
-/// hung while the told window is still hung is the same hang; a later hang in
-/// another window, which a window still hung when the told window recovers
-/// is, is told again and replaces it (Dickson, 2026-11-07, 2026-11-08). A
-/// told window found not hung ends the hang, so its later freeze is a new
-/// hang (Dickson, 2026-11-09).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-enum Hang {
-    /// No hang is being told.
-    #[default]
-    None,
-    /// `window`'s hang was told to Core.
-    Told {
-        /// The window told.
-        window: Window,
-    },
 }
 
 /// The reducer.
@@ -595,7 +448,7 @@ pub struct Reducer {
     hold: hold::Hold,
     facts: Facts,
     /// The program in flight, and the worker generation in charge.
-    flight: InFlight<Current>,
+    flight: InCharge<Current>,
     /// The tries left of a focus group whose try was abandoned, to run
     /// before anything else.
     after: VecDeque<(Entry, Handling, Option<GroupTry>)>,
@@ -607,19 +460,11 @@ pub struct Reducer {
     idle_query: Option<u64>,
     /// How many focus groups have been tried.
     focus_groups: u64,
-    /// A test's deadline in place of [`HANDLING_DEADLINE`]
-    /// ([`Input::HandlingDeadline`]).
-    handling_deadline: Option<Duration>,
     /// Whether a release was asked for and its [`Input::Released`] has not
     /// come: nothing is dispatched until it has, so no program is given a
     /// node it frees.
     releasing: bool,
     stopping: bool,
-    /// The hang told to Core ([`OutpostToCore::NotResponding`], sent only
-    /// by this record), judged live while it lasts on each input that takes
-    /// an entry, applies a commit or starts a program. Nothing is told after
-    /// [`Input::Close`].
-    hang: Hang,
 }
 
 impl Reducer {
@@ -634,12 +479,6 @@ impl Reducer {
     #[must_use]
     pub fn facts(&self) -> &Facts {
         &self.facts
-    }
-
-    /// The deadline for handling an event, a focus or a focus-now query:
-    /// [`HANDLING_DEADLINE`], or a test's in its place.
-    fn handling_deadline(&self) -> Duration {
-        self.handling_deadline.unwrap_or(HANDLING_DEADLINE)
     }
 
     /// The window of the focus this outpost follows, if any.
@@ -686,21 +525,13 @@ impl Reducer {
         self.flight.accepts(request)
     }
 
-    /// When the shell is next to call [`tick`](Self::tick): what the
-    /// program in flight next has due (its deadline or its next check),
-    /// the front check of the first marker waiting for its read, and the
-    /// console poll's due time while no program is in flight, no release
-    /// is pending and the outpost is not stopping (only then is it acted
-    /// on), on the shell's clock.
+    /// When the shell is next to call [`tick`](Self::tick): the console
+    /// poll's due time while no program is in flight, no release is pending
+    /// and the outpost is not stopping (only then is it acted on), on the
+    /// shell's clock.
     #[must_use]
     pub fn next_timer(&self, now: Now) -> Option<Duration> {
         let mut times = Vec::new();
-        if !self.stopping {
-            if let Some(due) = self.flight.next_wake() {
-                times.push(Duration::from_micros(due));
-            }
-            times.extend(self.intake.front_due());
-        }
         if !self.busy()
             && !self.releasing
             && !self.stopping
@@ -717,20 +548,18 @@ impl Reducer {
     pub fn input(&mut self, input: Input, now: Now) -> Vec<Effect> {
         let before = self.observed();
         let mut effects = Vec::new();
-        let mut taken = false;
         match input {
             Input::Entry { entry, source } => {
-                taken = true;
                 self.entry(entry, source, now, &mut effects);
             }
             Input::Hooked => self.hold.hooked(),
             Input::WithoutListener => {
                 let held = self.hold.without_listener();
-                self.push_all(held, now, &mut effects);
+                self.push_all(held, &mut effects);
             }
             Input::ForwardingEnded(through) => {
                 if let Some(released) = self.hold.forwarding_ended(through) {
-                    self.push_all(released, now, &mut effects);
+                    self.push_all(released, &mut effects);
                 }
             }
             Input::Front(front) => {
@@ -754,7 +583,6 @@ impl Reducer {
             }
             Input::Commit { request, change } => {
                 if self.accepts(request) {
-                    taken = true;
                     self.commit(request, &change, now, &mut effects);
                 }
             }
@@ -769,39 +597,12 @@ impl Reducer {
                 anchors,
                 objects,
             } => self.released(&nodes, &anchors, objects, &mut effects),
-            Input::HandlingDeadline(deadline) => self.handling_deadline = Some(deadline),
-            Input::Judged { request, moved_on } => {
-                if !self.stopping {
-                    let abandons = self
-                        .current_of(request)
-                        .is_some_and(|current| current.moved_on_abandons);
-                    let decision = self
-                        .flight
-                        .judged(request, (moved_on && abandons).then_some(Reason::MovedOn));
-                    self.decided(decision, &mut effects);
-                }
-            }
-            Input::HangSeen { window, request } => {
-                if !self.stopping {
-                    if let Some(current) = request.and_then(|request| self.current_of(request)) {
-                        current.hang_mark = true;
-                    }
-                    self.hang_seen(window, &mut effects);
-                }
-            }
-            Input::FrontReadable { window } => self.hang_ended(window),
-            Input::ToldJudged {
-                window,
-                waiting,
-                hung,
-            } => self.told_judged(window, waiting, hung, &mut effects),
             Input::Ask(_) | Input::CancelAsk(_) | Input::Answered { .. } => {
                 self.asked(input, &mut effects);
             }
             Input::Close => {
                 self.stopping = true;
                 self.asks.close();
-                self.hang = Hang::None;
                 let unparked = self.intake.close();
                 if !unparked.is_empty() {
                     effects.push(Effect::Unpark(unparked));
@@ -810,7 +611,6 @@ impl Reducer {
         }
         self.pump(now, &mut effects);
         self.answer_idle(&mut effects);
-        self.judge_told(taken, &mut effects);
         self.changed(&before, &mut effects);
         effects
     }
@@ -819,16 +619,8 @@ impl Reducer {
     pub fn tick(&mut self, now: Now) -> Vec<Effect> {
         let before = self.observed();
         let mut effects = Vec::new();
-        if !self.stopping {
-            let decision = self.flight.tick(micros(now.at));
-            self.decided(decision, &mut effects);
-            if self.intake.front_check(now.at) {
-                effects.push(Effect::CheckFront);
-            }
-        }
         self.pump(now, &mut effects);
         self.answer_idle(&mut effects);
-        self.judge_told(false, &mut effects);
         self.changed(&before, &mut effects);
         effects
     }
@@ -862,9 +654,8 @@ impl Reducer {
                 effects.push(Effect::Send(Box::new(OutpostToCore::Answer(answer))));
             }
             Cancelled::Abandon(answer) => {
-                if let Some((request, _)) = self.flight.running() {
-                    let decision = self.flight.judged(request, Some(Reason::MovedOn));
-                    self.decided(decision, effects);
+                if let Some(abandoned) = self.flight.abandon() {
+                    self.abandoned(abandoned, effects);
                 }
                 effects.push(Effect::Send(Box::new(OutpostToCore::Answer(answer))));
             }
@@ -907,19 +698,18 @@ impl Reducer {
     /// lasts if it came from the hook, and pushed into the intake
     /// otherwise.
     fn entry(&mut self, entry: Entry, source: Source, now: Now, effects: &mut Vec<Effect>) {
-        self.destroy_seen(&entry.item);
         if self.key_arrived(&entry, now) {
             return;
         }
         match source {
             Source::Hook => {
                 if let Some(entry) = self.hold.hooked_copy(entry) {
-                    self.push(entry, now, effects);
+                    self.push(entry, effects);
                 }
             }
             Source::Listener => {
                 self.hold.listener_copy(&entry);
-                self.push(entry, now, effects);
+                self.push(entry, effects);
             }
             Source::Other => {
                 let ends_reads = matches!(
@@ -929,9 +719,9 @@ impl Reducer {
                         _
                     )
                 );
-                self.push(entry, now, effects);
+                self.push(entry, effects);
                 if ends_reads && let Some(released) = self.hold.reads_ended() {
-                    self.push_all(released, now, effects);
+                    self.push_all(released, effects);
                 }
             }
         }
@@ -976,37 +766,21 @@ impl Reducer {
         false
     }
 
-    /// A destroyed window answers nothing more: a hang told of it ends.
-    /// Applied as the destroy first reaches the reducer, from either
-    /// source, even as a hook copy the hand-over's hold keeps back; a second
-    /// copy changes nothing.
-    fn destroy_seen(&mut self, item: &Item) {
-        if let Item::Msaa {
-            kind: WinKind::Destroy,
-            hwnd,
-            ..
-        } = *item
-            && let Some(window) = Window::new(hwnd)
-        {
-            self.hang_ended(window);
-        }
-    }
-
     /// Pushes `entries` into the intake in order, as one batch.
-    fn push_all(&mut self, entries: Vec<Entry>, now: Now, effects: &mut Vec<Effect>) {
+    fn push_all(&mut self, entries: Vec<Entry>, effects: &mut Vec<Effect>) {
         for entry in entries {
-            self.push(entry, now, effects);
+            self.push(entry, effects);
         }
     }
 
     /// Pushes `entry` into the intake at `now`, recording a query.
-    fn push(&mut self, entry: Entry, now: Now, effects: &mut Vec<Effect>) {
+    fn push(&mut self, entry: Entry, effects: &mut Vec<Effect>) {
         if let Item::Query { request_id, .. } = entry.item
             && !self.stopping
         {
             self.queries.insert(request_id);
         }
-        let pushed = self.intake.push(entry, &self.facts.marks(), now.at);
+        let pushed = self.intake.push(entry, &self.facts.marks());
         if !pushed.unparked.is_empty() {
             effects.push(Effect::Unpark(pushed.unparked));
         }
@@ -1027,74 +801,6 @@ impl Reducer {
         effects.push(Effect::Send(Box::new(message)));
     }
 
-    /// `window` was found hung: told if no hang is, the same hang if it is
-    /// the window told, and otherwise a new one only if the told window is
-    /// found not hung.
-    fn hang_seen(&mut self, window: Window, effects: &mut Vec<Effect>) {
-        match self.hang {
-            Hang::None => self.tell_hang(window, effects),
-            Hang::Told { window: told } if told == window => {}
-            Hang::Told { window: told } => effects.push(Effect::JudgeTold {
-                window: told,
-                waiting: Some(window),
-            }),
-        }
-    }
-
-    /// Tells Core of `window`'s hang, which becomes the hang told.
-    fn tell_hang(&mut self, window: Window, effects: &mut Vec<Effect>) {
-        self.hang = Hang::Told { window };
-        self.send(
-            OutpostToCore::NotResponding {
-                window: window.get(),
-            },
-            effects,
-        );
-    }
-
-    /// A hang told of `window` has ended; one of another window has not.
-    fn hang_ended(&mut self, window: Window) {
-        if self.hang == (Hang::Told { window }) {
-            self.hang = Hang::None;
-        }
-    }
-
-    /// Asks once that the told window be judged, with nothing waiting on
-    /// the answer, on an input where an entry is `taken` from the mailbox, a
-    /// commit applied or a program started. A cut read's finish continues
-    /// the program already started, so it is not a program started.
-    fn judge_told(&self, taken: bool, effects: &mut Vec<Effect>) {
-        let started = effects.iter().any(
-            |effect| matches!(effect, Effect::Dispatch(program) if !matches!(program.work, Work::Finish { .. })),
-        );
-        if let Hang::Told { window } = self.hang
-            && (taken || started)
-        {
-            effects.push(Effect::JudgeTold {
-                window,
-                waiting: None,
-            });
-        }
-    }
-
-    /// The judgement of `window`, told when it was asked: not hung ends its
-    /// hang, and the window waiting, if any, is a new one.
-    fn told_judged(
-        &mut self,
-        window: Window,
-        waiting: Option<Window>,
-        hung: bool,
-        effects: &mut Vec<Effect>,
-    ) {
-        if hung || self.hang != (Hang::Told { window }) {
-            return;
-        }
-        match waiting {
-            Some(waiting) => self.tell_hang(waiting, effects),
-            None => self.hang = Hang::None,
-        }
-    }
-
     /// Applies the commit of `request`'s program: its report recorded for
     /// Core's judgement, then its messages sent, then the rest.
     fn commit(&mut self, request: Request, change: &Change, now: Now, effects: &mut Vec<Effect>) {
@@ -1112,15 +818,6 @@ impl Reducer {
                 }
             }
             self.send(message, effects);
-        }
-        // A window named hung is never taken at the commit's word: its call
-        // may have begun before a hang or a destroy, and failed after it.
-        // Asked before the told window's judgement, which ends the input,
-        // so an answer that replaces the told window comes first.
-        if let Some(window) = change.found
-            && !self.stopping
-        {
-            effects.push(Effect::CheckHung { window });
         }
         if let Some((node_id, trace, observed_at_us, timing)) = change.noted_caret {
             // The event's timing goes with it: its read is skipped only
@@ -1262,18 +959,6 @@ impl Reducer {
         self.to_drop |= objects;
     }
 
-    /// Does what the work in flight decided at `now`: asks the shell, or
-    /// carries out an abandonment.
-    fn decided(&mut self, decision: Decision<Current>, effects: &mut Vec<Effect>) {
-        match decision {
-            Decision::Nothing => {}
-            Decision::Ask(Ask::Judge { request, window }) => {
-                effects.push(Effect::AskJudge { request, window });
-            }
-            Decision::Abandon(abandoned) => self.abandoned(abandoned, effects),
-        }
-    }
-
     /// The worker in charge was abandoned: its replacement is started, and
     /// the program's query, the live re-read its entry answers, the owed
     /// work it attempted are answered.
@@ -1281,9 +966,7 @@ impl Reducer {
         let Abandoned {
             dead,
             replacement,
-            reason,
             item: current,
-            ..
         } = abandoned;
         self.facts.follow.bar_program_ended();
         if let Some(followed) = self.facts.follow.followed.as_mut()
@@ -1294,18 +977,7 @@ impl Reducer {
         {
             followed.owed = None;
         }
-        effects.push(Effect::Abandon {
-            dead,
-            replacement,
-            reason: match reason {
-                _ if current.asked.is_some() => {
-                    "Core cancelled its request as the foreground moved away"
-                }
-                Reason::Deadline => "a call passed its deadline",
-                Reason::MovedOn => "the user moved on from a slow window",
-            },
-            on_hung: current.hang_mark,
-        });
+        effects.push(Effect::Abandon { dead, replacement });
         if let Some((request_id, trace)) = current.running {
             self.send(reply(request_id, trace, QueryOutcome::Abandoned), effects);
         }
@@ -1405,7 +1077,6 @@ impl Reducer {
     pub fn shutdown_drop(&mut self) -> Program {
         Program {
             request: self.flight.next_request(),
-            window: None,
             facts: Facts::default(),
             work: Work::Drop,
         }
@@ -1418,13 +1089,7 @@ impl Reducer {
     fn pump(&mut self, now: Now, effects: &mut Vec<Effect>) {
         while !self.busy() && !self.stopping && !self.releasing {
             if let Some(ask) = self.asks.take_next() {
-                self.dispatch(
-                    Work::Ask(ask),
-                    (Duration::MAX, None, None),
-                    None,
-                    now,
-                    effects,
-                );
+                self.dispatch(Work::Ask(ask), None, None, effects);
                 continue;
             }
             let generation = self.flight.generation();
@@ -1441,34 +1106,20 @@ impl Reducer {
                     self.facts.follow.absorbed = None;
                 }
                 let node = followed.node;
-                self.dispatch(
-                    Work::Owed(OwedProgram { node, owed }),
-                    (self.handling_deadline(), None, None),
-                    None,
-                    now,
-                    effects,
-                );
+                self.dispatch(Work::Owed(OwedProgram { node, owed }), None, None, effects);
                 continue;
             }
             if let Some((entry, handling, group)) = self.after.pop_front() {
-                self.start_entry(entry, handling, group, now, effects);
+                self.start_entry(entry, handling, group, effects);
                 continue;
             }
             if let Some(window) = self.facts.follow.bar.due() {
                 self.facts.follow.bar = BarWatch::Finding { window };
-                let deadline = self.handling_deadline();
-                self.dispatch(
-                    Work::FindBar(window),
-                    (deadline, Window::new(window), None),
-                    None,
-                    now,
-                    effects,
-                );
+                self.dispatch(Work::FindBar(window), None, None, effects);
                 continue;
             }
             if std::mem::take(&mut self.to_drop) {
-                let deadline = self.handling_deadline();
-                self.dispatch(Work::Drop, (deadline, None, None), None, now, effects);
+                self.dispatch(Work::Drop, None, None, effects);
                 continue;
             }
             let Some((planned, batch)) = self.intake.next(&self.facts.marks()) else {
@@ -1483,13 +1134,7 @@ impl Reducer {
                 .then(|| Arc::make_mut(&mut self.facts.text).reach_poll(now.wall_us))
                 .flatten();
                 let Some(node) = due else { return };
-                self.dispatch(
-                    Work::NoteRead(NodeId::new(node)),
-                    (self.handling_deadline(), None, None),
-                    None,
-                    now,
-                    effects,
-                );
+                self.dispatch(Work::NoteRead(NodeId::new(node)), None, None, effects);
                 if let Some(current) = self.flight.item_mut() {
                     current.deferred = true;
                 }
@@ -1498,7 +1143,7 @@ impl Reducer {
             match planned {
                 Planned::Run(entry) => self.run(entry, batch, now, effects),
                 Planned::Menu(entry) => {
-                    self.dispatch_entry(entry, Handling::Menu, batch, None, now, effects);
+                    self.dispatch_entry(entry, Handling::Menu, batch, None, effects);
                 }
                 Planned::Focus(entries) => {
                     self.focus_groups = self.focus_groups.saturating_add(1);
@@ -1512,7 +1157,7 @@ impl Reducer {
                         batch,
                         older,
                     };
-                    self.start_entry(newest, Handling::Tried(0), Some(group), now, effects);
+                    self.start_entry(newest, Handling::Tried(0), Some(group), effects);
                 }
             }
         }
@@ -1524,7 +1169,6 @@ impl Reducer {
         entry: Entry,
         handling: Handling,
         group: Option<GroupTry>,
-        now: Now,
         effects: &mut Vec<Effect>,
     ) {
         let batch = group
@@ -1534,7 +1178,7 @@ impl Reducer {
             Some(group) => Handling::Tried(group.rank),
             None => handling,
         };
-        self.dispatch_entry(entry, handling, batch, group, now, effects);
+        self.dispatch_entry(entry, handling, batch, group, effects);
     }
 
     /// The number of the batch being handed out.
@@ -1609,7 +1253,7 @@ impl Reducer {
                 let outcome = QueryOutcome::Done(QueryResult::ShellItemPosition(none));
                 self.send(reply(request_id, entry.trace, outcome), effects);
             }
-            _ => self.dispatch_entry(entry, Handling::Run, batch, None, now, effects),
+            _ => self.dispatch_entry(entry, Handling::Run, batch, None, effects),
         }
     }
 
@@ -1629,11 +1273,9 @@ impl Reducer {
         handling: Handling,
         batch: u64,
         group: Option<GroupTry>,
-        now: Now,
         effects: &mut Vec<Effect>,
     ) {
-        let (deadline, running) = budget(&entry, now, self.handling_deadline());
-        let window = intake::window_of(&entry.item);
+        let running = query_of(&entry);
         // Anything that may end a held terminal's hold reads every update
         // observed after it begins.
         if clears_absorb(&entry.item) {
@@ -1650,19 +1292,17 @@ impl Reducer {
             batch,
             group: group_place,
         };
-        self.dispatch(work, (deadline, window, running), group, now, effects);
+        self.dispatch(work, running, group, effects);
     }
 
-    /// Dispatches `work` under `deadline`, concerning `window`, if any,
-    /// and answering `running`, as a try of `group` when it is one. Verbatim
-    /// moving the caret or selecting on a node clears its note, before its
-    /// copy is taken.
+    /// Dispatches `work`, answering `running`, as a try of `group` when it
+    /// is one. Verbatim moving the caret or selecting on a node clears its
+    /// note, before its copy is taken.
     fn dispatch(
         &mut self,
         work: Work,
-        (deadline, window, running): (Duration, Option<Window>, Option<(RequestId, TraceId)>),
+        running: Option<(RequestId, TraceId)>,
         group: Option<GroupTry>,
-        now: Now,
         effects: &mut Vec<Effect>,
     ) {
         if let Some(moved) = verbatims_caret_move(&work) {
@@ -1686,31 +1326,10 @@ impl Reducer {
             live_reread,
             group,
             deferred: false,
-            hang_mark: false,
-            moved_on_abandons: !is_query_off_the_focus(&work),
         };
-        // A program with no window at dispatch that calls into the
-        // application has its worker name the window it calls into, a tree
-        // dump its application's main window and a shell item query the
-        // taskbar's; a release's drop, which calls into many windows, is
-        // judged by its deadline alone, so no wake judges a window never
-        // named.
-        let rule = match (window, &work) {
-            (Some(window), _) => RuleWindow::Known(window),
-            // Core's request is bounded by Core alone: its due time and
-            // its cancel.
-            (_, Work::Ask(_)) | (None, Work::Drop | Work::FindBar(_)) => RuleWindow::Never,
-            (
-                None,
-                Work::Entry { .. } | Work::Owed(_) | Work::NoteRead(_) | Work::Finish { .. },
-            ) => RuleWindow::Named,
-        };
-        let request = self
-            .flight
-            .start(current, micros(deadline), rule, micros(now.at));
+        let request = self.flight.start(current);
         effects.push(Effect::Dispatch(Box::new(Program {
             request,
-            window,
             facts: self.facts.clone(),
             work,
         })));
@@ -1719,9 +1338,8 @@ impl Reducer {
     /// Dispatches the program that finishes `cut`, the caret read the
     /// program in flight cut at its value change check, before anything
     /// else and even while the outpost shuts down, as the read's program
-    /// would have gone on: handed on to a new request, it takes over that
-    /// program's deadline, its walk, its moved-on rule and the query it
-    /// answers. The check is decided here: every
+    /// would have gone on: handed on to a new request, it takes over the
+    /// query that program answers. The check is decided here: every
     /// value change the control raised before the read part's sync is
     /// ahead of its end in the mailbox, so among the entries not yet
     /// dispatched, in the intake or held.
@@ -1736,7 +1354,6 @@ impl Reducer {
         };
         effects.push(Effect::Dispatch(Box::new(Program {
             request,
-            window: Window::new(cut.edit),
             facts: self.facts.clone(),
             work: Work::Finish { cut, waiting },
         })));
@@ -1804,59 +1421,12 @@ fn owed_clears_absorb(owed: &Owed) -> bool {
     matches!(owed.work, OwedWork::FirstRead(_))
 }
 
-/// `duration` in microseconds, the work in flight's times.
-fn micros(duration: Duration) -> u64 {
-    u64::try_from(duration.as_micros()).unwrap_or(u64::MAX)
-}
-
-/// The deadline for an entry begun at `now`, and the query it answers, if
-/// it is one, `handling` being [`HANDLING_DEADLINE`] or a test's in its
-/// place: `handling` for every entry but a focus read and a listener
-/// read's report, which have the two seconds [`FOCUS_READ_DEADLINE`] adds
-/// to [`HANDLING_DEADLINE`] more ([`FOCUS_READ_DEADLINE`] when `handling`
-/// is [`HANDLING_DEADLINE`]). A shell item query's deadline is the one it
-/// carries, a due time on the shared clock fixed when the dialog asked, so
-/// a query that waited behind other work has only what is left of it.
-fn budget(entry: &Entry, now: Now, handling: Duration) -> (Duration, Option<(RequestId, TraceId)>) {
-    let focus_read = handling.saturating_add(FOCUS_READ_DEADLINE.saturating_sub(HANDLING_DEADLINE));
+/// The query `entry` answers, if it is one.
+fn query_of(entry: &Entry) -> Option<(RequestId, TraceId)> {
     match &entry.item {
-        Item::Query { request_id, query } => {
-            let deadline = match query {
-                Query::ReadFocus { .. } => focus_read,
-                Query::ShellItems { answer_by_us, .. }
-                | Query::ShellItemPosition { answer_by_us, .. } => {
-                    Duration::from_micros(answer_by_us.saturating_sub(now.wall_us))
-                }
-                _ => handling,
-            };
-            (deadline, Some((*request_id, entry.trace)))
-        }
-        Item::Fact(DeliveredFact::UiaFocusRead { .. }, _) => (focus_read, None),
-        Item::Fact(..)
-        | Item::Msaa { .. }
-        | Item::Uia(_)
-        | Item::NotedCaret { .. }
-        | Item::ReadTerminal { .. }
-        | Item::Barrier { .. }
-        | Item::NodesHeld { .. } => (handling, None),
+        Item::Query { request_id, .. } => Some((*request_id, entry.trace)),
+        _ => None,
     }
-}
-
-/// Whether `work` is a query that is not about the focus: a tree dump or a
-/// shell item query, which the user moving on never abandons.
-fn is_query_off_the_focus(work: &Work) -> bool {
-    matches!(
-        work,
-        Work::Entry { entry, .. } if matches!(
-            &entry.item,
-            Item::Query {
-                query: Query::DumpTree { .. }
-                    | Query::ShellItems { .. }
-                    | Query::ShellItemPosition { .. },
-                ..
-            }
-        )
-    )
 }
 
 /// Core's live re-read the program handling `item` answers: the listener's

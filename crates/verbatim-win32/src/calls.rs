@@ -3,10 +3,8 @@
 //! thread that installed one, in release builds as in debug ones. An
 //! outpost's worker installs a gate bound to its charge, so once its
 //! generation is abandoned each counted call fails with
-//! [`CallError::Abandoned`] and makes no call, and the window messages it
-//! sends test their window's readability with the outpost's reader, which
-//! a test replaces. A thread with no gate makes every call, and tests a
-//! window's readability by the system's judgement.
+//! [`CallError::Abandoned`] and makes no call. A thread with no gate makes
+//! every call.
 //!
 //! The gate's failure is its own error, never a fact about the application:
 //! no caller reads it as "gone", "import failed" or "no provider". It stops
@@ -19,17 +17,10 @@ use std::sync::Arc;
 
 use windows::Win32::Foundation::E_ABORT;
 
-use crate::window::{Readability, readability as system_readability};
-
 /// What a gate is bound to: an outpost worker's charge.
 pub trait Charge: Send + Sync {
     /// Whether the worker's generation was abandoned.
     fn is_dead(&self) -> bool;
-    /// Window `hwnd` was found hung or ghosted at a check before a call into
-    /// it, and nothing was sent.
-    fn found_hung(&self, hwnd: isize);
-    /// Whether window `hwnd` can be read, by the outpost's reader.
-    fn readability(&self, hwnd: isize) -> Readability;
 }
 
 thread_local! {
@@ -97,27 +88,8 @@ pub fn check() -> Result<(), CallError> {
     })
 }
 
-/// Whether window `hwnd` can be read before a window message is sent to
-/// it: by this thread's gate's reader, which is told when the window is
-/// found hung, or by the system's judgement on a thread with none. Local
-/// calls.
-#[must_use]
-pub fn message_readability(hwnd: isize) -> Readability {
-    GATE.with_borrow(|gate| match gate {
-        Some(charge) => {
-            let found = charge.readability(hwnd);
-            if found.is_hung() {
-                charge.found_hung(hwnd);
-            }
-            found
-        }
-        None => system_readability(hwnd),
-    })
-}
-
 #[cfg(test)]
 mod tests {
-    use std::sync::Mutex;
     use std::sync::atomic::{AtomicBool, Ordering};
 
     use super::*;
@@ -125,37 +97,22 @@ mod tests {
     #[derive(Default)]
     struct Recorded {
         dead: AtomicBool,
-        hung: Mutex<Vec<isize>>,
     }
 
     impl Charge for Recorded {
         fn is_dead(&self) -> bool {
             self.dead.load(Ordering::Relaxed)
         }
-        fn found_hung(&self, hwnd: isize) {
-            self.hung.lock().expect("the record").push(hwnd);
-        }
-        fn readability(&self, hwnd: isize) -> Readability {
-            if hwnd == 7 {
-                Readability::Hung
-            } else {
-                Readability::Readable
-            }
-        }
     }
 
     /// A thread's gate refuses every counted call once its worker is
-    /// abandoned, with its own error, and tells its charge of each window
-    /// it finds hung; another thread's calls pass it by.
+    /// abandoned, with its own error; another thread's calls pass it by.
     #[test]
     fn a_gate_refuses_every_call_once_its_worker_is_abandoned() {
         std::thread::spawn(|| {
             let charge = Arc::new(Recorded::default());
             install(Arc::clone(&charge) as Arc<dyn Charge>);
             assert_eq!(check(), Ok(()));
-            assert_eq!(message_readability(7), Readability::Hung);
-            assert_eq!(message_readability(8), Readability::Readable);
-            assert_eq!(*charge.hung.lock().expect("the record"), [7]);
             charge.dead.store(true, Ordering::Relaxed);
             assert_eq!(check(), Err(CallError::Abandoned));
             assert!(is_abandoned(&CallError::Abandoned.into()));

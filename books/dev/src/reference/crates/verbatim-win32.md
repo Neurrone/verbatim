@@ -18,10 +18,8 @@ Public API:
   `check()`, which every call the backends count makes first, fails with
   `CallError::Abandoned` once the worker's generation is abandoned, so
   the call is not made, its error `E_ABORT` (`ABANDONED`, `is_abandoned`)
-  never read as a fact about the application; and
-  `message_readability(hwnd)` tests a window message's window with the
-  outpost's reader, telling the charge of a window found hung. A thread
-  with no gate makes every call and asks the system.
+  never read as a fact about the application. A thread with no gate makes
+  every call.
 - `held_locks` — the debug-build lock check: `hold(location)` records in
   the calling thread's eight slots that it holds a lock taken there,
   returning a `Held` whose drop empties that slot, so the record is right

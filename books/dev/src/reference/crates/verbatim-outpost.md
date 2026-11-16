@@ -383,13 +383,9 @@ the same tables and code, which the arbitrator's own lists are built from.
   `observe_foreground_programs` (a `ForegroundProgramObserver`, told on the
   worker the window of each foreground change a program is about to
   handle, so a test can hold the worker there);
-  `set_focus_window_reader` (a `FocusWindowReader` for focus-now and the
-  moved-on judgement); `set_observation_clock` (a `verbatim_process::clock::ObservationClock`
+  `set_focus_window_reader` (a `FocusWindowReader` for focus-now); `set_observation_clock` (a `verbatim_process::clock::ObservationClock`
   for the outpost's own events' stamps and its verdicts' keeps);
-  `set_handling_deadline` (a deadline in
-  place of the reducer's `HANDLING_DEADLINE`, 11 seconds, for the
-  programs dispatched after it, so a test that waits out a worker's
-  abandonment waits less; Verbatim never calls it); and `without_listener`, for an outpost
+  and `without_listener`, for an outpost
   no focus listener forwards to, whose hook's copies are never held.
 - `Outpost::settle` posts a barrier (`Item::Barrier` with
   `Asker::Settle`) and waits until the reducer reaches it with no program
@@ -427,28 +423,19 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
   range, in the store (`store::Parked`), the entry carrying the key.
 - The reducer ([verbatim-outpost-logic](verbatim-outpost-logic.md)), a
   pure state machine on a thread of
-  its own, run by its shell (`outpost::shell`): it holds the intake's
-  order (`reducer::intake`), the reports Core may hold
-  (`reducer::held`), the follow state (`reducer::follow`), the hand-over's
-  hold, the arbitrator's verdicts (`reducer::verdicts`), each node's text
-  facts (`reducer::text`), the program in flight as its work in flight
-  (`verbatim_reader_rules::in_flight::InFlight`: the worker generation in
-  charge, the deadline and the moved-on rule) with its hang mark, the
-  record of hung windows, and the queries not yet answered. Inputs
-  come in mailbox order; effects go out: dispatch a program, send a
-  message, release, move the subscription, abandon a worker, set a timer.
-  It names no Windows type, holds no application object and makes no
-  call; what it needs of Windows' own state it asks for by an effect
-  (`Effect::AskJudge`, the check of the program's window, answered
-  `Input::HangSeen` when it is hung and `Input::Judged` with whether the
-  user moved on; `Effect::CheckFront`, the check of the window in front
-  while a listener read's marker waits, answered `Input::HangSeen` or
-  `Input::FrontReadable`; `Effect::JudgeTold`, the told window judged,
-  answered `Input::ToldJudged`; `Effect::CheckHung`, a window a commit
-  named hung confirmed, answered `Input::HangSeen` when it is), which the shell's `apply` answers at once, as
-  the reducer's next inputs, before it takes another message, and
-  what the answer asks is carried out before anything asked after the
-  question, as a release's answer is. `cargo xtask ci`
+  its own, run by its shell (`outpost::shell`): it holds Core's requests
+  queued for the worker, the intake's order (`reducer::intake`), the
+  reports Core may hold (`reducer::held`), the follow state
+  (`reducer::follow`), the hand-over's hold, the arbitrator's verdicts
+  (`reducer::verdicts`), each node's text facts (`reducer::text`), the
+  program in flight with the worker generation in charge, and the queries
+  not yet answered. Inputs come in mailbox order; effects go out:
+  dispatch a program, send a message, release, move the subscription,
+  abandon a worker. It names no Windows type, holds no application object
+  and makes no call. A program has no deadline and the outpost judges no
+  hang: a worker is abandoned only when Core cancels the request it runs
+  because the foreground moved away. A release's answer is given at once,
+  as the reducer's next input, before the shell takes another message. `cargo xtask ci`
   reads every file of its crate by the pure rule
   (`xtask/src/ownership.rs`). The shell waits on the mailbox's alarm
   (`verbatim_process::alarm::Alarm`): an event set by an append while it waits, and a
@@ -482,50 +469,17 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
   every agile reference and the drop of the store's `Removed` check. The
   worker's catch around a program (`worker::catching`) and UIA's around
   its event callbacks end the process when the panic is the check's.
-- Hung windows (`outpost::worker`, `outpost::shell`): each program's window is
-  named in its worker's charge, keyed by its request, with no call into
-  the application: the window its entry names, at its start; else a
-  query's node's own window (the window an MSAA node is kept under, or a
-  UIA element's whose runtime id is `[42, hwnd]`), the application's focus
-  window for a focus read and a node of no window of its own
-  (the foreground thread's focus window when that thread is the
-  application's, else the top-level window of the focus the outpost
-  expects Core to hold), a tree dump's application's main window
-  (`window::main_window_of`), a shell item query's taskbar window
-  (`shell_items::taskbar_window`), the owed work's and the console poll's
-  node's. The shell answers the reducer's `AskJudge` by that window, read
-  under the charge's lock: hung or ghosted by the outpost's reader, which
-  is a hang seen, told to Core once per hang and abandoning nothing, then
-  moved on, which the reducer ignores for a tree dump and a shell item
-  query, as they are not about the focus and are bounded by their deadline
-  alone; with no window named, the program stays. While a listener
-  read's marker has waited half a second, nothing is in flight behind it,
-  so the shell answers the reducer's `CheckFront` from the window in
-  front (`Context::foreground_window`, by the outpost's foreground
-  reader): a ghost is mapped to the hung window it stands in for
-  (`verbatim_win32::window::hung_window_from_ghost`), since the ghost's
-  process is the desktop window manager's, and a window the application
-  serves is judged by the readability reader, all by local calls. An
-  event's check before its first call (`Worker::readable`), a query's of
-  its named window, and a window message's (through the call gate) all ask
-  the same reader; a window found hung is named in the program's commit as
-  hung, and a query refused so is answered `Abandoned` with no call, so a
-  query on a hung window parks no worker. A listener read is not tested:
-  its program reads the focus, waiting for the application call by call
-  within its deadline. A focus read is not refused: its check of the focus
-  window answers no focused control in a window that cannot be read. A
-  commit names the window its program found hung at a check, if any
-  (`Change::found`). The worker installs a call gate on its thread
-  (`verbatim_win32::calls`), bound to its charge, in release builds as in
-  debug ones, and uninstalls it as its thread ends: once its generation is abandoned, every counted call fails
-  with `CallError::Abandoned` and makes no call, which no caller reads as
-  a fact about the application. The shell keeps each parked worker's
-  reason by generation (`Posted::Returned` carries the generation), and
-  the pong reports those parked on a window seen hung, by their program's
-  hang mark (`parked_on_hung`), apart from the rest (`parked_count`),
-  which alone the supervisor's limit counts. The two counts are one value
-  (`Lock<Parked>`), written together when a worker is parked or returns
-  and read once per ping, so each parked worker is counted once in a pong.
+- The worker installs a call gate on its thread (`verbatim_win32::calls`),
+  bound to its charge, in release builds as in debug ones, and uninstalls
+  it as its thread ends: once its generation is abandoned, every counted
+  call fails with `CallError::Abandoned` and makes no call, which no
+  caller reads as a fact about the application. Nothing is refused for a
+  hung window: Core judges a hang. An event's check before its first call
+  (`Worker::readable`) still drops an event of a window that cannot be
+  read, by the outpost's reader. The pong reports the abandoned workers
+  that have not returned (`parked_count`; `parked_on_hung` is 0, the
+  outpost judging no hang), one value (`Lock<usize>`) written when a
+  worker is parked or returns and read once per ping.
 - Programs (`outpost::worker`): the worker generation in charge takes one
   program at a time from its inbox, an entry's handling, the owed work, a
   release's drop, or the finish of a caret
@@ -642,31 +596,21 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
   crates' per-thread call counts into each published `EventTiming`; a
   program that publishes nothing logs its calls (`books/dev/src/reference/performance.md`,
   "Cancelled traces").
-- Deadlines and abandonment are the reducer's: an entry has the handling
-  deadline (`HANDLING_DEADLINE`, 11 s); a focus read, and the report of a
-  listener's read, the focus read's (`FOCUS_READ_DEADLINE`, 13 s); a shell
-  query the due time it carries (`budget` in `verbatim-outpost-logic`). A program on a window also has its worker abandoned once the user
-  has moved to another UI thread of the same provider process, judged
-  when the half-second grace ends and every half second after until the
-  deadline, as NVDA's watchdog judges, by an ask the shell answers with
-  `verbatim_win32::window::is_another_thread_of_its_application` against
-  the window with the keyboard focus, by the outpost's focus window
-  reader; the same check tells a hang of the window and abandons nothing
-  for it; a foreground fact judges nothing. It marks the generation dead in the worker's charge
-  (`worker::Charge`), answers the query the program was running
-  `Abandoned`, and starts a replacement. The shell's warning does not name the call
-  the worker was in: only the worker's thread knows it. A returning abandoned worker has
-  its commits refused, posts that it returned, and exits. The shell alone
-  counts the abandoned workers that have not returned, one more as it
-  carries out `Effect::Abandon` and one fewer at each return, which no
-  longer reaches the reducer, and publishes the count to an atomic the
-  I/O thread answers pings with.
+- Abandonment is the reducer's, and only for Core's cancel of the request
+  a program runs because the foreground moved away: a program has no
+  deadline and the outpost judges no user moving on. It marks the
+  generation dead in the worker's charge (`worker::Charge`), answers the
+  request "abandoned", and starts a replacement. A returning abandoned
+  worker has its commits refused, posts that it returned, and exits. The
+  shell alone counts the abandoned workers that have not returned, one
+  more as it carries out `Effect::Abandon` and one fewer at each return,
+  which no longer reaches the reducer, and publishes the count the I/O
+  thread answers pings with.
 - A focus is reported once its walk returns, in full, however long the
-  walk takes within its program's deadline: no walk is published at a
-  bound. The owed work, a terminal's first read from the caret read with
-  its report, is a program the reducer dispatches before anything else,
-  once per worker generation, under a deadline of its own with no
-  moved-on window.
+  walk takes: no walk is published at a bound. The owed work, a
+  terminal's first read from the caret read with its report, is a program
+  the reducer dispatches before anything but Core's requests, once per
+  worker generation.
 - Requests and their tags: each program is a request with a mint tag of
   its own (`store::Tag`, the generation and a request number the reducer
   gives), which its `RequestContext` carries with the store's handle; the
@@ -679,7 +623,8 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
 - Queries: each query the outpost takes has a reply token
   (`verbatim_model::protocol::Responder`) in the shell, keyed by request
   id, consumed by the one answer the reducer sends: the reply, `Abandoned`
-  at the deadline, `Failed` for a program that ended without answering,
+  for a program whose worker was abandoned, `Failed` for a program that
+  ended without answering,
   `NotStarted` for a `Cancel` before dispatch. A token dropped unanswered answers `Failed`. In debug builds
   the shell asserts after each transition that its tokens are the queries
   the reducer records.
@@ -688,13 +633,12 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
   calls end at `verbatim_uia::UIA_CONNECTION_TIMEOUT` (2 s) or
   `UIA_TRANSACTION_TIMEOUT` (10 s); the continuation of a listener read's
   chain, an MSAA focus's ancestor walk and a focus read's walk have no
-  limit but their program's deadline; a dialog's text, UIA's as MSAA's, is gathered in
-  its program on the worker's own client, bounded by the program's
-  deadline, as NVDA gathers it inside its focus event; tree view,
-  list view, and edit messages use `SendMessageTimeoutW`, refused unsent
-  by a hung or ghosted window as NVDA's `SMTO_ABORTIFHUNG` refuses them,
-  none being in the `WM_APP` to `0xBFFF` range NVDA exempts; an
-  `IAccessible` call is bounded by the entry's deadline.
+  limit of their own; a dialog's text, UIA's as MSAA's, is gathered in
+  its program on the worker's own client, as NVDA gathers it inside its
+  focus event; tree view, list view, and edit messages use
+  `SendMessageTimeoutW` with no limit, sent whatever the window's state;
+  an `IAccessible` call has no limit. Core bounds each request by its due
+  time.
 - The I/O thread, the main thread (`verbatim_process::transport::ChildIo`,
   at `THREAD_PRIORITY_HIGHEST`), waits only on its completion port, hands
   each command to `Outpost::handle_command` (which answers pings itself and
