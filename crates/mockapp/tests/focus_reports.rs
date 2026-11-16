@@ -587,6 +587,9 @@ fn a_focus_carries_its_parents_automation_id() {
 /// focus moves on; it is read and spoken, its states read when the outpost
 /// completes it, after the selection moved on, as NVDA reads them when it
 /// speaks, so it is "not selected"; then the item moved to after it.
+/// "First not selected" awaits a `verbatim-event-record` recording of
+/// Windows Terminal's Control+Tab and an NVDA capture of it, which will
+/// confirm or correct the expectation.
 fn a_focus_read_while_it_had_the_keyboard_focus_is_reported_though_the_focus_moved_on() {
     let title = common::unique_title("mockapp-left-selection");
     let mut app = common::spawn("small.json", "uia", &title);
