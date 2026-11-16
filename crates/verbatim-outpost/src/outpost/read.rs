@@ -2221,6 +2221,9 @@ pub(super) fn activate(
     for _ in 0..=ACTIVATION_PARENT_HOPS {
         match activate_one(context, client, current) {
             Ok(action) => return Ok(action),
+            // A node that is gone has no parent to reach: a step to it
+            // would find the node, and walk its route, again.
+            Err(ReadError::Gone) => return Err(first_error.unwrap_or(ReadError::Gone)),
             Err(error) => {
                 if first_error.is_none() {
                     first_error = Some(error);

@@ -2718,7 +2718,6 @@ fn a_node_whose_route_does_not_lead_to_it_is_gone_by_its_route_alone() {
             ("FragmentRoot", 2),
         ]
     };
-    let twice = |hits: [(&'static str, u32); 9]| hits.map(|(method, count)| (method, 2 * count));
     for (operation, request, expected_calls, expected_hits) in [
         (
             "UIA next sibling of a node gone",
@@ -2742,11 +2741,8 @@ fn a_node_whose_route_does_not_lead_to_it_is_gone_by_its_route_alone() {
         (
             "UIA activation of a node gone",
             verbatim_model::request::Request::Activate { node },
-            CallCounts {
-                connections: 2,
-                ..calls(4, 0, 0)
-            },
-            twice(walk(14)),
+            connected(2, 0, 0),
+            walk(14),
         ),
     ] {
         common::reset_hits(hwnd);
