@@ -437,11 +437,6 @@ by Core on entering the window: one acquisition; `progress`, an
   how an outpost unhooks some kinds and hooks them again, and waits for it
   to catch up (`sync`): every nudge sent and, once the hooks are in, every
   `WinEvent` raised before it, through `SyncMarker`.
-- `fact_of_win_event(kind, (hwnd, id_object, id_child))` — the
-  `DeliveredFact` an MSAA `WinEvent` makes, whether the listener's hook or
-  an outpost's own took it in: a focus, a foreground change, a menu
-  opening, an alert, or a tooltip shown; `None` for any other kind and
-  for an event with no window.
 - The window functions the client calls by handle (`window_exists`,
   `window_class_name`, `parent`, `style` and the rest) are
   `verbatim_win32::window`'s

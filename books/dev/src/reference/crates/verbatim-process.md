@@ -160,8 +160,7 @@ Public API:
   for a frame with a raw section, a line break and `Raw-Length: ` with
   the raw section's length in ten digits; a blank line; then the body, a
   JSON message, and after it the raw section, bytes whose places the
-  message gives (a terminal's text and colours, a synthesizer host's
-  samples). A frame without a raw section has no `Raw-Length` line. The
+  message gives (a synthesizer host's samples). A frame without a raw section has no `Raw-Length` line. The
   body and raw section together take at most `MAX_FRAME_BYTES` (32 MB);
   the fixed width lets a frame be encoded in place. A reader hands a
   frame out as its `Parts`, `body` and `raw` (`None` when the header names
@@ -270,39 +269,20 @@ Public API:
   exhaustively and a test pins every variant's name.
 
   Each message is stamped as its write begins, by whichever thread writes
-  it: `listener_written_at_us` on a listener's fact or menu end,
-  `written_at_us` on an outpost's `Event`, `Reply`, or `Pong`; the listener
-  adds `listener_handled_at_us`. verbatim.exe stamps its relay times on a
-  routed fact or query as it writes it, and a ping or a hand-over notice
-  to the listener with `sent_at_us`; the listener logs each hop at trace
-  under `verbatim::stage`.
+  it: `written_at_us` on an outpost's `Pong`,
+  `listener_written_at_us` on the listener's progress changes, and
+  verbatim.exe's `sent_at_us` on a ping it writes.
 
   Framing. Each message is one frame of `transport`, a `Content-Length`
   header and compact JSON, through `write_message` and `read_message`,
   for any type that implements `Message` (`put_frame` and `from_parts`):
-  the four direction enums, the outpost's with the raw section below.
+  the four direction enums, none of which takes a raw section, so a
+  frame of theirs with one is refused (`Parts::without_raw`).
   `write_message` writes the whole frame in one `WriteFile`,
   `encode_message` gives the bytes, `put_message` appends them to a
   sender's buffer, and `decode_message` parses a frame's `Parts`. A
-  message that carries a terminal's text (an event with a
-  `TerminalSnapshot`, or a reply with a `TerminalSnapshot`,
-  `TerminalHistory`, or `TerminalFound`, its `RequestId` in the JSON as
-  any reply's) has a raw section (the private
-  `message::raw` module; `docs/design/communication.md`, section 4.2): each
-  text is UTF-8 there and a range in the JSON, `"raw":[start,length]` in a
-  `TerminalText` and `"text":[start,length]` for a history's or match's
-  text, and colour runs are 16-byte records of four little-endian `u32`s
-  (column, length, foreground, background), the JSON giving
-  `"colours":{"raw":[start,length],"rows":[...]}` with each row's run
-  count. The module converts while encoding, borrowing from the message,
-  and back while decoding, validating text with `simdutf8`; the model's
-  types know nothing of it. A range outside the section, invalid UTF-8,
-  records that do not fill their range, a section longer or shorter than
-  its ranges, or a section on any other message is a protocol error. For
-  example, a history whose text is `abc` has a header with
-  `Raw-Length: 0000000003`, a body whose outcome is
-  `{"Done":{"Text":{"TerminalHistory":{"text":[0,3],"above":0,"read":0}}}}`,
-  and then the bytes `abc`. `message_kind(body)` reads a frame's variant
+  terminal read's answer carries its text and colours in the JSON body,
+  as every answer does. `message_kind(body)` reads a frame's variant
   name from its first bytes without parsing the rest; the relay reads it
   on every outpost frame.
 - `arguments` — the launch arguments the supervisor gives its children,

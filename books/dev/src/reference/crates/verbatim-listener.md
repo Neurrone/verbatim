@@ -92,17 +92,13 @@ this shape are in `books/dev/src/explanation/architecture.md`, section 1
   thread sleeps on an alarm set only while a bar read runs.
 - Calls. Every call waits for the application, up to UIA's transaction
   timeout. A call over a second is logged at info
-  (`focus_read::CallLog`).
-- `focus_read::FocusReader` is the unasked focus read that mockapp's
-  integration harness still drives as its stand-in for the listener,
-  until that harness moves onto the request driver; the listener process
-  does not use it.
-- `focus_read::read_object` is the listener's answer to Core's generic
-  read of an element, the read a reading thread makes for a kept element,
-  for a test that stands in for the listener holding the element itself;
-  `focus_read::read_object_observed` is the same read, telling a test the
-  name of each call before it makes it, so the test can change the
-  application's windows between two of them.
+  (the private `call_log` module's `CallLog`).
+- `read_object` is the listener's answer to Core's generic read of an
+  element, the read a reading thread makes for a kept element, for a test
+  that stands in for the listener holding the element itself;
+  `read_object_observed` is the same read, telling a test the name of
+  each call before it makes it (`CallObserver`), so the test can change
+  the application's windows between two of them.
 
 ## Progress bars
 
@@ -204,7 +200,7 @@ section 6.3).
 - It handles `Ping`, `ApplicationExited` (which ends the application's
   check thread and moves its reading record to the exited generations,
   then answers `ExitHandled`), `IdleQuery`, `Request`, `Cancel` and
-  `Shutdown`; `LiveReread` changes nothing, as no unasked read is kept. It makes no remote operation, so takes no `--classic-uia`.
+  `Shutdown`. It makes no remote operation, so takes no `--classic-uia`.
 - The idle barrier's answer goes behind every event delivered to the
   `WinEvent` thread before it, every job queued for the reading threads,
   every event handed to the check threads, and every tell placed before

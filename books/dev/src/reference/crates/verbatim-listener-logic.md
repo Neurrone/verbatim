@@ -53,14 +53,7 @@ Public API:
 - `focus` — the progress path's vocabulary (`classic_value_change`,
   `BarObject`, `BarVerdict`, `ClassicBarRead`, `BarRaiser`,
   `WindowAnswer`, `BAR_VERDICTS_KEPT`, the bar limits) and
-  `ABANDONED_LIMIT`; and the vocabulary of the unasked focus read that
-  mockapp's integration harness still drives through
-  `verbatim_listener::focus_read::FocusReader`: its kind (`FocusEvent`),
-  where it was queued (`Arrival`, `QueuePlace`), what became of it
-  (`Judged`, with `into_fact`), and the reasons it is dropped.
-- `checks` — the unasked focus read's checks, NVDA's focus handler's in
-  their order, as one pure step function (`checks::next`), which only
-  mockapp's stand-in drives; the listener's own checks are `check`'s.
+  `ABANDONED_LIMIT`.
 - `foreground` — what the listener learns of each window that came to
   the foreground, for Core: `ForegroundWatch` takes the window in front at
   the start (`start`), each foreground event with whether its window was

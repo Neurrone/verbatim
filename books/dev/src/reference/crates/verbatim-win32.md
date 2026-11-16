@@ -77,13 +77,11 @@ Public API:
   that serves its UIA. `is_another_thread_of_its_application(hwnd, other)`
   is whether `other` is a window of the same application as `hwnd` on
   another UI thread, so, with `other` the window with the keyboard focus,
-  whether the user has moved on from `hwnd`: the test both readers'
-  `MOVED_ON_GRACE` is judged by, the outpost passing the window its focus
-  window reader gives and the listener calling
-  `front_is_another_thread_of_its_application(hwnd)`, which reads the
-  system's. `SystemWindows` answers the acceptance
-  test's `WindowQueries` with local calls, with the foreground window its
-  caller read.
+  whether the user has moved on from `hwnd`;
+  `front_is_another_thread_of_its_application(hwnd)` asks it of the
+  window with the keyboard focus. Neither reader calls them now: Core
+  judges the foreground. `is_topmost(hwnd)` and `active_window()` are the
+  local reads the window facts take for Core's acceptance.
 - `provider` — the process that serves a window's UI Automation
   (`books/dev/src/explanation/design/listener-without-connections.md`, section 4.3):
   `provider_process(hwnd)`, `served_by`, `console_host_of(client)`,

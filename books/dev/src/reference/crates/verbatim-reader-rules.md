@@ -2,12 +2,14 @@
 
 What both of Verbatim's readers, an outpost and the focus listener, apply
 before reading a window: NVDA's class verdict and the class name
-normalization it is judged on, NVDA's acceptance test, the waits both
-readers judge by, and the work in flight both keep. A rule both apply is defined here once, because the two
+normalization it is judged on, the kept verdicts on a window's provider,
+NVDA's limit on a thread's events, and a window's handle that is never 0.
+NVDA's acceptance test is Core's (`crates/verbatim-core/src/focus/acceptance.rs`),
+since Core judges every tell. A rule both readers apply is defined here once, because the two
 readers' crates may not depend on each other and no test could tie two
 copies (decision D14, "Where the rules run"). It is a logic crate: pure,
 in the GPL tier, with no Windows dependency, so it builds and is tested on
-Linux. It depends on `verbatim-core`, for `ForegroundRelation`.
+Linux. It depends on nothing of Verbatim's.
 
 Public API:
 
@@ -47,19 +49,9 @@ Public API:
   crates parse one where it enters them, `Window::new(handle)` giving
   `None` for 0, and give it back for a call with `get`, so no rule judges
   a 0 as none.
-- `acceptance` — NVDA's test for accepting an event before anything is
-  read of it (`shouldAcceptEvent`; `docs/parity/focus-events.md`, "Event
-  acceptance"). `accepts_event(event, window, &windows, &requested)` is a
-  function of the event's name (`EventName`), its window, `None` for an
-  event with no window, which is accepted, the window queries
-  (`WindowQueries`, which `verbatim_win32::window::SystemWindows` answers
-  with local calls, parsing each handle the system gives into an
-  `Option<Window>`, and the tests answer from a made-up desk) and
-  the events application support asked for (`RequestedEvents`).
-  `foreground_relation(window, class, &windows)` is how the window stands
-  to the foreground window, the rules the test ends with, which an outpost
-  also reports in an event's window facts.
 - `CONSOLE_WINDOW_CLASS` — the console host's window class.
+
 Tests: the class normalization, the class lists pinned to their NVDA
-sources so an NVDA sync is a diff, and the acceptance test rule by rule
-against a made-up desk.
+sources so an NVDA sync is a diff, the limit per thread, and a window's
+handle parsed. The verdicts' keeping is tested through the outposts'
+arbitrator and the listener.

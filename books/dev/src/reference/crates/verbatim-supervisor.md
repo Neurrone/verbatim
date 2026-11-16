@@ -168,8 +168,6 @@ How it works:
   `verbatim_process::arguments`' `OutpostArguments` and
   `ListenerArguments`, and launching is
   [verbatim-process](verbatim-process.md)'s.
-- The relay stamps each request with its relay times as it writes it
-  (`writer::received_now`, `writer::stamp`).
 
 ## Ignored processes
 

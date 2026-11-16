@@ -4,7 +4,7 @@ The outpost's reducer (`books/dev/src/explanation/design/ownership.md`): the pur
 that holds every remembered fact of an outpost's application, with no
 Windows type and no application object. It is a logic crate: in the GPL
 tier, with no Windows dependency, so it builds and is tested on any host.
-It depends on `verbatim-model`, on `verbatim-core` for `focus_rules`, and
+It depends on `verbatim-model` and
 on [verbatim-reader-rules](verbatim-reader-rules.md) for the verdicts and
 the window type it shares with the focus listener.
 
@@ -53,76 +53,50 @@ Public API:
   after every drain of its mailbox, a timer due or not, so a tick may
   find nothing due; and `next_timer(now)`, the time of the shell's timed wait. It makes
   no call of any kind.
-- `Input`: an entry from a producer, Core's request, its cancel and a
-  program's answer to it, a verdict, a commit, a program finished, a
-  release's answer, and the shell's close. `Effect`: dispatch a
-  `Program`, send a message, release, move the subscription
-  (`Subscribe`), let go of followed groups (`Unfollow`) or parked elements
-  (`Unpark`), forget text ranges (`ForgetRanges`), abandon a worker
-  generation (`Abandon`, with the dead generation and its replacement; the
-  shell alone counts the abandoned workers that have not returned), report
-  a logic error (`LogicError`) or a settle reached (`Settled`).
+- `Input`: an entry from a producer, Core's request (`Ask`), its cancel
+  (`CancelAsk`) and a program's answer to it (`Answered`), a window Core
+  named destroyed, a verdict, a commit, a program finished, a release's
+  answer, and the shell's close. `Effect`: dispatch a `Program`, send a
+  message, release, let go of parked elements (`Unpark`), forget text
+  ranges (`ForgetRanges`), abandon a worker generation (`Abandon`, with
+  the dead generation and its replacement; the shell alone counts the
+  abandoned workers that have not returned), or report a settle reached
+  (`Settled`).
 - A program runs until it ends: it has no deadline, and the outpost
   judges no hang and no user moving on. Core bounds its requests by their
-  due times and judges a hang itself. A shell items or position query
-  reached at or after the `answer_by_us` it carries is answered at once
-  with nothing read, an empty list or no candidates and incomplete, and
-  no program is dispatched for it. A query's `RequestId` is stored and
-  echoed in its reply, and decides nothing.
-- The program in flight is the generation in charge's (`InCharge<Current>`,
-  the `charge` module): its request, and beside it the query the program
-  answers, the Core request it runs, and whether it
-  is deferred work. A generation is abandoned only when Core cancels the
-  request its program runs because the foreground moved away; the reducer
-  then emits `Abandon` and answers its own obligations: the running query
-  and the owed work of the dead generation. A cut caret read's
-  finish is handed on to a new request (`InCharge::hand_on`).
-- `Program` and `Work`: what the worker generation in charge runs, with
-  its copies of the facts (`Facts`), whose commits come back as `Change`s
-  and are applied while their `Request` is live.
+  due times and judges a hang itself.
+- The program in flight is the generation in charge's (`InCharge`, the
+  `charge` module), numbered by `Request` within its generation so that a
+  dead generation's and an earlier program's results are refused. A
+  generation is abandoned only when Core cancels the request its program
+  runs because the foreground moved away; the reducer then emits
+  `Abandon` and answers that request.
+- `Program` and `Work` (an intake `Entry`, a drop of released objects,
+  Core's `Ask`, or a watch's program): what the worker generation in
+  charge runs, with its copies of the facts (`Facts`: the verdicts and
+  each node's text facts), whose commits come back as `Change`s (the
+  program's tell and its text changes) and are applied while their
+  `Request` is live.
 - The vocabulary of its state, used by the shell and the worker: the
-  intake's `Entry`, `Item` and `Object`; the follow
-  state (`FollowState`, `Followed`, `Origin`, `Subscribed`, `LastReported`,
-  and a commit's `FocusCommit` and `MarkChange`, below); the caret key's
-  watches (`Watches`, `WatchProgram`, `WatchWork`, above); the verdicts
-  (`Verdicts`, `VerdictChange`, `Probe`, `Probed`, from `verbatim-reader-rules`, and
+  intake's `Entry`, `Item`, `UiaEvent` and `Asker`; the focus line's
+  paths a UI Automation completion finds its elements by (`FocusPath`,
+  `Route`); the caret key's watches (`Watches`, `WatchProgram`,
+  `WatchWork`, above); the verdicts (`Verdicts`, `VerdictChange`,
+  `Probe`, `Probed`, from `verbatim-reader-rules`, and
   `KeptFromAnyGeneration`, this crate's rule of which a generation no
-  longer in charge may record); each node's text facts
-  (`NodeAnchors`, `Anchor`, `TextChange`, `ReportCut`, `AnswerCut`),
-  among them the reads held behind ids Core names (`NodeAnchors::held`: a
-  caret key's starting point and a selection baseline, numbered and
-  released as anchors are, Table 16); and
+  longer in charge may record); each node's text facts (`TextFacts`,
+  `NodeAnchors`, `Anchor`, `LastRead`, `KeptSelection`, `ReadSelection`,
+  `TextChange`), among them the reads held behind ids Core names
+  (`NodeAnchors::held`: a caret key's starting point and a selection
+  baseline, numbered and released as anchors are, Table 16); and
   `WinKind` and `UiaKind`, its own copies of the backends' event kinds,
   since it names no backend crate.
 
-The followed focus (`src/follow.rs`) is one record, `Followed`: the node,
-its role, object, window, chain and titles, how it was read (`Origin`: the
-listener's read with its focus path, an MSAA focus with what a live re-read
-needs, a focus-now answer, a menu opening), its redirect and system-caret
-marks and its subscription. A
-commit's `FocusCommit::Adopt` replaces the record whole, so that no fact of an
-older focus survives beside a newer one; the subscription it replaces keeps
-its group among `kept_groups` until its node is released.
-`FocusCommit::Again`, a focus-now answer on the focus already followed, moves
-the subscription and replaces the owed work and nothing else.
-A caret key's watch on another node than the one an adoption names ends. An element found after its report moves the subscription only while
-its node is followed; otherwise its tokens are let go. `MarkChange` is the
-one change of a mark a commit makes (clearing the redirect). A commit the
-state table says cannot occur, a
-`FocusCommit::Again` or a mark of the record's changed with nothing
-followed, changes nothing and comes back as `Effect::LogicError`, which the shell logs as an
-error.
-
-A node's note is kept in the
-text facts with the node's record (`text.rs`): `KeyNote`, its key's unit and
-motion, when it ends, and what it causes to be read besides the node's
-caret events (`NoteReads::Field`, `CaretAndText`, or `CaretOnly` once a read showed the
-key's effect). It is set as a before
-read's request or a one-way `CoreToOutpost::KeyNote` arrives and cleared by
-the key's final read, which goes ahead of queued reads, or Verbatim's own
-caret move; a note past its end counts as absent where it is read, so
-no timer ends it and no key's progress is held here. Core alone judges a
-read's facts as a key's evidence.
+The outpost follows no focus of its own: it keeps the registration Core's
+`Follow` request names, in the outpost's shell, and tells Core what that
+registration hears. It keeps no key note: a caret key's starting read and
+watch are Core's requests, and Core alone judges a read's facts as a
+key's evidence.
 
 `cargo xtask ci` reads every file of the crate by the pure rule
 (`xtask/src/ownership.rs`): no clock, no lock, no thread, no Windows type.
@@ -135,12 +109,11 @@ cells (Table 14) `waiting.rs`'s; the watch's cells (Table 15) are
 `watch.rs`'s, and the watch across Core and the outpost is the generated
 test `tests/caret_watch.rs`.
 
-The worker's choice between adopting and following again is
-pinned by the outpost's `a_focus_now_answer_is_followed_again_only_on_the_followed_focus`.
-
 The intake (`src/intake.rs`) queues what the outpost still hears, its
 `Follow` subscription's UI Automation events and a console host's console
-events, a window Core named destroyed, and Core's queries, lists of held
-nodes and idle queries, in arrival order: one waiting entry per object and
-kind, a console's events merged per window and kind, and a batch ending at
-an idle query. Its rules are pinned by its own tests.
+events, a window Core named destroyed, and Core's lists of held nodes and
+idle queries, in arrival order: one waiting entry per object and kind, a
+console's events merged per window and kind, a newer list of held nodes
+replacing a waiting one, and a batch ending at an idle query. Core's
+requests do not pass through it: they wait in `Asks`. Its rules are pinned
+by its own tests.

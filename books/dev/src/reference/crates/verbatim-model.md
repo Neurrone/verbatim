@@ -16,19 +16,17 @@ recorder unchanged. What the reducer does with each type is in
   outpost never collide in the latency ledger. Only the processes that
   observe events mint; a reducer takes every trace id with the input that
   caused the work. `from_raw(u64)` gives a fixed id, for tests and samples.
-- `OutpostId`, `NodeId`, `Pid`, `QueryId`: small identity types. An
+- `OutpostId`, `NodeId`, `Pid`: small identity types. An
   `OutpostId` names one outpost process generation and is never reused. A
   `NodeId` is an outpost id plus a number that outpost issued: outposts
   mint ids with `NodeId::new(number)`, leaving the outpost `UNASSIGNED`,
   and Core stamps the real generation on everything arriving on that
-  outpost's pipe (`assign_outpost` on snapshots, trees, events, and fetch
-  results), so an id from a replaced outpost never names a node in its
-  successor.
+  outpost's pipe (`assign_outpost` on answers and tells), so an id from a
+  replaced outpost never names a node in its successor.
 - `HIDDEN_FRAME_WINDOW_PROP`: the window property
   [verbatim-gui](verbatim-gui.md) stamps on Core's hidden main frame
-  (decision D9), which every outpost checks, with the window's owning
-  process, before emitting a `FocusChanged`, so the frame is never
-  announced.
+  (decision D9), which a reader reads into a window's facts
+  (`verbatim_win32::window`) so that Core never announces the frame.
 - `WindowHandle` and `WindowFacts`: a native window handle as an opaque
   number, and the facts about an event's window its outpost reads with
   local calls: top-level window, root owner, whether it is topmost,
@@ -99,39 +97,17 @@ recorder unchanged. What the reducer does with each type is in
   the foreground. `ListenerToCore::Progress` carries it to Core, as
   `Input::Progress`.
 - `NormalizedEvent`, `PropertyChange`, `Notification`,
-  `NotificationKind`, `NotificationProcessing`: the events an outpost
-  sends.
-  - `FocusChanged`: a full snapshot; `whole_window`, set when the node is
-    a top-level window standing for the application's focus in it, no
-    control in it read (an outpost's report of a foreground change into a
-    window it reads through MSAA, and a held UIA application's title); the ancestor
-    chain, outermost first, complete to the desktop, which is not in it,
-    windows a walk did not reach being plain windows read from Windows'
-    own state; a selection container's selected child; for a focus
-    that may have text, `text` (see "The text protocol"); and, for a UI
-    Automation focus whose node its reader held an element for, `earlier`,
-    an `EarlierElement` (focused, not focused or gone): what was read of
-    that element with this focus, by which Core tells a repeat from a new
-    element under a reused runtime id; and, for an entry of a focus group
-    its outpost tried newest first, `group`, a `FocusGroup` of the
-    group's number and the entry's rank, by which Core takes no older
-    entry once it took a newer one. The enrichment
-    is deadline-guarded and completes a cut chain by plain windows, so it
-    never blocks or loses a focus.
-  - `PropertyChanged` with a `PropertyChange`: name, value, description,
-    or the complete new `States` set, with a `child_count` read only for a
-    state change that newly expands a Win32 tree view item.
-  - `ValueChanged`.
-  - `SelectionChanged` (a node selected within its container) and
-    `ControlledSelection` (a node selected inside an element the focus
-    controls through UIA's ControllerFor relation, with the controlling
-    focus's id).
-  - `Notification`: UIA's application-initiated announcement, with its
-    kind, processing hint, and optional display string and activity id.
-  - `Alert`: a toast or other alert, with its `AlertOrigin`: an MSAA alert,
-    or a Windows toast's window opening carrying its `ToastId`, the hash of its
-    runtime id that Core compares for its repeat rule.
-  - The text events, under "The text protocol".
+  `NotificationKind`, `NotificationProcessing`, `AlertOrigin`, `ToastId`,
+  `EarlierElement`, `FocusGroup`: an event as Core took it, which
+  `Effect::Observed` carries to the control plane's event stream, its
+  protocol version 4 event: `FocusChanged` (a full snapshot with its
+  ancestor chain, outermost first), `PropertyChanged` with a
+  `PropertyChange` (name, value, description, or the complete new
+  `States` set), `ValueChanged`, `SelectionChanged`,
+  `ControlledSelection`, `Notification`, `Alert` (with its `AlertOrigin`:
+  an MSAA alert, or a Windows toast's window opening carrying its
+  `ToastId`), and the text events under "The text protocol". The readers
+  send none: they tell (`tell`) and answer requests (`request`).
 - `KeySeq`: the number of a user input, ordered by press, which fences
   speech (`books/dev/src/explanation/design/ownership.md`). Only the keyboard hook's
   thread mints one (`KeySeq::after`), a review rule since the type is in
@@ -143,60 +119,43 @@ recorder unchanged. What the reducer does with each type is in
 - `Input` and `Effect`: the reducer's contract. `Input::trace_id` is the
   trace an input carries, for those that carry one: the trace the shell
   executes the input's effects under and Core's key stamp looks up.
-  - Inputs are events (each with its source pid, backend, optional
-    `WindowFacts`, and the observation time on the run's shared clock in
-    microseconds, one clock read for every event kind, and, for the answer
-    to a `Query::ReadFocus`, its `purpose`, which only the app sets),
-    `Answered` (an
-    outpost's answer to a query the reducer asked, its `QueryId`, the
-    outpost that answered and the protocol's `QueryOutcome`, which the
-    reducer turns into the result its query's kind takes), `OutpostEnded`
-    (a generation ended, so its node ids are dead and the reducer's queries
-    of it end "gone", with a trace the shell mints for it), timer ticks, `Command` (a `ReviewCommand`, its key
-    number, a press-repeat count and when the hook saw it), `Script` (the
-    menu, the time, or the shell's lists, as a `Script`, with the same),
-    `ToggleKeyPressed` (a lock key reached the operating system, with its
-    key number and press time), and what the shell's threads learn, since only
-    the reducer speaks: `Started`, `Exiting { replaced }`, `ErrorLogged`,
-    `ApplicationNotResponding`, `LockKeyToggled` (a `LockKey` and its
-    state), `ClockRead`, `ClipboardCopied`, `ShellItemGone`,
-    `ShellItemUnclickable`, `PreviewSpeech`, `PreviewEarcon`,
-    `MenuOrSwitchEnded`, `Foreground`, `ReadFocusUnanswered` (Verbatim+Tab's
-    query ended with no answer, abandoned or not) and `Desktop` (a
-    `DesktopNews`: the user's desktop returned, the virtual desktop's
-    name, or its due time). The text inputs are under
-    "The text protocol".
+  - Inputs are `Queue` (an input to Core's event queue, ADR 0003, a `QueueInput`
+    below, with the trace it runs under and its time on the run's shared
+    clock),
+    `Command` (a `ReviewCommand`, its key number, a press-repeat count and
+    when the hook saw it), `Script` (the menu, the time, or the shell's
+    lists, as a `Script`, with the same), `ToggleKeyPressed` (a lock key
+    reached the operating system, with its key number and press time),
+    timer ticks, the key and speech inputs under "The text protocol",
+    `Settings` and `Reported` (the reader settings, and the details the
+    active theme reports, from which Core chooses each read's details),
+    `Foreground` (a window came to the foreground, as the listener tells
+    it), `Progress` (a bar's change from the listener), and what the
+    shell's threads learn, since only the reducer speaks: `Started`,
+    `Exiting { replaced }`, `ErrorLogged`, `LockKeyToggled` (a `LockKey`
+    and its state), `ClockRead`, `ClipboardCopied`, `ShellItemGone`,
+    `ShellItemUnclickable`, `PreviewSpeech` and `PreviewEarcon`.
   - Effects are `Speak` (an utterance and the number of the user input
     that caused it, which Core stamps as its last step; every
-    construction gives `None`); `StopSpeech`; `DropExpiredSpeech` (carrying a
-    `FocusNow`); `Fetch` (a `Query` naming the node and a `QueryKind`:
-    parent, next or previous sibling, first child, answered by a
-    `FetchResult` that tells a tree edge, `NoNeighbor`, from a node that
-    could not be re-acquired, `Gone`); `ReadNode` (a review command's live
-    read of a node, answered `QueryResult::Node` or `Gone`); `PlayEarcon`;
-    `Activate` (a node to activate, under its `QueryId`); `Withdraw` (a query Core gave up
-    on, to withdraw from its outpost);
+    construction gives `None`); `StopSpeech`; `Queue` (what Core's event
+    queue asks of the shell, a `QueueEffect` below); `DropExpiredSpeech` (carrying a `FocusNow`); `PlayEarcon`;
     `CopyToClipboard` (routed through the shell's clipboard helper, its
-    result back as `Input::ClipboardCopied`); `ReadFocus(FocusPurpose)`
-    (NVDA's fake focus, the desktop's return, or Verbatim+Tab's live
-    query); `ReadClock { repeat }` (read the time and date
+    result back as `Input::ClipboardCopied`); `KeepDisplayOn` (while
+    say-all reads); `SettingsChanged` (a toggle key changed a reader
+    setting, which the shell saves); `ForKey` (an effect on behalf of
+    another key's trace); `ReadClock { repeat }` (read the time and date
     into `Input::ClockRead`); `Show(GuiRequest)` (the menu, or the list of
-    a `ShellItemKind`'s items); `Observed` (an `Observed`: an event Core
-    took, with its trace, process, backend and window facts, for the
-    control plane's event stream, which carries it as its protocol
-    version 4 event: a focus Core executed as `FocusChanged`, a change of
-    an edit control's text as `TextChanged`, a caret tell's read as
-    `CaretMoved`, and each read of the focused terminal Core took as
-    `TerminalSnapshot`). A lock key's read and the terminal's
-    quiet-period timer are not effects: the shell reads their due times
-    from Core's state after each step.
-    The text effects are under "The text protocol".
+    a `ShellItemKind`'s items); and `Observed` (an event Core took, with
+    its trace, process, backend and window facts, for the control plane's
+    event stream). A lock key's read and the terminal's quiet-period timer
+    are not effects: the shell reads their due times from Core's state
+    after each step.
 - `Earcon`: an event reported at once, outside the speech queue: an
   application not responding, start, exit, an error, browse and focus
   mode, suggestions opened and closed, and progress with its percentage.
   The theme decides how each is presented.
 - `ActionName`: the action an activation performed, in its answer
-  (`QueryResult::Activated`): `Invoke` (spoken "invoke") or `Named` (an
+  (`Reply::Activated`): `Invoke` (spoken "invoke") or `Named` (an
   application's own name, spoken as is).
 - `ReviewCommand`: the review and object-navigation vocabulary the
   keyboard layer's scripts map onto, so the reducer never depends on
@@ -364,8 +323,8 @@ them yet.
   the caret's line. Each names its `TextProvider` and `TextDetails`: the
   format attributes to read (a `FormatSet` of `FormatAttribute`s, one per
   attribute the theme switches), spelling and grammar errors, and links,
-  which the outpost reads exactly; a caret key's `KeyFetch` names them
-  too, and a read that names none fetches nothing beyond the text.
+  which the outpost reads exactly; a read that names none fetches nothing
+  beyond the text.
 - A caret tell's read (`TextOp::ReadSelection`, a `SelectionRead` naming
   the provider, Core's selection baseline, if any, and the tell's element
   for the outpost to adopt when the node's own answered it has no text
@@ -409,112 +368,60 @@ margin of a second, and a compile-time assertion states each nesting.
 `protocol` holds the messages between verbatim.exe and its children, the
 focus listener and the outposts, and the types they carry
 (`books/dev/src/explanation/design/ownership.md`). They are pure data; the framing
-that carries them on the pipes, `Message`, is
-[verbatim-outpost](verbatim-outpost.md)'s.
+that carries them on the pipes is
+[verbatim-process](verbatim-process.md)'s.
 
 - One enum per direction and role, so a receiver cannot be sent what it
   does not take: a frame of another direction fails to decode, and its
   child is ended as failed.
-  - `CoreToOutpost`: `Query`
-    (under a `RequestId`: who in Core asked, `Requester::Reducer` or
-    `Requester::Shell`, non-exhaustive for later askers, and that asker's
-    number, which outposts store, compare and echo and decide nothing by);
-    `CancelQuery` (withdraws a query not started, by its `RequestId`); `KeyNote` (the note of a key with no before read, with no reply); `Ping`;
-    `NodesHeld`; `IdleQuery`; `Shutdown`; `LiveReread`; `Assign`; `Request` (an `Ask` of
-    the shared list, its node ids stamped with the outpost generation,
-    which the outpost clears with `Ask::unstamp`); `Cancel` (a
-    request's `Cancel` with its reason); and `WindowDestroyed` (a window
-    of the outpost's application destroyed, whose MSAA nodes, text facts
-    and followed registration the outpost forgets, and whose queued
-    requests it answers "not there").
+  - `CoreToOutpost`: `Ping`, `NodesHeld`, `IdleQuery`, `Shutdown`,
+    `Assign`, `Request` (an `Ask` of the shared list, its node ids
+    stamped with the outpost generation, which the outpost clears with
+    `Ask::unstamp`), `Cancel` (a request's `Cancel` with its reason) and
+    `WindowDestroyed` (a window of the outpost's application destroyed,
+    whose MSAA nodes, text facts and followed registration the outpost
+    forgets, and whose queued requests it answers "not there").
   - `CoreToListener`: `ApplicationExited` (answered by `ExitHandled`),
-    `Ping`, `IdleQuery`, `Shutdown`, `LiveReread`, `Request` and
-    `Cancel`.
-  - `OutpostToCore`: `Ready`, `SpareReady`, `Event` (trace id,
-    observation time in microseconds, backend, `WindowFacts`, the
-    normalized event, and the application it belongs to when not the
-    outpost's target), `Reply` (exactly one per accepted query, echoing
-    its `RequestId`, with its `EventTiming` and a `QueryOutcome`: `Done` with a `QueryResult`,
-    `Gone`, `Failed`, `NotStarted`, or `Abandoned`), `Pong`, `Fault`,
-    `TargetExited`, `IdleAnswer`, `Tell` (a tell its `Follow`
-    registration delivered, a UI Automation property change with the
-    value it carried, which verbatim.exe does not yet carry to Core) and
-    `Answer` (one per `Request`; its node
-    ids are stamped by `Answer::assign_outpost`, named by `Answer::named`,
-    and it counts toward `NodesHeld`'s positions when it carries a
-    result).
-  - `ListenerToCore`: `Ready`, `ExitHandled`, `MenuOrSwitchEnded`,
-    `Desktop` (a `DesktopNews`, with its timing), `Progress`,
-    `Foreground`, `Tell` (a tell, `tell::Event`, which the supervisor
-    hands to Core), `Answer`, `Pong`, `Fault` and `IdleAnswer`.
+    `Ping`, `IdleQuery`, `Shutdown`, `Request` and `Cancel`.
+  - `OutpostToCore`: `Ready`, `Pong` (with `parked_count`, the abandoned
+    workers not yet returned, less `parked_on_hung`, those parked on a
+    window found hung while their program ran), `NotResponding { window }`,
+    `Fault`, `TargetExited`, `SpareReady`, `IdleAnswer`, `Tell` (a tell its
+    `Follow` registration or a console host's hook delivered, with the
+    value it carried) and `Answer` (one per `Request`; its node ids are
+    stamped by `Answer::assign_outpost`, named by `Answer::named`, and it
+    counts toward `NodesHeld`'s positions when it carries a result).
+  - `ListenerToCore`: `Ready`, `ExitHandled`, `Progress`, `Foreground`,
+    `Tell` (a tell, `tell::Event`, which the supervisor hands to Core),
+    `Answer`, `Pong`, `Fault` and `IdleAnswer`.
 - Every variant has a `Kind` (`kind()`, an exhaustive match): `Ask`,
-  `Answer`, `Report`, `Release`, `Lifecycle`, `Routed` or
-  `Configuration`. The module denies wildcard matches over its enums, and
-  a test holds the reviewed list of every variant's kind, built from a
-  chain of samples whose matches name every variant; verbatim.exe sends
-  no report.
-- `OutpostToCore::carries_nodes` lists every variant: an event and a
-  completed reply carry node ids, and the outpost and verbatim.exe count
+  `Answer`, `Report`, `Release` or `Lifecycle`. The module denies
+  wildcard matches over its enums, and a test holds the reviewed list of
+  every variant's kind, built from a chain of samples (`samples`) whose
+  matches name every variant; verbatim.exe sends no report.
+- `OutpostToCore::carries_nodes` says which messages carry node ids, an
+  answer with a result and a tell, and the outpost and verbatim.exe count
   the positions `NodesHeld` acknowledges with this one function.
   `assign_outpost` stamps the arriving generation on every node id, and
   `named` lists the node ids and text anchors a message names (`Named`),
-  which an outpost records as carried by it; `written` and `core_read` the
-  write and read stamps. `Urgent` is what
-  an outpost sends ahead of its queue (`Pong`, `Ready`, `TargetExited`,
-  `SpareReady`), none of which carries a node.
-- `Query` is `ReadFocus`, `Navigate`, `Activate`, `Ancestors`, `DumpTree`,
-  `Text`, `ShellItems` or `ShellItemPosition`. A `ReadFocus` carries its
-  `FocusPurpose`: `Plain` (the start, a replacement), `Fake` (a menu's or
-  the switcher's end), `Again` (the user's desktop returned) or `Report`
-  (Verbatim+Tab), which decides the tests its answer gets in the outpost
-  and in Core. A shell items or position
-  query carries its deadline on the run's shared clock, `answer_by_us`;
-  one dispatched past it is answered with no items. A
-  `ReadFocus` answer (`FocusNow`) carries the foreground window when the application
-  holds the foreground, its focused control (`FocusedControl`) with
-  ancestors, selected child, window facts and text, and when reading
-  began.
+  which an outpost records as carried by it; `written` stamps the write.
+  `Urgent` is what an outpost sends ahead of its queue (`Pong`, `Ready`,
+  `TargetExited`, `SpareReady`), none of which carries a node.
 - `OutpostToCore::NotResponding { window }`: a window of the outpost's
-  application began a hang, sent once per hang of the application (a
-  window met hung while another is still recorded hung sends nothing), in
-  order with its events;
-  Core plays the "not responding" sound for it only when the window's
-  application holds attention. The pong's `parked_count` counts the
-  abandoned workers not yet returned but for those parked on a window the
-  outpost saw hung while their program ran, which `parked_on_hung` counts.
+  application began a hang, sent once per hang of the application, in
+  order with its answers and tells; Core plays the "not responding" sound
+  for it only when the window's application holds attention.
 - `EventTiming` records each point of an event's way, in microseconds
   (`docs/design/communication.md`, section 10.1); `hop_us` is the time
   between two stamps.
-- `event_input` is the reducer's input an outpost's event is: the app and
-  the merge's tests both reduce what it gives.
-- `Merge` declares how a message type merges while it waits: its key, its
-  `Barrier` to newer messages (`All`, `Reply` or `None`), whether two of a
-  key may merge across a barrier, and the merged message. `merge_into`
-  places a newer message among those waiting since the last flush marker:
-  the newest waiting message of its key decides, and nothing merges
-  across `Barrier::All`. `Merge for OutpostToCore` is the outbound
-  queue's rule: an event replaces a waiting event of its node and kind and
-  goes to the back (never a focus report answering Core's live re-read,
-  which has no key, as it alone answers its request), a caret report
-  carrying the older's selection changes
-  before its own, a change of states that leaves the node expanded with no
-  child count keeping the older's count, and a focus report keeping the
-  stronger `earlier` of the two, in the order `Gone`, `NotFocused`,
-  `Focused`, none, so the merged message says what Core would have
-  concluded from both in order; the idle answer is `Barrier::All`; a reply bars only a
-  caret report with selection changes, and such a report never merges
-  with one in general terms. `crates/verbatim-core/tests/merge.rs` proves
-  Core's state and the others' speech the same, merged or not, for every
-  merged kind over a fixed set of sequences.
 - `Responder<T>` answers one in-process request once: `answer` consumes
   it, and its `Drop` answers `None`, "gone", so a request lost anywhere is
   still answered. Across processes a killed child runs no `Drop`, so there
-  the asking side's request table answers.
+  Core's request table answers.
 
-The listener's facts and their helpers live here too: `UiaFocusRead`,
-`UiaSnapshotFact`, `UiaAncestorFact`, `AncestorsEnd`, `DeliveredFact`
-(`is_focus_read`, `is_win_event`, and `key`, NVDA's limiter key, a
-`FactKey`), `WinEventStamp` with `tick_is_after`, and `DumpedTree`.
+The completion's types live here too: `UiaSnapshotFact` and
+`UiaAncestorFact`, what the listener read of an element and its
+ancestors, `AncestorsEnd`, where a walk ended, and `DumpedTree`.
 
 ## The text protocol
 
@@ -567,10 +474,13 @@ implements. What each answer says is in `docs/parity/text.md`,
   `Document` (only for moving to the ends). In a terminal, line is the
   largest unit read.
 
-### Events the outpost sends
+### Text events Core takes
+
+These are `NormalizedEvent`'s, which `Effect::Observed` carries to the
+control plane's event stream; no reader sends them.
 
 - `FocusChanged`'s `text`, a `FocusText`, read while the outpost handled
-  the focus so the caret's line comes in the focus's own message:
+  with the focus (`FocusCaret`) so the caret's line comes with it:
   `Caret { caret, selected_text, changes }`, `changes` being how the
   selection differs from the node's last read, for a repeated focus,
   `NoText` (Core speaks the value), or
@@ -580,15 +490,12 @@ implements. What each answer says is in `docs/parity/text.md`,
   `CaretReport` is the line at the caret, with its `offset` at the caret,
   the `CaretSelection` (`None` when nothing is selected), whose start is in
   that line or in `start_line`, the earlier line it starts in, and
-  `read_at_us`, when the read began on the shared clock. Sent on
-  every caret or selection change in the focus, coalesced so a burst
-  sends only the latest with the selection changes of every report it
-  replaces. `selection_changes` is how the selection changed from the one
-  in the outpost's last report for the node, by the rule of `CaretReply`'s;
-  after Verbatim selected text or moved the caret, the comparison is with
-  that. A key's own caret event is taken by its watch.
-- `TextChanged { node_id }`: the node's text changed; Core says nothing of
-  it.
+  `read_at_us`, when the read began on the shared clock. Core gives it
+  for each caret tell's read it takes; `selection_changes` is how the
+  selection changed from Core's selection baseline, by the rule below. A
+  key's own caret event is taken by its watch.
+- `TextChanged { node_id }`: an edit control's text changed; Core says
+  nothing of it.
 - `TerminalSnapshot { node_id, snapshot }`: one full read of a focused
   terminal, the control plane's protocol version 4 event the test harness
   waits on ([verbatim-core](verbatim-core.md), "Core's terminal model"),
@@ -611,25 +518,13 @@ implements. What each answer says is in `docs/parity/text.md`,
 
 ### Requests and replies
 
-Core emits `Effect::Text(TextRequest { query_id, node_id, op })`; the
-outpost owning `node_id` answers, and the answer reaches Core as
-`Input::Answered { trace_id, query_id, outpost, outcome }`, whose outcome
-carries a `TextReply`. A newer request for the same purpose
-supersedes an older one, whose answer Core drops. The operations
-(`TextOp`):
+A text request is a request of the shared list, `Request::Text` naming
+the node and a `TextOp`, which Core's event queue sends to the node's
+outpost (`QueueEffect::Send`); its answer reaches Core as
+`QueueInput::Answer` carrying a `TextReply`. The caret key's starting
+read, its watch, the sentence move and a caret tell's read are under
+"Tells, requests and the tables" above; the other operations:
 
-- `ReadCaret(CaretRead { fetch, purpose })`: one read of the caret for a
-  key, answered `TextReply::Caret` (a `CaretReply` carrying `ReadFacts`),
-  or, in a focused terminal, a `TerminalSnapshot` whose caret answers it.
-  `ReadPurpose::BeforeFieldKey` and `ReadPurpose::BeforeTerminalKey` are a
-  held key's before read, whose arrival sets the node's note;
-  `ReadPurpose::Final` is a text field's key's final read past its bound,
-  whose commit clears it. `KeyFetch` names the unit and the motion. A key with no before read
-  sends `CoreToOutpost::KeyNote` instead. A read made under a note, or
-  asked for one, reports `ReadFacts` on its `CaretMoved` or reply: the
-  unit, how it compared with the node's last read (`Change::NoPrevious` or
-  `Change::Compared`, whose `Compared` is judged by `had_effect`), and when
-  it ended. Core alone decides whether those facts are a key's evidence.
 - Selection changes: each `SelectionChange` is `selected` or not, its
   `text` cut to `MAX_SELECTION_TEXT_BYTES` (4 KB), and its full count of
   `characters`. When the old and new selections neither overlap nor
@@ -710,7 +605,6 @@ exists), or `Unanswered` (no answer in time, or the read failed).
   chord (Control+Z, Control+Y, Control+X, Control+V or Escape) the hook
   passed to the application.
 - `Input::HeldKey`, with the same fields: a caret key the hook held back.
-  `Input::HeldKeyDue { trace_id }`: the held key's one deadline passed.
 - `Input::CharacterTyped { trace_id, key_seq, text, at_ms }`: text typed into the
   focused application, one character or an input method's committed
   composition, a tab as a tab and Enter as a carriage return.
@@ -719,34 +613,27 @@ exists), or `Unanswered` (no answer in time, or the read failed).
 - `Input::MarkReached { mark }`, `Input::UtteranceCancelled { marks,
   at_ms }`, `Input::UtteranceFailed { marks }`: what the speech pipeline
   reports of the marks the reducer placed.
-- `Input::SpeechCancelled { at_ms }`: a key press cut speech off outside
-  the reducer.
 - `Input::Settings(ReaderSettings)` and
   `Input::Reported(ReportedDetails)`: at startup and whenever they
   change.
 - `Input::TerminalTimer { trace_id, at_ms }`: the focused terminal's
   quiet-period timer came due, at the due time Core's state gave.
 - The shell sends the speech side's reports and its timers as queue
-  inputs (`Input::Queue`), each standing for one of the inputs above and
-  handled at once by Core as that input:
-  `QueueInput::SpeechCut` for `SpeechCancelled`,
+  inputs (`Input::Queue`), handled at once by Core:
+  `QueueInput::SpeechCut` (a key press cut speech off),
   `QueueInput::UtteranceCancelled` and `QueueInput::UtteranceFailed`,
-  `QueueInput::HeldKeyDue` under the key's trace,
+  `QueueInput::Due` (the time Core last asked to be woken at came),
   `QueueInput::TerminalDue { at_ms }` for `TerminalTimer`, and
   `QueueInput::LockKeyRead { key, on }` for `LockKeyToggled`; a mark
   reached is `QueueInput::MarkReached`, which joins the event queue.
 
 ### Effects for the shell
 
-- `Effect::Text(TextRequest)`, routed to the node's outpost.
-- `Effect::PassHeldKey(trace_id)`: pass a held key on.
+- `Effect::Queue(QueueEffect)`: a text request sent to the node's
+  outpost (`Send`) or cancelled (`Cancel`), a held key's stroke sent
+  (`SendStrokes`), and the wake Core asks for (`WakeAt`).
 - `Effect::ForKey(trace_id, effect)`: an effect executed on another key's
   trace.
-- `Effect::BoundHeldKey(Option<(TraceId, u64)>)`: send
-  `Input::HeldKeyDue` with that trace once the milliseconds given have
-  passed, a later one replacing it, `None` clearing it.
-- `Effect::Withdraw { outpost, query_id }`: withdraw from its outpost a
-  query Core gave up on and no longer records.
 - `Effect::KeepDisplayOn(bool)`: keep the display on while say-all reads;
   every true is followed by a false.
 - `Effect::SettingsChanged(ReaderSettings)`: a toggle key changed a
