@@ -4481,12 +4481,13 @@ fn uia_text_focus(
 /// caret and 10 with a selection before Core asked the completion and read
 /// the states after the registration. Classically the read is the classic
 /// calls behind the same signature: 19 and 27 calls, where the caret
-/// report the outpost sent with its own focus report took 45 and 57. A terminal's caret is not read with its
-/// focus: its first read is build 3's baseline read, which Core sends with
-/// `Follow` as the focus commits (`docs/design/readers-tell-core-asks-build3.md`,
-/// "The focused terminal's life"), 2 calls remotely and 30 classically, so
-/// the focus and its baseline cost 10 and 40 calls, where its focus with
-/// its caret took 9 and 27.
+/// report the outpost sent with its own focus report took 45 and 57. A terminal's caret is read with its
+/// focus too, so that the focus says its line (`docs/parity/terminals.md`),
+/// and its first full read is build 3's baseline read, which Core sends
+/// with `Follow` as the focus commits
+/// (`docs/design/readers-tell-core-asks-build3.md`, "The focused
+/// terminal's life"): the focus, its caret and its baseline cost 11 calls
+/// remotely and 48 classically.
 #[expect(
     clippy::too_many_lines,
     reason = "every text field focus and its pinned counts, listed in full"
@@ -4522,6 +4523,7 @@ fn text_field_focuses_cost_exactly() {
     let terminal_said = vec![
         window("Mockapp Terminal Reading Fixture"),
         vec![label("Terminal"), SegmentContent::Role(Role::Terminal)],
+        vec![SegmentContent::Text("one".to_owned())],
     ];
     for (operation, fixture, id, remote, setup, expected_said, expected) in [
         (
@@ -4588,7 +4590,7 @@ fn text_field_focuses_cost_exactly() {
             true,
             &[][..],
             terminal_said.clone(),
-            first_focus(10),
+            first_focus(11),
         ),
         (
             "UIA terminal focus, classically",
@@ -4597,7 +4599,7 @@ fn text_field_focuses_cost_exactly() {
             false,
             &[][..],
             terminal_said.clone(),
-            first_focus(40),
+            first_focus(48),
         ),
     ] {
         let (said, measured) = uia_text_focus(fixture, id, remote, setup);

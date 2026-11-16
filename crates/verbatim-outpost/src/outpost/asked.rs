@@ -1139,16 +1139,16 @@ fn class_of(
 /// The focus's caret, read after its states (Table 17): for a node that
 /// may have text, its caret and selection, compared with `baseline` when
 /// the node holds it, the next baseline held; none for a node with no
-/// text. A terminal's first read is its baseline read, so its caret is not
-/// read here.
+/// text. A terminal's caret is read too, so that its focus says the line
+/// the caret is on ("blank" for an empty one) as NVDA's announcement of a
+/// focused terminal does (`docs/parity/terminals.md`); its baseline read,
+/// sent after the focus, is silent.
 fn caret_of(
     context: &RequestContext<'_>,
     node: &NodeSnapshot,
     baseline: Option<TextAnchor>,
 ) -> FocusCaret {
-    if node.role == Role::Terminal {
-        FocusCaret::NotRead
-    } else if text_reads::may_have_text(context, node.id, node.role) {
+    if text_reads::may_have_text(context, node.id, node.role) {
         text_reads::focus_caret(context, node.id, baseline)
     } else {
         FocusCaret::NoText

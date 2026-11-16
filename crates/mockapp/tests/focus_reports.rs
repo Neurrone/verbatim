@@ -1732,8 +1732,8 @@ fn a_console_windows_own_focus_is_never_reported() {
 /// calls, the text area's cache and the steps up to the console window and
 /// to the desktop's root, and no window message. The outpost, which
 /// judges the console by its window's class, completes it as the
-/// console's terminal, nameless, its caret not read, since a terminal's
-/// first read is Core's baseline read.
+/// console's terminal, nameless, with the line at its caret, which the
+/// focus says as NVDA's announcement of a focused terminal does.
 fn a_console_text_areas_focus_is_checked_from_the_text_area() {
     let title = common::unique_title("mockapp-console-text-area");
     let mut app = common::spawn("console_window.json", "uia", &title);
@@ -1754,13 +1754,13 @@ fn a_console_text_areas_focus_is_checked_from_the_text_area() {
             reported.role(),
             reported.name(),
             reported.ancestor_names(),
-            &reported.read.caret
+            caret_line(&reported)
         ),
         (
             Role::Terminal,
             None,
             vec![Some("Mockapp Console Window Fixture")],
-            &FocusCaret::NotRead
+            Some("ready>")
         )
     );
     outpost.settled();
