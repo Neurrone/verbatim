@@ -191,12 +191,13 @@ processes, every exception attributed.
 - The reducer parses every outpost frame on its own thread, whatever its
   size, with no wake-up of its own: a few microseconds for the common
   messages. A terminal read's answer carries its text and colours in the
-  JSON body, as every answer does (`docs/design/communication.md`,
-  section 4.2): as JSON strings, 0.9 MB of Latin text took 0.6 ms to
-  parse, 1.6 MB of Cyrillic 1.6 ms, and 100 rows of 120 colour runs
-  1.0 ms (release, measured 2026-10-28, before a terminal read was an
-  answer to Core's request); keys and other outposts' frames posted after
-  it wait for it.
+  frame's raw section (`docs/design/communication.md`, section 4.2), so a
+  whole-document read of 9,031 rows takes 0.07 to 0.09 ms for 0.29 MB of
+  Latin text and 0.09 to 0.13 ms for 0.36 MB of Cyrillic, and an ordinary
+  read with its screen's 30 rows of 120 colour runs 0.03 to 0.04 ms
+  (release, parsing alone, mean of 50, six runs of the ignored
+  `measure_conversion`, measured 2026-11-17); keys and other outposts'
+  frames posted after it wait for it.
 - The relay's owner thread copies each outpost frame it hands on out of
   the reader's buffer, the frame having been lent: a 4.0 MB frame, a
   terminal's whole document over a buffer of the console's greatest
@@ -1586,10 +1587,21 @@ reprint. What remains is the memory's and rules' work on every row ("A
 terminal's rotation") and the page faults of the heap taking pages back;
 Core's own part is about 0.2 to 0.5 ms.
 
+The outpost's conversion of a read into its snapshot, in one pass into
+buffers made for each read, its text sized up front, and its writing in
+the answer sent to Core (`terminal::unpadded_utf16`; the ignored
+`measure_conversion` in `crates/verbatim-outpost/src/terminal/tests.rs`,
+release, 2026-11-01, eleven runs): a whole document of 9,031 rows of 120
+cells 1,947 to 2,128 µs with 78 to 80 page faults in Latin text, 2,036
+to 2,180 µs with 95 to 98 in Cyrillic; an ordinary read of two screens
+20 to 27 µs; 64 KiB, the write buffer, kept after a whole document. Paid
+in the outpost, once per whole-document read.
+
 ### A terminal's reads, live
 
 Measured on 2026-10-26 on this machine, release build, every read sent to
-Core, one run of each scenario, a terminal's text in the JSON body.
+Core, one run of each scenario, before a terminal's text moved to the
+frame's raw section.
 
 - Messages: one per read; a flood sent 1,911 in the console host and 252
   in Windows Terminal, a full-history flood 3,906 and 154, the key

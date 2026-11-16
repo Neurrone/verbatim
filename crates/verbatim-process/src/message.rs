@@ -6,7 +6,9 @@
 //! ends the child inherits, their handle values passed on its command line,
 //! so there is nothing to discover or secure. Each message is one frame of
 //! `crate::transport`: a `Content-Length` header, then the
-//! message as compact JSON, readable by eye and in captures; all of it
+//! message as compact JSON, readable by eye and in captures, and, for an
+//! answer carrying a terminal's text or colours, a raw section holding
+//! them, the JSON giving their places (the `raw` module); all of it
 //! isolated behind [`Message`], [`write_message`], [`encode_message`] and
 //! [`read_message`] so neither end's logic sees the framing.
 
@@ -19,6 +21,8 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use verbatim_model::protocol::{CoreToListener, CoreToOutpost, ListenerToCore, OutpostToCore};
 
+mod raw;
+
 /// The most bytes one message may take, its frame's header aside, in either
 /// direction between Core and a child (`docs/design/communication.md`, section
 /// 4.2; Dickson, 2026-10-07): room for 10 MB
@@ -29,7 +33,10 @@ use verbatim_model::protocol::{CoreToListener, CoreToOutpost, ListenerToCore, Ou
 pub const MAX_MESSAGE_BYTES: usize = crate::transport::MAX_FRAME_BYTES;
 
 /// A message of the Core-outpost protocol as a frame carries it: its JSON
-/// body alone, refused with a raw section.
+/// body, and for an answer that carries a terminal's text and colours, a
+/// raw section holding them, the body giving their places
+/// (`docs/design/communication.md`, section 4.2). Every other message is a
+/// body alone, and is refused with a raw section.
 pub trait Message: Sized {
     /// Appends this message's frame to `buffer`.
     ///
@@ -91,11 +98,17 @@ impl Message for ListenerToCore {
 
 impl Message for OutpostToCore {
     fn put_frame(&self, buffer: &mut Vec<u8>) -> io::Result<()> {
-        put_json(buffer, self)
+        match raw::Terminal::of(self) {
+            Some(terminal) => terminal.put_frame(buffer),
+            None => put_json(buffer, self),
+        }
     }
 
     fn from_parts(parts: Parts<'_>) -> io::Result<Self> {
-        from_json(parts)
+        match parts.raw {
+            Some(section) => raw::decode(parts.body, section),
+            None => serde_json::from_slice(parts.body).map_err(io::Error::other),
+        }
     }
 }
 
