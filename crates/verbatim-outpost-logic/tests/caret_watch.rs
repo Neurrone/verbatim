@@ -20,14 +20,8 @@
 //! with the time each was said, must equal what the model says is heard by
 //! then; at the end, all of it.
 //!
-//! Where the sources leave an outcome open, the model refuses the script
-//! and the world never runs it, until a ruling decides: a caret event
-//! heard while a key's read before it is out (NVDA's wait would find it
-//! pending at its first try; whether the watch counts what it heard before
-//! it began is not recorded); a change first seen at the bound (NVDA's try
-//! at about 100 ms counts it as the effect; the bound "until 100 ms" does
-//! not say); and two things at one microsecond, whose order is the
-//! harness's.
+//! Two things at one microsecond leave their order open, the harness's,
+//! so the model refuses such a script and the world does not run it.
 //!
 //! Not in the world: the console host, whose caret key's read before it
 //! and final read are build 3's terminal reads, which no message of
@@ -509,6 +503,29 @@ fn rules() -> Vec<Rule> {
                 at(9_000, Heard::Focus("OK".to_owned())),
                 at(114_000, Heard::Char('a')),
             ],
+        ),
+        (
+            "a change first seen at the bound is the key's effect: Backspace says what it deleted",
+            script(
+                Kind::TextBox,
+                2,
+                vec![press(0, Key::Backspace, Some((95, 1)), 5)],
+                None,
+            ),
+            vec![at(105_000, Heard::Char('b'))],
+        ),
+        (
+            "an event heard while a key's read before it is out is that key's effect, the caret read at once after the key is sent",
+            script(
+                Kind::Notepad,
+                0,
+                vec![
+                    press(0, Key::Right, Some((32, 1)), 5),
+                    press(30, Key::Left, Some((2, 1)), 10),
+                ],
+                None,
+            ),
+            vec![at(40_000, Heard::Char('b'))],
         ),
     ]
 }

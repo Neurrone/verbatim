@@ -244,7 +244,7 @@ fn delay(lo: Us, hi: Us) -> impl Strategy<Value = Us> {
 fn handling() -> impl Strategy<Value = Option<Handling>> {
     prop_oneof![
         6 => (delay(1, 10), delay(0, 3)).prop_map(|delays| Some(handled(delays))),
-        2 => (delay(20, 80), delay(0, 3)).prop_map(|delays| Some(handled(delays))),
+        2 => (delay(20, 110), delay(0, 3)).prop_map(|delays| Some(handled(delays))),
         1 => (delay(120, 250), delay(0, 3)).prop_map(|delays| Some(handled(delays))),
         1 => Just(None),
     ]

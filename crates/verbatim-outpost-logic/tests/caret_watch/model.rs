@@ -28,10 +28,15 @@
 //!   the outpost runs one read at a time, and a read no longer wanted is
 //!   left to finish (ADR 0003, "A frozen window").
 //!
-//! The model is a simulation of its own over the script's times. Where
-//! the sources leave the outcome open, the model refuses the case
-//! ([`Refused`]) so the world never generates it; each such place names
-//! the question it waits on.
+//! - NVDA's caret wait read from its source, as the coordinator gave it
+//!   (`nvda/source/editableText.py`, `_hasCaretMoved`, 70 to 163): a
+//!   change first seen at the bound counts as the effect (124 to 152), and
+//!   an event heard after the key's script began, its read before it
+//!   included, counts within 60 ms (95 to 118).
+//!
+//! The model is a simulation of its own over the script's times. Two
+//! things at one microsecond leave their order open, so the model refuses
+//! the case ([`Refused`]) and the world never runs it.
 
 use std::collections::VecDeque;
 
@@ -136,6 +141,10 @@ enum Event {
 }
 
 /// The model's run of one script.
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each is one fact of the model's world, read on its own"
+)]
 pub struct Model<'s> {
     script: &'s Script,
     now: Us,
@@ -148,6 +157,9 @@ pub struct Model<'s> {
     field_committed: bool,
     /// Whether a focus tell waits, counting as pending.
     pending: bool,
+    /// Whether an event the field raised was heard since the front key's
+    /// script began.
+    event_heard: bool,
     queue: VecDeque<Entry>,
     front: Front,
     /// Per key: held by the hook, sent to the application, marked by a
@@ -190,6 +202,7 @@ impl<'s> Model<'s> {
             field_focused: true,
             field_committed: true,
             pending: false,
+            event_heard: false,
             queue: VecDeque::new(),
             front: Front::Idle,
             held: vec![false; keys],
@@ -206,7 +219,7 @@ impl<'s> Model<'s> {
     pub fn run(mut self) -> Result<Prediction, Refused> {
         while let Some((at, event)) = self.next()? {
             self.now = at;
-            self.happen(event)?;
+            self.happen(event);
             self.take_next();
         }
         Ok(Prediction {
@@ -271,38 +284,35 @@ impl<'s> Model<'s> {
         self.front = Front::Idle;
     }
 
-    fn happen(&mut self, event: Event) -> Result<(), Refused> {
+    fn happen(&mut self, event: Event) {
         match event {
             Event::Press(key) => {
                 self.pressed(key);
-                Ok(())
             }
             Event::Release(key) => {
                 self.release(key);
-                Ok(())
             }
             Event::Change(key) => {
                 self.app.apply(self.press(key).key);
-                Ok(())
             }
-            Event::Raised(_) => self.raised(),
+            Event::Raised(_) => {
+                self.raised();
+            }
             Event::FocusMoved => {
                 self.field_focused = false;
-                Ok(())
             }
             Event::FocusTold => {
                 self.focus_told();
-                Ok(())
             }
             Event::ListenerDone => {
                 self.ask(Work::Focus);
-                Ok(())
             }
             Event::WorkerDone => {
                 self.worker_done();
-                Ok(())
             }
-            Event::Check(pass) => self.check(pass),
+            Event::Check(pass) => {
+                self.check(pass);
+            }
         }
     }
 
@@ -390,11 +400,17 @@ impl<'s> Model<'s> {
         self.front = Front::Watching {
             key,
             pass,
-            before,
+            before: before.clone(),
             // NVDA trusts a UI Automation field's events, and the outpost
             // hears the committed focus's alone.
-            events: self.script.kind == Kind::Notepad && self.field_committed,
+            events: self.trusts_events(),
         };
+        if self.trusts_events() && self.event_heard {
+            // An event heard while the read before the key was out is
+            // pending at the loop's first look.
+            self.effect(key, &before);
+            return;
+        }
         let mut check = pass;
         while check <= pass + BOUND {
             self.at(check, Event::Check(pass));
@@ -406,42 +422,40 @@ impl<'s> Model<'s> {
     /// the test ADR 0003 keeps ("Keys and commands": today's "had an
     /// effect"; `docs/parity/text.md`, "What counts as a caret key's
     /// evidence"); at the bound, the key's words with none.
-    fn check(&mut self, began: Us) -> Result<(), Refused> {
+    fn check(&mut self, began: Us) {
         let Front::Watching {
             key, pass, before, ..
         } = self.front.clone()
         else {
-            return Ok(());
+            return;
         };
         if pass != began {
-            return Ok(());
+            return;
         }
         let changed = had_effect(self.press(key).key, &before, &self.app);
         if self.now < pass + BOUND {
             if changed {
                 self.effect(key, &before);
             }
-            return Ok(());
+            return;
         }
         if changed {
-            // A change after the last check before the bound: NVDA's try at
-            // about 100 ms finds it and counts it as the effect.
-            return Err(Refused(
-                "does a change first seen at the bound count as the key's effect?",
-            ));
+            // The check at the bound counts: NVDA's loop reads the caret and
+            // compares it with the bookmark before it computes the elapsed
+            // time and breaks (`nvda/source/editableText.py` 124 to 152), so
+            // its last try, at or past the timeout, finds the effect.
+            self.effect(key, &before);
+            return;
         }
         if self.press(key).key != Key::Backspace {
             self.say(unit(self.press(key).key, &self.app));
         }
         self.end();
-        Ok(())
     }
 
-    /// The application raised its events: within 60 ms of the key they
-    /// are its effect. Heard while a key's read before it is out, they are
-    /// open: NVDA's wait would find them pending at its first try, and
-    /// whether the watch counts what came before it is not recorded.
-    fn raised(&mut self) -> Result<(), Refused> {
+    /// The application raised its events: within 60 ms of the key, or
+    /// while its read before it is out, they are its effect.
+    fn raised(&mut self) {
         match self.front.clone() {
             Front::Watching {
                 key,
@@ -452,13 +466,25 @@ impl<'s> Model<'s> {
                 if events && self.now <= pass + EVENTS {
                     self.effect(key, &before);
                 }
-                Ok(())
             }
-            Front::Reading(_) if self.field_committed => Err(Refused(
-                "does a caret event heard while a key's read before it is out count as that key's effect?",
-            )),
-            Front::Idle | Front::Reading(_) | Front::Focusing => Ok(()),
+            // Heard after the key's script began, while its read before it
+            // is out: NVDA's script runs on its main thread, so the event is
+            // still pending when its loop first looks, at once after the
+            // key is sent, and is the key's effect, the caret read then
+            // (`nvda/source/editableText.py` 70 to 163, the event test 95 to
+            // 118).
+            Front::Reading(_) if self.trusts_events() => {
+                self.event_heard = true;
+            }
+            Front::Idle | Front::Reading(_) | Front::Focusing => {}
         }
+    }
+
+    /// Whether NVDA trusts the field's events for a caret key's effect
+    /// (`caretMovementDetectionUsesEvents`), and the outpost hears them: a
+    /// UI Automation field while it is the committed focus.
+    fn trusts_events(&self) -> bool {
+        self.script.kind == Kind::Notepad && self.field_committed
     }
 
     /// Key `key`'s effect, now: its words from the caret read now.
@@ -504,6 +530,7 @@ impl<'s> Model<'s> {
             self.send(key);
             return;
         }
+        self.event_heard = false;
         self.front = Front::Reading(key);
         self.ask(Work::Read(key));
     }
