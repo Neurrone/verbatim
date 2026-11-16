@@ -123,18 +123,23 @@ Public API:
 - `ScriptAction::review_command` — the reducer command an action runs, or
   `None` for speak time and the tray list, which run as Core's scripts; the
   one place the two vocabularies meet.
-- `caret_bindings()` — the caret keys of NVDA's editable-text commands, as
-  `(GestureId, CaretKey)` pairs: Left and Right Arrow, Control with them,
-  Up and Down Arrow, Control with them, Home, End, Page Up, Page Down, and
-  Control with Home and End, each with and without Shift; Backspace,
+- `caret_bindings()` — the caret keys of NVDA's editable-text commands
+  that the hook holds, as `(GestureId, CaretKey)` pairs: Left and Right
+  Arrow, Control with them, Up and Down Arrow, Control with them, Home,
+  End, Page Up, Page Down, and Control with Home and End; Backspace,
   Delete and the numpad's Delete, each alone and with Control or Shift
   (Shift deletes as the key alone does, and Shift+Delete cuts a
-  selection); Alt with Up and Down Arrow, NVDA's sentence keys; and
-  Control+A. They are observed and held, never
-  bound: the shell adds them to the hook's map with `with_held` and
-  turns each reported gesture into `Input::CaretKey`, or, while the focus
-  has text, the machine holds them back until the caret has been read and
-  the shell turns each into `Input::HeldKey` (`books/dev/src/explanation/design/key-holding.md`).
+  selection); and Alt with Up and Down Arrow, NVDA's sentence keys. They
+  are observed and held, never bound: the shell adds them to the hook's
+  map with `with_held` and turns each reported gesture into
+  `Input::CaretKey`, or, while the focus has text, the machine holds them
+  back until the caret has been read and the shell turns each into
+  `Input::HeldKey` (`books/dev/src/explanation/design/key-holding.md`).
+- `selection_bindings()` — the selection keys, the Shift forms of the
+  moves and Control+A, as `(GestureId, CaretKey)` pairs with `select`
+  set. They are observed, never held nor bound: each passes at once,
+  deferred only behind a held key, and is reported, so Core ends say-all
+  at its turn.
 - `clearing_keys()` — the keys that end or clear the command line being
   typed: Escape, Control+C, Control+D, and Control+Break, both as NVDA
   binds it (Control+Pause) and as Windows reports it (the `break` key,

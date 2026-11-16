@@ -138,7 +138,7 @@ The machine decides which keys are held and deferred
 (`books/dev/src/explanation/design/key-holding.md`; the rules are in
 [verbatim-input](verbatim-input.md)); the hook gathers the permit and
 carries out the verdicts. The held keys are the gesture map's
-(`GestureMap::with_held`, the whole caret table,
+(`GestureMap::with_held`, the caret table without the selection keys,
 `verbatim_input::caret_bindings`). A `Hold(place)` is swallowed and
 reported as `KeyReport::Held`, with its press time and the stroke it came
 from (`HeldStroke`: virtual key, scan code, extended flag, place), after

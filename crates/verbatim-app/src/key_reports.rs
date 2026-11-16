@@ -43,7 +43,10 @@ impl Tables {
     /// The tables for keyboard layout `layout`.
     pub(crate) fn for_layout(layout: KeyboardLayout) -> Self {
         Self {
-            caret_keys: verbatim_input::caret_bindings().into_iter().collect(),
+            caret_keys: verbatim_input::caret_bindings()
+                .into_iter()
+                .chain(verbatim_input::selection_bindings())
+                .collect(),
             clearing_keys: verbatim_input::clearing_keys().into_iter().collect(),
             editing_chords: verbatim_input::editing_chords().into_iter().collect(),
             show_menu: GestureId::parse(SHOW_MENU_GESTURE).expect("valid binding"),

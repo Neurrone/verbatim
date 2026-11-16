@@ -3,7 +3,8 @@
 //! transcribed exactly), and M4's review, say-all, select-then-copy, and
 //! typing commands (`docs/parity/review.md`, with NVDA's desktop and
 //! laptop keys), plus the caret keys the hook
-//! observes on their way to the application ([`caret_bindings`]).
+//! observes on their way to the application ([`caret_bindings`],
+//! [`selection_bindings`]).
 //!
 //! [`ScriptAction`] names every command abstractly, independent of any
 //! particular key; [`bindings_for`] returns the complete gesture table for a
@@ -351,91 +352,69 @@ pub fn bindings_for(layout: KeyboardLayout) -> Vec<(GestureId, ScriptAction)> {
         .collect()
 }
 
-/// The caret keys of NVDA's editable-text commands, every layout alike:
-/// moving by character, word, line, paragraph, page, to the line's ends and
-/// the document's, each with Shift to select, plus Backspace and Delete
-/// (the numpad's too) with their Control and Shift forms, Alt with Up or
-/// Down Arrow, and Control+A. They are observed, never bound: the hook
-/// passes each to the application, which moves the caret, and reports it
-/// so the reducer can speak the result (`docs/nvda/editable-text-and-terminals.md`).
-/// Build the hook's map with [`GestureMap::with_observed`] over these
-/// gestures; the shell turns a reported gesture into `Input::CaretKey`
-/// through the same table.
+/// The caret keys of NVDA's editable-text commands that the hook holds,
+/// every layout alike: moving by character, word, line, paragraph, page,
+/// to the line's ends and the document's, plus Backspace and Delete (the
+/// numpad's too) with their Control and Shift forms, and Alt with Up or
+/// Down Arrow. They are observed and held, never bound: the hook holds
+/// each while Core's view lets keys be held, and reports it so the reducer
+/// can read the caret, send it and speak the result
+/// (`docs/nvda/editable-text-and-terminals.md`). Build the hook's map with
+/// [`GestureMap::with_held`] over these gestures; the shell turns a
+/// reported gesture into `Input::CaretKey` through the same table. The
+/// selection keys are [`selection_bindings`].
 ///
 /// # Panics
 ///
 /// Never panics in practice: every identifier is a fixed literal pinned
 /// well-formed by this module's tests.
-#[expect(
-    clippy::expect_used,
-    reason = "fixed literals; every entry is parsed by caret_keys_are_distinct_and_never_bound"
-)]
 #[must_use]
 pub fn caret_bindings() -> Vec<(GestureId, CaretKey)> {
-    const MOVES: &[(&str, CaretMotion)] = &[
-        ("leftarrow", CaretMotion::PreviousCharacter),
-        ("rightarrow", CaretMotion::NextCharacter),
-        ("control+leftarrow", CaretMotion::PreviousWord),
-        ("control+rightarrow", CaretMotion::NextWord),
-        ("uparrow", CaretMotion::PreviousLine),
-        ("downarrow", CaretMotion::NextLine),
-        ("control+uparrow", CaretMotion::PreviousParagraph),
-        ("control+downarrow", CaretMotion::NextParagraph),
-        ("home", CaretMotion::StartOfLine),
-        ("end", CaretMotion::EndOfLine),
-        ("pageup", CaretMotion::PreviousPage),
-        ("pagedown", CaretMotion::NextPage),
-        ("control+home", CaretMotion::Top),
-        ("control+end", CaretMotion::Bottom),
-    ];
-    // NVDA's other keys without a Shift form: Shift with Backspace and
-    // Delete deletes as without it (Shift+Delete cuts a selection), the
-    // numpad's Delete is Delete, and Alt with Up or Down Arrow moves by
-    // sentence.
-    const EDITS: &[(&str, CaretMotion)] = &[
-        ("backspace", CaretMotion::Backspace),
-        ("shift+backspace", CaretMotion::Backspace),
-        ("control+backspace", CaretMotion::BackspaceWord),
-        ("delete", CaretMotion::Delete),
-        ("shift+delete", CaretMotion::Delete),
-        ("numpaddelete", CaretMotion::Delete),
-        ("shift+numpaddelete", CaretMotion::Delete),
-        ("control+delete", CaretMotion::DeleteWord),
-        ("control+numpaddelete", CaretMotion::DeleteWord),
-        ("alt+uparrow", CaretMotion::PreviousSentence),
-        ("alt+downarrow", CaretMotion::NextSentence),
-    ];
-    let parse = |identifier: String| {
-        GestureId::parse(&identifier).expect("caret table entries are well-formed")
-    };
-    let mut bindings = Vec::new();
-    for &(keys, motion) in MOVES {
-        bindings.push((
-            parse(format!("kb:{keys}")),
-            CaretKey {
-                motion,
-                select: false,
-            },
-        ));
-        bindings.push((
-            parse(format!("kb:shift+{keys}")),
-            CaretKey {
-                motion,
-                select: true,
-            },
-        ));
-    }
-    for &(keys, motion) in EDITS {
-        bindings.push((
-            parse(format!("kb:{keys}")),
-            CaretKey {
-                motion,
-                select: false,
-            },
-        ));
-    }
+    MOVES
+        .iter()
+        .chain(EDITS)
+        .map(|&(keys, motion)| {
+            (
+                caret_gesture(&format!("kb:{keys}")),
+                CaretKey {
+                    motion,
+                    select: false,
+                },
+            )
+        })
+        .collect()
+}
+
+/// The selection keys of NVDA's editable-text commands, every layout
+/// alike: the Shift forms of [`caret_bindings`]' moves, and Control+A.
+/// They are observed, never held nor bound: each passes at once, deferred
+/// only behind a held key as every key is, and is reported so the reducer
+/// ends say-all at its turn (`docs/design/readers-tell-core-asks-build1.md`,
+/// "The hook and Core's stroke line": NVDA binds them only in controls
+/// that do not detect selection changes, which Verbatim does not read).
+/// Build the hook's map with [`GestureMap::with_observed`] over these
+/// gestures.
+///
+/// # Panics
+///
+/// Never panics in practice: every identifier is a fixed literal pinned
+/// well-formed by this module's tests.
+#[must_use]
+pub fn selection_bindings() -> Vec<(GestureId, CaretKey)> {
+    let mut bindings: Vec<(GestureId, CaretKey)> = MOVES
+        .iter()
+        .map(|&(keys, motion)| {
+            (
+                caret_gesture(&format!("kb:shift+{keys}")),
+                CaretKey {
+                    motion,
+                    select: true,
+                },
+            )
+        })
+        .collect();
     bindings.push((
-        parse("kb:control+a".to_owned()),
+        caret_gesture("kb:control+a"),
         CaretKey {
             motion: CaretMotion::SelectAll,
             select: true,
@@ -443,6 +422,51 @@ pub fn caret_bindings() -> Vec<(GestureId, CaretKey)> {
     ));
     bindings
 }
+
+/// A caret table's identifier, parsed.
+#[expect(
+    clippy::expect_used,
+    reason = "fixed literals; every entry is parsed by caret_keys_are_distinct_and_never_bound"
+)]
+fn caret_gesture(identifier: &str) -> GestureId {
+    GestureId::parse(identifier).expect("caret table entries are well-formed")
+}
+
+/// The caret table's moves, each also a selection key with Shift.
+const MOVES: &[(&str, CaretMotion)] = &[
+    ("leftarrow", CaretMotion::PreviousCharacter),
+    ("rightarrow", CaretMotion::NextCharacter),
+    ("control+leftarrow", CaretMotion::PreviousWord),
+    ("control+rightarrow", CaretMotion::NextWord),
+    ("uparrow", CaretMotion::PreviousLine),
+    ("downarrow", CaretMotion::NextLine),
+    ("control+uparrow", CaretMotion::PreviousParagraph),
+    ("control+downarrow", CaretMotion::NextParagraph),
+    ("home", CaretMotion::StartOfLine),
+    ("end", CaretMotion::EndOfLine),
+    ("pageup", CaretMotion::PreviousPage),
+    ("pagedown", CaretMotion::NextPage),
+    ("control+home", CaretMotion::Top),
+    ("control+end", CaretMotion::Bottom),
+];
+
+/// NVDA's other held keys, with no Shift form: Shift with Backspace and
+/// Delete deletes as without it (Shift+Delete cuts a selection), the
+/// numpad's Delete is Delete, and Alt with Up or Down Arrow moves by
+/// sentence.
+const EDITS: &[(&str, CaretMotion)] = &[
+    ("backspace", CaretMotion::Backspace),
+    ("shift+backspace", CaretMotion::Backspace),
+    ("control+backspace", CaretMotion::BackspaceWord),
+    ("delete", CaretMotion::Delete),
+    ("shift+delete", CaretMotion::Delete),
+    ("numpaddelete", CaretMotion::Delete),
+    ("shift+numpaddelete", CaretMotion::Delete),
+    ("control+delete", CaretMotion::DeleteWord),
+    ("control+numpaddelete", CaretMotion::DeleteWord),
+    ("alt+uparrow", CaretMotion::PreviousSentence),
+    ("alt+downarrow", CaretMotion::NextSentence),
+];
 
 /// The keys that end or clear the command line being typed: Escape,
 /// Control+C, Control+D, and Control+Break, both as NVDA names it
@@ -748,7 +772,10 @@ mod tests {
     fn clearing_keys_are_never_bound_nor_caret_keys() {
         let clearing = clearing_keys();
         assert_eq!(clearing.len(), 5);
-        let caret = caret_bindings();
+        let caret: Vec<(GestureId, CaretKey)> = caret_bindings()
+            .into_iter()
+            .chain(selection_bindings())
+            .collect();
         for layout in [KeyboardLayout::Desktop, KeyboardLayout::Laptop] {
             let bindings = bindings_for(layout);
             for gesture in &clearing {
@@ -762,7 +789,10 @@ mod tests {
     fn editing_chords_are_never_bound_nor_caret_keys() {
         let chords = editing_chords();
         assert_eq!(chords.len(), 5);
-        let caret = caret_bindings();
+        let caret: Vec<(GestureId, CaretKey)> = caret_bindings()
+            .into_iter()
+            .chain(selection_bindings())
+            .collect();
         for layout in [KeyboardLayout::Desktop, KeyboardLayout::Laptop] {
             let bindings = bindings_for(layout);
             for gesture in &chords {
@@ -774,10 +804,15 @@ mod tests {
 
     #[test]
     fn caret_keys_are_distinct_and_never_bound() {
-        let caret = caret_bindings();
-        // 14 motions with and without Shift, 9 deletions, the 2 sentence
-        // keys, and Control+A.
-        assert_eq!(caret.len(), 40);
+        let held = caret_bindings();
+        // 14 motions, 9 deletions and the 2 sentence keys held; the 14
+        // motions with Shift and Control+A observed.
+        assert_eq!(held.len(), 25);
+        assert!(held.iter().all(|(_, key)| !key.select));
+        let selection = selection_bindings();
+        assert_eq!(selection.len(), 15);
+        assert!(selection.iter().all(|(_, key)| key.select));
+        let caret: Vec<(GestureId, CaretKey)> = held.into_iter().chain(selection).collect();
         let unique: BTreeSet<&GestureId> = caret.iter().map(|(gesture, _)| gesture).collect();
         assert_eq!(unique.len(), caret.len());
         for layout in [KeyboardLayout::Desktop, KeyboardLayout::Laptop] {

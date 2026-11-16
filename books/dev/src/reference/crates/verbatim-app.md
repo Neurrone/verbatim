@@ -189,8 +189,9 @@ Milestone M4's text protocol is wired here (`books/dev/src/reference/crates/verb
   one 2-second bound, so a change made just before Exit is saved; only a
   synthesizer host that has stopped answering can hold a commit past the
   bound, and that loss is logged.
-- The hook's gesture map observes the caret keys
-  (`GestureMap::with_observed(caret_bindings())`): they reach the
+- The hook's gesture map holds the caret keys
+  (`GestureMap::with_held` over `caret_bindings()`) and observes the
+  selection keys (`with_observed` over `selection_bindings()`): they reach the
   application, and each one the hook reports becomes `Input::CaretKey`
   through the same table, with the time the hook stamped it. It observes
   the clearing keys too (`clearing_keys()`), each of which becomes
