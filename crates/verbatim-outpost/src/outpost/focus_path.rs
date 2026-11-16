@@ -40,22 +40,48 @@ pub(crate) fn find(
     nodes: &Request<Node>,
     remote: bool,
 ) -> (Result<Option<Cached<Node>>, String>, bool) {
+    let (found, import_failed, _) = find_from_window(uia, route, nodes, remote);
+    (found, import_failed)
+}
+
+/// What [`find_from_window`] answers: the element or why not, whether a
+/// remote operation could not import the window's element, and the
+/// window's element, when it was read.
+pub(crate) type FoundFromWindow = (
+    Result<Option<Cached<Node>>, String>,
+    bool,
+    Option<Cached<Node>>,
+);
+
+/// [`find`], with the route's window's element it read, when it read it,
+/// so that a caller holding a node for that element keeps it rather than
+/// connecting to the window again.
+pub(crate) fn find_from_window(
+    uia: &Uia,
+    route: &Route,
+    nodes: &Request<Node>,
+    remote: bool,
+) -> FoundFromWindow {
     let root = match uia.window_element(route.window.get(), nodes) {
         Ok(root) => root,
         Err(error)
             if verbatim_uia::element_is_gone(&error) || !window_exists(route.window.get()) =>
         {
             tracing::debug!(window = route.window.get(), %error, "a path's window is gone");
-            return (Ok(None), false);
+            return (Ok(None), false, None);
         }
         Err(error) => {
             tracing::debug!(window = route.window.get(), %error, "a path's window could not be read");
-            return (Err(format!("reading the route's window: {error}")), false);
+            return (
+                Err(format!("reading the route's window: {error}")),
+                false,
+                None,
+            );
         }
     };
     if route.path.is_empty() {
         let same = root.runtime_id() == route.runtime_id;
-        return (Ok(same.then_some(root)), false);
+        return (Ok(same.then(|| root.clone())), false, Some(root));
     }
     let fill = Fill::new(nodes);
     let query = PathQuery {
@@ -71,7 +97,7 @@ pub(crate) fn find(
             if let Path::Fallback(error) = &path {
                 tracing::warn!(window = route.window.get(), %error, "a remote operation failed; read the classic way");
             }
-            (Ok(found), import_failed)
+            (Ok(found), import_failed, Some(root))
         }
         Err(error)
             if error.hresult().is_some_and(|code| {
@@ -79,11 +105,15 @@ pub(crate) fn find(
             }) =>
         {
             tracing::debug!(window = route.window.get(), %error, "an element on a path is gone");
-            (Ok(None), false)
+            (Ok(None), false, Some(root))
         }
         Err(error) => {
             tracing::debug!(window = route.window.get(), %error, "a path could not be walked");
-            (Err(format!("walking the route: {error}")), false)
+            (
+                Err(format!("walking the route: {error}")),
+                false,
+                Some(root),
+            )
         }
     }
 }

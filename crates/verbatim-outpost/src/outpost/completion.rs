@@ -45,7 +45,7 @@ pub(super) fn complete(
     let focus = complete.completes == CompletionFor::Focus;
     let path = FocusPath::of_route(route);
     let runtime_id = first.runtime_id.0.clone();
-    let found = find(context, client, &path, &runtime_id, focus);
+    let (found, window_element) = find(context, client, &path, &runtime_id, focus);
     let reused = found
         .as_ref()
         .is_some_and(|found| replaced_stale(context, client, &runtime_id, found));
@@ -94,17 +94,13 @@ pub(super) fn complete(
     let Ok((mut ancestors, met)) = ancestors(context, client, complete, met) else {
         return Outcome::NotThere;
     };
-    // Each node minted from the listener's read keeps the route to the
-    // outpost's copy of its element.
-    for minted in std::iter::once(node).chain(ancestors.iter().map(|ancestor| ancestor.id)) {
-        if let Some(route) = context
-            .store
-            .runtime_id_of(minted)
-            .and_then(|runtime_id| path.route_to(&runtime_id))
-        {
-            context.store.record_route(minted, route);
-        }
-    }
+    keep_minted(context, (node, &ancestors), &path, window_element.as_ref());
+    // A focus that met none of the ancestors Core knows enters a new
+    // window: its foreground object is read with it, as NVDA reads it then,
+    // taken from the chain when the foreground window is one of it.
+    let foreground = (focus && met.is_none())
+        .then(|| read::foreground_object_among(context, client, &ancestors))
+        .flatten();
     if focus {
         // Every dialog of the chain below the ancestors Core already knows
         // is one the focus enters.
@@ -138,7 +134,7 @@ pub(super) fn complete(
             met,
             nearest: Some(nearest),
             msaa: None,
-            foreground: None,
+            foreground: foreground.as_ref(),
             // The property table carries no such fact of the listener's
             // read.
             value_from_selection: false,
@@ -159,21 +155,73 @@ fn find(
     path: &FocusPath,
     runtime_id: &[i32],
     focus: bool,
-) -> Option<Cached<Node>> {
+) -> (Option<Cached<Node>>, Option<Cached<Node>>) {
     if let Some(route) = path.route_to(runtime_id) {
-        let (uia, nodes) = client.uia_with(context, Context::node_request).ok()?;
+        let Ok((uia, nodes)) = client.uia_with(context, Context::node_request) else {
+            return (None, None);
+        };
         let remote = context.tries_remote(Some(route.window.get()));
-        let (found, import_failed) = focus_path::find(uia, &route, &nodes, remote);
+        let (found, import_failed, window_element) =
+            focus_path::find_from_window(uia, &route, &nodes, remote);
         if import_failed {
             context.read_classically(route.window.get());
         }
-        return found.ok().flatten();
+        return (found.ok().flatten(), window_element);
     }
     if !focus {
-        return None;
+        return (None, None);
     }
-    let element = read::focused_element_in(context, client, read::FocusRead::CutWalk).ok()?;
-    (element.runtime_id() == runtime_id).then_some(element)
+    let element = read::focused_element_in(context, client, read::FocusRead::CutWalk).ok();
+    (
+        element.filter(|element| element.runtime_id() == runtime_id),
+        None,
+    )
+}
+
+/// Each node minted from the listener's read, `node` and `ancestors`,
+/// keeps the route to the outpost's copy of its element, by `path`; and
+/// `window_element`, the route's window's element read to find the
+/// element, is kept for the ancestor it is, so a dialog's text or a later
+/// request on it connects to the window no second time.
+fn keep_minted(
+    context: &RequestContext<'_>,
+    (node, ancestors): (NodeId, &[NodeSnapshot]),
+    path: &FocusPath,
+    window_element: Option<&Cached<Node>>,
+) {
+    for minted in std::iter::once(node).chain(ancestors.iter().map(|ancestor| ancestor.id)) {
+        if let Some(route) = context
+            .store
+            .runtime_id_of(minted)
+            .and_then(|runtime_id| path.route_to(&runtime_id))
+        {
+            context.store.record_route(minted, route);
+        }
+    }
+    if let Some(window_element) = window_element {
+        keep_window_element(context, ancestors, window_element);
+    }
+}
+
+/// Keeps `window_element`, the element of the route's window read to find
+/// the completion's element, for the ancestor among `ancestors` it is, when
+/// the outpost holds no element for that node.
+fn keep_window_element(
+    context: &RequestContext<'_>,
+    ancestors: &[NodeSnapshot],
+    window_element: &Cached<Node>,
+) {
+    let runtime_id = window_element.runtime_id();
+    let Some(node) = context.nodes().existing(&runtime_id) else {
+        return;
+    };
+    if ancestors.iter().any(|ancestor| ancestor.id == node)
+        && context.store.element_of(node).is_none()
+    {
+        let _ = context
+            .nodes()
+            .id_for_element(&runtime_id, &window_element.narrow::<Kept>());
+    }
 }
 
 /// Whether the element kept under `runtime_id` is no longer the one the id

@@ -1651,9 +1651,34 @@ pub(super) fn foreground_object(
     context: &RequestContext<'_>,
     client: &mut Client,
 ) -> Option<NodeSnapshot> {
+    foreground_object_among(context, client, &[])
+}
+
+/// [`foreground_object`], taken with no call from `chain`, a focus's
+/// ancestors just read, when one of them is the foreground window's own
+/// UI Automation element: the same element the window's read would find.
+pub(super) fn foreground_object_among(
+    context: &RequestContext<'_>,
+    client: &mut Client,
+    chain: &[NodeSnapshot],
+) -> Option<NodeSnapshot> {
     let hwnd = context.foreground_window();
     if hwnd == 0 || !served_by(hwnd, context.target_pid()) || window_is_hidden_frame(hwnd) {
         return None;
+    }
+    if let Some(own) = chain.iter().find(|node| {
+        node.backend == Backend::Uia
+            && node.details.window.map(super::window::hwnd_of) == Some(hwnd)
+    }) {
+        let mut node = own.clone();
+        if node
+            .name
+            .as_deref()
+            .is_none_or(|name| name.trim().is_empty())
+        {
+            node.name = window_text(hwnd);
+        }
+        return Some(node);
     }
     Some(
         if window_exists(hwnd) && context.window_unreadable(hwnd).is_some() {
