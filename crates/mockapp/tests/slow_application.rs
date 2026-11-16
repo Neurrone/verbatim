@@ -16,34 +16,26 @@
 //!   limit restored.
 //! - The shell's items are answered complete or not at all: a walk whose
 //!   window's lookup UIA ends with its timeout fails whole.
-//! - A window that hangs while the outpost waits on it is told to Core once
-//!   and waited for: a query, and a listener read's marker
-//!   waiting with the hung window in front.
+//!
+//! A window that hangs while the outpost waits on it is Core's to judge,
+//! by its hang check (`docs/design/readers-tell-core-asks-build1.md`), and
+//! is not tested here.
 
 mod common;
 #[path = "common/harness.rs"]
 mod harness;
 
-use std::io::BufReader;
-use std::sync::mpsc;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use verbatim_ia2::{WinEvent, WinEventHook, WinEventKind};
-use verbatim_model::protocol::{
-    CoreToOutpost, DeliveredFact, OutpostToCore, Query, QueryOutcome, QueryResult, RequestId,
-};
-use verbatim_model::{
-    CallCounts, NormalizedEvent, QueryKind, Role, ShellItem, ShellItemKind, TraceId,
-};
-use verbatim_outpost::Outpost;
+use verbatim_model::protocol::{OutpostToCore, Query, QueryOutcome, QueryResult, RequestId};
+use verbatim_model::request::MsaaIds;
+use verbatim_model::{CallCounts, NodeId, QueryKind, Role, ShellItem, ShellItemKind, WindowHandle};
 use verbatim_process::arguments::OutpostOptions;
 use verbatim_uia::Uia;
 
 use common::outpost::OutpostUnderTest;
-use verbatim_process::message::read_message;
-use verbatim_process::overlapped::{End, Flow, pipe};
-use verbatim_process::transport::{BlockingReader, EVENT_PIPE_BUFFER};
 
 /// Longer than the old focus deadline, well under NVDA's ten seconds.
 const STALL: Duration = Duration::from_millis(2500);
@@ -52,7 +44,6 @@ fn a_focus_read_that_waits_on_a_busy_application_is_still_reported() {
     common::init_com();
     let title = common::unique_title("mockapp-slow-focus");
     let mut app = common::spawn("small.json", "msaa", &title);
-    let window = common::find_window(&title).0 as isize;
     let pid = app.pid();
 
     // The focus event's real MSAA address, captured from mockapp itself.
@@ -70,77 +61,42 @@ fn a_focus_read_that_waits_on_a_busy_application_is_still_reported() {
     app.send("focus btn1");
     let (hwnd, id_object, id_child) =
         common::pump_until(|| *focus.lock().unwrap_or_else(PoisonError::into_inner));
+    let outpost = OutpostUnderTest::new(&app);
 
-    let (pipe_in, pipe_out) =
-        pipe(Flow::Inbound, EVENT_PIPE_BUFFER, End::Overlapped).expect("a pipe");
-    let outpost = Outpost::new(pipe_out, pid);
-    // No window takes the foreground on the desktop the test runs on:
-    // mockapp's is the foreground, so its focus passes the acceptance test.
-    outpost.set_foreground_reader(Arc::new(move || window));
-    let (messages_tx, messages) = mpsc::channel();
-    std::thread::spawn(move || {
-        let mut reader = BufReader::new(BlockingReader::new(pipe_in).expect("a reader"));
-        while let Ok(Some(message)) = read_message::<_, OutpostToCore>(&mut reader) {
-            if messages_tx.send(message).is_err() {
-                return;
-            }
-        }
-    });
-    assert_eq!(
-        messages.recv_timeout(common::WAIT_TIMEOUT).ok(),
-        Some(OutpostToCore::Ready {
-            outpost_pid: verbatim_model::Pid(std::process::id()),
-            target_pid: verbatim_model::Pid(pid),
-        }),
-        "the outpost announces itself first"
-    );
-
-    // The window thread is stalled before the fact arrives.
+    // The window thread is stalled before Core's request arrives.
     app.stall(STALL);
-    outpost.handle_command(&CoreToOutpost::DeliverFact {
-        trace_id: TraceId::mint(),
-        timing: verbatim_model::protocol::EventTiming::default(),
-        fact: DeliveredFact::MsaaFocus {
-            hwnd,
-            id_object,
-            id_child,
-        },
-        win_event: None,
+    let focused = outpost.msaa_focus_answer(MsaaIds {
+        window: WindowHandle(u64::try_from(hwnd).expect("a window handle")),
+        object: id_object,
+        child: id_child,
     });
-
-    let message = messages
-        .recv_timeout(STALL + common::WAIT_TIMEOUT)
-        .expect("the outpost reports the focus before the wait times out");
-    let OutpostToCore::Event {
-        event: NormalizedEvent::FocusChanged { node, .. },
-        timing,
-        ..
-    } = message
-    else {
-        panic!("the outpost said {message:?}, not the focus");
-    };
-    assert_eq!(node.name.as_deref(), Some("Original Name"));
-    // The outpost's worker took the fact, and began reading, before the
-    // stall ended, and reported the focus after it: the read waited on the
-    // stalled window thread for the whole stall, longer than the old
-    // deadline, and the test exercised a slow read.
+    let answered_at = common::outpost::now_us();
+    assert_eq!(focused.name(), Some("Original Name"));
+    // The answer came after the stall ended: the read waited on the stalled
+    // window thread for the whole stall, longer than the old deadline.
     let ended = app.stall_ended(STALL);
     assert!(
-        timing.dequeued_at_us < ended,
-        "the read began at {} us, after the stall ended at {ended} us",
-        timing.dequeued_at_us
+        answered_at >= ended,
+        "the focus was answered at {answered_at} us, before the stall ended at {ended} us"
     );
-    assert!(
-        timing.published_at_us >= ended,
-        "the focus was reported at {} us, before the stall ended at {ended} us",
-        timing.published_at_us
-    );
+    drop(outpost);
     app.quit();
 }
 
 /// The text of mockapp's dialog fixture's dialog, its question's name and
 /// description.
 const QUESTION: &str = "Remove the theme Mine? This cannot be undone. Its sounds go with it.";
+
+/// The node of the focus's ancestor named `name`, from its answer.
+fn ancestor_named(focused: &common::outpost::Focused, name: &str) -> NodeId {
+    focused
+        .read
+        .ancestors
+        .iter()
+        .find(|ancestor| common::outpost::name_of(&ancestor.node) == Some(name))
+        .and_then(|ancestor| ancestor.node.read.node)
+        .unwrap_or_else(|| panic!("the focus's chain has no {name:?}"))
+}
 
 /// The outcome of query `request_id`, the outpost's next message.
 fn reply_to(outpost: &OutpostUnderTest, request_id: RequestId) -> QueryOutcome {
@@ -167,13 +123,8 @@ fn a_slow_navigation_step_answers_its_neighbor() {
     let uia = Uia::new().expect("a UIA client");
     let mut outpost = OutpostUnderTest::new(&app);
     app.send("set-focus notes");
-    let reported = outpost.uia_focus(&common::listener_focus(&uia, hwnd.0 as isize));
-    let group = reported
-        .ancestors
-        .iter()
-        .find(|ancestor| ancestor.name.as_deref() == Some("Inner group"))
-        .expect("the focus's chain has the inner group")
-        .id;
+    let focused = outpost.uia_focus_answer(&common::listener_focus(&uia, hwnd.0 as isize));
+    let group = ancestor_named(&focused, "Inner group");
 
     let stall = Duration::from_millis(800);
     app.stall(stall);
@@ -213,13 +164,8 @@ fn a_slow_path_walk_answers_its_node() {
         },
     );
     app.send("set-focus notes");
-    let reported = outpost.uia_focus(&common::listener_focus(&uia, hwnd.0 as isize));
-    let group = reported
-        .ancestors
-        .iter()
-        .find(|ancestor| ancestor.name.as_deref() == Some("Inner group"))
-        .expect("the focus's chain has the inner group")
-        .id;
+    let focused = outpost.uia_focus_answer(&common::listener_focus(&uia, hwnd.0 as isize));
+    let group = ancestor_named(&focused, "Inner group");
 
     outpost.run_out_of_time_after(2);
     let (neighbor, _) = outpost.navigate(group, QueryKind::FirstChild);
@@ -248,31 +194,32 @@ fn a_slow_dialog_text_is_reported_with_the_focus() {
     // then holds none of the outpost's nodes, as when it moved to another
     // application, so the next focus enters the dialog anew.
     app.send("set-focus yes");
-    outpost.uia_focus(&common::listener_focus(&uia, hwnd.0 as isize));
-    outpost.release_all();
+    let _ = outpost.uia_focus_answer(&common::listener_focus(&uia, hwnd.0 as isize));
+    outpost.forget_focus();
     outpost.settle();
     app.send("set-focus no");
-    let fact = outpost.listener_fact(&common::listener_focus(&uia, hwnd.0 as isize));
+    let (focus, _) = outpost.listener_focus(&common::listener_focus(&uia, hwnd.0 as isize));
 
     let stall = verbatim_uia::UIA_CONNECTION_TIMEOUT * 3 / 4;
     app.stall(stall);
-    outpost.deliver(fact);
-    let reported = outpost.reported_focus();
+    let (outcome, calls) = outpost.complete_focus(focus);
     app.stall_ended(stall);
-    assert_eq!(reported.node.name.as_deref(), Some("No"));
-    let dialog = reported
+    let focused = common::outpost::Focused::of(outcome, calls);
+    assert_eq!(focused.name(), Some("No"));
+    let dialog = focused
+        .read
         .ancestors
         .iter()
-        .find(|ancestor| ancestor.role == Role::Dialog)
-        .unwrap_or_else(|| panic!("the focus's chain has no dialog: {:?}", reported.ancestors));
+        .find(|ancestor| common::outpost::role_of(&ancestor.node) == Role::Dialog)
+        .unwrap_or_else(|| {
+            panic!(
+                "the focus's chain has no dialog: {:?}",
+                focused.read.ancestors
+            )
+        });
+    assert_eq!(dialog.dialog_text.as_deref(), Some(QUESTION));
     assert_eq!(
-        dialog.details.description.as_deref(),
-        Some(QUESTION),
-        "{:?}",
-        reported.ancestors
-    );
-    assert_eq!(
-        reported.calls,
+        focused.calls,
         CallCounts {
             uia: 2,
             msaa: 0,
@@ -354,243 +301,9 @@ fn a_shell_items_walk_whose_lookup_times_out_fails_whole() {
     app.quit();
 }
 
-/// The "Inner group" ancestor of mockapp's ancestry fixture's "Notes"
-/// field, focused and reported through the listener's read, a node with no
-/// window of its own: its window is the application's focus window.
-fn inner_group(
-    app: &mut common::MockApp,
-    uia: &Uia,
-    hwnd: windows::Win32::Foundation::HWND,
-    outpost: &OutpostUnderTest,
-) -> verbatim_model::NodeId {
-    app.send("set-focus notes");
-    outpost
-        .uia_focus(&common::listener_focus(uia, hwnd.0 as isize))
-        .ancestors
-        .iter()
-        .find(|ancestor| ancestor.name.as_deref() == Some("Inner group"))
-        .expect("the focus's chain has the inner group")
-        .id
-}
-
-/// The outpost's pong, asked for now: its workers parked on windows not
-/// judged hung, and those on windows judged hung.
-fn parked(outpost: &OutpostUnderTest) -> (usize, usize) {
-    outpost
-        .outpost
-        .handle_command(&CoreToOutpost::Ping { sent_at_us: 0 });
-    match outpost.next() {
-        OutpostToCore::Pong {
-            parked_count,
-            parked_on_hung,
-            ..
-        } => (parked_count, parked_on_hung),
-        other => panic!("the outpost said {other:?}, not its pong"),
-    }
-}
-
-/// A query whose call mockapp holds while the outpost's reader comes to
-/// answer its window hung, its window being the application's focus
-/// window, tells Core once that the window stopped responding and is not
-/// abandoned: the pong counts no worker parked, and once mockapp answers,
-/// the query is answered with its neighbor.
-fn a_query_whose_window_hangs_during_its_call_is_answered_when_it_answers() {
-    common::init_com();
-    let title = common::unique_title("mockapp-hung-query");
-    let mut app = common::spawn("ancestry.json", "uia", &title);
-    let hwnd = common::find_window(&title);
-    let uia = Uia::new().expect("a UIA client");
-    let outpost = OutpostUnderTest::with_options(
-        &app,
-        OutpostOptions {
-            remote_operations: false,
-        },
-    );
-    let group = inner_group(&mut app, &uia, hwnd, &outpost);
-    let mut outpost = outpost;
-
-    app.hold();
-    let request_id = outpost.ask(Query::Navigate {
-        node_id: group,
-        kind: QueryKind::FirstChild,
-    });
-    assert_eq!(app.held(), "GetObject", "the window's lookup was held");
-    outpost.judge_hung(hwnd);
-    assert_eq!(
-        outpost.next(),
-        OutpostToCore::NotResponding {
-            window: hwnd.0 as isize
-        },
-        "Core is told of the hang"
-    );
-    assert_eq!(parked(&outpost), (0, 0), "no worker abandoned");
-    app.release();
-    match reply_to(&outpost, request_id) {
-        QueryOutcome::Done(QueryResult::Navigated(Some(neighbor))) => {
-            assert_eq!(neighbor.name.as_deref(), Some("Deep button"));
-        }
-        other => panic!("the step answered {other:?}, not its neighbor"),
-    }
-    outpost.settled();
-    drop(outpost);
-    app.quit();
-}
-
-/// While a listener read's marker waits, with no program in flight, a
-/// stall of mockapp's window thread long enough for Windows to report the
-/// window hung is found by the outpost's check of the window in front,
-/// mockapp's: Core is told once that it stopped responding, and the focus
-/// is reported once the listener's read, made before the stall, is
-/// delivered after it ends.
-fn a_hang_while_the_listeners_read_waits_is_told_once_and_the_focus_spoken_when_it_answers() {
-    common::init_com();
-    let title = common::unique_title("mockapp-hung-marker");
-    let mut app = common::spawn("small.json", "uia", &title);
-    let window = common::find_window(&title);
-    let uia = Uia::new().expect("a UIA client");
-    let outpost = OutpostUnderTest::new(&app);
-    app.send("set-focus btn1");
-    let fact = outpost.listener_fact(&common::listener_focus(&uia, window.0 as isize));
-
-    let stall = Duration::from_secs(8);
-    outpost.deliver(DeliveredFact::UiaFocusMarker { marker: 0 });
-    app.stall(stall);
-    assert_eq!(
-        outpost.next(),
-        OutpostToCore::NotResponding {
-            window: window.0 as isize
-        },
-        "Core is told of the hang"
-    );
-    app.stall_ended(stall);
-    outpost.deliver(fact);
-    assert_eq!(
-        outpost.reported_focus().node.name.as_deref(),
-        Some("Original Name"),
-        "the focus, once its read comes"
-    );
-    outpost.settled();
-    drop(outpost);
-    app.quit();
-}
-
-/// A query whose call mockapp holds is abandoned once the user has moved
-/// on to a window of the same application on another UI thread, which the
-/// outpost reads as the window with the keyboard focus: the query is
-/// answered abandoned, Core is told of no hang, and the pong counts the
-/// worker parked apart from those on hung windows. Released, the worker
-/// returns.
-fn a_query_whose_user_moved_on_is_abandoned() {
-    common::init_com();
-    let title = common::unique_title("mockapp-moved-on-query");
-    let mut app = common::spawn("ancestry.json", "uia", &title);
-    let hwnd = common::find_window(&title);
-    let other = app.thread_window();
-    let uia = Uia::new().expect("a UIA client");
-    let outpost = OutpostUnderTest::with_options(
-        &app,
-        OutpostOptions {
-            remote_operations: false,
-        },
-    );
-    let group = inner_group(&mut app, &uia, hwnd, &outpost);
-    let mut outpost = outpost;
-
-    app.hold();
-    let request_id = outpost.ask(Query::Navigate {
-        node_id: group,
-        kind: QueryKind::FirstChild,
-    });
-    // The worker named the host window, the focus window then, before the
-    // call held.
-    assert_eq!(app.held(), "GetObject", "the window's lookup was held");
-    outpost.set_focus_window(other);
-    assert_eq!(reply_to(&outpost, request_id), QueryOutcome::Abandoned);
-    assert_eq!(
-        parked(&outpost),
-        (1, 0),
-        "one worker parked, not on a hung window"
-    );
-    app.release();
-    // The evidence that the abandoned worker returned: its pong counts
-    // none parked.
-    let returned_by = std::time::Instant::now() + common::WAIT_TIMEOUT;
-    while parked(&outpost) != (0, 0) {
-        assert!(
-            std::time::Instant::now() < returned_by,
-            "the abandoned worker did not return"
-        );
-    }
-    drop(outpost);
-    app.quit();
-}
-
-/// A query on a node with no window of its own, reached by navigation off
-/// the followed focus's chain, whose application's focus window the
-/// outpost's reader answers hung, is refused at its check before its first
-/// call: the query is answered abandoned, Core is told the window stopped
-/// responding once its check confirms it, and no call reaches mockapp.
-fn a_query_on_a_windowless_node_of_a_hung_window_is_refused_with_no_call() {
-    common::init_com();
-    let title = common::unique_title("mockapp-hung-refused");
-    let mut app = common::spawn("ancestry.json", "uia", &title);
-    let hwnd = common::find_window(&title);
-    let uia = Uia::new().expect("a UIA client");
-    let mut outpost = OutpostUnderTest::new(&app);
-    let group = inner_group(&mut app, &uia, hwnd, &outpost);
-    let (deep, _) = outpost.navigate(group, QueryKind::FirstChild);
-    assert_eq!(
-        deep.name.as_deref(),
-        Some("Deep button"),
-        "off the focus's chain"
-    );
-
-    outpost.judge_hung(hwnd);
-    common::reset_hits(hwnd);
-    let request_id = outpost.ask(Query::Navigate {
-        node_id: deep.id,
-        kind: QueryKind::NextSibling,
-    });
-    match outpost.next() {
-        OutpostToCore::Reply {
-            request_id: answered,
-            outcome: QueryOutcome::Abandoned,
-            timing,
-            ..
-        } if answered == request_id => assert_eq!(timing.calls, CallCounts::default()),
-        other => panic!("the outpost said {other:?}, not the refusal"),
-    }
-    assert_eq!(
-        outpost.next(),
-        OutpostToCore::NotResponding {
-            window: hwnd.0 as isize
-        }
-    );
-    outpost.settled();
-    assert_eq!(common::read_hits(hwnd), [], "no call reached mockapp");
-    drop(outpost);
-    app.quit();
-}
-
 /// Runs each test on a desktop of its own (`common/harness.rs`).
 fn main() {
     harness::run_isolated(&[
-        (
-            "a_query_whose_window_hangs_during_its_call_is_answered_when_it_answers",
-            a_query_whose_window_hangs_during_its_call_is_answered_when_it_answers,
-        ),
-        (
-            "a_hang_while_the_listeners_read_waits_is_told_once_and_the_focus_spoken_when_it_answers",
-            a_hang_while_the_listeners_read_waits_is_told_once_and_the_focus_spoken_when_it_answers,
-        ),
-        (
-            "a_query_whose_user_moved_on_is_abandoned",
-            a_query_whose_user_moved_on_is_abandoned,
-        ),
-        (
-            "a_query_on_a_windowless_node_of_a_hung_window_is_refused_with_no_call",
-            a_query_on_a_windowless_node_of_a_hung_window_is_refused_with_no_call,
-        ),
         (
             "a_focus_read_that_waits_on_a_busy_application_is_still_reported",
             a_focus_read_that_waits_on_a_busy_application_is_still_reported,

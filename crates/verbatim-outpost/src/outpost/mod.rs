@@ -428,12 +428,14 @@ impl<'a> RequestContext<'a> {
     /// looks up no window of another process by its handle
     /// (`books/dev/src/explanation/design/listener-without-connections.md`, section 4.3).
     fn focus_route(&self, runtime_id: &[i32]) -> Option<focus_path::Route> {
-        let route = self.follow(|follow| {
-            follow
-                .followed
-                .as_ref()
-                .and_then(reducer::Followed::focus_path)
-                .and_then(|path| path.route_to(runtime_id))
+        let route = self.store.route_to(runtime_id).or_else(|| {
+            self.follow(|follow| {
+                follow
+                    .followed
+                    .as_ref()
+                    .and_then(reducer::Followed::focus_path)
+                    .and_then(|path| path.route_to(runtime_id))
+            })
         })?;
         read::serves(self, route.window.get()).then_some(route)
     }

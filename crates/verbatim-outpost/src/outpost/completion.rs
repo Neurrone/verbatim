@@ -94,6 +94,17 @@ pub(super) fn complete(
     let Ok((mut ancestors, met)) = ancestors(context, client, complete, met) else {
         return Outcome::NotThere;
     };
+    // Each node minted from the listener's read keeps the route to the
+    // outpost's copy of its element.
+    for minted in std::iter::once(node).chain(ancestors.iter().map(|ancestor| ancestor.id)) {
+        if let Some(route) = context
+            .store
+            .runtime_id_of(minted)
+            .and_then(|runtime_id| path.route_to(&runtime_id))
+        {
+            context.store.record_route(minted, route);
+        }
+    }
     if focus {
         // Every dialog of the chain below the ancestors Core already knows
         // is one the focus enters.

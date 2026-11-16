@@ -204,6 +204,11 @@ struct State {
     /// kept after its element dies, as NVDA's object keeps the window it
     /// found when it was made (`NVDAObjects/UIA/__init__.py` 1604 to 1607).
     nearest_windows: HashMap<u64, isize>,
+    /// The route to the outpost's copy of each UIA node minted from a
+    /// listener's read, by which its element is found again
+    /// (`docs/design/readers-tell-core-asks-build1.md`, "The outpost in
+    /// this build"), released with the node.
+    routes: HashMap<u64, super::focus_path::Route>,
     /// The objects entries came with, parked until their program takes
     /// them, by key ([`Parked`]).
     parked: HashMap<u64, Parked>,
@@ -288,6 +293,7 @@ impl State {
             removed.patterns.extend(self.patterns.remove(&node));
             self.support.remove(&node);
             self.nearest_windows.remove(&node);
+            self.routes.remove(&node);
             removed.terminals.extend(self.terminals.remove(&node));
         }
     }
@@ -335,6 +341,7 @@ impl Store {
                 support: HashMap::new(),
                 terminals: HashMap::new(),
                 nearest_windows: HashMap::new(),
+                routes: HashMap::new(),
                 parked: HashMap::new(),
                 parked_taken: 0,
             }),
@@ -413,6 +420,22 @@ impl Store {
     /// node is built, forgotten with the node.
     pub(super) fn record_nearest_window(&self, node: NodeId, window: isize) {
         self.lock().nearest_windows.insert(node.number(), window);
+    }
+
+    /// Records `route` as the way to the UIA node `node`'s element, minted
+    /// from a listener's read, forgotten with the node.
+    pub(super) fn record_route(&self, node: NodeId, route: super::focus_path::Route) {
+        self.lock().routes.insert(node.number(), route);
+    }
+
+    /// The route recorded for the element `runtime_id` names
+    /// ([`Self::record_route`]).
+    pub(super) fn route_to(&self, runtime_id: &[i32]) -> Option<super::focus_path::Route> {
+        self.lock()
+            .routes
+            .values()
+            .find(|route| route.runtime_id == runtime_id)
+            .cloned()
     }
 
     /// The details a node read includes.
