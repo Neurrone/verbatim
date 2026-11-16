@@ -401,6 +401,69 @@ fn an_idle_outpost_holding_nothing_is_retired_and_one_with_a_request_is_kept() {
     assert_eq!(stage(&held), None);
 }
 
+/// Row "Ready", column G, today's `retirement_decision`: an application's
+/// idle time counts from when it last held attention, so an outpost whose
+/// application held attention for longer than the idle time is kept until
+/// the idle time has passed since it lost attention, then retired.
+#[test]
+fn an_outpost_is_retired_only_once_the_idle_time_passes_after_its_application_loses_attention() {
+    let mut held = listening();
+    let _ = route(
+        &mut held,
+        0,
+        &QueueInput::Process(ProcessFact::Retirement {
+            idle_us: 10_000,
+            sweep_us: 1_000,
+        }),
+    );
+    let foreground_of = |process: Pid, window: u64| {
+        QueueInput::Foreground(verbatim_model::request::ForegroundReport {
+            window: WindowHandle(window),
+            root_owner: WindowHandle(window),
+            process,
+            thread: 41,
+            class: "Frame".to_owned(),
+        })
+    };
+    let _ = route(&mut held, 1_000, &foreground_of(APP, 4));
+    let _ = route(&mut held, 1_100, &started(GENERATION));
+    let _ = route(&mut held, 1_200, &QueueInput::ReaderReady(OUTPOST));
+    // The first foreground's read of the current focus, request 1, is
+    // answered "not there": nothing holds the outpost.
+    let _ = route(
+        &mut held,
+        1_300,
+        &QueueInput::Answer {
+            from: OUTPOST,
+            answer: verbatim_model::request::Answer {
+                number: verbatim_model::request::RequestNumber(1),
+                outcome: verbatim_model::request::Outcome::NotThere,
+                probes: Vec::new(),
+                detail: String::new(),
+            },
+        },
+    );
+    assert!(held.state.queue.table.requests().next().is_none());
+    // Attended for 50 ms, far past the idle time, then another
+    // application takes the foreground.
+    let ended = |said: Vec<String>| -> Vec<String> {
+        said.into_iter()
+            .filter(|said| said.starts_with("end"))
+            .collect()
+    };
+    assert_eq!(
+        ended(route(&mut held, 50_000, &foreground_of(Pid(50), 9))),
+        Vec::<String>::new()
+    );
+    assert_eq!(
+        ended(route(&mut held, 52_000, &QueueInput::Due)),
+        Vec::<String>::new()
+    );
+    assert!(matches!(stage(&held), Some(Stage::Ready(_))));
+    assert_eq!(ended(route(&mut held, 61_000, &QueueInput::Due)), ["end 3"]);
+    assert_eq!(stage(&held), None);
+}
+
 /// Verbatim's own outpost is started at once and never retired.
 #[test]
 fn verbatims_own_outpost_is_started_at_once_and_never_retired() {

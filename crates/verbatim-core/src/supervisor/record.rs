@@ -200,14 +200,14 @@ impl Record {
     }
 
     /// Arms the retirement check from `now_us` while an outpost other
-    /// than Verbatim's own is ready whose application, `attended` not
+    /// than Verbatim's own is running whose application, `attended` not
     /// being it, does not hold attention, and disarms it otherwise, so
     /// that no wake is timed that would not be acted on.
     pub(crate) fn settle_sweep(&mut self, now_us: u64, attended: Option<Pid>) {
         let retirable = self.applications.iter().any(|(process, application)| {
             Some(*process) != self.own
                 && Some(*process) != attended
-                && matches!(application.stage, Stage::Ready(_))
+                && matches!(application.stage, Stage::Starting(_) | Stage::Ready(_))
         });
         match (retirable, self.sweep_due_us) {
             (true, None) => {

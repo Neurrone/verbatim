@@ -13,6 +13,7 @@ use verbatim_model::request::{Outcome as WireOutcome, ProcessFact};
 use super::driver::Core;
 use super::inbox::Effect;
 use super::{Instance, Logic, Reader};
+use crate::supervisor::policy::retirement_decision;
 use crate::supervisor::record::{Application, Replaced, Retirement, Running, Stage};
 
 impl<L: Logic> Core<L> {
@@ -245,13 +246,24 @@ impl<L: Logic> Core<L> {
     /// The listener's foreground report names `process` (column I): with
     /// no record, its outpost is started as an attended application's;
     /// a backoff that runs ends at once; attention is noted for the
-    /// retirement.
+    /// retirement, both by the application gaining it and by the one
+    /// losing it, so an application's idle time counts from when it last
+    /// held attention, as `retirement_decision` reads it.
     pub(super) fn attended(&mut self, process: Pid) {
         let mut shared = self.shared.borrow_mut();
+        let now_us = shared.state.queue.now_us;
+        let queue = &mut shared.state.queue;
+        if let Some(left) = queue
+            .foreground
+            .map(|foreground| foreground.process)
+            .filter(|left| *left != process)
+            && let Some(application) = queue.record.applications.get_mut(&left)
+        {
+            application.attended_us = now_us;
+        }
         if !L::watched(&shared.state.facts, process) {
             return;
         }
-        let now_us = shared.state.queue.now_us;
         let record = &mut shared.state.queue.record;
         let Some(application) = record.applications.get_mut(&process) else {
             record.launch(process, now_us);
@@ -340,11 +352,12 @@ impl<L: Logic> Core<L> {
         }
     }
 
-    /// The retirement check (column G): a ready outpost, not Verbatim's
-    /// own, whose application has not held attention for the idle time
-    /// and of which Core holds nothing, no request out or waiting for it
-    /// counting as holding, is ended, its record gone and nothing taken
-    /// again.
+    /// The retirement check (column G): today's `retirement_decision`
+    /// on a running outpost, starting or ready, not Verbatim's own: its
+    /// application has not held attention for the idle time and Core
+    /// holds none of its nodes, with the design's one addition that a
+    /// request out or waiting for it counts as holding. Such an outpost
+    /// is ended, its record gone and nothing taken again.
     fn retire_idle(&mut self) {
         let retired: Vec<Instance> = {
             let shared = self.shared.borrow();
@@ -355,7 +368,8 @@ impl<L: Logic> Core<L> {
                 .applications
                 .iter()
                 .filter_map(|(process, application)| {
-                    let Stage::Ready(running) = application.stage else {
+                    let (Stage::Starting(running) | Stage::Ready(running)) = application.stage
+                    else {
                         return None;
                     };
                     let reader = Reader::Outpost(*process);
@@ -364,13 +378,18 @@ impl<L: Logic> Core<L> {
                             &shared.state.facts,
                             verbatim_model::OutpostId(running.generation),
                         );
-                    let idle = queue.now_us.saturating_sub(application.attended_us)
-                        >= record.retirement.idle_us;
-                    (Some(*process) != record.own && attended != Some(*process) && !holding && idle)
-                        .then_some(Instance {
-                            reader,
-                            generation: running.generation,
-                        })
+                    (Some(*process) != record.own
+                        && retirement_decision(
+                            application.attended_us,
+                            queue.now_us,
+                            Duration::from_micros(record.retirement.idle_us),
+                            attended == Some(*process),
+                            holding,
+                        ))
+                    .then_some(Instance {
+                        reader,
+                        generation: running.generation,
+                    })
                 })
                 .collect()
         };
