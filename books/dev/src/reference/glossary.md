@@ -22,9 +22,6 @@ their NVDA meanings and are documented in [docs/nvda](https://github.com/Neurron
   ships, implementing Verbatim's C ABI (the `SynthDriver` trait as C
   exports) and loading the engine; the synthesizer host loads only it.
   [extensions](https://github.com/Neurrone/verbatim/blob/main/docs/design/extensions.md).
-- **Ancestry cache** — a focus reader's saved ancestors from its last
-  read in an application, with the window text of each window entry,
-  used to stop a later walk early. [verbatim-core](crates/verbatim-core.md), "The ancestry cache".
 - **Application identity** — the name a module binds to an outpost by:
   the executable name, replaced by the console client's for a console
   window, the hosted application's for WWAHost, the parent's for
@@ -35,7 +32,7 @@ their NVDA meanings and are documented in [docs/nvda](https://github.com/Neurron
   lifetime.
   [verbatim-outpost](crates/verbatim-outpost.md); NVDA's referee is in
   [The UIA client](https://github.com/Neurrone/verbatim/blob/main/docs/nvda/uia.md).
-- **Ask** — a request from Core to a reader; every call into an application is made for one, and it gets exactly one answer. ADR 0003's term, not yet built.
+- **Ask** — a request from Core to a reader; every call into an application is made for one, and it gets exactly one answer.
   [ADR 0003](adr/0003-readers-tell-core-asks.md).
 - **Backend** — one client stack over an accessibility API: UIA
   (`verbatim-uia`), MSAA/IA2 (`verbatim-ia2`), later JAB.
@@ -44,11 +41,6 @@ their NVDA meanings and are documented in [docs/nvda](https://github.com/Neurron
   `extensions/builtin/` (planned), loaded by the same host as an installed module
   but never bundled, listed, installed or disabled.
   [extensions](https://github.com/Neurrone/verbatim/blob/main/docs/design/extensions.md).
-- **Cache join** — the entry where a focus reader's walk met its ancestry
-  cache and stopped. [verbatim-core](crates/verbatim-core.md), "The ancestry cache".
-- **Cached ancestor** — an entry of a reported ancestry taken from the
-  ancestry cache rather than read live; a report's
-  `first_cached_ancestor` is the index of its innermost one. [verbatim-core](crates/verbatim-core.md), "The ancestry cache".
 - **Call program** — a whole sequence of calls into an application with
   pure stopping rules, such as a focus's walk or a caret read, run by an
   outpost's worker on copies of what it reads; its commits and result
@@ -68,18 +60,18 @@ their NVDA meanings and are documented in [docs/nvda](https://github.com/Neurron
   are accepted or dropped against it, while a focus is judged against
   the real foreground window as its outpost read it (D14).
   [verbatim-core](crates/verbatim-core.md).
-- **Check thread** — the listener's thread, one per application whose UI Automation events it hears, that makes at each event's delivery, before its tell is sent, the calls NVDA's handler for that event makes, so that Core judges their results. ADR 0003's term, not yet built.
+- **Check thread** — the listener's thread, one per application whose UI Automation events it hears, that makes at each event's delivery, before its tell is sent, the calls NVDA's handler for that event makes, so that Core judges their results.
 - **Cold case** — a window arbitration has never seen: the first event
   for it resolves a real verdict with a provider probe on the worker.
   [verbatim-outpost](crates/verbatim-outpost.md).
-- **Committed focus** — the focus Core has executed, NVDA's focus object; commands, the narrow rule and typed echo judge it. ADR 0003's term, not yet built.
+- **Committed focus** — the focus Core has executed, NVDA's focus object; commands, the narrow rule and typed echo judge it.
   [ADR 0003](adr/0003-readers-tell-core-asks.md).
 - **Control plane** — the one authenticated protocol (JSON over the
   control pipe) serving dev tooling now and remote support later
   (D8). [verbatim-control](crates/verbatim-control.md).
-- **Core's inbox** — the one place on Core's thread where everything arrives, in arrival order; nothing waits there. ADR 0003's term, not yet built.
+- **Core's inbox** — the one place on Core's thread where everything arrives, in arrival order; nothing waits there.
   [ADR 0003](adr/0003-readers-tell-core-asks.md).
-- **Due time** — when Core stops waiting for a request's answer: 11 seconds, 13 for a focus read, counted from when Core decides to ask. ADR 0003's term, not yet built.
+- **Due time** — when Core stops waiting for a request's answer: 11 seconds, 13 for a focus read, counted from when Core decides to ask.
   [ADR 0003](adr/0003-readers-tell-core-asks.md).
 - **Earcon** — an event Verbatim reports at once, outside the speech
   queue (start, a mode switch, an application not responding), named
@@ -88,9 +80,9 @@ their NVDA meanings and are documented in [docs/nvda](https://github.com/Neurron
 - **Effect** — a reducer output: an instruction (Speak, Fetch,
   Activate…) the shell executes; the reducer itself does no I/O.
   [verbatim-core](crates/verbatim-core.md).
-- **Entered ancestors** — the entries of a new reported ancestry below
+- **Entered ancestors** — the ancestors a new focus answer carries below
   the lowest common ancestor, which Core speaks as entered. [How focus works](../explanation/design/focus.md).
-- **Event queue** — Core's ordered queue of application events, keys, commands and entries Core makes itself; only its front entry may have a request out. ADR 0003's term, not yet built.
+- **Event queue** — Core's ordered queue of application events, keys, commands and entries Core makes itself; only its front entry may have a request out.
   [ADR 0003](adr/0003-readers-tell-core-asks.md).
 - **Extension** — the installable unit, a `.vext` zip holding an extension
   manifest, locale files and one or more module folders; NVDA's add-on.
@@ -110,19 +102,11 @@ their NVDA meanings and are documented in [docs/nvda](https://github.com/Neurron
   cross-process call (D13); since stage A step 6 of phase 6 it also judges
   and reads each UIA focus from the event's own element, on a reading
   thread per application. [Architecture](../explanation/architecture.md) section 1.
-- **Focus marker** — what the focus listener sends an application's
-  outpost the moment a UIA focus event arrives, before it has read it:
-  the outpost holds everything it takes in after the marker until the
-  listener's read of the focus, or its drop, takes the marker's place.
-  [verbatim-listener](crates/verbatim-listener.md).
-- **Focus reader** — one source of focus reports for an application, its
-  outpost generation paired with a kind: the listener's reading thread,
-  or the outpost's own reads. [How focus works](../explanation/design/focus.md).
-- **Stop waiting** — Core no longer waits for a request's answer: it records in its own table that it no longer waits for the request and takes the next entry; whether the reader is told to cancel, and what a late answer does, depends on the reason. ADR 0003's term, not yet built.
+- **Stop waiting** — Core no longer waits for a request's answer: it records in its own table that it no longer waits for the request and takes the next entry; whether the reader is told to cancel, and what a late answer does, depends on the reason.
   [ADR 0003](adr/0003-readers-tell-core-asks.md).
 - **Golden image** — the Packer-built Windows VM baseline the Hyper-V
   harness imports, deploys to, and checkpoints. [The VM harness](../how-to/vm.md).
-- **Held object** — something a reader keeps behind an id Core names, such as a node or a position in a text, released when Core releases it. ADR 0003's term, not yet built.
+- **Held object** — something a reader keeps behind an id Core names, such as a node or a position in a text, released when Core releases it.
   [ADR 0003](adr/0003-readers-tell-core-asks.md).
 - **Held nodes** — the node references the reducer holds (the focus,
   its ancestors, the last selection, the navigator, and a pending
@@ -136,12 +120,8 @@ their NVDA meanings and are documented in [docs/nvda](https://github.com/Neurron
   can report (a role, a state, a description, a spelling error, an
   event), with a stable id and a category; a theme says how each is
   reported. [verbatim-model](crates/verbatim-model.md).
-- **Live re-read** — Core setting aside a report that would speak a
-  cached ancestor, as entered or as the window title, and asking the
-  focus reader that sent it to read the same element again with no
-  ancestry cache. [verbatim-core](crates/verbatim-core.md), "The ancestry cache".
-- **Lowest common ancestor** — the innermost entry a new reported
-  ancestry shares with Core's focus ancestry, where Core joins the two.
+- **Lowest common ancestor** — the innermost ancestor a new focus
+  answer shares with Core's focus ancestry, where Core joins the two.
   [How focus works](../explanation/design/focus.md).
 - **Message position** — the count of messages carrying node ids an
   outpost has sent, kept the same way by the outpost and Core; Core
@@ -172,20 +152,18 @@ their NVDA meanings and are documented in [docs/nvda](https://github.com/Neurron
   focus-entry announcement under the NVDA-parity exclusion filter.
   [verbatim-core](crates/verbatim-core.md); NVDA's rule is in
   [Object model](https://github.com/Neurrone/verbatim/blob/main/docs/nvda/object-model.md).
-- **Reader** — a process that calls into applications for Core and hears their events: the focus listener, which holds every desktop-wide registration, and one outpost per application. ADR 0003's term, not yet built.
+- **Reader** — a process that calls into applications for Core and hears their events: the focus listener, which holds every desktop-wide registration, and one outpost per application.
   [ADR 0003](adr/0003-readers-tell-core-asks.md).
-- **Readers' last focus** — the newest focus a reader read that Core executed, NVDA's last queued focus; empty at startup and after the foreground leaves for an unrelated top-level window. ADR 0003's term, not yet built.
+- **Readers' last focus** — the newest focus a reader read that Core executed, NVDA's last queued focus; empty at startup and after the foreground leaves for an unrelated top-level window.
   [ADR 0003](adr/0003-readers-tell-core-asks.md).
 - **Recovery ladder** — the escalation for misbehaving outposts:
   rung 1, per-entry deadlines; rung 2, abandon the stuck worker and
   start a replacement; rung 3, end a failed outpost, crashed, stuck or
   piling up abandoned workers, and give its application the next one.
   [Architecture](../explanation/architecture.md) section 1.
-- **Reported ancestry** — the ancestors a focus report carries, read by
-  its focus reader. [How focus works](../explanation/design/focus.md).
-- **Request table** — the app's record of every query sent to an
-  outpost, the single owner of "exactly one outcome per query".
-  [verbatim-app](crates/verbatim-app.md).
+- **Request table** — Core's record of every request it makes of a
+  reader, from its asking to its one ending.
+  [verbatim-core](crates/verbatim-core.md), "Core's requests".
 - **Responder** — a value that answers an asker once; answering
   consumes it, and dropping it unanswered answers "gone". It lives in a
   thread's shell, never in a pure reducer's state.
@@ -211,9 +189,9 @@ their NVDA meanings and are documented in [docs/nvda](https://github.com/Neurron
   under: the newest key given to the reading rules whose window holds
   the read, so a later key's cut treats that speech as the key's.
   [verbatim-core](crates/verbatim-core.md), "Core's terminal model".
-- **Ancestors Core already knows** — the committed focus's ancestors, sent with a focus request. The reader's walk reads up the ancestor chain until it reaches one of them. ADR 0003's term, not yet built.
+- **Ancestors Core already knows** — the committed focus's ancestors, sent with a focus request. The reader's walk reads up the ancestor chain until it reaches one of them.
   [ADR 0003](adr/0003-readers-tell-core-asks.md).
-- **Tell** — a message a reader sends Core when an event arrives, carrying what came with the event and reads of Windows' own state that cannot hang; a UI Automation event's tell also carries the results of its check thread's calls, and no other tell makes a call into the application. ADR 0003's term, not yet built.
+- **Tell** — a message a reader sends Core when an event arrives, carrying what came with the event and reads of Windows' own state that cannot hang; a UI Automation event's tell also carries the results of its check thread's calls, and no other tell makes a call into the application.
   [ADR 0003](adr/0003-readers-tell-core-asks.md).
 - **Terminal snapshot** — one read of a terminal as its outpost sends it
   to Core (`TerminalSnapshot`): the text from where the read started to
@@ -230,10 +208,6 @@ their NVDA meanings and are documented in [docs/nvda](https://github.com/Neurron
   one model. The built-in default theme is complete; every other theme
   holds only its differences. [verbatim-model](crates/verbatim-model.md)
   and [verbatim-config](crates/verbatim-config.md).
-- **Title check** — a focus reader's comparison of the window titles
-  saved in its ancestry cache with their live text, read locally from
-  Windows' state, before it uses the cache; any change makes the walk go
-  live. [verbatim-core](crates/verbatim-core.md), "The ancestry cache".
 - **Trace id** — the correlation id minted at the triggering input
   and carried through event, reducer, speech, and audio, making
   end-to-end latency timelines possible.
