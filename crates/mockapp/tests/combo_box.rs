@@ -31,10 +31,10 @@ use std::sync::mpsc;
 
 use verbatim_core::SrState;
 use verbatim_listener_logic::focus::Judged;
+use verbatim_model::property::{PropertyId, PropertyValue};
 use verbatim_model::protocol::{DeliveredFact, OutpostToCore, UiaSnapshotFact};
 use verbatim_model::{
-    Backend, Effect, Input, NodeSnapshot, NormalizedEvent, OutpostId, Pid, Role, SegmentContent,
-    TraceId,
+    Backend, Effect, Input, NodeId, NormalizedEvent, OutpostId, Pid, Role, SegmentContent, TraceId,
 };
 use verbatim_uia::{
     Agile, Cached, ListenerEvent, ListenerSelection, Part, Registration, Subscription, Uia,
@@ -86,56 +86,50 @@ fn start(name: &str) -> (common::MockApp, HWND, OutpostUnderTest) {
 }
 
 /// Moves mockapp's focus to `id`, has the listener's reader read it and
-/// the outpost report it, and returns the focus and its selected child,
-/// which must be all the outpost said.
+/// the outpost complete the read as Core asks, and returns the focus's
+/// node, role, name and value.
 fn focus(
     app: &mut common::MockApp,
     outpost: &OutpostUnderTest,
     hwnd: HWND,
     id: &str,
-) -> (NodeSnapshot, Option<NodeSnapshot>) {
+) -> (NodeId, Role, Option<String>, Option<String>) {
     app.send(&format!("set-focus {id}"));
-    outpost.deliver(outpost.listener_fact(&focused(hwnd)));
-    let reported = match outpost.next() {
-        OutpostToCore::Event {
-            event:
-                NormalizedEvent::FocusChanged {
-                    node,
-                    selected_child,
-                    ..
-                },
-            ..
-        } => (node, selected_child),
-        other => panic!("the outpost said {other:?}, not the focus on {id}"),
-    };
+    let focused = outpost.uia_focus_answer(&focused(hwnd));
     outpost.settled();
-    reported
+    let value = match common::outpost::value(&focused.read.focus.read.values, PropertyId::Value) {
+        Some(PropertyValue::Text(value)) => Some(value.clone()),
+        _ => None,
+    };
+    (
+        focused.node(),
+        focused.role(),
+        focused.name().map(str::to_owned),
+        value,
+    )
 }
 
-/// The combo box's value is its selected item's name, and the item is not
-/// reported as its selected child.
+/// The combo box's value is its selected item's name.
 fn a_combo_box_without_the_value_pattern_has_its_selected_item_as_its_value() {
     let (mut app, hwnd, outpost) = start("mockapp-combo-box-value");
-    let (node, selected_child) = focus(&mut app, &outpost, hwnd, "hour");
+    let (_, role, name, value) = focus(&mut app, &outpost, hwnd, "hour");
     assert_eq!(
-        (node.role, node.name.as_deref(), node.value.as_deref()),
+        (role, name.as_deref(), value.as_deref()),
         (Role::ComboBox, Some("Hour"), Some("Nine"))
     );
-    assert_eq!(selected_child, None);
     drop(outpost);
     app.quit();
 }
 
 /// A list whose class name contains `LoopingSelector` has its selected
-/// item as its value too, not as its selected child.
+/// item as its value too.
 fn a_looping_selector_has_its_selected_item_as_its_value() {
     let (mut app, hwnd, outpost) = start("mockapp-combo-box-looping");
-    let (node, selected_child) = focus(&mut app, &outpost, hwnd, "minute");
+    let (_, role, name, value) = focus(&mut app, &outpost, hwnd, "minute");
     assert_eq!(
-        (node.role, node.name.as_deref(), node.value.as_deref()),
+        (role, name.as_deref(), value.as_deref()),
         (Role::List, Some("Minute"), Some("Five"))
     );
-    assert_eq!(selected_child, None);
     drop(outpost);
     app.quit();
 }
@@ -145,7 +139,7 @@ fn a_looping_selector_has_its_selected_item_as_its_value() {
 /// item's name.
 fn an_item_selected_in_the_focused_combo_box_changes_its_value() {
     let (mut app, hwnd, outpost) = start("mockapp-combo-box-selection");
-    let (combo, _) = focus(&mut app, &outpost, hwnd, "hour");
+    let (combo, ..) = focus(&mut app, &outpost, hwnd, "hour");
     let selections = Selections::new(hwnd);
     app.send("select ten");
     outpost.deliver(selections.next(&outpost, "Ten"));
@@ -153,7 +147,7 @@ fn an_item_selected_in_the_focused_combo_box_changes_its_value() {
         OutpostToCore::Event {
             event: NormalizedEvent::ValueChanged { node_id, value },
             ..
-        } => assert_eq!((node_id, value.as_deref()), (combo.id, Some("Ten"))),
+        } => assert_eq!((node_id, value.as_deref()), (combo, Some("Ten"))),
         other => panic!("the outpost said {other:?}, not the combo box's new value"),
     }
     outpost.settled();
@@ -269,14 +263,14 @@ fn selected_name(outpost: &OutpostUnderTest) -> Option<String> {
 /// item's own name.
 fn the_new_value_is_the_items_name_as_it_is_now() {
     let (mut app, hwnd, outpost) = start("mockapp-combo-box-late-name");
-    let (combo, _) = focus(&mut app, &outpost, hwnd, "hour");
+    let (combo, ..) = focus(&mut app, &outpost, hwnd, "hour");
     app.send("select ten");
     outpost.deliver(selection_of(hwnd, "Ten", None));
     match outpost.next() {
         OutpostToCore::Event {
             event: NormalizedEvent::ValueChanged { node_id, value },
             ..
-        } => assert_eq!((node_id, value.as_deref()), (combo.id, Some("Ten"))),
+        } => assert_eq!((node_id, value.as_deref()), (combo, Some("Ten"))),
         other => panic!("the outpost said {other:?}, not the combo box's new value"),
     }
     outpost.settled();
@@ -407,8 +401,8 @@ fn a_selection_outside_the_combo_box_is_no_value_change() {
 /// selection of its item is no change of it here.
 fn a_combo_box_with_the_value_pattern_has_no_value_change_from_a_selection() {
     let (mut app, hwnd, outpost) = start("mockapp-combo-box-value-pattern");
-    let (node, _) = focus(&mut app, &outpost, hwnd, "size");
-    assert_eq!(node.value.as_deref(), Some("Large"));
+    let (_, _, _, value) = focus(&mut app, &outpost, hwnd, "size");
+    assert_eq!(value.as_deref(), Some("Large"));
     let selections = Selections::new(hwnd);
     app.send("select large");
     outpost.deliver(selections.next(&outpost, "Large"));
