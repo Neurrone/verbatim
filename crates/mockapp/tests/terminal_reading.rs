@@ -19,6 +19,10 @@
 //!   takes the colours only when Core asks; the whole document and a
 //!   history block are read when asked; a caret key's starting read mints
 //!   the key's caret starting point with the caret.
+//! - A terminal caret key's watch has no event shortcut: a caret event, the
+//!   console's or Windows Terminal's, is told and leaves the watch polling
+//!   to its bound, and a caret moved with no event is found by a check; it
+//!   answers with nothing read, Core's full read following.
 //!
 //! Each test runs on a desktop of its own (`harness::run_isolated`), so no
 //! other client sees mockapp's window or raises its events.
@@ -33,8 +37,9 @@ use verbatim_model::property::PropertyId;
 use verbatim_model::request::{Answer, Follow, FollowGroup, Followed, Outcome, Reply, Request};
 use verbatim_model::tell::{EventObject, Payload};
 use verbatim_model::{
-    CallCounts, NodeId, TerminalRead, TerminalReadReply, TerminalScope, TerminalSnapshot,
-    TextAnchor, TextOp, TextReply, TextUnit,
+    CallCounts, CaretMotion, NodeId, TerminalRead, TerminalReadReply, TerminalScope,
+    TerminalSnapshot, TextAnchor, TextOp, TextProvider, TextReply, TextUnit, Watch, WatchFinalRead,
+    Watched,
 };
 use verbatim_outpost::Heard;
 use verbatim_process::arguments::OutpostOptions;
@@ -427,6 +432,91 @@ fn a_starting_read_reads_the_caret_and_mints_the_starting_point() {
     terminal.quit();
 }
 
+/// A caret key's starting read of the terminal, the caret where mockapp
+/// has it: the caret starting point it mints.
+fn starting_point(terminal: &Terminal) -> TextAnchor {
+    let read = terminal.read(TerminalRead {
+        starting: Some(TextUnit::Character),
+        output: false,
+        ..terminal.ask(Some(terminal.start), TerminalScope::Fresh, (0, 0), false)
+    });
+    read.point
+        .expect("a starting read mints the starting point")
+}
+
+/// Core's watch of a terminal's caret key from `point`, passed now, as
+/// Core sends it for the terminal: no event is the key's effect, the
+/// checks are every 5 ms to NVDA's 100 ms bound in the console host and
+/// every 10 ms to 300 ms in Windows Terminal, and no unit is read at its
+/// end (`docs/design/readers-tell-core-asks-build1.md`, "A terminal's caret
+/// key"). Returns the request's number.
+fn watch(terminal: &Terminal, point: TextAnchor) -> verbatim_model::request::RequestNumber {
+    let (poll_us, bound_us) = if terminal.console {
+        (5_000, 100_000)
+    } else {
+        (10_000, 300_000)
+    };
+    terminal.outpost.request(
+        terminal.hwnd,
+        Request::Text {
+            node: terminal.node,
+            op: TextOp::Watch(Watch {
+                provider: TextProvider::Uia,
+                point,
+                motion: CaretMotion::NextCharacter,
+                passed_at_us: common::outpost::now_us(),
+                poll_us,
+                events: false,
+                bound_us,
+                final_read: WatchFinalRead::Terminal,
+            }),
+        },
+    )
+}
+
+/// How the watch `number` ended, which must be the outpost's next message.
+fn watched(terminal: &Terminal, number: verbatim_model::request::RequestNumber) -> Watched {
+    match terminal.outpost.answer(number).outcome {
+        Outcome::Result(Reply::Text(TextReply::Watched(watched))) => *watched,
+        other => panic!("the outpost answered {other:?}, not the watch"),
+    }
+}
+
+/// A terminal caret key's watch finds a caret the program moved with no
+/// event by its check, and answers with no unit read, Core's full read of
+/// the terminal following. Converted from
+/// `a_read_terminal_message_reads_the_caret_first_under_the_keys_trace`:
+/// the key's effect is the watch's, its read Core's (build 1, "A
+/// terminal's caret key").
+fn a_terminal_watch_finds_a_caret_moved_with_no_event() {
+    let mut terminal = start("mockapp-terminal-watch-moved");
+    let point = starting_point(&terminal);
+    terminal.app.send("caret term 1");
+    let number = watch(&terminal, point);
+    assert_eq!(watched(&terminal, number), Watched::EffectUnread);
+    terminal.outpost.settled();
+    terminal.quit();
+}
+
+/// Windows Terminal's caret event during a terminal key's watch, with the
+/// caret where the key found it, is told to Core as the terminal's change
+/// and is not the key's effect: a terminal's watch has no event shortcut,
+/// so it runs to its bound and answers with nothing read. Converted from
+/// `a_read_covering_a_caret_event_answers_a_watch_with_no_caret`: an event
+/// no longer answers a terminal's watch (build 1, "A terminal's caret
+/// key").
+fn a_caret_event_is_not_a_terminal_watchs_effect() {
+    let mut terminal = start("mockapp-terminal-watch-event");
+    let point = starting_point(&terminal);
+    let number = watch(&terminal, point);
+    terminal.app.send("caret-event term");
+    terminal.outpost.heard(&[Heard::UiaTextSelection]);
+    terminal.told();
+    assert_eq!(watched(&terminal, number), Watched::BoundUnread);
+    terminal.outpost.settled();
+    terminal.quit();
+}
+
 /// [`start_with`] for mockapp's console host fixture: its text area in a
 /// window of the console's class, which `Follow` names as a console's
 /// terminal, so the outpost hooks the console's events.
@@ -523,6 +613,38 @@ fn the_console_hosts_system_caret_is_not_its_caret_event() {
     terminal.quit();
 }
 
+/// The console's caret event during a caret key's watch, with no move, is
+/// told as the terminal's change and leaves the watch polling, every 5 ms
+/// in the console host: it runs to its 100 ms bound and answers with
+/// nothing read. Converted from
+/// `a_console_caret_event_without_a_move_leaves_the_poll_reading`: the
+/// console poll goes into Core's watch (build 3's appendix).
+fn a_console_caret_event_without_a_move_leaves_the_watch_polling() {
+    let mut terminal = start_console("mockapp-console-watch-event");
+    let point = starting_point(&terminal);
+    let number = watch(&terminal, point);
+    terminal.app.send("console-caret 0 0");
+    terminal
+        .outpost
+        .heard(&[Heard::Msaa(WinEventKind::ConsoleCaret)]);
+    terminal.told();
+    assert_eq!(watched(&terminal, number), Watched::BoundUnread);
+    terminal.outpost.settled();
+    terminal.quit();
+}
+
+/// The console host's caret moved with no event is the key's effect, found
+/// by the watch's check, which answers with nothing read.
+fn a_console_watch_finds_a_caret_moved_with_no_event() {
+    let mut terminal = start_console("mockapp-console-watch-moved");
+    let point = starting_point(&terminal);
+    terminal.app.send("caret text 1");
+    let number = watch(&terminal, point);
+    assert_eq!(watched(&terminal, number), Watched::EffectUnread);
+    terminal.outpost.settled();
+    terminal.quit();
+}
+
 fn main() {
     harness::run_isolated(&[
         (
@@ -552,6 +674,22 @@ fn main() {
         (
             "a_starting_read_reads_the_caret_and_mints_the_starting_point",
             a_starting_read_reads_the_caret_and_mints_the_starting_point,
+        ),
+        (
+            "a_terminal_watch_finds_a_caret_moved_with_no_event",
+            a_terminal_watch_finds_a_caret_moved_with_no_event,
+        ),
+        (
+            "a_caret_event_is_not_a_terminal_watchs_effect",
+            a_caret_event_is_not_a_terminal_watchs_effect,
+        ),
+        (
+            "a_console_caret_event_without_a_move_leaves_the_watch_polling",
+            a_console_caret_event_without_a_move_leaves_the_watch_polling,
+        ),
+        (
+            "a_console_watch_finds_a_caret_moved_with_no_event",
+            a_console_watch_finds_a_caret_moved_with_no_event,
         ),
         (
             "the_console_hosts_caret_comes_from_its_console",

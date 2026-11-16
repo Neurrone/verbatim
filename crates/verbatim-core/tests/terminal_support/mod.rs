@@ -348,8 +348,9 @@ pub fn focus_after(earlier: Option<verbatim_model::EarlierElement>) -> Input {
 }
 
 /// The terminal's focus read, as the outpost answers Core's read of the
-/// application's focus at startup, inside `depth` groups.
-fn focus_read(depth: u64) -> FocusRead {
+/// application's focus at startup, inside `depth` groups, and inside a
+/// console host's window, outermost, when `console`.
+fn focus_read(depth: u64, console: bool) -> FocusRead {
     let value = |name: String, role: Role| {
         PropertyValues(vec![
             PropertyAnswer {
@@ -381,6 +382,7 @@ fn focus_read(depth: u64) -> FocusRead {
             simple_child: false,
             dialog_text: None,
         })
+        .chain(console.then(console_window))
         .collect();
     FocusRead {
         focus: FocusNode {
@@ -412,6 +414,40 @@ fn focus_read(depth: u64) -> FocusRead {
     }
 }
 
+/// A console host's window, as a focus read's ancestor: its own window, of
+/// the console's class.
+fn console_window() -> verbatim_model::request::FocusAncestor {
+    verbatim_model::request::FocusAncestor {
+        node: FocusNode {
+            read: NodeRead {
+                node: Some(NodeId::in_outpost(OutpostId(OUTPOST.generation), 99_999)),
+                window: window(),
+                values: PropertyValues(vec![
+                    PropertyAnswer {
+                        id: PropertyId::Name,
+                        value: Some(PropertyValue::Text("Console".to_owned())),
+                    },
+                    PropertyAnswer {
+                        id: PropertyId::Role,
+                        value: Some(PropertyValue::Role(Role::Window)),
+                    },
+                    PropertyAnswer {
+                        id: PropertyId::NativeWindow,
+                        value: Some(PropertyValue::Window(WindowHandle(4))),
+                    },
+                    PropertyAnswer {
+                        id: PropertyId::ClassName,
+                        value: Some(PropertyValue::Text("ConsoleWindowClass".to_owned())),
+                    },
+                ]),
+            },
+            runtime_id: Some(RuntimeId(vec![42, 99_999])),
+        },
+        simple_child: false,
+        dialog_text: None,
+    }
+}
+
 /// A reducer reading the simulated terminal through Core's event queue,
 /// with playback that reaches each utterance's marks as it plays.
 #[expect(
@@ -429,6 +465,8 @@ pub struct Session {
     pub requests: Vec<Asked>,
     /// How many output reads Core asked.
     pub output_reads: usize,
+    /// Every caret key's watch Core sent, in order.
+    pub watches: Vec<verbatim_model::Watch>,
     /// Every due time of the quiet-period timer, as the shell reads it
     /// after each step that changed it, in order.
     pub timers: Vec<Option<u64>>,
@@ -470,6 +508,8 @@ pub struct Session {
     keys: u64,
     /// How many groups the terminal is inside.
     depth: u64,
+    /// Whether the terminal is inside a console host's window.
+    console: bool,
     /// When the next full read the outpost answers began, when earlier
     /// than when it ended, the session's time.
     pub next_read_began: Option<u64>,
@@ -506,6 +546,17 @@ impl Session {
 
     /// [`Session::with`], the terminal inside `depth` groups.
     pub fn inside(outpost: Outpost, depth: u64) -> Self {
+        Self::built(outpost, depth, false)
+    }
+
+    /// [`Session::with`], the terminal inside a console host's window,
+    /// which Core takes from the focus read's ancestor of the console's
+    /// class.
+    pub fn in_console(outpost: Outpost) -> Self {
+        Self::built(outpost, 0, true)
+    }
+
+    fn built(outpost: Outpost, depth: u64, console: bool) -> Self {
         let mut session = Self {
             state: SrState::new(),
             runtime: verbatim_core::Runtime::default(),
@@ -513,6 +564,7 @@ impl Session {
             heard: Vec::new(),
             requests: Vec::new(),
             output_reads: 0,
+            watches: Vec::new(),
             timers: Vec::new(),
             armed: None,
             copied: Vec::new(),
@@ -528,6 +580,7 @@ impl Session {
             at_ms: 0,
             keys: 0,
             depth,
+            console,
             next_read_began: None,
             hold_output: false,
             held_output: VecDeque::new(),
@@ -543,7 +596,12 @@ impl Session {
             root_owner: WindowHandle(4),
             process: APP,
             thread: 41,
-            class: "CASCADIA_HOSTING_WINDOW_CLASS".to_owned(),
+            class: if console {
+                "ConsoleWindowClass"
+            } else {
+                "CASCADIA_HOSTING_WINDOW_CLASS"
+            }
+            .to_owned(),
         }));
         session.queue(QueueInput::Process(
             verbatim_model::request::ProcessFact::OutpostStarted {
@@ -719,7 +777,7 @@ impl Session {
         let outcome = match &ask.request {
             Wire::Follow(_) => Outcome::Result(Reply::Followed),
             Wire::CurrentFocus { .. } => {
-                Outcome::Result(Reply::Focus(Box::new(focus_read(self.depth))))
+                Outcome::Result(Reply::Focus(Box::new(focus_read(self.depth, self.console))))
             }
             Wire::Text { op, .. } => match op {
                 TextOp::ReadTerminal(read) => {
@@ -893,7 +951,10 @@ impl Session {
                 from: *from,
                 rows: *rows,
             },
-            TextOp::Watch(_) => Asked::Watch,
+            TextOp::Watch(watch) => {
+                self.watches.push(*watch);
+                Asked::Watch
+            }
             _ => return,
         };
         self.requests.push(asked);

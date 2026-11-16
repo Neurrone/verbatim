@@ -1344,6 +1344,76 @@ fn a_held_keys_starting_read_is_aligned_and_its_output_spoken() {
     );
 }
 
+/// Up held in `session` at 200 ms, its starting read answered at 300 ms:
+/// the watch Core sent.
+fn held_up_watch(session: &mut Session) -> Vec<verbatim_model::Watch> {
+    session.at_ms = 300;
+    session.input(&Input::HeldKey {
+        key_seq: verbatim_model::KeySeq::NONE_YET,
+        trace_id: TraceId::from_raw(9),
+        key: CaretKey {
+            motion: CaretMotion::PreviousLine,
+            select: false,
+        },
+        pressed_at_ms: 200,
+    });
+    assert_eq!(
+        session.requests(),
+        [Asked::Starting, Asked::Watch, Asked::Fresh]
+    );
+    std::mem::take(&mut session.watches)
+}
+
+/// A terminal caret key's watch in the console host
+/// (`docs/design/readers-tell-core-asks-build1.md`, "A terminal's caret
+/// key"): from the starting point its starting read minted (anchor 3, after
+/// the baseline's start, 1, and the starting read's own, 2), from its pass
+/// at 300 ms, a check every 5 ms (Verbatim-only, ruled 2026-10-26) to
+/// NVDA's 100 ms bound, its multiplier 1 on consoles (`winConsoleUIA.py`
+/// 470), no event taken as its effect, and no unit read at its end, the
+/// terminal's full read following. Converted from the console poll's
+/// timing (`TerminalReads::Poll`), which goes into the watch.
+#[test]
+fn a_console_hosts_caret_key_is_watched_every_5_ms_to_100_ms_with_no_event() {
+    let mut session = Session::in_console(Outpost::new(Flavor::ConsoleHost, 20, 4, 10));
+    assert_eq!(
+        held_up_watch(&mut session),
+        [verbatim_model::Watch {
+            provider: verbatim_model::TextProvider::Uia,
+            point: verbatim_model::TextAnchor(3),
+            motion: CaretMotion::PreviousLine,
+            passed_at_us: 300_000,
+            poll_us: 5_000,
+            events: false,
+            bound_us: 100_000,
+            final_read: verbatim_model::WatchFinalRead::Terminal,
+        }]
+    );
+}
+
+/// A terminal caret key's watch outside the console host: a check every
+/// 10 ms, as NVDA's poll, to NVDA's bound multiplied by its terminal's 3
+/// (`NVDAObjects/UIA/winConsoleUIA.py` 470, 486), 300 ms, with no event
+/// taken as its effect. Converted from the read at the pass in Windows
+/// Terminal (`CoreToOutpost::ReadTerminal`), which goes into the watch.
+#[test]
+fn a_windows_terminal_caret_key_is_watched_every_10_ms_to_300_ms_with_no_event() {
+    let mut session = Session::new(Flavor::WindowsTerminal, 20, 4, 10);
+    assert_eq!(
+        held_up_watch(&mut session),
+        [verbatim_model::Watch {
+            provider: verbatim_model::TextProvider::Uia,
+            point: verbatim_model::TextAnchor(3),
+            motion: CaretMotion::PreviousLine,
+            passed_at_us: 300_000,
+            poll_us: 10_000,
+            events: false,
+            bound_us: 300_000,
+            final_read: verbatim_model::WatchFinalRead::Terminal,
+        }]
+    );
+}
+
 #[test]
 fn a_key_deferred_behind_a_held_key_reaches_the_rules_at_the_held_keys_pass() {
     // "x" typed at 210 while Up, pressed at 200, waits for its starting
