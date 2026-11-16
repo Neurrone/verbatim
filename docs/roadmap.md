@@ -477,55 +477,10 @@ just before it. All five builds are built; the rules for the planned milestones 
 
 ### The caret and selection rework
 
-Follow-up from the reducers' simplification study: Core's
-`caret_history` makes the same caret-before-the-key judgement as the
-outpost, a fact judged in two places; the rework gives it one owner.
-
-The decisions, the design and the order of work are in
-[the caret and selection rework](design/caret-selection-rework.md), consolidated for building, the one
-source for them; its first step is NVDA's captures of the keys not yet
-captured. Agreed with Dickson on 2026-10-25 and 2026-10-29 after a study found the design's shape
-right (a held key's caret read before it, the outpost watching for
-evidence and comparing positions in the provider, Core choosing every
-word) but a second layer, added before key holding closed the race it
-answered, never removed: the caret and selection were kept in nine
-places, and two known defects come from copies disagreeing (Control+A
-followed by a repeated focus says nothing; a superseded key's answer
-leaves Core's caret stale).
-
-The decisions, in brief:
-
-- Pin today's defects with tests first.
-- One last read per text node in the outpost as the only baseline, one
-  request per key that reads the caret before it and opens the watch, and
-  Core taking every report and answer as the newest caret by one stamp,
-  the read's start; the baseline's life follows the focus Core holds.
-- Remove the second layer: Core's eight caret reports and its Backspace
-  and Delete prediction, the outpost's eight reads (so that until
-  uiAccess, M8.7, a caret key in an elevated window is judged from the
-  last read), the time-zero record, the line-limited "since" check,
-  report numbers, the selection baseline's three modes, the separate
-  watch request, and the single superseded slot.
-- Control+Z, Control+Y, Control+X, Control+V and Escape in a text field
-  match NVDA: not held and silent, replacing the decision of 2026-10-08
-  that spoke them; the `caret_keys` scenarios' expectations change.
-- A key that moves nothing speaks as NVDA's script does, so that Up
-  Arrow on a one-line field reads the line, replacing the decision of
-  2026-10-08 that made it silent: at once at the edge of the text when
-  nothing is selected, otherwise 100 ms after the key; a move that
-  arrives later, within the watch's new 1-second bound, cuts speech and
-  is spoken. Alt+Up and Alt+Down Arrow move by sentence where the
-  application does not, as NVDA does. Terminals keep their reading
-  rules for all of this (Dickson, 2026-10-29).
-- One time stamp per caret report; the outbound queue's clause against
-  merging a caret report across a reply is removed, its stated reason
-  predating 505e3ad8.
-- The judgement of a key's evidence stays in the outpost, named in D14 as
-  the one read-time decision outside Core, since it bounds reads on text
-  changes.
-- M4.6's generated tests of the outpost's reducer extended to the text
-  facts this rework keeps, among them one baseline per text node, once it
-  has removed the second layer, so no test is written for a removed state.
+Replaced by build 1 of "Readers tell, Core asks": Core's caret key entry,
+its stroke line and the outpost's watch give a key's caret one owner
+(`docs/design/readers-tell-core-asks-build1.md`, "Keys and commands in
+this build"; [holding caret keys](../books/dev/src/explanation/design/key-holding.md)).
 
 ### Deferred
 

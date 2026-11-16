@@ -1017,7 +1017,8 @@ reads behind ids Core names, released as anchors are (Table 16):
   and links.
 
 A caret key is read and reported for Core, which alone judges it
-(`docs/design/caret-selection-rework.md`):
+(`docs/design/readers-tell-core-asks-build1.md`, "Keys and commands in
+this build"):
 
 - A key's reads come from a note on its node (`reducer::KeyNote`), set as a
   before read's request (`TextOp::ReadCaret` with a before-key `ReadPurpose`)

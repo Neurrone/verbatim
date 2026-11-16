@@ -94,8 +94,6 @@ harness, NVDA captures and troubleshooting.
   - [cross-process-calls-study.md](design/cross-process-calls-study.md)
     — every call that can reach another application, measured, with a
     verdict on the rule that only an application's own outpost calls it.
-  - [caret-selection-rework.md](design/caret-selection-rework.md) — one
-    caret baseline and one request per key.
   - [state-models.md](design/state-models.md) — one explicit state each
     for the listener's record, hung windows and the followed focus.
   - [progress-bars.md](design/progress-bars.md) — every progress bar,

@@ -150,7 +150,15 @@ moves nothing moves the caret by sentence from the key's starting read,
 by Unicode's rules within each paragraph, with the ordinary due time of
 a request, as NVDA blocks until it can move (`editableText.py` 245 to
 262; Dickson, 2026-11-16), and through UI Automation, which has no
-sentence unit, says nothing.
+sentence unit, says nothing. Alt+Down moves to the next sentence's
+start, and from a paragraph's last sentence to the next paragraph's
+first; from the text's last sentence it moves to the text's end and says
+"blank", as captured. Alt+Up steps back one character and takes that
+sentence's start, so from the middle of a sentence it lands at that
+sentence's start, and from a paragraph's first sentence it takes the
+previous paragraph's last; at the text's start it stays and says the
+first sentence, as captured (`textInfos/offsets.py` 852 to 856, 879 to
+885; `editableText.py` 258 to 262).
 
 The differences: a move later than the bound is not spoken for the key,
 and in a classic edit control or MSAA text, where the watch checks the

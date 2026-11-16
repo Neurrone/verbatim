@@ -113,7 +113,7 @@ state table says cannot occur, a
 followed, changes nothing and comes back as `Effect::LogicError`, which the shell logs as an
 error.
 
-A node's note (`docs/design/caret-selection-rework.md`) is kept in the
+A node's note is kept in the
 text facts with the node's record (`text.rs`): `KeyNote`, its key's unit and
 motion, when it ends, and what it causes to be read besides the node's
 caret events (`NoteReads::Field`, `CaretAndText`, or `CaretOnly` once a read showed the

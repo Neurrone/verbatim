@@ -4,13 +4,6 @@ The ownership refactor's builds are all built: [the one judge build](../../books
 
 ## Rules
 
-- The caret and selection rework (`docs/design/caret-selection-rework.md`).
-  - The last read per node and the pinned baseline are reducer state, released by the release rule.
-  - Caret and text events are read for every node the outpost has not released, not only its newest focus, and Core decides which is spoken.
-  - A repeat is read in full and compared with the last read, and Core's choice between a repeat and a new focus decides what is spoken, which removes the Control+A loss.
-  - The key request is a stream responder; the 100 ms and 1-second bounds are reducer timers.
-  - The auto-repeat mark, the edge facts and the chords' gesture travel with the report.
-  - The clause against merging a caret report across a reply becomes the barrier on replies.
 - M4.3.
   - Each setting has one owner and reaches it as a delta, and every setting writes through the saver.
   - The hook's settings and gesture map are one snapshot, loaded once per key.
