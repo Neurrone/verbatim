@@ -286,11 +286,45 @@ fn a_selection_outside_the_combo_box_is_no_value_change() {
 }
 
 /// A combo box with the `Value` pattern has its own value, and a selection
-/// of its item is no change of it here: nothing is said.
+/// of its item is no change of it outside a `Windows.UI.Core` window:
+/// nothing is said. The outpost reads the facts Core asks for it: the
+/// `Value` pattern, its window's class, and no Windows Forms list
+/// (`docs/parity/changes-and-selection.md`, "A combo box with the `Value`
+/// pattern whose items give its value").
 fn a_combo_box_with_the_value_pattern_has_no_value_change_from_a_selection() {
     let (mut app, hwnd, outpost) = start("mockapp-combo-box-value-pattern");
-    let (_, _, _, value) = focus(&mut app, &outpost, hwnd, "size");
+    let (node, _, _, value) = focus(&mut app, &outpost, hwnd, "size");
     assert_eq!(value.as_deref(), Some("Large"));
+    let answer = outpost.requested(
+        hwnd,
+        verbatim_model::request::Request::Properties {
+            node,
+            set: vec![
+                PropertyId::HasValuePattern,
+                PropertyId::WindowClass,
+                PropertyId::ComboBoxList,
+            ],
+        },
+    );
+    assert_eq!(
+        answer.outcome,
+        verbatim_model::request::Outcome::Result(verbatim_model::request::Reply::Properties(
+            verbatim_model::property::PropertyValues(vec![
+                verbatim_model::property::PropertyAnswer {
+                    id: PropertyId::HasValuePattern,
+                    value: Some(PropertyValue::Flag(true)),
+                },
+                verbatim_model::property::PropertyAnswer {
+                    id: PropertyId::WindowClass,
+                    value: Some(PropertyValue::Text("VerbatimMockAppWindow".to_owned())),
+                },
+                verbatim_model::property::PropertyAnswer {
+                    id: PropertyId::ComboBoxList,
+                    value: None,
+                },
+            ])
+        ))
+    );
     let mut core = CoreDriver::new(&app, outpost);
     let _ = core.uia_focus(&focused(hwnd));
     let selections = Selections::new(hwnd);

@@ -370,8 +370,33 @@ fn a_selected_item_the_focus_controls_is_read_completed_and_spoken_as_a_focus() 
     );
 }
 
+/// The committed focus's `HasValuePattern`, `WindowClass` and `Value`,
+/// as its outpost answers them.
+fn value_facts(has_value: bool, class: &str, value: &str) -> Reply {
+    Reply::Properties(PropertyValues(vec![
+        PropertyAnswer {
+            id: PropertyId::HasValuePattern,
+            value: Some(PropertyValue::Flag(has_value)),
+        },
+        PropertyAnswer {
+            id: PropertyId::WindowClass,
+            value: Some(PropertyValue::Text(class.to_owned())),
+        },
+        PropertyAnswer {
+            id: PropertyId::Value,
+            value: Some(PropertyValue::Text(value.to_owned())),
+        },
+    ]))
+}
+
+/// The request out last, by its wire form.
+fn last_asked(state: &Held) -> Option<verbatim_model::request::Request> {
+    state.queue.table_for_tests().last().cloned()
+}
+
 #[test]
-fn a_selected_item_of_a_focus_whose_value_is_not_its_selection_says_nothing() {
+fn a_selected_list_item_whose_parent_is_the_focus_asks_its_value_facts_and_says_nothing_outside_a_core_window()
+ {
     let mut state = committed();
     feed_at(&mut state, 4_000, entry(selected(8, StateSet::default())));
     feed_at(&mut state, 5_000, answer(LISTENER, 4, item_read()));
@@ -380,6 +405,209 @@ fn a_selected_item_of_a_focus_whose_value_is_not_its_selection_says_nothing() {
             &mut state,
             6_000,
             answer(OUTPOST, 5, item(RelationFound::Unrelated, Some(1)))
+        ),
+        ["send Outpost(Pid(40)) other"]
+    );
+    assert_eq!(
+        last_asked(&state),
+        Some(verbatim_model::request::Request::Properties {
+            node: node(2),
+            set: vec![
+                PropertyId::HasValuePattern,
+                PropertyId::WindowClass,
+                PropertyId::Value
+            ],
+        })
+    );
+    assert_eq!(
+        feed_at(
+            &mut state,
+            7_000,
+            answer(OUTPOST, 6, value_facts(true, "AppPane", "Ten"))
+        ),
+        NOTHING
+    );
+    assert!(state.queue.front_for_tests().is_none());
+}
+
+#[test]
+fn a_selected_list_item_of_a_focus_with_the_value_pattern_in_a_core_window_speaks_its_value() {
+    let mut state = committed();
+    feed_at(&mut state, 4_000, entry(selected(8, StateSet::default())));
+    feed_at(&mut state, 5_000, answer(LISTENER, 4, item_read()));
+    feed_at(
+        &mut state,
+        6_000,
+        answer(OUTPOST, 5, item(RelationFound::Unrelated, Some(1))),
+    );
+    assert_eq!(
+        feed_at(
+            &mut state,
+            7_000,
+            answer(
+                OUTPOST,
+                6,
+                value_facts(true, "Windows.UI.Core.CoreWindow", "Ten")
+            )
+        ),
+        ["Value(\"Ten\")"]
+    );
+}
+
+#[test]
+fn a_selected_list_item_of_a_core_window_focus_without_the_value_pattern_says_nothing() {
+    let mut state = committed();
+    feed_at(&mut state, 4_000, entry(selected(8, StateSet::default())));
+    feed_at(&mut state, 5_000, answer(LISTENER, 4, item_read()));
+    feed_at(
+        &mut state,
+        6_000,
+        answer(OUTPOST, 5, item(RelationFound::Unrelated, Some(1))),
+    );
+    assert_eq!(
+        feed_at(
+            &mut state,
+            7_000,
+            answer(
+                OUTPOST,
+                6,
+                value_facts(false, "Windows.UI.Core.CoreWindow", "Ten")
+            )
+        ),
+        NOTHING
+    );
+}
+
+/// The committed focus a combo box, "Hour", node 2 in window 5.
+fn combo_box_committed() -> Held {
+    let mut state = asked_completion();
+    let mut read = focus_read(None);
+    read.focus.read.values = values("Hour", Role::ComboBox);
+    feed_at(
+        &mut state,
+        3_000,
+        answer(OUTPOST, 2, Reply::Focus(Box::new(read))),
+    );
+    state
+}
+
+/// A selection of list item `[42, 8]` in window 9, a `ComboLBox` of the
+/// focus's process outside the foreground and not topmost, which the
+/// acceptance test refuses.
+fn combo_list_selected() -> Event {
+    let mut facts = facts("ComboLBox");
+    facts.window.handle = WindowHandle(9);
+    facts.root = crate::entries::tests::facet(9, "ComboLBox");
+    facts.root_owner = crate::entries::tests::facet(9, "ComboLBox");
+    facts.window_to_foreground = verbatim_model::tell::Relation::Outside;
+    facts.root_owner_to_foreground = verbatim_model::tell::Relation::Outside;
+    facts.root_owner_is_foregrounds = false;
+    facts.window_to_active = verbatim_model::tell::Relation::Outside;
+    let mut cached = values("Ten", Role::ListItem);
+    cached.0.push(PropertyAnswer {
+        id: PropertyId::States,
+        value: Some(PropertyValue::States(StateSet::default())),
+    });
+    Event {
+        cached,
+        window: TellWindow::Found(Box::new(facts)),
+        ..selected(8, StateSet::default())
+    }
+}
+
+fn combo_box_list(list: Option<u64>) -> Reply {
+    Reply::Properties(PropertyValues(vec![PropertyAnswer {
+        id: PropertyId::ComboBoxList,
+        value: list.map(|list| PropertyValue::Window(WindowHandle(list))),
+    }]))
+}
+
+#[test]
+fn a_list_item_selected_in_a_windows_forms_combo_boxs_list_speaks_the_combo_boxs_value() {
+    let mut state = combo_box_committed();
+    assert_eq!(
+        feed_at(&mut state, 4_000, entry(combo_list_selected())),
+        ["send Outpost(Pid(40)) other"]
+    );
+    assert_eq!(
+        last_asked(&state),
+        Some(verbatim_model::request::Request::Properties {
+            node: node(2),
+            set: vec![PropertyId::ComboBoxList],
+        })
+    );
+    // The focus is NVDA's Windows Forms combo box, so the selection is
+    // taken outside the foreground and handled as any other first.
+    assert_eq!(
+        feed_at(
+            &mut state,
+            5_000,
+            answer(OUTPOST, 4, combo_box_list(Some(9)))
+        ),
+        ["send Listener ReadObject"]
+    );
+    assert_eq!(
+        feed_at(&mut state, 6_000, answer(LISTENER, 5, item_read())),
+        ["send Outpost(Pid(40)) CompleteUia"]
+    );
+    assert_eq!(
+        feed_at(
+            &mut state,
+            7_000,
+            answer(OUTPOST, 6, item(RelationFound::Unrelated, None))
+        ),
+        ["send Outpost(Pid(40)) other"]
+    );
+    assert_eq!(
+        last_asked(&state),
+        Some(verbatim_model::request::Request::Properties {
+            node: node(2),
+            set: vec![PropertyId::Value],
+        })
+    );
+    assert_eq!(
+        feed_at(
+            &mut state,
+            8_000,
+            answer(
+                OUTPOST,
+                7,
+                Reply::Properties(PropertyValues(vec![PropertyAnswer {
+                    id: PropertyId::Value,
+                    value: Some(PropertyValue::Text("Ten".to_owned())),
+                }]))
+            )
+        ),
+        ["Value(\"Ten\")"]
+    );
+}
+
+#[test]
+fn a_combo_lbox_selection_for_a_combo_box_that_is_not_windows_forms_is_refused() {
+    let mut state = combo_box_committed();
+    feed_at(&mut state, 4_000, entry(combo_list_selected()));
+    assert_eq!(
+        feed_at(&mut state, 5_000, answer(OUTPOST, 4, combo_box_list(None))),
+        NOTHING
+    );
+    assert!(state.queue.front_for_tests().is_none());
+}
+
+#[test]
+fn a_selection_in_another_list_of_a_windows_forms_combo_boxs_process_gives_no_value() {
+    let mut state = combo_box_committed();
+    feed_at(&mut state, 4_000, entry(combo_list_selected()));
+    feed_at(
+        &mut state,
+        5_000,
+        answer(OUTPOST, 4, combo_box_list(Some(10))),
+    );
+    feed_at(&mut state, 6_000, answer(LISTENER, 5, item_read()));
+    assert_eq!(
+        feed_at(
+            &mut state,
+            7_000,
+            answer(OUTPOST, 6, item(RelationFound::Unrelated, None))
         ),
         NOTHING
     );

@@ -302,12 +302,55 @@ Language and region, and Colors pages has no `Value` pattern, and
 arrowing the collapsed "Show additional calendars in the taskbar" combo
 box raises an element selected event on the new item, which Verbatim
 speaks as the combo box's value, "Simplified Chinese (Lunar)", and back,
-"Don't show additional calendars". So NVDA's second rule, the same value
-change for a `Windows.UI.Core` combo box that has the `Value` pattern
-(lines 2795 to 2798, NVDA issue 6337), is not needed for Settings and is
-not built: no such combo box was found to try it on. Not built either:
-the classic .NET Framework Windows Forms combo box (the roadmap's audit
-item 11, deferred).
+"Don't show additional calendars".
+
+### A combo box with the `Value` pattern whose items give its value
+
+NVDA: the value change above is a rule of `ListItem`, NVDA's class for a
+UIA list item control type, and has two more cases.
+
+- A list item without the focus whose parent is the focus, when the
+  parent has the `Value` pattern (read from its cache) and its window's
+  class begins with `Windows.UI.Core`, for a combo box that does not raise
+  value changes of its own (`ListItem.event_stateChange`,
+  `NVDAObjects/UIA/__init__.py` 2786 to 2800, NVDA issue 6337). The
+  parent need not be a combo box. Like the first rule, it fires on the
+  item's selection, which NVDA's `event_selection` ends with a state
+  change (`NVDAObjects/__init__.py` 1339).
+- A classic .NET Framework Windows Forms combo box
+  (`_NetFrameworkWinFormsComboBox`, lines 1387 to 1399 and 2734 to 2744,
+  NVDA issue 17454): a combo box from framework `WinForm`, whose window's
+  class normalizes to `COMBOBOX`, whose provider description names
+  `System.Windows.Forms, Version=4.0.0.0`, with the `Value` pattern and
+  without the `Selection` pattern. Its drop-down list is a window of its
+  own, class `ComboLBox`, whose items are not its children, and it raises
+  no value change when its selection changes. The object asks for the
+  element selected events of its process's `ComboLBox` windows whatever
+  the foreground (`requestEvents`, the acceptance test's rule 2). When a
+  list item is selected (`ListItem.event_UIA_elementSelected`, lines 2770
+  to 2784), NVDA first handles the selection as any other, then, when the
+  focus is such a combo box in the item's process, the item's window's
+  class is `ComboLBox`, and `GetComboBoxInfo` on the focus's window names
+  the item's window as its list, raises a value change on the focus.
+
+Verbatim: **matched (unverified)**, from NVDA's source, with no capture
+of such a combo box. The item's role must be a list item. For the
+`Windows.UI.Core` case, Core asks the committed focus's outpost one read
+of the focus's `HasValuePattern`, `WindowClass` (its own or nearest
+window's class) and `Value` when such an item's parent is the focus and
+its value is not its selection's, and speaks the value as a value change
+when NVDA's condition holds; NVDA reads the first two from its cache with
+no call. For the Windows Forms case, a selection from a `ComboLBox`
+window of the committed focus's process while the focus is a combo box
+makes Core ask the focus's `ComboBoxList`, which the outpost answers with
+`GetComboBoxInfo`'s list only for such a combo box; with an answer, the
+selection is taken whatever the acceptance test says, handled as any
+other, and an item in that list gives the focus's value change, its value
+read live. Different in form: NVDA takes these events from the time such
+a combo box is first made, Verbatim only while the committed focus is a
+combo box of their process; while another object is the focus, a
+selection NVDA takes says nothing unless the focus controls the list,
+which no application is known to do.
 
 ### A combo box opened into its list
 
