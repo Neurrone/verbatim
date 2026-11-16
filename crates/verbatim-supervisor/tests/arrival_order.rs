@@ -384,6 +384,11 @@ impl Reducer {
             };
             match input {
                 Input::Key(number) => handled.push(format!("key {number}")),
+                // Liveness and the listener's generation are Core's
+                // record's facts, which these tests do not judge.
+                Input::Outpost(
+                    OutpostMessage::Pong { .. } | OutpostMessage::ListenerStarted { .. },
+                ) => {}
                 Input::Outpost(message) => {
                     if let Some(message) = self.frames.arrived(message) {
                         handled.push(self.name(message));
@@ -469,6 +474,9 @@ impl Reducer {
         while let Some(input) = self.queue.try_recv() {
             match input {
                 Input::Key(number) => rest.push(format!("key {number}")),
+                Input::Outpost(
+                    OutpostMessage::Pong { .. } | OutpostMessage::ListenerStarted { .. },
+                ) => {}
                 Input::Outpost(message) => rest.push(format!("{message:?}")),
             }
         }

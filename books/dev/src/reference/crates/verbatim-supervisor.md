@@ -40,11 +40,18 @@ message layer, the launch arguments and the held processes are
 - `shutdown()` shuts every child down and returns a `ShutdownSummary`: how
   many children ended cleanly, had exited, exited with an error, were killed
   at their time limit, or were killed because ending them failed.
-- `ensure_spawned(pid)` starts an outpost, from a spare when one waits.
+- `ensure_spawned(pid)` starts an outpost, from a spare when one waits,
+  as Core's generation record asks (`QueueEffect::StartOutpost`); asked for
+  an application whose generation already runs, it reports that one
+  (`Running`), so Core's record takes it.
+- `end_outpost(outpost)` ends a generation as Core's record asks: it is
+  stuck, or retired.
+- `send_to_listener(command)` sends the listener a request or cancel of
+  Core's event queue, behind every command sent to it before.
 - `send_to_outpost(outpost, command)` queues a command without waiting,
   failing at once with a `QueueError` when the generation ended or its
   queue is full.
-- `note_views(attention, holding)`, `leave_nodes_held` (left in the
+- `leave_nodes_held` (left in the
   writer's slot for the next command), `send_nodes_held` (written behind
   what waits, in place of a list left), `query_idle(round)`, `is_ignored`,
   and `frames`.
@@ -53,9 +60,13 @@ message layer, the launch arguments and the held processes are
   backoff ends, after what it waits for has happened.
 - `SPARES` is two; Verbatim's readiness waits for them.
 
-The app hears through `OutpostMessage`: `ListenerReady`, `SpareReady`,
-`Regenerated`, `IdleQueried`, `NotWatched`, `Foreground`, `Progress` (a
-progress bar's change from the listener), and per
+The app hears through `OutpostMessage`: `ListenerStarted` (before the
+listener's launch, so Core keeps its first tells), `ListenerReady`,
+`ListenerEnded`, `Listener` (the listener's tells and answers, which Core's
+event queue judges), `Pong` (each child's answer to a ping, for Core's
+liveness), `SpareReady`, `Regenerated`, `IdleQueried`, `NotWatched`,
+`Foreground`, `Progress` (a progress bar's change from the listener),
+`Running`, and per
 generation `Started`, its messages as unparsed `Frame`s, and `Ended` with a
 reason (exited, killed, retired, target exited) and whether a next
 generation follows (`follows`), the supervisor's decision as it ended it.
@@ -171,9 +182,9 @@ How it works:
   hung end an outpost (the pong's `parked_count`; its `parked_on_hung`
   never counts, since the outpost is the one judge of a hung window),
   judged by the generation's `heartbeat` and, for the listener and the
-  spares, by their `Liveness`, all on the run's shared clock. An outpost whose application has not
-  held attention for two minutes (`Retirement`), is not Core's own, and holds no nodes of
-  the reducer's is retired by the sweep (`policy::retirement_decision`). An
+  spares, by their `Liveness`, all on the run's shared clock. Core's
+  generation record retires an idle outpost (`end_outpost`); the sweep only
+  closes the books of applications that have exited. An
   outpost says `TargetExited` when its application exits, and the heartbeat
   also checks every held application.
 - Every ending is a clean shutdown (`retire`, under "Shutting down"); an

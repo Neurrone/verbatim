@@ -770,6 +770,17 @@ impl SrState {
         })
     }
 
+    /// Whether Core has committed a focus: the test harness's readiness
+    /// waits for one (`docs/design/readers-tell-core-asks-build1.md`, "The
+    /// outpost generation record").
+    #[must_use]
+    pub fn focus_committed(&self) -> bool {
+        !matches!(
+            self.versions.committed,
+            crate::focus::versions::Committed::Nothing
+        )
+    }
+
     /// What the test harness's readiness reads of the outpost generation
     /// record.
     #[must_use]

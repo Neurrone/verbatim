@@ -140,9 +140,7 @@ The end-to-end harness's hooks (private `harness` module):
   place goes to the generation `OutpostMessage::Regenerated` names,
   which holds its facts and its query. When every answer is in, the reducer takes in what is already
   on its port and checks its own conditions: no outpost request
-  outstanding, no outpost still starting, no focus wanted from an outpost
-  being started (a crashed outpost's replacement), no key the hook held back still waiting to be
-  passed on, no key or command waiting in Core's held-key line
+  outstanding, no outpost still starting, no key or command waiting in Core's held-key line
   (`SrState::holds_inputs_back`), no lock key's announcement still to come
   (`SrState::announces_toggle_key`), and no terminal's quiet-period timer armed, since what waits
   for it is spoken when it ends. If they hold, the waiters are answered once
@@ -215,25 +213,20 @@ Milestone M4's text protocol is wired here (`books/dev/src/reference/crates/verb
   hook's `ForegroundView`, which the reducer thread sets after every
   input from `SrState::hook_foreground`, says the focus has text and the
   window in front lets keys be held (not an elevated window's). A held
-  key's report becomes `Input::HeldKey`, and its stroke joins one line
-  (`held_keys`) with the transitions the hook deferred behind held keys
-  (`KeyReport::Deferred`), in the order reported. A held key waits at the
-  front until Core emits `Effect::PassHeldKey`; a deferred transition
-  goes as soon as it reaches the front. A terminal's keys reach its
-  reading rules through Core alone, which takes each key input in and a
-  deferred key as reaching the program when the held key ahead of it is
-  passed on ([verbatim-core](verbatim-core.md), "Core's terminal model").
-  Whatever reaches the front is sent with one `SendInput`, each key carrying its place in line
+  key's report is a press whose caret key carries its stroke, and the
+  hook's deferred transitions (`KeyReport::Deferred`) join Core's stroke
+  line in the order reported ([verbatim-core](verbatim-core.md)). Core
+  names what goes (`QueueEffect::SendStrokes`), which `strokes` sends with
+  one `SendInput`, each key carrying its place in line
   (`passed_on_info`): a held key with the gesture's Shift, Control or Alt
   that are not down pressed around it and the key released first if
   Windows still has it down, as NVDA's gesture send does, and a
-  character typed as Unicode (`VK_PACKET`) as Unicode again. Each
-  pass-on logs how long the key was held (`verbatim::held_key`,
-  `held_us`). At exit (`ShellCommand::Exiting`, after the hook is
-  dropped) the line is dropped but leaves no key down
-  (`key_line::exit`): each key whose last transition in line is a
-  release, a held key counting as one, and which Windows has down (`GetAsyncKeyState`), is released
-  with one `SendInput`. `Effect::ForKey` is executed on the named key's trace.
+  character typed as Unicode (`VK_PACKET`) as Unicode again. At exit
+  (`ShellCommand::Exiting`, after the hook is dropped) Core names the keys
+  whose last transition in its line is a release
+  (`QueueEffect::ReleaseAtExit`), and each Windows has down
+  (`GetAsyncKeyState`) is released with one `SendInput`. `Effect::ForKey`
+  is executed on the named key's trace.
   `Effect::BoundHeldKey` sets or clears the held key's one deadline, for
   its wait for the key ahead or for the read of its caret, kept beside the
   reducer thread's other deadlines (`next_deadline`); when it passes, the
@@ -391,28 +384,43 @@ knowing for review:
   speech marks, and control-plane requests. It passes every supervisor
   message through the supervisor's `Frames`, which turns each outpost's
   frame into the message it carries, on the reducer's thread whatever its
-  size, in the order the frames arrive. Every outpost message arrives tagged with the
+  size, in the order the frames arrive. Core's event queue
+  (`Input::Queue`) takes, in arrival order, the readers' tells and answers
+  (an outpost's, and the listener's `OutpostMessage::Listener`), which Core
+  judges by generation, dropping a frame of an instance not current; the
+  owner thread's process facts (`Started` and `Running` as
+  `ProcessFact::OutpostStarted`, an outpost's `Ready` and
+  `ListenerReady` as `ReaderReady`, `Ended` and `ListenerEnded` as
+  `ReaderEnded`, `ListenerStarted`, `Pong`, `SpareReady`, and
+  `NotWatched` as `LaunchFailed`); the listener's foreground report, with
+  the window's class; the hook's presses, deferred transitions and Alt
+  changes; and, posted before Verbatim starts, the harness's retirement
+  and ignored processes and Verbatim's own process, whose outpost Core
+  starts at once. A press's caret key is bound to the committed focus
+  (`SrState::caret_binding`) as the thread takes it, in the order of the
+  inputs before it. Core's effects are carried out: a request
+  (`QueueEffect::Send`) goes to the listener (`send_to_listener`) or to
+  the outpost generation Core names, unless Windows reports its window
+  hung, when it is answered "not responding" unsent; one that cannot be
+  written is answered "reader ended"; a cancel goes with its reason; a
+  hang check is answered with `IsHungAppWindow`; `StartOutpost` is
+  `ensure_spawned`, `EndOutpost` is `end_outpost`, `WindowDestroyed` goes
+  to the outpost Core names, and `WakeAt` is one of the thread's
+  deadlines, its passing fed as `QueueInput::Due`. Each answer the shell
+  gives enters the queue after the input whose effects are being carried
+  out. Every other outpost message arrives tagged with the
   outpost generation whose pipe carried it; an outpost joins the live set
   on `OutpostMessage::Started`, which precedes all its messages, and leaves
-  it on `OutpostMessage::Ended`, and a message from an outpost not in the
-  set is dropped, so nothing from an ended outpost reaches the reducer, even
-  when the supervisor killed it with messages still in flight. The status
+  it on `OutpostMessage::Ended`, and such a message from an outpost not in
+  the set is dropped. The status
   mirror follows the same notices. Once each outpost message or command
   has been handled whole, never between the inputs one message produces,
-  the thread sends the
-  supervisor the derived views (`send_views`) when they change: the
-  application holding attention and the outposts in which the reducer holds
-  nodes. It also tells each live outpost which of its nodes the reducer
+  the thread tells each live outpost (`send_views`) which of its nodes the reducer
   holds, with the position of the last of that outpost's messages it has
   handled, whenever either changes, written at once or left for the next
   command as the held anchors are (below), so the outpost can release
   everything else
-  ([verbatim-outpost](verbatim-outpost.md), "Held objects"). A focus-now
-  answer is a foreground change and then a focus: held nodes sent after
-  the first alone, with the answer's position as acknowledged, had the
-  outpost release the focus it reported in that same answer before Core
-  took it, so the focus came back as a new node and was announced twice at
-  startup. On an end the reducer
+  ([verbatim-outpost](verbatim-outpost.md), "Held objects"). On an end the reducer
   gets `Input::OutpostEnded`, with a trace minted for it, which ends the
   reducer's own queries of that outpost "gone"; then each of the shell's
   outstanding queries of it gets a "gone" outcome, and the control plane's
@@ -436,89 +444,19 @@ knowing for review:
   with its outcome, and `requests::deliver` carries the outcome out, at
   the reducer thread's three places an outcome comes: an outpost's reply,
   an outpost's end, and a deadline passed. Every query the shell sends an
-  outpost for itself (a tree dump, a focus query, and the shell item
+  outpost for itself (a tree dump and the shell item
   queries) is recorded with a fresh `RequestId` tagged
   `Requester::Shell` and the outpost generation it went to, and sent as a
   `Query` carrying that id; the outpost's one `Reply` echoes it with one
   of five outcomes. The first outcome removes the entry and goes to the
-  asker: a tree dump's is sent on its reply channel; and a focus query's
-  (`Asker::ReadFocus`, with its purpose, `FocusPurpose`) becomes reducer
-  input marked with its purpose (`requests::read_focus_inputs`). A plain
-  query's (`Plain`) is a focus on the focused control,
-  with its ancestors and the text its outpost read with it, its window
-  announced only as an entered ancestor when it is presentable, as NVDA
-  announces the focus it starts with, or, with no focused control, a
-  foreground change to the window. The reducer thread sends a focus-now
-  query at startup (for the
-  foreground application), when the outpost of the attention application,
-  or of the focus's application if that is another, ended in a crash or
-  kill after its `Ready` (the supervisor replaces every failed outpost
-  itself, at once or after its backoff, so the query waits for the
-  replacement's `Ready`), and when the supervisor reports
-  `OutpostMessage::ListenerReady` for a replacement listener; each waits for the outpost's `Ready`
-  if it is still starting. These, the tree dump, and the attention view
-  sent to the supervisor go by application, which for a console's client
-  is its console host's outpost: an event carrying an `application`
-  (an event in a console window, reported by the console host's outpost)
-  enters the reducer with that application as its source, and
-  `LiveOutposts` records that the outpost serves it (`reports_for`,
-  `target_for`), so its queries go there and the supervisor keeps it
-  ([verbatim-outpost](verbatim-outpost.md), "Console windows and frames of
-  another process"). A focus-now query for a
-  console's client whose console window is in front goes to the console
-  host's outpost even before it has reported for the console: Core finds
-  the host locally (`focus_now_server`, through
-  `verbatim_win32::provider::provider_process`), so the client's own outpost, which
-  serves none of the console window, is never asked for it. When the host
-  cannot be read from the client, such as for a client run as another
-  user, the window has no provider process and no outpost is asked. When the supervisor reports
-  `OutpostMessage::NotWatched` (no outpost was started for the
-  application, or its record was removed as it exited or its outpost
-  retired), the wish for its focus is answered "gone", along with a status
-  entry that was only waiting for its outpost, so nothing, the idle
-  barrier included, waits for an outpost that will never come. The wishes
-  have one owner, `wanted::Wanted`, keyed by the process whose outpost
-  they wait for: a focus query (`FocusWanted`: the application, the
-  purpose and the trace) and the list dialogs' shell items requests each
-  end exactly once, at that outpost's `Ready`, where it is sent, at
-  `NotWatched`, or, for a shell items request, at its deadline; a newer
-  focus query replaces one waiting of its own kind, a Verbatim+Tab
-  `Report` query being kept apart from the query for Core's focus
-  (`Plain`, `Fake` or `Again`), so neither replaces the other, and at the
-  `Ready` the one for Core's focus is sent first. A Verbatim+Tab query that ends so
-  unanswered is told to the reducer (`Input::ReadFocusUnanswered`): at
-  `NotWatched` with "No focus", replaced silently.
-  An `Ended` asks the replacement for the focus only when the supervisor
-  says a generation follows (`follows`), so the app never infers a
-  replacement the supervisor will not start. `LiveOutposts` keeps each
-  live generation as `Starting` or `Ready`; `mark_ready` consumes the
-  starting one. When the supervisor reports
-  `OutpostMessage::MenuOrSwitchEnded` (a menu or the Alt+Tab switcher
-  closed, told 50 ms later with the time it ended), the reducer is given
-  `Input::MenuOrSwitchEnded`, and unless it has applied a focus observed
-  since that time (`SrState::latest_focus_observed_at`) it emits
-  `Effect::ReadFocus(FocusPurpose::Fake)`, for which the reducer thread
-  asks the foreground application's ready outpost for its focus, whose
-  answer re-enters the reducer as the focus on the control alone, NVDA's
-  fake focus; an outpost's refused answer, no window and no control, is
-  no input. `OutpostMessage::Desktop` becomes `Input::Desktop`, under a
-  trace minted for it; the desktop's return makes the reducer emit
-  `Effect::ReadFocus(FocusPurpose::Again)`, asked and answered as the fake
-  focus is. An application with no ready outpost gets a plain query.
-  Verbatim+Tab's `Effect::ReadFocus(FocusPurpose::Report)` is asked under
-  the press's trace (`report_focus`) of the process of the foreground
-  thread's focus window, `GetGUIThreadInfo`'s `hwndFocus`, else its active
-  window, else the window in front, a ghost window first mapped to the
-  hung window it stands in for (`HungWindowFromGhostWindow`), so a frozen
-  application's query goes to its own outpost and a Settings page's to
-  `SystemSettings` rather than `ApplicationFrameHost`
-  (`report_focus_target`, local calls behind `WindowsLookup`, which a test
-  gives its own); its outpost is the window's provider process, a console
-  window's console host. The answer is the control or, with none, the
-  window, marked `Report`; no window in front, an ignored process, a
-  window with no readable provider, an empty answer, the outpost's end or
-  a failure is `Input::ReadFocusUnanswered` with "No focus", and the
-  query's abandonment at its deadline is the same input said silently.
+  asker: a tree dump's is sent on its reply channel, and a shell items
+  query's to its dialog. The list dialogs' shell items requests wait for
+  the taskbar's outpost in `wanted::Wanted`, keyed by its process, each
+  ended exactly once, at that outpost's `Ready`, where it is sent, at
+  `NotWatched`, or at its deadline. `LiveOutposts` keeps each live
+  generation as `Starting` or `Ready`; `mark_ready` consumes the starting
+  one, and `reports_for` records that a console host's outpost serves a
+  console's client.
   Later outcomes for the same id, and outcomes from any other outpost, are
   dropped. Core makes the outcome itself when a query cannot be sent
   ("failed", which a navigation sees as `Unanswered`; only "gone" becomes
@@ -628,15 +566,15 @@ knowing for review:
   ignored), the saver and its section writers, the settings host, whose
   commit saves on the synth thread through the speech section's writer,
   the supervisor with its focus listener (decision D13;
-  asking the current foreground application for its focus once at
-  startup with a focus-now query (`ShellCommand::FocusNow`), since the
-  listener thereafter reports foreground changes as facts — no thread of
+  Core's event queue asks the application in front for its focus at the
+  listener's first foreground report — no thread of
   Core's hooks the foreground, the keyboard hook's included; the
   listener's report of a window that came to the foreground
   (`OutpostMessage::Foreground`) reaches the reducer as `Input::Foreground`,
   with Verbatim's own integrity level read once and whether the window is
   Verbatim's own process's, from which Core decides the keyboard hook's
-  view of the foreground, attention and its foreground record), the
+  view of the foreground and attention, and as `QueueInput::Foreground`,
+  with the window's class, for the event queue's foreground record), the
   reducer thread
   (`ReducerThread`, described below), the keyboard hook (given
   `key_reports`' callbacks), the control

@@ -30,7 +30,6 @@
 //! command line.
 
 use std::cell::RefCell;
-use std::collections::BTreeSet;
 use std::io::{BufReader, Read as _};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
@@ -1149,9 +1148,12 @@ fn repeated_failures_are_spaced_by_the_backoff_until_a_foreground_change() {
         run.expect_ended(outpost, first_pid, EndReason::Exited);
         run.supervisor.ensure_spawned(*other_pid);
         let [other] = served(&run, [*other_pid]);
-        // The wait ends; the views wake the supervisor to decide at once.
+        // The wait ends; the clock given again wakes the supervisor to
+        // decide at once.
         moved.fetch_add(wait_us, Ordering::SeqCst);
-        run.supervisor.note_views(None, BTreeSet::new());
+        let clock_moved = Arc::clone(&moved);
+        run.supervisor
+            .set_backoff_clock(Arc::new(move || start + clock_moved.load(Ordering::SeqCst)));
         [(outpost, process)] = served(&run, [first_pid]);
         assert!(other.0 < outpost, "{other:?} was started first");
     }

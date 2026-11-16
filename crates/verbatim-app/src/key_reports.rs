@@ -19,7 +19,8 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 
 use verbatim_input::{EmittedGesture, KeySpeechEffect, KeyboardLayout, ScriptAction, ToggleKey};
-use verbatim_model::{CaretKey, CaretMotion, GestureId, Input, KeySeq, LockKey, Script};
+use verbatim_model::request::{Press, PressAction, QueueInput};
+use verbatim_model::{CaretKey, CaretMotion, GestureId, Input, KeySeq, LockKey, Script, TraceId};
 use verbatim_process::port_queue::Poster;
 use verbatim_speech::SpeechControl;
 
@@ -230,6 +231,44 @@ const OTHER_KEY: CaretKey = CaretKey {
     select: false,
 };
 
+/// A press as Core's queue input, traced `trace_id`: the action the hook
+/// chose, whose caret key the reducer thread binds to the committed focus
+/// as Core takes it, in the order of the inputs before it.
+fn press(
+    trace_id: TraceId,
+    key_seq: KeySeq,
+    pressed_at_us: u64,
+    action: PressAction,
+) -> ShellCommand {
+    queued(
+        trace_id,
+        pressed_at_us,
+        QueueInput::Press(Box::new(Press {
+            key_seq,
+            pressed_at_us,
+            action,
+        })),
+    )
+}
+
+/// `input` for Core's event queue, traced `trace_id`, at `at_us`.
+fn queued(trace_id: TraceId, at_us: u64, input: QueueInput) -> ShellCommand {
+    ShellCommand::Input(Box::new(Input::Queue {
+        trace_id,
+        at_us,
+        input,
+    }))
+}
+
+/// A caret key's action, not yet bound.
+fn caret_key(key: CaretKey, held: Option<verbatim_model::stroke::HeldStroke>) -> PressAction {
+    PressAction::CaretKey {
+        key,
+        held,
+        bound: None,
+    }
+}
+
 /// The commands an observed gesture is to the reducer, in order: a caret
 /// key's, a clearing key's or an editing chord's.
 fn observed_commands(
@@ -239,42 +278,23 @@ fn observed_commands(
     tables: &Tables,
     post: &mut impl FnMut(ShellCommand),
 ) {
-    let caret_key = |caret| ShellCommand::CaretKey {
-        input: Box::new(Input::CaretKey {
-            trace_id: gesture.trace_id,
-            key_seq,
-            key: caret,
-            pressed_at_ms: pressed_at_us / 1_000,
-        }),
-        pressed_at_us,
-    };
-    let editing_chord = || ShellCommand::CaretKey {
-        input: Box::new(Input::EditingChord {
-            trace_id: gesture.trace_id,
-            key_seq,
-            pressed_at_ms: pressed_at_us / 1_000,
-        }),
-        pressed_at_us,
-    };
+    let trace_id = gesture.trace_id;
+    let action = |action| press(trace_id, key_seq, pressed_at_us, action);
     let chord = tables.editing_chords.contains(&gesture.gesture);
     if let Some(&caret) = tables.caret_keys.get(&gesture.gesture) {
-        post(caret_key(caret));
+        post(action(caret_key(caret, None)));
     } else if tables.clearing_keys.contains(&gesture.gesture) {
         // The typing held is forgotten first; then the key is judged as
         // what else it is (Escape clearing a terminal's line speaks what it
         // removed).
-        post(ShellCommand::Input(Box::new(Input::ClearingKey {
-            trace_id: gesture.trace_id,
-            key_seq,
-            at_ms: pressed_at_us / 1_000,
-        })));
-        post(if chord {
-            editing_chord()
+        post(action(PressAction::Clearing));
+        post(action(if chord {
+            PressAction::EditingChord
         } else {
-            caret_key(OTHER_KEY)
-        });
+            caret_key(OTHER_KEY, None)
+        }));
     } else if chord {
-        post(editing_chord());
+        post(action(PressAction::EditingChord));
     }
 }
 
@@ -287,113 +307,116 @@ fn commands_for(report: KeyReport, tables: &Tables, mut post: impl FnMut(ShellCo
             key_seq,
             pressed_at_us,
         } => observed_commands(&gesture, key_seq, pressed_at_us, tables, &mut post),
-        // A held key always reaches the reducer thread, which sends it on;
-        // the hook holds only caret keys, so it is one.
+        // A held key joins Core's stroke line, which sends it on; the hook
+        // holds only caret keys, so it is one, any other passed at its turn.
         KeyReport::Held {
             gesture,
             key_seq,
             pressed_at_us,
             stroke,
-        } => post(ShellCommand::HeldKey {
-            input: tables.caret_keys.get(&gesture.gesture).map(|&caret| {
-                Box::new(Input::HeldKey {
-                    trace_id: gesture.trace_id,
-                    key_seq,
-                    key: caret,
-                    pressed_at_ms: pressed_at_us / 1_000,
-                })
-            }),
-            trace_id: gesture.trace_id,
-            gesture: gesture.gesture,
-            pressed_at_us,
-            stroke,
-        }),
-        KeyReport::Deferred { stroke, pressed } => {
-            post(ShellCommand::DeferredKey { stroke, pressed });
+        } => {
+            let key = tables
+                .caret_keys
+                .get(&gesture.gesture)
+                .copied()
+                .unwrap_or(OTHER_KEY);
+            let held = crate::strokes::held_of(&gesture.gesture, stroke);
+            post(press(
+                gesture.trace_id,
+                key_seq,
+                pressed_at_us,
+                caret_key(key, Some(held)),
+            ));
         }
+        KeyReport::Deferred { stroke, pressed } => post(queued(
+            TraceId::mint(),
+            verbatim_process::clock::now_us(),
+            QueueInput::Deferred {
+                stroke: crate::strokes::stroke_of(stroke),
+                pressed,
+            },
+        )),
         KeyReport::Passed {
             trace_id,
             key_seq,
             pressed_at_us,
-        } => post(ShellCommand::CaretKey {
-            input: Box::new(Input::CaretKey {
-                trace_id,
-                key_seq,
-                key: OTHER_KEY,
-                pressed_at_ms: pressed_at_us / 1_000,
-            }),
+        } => post(press(
+            trace_id,
+            key_seq,
             pressed_at_us,
-        }),
+            caret_key(OTHER_KEY, None),
+        )),
         KeyReport::Typed {
             trace_id,
             key_seq,
             text,
             pressed_at_us,
-        } => post(ShellCommand::Input(Box::new(Input::CharacterTyped {
+        } => post(press(
             trace_id,
             key_seq,
-            text,
-            at_ms: pressed_at_us / 1_000,
-        }))),
+            pressed_at_us,
+            PressAction::Typed { text },
+        )),
         KeyReport::Gesture {
             gesture,
             key_seq,
             pressed_at_us,
         } => {
-            if let Some(input) = gesture_input(&gesture, key_seq, pressed_at_us, tables) {
-                post(ShellCommand::Input(Box::new(input)));
+            if let Some(command) = gesture_command(&gesture, key_seq, pressed_at_us, tables) {
+                post(command);
             }
         }
         KeyReport::Handled(number) => post(ShellCommand::InputHandled(number)),
         // Alt joins Core's key state at once, in the order of the inputs
         // the reducer takes, so a tell reads it at its arrival.
-        KeyReport::Alt { down } => post(ShellCommand::Input(Box::new(Input::Queue {
-            trace_id: verbatim_model::TraceId::mint(),
-            at_us: verbatim_process::clock::now_us(),
-            input: verbatim_model::request::QueueInput::Alt { down },
-        }))),
+        KeyReport::Alt { down } => post(queued(
+            TraceId::mint(),
+            verbatim_process::clock::now_us(),
+            QueueInput::Alt { down },
+        )),
     }
 }
 
-/// The input a gesture is to the reducer: the menu's, the time's or the
-/// shell list's script, a lock key's press, or a review command; `None`
-/// for a gesture nothing is bound to.
-fn gesture_input(
+/// The command a gesture is to the reducer: the menu's, the time's or the
+/// shell list's script or a review command, as a press; a lock key's
+/// press; `None` for a gesture nothing is bound to.
+fn gesture_command(
     gesture: &EmittedGesture,
     key_seq: KeySeq,
     pressed_at_us: u64,
     tables: &Tables,
-) -> Option<Input> {
+) -> Option<ShellCommand> {
     let trace_id = gesture.trace_id;
     let repeat = gesture.repeat;
-    let at_ms = pressed_at_us / 1_000;
-    let script = |script| Input::Script {
-        trace_id,
-        key_seq,
-        repeat,
-        script,
-        pressed_at_ms: at_ms,
+    let script = |script| {
+        press(
+            trace_id,
+            key_seq,
+            pressed_at_us,
+            PressAction::Script { script, repeat },
+        )
     };
     if gesture.gesture == tables.show_menu {
         return Some(script(Script::ShowMenu));
     }
     if let Some(&toggle) = tables.toggles.get(&gesture.gesture) {
-        return Some(Input::ToggleKeyPressed {
+        return Some(ShellCommand::Input(Box::new(Input::ToggleKeyPressed {
             trace_id,
             key_seq,
             toggle,
-            pressed_at_ms: at_ms,
-        });
+            pressed_at_ms: pressed_at_us / 1_000,
+        })));
     }
     match tables.scripts.get(&gesture.gesture)? {
         ScriptAction::SpeakTime => Some(script(Script::ReportTime)),
         ScriptAction::ShowTrayList => Some(script(Script::ShellList)),
-        action => action.review_command().map(|command| Input::Command {
-            trace_id,
-            key_seq,
-            command,
-            repeat,
-            pressed_at_ms: at_ms,
+        action => action.review_command().map(|command| {
+            press(
+                trace_id,
+                key_seq,
+                pressed_at_us,
+                PressAction::Command { command, repeat },
+            )
         }),
     }
 }
@@ -421,11 +444,10 @@ mod tests {
         commands
             .into_iter()
             .map(|command| match command {
-                ShellCommand::Input(input) | ShellCommand::CaretKey { input, .. } => {
-                    format!("{input:?}")
-                }
-                ShellCommand::HeldKey { input, .. } => format!("held {input:?}"),
-                ShellCommand::DeferredKey { pressed, .. } => format!("deferred {pressed}"),
+                ShellCommand::Input(input) => match *input {
+                    Input::Queue { input, .. } => format!("{input:?}"),
+                    input => format!("{input:?}"),
+                },
                 ShellCommand::InputHandled(number) => format!("handled {number}"),
                 _ => "something else".to_owned(),
             })
@@ -463,6 +485,19 @@ mod tests {
 
     const PRESSED_AT_US: u64 = 1_700_000_000_123_000;
 
+    /// What a press of key 4 with `action` is to Core, as [`mapped`] names
+    /// it.
+    fn pressed(action: PressAction) -> String {
+        format!(
+            "{:?}",
+            QueueInput::Press(Box::new(Press {
+                key_seq: KeySeq::new(4),
+                pressed_at_us: PRESSED_AT_US,
+                action,
+            }))
+        )
+    }
+
     fn gesture(trace_id: TraceId, name: &str, repeat: u8) -> KeyReport {
         KeyReport::Gesture {
             gesture: emitted(trace_id, name, repeat),
@@ -475,14 +510,14 @@ mod tests {
     fn each_report_maps_to_its_commands() {
         let trace_id = TraceId::mint();
         let key_seq = KeySeq::new(4);
-        let caret = |motion| Input::CaretKey {
-            trace_id,
-            key_seq,
-            key: CaretKey {
-                motion,
-                select: false,
-            },
-            pressed_at_ms: PRESSED_AT_US / 1_000,
+        let caret = |motion| {
+            pressed(caret_key(
+                CaretKey {
+                    motion,
+                    select: false,
+                },
+                None,
+            ))
         };
         let observed = |name| KeyReport::Observed {
             gesture: emitted(trace_id, name, 0),
@@ -491,39 +526,26 @@ mod tests {
         };
         assert_eq!(
             mapped(observed("kb:downarrow")),
-            [format!("{:?}", caret(CaretMotion::NextLine))]
+            [caret(CaretMotion::NextLine)]
         );
         assert_eq!(
             mapped(observed("kb:escape")),
             [
-                format!(
-                    "{:?}",
-                    Input::ClearingKey {
-                        trace_id,
-                        key_seq,
-                        at_ms: PRESSED_AT_US / 1_000
-                    }
-                ),
-                format!(
-                    "{:?}",
-                    Input::EditingChord {
-                        trace_id,
-                        key_seq,
-                        pressed_at_ms: PRESSED_AT_US / 1_000
-                    }
-                ),
+                pressed(PressAction::Clearing),
+                pressed(PressAction::EditingChord)
             ]
         );
         assert_eq!(
             mapped(observed("kb:control+z")),
-            [format!(
-                "{:?}",
-                Input::EditingChord {
-                    trace_id,
-                    key_seq,
-                    pressed_at_ms: PRESSED_AT_US / 1_000
-                }
-            )]
+            [pressed(PressAction::EditingChord)]
+        );
+        assert_eq!(
+            mapped(KeyReport::Passed {
+                trace_id,
+                key_seq,
+                pressed_at_us: PRESSED_AT_US
+            }),
+            [caret(CaretMotion::Other)]
         );
         assert_eq!(mapped(KeyReport::Handled(3)), ["handled 3"]);
         assert_eq!(
@@ -533,15 +555,9 @@ mod tests {
                 text: "a".to_owned(),
                 pressed_at_us: PRESSED_AT_US
             }),
-            [format!(
-                "{:?}",
-                Input::CharacterTyped {
-                    trace_id,
-                    key_seq,
-                    text: "a".to_owned(),
-                    at_ms: PRESSED_AT_US / 1_000
-                }
-            )]
+            [pressed(PressAction::Typed {
+                text: "a".to_owned()
+            })]
         );
     }
 
@@ -549,18 +565,7 @@ mod tests {
     fn each_gesture_maps_to_its_script_command_or_lock_key() {
         let trace_id = TraceId::mint();
         let key_seq = KeySeq::new(4);
-        let script = |script, repeat| {
-            format!(
-                "{:?}",
-                Input::Script {
-                    trace_id,
-                    key_seq,
-                    repeat,
-                    script,
-                    pressed_at_ms: PRESSED_AT_US / 1_000
-                }
-            )
-        };
+        let script = |script, repeat| pressed(PressAction::Script { script, repeat });
         assert_eq!(
             mapped(gesture(trace_id, "kb:verbatim+v", 0)),
             [script(Script::ShowMenu, 0)]
@@ -575,16 +580,10 @@ mod tests {
         );
         assert_eq!(
             mapped(gesture(trace_id, "kb:numpad8", 2)),
-            [format!(
-                "{:?}",
-                Input::Command {
-                    trace_id,
-                    key_seq,
-                    command: ReviewCommand::ReviewCurrentLine,
-                    repeat: 2,
-                    pressed_at_ms: PRESSED_AT_US / 1_000
-                }
-            )]
+            [pressed(PressAction::Command {
+                command: ReviewCommand::ReviewCurrentLine,
+                repeat: 2
+            })]
         );
         assert_eq!(
             mapped(gesture(trace_id, "kb:scrolllock", 0)),
@@ -612,16 +611,10 @@ mod tests {
         let report = || gesture(trace_id, "kb:verbatim+shift+period", 1);
         assert_eq!(
             mapped_in(KeyboardLayout::Laptop, report()),
-            [format!(
-                "{:?}",
-                Input::Command {
-                    trace_id,
-                    key_seq: KeySeq::new(4),
-                    command: ReviewCommand::ReviewCurrentLine,
-                    repeat: 1,
-                    pressed_at_ms: PRESSED_AT_US / 1_000
-                }
-            )]
+            [pressed(PressAction::Command {
+                command: ReviewCommand::ReviewCurrentLine,
+                repeat: 1
+            })]
         );
         assert_eq!(
             mapped_in(KeyboardLayout::Desktop, report()),
@@ -653,7 +646,10 @@ mod tests {
         std::iter::from_fn(|| port.try_recv())
             .map(|command| match command {
                 ShellCommand::Input(input) => match *input {
-                    Input::CharacterTyped { key_seq, .. } => Some(key_seq),
+                    Input::Queue {
+                        input: QueueInput::Press(press),
+                        ..
+                    } if matches!(press.action, PressAction::Typed { .. }) => Some(press.key_seq),
                     Input::SpeechCancelled { .. } => None,
                     other => panic!("the hook posted {other:?}"),
                 },
@@ -818,18 +814,21 @@ mod tests {
                     sequence: 1
                 },
             }),
-            [format!(
-                "held {:?}",
-                Some(Box::new(Input::HeldKey {
-                    trace_id,
-                    key_seq,
-                    key: CaretKey {
-                        motion: CaretMotion::NextLine,
-                        select: false
+            [pressed(caret_key(
+                CaretKey {
+                    motion: CaretMotion::NextLine,
+                    select: false
+                },
+                Some(verbatim_model::stroke::HeldStroke {
+                    stroke: verbatim_model::stroke::Stroke {
+                        vk: 0x28,
+                        scan_code: 0x50,
+                        extended: true,
+                        sequence: 1
                     },
-                    pressed_at_ms: PRESSED_AT_US / 1_000
-                }))
-            )]
+                    modifiers: Vec::new(),
+                })
+            ))]
         );
     }
 }

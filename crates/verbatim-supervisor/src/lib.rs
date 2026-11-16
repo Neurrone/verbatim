@@ -56,7 +56,6 @@ mod relay;
 mod retire;
 mod writer;
 
-use std::collections::BTreeSet;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -66,7 +65,7 @@ use crossbeam_channel::Sender;
 use verbatim_model::{OutpostId, Pid};
 use verbatim_process::port_queue::Poster;
 
-use verbatim_model::protocol::{CoreToListener, CoreToOutpost, OutpostToCore};
+use verbatim_model::protocol::{CoreToListener, CoreToOutpost, ListenerToCore, OutpostToCore};
 
 pub use frames::{Frame, Frames};
 pub use retire::ShutdownSummary;
@@ -350,6 +349,20 @@ pub enum OutpostMessage {
         /// Only the supervisor sends it.
         sealed: Sealed,
     },
+    /// Asked to start an outpost for `target_pid`
+    /// ([`Supervisor::ensure_spawned`]) while one already runs: the
+    /// generation running, and whether it has said it is ready, so Core's
+    /// generation record takes it.
+    Running {
+        /// The generation.
+        outpost: OutpostId,
+        /// The application it watches.
+        target_pid: Pid,
+        /// Whether it sent its `Ready`.
+        ready: bool,
+        /// Only the supervisor sends it.
+        sealed: Sealed,
+    },
     /// A message an outpost sent, tagged with its target pid and the outpost
     /// generation whose pipe it arrived on.
     Event {
@@ -383,10 +396,48 @@ pub enum OutpostMessage {
     /// ended, facts were lost in the gap, so the app asks the foreground
     /// application for its current focus.
     ListenerReady {
+        /// The listener's generation.
+        listener: OutpostId,
         /// Whether this listener replaced one that ended.
         replacement: bool,
         /// Only the supervisor sends it.
         sealed: Sealed,
+    },
+    /// The owner is about to launch the listener of generation `listener`:
+    /// sent before its process starts, so Core keeps its first tells
+    /// (`docs/design/readers-tell-core-asks-build1.md`, "The outpost
+    /// generation record").
+    ListenerStarted {
+        /// The listener's generation.
+        listener: OutpostId,
+        /// Only the supervisor sends it.
+        sealed: Sealed,
+    },
+    /// The listener of generation `listener` ended: its pipe closed, it was
+    /// found wedged, or Verbatim is exiting.
+    ListenerEnded {
+        /// The listener's generation.
+        listener: OutpostId,
+        /// Only the supervisor sends it.
+        sealed: Sealed,
+    },
+    /// A tell or an answer the listener of generation `listener` sent, for
+    /// Core's event queue, which judges whether it is the current one's.
+    Listener {
+        /// The listener's generation.
+        listener: OutpostId,
+        /// The message: a [`ListenerToCore::Tell`] or a
+        /// [`ListenerToCore::Answer`].
+        message: Box<ListenerToCore>,
+    },
+    /// A child answered a ping: an outpost of `target_pid`, or the
+    /// listener when `target_pid` is `None`. Core's generation record keeps
+    /// each one's liveness.
+    Pong {
+        /// The generation that answered.
+        outpost: OutpostId,
+        /// The application its outpost watches; `None` for the listener.
+        target_pid: Option<Pid>,
     },
     /// A menu closed, menu mode ended, or the Alt+Tab switcher closed,
     /// somewhere on the desktop, at `ended_at_us`: unless a focus observed
@@ -831,15 +882,6 @@ impl Supervisor {
         let _ = self.owner.send(owner::OwnerEvent::BackoffClock(clock));
     }
 
-    /// Tells the owner the views the app derives from the reducer state:
-    /// the application holding attention, and the outposts in which the
-    /// state holds nodes, which decide retirement.
-    pub fn note_views(&self, attention: Option<Pid>, holding: BTreeSet<OutpostId>) {
-        let _ = self
-            .owner
-            .send(owner::OwnerEvent::Views { attention, holding });
-    }
-
     /// Sends the focus listener Core's live re-read `request` of the last
     /// read, traced `trace_id`, of `application`'s reading thread
     /// ([`CoreToListener::LiveReread`]), behind every command sent to it
@@ -853,14 +895,28 @@ impl Supervisor {
         application: Pid,
         (trace_id, window): (verbatim_model::TraceId, isize),
     ) {
-        let _ = self
-            .owner
-            .send(owner::OwnerEvent::LiveReread(CoreToListener::LiveReread {
-                request,
-                application,
-                trace_id,
-                window,
-            }));
+        self.send_to_listener(CoreToListener::LiveReread {
+            request,
+            application,
+            trace_id,
+            window,
+        });
+    }
+
+    /// Sends the focus listener `command`, a request or cancel of Core's
+    /// event queue, behind every command sent to it before, never dropped;
+    /// held while a listener is launching. With none, nothing is sent:
+    /// Core heard the listener end ([`OutpostMessage::ListenerEnded`]) and
+    /// answered its requests.
+    pub fn send_to_listener(&self, command: CoreToListener) {
+        let _ = self.owner.send(owner::OwnerEvent::ToListener(command));
+    }
+
+    /// Ends the outpost generation `outpost`, as Core's generation record
+    /// asks: it is stuck, or retired. Nothing happens when it has ended
+    /// already; its [`OutpostMessage::Ended`] follows otherwise.
+    pub fn end_outpost(&self, outpost: OutpostId) {
+        let _ = self.owner.send(owner::OwnerEvent::EndOutpost(outpost));
     }
 
     /// Runs the idle barrier's round `round` through the children

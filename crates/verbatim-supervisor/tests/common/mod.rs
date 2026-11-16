@@ -49,7 +49,16 @@ impl Delivered {
         std::iter::from_fn(|| self.ready.borrow_mut().pop_front())
     }
 
+    /// Takes `message`, but for the liveness and listener-generation facts
+    /// the supervisor reports for Core's generation record, which these
+    /// tests do not judge.
     fn take(&self, message: OutpostMessage) {
+        if matches!(
+            message,
+            OutpostMessage::Pong { .. } | OutpostMessage::ListenerStarted { .. }
+        ) {
+            return;
+        }
         let handled = self.frames.borrow_mut().arrived(message);
         self.ready.borrow_mut().extend(handled);
     }

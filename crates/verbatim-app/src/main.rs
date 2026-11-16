@@ -12,7 +12,6 @@ mod datetime;
 mod error_sound;
 mod flight_dump;
 mod harness;
-mod held_keys;
 mod idle;
 mod key_reports;
 mod latency;
@@ -23,11 +22,12 @@ mod screen_reader_flag;
 mod single_instance;
 mod speech_events;
 mod speech_settings;
+mod strokes;
 mod terminal_settings;
 mod themes;
 mod wanted;
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap};
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
@@ -44,8 +44,11 @@ use verbatim_core::{ReducerRecorder, SrState, reduce};
 use verbatim_gui::{GuiCommand, GuiEvent, GuiHandle, ShellItemKind, run_gui};
 use verbatim_input::{DecisionConfig, GestureMap, KeyboardLayout};
 use verbatim_input_windows::{ForegroundView, InputHook};
+use verbatim_model::protocol::{CoreToListener, ListenerToCore, RequestId};
 use verbatim_model::protocol::{CoreToOutpost, EventTiming, OutpostToCore, Query, QueryOutcome};
-use verbatim_model::protocol::{FocusPurpose, RequestId};
+use verbatim_model::request::{
+    Answer, ForegroundReport, Instance, Outcome, ProcessFact, QueueEffect, QueueInput, Reader,
+};
 use verbatim_model::{
     Earcon, Effect, ForegroundWindow, GestureId, GuiRequest, Input, LockKey, OutpostId, Pid,
     ReaderSettings, TextRequest, TraceId, WindowHandle,
@@ -65,7 +68,6 @@ use verbatim_synth_capture::CaptureSynth;
 use latency::LatencyLedger;
 use live::LiveOutposts;
 use requests::{Asker, DumpTicket, DumpTreeResult, RequestTable};
-use wanted::FocusWanted;
 
 /// The one binding not carried by the keyboard layout's own script table:
 /// Verbatim+V opens the menu. The review, object-navigation, time, and
@@ -302,6 +304,7 @@ fn run(
     // (the owner's own Windows Terminal), ignored entirely: nothing is ever
     // read from them. Unset for real users, so nothing is ignored.
     let ignored = Arc::new(verbatim_process::held::IgnoredProcesses::from_env());
+    let ignored_pids = ignored.pids();
     // The idle retirement: two minutes, but in the end-to-end scenario that
     // waits for one, whose harness shortens it with
     // `VERBATIM_TEST_RETIREMENT`; unset for real users.
@@ -323,7 +326,24 @@ fn run(
     let idle_line = Arc::new(harness::IdleLine::default());
     let live_re_reads = Arc::new(std::sync::atomic::AtomicU64::new(0));
 
-    warm_own_outpost(&supervisor, &outposts, own_pid);
+    // Core's generation record takes the harness's retirement and ignored
+    // processes, and starts Verbatim's own outpost at once, before the
+    // first gesture can come: a cold outpost races a real keypress sent
+    // right after Verbatim's menu opens.
+    for fact in [
+        QueueInput::Process(ProcessFact::Retirement {
+            idle_us: micros(retirement.idle),
+            sweep_us: micros(retirement.sweep_interval),
+        }),
+        QueueInput::Ignored(ignored_pids),
+        QueueInput::Process(ProcessFact::OwnProcess(Pid(own_pid))),
+    ] {
+        let _ = command_tx.send(ShellCommand::Input(Box::new(Input::Queue {
+            trace_id: TraceId::mint(),
+            at_us: now_us(),
+            input: fact,
+        })));
+    }
 
     // Core's view of the window in front, for the keyboard hook: whether
     // it may hold keys there, whether the focus has text whose caret keys
@@ -415,15 +435,6 @@ fn run(
     // initial outpost target (the focus listener only reports foreground
     // changes after this point).
     let _ = command_tx.send(ShellCommand::Input(Box::new(Input::Started)));
-    // Ask the foreground application for its current focus: its outpost is
-    // started if needed, and the answer is spoken like a switch to it.
-    if let Some(pid) = foreground_pid() {
-        // A console window's outpost is its console host's.
-        if let Some(server) = focus_now_server(pid) {
-            note_targeted_pid(&outposts, server);
-        }
-        let _ = command_tx.send(ShellCommand::FocusNow(pid));
-    }
 
     // The GUI loop owns the main thread until shutdown.
     let host_for_gui: Arc<dyn SpeechSettingsHost> = Arc::new(settings_host);
@@ -777,40 +788,6 @@ fn keep_display_on(on: bool) {
     }
 }
 
-/// Notes that `target` is (or is about to be) watched by an outpost, adding a
-/// `Starting` placeholder to the status mirror only if this pid is not
-/// already known. Multiple outposts coexist under decision D9, so unlike
-/// M1's single-outpost policy this must never clear existing entries: a
-/// foreground change to a pid Core already has an outpost for is routed to
-/// that outpost by the supervisor rather than starting a new one, and its
-/// existing status entry is left alone.
-fn note_targeted_pid(outposts: &Arc<Mutex<HashMap<Pid, OutpostStatus>>>, target: Pid) {
-    let mut outposts = outposts.lock().expect("outposts lock");
-    outposts.entry(target).or_insert(OutpostStatus {
-        target_pid: target,
-        outpost_pid: None,
-        state: OutpostState::Starting,
-    });
-}
-
-/// Warms an outpost for Core's own process as early in startup as possible,
-/// well before the first gesture can plausibly arrive: Verbatim reading its
-/// own GUI is a first-class scenario, and a cold outpost spawn (process
-/// creation, `WinEvent` hook install, UIA registration) measurably races a
-/// real keypress sent immediately after the popup menu takes foreground —
-/// see `Supervisor::ensure_spawned`'s doc comment for the live VM failure
-/// this fixes. Does not touch foreground tracking; that happens when the focus
-/// listener reports Core's window taking foreground (decision D13), a fact the
-/// supervisor routes to this outpost, which reports the focus on the window.
-fn warm_own_outpost(
-    supervisor: &Arc<Supervisor>,
-    outposts: &Arc<Mutex<HashMap<Pid, OutpostStatus>>>,
-    own_pid: u32,
-) {
-    note_targeted_pid(outposts, Pid(own_pid));
-    supervisor.ensure_spawned(Pid(own_pid));
-}
-
 /// The process owning the window `hwnd`, read with a local call.
 fn window_pid(hwnd: isize) -> Option<Pid> {
     use windows::Win32::Foundation::HWND;
@@ -859,25 +836,6 @@ fn taskbar_process() -> Option<Pid> {
     window_pid(taskbar.0 as isize)
 }
 
-/// The process whose outpost answers a focus-now query for the
-/// application `pid`. When Windows names `pid` as the owner of the window in
-/// front, the process that serves that window
-/// ([`verbatim_win32::provider::provider_process`]), which differs from its owner
-/// only for a console window, whose console host serves it; `None` when it
-/// cannot be read, for a console window whose host cannot be read from its
-/// client or a window closed since, so no outpost is asked: the client's
-/// own serves none of its console window. `pid` itself for any other
-/// window in front. Local calls only.
-fn focus_now_server(pid: Pid) -> Option<Pid> {
-    use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
-    // SAFETY: no preconditions.
-    let hwnd = unsafe { GetForegroundWindow() }.0 as isize;
-    if window_pid(hwnd) != Some(pid) {
-        return Some(pid);
-    }
-    verbatim_win32::provider::provider_process(hwnd).map(Pid)
-}
-
 /// The application holding the system foreground right now, read with a
 /// local call.
 fn foreground_pid() -> Option<Pid> {
@@ -888,69 +846,6 @@ fn foreground_pid() -> Option<Pid> {
     // SAFETY: tolerates any handle; `pid` is a local out-parameter.
     unsafe { GetWindowThreadProcessId(hwnd, Some(&raw mut pid)) };
     (pid != 0).then_some(Pid(pid))
-}
-
-/// What Verbatim+Tab's routing reads of the windows now
-/// ([`report_focus_target`]): local calls, which a test gives its own.
-trait WindowsLookup {
-    /// The window with the keyboard focus on the foreground thread, else
-    /// its active window (`GetGUIThreadInfo`).
-    fn focus_window(&self) -> Option<isize>;
-    /// The window in front (`GetForegroundWindow`).
-    fn foreground_window(&self) -> Option<isize>;
-    /// The hung window a ghost window stands in for
-    /// (`HungWindowFromGhostWindow`).
-    fn hung_window_from_ghost(&self, hwnd: isize) -> Option<isize>;
-    /// The process that owns a window (`GetWindowThreadProcessId`).
-    fn owner(&self, hwnd: isize) -> Option<u32>;
-    /// The process that serves a window's UIA, a console window's console
-    /// host ([`verbatim_win32::provider::provider_process`]).
-    fn provider(&self, hwnd: isize) -> Option<u32>;
-}
-
-/// The windows as Windows reports them now.
-struct WindowsNow;
-
-impl WindowsLookup for WindowsNow {
-    fn focus_window(&self) -> Option<isize> {
-        verbatim_win32::window::focus_window()
-    }
-
-    fn foreground_window(&self) -> Option<isize> {
-        use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
-        // SAFETY: no preconditions.
-        let hwnd = unsafe { GetForegroundWindow() }.0 as isize;
-        (hwnd != 0).then_some(hwnd)
-    }
-
-    fn hung_window_from_ghost(&self, hwnd: isize) -> Option<isize> {
-        verbatim_win32::window::hung_window_from_ghost(hwnd)
-    }
-
-    fn owner(&self, hwnd: isize) -> Option<u32> {
-        window_pid(hwnd).map(|pid| pid.0)
-    }
-
-    fn provider(&self, hwnd: isize) -> Option<u32> {
-        verbatim_win32::provider::provider_process(hwnd)
-    }
-}
-
-/// Where Verbatim+Tab's query goes (Dickson, 2026-11-07): the application
-/// that owns the foreground thread's focus window, or with none the window
-/// in front, a ghost window first mapped to the hung window it stands in
-/// for, so a frozen application's query goes to its own outpost; with the
-/// process that serves that window, whose outpost is asked, a console
-/// window's console host, `None` when it cannot be read. So Settings
-/// answers from its own process, not from `ApplicationFrameHost`'s frame.
-/// `None` with no window in front. Local calls.
-fn report_focus_target(windows: &dyn WindowsLookup) -> Option<(Pid, Option<Pid>)> {
-    let window = windows
-        .focus_window()
-        .or_else(|| windows.foreground_window())?;
-    let window = windows.hung_window_from_ghost(window).unwrap_or(window);
-    let application = windows.owner(window).filter(|&pid| pid != 0)?;
-    Some((Pid(application), windows.provider(window).map(Pid)))
 }
 
 /// The reducer thread's dependencies, bundled to keep [`reducer_loop`]'s
@@ -998,38 +893,11 @@ pub(crate) enum ShellCommand {
     /// A message from the supervisor, put in line by [`outpost_sink`].
     Outpost(OutpostMessage),
     Input(Box<Input>),
-    /// A caret key the hook passed, an `Input::CaretKey`, with when the hook
-    /// saw it in microseconds since the Unix epoch, where its latency line
-    /// starts.
-    CaretKey {
-        input: Box<Input>,
-        pressed_at_us: u64,
-    },
-    /// A caret key the hook held back, an `Input::HeldKey` (`None` for a
-    /// key that is no caret key, which is passed on at once), with its
-    /// trace, its gesture, when the hook saw it, and the stroke to send
-    /// again once Core passes it on.
-    HeldKey {
-        input: Option<Box<Input>>,
-        trace_id: TraceId,
-        gesture: GestureId,
-        pressed_at_us: u64,
-        stroke: verbatim_input_windows::HeldStroke,
-    },
-    /// A key transition the hook deferred behind a held key, sent on in
-    /// its turn.
-    DeferredKey {
-        stroke: verbatim_input_windows::HeldStroke,
-        pressed: bool,
-    },
     /// A control-plane tree dump, reading locations when the flag says.
     DumpTree(DumpTicket, bool, Sender<DumpTreeResult>),
     /// The control-plane caller waiting for this tree dump stopped waiting:
     /// withdraw the dump if its outpost has not started it.
     DumpTreeGivenUp(DumpTicket),
-    /// Ask this application for its current focus: at startup, for the
-    /// foreground application.
-    FocusNow(Pid),
     /// Verbatim is exiting: the reducer is told, and whatever it plays to
     /// be heard before Verbatim exits (the exit sound) is handed back on
     /// `heard`, for the main thread to wait on; `None` when nothing is.
@@ -1071,13 +939,9 @@ struct ReducerThread<'a> {
     /// Outpost generations that have started and not yet ended. A message
     /// from an outpost that has ended is dropped before the reducer sees it.
     live: LiveOutposts,
-    /// What waits for an application's outpost to be ready: its current
-    /// focus, for the startup foreground application and the attention
-    /// application after its outpost or the listener was replaced, and the
-    /// shell's items the list dialogs want of the taskbar's process.
+    /// The shell's items the list dialogs want of the taskbar's process,
+    /// waiting for its outpost to be ready.
     wanted: wanted::Wanted,
-    /// The views last sent to the supervisor.
-    views: (Option<Pid>, BTreeSet<OutpostId>),
     /// The outposts a focus report of which was handled since the views
     /// were last sent, which are written the nodes Core holds in them
     /// ([`send_views`](Self::send_views)).
@@ -1089,22 +953,19 @@ struct ReducerThread<'a> {
     /// Turns the outposts' frames, which the supervisor's relay posts
     /// unparsed, into the messages they carry, in each outpost's order.
     frames: Frames,
-    /// The caret keys the hook held back, until Core passes them on.
-    held_keys: held_keys::HeldKeys,
     /// The held key's one deadline, as Core set it
     /// ([`Effect::BoundHeldKey`]): the key, and when its wait for the key
     /// ahead or the read of its caret ends; one of the reducer thread's
     /// deadlines, so it adds no wake-up source.
     held_due: Option<(TraceId, Instant)>,
+    /// When Core's event queue asked to be woken
+    /// ([`QueueEffect::WakeAt`]), in microseconds on the run's shared
+    /// clock: one of the reducer thread's deadlines.
+    queue_due: Option<u64>,
     /// Control-plane `AwaitIdle` waiters that reached their place in line,
     /// and the idle barrier's round through every child that answers them
     /// (`docs/design/communication.md`, section 6.7).
     barrier: idle::IdleBarrier<Sender<()>>,
-    /// Given spares that failed before their `Ready` and whose `Ended` is
-    /// still to come: their applications' held facts went to the next
-    /// generation ([`OutpostMessage::Regenerated`]), so their end asks
-    /// for no focus.
-    regenerated: HashSet<OutpostId>,
     /// The exit sound the reducer played once Verbatim was exiting
     /// ([`SrState::exiting()`]), for the main thread to wait on until it has
     /// been heard ([`ShellCommand::Exiting`]).
@@ -1120,7 +981,19 @@ struct ReducerThread<'a> {
 }
 
 impl ReducerThread<'_> {
-    /// Handles one message from the supervisor.
+    /// Feeds Core's event queue `input`, arriving now.
+    fn queue(&mut self, input: QueueInput) {
+        self.apply(queued(input));
+    }
+
+    /// Handles one message from the supervisor: the readers' tells and
+    /// answers and the owner thread's process facts go to Core's event
+    /// queue in the order they arrived, Core judging which generation is
+    /// current.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one arm per message the supervisor sends, with no wildcard"
+    )]
     fn on_outpost_message(&mut self, message: OutpostMessage) {
         match message {
             OutpostMessage::Started {
@@ -1138,6 +1011,26 @@ impl ReducerThread<'_> {
                         state: OutpostState::Starting,
                     },
                 );
+                self.queue(QueueInput::Process(ProcessFact::OutpostStarted {
+                    process: target_pid,
+                    generation: outpost.0,
+                }));
+            }
+            OutpostMessage::Running {
+                outpost,
+                target_pid,
+                ready,
+                ..
+            } => {
+                self.queue(QueueInput::Process(ProcessFact::OutpostStarted {
+                    process: target_pid,
+                    generation: outpost.0,
+                }));
+                if ready {
+                    self.queue(QueueInput::ReaderReady(outpost_instance(
+                        target_pid, outpost,
+                    )));
+                }
             }
             OutpostMessage::Event {
                 pid,
@@ -1145,21 +1038,31 @@ impl ReducerThread<'_> {
                 position,
                 message,
             } => {
-                // An outpost the supervisor has ended can still have messages
-                // in flight; they are dropped here, before the reducer. An
-                // accepted one is handled from here on: anything the reducer
-                // keeps from it is in the held nodes sent after this input.
-                if self.live.accept(outpost, position) {
-                    self.on_outpost_input(pid, outpost, *message);
+                // A tell or an answer goes to Core, which drops one of a
+                // generation not current; anything else from a generation
+                // the supervisor has ended is dropped here. An accepted one
+                // is handled from here on: anything the reducer keeps from
+                // it is in the held nodes sent after this input.
+                let accepted = self.live.accept(outpost, position);
+                match *message {
+                    OutpostToCore::Tell(tell) => self.queue(QueueInput::Tell {
+                        from: outpost_instance(pid, outpost),
+                        tell,
+                    }),
+                    OutpostToCore::Answer(answer) => self.queue(QueueInput::Answer {
+                        from: outpost_instance(pid, outpost),
+                        answer,
+                    }),
+                    message if accepted => self.on_outpost_input(pid, outpost, message),
+                    _ => {}
                 }
             }
             OutpostMessage::Ended {
                 outpost,
                 target_pid,
                 reason,
-                follows,
                 ..
-            } => self.on_outpost_ended(outpost, target_pid, reason, follows),
+            } => self.on_outpost_ended(outpost, target_pid, reason),
             OutpostMessage::Regenerated {
                 outpost,
                 next,
@@ -1168,30 +1071,57 @@ impl ReducerThread<'_> {
             } => {
                 tracing::info!(%outpost, %next, %target_pid, "a given spare failed before it was ready; the next generation holds its application's facts");
                 self.barrier.handed_on(outpost, next);
-                // Its `Ended` follows only if the app heard it started.
-                if self.live.application_of(outpost).is_some() {
-                    self.regenerated.insert(outpost);
-                }
             }
             OutpostMessage::SpareReady { spare, waiting, .. } => {
                 tracing::debug!(%spare, waiting, "spare outpost ready");
                 if waiting >= verbatim_supervisor::SPARES {
                     self.context.readiness.spares_ready();
                 }
+                self.queue(QueueInput::Process(ProcessFact::SparesReady(waiting)));
             }
-            OutpostMessage::ListenerReady { replacement, .. } => {
+            OutpostMessage::ListenerStarted { listener, .. } => {
+                self.queue(QueueInput::Process(ProcessFact::ListenerStarted(
+                    listener.0,
+                )));
+            }
+            OutpostMessage::ListenerReady {
+                listener,
+                replacement,
+                ..
+            } => {
                 self.context.readiness.listener_ready();
                 // The live re-reads asked of the listener replaced end with
                 // no answer.
                 if replacement {
                     self.apply(Input::ListenerReplaced);
                 }
-                // Facts were lost while there was no listener: read the
-                // foreground afresh and ask its application for the focus.
-                if replacement && let Some(pid) = foreground_pid() {
-                    self.want_focus_now(pid);
-                    self.apply_follow_ups();
+                self.queue(QueueInput::ReaderReady(listener_instance(listener)));
+            }
+            OutpostMessage::ListenerEnded { listener, .. } => {
+                self.queue(QueueInput::ReaderEnded(listener_instance(listener)));
+            }
+            OutpostMessage::Listener { listener, message } => {
+                let from = listener_instance(listener);
+                match *message {
+                    ListenerToCore::Tell(tell) => self.queue(QueueInput::Tell { from, tell }),
+                    ListenerToCore::Answer(answer) => {
+                        self.queue(QueueInput::Answer { from, answer });
+                    }
+                    other => tracing::error!(
+                        ?other,
+                        "the supervisor handed on a listener message that is no tell or answer, a logic bug"
+                    ),
                 }
+            }
+            OutpostMessage::Pong {
+                outpost,
+                target_pid,
+            } => {
+                let instance = match target_pid {
+                    Some(pid) => outpost_instance(pid, outpost),
+                    None => listener_instance(outpost),
+                };
+                self.queue(QueueInput::Process(ProcessFact::Pong(instance)));
             }
             OutpostMessage::MenuOrSwitchEnded { ended_at_us } => {
                 self.apply(Input::MenuOrSwitchEnded { ended_at_us });
@@ -1208,19 +1138,7 @@ impl ReducerThread<'_> {
                     change,
                 });
             }
-            OutpostMessage::Foreground(report) => {
-                self.apply(Input::Foreground(ForegroundWindow {
-                    window: WindowHandle(u64::from_ne_bytes(report.window.to_ne_bytes())),
-                    root_owner: WindowHandle(u64::from_ne_bytes(report.root_owner.to_ne_bytes())),
-                    process: Pid(report.process),
-                    observed_at_us: report.observed_at_us,
-                    own: report.process == std::process::id(),
-                    thread: report.thread,
-                    console: report.console,
-                    integrity: report.integrity,
-                    own_integrity: verbatim_win32::integrity::own_integrity(),
-                }));
-            }
+            OutpostMessage::Foreground(report) => self.foreground(&report),
             OutpostMessage::IdleQueried {
                 round, outposts, ..
             } => {
@@ -1233,167 +1151,48 @@ impl ReducerThread<'_> {
         }
     }
 
-    /// No outpost will answer for `target_pid`: what waits for one is
-    /// answered "gone", and a status entry only waiting for its outpost
-    /// removed.
+    /// The listener's report that `report`'s window came to the foreground:
+    /// Core's event queue takes it, with the window's class, and the hook's
+    /// view takes its integrity and keyboard thread.
+    fn foreground(&mut self, report: &verbatim_supervisor::ForegroundReport) {
+        let window = WindowHandle(u64::from_ne_bytes(report.window.to_ne_bytes()));
+        let root_owner = WindowHandle(u64::from_ne_bytes(report.root_owner.to_ne_bytes()));
+        self.apply(Input::Foreground(ForegroundWindow {
+            window,
+            root_owner,
+            process: Pid(report.process),
+            observed_at_us: report.observed_at_us,
+            own: report.process == std::process::id(),
+            thread: report.thread,
+            console: report.console,
+            integrity: report.integrity,
+            own_integrity: verbatim_win32::integrity::own_integrity(),
+        }));
+        self.queue(QueueInput::Foreground(ForegroundReport {
+            window,
+            root_owner,
+            process: Pid(report.process),
+            thread: report.thread,
+            class: verbatim_win32::window::window_class_name(report.window),
+        }));
+    }
+
+    /// No outpost will serve `target_pid` now: Core hears its launch failed,
+    /// what the list dialogs wanted of it is answered with nothing, and a
+    /// status entry only waiting for its outpost is removed.
     fn not_watched(&mut self, target_pid: Pid) {
-        let unanswered = self.wanted.not_watched(target_pid);
-        if !unanswered.is_empty() {
-            for wanted in unanswered {
-                self.focus_unanswered(wanted, false);
-            }
-            self.apply_follow_ups();
-        }
+        self.wanted.not_watched(target_pid);
+        self.queue(QueueInput::Process(ProcessFact::LaunchFailed {
+            process: target_pid,
+            application_gone: !verbatim_process::held::Target::open(target_pid)
+                .is_ok_and(|target| !target.has_exited()),
+        }));
         let mut outposts = self.context.outposts.lock().expect("outposts lock");
         if outposts
             .get(&target_pid)
             .is_some_and(|status| status.outpost_pid.is_none())
         {
             outposts.remove(&target_pid);
-        }
-    }
-
-    /// The reducer asked for the focus now, for `purpose`
-    /// (`Effect::ReadFocus`), under `trace_id`: Verbatim+Tab's
-    /// ([`Self::report_focus`]), or the application in front's, after a
-    /// menu or the Alt+Tab switcher closed, usually not the one that owned
-    /// the menu, as NVDA's fake focus, or when the user's desktop returned.
-    /// Only the control is reported, as NVDA queues a focus on it and
-    /// nothing for its window. An application with no ready outpost is
-    /// asked for its window too, as at the start, since attention may be
-    /// moving to it.
-    fn read_focus(&mut self, purpose: FocusPurpose, trace_id: TraceId) {
-        if purpose == FocusPurpose::Report {
-            self.report_focus(trace_id);
-            return;
-        }
-        let Some(pid) = foreground_pid().filter(|&pid| !self.context.supervisor.is_ignored(pid))
-        else {
-            return;
-        };
-        let Some(outpost) = self.live.ready(pid) else {
-            self.want_focus_now(pid);
-            return;
-        };
-        self.ask_focus(outpost, pid, purpose, trace_id);
-    }
-
-    /// Verbatim+Tab's query, under the press's `trace_id`: asked of the
-    /// process of the foreground thread's focus window
-    /// ([`report_focus_target`]), started if it has no outpost, and told
-    /// unanswered, for Core to say "No focus", once the press's input is
-    /// handled, when there is no window in front, its process is ignored,
-    /// or no outpost can serve it.
-    fn report_focus(&mut self, trace_id: TraceId) {
-        let target = report_focus_target(&WindowsNow);
-        let asked = target.is_some_and(|(application, server)| {
-            !self.context.supervisor.is_ignored(application)
-                && server.is_some_and(|server| {
-                    self.want_focus(
-                        (application, server),
-                        FocusWanted {
-                            application,
-                            purpose: FocusPurpose::Report,
-                            trace_id,
-                        },
-                    );
-                    true
-                })
-        });
-        if !asked {
-            tracing::info!(?target, "Verbatim+Tab has nothing to ask");
-            self.follow_ups.push(Input::ReadFocusUnanswered {
-                trace_id,
-                abandoned: false,
-            });
-        }
-    }
-
-    /// Whether `event` is a focus in a top-level window of a process
-    /// Verbatim ignores, which another application's outpost can report as
-    /// the window around its own focus: it is dropped, so an ignored process
-    /// never becomes the focus or the attention. A local read.
-    fn in_ignored_window(
-        &self,
-        event: &verbatim_model::NormalizedEvent,
-        window: Option<&verbatim_model::WindowFacts>,
-    ) -> bool {
-        let (verbatim_model::NormalizedEvent::FocusChanged { .. }, Some(window)) = (event, window)
-        else {
-            return false;
-        };
-        let owner = window_pid(isize::try_from(window.top_level.0.cast_signed()).unwrap_or(0));
-        let ignored = owner.is_some_and(|pid| self.context.supervisor.is_ignored(pid));
-        if ignored {
-            tracing::info!(
-                ?owner,
-                "a focus in a window of an ignored process is dropped"
-            );
-        }
-        ignored
-    }
-
-    /// Asks the outpost serving the application `pid` for the current focus
-    /// now if it is ready, or as soon as it is, starting one if there is
-    /// none. A console's client whose console window is in front is served
-    /// by its console host's outpost, found locally ([`focus_now_server`]),
-    /// whether or not that outpost has reported for it yet, and by none
-    /// when that host cannot be read: the client's own outpost serves none
-    /// of the console window, and connects to no other application's window
-    /// (`books/dev/src/explanation/design/listener-without-connections.md`, section 4.3).
-    fn want_focus_now(&mut self, pid: Pid) {
-        if self.context.supervisor.is_ignored(pid) {
-            return; // Nothing is asked of a process Verbatim ignores.
-        }
-        let Some(server) = focus_now_server(pid) else {
-            tracing::info!(
-                %pid,
-                "no outpost is asked for the focus: the window in front has no provider process that can be read"
-            );
-            return;
-        };
-        self.want_focus(
-            (pid, server),
-            FocusWanted {
-                application: pid,
-                purpose: FocusPurpose::Plain,
-                trace_id: TraceId::mint(),
-            },
-        );
-    }
-
-    /// Asks the outpost of `server`, the process serving the window of the
-    /// application `pid`, for the focus query `wanted` now if it is ready,
-    /// or as soon as it is, starting one if there is none. A console's
-    /// client is served by its console host's outpost, which then reports
-    /// for it. A query waiting of its own kind that this one replaces ends
-    /// unanswered ([`wanted::Wanted::want_focus_now`]).
-    fn want_focus(&mut self, (pid, server): (Pid, Pid), wanted: FocusWanted) {
-        let FocusWanted {
-            purpose, trace_id, ..
-        } = wanted;
-        let replaced = if server != pid {
-            let host = server;
-            if let Some(outpost) = self.live.ready(host) {
-                self.live.reports_for(outpost, pid);
-                self.ask_focus(outpost, pid, purpose, trace_id);
-                None
-            } else {
-                let replaced = self.wanted.want_focus_now(host, wanted);
-                self.context.supervisor.ensure_spawned(host);
-                replaced
-            }
-        } else if let Some(outpost) = self.live.ready(pid) {
-            self.ask_focus(outpost, pid, purpose, trace_id);
-            None
-        } else {
-            let target = self.live.target_for(pid);
-            let replaced = self.wanted.want_focus_now(target, wanted);
-            self.context.supervisor.ensure_spawned(target);
-            replaced
-        };
-        if let Some(replaced) = replaced {
-            self.focus_unanswered(replaced, true);
         }
     }
 
@@ -1404,56 +1203,9 @@ impl ReducerThread<'_> {
         }
     }
 
-    /// The focus query `wanted` ends with no answer: for Verbatim+Tab,
-    /// Core is told, its press ending silently when `silently`, else with
-    /// "No focus", as a follow-up input, applied after the input whose
-    /// effects are being carried out, if any; no other asker waits.
-    fn focus_unanswered(&mut self, wanted: FocusWanted, silently: bool) {
-        if wanted.purpose == FocusPurpose::Report {
-            self.follow_ups.push(Input::ReadFocusUnanswered {
-                trace_id: wanted.trace_id,
-                abandoned: silently,
-            });
-        }
-    }
-
-    /// Sends the focus query of application `source` for `purpose`, under
-    /// `trace_id`.
-    fn ask_focus(
-        &mut self,
-        outpost: OutpostId,
-        source: Pid,
-        purpose: FocusPurpose,
-        trace_id: TraceId,
-    ) {
-        let id = self.requests.begin(
-            outpost,
-            Asker::ReadFocus {
-                source,
-                trace_id,
-                purpose,
-            },
-        );
-        self.send(
-            trace_id,
-            outpost,
-            id,
-            CoreToOutpost::Query {
-                trace_id,
-                request_id: id,
-                query: Query::ReadFocus { purpose },
-                timing: EventTiming::default(),
-            },
-        );
-    }
-
     /// Turns one message from a live outpost into reducer input, or routes a
     /// reply to whoever asked.
     #[deny(clippy::wildcard_enum_match_arm)]
-    #[expect(
-        clippy::too_many_lines,
-        reason = "one arm per message an outpost sends, with no wildcard"
-    )]
     fn on_outpost_input(&mut self, source: Pid, outpost: OutpostId, message: OutpostToCore) {
         match message {
             OutpostToCore::Event {
@@ -1474,15 +1226,6 @@ impl ReducerThread<'_> {
                 // does that outpost from now on.
                 if let Some(application) = application {
                     self.live.reports_for(outpost, application);
-                }
-                if self.in_ignored_window(event, window.as_ref()) {
-                    // Core has judged the focus, refused: the outpost hears
-                    // the nodes Core holds after it, as after any focus
-                    // report.
-                    if matches!(event, verbatim_model::NormalizedEvent::FocusChanged { .. }) {
-                        self.focus_reported.insert(outpost);
-                    }
-                    return;
                 }
                 let first_observed_us = match timing.observed_at_us {
                     0 => observed_at_us,
@@ -1528,16 +1271,7 @@ impl ReducerThread<'_> {
             } => {
                 tracing::info!(%outpost, %outpost_pid, %target_pid, "outpost ready");
                 self.live.mark_ready(outpost);
-                let asked = self.wanted.ready(target_pid, now_us());
-                for wanted in asked.focus_now.into_iter().chain(asked.report) {
-                    if wanted.application != target_pid {
-                        // A console host's replacement, asked for its
-                        // console's client.
-                        self.live.reports_for(outpost, wanted.application);
-                    }
-                    self.ask_focus(outpost, wanted.application, wanted.purpose, wanted.trace_id);
-                }
-                for wanted in asked.shell {
+                for wanted in self.wanted.ready(target_pid, now_us()) {
                     self.ask_shell_items(outpost, wanted.kind, wanted.ask, wanted.times);
                 }
                 self.context.outposts.lock().expect("outposts lock").insert(
@@ -1549,6 +1283,9 @@ impl ReducerThread<'_> {
                     },
                 );
                 self.context.readiness.notify();
+                self.queue(QueueInput::ReaderReady(outpost_instance(
+                    target_pid, outpost,
+                )));
             }
             OutpostToCore::Fault { detail } => {
                 tracing::warn!(%source, %outpost, detail, "outpost fault");
@@ -1568,19 +1305,12 @@ impl ReducerThread<'_> {
                     );
                 }
             }
-            // An answer to Core's request, which no request of the event
-            // queue is sent to an outpost for yet: dropped, as the owner
-            // thread drops the listener's.
-            OutpostToCore::Answer(answer) => {
-                tracing::debug!(%outpost, number = %answer.number, "an outpost's answer dropped");
-            }
-            // A tell from an outpost's `Follow` group, which reaches Core's
-            // event queue with the listener's tells: dropped until then.
-            OutpostToCore::Tell(tell) => {
-                tracing::debug!(%outpost, kind = ?tell.kind, "an outpost's tell dropped");
-            }
-            // The relay consumes these, and hands none of them on.
-            OutpostToCore::Pong { .. }
+            // Core's event queue takes tells and answers before this
+            // function is called ([`Self::on_outpost_message`]); the relay
+            // consumes the rest, and hands none of them on.
+            OutpostToCore::Answer(_)
+            | OutpostToCore::Tell(_)
+            | OutpostToCore::Pong { .. }
             | OutpostToCore::TargetExited
             | OutpostToCore::SpareReady { .. } => {}
         }
@@ -1594,50 +1324,18 @@ impl ReducerThread<'_> {
                     self.on_outpost_message(message);
                 }
             }
-            ShellCommand::Input(input) => self.apply(*input),
-            ShellCommand::CaretKey {
-                input,
-                pressed_at_us,
-            } => {
-                if let Input::CaretKey { trace_id, .. } | Input::EditingChord { trace_id, .. } =
-                    &*input
-                {
-                    self.context.ledger.key_pressed(*trace_id, pressed_at_us);
-                }
-                self.apply(*input);
-            }
-            ShellCommand::HeldKey {
-                input,
-                trace_id,
-                gesture,
-                pressed_at_us,
-                stroke,
-            } => {
-                self.held_keys
-                    .held(trace_id, &gesture, stroke, pressed_at_us);
-                if let Some(input) = input {
-                    self.context.ledger.key_pressed(trace_id, pressed_at_us);
-                    self.apply(*input);
-                } else {
-                    self.held_keys.pass_on(trace_id);
-                }
-            }
-            ShellCommand::DeferredKey { stroke, pressed } => {
-                self.held_keys.deferred(stroke, pressed);
-            }
+            ShellCommand::Input(input) => self.take_input(*input),
             ShellCommand::DumpTree(ticket, locations, reply) => {
                 self.dump_tree(ticket, locations, reply);
             }
             ShellCommand::ShellItems(kind, ask) => self.shell_items(kind, ask),
             ShellCommand::DumpTreeGivenUp(ticket) => self.dump_tree_given_up(ticket),
-            ShellCommand::FocusNow(pid) => {
-                self.want_focus_now(pid);
-                self.apply_follow_ups();
-            }
             ShellCommand::Exiting { replaced, heard } => {
-                // The hook is gone, so nothing more joins the line, and a
-                // key in it would now arrive after keys pressed since.
-                self.held_keys.exit();
+                // The hook is gone, so nothing more joins Core's stroke
+                // line, and a key in it would now arrive after keys pressed
+                // since: Core names the keys to release, and drops the
+                // rest.
+                self.queue(QueueInput::Exit);
                 self.apply(Input::Exiting { replaced });
                 let _ = heard.send(self.exit_sound.take());
             }
@@ -1661,6 +1359,28 @@ impl ReducerThread<'_> {
                 });
             }
         }
+    }
+
+    /// Takes `input` another thread posted. A press joins Core's event
+    /// queue with its caret key bound to the committed focus as Core takes
+    /// it, in the order of the inputs before it, and starts its latency
+    /// line.
+    fn take_input(&mut self, mut input: Input) {
+        if let Input::Queue {
+            trace_id,
+            input: QueueInput::Press(press),
+            ..
+        } = &mut input
+        {
+            self.context
+                .ledger
+                .key_pressed(*trace_id, press.pressed_at_us);
+            if let verbatim_model::request::PressAction::CaretKey { bound, .. } = &mut press.action
+            {
+                *bound = self.state.caret_binding().map(Box::new);
+            }
+        }
+        self.apply(input);
     }
 
     /// Notes that the harness's numbered input `input` has been handled,
@@ -1704,7 +1424,6 @@ impl ReducerThread<'_> {
         }
         let requests = self.requests.outstanding() + self.state.outstanding_queries();
         let starting = self.live.starting();
-        let focus_wanted = self.wanted.focus_now_count();
         let standing = match self.barrier.standing() {
             idle::Standing::NoRound => "no round under way".to_owned(),
             idle::Standing::AwaitingRelay(round) => {
@@ -1723,7 +1442,7 @@ impl ReducerThread<'_> {
             .outstanding
             .lock()
             .unwrap_or_else(PoisonError::into_inner) = format!(
-            "handled input {}, {standing}, {requests} outpost requests outstanding, {starting} outposts starting, focus wanted from {focus_wanted} applications, terminal timer {}",
+            "handled input {}, {standing}, {requests} outpost requests outstanding, {starting} outposts starting, terminal timer {}",
             self.handled_input,
             if self.state.terminal_timer_due().is_some() {
                 "armed"
@@ -1745,12 +1464,10 @@ impl ReducerThread<'_> {
     fn idle_conditions_clear(&self) -> bool {
         self.requests.outstanding() == 0
             && self.state.outstanding_queries() == 0
-            && self.held_keys.is_empty()
             && !self.state.holds_inputs_back()
             && !self.state.announces_toggle_key()
             && self.state.terminal_timer_due().is_none()
             && self.live.starting() == 0
-            && self.wanted.focus_now_count() == 0
     }
 
     /// Merges a change from the settings dialog's Terminal page into the
@@ -1777,18 +1494,10 @@ impl ReducerThread<'_> {
             requests::Routed::Reducer(input) => self.apply(input),
             requests::Routed::Shell(outcome) => {
                 if let Some((asker, outcome)) = self.requests.finish(id, outpost, outcome) {
-                    self.deliver(asker, outcome);
+                    requests::deliver(asker, outcome);
                 }
             }
             requests::Routed::Nobody => {}
-        }
-    }
-
-    /// Carries out one request's outcome for its asker
-    /// ([`requests::deliver`]), applying the reducer inputs it produces.
-    fn deliver(&mut self, asker: Asker, outcome: QueryOutcome) {
-        for input in requests::deliver(asker, outcome) {
-            self.apply(input);
         }
     }
 
@@ -1811,7 +1520,7 @@ impl ReducerThread<'_> {
             self.focus_reported.insert(node.id.outpost());
         }
         let effects = reduce(&mut self.state, &mut self.runtime, &input);
-        if !self.focus_known && self.state.focused().is_some() {
+        if !self.focus_known && self.state.focus_committed() {
             self.focus_known = true;
             self.context.readiness.focus_known();
         }
@@ -1867,18 +1576,6 @@ impl ReducerThread<'_> {
     fn send_views(&mut self) {
         let held = self.state.held_nodes();
         let anchors = self.state.held_anchors();
-        // The supervisor keeps outposts by the process they watch: a
-        // console's client holding attention keeps its console host's.
-        let views = (
-            self.state
-                .attention()
-                .map(|application| self.live.target_for(application)),
-            held.keys().copied().collect::<BTreeSet<_>>(),
-        );
-        if views != self.views {
-            self.context.supervisor.note_views(views.0, views.1.clone());
-            self.views = views;
-        }
         self.send_fetches();
         for (outpost, live) in self.live.iter_mut() {
             let nodes: BTreeSet<u64> = held
@@ -2001,8 +1698,15 @@ impl ReducerThread<'_> {
                 );
             }
             Effect::PlayEarcon(earcon) => self.context.manager.play_earcon(&mut self.token, earcon),
-            Effect::ReadFocus(purpose) => self.read_focus(purpose, trace_id),
-            Effect::PassHeldKey(held) => self.held_keys.pass_on(held),
+            Effect::Queue(effect) => self.execute_queue(effect),
+            // Core's event queue asks for the focus itself; today's paths
+            // that still name this read are no longer fed.
+            Effect::ReadFocus(purpose) => {
+                tracing::warn!(
+                    ?purpose,
+                    "a read of the focus outside Core's event queue is not asked"
+                );
+            }
             Effect::BoundHeldKey(due) => {
                 self.held_due = due.map(|(key, within_ms)| {
                     (key, Instant::now() + Duration::from_millis(within_ms))
@@ -2047,6 +1751,122 @@ impl ReducerThread<'_> {
                 },
             ),
             _ => {}
+        }
+    }
+
+    /// Carries out one of Core's event queue's effects.
+    fn execute_queue(&mut self, effect: QueueEffect) {
+        match effect {
+            QueueEffect::Send { to, ask } => self.send_request(to, ask),
+            QueueEffect::Cancel { to, cancel } => match to.reader {
+                Reader::Listener => self
+                    .context
+                    .supervisor
+                    .send_to_listener(CoreToListener::Cancel(cancel)),
+                Reader::Outpost(_) => {
+                    let outpost = OutpostId(to.generation);
+                    if let Err(error) = self
+                        .context
+                        .supervisor
+                        .send_to_outpost(outpost, CoreToOutpost::Cancel(cancel))
+                    {
+                        // Its end answers the request.
+                        tracing::debug!(%error, %outpost, "a cancel could not reach its outpost");
+                    }
+                }
+            },
+            QueueEffect::Answered { asker, outcome } => {
+                tracing::warn!(
+                    asker,
+                    ?outcome,
+                    "a request outside the queue ended with no asker"
+                );
+            }
+            QueueEffect::CheckHung(windows) => {
+                for window in windows {
+                    let hung = verbatim_win32::window::readability(window_handle(window)).is_hung();
+                    self.follow_ups
+                        .push(queued(QueueInput::HangCheck { window, hung }));
+                }
+            }
+            QueueEffect::SendStrokes(transitions) => strokes::send(&transitions),
+            QueueEffect::ReleaseAtExit(keys) => strokes::release_at_exit(&keys),
+            QueueEffect::WindowDestroyed { to, window } => {
+                let outpost = OutpostId(to.generation);
+                if let Err(error) = self
+                    .context
+                    .supervisor
+                    .send_to_outpost(outpost, CoreToOutpost::WindowDestroyed(window))
+                {
+                    tracing::debug!(%error, %outpost, "a window's destruction could not reach its outpost");
+                }
+            }
+            QueueEffect::AnswerDropped { number, late } => {
+                tracing::debug!(%number, late, "an answer was dropped");
+            }
+            QueueEffect::Undecodable(number) => {
+                tracing::warn!(%number, "an answer did not decode as its request's reply, the reader's fault");
+            }
+            QueueEffect::Mismatch { replayed, original } => {
+                tracing::error!(
+                    replayed,
+                    original,
+                    "Core's front entry could not be rebuilt from its checkpoint, a defect in Core"
+                );
+            }
+            QueueEffect::WakeAt(due) => self.queue_due = due,
+            QueueEffect::StartOutpost(process) => self.context.supervisor.ensure_spawned(process),
+            QueueEffect::EndOutpost(instance) => {
+                if matches!(instance.reader, Reader::Outpost(_)) {
+                    self.context
+                        .supervisor
+                        .end_outpost(OutpostId(instance.generation));
+                }
+            }
+            QueueEffect::StaleFrame(instance) => {
+                tracing::debug!(
+                    ?instance,
+                    "a frame of a reader's instance not current was dropped"
+                );
+            }
+        }
+    }
+
+    /// Sends Core's request `ask` to the instance `to`, unless Windows
+    /// reports its window hung, when it is answered "not responding"
+    /// unsent; one that cannot be written is answered "reader ended". Each
+    /// answer the shell gives enters Core's inbox after the input whose
+    /// effects are being carried out, so no reducer step re-enters itself.
+    fn send_request(&mut self, to: Instance, ask: verbatim_model::request::Ask) {
+        let number = ask.number;
+        if verbatim_win32::window::readability(window_handle(ask.window)).is_hung() {
+            self.follow_ups
+                .push(queued(QueueInput::RefusedHung(number)));
+            return;
+        }
+        let sent = match to.reader {
+            Reader::Listener => {
+                self.context
+                    .supervisor
+                    .send_to_listener(CoreToListener::Request(Box::new(ask)));
+                Ok(())
+            }
+            Reader::Outpost(_) => self.context.supervisor.send_to_outpost(
+                OutpostId(to.generation),
+                CoreToOutpost::Request(Box::new(ask)),
+            ),
+        };
+        if let Err(error) = sent {
+            tracing::warn!(%error, ?to, %number, "a request could not reach its reader");
+            self.follow_ups.push(queued(QueueInput::Answer {
+                from: to,
+                answer: Answer {
+                    number,
+                    outcome: Outcome::Ended,
+                    probes: Vec::new(),
+                    detail: String::new(),
+                },
+            }));
         }
     }
 
@@ -2241,63 +2061,17 @@ impl ReducerThread<'_> {
     }
 
     /// Handles the end of `outpost`, which watched `target_pid`, for
-    /// `reason`, and whether the supervisor gives the application a next
-    /// generation, `follows`.
-    fn on_outpost_ended(
-        &mut self,
-        outpost: OutpostId,
-        target_pid: Pid,
-        reason: EndReason,
-        follows: bool,
-    ) {
+    /// `reason`: Core's generation record hears its reader ended, answers
+    /// what was asked of it and decides its replacement, and the requests
+    /// of today's table asked of it end.
+    fn on_outpost_ended(&mut self, outpost: OutpostId, target_pid: Pid, reason: EndReason) {
         tracing::info!(%outpost, %target_pid, %reason, "outpost ended");
         // Everything it sent is ahead of its end: in the idle
         // barrier's round, its end is its answer.
         self.barrier.ended(outpost);
-        // When the supervisor gives the application a next generation,
-        // at once or after its backoff (`books/dev/src/reference/adr/0001-focus.md`, "Spare
-        // outposts"), and it is the attention application, or the
-        // focus's when that is another (a Settings page's content,
-        // inside ApplicationFrameHost's window), the replacement is
-        // asked for the focus once it is ready, which is taken
-        // silently if the user already heard it; the reducer's own
-        // view of attention decides, rather than the supervisor's,
-        // which follows it by a message. When none follows, the
-        // supervisor's `NotWatched` comes next, and ends what waits. A
-        // console host's outpost reports for the console's client. A
-        // given spare that failed before its `Ready` loses nothing: its
-        // application's held facts went to the next generation, which
-        // reports them, so nothing is asked. The supervisor sends a
-        // generation's end only after its start, in order on one port, so
-        // a generation ending is always live here; a miss is a logic bug,
-        // logged as an error.
-        let regenerated = self.regenerated.remove(&outpost);
-        let replaced = follows && !regenerated;
-        match self.live.application_of(outpost) {
-            Some(application)
-                if replaced
-                    && (self.state.attention() == Some(application)
-                        || self.state.focus_source() == Some(application)) =>
-            {
-                let replaced = self.wanted.want_focus_now(
-                    target_pid,
-                    FocusWanted {
-                        application,
-                        purpose: FocusPurpose::Plain,
-                        trace_id: TraceId::mint(),
-                    },
-                );
-                if let Some(replaced) = replaced {
-                    self.focus_unanswered(replaced, true);
-                }
-            }
-            Some(_) => {}
-            None => tracing::error!(
-                %outpost,
-                %target_pid,
-                "an outpost's end names no live generation, a logic bug"
-            ),
-        }
+        self.queue(QueueInput::ReaderEnded(outpost_instance(
+            target_pid, outpost,
+        )));
         if self.live.ended(outpost) {
             self.context
                 .outposts
@@ -2310,7 +2084,7 @@ impl ReducerThread<'_> {
             outpost,
         });
         for (asker, outcome) in self.requests.outpost_ended(outpost) {
-            self.deliver(asker, outcome);
+            requests::deliver(asker, outcome);
         }
         if let Some(server) = self.context.server_slot.get() {
             server.broadcast_outpost_ended(target_pid, reason.to_string());
@@ -2335,6 +2109,7 @@ impl ReducerThread<'_> {
             .map(instant_at)
             .into_iter()
             .chain(self.held_due.map(|(_, due)| due))
+            .chain(self.queue_due.map(instant_at))
             .min()
     }
 
@@ -2342,6 +2117,9 @@ impl ReducerThread<'_> {
     /// terminal's timer and the lock keys' reads on.
     fn expire(&mut self, now: Instant) {
         let shared = now_us();
+        if self.queue_due.take_if(|due| *due <= shared).is_some() {
+            self.queue(QueueInput::Due);
+        }
         if let Some((trace_id, _)) = self.held_due.take_if(|(_, due)| *due <= now) {
             self.apply(Input::HeldKeyDue {
                 trace_id,
@@ -2381,6 +2159,41 @@ impl ReducerThread<'_> {
             tracing::debug!(%error, %outpost, "a tree dump could not be withdrawn");
         }
     }
+}
+
+/// `input` for Core's event queue, arriving now.
+fn queued(input: QueueInput) -> Input {
+    Input::Queue {
+        trace_id: TraceId::mint(),
+        at_us: now_us(),
+        input,
+    }
+}
+
+/// The instance of `outpost`, the generation watching `target_pid`.
+fn outpost_instance(target_pid: Pid, outpost: OutpostId) -> Instance {
+    Instance {
+        reader: Reader::Outpost(target_pid),
+        generation: outpost.0,
+    }
+}
+
+/// The instance of the listener of generation `listener`.
+fn listener_instance(listener: OutpostId) -> Instance {
+    Instance {
+        reader: Reader::Listener,
+        generation: listener.0,
+    }
+}
+
+/// The window `window` names, as the Windows calls take it.
+fn window_handle(window: WindowHandle) -> isize {
+    isize::from_ne_bytes(window.0.to_ne_bytes())
+}
+
+/// `duration` in microseconds.
+fn micros(duration: Duration) -> u64 {
+    u64::try_from(duration.as_micros()).unwrap_or(u64::MAX)
 }
 
 /// Whether `who` is the tree dump named `ticket`.
@@ -2438,16 +2251,14 @@ fn reducer_loop(
         requests: RequestTable::default(),
         live: LiveOutposts::default(),
         wanted: wanted::Wanted::default(),
-        views: (None, BTreeSet::new()),
         focus_reported: BTreeSet::new(),
         focus_known: false,
         handled_input: 0,
         frames: context.supervisor.frames(),
         barrier: idle::IdleBarrier::default(),
-        regenerated: HashSet::new(),
         exit_sound: None,
-        held_keys: held_keys::HeldKeys::default(),
         held_due: None,
+        queue_due: None,
         marks: idle::HeldMarks::default(),
         follow_ups: Vec::new(),
         token,
@@ -2992,96 +2803,5 @@ mod tests {
             arrived,
             ["outpost message for 1", "key 7", "outpost message for 2"]
         );
-    }
-    /// Windows as a test describes them: the foreground thread's focus
-    /// window, the window in front, the ghosts and the hung windows they
-    /// stand in for, each window's owner, and the console windows' hosts.
-    struct FakeWindows {
-        focus: Option<isize>,
-        foreground: Option<isize>,
-        ghosts: &'static [(isize, isize)],
-        owners: &'static [(isize, u32)],
-        hosts: &'static [(isize, u32)],
-    }
-
-    impl WindowsLookup for FakeWindows {
-        fn focus_window(&self) -> Option<isize> {
-            self.focus
-        }
-
-        fn foreground_window(&self) -> Option<isize> {
-            self.foreground
-        }
-
-        fn hung_window_from_ghost(&self, hwnd: isize) -> Option<isize> {
-            self.ghosts
-                .iter()
-                .find_map(|&(ghost, hung)| (ghost == hwnd).then_some(hung))
-        }
-
-        fn owner(&self, hwnd: isize) -> Option<u32> {
-            self.owners
-                .iter()
-                .find_map(|&(window, pid)| (window == hwnd).then_some(pid))
-        }
-
-        fn provider(&self, hwnd: isize) -> Option<u32> {
-            self.hosts
-                .iter()
-                .find_map(|&(window, host)| (window == hwnd).then_some(host))
-                .or_else(|| self.owner(hwnd))
-        }
-    }
-
-    /// Verbatim+Tab goes to the process of the foreground thread's focus
-    /// window: Settings' page in `ApplicationFrameHost`'s frame answers from
-    /// `SystemSettings`; a ghost is mapped to the hung window it stands in
-    /// for; a console window is served by its console host for its client;
-    /// with no focus window, the window in front's; with neither, nowhere.
-    #[test]
-    fn verbatim_tab_is_routed_to_the_focus_windows_process() {
-        let settings = FakeWindows {
-            focus: Some(0x20),
-            foreground: Some(0x10),
-            ghosts: &[],
-            owners: &[(0x10, 5), (0x20, 7)],
-            hosts: &[],
-        };
-        assert_eq!(report_focus_target(&settings), Some((Pid(7), Some(Pid(7)))));
-        let frozen = FakeWindows {
-            focus: Some(0x30),
-            foreground: Some(0x30),
-            ghosts: &[(0x30, 0x40)],
-            owners: &[(0x30, 2), (0x40, 9)],
-            hosts: &[],
-        };
-        assert_eq!(report_focus_target(&frozen), Some((Pid(9), Some(Pid(9)))));
-        let console = FakeWindows {
-            focus: Some(0x50),
-            foreground: Some(0x50),
-            ghosts: &[],
-            owners: &[(0x50, 11)],
-            hosts: &[(0x50, 12)],
-        };
-        assert_eq!(
-            report_focus_target(&console),
-            Some((Pid(11), Some(Pid(12))))
-        );
-        let no_focus_window = FakeWindows {
-            focus: None,
-            ..settings
-        };
-        assert_eq!(
-            report_focus_target(&no_focus_window),
-            Some((Pid(5), Some(Pid(5))))
-        );
-        let nothing = FakeWindows {
-            focus: None,
-            foreground: None,
-            ghosts: &[],
-            owners: &[],
-            hosts: &[],
-        };
-        assert_eq!(report_focus_target(&nothing), None);
     }
 }

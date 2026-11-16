@@ -14,12 +14,8 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crossbeam_channel::Sender;
-use verbatim_model::protocol::{
-    FocusNow, FocusPurpose, QueryOutcome, QueryResult, RequestId, Requester, Responder,
-};
-use verbatim_model::{
-    Input, NodeSnapshot, NormalizedEvent, OutpostId, Pid, QueryId, TraceId, TreeNode, WindowFacts,
-};
+use verbatim_model::protocol::{QueryOutcome, QueryResult, RequestId, Requester, Responder};
+use verbatim_model::{Input, OutpostId, QueryId, TraceId, TreeNode};
 
 /// The answer a tree-dump request waits for: the walked tree and whether the
 /// walk was truncated, or a reason it failed.
@@ -53,14 +49,6 @@ pub(crate) enum Asker {
         ticket: DumpTicket,
         /// Where the answer goes.
         reply: Sender<DumpTreeResult>,
-    },
-    /// A focus query of application `source`, for `purpose`
-    /// ([`FocusPurpose`]), under `trace_id`: its answer re-enters the
-    /// reducer marked with its purpose ([`read_focus_inputs`]).
-    ReadFocus {
-        source: Pid,
-        trace_id: TraceId,
-        purpose: FocusPurpose,
     },
     /// The tray or taskbar list dialog's request for the shell's items,
     /// whose outcome goes to `deliver`: the items, or `None` for any
@@ -144,7 +132,7 @@ fn describe(outcome: &QueryOutcome) -> String {
 fn deliver_shell_item_position(
     deliver: Responder<verbatim_model::ShellCandidates>,
     outcome: QueryOutcome,
-) -> Vec<Input> {
+) {
     match outcome {
         QueryOutcome::Done(QueryResult::ShellItemPosition(found)) => deliver.answer(found),
         other => {
@@ -156,15 +144,11 @@ fn deliver_shell_item_position(
             drop(deliver);
         }
     }
-    Vec::new()
 }
 
 /// Hands a shell items query's outcome to the list dialog's `deliver`:
 /// the items, or `None` for any failure. Nothing re-enters the reducer.
-fn deliver_shell_items(
-    deliver: Responder<Vec<verbatim_gui::ShellItem>>,
-    outcome: QueryOutcome,
-) -> Vec<Input> {
+fn deliver_shell_items(deliver: Responder<Vec<verbatim_gui::ShellItem>>, outcome: QueryOutcome) {
     match outcome {
         QueryOutcome::Done(QueryResult::ShellItems(items)) => deliver.answer(items),
         other => {
@@ -176,13 +160,10 @@ fn deliver_shell_items(
             drop(deliver);
         }
     }
-    Vec::new()
 }
 
-/// Hands one outcome to its asker, returning the reducer inputs it
-/// produces: an answer to a dialog or the control plane is given here, and
-/// produces none.
-pub(crate) fn deliver(asker: Asker, outcome: QueryOutcome) -> Vec<Input> {
+/// Hands one outcome to its asker: a dialog or the control plane.
+pub(crate) fn deliver(asker: Asker, outcome: QueryOutcome) {
     match asker {
         Asker::DumpTree { reply, .. } => {
             let answer = match outcome {
@@ -193,135 +174,17 @@ pub(crate) fn deliver(asker: Asker, outcome: QueryOutcome) -> Vec<Input> {
             };
             // The requester may have timed out and dropped its receiver.
             let _ = reply.try_send(answer);
-            Vec::new()
         }
         Asker::ShellItems { deliver } => deliver_shell_items(deliver, outcome),
         Asker::ShellItemPosition { deliver } => deliver_shell_item_position(deliver, outcome),
-        Asker::ReadFocus {
-            source,
-            trace_id,
-            purpose,
-        } => read_focus_inputs((source, trace_id, purpose), outcome),
-    }
-}
-
-/// The reducer inputs the outcome of a focus query of `source`, asked for
-/// `purpose` under `trace_id`, becomes, each marked with its purpose: for
-/// a plain query, the focus and its window ([`focus_inputs`]); for a fake
-/// focus or the desktop's return, only the focused control, as NVDA's fake
-/// focus and `_handleUserDesktop` queue a focus on it and nothing for its
-/// window; for Verbatim+Tab, the control or, with none, the window, and
-/// with neither or no answer at all, its end unanswered, abandoned or not
-/// ([`Input::ReadFocusUnanswered`]), since Core waits for every press's
-/// answer.
-pub(crate) fn read_focus_inputs(
-    (source, trace_id, purpose): (Pid, TraceId, FocusPurpose),
-    outcome: QueryOutcome,
-) -> Vec<Input> {
-    let focus = match outcome {
-        QueryOutcome::Done(QueryResult::Focus(focus)) => focus,
-        other => {
-            tracing::warn!(reason = describe(&other), %source, ?purpose, "focus query failed");
-            return match purpose {
-                FocusPurpose::Report => vec![Input::ReadFocusUnanswered {
-                    trace_id,
-                    abandoned: other == QueryOutcome::Abandoned,
-                }],
-                FocusPurpose::Plain | FocusPurpose::Fake | FocusPurpose::Again => Vec::new(),
-            };
-        }
-    };
-    match purpose {
-        FocusPurpose::Plain => focus_inputs((source, trace_id, purpose), focus),
-        FocusPurpose::Fake | FocusPurpose::Again => focus_inputs(
-            (source, trace_id, purpose),
-            FocusNow {
-                window: None,
-                ..focus
-            },
-        ),
-        FocusPurpose::Report => {
-            let inputs = focus_inputs((source, trace_id, purpose), focus);
-            if inputs.is_empty() {
-                vec![Input::ReadFocusUnanswered {
-                    trace_id,
-                    abandoned: false,
-                }]
-            } else {
-                inputs
-            }
-        }
-    }
-}
-
-/// The reducer inputs a focus-now answer becomes: a focus on the focused
-/// control, with its ancestors, or, when the application has no focused
-/// control, a foreground change to its window, the window then being the
-/// focus. NVDA, starting, takes the system's focus and announces it with
-/// its newly entered ancestors by the rules for any focus, the foreground
-/// window among them only when it is presentable; it does not speak the
-/// foreground window as a focus of its own. So the window is not reported
-/// before a control: the control's focus in the system's foreground window
-/// moves attention and the foreground with it, cuts speech off as a new
-/// top-level window does, and announces the window only as an entered
-/// ancestor (a desktop's Program Manager, a pane, says nothing, as NVDA's
-/// captures of 2026-10-11 show). A control without window facts of its own
-/// takes the window's. The same rules as live events then apply, so a
-/// report of the focus the user already heard after a replacement is taken
-/// silently.
-fn focus_inputs(
-    (source, trace_id, purpose): (Pid, TraceId, FocusPurpose),
-    focus: FocusNow,
-) -> Vec<Input> {
-    let event = |node: NodeSnapshot,
-                 window: Option<WindowFacts>,
-                 foreground,
-                 ancestors: Vec<NodeSnapshot>,
-                 selected_child,
-                 text| {
-        Input::Event {
-            trace_id,
-            observed_at_us: focus.observed_at_us,
-            source,
-            backend: node.backend,
-            window,
-            event: NormalizedEvent::FocusChanged {
-                node,
-                whole_window: foreground,
-                ancestors,
-                selected_child,
-                text,
-                earlier: None,
-                group: None,
-                answers: None,
-                first_cached_ancestor: None,
-            },
-            purpose: Some(purpose),
-        }
-    };
-    match (focus.focus, focus.window) {
-        (Some(control), window) => vec![event(
-            control.node,
-            control.window.or(window.map(|(_, facts)| facts)),
-            false,
-            control.ancestors,
-            control.selected_child,
-            control.text,
-        )],
-        (None, Some((window, facts))) => {
-            vec![event(window, Some(facts), true, Vec::new(), None, None)]
-        }
-        (None, None) => Vec::new(),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use crossbeam_channel::bounded;
-    use verbatim_model::protocol::{DumpedTree, FocusedControl};
-    use verbatim_model::{
-        Backend, FocusText, NodeDetails, NodeId, OutpostId, Role, StateSet, WindowHandle,
-    };
+    use verbatim_model::protocol::DumpedTree;
+    use verbatim_model::{Backend, NodeDetails, NodeId, NodeSnapshot, OutpostId, Role, StateSet};
 
     use super::*;
 
@@ -332,11 +195,10 @@ mod tests {
         id: verbatim_model::protocol::RequestId,
         outpost: OutpostId,
         outcome: QueryOutcome,
-    ) -> Vec<Input> {
-        table
-            .finish(id, outpost, outcome)
-            .map(|(asker, outcome)| deliver(asker, outcome))
-            .unwrap_or_default()
+    ) {
+        if let Some((asker, outcome)) = table.finish(id, outpost, outcome) {
+            deliver(asker, outcome);
+        }
     }
 
     fn dump(reply: Sender<DumpTreeResult>) -> Asker {
@@ -373,7 +235,7 @@ mod tests {
             QueryOutcome::Done(QueryResult::ShellItems(Vec::new())),
         );
         for (asker, outcome) in table.outpost_ended(OutpostId(1)) {
-            assert_eq!(deliver(asker, outcome), [] as [Input; 0]);
+            deliver(asker, outcome);
         }
         assert_eq!(
             *outcomes.lock().expect("outcomes"),
@@ -508,334 +370,5 @@ mod tests {
         );
         let (root, _) = new_rx.try_recv().expect("answered").expect("a tree");
         assert_eq!(root.snapshot.name.as_deref(), Some("new"));
-    }
-
-    fn notepad_facts(under_active_window: Option<bool>) -> WindowFacts {
-        WindowFacts {
-            top_level: WindowHandle(0x10),
-            root_owner: WindowHandle(0x10),
-            topmost: false,
-            under_active_window,
-            in_foreground: true,
-            class: "Notepad".to_owned(),
-            application: String::new(),
-            alt_held: false,
-            foreground_is_shell: false,
-            foreground_window: verbatim_model::WindowHandle(0),
-        }
-    }
-
-    /// A focus-now answer with a focused control is that control's focus
-    /// alone, with its ancestors and what its text read found: the
-    /// foreground window is not spoken as a focus of its own, as NVDA does
-    /// not speak it when it starts, and is announced only as an entered
-    /// ancestor when it is presentable.
-    #[test]
-    fn a_focus_now_answer_with_a_control_is_the_controls_focus_alone() {
-        let mut table = RequestTable::default();
-        let trace_id = TraceId::mint();
-        let id = table.begin(
-            OutpostId(1),
-            Asker::ReadFocus {
-                source: Pid(5),
-                trace_id,
-                purpose: FocusPurpose::Plain,
-            },
-        );
-        let window = node(Role::Window, "Untitled - Notepad");
-        // The control's own window facts, told apart from the window's.
-        let control_facts = notepad_facts(Some(true));
-        let control = node(Role::Button, "OK");
-        let ancestors = vec![node(Role::Pane, "Buttons")];
-        let selected_child = Some(node(Role::ListItem, "First"));
-        let answer = FocusNow {
-            window: Some((window, notepad_facts(None))),
-            focus: Some(FocusedControl {
-                node: control.clone(),
-                ancestors: ancestors.clone(),
-                selected_child: selected_child.clone(),
-                window: Some(control_facts.clone()),
-                text: Some(Box::new(FocusText::NoText)),
-            }),
-            observed_at_us: 1234,
-        };
-        let inputs = finish(
-            &mut table,
-            id,
-            OutpostId(1),
-            QueryOutcome::Done(QueryResult::Focus(answer)),
-        );
-        assert_eq!(
-            inputs,
-            [Input::Event {
-                trace_id,
-                observed_at_us: 1234,
-                source: Pid(5),
-                backend: Backend::Uia,
-                window: Some(control_facts),
-                event: NormalizedEvent::FocusChanged {
-                    node: control,
-                    whole_window: false,
-                    ancestors,
-                    selected_child,
-                    text: Some(Box::new(FocusText::NoText)),
-                    earlier: None,
-                    group: None,
-                    answers: None,
-                    first_cached_ancestor: None,
-                },
-                purpose: Some(FocusPurpose::Plain),
-            }]
-        );
-    }
-
-    /// With no focused control, the foreground window is the focus, a
-    /// foreground change; a control without window facts of its own takes
-    /// the foreground window's.
-    #[test]
-    fn a_focus_now_answer_without_a_control_is_the_windows_focus() {
-        let mut table = RequestTable::default();
-        let trace_id = TraceId::mint();
-        let begin = |table: &mut RequestTable| {
-            table.begin(
-                OutpostId(1),
-                Asker::ReadFocus {
-                    source: Pid(5),
-                    trace_id,
-                    purpose: FocusPurpose::Plain,
-                },
-            )
-        };
-        let window = node(Role::Window, "Untitled - Notepad");
-        let facts = notepad_facts(None);
-        let id = begin(&mut table);
-        let inputs = finish(
-            &mut table,
-            id,
-            OutpostId(1),
-            QueryOutcome::Done(QueryResult::Focus(FocusNow {
-                window: Some((window.clone(), facts.clone())),
-                focus: None,
-                observed_at_us: 1234,
-            })),
-        );
-        assert_eq!(
-            inputs,
-            [Input::Event {
-                trace_id,
-                observed_at_us: 1234,
-                source: Pid(5),
-                backend: Backend::Uia,
-                window: Some(facts.clone()),
-                event: NormalizedEvent::FocusChanged {
-                    node: window.clone(),
-                    whole_window: true,
-                    ancestors: Vec::new(),
-                    selected_child: None,
-                    text: None,
-                    earlier: None,
-                    group: None,
-                    answers: None,
-                    first_cached_ancestor: None,
-                },
-                purpose: Some(FocusPurpose::Plain),
-            }]
-        );
-
-        let control = node(Role::Button, "OK");
-        let id = begin(&mut table);
-        let inputs = finish(
-            &mut table,
-            id,
-            OutpostId(1),
-            QueryOutcome::Done(QueryResult::Focus(FocusNow {
-                window: Some((window, facts.clone())),
-                focus: Some(FocusedControl {
-                    node: control.clone(),
-                    ancestors: Vec::new(),
-                    selected_child: None,
-                    window: None,
-                    text: None,
-                }),
-                observed_at_us: 1234,
-            })),
-        );
-        assert_eq!(
-            inputs,
-            [Input::Event {
-                trace_id,
-                observed_at_us: 1234,
-                source: Pid(5),
-                backend: Backend::Uia,
-                window: Some(facts),
-                event: NormalizedEvent::FocusChanged {
-                    node: control,
-                    whole_window: false,
-                    ancestors: Vec::new(),
-                    selected_child: None,
-                    text: None,
-                    earlier: None,
-                    group: None,
-                    answers: None,
-                    first_cached_ancestor: None,
-                },
-                purpose: Some(FocusPurpose::Plain),
-            }]
-        );
-    }
-
-    #[test]
-    fn a_focus_now_answer_outside_the_foreground_is_only_a_focus() {
-        let mut table = RequestTable::default();
-        let trace_id = TraceId::mint();
-        let id = table.begin(
-            OutpostId(1),
-            Asker::ReadFocus {
-                source: Pid(5),
-                trace_id,
-                purpose: FocusPurpose::Plain,
-            },
-        );
-        let control = node(Role::Button, "OK");
-        let answer = FocusNow {
-            window: None,
-            focus: Some(FocusedControl {
-                node: control.clone(),
-                ancestors: Vec::new(),
-                selected_child: None,
-                window: None,
-                text: None,
-            }),
-            observed_at_us: 1234,
-        };
-        let inputs = finish(
-            &mut table,
-            id,
-            OutpostId(1),
-            QueryOutcome::Done(QueryResult::Focus(answer)),
-        );
-        assert_eq!(
-            inputs,
-            [Input::Event {
-                trace_id,
-                observed_at_us: 1234,
-                source: Pid(5),
-                backend: Backend::Uia,
-                window: None,
-                event: NormalizedEvent::FocusChanged {
-                    node: control,
-                    whole_window: false,
-                    ancestors: Vec::new(),
-                    selected_child: None,
-                    text: None,
-                    earlier: None,
-                    group: None,
-                    answers: None,
-                    first_cached_ancestor: None,
-                },
-                purpose: Some(FocusPurpose::Plain),
-            }]
-        );
-    }
-
-    /// A focus-now answer, asked for at the start or for a fake focus,
-    /// reaches Core with its stamp in microseconds, by
-    /// which Core orders it against another application's focus.
-    #[test]
-    fn a_focus_now_answer_reaches_core_with_its_microseconds() {
-        let mut table = RequestTable::default();
-        let trace_id = TraceId::mint();
-        let control = node(Role::Button, "OK");
-        for asker in [
-            Asker::ReadFocus {
-                source: Pid(5),
-                trace_id,
-                purpose: FocusPurpose::Plain,
-            },
-            Asker::ReadFocus {
-                source: Pid(5),
-                trace_id,
-                purpose: FocusPurpose::Fake,
-            },
-        ] {
-            let id = table.begin(OutpostId(1), asker);
-            let answer = FocusNow {
-                window: None,
-                focus: Some(FocusedControl {
-                    node: control.clone(),
-                    ancestors: Vec::new(),
-                    selected_child: None,
-                    window: None,
-                    text: None,
-                }),
-                observed_at_us: 1_234_567,
-            };
-            let inputs = finish(
-                &mut table,
-                id,
-                OutpostId(1),
-                QueryOutcome::Done(QueryResult::Focus(answer)),
-            );
-            let stamps: Vec<_> = inputs
-                .iter()
-                .map(|input| match input {
-                    Input::Event { observed_at_us, .. } => *observed_at_us,
-                    other => panic!("not a focus: {other:?}"),
-                })
-                .collect();
-            assert_eq!(stamps, [1_234_567]);
-        }
-    }
-    /// A fake focus's answer the outpost refused, with no window and no
-    /// control, is no input: nothing is spoken and attention does not move.
-    #[test]
-    fn a_refused_fake_focus_answer_is_no_input() {
-        let refused = FocusNow {
-            window: None,
-            focus: None,
-            observed_at_us: 1234,
-        };
-        assert_eq!(
-            read_focus_inputs(
-                (Pid(5), TraceId::from_raw(3), FocusPurpose::Fake),
-                QueryOutcome::Done(QueryResult::Focus(refused)),
-            ),
-            []
-        );
-    }
-
-    /// Verbatim+Tab's query ends in Core whatever its outcome: abandoned at
-    /// its deadline, silently; gone, failed or with no focus, saying "No
-    /// focus".
-    #[test]
-    fn a_report_focus_query_with_no_answer_is_told_to_core() {
-        let trace_id = TraceId::from_raw(3);
-        let unanswered =
-            |outcome| read_focus_inputs((Pid(5), trace_id, FocusPurpose::Report), outcome);
-        assert_eq!(
-            unanswered(QueryOutcome::Abandoned),
-            [Input::ReadFocusUnanswered {
-                trace_id,
-                abandoned: true,
-            }]
-        );
-        let nothing = FocusNow {
-            window: None,
-            focus: None,
-            observed_at_us: 1234,
-        };
-        for outcome in [
-            QueryOutcome::Gone,
-            QueryOutcome::Failed("no client".to_owned()),
-            QueryOutcome::Done(QueryResult::Focus(nothing)),
-        ] {
-            assert_eq!(
-                unanswered(outcome),
-                [Input::ReadFocusUnanswered {
-                    trace_id,
-                    abandoned: false,
-                }]
-            );
-        }
     }
 }

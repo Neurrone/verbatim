@@ -185,14 +185,6 @@ impl LiveOutposts {
             .map(|generation| generation.live().target_pid)
     }
 
-    /// The process whose outpost serves the application `pid`: the target
-    /// of the newest live generation reporting for it, else `pid` itself.
-    pub(crate) fn target_for(&self, pid: Pid) -> Pid {
-        self.newest(pid)
-            .and_then(|outpost| self.outposts.get(&outpost))
-            .map_or(pid, |generation| generation.live().target_pid)
-    }
-
     /// The newest live generation serving the application `pid`, ready or
     /// not.
     pub(crate) fn newest(&self, pid: Pid) -> Option<OutpostId> {
@@ -285,10 +277,8 @@ mod tests {
         live.reports_for(OutpostId(3), Pid(20));
         assert_eq!(live.ready(Pid(20)), Some(OutpostId(3)));
         assert_eq!(live.newest(Pid(20)), Some(OutpostId(3)));
-        assert_eq!(live.target_for(Pid(20)), Pid(30));
         assert_eq!(live.application_of(OutpostId(3)), Some(Pid(20)));
         assert_eq!(live.application_of(OutpostId(4)), Some(Pid(20)));
-        assert_eq!(live.target_for(Pid(41)), Pid(41), "no outpost serves it");
     }
 
     #[test]

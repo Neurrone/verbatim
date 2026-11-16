@@ -313,8 +313,15 @@ fn a_round_asks_the_listener_then_every_outpost_behind_the_facts_before_it() {
     }
 
     // Round 1: the listener's pipe ends on the query, which counts as its
-    // answer; there is no outpost to ask. Its replacement starts after.
+    // answer; there is no outpost to ask. Core hears it ended, and its
+    // replacement starts after.
     supervisor.query_idle(1);
+    match next(&events) {
+        OutpostMessage::ListenerEnded { listener, .. } => {
+            assert_eq!(listener, OutpostId(1), "the first listener ended");
+        }
+        other => panic!("the supervisor said {other:?}, not that the listener ended"),
+    }
     queried(&events, 1, &[]);
     match next(&events) {
         OutpostMessage::ListenerReady {

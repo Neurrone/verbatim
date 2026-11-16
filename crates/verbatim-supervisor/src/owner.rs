@@ -16,7 +16,7 @@
 
 #![forbid(unsafe_code)]
 
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, VecDeque};
 use std::io;
 use std::os::windows::io::OwnedHandle;
 use std::sync::Arc;
@@ -40,7 +40,7 @@ use super::frames::Frame;
 use super::generation::{Generation, Heartbeat, Next, Notice, Removed, Run};
 use super::policy::{
     Backoff, HeldFact, HeldFacts, Liveness, Parked, Spares, WedgeLimits, WedgeReason, due_starts,
-    may_start_outpost, retirement_decision,
+    may_start_outpost,
 };
 use super::process::{self, Launched, Role};
 use super::relay::{COMPLETIONS_PER_WAIT, CommandPipes, Inbox, Mailbox, Relay, Source, Taken};
@@ -71,11 +71,6 @@ pub(super) enum OwnerEvent {
     /// From a test: read the time the failures' backoffs are judged by
     /// from this clock from now on ([`Owner::backoff_clock`]).
     BackoffClock(BackoffClock),
-    /// From the app: the views derived from the reducer state.
-    Views {
-        attention: Option<Pid>,
-        holding: BTreeSet<OutpostId>,
-    },
 
     /// Read from the listener's pipe: a focus fact to route.
     Fact {
@@ -119,9 +114,13 @@ pub(super) enum OwnerEvent {
     Retired(Ending),
     /// From the app: run the idle barrier's round through the children.
     IdleRound(u64),
-    /// From the app: Core's live re-read for the listener
-    /// ([`CoreToListener::LiveReread`]).
-    LiveReread(CoreToListener),
+    /// From the app: a command for the listener, Core's live re-read
+    /// ([`CoreToListener::LiveReread`]) or a request or cancel of Core's
+    /// event queue.
+    ToListener(CoreToListener),
+    /// From the app: end this outpost generation, as Core's generation
+    /// record asks.
+    EndOutpost(OutpostId),
     /// From the app: Verbatim is exiting. Every child is shut down, and the
     /// summary of every ending in Verbatim's life is sent back once all
     /// have ended; the owner then ends.
@@ -178,9 +177,6 @@ struct Record {
     generation: Generation<OutpostChild>,
     /// Facts that arrived before `Ready`, released in order on `Ready`.
     held: HeldFacts,
-    /// When the application last held attention, on the run's shared
-    /// clock.
-    last_attention_us: u64,
     /// The idle barrier's round, held behind the held facts until `Ready`.
     idle_query: Option<u64>,
     /// When the current generation was given to the application or
@@ -314,8 +310,6 @@ struct Owner {
     /// no other ([`Target`]), which outlives the record, so a process id is
     /// never reused while an outpost or a reading thread serves it.
     apps: BTreeMap<Pid, App>,
-    attention: Option<Pid>,
-    holding: BTreeSet<OutpostId>,
     own_pid: Pid,
     /// How long an ending child has to exit after the shutdown message.
     shutdown_limit: Duration,
@@ -393,8 +387,6 @@ pub(super) fn start(setup: Setup) -> io::Result<()> {
         records: BTreeMap::new(),
         listener: None,
         apps: BTreeMap::new(),
-        attention: None,
-        holding: BTreeSet::new(),
         own_pid: Pid(std::process::id()),
         ignored,
         idle: None,
@@ -659,6 +651,10 @@ impl Owner {
     /// focus facts, the window in front, pongs, and `Ready` are handled as
     /// the owner's events;
     /// faults are logged.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one arm per message the listener sends, with no wildcard"
+    )]
     fn listener_message(
         &mut self,
         outpost: OutpostId,
@@ -750,9 +746,15 @@ impl Owner {
                 integrity,
             }),
             ListenerToCore::Ready { .. } => OwnerEvent::Ready(outpost),
-            // Not yet carried to Core's event queue: today's routed facts,
-            // sent beside the tells, are what Core hears until then.
-            ListenerToCore::Tell(_) | ListenerToCore::Answer(_) => return,
+            // Core's event queue judges them, the listener's generation
+            // among them.
+            message @ (ListenerToCore::Tell(_) | ListenerToCore::Answer(_)) => {
+                self.outbox.send(OutpostMessage::Listener {
+                    listener: outpost,
+                    message: Box::new(message),
+                });
+                return;
+            }
             ListenerToCore::IdleAnswer { round } => {
                 self.listener_idle(outpost, round);
                 return;
@@ -774,23 +776,29 @@ impl Owner {
             OwnerEvent::Shutdown(reply) => self.shut_down_all(reply),
             OwnerEvent::BackoffClock(clock) => self.backoff_clock = clock,
             OwnerEvent::EnsureSpawned(pid) => {
-                if self.shutting_down.is_none() && !self.records.contains_key(&pid) {
-                    let _ = self.start_outpost(pid, None);
+                if self.shutting_down.is_some() {
+                    return;
+                }
+                match self.records.get(&pid) {
+                    None => {
+                        let _ = self.start_outpost(pid, None);
+                    }
+                    // Core asks for an outpost the owner already runs: it is
+                    // reported again, so Core's record takes it.
+                    Some(record) => {
+                        if let Some(outpost) = record.generation.outpost() {
+                            let ready = record.generation.is_ready();
+                            self.outbox.send(OutpostMessage::Running {
+                                outpost,
+                                target_pid: pid,
+                                ready,
+                                sealed: Sealed::new(),
+                            });
+                        }
+                    }
                 }
             }
 
-            OwnerEvent::Views { attention, holding } => {
-                if attention != self.attention {
-                    let now = now_us();
-                    for pid in [self.attention, attention].into_iter().flatten() {
-                        if let Some(record) = self.records.get_mut(&pid) {
-                            record.last_attention_us = now;
-                        }
-                    }
-                    self.attention = attention;
-                }
-                self.holding = holding;
-            }
             OwnerEvent::Fact { .. } if self.shutting_down.is_some() => {}
             OwnerEvent::Fact {
                 trace_id,
@@ -826,12 +834,21 @@ impl Owner {
             OwnerEvent::Pong { outpost, parked } => {
                 if let Some(record) = self.record_of(outpost) {
                     record.generation.ponged(now_us(), parked);
+                    let target_pid = self.pid_of(outpost);
+                    self.outbox.send(OutpostMessage::Pong {
+                        outpost,
+                        target_pid,
+                    });
                 } else if let Some(listener) = self
                     .listener
                     .as_mut()
                     .filter(|listener| listener.outpost == outpost)
                 {
                     listener.liveness.ponged(now_us());
+                    self.outbox.send(OutpostMessage::Pong {
+                        outpost,
+                        target_pid: None,
+                    });
                 }
             }
             OwnerEvent::Unreadable(outpost) => self.on_pipe_closed(outpost),
@@ -841,7 +858,13 @@ impl Owner {
                 self.summary.count(ending);
             }
             OwnerEvent::IdleRound(round) => self.idle_round(round),
-            OwnerEvent::LiveReread(command) => self.tell_listener(command),
+            OwnerEvent::ToListener(command) => self.tell_listener(command),
+            OwnerEvent::EndOutpost(outpost) => {
+                if let Some(pid) = self.pid_of(outpost) {
+                    self.end(pid, EndReason::Retired);
+                    self.release_target(pid);
+                }
+            }
         }
     }
 
@@ -984,7 +1007,6 @@ impl Owner {
             Record {
                 generation: Generation::new(),
                 held,
-                last_attention_us: now,
                 idle_query: None,
                 since_us: now,
                 backoff: Backoff::default(),
@@ -1379,6 +1401,10 @@ impl Owner {
             pending: Vec::new(),
             exits_told: BTreeMap::new(),
         });
+        self.outbox.send(OutpostMessage::ListenerStarted {
+            listener: outpost,
+            sealed: Sealed::new(),
+        });
         self.launch(outpost, Role::Listener);
     }
 
@@ -1683,6 +1709,7 @@ impl Owner {
             tracing::info!(%outpost, "focus listener ready");
             let replacement = listener.replacement;
             self.outbox.send(OutpostMessage::ListenerReady {
+                listener: outpost,
                 replacement,
                 sealed: Sealed::new(),
             });
@@ -2004,9 +2031,17 @@ impl Owner {
     /// Ends the focus listener, shutting its process down cleanly, for
     /// `why`.
     fn end_listener(&mut self, why: &str) {
-        if let Some(listener) = self.listener.take()
-            && let Some(child) = listener.child.into_running()
-        {
+        let Some(listener) = self.listener.take() else {
+            return;
+        };
+        // Core answers what it asked of the listener; at exit nothing waits.
+        if self.shutting_down.is_none() {
+            self.outbox.send(OutpostMessage::ListenerEnded {
+                listener: listener.outpost,
+                sealed: Sealed::new(),
+            });
+        }
+        if let Some(child) = listener.child.into_running() {
             self.retire_child(
                 child,
                 format!("focus listener {}", listener.outpost),
@@ -2116,38 +2151,12 @@ impl Owner {
         }
     }
 
-    /// Retires every outpost whose application has not held attention for
-    /// the retirement's idle time ([`crate::Retirement::idle`], two
-    /// minutes) and in which Core holds no nodes. Core's own outpost is
-    /// never retired: its next menu would otherwise spawn it cold.
+    /// Closes the books of applications that have exited: Core's
+    /// generation record retires idle outposts
+    /// ([`super::Supervisor::end_outpost`]).
     fn sweep(&mut self) {
         if self.shutting_down.is_some() {
             return;
-        }
-        let now = now_us();
-        let idle = self.timings.retirement.idle;
-        let retiring: Vec<Pid> = self
-            .records
-            .iter()
-            .filter(|(pid, record)| {
-                **pid != self.own_pid
-                    && record.generation.child().is_some()
-                    && retirement_decision(
-                        record.last_attention_us,
-                        now,
-                        idle,
-                        self.attention == Some(**pid),
-                        record
-                            .generation
-                            .outpost()
-                            .is_some_and(|outpost| self.holding.contains(&outpost)),
-                    )
-            })
-            .map(|(pid, _)| *pid)
-            .collect();
-        for pid in retiring {
-            self.end(pid, EndReason::Retired);
-            self.release_target(pid);
         }
         // Applications whose failed outposts' replacements wait for their
         // backoff, and which have since exited.

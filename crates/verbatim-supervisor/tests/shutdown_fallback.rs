@@ -78,6 +78,12 @@ fn a_child_that_does_not_exit_in_time_is_killed_and_the_kill_is_reported() {
         std::sync::Arc::default(),
     )
     .expect("the supervisor starts");
+    // The listener's start, which Core's generation record takes, comes
+    // first.
+    assert!(matches!(
+        events.recv_timeout(READY_TIMEOUT),
+        Ok(OutpostMessage::ListenerStarted { .. })
+    ));
     match events.recv_timeout(READY_TIMEOUT) {
         Ok(OutpostMessage::ListenerReady {
             replacement: false, ..

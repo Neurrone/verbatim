@@ -173,7 +173,6 @@ fn an_outpost_is_never_started_or_replaced_for_an_application_that_has_exited() 
         .spawn()
         .expect("the application starts");
     let target_pid = Pid(application.id());
-    supervisor.note_views(Some(target_pid), std::collections::BTreeSet::new());
     supervisor.ensure_spawned(target_pid);
     let outpost = match next(&events) {
         OutpostMessage::Started {
@@ -307,7 +306,6 @@ fn an_end_the_app_refuses_for_now_still_comes_before_its_replacement() {
         .spawn()
         .expect("the application starts");
     let target_pid = Pid(application.id());
-    supervisor.note_views(Some(target_pid), std::collections::BTreeSet::new());
     supervisor.ensure_spawned(target_pid);
     let outpost = started_and_ready(&events, target_pid);
 
@@ -413,7 +411,6 @@ fn a_replacement_waiting_out_its_backoff_is_not_started_for_an_application_that_
         .spawn()
         .expect("the application starts");
     let target_pid = Pid(application.id());
-    supervisor.note_views(Some(target_pid), std::collections::BTreeSet::new());
     supervisor.ensure_spawned(target_pid);
     let outpost = started_and_ready(&events, target_pid);
     // The first failure is replaced at once; the second waits a second.
@@ -423,10 +420,11 @@ fn a_replacement_waiting_out_its_backoff_is_not_started_for_an_application_that_
     drop(application.stdin.take());
     let status = application.wait().expect("the application exits");
     assert!(status.success(), "the application exited with {status}");
-    // The second failure's backoff, a second, ends; the views wake the
-    // supervisor to decide at once.
+    // The second failure's backoff, a second, ends; the clock given again
+    // wakes the supervisor to decide at once.
     moved.store(1_000_000, Ordering::SeqCst);
-    supervisor.note_views(Some(target_pid), std::collections::BTreeSet::new());
+    let clock_moved = Arc::clone(&moved);
+    supervisor.set_backoff_clock(Arc::new(move || start + clock_moved.load(Ordering::SeqCst)));
     match next(&events) {
         OutpostMessage::NotWatched {
             target_pid: gone, ..
