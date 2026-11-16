@@ -128,144 +128,38 @@ guide maps those behaviors onto the crate's types and modules.
   is in microseconds on the run's shared clock. `EndReason` is why a
   generation ended; `Received` is when verbatim.exe took in a request it
   relays.
-- `requests::RequestTable<A>`: the one owner of each query the shell
-  sends an outpost for its own askers and of its one outcome, generic over
-  who asked (below, "The request table"). `SrState::outstanding_queries`
-  is the count of the reducer's own queries the idle barrier waits for
-  (below, "Core's queries").
+## Core's requests
 
-## Core's queries
+Every request Core makes of a reader is recorded in the event queue's
+request table (`crates/verbatim-core/src/event_queue/table.rs`; Table 2 of
+`docs/design/readers-tell-core-asks-build1.md`), from its asking to its one
+ending, under the request number it goes out with. An entry holds the
+reader asked, the window it names, when Core stops waiting for it (13
+seconds for a focus read's whole chain, 11 for any other), the request and
+its owner: the front entry's function, an asker outside the queue (a tree
+dump, the shell's item lists), Core itself (`Follow`), or Core's facts by
+a token (a terminal's output reads and baseline).
 
-Every query the reducer asks of an outpost is recorded in one field of `SrState`, `queries` (`src/queries.rs`), from
-its request to its one ending, under the `QueryId` its request goes out
-as (`protocol::RequestId::reducer`). An entry holds the outpost asked,
-the trace its request runs under, who answers it (`Asked::Read`, which
-the idle barrier waits for), and what its answer continues (`Then`).
+- A request is waiting for its reader, out to one instance of it, or no
+  longer awaited. An answered request leaves the table, so a later answer
+  naming it finds nothing and is dropped.
+- One ending each, handed back with its owner: its reader's answer, taken
+  only from the instance it went to; "not responding" when the shell
+  refused to send it to a hung window; "ended" when its reader ended; or
+  no longer awaited, at its due time, when the shell's live check finds
+  its window hung, at a foreground change that leaves its window behind,
+  or when a later entry withdraws it. A request no
+  longer awaited that went out is kept by its number and instance only so
+  that its late answer is dropped, and forgotten when that instance ends.
+- Only the front entry may have a request out; its function is paused at
+  the request and resumed with the outcome, decoded once as the request's
+  reply type, so no paused function outlives its entry.
+- The table also keeps the recovery set, the windows found hung, which the
+  shell checks every half second until each answers again.
 
-- One way to ask: `Queries::ask(asking, then)` records the query and
-  returns the request's effect (`Effect::Fetch`, `Effect::Text` or
-  `Effect::Activate`).
-- One ending each, after which the continuation runs once, routed by the
-  entry's `then` (`queries::ended`): the outpost's answer,
-  `Input::Answered`, taken only from the outpost asked (`queries::answered`); the outpost's end, inside
-  `Input::OutpostEnded`, where every entry still open there ends "gone" in
-  number order, under its own trace or the end's (`outpost_gone`); its
-  owner's withdrawal, the held key's read at its deadline
-  (`Queries::withdraw_kept`, `Effect::Withdraw`). An answer with no
-  entry is dropped.
-- The outcome becomes the result the entry's kind takes: a navigation's
-  `FetchResult` (`Gone` for a gone node, `Unanswered` for any failure), an
-  activation's action, said "No action" for a failure and nothing for an
-  abandoned one, which includes one refused because its window is hung, or a `TextReply` (`Gone`, or `Unanswered` for any
-  failure).
-- A query superseded or cleared is turned to `Then::Nothing`
-  (`Queries::forget`): its entry stays until its answer, which runs
-  nothing, so the idle barrier still waits for a superseded read.
-- A terminal's full reads are not in this table: the focused terminal's
-  reads are Core's own requests awaited by its facts, tagged with the
-  model's node and generation, which each model gets from a counter kept
-  with the models (`Terminals`), so a model made again for the same node
-  takes none of its predecessor's answers ("Core's terminal model").
-- `reduce` ends each transition by setting the trace of the queries made
-  in it to the trace the shell runs their requests under: the key's inside
-  `Effect::ForKey`, else the input's (`set_traces`).
-- `held_nodes` takes the node a navigation starts from and the nodes of
-  the caret keys', text commands' and held keys' entries; an entry with
-  `Nothing` holds nothing.
-
-What the shell and the outposts guarantee the reducer here, which its
-generated test relies on and gives no stronger: the focus listener's
-foreground stamps never decrease, though a focus may be stamped as late as
-one; answers do not come in the order of their requests in general, and an
-answer may come from another outpost than the one asked or come again,
-both of which Core drops; every outpost generation of one application
-reports its process; an outpost generation's id is never given again,
-and once it has ended (`Input::OutpostEnded`) nothing more of it comes.
-That Core never asks an ended generation is checked, not assumed.
-
-Tests: the query table's unit tests, every sequence of up to three steps
-from a text box, a held key's watch and a console, enumerated against the
-table's invariants (`crates/verbatim-core/src/queries/tests.rs`), and a generated test of the
-reducer's slice of queries, focus lifecycle and generations against a
-reference model of sets and lists (`crates/verbatim-core/src/queries/generated.rs`): lists of actions run
-through proptest's `TestRunner::run` under a fixed seed and 300 cases
-(about 6.8 s in a debug build), each made valid against the model as it
-is applied. The actions are focuses from the oldest or newest live
-generation on a text box, a button or the terminal, with what the reader
-read of the element it held, in the front's window or with no window
-facts, observed now, before, or at no known time; terminal snapshots,
-some with a ruler that changes on every such read, and the first
-snapshots of 16 other terminals; the terminal's timer at its due time;
-answers to the oldest or
-newest open request, done, gone or failed, and at low weight to one
-ended, to one never asked and from another outpost; caret keys, held keys
-and their due times, typing and speech cut off; review commands; foreground
-changes, now or at the newest focus's stamp; outposts' ends and new
-generations. Focuses are generated only in the front's window or with
-no window facts. After every input the enumeration's invariants are checked
-against the wire's view of the requests, and the model's: every open
-entry but Core's own names a live generation and no effect asks an ended
-one; ids only rise and an ended id never returns; each new entry's trace
-is its input's or its key's, and an older entry's is unchanged; the held
-keys' awaited watch names an open entry; no held node is of an ended
-generation; a focus is taken, its node alive and not left, or changes
-nothing of the focus and says nothing; the focus is left only at a
-foreground change and back only when a focus is taken; at
-most 16 models, each generation new when made and none of an ended
-outpost, one going only when evicted as the oldest for a new one, its
-node's text forgotten or its outpost ended, the others in their order of
-reading; and every memory entry a live model's. A foreground change gives
-no effect and changes nothing but the foreground record and whether the
-focus was left; the record then holds the change as the hook's view,
-the front and attention, and keeps its entered window, object and
-stamps; which focus is stale, a duplicate or left is left to the
-reducer's hand-written examples;
-an outpost's end asks nothing of it and leaves nothing of
-it, and another outpost's entry ends then only by a withdrawal; an answer
-to a model no longer live runs nothing; speech cut off asks nothing; the
-terminal's timer, fired at the due time the state gives, is due later
-than that or not at all. The
-state round-trips through its serialisation after every action, each case
-runs twice with the same effects, ends with every request answered and
-only Core's own entries left, and the gate fails if any listed state is
-never reached. Once a case is quiet, no field of the state names an
-ended generation but those `ENDED_MAY_REMAIN` lists, each by its exact
-path with why it is kept (the dead focus's copied data, the foreground
-window's object, the newest focus stamp and the focus's formatting
-cache): the state is serialised through a serializer that finds every
-`OutpostId` by its type's name, in a node id, a tuple or a map's key
-(`crates/verbatim-core/src/queries/ended.rs`), so a field added later is
-checked with no change to the check. A failure's shrunk case is kept in
-the test's `found()` list, as the failure prints it (`books/dev/src/reference/testing.md`,
-"Exploration tests"), and so is a failing sequence of the query table's
-enumeration in its own `found()`. Three fixed cases keep what the
-generated cases reach too seldom: a model's request answered after a
-newer model of the same terminal replaced it, a foreground change at the
-newest focus's stamp, and the terminal's timer fired once a changing
-row armed it.
-
-## The request table
-
-`RequestTable<A>` records every query the shell sends an outpost for its
-own askers (a tree dump, focus-now, the fake focus, and the two shell
-item queries), on the reducer thread, with a `RequestId` tagged
-`Requester::Shell` and the outpost generation it went to, and holds its
-asker `A` as a token it never calls. `verbatim-app` gives its `Asker` and
-carries each outcome out (`requests::deliver`,
-[verbatim-app](verbatim-app.md)).
-
-- `begin` records a request. The table keeps no deadline: an outpost
-  answers each query by its program's deadline, or the query's own
-  `answer_by_us`, so a clock here would be a second path to its one
-  outcome.
-- Every ending hands the asker back with its outcome, so each asker leaves
-  the table exactly once: `finish(id, outpost, outcome)` only for the
-  generation asked and only the first time; `outpost_ended(outpost)`, each
-  outstanding request answered "gone". `find(which)` names a request to
-  withdraw from its outpost while it keeps its one outcome.
-- Request numbers are given in increasing order and kept in a
-  `BTreeMap`, so the outcomes `outpost_ended` returns together come in the
-  order the requests were made.
+Tests: the queue's unit tests (`crates/verbatim-core/src/event_queue/tests.rs`),
+each rule of Table 2 and every ending, a late answer dropped by number and
+an answer from an instance the request did not go to dropped.
 
 ## The outpost generation record
 

@@ -227,53 +227,54 @@ while focus is in Notepad's text area.
    fresh trace id, a repeat count and that number, is reported. The hook
    never blocks, since Windows silently removes a low-level hook that is
    too slow, and never drops a key.
-2. **The report becomes a reducer command, still on the hook thread.**
+2. **The report becomes a press, still on the hook thread.**
    The report callback (`crates/verbatim-app/src/key_reports.rs`) looks
    the gesture up in the layout's table (`verbatim_input::bindings_for`),
    finds `ScriptAction::MoveToNextSibling`, maps it to
    `ReviewCommand::NextSibling` (`ScriptAction::review_command`), and posts
-   it to the reducer thread's port as `Input::Command`, in line with the
+   it to Core's thread as a press for the event queue
+   (`QueueInput::Press` with `PressAction::Command`), in line with the
    keys. Verbatim+V, the time and the tray and taskbar lists become
-   `Input::Script`, and a lock key `Input::ToggleKeyPressed`, which Core
-   turns into effects the reducer thread carries out.
-3. **The reducer asks for the neighbor.** `reduce_command` calls
-   `navigate`, which turns any navigation still open to `Then::Nothing`
-   (`Queries::forget`), so its answer will run nothing, then records the
-   new one in Core's query table (`Queries::ask` in
-   `crates/verbatim-core/src/queries.rs`) as `Then::Navigation`, with the
-   outpost generation the node id names, and returns `Effect::Fetch`.
-   Nothing is spoken yet.
-4. **The reducer thread sends a query.** `ReducerThread::execute` queues
-   `CoreToOutpost::Query` with `Query::Navigate` under
-   `RequestId::reducer` of the reducer's query number
-   (`Supervisor::send_to_outpost`). If the generation has ended or its
-   queue is full, the query is answered at once as failed.
-5. **The outpost answers in order.** The outpost strips Core's stamp from
-   the node id (`unstamped`) and queues the query behind any events, so
-   the answer never overtakes an event the user caused earlier. The worker
-   runs `read::navigate` under a 400 ms deadline: one raw-view tree walker
-   step for a UIA node, `accNavigate` for an MSAA node, with a neighbor in
-   a window the other backend owns re-read through it (`corrected_backend`,
-   NVDA's `correctAPIForRelation`). It publishes one `Reply`: the
-   neighbor, no neighbor (a real edge), gone, or failed.
-6. **The outcome re-enters the reducer.** The reply's request id names
-   the reducer as its asker, so `requests::reply_input` in `verbatim-app`
-   makes it `Input::Answered`. The query table takes it only from the
-   generation asked and only while the query is open
-   (`queries::answered`), ending its entry, and the navigation's outcome
-   becomes a `FetchResult`.
-7. **The reducer acts on it** (`navigate_completed`), unless a newer
-   navigation turned the entry to nothing. A node moves the navigator and
-   is announced; no neighbor speaks NVDA's edge message ("No next" and the
-   like, `edge_message_of`); gone speaks the same message and leaves the
-   navigator where it is; unanswered says nothing.
+   `PressAction::Script`, and a lock key `Input::ToggleKeyPressed`, which
+   Core turns into effects its thread carries out.
+3. **The press waits for its turn.** The press joins Core's event queue
+   behind every event the readers told before it
+   ([event queue](design/focus.md)), so the command acts on the object
+   those events left. At its turn the press entry
+   (`crates/verbatim-core/src/keys/entry.rs`) runs the navigation
+   (`navigator::navigate` in `crates/verbatim-core/src/navigator.rs`): it
+   finds the navigator object and the window it is in, and asks the
+   outpost of that window's process for the neighbour, a request the queue
+   records and awaits, holding the queue until it ends. Nothing is spoken
+   yet.
+4. **Core's thread sends the request.** The queue's `Send` effect names
+   the outpost generation and the request (`Request::Navigate`, with the
+   properties to read of the node reached). The shell checks the window
+   for a hang first, and answers a request to a hung window "not
+   responding" unsent; otherwise it sends it to the outpost
+   (`CoreToOutpost::Request`). If the generation has ended, the request is
+   answered at once as ended.
+5. **The outpost answers.** The outpost's worker runs `read::navigate`:
+   one raw-view tree walker step for a UIA node, `accNavigate` for an
+   MSAA node, with a neighbour in a window the other backend owns re-read
+   through it (`corrected_backend`, NVDA's `correctAPIForRelation`). It
+   answers once: the neighbour, no neighbour (a real edge), gone, or
+   failed.
+6. **The answer re-enters the queue.** The answer names its request's
+   number; the queue takes it only from the generation asked and only
+   while the request is out, and drops a late one. The paused navigation
+   resumes with the outcome, decoded once as the request's reply type.
+7. **Core acts on it.** A node moves the navigator and is announced; no
+   neighbour speaks NVDA's edge message ("No next" and the like); gone
+   speaks the same message and leaves the navigator where it is; no
+   answer says nothing.
 8. **Speech**, queued, as in walkthrough 3.
 
 Other commands follow the same path. Verbatim+numpad5 (report the current
-object) needs no outpost: the reducer speaks the navigator's copy, spells
-it on the second press, and on the third emits `Effect::CopyToClipboard`.
-Activation emits `Effect::Activate`, which becomes a `Query::Activate`
-under the same 400 ms deadline. A gesture a test sends is pressed as its
+object) reads the navigator object live, then speaks it, spells it on the
+second press, and on the third emits `Effect::CopyToClipboard`.
+Activation asks the outpost for the object's default action as another
+request of the queue. A gesture a test sends is pressed as its
 keys, so it takes this same path, and a second press within 500 ms is
 counted as a person's is.
 
