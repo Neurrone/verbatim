@@ -94,8 +94,6 @@ harness, NVDA captures and troubleshooting.
   - [cross-process-calls-study.md](design/cross-process-calls-study.md)
     — every call that can reach another application, measured, with a
     verdict on the rule that only an application's own outpost calls it.
-  - [state-models.md](design/state-models.md) — one explicit state each
-    for the listener's record, hung windows and the followed focus.
   - [progress-bars.md](design/progress-bars.md) — every progress bar,
     foreground and background, owned by the listener.
   - [m42-parity.md](design/m42-parity.md) — the toasts session and the

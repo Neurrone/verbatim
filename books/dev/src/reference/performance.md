@@ -108,11 +108,9 @@ rest of its program's.
 
 Every counted call an outpost's worker makes first consults its call gate
 (`verbatim_win32::calls`), which takes the worker's charge's lock, as
-naming the program's window does: uncontended but for the reducer's
-thread, which takes it at each judgement of a program, every half second
-from its grace's end. A window message's window is tested before the
-send, `IsWindow`, the ghost lookup and `IsHungAppWindow`, all local; no
-call into an application and no wake-up is added.
+naming the program's window does, and refuses only an abandoned worker's
+calls; the outpost makes no hang check of its own before a call. No call
+into an application and no wake-up is added.
 
 Core's shell checks a request's window live before sending it and every
 half second for each request out and each window Core watches for
@@ -143,19 +141,19 @@ every Verbatim process (`verbatim_uia::UIA_CONNECTION_TIMEOUT` and
 A trace is cancelled when the outpost handles its entry and publishes
 nothing: a focus whose element no longer has the keyboard focus, a focus
 in a window the other backend owns, an MSAA focus where nothing has the
-focused state, an older focus superseded in its batch, or an entry the
-watchdog abandoned at its deadline. The ledger counts completed traces
+focused state, an older focus superseded in its run, or a request Core
+stopped waiting for. The ledger counts completed traces
 only.
 
 - A cancelled trace's calls, and calls made after an entry's last
   publish, are logged at debug level on the worker's "handled" line (the
   `unpublished` field) with the trace id, never shown in the latency
   ledger and never added to the next entry's count.
-- An abandoned entry's calls are never sent: its worker is replaced, and
-  the `Abandoned` reply carries no counts. A query withdrawn before it
-  started made none.
-- In a batch of several focus events, the newest is handled first and
-  older ones only if it is dropped; each counts its own calls.
+- A request Core stopped waiting for has its late answer dropped by
+  number, and its counts with it. A request withdrawn before it started
+  made none.
+- In a run of several focus events, the newest is tried first and older
+  ones only if it is refused; each counts its own calls.
 
 ## The floor and the ratio
 
@@ -240,8 +238,10 @@ default, and with the classic walk (`uia.remote_operations = false`).
 
 Rules that hold for every UIA focus:
 
-- The calls before the read are NVDA's focus handler's, in its order
-  ([ADR 0001](adr/0001-focus.md), "The listener's checks, ported from NVDA's focus handler"): the sender's nearest
+- The calls before the read are NVDA's focus handler's, in its order,
+  made by the listener's check thread as the event is delivered and
+  judged by Core
+  ([ADR 0003](adr/0003-readers-tell-core-asks.md), "Readers tell, Core asks"): the sender's nearest
   window (`NormalizeElementBuildCache`, answered from the event's cache
   for a sender that is a window), costing mockapp 31 provider calls for a
   button or the list and 22 for a list item; and the sender's keyboard
@@ -300,25 +300,13 @@ Rules that hold for every UIA focus:
   one `GetPropertyValue` the provider description that the outpost's
   lookup of the route's window caches for the proxy rule
   (`books/dev/src/explanation/design/listener-without-connections.md`, section 5).
-- Beside the calls, local work only and no wake-up: the schedule sets
-  the watchdog's alarm to the read's grace end as it starts, and moves it
-  back to whatever else is due, or cancels it, as it ends: two timer
-  calls that wake no thread. A read that finds its top-level window takes
-  the listener's schedule lock once more, to tell the schedule (`Placed`),
-  and each held process's exit costs two pipe writes, the exit and its
-  answer, and a wake of each side. A read that would reuse its ancestry cache
-  first makes the title check, one `InternalGetWindowText` per window
-  entry of the cache, local calls with no call into the application and
-  no message. A read that returns within its grace
-  makes no moved-on call (`GetGUIThreadInfo`, `GetWindowThreadProcessId`,
-  class and process reads); one still under way past its grace costs one
-  watchdog wake-up and one moved-on call every half second, at most 25
-  before `FOCUS_READ_DEADLINE` (stand-in reads held 3 seconds, debug: 5
-  wake-ups and 5 calls); and when the new
-  focus is inside the old, the intake moves the old focus's queued state
-  changes ahead of the read ([How focus works](../explanation/design/focus.md), "One UI Automation focus, end
-  to end"), delaying the report by their handling, 0.2 to 1.8 ms per property
-  change in Settings' Date and time page (debug).
+- Beside the calls, local work only and no wake-up: a read that finds
+  its top-level window takes the listener's schedule lock once more, to
+  tell the schedule (`Placed`), and each held process's exit costs two
+  pipe writes, the exit and its answer, and a wake of each side. When the
+  new focus is inside the old, Core judges the old focus's waiting state
+  changes before taking it ([How focus works](../explanation/design/focus.md),
+  "One UI Automation focus, end to end"), with no call.
 - Bound: one step per ancestor until a known one, so the count grows only
   with how far the focus moved up the tree.
 
@@ -334,45 +322,18 @@ not deliver"): no wait, no timer and no read in its place.
   window is dropped there, before any probe
   (`a_focus_event_naming_another_applications_window_is_not_read`).
 
-### A return between top-level windows, and the live re-read
+### A return between top-level windows
 
-A report whose cached ancestor Core would speak is set aside and read
-again live by the focus reader that sent it ([How focus works](../explanation/design/focus.md), "A return to
-a window, with the title check and the live re-read").
+A return to an application after another application's focus was
+committed walks its ancestry to the top live, since the readers' last
+focus was emptied when the user left
+([How focus works](../explanation/design/focus.md), "A return to an
+application"): the classic walk of the element at full depth, about 6 to
+15 calls into the application, NVDA's own cost on such a return.
 
-- Per live re-read: one request from Core (through the app and the
-  supervisor to the listener, or to the outpost), the classic walk of the
-  held element at full depth with no ancestry cache, about 6 to 15 calls
-  into the application, NVDA's own cost on such a return, and the
-  answer's usual route; nothing on a move within one top-level window,
-  where no live re-read happens.
-- How often: one per focus event of the returned element while a live
-  re-read waits. `measure_focus_return`, 20 returns between the Windows
-  Forms text box and a mockapp UIA window read by the listener, counted
-  25, 29 and 32 live re-reads in three runs, since that window raises two
-  focus events for its item on a return. A return whose window title
-  changed meanwhile is walked live by the title check and costs none
-  (`measure_focus_return_retitled`).
-- Latency, debug, `cargo xtask measure` (2026-11-08), key or action to
-  speech queued: a return with live re-reads, median 1.0 ms and 99th
-  percentile 15.7 ms, the listener's handling median 6.2 ms and 99th
-  percentile 18.4 ms; a return walked live by the title check, median
-  0.8 ms and 99th percentile 11.6 ms, the listener's handling median
-  14.0 ms. A return with a live re-read is therefore no faster than one
-  walked live: the ancestry cache saves calls only on moves within a
-  window.
-- Memory: at most one live re-read waiting in Core, at the focus queue's
-  front, and the window texts saved with each ancestry cache.
-- The focus queue behind a live re-read has no cap (ADR 0001, "One
-  ordered focus queue"): it holds what the applications raise while the
-  re-read waits, bounded in time by the reader's read deadline, 13
-  seconds, and by the moved-on rule, which answers the re-read gone from
-  half a second after it starts once the user is in another thread's
-  window. Executing a backlog takes one input: 1,000 reports behind one
-  re-read, median 1.4 ms and at most 1.7 ms over 20 runs, about 1.5
-  microseconds a report; 100, median 0.19 ms; 10, median 0.02 ms (release
-  build, a scratch measurement of `reduce` on 2026-11-08). Each report
-  overtaken is spoken and expires in the speech manager, as in NVDA.
+- Latency, debug, `cargo xtask measure` (2026-11-08), a return walked
+  live: key or action to speech queued median 0.8 ms and 99th percentile
+  11.6 ms, the listener's handling median 14.0 ms.
 
 ### A value change anywhere on the desktop, in the listener
 
@@ -521,18 +482,17 @@ A read waits for the application at every call, up to UI Automation's
 timeout per request and its thread's deadline ([How focus works](../explanation/design/focus.md), "Slow and
 hung applications").
 
-- While a listener read's marker waits past half a second, the outpost's
-  front check: two wake-ups a second of the reducer's thread, each three
-  local calls (`GetForegroundWindow`, the provider process, readability),
-  until the marker resolves; a read answered within half a second raises
-  none. Nothing on the event or speech path.
-- While a program is in flight past half a second: the moved-on check
-  and the hang check every half second, on one timer, local calls only.
+- While a request is out, Core's shell asks Windows whether its window
+  is hung every half second, one `IsHungAppWindow` and, for a ghost, one
+  `HungWindowFromGhostWindow`, local calls on the reducer thread's one
+  timer; a window in the recovery set is checked the same way until it
+  answers. Nothing while no request is out.
 - A failed walk step goes on from the parent window's own object, read
   live, making the calls NVDA makes there; only a failure pays it.
-- Bound: an application's later events wait behind its read up to its
-  deadline, 13 seconds, and one burst about 39 seconds behind two
-  abandoned reads; other applications do not wait.
+- Bound: the event queue waits behind a focus read until Windows reports
+  its window hung, its due time of 13 seconds passes, or the foreground
+  leaves its window ([ADR 0003](adr/0003-readers-tell-core-asks.md),
+  "Limits accepted").
 
 ### Focus changes measured across the pipeline
 
@@ -555,7 +515,7 @@ Debug builds, 2026-11-08.
   handling median 11.9 ms; `measure_focus_text_box` median 0.3 ms and
   99th percentile 1.9 ms; `measure_focus_windows_terminal_tabs` 0.4 ms
   (two announcements), the listener's handling 43.6 ms. Returns are in
-  "A return between top-level windows, and the live re-read".
+  "A return between top-level windows".
 
 ### A focus change into a list, UIA
 
@@ -655,25 +615,11 @@ measured per input-hook wake.
   Each verdict probe is posted in its own commit,
   so a walk that probes adds a post for each. An event the push drops
   wakes nobody; one the reducer drops wakes only its thread.
-  Each further program of one entry, a run's next try,
-  the owed work, or the finish of an edit
-  control's caret read cut at its value change check (only with a
-  selection before or after), adds two. Each timer, a
-  deadline, a grace or a check of the window in front, costs one
-  wake. Each 5 ms re-read of the console
-  host's caret poll is a program of its own, timed by the shell's
-  high-resolution timer, waking the shell for its timer, the worker, and
-  the shell for its commit and end, up to ten re-reads on a key that
-  moves nothing. Wake-ups in all processes per input-hook wake, debug
-  builds, test audio mode, one 12-second trace window each (2026-10-31):
-  `measure_keys_conhost` 18.1; `measure_keys_conhost_unmoved`, keys that
-  move nothing, 17.5, the outpost's share 8.0; `measure_keys_notepad`
-  33.5.
+  Each check of a caret key's watch wakes the worker on its
+  high-resolution timer, every 10 ms, or 5 ms in the console host, to the
+  key's bound.
 - Latency: two thread hand-offs per program, each an `SetEvent` and a
   wait's return, expected at tens of microseconds.
-- Processor time: per program, a scan of the intake when a caret key's
-  read is dispatched; and a scan of the intake for an edit control's
-  value change when a caret read is cut at its value change check.
 - Locks: the reducer's thread takes the mailbox's lock to drain it, the store's for
   a commit's writes, and the
   backlog's with the store's inside it for a release; a worker takes its
@@ -1042,44 +988,22 @@ errors and links, against mockapp's `tests/fixtures/text.json`, whose
 
 ### A caret key's reads, UIA
 
-A caret key passed on sets a note on its node
-(`books/dev/src/reference/crates/verbatim-outpost.md`): while it lives,
-the reads of that node the application's events cause fetch the key's
-unit and report how they compare with the node's last read, and Core
-alone judges them. The worker waits for nothing.
+A caret key at its turn asks one starting read, then its watch
+(`books/dev/src/explanation/design/key-holding.md`): the outpost checks
+the caret against the starting point at once and then every 10 ms, every
+5 ms in the console host, until the key's effect shows or its bound
+passes, then makes one final read. Core alone judges what the key says.
 
-- Minimum and today: one round trip per read, nothing for waiting; met.
-  1 remotely per read, the whole caret read; classically 15; in the edit
-  control 5 window messages for a read that finds no effect and 6 for one
-  that finds it.
-- A text change under a note reads the node once, as above, while the
-  note has seen no effect; the first effect, the final read, the next key
-  or the note's end after 300 ms stops those reads.
-- A caret event after the key's effect keeps its facts until the note
-  ends: the read fetches the key's unit, nothing more through UIA and
-  possibly window messages in an edit control.
-- The final read: one read and one report for a text field's key with no
-  evidence by its 100 ms bound, which a key that moves nothing always
-  pays; it goes ahead of queued reads, and clears the note when it
-  commits. A terminal's key has none.
-- A read in flight when the note arrives is compared at its commit by
-  the text both reads hold, with no call; a word key's unit, which it did
-  not fetch, comes from the final read.
-- Over a selection, any key, Backspace and Delete included, compares with
-  the node's last read's selection in the same round trip, reading the
-  old selection's text as its ends now hold it, up to 513 UTF-16 code
-  units (`verbatim_uia_rops::MAX_COMPARED_TEXT`, one more than the 512
-  characters from which a selection is spoken as a count): inside the
-  program through UIA, one call classically, one `WinEvent` sync in an
-  edit control.
-- In the console host a note re-reads the caret every 5 ms for up to 50
-  ms, a documented workaround
-  (`books/dev/src/explanation/design/key-holding.md`, "The console host's
-  caret poll"): at most 10 round trips and 10 worker wake-ups a key. In
-  `measure_keys_conhost` (release, 2026-10-26) every key its first read
-  did not answer was answered within 5 ms, caret reads for keys were 1.34
-  a key, and caret keys reached speech at P95 9.0, P99 9.4 and maximum 9.4
-  ms.
+- Minimum and today: one round trip per check; met
+  (`watch_checks_execute_exactly`). Through UI Automation the check that
+  shows the effect goes on to read the final read's fields in the same
+  program, so a key found by a check costs one round trip; at the bound
+  the final read is its own program.
+- A key that moves nothing pays every check to its bound: 10 in a text
+  field, 20 in the console host, 30 in Windows Terminal.
+- In a UI Automation text field other than a terminal, a caret or text
+  change event of the watched node within 60 ms of the pass ends the
+  watch with the final read at once.
 
 ### A caret report, UIA
 
@@ -1109,31 +1033,26 @@ character with nothing selected, then "al" selected from the caret.
   on the caret's line starts at the caret's offset less its length, two
   calls fewer.
 
-### The caret read before a held key
+### A caret key's starting read
 
 A caret key pressed while the focus has text is held by the hook until
-the outpost has read the caret (`ReadPurpose::BeforeFieldKey`,
-`books/dev/src/explanation/design/key-holding.md`); the read is a caret report's, comparing the
-selection with the node's last read and reading the key's unit
-(`caret_moves_cost_exactly`).
+its turn and its starting read
+(`books/dev/src/explanation/design/key-holding.md`), which takes the
+caret and the key's unit (`caret_moves_cost_exactly`).
 
-- Minimum and today: 1 UIA call remotely, 8 classically with no selection
-  to compare and 17 with one's change to read, 5 window messages in a
-  Win32 edit control and 7 with a change to read; met.
+- Today: 1 UIA call remotely, 17 classically, 7 window messages in a
+  Win32 edit control.
 - Wake-ups: two more of the hook's thread per held key, and the read's
   round trip: roughly 8 to 13 wake-ups and 0.7 to 1.5 ms of processor time
-  per held key in the terminals (debug; `books/dev/src/explanation/design/key-holding.md`,
-  "Costs"). A key deferred behind a held key wakes the reducer once more
-  (`ShellCommand::DeferredKey`) and is sent again with one `SendInput`.
+  per held key in the terminals, measured with the read before each key
+  that the starting read is (debug; `books/dev/src/explanation/design/key-holding.md`,
+  "Costs"). A transition deferred behind a held key joins Core's stroke
+  line and is sent with it in one `SendInput`.
 - Each foreground change costs the listener the integrity check's local
   calls and one message to Core, which publishes the hook's view with one
   lock-free store; the hook's thread is not woken.
-- A held key costs the reducer at most one wake-up for its one deadline
-  (`Effect::BoundHeldKey`), at the 100 ms bound after it is passed on or
-  the 150 ms bound of its read, one of its existing
-  deadlines, and none when the wait or the read ends sooner; the last of 15 auto-repeats of a key that moves
-  nothing reached the text box 1.05 to 1.06 s after the release
-  (`measure_held_repeat_text_box`).
+- A held key costs Core at most one wake-up for its 150 ms release, none
+  when its turn comes sooner.
 
 ### The shell's staging windows
 
@@ -1157,75 +1076,26 @@ any window.
   switch and 18 to 33 ms with Alt held, against 525 to 811 and 22 to 28
   with no Verbatim.
 
-### Ordering focuses across processes
+### Tells and Core's requests
 
-Core drops a focus from another outpost observed before the focus it has
-applied (decision D14; `docs/parity/focus-events.md`, "Stale focus
-events"). Every process stamps an observation with one read of the
-performance counter, in microseconds, for every event kind.
+Every event a reader hears is told to Core, and every call into an
+application is made for Core's request
+([ADR 0003](adr/0003-readers-tell-core-asks.md)).
 
-- Minimum and today: no wait; every message carries one stamp.
-- What it does not catch: a switcher focus Windows raises after the
-  console's (11 ms after its foreground event and 15 ms after its focus)
-  happened later, so no ordering drops it; Core's refusal of the
-  switcher's pane covers it ("The task switcher's frame").
-
-### One judge: reading for every node the outpost has not released
-
-An outpost reads changes for every node it has not released, and Core
-alone judges focuses (`books/dev/src/explanation/design/ownership.md`); no message
-carries Core's focus to the listener or the outposts.
-
-- An MSAA repeat of the focus is read in full: 23 MSAA calls in
-  `call_counts`' arrow back onto the same list item ("MSAA focus
-  repeated"). A foreground change in front of a report's window is read and
-  reported, 8 MSAA calls once the window's backend is known and 11 for a
-  second report of the same window (`msaa_events`); within a focus group its older
-  entry is read too, 20 MSAA calls for the list item beside the change.
-  Each costs one message to Core, one reducer input, and the `NodesHeld`
-  written after it.
-- A change of a node the outpost has not released but Core no longer
-  targets is read: an MSAA change outside Core's line costs its
-  acquisition and the one property read, 1 `WM_GETOBJECT` and 1
-  `get_accChild` before the property, plus one message;
-  a state change of a node only a waiting message carries reads its role
-  too. Only while its window is in front, and only until Core's list
-  releases it, one pipe hop after Core handled the report.
-- A UIA selection is read against every report's focus newest first,
-  one remote operation (`ControllerFor`) per UIA report until one
-  controls the selection: in steady state Core's line can hold two UIA
-  reports (a list and the item focused inside it), so a selection in a
-  list no focus controls costs two remote operations. `call_counts`' combo box pins the cost with
-  the older report released.
-- The focus-following subscription keeps its group on the element of
-  every UIA report the outpost has not released: one more element with a
-  group for one round trip after each focus, removed at release with one
-  `RemoveEventHandlerGroup`, and none re-added for an element the focus
-  returns to within that round trip. Measured in debug end-to-end runs on
-  2026-10-30 from the outposts' `nodes held (N)` lines, Core's held set
-  reached at most 2 nodes in the Windows Forms text box outpost
-  (`text_box_editing`), 4 in the Settings outpost (`settings_system_page`)
-  and 4 in Explorer's. In `settings_system_page` `AddEventHandlerGroup`
-  took 0 to 4 ms, and the second focus-following group was held for under
-  10 ms before `RemoveEventHandlerGroup` (0 ms). Not yet measurable: the
-  normalize call for an event of a XAML element with no cached window that
-  is not the newest focus, `caret_of`'s text calls for a `TextSelection`
-  event of an older element, and the refresh for a `HelpText` or
-  `ControllerFor` change of an older element, because a published
-  message's calls reach the latency log only when Core speaks; the
-  missing log line is the published message's calls on the worker's
-  `handled` line.
-- `Outbound::waiting_nodes` takes the outbound queue's lock and walks
-  `reported` on every accepted MSAA state change.
-- `NodesHeld` is written on its own after each focus report and each
-  change of the node set Core holds in an outpost: one pipe write and the
-  outpost's reader wake. A change of anchors or of the acknowledged position alone still rides on
-  the next command or the 3-second ping, so typing adds no write.
-- Text anchors are released by message position, as nodes are: an
-  outpost keeps the anchors minted since
-  Core's last list, bounded by the keys typed between two lists.
-- Not measured here: `held_nodes` per outpost in the scenarios' flight
-  dumps, which the scenarios record.
+- Per event-driven read, two more crossings than a reader reading on its
+  own: the tell to Core and the request back before the first call, and
+  one more wake of Core per UI Automation focus, which is read in two
+  requests. For the console flood's 1,911 reads, about 3,800 more
+  crossings and 1,900 more wakes of Core (derived).
+- Every background event the listener's drops and merge let through is a
+  tell and a step of Core's reducer: about 1,100 a second for a File
+  Explorer window in the background (derived). Measured on 2026-11-14,
+  before the build, Core kept up at every load, so the listener's limiter
+  only merges.
+- `NodesHeld` is written after each change of the node set Core holds in
+  an outpost: one pipe write and the outpost's reader wake. Text anchors
+  are released the same way, an outpost keeping those minted since Core's
+  last list.
 
 ### The task switcher's frame
 
@@ -1502,15 +1372,9 @@ A word in a rich edit control from version 2.0 is found with two
 before the offset, and the text's length (`EM_GETTEXTLENGTHEX`) once per
 request, to find no word at the end, as NVDA does.
 
-An answer that compares selections waits once for the `WinEvent` thread to
-take every event raised before it (`Nudger::sync`), then ends its
-program, and the reducer scans its waiting entries once for the control's
-value change and dispatches the answer's finish, so an edit is said in
-general terms, at two more wakes. The sync posts one thread message and raises
-one marker with `NotifyWinEvent`, because a posted message alone can
-overtake an event raised before it: about 25 to 36 µs at the median
-(release, 20,000 syncs of an idle thread), and no `WM_GETOBJECT`. A sync is
-made only here, in the caret report below, and in `Outpost::settle`.
+An answer that compares selections is judged in Core: a value change of
+the control waiting in the event queue when the answer arrives makes the
+difference general terms, with no call and no wake.
 
 ### A caret report, Win32 edit control
 

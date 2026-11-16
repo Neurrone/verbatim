@@ -706,15 +706,15 @@ The scenarios, all named `measure_`:
 - `measure_focus_return`: 20 returns from the Windows Forms text box to a
   `mockapp` UIA window read by the listener, whose list's item has the
   focus, each window brought forward as a taskbar button does. Each
-  return meets the listener's ancestry cache and is read again live, so
-  the scenario asserts each window's speech and exactly 20 live re-reads.
+  return is read to the top, since the readers' last focus was emptied
+  when the text box came in front, and the scenario asserts each
+  window's speech.
 - `measure_focus_return_retitled`: the same returns, the `mockapp`
   window given a new title (`set-title`) while the text box is in front,
-  so the listener's title check walks each return live: it asserts the new
-  title spoken and no live re-read.
+  so each return says the new title: it asserts the new title spoken.
 - `measure_focus_flood`: 20 bursts of `mockapp`'s `focus` commands over
   ten buttons of one UIA window, each burst written at once, its speech
-  collected unasserted, and no live re-read asserted.
+  collected unasserted.
 - `measure_keys_text_box`: 20 Pause keys injected by Verbatim itself
   through its control plane's `SendKeys` (the held-key re-injection
   workload; Pause is not announced, so the ledger logs no line for them),
