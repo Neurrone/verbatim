@@ -368,6 +368,12 @@ impl Table {
             .any(|live| live.reader == reader && live.stage == Stage::Waiting)
     }
 
+    /// Whether no request waits or is out and no window is watched for
+    /// recovery.
+    pub(crate) fn idle(&self) -> bool {
+        self.live.is_empty() && self.recovery.is_empty()
+    }
+
     /// The readers requests wait for, each once.
     pub(crate) fn waiting_readers(&self) -> impl Iterator<Item = Reader> + '_ {
         let mut readers: Vec<Reader> = self

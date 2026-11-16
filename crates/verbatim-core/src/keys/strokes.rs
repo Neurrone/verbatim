@@ -132,6 +132,11 @@ impl StrokeLine {
         self.dropped.remove(&key);
     }
 
+    /// Whether no transition waits to be sent.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.line.is_empty()
+    }
+
     /// The earliest 150 ms release still to fire.
     pub(crate) fn next_release(&self) -> Option<u64> {
         self.line

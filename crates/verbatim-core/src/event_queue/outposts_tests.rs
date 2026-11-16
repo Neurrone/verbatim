@@ -486,3 +486,32 @@ fn verbatims_own_outpost_is_started_at_once() {
         [(own, verbatim_model::OutpostId(5))]
     );
 }
+
+/// The test harness's idle (the design, "The test harness's idle"): Core's
+/// queue is idle with nothing in it, and not while an entry's request is
+/// out; once that entry ends it is idle again.
+#[test]
+fn the_queue_is_not_idle_while_an_entrys_request_is_out() {
+    let mut held = committed();
+    assert!(held.state.queue_idle());
+    assert_eq!(held.state.oldest_key_entry(), None);
+    assert_eq!(
+        route(&mut held, 2_000, &focus_tell_of(-8)),
+        ["send Outpost(Pid(40)) MsaaRun"]
+    );
+    assert!(!held.state.queue_idle());
+    let _ = route(
+        &mut held,
+        2_100,
+        &QueueInput::Answer {
+            from: OUTPOST,
+            answer: verbatim_model::request::Answer {
+                number: verbatim_model::request::RequestNumber(2),
+                outcome: verbatim_model::request::Outcome::NotThere,
+                probes: Vec::new(),
+                detail: String::new(),
+            },
+        },
+    );
+    assert!(held.state.queue_idle());
+}

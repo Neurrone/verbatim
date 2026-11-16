@@ -969,6 +969,9 @@ struct ReducerThread<'a> {
     /// The harness's marks of handled input held behind a lock key's
     /// announcement still to come.
     marks: idle::HeldMarks,
+    /// The number of the newest key press the hook reported, which a
+    /// harness's mark that follows it waits on.
+    last_press: Option<verbatim_model::KeySeq>,
     /// Inputs an effect produced, applied once the current input's effects
     /// have all been executed, so one input is reduced at a time.
     follow_ups: Vec<Input>,
@@ -1358,9 +1361,16 @@ impl ReducerThread<'_> {
             }
             ShellCommand::TerminalSettings(change) => self.change_terminal_settings(change),
             ShellCommand::InputHandled(input) => {
-                // Behind a lock key's announcement still to come, as the
-                // key's stroke caused it.
-                for input in self.marks.take(input, self.state.announces_toggle_key()) {
+                // Behind the entries of the keys the hook reported before
+                // it, and a lock key's announcement still to come, as the
+                // key's stroke caused them.
+                let held = self.marks.take(
+                    input,
+                    self.last_press,
+                    self.state.announces_toggle_key(),
+                    self.state.oldest_key_entry(),
+                );
+                for input in held {
                     self.input_handled(input);
                 }
             }
@@ -1389,6 +1399,7 @@ impl ReducerThread<'_> {
             ..
         } = &mut input
         {
+            self.last_press = Some(press.key_seq);
             self.context
                 .ledger
                 .key_pressed(*trace_id, press.pressed_at_us);
@@ -1477,9 +1488,13 @@ impl ReducerThread<'_> {
     /// (`books/dev/src/explanation/design/key-holding.md`), no key or command waits in Core's
     /// held-key line, no lock key's announcement is still to come, and no
     /// terminal's quiet-period timer is armed, since what waits for it is
-    /// spoken when it ends.
+    /// spoken when it ends; and Core's event queue is idle
+    /// (`SrState::queue_idle`: no entry, no request waiting or out, no
+    /// window watched for recovery, no stroke in line, no delay of its own
+    /// due).
     fn idle_conditions_clear(&self) -> bool {
-        self.requests.outstanding() == 0
+        self.state.queue_idle()
+            && self.requests.outstanding() == 0
             && self.state.outstanding_queries() == 0
             && !self.state.holds_inputs_back()
             && !self.state.announces_toggle_key()
@@ -1559,9 +1574,12 @@ impl ReducerThread<'_> {
             self.execute(trace_id, effect);
         }
         self.apply_follow_ups();
-        // The marks held behind a lock key's announcement go once it has
-        // been made.
-        for input in self.marks.release(self.state.announces_toggle_key()) {
+        // The marks held behind their keys' entries and a lock key's
+        // announcement go once those have ended and it has been made.
+        for input in self.marks.release(
+            self.state.announces_toggle_key(),
+            self.state.oldest_key_entry(),
+        ) {
             self.input_handled(input);
         }
     }
@@ -2270,6 +2288,7 @@ fn reducer_loop(
         held_due: None,
         queue_due: None,
         marks: idle::HeldMarks::default(),
+        last_press: None,
         follow_ups: Vec::new(),
         token,
     };

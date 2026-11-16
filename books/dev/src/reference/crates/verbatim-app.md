@@ -117,9 +117,11 @@ The end-to-end harness's hooks (private `harness` module):
 - The idle barrier: the keyboard hook reports each numbered key stroke
   handled (`KeyReport::Handled`), posted to the reducer thread behind
   whatever the stroke caused (`ShellCommand::InputHandled`), which records
-  it and broadcasts `Frame::InputHandled`; a mark taken while a lock key's
-  announcement is still to come is held (`idle::HeldMarks`) and handed on
-  after the input that makes it. A control-plane `AwaitIdle` is posted
+  it and broadcasts `Frame::InputHandled` once the key's entry has ended:
+  a mark is held (`idle::HeldMarks`) until the entries of every key press
+  the hook reported before it have left Core's event queue
+  (`SrState::oldest_key_entry`) and no lock key's announcement is still to
+  come, and marks are handed on in order. A control-plane `AwaitIdle` is posted
   straight to the reducer's port (`ShellCommand::AwaitIdle`, carrying the
   waiter, by `harness::IdleLine::wait`); every harness input is a
   numbered key, so on the reducer thread it waits until the input it
@@ -133,8 +135,11 @@ The end-to-end harness's hooks (private `harness` module):
   answered, except an outpost that failed before its `Ready`, whose
   place goes to the generation `OutpostMessage::Regenerated` names,
   which holds its facts and its query. When every answer is in, the reducer takes in what is already
-  on its port and checks its own conditions: no outpost request
-  outstanding, no outpost still starting, no key or command waiting in Core's held-key line
+  on its port and checks its own conditions: Core's event queue idle
+  (`SrState::queue_idle`: no entry at the front or waiting, none to be
+  appended later, no request waiting or out, no window watched for
+  recovery, no stroke in Core's line, no delay of Core's own due), no
+  outpost request outstanding, no outpost still starting, no key or command waiting in Core's held-key line
   (`SrState::holds_inputs_back`), no lock key's announcement still to come
   (`SrState::announces_toggle_key`), and no terminal's quiet-period timer armed, since what waits
   for it is spoken when it ends. If they hold, the waiters are answered once

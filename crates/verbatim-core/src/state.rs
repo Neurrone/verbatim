@@ -770,6 +770,32 @@ impl SrState {
         })
     }
 
+    /// Whether Core's event queue is idle for the test harness
+    /// (`docs/design/readers-tell-core-asks-build1.md`, "The test
+    /// harness's idle"): the queue empty, with nothing to be appended
+    /// later; no request waiting for its outpost or out, and no window
+    /// watched for recovery; no stroke in Core's line, so no key held;
+    /// and no delay of Core's own due (the return from another desktop).
+    #[must_use]
+    pub fn queue_idle(&self) -> bool {
+        self.queue.idle() && self.strokes.is_empty() && crate::input_desktop::due(self).is_none()
+    }
+
+    /// The number of the oldest key whose entry is still in Core's event
+    /// queue, at the front or waiting: the test harness's mark that a key
+    /// was handled is held until the entries of every key before it have
+    /// ended (the design, "The test harness's idle").
+    #[must_use]
+    pub fn oldest_key_entry(&self) -> Option<verbatim_model::KeySeq> {
+        self.queue
+            .entries()
+            .filter_map(|entry| match entry {
+                crate::entries::Entry::Press(press) => Some(press.press.key_seq),
+                _ => None,
+            })
+            .min()
+    }
+
     /// Whether Core has committed a focus: the test harness's readiness
     /// waits for one (`docs/design/readers-tell-core-asks-build1.md`, "The
     /// outpost generation record").

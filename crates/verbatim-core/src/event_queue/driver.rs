@@ -137,6 +137,18 @@ impl<E, F> Default for Queue<E, F> {
 }
 
 impl<E, F> Queue<E, F> {
+    /// Whether the queue is idle for the test harness
+    /// (`docs/design/readers-tell-core-asks-build1.md`, "The test
+    /// harness's idle"): no entry at the front or waiting, none to be
+    /// appended later, no request waiting for its outpost or out, and no
+    /// window in the recovery set, so no hang round is due either.
+    pub(crate) fn idle(&self) -> bool {
+        self.front.is_none()
+            && self.waiting.is_empty()
+            && self.timers.is_empty()
+            && self.table.idle()
+    }
+
     /// The one time Core waits for: the nearest due time, hang round or
     /// entry Core appends later.
     pub(crate) fn next_due(&self) -> Option<u64> {

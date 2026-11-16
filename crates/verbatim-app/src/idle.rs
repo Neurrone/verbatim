@@ -27,7 +27,7 @@
 
 use std::collections::HashSet;
 
-use verbatim_model::OutpostId;
+use verbatim_model::{KeySeq, OutpostId};
 
 /// The barrier's waiters and the round under way. `W` is what answers a
 /// waiter: the reducer keeps the control plane's reply channel.
@@ -236,29 +236,47 @@ impl<W> IdleBarrier<W> {
     }
 }
 
-/// The harness's marks of handled input that came while a lock key's
-/// announcement was still to come, which the reducer thread hands on, in
-/// order, once it has been made, so the harness reads no speech before it
-/// (`books/dev/src/explanation/design/ownership.md`).
+/// The harness's marks of handled input, each held until the entries of
+/// every key the hook reported before it have ended in Core's event queue
+/// (`docs/design/readers-tell-core-asks-build1.md`, "The test harness's
+/// idle": `InputHandled` at the end of the key's entry, not at the hook's
+/// post) and no lock key's announcement is still to come, then handed on
+/// in order, so the harness reads no speech before what its key caused.
 #[derive(Debug, Default)]
-pub(crate) struct HeldMarks(Vec<u64>);
+pub(crate) struct HeldMarks(Vec<(u64, Option<KeySeq>)>);
 
 impl HeldMarks {
-    /// The mark `mark` was taken: the marks to hand on now, none while an
-    /// announcement is `pending`.
-    pub(crate) fn take(&mut self, mark: u64, pending: bool) -> Vec<u64> {
-        self.0.push(mark);
-        self.release(pending)
+    /// The mark `mark` was taken behind the key `last_key`, the newest the
+    /// hook reported before it: the marks to hand on now ([`release`]).
+    ///
+    /// [`release`]: Self::release
+    pub(crate) fn take(
+        &mut self,
+        mark: u64,
+        last_key: Option<KeySeq>,
+        pending: bool,
+        oldest_entry: Option<KeySeq>,
+    ) -> Vec<u64> {
+        self.0.push((mark, last_key));
+        self.release(pending, oldest_entry)
     }
 
-    /// An input was handled: the marks held, to hand on now that no
-    /// announcement is `pending`, or none.
-    pub(crate) fn release(&mut self, pending: bool) -> Vec<u64> {
-        if pending || self.0.is_empty() {
-            Vec::new()
-        } else {
-            std::mem::take(&mut self.0)
+    /// An input was handled: the marks held, from the front, whose keys'
+    /// entries have all ended, `oldest_entry` being the oldest key still in
+    /// Core's queue, while no announcement is `pending`.
+    pub(crate) fn release(&mut self, pending: bool, oldest_entry: Option<KeySeq>) -> Vec<u64> {
+        if pending {
+            return Vec::new();
         }
+        let ended = self
+            .0
+            .iter()
+            .take_while(|(_, last_key)| match (last_key, oldest_entry) {
+                (Some(last_key), Some(oldest)) => oldest > *last_key,
+                (None, _) | (_, None) => true,
+            })
+            .count();
+        self.0.drain(..ended).map(|(mark, _)| mark).collect()
     }
 }
 
@@ -269,15 +287,33 @@ mod tests {
     #[test]
     fn a_mark_taken_while_an_announcement_is_pending_is_handed_on_after_it() {
         let mut marks = HeldMarks::default();
-        assert_eq!(marks.take(3, true), Vec::<u64>::new());
-        assert_eq!(marks.take(4, true), Vec::<u64>::new());
+        assert_eq!(marks.take(3, None, true, None), Vec::<u64>::new());
+        assert_eq!(marks.take(4, None, true, None), Vec::<u64>::new());
         // An input that leaves the announcement pending hands on nothing.
-        assert_eq!(marks.release(true), Vec::<u64>::new());
+        assert_eq!(marks.release(true, None), Vec::<u64>::new());
         // The input that made it hands both on, in order.
-        assert_eq!(marks.release(false), [3, 4]);
-        assert_eq!(marks.release(false), Vec::<u64>::new());
+        assert_eq!(marks.release(false, None), [3, 4]);
+        assert_eq!(marks.release(false, None), Vec::<u64>::new());
         // With nothing pending, a mark goes at once.
-        assert_eq!(marks.take(5, false), [5]);
+        assert_eq!(marks.take(5, None, false, None), [5]);
+    }
+
+    /// A mark is handed on when the entry of the last key before it ends,
+    /// not when the hook posts it, and marks go in order: one behind a key
+    /// whose entry is still in the queue holds those after it.
+    #[test]
+    fn a_mark_is_handed_on_when_its_keys_entry_ends() {
+        let key = |number| Some(KeySeq::new(number));
+        let mut marks = HeldMarks::default();
+        // Key 7's entry is at the front as its mark arrives.
+        assert_eq!(marks.take(1, key(7), false, key(7)), Vec::<u64>::new());
+        // Key 8's mark, its entry waiting behind key 7's.
+        assert_eq!(marks.take(2, key(8), false, key(7)), Vec::<u64>::new());
+        // Key 7's entry ends; key 8's is now the front.
+        assert_eq!(marks.release(false, key(8)), [1]);
+        // Key 8's entry ends with a later key's entry still queued.
+        assert_eq!(marks.release(false, key(9)), [2]);
+        assert_eq!(marks.release(false, None), Vec::<u64>::new());
     }
 
     const A: OutpostId = OutpostId(1);
