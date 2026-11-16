@@ -467,6 +467,10 @@ pub struct Session {
     pub output_reads: usize,
     /// Every caret key's watch Core sent, in order.
     pub watches: Vec<verbatim_model::Watch>,
+    /// Every full read the outpost answered, in order.
+    pub answered_reads: Vec<verbatim_model::TerminalSnapshot>,
+    /// Every event Core gave the control plane's stream, in order.
+    pub observed: Vec<verbatim_model::Observed>,
     /// Every due time of the quiet-period timer, as the shell reads it
     /// after each step that changed it, in order.
     pub timers: Vec<Option<u64>>,
@@ -565,6 +569,8 @@ impl Session {
             requests: Vec::new(),
             output_reads: 0,
             watches: Vec::new(),
+            answered_reads: Vec::new(),
+            observed: Vec::new(),
             timers: Vec::new(),
             armed: None,
             copied: Vec::new(),
@@ -613,6 +619,8 @@ impl Session {
         session.heard.clear();
         session.requests.clear();
         session.output_reads = 0;
+        session.answered_reads.clear();
+        session.observed.clear();
         session.timers.clear();
         session
     }
@@ -843,6 +851,7 @@ impl Session {
             reply.snapshot.started_ms = began;
             reply.started_us = began * 1_000;
         }
+        self.answered_reads.push(reply.snapshot.clone());
         reply
     }
 
@@ -992,6 +1001,7 @@ impl Session {
                 }
                 Effect::StopSpeech => self.queued.clear(),
                 Effect::CopyToClipboard(text) => self.copied.push(text),
+                Effect::Observed(observed) => self.observed.push(*observed),
                 Effect::Queue(QueueEffect::Send { to, ask }) => {
                     assert_eq!(to, OUTPOST, "a request to the terminal's outpost");
                     self.record(&ask);

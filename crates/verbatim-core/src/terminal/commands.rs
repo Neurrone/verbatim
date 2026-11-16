@@ -91,6 +91,9 @@ pub(crate) async fn fresh(cx: &mut Cx<Entries>, trace_id: TraceId, node: NodeId,
         Outcome::Result(reply) => Some(reply),
         _ => None,
     };
+    if let Some(reply) = reply.as_deref() {
+        cx.emit(reading::observed(&asked.terminal, reply, trace_id));
+    }
     let now_us = cx.now_us();
     let entry = reading::entry_read_ended(
         &mut cx.facts_mut(),

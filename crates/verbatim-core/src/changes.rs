@@ -276,9 +276,40 @@ fn sets_text_changed(facts: &mut SrState, change: &MsaaChange) -> bool {
     true
 }
 
+/// A change of the committed focus's text, a value change of an edit
+/// control's client read through its messages, is the control plane's
+/// text change, as the outpost reported it before Core judged its changes.
+fn observe_text_change(cx: &mut Cx<Entries>, change: &MsaaChange) {
+    let node = cx
+        .facts()
+        .versions
+        .committed_read()
+        .filter(|kept| crate::caret_tell::edit_text_change(kept, change))
+        .map(|kept| kept.node);
+    if let Some(node_id) = node {
+        cx.emit(verbatim_model::Observed::effect(
+            change.tell.trace_id,
+            (change.tell.process, Backend::Msaa),
+            None,
+            verbatim_model::NormalizedEvent::TextChanged { node_id },
+        ));
+    }
+}
+
+/// Whether `change` goes on to be judged: it passes, and is no value
+/// change that sets the text-changed flag. A change of the committed
+/// field's text that passes is the control plane's text change.
+fn judged(cx: &mut Cx<Entries>, change: &MsaaChange) -> bool {
+    if !passes(cx, change) {
+        return false;
+    }
+    observe_text_change(cx, change);
+    !sets_text_changed(&mut cx.facts_mut(), change)
+}
+
 /// The function of an MSAA change entry.
 pub(crate) async fn msaa(mut cx: Cx<Entries>, change: MsaaChange) {
-    if !passes(&cx, &change) || sets_text_changed(&mut cx.facts_mut(), &change) {
+    if !judged(&mut cx, &change) {
         return;
     }
     let Some(process) = cx

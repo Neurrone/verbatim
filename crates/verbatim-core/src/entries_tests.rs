@@ -1202,3 +1202,77 @@ fn the_switchers_item_with_alt_down_at_its_arrival_says_only_itself() {
         ]
     );
 }
+
+/// A node of the application read through MSAA, `name` of `role`, as a
+/// focus's report carries it.
+fn msaa_node(number: u64, name: &str, role: Role) -> verbatim_model::NodeSnapshot {
+    verbatim_model::NodeSnapshot {
+        id: node(number),
+        backend: verbatim_model::Backend::Msaa,
+        role,
+        name: Some(name.to_owned()),
+        value: None,
+        states: verbatim_model::StateSet::new(),
+        details: verbatim_model::NodeDetails::default(),
+    }
+}
+
+/// A focus executed is the control plane's focus change, as its reader
+/// reported it before Core read its focus itself: the node, its ancestors
+/// outermost first, its text as read, under its tell's trace with its
+/// window's facts, which the harness waits on by the node's name
+/// (`rapid_tabbing_in_settings.rs`, `wait_for_focus_on`).
+#[test]
+fn an_executed_focus_is_the_control_planes_focus_change() {
+    let mut state = ready();
+    let _ = feed_at(&mut state, 1_000, entry(msaa_tell(-4)));
+    let tried = RunRead {
+        tried: vec![Tried::Focus(Box::new(focus_read(Some(held(-4)))))],
+    };
+    let observed: Vec<verbatim_model::Observed> = feed(
+        &mut state.state,
+        &mut state.runtime,
+        Timed {
+            at_us: 2_000,
+            input: answer(OUTPOST, 1, Reply::Run(tried)),
+        },
+    )
+    .unwrap()
+    .into_iter()
+    .filter_map(|effect| match effect {
+        Effect::Said(verbatim_model::Effect::Observed(observed)) => Some(*observed),
+        _ => None,
+    })
+    .collect();
+    assert_eq!(
+        observed,
+        [verbatim_model::Observed {
+            trace_id: verbatim_model::TraceId::from_raw(7),
+            source: APP,
+            backend: verbatim_model::Backend::Msaa,
+            window: Some(verbatim_model::WindowFacts {
+                top_level: WindowHandle(4),
+                root_owner: WindowHandle(4),
+                topmost: false,
+                under_active_window: None,
+                in_foreground: true,
+                foreground_window: WindowHandle(4),
+                class: "Button".to_owned(),
+                application: "app".to_owned(),
+                alt_held: false,
+                foreground_is_shell: false,
+            }),
+            event: verbatim_model::NormalizedEvent::FocusChanged {
+                node: msaa_node(2, "OK", Role::Button),
+                whole_window: false,
+                ancestors: vec![msaa_node(1, "Editor", Role::Window)],
+                selected_child: None,
+                text: Some(Box::new(verbatim_model::FocusText::NotRead)),
+                earlier: None,
+                group: None,
+                first_cached_ancestor: None,
+                answers: None,
+            },
+        }]
+    );
+}

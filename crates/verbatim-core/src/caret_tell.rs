@@ -180,14 +180,18 @@ fn value_change_of(kept: &Kept, change: &MsaaChange) -> bool {
         && change.ids.child == 0
 }
 
+/// Whether `change` is a value change of the committed focus `kept`, read
+/// through an edit control's messages: a change of its text.
+pub(crate) fn edit_text_change(kept: &Kept, change: &MsaaChange) -> bool {
+    crate::text_facts::provider(kept) == TextProvider::EditMessages && value_change_of(kept, change)
+}
+
 /// Whether `change`, an MSAA change at its turn, is a value change of the
 /// committed focus `kept` that sets its text-changed flag (Table 17,
 /// column G): `kept` is editable text with automatic selection detection
 /// read through an edit control's messages.
 pub(crate) fn sets_text_changed(kept: &Kept, change: &MsaaChange) -> bool {
-    crate::text_facts::provider(kept) == TextProvider::EditMessages
-        && crate::text_facts::detects_selection(kept)
-        && value_change_of(kept, change)
+    edit_text_change(kept, change) && crate::text_facts::detects_selection(kept)
 }
 
 /// Whether the committed focus is a console host's terminal, whose caret
@@ -253,6 +257,23 @@ fn answered(
     {
         return;
     }
+    cx.emit(verbatim_model::Observed::effect(
+        tell.tell.trace_id,
+        (tell.tell.process, kept.read_by.backend()),
+        None,
+        verbatim_model::NormalizedEvent::CaretMoved {
+            node_id: kept.node,
+            caret: read.caret.clone(),
+            selection_changes: read
+                .difference
+                .as_ref()
+                .map(|difference| difference.changes.clone())
+                .unwrap_or_default(),
+            content_changed: false,
+            new_selection: None,
+            facts: None,
+        },
+    ));
     let collapsed = read.caret.selection.is_none();
     crate::editing::take_caret(&mut cx.facts_mut(), kept.node, read.caret);
     let Some(difference) = read.difference else {

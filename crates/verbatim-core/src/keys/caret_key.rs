@@ -406,6 +406,13 @@ async fn terminal_read(
         Outcome::Result(reply) => Some(reply),
         _ => None,
     };
+    if let Some(reply) = reply.as_deref() {
+        cx.emit(crate::terminal::reading::observed(
+            &asked.terminal,
+            reply,
+            press.trace_id,
+        ));
+    }
     let now_us = cx.now_us();
     let entry = crate::terminal::reading::entry_read_ended(
         &mut cx.facts_mut(),

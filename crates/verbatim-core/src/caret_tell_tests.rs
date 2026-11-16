@@ -12,10 +12,10 @@ use verbatim_model::request::{
 };
 use verbatim_model::tell::{ElementToken, EventObject, Payload};
 use verbatim_model::{
-    CaretReport, CaretSelection, EditSelection, Effect as Said, Phrase, Role, SegmentContent,
-    Selection, SelectionChange, SelectionDifference, SelectionRead, SelectionReadReply,
-    SelectionText, TextAnchor, TextChunk, TextOp, TextPosition, TextProvider, TextReply, TextUnit,
-    WindowHandle,
+    Backend, CaretReport, CaretSelection, EditSelection, Effect as Said, NormalizedEvent, Observed,
+    Phrase, Role, SegmentContent, Selection, SelectionChange, SelectionDifference, SelectionRead,
+    SelectionReadReply, SelectionText, TextAnchor, TextChunk, TextOp, TextPosition, TextProvider,
+    TextReply, TextUnit, WindowHandle,
 };
 
 use crate::entries::tests::{
@@ -87,12 +87,14 @@ fn value_change() -> Input<Entry> {
 }
 
 /// What one step did: each text request by its number and what it asks,
-/// each other request, and each utterance by its segments.
+/// each other request, each utterance by its segments, and each event the
+/// control plane's stream carries.
 #[derive(Debug, Default, PartialEq)]
 struct Step {
     text: Vec<(u64, TextOp)>,
     other: usize,
     said: Vec<Vec<String>>,
+    observed: Vec<Observed>,
 }
 
 fn step(held: &mut Held, at_us: u64, input: Input<Entry>) -> Step {
@@ -111,6 +113,7 @@ fn step(held: &mut Held, at_us: u64, input: Input<Entry>) -> Step {
                     .map(|segment| format!("{:?}", segment.content))
                     .collect(),
             ),
+            Effect::Said(Said::Observed(observed)) => step.observed.push(*observed),
             _ => {}
         }
     }
@@ -255,6 +258,58 @@ fn with_baseline(held: &mut Held, tell: Input<Entry>, provider: TextProvider, nu
     assert_eq!(baseline(held), Some(TextAnchor(70)));
 }
 
+/// The edit control's value change as the control plane's stream carries
+/// it, as the outpost reported it before Core took its tells: a text change
+/// of the committed field, node 2, read through MSAA.
+fn text_change() -> Observed {
+    Observed {
+        trace_id: verbatim_model::TraceId::from_raw(7),
+        source: APP,
+        backend: Backend::Msaa,
+        window: None,
+        event: NormalizedEvent::TextChanged { node_id: node(2) },
+    }
+}
+
+/// The edit control's value change is the control plane's text change
+/// whether or not the field detects selection, which the harness waits on
+/// after a paste (`text_box.rs`, `paste`); a caret tell's read is its caret
+/// move.
+#[test]
+fn an_edit_controls_value_change_and_a_caret_read_are_the_control_planes_events() {
+    let mut held = edit_control();
+    let changed = step(&mut held, 1_500, value_change());
+    assert_eq!(changed.observed, [text_change()]);
+    let _ = step(&mut held, 2_000, system_caret());
+    let read = step(
+        &mut held,
+        2_100,
+        selection_read(
+            2,
+            (caret(1, 3), 70),
+            Some(differing(vec![change(true, "lph")], Some("lph"))),
+            Some(EditSelection { start: 1, end: 4 }),
+        ),
+    );
+    assert_eq!(
+        read.observed,
+        [Observed {
+            trace_id: verbatim_model::TraceId::from_raw(7),
+            source: APP,
+            backend: Backend::Msaa,
+            window: None,
+            event: NormalizedEvent::CaretMoved {
+                node_id: node(2),
+                caret: caret(1, 3),
+                selection_changes: vec![change(true, "lph")],
+                content_changed: false,
+                new_selection: None,
+                facts: None,
+            },
+        }]
+    );
+}
+
 #[test]
 fn a_caret_tell_with_no_baseline_mints_one_says_nothing_and_takes_the_caret() {
     let mut held = uia_field();
@@ -387,7 +442,13 @@ fn a_value_change_makes_the_next_difference_general_and_is_cleared_by_it() {
     let mut held = edit_control();
     with_baseline(&mut held, system_caret(), TextProvider::EditMessages, 2);
     let changed = step(&mut held, 1_500, value_change());
-    assert_eq!(changed, Step::default());
+    assert_eq!(
+        changed,
+        Step {
+            observed: vec![text_change()],
+            ..Step::default()
+        }
+    );
     assert!(text_changed(&held));
 
     let asked = step(&mut held, 2_000, system_caret());

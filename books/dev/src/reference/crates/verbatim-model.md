@@ -181,7 +181,13 @@ recorder unchanged. What the reducer does with each type is in
     (NVDA's fake focus, the desktop's return, or Verbatim+Tab's live
     query); `ReadClock { repeat }` (read the time and date
     into `Input::ClockRead`); `Show(GuiRequest)` (the menu, or the list of
-    a `ShellItemKind`'s items). A lock key's read and the terminal's
+    a `ShellItemKind`'s items); `Observed` (an `Observed`: an event Core
+    took, with its trace, process, backend and window facts, for the
+    control plane's event stream, which carries it as its protocol
+    version 4 event: a focus Core executed as `FocusChanged`, a change of
+    an edit control's text as `TextChanged`, a caret tell's read as
+    `CaretMoved`, and each read of the focused terminal Core took as
+    `TerminalSnapshot`). A lock key's read and the terminal's
     quiet-period timer are not effects: the shell reads their due times
     from Core's state after each step.
     The text effects are under "The text protocol".
@@ -581,8 +587,9 @@ implements. What each answer says is in `docs/parity/text.md`,
   it.
 - `TerminalSnapshot { node_id, snapshot }`: one full read of a focused
   terminal, the control plane's protocol version 4 event the test harness
-  waits on ([verbatim-core](verbatim-core.md), "Core's terminal model");
-  no outpost sends it. A `TerminalSnapshot` is whole by itself: its `text` from the read's start to the document's end, the
+  waits on ([verbatim-core](verbatim-core.md), "Core's terminal model"),
+  which Core gives as `Effect::Observed` for each read it takes; no
+  outpost sends it. A `TerminalSnapshot` is whole by itself: its `text` from the read's start to the document's end, the
   `screen`, the document's `first_row` and the `caret_line`, each a
   `TerminalText`; the flags `from_start`, `shrank`, `at_document_start`
   and `alternate`; `caret_rows_to_end`, `caret_column`, and `above`;

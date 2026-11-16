@@ -440,7 +440,13 @@ pub(crate) fn execute(
         .committed_read()
         .filter(|committed| committed.node == ready.kept.node)
         .map(|committed| committed.selection);
-    let mut said = crate::reduce::execute_report(state, &ready.report, false, 0);
+    let mut said = vec![observed(&ready.report)];
+    said.extend(crate::reduce::execute_report(
+        state,
+        &ready.report,
+        false,
+        0,
+    ));
     if read.met.is_none()
         && let Some(foreground) = &ready.foreground
     {
@@ -462,6 +468,27 @@ pub(crate) fn execute(
         follows,
         committed: true,
     }
+}
+
+/// The focus `report` as the control plane's event stream carries it, as
+/// its reader reported it before Core judged its reports itself.
+fn observed(report: &Report) -> Effect {
+    verbatim_model::Observed::effect(
+        report.trace_id,
+        (report.source, report.node.backend),
+        report.window.clone(),
+        verbatim_model::NormalizedEvent::FocusChanged {
+            node: report.node.clone(),
+            whole_window: report.whole_window,
+            ancestors: report.ancestors.to_vec(),
+            selected_child: report.selected_child.clone(),
+            text: report.text.clone().map(Box::new),
+            earlier: report.earlier,
+            group: report.group,
+            first_cached_ancestor: None,
+            answers: None,
+        },
+    )
 }
 
 /// What executing a focus answer did: what it said, the `Follow`s its

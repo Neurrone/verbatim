@@ -1222,11 +1222,9 @@ impl ReducerThread<'_> {
             OutpostToCore::Event {
                 trace_id,
                 observed_at_us,
-                backend,
-                ref window,
                 application,
                 timing,
-                ref event,
+                ..
             } => {
                 // The latency timeline starts when the event was first
                 // observed. That is `observed_at_us` except for a foreground
@@ -1246,19 +1244,6 @@ impl ReducerThread<'_> {
                     .ledger
                     .event_observed(trace_id, first_observed_us);
                 self.context.ledger.event_received(trace_id, timing);
-                // The event is copied for the control plane only when some
-                // connection is subscribed to events.
-                if let Some(server) = self.context.server_slot.get()
-                    && server.has_event_subscribers()
-                {
-                    server.broadcast_event(
-                        trace_id,
-                        application.unwrap_or(source),
-                        backend,
-                        window.clone(),
-                        event.clone(),
-                    );
-                }
                 if let Some(input) = verbatim_model::protocol::event_input(source, message) {
                     self.apply(input);
                 }
@@ -1654,6 +1639,23 @@ impl ReducerThread<'_> {
         }
     }
 
+    /// Fans an event Core took out to the control plane's event stream,
+    /// when some connection is subscribed to events.
+    fn observed(&self, observed: verbatim_model::Observed) {
+        if let Some(server) = self.context.server_slot.get()
+            && server.has_event_subscribers()
+        {
+            let verbatim_model::Observed {
+                trace_id,
+                source,
+                backend,
+                window,
+                event,
+            } = observed;
+            server.broadcast_event(trace_id, source, backend, window, event);
+        }
+    }
+
     /// Executes one reducer effect.
     fn execute(&mut self, trace_id: TraceId, effect: Effect) {
         match effect {
@@ -1750,6 +1752,7 @@ impl ReducerThread<'_> {
             Effect::ReadClock { repeat } => {
                 self.follow_ups.push(read_clock(trace_id, repeat));
             }
+            Effect::Observed(observed) => self.observed(*observed),
             Effect::Show(request) => send_gui_command(
                 &self.context.gui_handle,
                 match request {

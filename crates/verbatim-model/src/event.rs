@@ -1592,6 +1592,49 @@ pub enum Effect {
     /// because it would have spoken a cached ancestor; the shell logs it
     /// and routes it to the listener or the outpost.
     LiveReread(LiveReread),
+    /// An event Core took, for the control plane's event stream, which
+    /// carries it as version 4 of the control protocol did: the shell
+    /// fans it out to the connections subscribed to events, and does
+    /// nothing else with it.
+    Observed(Box<Observed>),
+}
+
+/// An event Core took ([`Effect::Observed`]), as the control plane's event
+/// stream carries it: the event, under the trace of the input that caused
+/// it, the process it is of, the backend that read it, and its window's
+/// facts when Core has them.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Observed {
+    /// The trace of the input that caused it.
+    pub trace_id: TraceId,
+    /// The process it is of.
+    pub source: Pid,
+    /// The backend that read it.
+    pub backend: Backend,
+    /// Its window's facts, when Core has them.
+    pub window: Option<WindowFacts>,
+    /// The event.
+    pub event: NormalizedEvent,
+}
+
+impl Observed {
+    /// [`Effect::Observed`] of `event`, of `source`, read by `backend`,
+    /// under `trace_id`, with `window`'s facts.
+    #[must_use]
+    pub fn effect(
+        trace_id: TraceId,
+        (source, backend): (Pid, Backend),
+        window: Option<WindowFacts>,
+        event: NormalizedEvent,
+    ) -> Effect {
+        Effect::Observed(Box::new(Self {
+            trace_id,
+            source,
+            backend,
+            window,
+            event,
+        }))
+    }
 }
 
 #[cfg(test)]

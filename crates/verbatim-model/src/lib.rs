@@ -70,8 +70,8 @@ pub use event::{
     ActionName, AlertOrigin, BarChange, DesktopNews, Earcon, EarlierElement, Effect, FetchResult,
     FirstCachedAncestor, FocusGroup, FocusReaderKind, ForegroundWindow, GuiRequest, HookForeground,
     Input, LiveReread, LiveRereadLog, LiveRereadReason, LockKey, NormalizedEvent, Notification,
-    NotificationKind, NotificationProcessing, Percent, Pid, PropertyChange, Query, QueryId,
-    QueryKind, ReviewCommand, Script, ToastId, WindowFacts, WindowHandle,
+    NotificationKind, NotificationProcessing, Observed, Percent, Pid, PropertyChange, Query,
+    QueryId, QueryKind, ReviewCommand, Script, ToastId, WindowFacts, WindowHandle,
 };
 pub use gesture::{GestureId, GestureParseError};
 pub use key_seq::KeySeq;

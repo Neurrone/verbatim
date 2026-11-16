@@ -1414,6 +1414,45 @@ fn a_windows_terminal_caret_key_is_watched_every_10_ms_to_300_ms_with_no_event()
     );
 }
 
+/// Every read of the terminal Core takes is the control plane's terminal
+/// read, as the outpost reported each read it sent before Core asked its
+/// reads itself, which the harness waits on for the caret's line
+/// (`terminal.rs`, `wait_for_caret_on`): the output reads, for a change
+/// told and for the key's pass, under the trace of their answers, and a
+/// held key's starting and final reads, under the key's, in the order they
+/// answered.
+#[test]
+fn every_terminal_read_core_takes_is_the_control_planes_terminal_read() {
+    let mut session = showing(20, 4, 10, "$ ls");
+    session.write(
+        "
+file
+$ ", 100,
+    );
+    let _ = held_up_watch(&mut session);
+    let expected: Vec<verbatim_model::Observed> = session
+        .answered_reads
+        .iter()
+        .zip([2, 9, 2, 9])
+        .map(|(snapshot, trace)| verbatim_model::Observed {
+            trace_id: TraceId::from_raw(trace),
+            source: verbatim_model::Pid(1),
+            backend: verbatim_model::Backend::Uia,
+            window: None,
+            event: verbatim_model::NormalizedEvent::TerminalSnapshot {
+                node_id: terminal_support::node(),
+                snapshot: Box::new(snapshot.clone()),
+            },
+        })
+        .collect();
+    assert_eq!(
+        session.answered_reads.len(),
+        4,
+        "two output reads and the key's two reads"
+    );
+    assert_eq!(session.observed, expected);
+}
+
 #[test]
 fn a_key_deferred_behind_a_held_key_reaches_the_rules_at_the_held_keys_pass() {
     // "x" typed at 210 while Up, pressed at 200, waits for its starting

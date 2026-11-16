@@ -438,8 +438,9 @@ knowing for review:
   outstanding queries of it gets a "gone" outcome, and the control plane's
   event subscribers get `Frame::OutpostEnded`. There is no foreground pid gate: which
   events are spoken is the reducer's attention model. Events go to the
-  reducer, the latency ledger, and the control plane's event subscribers
-  (copied for the control plane only while one is subscribed);
+  reducer and the latency ledger; the control plane's event subscribers
+  get the events Core took, its `Effect::Observed` (copied for the
+  control plane only while one is subscribed);
   replies are routed by their request id's asker (`requests::reply_input`):
   one to a query of the reducer's re-enters it as `Input::Answered` under
   the reply's trace, a failed outcome logged first; the shell asks no

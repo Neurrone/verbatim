@@ -599,6 +599,21 @@ pub(crate) fn speech_turn(cx: &mut Cx<Entries>, entry: SpeechEntry) {
     }
 }
 
+/// A read of `terminal` Core took, `reply`, as the control plane's event
+/// stream carries it, as the outpost reported each read it sent before
+/// Core asked its reads itself.
+pub(crate) fn observed(terminal: &Terminal, reply: &TerminalReadReply, trace: TraceId) -> Effect {
+    verbatim_model::Observed::effect(
+        trace,
+        (terminal.window.process, verbatim_model::Backend::Uia),
+        None,
+        verbatim_model::NormalizedEvent::TerminalSnapshot {
+            node_id: terminal.node,
+            snapshot: Box::new(reply.snapshot.clone()),
+        },
+    )
+}
+
 /// The reply of a terminal's full read, decoded.
 fn read_reply(reply: Reply) -> Option<Box<TerminalReadReply>> {
     match reply {
@@ -632,6 +647,17 @@ pub(crate) fn answered(
     if follow.is_some_and(|follow| follow.token == token) {
         follow_ended(state, &terminal, follow, &outcome, now_us);
         return Vec::new();
+    }
+    let awaited = match focused {
+        FocusedTerminal::Baselining { read, .. } => read == Some(token),
+        FocusedTerminal::Modelled {
+            reading: Reading::Out { token: out, .. },
+            ..
+        } => out == token,
+        _ => false,
+    };
+    if awaited && let Outcome::Result(Reply::Text(TextReply::TerminalRead(reply))) = &outcome {
+        said.push(observed(&terminal, reply, trace));
     }
     match focused {
         FocusedTerminal::Baselining {

@@ -40,6 +40,16 @@ pub(crate) enum ReadBy {
     },
 }
 
+impl ReadBy {
+    /// The backend that read it.
+    pub(crate) fn backend(&self) -> verbatim_model::Backend {
+        match self {
+            Self::Uia { .. } => verbatim_model::Backend::Uia,
+            Self::Msaa { .. } => verbatim_model::Backend::Msaa,
+        }
+    }
+}
+
 /// Where a focus is, by window: its nearest window, its top-level window
 /// and the top of its owner chain, and the windows of its ancestors.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
