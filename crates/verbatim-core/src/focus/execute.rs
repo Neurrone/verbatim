@@ -525,8 +525,6 @@ fn observed(report: &Report) -> Effect {
             text: report.text.clone().map(Box::new),
             earlier: report.earlier,
             group: None,
-            first_cached_ancestor: None,
-            answers: None,
         },
     )
 }

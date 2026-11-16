@@ -1239,9 +1239,6 @@ impl ReducerThread<'_> {
             // consumes the rest, and hands none of them on.
             OutpostToCore::Answer(_)
             | OutpostToCore::Tell(_)
-            | OutpostToCore::Event { .. }
-            | OutpostToCore::Reply { .. }
-            | OutpostToCore::LiveRereadGone { .. }
             | OutpostToCore::NotResponding { .. }
             | OutpostToCore::Pong { .. }
             | OutpostToCore::TargetExited

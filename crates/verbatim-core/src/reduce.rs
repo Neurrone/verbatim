@@ -543,7 +543,6 @@ fn focus_context(
         snapshot: report.node.clone(),
         spoken: spoken_record(previous, report, &ancestors),
         ancestors,
-        last_selection: report.selected_child.map(|selected| selected.id),
         alive: true,
         reported_focused: report.node.states.contains(State::Focused),
         trace_id: Some(trace_id),

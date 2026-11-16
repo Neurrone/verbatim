@@ -15,7 +15,7 @@
 //! a script writes). Windows are switched as a taskbar button does, never
 //! with Alt+Tab. They assert nothing beyond completing, except where a
 //! workload proves it measures its path, as the focus returns do by their
-//! speech and their count of live re-reads: the registry runs the
+//! speech: the registry runs the
 //! `measure` group with the speech collector in collect-only mode, which
 //! never fails on unasserted speech. Just before every input,
 //! everything Verbatim has queued is taken, not asserted, and written with
@@ -522,27 +522,16 @@ pub(crate) fn setup_focus_return(scenario: &mut Scenario) -> io::Result<Scenario
     Ok(ScenarioState::None)
 }
 
-/// `measure_focus_return`: a return between top-level windows that a live
-/// re-read answers (`books/dev/src/reference/crates/verbatim-core.md`, "The
-/// ancestry cache"). The user goes from mockapp's UIA window to the
-/// Windows Forms text box and back ([`focus_returns`]); each return's
-/// focus event, read by the listener's reading thread for mockapp, which
-/// still holds its last focus, meets its ancestry cache at the list and
-/// takes the window from it, and Core, whose focus ancestry is the text
-/// box's, would enter the window from the cache, so it asks for a live
-/// re-read and speaks its answer: at least one live re-read per return,
-/// and one more for each further focus event the window raises for its
-/// item while a re-read waits, which Core judges as a new report.
+/// `measure_focus_return`: a return between top-level windows. The user
+/// goes from mockapp's UIA window to the Windows Forms text box and back
+/// ([`focus_returns`]), each return's focus read up its ancestors until
+/// it meets one Core already knows.
 pub(crate) fn body_focus_return(scenario: &mut Scenario, _state: &mut ScenarioState) {
     let truth = Truth {
         name: "measure_focus_return",
     };
     focus_returns(scenario, &truth, (RETURN_BOX, "m-return-app"), false);
-    let re_reads = scenario.live_re_reads();
-    assert!(
-        re_reads >= REPEATS as u64,
-        "every return makes a live re-read: {re_reads} for {REPEATS} returns"
-    );
+    scenario.expect_nothing_more();
 }
 
 /// The text box of `measure_focus_return_retitled`.
@@ -555,15 +544,13 @@ pub(crate) fn setup_focus_return_retitled(scenario: &mut Scenario) -> io::Result
 
 /// `measure_focus_return_retitled`: the returns of `measure_focus_return`,
 /// with mockapp's window given a new title (`set-title`) each time while
-/// the text box is in front, so the listener's title check finds the
-/// window text saved with its ancestry cache changed and walks live to the
-/// top: the new title is spoken, with no live re-read.
+/// the text box is in front: the new title is spoken.
 pub(crate) fn body_focus_return_retitled(scenario: &mut Scenario, _state: &mut ScenarioState) {
     let truth = Truth {
         name: "measure_focus_return_retitled",
     };
     focus_returns(scenario, &truth, (RETITLED_BOX, "m-retitled-app"), true);
-    scenario.expect_live_re_reads(0);
+    scenario.expect_nothing_more();
 }
 
 /// How many buttons the flood's mockapp window holds.
@@ -607,8 +594,7 @@ fn flood_fixture() -> String {
 /// button, as in `rapid_tabbing_in_settings`, and then Verbatim being idle.
 /// Which buttons a burst says depends on how mockapp's focus changes and
 /// the listener's reads interleave, so its speech is collected, not
-/// asserted. Every move is within one top-level window, so none asks for a
-/// live re-read.
+/// asserted.
 pub(crate) fn body_focus_flood(scenario: &mut Scenario, _state: &mut ScenarioState) {
     let truth = Truth {
         name: "measure_focus_flood",
@@ -643,7 +629,7 @@ pub(crate) fn body_focus_flood(scenario: &mut Scenario, _state: &mut ScenarioSta
         super::rapid_tabbing_in_settings::wait_for_focus_on(&mut events, &last);
         truth.drain(scenario, "after the burst");
     }
-    scenario.expect_live_re_reads(0);
+    scenario.expect_nothing_more();
 }
 
 /// The long line `measure_speech_real` reads with a review key, so that a

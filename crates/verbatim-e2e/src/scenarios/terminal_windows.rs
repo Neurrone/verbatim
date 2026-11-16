@@ -83,10 +83,7 @@
 //! the caret is on. NVDA, captured at the pin (alpha-58022, 732d1ce2, five
 //! runs of the switch by Alt+Tab and five by bringing the window forward,
 //! identical but for its late echo of typed characters), says "<new title>
-//! window", then "<first title> terminal <new title>". The rename changes
-//! the window text saved with both focus readers' ancestry caches, so the
-//! return's ancestors are read live and Core asks for no live re-read,
-//! which the scenario asserts from the status reply.
+//! window", then "<first title> terminal <new title>".
 //!
 //! `*_leave_flood` leaves a terminal during a flood and returns. `away.ps1`
 //! writes a line of sixteen numbered words, "word1" to "word16", then
@@ -441,9 +438,7 @@ pub(crate) fn body_two_windows_terminal(scenario: &mut Scenario, state: &mut Sce
 /// rename while away says nothing, and the return says the new title,
 /// "<new title> window", and the terminal, whose name is the tab's first
 /// title, with the new title as its description, then the line the caret
-/// is on, as NVDA was captured saying it. The window title saved with the
-/// ancestry caches has changed, so both focus readers read the return's
-/// ancestors live, and Core asks for no live re-read.
+/// is on, as NVDA was captured saying it.
 fn retitle_while_away(scenario: &mut Scenario, first: &str, second: &str, directory: &str) {
     scenario
         .bring_window_forward(first)
@@ -468,7 +463,6 @@ fn retitle_while_away(scenario: &mut Scenario, first: &str, second: &str, direct
     scenario
         .wait_for_agent_file(&format!(r"{directory}\retitled"), FLOOD_STEP)
         .expect("the first window is renamed");
-    let re_reads = scenario.live_re_reads();
     scenario
         .bring_window_forward(first)
         .expect("brings the renamed first window back");
@@ -478,11 +472,6 @@ fn retitle_while_away(scenario: &mut Scenario, first: &str, second: &str, direct
         &format!("{first} terminal {renamed}"),
         PROMPT,
     ]);
-    assert_eq!(
-        scenario.live_re_reads(),
-        re_reads,
-        "Core's live re-reads as the renamed window came back"
-    );
 }
 
 /// Switches to the tab titled `title`, the `position`th of two, as NVDA was

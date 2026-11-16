@@ -22,8 +22,8 @@ use verbatim_model::tell::{
 };
 use verbatim_model::{
     Backend, CellPosition, Earcon, Effect, FocusNow, FocusValidity, Input, NodeDetails, NodeId,
-    NodeSnapshot, NormalizedEvent, NotificationKind, NotificationProcessing, ObjectKey, OutpostId,
-    Phrase, Pid, ReviewCommand, Role, SegmentContent, SpeechPriority, State, StateSet, TraceId,
+    NodeSnapshot, NotificationKind, NotificationProcessing, ObjectKey, OutpostId, Phrase,
+    ReviewCommand, Role, SegmentContent, SpeechPriority, State, StateSet, TraceId,
     UtteranceSegment, WindowHandle,
 };
 
@@ -425,87 +425,27 @@ fn listener_object(app: App, node: NodeId, id: PropertyId, value: PropertyValue)
     }
 }
 
-fn snapshot(
-    id: u64,
-    role: Role,
-    name: Option<&str>,
-    value: Option<&str>,
-    states: StateSet,
-) -> NodeSnapshot {
-    NodeSnapshot {
-        id: NodeId::new(id),
-        backend: Backend::Uia,
-        role,
-        name: name.map(str::to_string),
-        value: value.map(str::to_string),
-        states,
-        details: NodeDetails::default(),
-    }
-}
-
-fn focus_event(trace_id: TraceId, source: Pid, snapshot: NodeSnapshot) -> Input {
-    Input::Event {
-        observed_at_us: 0,
-        trace_id,
-        source,
-        backend: Backend::Uia,
-        window: None,
-        event: NormalizedEvent::FocusChanged {
-            whole_window: false,
-            node: snapshot,
-            ancestors: Vec::new(),
-            selected_child: None,
-            text: None,
-            earlier: None,
-            group: None,
-            answers: None,
-            first_cached_ancestor: None,
-        },
-        purpose: None,
-    }
-}
-
+/// A short session through Core's event queue: the listener started and
+/// ready, a focus told from it, and a tick.
 fn sample_script() -> Vec<Input> {
-    let source = Pid(1);
-    let node_id = NodeId::new(1);
-    let button = snapshot(1, Role::Button, Some("OK"), None, StateSet::new());
-    let checkbox = NodeSnapshot {
-        id: node_id,
-        ..snapshot(1, Role::CheckBox, Some("Agree"), None, StateSet::new())
+    let queue = |at_us, input| Input::Queue {
+        trace_id: TraceId::from_raw(47),
+        at_us,
+        input,
     };
     vec![
-        focus_event(TraceId::from_raw(47), source, button),
-        Input::Event {
-            observed_at_us: 0,
-            trace_id: TraceId::from_raw(48),
-            source,
-            backend: Backend::Uia,
-            window: None,
-            event: NormalizedEvent::FocusChanged {
-                whole_window: false,
-                node: checkbox,
-                ancestors: Vec::new(),
-                selected_child: None,
-                text: None,
-                earlier: None,
-                group: None,
-                answers: None,
-                first_cached_ancestor: None,
+        queue(
+            1_000,
+            QueueInput::Process(ProcessFact::ListenerStarted(LISTENER.generation)),
+        ),
+        queue(2_000, QueueInput::ReaderReady(LISTENER)),
+        queue(
+            3_000,
+            QueueInput::Tell {
+                from: LISTENER,
+                tell: Box::new(focus_tell(ONE, 1, 3_000)),
             },
-            purpose: None,
-        },
-        Input::Event {
-            observed_at_us: 0,
-            trace_id: TraceId::from_raw(49),
-            source,
-            backend: Backend::Uia,
-            window: None,
-            event: NormalizedEvent::ValueChanged {
-                node_id,
-                value: Some("x".to_string()),
-            },
-            purpose: None,
-        },
+        ),
         Input::Tick,
     ]
 }

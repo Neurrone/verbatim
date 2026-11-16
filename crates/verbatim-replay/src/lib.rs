@@ -236,8 +236,8 @@ impl Renderer {
         out
     }
 
-    /// One effect: an utterance as its text, a query by what it asks of
-    /// which node, and anything else by its kind and fields.
+    /// One effect: an utterance as its text, and anything else by its kind
+    /// and fields.
     #[must_use]
     pub fn effect(&self, effect: &Effect) -> String {
         match effect {
@@ -249,15 +249,6 @@ impl Renderer {
                 }
             }
             Effect::DropExpiredSpeech(_) => "DropExpiredSpeech".to_owned(),
-            Effect::Fetch(query) => format!(
-                "Fetch {:?} of {}, query {}",
-                query.kind,
-                serde_json::to_value(query.node_id)
-                    .ok()
-                    .and_then(|id| value_text(&id))
-                    .unwrap_or_default(),
-                query.query_id.0
-            ),
             Effect::PlayEarcon(earcon) => format!("PlayEarcon {earcon:?}"),
             Effect::CopyToClipboard(text) => format!("CopyToClipboard {}", quoted(text)),
             Effect::ForKey(trace, effect) => {
@@ -271,54 +262,13 @@ impl Renderer {
     }
 }
 
-/// One input: its kind, and for an event the event's kind and node, then
-/// its fields, each as its name and value.
+/// One input: its kind, then its fields, each as its name and value.
 #[must_use]
 pub fn describe_input(input: &Input) -> String {
-    let value = match serde_json::to_value(input) {
-        Ok(value) => value,
-        Err(error) => return format!("{input:?} ({error})"),
-    };
-    if let Input::Event { .. } = input
-        && let Some(Value::Object(fields)) = value.get("Event")
-    {
-        return describe_event(fields);
+    match serde_json::to_value(input) {
+        Ok(value) => variant(&value),
+        Err(error) => format!("{input:?} ({error})"),
     }
-    variant(&value)
-}
-
-/// An event: `Event`, the event's kind, its node, the event's own fields,
-/// then the input's.
-fn describe_event(fields: &Map<String, Value>) -> String {
-    let mut parts = vec!["Event".to_owned()];
-    let mut rest = Vec::new();
-    if let Some(Value::Object(event)) = fields.get("event")
-        && let Some((kind, Value::Object(event_fields))) = event.iter().next()
-    {
-        parts[0].push(' ');
-        parts[0].push_str(kind);
-        for key in ["node", "node_id", "controller", "bar"] {
-            if let Some(node) = event_fields.get(key).and_then(value_text) {
-                parts.push(format!("{key} {node}"));
-            }
-        }
-        rest.extend(
-            event_fields
-                .iter()
-                .filter(|(key, _)| {
-                    !matches!(key.as_str(), "node" | "node_id" | "controller" | "bar")
-                })
-                .filter_map(field),
-        );
-    }
-    parts.extend(rest);
-    parts.extend(
-        in_order(fields)
-            .into_iter()
-            .filter(|(key, _)| key.as_str() != "event")
-            .filter_map(field),
-    );
-    parts.join(", ")
 }
 
 /// An enum's serialized value: its variant's name, then its fields.
@@ -421,47 +371,9 @@ fn shortened(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use verbatim_model::{
-        Backend, NodeDetails, NodeId, NodeSnapshot, NormalizedEvent, Pid, Role, StateSet, TraceId,
-    };
+    use verbatim_model::TraceId;
 
     use super::*;
-
-    #[test]
-    fn an_event_names_its_kind_and_node_first() {
-        let input = Input::Event {
-            trace_id: TraceId::from_raw(7),
-            observed_at_us: 12,
-            source: Pid(700),
-            backend: Backend::Uia,
-            window: None,
-            event: NormalizedEvent::FocusChanged {
-                whole_window: false,
-                node: NodeSnapshot {
-                    id: NodeId::new(1),
-                    backend: Backend::Uia,
-                    role: Role::Button,
-                    name: Some("OK".to_owned()),
-                    value: None,
-                    states: StateSet::new(),
-                    details: NodeDetails::default(),
-                },
-                ancestors: Vec::new(),
-                selected_child: None,
-                text: None,
-                earlier: None,
-                group: None,
-                answers: None,
-                first_cached_ancestor: None,
-            },
-            purpose: None,
-        };
-        assert_eq!(
-            describe_input(&input),
-            "Event FocusChanged, node Button \"OK\", whole_window false, trace 7, source 700, observed_at_us 12, backend \"Uia\""
-        );
-        assert_eq!(input_time_us(&input), Some(12));
-    }
 
     #[test]
     fn a_long_text_is_shortened_with_its_length() {

@@ -329,51 +329,6 @@ pub fn already_entered_ancestors<O: EnteredKey, N: EnteredKey>(
     lowest_common_ancestor(previous, new).map_or(0, |(_, at_new)| at_new.saturating_add(1))
 }
 
-/// The index of a report's innermost cached ancestor, its
-/// `first_cached_ancestor`, as its focus reader computes it from the
-/// entries it emits, `ancestors` outermost first, after its filters and
-/// rules: the innermost of them `is_cached` names, the node of an ancestor
-/// it took from its ancestry cache rather than read live. Where a filter
-/// left the innermost cached ancestor out, this is the next cached one
-/// outward that remains. `None` when none remains.
-pub fn first_cached_ancestor(
-    ancestors: &[NodeId],
-    is_cached: impl Fn(NodeId) -> bool,
-) -> Option<u32> {
-    ancestors
-        .iter()
-        .rposition(|&ancestor| is_cached(ancestor))
-        .and_then(|index| u32::try_from(index).ok())
-}
-
-/// Core's check that a report would speak an ancestor its focus reader
-/// took from its ancestry cache (`books/dev/src/reference/crates/verbatim-core.md`,
-/// "The ancestry cache"): `first_cached`, its `first_cached_ancestor`, the
-/// index of its innermost cached ancestor among its ancestors outermost
-/// first, so that every entry up to it is cached; `entered_from`, the
-/// index of its first entered ancestor, below the lowest common ancestor
-/// (its ancestors' count when it enters none); and `title`, the index of
-/// the entry the title rule would speak, if any. A cached ancestor is
-/// spoken when it is entered, or when it is the title rule's entry; the
-/// entered ancestors are spoken first, so they are the reason when both
-/// hold. `None` when no cached ancestor would be spoken, and for a report
-/// with no cached ancestor. Nothing is allocated.
-#[must_use]
-pub fn needs_live_ancestry(
-    first_cached: Option<usize>,
-    entered_from: usize,
-    title: Option<usize>,
-) -> Option<verbatim_model::LiveRereadReason> {
-    let first_cached = first_cached?;
-    if entered_from <= first_cached {
-        Some(verbatim_model::LiveRereadReason::Entered)
-    } else if title.is_some_and(|title| title <= first_cached) {
-        Some(verbatim_model::LiveRereadReason::Title)
-    } else {
-        None
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -41,11 +41,6 @@ pub(crate) struct FocusContext {
     /// recorder does at each checkpoint, copies a pointer, not the chain.
     /// A focus change replaces the whole chain, never edits it.
     pub(crate) ancestors: Arc<[NodeSnapshot]>,
-    /// The most recently announced selected item within the focused
-    /// container — seeded by the focus event's own `selected_child`, then
-    /// advanced by each announced `SelectionChanged` — so a selection event
-    /// for the item that was just spoken is not spoken twice.
-    pub(crate) last_selection: Option<NodeId>,
     /// False once the outpost that issued these node ids has ended. The
     /// copied data stays, so a replacement outpost's report of the same
     /// focus can be taken silently (`docs/parity/focus-events.md`, "Recovery after an
@@ -926,9 +921,6 @@ impl SrState {
             insert(focus.snapshot.id);
             for ancestor in focus.ancestors.iter() {
                 insert(ancestor.id);
-            }
-            if let Some(selected) = focus.last_selection {
-                insert(selected);
             }
         }
         if let Some(navigator) = &self.navigator {
