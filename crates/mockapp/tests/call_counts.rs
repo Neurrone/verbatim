@@ -4741,6 +4741,107 @@ fn uia_mixed_stretch_costs_exactly() {
     ratchet.finish();
 }
 
+/// What a caret tell's read costs, through Core: mockapp's "Notes" document
+/// focused and committed, then a selection no key made, "alpha", and a UI
+/// Automation caret event on the document, which the outpost's `Follow`
+/// registration delivers and the outpost tells Core of with no read of its
+/// own; Core asks the read of the selection, compared with the baseline
+/// the focus answer minted (`docs/design/readers-tell-core-asks-build1.md`,
+/// "Selection and the caret's text facts" and Table 17), and says what it
+/// selected. With remote operations and classically: what Core said, and
+/// the read's calls.
+fn caret_tell_read(remote: bool) -> (Vec<Utterance>, CallCounts) {
+    let path = if remote { "remote" } else { "classic" };
+    let title = common::unique_title(&format!("mockapp-counts-caret-tell-{path}"));
+    let mut app = common::spawn("caret_watch.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let mut core = CoreDriver::new(
+        &app,
+        OutpostUnderTest::on_frozen_time_with_options(
+            &app,
+            OutpostOptions {
+                remote_operations: remote,
+            },
+        ),
+    );
+    app.send("set-focus doc");
+    let uia = Uia::new().expect("a UIA client");
+    let _ = core.uia_focus(&common::listener_focus(&uia, hwnd.0 as isize));
+    app.send("caret doc 0 5");
+    app.send("caret-event doc");
+    let step = core.told(1);
+    drop(core);
+    app.quit();
+    (step.spoken(), step.calls)
+}
+
+/// The program of a caret tell's read on this thread, as the outpost's
+/// worker runs it (`verbatim_outpost::text::held::read_selection`), with
+/// `verbatim_uia_rops`'s counting on: mockapp's "Notes" document, the
+/// caret at `caret`'s command, compared with the baseline read before it
+/// at the text's start. The instructions its one program executed.
+fn caret_tell_program(caret: &str) -> u32 {
+    let title = common::unique_title("mockapp-counts-caret-tell-program");
+    let mut app = common::spawn("caret_watch.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let mut source = uia_notes(hwnd);
+    let mut store = Anchors::new(Arc::default());
+    let mut anchors = store.node(1);
+    common::apply(&mut app, hwnd, "caret doc 0");
+    let baseline = verbatim_outpost::text::held::read_selection(&mut source, &mut anchors, 1, None)
+        .expect("the baseline's read")
+        .baseline;
+    common::apply(&mut app, hwnd, caret);
+    verbatim_uia_rops::counting::start();
+    verbatim_outpost::text::held::read_selection(&mut source, &mut anchors, 2, Some(baseline))
+        .expect("the caret tell's read");
+    let counts = verbatim_uia_rops::counting::stop();
+    app.quit();
+    match counts.as_slice() {
+        [Some(count)] => *count,
+        counts => panic!("one counted program, not {counts:?}"),
+    }
+}
+
+/// A caret tell's read, the cost of each UI Automation caret event on the
+/// committed focus (`caret_tell_read`): remotely one program, which reads
+/// the caret, the selection, the caret's line, the selection's text and
+/// its changes from the baseline, the element and its text pattern being
+/// the focus's, held since its completion. Before the selection's text and
+/// changes were read in the program, they were read from the ranges after
+/// it, six calls more. Classically the read is the classic calls behind the
+/// program's signature, 22, one more than the read by parts after it made.
+/// The program's instructions, under UI Automation's limit of 10,000
+/// (`instruction_limit.rs`): 111 for the selection "alpha" in a line of
+/// plain text, compared with a baseline at the text's start, and 54 for the
+/// caret alone moved inside the line; the caret read's worst case, the same
+/// program with every part asked, is pinned by `instruction_limit.rs`'s
+/// `caret_reads_execute_exactly`.
+fn caret_tell_reads_cost_exactly() {
+    common::init_com();
+    let mut ratchet = Ratchet::default();
+    let selected = vec![vec![SegmentContent::Phrase(
+        verbatim_model::Phrase::Selected(verbatim_model::SelectionText::Text("alpha".to_owned())),
+    )]];
+    for (operation, remote, expected) in [
+        ("UIA caret tell's read, remotely", true, calls(1, 0, 0)),
+        ("UIA caret tell's read, classically", false, calls(22, 0, 0)),
+    ] {
+        let (said, measured) = caret_tell_read(remote);
+        assert_eq!(said, selected, "{operation}: what Core said");
+        ratchet.check_calls(operation, measured, expected);
+    }
+    assert_eq!(
+        [
+            caret_tell_program("caret doc 0 5"),
+            caret_tell_program("caret doc 3")
+        ],
+        [111, 54],
+        "the caret tell's read's program, a selection and the caret alone"
+    );
+    ratchet.finish();
+}
+
 fn caret_moves_cost_exactly() {
     common::init_com();
     let mut ratchet = Ratchet::default();
@@ -5239,12 +5340,11 @@ fn uia_text_focus(
 /// (`docs/design/readers-tell-core-asks-build1.md`, Table 17): the line at
 /// the caret and the selection, with the selected text when there is one.
 /// Remotely that is the text pattern's fetch and one program, two calls,
-/// and the selected text three more, read from the selection's ends; the
-/// focus was 9 calls with its caret and 10 with a selection before Core
-/// asked the completion and read the states after the registration.
-/// Classically the read is the classic calls behind the same signature: 19
-/// and 29 calls, where the caret report the outpost sent with its own
-/// focus report took 45 and 57. A terminal's caret is not read with its
+/// the selected text read in the program; the focus was 9 calls with its
+/// caret and 10 with a selection before Core asked the completion and read
+/// the states after the registration. Classically the read is the classic
+/// calls behind the same signature: 19 and 27 calls, where the caret
+/// report the outpost sent with its own focus report took 45 and 57. A terminal's caret is not read with its
 /// focus, its first read being build 3's baseline read, which Core asks
 /// once `Follow` names it ("Terminals in this build", Dickson,
 /// 2026-11-15): 8 and 10 calls, where its focus with its caret took 9 and
@@ -5311,7 +5411,7 @@ fn text_field_focuses_cost_exactly() {
             true,
             selected,
             text_said(false, &alpha_selected),
-            first_focus(13),
+            first_focus(10),
         ),
         (
             "UIA text field focus with a selection, classically",
@@ -5320,7 +5420,7 @@ fn text_field_focuses_cost_exactly() {
             false,
             selected,
             text_said(false, &alpha_selected),
-            first_focus(29),
+            first_focus(27),
         ),
         // A protected field's selected text is read as any field's, which
         // Core says masked as the control gives it, so its focus costs
@@ -5332,7 +5432,7 @@ fn text_field_focuses_cost_exactly() {
             true,
             protected_selected,
             text_said(true, &alpha_selected),
-            first_focus(13),
+            first_focus(10),
         ),
         (
             "UIA protected text field focus with a selection, classically",
@@ -5341,7 +5441,7 @@ fn text_field_focuses_cost_exactly() {
             false,
             protected_selected,
             text_said(true, &alpha_selected),
-            first_focus(29),
+            first_focus(27),
         ),
         (
             "UIA terminal focus, remotely",
@@ -5502,6 +5602,10 @@ fn main() {
             an_acc_focus_served_by_another_process_answers_no_focused_control,
         ),
         ("caret_moves_cost_exactly", caret_moves_cost_exactly),
+        (
+            "caret_tell_reads_cost_exactly",
+            caret_tell_reads_cost_exactly,
+        ),
         (
             "an_outposts_probe_that_finds_a_provider_makes_no_connection",
             an_outposts_probe_that_finds_a_provider_makes_no_connection,

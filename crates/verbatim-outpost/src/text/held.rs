@@ -21,8 +21,8 @@ use verbatim_model::{
 };
 
 use super::{
-    CaretRequest, CaretState, NodeText, TextError, TextResult, TextSource, change, keep_unit,
-    perform, report_for, selection_changes, unit_at_caret,
+    CaretRequest, CaretState, NodeText, TextError, TextResult, TextSource, change, change_of,
+    keep_unit, perform, report_for, selection_changes, unit_at_caret,
 };
 
 /// Reads the caret, the selection and the caret's line, and reports them,
@@ -32,20 +32,23 @@ use super::{
 /// caret's line or the line before, so Core knows what comes before the
 /// start, as a Backspace over the selection says it; else by its parts,
 /// where a selection's start lies on the caret's line only when it is the
-/// caret.
+/// caret. With `selection`, a read in one go also reads the selection's
+/// text, and with `previous`, the old selection's ends and whether it was
+/// collapsed, its changes from it.
 fn read_caret<S: TextSource>(
     source: &mut S,
     anchors: &mut NodeText<'_, S::Pos>,
     read_at_us: u64,
-) -> TextResult<(CaretState<S::Pos>, CaretReport)> {
+    (selection, previous): (bool, Option<OldSelection<'_, S::Pos>>),
+) -> TextResult<CaretFound<S::Pos>> {
     let request = CaretRequest {
         since: None,
-        previous: None,
-        previous_collapsed: false,
+        previous: previous.map(|(ends, _)| ends),
+        previous_collapsed: previous.is_some_and(|(_, collapsed)| collapsed),
         unit: None,
         formats: None,
         recheck: false,
-        read_selection_text: false,
+        read_selection_text: selection,
         read_previous_text: false,
     };
     if let Some(read) = source.caret_read(&request)? {
@@ -60,12 +63,43 @@ fn read_caret<S: TextSource>(
             ),
             None,
         )?;
-        return Ok((read.state, report));
+        return Ok(CaretFound {
+            state: read.state,
+            report,
+            changes: read.changes,
+            selection_text: read.selection_text,
+        });
     }
     let state = source.caret()?;
     let report = report_for(source, anchors, (&state, read_at_us), (None, None), None)?;
-    Ok((state, report))
+    Ok(CaretFound {
+        state,
+        report,
+        changes: None,
+        selection_text: None,
+    })
 }
+
+/// An old selection a read compares with: its ends, and whether it was
+/// collapsed.
+type OldSelection<'a, P> = (&'a (P, P), bool);
+
+/// What [`read_caret`] found: the caret and the selection, the report, and
+/// what a read in one go gave of the selection, which a read by parts
+/// leaves to its caller.
+struct CaretFound<P> {
+    state: CaretState<P>,
+    report: CaretReport,
+    /// The changes from the old selection, as [`super::CaretRead::changes`].
+    changes: Option<Vec<(bool, Vec<u16>)>>,
+    /// The selection's text, as [`super::CaretRead::selection_text`].
+    selection_text: Option<Vec<u16>>,
+}
+
+/// The most UTF-16 code units of a selection's text a read in one go
+/// gives (`verbatim_uia_rops::MAX_COMPARED_TEXT`, the only source that
+/// gives one): a text as long is cut, and is read whole by its range.
+const SELECTION_TEXT_CAP: usize = 513;
 
 /// What a selection read found ([`read_selection`]).
 pub struct SelectionFound<P> {
@@ -129,19 +163,36 @@ pub fn read_selection<S: TextSource>(
     baseline: Option<TextAnchor>,
 ) -> TextResult<SelectionFound<S::Pos>> {
     let old = baseline.and_then(|baseline| anchors.held_read(baseline));
-    let (state, report) = read_caret(source, anchors, read_at_us)?;
-    let selected = match &state.selection {
-        Some((start, end)) => change(source, true, start, end)?,
-        None => None,
+    let kept = old.as_ref().map(super::LastRead::kept_selection);
+    // The selection's text and its changes from the baseline are read with
+    // the caret where the source reads in one go, as the caret report
+    // reads them.
+    let CaretFound {
+        state,
+        report,
+        changes: read_changes,
+        selection_text,
+    } = read_caret(
+        source,
+        anchors,
+        read_at_us,
+        (true, kept.as_ref().map(|kept| (&kept.ends, kept.collapsed))),
+    )?;
+    let selected = match (&state.selection, selection_text) {
+        (Some(_), Some(units)) if units.len() < SELECTION_TEXT_CAP => change_of(true, &units),
+        (Some((start, end)), _) => change(source, true, start, end)?,
+        (None, _) => None,
     };
-    let difference = match old {
+    let difference = match kept {
         None => None,
-        Some(old) => {
-            let kept = old.kept_selection();
-            let changes = if kept.collapsed && state.selection.is_none() {
-                Vec::new()
-            } else {
-                selection_changes(source, (&kept.ends, kept.collapsed), &state)?
+        Some(kept) => {
+            let changes = match read_changes {
+                _ if kept.collapsed && state.selection.is_none() => Vec::new(),
+                Some(read) => read
+                    .into_iter()
+                    .filter_map(|(selected, text)| change_of(selected, &text))
+                    .collect(),
+                None => selection_changes(source, (&kept.ends, kept.collapsed), &state)?,
             };
             Some(SelectionDifference {
                 changes,
@@ -173,7 +224,7 @@ pub fn starting_read<S: TextSource>(
     read_at_us: u64,
     (unit, word): (TextUnit, bool),
 ) -> TextResult<Started> {
-    let (state, report) = read_caret(source, anchors, read_at_us)?;
+    let CaretFound { state, report, .. } = read_caret(source, anchors, read_at_us, (false, None))?;
     let mut at_caret = |anchors: &mut NodeText<'_, S::Pos>, unit| -> TextResult<TextChunk> {
         Ok(unit_at_caret(
             source,
