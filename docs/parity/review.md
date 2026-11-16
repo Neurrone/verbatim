@@ -227,18 +227,14 @@ current line (flat review) leaves its position where it was
 (`globalCommands.py` 1975 to 1990), so a column stays across a short line in every text.
 A navigation the application did not answer is not `Gone`: the navigator
 stays where it is and nothing is said, as NVDA's stays when a call to a
-busy application is cancelled. A press of a command the application took
-longer than its bound to answer, with a press behind it, gives way
-(`docs/design/m42-parity.md`, "Limits"), saying nothing.
+busy application is cancelled.
 
 Review presses run in press order among keys, as NVDA's scripts are one
-queue (`scriptHandler.py` 242 to 252), a press with something behind it
-bounded by 150 ms and one alone by its read's own deadline; a focus that
-moves the navigator ends a press saying nothing. Core's
-`a_gone_navigation_says_the_direction_edge_and_the_navigator_stays`,
-`a_dead_object_reviews_as_empty_flat_text_and_reports_nothing`,
-`a_press_with_something_behind_it_gives_way_at_its_bound`,
-`a_focus_ends_a_navigation_press_and_what_waits_runs_on_the_new_navigator`
+queue (`scriptHandler.py` 242 to 252), each an entry of Core's event
+queue; a focus behind a press is executed after it. Core's
+`every_direction_from_an_object_not_there_says_its_edge`,
+`a_report_of_an_object_not_there_says_nothing`,
+`a_focus_behind_a_navigation_and_a_report_is_executed_after_them`
 and `flat_reviews_current_line_leaves_the_position_where_it_was`;
 mockapp's `dead_objects` tests through a real outpost; the
 `review_dead_object`, `windows_terminal_review_stays_on_line` and

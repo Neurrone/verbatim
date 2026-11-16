@@ -150,7 +150,7 @@ name. As in NVDA, the focus that follows, in the window switched to, is
 a new focus and is announced. No scenario reaches a staging window, and
 the Windows+X menu's host took neither the focus nor the foreground in
 the `quick_link_menu` scenario's runs, so Core's unit test pins the rule
-(`a_focus_or_foreground_on_a_shell_staging_window_cuts_speech_and_says_nothing`);
+(`a_focus_on_a_shell_staging_window_is_taken_and_says_nothing`, through which a foreground tell executes too);
 a hand-run Alt+Tab check of 2026-10-24 found every switch completing and
 nothing said for the staging window.
 

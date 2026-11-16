@@ -206,7 +206,7 @@ focus.
 - Reading a masked field with the review cursor or object navigation is
   matched (unverified): it takes the same reads as any field's, and
   Core's unit test
-  `navigating_to_a_protected_edit_field_reads_its_masked_selection`
+  `a_navigation_to_a_protected_edit_field_reads_its_masked_selection`
   covers object navigation's request, but no capture or scenario has
   either in a password field.
 

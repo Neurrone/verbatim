@@ -897,7 +897,7 @@ placeholder not to be said, as its keyboard focus is read live. No
 capture of NVDA exists for this case.
 
 Tests: `remote_ops.rs` in `mockapp`,
-`a_focus_whose_read_fails_is_reported_whatever_its_event_says_of_its_focus`,
+`a_focus_whose_read_fails_is_answered_whatever_its_event_says_of_its_focus`,
 `a_focus_whose_walk_times_out_is_reported_below_its_window`,
 and `a_focus_whose_parent_step_fails_goes_on_from_its_windows_parent`
 (the failed step and the missing parent) for the listener's report;

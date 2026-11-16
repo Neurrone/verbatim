@@ -170,7 +170,7 @@ Verbatim: **matched (unverified)**, case by case:
   `HasKeyboardFocus` read fails, whatever the event's cached
   `HasKeyboardFocus` says, always as the focus, with the focused state
   (mockapp's
-  `a_focus_whose_read_fails_is_reported_whatever_its_event_says_of_its_focus`).
+  `a_focus_whose_read_fails_is_answered_whatever_its_event_says_of_its_focus`).
   A keyboard focus read that fails lets the focus through, as
   `docs/parity/focus-events.md`, "A focus whose keyboard focus read
   fails", records with its tests.
