@@ -84,11 +84,11 @@ use std::time::{Duration, Instant};
 
 use verbatim_listener::focus_read::FocusReader;
 use verbatim_listener_logic::focus::{Arrival, FocusEvent, Judged};
+use verbatim_model::property::{PropertyId, PropertyValue, PropertyValues};
 use verbatim_model::protocol::{
     CoreToOutpost, DeliveredFact, EventTiming, FocusNow, FocusedControl, OutpostToCore, Query,
     QueryOutcome, QueryResult, RequestId, WinEventStamp,
 };
-use verbatim_model::property::{PropertyId, PropertyValue, PropertyValues};
 use verbatim_model::request::{
     Answer, CandidateKind, CompleteUia, CompletionFor, FocusNode, FocusRead, KnownAncestor,
     MsaaIds, MsaaRun, ObjectRead, ObjectRef, Outcome, Purpose, ReadObject, Reply, Request,
@@ -532,10 +532,11 @@ pub struct OutpostUnderTest {
     /// The calls each request made, by its number, as the outpost tells
     /// them before it answers ([`Outpost::observe_request_calls`]).
     request_calls: Receiver<(RequestNumber, CallCounts)>,
-    /// The ancestors of the focus the stand-in for Core committed, nearest
-    /// first, each with the entries Core names it by in a request's list
-    /// of the ancestors it already knows ([`Self::known`]).
-    committed: RefCell<Vec<Vec<KnownAncestor>>>,
+    /// The focus the stand-in for Core committed, then its ancestors
+    /// nearest first, each by its name and the entries Core names it by in
+    /// a request's list of the ancestors it already knows
+    /// ([`Self::known`]).
+    committed: RefCell<Vec<(Option<String>, Vec<KnownAncestor>)>>,
     /// mockapp's window, which a request about its focus names.
     app_window: HWND,
     /// mockapp's process.
@@ -1015,33 +1016,51 @@ impl OutpostUnderTest {
         self.answer(number)
     }
 
-    /// The ancestors Core already knows, as a request names them: those of
-    /// the focus the stand-in for Core committed last, nearest first, each
-    /// by its node, its runtime id and its own window.
+    /// The ancestors Core already knows, as a request names them: the
+    /// focus the stand-in for Core committed last, then its ancestors
+    /// nearest first, each by its node, its runtime id and its own window,
+    /// as NVDA's walk meets its focus object as it meets the focus's
+    /// ancestors.
     pub fn known(&self) -> Vec<KnownAncestor> {
-        self.committed.borrow().iter().flatten().cloned().collect()
+        self.committed
+            .borrow()
+            .iter()
+            .flat_map(|(_, known)| known.iter().cloned())
+            .collect()
+    }
+
+    /// The names of the committed focus's ancestors, outermost first, as
+    /// the stand-in for Core holds them: those its answer carried, then
+    /// the earlier line's from the one its walk met.
+    pub fn committed_ancestor_names(&self) -> Vec<Option<String>> {
+        self.committed
+            .borrow()
+            .iter()
+            .skip(1)
+            .rev()
+            .map(|(name, _)| name.clone())
+            .collect()
     }
 
     /// Stands in for Core committing the focus `read` answers to a request
-    /// that named `sent` as the ancestors it already knows: its ancestors
-    /// are the answer's, then the committed focus's from the one the walk
-    /// met.
+    /// that named `sent` as the ancestors it already knows: the focus,
+    /// then the answer's ancestors, then the committed line from the one
+    /// the walk met, the committed focus itself among them.
     pub fn commit_focus(&self, read: &FocusRead, sent: &[KnownAncestor]) {
         let mut committed = self.committed.borrow_mut();
-        let mut ancestors: Vec<Vec<KnownAncestor>> = read
-            .ancestors
-            .iter()
-            .map(|ancestor| known_of(&ancestor.node))
+        let entry = |node: &FocusNode| (name_of(node).map(str::to_owned), known_of(node));
+        let mut line: Vec<_> = std::iter::once(entry(&read.focus))
+            .chain(read.ancestors.iter().map(|ancestor| entry(&ancestor.node)))
             .collect();
         if let Some(met) = read.met {
             let met = &sent[usize::try_from(met).expect("a small place")];
             let place = committed
                 .iter()
-                .position(|entries| entries.contains(met))
+                .position(|(_, entries)| entries.contains(met))
                 .expect("the ancestor met is one Core knows");
-            ancestors.extend(committed.drain(place..));
+            line.extend(committed.drain(place..));
         }
-        *committed = ancestors;
+        *committed = line;
     }
 
     /// Forgets the focus the stand-in for Core committed: Core's focus

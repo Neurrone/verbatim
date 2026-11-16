@@ -135,7 +135,11 @@ fn a_probe_that_timed_out_is_made_once_in_its_request() {
     };
     assert_eq!(answer.number, number);
     assert_eq!(
-        answer.probes.iter().map(|probe| probe.provider).collect::<Vec<_>>(),
+        answer
+            .probes
+            .iter()
+            .map(|probe| probe.provider)
+            .collect::<Vec<_>>(),
         [false],
         "the window is probed once, and its probe found no provider"
     );

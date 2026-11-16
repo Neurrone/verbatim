@@ -183,7 +183,23 @@ fn chain(
         let place = *known.places.get(usize::try_from(met).ok()?)?;
         let committed = state.versions.committed_kept()?;
         let context = state.focus.object()?;
-        for above in committed.ancestors.get(place..)? {
+        // Place 0 is the committed focus itself, which the walk met as an
+        // ancestor of the focus inside it.
+        let above_from = if let Some(above_from) = place.checked_sub(1) {
+            above_from
+        } else {
+            let itself = &context.snapshot;
+            if itself.id != committed.node {
+                return None;
+            }
+            let dialog_text = (itself.role == Role::Dialog)
+                .then(|| itself.details.description.clone())
+                .flatten();
+            snapshots.push(itself.clone());
+            kept.push(committed.as_ancestor(dialog_text));
+            0
+        };
+        for above in committed.ancestors.get(above_from..)? {
             let node = context
                 .ancestors
                 .iter()
@@ -331,6 +347,7 @@ fn ready(
         value_from_selection: read.value_from_selection,
         class: read.class,
         role: node.role,
+        own_window: own_window(&read.focus.read.values),
         selection: crate::text_facts::SelectionFacts::default(),
     };
     Some(Ready {

@@ -20,8 +20,7 @@ use std::time::Duration;
 
 use common::outpost::{Focused, OutpostUnderTest};
 use verbatim_listener_logic::focus::Judged;
-use verbatim_model::protocol::OutpostToCore;
-use verbatim_model::{CallCounts, NormalizedEvent};
+use verbatim_model::CallCounts;
 use verbatim_model::{Role, State};
 use verbatim_process::arguments::OutpostOptions;
 use verbatim_uia::map::{add_legacy_checked_state, wants_legacy_checked_state};
@@ -868,7 +867,9 @@ fn a_focus_whose_parent_step_fails_goes_on_from_its_windows_parent() {
             ),
             (
                 0,
-                Some(&RouteEnd::ContinueFrom(WindowHandle(desktop.cast_unsigned() as u64)))
+                Some(&RouteEnd::ContinueFrom(WindowHandle(
+                    desktop.cast_unsigned() as u64
+                )))
             ),
             "{case}: the listener names the window its chain goes on from"
         );
@@ -1017,46 +1018,33 @@ fn a_focus_now_whose_classic_walk_finds_no_parent_below_the_root_goes_on_from_it
 /// above it: the next focus, inside it, meets that chain at it and is
 /// reported with it as its outermost container, as NVDA's focus line,
 /// built from the previous one where the two meet (`api.setFocusObject`),
-/// keeps the failed focus's ancestry. The listener reads the next focus up
-/// to the window as a first focus is, since it reuses only a chain that
-/// reached the top, and the outpost meets its own chain.
+/// keeps the failed focus's ancestry. Core names its committed focus first
+/// among the ancestors it already knows, as NVDA's walk meets its focus
+/// object, so the next focus's walk meets the group at its first step.
 fn a_focus_inside_one_whose_parent_step_failed_meets_its_chain_there() {
     let mut fixture = Fixture::start("mockapp-rops-after-unknown");
     let outpost = OutpostUnderTest::new(&fixture.app);
     let group = fixture.focus_delivered("group2", "Inner group");
-    // The listener's walk to the nearest window steps to the focus's
-    // parent once first; the step after it is the classic read's.
-    fixture.app.send("answer-parent group2 fail 1");
-    outpost.deliver(outpost.listener_fact(&group));
-    match outpost.next() {
-        OutpostToCore::Event {
-            event: NormalizedEvent::FocusChanged { ancestors, .. },
-            ..
-        } => assert_eq!(ancestors, [], "the group's chain: nothing above it"),
-        other => panic!("the outpost said {other:?}, not the group's focus"),
-    }
+    // Core names the focus's nearest window, so the read's first parent
+    // step is its walk's.
+    fixture.app.send("answer-parent group2 fail");
+    let focused = outpost.uia_focus_answer(&group);
+    assert_eq!(
+        focused.ancestor_names(),
+        [] as [Option<&str>; 0],
+        "the group's chain: nothing above it"
+    );
     outpost.settled();
     fixture.app.send("answer-parent group2 usual");
     let deep = fixture.focus_delivered("deep", "Deep button");
-    outpost.deliver(outpost.listener_fact(&deep));
-    match outpost.next() {
-        OutpostToCore::Event {
-            event: NormalizedEvent::FocusChanged {
-                node, ancestors, ..
-            },
-            ..
-        } => {
-            assert_eq!(node.name.as_deref(), Some("Deep button"));
-            assert_eq!(
-                ancestors
-                    .iter()
-                    .map(|node| node.name.as_deref())
-                    .collect::<Vec<_>>(),
-                [Some("Inner group")]
-            );
-        }
-        other => panic!("the outpost said {other:?}, not the button's focus"),
-    }
+    let focused = outpost.uia_focus_answer(&deep);
+    assert_eq!(focused.name(), Some("Deep button"));
+    // The walk meets the group, the focus Core committed, at once.
+    assert_eq!(focused.ancestor_names(), [] as [Option<&str>; 0]);
+    assert_eq!(
+        outpost.committed_ancestor_names(),
+        [Some("Inner group".to_owned())]
+    );
     outpost.settled();
     drop(outpost);
     fixture.app.quit();

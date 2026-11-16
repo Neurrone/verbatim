@@ -7,9 +7,9 @@ use verbatim_model::property::{
     PropertyAnswer, PropertyId, PropertyValue, PropertyValues, RuntimeId,
 };
 use verbatim_model::request::{
-    Answer, Ask, CompleteUia, FocusAncestor, FocusCaret, KnownAncestor, FocusNode, FocusRead, HeldIds, NodeRead, ObjectClass,
-    ObjectRead, Outcome as WireOutcome, Refusal, Reply, Request as Wire, RequestNumber, Route,
-    RouteEnd, RouteStep, RunRead, Tried,
+    Answer, Ask, CompleteUia, FocusAncestor, FocusCaret, FocusNode, FocusRead, HeldIds,
+    KnownAncestor, NodeRead, ObjectClass, ObjectRead, Outcome as WireOutcome, Refusal, Reply,
+    Request as Wire, RequestNumber, Route, RouteEnd, RouteStep, RunRead, Tried,
 };
 use verbatim_model::tell::{
     AcceptanceFacts, Checked, ElementToken, Payload, Read, Relation, WindowFacet,
@@ -446,7 +446,11 @@ fn second_focus_asked() -> Held {
     let mut state = asked_completion();
     let mut first = focus_read(None);
     first.ancestors[0].node.runtime_id = Some(RuntimeId(vec![42, 4]));
-    feed_at(&mut state, 3_000, answer(OUTPOST, 2, Reply::Focus(Box::new(first))));
+    feed_at(
+        &mut state,
+        3_000,
+        answer(OUTPOST, 2, Reply::Focus(Box::new(first))),
+    );
     assert_eq!(
         feed_at(&mut state, 4_000, entry(uia_tell(2, Vec::new()))),
         ["send Listener ReadObject"]
@@ -470,6 +474,52 @@ fn the_known_ancestor_a_listeners_walk_met_is_named_in_the_completion() {
     .unwrap();
     assert_eq!(complete.route.end, RouteEnd::Known(met.clone()));
     assert!(complete.known.contains(&met));
+}
+
+#[test]
+fn a_focus_inside_the_committed_focus_meets_it_and_says_only_itself() {
+    // NVDA's walk meets its focus object as it meets the focus's
+    // ancestors (`docs/parity/focus-context.md`), so the committed focus
+    // is known first, and a focus inside it says no container again.
+    let mut state = second_focus_asked();
+    let met = KnownAncestor::Uia(RuntimeId(vec![42, 1]));
+    let mut object = listener_answer();
+    if let Some(route) = object.route.as_mut() {
+        route.end = RouteEnd::Known(met.clone());
+    }
+    let complete = sent_completion(
+        &mut state,
+        5_000,
+        answer(LISTENER, 4, Reply::Object(Box::new(object))),
+    )
+    .unwrap();
+    let place = complete.known.iter().position(|known| *known == met);
+    let mut inner = focus_read(None);
+    inner.focus.read.node = Some(node(3));
+    inner.focus.read.values = values("Inner", Role::Button);
+    inner.focus.runtime_id = Some(RuntimeId(vec![42, 2]));
+    inner.ancestors = Vec::new();
+    inner.met = Some(u32::try_from(place.unwrap()).unwrap());
+    assert_eq!(
+        feed_at(
+            &mut state,
+            6_000,
+            answer(OUTPOST, 5, Reply::Focus(Box::new(inner)))
+        ),
+        [
+            "Label(\"Inner\") Role(Button)",
+            "send Outpost(Pid(40)) Follow"
+        ]
+    );
+    let committed = state.versions.committed_read().unwrap();
+    assert_eq!(
+        committed
+            .ancestors
+            .iter()
+            .map(|ancestor| ancestor.node)
+            .collect::<Vec<_>>(),
+        [node(2), node(1)]
+    );
 }
 
 #[test]

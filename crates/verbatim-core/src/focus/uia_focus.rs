@@ -12,8 +12,7 @@ use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::{PropertyId, PropertyValue};
 use verbatim_model::request::{
     CompleteUia, CompletionFor, FocusRead, ObjectRead, ObjectRef, Purpose, ReadObject, Reply,
-    RouteEnd,
-    Request as Wire,
+    Request as Wire, RouteEnd,
 };
 use verbatim_model::tell::{ElementToken, TellWindow};
 

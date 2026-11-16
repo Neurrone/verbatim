@@ -54,6 +54,7 @@ pub(crate) fn kept(top_level: u64) -> Kept {
         value_from_selection: false,
         class: ObjectClass::Plain,
         role: verbatim_model::Role::Button,
+        own_window: None,
         selection: crate::text_facts::SelectionFacts::default(),
     }
 }
@@ -89,11 +90,13 @@ fn a_reader_focus_executing_becomes_both_versions() {
 }
 
 #[test]
-fn the_known_ancestors_are_the_committed_focuss_with_nodes_of_its_own_generation() {
+fn the_known_ancestors_are_the_committed_focus_and_its_with_nodes_of_its_own_generation() {
     let versions = normal();
     assert_eq!(
         versions.known_ancestors(Some(OUTPOST)),
         vec![
+            KnownAncestor::Node(NodeId::new(1).with_outpost(OUTPOST)),
+            KnownAncestor::Uia(RuntimeId(vec![42, 1])),
             KnownAncestor::Node(NodeId::new(2).with_outpost(OUTPOST)),
             KnownAncestor::Uia(RuntimeId(vec![42, 2])),
             KnownAncestor::Node(NodeId::new(3).with_outpost(OUTPOST)),
@@ -104,12 +107,13 @@ fn the_known_ancestors_are_the_committed_focuss_with_nodes_of_its_own_generation
     assert_eq!(
         versions.known_ancestors(Some(OutpostId(8))),
         vec![
+            KnownAncestor::Uia(RuntimeId(vec![42, 1])),
             KnownAncestor::Uia(RuntimeId(vec![42, 2])),
             KnownAncestor::Uia(RuntimeId(vec![42, 3])),
             KnownAncestor::Window(WindowHandle(10)),
         ]
     );
-    assert_eq!(versions.known_ancestors(None).len(), 3);
+    assert_eq!(versions.known_ancestors(None).len(), 4);
 }
 
 #[test]

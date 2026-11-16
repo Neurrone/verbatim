@@ -112,6 +112,9 @@ pub(crate) struct Kept {
     pub(crate) class: ObjectClass,
     /// Its role, as the answer read it.
     pub(crate) role: Role,
+    /// Its own window, for a window object: by it the next focus read's
+    /// walk meets the focus itself, as an ancestor of a focus inside it.
+    pub(crate) own_window: Option<WindowHandle>,
     /// Its selection baseline and text-changed flag (Table 17).
     #[serde(default)]
     pub(crate) selection: crate::text_facts::SelectionFacts,
@@ -134,6 +137,23 @@ pub(crate) struct KeptAncestor {
 }
 
 impl Kept {
+    /// The focus itself as the next focus read's walk meets it, an
+    /// ancestor of a focus inside it, with `dialog_text`, its dialog text
+    /// when it is a dialog: NVDA's walk meets the old focus as it meets
+    /// the old focus's ancestors (`docs/parity/focus-context.md`).
+    pub(crate) fn as_ancestor(&self, dialog_text: Option<String>) -> KeptAncestor {
+        KeptAncestor {
+            node: self.node,
+            runtime_id: match &self.read_by {
+                ReadBy::Uia { runtime_id, .. } => Some(runtime_id.clone()),
+                ReadBy::Msaa { .. } => None,
+            },
+            window: self.own_window,
+            simple_child: matches!(self.read_by, ReadBy::Msaa { held_child, .. } if held_child != 0),
+            dialog_text,
+        }
+    }
+
     /// The readers' last focus this focus becomes when it executes.
     pub(crate) fn last(&self) -> LastFocus {
         LastFocus {
@@ -264,8 +284,8 @@ impl Versions {
     }
 
     /// The ancestors Core already knows, sent with a focus request to the
-    /// outpost generation `asked` (column H): the committed focus's
-    /// ancestors, only while the readers' last focus is set, a node only
+    /// outpost generation `asked` (column H): a reader's committed focus
+    /// itself and its ancestors, only while the readers' last focus is set, a node only
     /// when the answering generation minted it; none from an ended
     /// generation; for an own focus, its source's; none for a sourceless
     /// one. The listener mints no node, so `asked` is `None` for it.
@@ -276,9 +296,10 @@ impl Versions {
             .collect()
     }
 
-    /// [`Versions::known_ancestors`], each with the place, among the kept
-    /// ancestors nearest first, of the ancestor it names, by which an
-    /// answer's meeting point is found again.
+    /// [`Versions::known_ancestors`], each with the place of the ancestor
+    /// it names in the committed focus's line, the focus itself at 0 and
+    /// its kept ancestors after it nearest first, by which an answer's
+    /// meeting point is found again.
     pub(crate) fn known_with_places(
         &self,
         asked: Option<OutpostId>,
@@ -286,18 +307,22 @@ impl Versions {
         if self.last.is_none() {
             return Vec::new();
         }
-        let kept = match &self.committed {
-            Committed::Read(kept) => kept,
+        // A reader's focus is met itself; an own focus stands over its
+        // source, which no walk meets as the focus.
+        let (kept, itself) = match &self.committed {
+            Committed::Read(kept) => (kept, true),
             Committed::Own {
                 source: Some(source),
-            } => source,
+            } => (source, false),
             Committed::Ended(_) | Committed::Own { source: None } | Committed::Nothing => {
                 return Vec::new();
             }
         };
         let mine = asked == Some(kept.outpost);
         let mut known = Vec::new();
-        for (place, ancestor) in kept.ancestors.iter().enumerate() {
+        let focus = kept.as_ancestor(None);
+        let line = std::iter::once(&focus).chain(&kept.ancestors);
+        for (place, ancestor) in line.enumerate().skip(usize::from(!itself)) {
             if mine {
                 known.push((place, KnownAncestor::Node(ancestor.node)));
             }
