@@ -1,11 +1,11 @@
 //! NVDA's equality of MSAA objects (`IAccessible._isEqual`) as the outpost
 //! applies it to the ancestors its focus walks read
 //! (`books/dev/src/reference/adr/0001-focus.md`, "Object identity"), heard
-//! through Core: mockapp's MSAA mode over `object_equality.json`, two
-//! focuses reported one after the other, the first waiting for Core's
-//! judgement when the second is read, so its line is the one compared
-//! with, and both reports reduced. What is heard for the second focus is
-//! its entered containers, each asserted whole, and then the focus.
+//! through Core driving a real outpost (`common::core_driver`): mockapp's
+//! MSAA mode over `object_equality.json`, two focuses told one after the
+//! other, the second read with the first's line as the ancestors Core
+//! knows. What is heard for the second focus is its entered containers,
+//! each asserted whole, and then the focus.
 //!
 //! NVDA's speech for each case is read from its source; the capture session
 //! against this fixture is still to be made.
@@ -14,13 +14,12 @@ mod common;
 #[path = "common/harness.rs"]
 mod harness;
 
-use verbatim_core::SrState;
-use verbatim_model::protocol::DeliveredFact;
-use verbatim_model::{
-    Backend, Effect, Input, NormalizedEvent, OutpostId, Pid, Role, SegmentContent, TraceId,
-};
+use verbatim_model::event_kind::EventKind;
+use verbatim_model::{Role, SegmentContent};
+use windows::Win32::Foundation::HWND;
 
-use common::outpost::{OutpostUnderTest, Reported};
+use common::core_driver::CoreDriver;
+use common::outpost::OutpostUnderTest;
 
 /// The fixture's nodes, by their index in mockapp's tree.
 const A: usize = 3;
@@ -34,90 +33,44 @@ const PEARS: usize = 13;
 /// child.
 const OPTIONS_CHILD: i32 = 3;
 
-/// The focus `reported` as the event it came in.
-fn focus_event(reported: &Reported) -> NormalizedEvent {
-    NormalizedEvent::FocusChanged {
-        node: reported.node.clone(),
-        whole_window: false,
-        ancestors: reported.ancestors.clone(),
-        selected_child: reported.selected_child.clone(),
-        text: None,
-        earlier: None,
-        group: None,
-        answers: None,
-        first_cached_ancestor: None,
-    }
-}
-
-/// What Core speaks for `reported`, given what it took before, each
-/// utterance's contents in order.
-fn spoken(state: &mut SrState, reported: &Reported) -> Vec<Vec<SegmentContent>> {
-    let mut event = focus_event(reported);
-    event.assign_outpost(OutpostId(1));
-    verbatim_core::reduce(
-        state,
-        &mut verbatim_core::Runtime::default(),
-        &Input::Event {
-            trace_id: TraceId::mint(),
-            observed_at_us: 0,
-            source: Pid(1),
-            backend: Backend::Msaa,
-            window: reported.facts.clone(),
-            event,
-            purpose: None,
-        },
-    )
-    .into_iter()
-    .filter_map(|effect| match effect {
-        Effect::Speak(utterance, _) => Some(
-            utterance
-                .segments
-                .into_iter()
-                .map(|segment| segment.content)
-                .collect(),
-        ),
-        _ => None,
-    })
-    .collect()
-}
-
 /// The containers entered with the second of two focuses, each an
 /// utterance of its contents, after asserting that the last utterance
-/// names `focus`: mockapp is focused on `first` and then on `second`, the
-/// focus facts for them `facts` gives, with `between` sent to mockapp
-/// after the first focus is reported.
+/// names `focus`: mockapp is focused on `first` and then on `second`, each
+/// told at the ids `ids` gives, with `between` sent to mockapp after the
+/// first focus is spoken.
 fn entered_with(
     (first, second): (&str, &str),
-    facts: impl Fn(isize, &str) -> DeliveredFact,
+    ids: impl Fn(&str) -> (i32, i32),
     between: &[&str],
     focus: &str,
 ) -> Vec<Vec<SegmentContent>> {
+    common::init_com();
     let title = common::unique_title("mockapp-object-equality");
     let mut app = common::spawn("object_equality.json", "msaa", &title);
-    let hwnd = common::find_window(&title).0 as isize;
-    let outpost = OutpostUnderTest::new(&app);
-    let mut state = SrState::new();
+    let hwnd: HWND = common::find_window(&title);
+    let mut core = CoreDriver::new(&app, OutpostUnderTest::new(&app));
     app.send(&format!("set-focus {first}"));
-    let reported = outpost.focus(facts(hwnd, first));
-    let _ = spoken(&mut state, &reported);
+    let _ = core.msaa_event(EventKind::MsaaFocus, hwnd, ids(first));
     for command in between {
         app.send(command);
     }
     app.send(&format!("set-focus {second}"));
-    let reported = outpost.focus(facts(hwnd, second));
-    let mut said = spoken(&mut state, &reported);
+    let mut said = core
+        .msaa_event(EventKind::MsaaFocus, hwnd, ids(second))
+        .spoken();
     let last = said.pop().expect("the focus is spoken");
     assert_eq!(
         last.first(),
         Some(&SegmentContent::Label(focus.into())),
         "the focus comes last"
     );
+    drop(core);
     app.quit();
     said
 }
 
-/// An MSAA focus fact for the node of `id` at its own object id.
-fn at_object(hwnd: isize, id: &str) -> DeliveredFact {
+/// The ids of the node of `id` at its own object id.
+fn at_object(id: &str) -> (i32, i32) {
     let index = match id {
         "a" => A,
         "b" => B,
@@ -128,11 +81,7 @@ fn at_object(hwnd: isize, id: &str) -> DeliveredFact {
         "pears" => PEARS,
         _ => unreachable!("a node the tests focus"),
     };
-    DeliveredFact::MsaaFocus {
-        hwnd,
-        id_object: i32::try_from(index + 1).expect("a small index"),
-        id_child: 0,
-    }
+    (i32::try_from(index + 1).expect("a small index"), 0)
 }
 
 /// The group "Options" said as an entered container.
@@ -217,13 +166,9 @@ fn msaa_groups_whose_locations_fail_meet_by_their_other_facts() {
 /// later from its button through `accParent`, at child id 0, it is another
 /// object, and is entered again.
 fn a_container_focused_at_an_event_child_id_is_entered_from_its_child() {
-    let facts = |hwnd, id: &str| match id {
-        "options" => DeliveredFact::MsaaFocus {
-            hwnd,
-            id_object: 1,
-            id_child: OPTIONS_CHILD,
-        },
-        other => at_object(hwnd, other),
+    let facts = |id: &str| match id {
+        "options" => (1, OPTIONS_CHILD),
+        other => at_object(other),
     };
     let entered = entered_with(("options", "ok"), facts, &[], "OK");
     assert_eq!(entered, vec![options_grouping()]);
