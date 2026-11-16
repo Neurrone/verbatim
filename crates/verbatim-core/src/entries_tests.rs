@@ -836,6 +836,37 @@ fn a_focus_on_the_child_a_redirect_reached_ends_the_run_with_no_read() {
     assert!(state.queue.front_for_tests().is_none());
 }
 
+/// Verbatim's settings dialog: Core reads the list's focused child as the
+/// dialog's current focus and speaks it, then the list's own focus comes
+/// to the front and its read is redirected to that child, which is not
+/// spoken again (`settings_dialog_keys`' artifacts).
+#[test]
+fn a_redirect_that_reaches_the_committed_focus_ends_the_run_unspoken() {
+    let mut state = ready();
+    feed_at(&mut state, 1_000, entry(msaa_tell(-5)));
+    let tried = RunRead {
+        tried: vec![Tried::Focus(Box::new(focus_read(Some(held(-5)))))],
+    };
+    assert_eq!(
+        feed_at(&mut state, 2_000, answer(OUTPOST, 1, Reply::Run(tried))),
+        SPOKEN
+    );
+    assert_eq!(
+        feed_at(&mut state, 3_000, entry(msaa_tell(-4))),
+        ["send Outpost(Pid(40)) MsaaRun"]
+    );
+    let mut read = focus_read(Some(held(-4)));
+    read.redirected_to = Some(held(-5).event);
+    let tried = RunRead {
+        tried: vec![Tried::Focus(Box::new(read))],
+    };
+    assert_eq!(
+        feed_at(&mut state, 4_000, answer(OUTPOST, 2, Reply::Run(tried))),
+        NOTHING
+    );
+    assert!(state.queue.front_for_tests().is_none());
+}
+
 #[test]
 fn a_focus_on_the_hidden_frames_own_object_is_dropped() {
     let mut state = ready();
