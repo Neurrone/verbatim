@@ -279,7 +279,7 @@ fn sets_text_changed(facts: &mut SrState, change: &MsaaChange) -> bool {
 /// A change of the committed focus's text, a value change of an edit
 /// control's client read through its messages, is the control plane's
 /// text change, as the outpost reported it before Core judged its changes.
-fn observe_text_change(cx: &mut Cx<Entries>, change: &MsaaChange) {
+pub(crate) fn observe_text_change(cx: &mut Cx<Entries>, change: &MsaaChange) {
     let node = cx
         .facts()
         .versions

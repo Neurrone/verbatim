@@ -509,6 +509,36 @@ fn a_value_change_waiting_at_the_answer_makes_the_terms_general_and_is_counted()
     assert_eq!(held.state.queue.waiting_for_tests(), 0);
 }
 
+/// `text_box_review_cursor`'s paste: the value change waiting at the caret
+/// read's answer is taken as counted, and is still the control plane's
+/// text change, which the harness waits on after a paste.
+#[test]
+fn a_value_change_a_caret_tell_takes_as_counted_is_still_the_control_planes_text_change() {
+    let mut held = edit_control();
+    with_baseline(&mut held, system_caret(), TextProvider::EditMessages, 2);
+    let _ = step(&mut held, 2_000, system_caret());
+    let _ = step(&mut held, 2_010, value_change());
+    let answered = step(
+        &mut held,
+        2_100,
+        selection_read(
+            3,
+            (caret(4, 0), 71),
+            Some(differing(Vec::new(), None)),
+            Some(EditSelection { start: 4, end: 4 }),
+        ),
+    );
+    assert_eq!(held.state.queue.waiting_for_tests(), 0);
+    assert_eq!(
+        answered
+            .observed
+            .iter()
+            .filter(|observed| matches!(observed.event, NormalizedEvent::TextChanged { .. }))
+            .collect::<Vec<_>>(),
+        [&text_change()]
+    );
+}
+
 /// NVDA's `Edit.event_caret` returns before comparing when the selection's
 /// offsets are those of the last caret event: nothing said, the baseline
 /// and flag kept.

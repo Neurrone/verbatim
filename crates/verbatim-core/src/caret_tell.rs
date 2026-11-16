@@ -284,13 +284,21 @@ fn answered(
     };
     // In an edit control, a value change of the focus waiting now makes
     // the terms general, and is taken as counted, as NVDA runs it inside
-    // its caret event (`NVDAObjects/window/edit.py` 1075 to 1080).
-    let value_waiting = provider == TextProvider::EditMessages
-        && !cx
-            .take_waiting(
-                |entry| matches!(entry, Entry::MsaaChange(change) if value_change_of(kept, change)),
-            )
-            .is_empty();
+    // its caret event (`NVDAObjects/window/edit.py` 1075 to 1080). Taken,
+    // it is still the control plane's text change.
+    let counted = if provider == TextProvider::EditMessages {
+        cx.take_waiting(
+            |entry| matches!(entry, Entry::MsaaChange(change) if value_change_of(kept, change)),
+        )
+    } else {
+        Vec::new()
+    };
+    for entry in &counted {
+        if let Entry::MsaaChange(change) = entry {
+            crate::changes::observe_text_change(cx, change);
+        }
+    }
+    let value_waiting = !counted.is_empty();
     let general = {
         let mut facts = cx.facts_mut();
         let Committed::Read(committed) = &mut facts.versions.committed else {
