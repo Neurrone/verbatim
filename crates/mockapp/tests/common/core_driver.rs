@@ -132,7 +132,22 @@ pub struct CoreDriver {
     /// Every input Core took and effect it gave, printed when a test
     /// fails.
     log: Vec<String>,
+    /// What the test does around the check's calls ([`Self::observe_check`]).
+    check_observer: Option<CheckObserver>,
 }
+
+/// A moment of the stand-in for the listener's check thread, which a
+/// test's observer acts at.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CheckMoment {
+    /// The check is about to make `Call`.
+    Calling(Call),
+    /// The check has made its last call.
+    Checked,
+}
+
+/// A test's observer of the check's moments.
+pub type CheckObserver = Box<dyn FnMut(CheckMoment)>;
 
 impl Drop for CoreDriver {
     fn drop(&mut self) {
@@ -191,6 +206,7 @@ impl CoreDriver {
             calls: CallCounts::default(),
             startup: Vec::new(),
             log: Vec::new(),
+            check_observer: None,
         };
         driver.feed(QueueInput::Process(ProcessFact::ListenerStarted(1)));
         driver.feed(QueueInput::ReaderReady(LISTENER));
@@ -508,6 +524,13 @@ impl CoreDriver {
         self.wake
     }
 
+    /// Has `observer` told of each call the stand-in for the listener's
+    /// check is about to make, and of the check's end, from now on, as a
+    /// test acts on mockapp at a moment of the check; `None` stops it.
+    pub fn observe_check(&mut self, observer: Option<CheckObserver>) {
+        self.check_observer = observer;
+    }
+
     /// Core's state, for a test that reads what it committed.
     pub fn state(&self) -> &SrState {
         &self.state
@@ -773,7 +796,11 @@ impl CoreDriver {
                 .map_or(Read::Failed, Read::Answered)
         };
         let now = verbatim_process::clock::now_us;
+        let mut observer = self.check_observer.take();
         while let Some(call) = check.next(record, now()) {
+            if let Some(observer) = observer.as_mut() {
+                observer(CheckMoment::Calling(call));
+            }
             match call {
                 Call::NearestWindow => check.walked(
                     verbatim_uia::nearest_window_lookup(element.live().element())
@@ -829,6 +856,10 @@ impl CoreDriver {
                 Call::KeyboardFocus => check.keyboard_focus(keyboard_focus(element)),
             }
         }
+        if let Some(observer) = observer.as_mut() {
+            observer(CheckMoment::Checked);
+        }
+        self.check_observer = observer;
         let (found, checked, parent) = check.finish();
         let window = match found {
             Walked::Found(window) => Some(window),

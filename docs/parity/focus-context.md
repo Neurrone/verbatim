@@ -102,8 +102,7 @@ re-read waits is judged as a new report, asking its own live re-read or
 spoken if it was read live (Claude, 2026-11-08, pending Dickson's
 acceptance). Core's `live_reread/tests.rs` and
 `generated_cases_keep_the_ancestry_caches_invariants`, mockapp's
-`a_changed_title_walks_to_the_top`,
-`a_return_to_an_application_reads_its_whole_chain` and
+`a_changed_title_walks_to_the_top` and
 `a_uia_window_with_an_msaa_menu_re_reads_live_once_per_return`, and the
 scenarios `windows_terminal_two_windows` (a window retitled while the
 user is away, from NVDA's capture) and `measure_focus_return`.

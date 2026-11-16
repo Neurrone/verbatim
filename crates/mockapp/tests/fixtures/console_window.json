@@ -2,6 +2,7 @@
   "id": "root",
   "role": "window",
   "name": "Mockapp Console Window Fixture",
+  "automation_id": "Console Window",
   "window_class": "ConsoleWindowClass",
   "children": [
     {

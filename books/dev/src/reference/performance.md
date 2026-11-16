@@ -392,14 +392,13 @@ every other one (Dickson, 2026-10-30; [ADR 0001](adr/0001-focus.md), "One judge 
 fact").
 
 - A focus in an MSAA window off the class lists, as UIA's MSAA proxy
-  delivers it: the listener reads it, 3 UIA calls for mockapp's window
-  element (the keyboard focus, the cache, the step to the desktop's root),
-  for which the proxy makes 14 calls into the application's `IAccessible`
-  (`a_focus_in_a_window_with_no_uia_provider_is_read_and_dropped_by_its_outpost`),
-  about five calls per element of the chain in general, and sends the read.
-  The outpost drops it by its verdict, kept or probed, so entries arriving
-  after its marker wait for the read, a few milliseconds. Probes per such
-  focus change: one, the outpost's, as NVDA makes one.
+  delivers it: the listener's check thread walks to its nearest window and
+  probes it, one window message, finds no provider and ends the check, and
+  Core drops the focus by the probe's verdict, asking nothing; nothing of
+  the application's `IAccessible` is asked
+  (`a_focus_in_a_window_with_no_uia_provider_is_dropped_by_its_probe`).
+  Probes per such focus change: one, the check thread's, as NVDA makes
+  one.
 - A focus in a window on the class lists: the class verdict, local calls
   only, and the drop.
 - The listener's exposure to a busy MSAA application: its read through the
@@ -1912,9 +1911,7 @@ for every event, so each request holds only what is read from it.
   item selected in a focused list, 25 properties more
   (`verbatim_uia::ListenerSelection`: the value, states, description,
   keyboard shortcut, grid row and column, position in set and level, not
-  the rectangle), whatever the theme, so the selection is reported with no
-  call of its own (Dickson, 2026-10-29;
-  `a_selection_in_a_focused_list_carries_its_states_and_position_from_the_cache`):
+  the rectangle), whatever the theme (Dickson, 2026-10-29):
   25 provider calls more inside the application per selection event,
   paid for every selection on the desktop, spoken or not.
 - The outpost's text registration asks for 3 properties (`TextEvent`),

@@ -42,12 +42,13 @@ Core judges it in the order the focuses were observed.
   Core's `a_duplicate_focus_makes_a_focus_observed_before_it_stale`,
   `the_repeat_hole_in_the_order_observed_speaks_the_return` and
   `the_same_focus_after_another_applications_focus_is_announced`.
-- The focus listener makes no repeat test: a UIA focus that passes NVDA's
-  other checks is read in full (mockapp's
-  `a_repeated_focus_on_the_still_focused_element_is_read_in_full`). An
-  outpost makes none either: an MSAA focus at the address of its last
-  report is read in full and reported, under the same node for a whole
-  object (mockapp's `a_repeated_msaa_focus_is_read_in_full`). The read is
+- The readers make no repeat test: Core makes NVDA's, for a UIA focus on
+  the check thread's keyboard-focus answers, a focus on the readers' last
+  focus that still has the keyboard focus ending with no read (mockapp's
+  `a_repeated_focus_on_the_still_focused_element_is_a_duplicate`). An
+  outpost asked an MSAA focus at the address of its last answer reads it
+  in full, under the same node for a whole object (mockapp's
+  `a_repeated_msaa_focus_is_read_in_full`). The read is
   the cost (`books/dev/src/reference/performance.md`, "One judge").
 - A runtime id is unique only among live elements, and File Explorer
   reuses them: going back from a subfolder, an item of the parent folder

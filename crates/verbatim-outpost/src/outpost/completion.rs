@@ -61,10 +61,14 @@ pub(super) fn complete(
         None => context.nodes().keep(&runtime_id, None),
     };
     let mut snapshot = snapshot_of(node, Backend::Uia, first_read);
+    let nearest = hwnd_of(route.window);
+    // A console host's text area is its terminal, as every way of reading
+    // a focus makes it.
+    let own_window = snapshot.details.window.map_or(nearest, hwnd_of);
+    read::console_text_area(&mut snapshot, Some(own_window));
     if focus && let Some(element) = &found {
         register(context, element, node, snapshot.role);
     }
-    let nearest = hwnd_of(route.window);
     // The node's window, fixed as it is made, as NVDA's object fixes its
     // own (`NVDAObjects/UIA/__init__.py` 1604 to 1607), for a step from it
     // once it is dead.

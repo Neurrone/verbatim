@@ -1275,8 +1275,9 @@ impl OutpostUnderTest {
     /// ancestors it already knows, which it commits; with its calls.
     pub fn current_focus(&self) -> (Outcome, CallCounts) {
         let sent = self.known();
+        // Core names the window its foreground record holds.
         let number = self.request(
-            self.app_window,
+            HWND(self.foreground() as _),
             Request::CurrentFocus {
                 set: focus_set(),
                 known: sent.clone(),
