@@ -59,7 +59,12 @@ use windows::Win32::UI::Accessibility::{
 };
 use windows::core::Interface;
 
+use common::core_driver::CoreDriver;
 use common::outpost::OutpostUnderTest;
+use verbatim_model::event_kind::EventKind;
+use verbatim_model::property::{PropertyId, PropertyValue};
+use verbatim_model::request::MsaaIds;
+use verbatim_model::tell::Payload;
 
 /// A UIA client on this thread over mockapp's window.
 struct Client {
@@ -112,31 +117,16 @@ impl Client {
 
 /// File Explorer, going back from a subfolder, gave the parent folder's
 /// item the runtime id of the subfolder's item it had just destroyed. The
-/// focus listener's reader, which read the dead item as the focus before,
-/// reads with the new focus whether that earlier element still has the
-/// keyboard focus: it is gone, so the outpost reports the new focus under
-/// the runtime id's node, with that evidence, which tells Core it is a new
-/// element. UI Automation counts the new element as the dead one, whose
-/// runtime id it has, but the dead one's keyboard focus cannot be read, so
-/// the focus is no repeat (section 16.3); a focus event repeated on the new
-/// element, which still has the focus, is read in full and reported under
-/// the same node, for Core to judge (`books/dev/src/explanation/design/ownership.md`). Both ways the reader reads a focus: with remote operations
-/// and without.
-///
-/// The calls each read makes are pinned, the outpost's own included, which
-/// are none: it reads nothing before it reports the focus. Before any read,
-/// the listener finds the windowless item's nearest window, for NVDA's
-/// native check and acceptance test, one call; then the sender's own
-/// keyboard focus, read plainly as NVDA reads it, one call. The read, the
-/// classic walk whichever way the outpost reads, makes four calls: the
-/// earlier element's keyboard focus, the focus's own cache, and two hops up
-/// to an ancestor of the focus before, with its window. The repeated focus
-/// makes the nearest window, the keyboard focus, and its read's three: the
-/// earlier element's keyboard focus, its cache, and one hop up to its known
-/// parent.
+/// outpost's completion of the new focus finds the element it kept under
+/// that runtime id gone, evicts it, and answers the focus under the
+/// runtime id's node, saying the id was reused, which tells Core it is a
+/// new element (`docs/parity/focus-events.md`, "Duplicate focus
+/// suppression"). A focus repeated on the new element, which still has the
+/// focus, is read in full and answered under the same node, the id no
+/// longer reused, for Core to judge. Both ways the outpost reads a focus:
+/// with remote operations and without.
 fn reused_runtime_id(remote: bool) {
     let path = if remote { "remote" } else { "classic" };
-    let gone_cost = 6;
     let title = common::unique_title(&format!("mockapp-reuse-{path}"));
     let mut app = common::spawn("reuse.json", "uia", &title);
     let client = Client::new(common::find_window(&title));
@@ -149,9 +139,9 @@ fn reused_runtime_id(remote: bool) {
 
     app.send("set-focus delta");
     let delta = client.focused();
-    let reported = outpost.uia_focus(&delta);
-    assert_eq!(reported.node.name.as_deref(), Some("delta.txt"), "{path}");
-    let dead_node = reported.node.id;
+    let reported = outpost.uia_focus_answer(&delta);
+    assert_eq!(reported.name(), Some("delta.txt"), "{path}");
+    let dead_node = reported.node();
 
     app.send("take-runtime-id inner delta");
     app.send("set-focus inner");
@@ -161,29 +151,23 @@ fn reused_runtime_id(remote: bool) {
         delta.runtime_id(),
         "{path}: mockapp gave Inner the dead item's runtime id"
     );
-    let reported = outpost.uia_focus(&inner);
+    let reported = outpost.uia_focus_answer(&inner);
     assert_eq!(
         (
-            reported.node.name.as_deref(),
-            reported.node.id,
-            reported.earlier
+            reported.name(),
+            reported.node(),
+            reported.read.runtime_id_reused
         ),
-        (Some("Inner"), dead_node, Some(EarlierElement::Gone)),
+        (Some("Inner"), dead_node, true),
         "{path}: the runtime id keeps its node, the element it named gone"
     );
-    assert_eq!(
-        reported.calls.uia, gone_cost,
-        "{path}: the calls the focus made"
-    );
 
-    let (judged, calls) = outpost.listener_read(&inner);
-    assert!(
-        matches!(judged, Judged::Read(_)),
-        "{path}: the repeated focus is read, not {judged:?}"
+    let again = outpost.uia_focus_answer(&inner);
+    assert_eq!(
+        (again.name(), again.node(), again.read.runtime_id_reused),
+        (Some("Inner"), dead_node, false),
+        "{path}: the same node again, its element its own"
     );
-    assert_eq!(calls.uia, 5, "{path}: the calls the repeated focus made");
-    let again = outpost.focus(judged.into_fact(0, FocusEvent::Focus));
-    assert_eq!(again.node.id, dead_node, "{path}: the same node again");
 
     drop(outpost);
     app.quit();
@@ -398,9 +382,8 @@ fn a_terminal_under_the_runtime_id_of_one_that_lost_the_focus_is_read_afresh() {
 /// File Explorer, going back from a subfolder, raised Inner's focus event
 /// before it selected Inner, so the event's states said "not selected".
 /// NVDA reads a focus's states when it handles the focus, not from the
-/// event, and said "Inner 1 of 2"; the focus listener reads them afresh
-/// in its read of the event's element, and its name and role from the
-/// event.
+/// event, and said "Inner 1 of 2"; the outpost's completion reads them
+/// afresh after the focus's registration, and Core says them.
 fn a_focus_reports_the_states_read_when_it_is_handled() {
     let title = common::unique_title("mockapp-live-states");
     let mut app = common::spawn("reuse.json", "uia", &title);
@@ -410,10 +393,9 @@ fn a_focus_reports_the_states_read_when_it_is_handled() {
     app.send("set-focus inner");
     let event = client.focused();
     app.send("select inner");
-    let reported = outpost.uia_focus(&event);
-    let node = reported.node;
+    let reported = outpost.uia_focus_answer(&event);
     assert_eq!(
-        (node.role, node.name.as_deref(), node.states),
+        (reported.role(), reported.name(), reported.states()),
         (
             Role::ListItem,
             Some("Inner"),
@@ -427,9 +409,16 @@ fn a_focus_reports_the_states_read_when_it_is_handled() {
             .collect::<StateSet>()
         )
     );
+    let values = &reported.read.focus.read.values;
     assert_eq!(
-        (node.details.position_in_set, node.details.set_size),
-        (Some(1), Some(2))
+        (
+            common::outpost::value(values, PropertyId::PositionInSet),
+            common::outpost::value(values, PropertyId::SetSize)
+        ),
+        (
+            Some(&PropertyValue::Count(1)),
+            Some(&PropertyValue::Count(2))
+        )
     );
 
     drop(outpost);
@@ -439,14 +428,11 @@ fn a_focus_reports_the_states_read_when_it_is_handled() {
 /// A Win32 tree view taking the focus raises focus on itself and then on
 /// its focused item, within its one `SetFocus` call. NVDA handles both
 /// together, newest first, and announces the item with the tree as its new
-/// ancestor; the outpost may read the tree's event before the item's
-/// reaches it, so it asks the tree's `accFocus` and reports the item it
-/// names (`docs/parity/windows-and-processes.md`, "A control's own focus with a focused child").
-/// The tree's event is handed to the outpost alone, as when it is read
-/// before the item's arrives, and the item's then reports nothing more.
-/// Both events are raised before the outpost is made, so its own hook,
-/// which takes in focus events, has neither, as when the listener forwards
-/// an application's first events.
+/// ancestor; a run of the tree's event alone, as when it is read before
+/// the item's arrives, asks the tree's `accFocus` and answers the item it
+/// names (`docs/parity/windows-and-processes.md`, "A control's own focus
+/// with a focused child"), with the child's ids the redirect reached, so
+/// that the item's own event, its duplicate, says nothing more.
 fn a_controls_own_focus_reports_its_focused_child() {
     let title = common::unique_title("mockapp-focus-child");
     let mut app = common::spawn("focus_child.json", "msaa", &title);
@@ -457,59 +443,60 @@ fn a_controls_own_focus_reports_its_focused_child() {
 
     common::apply(&mut app, hwnd, "focus-child categories general");
     let outpost = OutpostUnderTest::new(&app);
-    let reported = outpost.focus(DeliveredFact::MsaaFocus {
-        hwnd: hwnd.0 as isize,
-        id_object: tree,
-        id_child: 0,
+    let reported = outpost.msaa_focus_answer(MsaaIds {
+        window: WindowHandle(hwnd.0 as u64),
+        object: tree,
+        child: 0,
     });
     assert_eq!(
-        (reported.node.role, reported.node.name.as_deref()),
+        (reported.role(), reported.name()),
         (Role::TreeItem, Some("General"))
     );
     assert_eq!(
-        reported
-            .ancestors
-            .last()
-            .map(|tree| (tree.role, tree.name.as_deref())),
+        reported.read.ancestors.first().map(|tree| (
+            common::outpost::role_of(&tree.node),
+            common::outpost::name_of(&tree.node)
+        )),
         Some((Role::Tree, Some("Categories")))
     );
-    outpost.deliver(DeliveredFact::MsaaFocus {
-        hwnd: hwnd.0 as isize,
-        id_object: tree,
-        id_child: 1,
-    });
-    outpost.settled();
+    assert_eq!(
+        reported.read.redirected_to,
+        Some(MsaaIds {
+            window: WindowHandle(hwnd.0 as u64),
+            object: tree,
+            child: 1,
+        }),
+        "the item the redirect reached, which its own event names"
+    );
 
     drop(outpost);
     app.quit();
 }
 
-/// An MSAA focus event at the address of the focus last reported is read
-/// in full and reported again, a full object under the same node and a
+/// An MSAA focus event at the address of the focus last committed is read
+/// in full and answered again, a full object under the same node and a
 /// simple child too, since whether it repeats the focus is Core's verdict
-/// (`books/dev/src/explanation/design/ownership.md`). Both events are
-/// raised before the outpost is made, so its own hook has neither.
+/// (`books/dev/src/explanation/design/ownership.md`).
 fn a_repeated_msaa_focus_is_read_in_full() {
     let title = common::unique_title("mockapp-msaa-duplicate");
     let mut app = common::spawn("small.json", "msaa", &title);
     let hwnd = common::find_window(&title);
     // The button is node 1, after the root, so its object id is 2.
-    let button = DeliveredFact::MsaaFocus {
-        hwnd: hwnd.0 as isize,
-        id_object: 2,
-        id_child: 0,
+    let button = MsaaIds {
+        window: WindowHandle(hwnd.0 as u64),
+        object: 2,
+        child: 0,
     };
     common::apply(&mut app, hwnd, "set-focus btn1");
     let outpost = OutpostUnderTest::new(&app);
-    let reported = outpost.focus(button.clone());
-    assert_eq!(reported.node.role, Role::Button);
-    let again = outpost.focus(button);
+    let reported = outpost.msaa_focus_answer(button);
+    assert_eq!(reported.role(), Role::Button);
+    let again = outpost.msaa_focus_answer(button);
     assert_eq!(
-        (again.node.id, again.node.role),
-        (reported.node.id, Role::Button),
+        (again.node(), again.role()),
+        (reported.node(), Role::Button),
         "the same object, under the same node"
     );
-    outpost.settled();
     drop(outpost);
     app.quit();
 
@@ -517,17 +504,17 @@ fn a_repeated_msaa_focus_is_read_in_full() {
     let mut app = common::spawn("focus_child.json", "msaa", &title);
     let hwnd = common::find_window(&title);
     // The tree is node 1, so its object id is 2; General is child 1.
-    let general = DeliveredFact::MsaaFocus {
-        hwnd: hwnd.0 as isize,
-        id_object: 2,
-        id_child: 1,
+    let general = MsaaIds {
+        window: WindowHandle(hwnd.0 as u64),
+        object: 2,
+        child: 1,
     };
     common::apply(&mut app, hwnd, "focus-child categories general");
     let outpost = OutpostUnderTest::new(&app);
     for _ in 0..2 {
-        let reported = outpost.focus(general.clone());
+        let reported = outpost.msaa_focus_answer(general);
         assert_eq!(
-            (reported.node.role, reported.node.name.as_deref()),
+            (reported.role(), reported.name()),
             (Role::TreeItem, Some("General"))
         );
     }
@@ -536,32 +523,43 @@ fn a_repeated_msaa_focus_is_read_in_full() {
 }
 
 /// A UIA focus event whose element has lost the keyboard focus to another
-/// element by the time the listener reads it is dropped, as NVDA's
-/// `shouldAllowUIAFocusEvent` drops it, and the outpost says nothing for
-/// it; the newer focus is reported from its own event. (The moved-on
-/// rules this replaces reported such a focus as its event said.)
+/// element by the time the listener checks it is dropped, as NVDA's
+/// `shouldAllowUIAFocusEvent` drops it: Core asks nothing for it and says
+/// nothing; the newer focus is spoken from its own event.
 fn a_focus_whose_element_lost_the_keyboard_focus_before_it_was_read_is_dropped() {
     let title = common::unique_title("mockapp-lost-focus");
     let mut app = common::spawn("small.json", "uia", &title);
     let client = Client::new(common::find_window(&title));
-    let outpost = OutpostUnderTest::new(&app);
+    let mut core = CoreDriver::new(&app, OutpostUnderTest::new(&app));
 
     app.send("set-focus btn1");
     let button = client.focused();
     app.send("set-focus slider1");
-    let (judged, _) = outpost.listener_read(&button);
-    let Judged::Dropped(reason) = judged else {
-        panic!("the listener read a focus that had moved on: {judged:?}");
-    };
-    assert_eq!(reason, "its element no longer has the keyboard focus");
-    outpost.deliver(judged.into_fact(7, FocusEvent::Focus));
-    outpost.settled();
+    let step = core.uia_focus(&button);
+    assert_eq!(
+        (step.said, step.calls.uia),
+        (Vec::new(), 0),
+        "nothing said, and nothing read past the listener's check"
+    );
 
     let slider = client.focused();
-    let reported = outpost.uia_focus(&slider);
-    assert_eq!(reported.node.name.as_deref(), Some("Level"));
+    let said = core.uia_focus(&slider).spoken();
+    assert_eq!(
+        said,
+        [
+            vec![
+                SegmentContent::Label("Mockapp Events Fixture".to_owned()),
+                SegmentContent::Role(Role::Window)
+            ],
+            vec![
+                SegmentContent::Label("Level".to_owned()),
+                SegmentContent::Role(Role::Slider),
+                SegmentContent::Value("1".to_owned())
+            ],
+        ]
+    );
 
-    drop(outpost);
+    drop(core);
     app.quit();
 }
 
@@ -598,54 +596,50 @@ fn a_focus_carries_its_parents_automation_id() {
 }
 
 /// A UIA focus event whose element still had the keyboard focus when the
-/// listener read it is reported, whatever has happened since: Windows
-/// Terminal's Control+Tab gives the focus to the tab it leaves, then to
-/// the tab it selects, and NVDA queues both, culling the first once the
-/// second is applied (`docs/nvda/editable-text-and-terminals.md`, "Terminals"). The focus is
-/// reported with its states as the listener read them,
-/// still selected, and the item moved to after it.
+/// listener checked it is read and spoken, whatever has happened since:
+/// Windows Terminal's Control+Tab gives the focus to the tab it leaves,
+/// then to the tab it selects, and NVDA queues both, culling the first
+/// once the second is applied (`docs/nvda/editable-text-and-terminals.md`,
+/// "Terminals"). The first focus is told, with its check made, before the
+/// focus moves on; it is read and spoken, its states read when the outpost
+/// completes it, after the selection moved on, as NVDA reads them when it
+/// speaks, so it is "not selected"; then the item moved to after it.
 fn a_focus_read_while_it_had_the_keyboard_focus_is_reported_though_the_focus_moved_on() {
     let title = common::unique_title("mockapp-left-selection");
     let mut app = common::spawn("small.json", "uia", &title);
     let client = Client::new(common::find_window(&title));
-    let outpost = OutpostUnderTest::new(&app);
+    let mut core = CoreDriver::new(&app, OutpostUnderTest::new(&app));
 
     app.send("select item1");
     app.send("set-focus item1");
-    let first = client.focused();
-    let read = outpost.listener_fact(&first);
+    let first = core.uia_tell(EventKind::UiaFocus, &client.focused(), None, Payload::None);
 
     app.send("select item2");
     app.send("set-focus item2");
-    let reported = outpost.focus(read);
+    let said = core.tell(first).spoken();
     assert_eq!(
-        (reported.node.name.as_deref(), reported.node.states),
-        (
-            Some("First"),
-            [
-                State::Focused,
-                State::Focusable,
-                State::Selectable,
-                State::Selected
-            ]
-            .into_iter()
-            .collect::<StateSet>()
-        )
-    );
-    assert_eq!(
-        reported.chain(),
+        said,
         [
-            Some("Mockapp Events Fixture"),
-            Some("Options"),
-            Some("First")
+            vec![
+                SegmentContent::Label("Mockapp Events Fixture".to_owned()),
+                SegmentContent::Role(Role::Window)
+            ],
+            vec![
+                SegmentContent::Label("Options".to_owned()),
+                SegmentContent::Role(Role::List)
+            ],
+            vec![
+                SegmentContent::Label("First".to_owned()),
+                SegmentContent::NegatedState(State::Selected)
+            ],
         ]
     );
 
     let second = client.focused();
-    let reported = outpost.uia_focus(&second);
-    assert_eq!(reported.node.name.as_deref(), Some("Second"));
+    let said = core.uia_focus(&second).spoken();
+    assert_eq!(said, [vec![SegmentContent::Label("Second".to_owned())]]);
 
-    drop(outpost);
+    drop(core);
     app.quit();
 }
 
@@ -1192,115 +1186,6 @@ fn a_text_change_after_the_focus_returns_to_a_document_is_heard() {
     app.quit();
 }
 
-/// The focus-following subscription keeps its group on the element of
-/// every UIA report whose node the outpost has not released: after the
-/// focus moves from the document to a button, a text change the document
-/// raises is heard and reported for the document's node, attributed by its
-/// runtime id; once Core's list releases the document, its text change is
-/// no longer heard.
-fn a_change_of_an_unreleased_older_focus_is_heard_for_its_node() {
-    let title = common::unique_title("mockapp-older-focus");
-    let mut app = common::spawn("caret_watch.json", "uia", &title);
-    let client = Client::new(common::find_window(&title));
-    let outpost = OutpostUnderTest::new(&app);
-
-    let notes = focus_in_caret_fixture(&mut app, &client, &outpost, "doc");
-    let ok = focus_in_caret_fixture(&mut app, &client, &outpost, "ok");
-    assert_eq!(ok.name.as_deref(), Some("OK"));
-
-    app.send("text-changed doc");
-    outpost.heard(&[
-        Heard::UiaTextChanged,
-        Heard::Msaa(WinEventKind::ValueChange),
-    ]);
-    match outpost.next() {
-        OutpostToCore::Event {
-            event: NormalizedEvent::TextChanged { node_id },
-            ..
-        } => assert_eq!(node_id, notes.id),
-        other => panic!("the outpost said {other:?}, not the document's text change"),
-    }
-    outpost.settled();
-
-    outpost.release_to_core_line();
-    outpost.settled();
-    app.send("text-changed doc");
-    outpost.heard(&[Heard::Msaa(WinEventKind::ValueChange)]);
-    outpost.settled();
-
-    drop(outpost);
-    app.quit();
-}
-
-/// A value change the old focus raises after the focus has moved into it
-/// keeps its place behind the focus, though the outpost's subscription
-/// queues it between the focus's marker and its read: only the old
-/// focus's state changes are planned ahead of a focus inside it
-/// (`books/dev/src/reference/adr/0001-focus.md`, "One route per application, and the marker"),
-/// since NVDA speaks a
-/// value change only for the focus itself and so says nothing for this
-/// one. mockapp moves the focus from the combo box to its item and then
-/// changes the combo box's value; the test delivers the item's marker
-/// before both and its read after the change is heard. The outpost reports
-/// the item first and the combo box's value change after it, which says
-/// nothing.
-fn a_value_change_of_the_old_focus_queued_behind_a_focus_inside_it_keeps_its_place() {
-    let title = common::unique_title("mockapp-expand-value");
-    let mut app = common::spawn("combo_box.json", "uia", &title);
-    let client = Client::new(common::find_window(&title));
-    let outpost = OutpostUnderTest::new(&app);
-    let mut state = SrState::new();
-
-    app.send("set-focus hour");
-    outpost.deliver(outpost.listener_fact(&client.focused()));
-    let combo_box = focus_changed(outpost.next());
-    outpost.settled();
-    let NormalizedEvent::FocusChanged { node, .. } = &combo_box else {
-        unreachable!("a focus change");
-    };
-    let combo_box_id = node.id;
-    reduced(&mut state, combo_box);
-
-    outpost.deliver(DeliveredFact::UiaFocusMarker { marker: 3 });
-    app.send("set-focus nine");
-    app.send("set-value hour Ten");
-    // UIA raises a value change `WinEvent` alongside the property change.
-    outpost.heard(&[
-        Heard::UiaProperty(UIA_ValueValuePropertyId.0),
-        Heard::Msaa(WinEventKind::ValueChange),
-    ]);
-    let (read, _) = outpost.listener_read(&client.focused());
-    outpost.deliver(read.into_fact(3, FocusEvent::Focus));
-    let item = focus_changed(outpost.next());
-    let NormalizedEvent::FocusChanged { node, .. } = &item else {
-        unreachable!("a focus change");
-    };
-    assert_eq!(node.name.as_deref(), Some("Nine"));
-    assert_eq!(
-        reduced(&mut state, item).1,
-        [vec![SegmentContent::Label("Nine".to_owned())]]
-    );
-    let change = match outpost.next() {
-        OutpostToCore::Event { event, .. } => event,
-        other => panic!("the outpost said {other:?}, not the combo box's value change"),
-    };
-    outpost.settled();
-    assert_eq!(
-        change,
-        NormalizedEvent::ValueChanged {
-            node_id: combo_box_id,
-            value: Some("Ten".to_owned()),
-        }
-    );
-    assert_eq!(
-        reduced(&mut state, change).1,
-        Vec::<Vec<SegmentContent>>::new()
-    );
-
-    drop(outpost);
-    app.quit();
-}
-
 /// A windowless UIA focus is tested by NVDA's acceptance test against its
 /// nearest window, in the listener, after the repeat check and before the
 /// focus is read, as NVDA tests it before it queues a focus
@@ -1371,52 +1256,6 @@ fn a_foreground_event_for_a_window_read_through_uia_is_dropped() {
     app.quit();
 }
 
-/// The focus change the outpost said, which must be one.
-fn focus_changed(message: OutpostToCore) -> NormalizedEvent {
-    match message {
-        OutpostToCore::Event {
-            event: event @ NormalizedEvent::FocusChanged { .. },
-            ..
-        } => event,
-        other => panic!("the outpost said {other:?}, not a focus change"),
-    }
-}
-
-/// What Core does with `event` from the outpost, and what it says.
-fn reduced(
-    state: &mut SrState,
-    mut event: NormalizedEvent,
-) -> (Vec<Effect>, Vec<Vec<SegmentContent>>) {
-    event.assign_outpost(OutpostId(1));
-    let effects = verbatim_core::reduce(
-        state,
-        &mut verbatim_core::Runtime::default(),
-        &Input::Event {
-            trace_id: TraceId::mint(),
-            observed_at_us: 0,
-            source: Pid(1),
-            backend: Backend::Uia,
-            window: None,
-            event,
-            purpose: None,
-        },
-    );
-    let spoken = effects
-        .iter()
-        .filter_map(|effect| match effect {
-            Effect::Speak(utterance, _) => Some(
-                utterance
-                    .segments
-                    .iter()
-                    .map(|segment| segment.content.clone())
-                    .collect(),
-            ),
-            _ => None,
-        })
-        .collect();
-    (effects, spoken)
-}
-
 /// A fake focus's MSAA answer whose object neither has the focused state
 /// nor is inside one that has, its state cleared by `set-states`, is
 /// refused as NVDA refuses it before it is queued: the answer carries no
@@ -1437,54 +1276,6 @@ fn a_fake_focus_on_an_msaa_object_without_the_focused_state_answers_nothing() {
         plain.focus.map(|control| control.node.name),
         Some(Some("First".to_owned()))
     );
-    drop(outpost);
-    app.quit();
-}
-
-/// Verbatim+Tab's query in a window that hangs while it is read waits for
-/// the answer: mockapp holds the read's call, the outpost finds the window
-/// hung and tells Core once, abandons nothing, and once mockapp answers,
-/// answers the focused control.
-fn a_report_focus_query_in_a_hung_window_waits_for_the_answer() {
-    use verbatim_model::protocol::FocusPurpose;
-    let title = common::unique_title("mockapp-hung-report");
-    let mut app = common::spawn("small.json", "uia", &title);
-    let hwnd = common::find_window(&title);
-    let client = Client::new(hwnd);
-    let mut outpost = OutpostUnderTest::with_options(
-        &app,
-        OutpostOptions {
-            remote_operations: false,
-        },
-    );
-    app.send("set-focus btn1");
-    outpost.read_focus_as(client.focused().live().element());
-    app.hold();
-    let request_id = outpost.ask(Query::ReadFocus {
-        purpose: FocusPurpose::Report,
-    });
-    assert_eq!(app.held(), "GetObject", "the read's call was held");
-    outpost.judge_hung(hwnd);
-    assert_eq!(
-        outpost.next(),
-        OutpostToCore::NotResponding {
-            window: hwnd.0 as isize
-        },
-        "Core is told of the hang"
-    );
-    app.release();
-    match outpost.next() {
-        OutpostToCore::Reply {
-            request_id: answered,
-            outcome: QueryOutcome::Done(QueryResult::Focus(now)),
-            ..
-        } if answered == request_id => assert_eq!(
-            now.focus.map(|control| control.node.name),
-            Some(Some("Original Name".to_owned()))
-        ),
-        other => panic!("the outpost said {other:?}, not the focus"),
-    }
-    outpost.settled();
     drop(outpost);
     app.quit();
 }
@@ -1581,59 +1372,6 @@ fn a_listener_report_in_a_window_the_outpost_judges_msaa_is_dropped() {
     outpost.listener_forces_uia(true);
     let read = outpost.listener_fact(&client.focused());
     outpost.deliver(read);
-    outpost.settled();
-
-    drop(outpost);
-    app.quit();
-}
-
-/// An event and its UIA focus, observed 10 ms apart, are judged by the one
-/// verdict that stood at their observations, however late the second is
-/// handled (`books/dev/src/reference/adr/0001-focus.md`, "One judge per fact"): the
-/// foreground change's probe of mockapp's busy window times out, so the
-/// window is unknown, read through MSAA, and kept so for half a second
-/// from the probe's end; the listener's read, handled after the stall and
-/// after the keep has passed by the time it is handled, is judged at its
-/// own observation by that unknown and dropped, though the window now
-/// answers its probe with its provider. Judged when handled, it would be
-/// probed again and spoken a second time.
-fn an_event_and_its_uia_focus_handled_after_the_keep_are_judged_by_one_verdict() {
-    let title = common::unique_title("mockapp-one-verdict");
-    let mut app = common::spawn("small.json", "uia", &title);
-    let hwnd = common::find_window(&title);
-    let client = Client::new(hwnd);
-    let outpost = OutpostUnderTest::on_frozen_time(&app);
-
-    app.send("set-focus btn1");
-    let read = outpost.listener_fact(&client.focused());
-    let observed = outpost.observed_now();
-    let stall = Duration::from_millis(u64::from(UIA_RAW_PROBE_TIMEOUT_MS) + 1_500);
-    app.stall(stall);
-    outpost.deliver_stamped(
-        DeliveredFact::Foreground {
-            hwnd: hwnd.0 as isize,
-        },
-        observed,
-    );
-    let message = outpost
-        .messages
-        .recv_timeout(stall + common::WAIT_TIMEOUT)
-        .expect("the outpost reports the foreground window");
-    app.stall_ended(stall);
-    let OutpostToCore::Event {
-        backend, timing, ..
-    } = &message
-    else {
-        panic!("the outpost said {message:?}, not the foreground window");
-    };
-    assert_eq!(
-        (*backend, timing.calls.window_messages),
-        (Backend::Msaa, 1),
-        "read through MSAA after one probe that timed out"
-    );
-    outpost.settled();
-    outpost.pass_time(Duration::from_secs(1));
-    outpost.deliver_stamped(read, observed + 10_000);
     outpost.settled();
 
     drop(outpost);
@@ -2647,34 +2385,6 @@ fn a_protected_fields_focus_comes_with_its_caret_and_selected_text() {
     app.quit();
 }
 
-/// A UIA focus the listener read is reported with the listener's stamp,
-/// the one clock read the listener's callback took, so Core orders it to
-/// the microsecond against another application's focus
-/// (`docs/parity/focus-events.md`, "Stale focus events").
-fn a_listener_read_focus_is_reported_with_the_listeners_stamp() {
-    let title = common::unique_title("mockapp-uia-focus-stamp");
-    let mut app = common::spawn("small.json", "uia", &title);
-    let client = Client::new(common::find_window(&title));
-    let outpost = OutpostUnderTest::new(&app);
-
-    app.send("set-focus btn1");
-    let fact = outpost.listener_fact(&client.focused());
-    let received_at_us = verbatim_process::clock::now_us();
-    outpost.deliver_stamped(fact, received_at_us);
-    match outpost.next() {
-        OutpostToCore::Event {
-            observed_at_us,
-            event: NormalizedEvent::FocusChanged { .. },
-            ..
-        } => assert_eq!(observed_at_us, received_at_us),
-        other => panic!("the outpost said {other:?}, not the focus"),
-    }
-    outpost.settled();
-
-    drop(outpost);
-    app.quit();
-}
-
 /// A focus-now answer is stamped when its read began, to the microsecond,
 /// so Core orders the focus it becomes to the microsecond.
 fn a_focus_now_answer_is_stamped_to_the_microsecond() {
@@ -3397,196 +3107,6 @@ fn a_dialog_the_listener_read_has_its_text_on_its_first_report() {
     app.quit();
 }
 
-/// The ancestry cache's title check (`verbatim_reader_rules::ancestry_cache`):
-/// a second focus in the window reuses the listener's ancestry cache above
-/// its cache join, the list, and the outpost marks the window entry its
-/// cached ancestor; once the window's text changes, the next focus's walk
-/// reads live to the top, carrying no cached ancestor, and its window entry
-/// has the new title.
-fn a_changed_title_walks_to_the_top() {
-    let title = common::unique_title("mockapp-changed-title");
-    let mut app = common::spawn("reuse.json", "uia", &title);
-    let client = Client::new(common::find_window(&title));
-    let outpost = OutpostUnderTest::new(&app);
-    app.send("set-focus inner");
-    let first = outpost.uia_focus(&client.focused());
-    assert_eq!(
-        first.first_cached_ancestor, None,
-        "the first read reuses nothing"
-    );
-    app.send("set-focus alpha");
-    let second = outpost.uia_focus(&client.focused());
-    assert_eq!(
-        second.first_cached_ancestor,
-        Some(FirstCachedAncestor {
-            index: 0,
-            reader: FocusReaderKind::Listener
-        }),
-        "the window entry above the list is the cached ancestor: {:?}",
-        second.chain()
-    );
-    let renamed = format!("{title} renamed");
-    app.send(&format!("set-title {renamed}"));
-    app.send("set-focus inner");
-    let third = outpost.uia_focus(&client.focused());
-    assert_eq!(
-        third.first_cached_ancestor, None,
-        "the walk read live to the top"
-    );
-    assert_eq!(
-        third
-            .ancestors
-            .first()
-            .and_then(|window| window.name.as_deref()),
-        Some(renamed.as_str()),
-        "the window entry is read live, with its new title"
-    );
-    drop(outpost);
-    app.quit();
-}
-
-/// Core's live re-read of the listener's last read: the held element is
-/// walked again live, one step to the parent per ancestor and one to the
-/// root, reusing nothing, and the read answers the request with no cached
-/// ancestor, keeping the place of the read it re-reads, so a menu opening
-/// still judges that read by when its event was queued; one for another
-/// trace, and one with no read held, are answered gone with no call.
-fn a_live_re_read_walks_the_held_element_with_no_cache_and_keeps_its_place() {
-    let title = common::unique_title("mockapp-live-reread");
-    let mut app = common::spawn("reuse.json", "uia", &title);
-    let client = Client::new(common::find_window(&title));
-    let outpost = OutpostUnderTest::new(&app);
-    let (gone, calls) = outpost.listener_live_reread(1);
-    assert!(
-        matches!(gone, Judged::Dropped(NOT_THE_LAST_READ)),
-        "with no last read: {gone:?}"
-    );
-    assert_eq!(calls.uia, 0, "no call with no last read");
-    app.send("set-focus inner");
-    let _ = outpost.uia_focus(&client.focused());
-    app.send("set-focus alpha");
-    let (judged, _) = outpost.listener_read(&client.focused());
-    let Judged::Read(cached) = judged else {
-        panic!("the second focus is read: {judged:?}");
-    };
-    assert_eq!(
-        cached.cached_from,
-        Some(1),
-        "the window came from the cache"
-    );
-    // The user moves away from the application before Core's live re-read:
-    // the read it re-reads is no longer current for a menu opening.
-    outpost.listener_moved_away();
-    let steps = Arc::new(Mutex::new(0u32));
-    let counted = Arc::clone(&steps);
-    outpost.listener_observes_calls(Arc::new(move |call| {
-        if call == "a step to the parent" {
-            *counted.lock().unwrap_or_else(PoisonError::into_inner) += 1;
-        }
-    }));
-    let (reread, _) = outpost.listener_live_reread(7);
-    let Judged::Read(reread) = reread else {
-        panic!("the live re-read reads: {reread:?}");
-    };
-    assert_eq!(
-        (reread.answers, reread.cached_from, reread.ancestors.len()),
-        (Some(7), None, 2),
-        "the answer carries its request and every ancestor read live"
-    );
-    assert_eq!(
-        *steps.lock().unwrap_or_else(PoisonError::into_inner),
-        3,
-        "a step to each ancestor and one to the root"
-    );
-    let (other, calls) = outpost.listener_live_reread_traced(8, TraceId::mint());
-    assert!(
-        matches!(other, Judged::Dropped(NOT_THE_LAST_READ)),
-        "for another trace: {other:?}"
-    );
-    assert_eq!(calls.uia, 0, "no call for another trace");
-    // The live re-read kept its read's place, before the user moved away,
-    // so a menu opening on another element finds no current focus to
-    // compare with: four calls, where a current focus adds the comparison.
-    app.send("set-focus inner");
-    let (opening, calls) = outpost.listener_read_as(&client.focused(), FocusEvent::MenuOpened);
-    assert!(
-        matches!(opening, Judged::Read(_)),
-        "the opening: {opening:?}"
-    );
-    assert_eq!(calls.uia, 4, "no comparison with a current focus");
-    drop(outpost);
-    app.quit();
-}
-
-/// A listener's live re-read's answer is taken in where it arrives, with no
-/// marker of its own, and reported with no join to the outpost's ancestry
-/// cache, carrying its request; the listener's answer of gone is passed on
-/// to Core.
-fn a_listener_live_re_read_is_completed_without_the_cache() {
-    let title = common::unique_title("mockapp-reread-answer");
-    let mut app = common::spawn("reuse.json", "uia", &title);
-    let client = Client::new(common::find_window(&title));
-    let outpost = OutpostUnderTest::new(&app);
-    app.send("set-focus inner");
-    let first = outpost.uia_focus(&client.focused());
-    app.send("set-focus alpha");
-    let _ = outpost.uia_focus(&client.focused());
-    let (judged, _) = outpost.listener_live_reread(3);
-    let answer = outpost.focus(judged.into_reread_fact(99, 3));
-    assert_eq!(
-        (answer.answers, answer.first_cached_ancestor),
-        (Some(3), None),
-        "the answer carries its request and no cached ancestor"
-    );
-    assert_eq!(
-        answer
-            .ancestors
-            .iter()
-            .map(|node| node.name.clone())
-            .collect::<Vec<_>>(),
-        first
-            .ancestors
-            .iter()
-            .map(|node| node.name.clone())
-            .collect::<Vec<_>>(),
-        "the same chain, read live"
-    );
-    outpost.deliver(DeliveredFact::UiaLiveRereadGone { request: 4 });
-    match outpost.next() {
-        OutpostToCore::LiveRereadGone { request: 4 } => {}
-        other => panic!("the outpost said {other:?}, not the answer of gone"),
-    }
-    drop(outpost);
-    app.quit();
-}
-
-/// Core's live re-read of the outpost's last MSAA focus report reacquires
-/// its object from the report's event address and reports it again, with
-/// no cached ancestor, carrying the request; one naming another trace is
-/// answered gone.
-fn an_msaa_live_re_read_reacquires_from_the_event_address() {
-    let title = common::unique_title("mockapp-msaa-reread");
-    let mut app = common::spawn("counts.json", "msaa", &title);
-    let hwnd = common::find_window(&title);
-    let outpost = OutpostUnderTest::new(&app);
-    common::apply(&mut app, hwnd, "set-focus first");
-    let reported = outpost.msaa_focus(hwnd, 2);
-    outpost.live_reread(5, reported.trace);
-    let answer = outpost.reported_focus();
-    assert_eq!(
-        (answer.node.id, answer.answers, answer.first_cached_ancestor),
-        (reported.node.id, Some(5), None),
-        "the same node, read again live"
-    );
-    outpost.live_reread(6, TraceId::mint());
-    match outpost.next() {
-        OutpostToCore::LiveRereadGone { request: 6 } => {}
-        other => panic!("the outpost said {other:?}, not the answer of gone"),
-    }
-    drop(outpost);
-    app.quit();
-}
-
 /// What Core does with `message` from outpost `outpost`, watching
 /// application `application`, as the app applies it, and what it says.
 fn core_takes(
@@ -3630,130 +3150,6 @@ fn live_rereads(effects: &[Effect]) -> Vec<&verbatim_model::LiveReread> {
             _ => None,
         })
         .collect()
-}
-
-/// A report's `first_cached_ancestor` is computed from the entries the
-/// outpost emits, after its filters: the listener's read of the second
-/// focus in the list meets its ancestry cache at the list and takes the
-/// group above it and the window from the cache, but the group, not a
-/// content element, is filtered out of the chain, so the innermost cached
-/// ancestor emitted is the window, at index 0, where the read's own index
-/// would name the list, read live.
-fn first_cached_ancestor_is_computed_after_the_filters() {
-    let title = common::unique_title("mockapp-cached-filtered");
-    let mut app = common::spawn("reuse_filtered.json", "uia", &title);
-    let client = Client::new(common::find_window(&title));
-    let outpost = OutpostUnderTest::new(&app);
-    app.send("set-focus inner");
-    let _ = outpost.uia_focus(&client.focused());
-    app.send("set-focus alpha");
-    let (judged, _) = outpost.listener_read(&client.focused());
-    let Judged::Read(read) = &judged else {
-        panic!("the second focus is read: {judged:?}");
-    };
-    assert_eq!(
-        (
-            read.cached_from,
-            read.ancestors
-                .iter()
-                .map(|ancestor| ancestor.snapshot.name.as_deref())
-                .collect::<Vec<_>>()
-        ),
-        (
-            Some(1),
-            vec![
-                Some("Items View"),
-                Some("Layout"),
-                Some("Mockapp Filtered Reuse Fixture")
-            ]
-        ),
-        "the list read live, the group and the window from the cache"
-    );
-    let reported = outpost.focus(judged.into_fact(0, FocusEvent::Focus));
-    assert_eq!(
-        reported.chain(),
-        [
-            Some("Mockapp Filtered Reuse Fixture"),
-            Some("Items View"),
-            Some("alpha.txt")
-        ],
-        "the group filtered out"
-    );
-    assert_eq!(
-        reported.first_cached_ancestor,
-        Some(FirstCachedAncestor {
-            index: 0,
-            reader: FocusReaderKind::Listener
-        })
-    );
-    drop(outpost);
-    app.quit();
-}
-
-/// A live re-read's answer keeps the verdict its report was given, as it
-/// reads the same element again: in mockapp's window of a class on NVDA's
-/// MSAA list, which the outpost judges MSAA, the listener's read of the
-/// button, made anyway, is dropped by the outpost's verdict, while the
-/// same read answering Core's live re-read is reported, carrying its
-/// request, with no verdict judged again.
-fn a_live_re_read_answer_keeps_its_reports_verdict() {
-    let title = common::unique_title("mockapp-reread-verdict");
-    let mut app = common::spawn("msaa_class_window.json", "uia", &title);
-    let client = Client::new(common::find_window(&title));
-    let outpost = OutpostUnderTest::new(&app);
-    app.send("set-focus btn1");
-    outpost.listener_forces_uia(true);
-    outpost.deliver(outpost.listener_fact(&client.focused()));
-    outpost.settled();
-    let (judged, _) = outpost.listener_live_reread(5);
-    let answer = outpost.focus(judged.into_reread_fact(99, 5));
-    assert_eq!(
-        (answer.node.name.as_deref(), answer.answers),
-        (Some("Original Name"), Some(5)),
-        "the button, answering the live re-read"
-    );
-    drop(outpost);
-    app.quit();
-}
-
-/// A live re-read's answer the outpost drops is answered gone, so Core's
-/// pending live re-read ends: the listener's live re-read of the button
-/// "OK" in mockapp's UIA child window, its step to "Embedded" now failing,
-/// goes on from the host window, whose root provider now fails
-/// (`fail-window-element`), so the outpost, holding no element of the host
-/// window, loses the focus and reports nothing, and its program answers
-/// the live re-read gone. The listener's first read, which the live
-/// re-read reads again, is not handed to the outpost, so the outpost has
-/// not met the host window before.
-fn a_live_re_read_answer_the_outpost_drops_is_answered_gone() {
-    let (mut app, host, island) = uia_island("mockapp-reread-dropped");
-    let outpost = OutpostUnderTest::new(&app);
-    let uia = Uia::new().expect("a UIA client");
-    let ok = common::listener_focus(&uia, island.0 as isize);
-    let (first, _) = outpost.listener_read(&ok);
-    assert!(
-        matches!(first, Judged::Read(_)),
-        "the first read: {first:?}"
-    );
-    app.send("island answer-parent ok fail");
-    app.send("fail-window-element");
-    let (judged, _) = outpost.listener_live_reread(3);
-    let Judged::Read(read) = &judged else {
-        panic!("the live re-read reads: {judged:?}");
-    };
-    assert_eq!(
-        read.ancestors_end,
-        verbatim_model::protocol::AncestorsEnd::ContinueFrom(host.0 as isize),
-        "the walk goes on from the host window"
-    );
-    outpost.deliver(judged.into_reread_fact(99, 3));
-    match outpost.next() {
-        OutpostToCore::LiveRereadGone { request: 3 } => {}
-        other => panic!("the outpost said {other:?}, not the answer of gone"),
-    }
-    outpost.settled();
-    drop(outpost);
-    app.quit();
 }
 
 /// A return to an application whose window was retitled while the user was
@@ -3870,143 +3266,6 @@ fn a_return_to_an_application_reads_its_whole_chain() {
     clippy::too_many_lines,
     reason = "the menu's steps, the return and its live re-read, in order"
 )]
-fn a_uia_window_with_an_msaa_menu_re_reads_live_once_per_return() {
-    let title = common::unique_title("mockapp-menu-return");
-    let mut app = common::spawn("reuse.json", "uia", &title);
-    let client = Client::new(common::find_window(&title));
-    let outpost = OutpostUnderTest::new(&app);
-    let mut state = SrState::new();
-    let from = (OutpostId(1), Pid(app.pid()));
-    let window_list_and_item = vec![
-        vec![
-            SegmentContent::Label("Mockapp Reuse Fixture".to_owned()),
-            SegmentContent::Role(Role::Window),
-        ],
-        vec![
-            SegmentContent::Label("Items View".to_owned()),
-            SegmentContent::Role(Role::List),
-        ],
-        vec![
-            SegmentContent::Label("Inner".to_owned()),
-            SegmentContent::NegatedState(State::Selected),
-            SegmentContent::Position {
-                position: 1,
-                set_size: Some(2),
-            },
-        ],
-    ];
-
-    app.send("set-focus inner");
-    outpost.deliver(outpost.listener_fact(&client.focused()));
-    let first = outpost.next();
-    outpost.settled();
-    assert_eq!(
-        core_takes(&mut state, first, from).1,
-        window_list_and_item,
-        "the first focus in the window"
-    );
-
-    let opened = app.send_answered("popup-menu");
-    assert!(
-        opened.starts_with("popup-menu "),
-        "mockapp's answer to the menu: {opened:?}"
-    );
-    let (effects, spoken) = core_takes(&mut state, outpost.next(), from);
-    assert_eq!(
-        spoken,
-        [vec![
-            SegmentContent::Label("Context".to_owned()),
-            SegmentContent::Role(Role::Menu),
-        ]],
-        "the menu's opening"
-    );
-    assert_eq!(
-        live_rereads(&effects),
-        Vec::<&verbatim_model::LiveReread>::new()
-    );
-    for (index, item, key) in [(0, "First", "f"), (1, "Second", "s")] {
-        app.send(&format!("menu-select {index}"));
-        let (effects, spoken) = core_takes(&mut state, outpost.next(), from);
-        assert_eq!(
-            spoken,
-            [vec![
-                SegmentContent::Label(item.to_owned()),
-                SegmentContent::Shortcut(key.to_owned()),
-            ]],
-            "the move to {item}"
-        );
-        assert_eq!(
-            live_rereads(&effects),
-            Vec::<&verbatim_model::LiveReread>::new()
-        );
-    }
-    assert_eq!(state.live_re_reads(), 0, "none within the menu");
-    app.send("menu-close");
-
-    outpost.deliver(outpost.listener_fact(&client.focused()));
-    let back = outpost.next();
-    outpost.settled();
-    let OutpostToCore::Event {
-        event:
-            NormalizedEvent::FocusChanged {
-                first_cached_ancestor,
-                ..
-            },
-        ..
-    } = &back
-    else {
-        panic!("the outpost said {back:?}, not the return's focus");
-    };
-    assert_eq!(
-        *first_cached_ancestor,
-        Some(FirstCachedAncestor {
-            index: 0,
-            reader: FocusReaderKind::Listener
-        }),
-        "the window entry came from the listener's ancestry cache"
-    );
-    let (effects, spoken) = core_takes(&mut state, back, from);
-    assert_eq!(
-        spoken,
-        Vec::<Vec<SegmentContent>>::new(),
-        "nothing said yet"
-    );
-    let asked = live_rereads(&effects);
-    let [reread] = asked.as_slice() else {
-        panic!("one live re-read asked for: {effects:?}");
-    };
-    assert_eq!(
-        (
-            reread.outpost,
-            reread.reader,
-            reread.logged.reason,
-            reread.logged.lowest_common_ancestor,
-            reread.logged.cache_join.1.as_deref(),
-        ),
-        (
-            OutpostId(1),
-            FocusReaderKind::Listener,
-            verbatim_model::LiveRereadReason::Entered,
-            None,
-            Some("Items View"),
-        )
-    );
-    assert_eq!(state.live_re_reads(), 1, "one for the return");
-
-    let (judged, _) = outpost.listener_live_reread_traced(reread.request, reread.trace_id);
-    outpost.deliver(judged.into_reread_fact(99, reread.request));
-    let answer = outpost.next();
-    outpost.settled();
-    assert_eq!(
-        core_takes(&mut state, answer, from).1,
-        window_list_and_item,
-        "the live read is spoken"
-    );
-    assert_eq!(state.live_re_reads(), 1, "its answer asks for no other");
-    drop(outpost);
-    app.quit();
-}
-
 /// A return to mockapp's UIA window whose application raises two focus
 /// events for the same element is spoken once
 /// (`books/dev/src/reference/crates/verbatim-core.md`, "The ancestry
@@ -4203,48 +3462,12 @@ fn main() {
             a_fake_focus_on_an_msaa_object_without_the_focused_state_answers_nothing,
         ),
         (
-            "a_report_focus_query_in_a_hung_window_waits_for_the_answer",
-            a_report_focus_query_in_a_hung_window_waits_for_the_answer,
-        ),
-        (
-            "first_cached_ancestor_is_computed_after_the_filters",
-            first_cached_ancestor_is_computed_after_the_filters,
-        ),
-        (
-            "a_live_re_read_answer_keeps_its_reports_verdict",
-            a_live_re_read_answer_keeps_its_reports_verdict,
-        ),
-        (
-            "a_live_re_read_answer_the_outpost_drops_is_answered_gone",
-            a_live_re_read_answer_the_outpost_drops_is_answered_gone,
-        ),
-        (
             "a_return_to_an_application_reads_its_whole_chain",
             a_return_to_an_application_reads_its_whole_chain,
         ),
         (
-            "a_uia_window_with_an_msaa_menu_re_reads_live_once_per_return",
-            a_uia_window_with_an_msaa_menu_re_reads_live_once_per_return,
-        ),
-        (
             "a_return_with_two_focus_events_of_one_element_is_spoken_once",
             a_return_with_two_focus_events_of_one_element_is_spoken_once,
-        ),
-        (
-            "a_changed_title_walks_to_the_top",
-            a_changed_title_walks_to_the_top,
-        ),
-        (
-            "a_live_re_read_walks_the_held_element_with_no_cache_and_keeps_its_place",
-            a_live_re_read_walks_the_held_element_with_no_cache_and_keeps_its_place,
-        ),
-        (
-            "a_listener_live_re_read_is_completed_without_the_cache",
-            a_listener_live_re_read_is_completed_without_the_cache,
-        ),
-        (
-            "an_msaa_live_re_read_reacquires_from_the_event_address",
-            an_msaa_live_re_read_reacquires_from_the_event_address,
         ),
         (
             "a_focus_after_a_failed_acc_parent_reaches_its_dialog",
@@ -4307,10 +3530,6 @@ fn main() {
             a_dialog_the_listener_read_has_its_text_on_its_first_report,
         ),
         (
-            "a_listener_read_focus_is_reported_with_the_listeners_stamp",
-            a_listener_read_focus_is_reported_with_the_listeners_stamp,
-        ),
-        (
             "a_focus_now_answer_is_stamped_to_the_microsecond",
             a_focus_now_answer_is_stamped_to_the_microsecond,
         ),
@@ -4329,10 +3548,6 @@ fn main() {
         (
             "a_focus_event_naming_another_applications_window_is_not_read",
             a_focus_event_naming_another_applications_window_is_not_read,
-        ),
-        (
-            "an_event_and_its_uia_focus_handled_after_the_keep_are_judged_by_one_verdict",
-            an_event_and_its_uia_focus_handled_after_the_keep_are_judged_by_one_verdict,
         ),
         (
             "the_listener_skips_a_focus_in_a_class_listed_window",
@@ -4465,14 +3680,6 @@ fn main() {
         (
             "a_text_change_after_the_focus_returns_to_a_document_is_heard",
             a_text_change_after_the_focus_returns_to_a_document_is_heard,
-        ),
-        (
-            "a_change_of_an_unreleased_older_focus_is_heard_for_its_node",
-            a_change_of_an_unreleased_older_focus_is_heard_for_its_node,
-        ),
-        (
-            "a_value_change_of_the_old_focus_queued_behind_a_focus_inside_it_keeps_its_place",
-            a_value_change_of_the_old_focus_queued_behind_a_focus_inside_it_keeps_its_place,
         ),
         (
             "a_focus_dropped_before_its_window_is_in_front_is_reported_once_it_is",

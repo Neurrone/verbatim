@@ -243,6 +243,11 @@ pub struct FocusPath {
     /// was cut: where a route starts when no element of the chain at or
     /// above the one wanted has a window of its own.
     nearest: Option<Window>,
+    /// For a chain whose walk met an ancestor Core already knows, which is
+    /// not among its elements, the route to that ancestor, from which the
+    /// chain's elements are found when none at or above the one wanted has
+    /// a window of its own ([`Self::above`]).
+    above: Option<Route>,
 }
 
 /// Where an element of a [`FocusPath`] is found from: the window whose
@@ -276,6 +281,7 @@ impl FocusPath {
             chain,
             cut,
             nearest,
+            above: None,
         }
     }
 
@@ -300,7 +306,17 @@ impl FocusPath {
             chain,
             cut,
             nearest: window(route.window).filter(|_| cut),
+            above: None,
         }
+    }
+
+    /// This chain going on above at `above`, the route to the ancestor Core
+    /// already knows that the listener's walk met and left out of the
+    /// chain: a window's own element, or an element the outpost has a
+    /// route to.
+    #[must_use]
+    pub fn above(self, above: Option<Route>) -> Self {
+        Self { above, ..self }
     }
 
     /// Whether the chain begins with the focus `runtime_id` names, holds no
@@ -328,20 +344,31 @@ impl FocusPath {
     pub fn route_to(&self, runtime_id: &[i32]) -> Option<Route> {
         let index = self.chain.iter().position(|(id, _)| id == runtime_id)?;
         let from = self.chain.get(index..)?;
-        let (above, window) = from
+        let below = |above: usize| {
+            from.get(..above)
+                .map(|below| below.iter().rev().map(|(id, _)| id.clone()))
+        };
+        if let Some((above, window)) = from
             .iter()
             .enumerate()
             .find_map(|(above, &(_, window))| Some((above, window?)))
-            .or_else(|| Some((from.len(), self.nearest?)))?;
-        let path = from
-            .get(..above)?
-            .iter()
-            .rev()
-            .map(|(id, _)| id.clone())
-            .collect();
+            .or_else(|| Some((from.len(), self.nearest?)))
+        {
+            return Some(Route {
+                window,
+                path: below(above)?.collect(),
+                runtime_id: runtime_id.to_vec(),
+            });
+        }
+        let known = self.above.as_ref()?;
         Some(Route {
-            window,
-            path,
+            window: known.window,
+            path: known
+                .path
+                .iter()
+                .cloned()
+                .chain(below(from.len())?)
+                .collect(),
             runtime_id: runtime_id.to_vec(),
         })
     }
@@ -871,6 +898,40 @@ mod tests {
         assert_eq!(
             FocusPath::of(&nearest(AncestorsEnd::Top)).route_to(&[42, 1]),
             None
+        );
+    }
+
+    /// A windowless chain whose walk met an ancestor Core already knows,
+    /// which the chain leaves out, is routed from that ancestor's route,
+    /// down by every runtime id of the chain; a chain with a window of its
+    /// own is routed from that window still.
+    #[test]
+    fn a_windowless_chain_that_met_a_known_ancestor_is_routed_from_it() {
+        use verbatim_model::protocol::AncestorsEnd;
+        let known = Route {
+            window: Window::new(70).expect("70 is not 0"),
+            path: vec![vec![42, 4]],
+            runtime_id: vec![42, 4],
+        };
+        assert_eq!(
+            FocusPath::of(&focus_read(0, [0, 0], AncestorsEnd::Top))
+                .above(Some(known.clone()))
+                .route_to(&[42, 2]),
+            Some(Route {
+                window: Window::new(70).expect("70 is not 0"),
+                path: vec![vec![42, 4], vec![42, 3], vec![42, 2]],
+                runtime_id: vec![42, 2],
+            })
+        );
+        assert_eq!(
+            FocusPath::of(&focus_read(0, [0, 80], AncestorsEnd::Top))
+                .above(Some(known))
+                .route_to(&[42, 1]),
+            Some(Route {
+                window: Window::new(80).expect("80 is not 0"),
+                path: vec![vec![42, 2], vec![42, 1]],
+                runtime_id: vec![42, 1],
+            })
         );
     }
 

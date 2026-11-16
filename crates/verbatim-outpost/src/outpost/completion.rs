@@ -16,7 +16,7 @@
 use verbatim_model::property::PropertyValues;
 use verbatim_model::protocol::{UiaAncestorFact, UiaSnapshotFact};
 use verbatim_model::request::{
-    CompleteUia, CompletionFor, ObjectRead, Outcome, Refusal, Reply, RouteEnd,
+    CompleteUia, CompletionFor, KnownAncestor, ObjectRead, Outcome, Refusal, Reply, RouteEnd,
 };
 use verbatim_model::{Backend, NodeId, NodeSnapshot, Role, State};
 use verbatim_uia::map::with_legacy_checked_state;
@@ -45,7 +45,7 @@ pub(super) fn complete(
         return Outcome::NotThere;
     };
     let focus = complete.completes == CompletionFor::Focus;
-    let path = FocusPath::of_route(route);
+    let path = FocusPath::of_route(route).above(known_route(context, &route.end));
     let runtime_id = first.runtime_id.0.clone();
     let (found, window_element) = find(context, client, &path, &runtime_id, focus);
     let reused = found
@@ -185,6 +185,30 @@ fn find(
         element.filter(|element| element.runtime_id() == runtime_id),
         None,
     )
+}
+
+/// The route to the ancestor Core already knows that the listener's walk
+/// met, `end`, which the route's steps leave out: a window's own element,
+/// or an element whose node the outpost keeps a route to. `None` for any
+/// other end, or a known element the outpost has no route to.
+fn known_route(context: &RequestContext<'_>, end: &RouteEnd) -> Option<super::focus_path::Route> {
+    match end {
+        RouteEnd::Known(KnownAncestor::Window(window)) => {
+            let hwnd = hwnd_of(*window);
+            let low = u32::try_from(window.0 & 0xFFFF_FFFF).ok()?;
+            Some(super::focus_path::Route {
+                window: verbatim_reader_rules::Window::new(hwnd)?,
+                path: Vec::new(),
+                runtime_id: vec![42, low.cast_signed()],
+            })
+        }
+        RouteEnd::Known(KnownAncestor::Uia(runtime_id)) => context.store.route_to(&runtime_id.0),
+        RouteEnd::Known(KnownAncestor::Node(node)) => context
+            .store
+            .runtime_id_of(*node)
+            .and_then(|runtime_id| context.store.route_to(&runtime_id)),
+        _ => None,
+    }
 }
 
 /// Each node minted from the listener's read, `node` and `ancestors`,

@@ -1192,8 +1192,10 @@ no verdict in force is probed first and the probe carried in the answer.
   Core already knows.
 - `CompleteUia` (`outpost/completion.rs`): refused "read through MSAA"
   when its window is; else the outpost's own copy of the element is found
-  by the route, a focus with no window on its route as the application's
-  focused element; an element kept under its runtime id that is gone or
+  by the route, which goes on, when the listener's walk met an ancestor
+  Core already knows, from that ancestor: a window's own element, or the
+  route kept for its node (`FocusPath::above`); a focus with no window on
+  its route as the application's focused element; an element kept under its runtime id that is gone or
   lost the keyboard focus is evicted with its text, and the answer says
   the id was reused; a focus's event registration is moved to the
   element on the registering thread and waited for, keeping the node
