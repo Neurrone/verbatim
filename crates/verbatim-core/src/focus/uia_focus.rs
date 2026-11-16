@@ -109,6 +109,20 @@ fn opens_on_committed(cx: &Cx<Entries>, focus: &UiaFocus) -> bool {
             })
 }
 
+/// Whether the check thread found `focus`'s element without the keyboard
+/// focus at delivery. A menu opening on the committed focus is a focus on
+/// it, subject to that answer as any focus is
+/// (`docs/parity/focus-events.md`), so one whose element lost the keyboard
+/// focus is dropped.
+fn lost_keyboard_focus(focus: &UiaFocus) -> bool {
+    focus
+        .tell
+        .checked
+        .as_ref()
+        .and_then(|checked| checked.keyboard_focus)
+        == Some(Read::Answered(false))
+}
+
 /// Whether `focus` names Verbatim's hidden frame's own element, which is
 /// dropped (Verbatim-only, design "Focus and foreground").
 fn on_hidden_frame(focus: &UiaFocus) -> bool {
@@ -134,17 +148,7 @@ fn on_hidden_frame(focus: &UiaFocus) -> bool {
 /// unspoken and clears Core's caret baseline.
 pub(crate) async fn run(mut cx: Cx<Entries>, focus: UiaFocus) {
     if opens_on_committed(&cx, &focus) {
-        // The opening is a focus on the committed focus, subject to the
-        // keyboard-focus answer the check thread read at delivery, as any
-        // focus is (`docs/parity/focus-events.md`): one whose element lost
-        // the keyboard focus is dropped.
-        let lost = focus
-            .tell
-            .checked
-            .as_ref()
-            .and_then(|checked| checked.keyboard_focus)
-            == Some(Read::Answered(false));
-        if lost {
+        if lost_keyboard_focus(&focus) {
             return;
         }
         let said = again(&mut cx.facts_mut(), focus.tell.trace_id);
