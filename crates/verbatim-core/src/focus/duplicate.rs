@@ -14,21 +14,41 @@ use super::versions::{LastFocus, ReadBy};
 /// Whether an MSAA focus named by `ids` is a duplicate of `last`: both
 /// MSAA, equal window, object and child ids, the earlier child id not
 /// above 0. A focus read through `accFocus` names no event ids, so nothing
-/// is its duplicate. The class verdict may change the test; no class with
-/// rules of its own is read yet.
+/// is its duplicate. The class verdict may change the test; no class read
+/// yet changes it.
 pub(crate) fn msaa_duplicate(last: Option<&LastFocus>, ids: &MsaaIds) -> bool {
-    let Some(last) = last else {
+    let Some(earlier) = last_msaa_ids(last) else {
         return false;
     };
-    let ReadBy::Msaa {
-        event: Some(earlier),
-        ..
-    } = &last.read_by
-    else {
-        return false;
-    };
-    match last.class {
-        ObjectClass::Plain => earlier == ids && earlier.child <= 0,
+    match last.map(|last| last.class) {
+        Some(ObjectClass::Plain | ObjectClass::FocusRaisedTwice) => {
+            earlier == ids && earlier.child <= 0
+        }
+        None => false,
+    }
+}
+
+/// Whether an MSAA focus named by `ids` is refused as the second focus
+/// File Explorer raises for an item: the readers' last focus is such an
+/// item, of [`ObjectClass::FocusRaisedTwice`], with equal window, object
+/// and child ids, whatever the child id (`docs/parity/focus-events.md`,
+/// "Duplicate focus suppression"). Unlike a duplicate it is not a valid
+/// focus: a run goes on to its older candidates. Equal ids in the item's
+/// own list stand for the item's class, which only a read would show.
+pub(crate) fn msaa_refused_repeat(last: Option<&LastFocus>, ids: &MsaaIds) -> bool {
+    last.is_some_and(|last| last.class == ObjectClass::FocusRaisedTwice)
+        && last_msaa_ids(last) == Some(ids)
+}
+
+/// The event ids the readers' last focus was read by, when it is an MSAA
+/// focus read from an event.
+fn last_msaa_ids(last: Option<&LastFocus>) -> Option<&MsaaIds> {
+    match &last?.read_by {
+        ReadBy::Msaa {
+            event: Some(earlier),
+            ..
+        } => Some(earlier),
+        ReadBy::Msaa { event: None, .. } | ReadBy::Uia { .. } => None,
     }
 }
 
@@ -54,7 +74,7 @@ pub(crate) fn uia_duplicate(
         return false;
     };
     let allows_duplicate = match last.class {
-        ObjectClass::Plain => false,
+        ObjectClass::Plain | ObjectClass::FocusRaisedTwice => false,
     };
     !allows_duplicate
         && earlier == runtime_id
@@ -82,6 +102,8 @@ pub(crate) enum RunRefusal {
     LastFocusWindow,
     /// A foreground tell whose ids equal the last focus's.
     SameIds,
+    /// The second focus File Explorer raises for the last focus's item.
+    RepeatedItem,
 }
 
 /// What a run makes of one candidate before asking.
@@ -121,6 +143,8 @@ pub(crate) fn judge_candidate(
     }
     if msaa_duplicate(last, ids) {
         RunJudgement::Duplicate
+    } else if msaa_refused_repeat(last, ids) {
+        RunJudgement::Refused(RunRefusal::RepeatedItem)
     } else {
         RunJudgement::Try
     }
@@ -346,6 +370,44 @@ mod tests {
         );
         assert_eq!(
             judge_candidate(Some(&last), &ids(3, -4, 1), false, None),
+            RunJudgement::Try
+        );
+    }
+
+    fn raised_twice_last(event: MsaaIds) -> LastFocus {
+        LastFocus {
+            class: ObjectClass::FocusRaisedTwice,
+            role: verbatim_model::Role::ListItem,
+            ..msaa_last(Some(event))
+        }
+    }
+
+    #[test]
+    fn a_second_focus_on_an_item_explorer_raises_twice_is_refused_and_the_run_goes_on() {
+        let last = raised_twice_last(ids(3, -4, 3));
+        assert!(msaa_refused_repeat(Some(&last), &ids(3, -4, 3)));
+        assert_eq!(
+            judge_candidate(Some(&last), &ids(3, -4, 3), false, None),
+            RunJudgement::Refused(RunRefusal::RepeatedItem)
+        );
+    }
+
+    #[test]
+    fn a_focus_on_another_item_after_one_explorer_raises_twice_is_tried() {
+        let last = raised_twice_last(ids(3, -4, 3));
+        assert!(!msaa_refused_repeat(Some(&last), &ids(3, -4, 4)));
+        assert_eq!(
+            judge_candidate(Some(&last), &ids(3, -4, 4), false, None),
+            RunJudgement::Try
+        );
+    }
+
+    #[test]
+    fn a_plain_items_second_focus_on_a_child_is_tried() {
+        let last = msaa_last(Some(ids(3, -4, 3)));
+        assert!(!msaa_refused_repeat(Some(&last), &ids(3, -4, 3)));
+        assert_eq!(
+            judge_candidate(Some(&last), &ids(3, -4, 3), false, None),
             RunJudgement::Try
         );
     }

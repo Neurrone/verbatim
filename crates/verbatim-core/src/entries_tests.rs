@@ -736,6 +736,44 @@ fn an_msaa_duplicate_of_the_readers_last_focus_ends_the_run_with_no_read() {
     assert!(state.queue.front_for_tests().is_none());
 }
 
+/// File Explorer raises a second focus on the desktop's item it focused,
+/// child 3 of its list, as it does when a program starts from the desktop
+/// (`text_box_caret_keys`' artifacts): the first is read and spoken, and
+/// the second, with the same ids, is refused with no read, though a
+/// child above 0 is never a duplicate.
+#[test]
+fn a_second_focus_on_an_item_file_explorer_raises_twice_is_refused_with_no_read() {
+    let mut state = ready();
+    let item = |state: &mut Held, at_us| {
+        let mut tell = msaa_tell(-4);
+        tell.object = EventObject::Msaa {
+            window: WindowHandle(5),
+            object: -4,
+            child: 3,
+        };
+        feed_at(state, at_us, entry(tell))
+    };
+    assert_eq!(item(&mut state, 1_000), ["send Outpost(Pid(40)) MsaaRun"]);
+    let mut read = focus_read(Some(HeldIds {
+        event: MsaaIds {
+            window: WindowHandle(5),
+            object: -4,
+            child: 3,
+        },
+        held_child: 3,
+    }));
+    read.class = ObjectClass::FocusRaisedTwice;
+    let tried = RunRead {
+        tried: vec![Tried::Focus(Box::new(read))],
+    };
+    assert_eq!(
+        feed_at(&mut state, 2_000, answer(OUTPOST, 1, Reply::Run(tried))),
+        SPOKEN
+    );
+    assert_eq!(item(&mut state, 3_000), NOTHING);
+    assert!(state.queue.front_for_tests().is_none());
+}
+
 #[test]
 fn a_candidate_refused_by_acceptance_is_not_asked() {
     let mut state = ready();

@@ -1078,9 +1078,61 @@ pub(super) fn focus_read(
             .foreground
             .map(|window| focus_node(window, window.details.window.map(hwnd_of))),
         value_from_selection: focus.value_from_selection,
-        class: ObjectClass::Plain,
+        class: object_class(context, focus.node, focus.msaa.is_some(), nearest),
         runtime_id_reused: focus.runtime_id_reused,
         caret: caret_of(context, focus.node, focus.baseline),
+    }
+}
+
+/// The class verdict of `node`, a focus read through MSAA when `msaa`,
+/// in the window `nearest`: [`ObjectClass::FocusRaisedTwice`] for File
+/// Explorer's item that it raises a second focus event for, as NVDA's
+/// Explorer app module classes it
+/// (`nvda/source/appModules/explorer.py`,
+/// `SysListView32EmittingDuplicateFocusEvents`, chosen in
+/// `chooseNVDAObjectOverlayClasses`): an MSAA menu item in a
+/// `SysListView32` window, or a list item there whose list is the
+/// desktop's. NVDA knows the desktop's list by its simple parent's simple
+/// parent being the desktop object; here, by the list's top-level window
+/// being one of the desktop's own, `Progman` or `WorkerW`. Two local
+/// calls, made only for a menu or list item read through MSAA.
+fn object_class(
+    context: &RequestContext<'_>,
+    node: &NodeSnapshot,
+    msaa: bool,
+    nearest: Option<isize>,
+) -> ObjectClass {
+    let Some(window) = nearest.filter(|_| msaa) else {
+        return ObjectClass::Plain;
+    };
+    class_of(
+        node.role,
+        || verbatim_win32::window::window_class_name(window),
+        || context.application_name(context.target_pid()),
+        || verbatim_win32::window::window_class_name(verbatim_win32::window::top_level_of(window)),
+    )
+}
+
+/// [`object_class`]'s rule for an MSAA object of `role`, each of its
+/// window's class, its application's name and its top-level window's
+/// class read only when the rule reaches it.
+fn class_of(
+    role: Role,
+    window_class: impl FnOnce() -> String,
+    application: impl FnOnce() -> String,
+    top_level_class: impl FnOnce() -> String,
+) -> ObjectClass {
+    let item = matches!(role, Role::MenuItem | Role::ListItem);
+    if !item
+        || verbatim_reader_rules::class::normalize_class_name(&window_class()) != "SysListView32"
+        || application() != "explorer"
+    {
+        return ObjectClass::Plain;
+    }
+    if role == Role::MenuItem || matches!(top_level_class().as_str(), "Progman" | "WorkerW") {
+        ObjectClass::FocusRaisedTwice
+    } else {
+        ObjectClass::Plain
     }
 }
 
@@ -1270,5 +1322,66 @@ pub(super) fn ancestors_end(end: &RouteEnd) -> verbatim_model::protocol::Ancesto
         RouteEnd::Known(_) | RouteEnd::ProcessBoundary | RouteEnd::Root => AncestorsEnd::Top,
         RouteEnd::ContinueFrom(window) => AncestorsEnd::ContinueFrom(hwnd_of(*window)),
         RouteEnd::PlainFrom(window) => AncestorsEnd::PlainFrom(hwnd_of(*window)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn class(role: Role, window: &str, application: &str, top_level: &str) -> ObjectClass {
+        class_of(
+            role,
+            || window.to_owned(),
+            || application.to_owned(),
+            || top_level.to_owned(),
+        )
+    }
+
+    #[test]
+    fn the_desktops_list_item_is_raised_twice() {
+        assert_eq!(
+            class(Role::ListItem, "SysListView32", "explorer", "Progman"),
+            ObjectClass::FocusRaisedTwice
+        );
+        assert_eq!(
+            class(Role::ListItem, "SysListView32", "explorer", "WorkerW"),
+            ObjectClass::FocusRaisedTwice
+        );
+    }
+
+    #[test]
+    fn a_list_views_menu_item_in_file_explorer_is_raised_twice_wherever_it_is() {
+        assert_eq!(
+            class(Role::MenuItem, "SysListView32", "explorer", "CabinetWClass"),
+            ObjectClass::FocusRaisedTwice
+        );
+    }
+
+    #[test]
+    fn other_items_and_other_applications_list_views_are_plain() {
+        for (role, window, application, top_level) in [
+            (Role::ListItem, "SysListView32", "explorer", "CabinetWClass"),
+            (Role::ListItem, "SysListView32", "powershell", "Progman"),
+            (Role::ListItem, "DirectUIHWND", "explorer", "Progman"),
+            (Role::Button, "SysListView32", "explorer", "Progman"),
+        ] {
+            assert_eq!(
+                class(role, window, application, top_level),
+                ObjectClass::Plain,
+                "{role:?} in {window} of {application} under {top_level}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_plain_object_reads_no_class_name() {
+        let class = class_of(
+            Role::Button,
+            || panic!("the window's class is read"),
+            || panic!("the application's name is read"),
+            || panic!("the top-level window's class is read"),
+        );
+        assert_eq!(class, ObjectClass::Plain);
     }
 }

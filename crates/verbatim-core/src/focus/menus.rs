@@ -28,7 +28,7 @@ use super::FOCUS_SET;
 use super::acceptance;
 use super::backend::BackendCache;
 use super::backend::{Judged, Judgement};
-use super::duplicate::msaa_duplicate;
+use super::duplicate::{msaa_duplicate, msaa_refused_repeat};
 use super::execute::{Known, Origin, execute};
 use super::msaa_run::RunRequest;
 use super::pending::counts_as_pending;
@@ -207,7 +207,9 @@ pub(crate) async fn check(mut cx: Cx<Entries>, check: MenuCheck) {
         return;
     };
     if let Some(held) = &read.msaa
-        && (msaa_duplicate(cx.facts().versions.last.as_ref(), &held.event) || !focused_state(&read))
+        && (msaa_duplicate(cx.facts().versions.last.as_ref(), &held.event)
+            || msaa_refused_repeat(cx.facts().versions.last.as_ref(), &held.event)
+            || !focused_state(&read))
     {
         return;
     }

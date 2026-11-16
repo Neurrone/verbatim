@@ -12,7 +12,7 @@ use verbatim_model::tell::{Event, EventObject, Read, TellWindow};
 
 use super::acceptance;
 use super::backend::{BackendCache, Judged, JudgedWindow, Judgement, WindowKey, by_class};
-use super::duplicate::{msaa_duplicate, uia_duplicate};
+use super::duplicate::{msaa_duplicate, msaa_refused_repeat, uia_duplicate};
 use super::versions::LastFocus;
 
 /// File Explorer, by its executable name.
@@ -108,8 +108,8 @@ fn judged_window(tell: &Event) -> Option<JudgedWindow> {
 /// Whether the focus-kind `tell` counts as pending at `now_us`: judged
 /// with no read, its acceptance passes, its verdict does not drop it, an
 /// override does not refuse it, a UI Automation focus's keyboard-focus
-/// answer let it through, and it is not a duplicate of the readers' last
-/// focus. A UI Automation focus whose walk found no window is dropped, as
+/// answer let it through, and it is neither a duplicate of the readers'
+/// last focus nor refused as the second focus File Explorer raises for it. A UI Automation focus whose walk found no window is dropped, as
 /// NVDA's native-element test drops it.
 pub(crate) fn counts_as_pending(
     tell: &Event,
@@ -159,15 +159,13 @@ pub(crate) fn counts_as_pending(
             object,
             child,
         } => {
+            let ids = MsaaIds {
+                window: *window,
+                object: *object,
+                child: *child,
+            };
             tell.kind == EventKind::Foreground
-                || !msaa_duplicate(
-                    last,
-                    &MsaaIds {
-                        window: *window,
-                        object: *object,
-                        child: *child,
-                    },
-                )
+                || !(msaa_duplicate(last, &ids) || msaa_refused_repeat(last, &ids))
         }
         // A focus is never told by an outpost's `Follow` group, nor as a
         // terminal's change.

@@ -28,6 +28,23 @@ duplicate.
   later event is its duplicate. Core's
   `an_msaa_focus_with_the_last_focuss_ids_and_no_child_is_a_duplicate`
   and `nothing_is_a_duplicate_of_a_focus_read_through_acc_focus`.
+- File Explorer raises a second MSAA focus on some items: a menu item
+  of a classic list view (`SysListView32`), and an item of the desktop's
+  list, which it focuses again when a program starts from the desktop.
+  NVDA's Explorer app module classes these items
+  (`SysListView32EmittingDuplicateFocusEvents`) and refuses a focus on
+  one whose window, object and child ids equal the last queued focus's
+  when that is of the same class, whatever the child id; the refusal is
+  its focused-state test's, so unlike a duplicate the focus is not
+  valid, and a run goes on to its older candidates. Verbatim: the outpost
+  classes such an item `FocusRaisedTwice` in its focus answer, knowing
+  the desktop's list by its top-level window, `Progman` or `WorkerW`,
+  where NVDA walks its simple parents to the desktop; Core refuses a
+  focus with the readers' last focus's ids while that focus is of the
+  class, in a run, in the pending test and in the check after a menu
+  end, with no read; equal ids in the item's own list stand for the
+  new object's class. Core's
+  `a_second_focus_on_an_item_file_explorer_raises_twice_is_refused_with_no_read`.
 - UI Automation: the readers' last focus is a UI Automation object, the
   runtime ids are equal, and the earlier element still has the keyboard
   focus. The listener keeps the element it read for each focus Core
