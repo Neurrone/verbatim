@@ -5,7 +5,9 @@ The composition root: `verbatim.exe`. Only the reducer speaks
 `Effect` of `reduce`, and the shell's threads turn what they learn into
 `Input`s, posted to the reducer thread's port, never calling the speech
 manager to speak; the keyboard hook's cancel, pause and resume are its one
-speech send. The compiler holds this: every speaking function of the
+speech send. The reducer thread runs at `Highest` (`prioritize_role`, set as
+`run` starts it; Dickson, 2026-11-14), so a message into Core is not
+starved by the readers' and the speech side's normal threads. The compiler holds this: every speaking function of the
 speech manager takes the `SpeakToken` `SpeechManager::new` makes, which
 `run` moves into `reducer_loop`, which hands it back when the loop ends;
 the settings window's sound preview plays through the GUI thread's own

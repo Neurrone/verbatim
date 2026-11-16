@@ -370,10 +370,16 @@ fn run(
             gui_handle: Arc::clone(&gui_handle),
         };
         // The only thread that speaks: it holds the speaking token, which
-        // the loop hands back when it ends.
+        // the loop hands back when it ends. It runs at `Highest`, so a
+        // message into Core is not starved by the readers' and the speech
+        // side's normal threads (Dickson, 2026-11-14; ADR 0003's build 1).
         thread::Builder::new()
             .name("verbatim-reducer".to_owned())
             .spawn(move || {
+                verbatim_process::scheduling::prioritize_role(
+                    "the reducer",
+                    verbatim_process::scheduling::ThreadPriority::Highest,
+                );
                 let _token = reducer_loop(command_rx, &context, reader_settings, speak_token);
             })?;
     }
