@@ -96,10 +96,11 @@ use windows::Win32::UI::Controls::{TVE_COLLAPSE, TVE_EXPAND, TVM_EXPAND};
 use windows::core::AgileReference;
 
 use common::core_driver::{CoreDriver, Utterance};
-use common::outpost::{OutpostUnderTest, Reported};
+use common::outpost::{Focused, OutpostUnderTest, Reported};
 use verbatim_ia2::WinEventKind;
 use verbatim_model::ReviewCommand;
 use verbatim_model::event_kind::EventKind;
+use verbatim_model::request::WindowVerdict;
 
 /// The fixture's nodes, by their index in mockapp's tree (depth first, the
 /// root at 0): mockapp answers `WM_GETOBJECT` for index `i` at object id
@@ -641,16 +642,6 @@ fn msaa_state_change_costs_exactly() {
     unsafe { windows::Win32::UI::WindowsAndMessaging::DestroyWindow(front) }
         .expect("the test's window is destroyed");
     app.quit();
-}
-
-/// The fact the listener delivers for an MSAA focus event on mockapp's
-/// node `index`.
-fn msaa_focus_fact(hwnd: HWND, index: usize) -> DeliveredFact {
-    DeliveredFact::MsaaFocus {
-        hwnd: hwnd.0 as isize,
-        id_object: i32::try_from(index + 1).expect("a small index"),
-        id_child: 0,
-    }
 }
 
 /// A focus entering a message box gathers its text
@@ -2046,22 +2037,28 @@ fn get_objects(
 }
 
 /// An outpost's first look at a window of its own application that has a
-/// UIA provider, here as it takes a foreground event for it: the raw probe
+/// UIA provider, here as Core's first request naming it asks: the raw probe
 /// alone, one `WM_GETOBJECT` with a zero `wParam`, and no connection to the
 /// window after it finds the provider
 /// (`books/dev/src/explanation/design/listener-without-connections.md`, decision 2). The probe
 /// costs mockapp one `WM_GETOBJECT`, two `ProviderOptions`, one
-/// `HostRawElementProvider` and one `Navigate`. Its verdict is kept for the
-/// window's lifetime, so a second foreground event costs nothing.
+/// `HostRawElementProvider` and one `Navigate`. Core keeps the verdict, so
+/// its second request carries it and costs nothing.
 fn an_outposts_probe_that_finds_a_provider_makes_no_connection() {
     let title = common::unique_title("mockapp-counts-probe-alone");
     let app = common::spawn("counts.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let outpost = OutpostUnderTest::on_frozen_time(&app);
     let mut ratchet = Ratchet::default();
-    for (label, expected_get_objects, expected_hits) in [
+    // Core's first request naming the window, which has no verdict in
+    // force, carries "probe first"; its answer's probe gives Core the
+    // verdict, which its next request carries. A request that makes no
+    // call of its own, `Follow` naming nothing, stands for any.
+    for (label, verdict, probes, expected_get_objects, expected_hits) in [
         (
             "first",
+            WindowVerdict::ProbeFirst,
+            1,
             get_objects(0, 1, &[]),
             vec![
                 ("WM_GETOBJECT", 1),
@@ -2070,12 +2067,32 @@ fn an_outposts_probe_that_finds_a_provider_makes_no_connection() {
                 ("Navigate", 1),
             ],
         ),
-        ("second", get_objects(0, 0, &[]), vec![]),
+        (
+            "second",
+            WindowVerdict::Uia,
+            0,
+            get_objects(0, 0, &[]),
+            vec![],
+        ),
     ] {
         common::reset_hits(hwnd);
-        outpost.deliver(DeliveredFact::Foreground {
-            hwnd: hwnd.0 as isize,
-        });
+        let number = outpost.request_with(
+            hwnd,
+            verdict,
+            verbatim_model::request::Request::Follow(verbatim_model::request::Follow {
+                node: None,
+            }),
+        );
+        let answer = outpost.answer(number);
+        assert_eq!(
+            answer
+                .probes
+                .iter()
+                .map(|probe| probe.provider)
+                .collect::<Vec<_>>(),
+            vec![true; probes],
+            "the {label} request's probes"
+        );
         outpost.settled();
         let get_objects = common::read_get_objects(hwnd);
         let hits = common::read_hits(hwnd);
@@ -2135,16 +2152,19 @@ fn a_window_above_the_process_boundary_is_a_plain_window_with_no_call() {
     place_below(hwnd, between, false);
     app.send("set-focus first");
     let focused = under_test.focused(hwnd);
-    let (judged, _) = outpost.listener_read(&focused);
+    let (read, _) = outpost.listener_focus(&focused);
     common::reset_hits(parent);
     parent_app.stall(stall);
-    let reported = outpost.focus(judged.into_fact(0, FocusEvent::Focus));
+    // Core asks the outpost to complete the listener's read from its
+    // route.
+    let (outcome, calls) = outpost.complete_focus(read);
     let reported_at = common::now_us();
     let ended = parent_app.stall_ended(stall);
     assert!(
         reported_at < ended,
-        "the focus was reported at {reported_at}, before the parent's stall ended at {ended}"
+        "the focus was answered at {reported_at}, before the parent's stall ended at {ended}"
     );
+    let reported = Focused::of(outcome, calls);
     assert_eq!(
         reported.chain(),
         [
@@ -2156,29 +2176,33 @@ fn a_window_above_the_process_boundary_is_a_plain_window_with_no_call() {
         ],
         "the outpost's chain"
     );
-    let above_boundary = |reported: &common::outpost::Reported| {
-        reported.ancestors[..2]
+    let above_boundary = |reported: &Focused| {
+        reported
+            .read
+            .ancestors
             .iter()
-            .map(|node| {
+            .rev()
+            .take(2)
+            .map(|ancestor| {
                 (
-                    node.role,
-                    node.details.top_level_client,
-                    node.details.window,
+                    common::outpost::role_of(&ancestor.node),
+                    common::outpost::value(
+                        &ancestor.node.read.values,
+                        verbatim_model::property::PropertyId::NativeWindow,
+                    )
+                    .cloned(),
                 )
             })
             .collect::<Vec<_>>()
     };
     let window = |hwnd: HWND| {
-        Some(WindowHandle(u64::from_ne_bytes(
-            (hwnd.0 as isize).to_ne_bytes(),
-        )))
+        Some(verbatim_model::property::PropertyValue::Window(
+            WindowHandle(u64::from_ne_bytes((hwnd.0 as isize).to_ne_bytes())),
+        ))
     };
     assert_eq!(
         above_boundary(&reported),
-        [
-            (Role::Pane, true, window(parent)),
-            (Role::Pane, false, window(between))
-        ],
+        [(Role::Pane, window(parent)), (Role::Pane, window(between))],
         "the windows above the boundary, as NVDA's MSAA clients for them"
     );
     outpost.settled();
@@ -2190,13 +2214,12 @@ fn a_window_above_the_process_boundary_is_a_plain_window_with_no_call() {
     drop(outpost);
     let outpost = judging_hung;
     outpost.judge_hung(parent);
-    let (judged, _) = outpost.listener_read(&focused);
-    let reported = outpost.focus(judged.into_fact(0, FocusEvent::Focus));
+    let reported = outpost.uia_focus_answer(&focused);
     assert_eq!(
         above_boundary(&reported),
         [
-            (Role::Window, false, window(parent)),
-            (Role::Pane, false, window(between))
+            (Role::Window, window(parent)),
+            (Role::Pane, window(between))
         ],
         "the hung top-level window, a plain window"
     );
@@ -2215,7 +2238,8 @@ fn a_window_above_the_process_boundary_is_a_plain_window_with_no_call() {
 /// another mockapp's window whose thread is then stalled, has a focus on a
 /// button that nothing in the window has the focused state for judged, and
 /// dropped, before the stall ends, and the parent's process counts no call
-/// and no message.
+/// and no message. The run is answered before the stall ends, so its
+/// walk waited on nothing in the parent.
 /// With the walk stepping on from the child window's own window object, it
 /// asks the parent for its client area and waits for the stall's end.
 fn the_focused_state_walk_makes_no_call_above_the_process_boundary() {
@@ -2230,10 +2254,20 @@ fn the_focused_state_walk_makes_no_call_above_the_process_boundary() {
     place_below(hwnd, parent, false);
     common::reset_hits(parent);
     parent_app.stall(stall);
-    // The button, index 1, without the focused state.
-    outpost.deliver(msaa_focus_fact(hwnd, 1));
-    outpost.settled();
+    // The button, index 1, without the focused state, tried as Core asks
+    // an MSAA run of its focus event: refused, with no ancestor in the
+    // window holding the focused state.
+    let (run, _) = outpost.msaa_run(&[(
+        common::outpost::node_ids(hwnd, 1),
+        verbatim_model::request::CandidateKind::Focus,
+    )]);
     let judged_at = common::now_us();
+    assert_eq!(
+        run.tried,
+        [verbatim_model::request::Tried::Refused(
+            verbatim_model::request::Refusal::NotFocused
+        )]
+    );
     let ended = parent_app.stall_ended(stall);
     assert!(
         judged_at < ended,
