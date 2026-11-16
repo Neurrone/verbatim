@@ -62,6 +62,12 @@ fn next(previous: Option<&OutpostToCore>) -> Option<OutpostToCore> {
         OutpostToCore::Fault { .. } => OutpostToCore::TargetExited,
         OutpostToCore::TargetExited => OutpostToCore::IdleAnswer { round: 1 },
         OutpostToCore::IdleAnswer { .. } => OutpostToCore::LiveRereadGone { request: 1 },
-        OutpostToCore::LiveRereadGone { .. } => return None,
+        OutpostToCore::LiveRereadGone { .. } => OutpostToCore::Answer(crate::request::Answer {
+            number: crate::request::RequestNumber(1),
+            outcome: crate::request::Outcome::NotThere,
+            probes: Vec::new(),
+            detail: String::new(),
+        }),
+        OutpostToCore::Answer(_) => return None,
     })
 }

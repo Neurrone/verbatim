@@ -195,7 +195,7 @@ fn an_outpost_is_never_started_or_replaced_for_an_application_that_has_exited() 
     supervisor
         .send_to_outpost(
             outpost,
-            CoreToOutpost::Cancel {
+            CoreToOutpost::CancelQuery {
                 request_id: RequestId::shell(0),
             },
         )
@@ -314,7 +314,7 @@ fn an_end_the_app_refuses_for_now_still_comes_before_its_replacement() {
     supervisor
         .send_to_outpost(
             outpost,
-            CoreToOutpost::Cancel {
+            CoreToOutpost::CancelQuery {
                 request_id: RequestId::shell(0),
             },
         )
@@ -360,7 +360,7 @@ fn crash(supervisor: &Supervisor, events: &Delivered, outpost: OutpostId, target
     supervisor
         .send_to_outpost(
             outpost,
-            CoreToOutpost::Cancel {
+            CoreToOutpost::CancelQuery {
                 request_id: RequestId::shell(0),
             },
         )

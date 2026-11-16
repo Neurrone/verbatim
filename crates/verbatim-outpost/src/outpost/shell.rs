@@ -91,6 +91,15 @@ pub(super) enum Posted {
     Returned(u64),
     /// A test shortens the deadline for handling an entry.
     HandlingDeadline(Duration),
+    /// Core's request.
+    Ask(Box<verbatim_model::request::Ask>),
+    /// Core cancels a request.
+    CancelAsk(verbatim_model::request::Cancel),
+    /// A program's answer to the Core request it runs.
+    Answered {
+        request: Request,
+        answer: Box<verbatim_model::request::Answer>,
+    },
     /// The outpost is shutting down.
     Close,
 }
@@ -135,6 +144,8 @@ impl Mailbox {
             && matches!(
                 posted,
                 Posted::Entry { .. }
+                    | Posted::Ask(_)
+                    | Posted::CancelAsk(_)
                     | Posted::Settle(_)
                     | Posted::Hooked
                     | Posted::WithoutListener
@@ -566,6 +577,9 @@ impl Shell {
             Posted::WithoutListener => Input::WithoutListener,
             Posted::ForwardingEnded(through) => Input::ForwardingEnded(through),
             Posted::Cancel(request_id) => Input::Cancel(request_id),
+            Posted::Ask(ask) => Input::Ask(ask),
+            Posted::CancelAsk(cancel) => Input::CancelAsk(cancel),
+            Posted::Answered { request, answer } => Input::Answered { request, answer },
             Posted::Front(front) => Input::Front(front),
             Posted::KeyNote(note) => {
                 // Only the console host polls its note; finding it is a

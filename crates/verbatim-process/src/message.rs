@@ -280,7 +280,8 @@ mod tests {
             | OutpostToCore::Reply { .. }
             | OutpostToCore::NotResponding { .. }
             | OutpostToCore::IdleAnswer { .. }
-            | OutpostToCore::LiveRereadGone { .. } => Peeked::Other,
+            | OutpostToCore::LiveRereadGone { .. }
+            | OutpostToCore::Answer(_) => Peeked::Other,
         };
         let mut samples = verbatim_model::protocol::samples::outpost_to_core();
         // A completed reply too, which carries nodes.
@@ -734,7 +735,7 @@ mod tests {
                 query,
                 timing: EventTiming::default(),
             })
-            .chain([CoreToOutpost::Cancel {
+            .chain([CoreToOutpost::CancelQuery {
                 request_id: RequestId::shell(3),
             }])
             .collect();

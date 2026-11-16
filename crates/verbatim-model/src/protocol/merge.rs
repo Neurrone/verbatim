@@ -163,7 +163,7 @@ impl Merge for OutpostToCore {
     fn barrier(&self) -> Barrier {
         match self {
             OutpostToCore::IdleAnswer { .. } => Barrier::All,
-            OutpostToCore::Reply { .. } => Barrier::Reply,
+            OutpostToCore::Reply { .. } | OutpostToCore::Answer(_) => Barrier::Reply,
             OutpostToCore::Event { event, .. } if carries_key_facts(event) => Barrier::Reply,
             OutpostToCore::Ready { .. }
             | OutpostToCore::SpareReady { .. }

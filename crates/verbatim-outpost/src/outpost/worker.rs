@@ -368,6 +368,13 @@ fn run_job(context: &Arc<Context>, client: &mut Client, job: Job, charge: &Arc<C
         Work::Finish { cut, waiting } => {
             Worker::new(&request_context, client, 0, cut.timing).finish(*cut, waiting);
         }
+        Work::Ask(ask) => {
+            let answer = super::asked::answer(&request_context, client, &ask);
+            context.mailbox.post(Posted::Answered {
+                request,
+                answer: Box::new(answer),
+            });
+        }
     });
     // Text writes no commit after them carried: a program's text calls
     // write nothing but through a commit.
@@ -435,7 +442,7 @@ fn named_window(context: &RequestContext<'_>, work: &Work) -> Option<Window> {
         },
         Work::Owed(owed) => node_window(context, owed.node),
         Work::NoteRead(node) => node_window(context, *node),
-        Work::Drop | Work::Finish { .. } | Work::FindBar(_) => None,
+        Work::Drop | Work::Finish { .. } | Work::FindBar(_) | Work::Ask(_) => None,
     }
 }
 
@@ -486,6 +493,7 @@ fn describe(work: &Work) -> String {
         Work::NoteRead(node) => format!("the console poll's read of {node:?}"),
         Work::FindBar(window) => format!("the foreground window {window:#x}'s element"),
         Work::Finish { cut, .. } => format!("the finish of a caret read of {:?}", cut.node),
+        Work::Ask(ask) => format!("{}", ask.number),
     }
 }
 

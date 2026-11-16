@@ -41,7 +41,9 @@
 //! never reported. A node reported later, or named by a request still
 //! running, is kept.
 
+mod asked;
 mod commit;
+mod completion;
 mod focus_path;
 pub(crate) mod lock;
 mod narrowing;
@@ -1548,12 +1550,10 @@ impl Outpost {
                 (TraceId::mint(), now_us(), EventTiming::default()),
                 Source::Other,
             ),
-            CoreToOutpost::Front(front) => {
-                context.mailbox.post(Posted::Front(*front));
-            }
+            CoreToOutpost::Front(front) => context.mailbox.post(Posted::Front(*front)),
             // The reducer withdraws the query if it has not dispatched it,
             // and answers it "not started" through its token.
-            CoreToOutpost::Cancel { request_id } => {
+            CoreToOutpost::CancelQuery { request_id } => {
                 context.mailbox.post(Posted::Cancel(*request_id));
             }
             CoreToOutpost::ReadTerminal { node, trace_id } => context.push(
@@ -1561,9 +1561,9 @@ impl Outpost {
                 (*trace_id, now_us(), EventTiming::default()),
                 Source::Other,
             ),
-            CoreToOutpost::KeyNote(note) => {
-                context.mailbox.post(Posted::KeyNote(*note));
-            }
+            CoreToOutpost::KeyNote(note) => context.mailbox.post(Posted::KeyNote(*note)),
+            CoreToOutpost::Request(ask) => context.mailbox.post(Posted::Ask(unstamped_ask(ask))),
+            CoreToOutpost::Cancel(cancel) => context.mailbox.post(Posted::CancelAsk(*cancel)),
             CoreToOutpost::Ping { .. } => {
                 context.outbound.urgent(context.pong());
             }
@@ -1592,6 +1592,13 @@ impl Outpost {
             }
         }
     }
+}
+
+/// `ask` with the node ids it names as this outpost knows them.
+fn unstamped_ask(ask: &verbatim_model::request::Ask) -> Box<verbatim_model::request::Ask> {
+    let mut ask = Box::new(ask.clone());
+    ask.unstamp();
+    ask
 }
 
 /// Handles `event`, a `WinEvent` the outpost's own hook delivered: stamps

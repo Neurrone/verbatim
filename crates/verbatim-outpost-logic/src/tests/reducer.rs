@@ -490,6 +490,7 @@ fn kind_of(program: &Program) -> Kind {
         },
         Work::Owed(_) => Kind::Owed,
         Work::Drop | Work::FindBar(_) => Kind::Drop,
+        Work::Ask(_) => unreachable!("this world sends no request of Core's"),
         Work::NoteRead(_) => unreachable!("this world sets no console key's note"),
         Work::Finish { .. } => Kind::Finish,
     }

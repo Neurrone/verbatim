@@ -410,8 +410,11 @@ that carries them on the pipes, `Message`, is
     (under a `RequestId`: who in Core asked, `Requester::Reducer` or
     `Requester::Shell`, non-exhaustive for later askers, and that asker's
     number, which outposts store, compare and echo and decide nothing by);
-    `Cancel` (withdraws a query not started, by its `RequestId`); `Ping`; `Fetches`;
-    `NodesHeld`; `IdleQuery`; `Shutdown`; and `Assign`.
+    `CancelQuery` (withdraws a query not started, by its `RequestId`); `Ping`; `Fetches`;
+    `NodesHeld`; `IdleQuery`; `Shutdown`; `Assign`; `Request` (an `Ask` of
+    the shared list, its node ids stamped with the outpost generation,
+    which the outpost clears with `Ask::unstamp`); and `Cancel` (a
+    request's `Cancel` with its reason).
   - `CoreToListener`: `HookInstalled`, `HookRemoved`, `ApplicationExited`
     (answered by `ExitHandled`), `Ping`, `IdleQuery` and `Shutdown`.
   - `OutpostToCore`: `Ready`, `SpareReady`, `Event` (trace id,
@@ -420,7 +423,10 @@ that carries them on the pipes, `Message`, is
     outpost's target), `Reply` (exactly one per accepted query, echoing
     its `RequestId`, with its `EventTiming` and a `QueryOutcome`: `Done` with a `QueryResult`,
     `Gone`, `Failed`, `NotStarted`, or `Abandoned`), `Pong`, `Fault`,
-    `TargetExited` and `IdleAnswer`.
+    `TargetExited`, `IdleAnswer` and `Answer` (one per `Request`; its node
+    ids are stamped by `Answer::assign_outpost`, named by `Answer::named`,
+    and it counts toward `NodesHeld`'s positions when it carries a
+    result).
   - `ListenerToCore`: `Ready`, `FocusFact` (a `ListenerFact`, a pid and
     the `DeliveredFact` routed to that pid's outpost), `ForwardingEnded`,
     `ExitHandled`, `MenuOrSwitchEnded`, `Desktop` (a `DesktopNews`, with its timing),

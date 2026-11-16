@@ -1297,6 +1297,47 @@ Caret and text events:
   its line, and it is neither recorded, adopted nor followed, so the
   followed chain and the events judged against it are unchanged.
 
+### Core's requests
+
+Each `CoreToOutpost::Request` is one program on the worker
+(`outpost/asked.rs`), answered once with one of the five outcomes, each
+node read with its nearest window's facts (`NodeWindow`, read from
+Windows with no call into the application) and its properties by the
+request's set, from the snapshot the outpost's reads make. A window with
+no verdict in force is probed first and the probe carried in the answer.
+
+- The shared list: `Properties` (the node's live read), `Navigate`,
+  `Children` (first child, then next siblings, at most 1000), `Find`
+  (children, or descendants depth first, at most 1000 visited), `Text`
+  (today's text answers) and `Activate`.
+- `ReadObject` of an MSAA object at an event's address, refused "read
+  through UI Automation" when its window is, or of a node it holds: its
+  relation to the nodes Core names by NVDA's equality, an MSAA object
+  never controlled, and its ancestors up to the first Core already
+  knows, the walk stopping at a known node of this outpost. A UI
+  Automation node's controller-for relation and an object's descendants
+  are refused unsupported.
+- `MsaaRun`: each candidate newest first, skipped when its window is read
+  through UI Automation, not there when no object is at its address,
+  refused "not focused" for a focus event whose object and ancestors lack
+  the focused state, until the first valid focus, read with its
+  ancestors up to the first Core already knows.
+- `CurrentFocus`: the focus-now read, its chain cut at the first ancestor
+  Core already knows.
+- `CompleteUia` (`outpost/completion.rs`): refused "read through MSAA"
+  when its window is; else the outpost's own copy of the element is found
+  by the route, a focus with no window on its route as the application's
+  focused element; an element kept under its runtime id that is gone or
+  lost the keyboard focus is evicted with its text, and the answer says
+  the id was reused; a focus's event registration is moved to the
+  element on the registering thread and waited for, then the node's
+  states are read; the ancestors are the listener's reads, completed
+  above as a focus read's are. Where the listener's walk met an ancestor
+  Core already knows, the parent of the route's outermost element is
+  read to find which, one call.
+- A focus answer's caret is not read yet: `NotRead` for a node that may
+  have text, `NoText` otherwise. `Follow` is refused unsupported.
+
 ### Queries
 
 - `ShellItems` (`outpost/shell_items.rs`) reads the notification area

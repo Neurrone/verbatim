@@ -132,7 +132,7 @@ impl ToChild for CoreToOutpost {
                 Some(timing)
             }
             CoreToOutpost::ForwardingEnded { .. }
-            | CoreToOutpost::Cancel { .. }
+            | CoreToOutpost::CancelQuery { .. }
             | CoreToOutpost::KeyNote(_)
             | CoreToOutpost::ReadTerminal { .. }
             | CoreToOutpost::Ping { .. }
@@ -142,7 +142,9 @@ impl ToChild for CoreToOutpost {
             | CoreToOutpost::IdleQuery { .. }
             | CoreToOutpost::Shutdown
             | CoreToOutpost::Assign { .. }
-            | CoreToOutpost::LiveReread { .. } => None,
+            | CoreToOutpost::LiveReread { .. }
+            | CoreToOutpost::Request(_)
+            | CoreToOutpost::Cancel(_) => None,
         }
     }
 }

@@ -17,6 +17,19 @@ reducer's rules for each kind of event.
 
 Public API:
 
+- Core's requests (`Asks`, the `waiting` module;
+  `docs/design/readers-tell-core-asks-build1.md`, Table 14): an
+  `Input::Ask` is queued in the order Core sent it and dispatched as
+  `Work::Ask` ahead of every other program, one at a time, with no
+  deadline and no moved-on rule, Core's due time and cancel bounding it.
+  `Input::Answered` sends the program's answer while its request is in
+  flight; a program that ends without one is answered ended, "failed".
+  `Input::CancelAsk` answers a queued request ended, "cancelled", and
+  never runs it; a running one cancelled because the foreground moved
+  away is answered ended, "abandoned", and its worker abandoned and
+  replaced (`Effect::Abandon`), its later answer refused; for any other
+  reason it runs on and its answer is sent. At the close the queued
+  requests are dropped unanswered.
 - `Reducer` with `input(input, now)`, which takes one `Input` in
   mailbox order, given the time (`Now`: the shell's monotonic clock, the
   observation clock and the shared clock), and returns the `Effect`s in

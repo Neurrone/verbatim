@@ -109,7 +109,7 @@ fn stand_in(args: &[String]) -> ! {
                 written_at_us: 0,
             }),
             CoreToOutpost::Shutdown => std::process::exit(0),
-            CoreToOutpost::Cancel {
+            CoreToOutpost::CancelQuery {
                 request_id: RequestId { number: 0, .. },
             } => send(&ready),
             CoreToOutpost::DeliverFact { .. } => facts += 1,
@@ -276,7 +276,7 @@ fn make_ready(supervisor: &Supervisor, events: &Delivered, outpost: OutpostId, t
     supervisor
         .send_to_outpost(
             outpost,
-            CoreToOutpost::Cancel {
+            CoreToOutpost::CancelQuery {
                 request_id: RequestId::shell(0),
             },
         )

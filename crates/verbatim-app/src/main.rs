@@ -1570,6 +1570,12 @@ impl ReducerThread<'_> {
                     );
                 }
             }
+            // An answer to Core's request, which no request of the event
+            // queue is sent to an outpost for yet: dropped, as the owner
+            // thread drops the listener's.
+            OutpostToCore::Answer(answer) => {
+                tracing::debug!(%outpost, number = %answer.number, "an outpost's answer dropped");
+            }
             // The relay consumes these, and hands none of them on.
             OutpostToCore::Pong { .. }
             | OutpostToCore::TargetExited
@@ -2056,7 +2062,7 @@ impl ReducerThread<'_> {
                 }
             }
             Effect::Withdraw { outpost, query_id } => {
-                let command = CoreToOutpost::Cancel {
+                let command = CoreToOutpost::CancelQuery {
                     request_id: RequestId::reducer(query_id.0),
                 };
                 if let Err(error) = self.context.supervisor.send_to_outpost(outpost, command) {
@@ -2405,7 +2411,7 @@ impl ReducerThread<'_> {
         let Some((id, outpost)) = self.requests.find(|asker| asks_dump(asker, ticket)) else {
             return;
         };
-        let command = CoreToOutpost::Cancel { request_id: id };
+        let command = CoreToOutpost::CancelQuery { request_id: id };
         if let Err(error) = self.context.supervisor.send_to_outpost(outpost, command) {
             // The outpost is going away; its end answers the request.
             tracing::debug!(%error, %outpost, "a tree dump could not be withdrawn");

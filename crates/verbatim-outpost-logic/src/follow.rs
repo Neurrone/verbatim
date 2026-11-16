@@ -338,6 +338,26 @@ impl FocusPath {
         }
     }
 
+    /// The chain of `route`, the listener's route to an element it read
+    /// for a request ([`verbatim_model::request::Route`]).
+    #[must_use]
+    pub fn of_route(route: &verbatim_model::request::Route) -> Self {
+        let window = |handle: verbatim_model::WindowHandle| {
+            Window::new(isize::from_ne_bytes(handle.0.to_ne_bytes()))
+        };
+        let chain = route
+            .steps
+            .iter()
+            .map(|step| (step.runtime_id.0.clone(), step.window.and_then(window)))
+            .collect();
+        let cut = route.end != verbatim_model::request::RouteEnd::Top;
+        Self {
+            chain,
+            cut,
+            nearest: window(route.window).filter(|_| cut),
+        }
+    }
+
     /// Whether the chain begins with the focus `runtime_id` names, holds no
     /// window of its own anywhere, and the listener's walk up from it did
     /// not reach the top: the walk was cut below the focus's nearest

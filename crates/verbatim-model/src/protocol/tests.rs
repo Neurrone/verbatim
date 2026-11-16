@@ -48,10 +48,10 @@ fn next_core_to_outpost(previous: Option<&CoreToOutpost>) -> Option<CoreToOutpos
             },
             timing: timing(),
         },
-        CoreToOutpost::Query { .. } => CoreToOutpost::Cancel {
+        CoreToOutpost::Query { .. } => CoreToOutpost::CancelQuery {
             request_id: RequestId::shell(1),
         },
-        CoreToOutpost::Cancel { .. } => CoreToOutpost::Ping { sent_at_us: 0 },
+        CoreToOutpost::CancelQuery { .. } => CoreToOutpost::Ping { sent_at_us: 0 },
         CoreToOutpost::Ping { .. } => CoreToOutpost::Fetches(crate::Fetches::default()),
         CoreToOutpost::Fetches(_) => CoreToOutpost::Front(FrontWindow::Left),
         CoreToOutpost::Front(_) => CoreToOutpost::NodesHeld {
@@ -77,7 +77,23 @@ fn next_core_to_outpost(previous: Option<&CoreToOutpost>) -> Option<CoreToOutpos
             node: crate::NodeId::new(1),
             trace_id: crate::TraceId::from_raw(1),
         },
-        CoreToOutpost::ReadTerminal { .. } => return None,
+        CoreToOutpost::ReadTerminal { .. } => {
+            CoreToOutpost::Request(Box::new(crate::request::Ask {
+                number: crate::request::RequestNumber(1),
+                window: crate::WindowHandle(8),
+                verdict: crate::request::WindowVerdict::Msaa,
+                request: crate::request::Request::CurrentFocus {
+                    set: vec![crate::property::PropertyId::Name],
+                    known: Vec::new(),
+                    baseline: None,
+                },
+            }))
+        }
+        CoreToOutpost::Request(_) => CoreToOutpost::Cancel(crate::request::Cancel {
+            number: crate::request::RequestNumber(1),
+            reason: crate::request::CancelReason::Withdrawn,
+        }),
+        CoreToOutpost::Cancel(_) => return None,
     })
 }
 
@@ -244,7 +260,7 @@ fn every_variant_has_its_reviewed_kind() {
             "DeliverFact: Routed",
             "ForwardingEnded: Lifecycle",
             "Query: Ask",
-            "Cancel: Ask",
+            "CancelQuery: Ask",
             "Ping: Lifecycle",
             "Fetches: Configuration",
             "Front: Configuration",
@@ -255,6 +271,8 @@ fn every_variant_has_its_reviewed_kind() {
             "LiveReread: Routed",
             "KeyNote: Ask",
             "ReadTerminal: Ask",
+            "Request: Ask",
+            "Cancel: Ask",
         ]
     );
     assert_eq!(
@@ -294,6 +312,7 @@ fn every_variant_has_its_reviewed_kind() {
             "TargetExited: Lifecycle",
             "IdleAnswer: Answer",
             "LiveRereadGone: Report",
+            "Answer: Answer",
         ]
     );
     assert_eq!(
@@ -339,10 +358,10 @@ fn core_sends_no_report() {
     assert_eq!(reports, Vec::<String>::new());
 }
 
-/// Only an event and a completed query's reply carry nodes, as the
-/// outpost and verbatim.exe count them.
+/// Only an event, a completed query's reply and an answer with a result
+/// carry nodes, as the outpost and verbatim.exe count them.
 #[test]
-fn only_an_event_and_a_completed_reply_carry_nodes() {
+fn only_an_event_a_completed_reply_and_a_result_carry_nodes() {
     let carried: Vec<(String, bool)> = super::samples::outpost_to_core()
         .iter()
         .map(|message| (name(message), message.carries_nodes()))
@@ -360,8 +379,16 @@ fn only_an_event_and_a_completed_reply_carry_nodes() {
             ("TargetExited".to_owned(), false),
             ("IdleAnswer".to_owned(), false),
             ("LiveRereadGone".to_owned(), false),
+            ("Answer".to_owned(), false),
         ]
     );
+    let answer = OutpostToCore::Answer(crate::request::Answer {
+        number: crate::request::RequestNumber(1),
+        outcome: crate::request::Outcome::Result(crate::request::Reply::Followed),
+        probes: Vec::new(),
+        detail: String::new(),
+    });
+    assert!(answer.carries_nodes());
     let outcomes = [
         (QueryOutcome::Done(QueryResult::Navigated(None)), true),
         (QueryOutcome::Gone, false),
@@ -534,7 +561,7 @@ fn a_request_id_round_trips_with_its_asker() {
                 },
                 timing: timing(),
             },
-            CoreToOutpost::Cancel { request_id },
+            CoreToOutpost::CancelQuery { request_id },
         ];
         for command in commands {
             let json = serde_json::to_string(&command).expect("JSON");

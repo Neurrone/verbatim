@@ -244,7 +244,7 @@ fn stand_in(args: &[String]) -> ! {
                 }
                 std::process::exit(0)
             }
-            CoreToOutpost::Cancel { request_id } => {
+            CoreToOutpost::CancelQuery { request_id } => {
                 if matches!(request_id.number, 8 | 9) {
                     send_unreadable(&mut messages);
                 }
@@ -454,7 +454,7 @@ impl Reducer {
         self.supervisor
             .send_to_outpost(
                 outpost,
-                CoreToOutpost::Cancel {
+                CoreToOutpost::CancelQuery {
                     request_id: RequestId::shell(request),
                 },
             )

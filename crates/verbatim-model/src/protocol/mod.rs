@@ -25,7 +25,7 @@ use crate::{
 
 /// Names one query Core sent an outpost ([`CoreToOutpost::Query`]), echoed
 /// in its [`OutpostToCore::Reply`] and named by its
-/// [`CoreToOutpost::Cancel`]: who in Core asked, and that asker's own
+/// [`CoreToOutpost::CancelQuery`]: who in Core asked, and that asker's own
 /// number for it. Outposts carry it opaquely, storing, comparing and
 /// echoing it, and decide nothing by it; Core routes a reply by its
 /// [`asker`](Self::asker).
@@ -718,7 +718,7 @@ pub enum CoreToOutpost {
     /// Withdraws a query that has not started: it is answered
     /// [`QueryOutcome::NotStarted`] instead of being run. A query already
     /// running is not affected.
-    Cancel {
+    CancelQuery {
         /// The query to withdraw.
         request_id: RequestId,
     },
@@ -816,6 +816,15 @@ pub enum CoreToOutpost {
         /// The application.
         target_pid: Pid,
     },
+    /// A request of the shared list, answered once by
+    /// [`OutpostToCore::Answer`] on the outpost's one worker
+    /// (`docs/design/readers-tell-core-asks-build1.md`, "The outpost in
+    /// this build" and Table 14).
+    Request(Box<crate::request::Ask>),
+    /// Cancel a request: one queued is dropped and answered cancelled; one
+    /// running is abandoned with its worker replaced when the foreground
+    /// moved away, or else left alone.
+    Cancel(crate::request::Cancel),
 }
 
 impl CoreToOutpost {
@@ -843,7 +852,9 @@ impl CoreToOutpost {
     pub fn kind(&self) -> Kind {
         match self {
             CoreToOutpost::Query { .. }
-            | CoreToOutpost::Cancel { .. }
+            | CoreToOutpost::CancelQuery { .. }
+            | CoreToOutpost::Request(_)
+            | CoreToOutpost::Cancel(_)
             | CoreToOutpost::KeyNote(_)
             | CoreToOutpost::ReadTerminal { .. }
             | CoreToOutpost::IdleQuery { .. } => Kind::Ask,
@@ -1335,6 +1346,8 @@ pub enum OutpostToCore {
         /// Core's request.
         request: u64,
     },
+    /// The answer to a [`CoreToOutpost::Request`], one per request.
+    Answer(crate::request::Answer),
 }
 
 /// Messages from the focus listener to verbatim.exe.
@@ -1506,7 +1519,9 @@ impl OutpostToCore {
     #[must_use]
     pub fn kind(&self) -> Kind {
         match self {
-            OutpostToCore::Reply { .. } | OutpostToCore::IdleAnswer { .. } => Kind::Answer,
+            OutpostToCore::Reply { .. }
+            | OutpostToCore::IdleAnswer { .. }
+            | OutpostToCore::Answer(_) => Kind::Answer,
             OutpostToCore::Event { .. }
             | OutpostToCore::Fault { .. }
             | OutpostToCore::NotResponding { .. }
@@ -1535,6 +1550,9 @@ impl OutpostToCore {
                 | QueryOutcome::NotStarted
                 | QueryOutcome::Abandoned => false,
             },
+            OutpostToCore::Answer(answer) => {
+                matches!(answer.outcome, crate::request::Outcome::Result(_))
+            }
             OutpostToCore::Ready { .. }
             | OutpostToCore::SpareReady { .. }
             | OutpostToCore::Pong { .. }
@@ -1556,7 +1574,8 @@ impl OutpostToCore {
                 timing.written_at_us = at_us;
             }
             OutpostToCore::Pong { written_at_us, .. } => *written_at_us = at_us,
-            OutpostToCore::Ready { .. }
+            OutpostToCore::Answer(_)
+            | OutpostToCore::Ready { .. }
             | OutpostToCore::SpareReady { .. }
             | OutpostToCore::Fault { .. }
             | OutpostToCore::NotResponding { .. }
@@ -1613,6 +1632,7 @@ impl OutpostToCore {
                 | QueryResult::ShellItems(_)
                 | QueryResult::ShellItemPosition(_) => {}
             },
+            OutpostToCore::Answer(answer) => answer.assign_outpost(outpost),
             OutpostToCore::Reply { .. }
             | OutpostToCore::Ready { .. }
             | OutpostToCore::SpareReady { .. }
@@ -1641,6 +1661,16 @@ pub struct Named {
 impl Named {
     fn node(&mut self, node: &NodeSnapshot) {
         self.nodes.push(node.id);
+    }
+
+    fn answer(&mut self, answer: &crate::request::Answer) {
+        let (nodes, anchors) = answer.named();
+        self.nodes.extend(nodes);
+        self.anchors.extend(anchors);
+        if let crate::request::Outcome::Result(crate::request::Reply::Text(reply)) = &answer.outcome
+        {
+            self.text_reply(reply);
+        }
     }
 
     fn tree(&mut self, tree: &TreeNode) {
@@ -1859,6 +1889,7 @@ impl OutpostToCore {
                 | QueryResult::ShellItems(_)
                 | QueryResult::ShellItemPosition(_) => {}
             },
+            OutpostToCore::Answer(answer) => named.answer(answer),
             OutpostToCore::Reply { .. }
             | OutpostToCore::Ready { .. }
             | OutpostToCore::SpareReady { .. }

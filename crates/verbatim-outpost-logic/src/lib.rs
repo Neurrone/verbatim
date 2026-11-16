@@ -78,6 +78,7 @@ mod intake;
 #[cfg(test)]
 mod tests;
 mod text;
+mod waiting;
 
 use std::collections::{BTreeSet, VecDeque};
 use std::sync::Arc;
@@ -109,6 +110,7 @@ pub use self::text::{
     NodeAnchors, NoteFetch, NoteOn, NoteReads, POLL_BOUND, POLL_INTERVAL, RangeKey, ReadSelection,
     ReportCut, TerminalReads, TextChange, TextFacts,
 };
+pub use self::waiting::{Asks, Cancelled};
 pub use verbatim_reader_rules::verdicts::{Probe, Probed, VerdictChange, Verdicts};
 
 /// The deadline of every program but a focus read and a listener read's
@@ -171,6 +173,8 @@ pub enum Work {
     /// Finds the element of the foreground window for its progress bars
     /// ([`BarWatch`]).
     FindBar(isize),
+    /// Core's request, answered once ([`waiting`]).
+    Ask(Box<verbatim_model::request::Ask>),
     /// Finishes the caret read `cut`, cut at its value change check, with
     /// the reducer's decision: whether a value change of its edit control
     /// waited when the read part ended (`waiting`).
@@ -503,6 +507,18 @@ pub enum Input {
         /// Whether `window` is hung.
         hung: bool,
     },
+    /// Core's request, queued for the worker ([`waiting`]).
+    Ask(Box<verbatim_model::request::Ask>),
+    /// Core cancels a request ([`waiting`]).
+    CancelAsk(verbatim_model::request::Cancel),
+    /// The answer of program `request` to the Core request it runs: sent
+    /// while the program is in flight, of the generation in charge.
+    Answered {
+        /// The program.
+        request: Request,
+        /// Its answer.
+        answer: Box<verbatim_model::request::Answer>,
+    },
     /// The outpost is shutting down.
     Close,
 }
@@ -514,6 +530,8 @@ struct Current {
     /// The query the program answers, if it answers one, which an
     /// abandonment or a program that ends without answering answers.
     running: Option<(RequestId, TraceId)>,
+    /// The Core request it runs ([`Asks::running`]), if it runs one.
+    asked: Option<verbatim_model::request::RequestNumber>,
     /// Core's live re-read its entry answers, if any, until a commit sends
     /// the answer: one the program ends or is abandoned without answering
     /// is answered gone, so a pending live re-read always ends.
@@ -571,6 +589,8 @@ enum Hang {
 #[cfg_attr(test, derive(Clone, Debug))]
 #[derive(Default)]
 pub struct Reducer {
+    /// Core's requests, run ahead of everything else.
+    asks: Asks,
     intake: intake::Intake,
     hold: hold::Hold,
     facts: Facts,
@@ -775,8 +795,12 @@ impl Reducer {
                 waiting,
                 hung,
             } => self.told_judged(window, waiting, hung, &mut effects),
+            Input::Ask(_) | Input::CancelAsk(_) | Input::Answered { .. } => {
+                self.asked(input, &mut effects);
+            }
             Input::Close => {
                 self.stopping = true;
+                self.asks.close();
                 self.hang = Hang::None;
                 let unparked = self.intake.close();
                 if !unparked.is_empty() {
@@ -807,6 +831,45 @@ impl Reducer {
         self.judge_told(false, &mut effects);
         self.changed(&before, &mut effects);
         effects
+    }
+
+    /// Core's request, its cancel, or a program's answer to it (Table 14).
+    fn asked(&mut self, input: Input, effects: &mut Vec<Effect>) {
+        match input {
+            Input::Ask(ask) => {
+                if !self.stopping {
+                    self.asks.push(ask);
+                }
+            }
+            Input::CancelAsk(cancel) => self.cancel_ask(cancel, effects),
+            Input::Answered { request, answer } => {
+                if self.accepts(request)
+                    && let Some(answer) = self.asks.answered(*answer)
+                {
+                    effects.push(Effect::Send(Box::new(OutpostToCore::Answer(answer))));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Core's `cancel`: a queued request answered cancelled, the running one
+    /// abandoned with its worker when the foreground moved away, or left
+    /// alone (Table 14).
+    fn cancel_ask(&mut self, cancel: verbatim_model::request::Cancel, effects: &mut Vec<Effect>) {
+        match self.asks.cancel(cancel) {
+            Cancelled::Dropped(answer) => {
+                effects.push(Effect::Send(Box::new(OutpostToCore::Answer(answer))));
+            }
+            Cancelled::Abandon(answer) => {
+                if let Some((request, _)) = self.flight.running() {
+                    let decision = self.flight.judged(request, Some(Reason::MovedOn));
+                    self.decided(decision, effects);
+                }
+                effects.push(Effect::Send(Box::new(OutpostToCore::Answer(answer))));
+            }
+            Cancelled::Nothing => {}
+        }
     }
 
     /// What the shell keeps a copy of, before a transition: the facts'
@@ -1235,6 +1298,9 @@ impl Reducer {
             dead,
             replacement,
             reason: match reason {
+                _ if current.asked.is_some() => {
+                    "Core cancelled its request as the foreground moved away"
+                }
                 Reason::Deadline => "a call passed its deadline",
                 Reason::MovedOn => "the user moved on from a slow window",
             },
@@ -1276,6 +1342,11 @@ impl Reducer {
             return;
         };
         self.facts.follow.bar_program_ended();
+        if current.asked.is_some()
+            && let Some(answer) = self.asks.ended()
+        {
+            effects.push(Effect::Send(Box::new(OutpostToCore::Answer(answer))));
+        }
         // A query it left unanswered still gets its one reply.
         if let Some((request_id, trace)) = current.running {
             self.send(
@@ -1346,6 +1417,16 @@ impl Reducer {
     /// handled on the way.
     fn pump(&mut self, now: Now, effects: &mut Vec<Effect>) {
         while !self.busy() && !self.stopping && !self.releasing {
+            if let Some(ask) = self.asks.take_next() {
+                self.dispatch(
+                    Work::Ask(ask),
+                    (Duration::MAX, None, None),
+                    None,
+                    now,
+                    effects,
+                );
+                continue;
+            }
             let generation = self.flight.generation();
             if let Some(followed) = self.facts.follow.followed.as_mut()
                 && let Some(owed) = followed
@@ -1593,9 +1674,14 @@ impl Reducer {
             | Work::Drop
             | Work::NoteRead(_)
             | Work::Finish { .. }
-            | Work::FindBar(_) => None,
+            | Work::FindBar(_)
+            | Work::Ask(_) => None,
         };
         let current = Current {
+            asked: match &work {
+                Work::Ask(ask) => Some(ask.number),
+                _ => None,
+            },
             running,
             live_reread,
             group,
@@ -1611,7 +1697,9 @@ impl Reducer {
         // named.
         let rule = match (window, &work) {
             (Some(window), _) => RuleWindow::Known(window),
-            (None, Work::Drop | Work::FindBar(_)) => RuleWindow::Never,
+            // Core's request is bounded by Core alone: its due time and
+            // its cancel.
+            (_, Work::Ask(_)) | (None, Work::Drop | Work::FindBar(_)) => RuleWindow::Never,
             (
                 None,
                 Work::Entry { .. } | Work::Owed(_) | Work::NoteRead(_) | Work::Finish { .. },

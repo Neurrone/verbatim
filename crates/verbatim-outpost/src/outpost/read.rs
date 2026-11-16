@@ -162,7 +162,7 @@ impl Client {
     /// The UIA client and the request `request` builds for the details the
     /// active theme wants read ([`Context::node_request`],
     /// [`Context::ancestor_request`]).
-    fn uia_with<S: Shape>(
+    pub(super) fn uia_with<S: Shape>(
         &mut self,
         context: &Context,
         request: fn(&Context, &Uia) -> windows::core::Result<Request<S>>,
@@ -419,7 +419,7 @@ fn uia_ancestors(
 /// stays a UIA ancestor, as the listener's walk keeps it; another
 /// process's window, and one read through MSAA, still end the walk there.
 /// Local calls, and the verdict's probe for a window of this application.
-fn uia_walk_leaves(context: &RequestContext<'_>, nearest: isize, hwnd: isize) -> bool {
+pub(super) fn uia_walk_leaves(context: &RequestContext<'_>, nearest: isize, hwnd: isize) -> bool {
     let plain = if hwnd == nearest {
         !serves(context, hwnd)
     } else {

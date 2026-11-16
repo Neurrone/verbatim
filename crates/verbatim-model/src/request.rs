@@ -709,6 +709,171 @@ pub struct Answer {
     pub detail: String,
 }
 
+impl Ask {
+    /// Clears the outpost part of every node id the request names, as its
+    /// outpost knows them ([`NodeId::unstamped`]).
+    pub fn unstamp(&mut self) {
+        fn unstamp(node: &mut NodeId) {
+            *node = node.unstamped();
+        }
+        fn known(known: &mut [KnownAncestor]) {
+            for ancestor in known {
+                if let KnownAncestor::Node(node) = ancestor {
+                    unstamp(node);
+                }
+            }
+        }
+        match &mut self.request {
+            Request::ReadObject(read) => {
+                if let ObjectRef::Node(node) = &mut read.object {
+                    unstamp(node);
+                }
+                match &mut read.relation {
+                    Some(RelationQuery::OneOf(nodes)) => nodes.iter_mut().for_each(unstamp),
+                    Some(RelationQuery::ControlledBy(node)) => unstamp(node),
+                    Some(RelationQuery::Selection { focus, nodes }) => {
+                        unstamp(focus);
+                        nodes.iter_mut().for_each(unstamp);
+                    }
+                    None => {}
+                }
+                if let Some(walk) = &mut read.walk {
+                    known(walk);
+                }
+            }
+            Request::Properties { node, .. }
+            | Request::Navigate { node, .. }
+            | Request::Find { node, .. }
+            | Request::Children { node, .. }
+            | Request::Text { node, .. }
+            | Request::Activate { node } => unstamp(node),
+            Request::CompleteUia(complete) => {
+                known(&mut complete.known);
+                if let CompletionFor::SelectionItem { focus } = &mut complete.completes {
+                    unstamp(focus);
+                }
+            }
+            Request::MsaaRun(run) => known(&mut run.known),
+            Request::CurrentFocus { known: list, .. } => known(list),
+            Request::Follow(follow) => {
+                if let Some(followed) = &mut follow.node {
+                    unstamp(&mut followed.node);
+                    if let Some(extra) = &mut followed.extra {
+                        unstamp(extra);
+                    }
+                }
+            }
+        }
+    }
+}
+
+impl Answer {
+    /// Stamps `outpost` on every node id the answer carries, as
+    /// [`crate::protocol::OutpostToCore::assign_outpost`] stamps every
+    /// message on an outpost's pipe.
+    pub fn assign_outpost(&mut self, outpost: crate::OutpostId) {
+        self.visit_nodes(&mut |node| *node = node.with_outpost(outpost));
+    }
+
+    /// The node ids and selection baselines the answer carries, in order,
+    /// but for a text reply's anchors, which the protocol's own walk of a
+    /// text reply names.
+    #[must_use]
+    pub fn named(&self) -> (Vec<NodeId>, Vec<TextAnchor>) {
+        let mut copy = self.clone();
+        let mut nodes = Vec::new();
+        copy.visit_nodes(&mut |node| nodes.push(*node));
+        let mut anchors = Vec::new();
+        if let Outcome::Result(reply) = &self.outcome {
+            let mut caret = |caret: &FocusCaret| {
+                if let FocusCaret::Read(read) = caret {
+                    anchors.push(read.caret.line.start);
+                    if let Some(selection) = &read.caret.selection {
+                        anchors.push(selection.range.start.anchor);
+                        anchors.push(selection.range.end.anchor);
+                        if let Some(line) = &selection.start_line {
+                            anchors.push(line.start);
+                        }
+                    }
+                    anchors.push(read.baseline);
+                }
+            };
+            match reply {
+                Reply::Focus(focus) => caret(&focus.caret),
+                Reply::Run(run) => {
+                    for tried in &run.tried {
+                        if let Tried::Focus(focus) = tried {
+                            caret(&focus.caret);
+                        }
+                    }
+                }
+                Reply::Object(_)
+                | Reply::Properties(_)
+                | Reply::Navigated(_)
+                | Reply::Found(_)
+                | Reply::Children(_)
+                | Reply::Text(_)
+                | Reply::Activated(_)
+                | Reply::Followed => {}
+            }
+        }
+        (nodes, anchors)
+    }
+
+    /// Calls `visit` on every node id the answer carries.
+    fn visit_nodes(&mut self, visit: &mut dyn FnMut(&mut NodeId)) {
+        fn read(read: &mut NodeRead, visit: &mut dyn FnMut(&mut NodeId)) {
+            if let Some(node) = &mut read.node {
+                visit(node);
+            }
+        }
+        fn focus(focus: &mut FocusRead, visit: &mut dyn FnMut(&mut NodeId)) {
+            read(&mut focus.focus.read, visit);
+            for ancestor in &mut focus.ancestors {
+                read(&mut ancestor.node.read, visit);
+            }
+            if let Some(foreground) = &mut focus.foreground {
+                read(&mut foreground.read, visit);
+            }
+        }
+        let Outcome::Result(reply) = &mut self.outcome else {
+            return;
+        };
+        match reply {
+            Reply::Object(object) => {
+                read(&mut object.object, visit);
+                for node in object
+                    .descendants
+                    .iter_mut()
+                    .chain(object.ancestors.iter_mut())
+                {
+                    read(node, visit);
+                }
+            }
+            Reply::Focus(read) => focus(read, visit),
+            Reply::Run(run) => {
+                for tried in &mut run.tried {
+                    if let Tried::Focus(read) = tried {
+                        focus(read, visit);
+                    }
+                }
+            }
+            Reply::Navigated(Some(node)) | Reply::Found(Some(node)) => read(node, visit),
+            Reply::Children(children) => {
+                for child in children {
+                    read(child, visit);
+                }
+            }
+            Reply::Navigated(None)
+            | Reply::Found(None)
+            | Reply::Properties(_)
+            | Reply::Text(_)
+            | Reply::Activated(_)
+            | Reply::Followed => {}
+        }
+    }
+}
+
 /// The session's lock state, as the shell's session notifications and
 /// its query at startup tell it (`docs/design/readers-tell-core-asks-build1.md`,
 /// "The secure desktop and the lock state"). Core counts unknown as
@@ -1092,6 +1257,50 @@ pub enum QueueEffect {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn node_read(number: u64) -> NodeRead {
+        NodeRead {
+            node: Some(NodeId::new(number)),
+            window: NodeWindow {
+                handle: WindowHandle(5),
+                top_level: WindowHandle(5),
+                root_owner: WindowHandle(5),
+                process: Pid(9),
+                thread: 2,
+                desktop: false,
+            },
+            values: PropertyValues::default(),
+        }
+    }
+
+    #[test]
+    fn an_answer_names_and_stamps_every_node_it_carries() {
+        let mut answer = Answer {
+            number: RequestNumber(1),
+            outcome: Outcome::Result(Reply::Object(Box::new(ObjectRead {
+                object: node_read(1),
+                relation: None,
+                descendants: vec![node_read(2)],
+                ancestors: vec![node_read(3)],
+                met: None,
+                route: None,
+            }))),
+            probes: Vec::new(),
+            detail: String::new(),
+        };
+        assert_eq!(
+            answer.named(),
+            (
+                vec![NodeId::new(1), NodeId::new(2), NodeId::new(3)],
+                Vec::new()
+            )
+        );
+        answer.assign_outpost(crate::OutpostId(4));
+        assert_eq!(
+            answer.named().0,
+            [1, 2, 3].map(|number| NodeId::in_outpost(crate::OutpostId(4), number))
+        );
+    }
 
     #[test]
     fn only_a_foreground_cancel_abandons_a_running_call() {
