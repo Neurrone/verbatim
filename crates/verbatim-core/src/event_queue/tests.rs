@@ -526,6 +526,42 @@ fn a_request_out_whose_window_is_found_hung_stops_with_the_sound_when_attended()
     );
 }
 
+/// A console host's window in front: the foreground names the console
+/// window, which the console host's process owns, while attention is on its
+/// client's process, which the foreground names.
+const CONSOLE_IN_FRONT: Foreground = Foreground {
+    window: WindowHandle(10),
+    root_owner: WindowHandle(10),
+    process: Pid(2),
+    thread: 0,
+    by_class: None,
+    shell: false,
+};
+
+/// A request to the console host, out while its client holds attention,
+/// found hung: the console window is the foreground window, so the
+/// not-responding sound plays though the processes differ.
+#[test]
+fn a_console_hosts_request_found_hung_while_its_client_holds_attention_plays_the_sound() {
+    let mut core = core_with(CONSOLE_IN_FRONT);
+    assert_eq!(feed(&mut core, 1_000, read(1)), [send(1)]);
+    assert_eq!(
+        feed(
+            &mut core,
+            1_200,
+            Input::HangCheck {
+                window: WINDOW.handle,
+                hung: true
+            }
+        ),
+        [
+            cancel(1, CancelReason::Hung),
+            Effect::NotRespondingSound,
+            said("NoLongerAwaited(Hung)")
+        ]
+    );
+}
+
 #[test]
 fn a_request_out_found_hung_while_unattended_stops_with_no_sound() {
     let mut core = core_with(ELSEWHERE);
