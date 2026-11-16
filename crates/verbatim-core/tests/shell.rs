@@ -95,10 +95,13 @@ fn exiting_cancels_speech_then_plays_the_exit_sound_and_nothing_follows() {
 fn a_lock_keys_new_state_is_said_interrupting() {
     let trace_id = TraceId::from_raw(1);
     assert_eq!(
-        effects_of(&Input::LockKeyToggled {
+        effects_of(&Input::Queue {
             trace_id,
-            key: LockKey::ScrollLock,
-            on: true,
+            at_us: 0,
+            input: verbatim_model::request::QueueInput::LockKeyRead {
+                key: LockKey::ScrollLock,
+                on: true
+            }
         }),
         [said(
             trace_id,
@@ -568,10 +571,13 @@ fn a_lock_keys_announcement_is_heard_after_a_key_pressed_within_its_30_ms() {
         reduce(
             &mut state,
             &mut verbatim_core::Runtime::default(),
-            &Input::LockKeyToggled {
+            &Input::Queue {
                 trace_id: toggled,
-                key: LockKey::ScrollLock,
-                on: true,
+                at_us: 0,
+                input: verbatim_model::request::QueueInput::LockKeyRead {
+                    key: LockKey::ScrollLock,
+                    on: true
+                }
             }
         ),
         [said(

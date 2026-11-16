@@ -66,13 +66,23 @@ pub fn reduce(state: &mut SrState, runtime: &mut crate::Runtime, input: &Input) 
     // A user input's number, recorded by its trace before anything it
     // causes is spoken (`crate::keys`).
     crate::keys::record(state, input);
-    let mut effects = match input {
+    // The speech side's reports and Core's timers reach Core as queue
+    // inputs and are handled at once, as the inputs they stand for, from
+    // here on (`crate::entries::Routed::AtOnce`).
+    let at_once;
+    let (input, mut effects) = match input {
         Input::Queue {
             trace_id,
             at_us,
-            input,
-        } => crate::entries::route(state, runtime, (*trace_id, *at_us), input),
-        _ => reduce_input(state, input),
+            input: queued,
+        } => match crate::entries::route(state, runtime, (*trace_id, *at_us), queued) {
+            crate::entries::Routed::Said(said) => (input, said),
+            crate::entries::Routed::AtOnce(standing_for) => {
+                at_once = *standing_for;
+                (&at_once, reduce_input(state, &at_once))
+            }
+        },
+        _ => (input, reduce_input(state, input)),
     };
     // The terminals Core reads (`terminal_model`): told when the focus
     // reaches or leaves them, given the settings, and their text answered

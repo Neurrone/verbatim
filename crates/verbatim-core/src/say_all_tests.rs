@@ -454,7 +454,11 @@ fn a_keys_cut_of_speech_stops_say_all_and_withdraws_its_read() {
     assert_eq!(read.sent.len(), 1, "{read:?}");
     let cut = reduce(
         &mut state,
-        &verbatim_model::Input::SpeechCancelled { at_us: 0 },
+        &verbatim_model::Input::Queue {
+            trace_id: verbatim_model::TraceId::from_raw(0),
+            at_us: 0,
+            input: verbatim_model::request::QueueInput::SpeechCut,
+        },
     );
     assert_eq!(cut.display, [false]);
     assert_eq!(
@@ -479,8 +483,11 @@ fn say_all_stops_when_its_utterance_is_cut_off_elsewhere() {
     };
     let read = by_line(&mut state, vec![line("One.\n", 100, 0), last]);
     assert_eq!(read.texts(), [["One."], ["Two."]]);
-    let cut =
-        |marks: Vec<SpeechMark>| verbatim_model::Input::UtteranceCancelled { marks, at_ms: 0 };
+    let cut = |marks: Vec<SpeechMark>| verbatim_model::Input::Queue {
+        trace_id: verbatim_model::TraceId::from_raw(0),
+        at_us: 0,
+        input: verbatim_model::request::QueueInput::UtteranceCancelled { marks, at_ms: 0 },
+    };
     // An utterance with no mark of say-all's changes nothing.
     let other = reduce(&mut state, &cut(vec![SpeechMark(9_999)]));
     assert!(
@@ -518,8 +525,12 @@ fn say_all_carries_on_past_an_utterance_that_failed() {
     // The first fails: nothing moves, and the third is handed on.
     let failed = reduce(
         &mut state,
-        &verbatim_model::Input::UtteranceFailed {
-            marks: vec![read.said[0].marks[0]],
+        &verbatim_model::Input::Queue {
+            trace_id: verbatim_model::TraceId::from_raw(0),
+            at_us: 0,
+            input: verbatim_model::request::QueueInput::UtteranceFailed {
+                marks: vec![read.said[0].marks[0]],
+            },
         },
     );
     assert_eq!(failed.texts(), [["Three."]]);
@@ -552,8 +563,12 @@ fn a_failed_utterance_with_little_left_reads_on_as_an_entry() {
     // the next read joins the queue as its own entry and is asked at once.
     let failed = reduce(
         &mut state,
-        &verbatim_model::Input::UtteranceFailed {
-            marks: vec![read.said[1].marks[0]],
+        &verbatim_model::Input::Queue {
+            trace_id: verbatim_model::TraceId::from_raw(0),
+            at_us: 0,
+            input: verbatim_model::request::QueueInput::UtteranceFailed {
+                marks: vec![read.said[1].marks[0]],
+            },
         },
     );
     assert_eq!(failed.said.len(), 2, "{failed:?}");

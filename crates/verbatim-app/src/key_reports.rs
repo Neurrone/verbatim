@@ -179,8 +179,10 @@ pub(crate) fn speech_effect(ports: Ports) -> Box<dyn Fn(KeySpeechEffect, KeySeq)
         KeySpeechEffect::Cancel => {
             ports.post(Post::Cancel(key_seq), Some(key_seq));
             ports.post(
-                Post::Command(ShellCommand::Input(Box::new(Input::SpeechCancelled {
+                Post::Command(ShellCommand::Input(Box::new(Input::Queue {
+                    trace_id: TraceId::mint(),
                     at_us: verbatim_process::clock::now_us(),
+                    input: QueueInput::SpeechCut,
                 }))),
                 Some(key_seq),
             );
@@ -639,7 +641,7 @@ mod tests {
 
     /// The key each command waiting on `port` is of, typed text being the
     /// only command these tests post, and `None` for a cancel's
-    /// `SpeechCancelled`.
+    /// `SpeechCut`.
     fn typed_keys(
         port: &mut verbatim_process::port_queue::PortQueue<ShellCommand>,
     ) -> Vec<Option<KeySeq>> {
@@ -650,7 +652,10 @@ mod tests {
                         input: QueueInput::Press(press),
                         ..
                     } if matches!(press.action, PressAction::Typed { .. }) => Some(press.key_seq),
-                    Input::SpeechCancelled { .. } => None,
+                    Input::Queue {
+                        input: QueueInput::SpeechCut,
+                        ..
+                    } => None,
                     other => panic!("the hook posted {other:?}"),
                 },
                 _ => panic!("the hook posted something other than an input"),

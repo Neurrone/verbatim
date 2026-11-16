@@ -862,7 +862,14 @@ fn a_cut_while_held_reads_to_the_end_without_speaking() {
     assert!(playback.play_one(&mut state));
     playback.feed(&mut state, &output(lines(41..=50)));
     playback.queued.clear();
-    playback.feed(&mut state, &Input::SpeechCancelled { at_us: 0 });
+    playback.feed(
+        &mut state,
+        &Input::Queue {
+            trace_id: verbatim_model::TraceId::from_raw(0),
+            at_us: 0,
+            input: verbatim_model::request::QueueInput::SpeechCut,
+        },
+    );
     assert_eq!(
         playback.requests,
         [TextOp::TerminalHold, TextOp::TerminalCancel]
@@ -891,7 +898,14 @@ fn a_read_a_cut_overtakes_speaks_only_its_answers_to_keys() {
     }
     playback.queued.clear();
     playback.heard.clear();
-    playback.feed(&mut state, &Input::SpeechCancelled { at_us: 0 });
+    playback.feed(
+        &mut state,
+        &Input::Queue {
+            trace_id: verbatim_model::TraceId::from_raw(0),
+            at_us: 0,
+            input: verbatim_model::request::QueueInput::SpeechCut,
+        },
+    );
     assert_eq!(
         playback.requests,
         [
@@ -924,7 +938,14 @@ fn a_read_a_cut_overtakes_speaks_only_its_answers_to_keys() {
 fn output_read_before_a_cut_is_not_spoken() {
     let mut state = terminal();
     let mut playback = Playback::default();
-    playback.feed(&mut state, &Input::SpeechCancelled { at_us: 5_000_000 });
+    playback.feed(
+        &mut state,
+        &Input::Queue {
+            trace_id: verbatim_model::TraceId::from_raw(0),
+            at_us: 5_000_000,
+            input: verbatim_model::request::QueueInput::SpeechCut,
+        },
+    );
     playback.feed(
         &mut state,
         &said(TERMINAL, 4_999, speech_of(None, lines(1..=2))),
@@ -1100,7 +1121,14 @@ fn output_carries_on_past_an_utterance_that_failed() {
     playback.feed(&mut state, &output(lines(1..=4)));
     // The first line fails, reported with its marks.
     let (marks, _) = playback.queued.pop_front().expect("line 1 handed on");
-    playback.feed(&mut state, &Input::UtteranceFailed { marks });
+    playback.feed(
+        &mut state,
+        &Input::Queue {
+            trace_id: verbatim_model::TraceId::from_raw(0),
+            at_us: 0,
+            input: verbatim_model::request::QueueInput::UtteranceFailed { marks },
+        },
+    );
     assert_eq!(
         playback.play_all(&mut state),
         ["line 2", "line 3", "line 4"]
@@ -1116,7 +1144,14 @@ fn speech_cut_off_drops_the_output_still_waiting() {
     // A key press cuts speech off: what was handed to speech is gone, and
     // so is what was waiting.
     playback.queued.clear();
-    playback.feed(&mut state, &Input::SpeechCancelled { at_us: 0 });
+    playback.feed(
+        &mut state,
+        &Input::Queue {
+            trace_id: verbatim_model::TraceId::from_raw(0),
+            at_us: 0,
+            input: verbatim_model::request::QueueInput::SpeechCut,
+        },
+    );
     assert_eq!(playback.play_all(&mut state), ["line 1"]);
     // Output after it is spoken as usual.
     playback.feed(&mut state, &output(lines(11..=11)));
@@ -1351,7 +1386,11 @@ fn of_what_a_read_before_a_cut_said_only_the_answers_to_keys_are_spoken() {
     let _ = reduce(
         &mut state,
         &mut crate::Runtime::default(),
-        &Input::SpeechCancelled { at_us: 5_000_000 },
+        &Input::Queue {
+            trace_id: verbatim_model::TraceId::from_raw(0),
+            at_us: 5_000_000,
+            input: verbatim_model::request::QueueInput::SpeechCut,
+        },
     );
     let speech = TerminalSpeech {
         items: vec![
@@ -1381,7 +1420,14 @@ fn output_cut_off_outside_the_reducer_is_released_by_the_pipelines_report() {
     let cut: Vec<(Vec<SpeechMark>, String)> = playback.queued.drain(..).collect();
     assert_eq!(cut.len(), 2, "{cut:?}");
     for (marks, _) in cut {
-        playback.feed(&mut state, &Input::UtteranceCancelled { marks, at_ms: 0 });
+        playback.feed(
+            &mut state,
+            &Input::Queue {
+                trace_id: verbatim_model::TraceId::from_raw(0),
+                at_us: 0,
+                input: verbatim_model::request::QueueInput::UtteranceCancelled { marks, at_ms: 0 },
+            },
+        );
     }
     assert_eq!(playback.play_all(&mut state), ["line 1"]);
     playback.feed(&mut state, &output(lines(11..=11)));

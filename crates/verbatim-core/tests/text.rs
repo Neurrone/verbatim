@@ -337,9 +337,10 @@ fn caret_read_reply(caret: CaretReport, unit: TextChunk) -> TextReply {
 fn bound_answer(state: &mut SrState, line: TextChunk) -> Vec<Effect> {
     let due = reduce(
         state,
-        &Input::HeldKeyDue {
+        &Input::Queue {
             trace_id: TraceId::from_raw(2),
             at_us: READ_ENDED_AT_US,
+            input: verbatim_model::request::QueueInput::HeldKeyDue,
         },
     );
     let unit = line.clone();
@@ -358,9 +359,10 @@ fn bound_answer(state: &mut SrState, line: TextChunk) -> Vec<Effect> {
 fn bound_unanswered(state: &mut SrState) -> Vec<Effect> {
     let due = reduce(
         state,
-        &Input::HeldKeyDue {
+        &Input::Queue {
             trace_id: TraceId::from_raw(2),
             at_us: READ_ENDED_AT_US,
+            input: verbatim_model::request::QueueInput::HeldKeyDue,
         },
     );
     reduce(
@@ -639,8 +641,10 @@ fn a_caret_keys_watch_ends_with_its_answer_and_with_typing() {
     let query = request_of(&reduce(&mut state, &key(CaretMotion::StartOfLine, false)));
     let _ = reduce(
         &mut state,
-        &Input::SpeechCancelled {
+        &Input::Queue {
+            trace_id: verbatim_model::TraceId::from_raw(0),
             at_us: (50) * 1_000,
+            input: verbatim_model::request::QueueInput::SpeechCut,
         },
     );
     let effects = reduce(&mut state, &typed("x"));
@@ -678,8 +682,10 @@ fn a_caret_keys_watch_ends_with_its_answer_and_with_typing() {
     let query = request_of(&reduce(&mut state, &key(CaretMotion::NextCharacter, false)));
     let _ = reduce(
         &mut state,
-        &Input::SpeechCancelled {
+        &Input::Queue {
+            trace_id: verbatim_model::TraceId::from_raw(0),
             at_us: (50) * 1_000,
+            input: verbatim_model::request::QueueInput::SpeechCut,
         },
     );
     let effects = reduce(
@@ -1490,9 +1496,10 @@ fn a_suggestion_selected_for_a_key_ends_it_with_no_line() {
     );
     let due = reduce(
         &mut state,
-        &Input::HeldKeyDue {
+        &Input::Queue {
             trace_id: TraceId::from_raw(2),
             at_us: READ_ENDED_AT_US,
+            input: verbatim_model::request::QueueInput::HeldKeyDue,
         },
     );
     assert_eq!(due, []);
@@ -1538,8 +1545,10 @@ fn a_caret_reports_held_change_is_said_with_an_answer_not_spoken() {
         if later {
             let _ = reduce(
                 &mut state,
-                &Input::SpeechCancelled {
+                &Input::Queue {
+                    trace_id: verbatim_model::TraceId::from_raw(0),
                     at_us: (50) * 1_000,
+                    input: verbatim_model::request::QueueInput::SpeechCut,
                 },
             );
         }
@@ -3127,7 +3136,14 @@ fn say_all_splits_a_paragraph_into_sentences_and_stops_on_a_key() {
     assert_eq!(third[0].1, "Three!");
     assert_eq!(effects.len(), 2, "{effects:?}");
     // A key stops it, dropping what was waiting; a late mark is ignored.
-    let effects = reduce(&mut state, &Input::SpeechCancelled { at_us: 0 });
+    let effects = reduce(
+        &mut state,
+        &Input::Queue {
+            trace_id: verbatim_model::TraceId::from_raw(0),
+            at_us: 0,
+            input: verbatim_model::request::QueueInput::SpeechCut,
+        },
+    );
     assert_eq!(effects, vec![Effect::KeepDisplayOn(false)]);
     assert_eq!(reduce(&mut state, &reached(third[0].0)), vec![]);
 }
@@ -3167,18 +3183,26 @@ fn say_all_stops_when_its_utterance_is_cut_off_elsewhere() {
     assert_eq!(
         reduce(
             &mut state,
-            &Input::UtteranceCancelled {
-                marks: vec![SpeechMark(9_999)],
-                at_ms: 0
+            &Input::Queue {
+                trace_id: verbatim_model::TraceId::from_raw(0),
+                at_us: 0,
+                input: verbatim_model::request::QueueInput::UtteranceCancelled {
+                    marks: vec![SpeechMark(9_999)],
+                    at_ms: 0
+                }
             }
         ),
         vec![]
     );
     let effects = reduce(
         &mut state,
-        &Input::UtteranceCancelled {
-            marks: vec![pieces[0].0],
-            at_ms: 0,
+        &Input::Queue {
+            trace_id: verbatim_model::TraceId::from_raw(0),
+            at_us: 0,
+            input: verbatim_model::request::QueueInput::UtteranceCancelled {
+                marks: vec![pieces[0].0],
+                at_ms: 0,
+            },
         },
     );
     assert_eq!(effects, vec![Effect::KeepDisplayOn(false)]);
@@ -3186,9 +3210,13 @@ fn say_all_stops_when_its_utterance_is_cut_off_elsewhere() {
     assert_eq!(
         reduce(
             &mut state,
-            &Input::UtteranceCancelled {
-                marks: vec![pieces[1].0],
-                at_ms: 0
+            &Input::Queue {
+                trace_id: verbatim_model::TraceId::from_raw(0),
+                at_us: 0,
+                input: verbatim_model::request::QueueInput::UtteranceCancelled {
+                    marks: vec![pieces[1].0],
+                    at_ms: 0
+                }
             }
         ),
         vec![]
@@ -3235,8 +3263,12 @@ fn say_all_carries_on_past_an_utterance_that_failed() {
     // The first fails: nothing moves, and the third is handed on.
     let effects = reduce(
         &mut state,
-        &Input::UtteranceFailed {
-            marks: vec![pieces[0].0],
+        &Input::Queue {
+            trace_id: verbatim_model::TraceId::from_raw(0),
+            at_us: 0,
+            input: verbatim_model::request::QueueInput::UtteranceFailed {
+                marks: vec![pieces[0].0],
+            },
         },
     );
     let third = say_all_pieces(&effects);
@@ -3276,8 +3308,10 @@ fn a_caret_key_after_say_all_starts_from_where_say_all_moved_the_caret() {
     );
     let _ = reduce(
         &mut state,
-        &Input::SpeechCancelled {
+        &Input::Queue {
+            trace_id: verbatim_model::TraceId::from_raw(0),
             at_us: (KEY_PRESSED_AT - 2) * 1_000,
+            input: verbatim_model::request::QueueInput::SpeechCut,
         },
     );
     let _ = caret_event_at(&mut state, line("Two.\n", 102, 0), KEY_PRESSED_AT);
@@ -3313,7 +3347,14 @@ fn say_all_from_the_review_cursor_leaves_the_review_cursor_where_it_stopped() {
     );
     let pieces = say_all_pieces(&effects);
     let _ = reduce(&mut state, &reached(pieces[1].0));
-    let _ = reduce(&mut state, &Input::SpeechCancelled { at_us: 0 });
+    let _ = reduce(
+        &mut state,
+        &Input::Queue {
+            trace_id: verbatim_model::TraceId::from_raw(0),
+            at_us: 0,
+            input: verbatim_model::request::QueueInput::SpeechCut,
+        },
+    );
     // The next review command reads the line where reading stopped.
     let effects = reduce(&mut state, &command(ReviewCommand::ReviewCurrentLine, 0));
     assert_eq!(
@@ -3486,7 +3527,14 @@ fn say_all_splits_lines_at_their_last_sentence_end_and_joins_a_sentence_across_l
     // caret stays there, and a key stops say-all with it there.
     let effects = reduce(&mut state, &reached(marks_of(&third[0])[0]));
     assert_eq!(effects, vec![]);
-    let effects = reduce(&mut state, &Input::SpeechCancelled { at_us: 0 });
+    let effects = reduce(
+        &mut state,
+        &Input::Queue {
+            trace_id: verbatim_model::TraceId::from_raw(0),
+            at_us: 0,
+            input: verbatim_model::request::QueueInput::SpeechCut,
+        },
+    );
     assert_eq!(effects, vec![Effect::KeepDisplayOn(false)]);
     assert_eq!(reduce(&mut state, &reached(marks_of(&third[0])[1])), vec![]);
 }
@@ -4909,9 +4957,10 @@ fn key_passed_on(text: &str, offset: u32, motion: CaretMotion) -> (SrState, Quer
 
 /// The key's 100 ms passing, the input the deadline brings.
 fn key_bound_passed() -> Input {
-    Input::HeldKeyDue {
+    Input::Queue {
         trace_id: TraceId::from_raw(2),
         at_us: 600_001,
+        input: verbatim_model::request::QueueInput::HeldKeyDue,
     }
 }
 
@@ -5747,7 +5796,14 @@ fn a_sentence_move_past_its_150_ms_is_dropped() {
 fn a_later_key_during_a_sentence_move_leaves_it_silent() {
     let (mut state, query) = sentence_final_read(BANANA, 3, CaretMotion::NextSentence);
     let effects = sentence_no_effect(&mut state, query, line(BANANA, 100, 3));
-    let _ = reduce(&mut state, &Input::SpeechCancelled { at_us: 700_000 });
+    let _ = reduce(
+        &mut state,
+        &Input::Queue {
+            trace_id: verbatim_model::TraceId::from_raw(0),
+            at_us: 700_000,
+            input: verbatim_model::request::QueueInput::SpeechCut,
+        },
+    );
     let effects = reduce(
         &mut state,
         &paragraph(request_of(&effects), 0, line(BANANA, 100, 3)),

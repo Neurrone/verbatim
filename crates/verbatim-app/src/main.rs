@@ -2147,9 +2147,10 @@ impl ReducerThread<'_> {
             self.queue(QueueInput::Due);
         }
         if let Some((trace_id, _)) = self.held_due.take_if(|(_, due)| *due <= now) {
-            self.apply(Input::HeldKeyDue {
+            self.apply(Input::Queue {
                 trace_id,
                 at_us: shared,
+                input: QueueInput::HeldKeyDue,
             });
         }
         // The terminal's timer, once its due time is past; the step moves
@@ -2157,10 +2158,7 @@ impl ReducerThread<'_> {
         if let Some(at_ms) = self.state.terminal_timer_due()
             && ms_to_us(at_ms) <= shared
         {
-            self.apply(Input::TerminalTimer {
-                trace_id: TraceId::mint(),
-                at_ms,
-            });
+            self.queue(QueueInput::TerminalDue { at_ms });
         }
         // Each lock key whose read is due, in press order; the step takes
         // it from the front.
@@ -2416,11 +2414,7 @@ fn read_toggle_key(toggle: LockKey) -> Input {
     // SAFETY: GetKeyState takes a virtual-key code and reads key state.
     let on =
         unsafe { windows::Win32::UI::Input::KeyboardAndMouse::GetKeyState(i32::from(vk)) } & 1 != 0;
-    Input::LockKeyToggled {
-        trace_id: TraceId::mint(),
-        key: toggle,
-        on,
-    }
+    queued(QueueInput::LockKeyRead { key: toggle, on })
 }
 
 /// The localized current time and date, read for the time gesture, whose

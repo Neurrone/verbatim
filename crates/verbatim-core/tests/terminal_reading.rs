@@ -519,9 +519,10 @@ fn the_timer_gives_the_keys_that_reached_the_program_by_then_first() {
         at_ms: 1900,
     });
     session.timers.clear();
-    session.input(&Input::TerminalTimer {
+    session.input(&Input::Queue {
         trace_id: TraceId::from_raw(7),
-        at_ms: 2000,
+        at_us: 0,
+        input: verbatim_model::request::QueueInput::TerminalDue { at_ms: 2000 },
     });
     assert_eq!(session.heard(), []);
     assert_eq!(session.timers, [Some(3250)]);
@@ -843,9 +844,10 @@ fn a_line_recalled_with_up_arrow_and_entered_is_marked() {
     });
     session.write("echo one", at_ms + 5);
     // Its 100 ms pass, as a key that moved no caret's do.
-    session.input(&Input::HeldKeyDue {
+    session.input(&Input::Queue {
         trace_id: TraceId::from_raw(8),
         at_us: (at_ms + 100) * 1_000,
+        input: verbatim_model::request::QueueInput::HeldKeyDue,
     });
     let (_, input) = typed("\r", at_ms + 1000);
     session.input(&input);

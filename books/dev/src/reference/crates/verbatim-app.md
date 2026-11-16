@@ -32,7 +32,7 @@ reducer as `Input::ToggleKeyPressed`; Core keeps when its state is to be
 read, 30 ms later, and the reducer thread reads that due time from the
 state after each step (`SrState::toggle_key_read_due`) among its
 deadlines, reads the key's state with `GetKeyState` once it passes and
-enters it as `Input::LockKeyToggled`, which Core says ("caps lock on")
+enters it as `QueueInput::LockKeyRead`, which Core says ("caps lock on")
 and which takes the key from the front. The
 time gesture's `Effect::ReadClock` is read on the reducer thread, as
 `GetTimeFormatEx` and `GetDateFormatEx` word it, and applied as
@@ -65,7 +65,7 @@ active review and navigation bindings follow `settings.toml`'s
 The keyboard hook's two callbacks are the `key_reports` module, which
 runs on the hook thread and is checked by `cargo xtask ci`'s hook rule
 (`xtask/src/ownership.rs`): the speech effect calls `cancel_through` with
-the key's number and posts `Input::SpeechCancelled`, or posts the
+the key's number and posts `QueueInput::SpeechCut`, or posts the
 pause's toggle; the report callback notes the key in the latency ledger and turns
 each `KeyReport` into its `ShellCommand`s, by lookups in tables made when
 the hook starts (`key_reports::Tables`), and posts them to the reducer's
@@ -75,7 +75,7 @@ queue's: a post a port refuses while its taker is still there, which
 only a system out of memory does, is kept in a thread-local queue on the
 hook thread, and the next post joins it and posts the queue from its
 front until a port refuses again, so no command, cancel or pause toggle
-overtakes a refused one and a key's cancel and its `SpeechCancelled` are both kept or
+overtakes a refused one and a key's cancel and its `SpeechCut` are both kept or
 both made; one whose port has closed is dropped. While posts succeed this
 adds one check of an empty queue, and no timer, lock or message; a kept
 post waits for the next key. Unit tests refuse a post through the
@@ -200,7 +200,7 @@ Milestone M4's text protocol is wired here (`books/dev/src/reference/crates/verb
   Each text a key types becomes
   `Input::CharacterTyped` (the hook's translation,
   [verbatim-input-windows](verbatim-input-windows.md)), and each key that
-  cancels speech also sends `Input::SpeechCancelled`, as does a gesture
+  cancels speech also sends `QueueInput::SpeechCut`, as does a gesture
   injected through the control plane, so say-all stops. All of these go
   straight from the hook thread to the reducer thread's port, each one
   post, so the hook never waits, and in the order the keys were
@@ -230,7 +230,7 @@ Milestone M4's text protocol is wired here (`books/dev/src/reference/crates/verb
   `Effect::BoundHeldKey` sets or clears the held key's one deadline, for
   its wait for the key ahead or for the read of its caret, kept beside the
   reducer thread's other deadlines (`next_deadline`); when it passes, the
-  thread enters `Input::HeldKeyDue` with the key's trace ID.
+  thread enters `QueueInput::HeldKeyDue` under the key's trace ID.
   `Effect::Withdraw` sends the outpost of a query Core gave up on, and
   no longer records, `CoreToOutpost::Cancel`, as a tree dump's give-up
   does.
@@ -239,7 +239,7 @@ Milestone M4's text protocol is wired here (`books/dev/src/reference/crates/verb
   (`SrState::terminal_timer_due`), never kept here, so a terminal model
   Core dropped leaves no timer; its due time on the shared clock is turned
   into an instant, and once it passes the thread enters
-  `Input::TerminalTimer` with that due time and a trace ID minted then.
+  `QueueInput::TerminalDue` with that due time and a trace ID minted then.
 - `Effect::Fetch`, `Effect::Activate` and `Effect::Text` go to the
   outpost of the node they name as `Query::Navigate`, `Query::Activate`
   and `Query::Text`, under the request id `RequestId::reducer` of the
@@ -248,10 +248,12 @@ Milestone M4's text protocol is wired here (`books/dev/src/reference/crates/verb
   cannot be sent is answered at once as failed.
 - The speech pipeline's observer (`speech_events`) is the latency ledger
   plus the marks: every index mark playback reaches becomes
-  `Input::MarkReached` posted to the same port, so say-all advances, and
-  every utterance with marks that ended before playback reached them all
-  (`SpeechEvents::marks_cancelled`) becomes `Input::UtteranceCancelled`,
-  and every one that failed (`marks_failed`) `Input::UtteranceFailed`,
+  `QueueInput::MarkReached` posted to the same port, joining Core's event
+  queue in arrival order, so say-all advances, and every utterance with
+  marks that ended before playback reached them all
+  (`SpeechEvents::marks_cancelled`) becomes
+  `QueueInput::UtteranceCancelled`, and every one that failed
+  (`marks_failed`) `QueueInput::UtteranceFailed`, both handled at once,
   so say-all and terminal output never wait on marks a cut has taken away.
   Every synthesizer reports marks: `OneCore` from its own bookmarks, and
   eSpeak NG from its mark events

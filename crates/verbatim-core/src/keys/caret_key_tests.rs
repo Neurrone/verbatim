@@ -1020,6 +1020,7 @@ fn route(held: &mut Held, at_us: u64, input: &QueueInput) -> Vec<Said> {
         (TraceId::from_raw(1), at_us),
         input,
     )
+    .said()
     .into_iter()
     .filter(|said| !matches!(said, Said::Queue(QueueEffect::WakeAt(_))))
     .collect()

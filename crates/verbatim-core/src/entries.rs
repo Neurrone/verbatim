@@ -936,29 +936,63 @@ pub(crate) fn feed(
     effects
 }
 
+/// What [`route`] made of a queue input.
+#[derive(Debug)]
+pub(crate) enum Routed {
+    /// Core handled it: the shell's effects.
+    Said(Vec<Said>),
+    /// One of the speech side's reports or Core's timers, handled at once
+    /// in the inbox by today's rules for the input it stands for, which
+    /// the reducer runs as it runs that input, with its stamping, the
+    /// terminal's interception and the queue's settling.
+    AtOnce(Box<verbatim_model::Input>),
+}
+
+#[cfg(test)]
+impl Routed {
+    /// The shell's effects of an input Core handled in the queue.
+    pub(crate) fn said(self) -> Vec<Said> {
+        match self {
+            Self::Said(said) => said,
+            Self::AtOnce(input) => panic!("{input:?} is handled at once, not routed"),
+        }
+    }
+}
+
 /// Routes one queue input from the shell (`Input::Queue`) into the event
 /// queue under `trace_id` at `at_us`, and returns what Core did as the
 /// shell's effects: requests, cancels, hang checks and the sound, what
-/// the entries' functions said, and the time Core next waits for. A tell
-/// of a kind whose entry a later step of the build adds is not taken.
+/// the entries' functions said, and the time Core next waits for; or, for
+/// the speech side's reports and Core's timers, the input each stands
+/// for, handled at once ([`Routed::AtOnce`]). A tell of a kind whose entry
+/// a later step of the build adds is not taken.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one arm per queue input, with no wildcard"
+)]
 pub(crate) fn route(
     state: &mut SrState,
     runtime: &mut Runtime,
     (trace_id, at_us): (TraceId, u64),
     input: &QueueInput,
-) -> Vec<Said> {
+) -> Routed {
     let input = match input {
         QueueInput::Tell { tell, .. } if tell.kind == EventKind::DesktopSwitch => {
             let Payload::DesktopSwitch { input_desktop_open } = tell.payload else {
                 // A switch without its payload is the listener's fault.
-                return Vec::new();
+                return Routed::Said(Vec::new());
             };
-            return desktop_switched(state, runtime, (trace_id, at_us), input_desktop_open);
+            return Routed::Said(desktop_switched(
+                state,
+                runtime,
+                (trace_id, at_us),
+                input_desktop_open,
+            ));
         }
         // Every frame of an instance that is not its reader's current one
         // is dropped (design, "The outpost generation record").
         QueueInput::Tell { from, .. } if !state.queue.admits(*from) => {
-            return vec![Said::Queue(QueueEffect::StaleFrame(*from))];
+            return Routed::Said(vec![Said::Queue(QueueEffect::StaleFrame(*from))]);
         }
         QueueInput::Tell { from, tell } => match Entry::of_tell(*from, (**tell).clone()) {
             Some(Entry::UiaFocus(mut focus)) => {
@@ -966,7 +1000,7 @@ pub(crate) fn route(
                 Input::Entry(Entry::UiaFocus(focus))
             }
             Some(entry) => Input::Entry(entry),
-            None => return Vec::new(),
+            None => return Routed::Said(Vec::new()),
         },
         QueueInput::Answer { from, answer } => Input::Answer {
             from: *from,
@@ -1011,19 +1045,21 @@ pub(crate) fn route(
         QueueInput::WithdrawOutside(asker) => Input::WithdrawOutside(Asker(*asker)),
         QueueInput::Ignored(processes) => {
             state.ignored.clone_from(processes);
-            return Vec::new();
+            return Routed::Said(Vec::new());
         }
         QueueInput::Deferred { stroke, pressed } => {
-            return state
-                .strokes
-                .defer(*stroke, *pressed)
-                .map(Said::Queue)
-                .into_iter()
-                .collect();
+            return Routed::Said(
+                state
+                    .strokes
+                    .defer(*stroke, *pressed)
+                    .map(Said::Queue)
+                    .into_iter()
+                    .collect(),
+            );
         }
         QueueInput::Alt { down } => {
             state.alt_down = *down;
-            return Vec::new();
+            return Routed::Said(Vec::new());
         }
         QueueInput::StrokesReset => {
             // The front's starting read, its stroke now dropped, is
@@ -1032,17 +1068,50 @@ pub(crate) fn route(
             Input::Settle
         }
         QueueInput::Exit => {
-            return vec![Said::Queue(QueueEffect::ReleaseAtExit(
+            return Routed::Said(vec![Said::Queue(QueueEffect::ReleaseAtExit(
                 state.strokes.exit(),
-            ))];
+            ))]);
         }
         QueueInput::Lock(lock) => {
             crate::input_desktop::lock(state, *lock);
-            return Vec::new();
+            return Routed::Said(Vec::new());
         }
         QueueInput::Process(fact) => Input::Process(*fact),
+        QueueInput::SpeechCut => {
+            return Routed::AtOnce(Box::new(verbatim_model::Input::SpeechCancelled { at_us }));
+        }
+        QueueInput::UtteranceCancelled { marks, at_ms } => {
+            return Routed::AtOnce(Box::new(verbatim_model::Input::UtteranceCancelled {
+                marks: marks.clone(),
+                at_ms: *at_ms,
+            }));
+        }
+        QueueInput::UtteranceFailed { marks } => {
+            return Routed::AtOnce(Box::new(verbatim_model::Input::UtteranceFailed {
+                marks: marks.clone(),
+            }));
+        }
+        QueueInput::HeldKeyDue => {
+            return Routed::AtOnce(Box::new(verbatim_model::Input::HeldKeyDue {
+                trace_id,
+                at_us,
+            }));
+        }
+        QueueInput::TerminalDue { at_ms } => {
+            return Routed::AtOnce(Box::new(verbatim_model::Input::TerminalTimer {
+                trace_id,
+                at_ms: *at_ms,
+            }));
+        }
+        QueueInput::LockKeyRead { key, on } => {
+            return Routed::AtOnce(Box::new(verbatim_model::Input::LockKeyToggled {
+                trace_id,
+                key: *key,
+                on: *on,
+            }));
+        }
     };
-    run_input(state, runtime, (trace_id, at_us), input)
+    Routed::Said(run_input(state, runtime, (trace_id, at_us), input))
 }
 
 /// A switch of the input desktop at `at_us`, handled at once in the inbox

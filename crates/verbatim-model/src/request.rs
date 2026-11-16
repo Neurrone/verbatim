@@ -1061,6 +1061,51 @@ pub enum QueueInput {
     /// A process fact the supervisor's owner thread reports for Core's
     /// outpost generation record.
     Process(ProcessFact),
+    /// The keyboard hook cut speech off at a key press, at the input's
+    /// time: handled at once in the inbox, as the speech side's cut
+    /// (`docs/design/readers-tell-core-asks-build1.md`, "The inbox, handled
+    /// at once"); say-all stops, as NVDA's stops on any key.
+    SpeechCut,
+    /// An utterance Core placed index marks in was cut off before playback
+    /// reached all of them, however it was cut; handled at once in the
+    /// inbox, so what waited on its marks stops.
+    UtteranceCancelled {
+        /// The marks the utterance carried, in order; those playback had
+        /// already reached were reported as [`QueueInput::MarkReached`]
+        /// first.
+        marks: Vec<crate::SpeechMark>,
+        /// When it ended, in milliseconds since the Unix epoch; 0 when
+        /// unknown.
+        at_ms: u64,
+    },
+    /// An utterance Core placed index marks in failed in synthesis or
+    /// audio output before playback reached all of them; handled at once
+    /// in the inbox, counted as heard.
+    UtteranceFailed {
+        /// The marks the utterance carried, in order; those playback had
+        /// already reached were reported as [`QueueInput::MarkReached`]
+        /// first.
+        marks: Vec<crate::SpeechMark>,
+    },
+    /// The held key's one deadline Core set
+    /// ([`crate::Effect::BoundHeldKey`]) passed, at the input's time, under
+    /// the key's own trace.
+    HeldKeyDue,
+    /// The focused terminal's quiet-period timer came due at `at_ms`, the
+    /// due time Core's state gives.
+    TerminalDue {
+        /// When it came due, in milliseconds on the clock every process of
+        /// a run shares.
+        at_ms: u64,
+    },
+    /// A lock key's state, read by the shell once the key's read was due
+    /// and Windows had changed it.
+    LockKeyRead {
+        /// Which key.
+        key: crate::LockKey,
+        /// Whether it is now on.
+        on: bool,
+    },
 }
 
 /// A process fact the supervisor's owner thread reports for Core's outpost

@@ -1,11 +1,12 @@
 //! The speech pipeline's observer: the latency ledger, plus the index marks
-//! the reducer placed, which re-enter it as `Input::MarkReached` so say-all
+//! the reducer placed, which re-enter Core's event queue as
+//! `QueueInput::MarkReached` and join it in arrival order, so say-all
 //! advances as playback reaches each piece (`books/dev/src/reference/crates/verbatim-core.md`,
 //! "Say-all"), and each utterance with marks cut off before playback
-//! reached them all, which re-enters as `Input::UtteranceCancelled` so
-//! nothing the reducer waits on is lost by a cut, or failed, which
-//! re-enters as `Input::UtteranceFailed`, so what waited carries on past
-//! it.
+//! reached them all, which re-enters as `QueueInput::UtteranceCancelled`
+//! so nothing the reducer waits on is lost by a cut, or failed, which
+//! re-enters as `QueueInput::UtteranceFailed`, so what waited carries on
+//! past it; both are handled at once in Core's inbox.
 //!
 //! Every synthesizer reports its marks: `OneCore` places them itself from its
 //! bookmarks, and eSpeak NG from its mark events
@@ -18,6 +19,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use crate::Commands;
+use verbatim_model::request::QueueInput;
 use verbatim_model::{Indication, Input, SpeechMark, TraceId, UtteranceEnding, UtteranceId};
 use verbatim_speech::{IndexMark, SpeechEvents, SynthTiming};
 
@@ -62,9 +64,7 @@ impl SpeechEvents for ShellSpeechEvents {
     }
 
     fn mark_reached(&self, _: UtteranceId, _: TraceId, mark: IndexMark, _: Instant) {
-        let input = Input::MarkReached {
-            mark: SpeechMark(mark.0),
-        };
+        let input = queued(QueueInput::MarkReached(SpeechMark(mark.0)));
         if self
             .commands
             .send(ShellCommand::Input(Box::new(input)))
@@ -75,10 +75,10 @@ impl SpeechEvents for ShellSpeechEvents {
     }
 
     fn marks_cancelled(&self, _: UtteranceId, _: TraceId, marks: &[IndexMark], _: Instant) {
-        let input = Input::UtteranceCancelled {
+        let input = queued(QueueInput::UtteranceCancelled {
             marks: marks.iter().map(|mark| SpeechMark(mark.0)).collect(),
             at_ms: crate::latency::now_ms(),
-        };
+        });
         if self
             .commands
             .send(ShellCommand::Input(Box::new(input)))
@@ -89,9 +89,9 @@ impl SpeechEvents for ShellSpeechEvents {
     }
 
     fn marks_failed(&self, _: UtteranceId, _: TraceId, marks: &[IndexMark], _: Instant) {
-        let input = Input::UtteranceFailed {
+        let input = queued(QueueInput::UtteranceFailed {
             marks: marks.iter().map(|mark| SpeechMark(mark.0)).collect(),
-        };
+        });
         if self
             .commands
             .send(ShellCommand::Input(Box::new(input)))
@@ -120,6 +120,15 @@ impl SpeechEvents for ShellSpeechEvents {
     }
 }
 
+/// `input` for Core's event queue, arriving now.
+fn queued(input: QueueInput) -> Input {
+    Input::Queue {
+        trace_id: TraceId::mint(),
+        at_us: verbatim_process::clock::now_us(),
+        input,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::OnceLock;
@@ -142,8 +151,8 @@ mod tests {
         (ShellSpeechEvents { ledger, commands }, taker)
     }
 
-    /// The single input posted to the reducer, unboxed.
-    fn only_input(taker: &mut verbatim_process::port_queue::PortQueue<ShellCommand>) -> Input {
+    /// The single queue input posted to the reducer.
+    fn only_input(taker: &mut verbatim_process::port_queue::PortQueue<ShellCommand>) -> QueueInput {
         let Some(ShellCommand::Input(input)) = taker.try_recv() else {
             panic!("the observer posted no input to the reducer");
         };
@@ -151,11 +160,14 @@ mod tests {
             taker.try_recv().is_none(),
             "the observer posted more than one command"
         );
-        *input
+        let Input::Queue { input, .. } = *input else {
+            panic!("the observer posted {input:?}, not a queue input");
+        };
+        input
     }
 
     /// A cut utterance's marks re-enter the reducer as
-    /// `Input::UtteranceCancelled`, every mark in order, stamped with the
+    /// `QueueInput::UtteranceCancelled`, every mark in order, stamped with the
     /// time it was reported.
     #[test]
     fn a_cut_utterance_reaches_the_reducer_with_its_marks() {
@@ -168,7 +180,7 @@ mod tests {
             Instant::now(),
         );
         let after = crate::latency::now_ms();
-        let Input::UtteranceCancelled { marks, at_ms } = only_input(&mut taker) else {
+        let QueueInput::UtteranceCancelled { marks, at_ms } = only_input(&mut taker) else {
             panic!("the input is not a cut utterance");
         };
         assert_eq!(marks, vec![SpeechMark(5), SpeechMark(6)]);
@@ -179,7 +191,7 @@ mod tests {
     }
 
     /// A failed utterance's marks re-enter the reducer as
-    /// `Input::UtteranceFailed`, every mark in order.
+    /// `QueueInput::UtteranceFailed`, every mark in order.
     #[test]
     fn a_failed_utterance_reaches_the_reducer_with_its_marks() {
         let (events, mut taker) = observer();
@@ -191,9 +203,26 @@ mod tests {
         );
         assert_eq!(
             only_input(&mut taker),
-            Input::UtteranceFailed {
+            QueueInput::UtteranceFailed {
                 marks: vec![SpeechMark(5), SpeechMark(6)],
             }
+        );
+    }
+
+    /// A mark playback reached re-enters the reducer as
+    /// `QueueInput::MarkReached`, to join Core's event queue.
+    #[test]
+    fn a_mark_reached_reaches_the_reducer_as_a_queue_input() {
+        let (events, mut taker) = observer();
+        events.mark_reached(
+            UtteranceId(1),
+            TraceId::mint(),
+            IndexMark(7),
+            Instant::now(),
+        );
+        assert_eq!(
+            only_input(&mut taker),
+            QueueInput::MarkReached(SpeechMark(7))
         );
     }
 }

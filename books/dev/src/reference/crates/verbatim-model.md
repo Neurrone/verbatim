@@ -720,6 +720,15 @@ exists), or `Unanswered` (no answer in time, or the read failed).
   startup and whenever they change.
 - `Input::TerminalTimer { trace_id, at_ms }`: the focused terminal's
   quiet-period timer came due, at the due time Core's state gave.
+- The shell sends the speech side's reports and its timers as queue
+  inputs (`Input::Queue`), each standing for one of the inputs above and
+  handled at once by Core as that input:
+  `QueueInput::SpeechCut` for `SpeechCancelled`,
+  `QueueInput::UtteranceCancelled` and `QueueInput::UtteranceFailed`,
+  `QueueInput::HeldKeyDue` under the key's trace,
+  `QueueInput::TerminalDue { at_ms }` for `TerminalTimer`, and
+  `QueueInput::LockKeyRead { key, on }` for `LockKeyToggled`; a mark
+  reached is `QueueInput::MarkReached`, which joins the event queue.
 
 ### Effects for the shell
 
