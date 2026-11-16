@@ -1530,6 +1530,30 @@ fn a_request_to_a_window_with_no_verdict_carries_probe_first_and_its_probe_decid
     );
 }
 
+/// A console window's probe names the thread `GetWindowThreadProcessId`
+/// gives, its client's, while its tells name the console host's thread
+/// that raised the event: the probe still decides the request's window.
+#[test]
+fn a_probe_of_the_requests_window_naming_another_owner_thread_decides_it() {
+    let mut core = probing_core();
+    assert_eq!(
+        feed_probing(&mut core, 1_000, Input::Entry(false)),
+        [send_probed(1, WindowVerdict::ProbeFirst)]
+    );
+    let client_thread = verbatim_model::request::Probe {
+        thread: PROBED.thread + 1,
+        ..probe(true, 1_100)
+    };
+    assert_eq!(
+        feed_probing(&mut core, 2_000, answer_probed(1, vec![client_thread])),
+        [said_result()]
+    );
+    assert_eq!(
+        feed_probing(&mut core, 3_000, Input::Entry(false)),
+        [send_probed(2, WindowVerdict::Uia)]
+    );
+}
+
 #[test]
 fn a_probe_verdict_lapses_half_a_second_after_the_probe_began() {
     let mut core = probing_core();

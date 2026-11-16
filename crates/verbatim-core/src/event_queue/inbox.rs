@@ -6,7 +6,7 @@
 //! here.
 
 use verbatim_model::request::{
-    Answer, Ask, Cancel, CancelReason, ProcessFact, Reply, Request as Wire, RequestNumber,
+    Answer, Ask, Cancel, CancelReason, Probe, ProcessFact, Reply, Request as Wire, RequestNumber,
 };
 use verbatim_model::{Pid, WindowHandle};
 
@@ -321,14 +321,28 @@ impl<L: Logic> Core<L> {
                 .answer(from, answer.number, answer.outcome);
         match answered {
             Ok(ended) => {
+                // A probe of the request's own window is kept under the
+                // request's key: the outpost names the window's owner by
+                // `GetWindowThreadProcessId`, which for a console window
+                // is its client's thread, while the tells name it by the
+                // console host's thread that raised the event, so keyed by
+                // the outpost's thread it would judge no later tell.
                 let probed = {
                     let backend = &mut self.shared.borrow_mut().state.queue.backend;
                     for probe in &answer.probes {
-                        backend.record(probe);
+                        if probe.window == ended.window.handle {
+                            backend.record(&Probe {
+                                thread: ended.window.thread,
+                                ..*probe
+                            });
+                        } else {
+                            backend.record(probe);
+                        }
                     }
-                    answer.probes.iter().any(|probe| {
-                        probe.window == ended.window.handle && probe.thread == ended.window.thread
-                    })
+                    answer
+                        .probes
+                        .iter()
+                        .any(|probe| probe.window == ended.window.handle)
                 };
                 self.deliver_probed(ended, probed);
             }
