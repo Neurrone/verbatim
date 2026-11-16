@@ -16,7 +16,7 @@ use verbatim_model::request::{Outcome as WireOutcome, ProcessFact};
 use super::driver::Core;
 use super::inbox::Effect;
 use super::{Instance, Logic, Reader};
-use crate::supervisor::record::{Application, Replaced, Running, Stage};
+use crate::supervisor::record::{ABANDONED_WORKER_LIMIT, Application, Replaced, Running, Stage};
 
 impl<L: Logic> Core<L> {
     /// Applies a process fact the owner thread reported.
@@ -30,7 +30,10 @@ impl<L: Logic> Core<L> {
                 process,
                 application_gone,
             } => self.launch_failed(process, application_gone),
-            ProcessFact::Pong(instance) => self.ponged(instance),
+            ProcessFact::Pong {
+                instance,
+                abandoned,
+            } => self.ponged(instance, abandoned),
             ProcessFact::ApplicationExited(process) => self.application_exited(process),
             ProcessFact::ListenerStarted(generation) => {
                 self.shared.borrow_mut().state.queue.record.listener = Some(generation);
@@ -174,17 +177,32 @@ impl<L: Logic> Core<L> {
 
     /// `instance` answered a ping: its liveness is re-armed when it is its
     /// application's current generation.
-    fn ponged(&mut self, instance: Instance) {
+    fn ponged(&mut self, instance: Instance, abandoned: usize) {
         let Reader::Outpost(process) = instance.reader else {
             return;
         };
-        let mut shared = self.shared.borrow_mut();
-        let now_us = shared.state.queue.now_us;
-        if let Some(application) = shared.state.queue.record.applications.get_mut(&process)
-            && let Stage::Starting(running) | Stage::Ready(running) = &mut application.stage
-            && running.generation == instance.generation
-        {
-            running.pong_us = now_us;
+        let current = {
+            let mut shared = self.shared.borrow_mut();
+            let now_us = shared.state.queue.now_us;
+            if let Some(application) = shared.state.queue.record.applications.get_mut(&process)
+                && let Stage::Starting(running) | Stage::Ready(running) = &mut application.stage
+                && running.generation == instance.generation
+            {
+                running.pong_us = now_us;
+                true
+            } else {
+                false
+            }
+        };
+        // The current generation that piled up workers abandoned to calls
+        // that never returned, other than those parked on a window judged
+        // hung, is ended as one that stopped answering is (column F).
+        if current && abandoned >= ABANDONED_WORKER_LIMIT {
+            self.shared
+                .borrow_mut()
+                .effects
+                .push(Effect::EndOutpost(instance));
+            self.instance_ended(instance);
         }
     }
 

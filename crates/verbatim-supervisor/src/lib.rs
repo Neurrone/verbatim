@@ -69,10 +69,6 @@ use verbatim_core::supervisor::policy;
 use verbatim_process::held::IgnoredProcesses;
 pub use writer::QueueError;
 
-/// How many workers parked on windows the outpost did not judge hung end
-/// the outpost ([`policy::Parked`]).
-const ABANDONED_WORKER_LIMIT: usize = 8;
-
 /// How many spare outposts the supervisor keeps waiting
 /// (`books/dev/src/reference/adr/0001-focus.md`, "Spare outposts").
 pub const SPARES: usize = 2;
@@ -359,12 +355,16 @@ pub enum OutpostMessage {
     },
     /// A child answered a ping: an outpost of `target_pid`, or the
     /// listener when `target_pid` is `None`. Core's generation record keeps
-    /// each one's liveness.
+    /// each one's liveness and judges an outpost's abandoned workers.
     Pong {
         /// The generation that answered.
         outpost: OutpostId,
         /// The application its outpost watches; `None` for the listener.
         target_pid: Option<Pid>,
+        /// How many of the outpost's workers were abandoned and have not
+        /// returned, but for those parked on a window judged hung: the
+        /// pong's `parked_count`; 0 for the listener.
+        abandoned: usize,
     },
     /// A menu closed, menu mode ended, or the Alt+Tab switcher closed,
     /// somewhere on the desktop, at `ended_at_us`: unless a focus observed

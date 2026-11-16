@@ -10,55 +10,30 @@ use std::time::Duration;
 
 use verbatim_model::OutpostId;
 
-/// Why the owner killed an otherwise-alive outpost (recovery ladder rung 3).
+/// Why the owner killed an otherwise-alive child (recovery ladder rung 3).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WedgeReason {
     /// No pong for the supervisor's `MISSED_PONG_THRESHOLD`
-    /// consecutive ping intervals: the outpost stopped answering.
+    /// consecutive ping intervals: the child stopped answering.
     MissedHeartbeats,
-    /// The most recent pong reported at least the supervisor's
-    /// `ABANDONED_WORKER_LIMIT` workers parked on windows the outpost did
-    /// not judge hung ([`Parked::other`]).
-    AbandonedWorkers,
 }
 
 impl std::fmt::Display for WedgeReason {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
             WedgeReason::MissedHeartbeats => "missed heartbeats",
-            WedgeReason::AbandonedWorkers => "abandoned workers",
         })
     }
 }
 
 /// The supervisor's limits for judging a child stuck: how often it is
-/// pinged, how many pings in a row it may miss, and how many abandoned
-/// workers its outpost may report.
+/// pinged and how many pings in a row it may miss.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct WedgeLimits {
     /// The time between pings.
     pub ping_interval: Duration,
     /// How many ping intervals may pass with no pong.
     pub missed_pongs: u32,
-    /// How many workers parked on windows not judged hung make an outpost
-    /// stuck.
-    pub abandoned_workers: usize,
-}
-
-/// The workers an outpost's last pong reported parked, abandoned to calls
-/// they have not returned from, by whether the outpost judged the window
-/// each is parked on hung.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Parked {
-    /// Parked on windows the outpost judged hung. They never count against
-    /// the outpost: the outpost is the one judge of a hung window, a
-    /// replacement would park on the same windows, and each later program
-    /// on a hung window is refused before its first call, so these stay
-    /// bounded.
-    pub on_hung: usize,
-    /// Parked for any other reason: a deadline passed, or the user moved
-    /// on. These count against [`WedgeLimits::abandoned_workers`].
-    pub other: usize,
 }
 
 /// Microseconds from `earlier` to `later` on the run's shared clock, none
@@ -72,29 +47,9 @@ fn after_us(at_us: u64, wait: Duration) -> u64 {
     at_us.saturating_add(u64::try_from(wait.as_micros()).unwrap_or(u64::MAX))
 }
 
-/// Whether an outpost should be killed, and why: given its last pong time
-/// and now, in microseconds on the run's shared clock, and the workers its
-/// last pong reported parked. Only the workers parked on windows the
-/// outpost did not judge hung count ([`Parked`]); they are checked first,
-/// as the more specific diagnosis.
-#[must_use]
-pub fn wedge_decision(
-    last_pong_us: u64,
-    now_us: u64,
-    limits: WedgeLimits,
-    parked: Parked,
-) -> Option<WedgeReason> {
-    if parked.other >= limits.abandoned_workers {
-        return Some(WedgeReason::AbandonedWorkers);
-    }
-    if since_us(last_pong_us, now_us) >= limits.ping_interval.saturating_mul(limits.missed_pongs) {
-        return Some(WedgeReason::MissedHeartbeats);
-    }
-    None
-}
-
 /// A child's liveness judged by its pongs alone: the focus listener's, or
-/// a spare outpost's while it waits, which report no abandoned workers.
+/// a spare outpost's while it waits. An application's outpost is judged
+/// by Core's generation record.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Liveness {
     /// When it last answered a ping, or was launched, on the run's shared
@@ -116,11 +71,13 @@ impl Liveness {
         self.last_pong_us = at_us;
     }
 
-    /// Whether it has missed its pings at `now_us`
-    /// ([`wedge_decision`], with no parked workers).
+    /// Whether it has missed its pings at `now_us`, in microseconds on
+    /// the run's shared clock.
     #[must_use]
     pub fn wedged(&self, now_us: u64, limits: WedgeLimits) -> Option<WedgeReason> {
-        wedge_decision(self.last_pong_us, now_us, limits, Parked::default())
+        (since_us(self.last_pong_us, now_us)
+            >= limits.ping_interval.saturating_mul(limits.missed_pongs))
+        .then_some(WedgeReason::MissedHeartbeats)
     }
 }
 
@@ -298,11 +255,10 @@ impl Spares {
 mod tests {
     use super::*;
 
-    /// The supervisor's limits: a ping every 3 s, 3 missed, 8 workers.
+    /// The supervisor's limits: a ping every 3 s, 3 missed.
     const LIMITS: WedgeLimits = WedgeLimits {
         ping_interval: Duration::from_secs(3),
         missed_pongs: 3,
-        abandoned_workers: 8,
     };
 
     /// A start on the shared clock, in microseconds.
@@ -310,64 +266,10 @@ mod tests {
     /// One second, in microseconds.
     const SECOND: u64 = 1_000_000;
 
-    /// Parked workers other than those on hung windows.
-    fn others(other: usize) -> Parked {
-        Parked { on_hung: 0, other }
-    }
-
-    #[test]
-    fn a_recent_pong_with_few_abandoned_workers_is_healthy() {
-        assert_eq!(
-            wedge_decision(START, START + SECOND, LIMITS, others(7)),
-            None
-        );
-    }
-
-    #[test]
-    fn nine_seconds_without_a_pong_is_a_wedge() {
-        let nine = START + 9 * SECOND;
-        assert_eq!(wedge_decision(START, nine - 1, LIMITS, others(0)), None);
-        assert_eq!(
-            wedge_decision(START, nine, LIMITS, others(0)),
-            Some(WedgeReason::MissedHeartbeats)
-        );
-    }
-
-    /// Only the workers parked on windows the outpost did not judge hung
-    /// count against the limit of eight: eight on hung windows and seven
-    /// others are not a wedge, and one more of the others is.
-    #[test]
-    fn only_workers_parked_on_windows_not_judged_hung_count_toward_the_limit() {
-        assert_eq!(
-            wedge_decision(
-                START,
-                START,
-                LIMITS,
-                Parked {
-                    on_hung: 8,
-                    other: 7
-                }
-            ),
-            None
-        );
-        assert_eq!(
-            wedge_decision(
-                START,
-                START,
-                LIMITS,
-                Parked {
-                    on_hung: 8,
-                    other: 8
-                }
-            ),
-            Some(WedgeReason::AbandonedWorkers)
-        );
-    }
-
     #[test]
     fn a_now_before_the_last_pong_never_panics() {
-        let earlier = START - 5 * SECOND;
-        assert_eq!(wedge_decision(START, earlier, LIMITS, others(0)), None);
+        let liveness = Liveness::new(START);
+        assert_eq!(liveness.wedged(START - 5 * SECOND, LIMITS), None);
     }
 
     #[test]

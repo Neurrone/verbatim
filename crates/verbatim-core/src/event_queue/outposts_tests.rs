@@ -10,13 +10,21 @@ use crate::entries::tests::{
 };
 use crate::event_queue::{Instance, Reader};
 use crate::focus::versions::Committed;
-use crate::supervisor::record::{LIVENESS_US, Stage};
+use crate::supervisor::record::{ABANDONED_WORKER_LIMIT, LIVENESS_US, Stage};
 
 /// The generation after [`OUTPOST`].
 const NEXT: Instance = Instance {
     reader: Reader::Outpost(APP),
     generation: GENERATION + 1,
 };
+
+/// The current generation's pong, reporting `abandoned` workers.
+fn pong(abandoned: usize) -> QueueInput {
+    QueueInput::Process(ProcessFact::Pong {
+        instance: OUTPOST,
+        abandoned,
+    })
+}
 
 /// What routing `input` at `at_us` did, as these tests read it: requests
 /// by reader and kind, the record's effects, answers outside the queue and
@@ -237,7 +245,7 @@ fn a_generation_with_no_pong_for_nine_seconds_is_ended_and_replaced() {
         route(
             &mut held,
             5_000_000,
-            &QueueInput::Process(ProcessFact::Pong(OUTPOST))
+            &pong(0)
         ),
         Vec::<String>::new()
     );
@@ -258,6 +266,24 @@ fn a_generation_with_no_pong_for_nine_seconds_is_ended_and_replaced() {
         route(&mut held, 15_000_100, &QueueInput::ReaderEnded(OUTPOST)),
         ["stale Outpost(Pid(40)) 3"]
     );
+}
+
+/// Row "Ready", column F by its pong: a pong reporting one short of the
+/// limit of workers abandoned, other than those parked on a window judged
+/// hung, keeps the generation; one reporting the limit ends it at once,
+/// as a generation with no pong is ended, and it is replaced.
+#[test]
+fn a_generation_whose_pong_reports_too_many_abandoned_workers_is_ended_and_replaced() {
+    let mut held = committed();
+    assert_eq!(
+        route(&mut held, 5_000_000, &pong(ABANDONED_WORKER_LIMIT - 1)),
+        Vec::<String>::new()
+    );
+    assert_eq!(
+        route(&mut held, 8_000_000, &pong(ABANDONED_WORKER_LIMIT)),
+        ["end 3", "start 40"]
+    );
+    assert!(matches!(held.state.versions.committed, Committed::Ended(_)));
 }
 
 /// Row "Ready", column E twice within a minute: the first end is replaced
@@ -390,7 +416,7 @@ fn an_idle_outpost_holding_nothing_is_kept() {
             route(
                 &mut held,
                 at_us,
-                &QueueInput::Process(ProcessFact::Pong(OUTPOST))
+                &pong(0)
             ),
             Vec::<String>::new()
         );

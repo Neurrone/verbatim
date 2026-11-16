@@ -1197,12 +1197,12 @@ pub enum OutpostToCore {
     Pong {
         /// How many of this outpost's workers have been abandoned and have
         /// not yet returned, but for those parked on a window the outpost
-        /// judged hung ([`Self::Pong::parked_on_hung`]): the supervisor
-        /// ends an outpost that piles them up.
+        /// judged hung ([`Self::Pong::parked_on_hung`]): Core's generation
+        /// record ends an outpost that piles them up.
         parked_count: usize,
         /// How many of this outpost's workers were abandoned when the
         /// outpost judged their window hung and have not yet returned,
-        /// which the supervisor does not count against it: each hung window
+        /// which Core does not count against it: each hung window
         /// holds at most one, since every later program on it answers at
         /// its check before its first call.
         #[serde(default)]

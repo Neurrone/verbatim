@@ -43,13 +43,13 @@ use verbatim_process::message::{Peeked, decode_message, peek};
 
 use super::Executables;
 use super::frames::Frame;
-use super::policy::{Liveness, Parked, Spares, WedgeLimits, WedgeReason, wedge_decision};
+use super::policy::{Liveness, Spares, WedgeLimits, WedgeReason};
 use super::process::{self, Launched, Role};
 use super::relay::{COMPLETIONS_PER_WAIT, CommandPipes, Inbox, Mailbox, Relay, Source, Taken};
 use super::retire::{Ending, ShutdownSummary, retire};
 use super::writer::{Outgoing, Received, ToChild, WriterHandle, received_now};
 use super::{
-    ABANDONED_WORKER_LIMIT, EndReason, EventSink, OutpostMessage, SPARES, Sealed, Timings,
+    EndReason, EventSink, OutpostMessage, SPARES, Sealed, Timings,
     Undelivered, Writers,
 };
 use verbatim_process::arguments::ListenerArguments;
@@ -69,7 +69,7 @@ pub(super) enum OwnerEvent {
     /// this clock from now on ([`Owner::backoff_clock`]).
     BackoffClock(BackoffClock),
     /// Read from a child's pipe: the child answered a ping.
-    Pong { outpost: OutpostId, parked: Parked },
+    Pong { outpost: OutpostId, abandoned: usize },
     /// From the app's [`super::Frames`]: a frame `outpost` sent is not a
     /// message, so it is ended as though its pipe had failed.
     Unreadable(OutpostId),
@@ -185,8 +185,6 @@ enum Generation {
         /// Its last fault, such as a given spare's hook failing: logged
         /// with its end.
         fault: Option<String>,
-        /// The workers its last pong reported parked.
-        parked: Parked,
         /// The idle barrier's round, asked once it is ready.
         idle_query: Option<u64>,
     },
@@ -196,8 +194,6 @@ enum Generation {
         outpost: OutpostId,
         /// Its process.
         child: OutpostChild,
-        /// The workers its last pong reported parked.
-        parked: Parked,
     },
 }
 
@@ -458,7 +454,6 @@ impl Owner {
         WedgeLimits {
             ping_interval: self.timings.ping_interval,
             missed_pongs: self.timings.missed_pongs,
-            abandoned_workers: ABANDONED_WORKER_LIMIT,
         }
     }
     /// The relay's loop: waits on the port until the heartbeat is due or
@@ -582,7 +577,6 @@ impl Owner {
             Peeked::Pong => {
                 let OutpostToCore::Pong {
                     parked_count,
-                    parked_on_hung,
                     written_at_us,
                     ..
                 } = decode_message(body)?
@@ -594,10 +588,7 @@ impl Owner {
                 }
                 self.handle(OwnerEvent::Pong {
                     outpost,
-                    parked: Parked {
-                        on_hung: parked_on_hung,
-                        other: parked_count,
-                    },
+                    abandoned: parked_count,
                 });
             }
             Peeked::TargetExited => self.application_exited(pid, "its outpost saw it exit"),
@@ -695,7 +686,7 @@ impl Owner {
                 }
                 self.handle(OwnerEvent::Pong {
                     outpost,
-                    parked: Parked::default(),
+                    abandoned: 0,
                 });
             }
             ListenerToCore::MenuOrSwitchEnded {
@@ -781,7 +772,7 @@ impl Owner {
             OwnerEvent::Shutdown(reply) => self.shut_down_all(reply),
             OwnerEvent::BackoffClock(clock) => self.backoff_clock = clock,
             OwnerEvent::StartOutpost(pid) => self.start_outpost(pid),
-            OwnerEvent::Pong { outpost, parked } => self.ponged(outpost, parked),
+            OwnerEvent::Pong { outpost, abandoned } => self.ponged(outpost, abandoned),
             OwnerEvent::Unreadable(outpost) => self.on_pipe_closed(outpost),
             OwnerEvent::Launched { outpost, result } => self.on_launched(outpost, result),
             OwnerEvent::Retired(ending) => {
@@ -798,20 +789,15 @@ impl Owner {
         }
     }
 
-    /// `outpost` answered a ping, reporting `parked` workers: an
-    /// application's current generation or the listener; Core keeps each
-    /// one's liveness.
-    fn ponged(&mut self, outpost: OutpostId, parked: Parked) {
+    /// `outpost` answered a ping, reporting `abandoned` workers: an
+    /// application's current generation, whose liveness and abandoned
+    /// workers Core judges, or the listener.
+    fn ponged(&mut self, outpost: OutpostId, abandoned: usize) {
         if let Some(pid) = self.pid_of(outpost) {
-            if let Some(
-                Generation::Starting { parked: last, .. } | Generation::Ready { parked: last, .. },
-            ) = self.records.get_mut(&pid)
-            {
-                *last = parked;
-            }
             self.outbox.send(OutpostMessage::Pong {
                 outpost,
                 target_pid: Some(pid),
+                abandoned,
             });
         } else if let Some(listener) = self
             .listener
@@ -822,6 +808,7 @@ impl Owner {
             self.outbox.send(OutpostMessage::Pong {
                 outpost,
                 target_pid: None,
+                abandoned: 0,
             });
         }
     }
@@ -1005,7 +992,6 @@ impl Owner {
                 outpost,
                 child,
                 fault: None,
-                parked: Parked::default(),
                 idle_query: None,
             },
         );
@@ -1445,7 +1431,6 @@ impl Owner {
         let Some(Generation::Starting {
             outpost,
             child,
-            parked,
             idle_query,
             ..
         }) = self.records.remove(&pid)
@@ -1459,11 +1444,7 @@ impl Owner {
         }
         self.records.insert(
             pid,
-            Generation::Ready {
-                outpost,
-                child,
-                parked,
-            },
+            Generation::Ready { outpost, child },
         );
         if pid == self.own_pid {
             self.keep_spares();
@@ -1710,10 +1691,9 @@ impl Owner {
             );
         }
     }
-    /// Pings every running child; ends an outpost that has piled up
-    /// abandoned workers, and the listener when it has stopped answering;
-    /// and finds the applications held that have exited. Core judges an
-    /// outpost's missed pings by its own due time
+    /// Pings every running child, ends the listener when it has stopped
+    /// answering, and finds the applications held that have exited. Core
+    /// judges an outpost's missed pings and abandoned workers
     /// (`docs/design/readers-tell-core-asks-build1.md`, "The outpost
     /// generation record").
     fn heartbeat(&mut self) {
@@ -1733,29 +1713,12 @@ impl Owner {
         for pid in exited {
             self.application_exited(pid, "seen by the supervisor");
         }
-        let mut wedged = Vec::new();
-        for (pid, generation) in &self.records {
-            let (Generation::Starting { child, parked, .. }
-            | Generation::Ready { child, parked, .. }) = generation
+        for generation in self.records.values() {
+            let (Generation::Starting { child, .. } | Generation::Ready { child, .. }) = generation
             else {
                 continue;
             };
-            // Only the abandoned workers are judged here: a pong's time is
-            // Core's to judge.
-            if wedge_decision(at_us, at_us, limits, *parked) == Some(WedgeReason::AbandonedWorkers)
-            {
-                wedged.push(*pid);
-            } else {
-                let _ = child.writer.push(Outgoing::Ping(ping.clone()));
-            }
-        }
-        for pid in wedged {
-            tracing::warn!(%pid, "ending an outpost that piled up abandoned workers");
-            self.end(
-                pid,
-                EndReason::Killed,
-                &format!("ended as stuck: {}", WedgeReason::AbandonedWorkers),
-            );
+            let _ = child.writer.push(Outgoing::Ping(ping.clone()));
         }
         self.spare_heartbeat(at_us, &ping);
 

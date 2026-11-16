@@ -1203,7 +1203,14 @@ pub enum ProcessFact {
         application_gone: bool,
     },
     /// An outpost or the listener answered a ping.
-    Pong(Instance),
+    Pong {
+        /// The instance that answered.
+        instance: Instance,
+        /// How many of an outpost's workers were abandoned and have not
+        /// returned, but for those parked on a window judged hung: Core
+        /// ends an outpost that piles them up. 0 for the listener.
+        abandoned: usize,
+    },
     /// The application's own process exited, as the relay's held handle
     /// tells it.
     ApplicationExited(Pid),

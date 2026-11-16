@@ -1099,12 +1099,16 @@ impl ReducerThread<'_> {
             OutpostMessage::Pong {
                 outpost,
                 target_pid,
+                abandoned,
             } => {
                 let instance = match target_pid {
                     Some(pid) => outpost_instance(pid, outpost),
                     None => listener_instance(outpost),
                 };
-                self.queue(QueueInput::Process(ProcessFact::Pong(instance)));
+                self.queue(QueueInput::Process(ProcessFact::Pong {
+                    instance,
+                    abandoned,
+                }));
             }
             OutpostMessage::MenuOrSwitchEnded { ended_at_us } => {
                 self.apply(Input::MenuOrSwitchEnded { ended_at_us });

@@ -23,6 +23,12 @@ use super::policy::Backoff;
 /// seconds (`verbatim-supervisor`'s `Timings`).
 pub(crate) const LIVENESS_US: u64 = 9_000_000;
 
+/// How many workers abandoned to calls that never returned, other than
+/// those parked on a window judged hung, end an outpost: each hung window
+/// holds at most one parked worker, since every later request on it is
+/// refused before its first call, but any other abandonment can repeat.
+pub(crate) const ABANDONED_WORKER_LIMIT: usize = 8;
+
 /// The backoff's three times: the second failure's wait, the longest
 /// wait, and how long an outpost must have stayed up for its failure to
 /// count as the first again (`verbatim-supervisor`'s `Timings` and
