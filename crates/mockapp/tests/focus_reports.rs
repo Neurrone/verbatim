@@ -771,15 +771,16 @@ fn a_windowless_text_focus_whose_walk_failed_is_found_as_the_focused_element() {
     // does not reach the field four levels below, two UIA calls; the
     // focused-element read, one UIA call, its stand-in counting no
     // connection; the field's registration and its states and caret; and
-    // the foreground object of the window the focus enters, one connection,
-    // one UIA call and one message. Without the read the field is not
+    // the foreground object of the window the focus enters, one connection
+    // and one UIA call, the window judged by Core's verdict, which the
+    // request carries, with no probe. Without the read the field is not
     // found.
     assert_eq!(
         reported.calls,
         CallCounts {
             uia: 7,
             msaa: 0,
-            window_messages: 1,
+            window_messages: 0,
             connections: 2,
         }
     );
@@ -833,7 +834,8 @@ fn assert_notes_reported(
 /// The route from the field's nearest window, one connection call and two
 /// UIA calls, which does not reach the field four levels below; the
 /// focused-element read, one UIA call; and the foreground object of the
-/// window the focus enters, one connection, one UIA call and one message.
+/// window the focus enters, one connection and one UIA call, the window
+/// judged by Core's verdict, which the request carries, with no probe.
 fn a_cut_walks_focused_element_with_another_runtime_id_is_not_taken() {
     let title = common::unique_title("mockapp-cut-walk-other-id");
     let mut app = common::spawn("ancestry.json", "uia", &title);
@@ -852,7 +854,7 @@ fn a_cut_walks_focused_element_with_another_runtime_id_is_not_taken() {
         CallCounts {
             uia: 4,
             msaa: 0,
-            window_messages: 1,
+            window_messages: 0,
             connections: 2,
         },
     );
@@ -869,8 +871,9 @@ fn a_cut_walks_focused_element_with_another_runtime_id_is_not_taken() {
 /// `NoText`. The route from the nearest window the route carries, this
 /// application's, one connection call and two UIA calls, which does not
 /// find the other's field; the focused-element read, one UIA call; and the
-/// foreground object of the window the focus enters, one connection, one
-/// UIA call and one message.
+/// foreground object of the window the focus enters, one connection and
+/// one UIA call, the window judged by Core's verdict, which the request
+/// carries, with no probe.
 fn a_cut_walks_focused_element_of_another_process_is_not_taken() {
     let title = common::unique_title("mockapp-cut-walk-own");
     let app = common::spawn("ancestry.json", "uia", &title);
@@ -899,7 +902,7 @@ fn a_cut_walks_focused_element_of_another_process_is_not_taken() {
         CallCounts {
             uia: 4,
             msaa: 0,
-            window_messages: 1,
+            window_messages: 0,
             connections: 2,
         },
     );

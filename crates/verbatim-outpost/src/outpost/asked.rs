@@ -53,6 +53,16 @@ const MAX_NODES: usize = 1000;
 /// The answer to `ask`, read on the worker.
 pub(super) fn answer(context: &RequestContext<'_>, client: &mut Client, ask: &Ask) -> Answer {
     let mut probes = Vec::new();
+    // Core's verdict for the request's window is the one its reads judge
+    // that window by: the outpost probes it again for none of them.
+    let given = match ask.verdict {
+        WindowVerdict::Uia => Some(true),
+        WindowVerdict::Msaa => Some(false),
+        WindowVerdict::ProbeFirst => None,
+    };
+    context
+        .given_verdict
+        .set(given.map(|uia| (hwnd_of(ask.window), uia)));
     // A request that carries "probe first" and whose handling consults no
     // verdict of its own still answers its window's probe, so that Core
     // records the verdict rather than count the probe timed out.

@@ -157,10 +157,16 @@ impl Client {
     }
 }
 
-/// Decides a window's backend with the outpost's arbitrator and the
+/// Decides a window's backend: by Core's verdict, when the request names
+/// the window with one; else with the outpost's arbitrator and the
 /// request's copy of the verdicts ([`crate::arbitration::uses_uia`]).
 /// Returns `true` for UIA.
 pub(super) fn window_uses_uia(context: &RequestContext<'_>, hwnd: isize) -> bool {
+    if let Some((window, uia)) = context.given_verdict.get()
+        && window == hwnd
+    {
+        return uia;
+    }
     crate::arbitration::uses_uia(&context.arbitrator, context, hwnd, || {
         verbatim_uia::console_reports_formatting(hwnd)
     })

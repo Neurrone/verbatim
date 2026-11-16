@@ -56,7 +56,7 @@ pub(crate) mod text_reads;
 pub(crate) mod window;
 mod worker;
 
-use std::cell::{Ref, RefCell};
+use std::cell::{Cell, Ref, RefCell};
 use std::collections::HashMap;
 use std::io;
 use std::os::windows::io::OwnedHandle;
@@ -327,6 +327,11 @@ struct RequestContext<'a> {
     /// when `None`, now on the arbitrator's observation clock at each
     /// judgement (`books/dev/src/reference/adr/0001-focus.md`, "One judge per fact").
     judged_at: Option<u64>,
+    /// Core's verdict for the window its request names, which the request
+    /// carries (`docs/design/readers-tell-core-asks-build1.md`, Table 4):
+    /// every judgement of that window while the request is answered takes
+    /// it, with no probe ([`read::window_uses_uia`]).
+    given_verdict: Cell<Option<(isize, bool)>>,
 }
 
 /// What a program's context holds of it ([`RequestContext::program`]).
@@ -357,6 +362,7 @@ impl<'a> RequestContext<'a> {
                 _context: std::marker::PhantomData,
             },
             judged_at: None,
+            given_verdict: Cell::new(None),
         }
     }
 
