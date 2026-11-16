@@ -588,7 +588,10 @@ pub(crate) fn read_element(
     }
     let known_met = |met: usize| {
         let place = places.get(met).copied()?;
-        read.walk.as_deref()?.get(usize::try_from(place).ok()?).cloned()
+        read.walk
+            .as_deref()?
+            .get(usize::try_from(place).ok()?)
+            .cloned()
     };
     let end = match route_end(&ended, &mut walked, (hwnd, nearest), known_met) {
         Ok(end) => end,
@@ -672,9 +675,11 @@ fn route_end(
                 // The walk ends at the process's top-level window or at the
                 // window below the process boundary
                 // (`verbatim_uia_rops::Ancestry`).
-                let outermost = walked.ancestors.last().map_or(hwnd, |ancestor| ancestor.hwnd);
-                if outermost != 0 && verbatim_win32::window::top_level_of(outermost) != outermost
-                {
+                let outermost = walked
+                    .ancestors
+                    .last()
+                    .map_or(hwnd, |ancestor| ancestor.hwnd);
+                if outermost != 0 && verbatim_win32::window::top_level_of(outermost) != outermost {
                     RouteEnd::ProcessBoundary
                 } else {
                     RouteEnd::Root

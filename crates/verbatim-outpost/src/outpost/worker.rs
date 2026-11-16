@@ -2535,10 +2535,7 @@ impl Worker<'_> {
     /// whether Alt is held, as a reported focus's do, for Core's rules for
     /// an application's windows, the Alt+Tab switcher's among them
     /// ([`focus_answer_facts`]).
-    fn focus_now(
-        &mut self,
-        purpose: FocusPurpose,
-    ) -> (FocusNow, Option<AnsweredFocus>) {
+    fn focus_now(&mut self, purpose: FocusPurpose) -> (FocusNow, Option<AnsweredFocus>) {
         let context = self.context;
         let (mut answer, window) =
             read::focus_now(context, self.client, purpose == FocusPurpose::Fake, &[]);
@@ -2595,12 +2592,7 @@ impl Worker<'_> {
     /// control already followed under the same node is followed again, not
     /// adopted. Either way the answer becomes the last
     /// focus queued, as NVDA's fake focus does.
-    fn follow_answer(
-        &mut self,
-        result: OutpostToCore,
-        answered: AnsweredFocus,
-        trace: TraceId,
-    ) {
+    fn follow_answer(&mut self, result: OutpostToCore, answered: AnsweredFocus, trace: TraceId) {
         let AnsweredFocus {
             node,
             ancestors,

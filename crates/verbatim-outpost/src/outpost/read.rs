@@ -24,7 +24,6 @@ use verbatim_uia_rops::{
     navigation_step,
 };
 
-
 use crate::dialog_text::is_dialog;
 
 use crate::gates;
@@ -2210,13 +2209,11 @@ pub(super) fn dump_tree(
 
 #[cfg(test)]
 mod tests {
-    use verbatim_model::{
-        Backend, NodeDetails, NodeId, NodeSnapshot, Role, StateSet,
-    };
+    use verbatim_model::{Backend, NodeDetails, NodeId, NodeSnapshot, Role, StateSet};
 
     use super::{
-        CONSOLE_WINDOW_CLASS, console_text_area_in, control_window,
-        join_cache_onto, window_read_without_its_handle,
+        CONSOLE_WINDOW_CLASS, console_text_area_in, control_window, join_cache_onto,
+        window_read_without_its_handle,
     };
     use verbatim_win32::window::window_owner;
 

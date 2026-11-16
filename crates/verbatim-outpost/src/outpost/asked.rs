@@ -918,7 +918,9 @@ fn current_focus(
         context,
         client,
         (
-            ancestors.iter_mut().chain(std::iter::once(&mut control.node)),
+            ancestors
+                .iter_mut()
+                .chain(std::iter::once(&mut control.node)),
             None,
         ),
         (&mut None, false),

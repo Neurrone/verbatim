@@ -21,7 +21,8 @@ use verbatim_uia::{Agile, Kept};
 use verbatim_model::protocol::{EventTiming, OutpostToCore};
 
 use super::reducer::{
-    Change, DialogMemo, FocusCommit, Followed, Group, LastReported, MarkChange, OwedWork, Subscribed,
+    Change, DialogMemo, FocusCommit, Followed, Group, LastReported, MarkChange, OwedWork,
+    Subscribed,
 };
 use super::store::TextWrite;
 
