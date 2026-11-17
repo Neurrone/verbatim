@@ -343,9 +343,14 @@ fn ready(
     // as the focus's outermost ancestor too, so the next focus in the menu,
     // which meets the menu and reads no foreground, keeps the frame above
     // it and enters nothing, and a focus that reads it again finds it
-    // already entered: the title is said once, entering the menu.
+    // already entered: the title is said once, entering the menu. A
+    // window the frame owns that is in front itself, such as a dialog, is
+    // the foreground read; when it is the focus too it is not taken, since
+    // the focus is never among its own ancestors
+    // (`docs/parity/focus-context.md`).
     if origin.frame_owned
         && let Some(frame) = &read_foreground
+        && frame.id != node.id
         && !ancestors.iter().any(|ancestor| ancestor.id == frame.id)
     {
         let mut frame = frame.clone();

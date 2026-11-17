@@ -23,7 +23,9 @@ focus and its ancestors, from its focus outward; the first entry that is
 the same object as one of the previous line is where the two lines meet.
 The new line is the previous one up to that entry, its old objects kept,
 then the new chain's entries below it, and those entries are the
-containers entered. NVDA judges a UI Automation element the same by its
+containers entered. The walk's first entry, the focus itself, is removed
+from the line, so the focus is never among its own ancestors (`api.py`
+148 to 149). NVDA judges a UI Automation element the same by its
 identity alone (`CompareElements`), so a container replaced by a new
 element with the same role and name is entered anew: File Explorer's
 items view list after Enter opens a folder or Backspace goes up, where

@@ -1013,6 +1013,59 @@ fn a_focus_in_a_window_the_hidden_frame_owns_takes_the_frame_as_its_foreground()
     );
 }
 
+/// A dialog the hidden frame owns, in front and focused itself: the
+/// answer reads it as its own foreground object, the same node, which is
+/// not taken as its ancestor, so it is said once. NVDA: the focus is never
+/// among its own ancestors (`docs/parity/focus-context.md`).
+#[test]
+fn a_focused_dialog_the_hidden_frame_owns_is_not_its_own_ancestor() {
+    let mut state = ready();
+    let mut tell = msaa_tell(-4);
+    // Verbatim's settings dialog, window 5, owned by the frame, window 8,
+    // and in front.
+    tell.window = TellWindow::Found(Box::new(AcceptanceFacts {
+        window: facet(5, "#32770"),
+        root: facet(5, "#32770"),
+        root_owner: facet(8, "wxWindowNR"),
+        foreground: WindowHandle(5),
+        foreground_root_owner: WindowHandle(8),
+        window_to_foreground: Relation::Equal,
+        root_owner_to_foreground: Relation::Outside,
+        root_owner_is_foregrounds: true,
+        active_window: WindowHandle(5),
+        window_to_active: Relation::Equal,
+        hidden_frame_owned: true,
+        ..facts("#32770")
+    }));
+    assert_eq!(
+        feed_at(&mut state, 1_000, entry(tell)),
+        ["send Outpost(Pid(40)) MsaaRun"]
+    );
+    let mut dialog = values("Settings", Role::Dialog);
+    dialog.0.push(PropertyAnswer {
+        id: PropertyId::NativeWindow,
+        value: Some(PropertyValue::Window(WindowHandle(5))),
+    });
+    let mut read = focus_read(Some(held(-4)));
+    read.focus.read.values = dialog.clone();
+    read.ancestors.clear();
+    read.foreground = Some(FocusNode {
+        read: NodeRead {
+            node: Some(node(2)),
+            window: win(5),
+            values: dialog,
+        },
+        runtime_id: None,
+    });
+    let tried = RunRead {
+        tried: vec![Tried::Focus(Box::new(read))],
+    };
+    assert_eq!(
+        feed_at(&mut state, 2_000, answer(OUTPOST, 1, Reply::Run(tried))),
+        ["Label(\"Settings\") Role(Dialog)"]
+    );
+}
+
 /// Verbatim's popup menu as Windows makes it: a window of its own with no
 /// owner, outside the frame in front, marked by the listener as the
 /// frame's (`verbatim_win32::window_facts`); the answer reads the frame as
