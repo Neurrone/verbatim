@@ -227,7 +227,7 @@ fn known_route(context: &RequestContext<'_>, end: &RouteEnd) -> Option<super::fo
 /// The route to `known`, an ancestor Core already knows: a window's own
 /// element, or an element whose node the outpost keeps a route to. `None`
 /// for a known element the outpost has no route to.
-pub(super) fn known_route_to(
+fn known_route_to(
     context: &RequestContext<'_>,
     known: &KnownAncestor,
 ) -> Option<super::focus_path::Route> {
@@ -242,33 +242,28 @@ pub(super) fn known_route_to(
     }
 }
 
-/// Each UI Automation node of a focus the outpost read itself, `nodes`,
-/// the focus and its reported ancestors, keeps the route to its element,
-/// by `walked`, the raw view's chain the read's walk up stepped through,
-/// nearest first, by runtime id and own window: from the nearest element
-/// at or above it with a window of its own; or, where the walk stopped at
-/// `met`, the ancestor Core already knows that it met, from the route to
-/// that ancestor. A later focus whose listener walk meets one of them is
-/// then found by that route, as one minted from the listener's read is
-/// ([`keep_minted`]). A met ancestor the outpost has no route to leaves
-/// the windowless nodes below it with none, as [`known_route`] leaves a
-/// completion below it.
+/// Each UI Automation node `nodes` names that one of the outpost's own
+/// walks up minted keeps the route to its element, by `walked`, the raw
+/// view's chain that walk stepped through, nearest first, by runtime id
+/// and own window: from the nearest element at or above it with a window
+/// of its own; or, where the chain's outermost element already has a route,
+/// the ancestor Core already knows that the walk met, or a window reached
+/// before, from that route. Every walk a read makes records its own chain:
+/// a focus-now read's from the focus, and each walk on from a window
+/// (`read::window_object_onward`), so no node a read mints from a walk
+/// lacks the route a later completion needs to find the focus below it.
 pub(super) fn keep_read_routes<'a>(
     context: &RequestContext<'_>,
     nodes: impl IntoIterator<Item = &'a NodeSnapshot>,
     walked: &[(Vec<i32>, isize)],
-    met: Option<&KnownAncestor>,
 ) {
-    // The walk's chain below the ancestor it met, which the route to that
-    // ancestor continues.
-    let met_at = met.and_then(|met| {
-        let runtime_id = known_runtime_id(context, met)?;
-        walked.iter().position(|(id, _)| *id == runtime_id)
-    });
-    let below = met_at.map_or(walked, |at| &walked[..at]);
-    let above = met
-        .filter(|_| met_at.is_some())
-        .and_then(|met| known_route_to(context, met));
+    let (below, above) = match walked.split_last() {
+        Some(((outermost, _), below)) => match context.store.route_to(outermost) {
+            Some(route) => (below, Some(route)),
+            None => (walked, None),
+        },
+        None => (walked, None),
+    };
     let path = FocusPath::of_chain(
         below
             .iter()

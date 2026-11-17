@@ -1327,7 +1327,6 @@ fn current_focus(
         context,
         std::iter::once(&control.node).chain(&ancestors),
         &control.walked,
-        met.and_then(|place| known.get(usize::try_from(place).ok()?)),
     );
     let foreground = met
         .is_none()

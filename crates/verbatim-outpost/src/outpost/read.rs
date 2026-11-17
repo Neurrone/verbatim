@@ -709,13 +709,21 @@ fn window_object_onward(
         } else {
             Vec::new()
         };
+        // The raw view's chain this walk steps through, from the window's
+        // element, for the routes to the nodes it mints.
+        let walked = RefCell::new(vec![(element.runtime_id(), hwnd)]);
+        let visited = |runtime_id: &[i32], window: isize| {
+            walked.borrow_mut().push((runtime_id.to_vec(), window));
+        };
         let above = uia_ancestors(
             context,
             (uia, request),
             (element.live(), hwnd, hwnd),
-            (previous, &mut None, None),
+            (previous, &mut None, Some(&visited)),
         )?;
-        return Ok(Some(above.into_iter().chain(below).collect()));
+        let chain: Vec<NodeSnapshot> = above.into_iter().chain(below).collect();
+        super::completion::keep_read_routes(context, &chain, &walked.into_inner());
+        return Ok(Some(chain));
     }
     // The client area, as NVDA reads a parent window through MSAA.
     let Some(client) = verbatim_ia2::acquire::snapshot_from_event(

@@ -1,0 +1,24 @@
+{
+  "id": "root",
+  "role": "window",
+  "name": "Mockapp Island Beside Fixture",
+  "children": [
+    {
+      "id": "embedded",
+      "role": "group",
+      "name": "Embedded",
+      "native": "uia_window",
+      "children": [
+        { "id": "ok", "role": "button", "name": "OK", "states": ["focusable", "focused"] }
+      ]
+    },
+    {
+      "id": "tools",
+      "role": "group",
+      "name": "Tools",
+      "children": [
+        { "id": "apply", "role": "button", "name": "Apply", "states": ["focusable"] }
+      ]
+    }
+  ]
+}

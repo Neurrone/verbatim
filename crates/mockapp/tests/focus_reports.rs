@@ -2840,6 +2840,90 @@ fn a_focus_in_a_hung_nearest_window_keeps_the_listeners_ancestors() {
     app.quit();
 }
 
+/// The nodes a focus-now read mints where its chain goes on from a window
+/// keep their routes, as those of its first walk do: the button "OK" in
+/// mockapp's UIA child window (`uia_island_beside.json`), whose first step
+/// fails, so that the chain goes on from the parent window of its nearest
+/// window, the host window, its element read then. The focus
+/// then moves to "Apply", beside the child window in the host window,
+/// whose listener walk meets the host window's element, which Core knows,
+/// and its completion finds the button by the host element's route and
+/// follows it. Without that route the completion finds no element and
+/// nothing is followed. `remote` reads the current focus's ancestors by
+/// the remote program, else by the classic walk.
+fn routes_where_a_focus_now_chain_goes_on_from_a_window(remote: bool) {
+    use windows::Win32::UI::WindowsAndMessaging::FindWindowExW;
+    let path = if remote { "remote" } else { "classic" };
+    let title = common::unique_title(&format!("mockapp-focus-now-onward-route-{path}"));
+    let mut app = common::spawn("uia_island_beside.json", "uia", &title);
+    let host = common::find_window(&title);
+    // SAFETY: a local search of the host window's children.
+    let island = unsafe {
+        FindWindowExW(
+            Some(host),
+            None,
+            windows::core::w!("VerbatimMockAppUiaWindow"),
+            windows::core::PCWSTR::null(),
+        )
+    }
+    .expect("mockapp made the UIA window");
+    let outpost = OutpostUnderTest::with_options(
+        &app,
+        OutpostOptions {
+            remote_operations: remote,
+        },
+    );
+    let uia = Uia::new().expect("a UIA client");
+    outpost.set_focus_window(island);
+    outpost.read_focus_as(
+        common::listener_focus(&uia, island.0 as isize)
+            .live()
+            .element(),
+    );
+    app.send("island answer-parent ok fail");
+    let (outcome, calls) = outpost.current_focus();
+    let now = Focused::of(outcome, calls);
+    assert_eq!(
+        roles_and_names(&now),
+        vec![
+            (Role::Window, Some("Mockapp Island Beside Fixture")),
+            (Role::Button, Some("OK"))
+        ],
+        "{path}: the chain goes on from the host window"
+    );
+    app.send("island answer-parent ok usual");
+
+    outpost.set_focus_window(host);
+    app.send("set-focus apply");
+    let client = Client::new(host);
+    let apply = client.focused();
+    let (focus, _) = outpost.listener_focus(&apply);
+    assert_eq!(
+        route_end(&focus),
+        RouteEnd::Known(KnownAncestor::Uia(RuntimeId(vec![
+            42,
+            u32::try_from(host.0 as usize & 0xFFFF_FFFF)
+                .expect("the handle's low half")
+                .cast_signed(),
+        ]))),
+        "{path}: the listener's walk meets the host window's element"
+    );
+    let reported = completed(&outpost, focus);
+    assert_eq!(reported.name(), Some("Apply"), "{path}");
+    assert_followed(&mut app, &outpost, "apply", &apply);
+
+    drop(outpost);
+    app.quit();
+}
+
+fn routes_where_a_focus_now_chain_goes_on_from_a_window_are_kept_remote() {
+    routes_where_a_focus_now_chain_goes_on_from_a_window(true);
+}
+
+fn routes_where_a_focus_now_chain_goes_on_from_a_window_are_kept_classic() {
+    routes_where_a_focus_now_chain_goes_on_from_a_window(false);
+}
+
 /// A UIA focus whose walk's first step fails goes on from the parent
 /// window of its nearest window, by that window's own object read live, as
 /// NVDA's object, which carries its nearest window, walks its parent by
@@ -3245,6 +3329,14 @@ fn main() {
         (
             "a_focus_now_reads_the_foreground_only_for_a_focus_entering_a_new_window",
             a_focus_now_reads_the_foreground_only_for_a_focus_entering_a_new_window,
+        ),
+        (
+            "routes_where_a_focus_now_chain_goes_on_from_a_window_are_kept_remote",
+            routes_where_a_focus_now_chain_goes_on_from_a_window_are_kept_remote,
+        ),
+        (
+            "routes_where_a_focus_now_chain_goes_on_from_a_window_are_kept_classic",
+            routes_where_a_focus_now_chain_goes_on_from_a_window_are_kept_classic,
         ),
         (
             "routes_below_an_ancestor_a_focus_now_walk_met_are_found_remote",
