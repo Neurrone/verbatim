@@ -76,6 +76,10 @@ fn window_and_button() -> Vec<Vec<SegmentContent>> {
     ]
 }
 
+/// The object id mockapp's MSAA tree answers counts.json's "Settings"
+/// group at: its index in the fixture, after the root, plus one.
+const GROUP_OBJECT: i32 = 2;
+
 /// A UIA client on this thread over mockapp's window.
 struct Client {
     uia: Uia,
@@ -1220,10 +1224,10 @@ fn a_foreground_event_for_a_window_read_through_uia_is_dropped() {
 /// application's current focus 50 ms later, and Core refuses an MSAA answer
 /// whose object neither has the focused state nor is inside one that has,
 /// its state cleared by `set-states`, as NVDA refuses its fake focus before
-/// it is queued (`docs/parity/focus-events.md`): nothing is said. The read
-/// is the focus and its ancestors, and mockapp's window as its foreground,
-/// since it met no ancestor Core knows. With the focused state, the same
-/// answer is spoken.
+/// it is queued (`docs/parity/focus-events.md`): nothing is said. The
+/// outpost runs the test, asked by Core's check, before it reads the
+/// object, so its calls are the focused object's lookup and the test's
+/// steps up to the desktop alone. With the focused state, the same answer is spoken.
 fn a_fake_focus_on_an_msaa_object_without_the_focused_state_answers_nothing() {
     let title = common::unique_title("mockapp-fake-focus-unfocused");
     let mut app = common::spawn("counts.json", "msaa", &title);
@@ -1243,11 +1247,11 @@ fn a_fake_focus_on_an_msaa_object_without_the_focused_state_answers_nothing() {
         (
             Vec::new(),
             CallCounts {
-                msaa: 42,
+                msaa: 14,
                 ..CallCounts::default()
             }
         ),
-        "the current focus read, and refused"
+        "the current focus's focused-state test, which refuses it"
     );
 
     common::apply(&mut app, hwnd, "set-states first focusable focused");
@@ -1267,6 +1271,88 @@ fn a_fake_focus_on_an_msaa_object_without_the_focused_state_answers_nothing() {
     );
 
     drop(core);
+    app.quit();
+}
+
+/// The check after a menu end tests the focused state of the current
+/// focus and of every ancestor up to the desktop, as NVDA's
+/// `shouldAllowIAccessibleFocusEvent` walks every parent
+/// (`NVDAObjects/IAccessible/__init__.py` 874 to 892), not only those below
+/// the ancestor Core already knows: Core's focus is mockapp's "Settings"
+/// group, by its focus event, and a menu opens and closes over it; the
+/// group keeps the focused state, and the current focus is its button
+/// "First", without it, whose walk meets the group. The fake focus is
+/// allowed and "First" spoken. Tested on the cut chain alone, it was
+/// refused and nothing was said.
+fn a_fake_focus_whose_focused_ancestor_core_knows_is_spoken() {
+    let title = common::unique_title("mockapp-fake-focus-known-ancestor");
+    let mut app = common::spawn("counts.json", "msaa", &title);
+    let hwnd = common::find_window(&title);
+    let mut core = CoreDriver::new(&app, OutpostUnderTest::new(&app));
+
+    common::apply(&mut app, hwnd, "set-focus group");
+    let _ = core.msaa_event(EventKind::MsaaFocus, hwnd, (GROUP_OBJECT, 0));
+    let client = (windows::Win32::UI::WindowsAndMessaging::OBJID_CLIENT.0, 0);
+    assert_eq!(
+        core.msaa_event(EventKind::MenuStart, hwnd, client).said,
+        Vec::new()
+    );
+    common::apply(&mut app, hwnd, "set-focus first");
+    common::apply(&mut app, hwnd, "set-states first focusable");
+    common::apply(&mut app, hwnd, "set-states group focused");
+    assert_eq!(
+        core.msaa_event(EventKind::MenuEnd, hwnd, client).said,
+        Vec::new()
+    );
+    assert_eq!(
+        core.due().spoken(),
+        [vec![
+            SegmentContent::Label("First".to_owned()),
+            SegmentContent::Role(Role::Button)
+        ]]
+    );
+
+    drop(core);
+    app.quit();
+}
+
+/// Core's read of the current focus takes the window with the keyboard
+/// focus at once, before any call into an application, as NVDA's fake
+/// focus takes the foreground window and its thread's focus window when
+/// its timer fires (`NVDAObjects/window/__init__.py` 165 to 173): the
+/// request names a window with no verdict in force, whose probe mockapp
+/// holds; while the probe waits, the keyboard focus moves to a window of
+/// another application, the desktop's. The answer is the focus in mockapp's
+/// window, which had the keyboard focus when the read began. Taken after
+/// the probe, the focus window would be the desktop, which mockapp does
+/// not serve, and nothing would be answered.
+fn a_focus_now_takes_the_focus_window_before_its_probe() {
+    let title = common::unique_title("mockapp-focus-now-window-first");
+    let mut app = common::spawn("counts.json", "msaa", &title);
+    let hwnd = common::find_window(&title);
+    let outpost = OutpostUnderTest::new(&app);
+    common::apply(&mut app, hwnd, "set-focus first");
+
+    app.hold();
+    let number = outpost.request(
+        hwnd,
+        verbatim_model::request::Request::CurrentFocus {
+            set: common::outpost::focus_set(),
+            known: Vec::new(),
+            baseline: None,
+            focused_state_test: false,
+        },
+    );
+    assert_eq!(app.held(), "GetObject", "the probe of the request's window");
+    // SAFETY: GetDesktopWindow has no preconditions.
+    outpost
+        .set_focus_window(unsafe { windows::Win32::UI::WindowsAndMessaging::GetDesktopWindow() });
+    app.release();
+    let focused = Focused::of(outpost.answer(number).outcome, CallCounts::default());
+    assert_eq!(focused.name(), Some("First"));
+
+    outpost.settled();
+    drop(outpost);
     app.quit();
 }
 
@@ -3059,6 +3145,14 @@ fn main() {
         (
             "a_focus_without_a_path_is_followed_from_its_next_focus_event",
             a_focus_without_a_path_is_followed_from_its_next_focus_event,
+        ),
+        (
+            "a_fake_focus_whose_focused_ancestor_core_knows_is_spoken",
+            a_fake_focus_whose_focused_ancestor_core_knows_is_spoken,
+        ),
+        (
+            "a_focus_now_takes_the_focus_window_before_its_probe",
+            a_focus_now_takes_the_focus_window_before_its_probe,
         ),
         (
             "a_focus_now_reads_the_foreground_only_for_a_focus_entering_a_new_window",

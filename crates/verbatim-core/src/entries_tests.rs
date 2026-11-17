@@ -323,7 +323,14 @@ pub(crate) fn kind(ask: &Ask) -> &'static str {
         Wire::ReadObject(_) => "ReadObject",
         Wire::CompleteUia(_) => "CompleteUia",
         Wire::MsaaRun(_) => "MsaaRun",
-        Wire::CurrentFocus { .. } => "CurrentFocus",
+        Wire::CurrentFocus {
+            focused_state_test: false,
+            ..
+        } => "CurrentFocus",
+        Wire::CurrentFocus {
+            focused_state_test: true,
+            ..
+        } => "CurrentFocus with the focused-state test",
         Wire::Follow(_) => "Follow",
         _ => "other",
     }

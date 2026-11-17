@@ -6,11 +6,12 @@
 //! the run before it executed no focus notes the committed focus, and
 //! 50 ms later Core appends a check entry. At its turn, if the committed
 //! focus is unchanged, Core asks the foreground application's outpost for
-//! its focus, and judges an MSAA answer by NVDA's duplicate test and its
-//! focused-state test (the object or an ancestor has the focused state);
-//! a UI Automation answer by neither. NVDA:
-//! `IAccessibleHandler/__init__.py` 976 to 1002, 760 to 782;
-//! `NVDAObjects/IAccessible/__init__.py` 874 to 892.
+//! its focus with NVDA's focused-state test, which the outpost runs on an
+//! MSAA focus over every ancestor up to the desktop, refusing one where
+//! neither the object nor an ancestor has the focused state; Core judges
+//! an MSAA answer by NVDA's duplicate test, and a UI Automation answer by
+//! neither. NVDA: `IAccessibleHandler/__init__.py` 976 to 1002, 760 to
+//! 782; `NVDAObjects/IAccessible/__init__.py` 874 to 892.
 //!
 //! The UI Automation menu opening is dropped at its arrival while a
 //! focus-kind entry that counts as pending, raised before it, waits or is
@@ -21,8 +22,7 @@
 use serde::{Deserialize, Serialize};
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::{PropertyId, PropertyValue};
-use verbatim_model::request::FocusRead;
-use verbatim_model::{OutpostId, State, TraceId};
+use verbatim_model::{OutpostId, TraceId};
 
 use super::FOCUS_SET;
 use super::acceptance;
@@ -170,18 +170,6 @@ async fn start(cx: &mut Cx<Entries>, candidate: &Candidate, run_executed: bool) 
     executed.deliver(cx);
 }
 
-/// Whether `read`'s object or one of its ancestors has the focused state.
-fn focused_state(read: &FocusRead) -> bool {
-    std::iter::once(&read.focus)
-        .chain(read.ancestors.iter().map(|ancestor| &ancestor.node))
-        .any(|node| {
-            matches!(
-                node.read.values.answer(PropertyId::States).and_then(|answer| answer.value.as_ref()),
-                Some(PropertyValue::States(states)) if states.contains(State::Focused)
-            )
-        })
-}
-
 /// The function of a check entry.
 pub(crate) async fn check(mut cx: Cx<Entries>, check: MenuCheck) {
     if cx.facts().versions.committed != check.committed {
@@ -201,15 +189,23 @@ pub(crate) async fn check(mut cx: Cx<Entries>, check: MenuCheck) {
         known: known.sent.clone(),
         baseline: known.baseline,
         set: crate::details::node_set(&cx.facts(), FOCUS_SET),
+        focused_state_test: true,
     };
-    let Outcome::Result(read) = cx.ask(request, due_us).await else {
-        cx.facts_mut().focus_read_failed();
-        return;
+    let read = match cx.ask(request, due_us).await {
+        Outcome::Result(read) => read,
+        // NVDA's focused-state test refused it: nothing is queued.
+        Outcome::Refused(_) => return,
+        Outcome::NotThere
+        | Outcome::NotResponding
+        | Outcome::ReaderEnded
+        | Outcome::NoLongerAwaited(_) => {
+            cx.facts_mut().focus_read_failed();
+            return;
+        }
     };
     if let Some(held) = &read.msaa
         && (msaa_duplicate(cx.facts().versions.last.as_ref(), &held.event)
-            || msaa_refused_repeat(cx.facts().versions.last.as_ref(), &held.event)
-            || !focused_state(&read))
+            || msaa_refused_repeat(cx.facts().versions.last.as_ref(), &held.event))
     {
         return;
     }

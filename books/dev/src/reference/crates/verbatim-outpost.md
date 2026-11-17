@@ -936,7 +936,12 @@ window before it is handled.
   the focused state, until the first valid focus, read with its
   ancestors up to the first Core already knows.
 - `CurrentFocus`: the focus-now read, its walk up through either API
-  stopping at the first ancestor Core already knows.
+  stopping at the first ancestor Core already knows. The window with the
+  keyboard focus is taken first, before any call that can block, the
+  request's probe included, as NVDA's fake focus takes it when its timer
+  fires. With `focused_state_test`, the check after a menu end, an MSAA
+  focus is refused "not focused" when neither it nor any ancestor up to
+  the desktop has the focused state, before it is read.
 - `CompleteUia` (`outpost/completion.rs`): refused "read through MSAA"
   when its window is; else the outpost's own copy of the element is found
   by the route, which goes on, when the listener's walk met an ancestor

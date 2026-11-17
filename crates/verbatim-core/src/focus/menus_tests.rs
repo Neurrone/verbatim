@@ -3,7 +3,7 @@
 
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::{PropertyAnswer, PropertyId, PropertyValue};
-use verbatim_model::request::{Reply, RunRead, Tried};
+use verbatim_model::request::{Outcome, Refusal, Reply, RunRead, Tried};
 use verbatim_model::tell::{ElementToken, Read};
 use verbatim_model::{State, StateSet, WindowHandle};
 
@@ -68,7 +68,7 @@ fn a_menu_end_checks_the_focus_50_ms_later_and_speaks_a_focused_answer() {
     assert_eq!(feed_at(&mut state, 1_049, Input::Tick), NOTHING);
     assert_eq!(
         feed_at(&mut state, 51_000, Input::Tick),
-        ["send Outpost(Pid(40)) CurrentFocus"]
+        ["send Outpost(Pid(40)) CurrentFocus with the focused-state test"]
     );
     assert_eq!(
         feed_at(&mut state, 52_000, answer(OUTPOST, 2, focused(true))),
@@ -76,16 +76,30 @@ fn a_menu_end_checks_the_focus_50_ms_later_and_speaks_a_focused_answer() {
     );
 }
 
+/// The outpost refuses the check's MSAA focus "not focused" when neither
+/// it nor any ancestor up to the desktop has the focused state, as NVDA's
+/// fake focus is tested before it is queued: nothing is said, and the
+/// readers' last focus and the caret baseline stay as they were, since
+/// nothing was queued.
 #[test]
-fn a_checked_msaa_focus_without_the_focused_state_is_not_spoken() {
+fn a_checked_msaa_focus_refused_as_unfocused_is_not_spoken() {
     let mut state = in_front();
     feed_at(&mut state, 1_000, menu_end());
     feed_at(&mut state, 51_000, Input::Tick);
     assert_eq!(
-        feed_at(&mut state, 52_000, answer(OUTPOST, 2, focused(false))),
+        feed_at(
+            &mut state,
+            52_000,
+            crate::entries::tests::answer_outcome(
+                OUTPOST,
+                2,
+                Outcome::Refused(Refusal::NotFocused)
+            )
+        ),
         NOTHING
     );
     assert!(state.versions.last.is_none());
+    assert!(state.queue.front_for_tests().is_none());
 }
 
 #[test]

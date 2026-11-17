@@ -63,6 +63,9 @@ pub(crate) struct CurrentFocusRead {
     pub(crate) baseline: Option<TextAnchor>,
     /// The properties of each node, chosen from the settings.
     pub(crate) set: Vec<PropertyId>,
+    /// Whether an MSAA answer with no focused state on it or any ancestor
+    /// is refused: the check after a menu end, NVDA's fake focus.
+    pub(crate) focused_state_test: bool,
 }
 
 impl Request for CurrentFocusRead {
@@ -81,6 +84,7 @@ impl Request for CurrentFocusRead {
             set: self.set.clone(),
             known: self.known.clone(),
             baseline: self.baseline,
+            focused_state_test: self.focused_state_test,
         }
     }
 
@@ -212,6 +216,7 @@ pub(crate) async fn run(mut cx: Cx<Entries>, entry: CurrentFocus) {
         known: Vec::new(),
         baseline: crate::text_facts::named_in_focus_read(&cx.facts(), generation),
         set: crate::details::node_set(&cx.facts(), FOCUS_SET),
+        focused_state_test: false,
     };
     let Outcome::Result(read) = cx.ask(request, due_us).await else {
         cx.facts_mut().focus_read_failed();

@@ -702,17 +702,15 @@ the front one. Its utterance carries no key
 number, so a key pressed within the 30 ms does not silence it, as NVDA's
 announcement after its timer is heard; it never waits behind a held key,
 since NVDA starts that timer when the key is pressed, outside its script
-queue. `MenuOrSwitchEnded` asks for the
-foreground application's focus (`Effect::ReadFocus(FocusPurpose::Fake)`,
-NVDA's fake focus) unless a focus observed since has been applied, or is
-waiting in the focus queue
-(`docs/parity/backends.md`). A focus query's answer is marked with its
-purpose (`Input::Event::purpose`), which decides the duplicate rule
-(`reduce::duplicate_rule_applies`): a fake focus's answer is judged only
-when it was read through MSAA, as NVDA's `processFocusNVDAEvent` tests
-IAccessible objects only, so a UIA answer of the focus Core holds is
-spoken again; the desktop's return's (`Again`) never; a plain query's as
-any report.
+queue. A menu, popup or switcher end whose run executed no focus makes
+the check entry 50 ms later (`focus::menus`, NVDA's fake focus): with the
+committed focus unchanged, it asks the foreground application's current
+focus with the focused-state test (`Request::CurrentFocus`,
+`focused_state_test`), which the outpost runs on an MSAA focus over every
+ancestor up to the desktop and refuses "not focused", saying nothing; an
+MSAA answer is then judged by the duplicate test, as NVDA's
+`processFocusNVDAEvent` tests IAccessible objects only, so a UI
+Automation answer of the focus Core holds is spoken again.
 
 The desktop's news (`desktop.rs`, `Input::Desktop`): the user's desktop
 returned asks the application in front for its focus again

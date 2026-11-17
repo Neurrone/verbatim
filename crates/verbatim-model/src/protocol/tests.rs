@@ -49,6 +49,7 @@ fn next_core_to_outpost(previous: Option<&CoreToOutpost>) -> Option<CoreToOutpos
                 set: vec![crate::property::PropertyId::Name],
                 known: Vec::new(),
                 baseline: None,
+                focused_state_test: false,
             },
         })),
         CoreToOutpost::Request(_) => CoreToOutpost::Cancel(crate::request::Cancel {

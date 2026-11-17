@@ -128,7 +128,14 @@ pub(super) fn answer(context: &RequestContext<'_>, client: &mut Client, ask: &As
             set,
             known,
             baseline,
-        } => current_focus(context, client, set, (known, *baseline)),
+            focused_state_test,
+        } => current_focus(
+            context,
+            client,
+            (ask, &mut probes),
+            set,
+            (known, *baseline, *focused_state_test),
+        ),
         Request::CompleteUia(complete) => {
             match verdict(
                 context,
@@ -227,12 +234,14 @@ fn terminal(
 
 /// Whether `request`'s handling consults its window's verdict itself,
 /// probing when it carries "probe first": a completion, an MSAA run by
-/// each candidate's, and a read of an MSAA object.
+/// each candidate's, and a read of an MSAA object; and a read of the
+/// current focus, which takes the focus window before it probes.
 fn consults_verdict(request: &Request) -> bool {
     matches!(
         request,
         Request::CompleteUia(_)
             | Request::MsaaRun(_)
+            | Request::CurrentFocus { .. }
             | Request::ReadObject(ReadObject {
                 object: ObjectRef::Msaa { .. },
                 ..
@@ -1276,19 +1285,40 @@ fn try_candidate(
 /// reads `objectInForeground` after the focus's ancestry, only when that
 /// ancestry shares nothing below the desktop with the old focus's
 /// (`eventHandler.py` 402 to 413).
+///
+/// The window with the keyboard focus is taken first, before any call
+/// that can block, `ask`'s probe among them, which `probes` records: NVDA's
+/// fake focus takes the foreground window and its thread's focus window
+/// when its timer fires (`NVDAObjects/window/__init__.py` 165 to 173), and
+/// a probe of a window whose thread is busy, Verbatim's hidden frame as its
+/// settings dialog opens, would let the focus move on before it is taken.
+/// With `focused_state_test`, an MSAA focus that neither has the focused
+/// state nor has an ancestor with it is refused "not focused", every
+/// ancestor up to the desktop tested, as NVDA tests its fake focus
+/// (`NVDAObjects/IAccessible/__init__.py` 874 to 892).
 fn current_focus(
     context: &RequestContext<'_>,
     client: &mut Client,
+    (ask, probes): (&Ask, &mut Vec<Probe>),
     set: &[PropertyId],
-    (known, baseline): (&[KnownAncestor], Option<TextAnchor>),
+    (known, baseline, focused_state_test): (&[KnownAncestor], Option<TextAnchor>, bool),
 ) -> Outcome {
-    let Ok((control_window, mut control)) = read::focused_control_in(
-        context,
-        client,
-        read::FocusRead::FocusNow,
-        &known_stops(known),
-    ) else {
-        return Outcome::NotThere;
+    let window = read::checked_focus_window(context);
+    let _ = verdict(context, hwnd_of(ask.window), ask.verdict, probes);
+    let read = window.and_then(|hwnd| {
+        read::focused_control_in(
+            context,
+            client,
+            (hwnd, read::FocusRead::FocusNow),
+            (&known_stops(known), focused_state_test),
+        )
+    });
+    let (control_window, mut control) = match read {
+        Ok(read) => read,
+        Err(read::FocusReadMiss::Unfocused) => return Outcome::Refused(Refusal::NotFocused),
+        Err(read::FocusReadMiss::Refused | read::FocusReadMiss::Failed(_)) => {
+            return Outcome::NotThere;
+        }
     };
     let (mut ancestors, met) = cut_at_known(context, control.ancestors, known);
     // The nodes this read minted keep their routes, so that a later focus

@@ -1295,8 +1295,10 @@ fn dialog_text_of(
     }
 }
 
-/// The application's focused control with its ancestors, selected child,
-/// and window, through the focus window's backend. `None` when the keyboard
+/// The application's focused control in `hwnd`, the window with the
+/// keyboard focus as [`checked_focus_window`] took it, with its ancestors,
+/// selected child, and window, through the focus window's backend.
+/// [`checked_focus_window`] refuses it when the keyboard
 /// focus is not in a window this application serves ([`control_window`]:
 /// a console window is its console host's), or is on Core's hidden frame,
 /// so the focused element is never read in another application, whose
@@ -1312,10 +1314,11 @@ fn dialog_text_of(
 /// `accFocus`, whose answer is checked as an object of a window this
 /// application serves before it is read
 /// ([`verbatim_ia2::acquire::focused_object`]): another process's
-/// answers no focused control. For a fake focus (`fake`), it is read only
-/// when it or an ancestor has the focused state, as NVDA's
-/// `processFocusNVDAEvent` tests an `IAccessible` object before it queues
-/// it, and answers [`FocusReadMiss::Unfocused`] otherwise.
+/// answers no focused control. With `focused_state_test`, the check after
+/// a menu end, it is read only when it or an ancestor, up to the desktop,
+/// has the focused state, as NVDA's `processFocusNVDAEvent` tests an
+/// `IAccessible` object before it queues it, and answers
+/// [`FocusReadMiss::Unfocused`] otherwise.
 ///
 /// Through UIA, the focused element is read with
 /// `GetFocusedElementBuildCache`, which reads the keyboard focus again
@@ -1334,10 +1337,9 @@ fn dialog_text_of(
 pub(super) fn focused_control_in(
     context: &RequestContext<'_>,
     client: &mut Client,
-    trigger: FocusRead,
-    known: &[NodeSnapshot],
+    (hwnd, trigger): (isize, FocusRead),
+    (known, focused_state_test): (&[NodeSnapshot], bool),
 ) -> Result<(isize, FocusedControl), FocusReadMiss> {
-    let hwnd = checked_focus_window(context)?;
     // The focused element is read from the window's provider at once.
     if window_uses_uia(context, hwnd) {
         uia_focused_control(context, client, (hwnd, trigger), known)
@@ -1346,8 +1348,22 @@ pub(super) fn focused_control_in(
         // comparing what it reads with them by NVDA's equality
         // (`books/dev/src/reference/adr/0001-focus.md`, "Object identity").
         let candidates = Candidates::new(vec![known.iter().map(|node| node.id).collect()]);
-        let object = verbatim_ia2::acquire::focused_object(hwnd, &|window| serves(context, window))
-            .ok_or(FocusReadMiss::Failed(None))?;
+        let mut object =
+            verbatim_ia2::acquire::focused_object(hwnd, &|window| serves(context, window))
+                .ok_or(FocusReadMiss::Failed(None))?;
+        if focused_state_test
+            && !object.has_focused_state(
+                MAX_ANCESTOR_HOPS,
+                &|window| reads_as_plain(context, window),
+                &mut |window| parent_window_for_focused_state(context, client, window),
+            )
+        {
+            tracing::debug!(
+                hwnd,
+                "the focused MSAA object has no focused state, nor any ancestor; it is refused"
+            );
+            return Err(FocusReadMiss::Unfocused);
+        }
         let node = object.read(context.nodes(), Some(&candidates));
         let (ancestors, _) = msaa_enrichment(context, client, (&node, known, Some(&candidates)))
             .map_err(|FocusLost| FocusReadMiss::Failed(None))?;
@@ -1465,7 +1481,7 @@ pub(super) fn focused_element_in(
 /// The window with the keyboard focus whose focused element
 /// [`focused_control_in`] may read: this application's, not on Core's
 /// hidden frame, and readable. Local calls.
-fn checked_focus_window(context: &Context) -> Result<isize, FocusReadMiss> {
+pub(super) fn checked_focus_window(context: &Context) -> Result<isize, FocusReadMiss> {
     let hwnd = control_window(context.target_pid(), || context.focus_window())
         .ok_or(FocusReadMiss::Refused)?;
     if window_belongs_to_hidden_frame(hwnd) {
@@ -1519,6 +1535,9 @@ pub(super) enum FocusReadMiss {
     /// application's, or is on Core's hidden frame, or cannot be read, or
     /// the focused element read belongs to another process.
     Refused,
+    /// The focused-state test refused an MSAA focus: neither it nor any
+    /// ancestor has the focused state.
+    Unfocused,
     /// The read itself failed, with the error's `HRESULT` when the failed
     /// call gave one.
     Failed(Option<windows::core::HRESULT>),

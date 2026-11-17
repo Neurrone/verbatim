@@ -93,6 +93,7 @@ impl<'a> Driver<'a> {
                 set: every_property(),
                 known: Vec::new(),
                 baseline: None,
+                focused_state_test: false,
             },
         )
     }

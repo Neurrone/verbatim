@@ -148,6 +148,7 @@ fn core_ask(number: u64) -> Input {
             set: Vec::new(),
             known: Vec::new(),
             baseline: None,
+            focused_state_test: false,
         },
     }))
 }

@@ -1213,6 +1213,7 @@ impl OutpostUnderTest {
                 set: focus_set(),
                 known: sent.clone(),
                 baseline: None,
+                focused_state_test: false,
             },
         );
         let (answer, calls) = self.answer_with_calls(number);

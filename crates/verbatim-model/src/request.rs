@@ -265,6 +265,12 @@ pub enum Request {
         /// Core's selection baseline for the committed focus, which a
         /// repeated focus's caret is compared with ([`FocusCaret`]).
         baseline: Option<TextAnchor>,
+        /// Whether an MSAA focus is refused [`Refusal::NotFocused`] when
+        /// neither it nor any of its ancestors, up to the desktop, has the
+        /// focused state: the check after a menu end, NVDA's fake focus,
+        /// which is tested before it is queued
+        /// (`shouldAllowIAccessibleFocusEvent`).
+        focused_state_test: bool,
     },
     /// A read or move in a node's text.
     Text {

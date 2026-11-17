@@ -391,11 +391,17 @@ does. A menu end, popup end or switch end reaching the front when the
 run of focus and foreground tells before it executed no valid focus, an
 MSAA duplicate counting as valid, notes the committed focus, and 50 ms
 later Core appends a check entry. At its turn, if the committed focus is
-unchanged, Core asks the foreground application's outpost for its focus,
-and judges an MSAA answer by NVDA's duplicate test and its focused-state
-test, a UI Automation answer by neither. Core's
+unchanged, Core asks the foreground application's outpost for its focus
+with NVDA's focused-state test, which the outpost runs on an MSAA focus
+over every ancestor up to the desktop, refusing one where none has the
+focused state, and judges an MSAA answer by NVDA's duplicate test, a UI
+Automation answer by neither. The outpost takes the window with the
+keyboard focus at once, before any call that can block, as NVDA's timer
+takes the foreground window and its thread's focus window. Core's
 `a_menu_end_checks_the_focus_50_ms_later_and_speaks_a_focused_answer`,
-`a_checked_msaa_focus_without_the_focused_state_is_not_spoken`,
+`a_checked_msaa_focus_refused_as_unfocused_is_not_spoken`; mockapp's
+`a_fake_focus_whose_focused_ancestor_core_knows_is_spoken`,
+`a_focus_now_takes_the_focus_window_before_its_probe`,
 `a_focus_committed_before_the_check_ends_it_with_no_read` and
 `a_menu_end_after_a_run_that_executed_a_focus_makes_no_check`.
 

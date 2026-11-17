@@ -72,6 +72,7 @@ fn a_first_worker_that_cannot_start_answers_its_program_and_starts_with_the_next
             set: common::outpost::focus_set(),
             known: Vec::new(),
             baseline: None,
+            focused_state_test: false,
         },
     );
     assert_eq!(
