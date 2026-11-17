@@ -180,9 +180,7 @@ pub fn read_selection<S: TextSource>(
     )?;
     // A selection whose text reads as empty holds nothing to say.
     let selected = match (&state.selection, selection_text) {
-        (Some(_), Some(units)) if units.len() < SELECTION_TEXT_CAP => {
-            Some(change_of(true, &units))
-        }
+        (Some(_), Some(units)) if units.len() < SELECTION_TEXT_CAP => Some(change_of(true, &units)),
         (Some((start, end)), _) => Some(change(source, true, start, end)?),
         (None, _) => None,
     }

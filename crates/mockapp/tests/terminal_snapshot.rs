@@ -125,7 +125,7 @@ fn eight_line_terminal(name: &str) -> (common::MockApp, HWND, Uia, IUIAutomation
 
 fn a_kept_start_is_used_until_the_text_clears_below_it_both_ways() {
     let (mut app, hwnd, uia, terminal) = eight_line_terminal("mockapp-snapshot-kept");
-    let (pattern, _) = verbatim_uia::text::text_pattern(&terminal).expect("a text pattern");
+    let pattern = verbatim_uia::text::text_pattern(&terminal).expect("a text pattern");
     let first = SnapshotQuery {
         element: &terminal,
         pattern: &pattern,
@@ -209,7 +209,7 @@ fn a_kept_start_is_used_until_the_text_clears_below_it_both_ways() {
 
 fn a_read_with_no_start_takes_the_rows_asked_for_or_the_whole_text_both_ways() {
     let (app, _, uia, terminal) = eight_line_terminal("mockapp-snapshot-unkept");
-    let (pattern, _) = verbatim_uia::text::text_pattern(&terminal).expect("a text pattern");
+    let pattern = verbatim_uia::text::text_pattern(&terminal).expect("a text pattern");
     let first = SnapshotQuery {
         element: &terminal,
         pattern: &pattern,
@@ -247,7 +247,7 @@ fn a_read_with_no_start_takes_the_rows_asked_for_or_the_whole_text_both_ways() {
 
 fn a_read_takes_the_rows_asked_for_above_its_start_as_far_as_the_documents_start_both_ways() {
     let (app, _, uia, terminal) = eight_line_terminal("mockapp-snapshot-above");
-    let (pattern, _) = verbatim_uia::text::text_pattern(&terminal).expect("a text pattern");
+    let pattern = verbatim_uia::text::text_pattern(&terminal).expect("a text pattern");
     let first = SnapshotQuery {
         element: &terminal,
         pattern: &pattern,
@@ -302,7 +302,7 @@ fn rows_by_their_place_are_read_from_the_kept_start_both_ways() {
     // the document's start read as nothing, and the document's first row
     // after them.
     let (app, _, uia, terminal) = eight_line_terminal("mockapp-snapshot-rows");
-    let (pattern, _) = verbatim_uia::text::text_pattern(&terminal).expect("a text pattern");
+    let pattern = verbatim_uia::text::text_pattern(&terminal).expect("a text pattern");
     let first = SnapshotQuery {
         element: &terminal,
         pattern: &pattern,
@@ -354,7 +354,7 @@ fn colours_are_read_as_exact_runs_at_any_width_hint_both_ways() {
     let hwnd = common::find_window(&title);
     let uia = Uia::new().expect("a UIA client");
     let terminal = terminal_element(&uia, hwnd);
-    let (pattern, _) = verbatim_uia::text::text_pattern(&terminal).expect("a text pattern");
+    let pattern = verbatim_uia::text::text_pattern(&terminal).expect("a text pattern");
     let (white, red, blue, green) = (0x00FF_FFFF, 0x0000_00FF, 0x00FF_0000, 0x0000_FF00);
     // A plain row; two red cells first; only the last cell's background
     // green, which the provider leaves out of the row's answer; and one

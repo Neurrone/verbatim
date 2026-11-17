@@ -19,8 +19,8 @@
 //! call.
 
 use windows::Win32::UI::Accessibility::{
-    IUIAutomationElement, IUIAutomationTextPattern, IUIAutomationTextPattern2,
-    IUIAutomationTextRange, TextUnit, TextUnit_Line, TextUnit_Word,
+    IUIAutomationElement, IUIAutomationTextPattern, IUIAutomationTextRange, TextUnit,
+    TextUnit_Line, TextUnit_Word,
 };
 
 use verbatim_uia::text::{Endpoint, TextRangeExt};
@@ -41,8 +41,6 @@ pub struct WatchQuery<'a> {
     pub element: &'a IUIAutomationElement,
     /// Its text pattern, which the classic implementation reads.
     pub pattern: &'a IUIAutomationTextPattern,
-    /// Its `TextPattern2`, when the provider has one.
-    pub pattern2: Option<&'a IUIAutomationTextPattern2>,
     /// The caret at the key's starting point.
     pub start: RangeEnd<'a>,
     /// The selection's ends at the starting point: both the caret when
@@ -118,7 +116,6 @@ pub fn watch_check(query: &WatchQuery<'_>, remote: bool) -> Result<(WatchAnswer,
 /// Everything the program is built from but its imports.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct ProgramKey {
-    pattern2: bool,
     start: i32,
     start_selection: (i32, i32),
     word: bool,
@@ -130,7 +127,6 @@ struct ProgramKey {
 impl ProgramKey {
     fn of(query: &WatchQuery<'_>) -> Self {
         Self {
-            pattern2: query.pattern2.is_some(),
             start: endpoint_number(query.start.endpoint),
             start_selection: (
                 endpoint_number(query.start_selection.0.endpoint),
@@ -246,7 +242,7 @@ fn build(b: &mut Builder, query: &WatchQuery<'_>) -> Registers {
     let was_start_endpoint = b.int(endpoint_number(query.start_selection.0.endpoint));
     let was_end_endpoint = b.int(endpoint_number(query.start_selection.1.endpoint));
     let pattern = b.get_text_pattern(element, false);
-    let caret = emit_caret(b, &c, (element, pattern), query.pattern2.is_some());
+    let caret = emit_caret(b, &c, pattern);
     let point = c.collapsed(b, caret.caret);
 
     let caret_moved = b.new_bool(true);
@@ -313,7 +309,7 @@ fn build(b: &mut Builder, query: &WatchQuery<'_>) -> Registers {
     });
 
     // The caret read again, once everything else is read.
-    let again = emit_caret_with(b, &c, (element, pattern), query.pattern2.is_some(), false);
+    let again = emit_caret_with(b, &c, pattern, false);
     let moved_while_read = b.new_bool(true);
     let moved_while_read = b.add_to_results(moved_while_read);
     emit_differs(
@@ -407,8 +403,8 @@ pub fn watch_check_classic(query: &WatchQuery<'_>) -> Result<WatchAnswer, Error>
     let caret_query = CaretQuery {
         element: query.element,
         pattern: query.pattern,
-        pattern2: query.pattern2,
         since: None,
+
         previous_selection: None,
         previous_collapsed: false,
         unit: None,

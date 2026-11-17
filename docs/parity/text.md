@@ -414,8 +414,13 @@ selected now. A key's own words come first and the selection's change
 after, since the caret event joins the event queue behind the key, as
 NVDA speaks its script's words and then its caret event's. Backspace and
 Control+Backspace over a selection say what comes before the
-selection's start, NVDA's caret (mockapp's
-`a_selections_start_is_read_in_the_line_it_starts_in`).
+selection's start, NVDA's caret. Through UI Automation the caret is
+the start of the selection's first range whichever end the provider's
+own caret (`TextPattern2`'s) is at, as NVDA's is
+(`NVDAObjects/UIA/__init__.py` 488 to 498; mockapp's
+`a_selections_caret_is_its_start_whichever_end_the_providers_caret_is_at`),
+so after Shift+Control+Right Arrow in Notepad the review cursor and
+every caret read start from the selection's start.
 
 In the Windows Forms text box, over "alpha " or "beta " selected with
 Shift+Control+Right Arrow: Backspace says the character before the

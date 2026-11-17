@@ -342,20 +342,14 @@ pub struct SelectionChange {
     pub characters: u32,
 }
 
-/// A selection in a caret report, with the line it starts in when that is
-/// an earlier line than the caret's, so a start line with no selection
-/// cannot be written.
+/// A selection in a caret report.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CaretSelection {
-    /// The selection. Its start is a position in the report's line when it
-    /// starts there, or in `start_line`, so that what comes before it is
-    /// known (a Backspace over the selection says it).
+    /// The selection. Its start is the caret, as NVDA's caret is the
+    /// selection's start, and so a position in the report's line, so that
+    /// what comes before it is known (a Backspace over the selection says
+    /// it).
     pub range: Selection,
-    /// The line the selection starts in, when it starts on a line before
-    /// the caret's, as a selection does whose caret is its end on the next
-    /// line; `None` otherwise, and when the outpost did not read it.
-    #[serde(default)]
-    pub start_line: Option<Box<TextChunk>>,
 }
 
 /// Where the caret is: the line it is on, with

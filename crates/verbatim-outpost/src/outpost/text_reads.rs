@@ -27,7 +27,7 @@
 
 use std::collections::{BTreeSet, HashMap};
 
-use windows::Win32::UI::Accessibility::{IUIAutomationTextPattern, IUIAutomationTextPattern2};
+use windows::Win32::UI::Accessibility::IUIAutomationTextPattern;
 use windows::Win32::UI::WindowsAndMessaging::OBJID_CLIENT;
 use windows::core::AgileReference;
 
@@ -53,12 +53,9 @@ use super::reducer::{NodeAnchors, RangeKey, TextChange};
 use super::store::TextWrite;
 use super::{Context, RequestContext};
 
-/// A node's text patterns, kept so each request does not fetch them again;
+/// A node's text pattern, kept so each request does not fetch it again;
 /// `None` for a node whose element has no text pattern.
-pub(super) type Patterns = Option<(
-    AgileReference<IUIAutomationTextPattern>,
-    Option<AgileReference<IUIAutomationTextPattern2>>,
-)>;
+pub(super) type Patterns = Option<AgileReference<IUIAutomationTextPattern>>;
 
 /// What a program holds of the store's text while it runs, and its text
 /// writes not yet committed. Its reads see its own writes first: the UIA
@@ -314,14 +311,7 @@ fn uia_source(
     } else {
         {
             let fetched = match verbatim_uia::text::text_pattern(element.live().element()) {
-                Ok((text_pattern, caret_pattern)) => {
-                    AgileReference::new(&text_pattern).ok().map(|text_pattern| {
-                        (
-                            text_pattern,
-                            caret_pattern.and_then(|caret| AgileReference::new(&caret).ok()),
-                        )
-                    })
-                }
+                Ok(text_pattern) => AgileReference::new(&text_pattern).ok(),
                 Err(error) if verbatim_uia::element_is_gone(&error) => {
                     return Err(TextReply::Gone);
                 }
@@ -345,25 +335,21 @@ fn uia_source(
             fetched
         }
     };
-    let Some((text_pattern, caret_pattern)) = found else {
+    let Some(text_pattern) = found else {
         return Err(TextReply::NoText);
     };
     let text_pattern = text_pattern.resolve().map_err(|_| TextReply::Gone)?;
-    let caret_pattern = caret_pattern.and_then(|caret| caret.resolve().ok());
     let class = element.read().class_name;
     let terminal = is_terminal_class(class.as_deref())
         || super::followed::terminal(context).is_some_and(|(followed, _)| followed == node_id);
     let remote = context.tries_remote(super::asked::known_nearest_of(context, node_id));
     let support = support_of(context, node_id);
-    Ok(UiaText::new(
-        element.live().element().clone(),
-        text_pattern,
-        caret_pattern,
-        terminal,
+    Ok(
+        UiaText::new(element.live().element().clone(), text_pattern, terminal)
+            .remote(remote)
+            .details(details)
+            .support(support),
     )
-    .remote(remote)
-    .details(details)
-    .support(support))
 }
 
 /// Forgets that `node_id`'s element answered it has no text pattern, as it
@@ -769,7 +755,7 @@ pub(super) fn terminal_read(
     let caret = verbatim_uia_rops::CaretLineQuery {
         element: source.element(),
         pattern: source.pattern(),
-        pattern2: source.pattern2(),
+
         max_text: i32::try_from(crate::text::MAX_CHUNK_UNITS + 1).unwrap_or(i32::MAX),
         since: None,
     };

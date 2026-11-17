@@ -665,9 +665,6 @@ impl Named {
     fn selection(&mut self, selection: &crate::CaretSelection) {
         self.anchors.push(selection.range.start.anchor);
         self.anchors.push(selection.range.end.anchor);
-        if let Some(line) = &selection.start_line {
-            self.chunk(line);
-        }
     }
 
     fn text_reply(&mut self, reply: &TextReply) {

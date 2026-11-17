@@ -885,9 +885,6 @@ impl Answer {
                     if let Some(selection) = &read.caret.selection {
                         anchors.push(selection.range.start.anchor);
                         anchors.push(selection.range.end.anchor);
-                        if let Some(line) = &selection.start_line {
-                            anchors.push(line.start);
-                        }
                     }
                     anchors.push(read.baseline);
                 }

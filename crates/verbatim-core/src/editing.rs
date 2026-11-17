@@ -207,11 +207,8 @@ fn selection_start<'a>(
 ) -> Option<Option<(&'a TextChunk, u32)>> {
     let selection = selection?;
     Some(
-        [Some(line), selection.start_line.as_deref()]
-            .into_iter()
-            .flatten()
-            .find(|candidate| candidate.start == selection.range.start.anchor)
-            .map(|found| (found, selection.range.start.offset)),
+        (line.start == selection.range.start.anchor)
+            .then_some((line, selection.range.start.offset)),
     )
 }
 

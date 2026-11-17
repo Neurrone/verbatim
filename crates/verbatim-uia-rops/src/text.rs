@@ -13,11 +13,11 @@
 //! entry point picks between them as [`crate::caret_read`] does.
 
 use windows::Win32::UI::Accessibility::{
-    IUIAutomationElement, IUIAutomationTextPattern, IUIAutomationTextPattern2,
-    IUIAutomationTextRange, TextUnit, TextUnit_Character, UIA_CultureAttributeId,
+    IUIAutomationElement, IUIAutomationTextPattern, IUIAutomationTextRange, TextUnit,
+    TextUnit_Character, UIA_CultureAttributeId,
 };
 
-use verbatim_uia::text::{Endpoint, Language, TextPatternExt, TextRangeExt, caret_range};
+use verbatim_uia::text::{Endpoint, Language, TextPatternExt, TextRangeExt};
 
 use crate::builder::{Builder, Reg, kind};
 use crate::caret::{
@@ -32,15 +32,13 @@ use crate::opcode::Comparison;
 use crate::operation::{Outcome, Value};
 
 /// The text a read is in: the element, which a program starts from, and
-/// its text patterns, which the classic implementations read.
+/// its text pattern, which the classic implementations read.
 #[derive(Clone, Copy)]
 pub struct TextTarget<'a> {
     /// The element with the text.
     pub element: &'a IUIAutomationElement,
     /// Its text pattern.
     pub pattern: &'a IUIAutomationTextPattern,
-    /// Its `TextPattern2`, when the provider has one.
-    pub pattern2: Option<&'a IUIAutomationTextPattern2>,
 }
 
 /// A position the caller holds: an end of a range, and whether the range
@@ -58,9 +56,8 @@ pub struct Position<'a> {
 /// Where a read starts, as the text protocol names a point.
 #[derive(Clone, Copy)]
 pub enum TextFrom<'a> {
-    /// The caret: the selection's first range collapsed, the caret
-    /// `TextPattern2` reports when text is selected, or the start of the
-    /// text when it has no caret.
+    /// The caret: the start of the selection's first range, as NVDA's
+    /// caret is, or the start of the text when it has no caret.
     Caret,
     /// The selection's start, the caret when nothing is selected.
     SelectionStart,
@@ -426,12 +423,7 @@ impl<'t> Program<'t> {
         }
         let element = self.element(b);
         let pattern = b.get_text_pattern(element, false);
-        let caret = emit_caret(
-            b,
-            &self.c,
-            (element, pattern),
-            self.target.pattern2.is_some(),
-        );
+        let caret = emit_caret(b, &self.c, pattern);
         self.pattern = Some(pattern);
         self.caret = Some(caret);
         caret
@@ -893,14 +885,10 @@ pub fn text_range_remote(query: &RangeQuery<'_>) -> Result<RangeAnswer, Error> {
     // inside a try block: a failure there leaves the selection made, and
     // the program still returns the selection before, with `read` false
     // and the failure's status, for the caller to read the changes.
-    let changes = match (reporting, before, p.element, p.pattern) {
-        (Some(max), Some(before), Some(element), Some(pattern)) => Some(emit_report(
-            &mut b,
-            c,
-            before,
-            (element, pattern, query.target.pattern2.is_some()),
-            (selected, max),
-        )),
+    let changes = match (reporting, before, p.pattern) {
+        (Some(max), Some(before), Some(pattern)) => {
+            Some(emit_report(&mut b, c, before, pattern, (selected, max)))
+        }
         _ => None,
     };
     let outcome = b.finish().execute()?;
@@ -934,7 +922,7 @@ fn emit_report(
     b: &mut Builder,
     c: &Constants,
     before: CaretRegisters,
-    text: (Reg<kind::Element>, Reg<kind::TextPattern>, bool),
+    pattern: Reg<kind::TextPattern>,
     (selected, max): (Reg<kind::Bool>, i32),
 ) -> ReportRegisters {
     let read = b.new_bool(false);
@@ -944,7 +932,13 @@ fn emit_report(
     let mut arrays = None;
     b.try_catch(
         |b| {
-            arrays = Some(emit_selection_change(b, c, before, text, (selected, max)));
+            arrays = Some(emit_selection_change(
+                b,
+                c,
+                before,
+                pattern,
+                (selected, max),
+            ));
             let yes = b.bool(true);
             b.set(read, yes);
         },
@@ -1036,7 +1030,7 @@ fn emit_selection_change(
     b: &mut Builder,
     c: &Constants,
     before: CaretRegisters,
-    (element, pattern, pattern2): (Reg<kind::Element>, Reg<kind::TextPattern>, bool),
+    pattern: Reg<kind::TextPattern>,
     (selected, max): (Reg<kind::Bool>, i32),
 ) -> (
     (Reg<kind::Array>, Reg<kind::Array>),
@@ -1058,7 +1052,7 @@ fn emit_selection_change(
         },
     );
     let old: (ProgramEnd, ProgramEnd) = ((old, c.start), (old, old_end));
-    let after = emit_caret_with(b, c, (element, pattern), pattern2, true);
+    let after = emit_caret_with(b, c, pattern, true);
     let old_collapsed = b.not(before.has_selection);
     let arrays = emit_changes(
         b,
@@ -1133,14 +1127,12 @@ fn classic_caret(target: TextTarget<'_>) -> Result<CaretState, Error> {
             selection: None,
         });
     }
-    let caret = match target.pattern2 {
-        Some(pattern2) => FoundPoint::collapsed(caret_range(pattern2)?),
-        None => FoundPoint {
-            range: first.clone(),
-            endpoint: Endpoint::Start,
-            collapsed: false,
-        },
+    let caret = FoundPoint {
+        range: first.clone(),
+        endpoint: Endpoint::Start,
+        collapsed: false,
     };
+
     Ok(CaretState {
         caret,
         selection: Some(first.clone()),

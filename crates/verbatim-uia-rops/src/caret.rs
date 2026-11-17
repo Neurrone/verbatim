@@ -7,10 +7,10 @@
 //! classic implementation behind the same signature does it call by call;
 //! [`caret_read`] is the one function callers use.
 //!
-//! The caret is `TextPattern2`'s caret range where the provider has it and
-//! text is selected, and otherwise the selection's start, as the outpost
-//! has always read it; text with no selection at all (no caret) is read
-//! from the start of its document. Formatting is read by UIA's format unit,
+//! The caret is the start of the first selection range, as NVDA's is
+//! (`NVDAObjects/UIA/__init__.py` 488 to 498), whichever end of the
+//! selection the provider's own caret is at; text with no selection at all
+//! (no caret) is read from the start of its document. Formatting is read by UIA's format unit,
 //! as NVDA reads it (`docs/nvda/document-formatting.md`): each stretch of
 //! the text whose attributes are the same, with the attributes asked for.
 //! A stretch with an attribute UIA answers as "mixed", from a provider whose
@@ -20,16 +20,15 @@
 
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::{
-    IUIAutomationElement, IUIAutomationTextPattern, IUIAutomationTextPattern2,
-    IUIAutomationTextRange, TextUnit, TextUnit_Character, TextUnit_Format, TextUnit_Line,
-    TextUnit_Word, UIA_AnnotationTypesAttributeId, UIA_BackgroundColorAttributeId,
-    UIA_BulletStyleAttributeId, UIA_FontNameAttributeId, UIA_FontSizeAttributeId,
-    UIA_FontWeightAttributeId, UIA_ForegroundColorAttributeId, UIA_IsItalicAttributeId,
-    UIA_LinkAttributeId, UIA_StrikethroughStyleAttributeId, UIA_TEXTATTRIBUTE_ID,
-    UIA_UnderlineStyleAttributeId,
+    IUIAutomationElement, IUIAutomationTextPattern, IUIAutomationTextRange, TextUnit,
+    TextUnit_Character, TextUnit_Format, TextUnit_Line, TextUnit_Word,
+    UIA_AnnotationTypesAttributeId, UIA_BackgroundColorAttributeId, UIA_BulletStyleAttributeId,
+    UIA_FontNameAttributeId, UIA_FontSizeAttributeId, UIA_FontWeightAttributeId,
+    UIA_ForegroundColorAttributeId, UIA_IsItalicAttributeId, UIA_LinkAttributeId,
+    UIA_StrikethroughStyleAttributeId, UIA_TEXTATTRIBUTE_ID, UIA_UnderlineStyleAttributeId,
 };
 
-use verbatim_uia::text::{Endpoint, TextPatternExt, TextRangeExt, caret_range};
+use verbatim_uia::text::{Endpoint, TextPatternExt, TextRangeExt};
 
 use crate::builder::{Builder, Reg, kind};
 use crate::error::Error;
@@ -218,8 +217,6 @@ pub struct CaretQuery<'a> {
     pub element: &'a IUIAutomationElement,
     /// Its text pattern, which the classic implementation reads.
     pub pattern: &'a IUIAutomationTextPattern,
-    /// Its `TextPattern2`, when the provider has one.
-    pub pattern2: Option<&'a IUIAutomationTextPattern2>,
     /// Where the caret was known to be, to say whether it moved.
     pub since: Option<RangeEnd<'a>>,
     /// The selection's ends as they were known (both the caret when
@@ -391,16 +388,10 @@ pub struct CaretAnswer {
     /// are now, up to [`MAX_COMPARED_TEXT`], which a provider moves as the
     /// text changes; `None` otherwise.
     pub previous_text: Option<Vec<u16>>,
-    /// When something is selected and the selection starts on the caret's
-    /// line, how many UTF-16 code units of the line's text come before the
-    /// selection's start: the caret's own offset where the caret is the
-    /// start, read from the line's start where `TextPattern2`'s caret is
-    /// another end; `None` otherwise.
+    /// When something is selected, how many UTF-16 code units of the
+    /// caret's line come before the selection's start, the caret: the
+    /// caret's own offset; `None` otherwise.
     pub selection_start: Option<usize>,
-    /// When something is selected and the selection starts on a line
-    /// before the caret's, as `TextPattern2`'s caret at its end can be,
-    /// that line, its `offset` being where the selection starts in it.
-    pub selection_line: Option<UnitRead>,
     /// The line the selection starts in is the text's first, known when
     /// the selection starts at that line's start, so that nothing comes
     /// before the selection; false otherwise.
@@ -430,8 +421,6 @@ pub struct CaretLineQuery<'a> {
     pub element: &'a IUIAutomationElement,
     /// Its text pattern, which the classic implementation reads.
     pub pattern: &'a IUIAutomationTextPattern,
-    /// Its `TextPattern2`, when the provider has one.
-    pub pattern2: Option<&'a IUIAutomationTextPattern2>,
     /// The most UTF-16 code units of text read for the line.
     pub max_text: i32,
     /// Where the caret was known to be, to say whether it moved
@@ -479,7 +468,6 @@ impl CaretLineRegisters {
             selection_text: None,
             previous_text: None,
             selection_start: None,
-            selection_line: None,
             start_first: false,
         })
     }
@@ -497,11 +485,7 @@ impl CaretLineRegisters {
 pub(crate) fn emit_caret_line(
     b: &mut Builder,
     query: &CaretLineQuery<'_>,
-    (element, pattern, since): (
-        Reg<kind::Element>,
-        Reg<kind::TextPattern>,
-        Option<Reg<kind::TextRange>>,
-    ),
+    (pattern, since): (Reg<kind::TextPattern>, Option<Reg<kind::TextRange>>),
 ) -> CaretLineRegisters {
     let c = Constants {
         start: b.int(endpoint_number(Endpoint::Start)),
@@ -510,7 +494,7 @@ pub(crate) fn emit_caret_line(
         one: b.int(1),
         max_text: b.int(query.max_text),
     };
-    let caret = emit_caret(b, &c, (element, pattern), query.pattern2.is_some());
+    let caret = emit_caret(b, &c, pattern);
     let point = c.collapsed(b, caret.caret);
     let moved = query.since.zip(since).map(|(since, known)| {
         let endpoint = b.int(endpoint_number(since.endpoint));
@@ -559,7 +543,6 @@ fn caret_line_read_classic(query: &CaretLineQuery<'_>) -> Result<CaretAnswer, Er
     caret_read_classic(&CaretQuery {
         element: query.element,
         pattern: query.pattern,
-        pattern2: query.pattern2,
         since: None,
         previous_selection: None,
         previous_collapsed: false,
@@ -1047,7 +1030,7 @@ fn build(b: &mut Builder, query: &CaretQuery<'_>) -> ReadRegisters {
         max_text: b.int(query.max_text),
     };
     let pattern = b.get_text_pattern(element, false);
-    let registers = emit_caret(b, &c, (element, pattern), query.pattern2.is_some());
+    let registers = emit_caret(b, &c, pattern);
     let CaretRegisters {
         caret,
         has_selection,
@@ -1153,53 +1136,10 @@ fn build(b: &mut Builder, query: &CaretQuery<'_>) -> ReadRegisters {
         let to_end = b.text_range_compare_endpoints(known, endpoint, line.range, c.end);
         (b.add_to_results(to_start), b.add_to_results(to_end))
     });
-    // Where the selection starts, when `TextPattern2`'s caret may be its
-    // other end (otherwise the caret is the start): in the caret's line,
-    // or in the line before it where it starts there.
-    let start_line = b.new_null().assume::<kind::TextRange>();
-    let start_offset = match query.pattern2 {
-        Some(_) => b.new_uint(0),
-        None => line.offset,
-    };
-    let selection_start = query.pattern2.is_some().then(|| {
-        let on_line = b.new_bool(false);
-        let on_line = b.add_to_results(on_line);
-        let start_offset = b.add_to_results(start_offset);
-        let other = b.new_null().assume::<kind::TextRange>();
-        let other = b.add_to_results(other);
-        let other_text = b.new_string("");
-        let other_text = b.add_to_results(other_text);
-        b.if_(has_selection, |b| {
-            let order = b.text_range_compare_endpoints(selection, c.start, line.range, c.start);
-            let after = b.compare(order, c.zero, Comparison::GreaterThanOrEqual);
-            b.if_else(
-                after,
-                |b| {
-                    b.set(start_line, line.range);
-                    let yes = b.bool(true);
-                    b.set(on_line, yes);
-                },
-                |b| {
-                    let range = c.collapsed(b, selection);
-                    let line_unit = b.int(TextUnit_Line.0);
-                    b.text_range_expand_to_enclosing_unit(range, line_unit);
-                    let text = b.text_range_get_text(range, c.max_text);
-                    b.set(other_text, text);
-                    b.set(other, range);
-                    b.set(start_line, range);
-                },
-            );
-            let before = b.text_range_clone(start_line);
-            b.text_range_move_endpoint_by_range(before, c.end, selection, c.start);
-            let text = b.text_range_get_text(before, c.max_text);
-            let size = b.string_size(text);
-            b.set(start_offset, size);
-        });
-        (on_line, start_offset, other, other_text)
-    });
-    if query.pattern2.is_none() {
-        b.set(start_line, line.range);
-    }
+    // The selection starts at the caret, NVDA's caret being the selection's
+    // start (`NVDAObjects/UIA/__init__.py` 488 to 498).
+    let start_line = line.range;
+    let start_offset = line.offset;
     // Whether that start is the text's, when it is its line's.
     let start_first = b.new_bool(false);
     let start_first = b.add_to_results(start_first);
@@ -1245,7 +1185,7 @@ fn build(b: &mut Builder, query: &CaretQuery<'_>) -> ReadRegisters {
 
     // The caret read again, once everything else is read.
     let moved_while_read = query.recheck.then(|| {
-        let again = emit_caret_with(b, &c, (element, pattern), query.pattern2.is_some(), false);
+        let again = emit_caret_with(b, &c, pattern, false);
         let order = b.text_range_compare_endpoints(again.caret, c.start, point, c.start);
         let differs = b.not_equal(order, c.zero);
         b.add_to_results(differs)
@@ -1263,13 +1203,12 @@ fn build(b: &mut Builder, query: &CaretQuery<'_>) -> ReadRegisters {
         moved_while_read,
         selection_text,
         previous_text,
-        selection_start,
         start_first,
     }
 }
 
 /// Everything the caret read's program is built from but its imports
-/// ([`ProgramCache`]): whether it has `TextPattern2`, the ends compared
+/// ([`ProgramCache`]): the ends compared
 /// with, the unit, the formatting and its attributes, and the text limits.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 #[expect(
@@ -1277,7 +1216,6 @@ fn build(b: &mut Builder, query: &CaretQuery<'_>) -> ReadRegisters {
     reason = "the query's separate things to do, each building another program"
 )]
 struct ProgramKey {
-    pattern2: bool,
     since: Option<i32>,
     previous_selection: Option<(i32, i32)>,
     previous_collapsed: bool,
@@ -1295,7 +1233,6 @@ struct ProgramKey {
 impl ProgramKey {
     fn of(query: &CaretQuery<'_>) -> Self {
         Self {
-            pattern2: query.pattern2.is_some(),
             since: query.since.map(|since| endpoint_number(since.endpoint)),
             previous_selection: query.previous_selection.map(|(start, end)| {
                 (
@@ -1345,44 +1282,8 @@ struct ReadRegisters {
     moved_while_read: Option<Reg<kind::Bool>>,
     selection_text: Option<Reg<kind::Str>>,
     previous_text: Option<Reg<kind::Str>>,
-    selection_start: Option<StartRegisters>,
     start_first: Reg<kind::Bool>,
 }
-
-/// Where the selection starts, from the program's [`StartRegisters`]: its
-/// offset in the caret's line, or the earlier line it starts in.
-fn read_start(
-    outcome: &Outcome,
-    (on_line, offset, other, other_text): StartRegisters,
-) -> Result<(Option<usize>, Option<UnitRead>), Error> {
-    let offset = usize::try_from(outcome.get(offset)?).unwrap_or(usize::MAX);
-    if outcome.get(on_line)? {
-        return Ok((Some(offset), None));
-    }
-    let range = outcome
-        .get(other)?
-        .ok_or(Error::MissingResult(other.id()))?;
-    let text = string_of(outcome, other_text)?.encode_utf16().collect();
-    Ok((
-        None,
-        Some(UnitRead {
-            range,
-            text,
-            offset,
-        }),
-    ))
-}
-
-/// The registers of where a selection starts, read where `TextPattern2`'s
-/// caret may be its other end: whether it starts on the caret's line, its
-/// offset in the line it starts in, and that line's range and text when it
-/// is another.
-type StartRegisters = (
-    Reg<kind::Bool>,
-    Reg<kind::Uint>,
-    Reg<kind::TextRange>,
-    Reg<kind::Str>,
-);
 
 thread_local! {
     /// The caret read programs this thread built.
@@ -1422,7 +1323,6 @@ pub fn caret_read_remote(query: &CaretQuery<'_>) -> Result<CaretAnswer, Error> {
         moved_while_read,
         selection_text,
         previous_text,
-        selection_start,
         start_first,
     } = r;
     let outcome = operation.execute()?;
@@ -1445,11 +1345,7 @@ pub fn caret_read_remote(query: &CaretQuery<'_>) -> Result<CaretAnswer, Error> {
         .map(|text| string_of(&outcome, text).map(|text| text.encode_utf16().collect()))
         .transpose()?;
     let line = line.read(&outcome)?;
-    let (selection_start, selection_line) = match selection_start {
-        _ if !selected => (None, None),
-        None => (Some(line.offset), None),
-        Some(registers) => read_start(&outcome, registers)?,
-    };
+    let selection_start = selected.then_some(line.offset);
     let start_first = outcome.get(start_first)?;
     let unit = unit.map(|unit| unit.read(&outcome)).transpose()?;
     let (runs, unsupported) = match runs {
@@ -1487,7 +1383,6 @@ pub fn caret_read_remote(query: &CaretQuery<'_>) -> Result<CaretAnswer, Error> {
         selection_text,
         previous_text,
         selection_start,
-        selection_line,
         start_first,
     })
 }
@@ -1571,6 +1466,12 @@ pub(crate) fn emit_changes(
         // nothing and the whole old one when the new holds nothing,
         // wherever the caret was in it (`speakSelectionChange`,
         // `nvda/source/speech/speech.py` 1362 to 1365).
+        // The old selection holds nothing when it held nothing, or when its
+        // ends now meet, as a provider's range does once its text was
+        // deleted: NVDA judges its old range as it now is.
+        let old_ends = order(b, old_start, old_end);
+        let old_met = b.equal(old_ends, c.zero);
+        let old_collapsed = b.or(old_collapsed, old_met);
         let new_collapsed = b.not(has_selection);
         let collapsed = b.or(old_collapsed, new_collapsed);
         let whole = b.or(apart, collapsed);
@@ -1631,16 +1532,15 @@ pub(crate) struct CaretRegisters {
 
 /// Emits the caret and the selection, as the classic implementation reads
 /// them: the selection's first range, collapsed at the caret when nothing
-/// is selected; with text selected, `TextPattern2`'s caret where the
-/// provider has it (`pattern2`), else the selection's start; with no
+/// is selected; with text selected, the selection's start, NVDA's caret
+/// whichever end the provider's own caret is at; with no
 /// selection at all, the start of the document.
 pub(crate) fn emit_caret(
     b: &mut Builder,
     c: &Constants,
-    target: (Reg<kind::Element>, Reg<kind::TextPattern>),
-    pattern2: bool,
+    pattern: Reg<kind::TextPattern>,
 ) -> CaretRegisters {
-    emit_caret_with(b, c, target, pattern2, true)
+    emit_caret_with(b, c, pattern, true)
 }
 
 /// [`emit_caret`], its registers among the program's results when
@@ -1649,8 +1549,7 @@ pub(crate) fn emit_caret(
 pub(crate) fn emit_caret_with(
     b: &mut Builder,
     c: &Constants,
-    (element, pattern): (Reg<kind::Element>, Reg<kind::TextPattern>),
-    pattern2: bool,
+    pattern: Reg<kind::TextPattern>,
     results: bool,
 ) -> CaretRegisters {
     fn kept<K>(b: &mut Builder, reg: Reg<K>, results: bool) -> Reg<K> {
@@ -1690,17 +1589,7 @@ pub(crate) fn emit_caret_with(
                     let yes = b.bool(true);
                     b.set(has_selection, yes);
                     b.set(selection, first);
-                    if pattern2 {
-                        // Only text with a selection needs the caret apart
-                        // from it.
-                        let pattern2 = b.get_text_pattern(element, true);
-                        let active = b.new_bool(false);
-                        let range = b.text_pattern2_get_caret_range(pattern2, active);
-                        b.set(caret, range);
-                        b.set(collapsed, yes);
-                    } else {
-                        b.set(caret, first);
-                    }
+                    b.set(caret, first);
                 },
             );
         },
@@ -1981,9 +1870,9 @@ pub fn caret_read_classic(query: &CaretQuery<'_>) -> Result<CaretAnswer, Error> 
         _ => None,
     };
     let line = unit_at(&point, TextUnit_Line, query.max_text)?;
-    let (selection_start, selection_line, start_first) = match &selection {
-        None => (None, None, false),
-        Some(selection) => classic_start(query, selection, &line)?,
+    let (selection_start, start_first) = match &selection {
+        None => (None, false),
+        Some(_) => (Some(line.offset), classic_first(query, &line)?),
     };
     let unit = query
         .unit
@@ -2013,61 +1902,22 @@ pub fn caret_read_classic(query: &CaretQuery<'_>) -> Result<CaretAnswer, Error> 
         selection_text,
         previous_text,
         selection_start,
-        selection_line,
         start_first,
     })
 }
 
-/// Where `selection` starts, the classic way, as [`build`] emits it: its
-/// offset in the caret's `line` (the caret's own without `TextPattern2`),
-/// or the earlier line it starts in, and whether the line it starts in is
-/// the text's first, read when it starts at that line's start.
-fn classic_start(
-    query: &CaretQuery<'_>,
-    selection: &IUIAutomationTextRange,
-    line: &UnitRead,
-) -> Result<(Option<usize>, Option<UnitRead>, bool), Error> {
-    let (start, start_line) = if query.pattern2.is_none() {
-        (Some(line.offset), None)
-    } else {
-        let on_line =
-            selection.compare_endpoints(Endpoint::Start, &line.range, Endpoint::Start)? >= 0;
-        let (range, text) = if on_line {
-            (line.range.clone(), None)
-        } else {
-            let range = collapsed(selection)?;
-            range.expand(TextUnit_Line)?;
-            let text = range.text(query.max_text)?;
-            (range, Some(text))
-        };
-        let before = range.clone_range()?;
-        before.move_endpoint_to(Endpoint::End, selection, Endpoint::Start)?;
-        let offset = before.text(query.max_text)?.len();
-        match text {
-            None => (Some(offset), None),
-            Some(text) => (
-                None,
-                Some(UnitRead {
-                    range,
-                    text,
-                    offset,
-                }),
-            ),
-        }
-    };
-    let at_line_start = match (start, &start_line) {
-        (Some(0), _) => Some(&line.range),
-        (None, Some(start_line)) if start_line.offset == 0 => Some(&start_line.range),
-        _ => None,
-    };
-    let first = match at_line_start {
-        Some(range) => {
-            let document = query.pattern.document_range()?;
-            range.compare_endpoints(Endpoint::Start, &document, Endpoint::Start)? == 0
-        }
-        None => false,
-    };
-    Ok((start, start_line, first))
+/// Whether the caret's `line`, where a selection starts, is the text's
+/// first, read only when the selection starts at the line's start, so
+/// that nothing comes before the selection, as [`build`] emits it.
+fn classic_first(query: &CaretQuery<'_>, line: &UnitRead) -> Result<bool, Error> {
+    if line.offset != 0 {
+        return Ok(false);
+    }
+    let document = query.pattern.document_range()?;
+    Ok(line
+        .range
+        .compare_endpoints(Endpoint::Start, &document, Endpoint::Start)?
+        == 0)
 }
 
 /// The caret, whether it is collapsed, and the selection, read the
@@ -2082,10 +1932,7 @@ pub(crate) fn classic_caret(
             if first.compare_endpoints(Endpoint::Start, first, Endpoint::End)? == 0 {
                 (first.clone(), true, None)
             } else {
-                match query.pattern2 {
-                    Some(pattern2) => (caret_range(pattern2)?, true, Some(first.clone())),
-                    None => (first.clone(), false, Some(first.clone())),
-                }
+                (first.clone(), false, Some(first.clone()))
             }
         }
     })
@@ -2147,6 +1994,9 @@ pub(crate) fn classic_changes(
     let order = |a: RangeEnd<'_>, b: RangeEnd<'_>| -> Result<i32, Error> {
         Ok(a.range.compare_endpoints(a.endpoint, b.range, b.endpoint)?)
     };
+    // The old selection holds nothing when it held nothing, or when its
+    // ends now meet, as [`emit_changes`] judges it.
+    let old_collapsed = old_collapsed || order(old_start, old_end)? == 0;
     let mut changes = Vec::new();
     let mut change = |selected: bool, from: RangeEnd<'_>, to: RangeEnd<'_>| -> Result<(), Error> {
         let between = from.range.clone_range()?;

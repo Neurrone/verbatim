@@ -488,8 +488,8 @@ control plane's event stream; no reader sends them.
 - `CaretMoved { node_id, caret, selection_changes, content_changed,
   new_selection }`: the caret or selection moved in a node with text. A
   `CaretReport` is the line at the caret, with its `offset` at the caret,
-  the `CaretSelection` (`None` when nothing is selected), whose start is in
-  that line or in `start_line`, the earlier line it starts in, and
+  the `CaretSelection` (`None` when nothing is selected), whose start is
+  the caret, in that line, and
   `read_at_us`, when the read began on the shared clock. Core gives it
   for each caret tell's read it takes; `selection_changes` is how the
   selection changed from Core's selection baseline, by the rule below. A

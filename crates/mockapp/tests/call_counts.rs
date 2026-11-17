@@ -3496,12 +3496,11 @@ fn check_uia_text_costs(ratchet: &mut Ratchet, remote: bool) {
             calls(1, 0, 0),
             &[
                 ("ProviderOptions", 2),
-                ("GetPatternProvider", 2),
+                ("GetPatternProvider", 1),
                 ("GetPropertyValue", 1),
                 ("HostRawElementProvider", 1),
                 ("Navigate", 1),
                 ("ITextProvider::GetSelection", 1),
-                ("GetCaretRange", 1),
                 ("Clone", 3),
                 ("CompareEndpoints", 2),
                 ("GetText", 1),
@@ -3510,10 +3509,9 @@ fn check_uia_text_costs(ratchet: &mut Ratchet, remote: bool) {
         )
     } else {
         (
-            calls(7, 0, 0),
+            calls(6, 0, 0),
             &[
                 ("ITextProvider::GetSelection", 1),
-                ("GetCaretRange", 1),
                 ("Clone", 1),
                 ("CompareEndpoints", 2),
                 ("GetText", 1),
@@ -3562,9 +3560,10 @@ fn check_uia_text_costs(ratchet: &mut Ratchet, remote: bool) {
     assert_eq!(selected_texts(&reply), [(true, "alpha", 5)]);
     // The three points past the start each found by the text before it
     // (a `MoveEndpointByUnit` and a `GetText` each), the start and the end
-    // compared, the selection read before and after (the second with
-    // `TextPattern2`'s caret, text now being selected), the select, and
-    // the change's ends compared and its text read, and the selection's
+    // compared, the selection read before and after, its caret the
+    // selection's start, as NVDA's is, the select, the old selection's
+    // ends compared remotely, as NVDA judges its old range as it now is,
+    // and the change's ends compared and its text read, and the selection's
     // text read after, up to 513 units, kept for the next comparison (one
     // `GetText` more since 2026-10-22). The selection before holding
     // nothing, the change is the whole new selection, with no comparison
@@ -3580,14 +3579,13 @@ fn check_uia_text_costs(ratchet: &mut Ratchet, remote: bool) {
             calls(1, 0, 0),
             &[
                 ("ProviderOptions", 2),
-                ("GetPatternProvider", 2),
+                ("GetPatternProvider", 1),
                 ("GetPropertyValue", 1),
                 ("HostRawElementProvider", 1),
                 ("Navigate", 1),
                 ("ITextProvider::GetSelection", 2),
-                ("GetCaretRange", 1),
                 ("Clone", 9),
-                ("CompareEndpoints", 5),
+                ("CompareEndpoints", 6),
                 ("GetText", 5),
                 ("MoveEndpointByUnit", 3),
                 ("MoveEndpointByRange", 10),
@@ -3596,10 +3594,9 @@ fn check_uia_text_costs(ratchet: &mut Ratchet, remote: bool) {
         )
     } else {
         (
-            calls(29, 0, 0),
+            calls(28, 0, 0),
             &[
                 ("ITextProvider::GetSelection", 2),
-                ("GetCaretRange", 1),
                 ("Clone", 5),
                 ("CompareEndpoints", 3),
                 ("GetText", 5),
@@ -3959,10 +3956,11 @@ fn caret_tell_program(caret: &str) -> u32 {
 /// the focus's, held since its completion. Before the selection's text and
 /// changes were read in the program, they were read from the ranges after
 /// it, six calls more. Classically the read is the classic calls behind the
-/// program's signature, 22, one more than the read by parts after it made.
+/// program's signature, 19, the caret being the selection's start with no
+/// `TextPattern2` caret or search for where the selection starts.
 /// The program's instructions, under UI Automation's limit of 10,000
-/// (`instruction_limit.rs`): 111 for the selection "alpha" in a line of
-/// plain text, compared with a baseline at the text's start, and 54 for the
+/// (`instruction_limit.rs`): 90 for the selection "alpha" in a line of
+/// plain text, compared with a baseline at the text's start, and 48 for the
 /// caret alone moved inside the line; the caret read's worst case, the same
 /// program with every part asked, is pinned by `instruction_limit.rs`'s
 /// `caret_reads_execute_exactly`.
@@ -3974,7 +3972,7 @@ fn caret_tell_reads_cost_exactly() {
     )]];
     for (operation, remote, expected) in [
         ("UIA caret tell's read, remotely", true, calls(1, 0, 0)),
-        ("UIA caret tell's read, classically", false, calls(22, 0, 0)),
+        ("UIA caret tell's read, classically", false, calls(19, 0, 0)),
     ] {
         let (said, measured) = caret_tell_read(remote);
         assert_eq!(said, selected, "{operation}: what Core said");
@@ -3985,7 +3983,7 @@ fn caret_tell_reads_cost_exactly() {
             caret_tell_program("caret doc 0 5"),
             caret_tell_program("caret doc 3")
         ],
-        [111, 54],
+        [90, 48],
         "the caret tell's read's program, a selection and the caret alone"
     );
     ratchet.finish();
@@ -4151,8 +4149,8 @@ fn edit_control_select_and_location_cost_exactly() {
 fn uia_notes(hwnd: HWND) -> UiaText {
     let under_test = UiaUnderTest::new(hwnd);
     let notes = under_test.element("Notes").clone();
-    let (pattern, pattern2) = verbatim_uia::text::text_pattern(&notes).expect("a text pattern");
-    UiaText::new(notes, pattern, pattern2, false).details(Theme::builtin_default().reported().text)
+    let pattern = verbatim_uia::text::text_pattern(&notes).expect("a text pattern");
+    UiaText::new(notes, pattern, false).details(Theme::builtin_default().reported().text)
 }
 
 /// A focus onto a combo box without the `Value` pattern, whose first
@@ -4480,7 +4478,7 @@ fn uia_text_focus(
 /// the selected text read in the program; the focus was 9 calls with its
 /// caret and 10 with a selection before Core asked the completion and read
 /// the states after the registration. Classically the read is the classic
-/// calls behind the same signature: 19 and 27 calls, where the caret
+/// calls behind the same signature: 19 and 24 calls, where the caret
 /// report the outpost sent with its own focus report took 45 and 57. A terminal's caret is read with its
 /// focus too, so that the focus says its line (`docs/parity/terminals.md`),
 /// and its first full read is build 3's baseline read, which Core sends
@@ -4560,7 +4558,7 @@ fn text_field_focuses_cost_exactly() {
             false,
             selected,
             text_said(false, &alpha_selected),
-            first_focus(27),
+            first_focus(24),
         ),
         // A protected field's selected text is read as any field's, which
         // Core says masked as the control gives it, so its focus costs
@@ -4581,7 +4579,7 @@ fn text_field_focuses_cost_exactly() {
             false,
             protected_selected,
             text_said(true, &alpha_selected),
-            first_focus(27),
+            first_focus(24),
         ),
         (
             "UIA terminal focus, remotely",

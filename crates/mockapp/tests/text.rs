@@ -69,8 +69,8 @@ fn notes_element(hwnd: HWND) -> IUIAutomationElement {
 /// classically.
 fn uia_notes(hwnd: HWND, remote: bool) -> UiaText {
     let notes = notes_element(hwnd);
-    let (pattern, pattern2) = verbatim_uia::text::text_pattern(&notes).expect("a text pattern");
-    UiaText::new(notes, pattern, pattern2, false).remote(remote)
+    let pattern = verbatim_uia::text::text_pattern(&notes).expect("a text pattern");
+    UiaText::new(notes, pattern, false).remote(remote)
 }
 
 /// The edit control mockapp's MSAA backend hosts for the "Notes" text.
@@ -372,7 +372,6 @@ struct CaretSummary {
     changes: Option<Vec<(bool, String)>>,
     texts: (Option<String>, Option<String>),
     selection_start: Option<usize>,
-    selection_line: Option<(String, usize)>,
     start_first: bool,
 }
 
@@ -402,10 +401,6 @@ fn summary(answer: &CaretAnswer) -> CaretSummary {
             answer.previous_text.as_deref().map(text),
         ),
         selection_start: answer.selection_start,
-        selection_line: answer
-            .selection_line
-            .as_ref()
-            .map(|line| (text(&line.text), line.offset)),
         start_first: answer.start_first,
     }
 }
@@ -437,12 +432,11 @@ fn remote_and_classic_caret_reads_agree() {
     let mut app = common::spawn("text.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let element = notes_element(hwnd);
-    let (pattern, pattern2) = verbatim_uia::text::text_pattern(&element).expect("a text pattern");
+    let pattern = verbatim_uia::text::text_pattern(&element).expect("a text pattern");
     let all = Attributes::ALL;
     let query = |formats, unit| CaretQuery {
         element: &element,
         pattern: &pattern,
-        pattern2: pattern2.as_ref(),
         since: None,
         previous_selection: None,
         previous_collapsed: false,
@@ -576,28 +570,23 @@ fn remote_and_classic_caret_reads_agree() {
         ..query(None, None)
     });
     assert_eq!(alone.texts, (Some("beta".to_owned()), None));
-    // The selection's start in the caret's line: the caret's own offset
-    // where the caret is the start; where `TextPattern2`'s caret is the
-    // end, as Windows 11 Notepad's is, read from the line's start; and for
-    // a selection that starts on an earlier line, that line, with the
-    // start's offset in it.
+    // The caret is the selection's start, as NVDA's is, whichever end
+    // `TextPattern2`'s caret is at (Windows 11 Notepad's is the end after
+    // Shift+Control+Right Arrow): the selection starts at the caret's own
+    // offset in its line.
     assert_eq!((alone.line.1, alone.selection_start), (6, Some(6)));
     common::apply(&mut app, hwnd, "caret doc 6 10 end");
     let at_end = caret_both(&query(None, None));
-    assert_eq!((at_end.line.1, at_end.selection_start), (10, Some(6)));
+    assert_eq!((at_end.line.1, at_end.selection_start), (6, Some(6)));
     common::apply(&mut app, hwnd, "caret doc 6 13 end");
     let below = caret_both(&query(None, None));
     assert_eq!(
-        (below.line, below.selection_start, below.selection_line),
-        (
-            ("gamma\n".to_owned(), 2),
-            None,
-            Some(("alpha beta\n".to_owned(), 6))
-        )
+        (below.line, below.selection_start),
+        (("alpha beta\n".to_owned(), 6), Some(6))
     );
     // A selection from the text's start: the line it starts in is known
     // to be the first, so nothing comes before it, whichever line the
-    // caret is on; one from the start of another line is not.
+    // provider's caret is on; one from the start of another line is not.
     assert!(!at_end.start_first);
     common::apply(&mut app, hwnd, "caret doc 0 5 end");
     let first = caret_both(&query(None, None));
@@ -605,9 +594,10 @@ fn remote_and_classic_caret_reads_agree() {
     common::apply(&mut app, hwnd, "caret doc 0 13 end");
     let first_below = caret_both(&query(None, None));
     assert_eq!(
-        (first_below.selection_line, first_below.start_first),
-        (Some(("alpha beta\n".to_owned(), 0)), true)
+        (first_below.selection_start, first_below.start_first),
+        (Some(0), true)
     );
+
     common::apply(&mut app, hwnd, "caret doc 11 13 end");
     let second = caret_both(&query(None, None));
     assert_eq!(
@@ -658,11 +648,10 @@ fn a_failing_attribute_is_not_supported() {
     let mut app = common::spawn("failing_attribute.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let element = notes_element(hwnd);
-    let (pattern, pattern2) = verbatim_uia::text::text_pattern(&element).expect("a text pattern");
+    let pattern = verbatim_uia::text::text_pattern(&element).expect("a text pattern");
     let query = CaretQuery {
         element: &element,
         pattern: &pattern,
-        pattern2: pattern2.as_ref(),
         since: None,
         previous_selection: None,
         previous_collapsed: false,
@@ -704,11 +693,10 @@ fn a_mixed_stretch_is_read_by_words_then_characters() {
     let mut app = common::spawn("italic.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let element = notes_element(hwnd);
-    let (pattern, pattern2) = verbatim_uia::text::text_pattern(&element).expect("a text pattern");
+    let pattern = verbatim_uia::text::text_pattern(&element).expect("a text pattern");
     let query = CaretQuery {
         element: &element,
         pattern: &pattern,
-        pattern2: pattern2.as_ref(),
         since: None,
         previous_selection: None,
         previous_collapsed: false,
@@ -780,11 +768,10 @@ fn remote_and_classic_text_reads_agree() {
     let mut app = common::spawn("text.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let element = notes_element(hwnd);
-    let (pattern, pattern2) = verbatim_uia::text::text_pattern(&element).expect("a text pattern");
+    let pattern = verbatim_uia::text::text_pattern(&element).expect("a text pattern");
     let target = TextTarget {
         element: &element,
         pattern: &pattern,
-        pattern2: pattern2.as_ref(),
     };
     let units = |from, movement, count| {
         let query = UnitsQuery {
@@ -889,7 +876,6 @@ fn remote_and_classic_text_reads_agree() {
     let selected = caret_read_remote(&CaretQuery {
         element: &element,
         pattern: &pattern,
-        pattern2: pattern2.as_ref(),
         since: None,
         previous_selection: None,
         previous_collapsed: false,
@@ -974,11 +960,10 @@ fn a_batch_in_several_languages_gives_each_line_its_own() {
     let mut app = common::spawn("languages.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let element = notes_element(hwnd);
-    let (pattern, pattern2) = verbatim_uia::text::text_pattern(&element).expect("a text pattern");
+    let pattern = verbatim_uia::text::text_pattern(&element).expect("a text pattern");
     let target = TextTarget {
         element: &element,
         pattern: &pattern,
-        pattern2: pattern2.as_ref(),
     };
     let units = |movement, count| {
         let query = UnitsQuery {
@@ -1307,12 +1292,11 @@ fn every_attribute_is_read_both_ways() {
     let mut app = common::spawn("formatting.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let element = notes_element(hwnd);
-    let (pattern, pattern2) = verbatim_uia::text::text_pattern(&element).expect("a text pattern");
+    let pattern = verbatim_uia::text::text_pattern(&element).expect("a text pattern");
     let learning = Attributes::ALL.without(Attributes::of(&[TextAttribute::Annotations]));
     let query = |formats| CaretQuery {
         element: &element,
         pattern: &pattern,
-        pattern2: pattern2.as_ref(),
         since: None,
         previous_selection: None,
         previous_collapsed: false,
@@ -1439,11 +1423,10 @@ fn unsupported_attributes_are_found_both_ways() {
     let mut app = common::spawn("text.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let element = notes_element(hwnd);
-    let (pattern, pattern2) = verbatim_uia::text::text_pattern(&element).expect("a text pattern");
+    let pattern = verbatim_uia::text::text_pattern(&element).expect("a text pattern");
     let query = CaretQuery {
         element: &element,
         pattern: &pattern,
-        pattern2: pattern2.as_ref(),
         since: None,
         previous_selection: None,
         previous_collapsed: false,
@@ -1488,11 +1471,10 @@ fn a_backward_move_is_counted_backward_both_ways() {
     let mut app = common::spawn("backward_moves.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let element = notes_element(hwnd);
-    let (pattern, pattern2) = verbatim_uia::text::text_pattern(&element).expect("a text pattern");
+    let pattern = verbatim_uia::text::text_pattern(&element).expect("a text pattern");
     let target = TextTarget {
         element: &element,
         pattern: &pattern,
-        pattern2: pattern2.as_ref(),
     };
     let units = |unit, count| {
         let query = UnitsQuery {
@@ -1540,12 +1522,11 @@ fn reading_ahead_ends_where_lines_clamp_back_both_ways() {
     let mut app = common::spawn("lines_clamp.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let element = notes_element(hwnd);
-    let (pattern, pattern2) = verbatim_uia::text::text_pattern(&element).expect("a text pattern");
+    let pattern = verbatim_uia::text::text_pattern(&element).expect("a text pattern");
     let query = UnitsQuery {
         target: TextTarget {
             element: &element,
             pattern: &pattern,
-            pattern2: pattern2.as_ref(),
         },
         from: TextFrom::Caret,
         movement: None,

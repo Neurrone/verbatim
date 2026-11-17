@@ -190,31 +190,27 @@ pub struct CaretRead<P> {
     /// source that does not read it.
     pub previous_text: Option<Vec<u16>>,
     /// Where the selection starts, when something is selected.
-    pub selection_start: SelectionStart<P>,
+    pub selection_start: SelectionStart,
 }
 
 /// Where a selection starts, as a caret read in one go found it
 /// ([`CaretRead::selection_start`]), so the report can say what comes
 /// before it.
-pub struct SelectionStart<P> {
+pub struct SelectionStart {
     /// When the selection starts on the caret's line, the UTF-16 offset of
     /// its start in the line's text.
     pub in_line: Option<usize>,
-    /// When the selection starts on a line before the caret's, that line,
-    /// with the UTF-16 offset of the start in its text.
-    pub line: Option<(Unit<P>, usize)>,
     /// The line the selection starts in is known to be the text's first,
     /// found when the selection starts at that line's start.
     pub first: bool,
 }
 
-impl<P> SelectionStart<P> {
+impl SelectionStart {
     /// Nothing known of where a selection starts.
     #[must_use]
     pub fn unknown() -> Self {
         Self {
             in_line: None,
-            line: None,
             first: false,
         }
     }
@@ -812,10 +808,7 @@ impl<P: Clone> NodeText<'_, P> {
                 start: Slot::new(start.clone()),
                 end: Slot::new(end.clone()),
                 text: text.map(Arc::from),
-                report: CaretSelection {
-                    range,
-                    start_line: None,
-                },
+                report: CaretSelection { range },
             }
         });
         if let Some(last) = self.anchors.last.as_mut() {
@@ -1239,7 +1232,7 @@ type ReadUnit<P> = (Unit<P>, usize, Vec<Formatting>);
 
 /// The caret's line when it was read already, and where the selection
 /// starts when the caret was read in one go ([`report_for`]).
-type LineRead<P> = (Option<ReadUnit<P>>, Option<SelectionStart<P>>);
+type LineRead<P> = (Option<ReadUnit<P>>, Option<SelectionStart>);
 
 /// The report for a caret state already read, and the time its read
 /// began, with its line when that was read already, and, when the caret
@@ -1283,30 +1276,11 @@ fn report_for<S: TextSource>(
         (Vec::new(), &formats),
     );
     line.first |= start.first && start_in_line.is_some();
-    // A selection that starts on an earlier line has that line reported
-    // with it, the start a position in it.
-    let selection_line = match (&state.selection, start.line) {
-        (Some((selection_start, _)), Some((unit, offset))) if start_in_line.is_none() => {
-            let mut chunk = chunk(
-                source,
-                anchors,
-                (&unit, TextUnit::Line),
-                (offset, selection_start.clone()),
-                (Vec::new(), &[]),
-            );
-            chunk.first |= start.first;
-            Some(Box::new(chunk))
-        }
-        _ => None,
-    };
     let line_anchor = line.start;
     let line_length = line.text.len();
     let selection = state.selection.as_ref().map(|(start, end)| Selection {
-        start: match (
-            start_in_line.filter(|&offset| offset <= line_length),
-            &selection_line,
-        ) {
-            (Some(offset), _) => {
+        start: match start_in_line.filter(|&offset| offset <= line_length) {
+            Some(offset) => {
                 let position = TextPosition {
                     anchor: line_anchor,
                     offset: u32::try_from(offset).unwrap_or(u32::MAX),
@@ -1314,19 +1288,12 @@ fn report_for<S: TextSource>(
                 anchors.remember(position, start.clone());
                 position
             }
-            // `chunk` remembered the start at its offset.
-            (None, Some(chunk)) => TextPosition {
-                anchor: chunk.start,
-                offset: chunk.offset,
-            },
-            (None, None) => anchors.position_of(start.clone()),
+            None => anchors.position_of(start.clone()),
         },
         end: anchors.position_of(end.clone()),
     });
-    let selection = selection.map(|range| CaretSelection {
-        range,
-        start_line: selection_line,
-    });
+    let selection = selection.map(|range| CaretSelection { range });
+
     anchors.anchors.last = Some(LastRead {
         caret: Slot::new(state.caret.clone()),
         selection: state.selection.as_ref().zip(selection.as_ref()).map(
@@ -1525,8 +1492,13 @@ fn selection_changes<S: TextSource>(
         .selection
         .clone()
         .unwrap_or_else(|| (state.caret.clone(), state.caret.clone()));
+    // The old selection holds nothing when it held nothing, or when its
+    // ends now meet, as a UI Automation range's do once its text was
+    // deleted: NVDA judges its old range as it now is.
+    let old_collapsed = old_collapsed || source.compare(old_start, old_end)? == Ordering::Equal;
     let mut changes = Vec::new();
     // NVDA speaks the whole new selection when the old held nothing, and
+
     // the whole old one when the new holds nothing, wherever the caret was
     // in it (`speakSelectionChange`, `nvda/source/speech/speech.py` 1362 to
     // 1365): a double-click inside a word is the word selected, once.

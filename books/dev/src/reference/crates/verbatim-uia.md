@@ -317,10 +317,9 @@ reads with. Every method is a cross-process call, counted once: a text
 range is a provider object in the application, so even copying one is a
 round trip.
 
-- `text_pattern(element)` fetches a node's `TextPattern2` where the
-  provider has it (the caret's own range) and else its `TextPattern`, one
-  call or two; `TextPatternExt` has `selection` and `document_range`;
-  `caret_range(pattern2)` is `GetCaretRange`.
+- `text_pattern(element)` fetches a node's `TextPattern`, one call: its
+  caret is read from its selection, as NVDA reads it, never from
+  `TextPattern2`; `TextPatternExt` has `selection` and `document_range`.
 - `TextRangeExt` on a range: `clone_range`, `compare_endpoints`,
   `expand`, `move_by`, `move_endpoint_to` (by another range's end),
   `move_endpoint_by_unit` (both moves' counts negative for a backward

@@ -35,8 +35,8 @@ const READ_AT: u64 = 1;
 fn uia_notes(hwnd: HWND, remote: bool) -> UiaText {
     let uia = Uia::new().expect("a UIA client");
     let notes = common::named_element(&uia, hwnd, "Notes");
-    let (pattern, pattern2) = verbatim_uia::text::text_pattern(&notes).expect("a text pattern");
-    UiaText::new(notes, pattern, pattern2, false).remote(remote)
+    let pattern = verbatim_uia::text::text_pattern(&notes).expect("a text pattern");
+    UiaText::new(notes, pattern, false).remote(remote)
 }
 
 /// mockapp with `text.json`'s "Notes" ("alpha beta\ngamma\n"), and its
@@ -218,10 +218,11 @@ fn the_program_and_its_classic_reads_agree() {
     let (mut app, hwnd) = start("mockapp-watch-agree");
     let uia = Uia::new().expect("a UIA client");
     let notes = common::named_element(&uia, hwnd, "Notes");
-    let (pattern, pattern2) = verbatim_uia::text::text_pattern(&notes).expect("a text pattern");
+    let pattern = verbatim_uia::text::text_pattern(&notes).expect("a text pattern");
     common::apply(&mut app, hwnd, "caret doc 0");
-    let before = verbatim_uia::text::caret_range(pattern2.as_ref().expect("TextPattern2"))
-        .expect("the caret");
+    let before = verbatim_uia::text::TextPatternExt::selection(&pattern)
+        .expect("the selection")
+        .remove(0);
     let start = RangeEnd {
         range: &before,
         endpoint: Endpoint::Start,
@@ -229,7 +230,6 @@ fn the_program_and_its_classic_reads_agree() {
     let query = |last: bool| WatchQuery {
         element: &notes,
         pattern: &pattern,
-        pattern2: pattern2.as_ref(),
         start,
         start_selection: (start, start),
         word: true,

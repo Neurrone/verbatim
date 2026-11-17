@@ -579,15 +579,15 @@ fn read_selection(
     }
 }
 
-/// A selection whose caret is its end, as Windows 11 Notepad's
-/// `TextPattern2` caret is after Shift+Control+Right Arrow: a caret tell's
-/// read gives the caret's line with the caret at that end, and the
-/// selection's start as a position in the same line, so Core knows what
-/// comes before the start (`docs/parity/text.md`, "TextInfo-equivalent
-/// layer"). A selection that starts on an earlier line has that line with
-/// it, its start a position there; one from the text's start has its line
-/// marked the text's first.
-fn a_selections_start_is_read_in_the_line_it_starts_in() {
+/// A selection whose provider's caret is its end, as Windows 11 Notepad's
+/// `TextPattern2` caret is after Shift+Control+Right Arrow: the caret is
+/// the selection's start, as NVDA's is (`NVDAObjects/UIA/__init__.py` 488
+/// to 498), so a caret tell's read gives the start's line with the caret
+/// at the start, which is also the selection's start, so Core knows what
+/// comes before it (`docs/parity/text.md`, "TextInfo-equivalent layer"),
+/// whichever line the provider's caret is on; a selection from the text's
+/// start has its line marked the text's first.
+fn a_selections_caret_is_its_start_whichever_end_the_providers_caret_is_at() {
     let (mut app, hwnd, outpost, node, baseline) = notes_outpost("mockapp-caret-watch-start");
     app.send("caret doc 6 10 end");
     let read = read_selection(&outpost, hwnd, node, baseline);
@@ -600,30 +600,28 @@ fn a_selections_start_is_read_in_the_line_it_starts_in() {
         ),
         (
             "alpha beta\n",
-            10,
+            6,
             Some(TextPosition {
                 anchor: caret.line.start,
                 offset: 6,
             })
         )
     );
+    // The provider's caret on the next line: the caret is still the
+    // start, on the line before.
     app.send("caret doc 6 13 end");
     let caret = read_selection(&outpost, hwnd, node, read.baseline).caret;
-    assert_eq!(caret.line.text, "gamma\n");
-    let start_line = caret
-        .selection
-        .as_ref()
-        .and_then(|selection| selection.start_line.clone())
-        .expect("the line the selection starts in");
     assert_eq!(
         (
-            start_line.text.as_str(),
+            caret.line.text.as_str(),
+            caret.line.offset,
             caret.selection.as_ref().map(|s| s.range.start)
         ),
         (
             "alpha beta\n",
+            6,
             Some(TextPosition {
-                anchor: start_line.start,
+                anchor: caret.line.start,
                 offset: 6,
             })
         )
@@ -974,6 +972,7 @@ fn an_edit_controls_delete_over_a_selection_says_its_unit_then_the_selection_rem
 }
 
 /// Runs each test on a desktop of its own (`common/harness.rs`).
+#[expect(clippy::too_many_lines, reason = "one entry per test")]
 fn main() {
     harness::run_isolated(&[
         (
@@ -1041,8 +1040,8 @@ fn main() {
             a_selecting_keys_selection_is_said_by_its_caret_tell,
         ),
         (
-            "a_selections_start_is_read_in_the_line_it_starts_in",
-            a_selections_start_is_read_in_the_line_it_starts_in,
+            "a_selections_caret_is_its_start_whichever_end_the_providers_caret_is_at",
+            a_selections_caret_is_its_start_whichever_end_the_providers_caret_is_at,
         ),
         (
             "a_selection_verbatim_made_is_the_next_baseline",

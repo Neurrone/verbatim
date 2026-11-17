@@ -835,8 +835,7 @@ reads behind ids Core names, released as anchors are (Table 16):
   bound (`docs/design/readers-tell-core-asks-build1.md`, "The watch" and
   Table 15).
 
-- A UIA node has text when its element has a text pattern (`TextPattern2`
-  where offered), fetched once and kept with the node. `NoText` is kept only
+- A UIA node has text when its element has a text pattern, fetched once and kept with the node. `NoText` is kept only
   until the node is next the focus or raises a caret or text event
   (`text_reads::forget_no_text`), since UIA answers a provider not yet ready
   as one with no pattern; a caret watch stays open on it, and a failed fetch
@@ -885,10 +884,9 @@ no comparison Core did not ask for.
   programs as they are. They change only by a program's commits
   (`TextChange`), and the reducer has the store let go of each UIA range
   no fact names any more (`Effect::ForgetRanges`).
-- A report's selection starts where Core can read before it: in the
-  caret's line, or an earlier line sent as `CaretSelection::start_line`;
-  through UIA, where the caret can be the selection's other end, the
-  caret read finds the start (`CaretRead::selection_start`).
+- A report's selection starts where Core can read before it: at the
+  caret, in the caret's line, since a UIA caret is the selection's start,
+  as NVDA's is (`CaretRead::selection_start`).
 - `Text_TextSelectionChanged` of a followed node is told to Core as a
   caret tell, the event's element kept behind the token the tell names,
   let go past 60 seconds or beyond the newest 64, for Core's caret read to

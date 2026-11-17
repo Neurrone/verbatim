@@ -34,8 +34,8 @@ use verbatim_uia_rops::{
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::{
-    IUIAutomationElement, IUIAutomationTextPattern, IUIAutomationTextPattern2, TextUnit_Line,
-    TextUnit_Paragraph, TextUnit_Word, TreeScope_Descendants, UIA_NamePropertyId,
+    IUIAutomationElement, IUIAutomationTextPattern, TextUnit_Line, TextUnit_Paragraph,
+    TextUnit_Word, TreeScope_Descendants, UIA_NamePropertyId,
 };
 use windows::core::BSTR;
 
@@ -451,13 +451,11 @@ fn controlled_selections_execute_exactly() {
 fn caret_query<'a>(
     element: &'a IUIAutomationElement,
     pattern: &'a IUIAutomationTextPattern,
-    pattern2: Option<&'a IUIAutomationTextPattern2>,
     old: Option<RangeEnd<'a>>,
 ) -> CaretQuery<'a> {
     CaretQuery {
         element,
         pattern,
-        pattern2,
         since: old,
         previous_selection: old.map(|old| (old, old)),
         previous_collapsed: false,
@@ -484,17 +482,16 @@ fn caret_reads_execute_exactly() {
     common::init_com();
     let mut fixture = Fixture::start("italic.json", "mockapp-instructions-caret");
     let notes = fixture.find("Notes");
-    let (pattern, pattern2) = verbatim_uia::text::text_pattern(&notes).expect("a text pattern");
+    let pattern = verbatim_uia::text::text_pattern(&notes).expect("a text pattern");
     common::apply(&mut fixture.app, fixture.hwnd, "caret doc 18");
-    let before = caret_read_remote(&caret_query(&notes, &pattern, pattern2.as_ref(), None))
-        .expect("the caret");
+    let before = caret_read_remote(&caret_query(&notes, &pattern, None)).expect("the caret");
     common::apply(&mut fixture.app, fixture.hwnd, "caret doc 20 30");
     let old = RangeEnd {
         range: &before.caret,
         endpoint: Endpoint::Start,
     };
     let worst = counted(|| {
-        let mut worst = caret_query(&notes, &pattern, pattern2.as_ref(), Some(old));
+        let mut worst = caret_query(&notes, &pattern, Some(old));
         worst.unit = Some(TextUnit_Word);
         worst.read_selection_text = true;
         worst.read_previous_text = true;
@@ -505,7 +502,7 @@ fn caret_reads_execute_exactly() {
     });
     common::apply(&mut fixture.app, fixture.hwnd, "caret doc 0");
     let typical = counted(|| {
-        let mut typical = caret_query(&notes, &pattern, pattern2.as_ref(), None);
+        let mut typical = caret_query(&notes, &pattern, None);
         typical.attributes = Attributes::of(&[TextAttribute::Annotations, TextAttribute::Link]);
         typical.learning = Attributes::NONE;
         typical.read_selection_text = true;
@@ -519,8 +516,11 @@ fn caret_reads_execute_exactly() {
     // conditions every read with `TextPattern2` runs (2026-10-22), and
     // 4456 before a selection holding nothing on either side was made one
     // whole change (2026-10-23), and 4462 and 97 before the worst case read
-    // the caret again at its end, as a key's check does (2026-11-09).
-    assert_eq!([worst, typical], [4485, 97], "caret read worst and typical");
+    // the caret again at its end, as a key's check does (2026-11-09), and
+    // 4485 and 97 before the caret became the selection's start, read with
+    // no `TextPattern2` caret and no search for where the selection starts
+    // (2026-11-17).
+    assert_eq!([worst, typical], [4453, 91], "caret read worst and typical");
 }
 
 /// The caret read where every format stretch is two characters with one
@@ -534,8 +534,8 @@ fn densely_mixed_formatting_executes_exactly() {
     common::init_com();
     let mut fixture = Fixture::start("mixed.json", "mockapp-instructions-mixed");
     let notes = fixture.find("Notes");
-    let (pattern, pattern2) = verbatim_uia::text::text_pattern(&notes).expect("a text pattern");
-    let query = caret_query(&notes, &pattern, pattern2.as_ref(), None);
+    let pattern = verbatim_uia::text::text_pattern(&notes).expect("a text pattern");
+    let query = caret_query(&notes, &pattern, None);
     common::apply(&mut fixture.app, fixture.hwnd, "caret doc 0");
     let sixteen = counted(|| {
         let answer = caret_read_remote(&query).expect("the program runs");
@@ -550,9 +550,10 @@ fn densely_mixed_formatting_executes_exactly() {
     let eighty = caret_read_remote(&query).map(|answer| answer.runs.len());
     fixture.app.quit();
     // 2148 and 4140 before the read of where a selection starts in the
-    // caret's line, whose condition every read with `TextPattern2` runs
-    // (2026-10-22).
-    assert_eq!([sixteen, thirty_two], [2158, 4150], "17 and 33 stretches");
+    // caret's line, whose condition every read with `TextPattern2` ran
+    // (2026-10-22), and 2158 and 4150 before the caret became the
+    // selection's start (2026-11-17).
+    assert_eq!([sixteen, thirty_two], [2152, 4144], "17 and 33 stretches");
     match eighty {
         Ok(runs) => assert_eq!(runs, 64),
         Err(error) => panic!("80 characters: {error}"),
@@ -566,7 +567,7 @@ fn say_all_batches_execute_exactly() {
     common::init_com();
     let mut fixture = Fixture::start("languages.json", "mockapp-instructions-say-all");
     let notes = fixture.find("Notes");
-    let (pattern, pattern2) = verbatim_uia::text::text_pattern(&notes).expect("a text pattern");
+    let pattern = verbatim_uia::text::text_pattern(&notes).expect("a text pattern");
     let more = numbered(30);
     common::apply(
         &mut fixture.app,
@@ -577,7 +578,6 @@ fn say_all_batches_execute_exactly() {
     let target = TextTarget {
         element: &notes,
         pattern: &pattern,
-        pattern2: pattern2.as_ref(),
     };
     let document = pattern.document_range().expect("the document range");
     let units = |from, movement| UnitsQuery {
@@ -628,7 +628,7 @@ fn range_selections_execute_exactly() {
     common::init_com();
     let mut fixture = Fixture::start("text.json", "mockapp-instructions-range");
     let notes = fixture.find("Notes");
-    let (pattern, pattern2) = verbatim_uia::text::text_pattern(&notes).expect("a text pattern");
+    let pattern = verbatim_uia::text::text_pattern(&notes).expect("a text pattern");
     common::apply(&mut fixture.app, fixture.hwnd, "caret doc 0");
     let document = pattern.document_range().expect("the document range");
     let start = Position {
@@ -650,7 +650,6 @@ fn range_selections_execute_exactly() {
         target: TextTarget {
             element: &notes,
             pattern: &pattern,
-            pattern2: pattern2.as_ref(),
         },
         start: after(0),
         end: Some(TextFrom::At(start)),
@@ -672,8 +671,10 @@ fn range_selections_execute_exactly() {
     // 160 before the selection's text was read after the select, to keep
     // for the next comparison (2026-10-22), and 165 before a selection
     // made from a collapsed caret was one whole change, placed by no
-    // comparison (2026-10-23).
-    assert_eq!(press, 163, "the review copy's first press");
+    // comparison (2026-10-23), and 163 before the caret after the select
+    // became the selection's start and the old selection was judged by its
+    // ends as they now are (2026-11-17).
+    assert_eq!(press, 159, "the review copy's first press");
     assert!(press < LIMIT / 2);
 }
 
@@ -686,7 +687,7 @@ fn terminal_snapshots_execute_exactly() {
     common::init_com();
     let mut fixture = Fixture::start("terminal.json", "mockapp-instructions-terminal");
     let terminal = fixture.find("Terminal");
-    let (pattern, pattern2) = verbatim_uia::text::text_pattern(&terminal).expect("a text pattern");
+    let pattern = verbatim_uia::text::text_pattern(&terminal).expect("a text pattern");
     common::apply(&mut fixture.app, fixture.hwnd, "screen term 30");
     let lines = numbered(80);
     common::apply(
@@ -717,7 +718,6 @@ fn terminal_snapshots_execute_exactly() {
         caret: Some(CaretLineQuery {
             element: &terminal,
             pattern: &pattern,
-            pattern2: pattern2.as_ref(),
             max_text: 4096,
             since: None,
         }),
@@ -746,7 +746,7 @@ fn terminal_rows_execute_exactly() {
     common::init_com();
     let mut fixture = Fixture::start("terminal.json", "mockapp-instructions-terminal-rows");
     let terminal = fixture.find("Terminal");
-    let (pattern, _) = verbatim_uia::text::text_pattern(&terminal).expect("a text pattern");
+    let pattern = verbatim_uia::text::text_pattern(&terminal).expect("a text pattern");
     common::apply(&mut fixture.app, fixture.hwnd, "screen term 30");
     let lines = numbered(200);
     common::apply(
@@ -805,7 +805,7 @@ fn terminal_colours_execute_exactly() {
     let read = |fixture: &str, prefix: &str| {
         let mut fixture = Fixture::start(fixture, prefix);
         let terminal = fixture.find("Terminal");
-        let (pattern, _) = verbatim_uia::text::text_pattern(&terminal).expect("a text pattern");
+        let pattern = verbatim_uia::text::text_pattern(&terminal).expect("a text pattern");
         common::apply(&mut fixture.app, fixture.hwnd, "screen term 30");
         common::apply(
             &mut fixture.app,
@@ -922,10 +922,11 @@ fn watch_checks_execute_exactly() {
     common::init_com();
     let mut fixture = Fixture::start("text.json", "mockapp-instructions-watch");
     let notes = fixture.find("Notes");
-    let (pattern, pattern2) = verbatim_uia::text::text_pattern(&notes).expect("a text pattern");
+    let pattern = verbatim_uia::text::text_pattern(&notes).expect("a text pattern");
     common::apply(&mut fixture.app, fixture.hwnd, "caret doc 0");
-    let before = verbatim_uia::text::caret_range(pattern2.as_ref().expect("TextPattern2"))
-        .expect("the caret");
+    let before = verbatim_uia::text::TextPatternExt::selection(&pattern)
+        .expect("the selection")
+        .remove(0);
     let start = RangeEnd {
         range: &before,
         endpoint: Endpoint::Start,
@@ -933,7 +934,6 @@ fn watch_checks_execute_exactly() {
     let query = |word: bool, unit, last: bool| WatchQuery {
         element: &notes,
         pattern: &pattern,
-        pattern2: pattern2.as_ref(),
         start,
         start_selection: (start, start),
         word,
@@ -958,7 +958,6 @@ fn watch_checks_execute_exactly() {
         let answer = caret_read_remote(&CaretQuery {
             element: &notes,
             pattern: &pattern,
-            pattern2: pattern2.as_ref(),
             since: None,
             previous_selection: None,
             previous_collapsed: false,
@@ -978,7 +977,7 @@ fn watch_checks_execute_exactly() {
     fixture.app.quit();
     assert_eq!(
         [worst, moved, typical, final_read],
-        [118, 110, 91, 67],
+        [110, 102, 91, 46],
         "watch check worst, moved and typical, and the final read"
     );
     assert!(worst < LIMIT / 2);

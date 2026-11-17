@@ -1019,20 +1019,18 @@ character with nothing selected, then "al" selected from the caret.
 - Today: 1 remotely in either case, met: the comparison, the change's
   text, and the new selection's text up to 513 units, read only when the
   selection's ends moved, are in the program.
-- Classically 8 with nothing selected and 21 for "al": the selection's
-  caret (`GetCaretRange`), two comparisons of the ends with the old
-  caret's (a selection from nothing is one whole change, as NVDA speaks
-  it, with no comparison placing it), the change's text (a copy, its two
-  ends moved, its text), the selection's text, where the selection
-  starts, since `TextPattern2`'s caret can be its other end (4, and 3 more
-  for a start on an earlier line), and, at its line's start, whether it
-  is the text's start (2). Inside a line it costs 19. When the last
+- Classically 8 with nothing selected; with a selection, two
+  comparisons of the ends with the old caret's (a selection from nothing
+  is one whole change, as NVDA speaks it, with no comparison placing it),
+  the change's text (a copy, its two ends moved, its text), the
+  selection's text, and, at its line's start, whether it is the text's
+  start (2): 19 for "alpha" selected (`caret_tell_reads_cost_exactly`).
+  The caret is the selection's start, so where the selection starts costs
+  nothing more. When the last
   selection held something, what its ends now hold is read too, up to 513
   units, so an edit is said in general terms (`docs/parity/text.md`,
   "TextInfo-equivalent layer"); a longer text is compared by its first
-  513 units and its length. A possible reduction classically: a selection
-  on the caret's line starts at the caret's offset less its length, two
-  calls fewer.
+  513 units and its length.
 
 ### A caret key's starting read
 
@@ -1255,7 +1253,7 @@ text for every focus it queues. A UIA focus's parts:
   that may have text: 2 UIA calls and 1 connection remotely, 4 calls and
   the connection classically;
 - the enrichment: 1 UIA call;
-- the caret read: 1 remotely; classically 35 for mockapp's document, 43
+- the caret read: 1 remotely; classically 35 for mockapp's document, 40
   with a selection, and 17 for its terminal;
 - the selected text, only when something is selected, a protected field's
   too: 1 remotely, 4 classically.
@@ -1268,7 +1266,7 @@ its probe adds 1 window message (above):
   nothing selected, 10 with a selection.
 - Today: a UIA document (`text.json`) 9 remotely and 10 with a selection,
   protected or not, each with 1 connection and no window message, so the
-  minimum is met remotely; classically 45, and 57 with a selection. A UIA
+  minimum is met remotely; classically 45, and 54 with a selection. A UIA
   terminal (`terminal_reading.json`), its caret read with its focus and
   its baseline read after it, 11 remotely and 48 classically, each with 1
   connection and no window message. A classic edit control through
@@ -1920,18 +1918,18 @@ first, the share of the limit in brackets:
   and 4 for each further controlled element. About 280 elements fit under
   the limit; the controlled list is the one bound the application sets
   (Settings' search suggestions were 25).
-- The caret read: 4,462 (45 percent) for a line of 64 stretches reached by
+- The caret read: 4,453 (45 percent) for a line of 64 stretches reached by
   walking a mixed stretch by words and characters, eleven attributes, and
-  every selection text up to 513 units; 97 for the report after a focus on
+  every selection text up to 513 units; 91 for the report after a focus on
   plain text with the default theme. Where every stretch is mixed
-  (`mixed.json`), each adds 249: 2,158 for 17 stretches and 4,150 for 33,
+  (`mixed.json`), each adds 249: 2,152 for 17 stretches and 4,144 for 33,
   so 64 come to about 8,000 (80 percent), under the limit but uncountable.
   It is the one program that can come within a factor of two of the limit,
   bounded by the 64 stretches.
 - Say-all's batch of twenty lines: 683 (7 percent) in three languages from
   a held position; 704 for a first batch from the caret. It does not grow
   with the lines' length.
-- The review copy's selection: 163.
+- The review copy's selection: 159.
 - A terminal's snapshot: 50 for a first read, 90 with a start and the caret
   and its line; no loop, so it does not grow with the history.
 - A terminal's rows by their place: 172 (2 percent) at its largest input,

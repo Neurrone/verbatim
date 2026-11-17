@@ -127,7 +127,6 @@ fn read_terminal(
     let caret = CaretLineQuery {
         element: source.element(),
         pattern: source.pattern(),
-        pattern2: source.pattern2(),
         max_text: 4096,
         since: None,
     };
@@ -153,8 +152,8 @@ fn read_terminal(
 /// The outpost's source for mockapp's terminal.
 fn source(uia: &Uia, hwnd: HWND, remote: bool) -> UiaText {
     let element = terminal_element(uia, hwnd);
-    let (pattern, pattern2) = verbatim_uia::text::text_pattern(&element).expect("a text pattern");
-    UiaText::new(element, pattern, pattern2, true).remote(remote)
+    let pattern = verbatim_uia::text::text_pattern(&element).expect("a text pattern");
+    UiaText::new(element, pattern, true).remote(remote)
 }
 
 fn uia_calls(uia: u32) -> CallCounts {

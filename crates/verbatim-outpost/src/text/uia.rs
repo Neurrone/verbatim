@@ -39,8 +39,7 @@
 use std::cmp::Ordering;
 
 use windows::Win32::UI::Accessibility::{
-    IUIAutomationElement, IUIAutomationTextPattern, IUIAutomationTextPattern2,
-    IUIAutomationTextRange, TextUnit_Character,
+    IUIAutomationElement, IUIAutomationTextPattern, IUIAutomationTextRange, TextUnit_Character,
 };
 use windows::core::AgileReference;
 
@@ -48,7 +47,8 @@ use verbatim_model::{
     BulletStyle, FormatAttribute, LineStyle, MAX_READ_AHEAD_TEXT, TextAttributes, TextDetails,
     TextMovement, TextReply, TextUnit,
 };
-use verbatim_uia::text::{Endpoint, TextPatternExt, TextRangeExt, caret_range, uia_text_unit};
+use verbatim_uia::text::{Endpoint, TextPatternExt, TextRangeExt, uia_text_unit};
+
 use verbatim_uia_rops::{
     Attributes, CaretAnswer, CaretQuery, FoundPoint, LocationQuery, Movement, Path, Position,
     RangeEnd, RangeQuery, RunAttributes, TextAttribute, TextFrom, TextTarget, UnitsQuery,
@@ -205,7 +205,6 @@ fn failed(error: windows::core::Error) -> TextError {
 pub struct UiaText {
     element: IUIAutomationElement,
     pattern: IUIAutomationTextPattern,
-    pattern2: Option<IUIAutomationTextPattern2>,
     terminal: bool,
     remote: bool,
     details: TextDetails,
@@ -226,8 +225,8 @@ pub struct TextSupport {
 }
 
 impl UiaText {
-    /// The text of `element` behind `pattern`, with `pattern2` for the
-    /// caret where the provider has it; `terminal` for a terminal's text.
+    /// The text of `element` behind `pattern`; `terminal` for a terminal's
+    /// text. The caret is the start of the selection, as NVDA's is.
     /// Caret reads use remote operations and read no detail beyond the
     /// text until [`remote`](Self::remote) and
     /// [`details`](Self::details) say otherwise.
@@ -235,13 +234,11 @@ impl UiaText {
     pub fn new(
         element: IUIAutomationElement,
         pattern: IUIAutomationTextPattern,
-        pattern2: Option<IUIAutomationTextPattern2>,
         terminal: bool,
     ) -> Self {
         Self {
             element,
             pattern,
-            pattern2,
             terminal,
             remote: true,
             details: TextDetails::NONE,
@@ -300,13 +297,6 @@ impl UiaText {
         &self.pattern
     }
 
-    /// The `TextPattern2`, when the provider has one, for reads outside the
-    /// text protocol (a terminal's caret, read with its new output).
-    #[must_use]
-    pub fn pattern2(&self) -> Option<&IUIAutomationTextPattern2> {
-        self.pattern2.as_ref()
-    }
-
     /// The caret read another program made (a terminal's, read with its new
     /// output, `crate::terminal`), as [`TextSource::caret_read`] gives it:
     /// the caret, the selection, and the caret's line.
@@ -344,7 +334,6 @@ impl UiaText {
         TextTarget {
             element: &self.element,
             pattern: &self.pattern,
-            pattern2: self.pattern2.as_ref(),
         }
     }
 
@@ -409,16 +398,10 @@ impl TextSource for UiaText {
                 selection: None,
             });
         }
-        let caret = match &self.pattern2 {
-            Some(pattern2) => UiaPos::new(
-                &caret_range(pattern2).map_err(failed)?,
-                Endpoint::Start,
-                true,
-            )?,
-            None => UiaPos::new(range, Endpoint::Start, false)?,
-        };
+        // The caret is the selection's start, as NVDA's is
+        // (`NVDAObjects/UIA/__init__.py` 488 to 498).
         Ok(CaretState {
-            caret,
+            caret: UiaPos::new(range, Endpoint::Start, false)?,
             selection: Some((
                 UiaPos::new(range, Endpoint::Start, false)?,
                 UiaPos::new(range, Endpoint::End, false)?,
@@ -628,7 +611,6 @@ impl TextSource for UiaText {
         let query = CaretQuery {
             element: &self.element,
             pattern: &self.pattern,
-            pattern2: self.pattern2.as_ref(),
             since: since.as_ref().map(end_of),
             previous_selection: previous
                 .as_ref()
@@ -698,7 +680,6 @@ impl TextSource for UiaText {
             previous_text: answer.previous_text,
             selection_start: SelectionStart {
                 in_line: answer.selection_start,
-                line: answer.selection_line.map(unit_read).transpose()?,
                 first: answer.start_first,
             },
         }))
@@ -722,7 +703,6 @@ impl TextSource for UiaText {
         let query = WatchQuery {
             element: &self.element,
             pattern: &self.pattern,
-            pattern2: self.pattern2.as_ref(),
             start: end_of(&start),
             start_selection: (end_of(&start_selection.0), end_of(&start_selection.1)),
             word: request.word,

@@ -12,12 +12,11 @@
 use windows::Win32::Globalization::LCIDToLocaleName;
 use windows::Win32::System::Variant::VT_I4;
 use windows::Win32::UI::Accessibility::{
-    IUIAutomationElement, IUIAutomationTextPattern, IUIAutomationTextPattern2,
-    IUIAutomationTextRange, IUIAutomationTextRange3, IUIAutomationTextRangeArray,
-    TextPatternRangeEndpoint, TextPatternRangeEndpoint_End, TextPatternRangeEndpoint_Start,
-    TextUnit, TextUnit_Character, TextUnit_Document, TextUnit_Line, TextUnit_Page,
-    TextUnit_Paragraph, TextUnit_Word, UIA_CultureAttributeId, UIA_TEXTATTRIBUTE_ID,
-    UIA_TextPattern2Id, UIA_TextPatternId,
+    IUIAutomationElement, IUIAutomationTextPattern, IUIAutomationTextRange,
+    IUIAutomationTextRange3, IUIAutomationTextRangeArray, TextPatternRangeEndpoint,
+    TextPatternRangeEndpoint_End, TextPatternRangeEndpoint_Start, TextUnit, TextUnit_Character,
+    TextUnit_Document, TextUnit_Line, TextUnit_Page, TextUnit_Paragraph, TextUnit_Word,
+    UIA_CultureAttributeId, UIA_TEXTATTRIBUTE_ID, UIA_TextPatternId,
 };
 use windows::core::{BSTR, Interface};
 
@@ -62,24 +61,17 @@ pub fn uia_text_unit(unit: verbatim_model::TextUnit) -> Option<TextUnit> {
     })
 }
 
-/// An element's text pattern: `TextPattern2` where the provider has it, for
-/// the caret, else `TextPattern`. Cross-process: one call when the
-/// provider has `TextPattern2`, two when it has only `TextPattern`.
+/// An element's text pattern. One cross-process call. Its caret is read
+/// from its selection, as NVDA reads it, never from `TextPattern2`.
 ///
 /// # Errors
 ///
-/// The COM error of the `TextPattern` fetch when the element has neither,
-/// or is gone.
+/// The COM error of the fetch when the element has no text pattern, or is
+/// gone.
 pub fn text_pattern(
     element: &IUIAutomationElement,
-) -> windows::core::Result<(IUIAutomationTextPattern, Option<IUIAutomationTextPattern2>)> {
-    if let Ok(pattern2) = element.current_pattern::<IUIAutomationTextPattern2>(UIA_TextPattern2Id) {
-        // A `TextPattern2` is a `TextPattern`; the cast stays in this process.
-        let pattern = pattern2.cast::<IUIAutomationTextPattern>()?;
-        return Ok((pattern, Some(pattern2)));
-    }
-    let pattern = element.current_pattern::<IUIAutomationTextPattern>(UIA_TextPatternId)?;
-    Ok((pattern, None))
+) -> windows::core::Result<IUIAutomationTextPattern> {
+    element.current_pattern::<IUIAutomationTextPattern>(UIA_TextPatternId)
 }
 
 /// The ranges of a range array, in order. Local.
@@ -139,21 +131,6 @@ impl TextPatternExt for IUIAutomationTextPattern {
         let array = unsafe { self.GetVisibleRanges() }?;
         Ok(ranges_of(&array))
     }
-}
-
-/// The caret, a collapsed range, from `TextPattern2`. Cross-process.
-///
-/// # Errors
-///
-/// The COM error if the provider fails.
-pub fn caret_range(
-    pattern: &IUIAutomationTextPattern2,
-) -> windows::core::Result<IUIAutomationTextRange> {
-    count(CallKind::Uia)?;
-    let mut active = windows::core::BOOL::default();
-    // SAFETY: `pattern` is a live pattern object and `active` a local the
-    // call writes whether the text has the keyboard focus.
-    unsafe { pattern.GetCaretRange(&raw mut active) }
 }
 
 /// Safe calls on a text range, each one cross-process call.

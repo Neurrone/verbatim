@@ -170,7 +170,6 @@ fn caret(offset: u32, selected: u32) -> CaretReport {
                     offset: offset + selected,
                 },
             },
-            start_line: None,
         }),
         read_at_us: 0,
     }

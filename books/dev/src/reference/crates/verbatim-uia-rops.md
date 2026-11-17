@@ -442,8 +442,8 @@ is built for each search, about 30 instructions a `FindText` call.
 `caret_read(query, remote)` (`CaretReadFn`) is one round trip remotely,
 the formatting the theme asks for included. A `CaretQuery` gives:
 
-- the element (a program starts from it), its text pattern and
-  `TextPattern2` (the classic reads use them);
+- the element (a program starts from it) and its text pattern (the
+  classic reads use it);
 - `since`, where the caret was known to be, a `RangeEnd`: a range and
   which of its ends; the selection's known ends; and `previous_collapsed`,
   whether that selection held nothing (a caret report sets it; a caret
@@ -467,9 +467,9 @@ The `CaretAnswer`:
 
 - `caret`, a range whose start is the caret, and whether it is known to
   be collapsed; `selection`, the selected range when text is selected.
-  The caret is the selection's first range, collapsed, when nothing is
-  selected; with text selected, `TextPattern2`'s caret range where the
-  provider has it, else the selection's start.
+  The caret is the start of the selection's first range, as NVDA's caret
+  is (`NVDAObjects/UIA/__init__.py` 488 to 498), whichever end of the
+  selection the provider's own caret is at.
 - `moved`: the caret is not where `since` says; `selection_moved`: the
   selection's ends are not the known ones.
 - `line` and `unit`: each a `UnitRead`, the range, its text, and how many
@@ -492,18 +492,18 @@ The `CaretAnswer`:
   on that line costs no further round trip.
 - `baseline_moved`: with `baseline_selection`, the selection is not a
   key's baseline's, compared when a read since replaced the node's last.
-- `selection_start`, `selection_line` and `start_first`: where the
-  selection starts, since `TextPattern2`'s caret can be its other end, so
-  a Backspace over the selection can say what comes before it, as NVDA's
-  caret, the selection's start, reads it.
+- `selection_start` and `start_first`: where the selection starts in the
+  caret's line, the caret's own offset, and whether that line is the
+  text's first, so a Backspace over the selection can say what comes
+  before it.
 - `changes`: with a previous selection that moved, the
   `SelectionTextChange`s by the text protocol's rule, read inside the
   provider, so a selecting key's answer is one round trip with the text
   of what changed.
 
 The program gets its text pattern with `GetTextPattern` (opcode 10014),
-reads the selection with `GetSelection` and, only when text is selected,
-the caret with `GetCaretRange`. It compares the caret and the selection
+reads the selection with `GetSelection`, whose first range's start is the
+caret. It compares the caret and the selection
 with the imported known ones, expands copies of the caret to the line and
 the unit, and reads their text and the text before the caret, whose
 length is the offset. Formatting is read by UIA's format unit, as NVDA
@@ -544,7 +544,7 @@ caret or the selection moved, or at the bound, so a key whose move a
 check finds costs one round trip with its final read. The comparisons of
 text (the characters beside the caret, the line, the word) are the
 caller's, made on the texts returned. The worst check, at the bound of a
-deleting key reading the word and a paragraph, executes 118 instructions
+deleting key reading the word and a paragraph, executes 110 instructions
 (`crates/mockapp/tests/instruction_limit.rs`).
 
 ## Layer 3: the text protocol's other reads

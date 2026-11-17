@@ -73,10 +73,7 @@ fn caret_on(line: TextChunk, selection: Option<CaretSelection>) -> CaretReport {
 }
 
 fn caret_selection(selection: Selection) -> CaretSelection {
-    CaretSelection {
-        range: selection,
-        start_line: None,
-    }
+    CaretSelection { range: selection }
 }
 
 /// A focus's caret read of `caret`, with the text selected, baseline
@@ -854,13 +851,17 @@ fn a_word_of_one_space_is_spoken_as_that_space() {
     // word of an indented line) is spelled, as NVDA keeps a unit's text
     // that is only white space when it decides whether to spell it
     // (`speech/speech.py` 1753 to 1763): "space", not "blank".
-    let mut text = editing("a  b
-", 0);
+    let mut text = editing(
+        "a  b
+", 0,
+    );
     assert_eq!(
         text.moved(
             CaretMotion::NextWord,
-            line("a  b
-", 101, 1),
+            line(
+                "a  b
+", 101, 1
+            ),
             Some(unit(TextUnit::Word, " ", 102))
         ),
         words(vec![character(" ")])
@@ -869,8 +870,10 @@ fn a_word_of_one_space_is_spoken_as_that_space() {
     assert_eq!(
         text.moved(
             CaretMotion::NextWord,
-            line("a  b
-", 101, 1),
+            line(
+                "a  b
+", 101, 1
+            ),
             Some(unit(TextUnit::Word, "  ", 103))
         ),
         words(vec![message(Message::Blank)])
@@ -1119,50 +1122,12 @@ fn backspace_over_a_selection_says_what_was_before_its_start_then_the_selection_
 }
 
 #[test]
-fn backspace_over_a_selection_from_an_earlier_line_says_what_was_before_its_start() {
-    let text = "alpha beta gamma\r\n";
-    let space = character(" ");
-    let beta = UtteranceSegment::text("beta".to_owned());
-    // A selection that starts on an earlier line than the caret's, as
-    // Notepad's Shift+End over "gamma" leaves it, the caret at the next
-    // line's start: what comes before its start, in the line the outpost
-    // reported with it (`notepad-third-word-to-end-backspace.txt`,
-    // `notepad-third-word-to-end-control-backspace.txt`).
-    for (motion, said) in [
-        (CaretMotion::Backspace, &space),
-        (CaretMotion::BackspaceWord, &beta),
-    ] {
-        let mut field = edit_control(text, 0);
-        let selection = CaretSelection {
-            range: Selection {
-                start: TextPosition {
-                    anchor: TextAnchor(300),
-                    offset: 11,
-                },
-                end: TextPosition {
-                    anchor: TextAnchor(201),
-                    offset: 0,
-                },
-            },
-            start_line: Some(Box::new(line(text, 300, 11))),
-        };
-        assert_eq!(
-            field.selection(caret_on(line(text, 100, 0), Some(selection)), None),
-            []
-        );
-        assert_eq!(
-            field.deleted_selection(motion, line(text, 100, 0)),
-            [
-                words(vec![said.clone()]),
-                words(vec![message(Message::SelectionRemoved)])
-            ],
-            "{motion:?} over a selection from an earlier line"
-        );
-    }
-
+fn backspace_over_a_selection_whose_start_is_in_no_line_reported_says_only_the_change() {
     // A start in no line reported with it has nothing known before it:
     // only the selection's change is said.
+    let text = "alpha beta gamma\r\n";
     let mut field = edit_control(text, 0);
+
     let selection = Some(caret_selection(selection_from(3, false)));
     assert_eq!(
         field.selection(caret_on(line(text, 100, 6), selection), None),

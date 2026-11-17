@@ -228,9 +228,9 @@ struct SnapshotKey {
     screen_rows: u32,
     whole: bool,
     above: u32,
-    /// Whether the caret is read, with `TextPattern2`, at most how much of
+    /// Whether the caret is read: at most how much of
     /// its line, and the end of `since` it is compared with.
-    caret: Option<(bool, i32, Option<i32>)>,
+    caret: Option<(i32, Option<i32>)>,
     /// Whether colours are read, and at what width.
     colours: Option<usize>,
 }
@@ -244,7 +244,6 @@ impl SnapshotKey {
             above: query.above,
             caret: query.caret.map(|caret| {
                 (
-                    caret.pattern2.is_some(),
                     caret.max_text,
                     caret.since.map(|since| endpoint_number(since.endpoint)),
                 )
@@ -502,7 +501,7 @@ fn build_snapshot(b: &mut Builder, query: &SnapshotQuery<'_>) -> SnapshotRegiste
 
     let caret = query
         .caret
-        .map(|caret| emit_caret_line(b, &caret, (element, pattern, since)));
+        .map(|caret| emit_caret_line(b, &caret, (pattern, since)));
     // The colours last, after the text they describe.
     let colours = query.colours.map(|width| {
         let (top, limit, top_row) = emit_bounds(b, screen, document);
