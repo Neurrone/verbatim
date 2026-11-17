@@ -1144,8 +1144,13 @@ pub enum QueueInput {
     /// The keyboard hook cut speech off at a key press, at the input's
     /// time: handled at once in the inbox, as the speech side's cut
     /// (`docs/design/readers-tell-core-asks-build1.md`, "The inbox, handled
-    /// at once"); say-all stops, as NVDA's stops on any key.
-    SpeechCut,
+    /// at once"); say-all stops, as NVDA's stops on any key. The speech
+    /// queue drops speech of keys numbered below `key`, so Core's speech
+    /// from then on carries at least `key`, a modifier's number included.
+    SpeechCut {
+        /// The number of the key whose press cut speech.
+        key: crate::KeySeq,
+    },
     /// An utterance Core placed index marks in was cut off before playback
     /// reached all of them, however it was cut; handled at once in the
     /// inbox, so what waited on its marks stops.

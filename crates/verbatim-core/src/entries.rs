@@ -1143,9 +1143,11 @@ pub(crate) fn route(
             return Routed::Said(Vec::new());
         }
         QueueInput::Process(fact) => Input::Process(*fact),
-        QueueInput::SpeechCut => {
-            // A key press cut speech off: a terminal drops what waits, and
-            // say-all stops, as NVDA's stops on any key.
+        QueueInput::SpeechCut { key } => {
+            // A key press cut speech off: what arrives from now on speaks
+            // past the cut, a terminal drops what waits, and say-all stops,
+            // as NVDA's stops on any key.
+            state.arrivals.speech_cut(*key);
             let mut said = crate::terminal::cut(state, at_us / 1_000);
             said.extend(crate::say_all::stop(state));
             // A say-all stopped with its read out withdraws it.

@@ -458,7 +458,9 @@ fn a_keys_cut_of_speech_stops_say_all_and_withdraws_its_read() {
         &verbatim_model::Input::Queue {
             trace_id: verbatim_model::TraceId::from_raw(0),
             at_us: 0,
-            input: verbatim_model::request::QueueInput::SpeechCut,
+            input: verbatim_model::request::QueueInput::SpeechCut {
+                key: verbatim_model::KeySeq::new(2),
+            },
         },
     );
     assert_eq!(cut.display, [false]);

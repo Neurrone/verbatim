@@ -622,7 +622,8 @@ exists), or `Unanswered` (no answer in time, or the read failed).
   quiet-period timer came due, at the due time Core's state gave.
 - The shell sends the speech side's reports and its timers as queue
   inputs (`Input::Queue`), handled at once by Core:
-  `QueueInput::SpeechCut` (a key press cut speech off),
+  `QueueInput::SpeechCut { key }` (the press of key `key`, a modifier
+  included, cut speech off),
   `QueueInput::UtteranceCancelled` and `QueueInput::UtteranceFailed`,
   `QueueInput::Due` (the time Core last asked to be woken at came),
   `QueueInput::TerminalDue { at_ms }` for `TerminalTimer`, and

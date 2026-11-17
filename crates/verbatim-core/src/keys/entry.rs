@@ -40,11 +40,17 @@ impl Fence {
     }
 }
 
-/// What Core keeps of the keys that joined the queue: the newest key
-/// number, every later arrival's fence, and what marks a caret key.
+/// What Core keeps of the keys that joined the queue and the keys that cut
+/// speech: the newest key number to join, which marks a caret key, and the
+/// newest to cut speech, which with it gives every later arrival's fence.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Arrivals {
+    /// The newest non-modifier key, command, braille gesture or key Core
+    /// sends to join the queue.
     newest: KeySeq,
+    /// The newest key whose press cut speech, a modifier, which joins no
+    /// queue, included.
+    cut: KeySeq,
 }
 
 impl Arrivals {
@@ -54,9 +60,17 @@ impl Arrivals {
         self.newest = self.newest.max(key);
     }
 
+    /// The key numbered `key` cut speech. The speech queue drops speech
+    /// carrying a lower number, so speech of what arrives after the cut
+    /// carries at least `key`; a modifier's cut marks no caret key, as a
+    /// modifier alone queues no script in NVDA (`docs/parity/text.md`).
+    pub(crate) fn speech_cut(&mut self, key: KeySeq) {
+        self.cut = self.cut.max(key);
+    }
+
     /// The fence of an entry joining now.
     pub(crate) fn fence(self) -> Fence {
-        Fence(self.newest)
+        Fence(self.newest.max(self.cut))
     }
 
     /// Whether the caret key numbered `key` is marked silent: a key joined
@@ -308,5 +322,20 @@ mod tests {
         assert!(arrivals.marks(KeySeq::new(4)));
         assert!(!arrivals.marks(KeySeq::new(5)));
         assert_eq!(arrivals.fence().key(), Some(KeySeq::new(5)));
+    }
+
+    /// A modifier's cut of speech moves the fence of what arrives after it,
+    /// so that its speech outlives the cut, and marks no caret key ahead.
+    #[test]
+    fn a_modifiers_cut_moves_the_fence_and_marks_no_caret_key() {
+        let mut arrivals = Arrivals::default();
+        arrivals.key_joined(KeySeq::new(4));
+        arrivals.speech_cut(KeySeq::new(5));
+        assert!(!arrivals.marks(KeySeq::new(4)));
+        assert_eq!(arrivals.fence().key(), Some(KeySeq::new(5)));
+        // The next key joins: its own number is the fence again.
+        arrivals.key_joined(KeySeq::new(6));
+        assert!(arrivals.marks(KeySeq::new(4)));
+        assert_eq!(arrivals.fence().key(), Some(KeySeq::new(6)));
     }
 }

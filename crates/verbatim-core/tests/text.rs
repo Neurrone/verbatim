@@ -919,6 +919,28 @@ fn shift_movement_speaks_what_was_selected_and_unselected() {
     );
 }
 
+/// A modifier pressed after a selection key, in the hook's order: its cut
+/// of speech reaches Core before the caret tell, which speaks what was
+/// selected carrying the modifier's number, so the speech queue, which
+/// drops speech numbered below the cut, speaks it.
+#[test]
+fn speech_arriving_after_a_modifiers_cut_carries_the_modifiers_number() {
+    let mut text = editing("hello, world\n", 5);
+    // Shift+Right Arrow is key 1, Control key 2.
+    assert_eq!(text.key(CaretMotion::NextCharacter, true), []);
+    assert_eq!(text.cut(), []);
+    assert_eq!(
+        text.selection(
+            caret_on(line("hello, world\n", 100, 6), None),
+            Some(differing(&[(true, ",")], None))
+        ),
+        [queued(vec![phrase(Phrase::Selected(
+            SelectionText::Character(",".to_owned())
+        ))])]
+    );
+    assert_eq!(text.stamps, [Some(KeySeq::new(2))]);
+}
+
 /// The selection of bytes `start` to `end` of the line at anchor 100.
 fn selected(start: u32, end: u32) -> CaretSelection {
     let at = |offset| TextPosition {
@@ -3355,9 +3377,17 @@ impl Text {
         })
     }
 
-    /// The speech side's cut, or `input` from it, handled at once.
+    /// The speech side's report `input`, handled at once.
     fn speech(&mut self, input: QueueInput) -> Vec<Heard> {
         self.step(input)
+    }
+
+    /// A key that joins no queue, such as a modifier, pressed next and
+    /// cutting speech, handled at once.
+    fn cut(&mut self) -> Vec<Heard> {
+        self.desk.keys += 1;
+        let key = KeySeq::new(self.desk.keys);
+        self.step(QueueInput::SpeechCut { key })
     }
 }
 
@@ -3497,7 +3527,7 @@ fn say_all_splits_a_paragraph_into_sentences_and_stops_on_a_key() {
     assert_eq!(text.placed(), []);
     // A key's cut stops it, dropping what was waiting; a late mark is
     // ignored.
-    assert_eq!(text.speech(QueueInput::SpeechCut), [Heard::Display(false)]);
+    assert_eq!(text.cut(), [Heard::Display(false)]);
     assert_eq!(text.mark(marks_of(&third[0])[0]), NOTHING);
 }
 
@@ -3665,7 +3695,7 @@ fn say_all_splits_lines_at_their_last_sentence_end_and_joins_a_sentence_across_l
     // The last utterance starts with the rest of the second line: the
     // caret stays there, and a key stops say-all with it there.
     assert_eq!(text.mark(third[0]), NOTHING);
-    assert_eq!(text.speech(QueueInput::SpeechCut), [Heard::Display(false)]);
+    assert_eq!(text.cut(), [Heard::Display(false)]);
     assert_eq!(text.mark(third[1]), NOTHING);
 }
 

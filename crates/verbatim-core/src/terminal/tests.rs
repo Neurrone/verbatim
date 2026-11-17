@@ -895,7 +895,9 @@ fn a_cut_while_held_reads_to_the_end_without_speaking() {
         &Input::Queue {
             trace_id: verbatim_model::TraceId::from_raw(0),
             at_us: 0,
-            input: verbatim_model::request::QueueInput::SpeechCut,
+            input: verbatim_model::request::QueueInput::SpeechCut {
+                key: verbatim_model::KeySeq::new(1),
+            },
         },
     );
     // The changes held unread are read by a silent read.
@@ -929,7 +931,9 @@ fn a_read_a_cut_overtakes_speaks_only_its_answers_to_keys() {
         &Input::Queue {
             trace_id: verbatim_model::TraceId::from_raw(0),
             at_us: 0,
-            input: verbatim_model::request::QueueInput::SpeechCut,
+            input: verbatim_model::request::QueueInput::SpeechCut {
+                key: verbatim_model::KeySeq::new(1),
+            },
         },
     );
     // The release read out at the cut becomes silent: nothing more is
@@ -959,7 +963,9 @@ fn output_read_before_a_cut_is_not_spoken() {
         &Input::Queue {
             trace_id: verbatim_model::TraceId::from_raw(0),
             at_us: 5_000_000,
-            input: verbatim_model::request::QueueInput::SpeechCut,
+            input: verbatim_model::request::QueueInput::SpeechCut {
+                key: verbatim_model::KeySeq::new(1),
+            },
         },
     );
     playback.feed(
@@ -1165,7 +1171,9 @@ fn speech_cut_off_drops_the_output_still_waiting() {
         &Input::Queue {
             trace_id: verbatim_model::TraceId::from_raw(0),
             at_us: 0,
-            input: verbatim_model::request::QueueInput::SpeechCut,
+            input: verbatim_model::request::QueueInput::SpeechCut {
+                key: verbatim_model::KeySeq::new(1),
+            },
         },
     );
     assert_eq!(playback.play_all(&mut state), ["line 1"]);
@@ -1418,7 +1426,9 @@ fn of_what_a_read_before_a_cut_said_only_the_answers_to_keys_are_spoken() {
         &Input::Queue {
             trace_id: verbatim_model::TraceId::from_raw(0),
             at_us: 5_000_000,
-            input: verbatim_model::request::QueueInput::SpeechCut,
+            input: verbatim_model::request::QueueInput::SpeechCut {
+                key: verbatim_model::KeySeq::new(1),
+            },
         },
     );
     let speech = TerminalSpeech {

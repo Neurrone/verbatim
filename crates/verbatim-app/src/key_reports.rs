@@ -91,7 +91,7 @@ thread_local! {
 /// The two ports the hook's callbacks post to, through one function on the
 /// hook thread ([`Ports::post`]): a post a port refuses is kept and posted
 /// again, ahead of the next one, so no command or cancel overtakes a
-/// refused one, and a key's cancel and the reducer's `SpeechCancelled`
+/// refused one, and a key's cancel and the reducer's `SpeechCut`
 /// are both kept or both made. One whose port has closed is dropped, its
 /// taker having gone.
 #[derive(Clone)]
@@ -182,7 +182,7 @@ pub(crate) fn speech_effect(ports: Ports) -> Box<dyn Fn(KeySpeechEffect, KeySeq)
                 Post::Command(ShellCommand::Input(Box::new(Input::Queue {
                     trace_id: TraceId::mint(),
                     at_us: verbatim_process::clock::now_us(),
-                    input: QueueInput::SpeechCut,
+                    input: QueueInput::SpeechCut { key: key_seq },
                 }))),
                 Some(key_seq),
             );
@@ -639,23 +639,31 @@ mod tests {
         (Ports::new(commands, control), commands_taken, speech_taken)
     }
 
-    /// The key each command waiting on `port` is of, typed text being the
-    /// only command these tests post, and `None` for a cancel's
-    /// `SpeechCut`.
-    fn typed_keys(
-        port: &mut verbatim_process::port_queue::PortQueue<ShellCommand>,
-    ) -> Vec<Option<KeySeq>> {
+    /// A command the hook posted to the reducer's port, by its key.
+    #[derive(Debug, PartialEq, Eq)]
+    enum Posted {
+        /// The key's typed text.
+        Typed(KeySeq),
+        /// The key's speech cut.
+        Cut(KeySeq),
+    }
+
+    /// Each command waiting on `port`, typed text and speech cuts being the
+    /// only commands these tests post.
+    fn typed_keys(port: &mut verbatim_process::port_queue::PortQueue<ShellCommand>) -> Vec<Posted> {
         std::iter::from_fn(|| port.try_recv())
             .map(|command| match command {
                 ShellCommand::Input(input) => match *input {
                     Input::Queue {
                         input: QueueInput::Press(press),
                         ..
-                    } if matches!(press.action, PressAction::Typed { .. }) => Some(press.key_seq),
+                    } if matches!(press.action, PressAction::Typed { .. }) => {
+                        Posted::Typed(press.key_seq)
+                    }
                     Input::Queue {
-                        input: QueueInput::SpeechCut,
+                        input: QueueInput::SpeechCut { key },
                         ..
-                    } => None,
+                    } => Posted::Cut(key),
                     other => panic!("the hook posted {other:?}"),
                 },
                 _ => panic!("the hook posted something other than an input"),
@@ -712,21 +720,21 @@ mod tests {
         report(typed(second));
         assert_eq!(
             typed_keys(&mut commands),
-            [Some(first), Some(second)],
+            [Posted::Typed(first), Posted::Typed(second)],
             "the kept command first, then the next key's"
         );
         drop(refusal);
     }
 
     /// A key's cancel the speech queue's port refuses is kept, and the
-    /// `SpeechCancelled` the key posts after it waits behind it; both are
+    /// `SpeechCut` the key posts after it waits behind it; both are
     /// posted ahead of the next key's posts, each taken once.
     #[test]
     fn a_refused_speech_cancel_is_posted_before_the_next_keys_posts() {
         // Keys no other test posts, so the selector names this test's post.
         let (first, second) = (KeySeq::new(92_001), KeySeq::new(92_002));
         // Refused as the key posts it, and again as the key's own
-        // `SpeechCancelled` is posted behind it.
+        // `SpeechCut` is posted behind it.
         let refusal = verbatim_faults::arm(
             verbatim_faults::Fault::KeyPostRefused,
             move |post: &PostSubject| {
@@ -750,7 +758,7 @@ mod tests {
         assert_eq!(
             typed_keys(&mut commands),
             [],
-            "the key's SpeechCancelled waits behind its cancel"
+            "the key's SpeechCut waits behind its cancel"
         );
         effect(KeySpeechEffect::Cancel, second);
         assert_eq!(
@@ -760,8 +768,8 @@ mod tests {
         );
         assert_eq!(
             typed_keys(&mut commands),
-            [None, None],
-            "each key's SpeechCancelled, once"
+            [Posted::Cut(first), Posted::Cut(second)],
+            "each key's SpeechCut, once"
         );
         drop(refusal);
     }
@@ -773,7 +781,7 @@ mod tests {
         // A key no other test posts, so the selector names this test's post.
         let key = KeySeq::new(93_001);
         // Refused as the key posts it, and again as the key's own
-        // `SpeechCancelled` is posted behind it.
+        // `SpeechCut` is posted behind it.
         let refusal = verbatim_faults::arm(
             verbatim_faults::Fault::KeyPostRefused,
             move |post: &PostSubject| {

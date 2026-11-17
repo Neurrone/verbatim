@@ -67,7 +67,7 @@ active review and navigation bindings follow `settings.toml`'s
 The keyboard hook's two callbacks are the `key_reports` module, which
 runs on the hook thread and is checked by `cargo xtask ci`'s hook rule
 (`xtask/src/ownership.rs`): the speech effect calls `cancel_through` with
-the key's number and posts `QueueInput::SpeechCut`, or posts the
+the key's number and posts `QueueInput::SpeechCut` with the same number, or posts the
 pause's toggle; the report callback notes the key in the latency ledger and turns
 each `KeyReport` into its `ShellCommand`s, by lookups in tables made when
 the hook starts (`key_reports::Tables`), and posts them to the reducer's
