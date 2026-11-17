@@ -18,11 +18,11 @@
 //!    one generation in charge at a time, each running one program at a
 //!    time on copies, posting its commits to the mailbox. A worker whose
 //!    call hangs is abandoned and replaced by the reducer.
-//! 5. The I/O thread ([`Outpost::handle_command`], driven by [`run_pipe`]
+//! 4. The I/O thread ([`Outpost::handle_command`], driven by [`run_pipe`]
 //!    on the transport's child side): reads Core's commands, answers pings
 //!    itself, so a busy or hung worker never makes the outpost look dead,
 //!    and finishes the writes to Core that pended.
-//! 6. The outbound queue ([`outbound`]): every thread writes its own
+//! 5. The outbound queue ([`outbound`]): every thread writes its own
 //!    messages to Core when no write is in flight; pongs and `Ready` go
 //!    first; sending never waits, and messages waiting behind a write in
 //!    flight keep their order.
@@ -73,7 +73,7 @@ use windows::Win32::UI::Accessibility::{
 
 use verbatim_ia2::{CONSOLE_SUBSCRIPTIONS, WinEvent};
 use verbatim_model::property::NodeDetailSet;
-use verbatim_model::{NodeId, Pid, TraceId};
+use verbatim_model::{Pid, TraceId};
 use verbatim_process::overlapped::{End, Flow, pipe};
 use verbatim_process::scheduling::{ThreadPriority, prioritize_role};
 use verbatim_process::transport::{
@@ -308,11 +308,6 @@ struct RequestContext<'a> {
     /// The program's own: its request, the caret events waiting when it
     /// was dispatched, and its worker's charge.
     program: Program<'a>,
-    /// The nodes the program's walks took from the outpost's ancestry
-    /// cache, the previous chain, above their cache join
-    /// ([`read::join_cache`]): the report's cached ancestors, from which its
-    /// `first_cached_ancestor` is computed as it is emitted.
-    joined_cache: RefCell<Vec<NodeId>>,
     /// The observation its verdicts are judged at: its entry's event's, or,
     /// when `None`, now on the arbitrator's observation clock at each
     /// judgement (`books/dev/src/reference/adr/0001-focus.md`, "One judge per fact").
@@ -345,7 +340,6 @@ impl<'a> RequestContext<'a> {
             nodes: context.store.nodes_for(tag, details),
             facts: RefCell::new(facts),
             program_text: RefCell::default(),
-            joined_cache: RefCell::default(),
             program: Program {
                 request,
                 charge,
@@ -354,12 +348,6 @@ impl<'a> RequestContext<'a> {
             judged_at: None,
             given_verdict: Cell::new(None),
         }
-    }
-
-    /// Notes `nodes`, entries a walk took from the ancestry cache above its
-    /// cache join, as cached ancestors of the report the program makes.
-    fn note_cached(&self, nodes: impl IntoIterator<Item = NodeId>) {
-        self.joined_cache.borrow_mut().extend(nodes);
     }
 
     /// Judges every verdict the program asks for at the observation

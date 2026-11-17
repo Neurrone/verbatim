@@ -70,22 +70,13 @@ pub(super) struct FocusLost;
 /// join, extended outward with the part of `previous`, the outpost's
 /// ancestry cache, above `met`: NVDA reuses the previous focus's ancestors
 /// from where the new focus's ancestry meets them, rather than reading
-/// them again. The entries joined on are the report's cached ancestors,
-/// noted for its `first_cached_ancestor` ([`RequestContext::note_cached`]).
-/// Each is recorded as carried by the message the chain goes in, which
-/// names it, as a node looked up is (`super::store::Recorded`); `previous`
-/// holds only entries the store still holds, tagged with the walk's
-/// request ([`held_prefix`]), and none at all when its title check failed
-/// (`Worker::focus_chain`).
+/// them again.
 pub(super) fn join_cache(
-    context: &RequestContext<'_>,
     previous: &[NodeSnapshot],
     chain: Vec<NodeSnapshot>,
     met: NodeId,
 ) -> Vec<NodeSnapshot> {
-    let (chain, above) = join_cache_onto(previous, chain, met);
-    context.note_cached(above.iter().map(|node| node.id));
-    chain
+    join_cache_onto(previous, chain, met).0
 }
 
 /// [`join_cache`]'s chain, and the entries of `previous` it joined on.
@@ -450,7 +441,7 @@ fn complete(
 ) -> Result<Vec<NodeSnapshot>, FocusLost> {
     Ok(match above {
         Above::Nothing => chain,
-        Above::Met(met) => join_cache(context, previous, chain, met),
+        Above::Met(met) => join_cache(previous, chain, met),
         Above::From(hwnd) => window_onward(context, uia, hwnd, (previous, candidates))?
             .into_iter()
             .chain(chain)
@@ -698,7 +689,7 @@ fn window_object_onward(
         // every UIA ancestor is ([`Ancestor::is_focus_context`]).
         let below = if element.read().is_focus_context(&top) {
             if known(top_id) {
-                return Ok(Some(join_cache(context, previous, vec![top], top_id)));
+                return Ok(Some(join_cache(previous, vec![top], top_id)));
             }
             vec![top]
         } else {
@@ -732,7 +723,7 @@ fn window_object_onward(
     };
     if known(client.id) {
         let client_id = client.id;
-        return Ok(Some(join_cache(context, previous, vec![client], client_id)));
+        return Ok(Some(join_cache(previous, vec![client], client_id)));
     }
     let above = msaa_ancestors(context, uia, &client, (previous, candidates))?;
     Ok(Some(
@@ -1304,9 +1295,9 @@ fn dialog_text_of(
 /// (Dickson, 2026-11-07). Returned with the window whose focused element it
 /// read.
 ///
-/// Through MSAA, the focused object is the focus window's client's
-/// `accFocus`, whose answer is checked as an object of a window this
-/// application serves before it is read
+/// Through MSAA, the focused object is found from the focus window's client
+/// by following `accFocus` down, each object it reaches checked as one of a
+/// window this application serves before anything more is asked of it
 /// ([`verbatim_ia2::acquire::focused_object`]): another process's
 /// answers no focused control. With `focused_state_test`, the check after
 /// a menu end, it is read only when it or an ancestor, up to the desktop,

@@ -264,10 +264,6 @@ pub struct FocusGroup {
 /// An accessibility event, normalized by an outpost from either backend.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
-#[expect(
-    clippy::large_enum_variant,
-    reason = "an event is built once per observation and moved, as its input is"
-)]
 pub enum NormalizedEvent {
     /// Keyboard focus moved to a node.
     FocusChanged {

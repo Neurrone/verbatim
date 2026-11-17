@@ -70,9 +70,10 @@
 //! itself ([`Arbitrator::set_observation_clock`]) and the probe is made
 //! again exactly when the test says.
 //!
-//! The worker drops MSAA events whose window arbitrates to UIA and UIA events
-//! whose window does not, so the two backends never both announce the same
-//! change.
+//! These verdicts decide only how the outpost reads a window; which
+//! backend's events speak for a window is Core's judgement, by its own
+//! verdicts (`books/dev/src/reference/adr/0001-focus.md`, "One judge per
+//! fact").
 
 use std::collections::HashSet;
 use std::sync::Arc;
