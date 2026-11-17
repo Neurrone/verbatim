@@ -500,7 +500,6 @@ mod tests {
                         start: position,
                         end: position,
                     },
-                    start_line: None,
                 },
             }),
             line: TextChunk {

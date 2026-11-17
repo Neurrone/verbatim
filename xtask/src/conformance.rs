@@ -310,7 +310,7 @@ fn text_element(
             Err(_) => std::thread::sleep(Duration::from_millis(50)),
         }
     };
-    let (pattern, _) = verbatim_uia::text::text_pattern(&element).map_err(error)?;
+    let pattern = verbatim_uia::text::text_pattern(&element).map_err(error)?;
     Ok((element, pattern))
 }
 
