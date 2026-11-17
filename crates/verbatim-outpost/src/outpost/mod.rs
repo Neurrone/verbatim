@@ -1474,9 +1474,11 @@ fn register_focus_events(context: &Arc<Context>) -> Option<Registration> {
         events: vec![UIA_Text_TextChangedEventId],
         callback: text_callback,
     };
-    // NVDA's extended group holds the active text position changes too;
-    // the outpost tells Core nothing of them, Core having no handler for
-    // them, so each is heard and dropped.
+    // NVDA registers the active text position changes desktop-wide, in
+    // its global group (`UIAHandler/__init__.py` 634 to 639); the outpost
+    // registers them on a text focus with its text changes, and tells Core
+    // nothing of them, Core having no handler for them, so each is heard
+    // and dropped.
     let position_context = Arc::clone(context);
     let position = Subscription::ActiveTextPosition {
         callback: Arc::new(
