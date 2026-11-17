@@ -93,9 +93,9 @@ pub(crate) fn recover(
     for store in &mut audio.sources {
         store.rewind(played);
     }
-    audio.fire(Instant::now());
+    audio.fire(device.has_clock(), Instant::now());
     open(audio, device, tap_signal);
-    audio.fire(Instant::now());
+    audio.fire(device.has_clock(), Instant::now());
     for (store, control) in audio.sources.iter_mut().zip(&audio.controls) {
         store.released_now = false;
         control.released.store(store.released, Ordering::Release);
@@ -116,7 +116,7 @@ pub(crate) fn shut_down(audio: &mut AudioLoop, device: &mut Fallback) {
         store.end_all(&UtteranceEnding::Cancelled);
     }
     loop {
-        audio.fire(Instant::now());
+        audio.fire(device.has_clock(), Instant::now());
         audio.end_pass();
         let done = audio
             .sources

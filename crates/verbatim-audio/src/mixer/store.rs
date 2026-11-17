@@ -594,11 +594,13 @@ impl SourceState {
     /// Retires the voices that have played to their end, ending the
     /// utterance of one that ends it, then reports every event whose moment
     /// has played, while the ring has room, then lets go of the frames that
-    /// have played. Returns whether it sent anything.
+    /// have played. A start waits for the device's clock when `clocked`,
+    /// the device having one. Returns whether it sent anything.
     pub(crate) fn fire(
         &mut self,
         source: usize,
         played: u64,
+        clocked: bool,
         at: Instant,
         out: &mut Producer<Outbound>,
     ) -> bool {
@@ -618,15 +620,17 @@ impl SourceState {
             };
             let event = match pending.kind {
                 Kind::Start => {
-                    if let Some(mix) = self.mix_position(pending.position)
-                        && self.awaiting_clock.len() < self.awaiting_clock.capacity()
-                    {
+                    let mix = self.mix_position(pending.position).filter(|_| {
+                        clocked && self.awaiting_clock.len() < self.awaiting_clock.capacity()
+                    });
+                    if let Some(mix) = mix {
                         self.awaiting_clock
                             .push((pending.utterance, pending.trace_id, mix));
                     }
                     PlaybackEvent::Started {
                         utterance: pending.utterance,
                         trace_id: pending.trace_id,
+                        clocked: mix.is_some(),
                     }
                 }
                 Kind::Mark(mark) => PlaybackEvent::Mark {

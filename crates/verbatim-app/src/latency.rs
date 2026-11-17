@@ -5,7 +5,9 @@
 //! subscribers.
 //!
 //! It also logs one line per announcement, at `info` on the
-//! `verbatim::latency` target, when its audio starts: how long each stage
+//! `verbatim::latency` target, once its stages are known: when the
+//! device's clock passes its first frame, or, on a device without a clock,
+//! when the device takes that frame. The line says how long each stage
 //! took, from Windows raising the event to the audio engine taking the first
 //! sample, in milliseconds, with the cross-process calls the outpost's read
 //! made (`books/dev/src/reference/performance.md`). A caret key's line starts when the keyboard
@@ -87,8 +89,10 @@ struct Stages {
     /// When the device's own clock passed the first frame.
     audio_heard: Option<u64>,
     /// Whether the latency line has been written: once the device's clock
-    /// passed the first frame, or, for a device without a clock or
-    /// playback that stopped first, once the utterance ended.
+    /// passed the first frame, or, for a device without a clock, once the
+    /// device took it, its last stage then being known; or, for playback
+    /// that stopped first or a clock that could not be read, once the
+    /// utterance ended.
     line_written: bool,
     /// Whether the trace's first utterance has ended, heard or not.
     ended: bool,
@@ -742,19 +746,30 @@ impl SpeechEvents for LatencyLedger {
         }
     }
 
-    fn audio_started(&self, utterance: UtteranceId, trace_id: TraceId, _at: std::time::Instant) {
+    fn audio_started(
+        &self,
+        utterance: UtteranceId,
+        trace_id: TraceId,
+        clocked: bool,
+        _at: std::time::Instant,
+    ) {
         // A trace's timeline ends at its first audio: when several
         // utterances share a trace, the first to be heard counts.
         let now = (self.clock)();
         let at_ms = now / 1_000;
-        // The line waits for the device's clock or the utterance's end
-        // ([`Stages::line_written`]).
         self.update(trace_id, |entry| {
             entry.audio_started_at_ms.get_or_insert(at_ms);
             if entry.stages.utterance == Some(utterance) && entry.stages.audio_started.is_none() {
                 entry.stages.audio_started = Some(now);
             }
         });
+        // A clock's report is the line's last stage, so the line waits for
+        // it, or for the utterance's end; without a clock every stage is
+        // known now, and the line is written beside the speech it measures
+        // ([`Stages::line_written`]).
+        if !clocked {
+            self.write_line(utterance, trace_id);
+        }
         if let Some(server) = self.server.get() {
             server.broadcast_speech_started(utterance, at_ms);
         }
@@ -830,8 +845,9 @@ impl SpeechEvents for LatencyLedger {
         ending: &UtteranceEnding,
         _at: std::time::Instant,
     ) {
-        // The line of an utterance whose device has no clock, or whose
-        // playback stopped before the clock passed its first frame.
+        // The line of an utterance whose playback stopped before the
+        // device's clock passed its first frame, or whose clock could not
+        // be read.
         self.write_line(utterance, trace_id);
         // Its speech is no longer owed, measured or not.
         if let Some(entry) = self
@@ -945,7 +961,7 @@ mod tests {
             std::time::Instant::now(),
         );
         FAKE_US.set(262_900);
-        ledger.audio_started(UtteranceId(1), trace, std::time::Instant::now());
+        ledger.audio_started(UtteranceId(1), trace, true, std::time::Instant::now());
 
         assert_eq!(
             ledger.recent(10),
@@ -959,6 +975,48 @@ mod tests {
         );
     }
 
+    /// A ledger holding one utterance, `OK button`, queued, synthesized
+    /// and sent to the mixer, on a new trace.
+    fn ledger_with_an_utterance_to_start() -> (LatencyLedger, TraceId) {
+        let now = std::time::Instant::now;
+        let ledger = ledger_at(1_000);
+        let trace = TraceId::mint();
+        ledger.utterance_queued(UtteranceId(1), trace, "OK button", now());
+        FAKE_US.set(2_000);
+        ledger.synthesis_started(UtteranceId(1), trace, now());
+        ledger.audio_to_mixer(UtteranceId(1), trace, now());
+        FAKE_US.set(3_000);
+        (ledger, trace)
+    }
+
+    fn line_written(ledger: &LatencyLedger) -> bool {
+        ledger.timelines.lock().expect("ledger lock").entries[0]
+            .stages
+            .line_written
+    }
+
+    /// On a device without a clock the line is written when the device
+    /// takes the first frame, every stage it reports being known then, not
+    /// when the utterance ends.
+    #[test]
+    fn without_a_clock_the_line_is_written_when_the_audio_starts() {
+        let (ledger, trace) = ledger_with_an_utterance_to_start();
+        ledger.audio_started(UtteranceId(1), trace, false, std::time::Instant::now());
+        assert!(line_written(&ledger));
+    }
+
+    /// On a device with a clock the line waits for the clock's report,
+    /// its last stage.
+    #[test]
+    fn with_a_clock_the_line_waits_for_the_clocks_report() {
+        let (ledger, trace) = ledger_with_an_utterance_to_start();
+        let now = std::time::Instant::now;
+        ledger.audio_started(UtteranceId(1), trace, true, now());
+        assert!(!line_written(&ledger));
+        ledger.audio_heard(UtteranceId(1), trace, now());
+        assert!(line_written(&ledger));
+    }
+
     #[test]
     fn a_trace_keeps_its_first_utterances_queue_time() {
         // A window, then its control, in one trace: the timeline runs from
@@ -968,7 +1026,7 @@ mod tests {
         let now = std::time::Instant::now;
         ledger.utterance_queued(UtteranceId(1), trace, "Notepad", now());
         FAKE_US.set(1_020_000);
-        ledger.audio_started(UtteranceId(1), trace, now());
+        ledger.audio_started(UtteranceId(1), trace, true, now());
         FAKE_US.set(1_030_000);
         ledger.utterance_queued(UtteranceId(2), trace, "Text editor", now());
 
@@ -1030,7 +1088,7 @@ mod tests {
         ledger.utterance_queued(UtteranceId(1), trace, "x", std::time::Instant::now());
         ledger.key_seen(11_000, false);
         FAKE_US.set(12_000);
-        ledger.audio_started(UtteranceId(1), trace, std::time::Instant::now());
+        ledger.audio_started(UtteranceId(1), trace, true, std::time::Instant::now());
         let line = ledger.timelines.lock().expect("ledger lock").entries[0]
             .stages
             .line()
@@ -1464,7 +1522,7 @@ mod tests {
         ledger.utterance_queued(UtteranceId(1), trace, "Text editor", now());
         ledger.utterance_queued(UtteranceId(2), trace, "hello", now());
         FAKE_US.set(30_000);
-        ledger.audio_started(UtteranceId(1), trace, now());
+        ledger.audio_started(UtteranceId(1), trace, true, now());
 
         let record = &ledger.recent(1)[0];
         assert_eq!(record.event_observed_at_ms, 1);
@@ -1511,7 +1569,7 @@ mod tests {
         for (at, trace) in (2..).zip(&unspoken) {
             ledger.event_observed(*trace, at);
         }
-        ledger.audio_started(UtteranceId(1), spoken, std::time::Instant::now());
+        ledger.audio_started(UtteranceId(1), spoken, true, std::time::Instant::now());
         let records = ledger.recent(10);
         let kept: Vec<TraceId> = records.iter().map(|record| record.trace_id).collect();
         assert_eq!(kept, [unspoken[4], unspoken[3], spoken]);

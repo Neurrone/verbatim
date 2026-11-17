@@ -590,6 +590,11 @@ impl AudioDevice for WasapiDevice {
         }
     }
 
+    fn has_clock(&self) -> bool {
+        // An open stream always has its clock: opening fails without it.
+        self.stream.is_some()
+    }
+
     fn clock_position(&mut self) -> Option<ClockReading> {
         let stream = self.stream.as_ref()?;
         let mut position = 0u64;

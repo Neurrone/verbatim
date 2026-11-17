@@ -69,7 +69,7 @@ impl SpeechEvents for Recorder {
         self.paused.notify_all();
     }
 
-    fn audio_started(&self, _: UtteranceId, _: TraceId, _: Instant) {}
+    fn audio_started(&self, _: UtteranceId, _: TraceId, _: bool, _: Instant) {}
 
     fn mark_reached(&self, utterance: UtteranceId, _: TraceId, mark: IndexMark, _: Instant) {
         self.marks.lock().unwrap().push((utterance, mark));

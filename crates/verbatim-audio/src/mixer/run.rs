@@ -123,7 +123,7 @@ impl AudioLoop {
 
         self.drain(device, &mut queued);
         self.read_controls(device, &mut queued);
-        self.fire(at);
+        self.fire(device.has_clock(), at);
         self.heard_by_clock(device, at);
         self.publish_room();
 
@@ -387,11 +387,12 @@ impl AudioLoop {
 
     /// Sends every event whose moment has played, and what each source is
     /// done with, voices retired in this pass included, while the ring has
-    /// room.
-    pub(crate) fn fire(&mut self, at: Instant) {
+    /// room. A start waits for the device's clock when `clocked`, the
+    /// device having one ([`AudioDevice::has_clock`]).
+    pub(crate) fn fire(&mut self, clocked: bool, at: Instant) {
         let played = self.played;
         for (index, store) in self.sources.iter_mut().enumerate() {
-            let fired = store.fire(index, played, at, &mut self.out);
+            let fired = store.fire(index, played, clocked, at, &mut self.out);
             let flushed = store.flush_retired(&mut self.out);
             self.sent |= fired || flushed;
         }

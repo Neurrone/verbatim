@@ -738,9 +738,9 @@ impl SpeechEvents for Observer {
         }
     }
 
-    fn audio_started(&self, utterance: UtteranceId, trace_id: TraceId, at: Instant) {
+    fn audio_started(&self, utterance: UtteranceId, trace_id: TraceId, clocked: bool, at: Instant) {
         if let Some(inner) = &self.inner {
-            inner.audio_started(utterance, trace_id, at);
+            inner.audio_started(utterance, trace_id, clocked, at);
         }
     }
 
@@ -859,10 +859,11 @@ fn playback_listener(
         PlaybackEvent::Started {
             utterance,
             trace_id,
+            clocked,
         } => {
-            trace!(target: "verbatim::speech", %utterance, trace_id = %trace_id, "audio_started");
+            trace!(target: "verbatim::speech", %utterance, trace_id = %trace_id, clocked, "audio_started");
             if let Some(events) = &events {
-                events.audio_started(utterance, trace_id, now);
+                events.audio_started(utterance, trace_id, clocked, now);
             }
         }
         PlaybackEvent::Mark {

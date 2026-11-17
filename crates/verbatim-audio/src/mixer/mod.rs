@@ -102,6 +102,11 @@ pub enum PlaybackEvent {
         utterance: UtteranceId,
         /// Its trace.
         trace_id: TraceId,
+        /// Whether the device's clock is to report the frame: the device
+        /// has one ([`AudioDevice::has_clock`](crate::AudioDevice::has_clock)),
+        /// so a [`Heard`](Self::Heard) follows unless playback stops first
+        /// or the clock cannot be read.
+        clocked: bool,
     },
     /// The device's own clock has passed the utterance's first frame, `ago`
     /// before the time this is reported with: reported only by a device

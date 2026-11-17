@@ -113,6 +113,8 @@ struct ManualDevice {
     reopened_format: Arc<Mutex<Option<DeviceFormat>>>,
     /// What the device's clock reads, if it has one.
     clock: Arc<Mutex<Option<ClockReading>>>,
+    /// The device has no clock, as the silent device has none.
+    clockless: bool,
     /// How many of the next opens fail.
     open_failures: Arc<AtomicU32>,
     /// The audio thread's allocations and frees, as counted at its last
@@ -132,6 +134,7 @@ impl Default for ManualDevice {
             fail: Arc::default(),
             reopened_format: Arc::default(),
             clock: Arc::default(),
+            clockless: false,
             open_failures: Arc::default(),
             allocations: Arc::default(),
             notices: DeviceNotices::new(Arc::new(move || {
@@ -334,6 +337,10 @@ impl AudioDevice for ManualDevice {
     fn clock_position(&mut self) -> Option<ClockReading> {
         *self.clock.lock().unwrap()
     }
+
+    fn has_clock(&self) -> bool {
+        !self.clockless
+    }
 }
 
 /// A mixer on a manual device with three sources: speech, with the synth
@@ -513,6 +520,7 @@ fn started(id: u64, trace: TraceId) -> PlaybackEvent {
     PlaybackEvent::Started {
         utterance: utterance(id),
         trace_id: trace,
+        clocked: true,
     }
 }
 
@@ -528,6 +536,28 @@ fn an_utterance_completes_only_when_the_device_has_played_its_last_frame() {
     harness.nothing_more();
     harness.play(1);
     assert_eq!(harness.next(), ended(1, trace, UtteranceEnding::Completed));
+}
+
+#[test]
+fn a_start_on_a_device_without_a_clock_says_no_clock_will_report_it() {
+    let device = ManualDevice {
+        clockless: true,
+        ..ManualDevice::default()
+    };
+    let mut harness = harness_on(device, None);
+    let trace = harness.speak(1, 20);
+    harness.play(1);
+    assert_eq!(
+        harness.next(),
+        PlaybackEvent::Started {
+            utterance: utterance(1),
+            trace_id: trace,
+            clocked: false,
+        }
+    );
+    harness.play(19);
+    assert_eq!(harness.next(), ended(1, trace, UtteranceEnding::Completed));
+    harness.nothing_more();
 }
 
 #[test]
@@ -930,7 +960,15 @@ fn a_device_that_fails_to_open_is_replaced_by_silence_until_a_notice_and_then_op
     // A whole idle pass first, so the waits below begin with an idle one.
     harness.device.settle();
     let trace = harness.speak(1, 20);
-    assert_eq!(harness.next(), started(1, trace));
+    // The silence has no clock to report the start.
+    assert_eq!(
+        harness.next(),
+        PlaybackEvent::Started {
+            utterance: utterance(1),
+            trace_id: trace,
+            clocked: false,
+        }
+    );
     assert_eq!(harness.next(), ended(1, trace, UtteranceEnding::Completed));
     harness.nothing_more();
 

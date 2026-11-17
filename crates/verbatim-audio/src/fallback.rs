@@ -141,4 +141,8 @@ impl AudioDevice for Fallback {
             self.device.clock_position()
         }
     }
+
+    fn has_clock(&self) -> bool {
+        !self.failed && self.device.has_clock()
+    }
 }

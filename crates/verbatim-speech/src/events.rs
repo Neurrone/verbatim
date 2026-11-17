@@ -24,8 +24,11 @@ pub trait SpeechEvents: Send + Sync {
     /// is its rendered speech text.
     fn utterance_queued(&self, utterance: UtteranceId, trace_id: TraceId, text: &str, at: Instant);
 
-    /// The utterance's first audio frame has played.
-    fn audio_started(&self, utterance: UtteranceId, trace_id: TraceId, at: Instant);
+    /// The utterance's first audio frame has played. `clocked` says
+    /// whether the audio device's clock is to report it too
+    /// ([`audio_heard`](Self::audio_heard)); without a clock this is the
+    /// last report of the utterance's start.
+    fn audio_started(&self, utterance: UtteranceId, trace_id: TraceId, clocked: bool, at: Instant);
 
     /// The audio device's own clock passed the utterance's first frame, at
     /// `at`, after [`audio_started`](Self::audio_started): reported only

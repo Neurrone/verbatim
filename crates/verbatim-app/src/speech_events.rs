@@ -39,8 +39,8 @@ impl SpeechEvents for ShellSpeechEvents {
         self.ledger.utterance_queued(utterance, trace_id, text, at);
     }
 
-    fn audio_started(&self, utterance: UtteranceId, trace_id: TraceId, at: Instant) {
-        self.ledger.audio_started(utterance, trace_id, at);
+    fn audio_started(&self, utterance: UtteranceId, trace_id: TraceId, clocked: bool, at: Instant) {
+        self.ledger.audio_started(utterance, trace_id, clocked, at);
     }
 
     fn audio_heard(&self, utterance: UtteranceId, trace_id: TraceId, at: Instant) {

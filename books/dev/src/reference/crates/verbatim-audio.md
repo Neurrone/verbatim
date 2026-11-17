@@ -29,7 +29,9 @@ Public API:
   available after an open failed; defaults to `false`), and
   `clock_position` (the device's own clock as a `ClockReading`: frames
   played since it last started, and how long ago that held; defaults to
-  `None`, and only the latency ledger's device clock stage uses it).
+  `None`, and only the latency ledger's device clock stage uses it), and
+  `has_clock` (whether the device has that clock, asked as each start
+  plays; defaults to `false`).
 - `Signal` — an auto-reset event, `set` from any thread and `wait`ed on
   by one; a set made while nobody waits stays until the next wait, so a
   wake is never lost. `CondvarSignal` is the portable one, over a mutex
@@ -120,7 +122,8 @@ Public API:
   to the device's format through the same converter as speech the first
   time it plays in that format, and kept converted.
 - `PlaybackEvent` — `Started` (the utterance's first frame has played:
-  the device has taken it from its queue), `Heard` (the device's own
+  the device has taken it from its queue; `clocked` says whether a `Heard`
+  is to follow, the open device having a clock), `Heard` (the device's own
   clock passed that frame, `ago` before the report's time; only from a device
   with a clock, and dropped when playback stops first: after each wake the
   mixer compares the clock, from the mix position at which the device

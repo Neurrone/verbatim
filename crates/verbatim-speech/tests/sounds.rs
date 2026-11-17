@@ -84,7 +84,7 @@ impl SpeechEvents for Recorder {
         self.queued.lock().unwrap().push(text.to_owned());
     }
 
-    fn audio_started(&self, _: UtteranceId, _: TraceId, _: Instant) {}
+    fn audio_started(&self, _: UtteranceId, _: TraceId, _: bool, _: Instant) {}
 
     fn mark_reached(&self, _: UtteranceId, _: TraceId, mark: IndexMark, _: Instant) {
         self.marks.lock().unwrap().push(mark);

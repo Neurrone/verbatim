@@ -245,4 +245,13 @@ pub trait AudioDevice: Send {
     fn clock_position(&mut self) -> Option<ClockReading> {
         None
     }
+
+    /// Whether the device has a clock to read
+    /// ([`clock_position`](Self::clock_position)); `false` by default. The
+    /// mixer asks as each start plays, and tells the start whether the
+    /// clock is to report it
+    /// ([`PlaybackEvent::Started`](crate::PlaybackEvent::Started)).
+    fn has_clock(&self) -> bool {
+        false
+    }
 }
