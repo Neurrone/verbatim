@@ -1320,7 +1320,9 @@ fn typing_the_terminal_showed_is_echoed_by_the_typing_echo_settings() {
 /// A review command's fresh read of the terminal answered with a failure,
 /// the terminal's text unread or its read failed, decodes as the read's
 /// answer: the command answers from Core's memory as after any read that
-/// brings nothing, and nothing is logged as malformed.
+/// brings nothing, and nothing is logged as malformed. With nothing in the
+/// memory, the line at the caret is lost and the command ends saying
+/// nothing, where it once seeded at the caret again without end.
 #[test]
 fn a_review_commands_fresh_read_answered_with_a_failure_decodes() {
     use verbatim_model::request::{
@@ -1389,6 +1391,16 @@ fn a_review_commands_fresh_read_answered_with_a_failure_decodes() {
             .collect();
         (undecodable, spoken)
     };
+    // With nothing in the model's memory, a failed fresh read ends the
+    // command saying nothing.
+    for failure in [TextReply::NoText, TextReply::Unanswered] {
+        let mut state = terminal();
+        assert_eq!(
+            review(&mut state, 1, Outcome::Result(Reply::Text(failure.clone()))),
+            (false, Vec::new()),
+            "{failure:?}"
+        );
+    }
     for failure in [TextReply::NoText, TextReply::Unanswered] {
         let mut state = terminal();
         let read = Outcome::Result(Reply::Text(TextReply::TerminalRead(Box::new(read_reply(

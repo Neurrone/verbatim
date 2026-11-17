@@ -255,8 +255,13 @@ pub(crate) struct PendingText {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum TextFollowUp {
     /// The review cursor's line was read: place the cursor at the point
-    /// read, then run the command.
-    Seed { command: ReviewCommand, repeat: u8 },
+    /// read, then run the command. `at_caret` when it was read at the
+    /// caret, from which a lost read has nowhere to start again.
+    Seed {
+        command: ReviewCommand,
+        repeat: u8,
+        at_caret: bool,
+    },
     /// The review cursor moved to another line: land on it and speak.
     Land(Landing),
     /// A select then copy selected the text.

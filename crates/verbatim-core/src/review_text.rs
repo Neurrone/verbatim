@@ -346,6 +346,7 @@ fn seed(press: ReviewPress, node: NodeId, at: TextPoint) -> Next {
         TextFollowUp::Seed {
             command: press.command,
             repeat: press.repeat,
+            at_caret: at == TextPoint::Caret,
         },
     )
 }
@@ -963,7 +964,12 @@ fn reply_to(
             vec![speak(trace_id, message(Message::NotSupported))]
         }
         (_, _) if !on_navigator => Vec::new(),
-        (TextFollowUp::Seed { command, repeat }, TextReply::Read { chunk, .. }) => {
+        (
+            TextFollowUp::Seed {
+                command, repeat, ..
+            },
+            TextReply::Read { chunk, .. },
+        ) => {
             let grid = navigator_grid(state);
             let offset = text::byte_offset(chunk.offset);
             let mut position = position_at(&Arc::new(chunk), offset, grid);
@@ -996,11 +1002,18 @@ fn reply_to(
             land(state, trace_id, landing, moved, chunk)
         }
         (
-            TextFollowUp::Land(Landing { command, .. }) | TextFollowUp::Seed { command, .. },
+            TextFollowUp::Land(Landing { command, .. })
+            | TextFollowUp::Seed {
+                command,
+                at_caret: false,
+                ..
+            },
             TextReply::AnchorLost,
         ) => {
             // The position the cursor was at is gone: start again from the
-            // caret.
+            // caret. The caret's own line lost as it was read has nowhere to
+            // start again from, and ends the command saying nothing below,
+            // as a read that fails does.
             if let Some(navigator) = state.navigator.as_mut() {
                 navigator.text = ReviewText::Unknown;
             }
