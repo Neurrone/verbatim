@@ -277,10 +277,9 @@ them yet.
   `RunRead` with each candidate `Tried`) and the current focus,
   each answered with a `FocusRead`, which carries what Core keeps with the
   committed focus and its `FocusCaret`: no text, text not read, or the
-  caret read (`FocusCaretRead`) with the selection baseline the outpost
-  minted and the difference from the baseline the request named, each
-  focus request naming the committed focus's baseline so that a repeated
-  focus can say what changed. A read's `RelationQuery` asks whether the object is one
+  caret read (`FocusCaretRead`), its line with the formatting the
+  request's `details` name, and the selection baseline the outpost
+  minted from it, which a focus read becomes silently. A read's `RelationQuery` asks whether the object is one
   of the nodes Core names, inside an object the focus controls, or, for a
   selected item, either. `Follow` names the committed focus's node to its
   outpost (`Followed`, with its `FollowGroup` and an extra object), or

@@ -16,7 +16,6 @@ use serde::{Deserialize, Serialize};
 use verbatim_model::request::{FocusCaret, Request as Wire};
 use verbatim_model::{
     EditSelection, NodeId, OutpostId, TextAnchor, TextOp, TextPoint, TextProvider, TextThrough,
-    UtteranceSegment,
 };
 
 use crate::focus::versions::{Committed, Kept, ReadBy};
@@ -95,55 +94,20 @@ pub(crate) fn edit_selection_repeated(state: &mut SrState, now: EditSelection) -
     state.edit_selection.replace(now) == Some(now)
 }
 
-/// The baseline a focus request to the outpost generation `asked` names:
-/// the committed focus's, when that generation holds it (design, "Focus
-/// and foreground": a repeated focus speaks the change from Core's
-/// baseline, which the request names).
-pub(crate) fn named_in_focus_read(state: &SrState, asked: Option<OutpostId>) -> Option<TextAnchor> {
-    let kept = state.versions.committed_read()?;
-    if asked != Some(kept.outpost) {
-        return None;
-    }
-    kept.selection.baseline
-}
-
 /// A focus answer's caret, `caret`, for a focus being committed whose
-/// text facts are `facts` (Table 17, columns A to C). `repeated` holds
-/// the committed focus's facts when the answer's node is the committed
-/// focus's, a repeated focus, and is `None` for a new focus. A caret read
-/// mints the baseline and clears the flag; a repeated focus with a
-/// baseline first says the change from it, in general terms when the flag
-/// was set and in specific terms otherwise. No caret clears both. Returns
-/// what is said.
-pub(crate) fn focus_answered(
-    facts: &mut SelectionFacts,
-    caret: &FocusCaret,
-    repeated: Option<SelectionFacts>,
-) -> Vec<UtteranceSegment> {
-    let FocusCaret::Read(read) = caret else {
-        *facts = SelectionFacts::default();
-        return Vec::new();
+/// text facts are `facts` (Table 17, columns A to C): a caret read mints
+/// the baseline and clears the flag, silently, a repeated focus's too, as
+/// NVDA's `initAutoSelectDetection` sets the baseline of the object gaining
+/// focus (`editableText.py` 417 to 427; Dickson, 2026-11-17); no caret
+/// clears both.
+pub(crate) fn focus_answered(facts: &mut SelectionFacts, caret: &FocusCaret) {
+    *facts = match caret {
+        FocusCaret::Read(read) => SelectionFacts {
+            baseline: Some(read.baseline),
+            text_changed: false,
+        },
+        FocusCaret::NoText | FocusCaret::NotRead => SelectionFacts::default(),
     };
-    *facts = SelectionFacts {
-        baseline: Some(read.baseline),
-        text_changed: false,
-    };
-    match (repeated, &read.difference) {
-        (
-            Some(SelectionFacts {
-                baseline: Some(_),
-                text_changed,
-            }),
-            Some(difference),
-        ) => crate::editing::selection_segments(
-            &difference.changes,
-            text_changed.then_some(crate::editing::General {
-                selection: difference.new_selection.as_ref(),
-                collapsed: read.caret.selection.is_none(),
-            }),
-        ),
-        _ => Vec::new(),
-    }
 }
 
 /// The selection baseline the committed focus's text facts hold, with

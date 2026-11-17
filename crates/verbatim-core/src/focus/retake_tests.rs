@@ -290,7 +290,6 @@ fn the_silent_retake_mints_the_baseline_in_the_new_generation_and_keeps_the_flag
         },
         selected_text: None,
         baseline: TextAnchor(90),
-        difference: None,
     }));
     assert_eq!(
         feed_at(

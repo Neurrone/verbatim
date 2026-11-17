@@ -155,7 +155,7 @@ pub(super) fn complete(
                 Some(verbatim_model::property::PropertyValue::Flag(true))
             ),
             runtime_id_reused: reused,
-            baseline: complete.baseline,
+            details: complete.details,
         },
         &complete.set,
     ))))

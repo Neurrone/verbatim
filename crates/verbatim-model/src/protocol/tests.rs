@@ -48,7 +48,7 @@ fn next_core_to_outpost(previous: Option<&CoreToOutpost>) -> Option<CoreToOutpos
             request: crate::request::Request::CurrentFocus {
                 set: vec![crate::property::PropertyId::Name],
                 known: Vec::new(),
-                baseline: None,
+                details: crate::TextDetails::NONE,
                 focused_state_test: false,
             },
         })),

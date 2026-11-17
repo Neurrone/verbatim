@@ -151,7 +151,7 @@ async fn start(cx: &mut Cx<Entries>, candidate: &Candidate, run_executed: bool) 
             }],
             set: crate::details::node_set(&cx.facts(), FOCUS_SET),
             known: known.sent.clone(),
-            baseline: known.baseline,
+            details: crate::details::focus_details(&cx.facts()),
         },
     };
     let due_us = cx.due_in(FOCUS_DUE_US);
@@ -199,7 +199,7 @@ pub(crate) async fn check(mut cx: Cx<Entries>, check: MenuCheck) {
     let request = CurrentFocusRead {
         window,
         known: known.sent.clone(),
-        baseline: known.baseline,
+        details: crate::details::focus_details(&cx.facts()),
         set: crate::details::node_set(&cx.facts(), FOCUS_SET),
         focused_state_test: true,
     };

@@ -122,7 +122,7 @@ fn a_probe_that_timed_out_is_made_once_in_its_request() {
             }],
             set: common::outpost::focus_set(),
             known: Vec::new(),
-            baseline: None,
+            details: verbatim_model::TextDetails::NONE,
         }),
     );
     let message = outpost

@@ -82,9 +82,9 @@ impl<'a> Driver<'a> {
             .handle_command(&CoreToOutpost::Cancel(Cancel { number, reason }));
     }
 
-    /// Asks for the application's current focus with every property, no
-    /// ancestors known and no selection baseline, as Core asks it at its
-    /// start: the read the attach mode prints.
+    /// Asks for the application's current focus with every property and
+    /// every text detail, no ancestors known, as Core asks it at its start
+    /// with every setting on: the read the attach mode prints.
     pub fn current_focus(&mut self, window: WindowHandle) -> RequestNumber {
         self.ask(
             window,
@@ -92,7 +92,7 @@ impl<'a> Driver<'a> {
             Request::CurrentFocus {
                 set: every_property(),
                 known: Vec::new(),
-                baseline: None,
+                details: verbatim_model::TextDetails::ALL,
                 focused_state_test: false,
             },
         )

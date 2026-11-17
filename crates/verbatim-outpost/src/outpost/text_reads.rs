@@ -686,45 +686,27 @@ fn watch_outcome(
 }
 
 /// A focus's caret, read after its states (Table 17, columns A to C): the
-/// line at the caret and the selection, compared with the baseline Core
-/// named when this node holds it, the next baseline held from the read.
-/// A node with no text answers [`FocusCaret::NoText`], one whose read
-/// failed [`FocusCaret::NotRead`].
+/// line at the caret, with the formatting `details` names, and the
+/// selection, the next baseline held from the read, compared with nothing
+/// (Dickson, 2026-11-17). A node with no text answers
+/// [`FocusCaret::NoText`], one whose read failed [`FocusCaret::NotRead`].
 pub(super) fn focus_caret(
     context: &RequestContext<'_>,
     node_id: NodeId,
-    baseline: Option<verbatim_model::TextAnchor>,
+    details: TextDetails,
 ) -> FocusCaret {
-    let named: Vec<u64> = baseline.map(|baseline| baseline.0).into_iter().collect();
     let read_at_us = context.observed_now();
-    // The read takes no formatting: nothing beyond the text is fetched.
-    let read = on_text!(
-        context,
-        node_id,
-        TextDetails::NONE,
-        &named,
-        |source, text| {
-            text::held::read_selection(source, text, read_at_us, baseline).map(|found| {
-                (
-                    found.report,
-                    found.selected,
-                    found.baseline,
-                    found.difference,
-                )
-            })
-        }
-    );
+    let read = on_text!(context, node_id, details, &[], |source, text| {
+        text::held::read_focus(source, text, read_at_us)
+    });
     match read {
         Err(TextReply::NoText) => FocusCaret::NoText,
         Err(_) | Ok(Err(_)) => FocusCaret::NotRead,
-        Ok(Ok((caret, selected, baseline, difference))) => {
-            FocusCaret::Read(Box::new(FocusCaretRead {
-                caret,
-                selected_text: selected.map(|selected| selected.text),
-                baseline,
-                difference,
-            }))
-        }
+        Ok(Ok((caret, selected, baseline))) => FocusCaret::Read(Box::new(FocusCaretRead {
+            caret,
+            selected_text: selected.map(|selected| selected.text),
+            baseline,
+        })),
     }
 }
 

@@ -56,10 +56,10 @@ use verbatim_uia_rops::{
 };
 
 use super::{
-    CaretRead, CaretRequest, CaretState, FormatSpan, Located, MAX_CHUNK_UNITS, MAX_RANGE_UNITS,
-    PastEnds, PointFrom, RangeAction, RangeRead, SelectionAfter, SelectionStart, Sentences,
-    TextError, TextResult, TextSource, Unit, UnitRead, UnitsAnswer, UnitsRead, UnitsRequest,
-    WatchRead, WatchRequest,
+    CaretRead, CaretRequest, CaretState, FormatSpan, Formatting, Located, MAX_CHUNK_UNITS,
+    MAX_RANGE_UNITS, PastEnds, PointFrom, RangeAction, RangeRead, SelectionAfter, SelectionStart,
+    Sentences, TextError, TextResult, TextSource, Unit, UnitRead, UnitsAnswer, UnitsRead,
+    UnitsRequest, WatchRead, WatchRequest,
 };
 
 /// A position in UIA text: an end of a range.
@@ -327,6 +327,23 @@ impl UiaText {
             previous_text: None,
             selection_start: SelectionStart::unknown(),
         })
+    }
+
+    /// A span's formatting as its stretches were read, as UTF-16 ranges of
+    /// its text: a character's one stretch has no length read; it covers
+    /// the character, as the caller takes it.
+    fn formats_of(&self, runs: Vec<verbatim_uia_rops::Run>) -> Vec<Formatting> {
+        let mut formats = Vec::with_capacity(runs.len());
+        let mut at = 0;
+        for run in runs {
+            formats.push((
+                at,
+                at + run.length,
+                attributes_of(&run.attributes, self.details),
+            ));
+            at += run.length;
+        }
+        formats
     }
 
     /// The text, as remote operations take it.
@@ -617,11 +634,7 @@ impl TextSource for UiaText {
                 .map(|(start, end)| (end_of(start), end_of(end))),
             previous_collapsed: request.previous_collapsed,
             unit,
-            formats: request.formats.map(|span| match span {
-                FormatSpan::Character => verbatim_uia_rops::FormatSpan::Character,
-                FormatSpan::Unit => verbatim_uia_rops::FormatSpan::Unit,
-                FormatSpan::Line => verbatim_uia_rops::FormatSpan::Line,
-            }),
+            formats: request.formats.map(rops_span),
             attributes,
             learning,
             max_text: i32::try_from(MAX_CHUNK_UNITS + 1).unwrap_or(i32::MAX),
@@ -647,18 +660,7 @@ impl TextSource for UiaText {
         };
         let line = unit_read(answer.line)?;
         let unit = answer.unit.map(unit_read).transpose()?;
-        // A character's one stretch has no length read; it covers the
-        // character, as the caller takes it.
-        let mut formats = Vec::with_capacity(answer.runs.len());
-        let mut at = 0;
-        for run in answer.runs {
-            formats.push((
-                at,
-                at + run.length,
-                attributes_of(&run.attributes, self.details),
-            ));
-            at += run.length;
-        }
+        let formats = self.formats_of(answer.runs);
         Ok(Some(CaretRead {
             state: CaretState { caret, selection },
             moved: answer.moved,
@@ -700,6 +702,7 @@ impl TextSource for UiaText {
                 request.start_selection.1.endpoint,
             ),
         );
+        let attributes = attributes_for(self.details).without(self.support.unsupported);
         let query = WatchQuery {
             element: &self.element,
             pattern: &self.pattern,
@@ -708,6 +711,8 @@ impl TextSource for UiaText {
             word: request.word,
             unit: request.unit.and_then(|unit| self.unit(unit)),
             last: request.last,
+            formats: request.formats.map(rops_span),
+            attributes,
             max_text: i32::try_from(MAX_CHUNK_UNITS + 1).unwrap_or(i32::MAX),
         };
         let (answer, path) =
@@ -728,6 +733,13 @@ impl TextSource for UiaText {
             line: unit_read(answer.line)?,
             word: answer.word.map(unit_read).transpose()?,
             unit: answer.unit.map(unit_read).transpose()?,
+            // With no attribute to read, there is no formatting to wait for.
+            formats: if attributes == Attributes::NONE {
+                Some(Vec::new())
+            } else {
+                answer.runs.map(|runs| self.formats_of(runs))
+            },
+
             moved_while_read: answer.moved_while_read,
         }))
     }
@@ -878,6 +890,15 @@ impl TextSource for UiaText {
 }
 
 /// A position as remote operations take it.
+/// The program's name for whose formatting a read reads.
+fn rops_span(span: FormatSpan) -> verbatim_uia_rops::FormatSpan {
+    match span {
+        FormatSpan::Character => verbatim_uia_rops::FormatSpan::Character,
+        FormatSpan::Unit => verbatim_uia_rops::FormatSpan::Unit,
+        FormatSpan::Line => verbatim_uia_rops::FormatSpan::Line,
+    }
+}
+
 fn end_of((range, endpoint): &(IUIAutomationTextRange, Endpoint)) -> RangeEnd<'_> {
     RangeEnd {
         range,

@@ -674,7 +674,7 @@ pub(crate) fn string_of(outcome: &Outcome, reg: Reg<kind::Str>) -> Result<String
 /// each attribute being learned, whether the span answered "not supported"
 /// for it.
 #[derive(Clone)]
-struct RunRegisters {
+pub(crate) struct RunRegisters {
     lengths: Reg<kind::Array>,
     values: Vec<(TextAttribute, Reg<kind::Array>)>,
     unsupported: Vec<(TextAttribute, Reg<kind::Bool>)>,
@@ -745,7 +745,7 @@ fn emit_attributes(b: &mut Builder, read: &[Reg<kind::Any>], registers: &RunRegi
 /// to read is one stretch, never walked. Each attribute of `learning` but
 /// the annotation types is asked of the whole span too, whose "not
 /// supported" says the provider does not support it.
-fn emit_runs(
+pub(crate) fn emit_runs(
     b: &mut Builder,
     c: &Constants,
     (span, text): (Reg<kind::TextRange>, Reg<kind::Str>),
@@ -901,7 +901,7 @@ impl RunRegisters {
     /// The stretches, from the arrays the program filled: each value read
     /// by its type, a sentinel ("not supported", "mixed") or a value of
     /// another type as none.
-    fn read(&self, outcome: &Outcome) -> Result<Vec<Run>, Error> {
+    pub(crate) fn read(&self, outcome: &Outcome) -> Result<Vec<Run>, Error> {
         let lengths = outcome.get(self.lengths)?;
         let mut columns = Vec::new();
         for (attribute, values) in &self.values {
@@ -1704,7 +1704,7 @@ fn plain_i32(value: &VARIANT) -> Option<i32> {
 /// of a span without annotations when nothing else is read. The span's
 /// annotation types and the attributes being learned are asked in one
 /// call.
-fn classic_runs(
+pub(crate) fn classic_runs(
     (span, length): (&IUIAutomationTextRange, usize),
     character: bool,
     ids: &[TextAttribute],

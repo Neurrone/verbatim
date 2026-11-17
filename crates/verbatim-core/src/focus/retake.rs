@@ -13,7 +13,7 @@
 use serde::{Deserialize, Serialize};
 use verbatim_model::property::PropertyId;
 use verbatim_model::request::{FocusRead, KnownAncestor, Reply, Request as Wire};
-use verbatim_model::{TextAnchor, TraceId};
+use verbatim_model::{TextDetails, TraceId};
 
 use super::FOCUS_SET;
 use super::execute::{Executed, Known, Origin, execute, retake};
@@ -58,9 +58,9 @@ pub(crate) struct CurrentFocusRead {
     pub(crate) window: RequestWindow,
     /// The ancestors Core already knows.
     pub(crate) known: Vec<KnownAncestor>,
-    /// The committed focus's selection baseline, which a repeated focus's
-    /// caret is compared with.
-    pub(crate) baseline: Option<TextAnchor>,
+    /// What the focus's caret read fetches beyond the text: its line's
+    /// formatting.
+    pub(crate) details: TextDetails,
     /// The properties of each node, chosen from the settings.
     pub(crate) set: Vec<PropertyId>,
     /// Whether an MSAA answer with no focused state on it or any ancestor
@@ -83,7 +83,7 @@ impl Request for CurrentFocusRead {
         Wire::CurrentFocus {
             set: self.set.clone(),
             known: self.known.clone(),
-            baseline: self.baseline,
+            details: self.details,
             focused_state_test: self.focused_state_test,
         }
     }
@@ -208,13 +208,10 @@ fn recovered_duplicate(state: &SrState, read: &FocusRead) -> bool {
 /// caret baseline.
 pub(crate) async fn run(mut cx: Cx<Entries>, entry: CurrentFocus) {
     let due_us = cx.due_in(FOCUS_DUE_US);
-    let generation = cx
-        .instance(Reader::Outpost(entry.window.process))
-        .map(|instance| verbatim_model::OutpostId(instance.generation));
     let request = CurrentFocusRead {
         window: entry.window,
         known: Vec::new(),
-        baseline: crate::text_facts::named_in_focus_read(&cx.facts(), generation),
+        details: crate::details::focus_details(&cx.facts()),
         set: crate::details::node_set(&cx.facts(), FOCUS_SET),
         focused_state_test: false,
     };

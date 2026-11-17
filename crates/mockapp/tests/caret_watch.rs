@@ -29,8 +29,8 @@ use verbatim_ia2::WinEventKind;
 use verbatim_model::request::{Outcome, Reply, Request};
 use verbatim_model::{
     CaretKey, CaretMotion, Message, NodeId, Phrase, Role, SegmentContent, SelectionChange,
-    SelectionDifference, SelectionRead, SelectionReadReply, SelectionText, TextAnchor, TextOp,
-    TextPoint, TextPosition, TextProvider, TextReply,
+    SelectionDifference, SelectionRead, SelectionReadReply, SelectionText, TextAnchor, TextFormat,
+    TextOp, TextPoint, TextPosition, TextProvider, TextReply,
 };
 use verbatim_outpost::Heard;
 use verbatim_uia::{Cached, ListenerEvent, Uia};
@@ -78,7 +78,9 @@ fn selecting(motion: CaretMotion) -> CaretKey {
 }
 
 /// What Core says for mockapp's caret watch fixture's window and its
-/// "Notes" document with the caret on "alpha beta".
+/// "Notes" document with the caret on "alpha beta": its line with its
+/// formatting at the line's start, every detail being reported, as NVDA
+/// speaks a focus's line (`speech/speech.py` 904 to 922).
 fn notes_focus() -> Vec<Utterance> {
     vec![
         vec![
@@ -89,7 +91,12 @@ fn notes_focus() -> Vec<Utterance> {
             SegmentContent::Label("Notes".to_owned()),
             SegmentContent::Role(Role::EditableText),
         ],
-        vec![SegmentContent::Text("alpha beta".to_owned())],
+        vec![
+            SegmentContent::Format(TextFormat::FontName("Consolas".to_owned())),
+            SegmentContent::Format(TextFormat::FontSize("11.0 pt".to_owned())),
+            SegmentContent::Format(TextFormat::Color("black".to_owned())),
+            SegmentContent::Text("alpha beta".to_owned()),
+        ],
     ]
 }
 
@@ -143,6 +150,62 @@ fn a_keys_move_found_by_its_watch_says_its_unit() {
         .spoken();
     said.extend(core.answered().spoken());
     assert_eq!(said, character("l"));
+    drop(core);
+    app.quit();
+}
+
+/// A focus's line and a key's unit are said with their formatting, the
+/// line's read with the focus and the unit's in the watch's program, as
+/// NVDA speaks both with the formatting the settings report
+/// (`speech/speech.py` 904 to 922), each change from the formatting last
+/// said. The focus says mockapp's line from its bold "alpha" to its
+/// misspelt "beta", so Control+Right Arrow onto "beta" says only the word;
+/// Control+Left Arrow onto "alpha" says it bold, out of the spelling error,
+/// and the change its space makes; Control+Right Arrow onto "beta" again
+/// says the spelling error.
+fn a_focus_line_and_a_keys_unit_are_said_with_their_formatting() {
+    let (mut app, hwnd, mut core) = start("text.json", "mockapp-caret-watch-formatting");
+    app.send("set-focus doc");
+    let focus = core.uia_focus(&focused(hwnd)).spoken();
+    assert_eq!(
+        focus.last(),
+        Some(&vec![
+            SegmentContent::Format(TextFormat::FontName("Consolas".to_owned())),
+            SegmentContent::Format(TextFormat::FontSize("11.0 pt".to_owned())),
+            SegmentContent::Format(TextFormat::Color("black".to_owned())),
+            SegmentContent::Format(TextFormat::Bold),
+            SegmentContent::Text("alpha".to_owned()),
+            SegmentContent::Format(TextFormat::NotBold),
+            SegmentContent::Format(TextFormat::SpellingError),
+            SegmentContent::Text("beta".to_owned()),
+        ])
+    );
+    let mut key_to = |motion, caret: &str| {
+        let mut said = core.caret_key(key(motion), || app.send(caret)).spoken();
+        said.extend(core.answered().spoken());
+        said
+    };
+    assert_eq!(
+        key_to(CaretMotion::NextWord, "caret doc 6"),
+        [vec![SegmentContent::Text("beta".to_owned())]]
+    );
+    // The word's space after it is not bold, a change the word carries.
+    assert_eq!(
+        key_to(CaretMotion::PreviousWord, "caret doc 0"),
+        [vec![
+            SegmentContent::Format(TextFormat::Bold),
+            SegmentContent::Format(TextFormat::NotSpellingError),
+            SegmentContent::Text("alpha".to_owned()),
+            SegmentContent::Format(TextFormat::NotBold),
+        ]]
+    );
+    assert_eq!(
+        key_to(CaretMotion::NextWord, "caret doc 6"),
+        [vec![
+            SegmentContent::Format(TextFormat::SpellingError),
+            SegmentContent::Text("beta".to_owned()),
+        ]]
+    );
     drop(core);
     app.quit();
 }
@@ -265,7 +328,12 @@ fn a_focus_on_a_field_that_took_the_runtime_id_withdraws_the_watch() {
                 SegmentContent::Label("Second".to_owned()),
                 SegmentContent::Role(Role::EditableText)
             ],
-            vec![SegmentContent::Text("beta line".to_owned())],
+            vec![
+                SegmentContent::Format(verbatim_model::TextFormat::FontName("Consolas".to_owned())),
+                SegmentContent::Format(verbatim_model::TextFormat::FontSize("11.0 pt".to_owned())),
+                SegmentContent::Format(verbatim_model::TextFormat::Color("black".to_owned())),
+                SegmentContent::Text("beta line".to_owned()),
+            ],
         ]
     );
     app.send("caret second 0 4");
@@ -978,6 +1046,10 @@ fn main() {
         (
             "a_keys_move_found_by_its_watch_says_its_unit",
             a_keys_move_found_by_its_watch_says_its_unit,
+        ),
+        (
+            "a_focus_line_and_a_keys_unit_are_said_with_their_formatting",
+            a_focus_line_and_a_keys_unit_are_said_with_their_formatting,
         ),
         (
             "a_caret_event_within_60_ms_of_the_pass_brings_a_check_that_finds_the_move",

@@ -277,7 +277,8 @@ fn a_caret_key_is_answered_with_what_it_did<S: TextSource>(
     common::apply(app, hwnd, "caret doc 0");
     caret_report(source, anchors, 1);
     common::apply(app, hwnd, "caret doc 6");
-    let read = check::final_read(source, anchors, TextUnit::Word, 2).expect("the final read");
+    let read =
+        check::final_read(source, anchors, (TextUnit::Word, None), 2).expect("the final read");
     assert_eq!(
         (read.caret.line.offset, read.unit.text.as_str()),
         (6, second_word)

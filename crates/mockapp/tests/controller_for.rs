@@ -484,7 +484,12 @@ fn a_text_focus_carries_its_line_ahead_of_a_selection_that_followed_it() {
                 SegmentContent::Label("Search box".to_owned()),
                 SegmentContent::Role(Role::EditableText),
             ],
-            vec![SegmentContent::Text("sound".to_owned())],
+            vec![
+                SegmentContent::Format(verbatim_model::TextFormat::FontName("Consolas".to_owned())),
+                SegmentContent::Format(verbatim_model::TextFormat::FontSize("11.0 pt".to_owned())),
+                SegmentContent::Format(verbatim_model::TextFormat::Color("black".to_owned())),
+                SegmentContent::Text("sound".to_owned()),
+            ],
             sound_settings(Some(1))[0].clone(),
         ]
     );

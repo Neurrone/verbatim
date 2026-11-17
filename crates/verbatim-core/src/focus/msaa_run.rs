@@ -181,7 +181,7 @@ pub(crate) async fn run(mut cx: Cx<Entries>, candidates: Vec<Candidate>) {
                 candidates: listed,
                 set: crate::details::node_set(&cx.facts(), FOCUS_SET),
                 known: known.sent.clone(),
-                baseline: known.baseline,
+                details: crate::details::focus_details(&cx.facts()),
             },
         };
         let Outcome::Result(answered) = cx.ask(request, due_us).await else {

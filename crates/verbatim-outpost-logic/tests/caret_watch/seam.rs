@@ -716,7 +716,6 @@ impl Seam {
             caret,
             selected_text: None,
             baseline,
-            difference: None,
         }));
         read
     }

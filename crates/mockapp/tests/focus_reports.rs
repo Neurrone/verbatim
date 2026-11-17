@@ -1367,7 +1367,7 @@ fn a_focus_now_takes_the_focus_window_before_its_probe() {
         verbatim_model::request::Request::CurrentFocus {
             set: common::outpost::focus_set(),
             known: Vec::new(),
-            baseline: None,
+            details: verbatim_model::TextDetails::NONE,
             focused_state_test: false,
         },
     );

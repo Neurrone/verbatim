@@ -14,8 +14,8 @@ use verbatim_model::tell::{ElementToken, EventObject, Payload};
 use verbatim_model::{
     Backend, CaretReport, CaretSelection, EditSelection, Effect as Said, NormalizedEvent, Observed,
     Phrase, Role, SegmentContent, Selection, SelectionChange, SelectionDifference, SelectionRead,
-    SelectionReadReply, SelectionText, TextAnchor, TextChunk, TextOp, TextPosition, TextProvider,
-    TextReply, TextUnit, WindowHandle,
+    SelectionReadReply, SelectionText, TextAnchor, TextChunk, TextDetails, TextOp, TextPosition,
+    TextProvider, TextReply, TextUnit, WindowHandle,
 };
 
 use crate::entries::tests::{
@@ -720,17 +720,12 @@ fn caret_tells_waiting_for_one_element_merge_into_one_read() {
     assert_eq!(held.state.queue.waiting_for_tests(), 0);
 }
 
-/// A focus answer's caret read: `caret`, baseline `baseline` minted, and
-/// the difference from the baseline the request named.
-fn focus_caret(
-    (caret, baseline): (CaretReport, u64),
-    difference: Option<SelectionDifference>,
-) -> FocusCaret {
+/// A focus answer's caret read: `caret`, and baseline `baseline` minted.
+fn focus_caret((caret, baseline): (CaretReport, u64)) -> FocusCaret {
     FocusCaret::Read(Box::new(FocusCaretRead {
         caret,
         selected_text: None,
         baseline: TextAnchor(baseline),
-        difference,
     }))
 }
 
@@ -753,8 +748,8 @@ fn edit_focus(held: &mut Held, (object, number): (i32, u64), caret: FocusCaret) 
     sent
 }
 
-/// The baseline the step's focus request names.
-fn named_baseline(held: &mut Held, object: i32) -> Option<TextAnchor> {
+/// What the step's focus request asks its caret read to fetch.
+fn named_details(held: &mut Held, object: i32) -> Option<TextDetails> {
     let effects = feed(
         &mut held.state,
         &mut held.runtime,
@@ -766,27 +761,19 @@ fn named_baseline(held: &mut Held, object: i32) -> Option<TextAnchor> {
     .unwrap();
     effects.into_iter().find_map(|effect| match effect {
         Effect::Send { ask, .. } => match ask.request {
-            Wire::MsaaRun(run) => Some(run.baseline),
+            Wire::MsaaRun(run) => Some(run.details),
             _ => None,
         },
         _ => None,
-    })?
+    })
 }
 
 /// Table 17, column A: a new focus's caret becomes Core's, its line said
-/// with the focus, and its baseline minted with no change said, whatever
-/// the difference the answer carries.
+/// with the focus, and its baseline minted with no change said.
 #[test]
 fn a_new_focus_says_its_line_and_mints_the_baseline_with_no_change() {
     let mut held = ready();
-    let said = edit_focus(
-        &mut held,
-        (-4, 1),
-        focus_caret(
-            (caret(1, 0), 80),
-            Some(differing(vec![change(true, "a")], Some("a"))),
-        ),
-    );
+    let said = edit_focus(&mut held, (-4, 1), focus_caret((caret(1, 0), 80)));
     assert_eq!(
         said,
         [
@@ -805,58 +792,31 @@ fn a_new_focus_says_its_line_and_mints_the_baseline_with_no_change() {
     assert_eq!(caret.line.offset, 1);
 }
 
-/// Table 17, column B in T3: a repeated focus's request names the
-/// baseline, and its answer's change from it is said in specific terms;
-/// the next baseline replaces it.
+/// Table 17, column B: a repeated focus's answer becomes the new
+/// baseline silently, whatever was selected meanwhile and with the
+/// text-changed flag set, and clears the flag, as NVDA's
+/// `initAutoSelectDetection` sets the baseline of the object gaining focus
+/// (`editableText.py` 417 to 427; Dickson, 2026-11-17). Its request asks
+/// for the line's formatting the settings report, as NVDA speaks the line
+/// with it (`speech/speech.py` 904 to 922).
 #[test]
-fn a_repeated_focus_says_the_change_from_the_named_baseline() {
+fn a_repeated_focus_mints_the_baseline_silently() {
     let mut held = ready();
-    let _ = edit_focus(&mut held, (-4, 1), focus_caret((caret(1, 0), 80), None));
-    let mut probe = held.clone();
-    assert_eq!(named_baseline(&mut probe, -8), Some(TextAnchor(80)));
-    let said = edit_focus(
-        &mut held,
-        (-8, 2),
-        focus_caret(
-            (caret(0, 1), 81),
-            Some(differing(vec![change(true, "a")], Some("a"))),
-        ),
-    );
-    assert_eq!(
-        said,
-        [
-            "send Outpost(Pid(40)) MsaaRun",
-            "Label(\"Name\") Role(EditableText)",
-            "Text(\"alpha beta\")",
-            "Phrase(Selected(Character(\"a\")))",
-        ]
-    );
-    assert_eq!(baseline(&held), Some(TextAnchor(81)));
-}
-
-/// Table 17, column B in T4: with the text-changed flag set, a repeated
-/// focus says the change in general terms and clears the flag.
-#[test]
-fn a_repeated_focus_after_a_value_change_says_the_change_in_general_terms() {
-    let mut held = ready();
-    let _ = edit_focus(&mut held, (-4, 1), focus_caret((caret(1, 0), 80), None));
+    let _ = edit_focus(&mut held, (-4, 1), focus_caret((caret(1, 0), 80)));
     let _ = step(&mut held, 800, value_change());
     assert!(text_changed(&held));
-    let said = edit_focus(
-        &mut held,
-        (-8, 2),
-        focus_caret(
-            (caret(0, 3), 81),
-            Some(differing(vec![change(true, "alp")], Some("alp"))),
-        ),
+    let mut probe = held.clone();
+    assert_eq!(
+        named_details(&mut probe, -8),
+        Some(held.state.reported.text)
     );
+    let said = edit_focus(&mut held, (-8, 2), focus_caret((caret(0, 3), 81)));
     assert_eq!(
         said,
         [
             "send Outpost(Pid(40)) MsaaRun",
             "Label(\"Name\") Role(EditableText)",
             "Text(\"alpha beta\")",
-            "Phrase(Selected(Text(\"alp\")))",
         ]
     );
     assert!(!text_changed(&held));
@@ -868,7 +828,7 @@ fn a_repeated_focus_after_a_value_change_says_the_change_in_general_terms() {
 #[test]
 fn a_focus_answer_with_no_caret_clears_the_baseline_and_the_flag() {
     let mut held = ready();
-    let _ = edit_focus(&mut held, (-4, 1), focus_caret((caret(1, 0), 80), None));
+    let _ = edit_focus(&mut held, (-4, 1), focus_caret((caret(1, 0), 80)));
     let _ = step(&mut held, 800, value_change());
     let _ = edit_focus(&mut held, (-8, 2), FocusCaret::NotRead);
     assert_eq!(baseline(&held), None);

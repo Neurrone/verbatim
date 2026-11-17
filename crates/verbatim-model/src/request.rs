@@ -17,8 +17,8 @@ use serde::{Deserialize, Serialize};
 use crate::property::{PropertyId, PropertyValue, PropertyValues, RuntimeId};
 use crate::tell::ElementToken;
 use crate::{
-    ActionName, CaretReport, NodeId, Pid, QueryKind, SelectionDifference, TextAnchor, TextOp,
-    TextReply, WindowHandle,
+    ActionName, CaretReport, NodeId, Pid, QueryKind, TextAnchor, TextDetails, TextOp, TextReply,
+    WindowHandle,
 };
 
 /// A reader Core asks.
@@ -262,9 +262,9 @@ pub enum Request {
         set: Vec<PropertyId>,
         /// The ancestors Core already knows.
         known: Vec<KnownAncestor>,
-        /// Core's selection baseline for the committed focus, which a
-        /// repeated focus's caret is compared with ([`FocusCaret`]).
-        baseline: Option<TextAnchor>,
+        /// What the focus's caret read fetches beyond the text, as the
+        /// settings report it: its line's formatting ([`FocusCaret`]).
+        details: TextDetails,
         /// Whether an MSAA focus is refused [`Refusal::NotFocused`] when
         /// neither it nor any of its ancestors, up to the desktop, has the
         /// focused state: the check after a menu end, NVDA's fake focus,
@@ -498,9 +498,9 @@ pub struct CompleteUia {
     pub known: Vec<KnownAncestor>,
     /// What it is for.
     pub completes: CompletionFor,
-    /// Core's selection baseline for the committed focus, which a
-    /// repeated focus's caret is compared with ([`FocusCaret`]).
-    pub baseline: Option<TextAnchor>,
+    /// What the focus's caret read fetches beyond the text, as the
+    /// settings report it: its line's formatting ([`FocusCaret`]).
+    pub details: TextDetails,
 }
 
 /// One MSAA focus or foreground candidate of a run, by the ids its event
@@ -539,9 +539,9 @@ pub struct MsaaRun {
     pub set: Vec<PropertyId>,
     /// The ancestors Core already knows.
     pub known: Vec<KnownAncestor>,
-    /// Core's selection baseline for the committed focus, which a
-    /// repeated focus's caret is compared with ([`FocusCaret`]).
-    pub baseline: Option<TextAnchor>,
+    /// What the focus's caret read fetches beyond the text, as the
+    /// settings report it: its line's formatting ([`FocusCaret`]).
+    pub details: TextDetails,
 }
 
 /// How one run candidate was tried.
@@ -687,13 +687,10 @@ pub struct FocusCaretRead {
     /// The selected text, when something is selected and it could be
     /// read; `None` otherwise, when the line is spoken instead.
     pub selected_text: Option<String>,
-    /// The next selection baseline, minted from the selection read.
+    /// The next selection baseline, minted from the selection read: a
+    /// focus read becomes the baseline silently, as NVDA's
+    /// `initAutoSelectDetection` sets it (`editableText.py` 417 to 427).
     pub baseline: TextAnchor,
-    /// The difference from the baseline the request named, from the
-    /// baseline's range as it now is, when the request named one the
-    /// outpost holds in the focus's text: Core speaks it only for a
-    /// repeated focus.
-    pub difference: Option<SelectionDifference>,
 }
 
 /// A result: the first of the five outcomes, by request.

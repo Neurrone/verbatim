@@ -4478,14 +4478,16 @@ fn uia_text_focus(
 /// the selected text read in the program; the focus was 9 calls with its
 /// caret and 10 with a selection before Core asked the completion and read
 /// the states after the registration. Classically the read is the classic
-/// calls behind the same signature: 19 and 24 calls, where the caret
+/// calls behind the same signature: 46 and 51 calls, the line's
+/// formatting read with every attribute, where the caret
 /// report the outpost sent with its own focus report took 45 and 57. A terminal's caret is read with its
 /// focus too, so that the focus says its line (`docs/parity/terminals.md`),
 /// and its first full read is build 3's baseline read, which Core sends
 /// with `Follow` as the focus commits
 /// (`docs/design/readers-tell-core-asks-build3.md`, "The focused
 /// terminal's life"): the focus, its caret and its baseline cost 11 calls
-/// remotely and 48 classically.
+/// remotely and 57 classically. The line's formatting, which the focus
+/// says, is read in the caret's program remotely, at no call of its own.
 #[expect(
     clippy::too_many_lines,
     reason = "every text field focus and its pinned counts, listed in full"
@@ -4507,7 +4509,18 @@ fn text_field_focuses_cost_exactly() {
         said
     };
     let window = |name: &str| vec![label(name), SegmentContent::Role(Role::Window)];
-    let line = vec![SegmentContent::Text("alpha beta".to_owned())];
+    // The line with its formatting, every detail being reported, as NVDA
+    // speaks a focus's line (`speech/speech.py` 904 to 922).
+    let line = vec![
+        SegmentContent::Format(verbatim_model::TextFormat::FontName("Consolas".to_owned())),
+        SegmentContent::Format(verbatim_model::TextFormat::FontSize("11.0 pt".to_owned())),
+        SegmentContent::Format(verbatim_model::TextFormat::Color("black".to_owned())),
+        SegmentContent::Format(verbatim_model::TextFormat::Bold),
+        SegmentContent::Text("alpha".to_owned()),
+        SegmentContent::Format(verbatim_model::TextFormat::NotBold),
+        SegmentContent::Format(verbatim_model::TextFormat::SpellingError),
+        SegmentContent::Text("beta".to_owned()),
+    ];
     let alpha_selected = vec![SegmentContent::Phrase(verbatim_model::Phrase::Preselected(
         verbatim_model::SelectionText::Text("alpha".to_owned()),
     ))];
@@ -4521,7 +4534,12 @@ fn text_field_focuses_cost_exactly() {
     let terminal_said = vec![
         window("Mockapp Terminal Reading Fixture"),
         vec![label("Terminal"), SegmentContent::Role(Role::Terminal)],
-        vec![SegmentContent::Text("one".to_owned())],
+        vec![
+            SegmentContent::Format(verbatim_model::TextFormat::FontName("Consolas".to_owned())),
+            SegmentContent::Format(verbatim_model::TextFormat::FontSize("11.0 pt".to_owned())),
+            SegmentContent::Format(verbatim_model::TextFormat::Color("black".to_owned())),
+            SegmentContent::Text("one".to_owned()),
+        ],
     ];
     for (operation, fixture, id, remote, setup, expected_said, expected) in [
         (
@@ -4540,7 +4558,7 @@ fn text_field_focuses_cost_exactly() {
             false,
             &[][..],
             text_said(false, &line),
-            first_focus(19),
+            first_focus(46),
         ),
         (
             "UIA text field focus with a selection, remotely",
@@ -4558,7 +4576,7 @@ fn text_field_focuses_cost_exactly() {
             false,
             selected,
             text_said(false, &alpha_selected),
-            first_focus(24),
+            first_focus(51),
         ),
         // A protected field's selected text is read as any field's, which
         // Core says masked as the control gives it, so its focus costs
@@ -4579,7 +4597,7 @@ fn text_field_focuses_cost_exactly() {
             false,
             protected_selected,
             text_said(true, &alpha_selected),
-            first_focus(24),
+            first_focus(51),
         ),
         (
             "UIA terminal focus, remotely",
@@ -4597,7 +4615,7 @@ fn text_field_focuses_cost_exactly() {
             false,
             &[][..],
             terminal_said.clone(),
-            first_focus(48),
+            first_focus(57),
         ),
     ] {
         let (said, measured) = uia_text_focus(fixture, id, remote, setup);

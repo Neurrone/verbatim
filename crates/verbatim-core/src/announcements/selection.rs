@@ -212,7 +212,7 @@ async fn selected(
             completes: CompletionFor::SelectionItem {
                 focus: committed.node,
             },
-            baseline: None,
+            details: crate::details::focus_details(&cx.facts()),
         },
     };
     let Outcome::Result(item) = cx.ask(complete, due_us).await else {

@@ -884,13 +884,13 @@ changes nothing. A value change of an edit control that is the committed
 focus sets the flag and says nothing; a UI Automation value change of an
 element with a text pattern says nothing. Answers to `MoveCaret`, a
 sentence move and `Select` on the focused text mint the next baseline.
-Every focus request names the committed focus's baseline to the
-generation that holds it (`Known::baseline`), and a focus answer's
-`FocusCaret` becomes Core's caret, its line or selected text said with
-the focus: a caret read mints the baseline and clears the flag, and on a
-repeated focus, the committed focus's node again, the change from the
-named baseline is said first in specific terms, or general ones with the
-flag set (`text_facts::focus_answered`); a focus answer with no caret,
+Every focus request names the details its caret read fetches, the
+line's formatting the settings report (`details::focus_details`), and a
+focus answer's `FocusCaret` becomes Core's caret, its line, with its
+formatting, or its selected text said with the focus: a caret read mints
+the baseline and clears the flag, silently, a repeated focus's too, as
+NVDA's `initAutoSelectDetection` does (`text_facts::focus_answered`;
+Dickson, 2026-11-17); a focus answer with no caret,
 or a failed focus read, clears the baseline and the flag. The end of the
 focus's outpost generation drops the baseline, and the silent re-take
 takes the baseline its answer minted and keeps the flag. A caret key's starting and final reads compare no
@@ -985,8 +985,7 @@ The answer updates the caret and speaks, queued:
   selection.
 - A selection no key made arrives as a `CaretMoved`'s selection change
   and is spoken the same way (`editing::selection_changed`), also when it
-  arrives with a before read or a repeated focus
-  (`FocusText::Caret`'s `changes`). While a key's watch is open for the
+  arrives with a before read. While a key's watch is open for the
   node, its words are held with the key (`Busy::heard`) and spoken after
   the key's.
 

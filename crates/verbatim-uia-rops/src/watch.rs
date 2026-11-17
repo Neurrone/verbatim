@@ -14,18 +14,27 @@
 //! that shows the effect only by them, with the caret and the selection
 //! where they were, has its unit read by the caller afterwards.
 //!
+//! The formatting of the final read's span (`FormatSpan`: the character,
+//! the unit, or the line), with the attributes the request names, is read
+//! in the same program, under the same condition as the unit, so a key's
+//! answer carries what its unit's formatting says, as NVDA speaks a caret
+//! key's unit with its formatting (`speech/speech.py` 904 to 922).
+//!
 //! [`watch_check`] is the one function callers use; a classic
 //! implementation behind the same signature makes the same reads call by
 //! call.
 
 use windows::Win32::UI::Accessibility::{
     IUIAutomationElement, IUIAutomationTextPattern, IUIAutomationTextRange, TextUnit,
-    TextUnit_Line, TextUnit_Word,
+    TextUnit_Character, TextUnit_Line, TextUnit_Word,
 };
 
 use verbatim_uia::text::{Endpoint, TextRangeExt};
 
 use crate::builder::{Builder, Reg, kind};
+use crate::caret::{
+    Attributes, FormatSpan, Run, RunRegisters, TextAttribute, classic_runs, emit_runs,
+};
 use crate::caret::{
     CaretQuery, CaretRegisters, Constants, RangeEnd, UnitRead, UnitRegisters, classic_caret,
     collapsed, emit_caret, emit_caret_with, endpoint_number, gone_or_timed_out, unit_at,
@@ -56,6 +65,11 @@ pub struct WatchQuery<'a> {
     /// Whether this is the check at the bound, whose final read is made
     /// whatever it shows.
     pub last: bool,
+    /// Whose formatting the final read reads, with `attributes`, read when
+    /// the unit is; `None` for none.
+    pub formats: Option<FormatSpan>,
+    /// The attributes to read.
+    pub attributes: Attributes,
     /// The most UTF-16 code units of text read for a line or a unit.
     pub max_text: i32,
 }
@@ -86,6 +100,10 @@ pub struct WatchAnswer {
     pub word: Option<UnitRead>,
     /// The key's unit at the caret, when asked and read.
     pub unit: Option<UnitRead>,
+    /// The formatting of [`WatchQuery::formats`]'s span, stretch by
+    /// stretch, when asked and read, the unit's condition; `None` when not
+    /// read.
+    pub runs: Option<Vec<Run>>,
     /// Whether the caret read again at the end is not where it was first
     /// read.
     pub moved_while_read: bool,
@@ -121,6 +139,8 @@ struct ProgramKey {
     word: bool,
     unit: Option<i32>,
     last: bool,
+    formats: Option<FormatSpan>,
+    attributes: Attributes,
     max_text: i32,
 }
 
@@ -135,6 +155,8 @@ impl ProgramKey {
             word: query.word,
             unit: query.unit.map(|unit| unit.0),
             last: query.last,
+            formats: query.formats,
+            attributes: query.attributes,
             max_text: query.max_text,
         }
     }
@@ -160,6 +182,7 @@ struct Registers {
     line: UnitRegisters,
     word: Option<UnitRegisters>,
     unit: Option<(Reg<kind::Bool>, UnitRegisters)>,
+    runs: Option<(Reg<kind::Bool>, RunRegisters)>,
     moved_while_read: Reg<kind::Bool>,
 }
 
@@ -308,6 +331,14 @@ fn build(b: &mut Builder, query: &WatchQuery<'_>) -> Registers {
         )
     });
 
+    let runs = emit_formats(
+        b,
+        &c,
+        query,
+        (point, &line, unit.as_ref().map(|(_, unit)| *unit)),
+        (caret_moved, selection_moved),
+    );
+
     // The caret read again, once everything else is read.
     let again = emit_caret_with(b, &c, pattern, false);
     let moved_while_read = b.new_bool(true);
@@ -327,8 +358,50 @@ fn build(b: &mut Builder, query: &WatchQuery<'_>) -> Registers {
         line,
         word,
         unit,
+        runs,
         moved_while_read,
     }
+}
+
+/// Emits the formatting read of the query's span, read under the unit's
+/// condition: once the caret or the selection moved, or at the bound.
+fn emit_formats(
+    b: &mut Builder,
+    c: &Constants,
+    query: &WatchQuery<'_>,
+    (point, line, unit): (Reg<kind::TextRange>, &UnitRegisters, Option<UnitRegisters>),
+    (caret_moved, selection_moved): (Reg<kind::Bool>, Reg<kind::Bool>),
+) -> Option<(Reg<kind::Bool>, RunRegisters)> {
+    let ids: Vec<TextAttribute> = query.attributes.iter().collect();
+    let span = query.formats.filter(|_| !ids.is_empty())?;
+    let read = b.new_bool(query.last);
+    let read = b.add_to_results(read);
+    let moved = b.or(caret_moved, selection_moved);
+    b.or_assign(read, moved);
+    let mut runs = None;
+    b.if_(read, |b| {
+        let (range, text, character) = match span {
+            FormatSpan::Line => (line.range, line.text, false),
+            FormatSpan::Unit => unit.map_or((line.range, line.text, false), |unit| {
+                (unit.range, unit.text, false)
+            }),
+            FormatSpan::Character => {
+                let character = b.text_range_clone(point);
+                let unit = b.int(TextUnit_Character.0);
+                b.text_range_expand_to_enclosing_unit(character, unit);
+                (character, line.text, true)
+            }
+        };
+        runs = Some(emit_runs(
+            b,
+            c,
+            (range, text),
+            character,
+            &ids,
+            Attributes::NONE,
+        ));
+    });
+    Some((read, runs.expect("the branch's body is emitted")))
 }
 
 /// The watch check in one cross-process round trip. The program is built
@@ -359,6 +432,10 @@ pub fn watch_check_remote(query: &WatchQuery<'_>) -> Result<WatchAnswer, Error> 
         Some((read, unit)) if outcome.get(read)? => Some(unit.read(&outcome)?),
         _ => None,
     };
+    let runs = match &r.runs {
+        Some((read, runs)) if outcome.get(*read)? => Some(runs.read(&outcome)?),
+        _ => None,
+    };
     Ok(WatchAnswer {
         caret,
         collapsed: outcome.get(r.caret.collapsed)?,
@@ -368,6 +445,7 @@ pub fn watch_check_remote(query: &WatchQuery<'_>) -> Result<WatchAnswer, Error> 
         line: r.line.read(&outcome)?,
         word: r.word.map(|word| word.read(&outcome)).transpose()?,
         unit,
+        runs,
         moved_while_read: outcome.get(r.moved_while_read)?,
     })
 }
@@ -435,9 +513,41 @@ pub fn watch_check_classic(query: &WatchQuery<'_>) -> Result<WatchAnswer, Error>
         .word
         .then(|| unit_at(&point, TextUnit_Word, query.max_text))
         .transpose()?;
+    let read = query.last || caret_moved || selection_moved;
     let unit = match query.unit {
-        Some(unit) if query.last || caret_moved || selection_moved => {
-            Some(unit_at(&point, unit, query.max_text)?)
+        Some(unit) if read => Some(unit_at(&point, unit, query.max_text)?),
+        _ => None,
+    };
+    let ids: Vec<TextAttribute> = query.attributes.iter().collect();
+    let runs = match query.formats.filter(|_| !ids.is_empty()) {
+        Some(span) if read => {
+            let (runs, _) = match span {
+                FormatSpan::Line | FormatSpan::Unit => {
+                    let spanned = match span {
+                        FormatSpan::Unit => unit.as_ref().unwrap_or(&line),
+                        _ => &line,
+                    };
+                    classic_runs(
+                        (&spanned.range, spanned.text.len()),
+                        false,
+                        &ids,
+                        Attributes::NONE,
+                        query.max_text,
+                    )?
+                }
+                FormatSpan::Character => {
+                    let character = point.clone_range()?;
+                    character.expand(TextUnit_Character)?;
+                    classic_runs(
+                        (&character, 0),
+                        true,
+                        &ids,
+                        Attributes::NONE,
+                        query.max_text,
+                    )?
+                }
+            };
+            Some(runs)
         }
         _ => None,
     };
@@ -455,6 +565,7 @@ pub fn watch_check_classic(query: &WatchQuery<'_>) -> Result<WatchAnswer, Error>
         line,
         word,
         unit,
+        runs,
         moved_while_read,
     })
 }

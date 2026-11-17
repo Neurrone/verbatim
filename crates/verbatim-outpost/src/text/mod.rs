@@ -88,6 +88,9 @@ pub struct WatchRequest<'a, P> {
     pub word: bool,
     /// The final read's unit beyond the line, as [`extra_unit`] gives it.
     pub unit: Option<TextUnit>,
+    /// Whose formatting the final read reads, with the unit, as
+    /// [`format_span`] gives it.
+    pub formats: Option<FormatSpan>,
     /// Whether this is the check at the bound.
     pub last: bool,
 }
@@ -108,6 +111,10 @@ pub struct WatchRead<P> {
     /// The final read's unit at the caret and the caret's offset in it,
     /// when asked and read.
     pub unit: Option<(Unit<P>, usize)>,
+    /// The formatting of [`WatchRequest::formats`]'s span, UTF-16 ranges
+    /// of its text, when asked and read with the unit; `None` when not
+    /// read.
+    pub formats: Option<Vec<Formatting>>,
     /// The caret read again at the end was not where it was first read.
     pub moved_while_read: bool,
 }
@@ -1344,7 +1351,22 @@ fn extra_unit<S: TextSource>(source: &S, unit: TextUnit) -> Option<TextUnit> {
     }
 }
 
+/// Whose formatting a caret key's final read reads: the character, the
+/// word, or the line spoken; none for a paragraph or a page, as NVDA
+/// reports no spelling errors when the caret moves by paragraph, for speed
+/// (`docs/nvda/document-formatting.md`), nor for a sentence key, whose
+/// final read says the line only where the application moved the caret.
+fn format_span(unit: TextUnit) -> Option<FormatSpan> {
+    match unit {
+        TextUnit::Character => Some(FormatSpan::Character),
+        TextUnit::Word => Some(FormatSpan::Unit),
+        TextUnit::Line => Some(FormatSpan::Line),
+        _ => None,
+    }
+}
+
 /// The unit at the caret in `last`, the node's last read, as text: the
+
 /// character cut from its line, the unit it fetched when that is the same
 /// kind, or else its line.
 fn before_unit_text<P>(last: &LastRead<P>, unit: TextUnit) -> String {

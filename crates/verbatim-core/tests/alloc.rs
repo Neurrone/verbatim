@@ -293,7 +293,6 @@ fn editing_with_chain(depth: u64) -> Desk {
         caret: caret_on(long_line(10, 0)),
         selected_text: None,
         baseline: TextAnchor(11),
-        difference: None,
     }));
     let _ = desk.focus_read(ONE, read);
     desk

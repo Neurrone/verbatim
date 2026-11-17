@@ -1254,7 +1254,9 @@ text for every focus it queues. A UIA focus's parts:
   the connection classically;
 - the enrichment: 1 UIA call;
 - the caret read: 1 remotely; classically 35 for mockapp's document, 40
-  with a selection, and 17 for its terminal;
+  with a selection, and 17 for its terminal, and its line's formatting
+  besides, read in the same program remotely and 27 calls more classically
+  with every attribute (`text_field_focuses_cost_exactly`);
 - the selected text, only when something is selected, a protected field's
   too: 1 remotely, 4 classically.
 
@@ -1268,7 +1270,7 @@ its probe adds 1 window message (above):
   protected or not, each with 1 connection and no window message, so the
   minimum is met remotely; classically 45, and 54 with a selection. A UIA
   terminal (`terminal_reading.json`), its caret read with its focus and
-  its baseline read after it, 11 remotely and 48 classically, each with 1
+  its baseline read after it, 11 remotely and 57 classically, each with 1
   connection and no window message. A classic edit control through
   MSAA 40 MSAA calls and 6 window messages, 2 of them the roles of the
   focused-state check of a control without the keyboard focus; one of the

@@ -191,7 +191,6 @@ fn an_element_gone_under_the_same_node_forgets_its_caret_and_model() {
         caret,
         selected_text: None,
         baseline: TextAnchor(2),
-        difference: None,
     }));
     let _ = uia_focus_read(
         &mut held,

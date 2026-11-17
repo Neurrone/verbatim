@@ -197,13 +197,14 @@ fn the_final_read_reads_the_keys_unit_at_the_caret() {
     let (mut app, hwnd) = start("mockapp-watch-final");
     both_ways(&mut app, hwnd, |app, source, anchors| {
         common::apply(app, hwnd, "caret doc 11");
-        let read = final_read(source, anchors, TextUnit::Word, READ_AT).expect("the final read");
+        let read =
+            final_read(source, anchors, (TextUnit::Word, None), READ_AT).expect("the final read");
         assert_eq!(
             summary(&read),
             ("gamma\n".to_owned(), 0, "gamma".to_owned())
         );
-        let read =
-            final_read(source, anchors, TextUnit::Character, READ_AT).expect("the final read");
+        let read = final_read(source, anchors, (TextUnit::Character, None), READ_AT)
+            .expect("the final read");
         assert_eq!(summary(&read), ("gamma\n".to_owned(), 0, "g".to_owned()));
     });
     app.quit();
@@ -235,6 +236,8 @@ fn the_program_and_its_classic_reads_agree() {
         word: true,
         unit: Some(TextUnit_Word),
         last,
+        formats: None,
+        attributes: verbatim_uia_rops::Attributes::NONE,
         max_text: 1024,
     };
     let found = |answer: &verbatim_uia_rops::WatchAnswer| {

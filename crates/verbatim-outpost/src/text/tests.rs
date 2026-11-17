@@ -1117,7 +1117,7 @@ fn a_final_read_reads_the_caret_and_the_keys_unit() {
     let read = check::final_read(
         &mut source,
         &mut anchors.node(1),
-        TextUnit::Word,
+        (TextUnit::Word, None),
         REPORTED_AT,
     )
     .expect("the fake answers");

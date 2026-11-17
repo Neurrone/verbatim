@@ -939,6 +939,8 @@ fn watch_checks_execute_exactly() {
         word,
         unit: Some(unit),
         last,
+        formats: None,
+        attributes: Attributes::NONE,
         max_text: 1024,
     };
     let typical = counted(|| {

@@ -698,7 +698,14 @@ cache-and-diff announcement model). NVDA:
 [Document formatting reporting](../nvda/document-formatting.md).
 Verbatim: **partial**: the cache-and-diff model is matched for caret
 keys and a focus's line (`docs/parity/speech-audio.md`, "Formatting
-while the caret moves"), and the options are theme indications.
+while the caret moves"), and the options are theme indications. The
+focus's line is read with the formatting the settings report, which
+every focus request names, and a caret key's unit with the formatting
+of its character, word or line, read in the watch's program with the
+unit; a paragraph or a page is read with none, and a sentence move,
+made only in classic edit controls, whose text Verbatim reads with no
+formatting, with none (mockapp's
+`a_focus_line_and_a_keys_unit_are_said_with_their_formatting`).
 
 ### The role-shaped behavior layer
 

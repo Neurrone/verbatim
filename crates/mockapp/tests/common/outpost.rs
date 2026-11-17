@@ -1095,7 +1095,7 @@ impl OutpostUnderTest {
                 set: self.reported_set.borrow().clone(),
                 known: sent.clone(),
                 completes: CompletionFor::Focus,
-                baseline: None,
+                details: verbatim_model::TextDetails::NONE,
             })),
         );
         let (answer, calls) = self.answer_with_calls(number);
@@ -1169,7 +1169,7 @@ impl OutpostUnderTest {
                     .collect(),
                 set: focus_set(),
                 known: sent.clone(),
-                baseline: None,
+                details: verbatim_model::TextDetails::NONE,
             }),
         );
         let (answer, calls) = self.answer_with_calls(number);
@@ -1212,7 +1212,7 @@ impl OutpostUnderTest {
             Request::CurrentFocus {
                 set: focus_set(),
                 known: sent.clone(),
-                baseline: None,
+                details: verbatim_model::TextDetails::NONE,
                 focused_state_test: false,
             },
         );

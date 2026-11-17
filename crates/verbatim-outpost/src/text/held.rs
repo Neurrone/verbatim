@@ -21,8 +21,8 @@ use verbatim_model::{
 };
 
 use super::{
-    CaretRead, CaretRequest, CaretState, NodeText, TextError, TextResult, TextSource, change,
-    change_of, keep_unit, perform, report_for, selection_changes, unit_at_caret,
+    CaretRead, CaretRequest, CaretState, FormatSpan, NodeText, TextError, TextResult, TextSource,
+    change, change_of, keep_unit, perform, report_for, selection_changes, unit_at_caret,
 };
 
 /// Reads the caret, the selection and the caret's line, and reports them,
@@ -33,20 +33,21 @@ use super::{
 /// start, as a Backspace over the selection says it; else by its parts,
 /// where a selection's start lies on the caret's line only when it is the
 /// caret. With `selection`, a read in one go also reads the selection's
-/// text, and with `previous`, the old selection's ends and whether it was
-/// collapsed, its changes from it.
+/// text, with `previous`, the old selection's ends and whether it was
+/// collapsed, its changes from it, and with `formats`, the line's
+/// formatting.
 fn read_caret<S: TextSource>(
     source: &mut S,
     anchors: &mut NodeText<'_, S::Pos>,
     read_at_us: u64,
-    (selection, previous): (bool, Option<OldSelection<'_, S::Pos>>),
+    (selection, previous, formats): (bool, Option<OldSelection<'_, S::Pos>>, Option<FormatSpan>),
 ) -> TextResult<CaretFound<S::Pos>> {
     let request = CaretRequest {
         since: None,
         previous: previous.map(|(ends, _)| ends),
         previous_collapsed: previous.is_some_and(|(_, collapsed)| collapsed),
         unit: None,
-        formats: None,
+        formats,
         recheck: false,
         read_selection_text: selection,
         read_previous_text: false,
@@ -176,7 +177,11 @@ pub fn read_selection<S: TextSource>(
         source,
         anchors,
         read_at_us,
-        (true, kept.as_ref().map(|kept| (&kept.ends, kept.collapsed))),
+        (
+            true,
+            kept.as_ref().map(|kept| (&kept.ends, kept.collapsed)),
+            None,
+        ),
     )?;
     // A selection whose text reads as empty holds nothing to say.
     let selected = match (&state.selection, selection_text) {
@@ -212,6 +217,42 @@ pub fn read_selection<S: TextSource>(
     })
 }
 
+/// A focus's caret read: the caret, its line with its formatting, which
+/// NVDA speaks with the focus (`speech/speech.py` 904 to 922), and the
+/// selection with its text, held as the next selection baseline, compared
+/// with nothing: a focus read becomes the baseline silently, as NVDA's
+/// `initAutoSelectDetection` sets it (`editableText.py` 417 to 427).
+///
+/// # Errors
+///
+/// When the application does not answer or the node is gone.
+pub fn read_focus<S: TextSource>(
+    source: &mut S,
+    anchors: &mut NodeText<'_, S::Pos>,
+    read_at_us: u64,
+) -> TextResult<(CaretReport, Option<SelectionChange>, TextAnchor)> {
+    let CaretFound {
+        state,
+        report,
+        selection_text,
+        ..
+    } = read_caret(
+        source,
+        anchors,
+        read_at_us,
+        (true, None, Some(FormatSpan::Line)),
+    )?;
+    // A selection whose text reads as empty holds nothing to say.
+    let selected = match (&state.selection, selection_text) {
+        (Some(_), Some(units)) if units.len() < SELECTION_TEXT_CAP => Some(change_of(true, &units)),
+        (Some((start, end)), _) => Some(change(source, true, start, end)?),
+        (None, _) => None,
+    }
+    .filter(|selected| !selected.text.is_empty());
+    let baseline = anchors.hold_last()?;
+    Ok((report, selected, baseline))
+}
+
 /// A held caret key's starting read: the caret and the selection, held
 /// as the starting point, with the key's `unit` at the caret (the line
 /// where the text has no such unit) and, with `word`, the word at the
@@ -226,7 +267,8 @@ pub fn starting_read<S: TextSource>(
     read_at_us: u64,
     (unit, word): (TextUnit, bool),
 ) -> TextResult<Started> {
-    let CaretFound { state, report, .. } = read_caret(source, anchors, read_at_us, (false, None))?;
+    let CaretFound { state, report, .. } =
+        read_caret(source, anchors, read_at_us, (false, None, None))?;
     started_at(source, anchors, (state, report), (unit, word))
 }
 

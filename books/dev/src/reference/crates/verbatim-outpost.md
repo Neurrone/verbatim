@@ -806,6 +806,9 @@ reads behind ids Core names, released as anchors are (Table 16):
 - `StartingRead`: the caret and the selection held as the starting point,
   with the key's unit at the caret (the line where the text has none) and,
   for Delete, the word; it compares no selection.
+- A focus's caret read (`held::read_focus`): the caret, its line with
+  the formatting the focus request's `details` name, and the selection
+  with its text, held as the next baseline, compared with nothing.
 - `ReadSelection`, a caret tell's read: the caret and the selection,
   compared with the named baseline when the node holds it, as its range
   now is (through UI Automation a range follows the edits), in specific

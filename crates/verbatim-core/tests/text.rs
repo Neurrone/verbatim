@@ -76,19 +76,13 @@ fn caret_selection(selection: Selection) -> CaretSelection {
     CaretSelection { range: selection }
 }
 
-/// A focus's caret read of `caret`, with the text selected, baseline
-/// `baseline` minted, and the difference from the baseline named.
-fn caret_read(
-    caret: CaretReport,
-    selected_text: Option<&str>,
-    baseline: u64,
-    difference: Option<SelectionDifference>,
-) -> FocusCaret {
+/// A focus's caret read of `caret`, with the text selected, and baseline
+/// `baseline` minted.
+fn caret_read(caret: CaretReport, selected_text: Option<&str>, baseline: u64) -> FocusCaret {
     FocusCaret::Read(Box::new(FocusCaretRead {
         caret,
         selected_text: selected_text.map(str::to_owned),
         baseline: TextAnchor(baseline),
-        difference,
     }))
 }
 
@@ -615,7 +609,7 @@ fn editing(text: &str, offset: u32) -> Text {
     let mut field = Text::new();
     let _ = field.focus(
         &node(FIELD, Role::EditableText, StateSet::new()),
-        caret_read(caret_on(line(text, 100, offset), None), None, 1, None),
+        caret_read(caret_on(line(text, 100, offset), None), None, 1),
     );
     field
 }
@@ -728,7 +722,7 @@ fn edit_control(text: &str, offset: u32) -> Text {
     };
     let caret = caret_on(line(text, 100, offset), None);
     let mut read = FocusRead {
-        caret: caret_read(caret.clone(), None, 1, None),
+        caret: caret_read(caret.clone(), None, 1),
         msaa: Some(verbatim_model::request::HeldIds {
             event: verbatim_model::request::MsaaIds {
                 window: ONE.window(),
@@ -1016,7 +1010,7 @@ fn backspace_at_a_lines_start_names_the_line_break_it_deleted() {
     };
     let _ = text.focus(
         &node(FIELD, Role::EditableText, StateSet::new()),
-        caret_read(caret_on(first, None), None, 1, None),
+        caret_read(caret_on(first, None), None, 1),
     );
     let read = WatchedRead {
         caret: caret_on(line("abc\r\n", 100, 0), None),
@@ -1245,7 +1239,7 @@ fn typed_characters_are_echoed_and_a_protected_field_echoes_stars() {
     );
     let _ = text.focus(
         &protected,
-        caret_read(caret_on(line("", 100, 0), None), None, 1, None),
+        caret_read(caret_on(line("", 100, 0), None), None, 1),
     );
     assert_eq!(text.typed("p"), words(vec![character("*")]));
 }
@@ -1354,7 +1348,7 @@ fn echo_only_in_edit_controls_stays_quiet_elsewhere() {
     assert_eq!(text.typed("a"), []);
     let _ = text.focus(
         &node(11, Role::EditableText, StateSet::new()),
-        caret_read(caret_on(line("", 100, 0), None), None, 1, None),
+        caret_read(caret_on(line("", 100, 0), None), None, 1),
     );
     assert_eq!(text.typed("a"), words(vec![character("a")]));
 }
@@ -1372,7 +1366,7 @@ fn focused(number: u64, role: Role, line: TextChunk) -> Text {
     let mut field = Text::new();
     let _ = field.focus(
         &node(number, role, StateSet::new()),
-        caret_read(caret_on(line, None), None, 1, None),
+        caret_read(caret_on(line, None), None, 1),
     );
     field
 }
@@ -1734,7 +1728,7 @@ fn the_start_marker_in_another_object_is_no_start_marker_and_is_kept() {
     );
     let _ = text.focus(
         &node(FIELD, Role::EditableText, StateSet::new()),
-        caret_read(caret_on(line("hello world\n", 100, 0), None), None, 1, None),
+        caret_read(caret_on(line("hello world\n", 100, 0), None), None, 1),
     );
     assert_eq!(
         text.command(ReviewCommand::SelectThenCopy, 0),
@@ -1768,7 +1762,7 @@ fn moving_to_the_start_marker_in_another_object_is_no_start_marker_and_keeps_it(
     );
     let _ = text.focus(
         &node(FIELD, Role::EditableText, StateSet::new()),
-        caret_read(caret_on(line("hello world\n", 100, 0), None), None, 1, None),
+        caret_read(caret_on(line("hello world\n", 100, 0), None), None, 1),
     );
     assert_eq!(
         text.command(ReviewCommand::MoveToStartMarker, 0),
@@ -2207,7 +2201,6 @@ fn text_read(selection: Option<Selection>, text: &str, selected_text: Option<&st
         caret_on(line(text, 100, 0), selection.map(caret_selection)),
         selected_text,
         1,
-        None,
     )
 }
 
@@ -2530,19 +2523,9 @@ fn a_protected_field_says_its_masked_line_selection_or_value_as_any_field() {
 }
 
 /// The caret read of a focus whose caret is at the start of a line minted
-/// at `anchor`, with nothing selected, baseline `baseline` minted, and
-/// `difference` from the baseline named.
-fn caret_at_anchor(
-    anchor: u64,
-    baseline: u64,
-    difference: Option<SelectionDifference>,
-) -> FocusCaret {
-    caret_read(
-        caret_on(line("gamma\n", anchor, 0), None),
-        None,
-        baseline,
-        difference,
-    )
+/// at `anchor`, with nothing selected, and baseline `baseline` minted.
+fn caret_at_anchor(anchor: u64, baseline: u64) -> FocusCaret {
+    caret_read(caret_on(line("gamma\n", anchor, 0), None), None, baseline)
 }
 
 /// The text anchors the state holds, by outpost.
@@ -2609,7 +2592,7 @@ impl Text {
 #[test]
 fn a_replacement_outposts_silent_re_read_takes_its_caret_without_speaking() {
     let mut text = Text::new();
-    let _ = text.focus_with_value(StateSet::new(), "gamma\n", caret_at_anchor(100, 1, None));
+    let _ = text.focus_with_value(StateSet::new(), "gamma\n", caret_at_anchor(100, 1));
     // The replacement numbers its nodes and anchors afresh and reports the
     // focus the user already heard: nothing is said, and its caret is
     // Core's.
@@ -2620,7 +2603,7 @@ fn a_replacement_outposts_silent_re_read_takes_its_caret_without_speaking() {
     };
     assert_eq!(
         (
-            text.replaced(&snapshot, caret_at_anchor(200, 2, None)),
+            text.replaced(&snapshot, caret_at_anchor(200, 2)),
             anchors_held(&text)
         ),
         (
@@ -2787,7 +2770,7 @@ fn a_focus_reports_the_formatting_at_its_line_start_afresh() {
         text.focus_with_value(
             StateSet::new(),
             "Ths is\r",
-            caret_read(caret_on(error_line, None), None, 1, None)
+            caret_read(caret_on(error_line, None), None, 1)
         ),
         vec![
             document(),
@@ -2857,7 +2840,7 @@ fn the_silent_re_take_after_a_replacement_reports_formatting_afresh() {
     };
     let caret = caret_on(bold_line("first bold\n", 200), None);
     assert_eq!(
-        text.replaced(&snapshot, caret_read(caret.clone(), None, 2, None)),
+        text.replaced(&snapshot, caret_read(caret.clone(), None, 2)),
         Vec::<Vec<UtteranceSegment>>::new()
     );
     // The replacement answers the key.

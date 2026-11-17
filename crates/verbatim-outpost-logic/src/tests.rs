@@ -147,7 +147,7 @@ fn core_ask(number: u64) -> Input {
         request: verbatim_model::request::Request::CurrentFocus {
             set: Vec::new(),
             known: Vec::new(),
-            baseline: None,
+            details: verbatim_model::TextDetails::NONE,
             focused_state_test: false,
         },
     }))

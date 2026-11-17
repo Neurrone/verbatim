@@ -221,7 +221,7 @@ pub(crate) async fn run(mut cx: Cx<Entries>, focus: UiaFocus) {
             set: crate::details::node_set(&cx.facts(), FOCUS_SET),
             known: known.sent.clone(),
             completes: CompletionFor::Focus,
-            baseline: known.baseline,
+            details: crate::details::focus_details(&cx.facts()),
         },
     };
     let read = match cx.ask(complete, due_us).await {

@@ -38,6 +38,13 @@ pub(crate) fn walk_set(state: &SrState, base: &[PropertyId]) -> Vec<PropertyId> 
         .collect()
 }
 
+/// What a focus's caret read fetches beyond the text: the details the
+/// settings report, for its line, which NVDA speaks with its formatting
+/// (`speech/speech.py` 904 to 922).
+pub(crate) fn focus_details(state: &SrState) -> TextDetails {
+    state.reported.text
+}
+
 /// Why a text read is made, which decides what it fetches.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum TextReason {

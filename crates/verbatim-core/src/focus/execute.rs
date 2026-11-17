@@ -13,7 +13,7 @@ use verbatim_model::request::{FocusAncestor, FocusCaret, FocusNode, FocusRead, K
 use verbatim_model::tell::{AcceptanceFacts, Event, Relation};
 use verbatim_model::{
     Backend, EarlierElement, Effect, FocusText, NodeDetails, NodeSnapshot, ObjectKey, Pid, Role,
-    StateSet, TextAnchor, TraceId, WindowFacts, WindowHandle,
+    StateSet, TraceId, WindowFacts, WindowHandle,
 };
 
 use super::follow::FollowRequest;
@@ -28,30 +28,21 @@ use crate::state::SrState;
 
 /// The ancestors Core already knows, as a focus request sent them: each
 /// with the place, in the committed focus's kept ancestors, of the
-/// ancestor it names, so that the answer's meeting point is found again;
-/// and the committed focus's selection baseline, which a repeated focus's
-/// caret is compared with.
+/// ancestor it names, so that the answer's meeting point is found again.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Known {
     /// The list as sent.
     pub(crate) sent: Vec<KnownAncestor>,
     /// For each, the place of its ancestor, nearest first.
     pub(crate) places: Vec<usize>,
-    /// The selection baseline the request names.
-    pub(crate) baseline: Option<TextAnchor>,
 }
 
 impl Known {
     /// The ancestors Core already knows for a request to the outpost
-    /// generation `asked` (`None` for the listener), with the committed
-    /// focus's baseline when that generation holds it.
+    /// generation `asked` (`None` for the listener).
     pub(crate) fn of(state: &SrState, asked: Option<verbatim_model::OutpostId>) -> Self {
         let (places, sent) = state.versions.known_with_places(asked).into_iter().unzip();
-        Self {
-            sent,
-            places,
-            baseline: crate::text_facts::named_in_focus_read(state, asked),
-        }
+        Self { sent, places }
     }
 }
 
@@ -468,8 +459,9 @@ fn ignored(state: &SrState, origin: &Origin) -> bool {
 /// less, and the foreground object becomes the one the answer read for
 /// it, the top ancestor only if it could not be read (design, "Focus and
 /// foreground"). The answer's caret becomes Core's, with the selection
-/// baseline it minted; a repeated focus, on the committed focus's node,
-/// then says the change from the baseline its request named (Table 17,
+/// baseline it minted, silently, a repeated focus's too, as NVDA's
+/// `initAutoSelectDetection` sets its baseline (`editableText.py` 417 to
+/// 427; Dickson, 2026-11-17) (Table 17,
 /// columns A to C). A focus whose nodes the reader did not mint, or whose
 /// meeting point Core does not hold, ends unspoken: a reader's fault.
 pub(crate) fn execute(
@@ -496,11 +488,6 @@ pub(crate) fn execute(
         }
         state.drop_models(|model| model.node == node);
     }
-    let repeated = state
-        .versions
-        .committed_read()
-        .filter(|committed| committed.node == ready.kept.node)
-        .map(|committed| committed.selection);
     // With the readers' last focus emptied by a foreground change to an
     // unrelated window, the committed focus was left: the new focus is
     // compared with no ancestors, so the window's title and the focus are
@@ -518,9 +505,7 @@ pub(crate) fn execute(
     if !matches!(read.caret, FocusCaret::Read(_)) {
         state.forget_caret();
     }
-    let change =
-        crate::text_facts::focus_answered(&mut ready.kept.selection, &read.caret, repeated);
-    said.extend(crate::editing::speak_each(origin.trace_id, change));
+    crate::text_facts::focus_answered(&mut ready.kept.selection, &read.caret);
     let follows = commit(state, origin, ready);
     Executed {
         said,
