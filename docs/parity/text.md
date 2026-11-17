@@ -51,7 +51,7 @@ never blocks on the answer
 event queue"). Core then
 speaks NVDA's unit: the character for Left and Right Arrow, Home, and
 End; the provider's word for Control with Left or Right Arrow, a word of
-one character (Notepad's full stop) by its name, as NVDA spells it; the
+one character (Notepad's full stop, or a single space) by its name, as NVDA spells it; the
 line for Up and Down Arrow, the page keys, and Control with Home or End;
 the paragraph for Control with Up or Down Arrow; what Backspace deleted;
 and what Delete left at the caret.

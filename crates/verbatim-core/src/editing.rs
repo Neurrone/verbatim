@@ -345,6 +345,9 @@ fn formatted(
 ) -> Option<Vec<UtteranceSegment>> {
     let content = text::chunk_content(chunk, grid);
     let spoken = match how {
+        // A word of nothing but white space is spoken whole
+        // ([`text::word_text`]).
+        text::Spoken::Word if !content.is_empty() && text::is_blank(content) => 0..content.len(),
         text::Spoken::Word => {
             let start = content.len().saturating_sub(content.trim_start().len());
             start..content.trim_end().len().max(start)
@@ -397,11 +400,11 @@ fn unit_segments(
             {
                 return segments;
             }
-            let read = text::chunk_content(chunk, grid).trim();
+            let read = text::chunk_content(chunk, grid);
             if unit == TextUnit::Word {
                 text::word_segments(read, chunk.language_at(0))
             } else {
-                text::text_segments(read, chunk.language_at(0))
+                text::text_segments(read.trim(), chunk.language_at(0))
             }
         }
     }

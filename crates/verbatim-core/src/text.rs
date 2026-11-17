@@ -233,13 +233,25 @@ pub(crate) fn text_segments(text: &str, language: Option<&str>) -> Vec<Utterance
     }
 }
 
+/// A word's text as it is spoken: without its surrounding white space,
+/// unless it is nothing but white space, which is kept, as NVDA keeps a
+/// unit's text that is only white space when it decides whether to spell
+/// it (`docs/nvda/speech.md`, "A word of one character").
+pub(crate) fn word_text(word: &str) -> &str {
+    if !word.is_empty() && is_blank(word) {
+        word
+    } else {
+        word.trim()
+    }
+}
+
 /// The segments for a word read on its own: its text, or, for a word that
 /// is a single character (a full stop a provider counts as a word of its
-/// own), that character by its name, as NVDA speaks it
+/// own, or a single space), that character by its name, as NVDA speaks it
 /// (`docs/nvda/speech.md`, "A word of one character"): spoken as text, a
-/// punctuation mark would say nothing.
+/// punctuation mark would say nothing, and a space "blank".
 pub(crate) fn word_segments(word: &str, language: Option<&str>) -> Vec<UtteranceSegment> {
-    let word = word.trim();
+    let word = word_text(word);
     if verbatim_text::graphemes(word).len() == 1 {
         character_segments(Some(word), language)
     } else {
@@ -484,12 +496,12 @@ pub(crate) fn formatted_segments(
     }
     *reported = first.1.clone();
     let single = how == Spoken::Character
-        || (how == Spoken::Word && verbatim_text::graphemes(text.trim()).len() == 1);
+        || (how == Spoken::Word && verbatim_text::graphemes(word_text(text)).len() == 1);
     if single {
         let character = if how == Spoken::Character {
             text
         } else {
-            text.trim()
+            word_text(text)
         };
         segments.extend(character_segments(
             (!character.is_empty()).then_some(character),

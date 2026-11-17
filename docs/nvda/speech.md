@@ -271,9 +271,11 @@ character is spoken by its name, as a character is when the caret moves
 over it. A full stop that the application's word unit counts as a word of
 its own (Windows 11 Notepad's does, after the last word of a sentence)
 is therefore spoken "dot", where as text, at the default symbol level,
-it would say nothing. A word of two or more characters is spoken as
-text. (`getTextInfoSpeech` and `_getTextInfoSpeech_considerSpelling` in
-`speech/speech.py`.)
+it would say nothing. Text that is nothing but white space is not set
+aside: a word that is a single space is spelled "space", where as text it
+would be "blank". A word of two or more characters, white space or not,
+is spoken as text. (`getTextInfoSpeech` and
+`_getTextInfoSpeech_considerSpelling` in `speech/speech.py`.)
 
 ### Capitals when spelling
 

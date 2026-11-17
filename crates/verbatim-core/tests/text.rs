@@ -849,6 +849,35 @@ fn a_word_of_one_character_is_spoken_as_that_character() {
 }
 
 #[test]
+fn a_word_of_one_space_is_spoken_as_that_space() {
+    // A provider's word that is a single space (the space before the first
+    // word of an indented line) is spelled, as NVDA keeps a unit's text
+    // that is only white space when it decides whether to spell it
+    // (`speech/speech.py` 1753 to 1763): "space", not "blank".
+    let mut text = editing("a  b
+", 0);
+    assert_eq!(
+        text.moved(
+            CaretMotion::NextWord,
+            line("a  b
+", 101, 1),
+            Some(unit(TextUnit::Word, " ", 102))
+        ),
+        words(vec![character(" ")])
+    );
+    // Two spaces are not one character: "blank", as NVDA speaks them.
+    assert_eq!(
+        text.moved(
+            CaretMotion::NextWord,
+            line("a  b
+", 101, 1),
+            Some(unit(TextUnit::Word, "  ", 103))
+        ),
+        words(vec![message(Message::Blank)])
+    );
+}
+
+#[test]
 fn the_review_cursor_speaks_a_word_of_one_character_by_its_name() {
     let mut text = reviewing("the river bank.\r\n", 11);
     assert_eq!(
