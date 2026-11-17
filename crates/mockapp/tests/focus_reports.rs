@@ -905,7 +905,8 @@ fn a_windowless_text_focus_whose_walk_failed_is_found_as_the_focused_element() {
     // one connection call and the walk down the route's runtime ids, which
     // does not reach the field four levels below, two UIA calls; the
     // focused-element read, one UIA call, its stand-in counting no
-    // connection; the field's registration and its states and caret; and
+    // connection; the field's registration and its states and caret, its
+    // text pattern asked for once, which it has none of; and
     // the foreground object of the window the focus enters, one connection
     // and one UIA call, the window judged by Core's verdict, which the
     // request carries, with no probe. Without the read the field is not
@@ -913,7 +914,7 @@ fn a_windowless_text_focus_whose_walk_failed_is_found_as_the_focused_element() {
     assert_eq!(
         reported.calls,
         CallCounts {
-            uia: 7,
+            uia: 6,
             msaa: 0,
             window_messages: 0,
             connections: 2,

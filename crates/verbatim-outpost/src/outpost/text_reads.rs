@@ -685,33 +685,6 @@ fn watch_outcome(
     }
 }
 
-#[cfg(test)]
-mod watch_tests {
-    use super::*;
-
-    /// A watch whose node's text cannot be opened, or whose read fails,
-    /// goes on as if the check showed no effect; only a node gone ends it
-    /// as not there.
-    #[test]
-    fn a_watch_read_that_fails_is_no_effect_and_only_a_gone_node_is_not_there() {
-        for failed in [TextReply::Unanswered, TextReply::NoText] {
-            assert_eq!(watch_outcome(Err(failed.clone())), None, "{failed:?}");
-        }
-        assert_eq!(
-            watch_outcome(Ok(Err(TextError::Failed("busy".to_owned())))),
-            None
-        );
-        assert!(matches!(
-            watch_outcome(Err(TextReply::Gone)),
-            Some(Outcome::NotThere)
-        ));
-        assert!(matches!(
-            watch_outcome(Ok(Err(TextError::Gone))),
-            Some(Outcome::NotThere)
-        ));
-    }
-}
-
 /// A focus's caret, read after its states (Table 17, columns A to C): the
 /// line at the caret and the selection, compared with the baseline Core
 /// named when this node holds it, the next baseline held from the read.
@@ -977,5 +950,32 @@ pub(super) fn terminal_find(
             tracing::debug!(reason, "a terminal could not be searched");
             TextReply::Unanswered
         }
+    }
+}
+
+#[cfg(test)]
+mod watch_tests {
+    use super::*;
+
+    /// A watch whose node's text cannot be opened, or whose read fails,
+    /// goes on as if the check showed no effect; only a node gone ends it
+    /// as not there.
+    #[test]
+    fn a_watch_read_that_fails_is_no_effect_and_only_a_gone_node_is_not_there() {
+        for failed in [TextReply::Unanswered, TextReply::NoText] {
+            assert_eq!(watch_outcome(Err(failed.clone())), None, "{failed:?}");
+        }
+        assert_eq!(
+            watch_outcome(Ok(Err(TextError::Failed("busy".to_owned())))),
+            None
+        );
+        assert!(matches!(
+            watch_outcome(Err(TextReply::Gone)),
+            Some(Outcome::NotThere)
+        ));
+        assert!(matches!(
+            watch_outcome(Ok(Err(TextError::Gone))),
+            Some(Outcome::NotThere)
+        ));
     }
 }
