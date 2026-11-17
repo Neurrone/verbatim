@@ -1697,12 +1697,7 @@ mod handler {
             return Ok(provider);
         }
         if pattern_id == UIA_LegacyIAccessiblePatternId && role == verbatim_model::Role::MenuItem {
-            let provider: IUnknown = LegacyIAccessibleProvider {
-                tree: tree.clone(),
-                index,
-            }
-            .into();
-            return Ok(provider);
+            return Ok(LegacyIAccessibleProvider::of(tree, index));
         }
         if pattern_id == UIA_TogglePatternId && props::toggle_available(role) {
             let provider: IUnknown = ToggleProvider {
@@ -1835,6 +1830,17 @@ mod handler {
     struct LegacyIAccessibleProvider {
         tree: SharedTree,
         index: usize,
+    }
+
+    impl LegacyIAccessibleProvider {
+        /// The provider of node `index` of `tree`.
+        fn of(tree: &SharedTree, index: usize) -> IUnknown {
+            LegacyIAccessibleProvider {
+                tree: tree.clone(),
+                index,
+            }
+            .into()
+        }
     }
 
     impl ILegacyIAccessibleProvider_Impl for LegacyIAccessibleProvider_Impl {
