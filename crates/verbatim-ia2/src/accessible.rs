@@ -302,6 +302,17 @@ impl Accessible {
         Ok(related(&focus))
     }
 
+    /// `accChild`: the object of its own that child `child` of this object
+    /// has, or `None` when it has none, as a simple child has not, or the
+    /// call fails. Two calls when it answers one: the call and the
+    /// counted `QueryInterface` for `IAccessible`.
+    pub(crate) fn child_object(&self, child: i32) -> Option<Self> {
+        count(CallKind::Msaa).ok()?;
+        // SAFETY: a live interface and an integer child `VARIANT`.
+        let dispatch = unsafe { self.object.get_accChild(&child_variant(child)) }.ok()?;
+        Related::Object(Some(dispatch)).object()
+    }
+
     /// `accSelection`: the selected child or object within this one.
     pub(crate) fn selection(&self) -> windows::core::Result<Related> {
         count(CallKind::Msaa)?;

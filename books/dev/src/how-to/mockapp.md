@@ -290,6 +290,10 @@ parses them.
   on, acquired with `AccessibleObjectFromWindow` as it is asked, as an
   application whose own `accFocus` names an object another process serves
   would.
+- `acc-focus-stepwise` (MSAA only) makes every node's `accFocus` answer,
+  by its child id, only its own child on the way to the focused node, whose
+  `accChild` gives the child's own object, from then on: the focused node
+  answers itself, and a node the focus is not below answers nothing.
 - `thread-window` makes a hidden top-level window on a UI thread of its
   own and answers `thread-window <hwnd>`: a window of the application on
   another thread than the host's, for a test of the moved-on judgement.

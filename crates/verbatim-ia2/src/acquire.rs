@@ -1553,46 +1553,24 @@ pub fn selected_child(node: NodeId, registry: &dyn Interning) -> Option<NodeSnap
 /// The focused object in `hwnd`, the window with the keyboard focus, for a
 /// focus-now query (including Core's after a menu closes), acquired but
 /// not yet read, so the caller can make NVDA's focused-state test on it
-/// first ([`FocusedObject`]): its client's `accFocus`, with a fallback to
-/// the client itself. `accFocus` names whatever it names when it is
-/// called, so the window of the object it names is checked with `serves`
+/// first ([`FocusedObject`]): from its client, `accFocus` followed until it
+/// names nothing or the object it was asked of, a child id it names turned
+/// into the child's own object by `accChild` where the child has one, as
+/// NVDA's focus object is found (`NVDAObjects/IAccessible/__init__.py`,
+/// `kwargsFromSuper` for the focus relation, and `IAccessibleHandler`'s
+/// `accFocus`); the client itself when the first names nothing. NVDA
+/// follows it with no limit; the outpost stops after
+/// [`MAX_ACC_FOCUS_STEPS`], so that objects naming each other in a cycle
+/// cannot hold the read forever. `accFocus` names whatever it names when it
+/// is called, so the window of the object it names is checked with `serves`
 /// before anything else is read of it: an object of a window the caller's
 /// application does not serve answers `None`, no focused control, and is
 /// read no further (`docs/design/cross-process-calls-study.md`, instance
 /// 8). Blocking; worker only.
 #[must_use]
 pub fn focused_object(hwnd: isize, serves: &dyn Fn(isize) -> bool) -> Option<FocusedObject> {
-    let client = Accessible::client_of_window(hwnd)?;
-    // A child object reached through `accFocus` has no address of its
-    // own; the client and its children by id do.
-    let (acc, at_address) = match read_acc_focus(&client) {
-        FocusTarget::ChildObject(child_acc) => (child_acc, false),
-        FocusTarget::ChildId(child_id) => (client.with_child(child_id), true),
-        FocusTarget::None => (client, true),
-    };
-    // A child object `accFocus` named is in whatever window it is in, and
-    // one placed in no window is not known to be served by the
-    // application, so it is not read; the client and its children by id
-    // are in `hwnd`.
-    let node_hwnd = match acc.window() {
-        Some(window) => window,
-        None if at_address => hwnd,
-        None => {
-            tracing::debug!(
-                hwnd,
-                "accFocus named an object in no window; nothing more is read"
-            );
-            return None;
-        }
-    };
-    if node_hwnd != hwnd && !serves(node_hwnd) {
-        tracing::debug!(
-            hwnd,
-            named = node_hwnd,
-            "accFocus named an object of a window the application does not serve; nothing more is read"
-        );
-        return None;
-    }
+    let (acc, node_hwnd, at_address) =
+        follow_acc_focus(Accessible::client_of_window(hwnd)?, hwnd, serves)?;
     let key = (node_hwnd, OBJID_CLIENT.0, acc.child());
     Some(FocusedObject {
         candidate: FocusCandidate {
@@ -1603,6 +1581,74 @@ pub fn focused_object(hwnd: isize, serves: &dyn Fn(isize) -> bool) -> Option<Foc
         },
         at_address,
     })
+}
+
+/// The most `accFocus` steps [`focused_object`] follows.
+const MAX_ACC_FOCUS_STEPS: u32 = 64;
+
+/// [`focused_object`]'s walk down `accFocus` from `client`, the client of
+/// `hwnd`: the object reached, its window, and whether it is at an address
+/// of its own, as the client and its children by id are, where an object
+/// `accFocus` or `accChild` gave is not. Each object of its own a step
+/// reaches is in whatever window it is in, so its window is checked with
+/// `serves` before anything more is asked of it: `None` for one of a
+/// window the application does not serve, or in no window, which is not
+/// known to be served by it.
+fn follow_acc_focus(
+    client: Accessible,
+    hwnd: isize,
+    serves: &dyn Fn(isize) -> bool,
+) -> Option<(Accessible, isize, bool)> {
+    let mut acc = client;
+    let mut window = hwnd;
+    let mut at_address = true;
+    for _ in 0..MAX_ACC_FOCUS_STEPS {
+        let next = match read_acc_focus(&acc) {
+            FocusTarget::ChildObject(child_acc) => child_acc,
+            // An integer can name a child that has an object of its own.
+            FocusTarget::ChildId(child_id) if child_id != CHILDID_SELF => {
+                match acc.child_object(child_id) {
+                    Some(child_acc) => child_acc,
+                    None => {
+                        // A simple child: accFocus asked of its object
+                        // again names it again, so the walk ends here.
+                        return Some((acc.with_child(child_id), window, at_address));
+                    }
+                }
+            }
+            FocusTarget::ChildId(_) | FocusTarget::None => break,
+        };
+        // The object it was asked of, named again: nothing further.
+        if next.canonical() == acc.canonical() {
+            break;
+        }
+        window = served_window(&next, hwnd, serves)?;
+        acc = next;
+        at_address = false;
+    }
+    Some((acc, window, at_address))
+}
+
+/// The window of `acc`, an object of its own that `accFocus` or `accChild`
+/// gave in the focus window `hwnd`, when the application serves it; `None`
+/// for one in no window or another application's.
+fn served_window(acc: &Accessible, hwnd: isize, serves: &dyn Fn(isize) -> bool) -> Option<isize> {
+    let Some(window) = acc.window() else {
+        tracing::debug!(
+            hwnd,
+            "accFocus named an object in no window; nothing more is read"
+        );
+        return None;
+    };
+    if window != hwnd && !serves(window) {
+        tracing::debug!(
+            hwnd,
+            named = window,
+            "accFocus named an object of a window the application does not serve; nothing more is read"
+        );
+        return None;
+    }
+    Some(window)
 }
 
 /// The MSAA name of the object a `WinEvent` names at its address,

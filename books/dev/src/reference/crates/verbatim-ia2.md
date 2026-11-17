@@ -280,10 +280,14 @@ Public API:
   chain, never reads one (`books/dev/src/explanation/design/uia-shapes.md`, decision 9) and a
   change reports none; ancestor walks read for context too),
   `focused_object(hwnd, serves)` ("what is focused right now"
-  in `hwnd`, the window with the keyboard focus: its client's `accFocus`,
-  for a focus-now query; the window of the object `accFocus` names is
-  checked with `serves` before anything is read of it, and an object of a
-  window the caller's application does not serve answers `None`),
+  in `hwnd`, the window with the keyboard focus, for a focus-now query:
+  from its client, `accFocus` followed until it names nothing or the
+  object it was asked of, a child id turned into the child's own object by
+  `accChild` where it has one, as NVDA finds its focus object, stopping
+  after 64 steps where NVDA has no limit; the window of each object of its
+  own a step reaches is checked with `serves` before anything more is asked
+  of it, and an object of a window the caller's application does not serve
+  answers `None`),
   acquired and not yet read (`FocusedObject`), so a fake focus can make
   NVDA's focused-state test on it first (`has_focused_state`, the walk a
   focus event's candidate gets) before it is read (`read`);
@@ -521,7 +525,8 @@ by Core on entering the window: one acquisition; `progress`, an
     `do_default_action` activates.
   - `parent` (`accParent`, then a counted `QueryInterface` for
     `IAccessible`), `child_count`, `children` (`AccessibleChildren`),
-    `navigate` (`accNavigate`), `focus` (`accFocus`), `selection`
+    `navigate` (`accNavigate`), `focus` (`accFocus`), `child_object`
+    (`accChild`, then a counted `QueryInterface`), `selection`
     (`accSelection`), `window` (`WindowFromAccessibleObject`), and
     `identity_string` (a counted `QueryInterface` for `IAccIdentity`, then
     `GetIdentityString`).

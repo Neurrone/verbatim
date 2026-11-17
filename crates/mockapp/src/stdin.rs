@@ -24,6 +24,7 @@
 //! `disconnect-at-first-child <id>`,
 //! `focus-child <container> <child>`, `client-name <text>`,
 //! `client-identity`, `disable-client`, `acc-focus-window <hwnd>`,
+//! `acc-focus-stepwise`,
 //! `child-window`, `child-client-identity`, `form-client`, `window-focus`,
 //! `fail-window-element`, `hold`,
 //! `release`, `await-advised <event id> <count>`,
@@ -383,6 +384,13 @@ pub(crate) enum Command {
     /// application whose own `accFocus` names an object another process
     /// serves would. MSAA-only.
     AccFocusWindow(isize),
+    /// `acc-focus-stepwise`: every node's `accFocus` answers, by its child
+    /// id, only its own child on the way to the focused node, whose
+    /// `accChild` gives that child's own object, from then on: the
+    /// focused node answers itself, and a node the focus is not below
+    /// answers nothing, as a container whose `accFocus` names the child
+    /// holding the focus does. MSAA-only.
+    AccFocusStepwise,
     /// `child-window`: makes a child window of the host window, of the
     /// host's class, which answers `WM_GETOBJECT` as the host does, so an
     /// event can name a node at its object id in a window of its own
@@ -713,6 +721,7 @@ pub(crate) fn parse_command(line: &str) -> Option<Command> {
         "form-client" => Some(Command::FormClient),
         "disable-client" => Some(Command::DisableClient),
         "acc-focus-window" => Some(Command::AccFocusWindow(rest.trim().parse().ok()?)),
+        "acc-focus-stepwise" => Some(Command::AccFocusStepwise),
         "child-window" => Some(Command::ChildWindow),
         "thread-window" => Some(Command::ThreadWindow),
         "popup-menu" => Some(Command::PopupMenu),

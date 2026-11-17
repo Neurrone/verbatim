@@ -259,6 +259,11 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .acc_focus_window = Some(window);
         }
+        Command::AccFocusStepwise => {
+            tree.lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .acc_focus_stepwise = true;
+        }
         Command::DisableClient => disable_client(tree, hwnd),
         Command::FocusChild(container, child) => {
             let parent = tree
@@ -1039,6 +1044,31 @@ mod handler {
                     .tree
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
+                // Only the child on the way to the focus, by its child id
+                // (`acc-focus-stepwise`).
+                if guard.acc_focus_stepwise {
+                    let Some(focused) = guard.focused else {
+                        return Ok(VARIANT::default());
+                    };
+                    if focused == self.index {
+                        return Ok(self_variant());
+                    }
+                    let mut node = focused;
+                    while let Some(parent) = guard.nodes[node].parent {
+                        if parent == self.index {
+                            let position = guard.nodes[parent]
+                                .children
+                                .iter()
+                                .position(|&child| child == node)
+                                .expect("a node is among its parent's children");
+                            return Ok(VARIANT::from(
+                                i32::try_from(position + 1).unwrap_or(i32::MAX),
+                            ));
+                        }
+                        node = parent;
+                    }
+                    return Ok(VARIANT::default());
+                }
                 let simple_child = (guard.simple_children == Some(self.index))
                     .then(|| {
                         let focused = guard.focused?;

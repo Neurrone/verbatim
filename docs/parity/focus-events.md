@@ -418,7 +418,11 @@ unchanged, Core asks the foreground application's outpost for its focus
 with NVDA's focused-state test, which the outpost runs on an MSAA focus
 over every ancestor up to the desktop, refusing one where none has the
 focused state, and judges an MSAA answer by NVDA's duplicate test, a UI
-Automation answer by neither. The outpost takes the window with the
+Automation answer by neither. The outpost finds an MSAA focus as NVDA's
+`objectWithFocus` does: from the focus window's client, `accFocus`
+followed until it names nothing or the object it was asked of, a child id
+turned into the child's own object by `accChild` where it has one; NVDA
+follows it with no limit, the outpost for at most 64 steps. The outpost takes the window with the
 keyboard focus at once, before any call that can block, as NVDA's timer
 takes the foreground window and its thread's focus window. Core's
 `a_menu_end_checks_the_focus_50_ms_later_and_speaks_a_focused_answer`,

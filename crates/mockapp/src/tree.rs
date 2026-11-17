@@ -178,6 +178,9 @@ pub(crate) struct Tree {
     /// The window whose client object every node's `accFocus` answers,
     /// once `acc-focus-window` has named one. MSAA-only.
     pub(crate) acc_focus_window: Option<isize>,
+    /// Whether every node's `accFocus` names only its own child on the way
+    /// to the focused node, by child id (`acc-focus-stepwise`). MSAA-only.
+    pub(crate) acc_focus_stepwise: bool,
 }
 
 /// A tree shared between the window thread (which owns every provider COM
@@ -221,6 +224,7 @@ impl Tree {
             selected: None,
             simple_children: None,
             acc_focus_window: None,
+            acc_focus_stepwise: false,
         }
     }
 

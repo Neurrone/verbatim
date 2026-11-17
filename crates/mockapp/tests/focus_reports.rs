@@ -1341,8 +1341,9 @@ fn a_foreground_event_for_a_window_read_through_uia_is_dropped() {
 /// its state cleared by `set-states`, as NVDA refuses its fake focus before
 /// it is queued (`docs/parity/focus-events.md`): nothing is said. The
 /// outpost runs the test, asked by Core's check, before it reads the
-/// object, so its calls are the focused object's lookup and the test's
-/// steps up to the desktop alone. With the focused state, the same answer is spoken.
+/// object, so its calls are the focused object's lookup, `accFocus` asked
+/// again of the object it named, which names itself, and the test's steps
+/// up to the desktop alone. With the focused state, the same answer is spoken.
 fn a_fake_focus_on_an_msaa_object_without_the_focused_state_answers_nothing() {
     let title = common::unique_title("mockapp-fake-focus-unfocused");
     let mut app = common::spawn("counts.json", "msaa", &title);
@@ -1362,7 +1363,7 @@ fn a_fake_focus_on_an_msaa_object_without_the_focused_state_answers_nothing() {
         (
             Vec::new(),
             CallCounts {
-                msaa: 14,
+                msaa: 15,
                 ..CallCounts::default()
             }
         ),
@@ -1467,6 +1468,32 @@ fn a_focus_now_takes_the_focus_window_before_its_probe() {
     assert_eq!(focused.name(), Some("First"));
 
     outpost.settled();
+    drop(outpost);
+    app.quit();
+}
+
+/// The MSAA focus-now read follows `accFocus` down until it stops naming
+/// another object, and turns a child id it names into the child's own
+/// object with `accChild`, as NVDA's focus object is found
+/// (`docs/parity/focus-events.md`, "The focus after a menu or the switcher
+/// closes"): mockapp
+/// answers each node's `accFocus` with only its own child on the way to
+/// the focus, by child id (`acc-focus-stepwise`), so the read reaches
+/// "Deep button", five levels below the client, through four objects
+/// `accChild` gives. Followed one level, the focus would be the client's
+/// first child, the unnamed pane.
+fn an_msaa_focus_now_follows_acc_focus_down_to_the_focus() {
+    let title = common::unique_title("mockapp-acc-focus-stepwise");
+    let mut app = common::spawn("ancestry.json", "msaa", &title);
+    app.send("set-focus deep");
+    app.send("acc-focus-stepwise");
+    let outpost = OutpostUnderTest::new(&app);
+    let (outcome, calls) = outpost.current_focus();
+    let focus = Focused::of(outcome, calls);
+    assert_eq!(
+        (focus.role(), focus.name()),
+        (Role::Button, Some("Deep button"))
+    );
     drop(outpost);
     app.quit();
 }
@@ -3228,6 +3255,10 @@ fn main() {
         (
             "a_protected_fields_focus_comes_with_its_caret_and_selected_text",
             a_protected_fields_focus_comes_with_its_caret_and_selected_text,
+        ),
+        (
+            "an_msaa_focus_now_follows_acc_focus_down_to_the_focus",
+            an_msaa_focus_now_follows_acc_focus_down_to_the_focus,
         ),
         (
             "a_focused_element_of_another_process_is_not_read_further",
