@@ -209,12 +209,18 @@ fn run_job(context: &Arc<Context>, client: &mut Client, job: Job, charge: &Arc<C
     // Objects the shell let go of: releasing one can call into the
     // application, so it is done here, under the program's deadline.
     drop(garbage);
+    if let Work::Ask(ask) = &program.work {
+        tracing::debug!(request = %ask.number, "request received by the worker");
+    }
     let Program {
         request,
         facts,
         work,
     } = program;
     let started = Instant::now();
+    if let Work::Ask(ask) = &work {
+        tracing::debug!(request = %ask.number, "request program begins");
+    }
     let description = tracing::enabled!(tracing::Level::DEBUG).then(|| describe(&work));
     let tag = super::shell::tag_of(request);
     let details = node_details_of(&work);

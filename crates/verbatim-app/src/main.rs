@@ -1679,10 +1679,13 @@ impl ReducerThread<'_> {
                     .send_to_listener(CoreToListener::Request(Box::new(ask)));
                 Ok(())
             }
-            Reader::Outpost(_) => self.context.supervisor.send_to_outpost(
-                OutpostId(to.generation),
-                CoreToOutpost::Request(Box::new(ask)),
-            ),
+            Reader::Outpost(_) => {
+                tracing::debug!(request = %number, "request written to the outpost");
+                self.context.supervisor.send_to_outpost(
+                    OutpostId(to.generation),
+                    CoreToOutpost::Request(Box::new(ask)),
+                )
+            }
         };
         if let Err(error) = sent {
             tracing::warn!(%error, ?to, %number, "a request could not reach its reader");

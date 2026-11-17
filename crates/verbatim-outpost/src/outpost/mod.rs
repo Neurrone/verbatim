@@ -1175,7 +1175,10 @@ impl Outpost {
                 },
                 (TraceId::mint(), now_us(), EventTiming::default()),
             ),
-            CoreToOutpost::Request(ask) => context.mailbox.post(Posted::Ask(unstamped_ask(ask))),
+            CoreToOutpost::Request(ask) => {
+                tracing::debug!(request = %ask.number, "request received and posted");
+                context.mailbox.post(Posted::Ask(unstamped_ask(ask)));
+            }
             CoreToOutpost::Cancel(cancel) => context.mailbox.post(Posted::CancelAsk(*cancel)),
             CoreToOutpost::WindowDestroyed(window) => {
                 // Its queued requests answered "not there" at once, then

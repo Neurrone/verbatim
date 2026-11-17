@@ -369,7 +369,10 @@ impl Shell {
                 };
                 input
             }
-            Posted::Ask(ask) => Input::Ask(ask),
+            Posted::Ask(ask) => {
+                tracing::debug!(request = %ask.number, "request taken by the reducer");
+                Input::Ask(ask)
+            }
             Posted::CancelAsk(cancel) => Input::CancelAsk(cancel),
             Posted::WindowDestroyed(window) => Input::WindowDestroyed(window),
             Posted::Answered { request, answer } => Input::Answered { request, answer },
@@ -536,6 +539,9 @@ impl Shell {
             self.spawn_worker(in_charge, self.warm);
         }
         let request = program.request;
+        if let verbatim_outpost_logic::Work::Ask(ask) = &program.work {
+            tracing::debug!(request = %ask.number, "request dispatched to the worker");
+        }
         let sent = match self.generations.get(&in_charge) {
             Some(generation) => {
                 let garbage = std::mem::take(&mut self.garbage);
