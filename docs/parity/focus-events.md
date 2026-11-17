@@ -390,9 +390,11 @@ event queue keeps the newest of the four menu kinds, as NVDA's limiter
 does. A menu end, popup end or switch end reaching the front when the
 run of focus and foreground tells before it executed no valid focus, an
 MSAA duplicate counting as valid, notes the committed focus, and 50 ms
-later Core appends a check entry, unless one is already due within the
-limiter's pump window, as NVDA's pump keeps one menu event and fakes the
-focus once. At its turn, if the committed focus is
+later Core appends a check entry, unless one noting the same committed
+focus is already due within the limiter's pump window, as NVDA's pump
+keeps one menu event and fakes the focus once; a focus committed between
+the two ends puts the later end in a later pump of NVDA's, which fakes
+the focus again. At its turn, if the committed focus is
 unchanged, Core asks the foreground application's outpost for its focus
 with NVDA's focused-state test, which the outpost runs on an MSAA focus
 over every ancestor up to the desktop, refusing one where none has the

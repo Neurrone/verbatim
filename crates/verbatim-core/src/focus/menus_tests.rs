@@ -8,8 +8,8 @@ use verbatim_model::tell::{ElementToken, Read};
 use verbatim_model::{State, StateSet, WindowHandle};
 
 use crate::entries::tests::{
-    APP, Held, NOTHING, OUTPOST, SPOKEN, answer, asked_completion, entry, feed_at, focus_read,
-    held, msaa_tell, ready, uia_tell,
+    APP, Held, LISTENER, NOTHING, OUTPOST, SPOKEN, SPOKEN_FOLLOWED, answer, asked_completion,
+    entry, feed_at, focus_read, held, listener_answer, msaa_tell, ready, uia_tell,
 };
 use crate::event_queue::{Foreground, Input};
 
@@ -130,6 +130,57 @@ fn a_popup_end_and_a_menu_end_of_one_pump_make_one_check() {
         NOTHING
     );
     assert!(state.queue.front_for_tests().is_none());
+}
+
+/// A UI Automation focus committed between the two ends of a closing
+/// menu gives the later end a check of its own: the popup end at 0 notes
+/// the committed focus and its check comes at 50; the UI Automation focus
+/// "OK" commits at 3, NVDA's immediate pump, so the menu end at 8 falls
+/// in a later pump with no valid focus, and NVDA schedules its own
+/// `_fakeFocus` (`IAccessibleHandler/__init__.py` 976 to 991, 1093 to
+/// 1103). The first check finds the committed focus changed and ends; the
+/// second reads the UI Automation focus and speaks it again, as NVDA
+/// queues a UI Automation fake focus with no duplicate test (762 to 782).
+#[test]
+fn a_menu_end_after_a_focus_committed_since_the_first_end_makes_its_own_check() {
+    let mut state = in_front();
+    let mut popup_end = msaa_tell(-4);
+    popup_end.kind = EventKind::PopupEnd;
+    assert_eq!(feed_at(&mut state, 1_000, entry(popup_end)), NOTHING);
+    assert_eq!(
+        feed_at(&mut state, 3_000, entry(uia_tell(1, Vec::new()))),
+        ["send Listener ReadObject"]
+    );
+    assert_eq!(
+        feed_at(
+            &mut state,
+            3_200,
+            answer(LISTENER, 2, Reply::Object(Box::new(listener_answer())))
+        ),
+        ["send Outpost(Pid(40)) CompleteUia"]
+    );
+    assert_eq!(
+        feed_at(
+            &mut state,
+            3_400,
+            answer(OUTPOST, 3, Reply::Focus(Box::new(focus_read(None))))
+        ),
+        SPOKEN_FOLLOWED
+    );
+    assert_eq!(feed_at(&mut state, 9_000, menu_end()), NOTHING);
+    assert_eq!(feed_at(&mut state, 51_000, Input::Tick), NOTHING);
+    assert_eq!(
+        feed_at(&mut state, 59_000, Input::Tick),
+        ["send Outpost(Pid(40)) CurrentFocus with the focused-state test"]
+    );
+    assert_eq!(
+        feed_at(
+            &mut state,
+            60_000,
+            answer(OUTPOST, 5, Reply::Focus(Box::new(focus_read(None))))
+        ),
+        ["Label(\"OK\") Role(Button)", "send Outpost(Pid(40)) Follow"]
+    );
 }
 
 #[test]

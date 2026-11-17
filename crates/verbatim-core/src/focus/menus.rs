@@ -82,16 +82,20 @@ pub(crate) async fn slot(mut cx: Cx<Entries>, candidate: Candidate, run_executed
     // event of a flush (`orderedWinEventLimiter.py` 77, 93 to 95), so its
     // pump fakes the focus once (`IAccessibleHandler/__init__.py` 1084,
     // 1093 to 1103). Core has no pump; a check already due within its
-    // window stands for this one (`limiter::PUMP_WINDOW_US`).
+    // window that noted the same committed focus stands for this one
+    // (`event_queue::PUMP_WINDOW_US`). One that noted another focus will
+    // end unasked, as a focus committed between the two ends put this end
+    // in a later pump of NVDA's.
+    let committed = cx.facts().versions.committed.clone();
     if cx.timer_due_near(
         CHECK_AFTER_US,
         crate::event_queue::PUMP_WINDOW_US,
-        |entry| matches!(entry, Entry::MenuCheck(_)),
+        |entry| matches!(entry, Entry::MenuCheck(due) if due.committed == committed),
     ) {
         return;
     }
     let check = MenuCheck {
-        committed: cx.facts().versions.committed.clone(),
+        committed,
         trace_id: candidate.tell.trace_id,
         fence: crate::keys::entry::Fence::default(),
     };
