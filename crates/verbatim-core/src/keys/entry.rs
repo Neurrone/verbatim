@@ -21,10 +21,11 @@ use verbatim_model::{Effect, Input, KeySeq, ReviewCommand, TraceId};
 use crate::entries::Entries;
 use crate::event_queue::Cx;
 
-/// An entry's speech fence: the newest key number when the entry joined
-/// the queue. Every utterance its function speaks carries it, so a key
-/// pressed after the entry arrived, whose press cut speech, fences that
-/// speech off.
+/// An entry's speech fence: when the entry joined the queue, the newer of
+/// the newest key to join the queue and the newest key whose press cut
+/// speech ([`Arrivals`]). Every utterance its function speaks carries it,
+/// so a key pressed after the entry arrived, whose press cut speech, fences
+/// that speech off.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Fence(KeySeq);
 

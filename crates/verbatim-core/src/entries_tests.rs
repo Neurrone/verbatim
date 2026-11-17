@@ -813,8 +813,8 @@ fn window_4_in_front() -> Input<Entry> {
 }
 
 /// A foreground tell is judged against the foreground record, as NVDA
-/// reads `GetForegroundWindow` as it processes the event
-/// (`IAccessibleHandler/__init__.py` 834 to 841): in the listener's order,
+/// reads the window in front as it processes the event
+/// (`docs/parity/focus-events.md`): in the listener's order,
 /// the report that window 4 came to the foreground, then its tell, the
 /// tell is asked (`msaa_flood_then_focus`, `background_progress_bar`).
 #[test]
@@ -944,9 +944,10 @@ fn a_focus_on_the_child_a_redirect_reached_ends_the_run_with_no_read() {
 /// spoken again, as NVDA queues it: the child's own focus event was read
 /// and spoken, then the list raises focus on its own object, and the
 /// outpost redirects it to that child. NVDA's duplicate test never holds
-/// for a last focus whose child id is above 0
-/// (`NVDAObjects/IAccessible/__init__.py` 866 to 867), so the redirected
-/// object is queued (`IAccessibleHandler/__init__.py` 740 to 759).
+/// for a last focus whose child id is above 0, so the redirected object is
+/// queued (`docs/parity/focus-events.md`, "Duplicate focus suppression";
+/// `docs/parity/windows-and-processes.md`, "A control's own focus with a
+/// focused child").
 #[test]
 fn a_redirect_that_reaches_the_committed_focus_is_spoken_again() {
     let child = MsaaIds {

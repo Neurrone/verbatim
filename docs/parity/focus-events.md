@@ -25,9 +25,13 @@ duplicate.
 - MSAA: both focuses MSAA, with equal window, object and child ids and
   the child id the earlier object is held by not above 0, as NVDA tests
   its object's own `IAccessibleChildID`, not its event's
-  (`NVDAObjects/IAccessible/__init__.py` 863 to 872), so a list's focus
-  on its own object that the outpost redirected to its focused item is
-  no duplicate when it comes again; compared by ids with no read. A
+  (`NVDAObjects/IAccessible/__init__.py` 863 to 872); compared by ids
+  with no read. A list's focus on its own object that the outpost
+  redirected to its focused item carries the item's ids as its event's,
+  as NVDA builds the redirected object (`IAccessibleHandler/__init__.py`
+  746 to 757), so its duplicate test, the limiter's exemption of the last
+  focus and the foreground's same-ids test compare the item's ids, and it
+  is never a duplicate, its child id being above 0. A
   focus read through `accFocus` carries no object id, as NVDA's, so no
   later event is its duplicate. Core's
   `an_msaa_focus_with_the_last_focuss_ids_and_no_child_is_a_duplicate`,

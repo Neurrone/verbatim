@@ -30,6 +30,7 @@
 #include <wx/treectrl.h>
 
 #include <cstddef>
+#include <cstdlib>
 #include <cstdint>
 #include <exception>
 #include <map>
@@ -1499,8 +1500,13 @@ void shut_down() {
     // the one running; ScheduleExit ends the main loop once the nested one
     // has returned. A native message or file box, which EndModal cannot
     // end, holds the exit until it is closed.
+    // Shutdown arrives only from the running event loop, so the main loop
+    // exists; anything else is a logic bug, which must not leave Verbatim
+    // running.
     wxEventLoopBase* main_loop = wxTheApp->GetMainLoop();
-    wxCHECK_RET(main_loop != nullptr, "shutdown arrives only from the running event loop");
+    if (main_loop == nullptr) {
+        std::abort();
+    }
     main_loop->ScheduleExit(0);
 }
 

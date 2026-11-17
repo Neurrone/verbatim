@@ -13,11 +13,12 @@ use super::versions::{LastFocus, ReadBy};
 
 /// Whether an MSAA focus named by `ids` is a duplicate of `last`: both
 /// MSAA, equal window, object and child ids, and the child id the earlier
-/// object is held by not above 0, as NVDA tests its object's own
-/// `IAccessibleChildID`, not its event's (`NVDAObjects/IAccessible/__init__.py`
-/// 863 to 872): a list's focus on its own object, child 0, that the
-/// outpost redirected to its focused item is held by the item's child id,
-/// so a repeat of it is no duplicate. A focus read through `accFocus`
+/// object is held by not above 0, as NVDA tests its object's own child
+/// id, not its event's (`docs/parity/focus-events.md`, "Duplicate focus
+/// suppression"): an event on a child that resolved to a full object, held
+/// by child 0, is a duplicate when repeated, and a list's focus the
+/// outpost redirected to its focused item, which carries the item's ids,
+/// never is. A focus read through `accFocus`
 /// names no event ids, so nothing is its duplicate. The class verdict may
 /// change the test; no class read yet changes it.
 pub(crate) fn msaa_duplicate(last: Option<&LastFocus>, ids: &MsaaIds) -> bool {
@@ -233,10 +234,9 @@ mod tests {
         assert!(!msaa_duplicate(Some(&last), &ids(3, -4, 2)));
     }
 
-    /// A list's focus on its own object, child 0, that the outpost
-    /// redirected to its focused item, held by child 3: the list's focus
-    /// again is no duplicate, as NVDA's object's own child id is above 0
-    /// (`NVDAObjects/IAccessible/__init__.py` 866 to 867).
+    /// An object held by child 3 is no duplicate whatever ids its event
+    /// named, as NVDA's object's own child id is above 0
+    /// (`docs/parity/focus-events.md`, "Duplicate focus suppression").
     #[test]
     fn a_repeat_of_a_focus_held_by_a_child_above_zero_is_not_a_duplicate() {
         let last = msaa_last_held(Some(ids(3, -4, 0)), 3);
