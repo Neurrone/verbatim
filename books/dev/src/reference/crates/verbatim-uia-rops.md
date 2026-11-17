@@ -33,7 +33,9 @@ the rest.
   pattern getters (`GetTextPattern` and `GetTextPattern2`, whose opcode is
   the pattern's id) and three of their methods (`TextPatternGetSelection`,
   `TextPatternGetDocumentRange`, and `TextPattern2GetCaretRange`, whose
-  opcode is `(patternId << 10) | vtableIndex`, `pattern_method`).
+  opcode is `(patternId << 10) | vtableIndex`, `pattern_method`). The
+  builder keeps `GetTextPattern2` and `TextPattern2GetCaretRange`, but no
+  program emits them: the caret is the selection's start, as NVDA's is.
   `Comparison`, `NavigationDirection`, `PointProperty`, and `RectProperty`
   are the enumerations instructions carry; `Status` is a run's outcome.
 - `Instruction` is one instruction with its parameters, and

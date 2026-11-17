@@ -423,8 +423,9 @@ pub enum FocusText {
         /// the line is spoken instead.
         #[serde(default)]
         selected_text: Option<String>,
-        /// How the selection changed from the node's last read: Core
-        /// speaks it for a repeated focus, and ignores it for a new one.
+        /// How the selection changed from the node's last read, for the
+        /// control plane's stream: a focus says no change, new or
+        /// repeated, so Core gives the default.
         #[serde(default)]
         changes: CaretChanges,
         /// What the read found for a key, when a key's note lived on the
