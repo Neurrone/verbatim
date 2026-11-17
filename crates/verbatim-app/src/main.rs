@@ -1030,10 +1030,13 @@ impl ReducerThread<'_> {
                             tell,
                         });
                     }
-                    OutpostToCore::Answer(answer) => self.queue(QueueInput::Answer {
-                        from: outpost_instance(pid, outpost),
-                        answer,
-                    }),
+                    OutpostToCore::Answer(answer) => {
+                        tracing::debug!(target: "request_hop", request = %answer.number, "answer queued for Core's reducer");
+                        self.queue(QueueInput::Answer {
+                            from: outpost_instance(pid, outpost),
+                            answer,
+                        });
+                    }
                     message if accepted => self.on_outpost_input(pid, outpost, message),
                     _ => {}
                 }
@@ -1680,7 +1683,7 @@ impl ReducerThread<'_> {
                 Ok(())
             }
             Reader::Outpost(_) => {
-                tracing::debug!(request = %number, "request written to the outpost");
+                tracing::debug!(target: "request_hop", request = %number, "request written to the outpost");
                 self.context.supervisor.send_to_outpost(
                     OutpostId(to.generation),
                     CoreToOutpost::Request(Box::new(ask)),

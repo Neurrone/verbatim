@@ -197,7 +197,7 @@ pub const RUST_LOG_ENV: &str = "VERBATIM_E2E_RUST_LOG";
 /// of every
 /// UIA event and `WinEvent` in each process, a `WinEvent` with how long
 /// ago it was raised, so a delay before an event reached Verbatim shows.
-pub const DEFAULT_RUST_LOG: &str = "info,verbatim_outpost=debug,verbatim_listener=debug,verbatim_supervisor=debug,verbatim_uia::subscribe=debug,verbatim_uia::com=debug,verbatim_ia2::hook=debug";
+pub const DEFAULT_RUST_LOG: &str = "info,verbatim_outpost=debug,verbatim_listener=debug,verbatim_supervisor=debug,request_hop=debug,verbatim_uia::subscribe=debug,verbatim_uia::com=debug,verbatim_ia2::hook=debug";
 
 /// Enforces one live Verbatim instance at a time within this process; the
 /// tests also run with `--test-threads=1`.

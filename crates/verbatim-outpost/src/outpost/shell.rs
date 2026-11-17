@@ -375,7 +375,10 @@ impl Shell {
             }
             Posted::CancelAsk(cancel) => Input::CancelAsk(cancel),
             Posted::WindowDestroyed(window) => Input::WindowDestroyed(window),
-            Posted::Answered { request, answer } => Input::Answered { request, answer },
+            Posted::Answered { request, answer } => {
+                tracing::debug!(request = %answer.number, "answer taken by the reducer");
+                Input::Answered { request, answer }
+            }
             Posted::Verdict { generation, change } => Input::Verdict { generation, change },
             Posted::Commit { request, effects } => {
                 // A dead generation's or a claimed request's commit gives

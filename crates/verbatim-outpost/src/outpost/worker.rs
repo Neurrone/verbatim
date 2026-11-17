@@ -247,6 +247,7 @@ fn run_job(context: &Arc<Context>, client: &mut Client, job: Job, charge: &Arc<C
             if let Some(observer) = context.request_calls.get() {
                 observer(answer.number, take_calls());
             }
+            tracing::debug!(request = %answer.number, "request program ended, answer posted to the reducer");
             context.mailbox.post(Posted::Answered {
                 request,
                 answer: Box::new(answer),

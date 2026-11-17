@@ -189,6 +189,9 @@ impl Backlog for Pending {
         // queue's time from the pipe's, taken as the write begins, whichever
         // thread writes.
         message.written(now_us());
+        if let OutpostToCore::Answer(answer) = &message {
+            tracing::debug!(request = %answer.number, "answer written to Core's pipe");
+        }
         put_message(buffer, &message)
     }
 }

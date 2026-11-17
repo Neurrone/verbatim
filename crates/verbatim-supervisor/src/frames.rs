@@ -127,6 +127,9 @@ impl Frames {
         }
         match parse(frame) {
             Ok(message) => {
+                if let OutpostToCore::Answer(answer) = &*message {
+                    tracing::debug!(target: "request_hop", request = %answer.number, "answer frame read whole and parsed");
+                }
                 if message.carries_nodes() {
                     stream.position += 1;
                 }
