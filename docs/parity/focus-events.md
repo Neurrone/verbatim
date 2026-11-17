@@ -23,10 +23,15 @@ is kept or said. With the readers' last focus empty nothing is a
 duplicate.
 
 - MSAA: both focuses MSAA, with equal window, object and child ids and
-  the earlier child id not above 0, compared by ids with no read. A
+  the child id the earlier object is held by not above 0, as NVDA tests
+  its object's own `IAccessibleChildID`, not its event's
+  (`NVDAObjects/IAccessible/__init__.py` 863 to 872), so a list's focus
+  on its own object that the outpost redirected to its focused item is
+  no duplicate when it comes again; compared by ids with no read. A
   focus read through `accFocus` carries no object id, as NVDA's, so no
   later event is its duplicate. Core's
-  `an_msaa_focus_with_the_last_focuss_ids_and_no_child_is_a_duplicate`
+  `an_msaa_focus_with_the_last_focuss_ids_and_no_child_is_a_duplicate`,
+  `a_repeat_of_a_focus_held_by_a_child_above_zero_is_not_a_duplicate`
   and `nothing_is_a_duplicate_of_a_focus_read_through_acc_focus`.
 - File Explorer raises a second MSAA focus on some items: a menu item
   of a classic list view (`SysListView32`), and an item of the desktop's

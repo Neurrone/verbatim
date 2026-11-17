@@ -12,19 +12,28 @@ use verbatim_model::tell::{Checked, Read};
 use super::versions::{LastFocus, ReadBy};
 
 /// Whether an MSAA focus named by `ids` is a duplicate of `last`: both
-/// MSAA, equal window, object and child ids, the earlier child id not
-/// above 0. A focus read through `accFocus` names no event ids, so nothing
-/// is its duplicate. The class verdict may change the test; no class read
-/// yet changes it.
+/// MSAA, equal window, object and child ids, and the child id the earlier
+/// object is held by not above 0, as NVDA tests its object's own
+/// `IAccessibleChildID`, not its event's (`NVDAObjects/IAccessible/__init__.py`
+/// 863 to 872): a list's focus on its own object, child 0, that the
+/// outpost redirected to its focused item is held by the item's child id,
+/// so a repeat of it is no duplicate. A focus read through `accFocus`
+/// names no event ids, so nothing is its duplicate. The class verdict may
+/// change the test; no class read yet changes it.
 pub(crate) fn msaa_duplicate(last: Option<&LastFocus>, ids: &MsaaIds) -> bool {
-    let Some(earlier) = last_msaa_ids(last) else {
+    let Some(last) = last else {
         return false;
     };
-    match last.map(|last| last.class) {
-        Some(ObjectClass::Plain | ObjectClass::FocusRaisedTwice) => {
-            earlier == ids && earlier.child <= 0
-        }
-        None => false,
+    match &last.read_by {
+        ReadBy::Msaa {
+            event: Some(earlier),
+            held_child,
+        } => match last.class {
+            ObjectClass::Plain | ObjectClass::FocusRaisedTwice => {
+                earlier == ids && *held_child <= 0
+            }
+        },
+        ReadBy::Msaa { event: None, .. } | ReadBy::Uia { .. } => false,
     }
 }
 
@@ -175,11 +184,13 @@ mod tests {
     }
 
     fn msaa_last(event: Option<MsaaIds>) -> LastFocus {
+        let held_child = event.map_or(0, |ids| ids.child);
+        msaa_last_held(event, held_child)
+    }
+
+    fn msaa_last_held(event: Option<MsaaIds>, held_child: i32) -> LastFocus {
         LastFocus {
-            read_by: ReadBy::Msaa {
-                event,
-                held_child: 0,
-            },
+            read_by: ReadBy::Msaa { event, held_child },
             place: place(3),
             class: ObjectClass::Plain,
             role: verbatim_model::Role::Button,
@@ -220,6 +231,16 @@ mod tests {
     fn an_msaa_focus_on_a_child_above_zero_is_never_a_duplicate() {
         let last = msaa_last(Some(ids(3, -4, 2)));
         assert!(!msaa_duplicate(Some(&last), &ids(3, -4, 2)));
+    }
+
+    /// A list's focus on its own object, child 0, that the outpost
+    /// redirected to its focused item, held by child 3: the list's focus
+    /// again is no duplicate, as NVDA's object's own child id is above 0
+    /// (`NVDAObjects/IAccessible/__init__.py` 866 to 867).
+    #[test]
+    fn a_repeat_of_a_focus_held_by_a_child_above_zero_is_not_a_duplicate() {
+        let last = msaa_last_held(Some(ids(3, -4, 0)), 3);
+        assert!(!msaa_duplicate(Some(&last), &ids(3, -4, 0)));
     }
 
     #[test]
