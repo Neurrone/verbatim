@@ -150,8 +150,15 @@ pub(crate) fn text_box_body(scenario: &mut Scenario, _state: &mut ScenarioState)
     press(scenario, "shift+control+rightarrow", &["beta  selected"]);
     press(scenario, "control+v", &["selection removed"]);
 
-    // NVDA at 30 ms: "l" (rtca-selection-keys-2026-11-17, text box, step 31).
-    shift_right_then_right(scenario, &[heard("l")]);
+    // NVDA at 30 ms says only "l" (rtca-selection-keys-2026-11-17, text
+    // box, step 31): its caret event for Shift+Right reaches it after
+    // Right. Verbatim's reaches Core first, so Verbatim says what NVDA says
+    // in Notepad at the same pace, a deliberate difference (Dickson,
+    // 2026-11-17; `docs/parity/text.md`, "A selection no key made").
+    shift_right_then_right(
+        scenario,
+        &[cut_off("a selected"), heard("l"), heard("a unselected")],
+    );
 
     // Backspace over the first word of a later line: the line break before
     // the selection's start
@@ -172,11 +179,10 @@ pub(crate) fn text_box_body(scenario: &mut Scenario, _state: &mut ScenarioState)
 /// Shift+Right Arrow followed at once by Right Arrow, in one batch, so
 /// that Right is pressed before the application can have reported the
 /// selection Shift+Right made (`books/dev/src/explanation/design/key-holding.md`, "How often a
-/// key's effect was misjudged"): NVDA says only Right's character, "l",
-/// Shift+Right saying nothing for itself and the selection compared only
-/// once both keys have been handled, when nothing is selected before or
-/// after (`docs/parity/text.md`, "A selection no key made"; the 2026-11-17
-/// comparison).
+/// key's effect was misjudged"). Whether Shift+Right's selection is said
+/// depends on whether its caret event is handled before Right: each body
+/// names what it hears (`docs/parity/text.md`, "A selection no key made";
+/// the 2026-11-17 comparison).
 fn shift_right_then_right(scenario: &mut Scenario, expected: &[crate::speech::Expected]) {
     press(scenario, "downarrow", &[LINE]);
     press(scenario, "home", &["a"]);

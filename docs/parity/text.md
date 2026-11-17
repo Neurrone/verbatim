@@ -185,11 +185,15 @@ which is every editable text but its `Terminal` behaviour
 `NVDAObjects/behaviors.py` 527 to 530), and elsewhere checks the caret's
 position.
 
-Verbatim: **matched** in UI Automation text fields other than terminals
-(Dickson, 2026-11-16): a caret or text-change event of the watched node
-within 60 ms of the key's pass ends the watch as the key's effect,
-whether or not the caret moved, and the outpost reads the caret at once.
-Terminals check the caret's position, as NVDA does. **Different** in a
+Verbatim: **different** in UI Automation text fields other than
+terminals (Dickson, 2026-11-17): a caret or text-change event of the
+watched node within 60 ms of the key's pass brings a check forward, to
+run at once, and counts only if the caret is no longer where it was when
+the key was pressed; otherwise the watch keeps checking until the caret
+moves or its bound, because Notepad raised a key's event about 7 ms
+late, inside the next key's watch. A key whose event comes with no move
+says its unit at the bound, where NVDA says it at the event. Terminals
+check the caret's position, as NVDA does. **Different** in a
 classic edit control and MSAA text, whose caret events reach the focus
 listener rather than the outpost that watches, so the watch checks the
 caret's position there: the position, the characters either side of the
@@ -359,6 +363,13 @@ Verbatim makes itself, select then copy's first press, or a caret it
 moves, is spoken by its own reply, if at all, and becomes the next
 baseline, so the caret event after it says no change (mockapp's
 `a_selection_verbatim_made_is_the_next_baseline`).
+
+A deliberate difference of timing (Dickson, 2026-11-17): in the Windows
+Forms text box, with Shift+Right and Right 30 ms apart, NVDA handled
+Shift+Right's caret event only after Right and said only "l", while
+Verbatim's reaches Core before Right, so it says "a selected", cut off,
+then "l" and "a unselected", as both say in Notepad at the same pace
+(`text_box_selection_keys`). Verbatim is not slowed to lose that race.
 
 ### Selection over changed text in a classic edit control
 
