@@ -210,7 +210,10 @@ section 6.3).
 - The idle barrier's answer goes behind every event delivered to the
   `WinEvent` thread before it, every job queued for the reading threads,
   every event handed to the check threads, and every tell placed before
-  it; abandoned threads do not count.
+  it; abandoned threads do not count. An answer made before the listener
+  has said `Ready` is held until `Ready` is sent and goes behind it, so a
+  barrier that follows the listener's restart passes only once its UIA
+  subscriptions are installed.
 - `listener::capture` and `listener::capture_selection` are what the
   notification and element-selected callbacks capture of their event's
   element, and `listener::bar_percent`, `listener::uia_bar_place` and

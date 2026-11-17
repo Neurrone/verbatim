@@ -57,9 +57,9 @@ use std::convert::Infallible;
 use std::io;
 use std::os::windows::io::OwnedHandle;
 use std::rc::Rc;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender as FoundSender;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -140,6 +140,9 @@ struct Outgoing {
     /// their installation has failed: until then every UIA event is dropped
     /// ([`Self::uia_event_process`]).
     uia_installed: AtomicBool,
+    /// Whether the listener has said `Ready`, and until then the idle
+    /// barrier's answers held back for it ([`Self::idle_answer`]).
+    readiness: Mutex<Readiness>,
     /// The clock the stamps are read from.
     clock: Clock,
     /// The listener's order of tells and its foreground hold.
@@ -148,6 +151,18 @@ struct Outgoing {
     /// listener is dropped, which closes it; none in a test, whose hold
     /// ends only by the foreground or a later tell.
     _hold_timer: Option<PoolTimer<Tells>>,
+}
+
+/// Whether the listener has said `Ready`: an idle barrier's answer made
+/// before then is held until `Ready` has been sent, so a barrier that
+/// starts while the listener starts, as after a crash, passes only once
+/// its UIA events are heard (`docs/design/communication.md`, section 6.7).
+enum Readiness {
+    /// Not yet ready, with the rounds whose answers wait, in the order
+    /// they were made.
+    Starting(Vec<u64>),
+    /// `Ready` has been sent: answers go at once.
+    Ready,
 }
 
 /// The clock the listener's stamps are read from: the shared clock,
@@ -418,6 +433,7 @@ impl Outgoing {
             sender,
             ignored,
             uia_installed: AtomicBool::new(false),
+            readiness: Mutex::new(Readiness::Starting(Vec::new())),
             clock: Clock::default(),
             tells,
             _hold_timer: hold_timer,
@@ -510,9 +526,39 @@ impl Outgoing {
 
     /// Answers the idle barrier's round `round`, behind every tell placed
     /// before it, the ones the foreground hold keeps included, and every
-    /// answer and report sent before it.
+    /// answer and report sent before it; before the listener is ready,
+    /// held until it has said `Ready` ([`Self::ready`]).
     fn idle_answer(&self, round: u64) {
-        self.tells.place(Held::IdleAnswer(round));
+        let mut readiness = self
+            .readiness
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        match &mut *readiness {
+            Readiness::Starting(held) => held.push(round),
+            Readiness::Ready => self.tells.place(Held::IdleAnswer(round)),
+        }
+    }
+
+    /// Says the listener is `Ready`, then answers every idle barrier's
+    /// round held for it, in order, behind `Ready` and every tell placed
+    /// before. Under the readiness lock, so no answer made meanwhile goes
+    /// ahead of them.
+    fn ready(&self) {
+        let mut readiness = self
+            .readiness
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        // The listener has no target application; `target_pid` is a
+        // sentinel the supervisor only logs.
+        self.urgent(ListenerToCore::Ready {
+            outpost_pid: Pid(std::process::id()),
+            target_pid: Pid(0),
+        });
+        if let Readiness::Starting(held) = std::mem::replace(&mut *readiness, Readiness::Ready) {
+            for round in held {
+                self.tells.place(Held::IdleAnswer(round));
+            }
+        }
     }
 
     /// Now, on the clock the listener's stamps are read from.
@@ -912,8 +958,9 @@ fn watch_win_event(
 /// Starts the thread that makes the listener's desktop-wide UIA
 /// subscriptions with `install`, takes UIA events from then on
 /// ([`Outgoing::uia_installation_ended`]), logs the time it took, says
-/// the listener is `Ready`, whether or not they were installed, and
-/// returns them.
+/// the listener is `Ready`, whether or not they were installed, which
+/// lets the idle barrier's answers held until then go
+/// ([`Outgoing::ready`]), and returns them.
 ///
 /// # Errors
 ///
@@ -938,12 +985,7 @@ fn install_on_its_thread(
                 installed = registration.is_some(),
                 "the listener's desktop-wide UIA subscriptions ended their installation"
             );
-            // The listener has no target application; `target_pid` is a
-            // sentinel the supervisor only logs.
-            outgoing.urgent(ListenerToCore::Ready {
-                outpost_pid: Pid(std::process::id()),
-                target_pid: Pid(0),
-            });
+            outgoing.ready();
             registration
         })
 }
@@ -2642,19 +2684,42 @@ mod tests {
             "the alert, with no Ready before it"
         );
         assert_eq!(listener.outgoing.uia_event_process(Some(5)), None);
+        // An idle barrier's query while the installation waits, as when a
+        // barrier follows the listener's restart: answered only after
+        // `Ready`.
+        listener.idle_query(9);
 
         release.send(()).expect("the installation waits");
-        let ready = std::iter::from_fn(|| read_message(&mut reader).expect("read"))
-            .find(|message| matches!(message, ListenerToCore::Ready { .. }));
+        let ready_and_answer: Vec<ListenerToCore> =
+            std::iter::from_fn(|| read_message(&mut reader).expect("read"))
+                .filter(|message| {
+                    matches!(
+                        message,
+                        ListenerToCore::Ready { .. } | ListenerToCore::IdleAnswer { .. }
+                    )
+                })
+                .take(2)
+                .collect();
         assert_eq!(
-            ready,
-            Some(ListenerToCore::Ready {
-                outpost_pid: Pid(std::process::id()),
-                target_pid: Pid(0),
-            })
+            ready_and_answer,
+            [
+                ListenerToCore::Ready {
+                    outpost_pid: Pid(std::process::id()),
+                    target_pid: Pid(0),
+                },
+                ListenerToCore::IdleAnswer { round: 9 },
+            ]
         );
         assert_eq!(listener.outgoing.uia_event_process(Some(5)), Some(Pid(5)));
 
+        stop_with_no_registration(listener);
+        // SAFETY: the window made above, on this thread.
+        unsafe { DestroyWindow(window) }.expect("the window destroyed");
+    }
+
+    /// Stops `listener`, whose UIA installation made no registration, as
+    /// its shutdown does, with no I/O thread to finish its writes.
+    fn stop_with_no_registration(listener: Listener) {
         let Listener {
             outgoing,
             readers,
@@ -2668,8 +2733,6 @@ mod tests {
         checks.stop();
         readers.stop();
         outgoing.close();
-        // SAFETY: the window made above, on this thread.
-        unsafe { DestroyWindow(window) }.expect("the window destroyed");
     }
 
     /// The idle barrier's answer waits behind every answer and report sent
@@ -2678,6 +2741,7 @@ mod tests {
     #[test]
     fn the_idle_answer_waits_behind_every_answer_and_report_before_it() {
         let (outgoing, mut reader) = outgoing_with(4096, IgnoredProcesses::default());
+        outgoing.ready();
         let answer = |number, detail: String| Answer {
             number: RequestNumber(number),
             outcome: Outcome::NotThere,
@@ -2706,6 +2770,7 @@ mod tests {
                 ListenerToCore::Answer(answer) => format!("answer {}", answer.number.0),
                 ListenerToCore::Progress { .. } => "progress".to_owned(),
                 ListenerToCore::Pong { .. } => "pong".to_owned(),
+                ListenerToCore::Ready { .. } => "ready".to_owned(),
                 ListenerToCore::IdleAnswer { round } => format!("idle {round}"),
                 other => format!("{other:?}"),
             })
@@ -2713,9 +2778,39 @@ mod tests {
         assert_eq!(
             order,
             [
-                "answer 1", "pong", "answer 2", "idle 1", "progress", "idle 2"
+                "ready", "answer 1", "pong", "answer 2", "idle 1", "progress", "idle 2"
             ]
         );
+    }
+
+    /// An idle barrier's answer made before the listener is ready is held
+    /// until `Ready` has been sent, behind it and every report sent before,
+    /// and an answer made after goes behind the held ones.
+    #[test]
+    fn an_idle_answer_before_the_listener_is_ready_follows_ready() {
+        let (outgoing, mut reader) = outgoing();
+        outgoing.idle_answer(1);
+        outgoing.progress(
+            BarChange {
+                percent: Percent::parse("41").expect("a number"),
+                place: (1, 2),
+                in_foreground: true,
+            },
+            EventTiming::default(),
+        );
+        outgoing.idle_answer(2);
+        outgoing.ready();
+        outgoing.idle_answer(3);
+        let order: Vec<String> = sent(&outgoing, &mut reader)
+            .into_iter()
+            .map(|message| match message {
+                ListenerToCore::Progress { .. } => "progress".to_owned(),
+                ListenerToCore::Ready { .. } => "ready".to_owned(),
+                ListenerToCore::IdleAnswer { round } => format!("idle {round}"),
+                other => format!("{other:?}"),
+            })
+            .collect();
+        assert_eq!(order, ["progress", "ready", "idle 1", "idle 2", "idle 3"]);
     }
 
     /// A bar's change carries its observation and is stamped handled as it
