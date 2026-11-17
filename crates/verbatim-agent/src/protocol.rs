@@ -86,11 +86,12 @@ use serde::{Deserialize, Serialize};
 /// [`ReplyPayload::WindowsClosed`], and a wait for the ended processes in
 /// [`Request::EndLaunched`]; version 33 has [`Request::SwitcherItems`]
 /// wait, up to its timeout, for an item of the switcher's list to have the
-/// focus, since the switcher's window is in front before its list exists.
-/// A test run against an older agent is refused
+/// focus, since the switcher's window is in front before its list exists;
+/// version 34 added [`Request::WaitForLastShownLine`], so a terminal is
+/// seen to show its prompt, read from the terminal itself. A test run against an older agent is refused
 /// at `Hello` instead of losing its connection mid-run, or running without
 /// the exclusion.
-pub const AGENT_PROTOCOL_VERSION: u32 = 33;
+pub const AGENT_PROTOCOL_VERSION: u32 = 34;
 
 /// How long the agent gives the taskbar to handle its Minimize All command
 /// ([`Request::MinimizeAll`]), in milliseconds.
@@ -403,6 +404,20 @@ pub enum Request {
     /// for up to `timeout_ms`. Answered by [`ReplyPayload::SwitcherItems`].
     SwitcherItems {
         /// How long to wait for an item of the list to have the focus.
+        timeout_ms: u64,
+    },
+    /// Waits up to `timeout_ms` for the last line the focused UI Automation
+    /// element shows (the last line of its text pattern's visible ranges
+    /// with anything but white space on it, its trailing white space
+    /// removed) to be `line`, reading it now and again at each of the
+    /// element's text-changed and text-selection-changed events: how a
+    /// terminal is seen to show its prompt, read from the terminal rather
+    /// than the screen reader under test. Answered by
+    /// [`ReplyPayload::LastShownLine`].
+    WaitForLastShownLine {
+        /// The line waited for.
+        line: String,
+        /// How long to wait, in milliseconds.
         timeout_ms: u64,
     },
     /// Lists the processes that have exited in the job of the process `pid`
@@ -856,6 +871,13 @@ pub enum ReplyPayload {
     SwitcherItems {
         /// The items, in the list's order.
         items: Vec<SwitcherItem>,
+    },
+    /// Answer to [`Request::WaitForLastShownLine`].
+    LastShownLine {
+        /// Whether the line waited for was shown when the wait ended.
+        met: bool,
+        /// The last line read, empty when nothing was shown.
+        last: String,
     },
     /// Answer to [`Request::ProcessDiagnostics`].
     ProcessDiagnostics(ProcessDiagnostics),

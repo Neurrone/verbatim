@@ -2150,6 +2150,28 @@ impl Scenario {
         self.agent.switcher_items(timeout)
     }
 
+    /// Waits up to `timeout` for the focused terminal to show `line` as its
+    /// last line with anything on it, read by the agent from the terminal's
+    /// own UI Automation text, its visible rows, at each change the
+    /// terminal reports: evidence about the terminal that does not go
+    /// through Verbatim.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails, or, naming the last line
+    /// shown, if `line` is not shown within `timeout`.
+    pub fn wait_for_last_shown_line(&mut self, line: &str, timeout: Duration) -> io::Result<()> {
+        let (met, last) = self.agent.wait_for_last_shown_line(line, timeout)?;
+        if met {
+            Ok(())
+        } else {
+            Err(io::Error::other(format!(
+                "the terminal did not show {line:?} as its last line within {timeout:?}; \
+                 its last line was {last:?}"
+            )))
+        }
+    }
+
     /// The process id of the program the scenario launched last, and the
     /// processes it started that are still running.
     ///

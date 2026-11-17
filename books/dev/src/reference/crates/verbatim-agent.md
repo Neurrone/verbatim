@@ -186,14 +186,22 @@ Public API:
     line and column of the focused Win32 edit control, from `EM_LINEINDEX`
     and `EM_POSFROMCHAR`), `UiaCharacterPosition` (the same from the
     focused UI Automation element's text: the top left of the character's
-    first bounding rectangle, rounded), and `SwitcherItems` (every item of
+    first bounding rectangle, rounded), `SwitcherItems` (every item of
     the open Alt+Tab switcher's `SwitchItemListControl` list, in its order,
     each one's name, grid
     row and column, position and the list's size; the switcher's window
     is in front before its list exists, so the read first waits, up to
     the request's timeout, on UI Automation's focus-changed events, for
     the focus to be an element whose raw-view parent is that list, and
-    reads the items from that parent). The
+    reads the items from that parent), and WaitForLastShownLine (protocol
+    version 34: waits, up to the request's timeout, for the last line the
+    focused element shows, the last line of its text pattern's visible
+    ranges with anything but white space on it, trailing white space
+    removed, to be the line asked for, reading it at once and again at
+    each of the element's text-changed and text-selection-changed events,
+    and answers whether it was and the last line read; a scenario waits
+    on it for a terminal to show its prompt, read from the terminal rather
+    than from Verbatim). The
     requests that keep UI Automation, which need facts only
     it has, report an element or pattern as not found only when UI
     Automation answers with none, and any other failure with its HRESULT

@@ -394,6 +394,7 @@ fn dispatch(connection: u64, id: u64, request: Request) -> Frame {
         | Request::EditCharacterPosition { .. }
         | Request::UiaCharacterPosition { .. }
         | Request::SwitcherItems { .. }
+        | Request::WaitForLastShownLine { .. }
         | Request::LocalClock { .. }) => state_request(id, request),
         Request::ListFiles { path } => list_reply(id, files::list(&path)),
         Request::ListFolders { path } => list_reply(id, files::list_folders(&path)),
@@ -665,6 +666,15 @@ fn state_request(id: u64, request: Request) -> Frame {
                 Ok(items) => Frame::Reply {
                     to: id,
                     payload: ReplyPayload::SwitcherItems { items },
+                },
+                Err(error) => error_frame(id, &error),
+            }
+        }
+        Request::WaitForLastShownLine { line, timeout_ms } => {
+            match focus::wait_for_last_shown_line(&line, Duration::from_millis(timeout_ms)) {
+                Ok((met, last)) => Frame::Reply {
+                    to: id,
+                    payload: ReplyPayload::LastShownLine { met, last },
                 },
                 Err(error) => error_frame(id, &error),
             }

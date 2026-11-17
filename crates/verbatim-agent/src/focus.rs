@@ -592,6 +592,166 @@ fn uia_position_through_uia(line: u32, column: u32) -> io::Result<(i32, i32)> {
     Ok((left.round() as i32, top.round() as i32))
 }
 
+/// Waits up to `timeout` for the last line the focused UI Automation
+/// element shows, the last line of its visible text ranges with anything
+/// but white space on it, to read `line` once its trailing white space is
+/// removed: how a terminal is seen to show a prompt after a flood, read
+/// from the terminal itself. Reads once now and again after each of the
+/// element's text-changed and text-selection-changed events, which a
+/// terminal raises as it writes a row and moves its caret
+/// ([`until_found`]); the handlers are added before the first read, so a
+/// change after it wakes the wait. Returns whether the line was shown and
+/// the last line read.
+///
+/// # Errors
+///
+/// Returns an error if UI Automation cannot be reached, the focus has no
+/// text pattern, or a read or a handler's registration fails.
+pub fn wait_for_last_shown_line(line: &str, timeout: Duration) -> io::Result<(bool, String)> {
+    through_uia("WaitForLastShownLine", || {
+        last_shown_line_through_uia(line, timeout)
+    })
+}
+
+/// The last line in `texts`, the text of a terminal's visible ranges in
+/// order, with anything but white space on it, its trailing white space
+/// and null characters removed; empty when there is none.
+fn last_shown_line<S: AsRef<str>>(texts: &[S]) -> String {
+    texts
+        .iter()
+        .flat_map(|text| text.as_ref().lines())
+        .map(|row| row.trim_end_matches(|c: char| c.is_whitespace() || c == '\0'))
+        .rfind(|row| !row.is_empty())
+        .unwrap_or_default()
+        .to_owned()
+}
+
+/// [`wait_for_last_shown_line`]'s UI Automation calls.
+fn last_shown_line_through_uia(line: &str, timeout: Duration) -> io::Result<(bool, String)> {
+    use windows::Win32::UI::Accessibility::{
+        IUIAutomationTextPattern, TreeScope_Subtree, UIA_Text_TextChangedEventId,
+        UIA_Text_TextSelectionChangedEventId, UIA_TextPatternId,
+    };
+
+    // SAFETY: as in `focused_element`.
+    let _ = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
+    // SAFETY: as in `focused_element`.
+    let automation: IUIAutomation =
+        unsafe { CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER) }
+            .map_err(io::Error::other)?;
+    // SAFETY: plain COM calls on live interfaces.
+    let focus = unsafe { automation.GetFocusedElement() }.map_err(io::Error::other)?;
+    // SAFETY: as above.
+    let pattern: IUIAutomationTextPattern = found(
+        unsafe { focus.GetCurrentPatternAs(UIA_TextPatternId) },
+        "GetCurrentPatternAs for the text pattern",
+        || "the focused element has no text pattern".to_owned(),
+    )?;
+    let (sender, wakes) = mpsc::channel();
+    let handler = text_wake::new(sender);
+    let mut registered = Vec::new();
+    for event in [
+        UIA_Text_TextChangedEventId,
+        UIA_Text_TextSelectionChangedEventId,
+    ] {
+        // SAFETY: as above.
+        unsafe {
+            automation.AddAutomationEventHandler(event, &focus, TreeScope_Subtree, None, &handler)
+        }
+        .map_err(io::Error::other)?;
+        registered.push(TextHandler {
+            automation: &automation,
+            element: &focus,
+            event,
+            handler: &handler,
+        });
+    }
+    let mut last = String::new();
+    let shown = until_found(
+        || {
+            // Every wake waiting is taken by this one read, so a burst of
+            // events is answered by one.
+            while wakes.try_recv().is_ok() {}
+            // SAFETY: as above.
+            let ranges = unsafe { pattern.GetVisibleRanges() }.map_err(io::Error::other)?;
+            // SAFETY: as above.
+            let count = unsafe { ranges.Length() }.map_err(io::Error::other)?;
+            let mut texts = Vec::new();
+            for index in 0..count {
+                // SAFETY: as above, with an index below the array's length.
+                let range = unsafe { ranges.GetElement(index) }.map_err(io::Error::other)?;
+                // SAFETY: as above.
+                let text = unsafe { range.GetText(-1) }.map_err(io::Error::other)?;
+                texts.push(text.to_string());
+            }
+            last = last_shown_line(&texts);
+            Ok((last == line).then_some(()))
+        },
+        &wakes,
+        timeout,
+    );
+    drop(registered);
+    Ok((shown?.is_some(), last))
+}
+
+/// A registered UI Automation event handler, removed on drop.
+struct TextHandler<'a> {
+    automation: &'a IUIAutomation,
+    element: &'a IUIAutomationElement,
+    event: windows::Win32::UI::Accessibility::UIA_EVENT_ID,
+    handler: &'a windows::Win32::UI::Accessibility::IUIAutomationEventHandler,
+}
+
+impl Drop for TextHandler<'_> {
+    fn drop(&mut self) {
+        // SAFETY: a plain COM call removing the handler this value added.
+        if let Err(error) = unsafe {
+            self.automation
+                .RemoveAutomationEventHandler(self.event, self.element, self.handler)
+        } {
+            tracing::warn!(%error, "removing a terminal text handler failed");
+        }
+    }
+}
+
+/// The UI Automation event handler [`wait_for_last_shown_line`] waits on:
+/// each event sends one wake, and the waiting thread reads the text
+/// itself, so no element crosses threads.
+mod text_wake {
+    // The `implement` macro's expansion.
+    #![allow(clippy::inline_always, clippy::ref_as_ptr)]
+
+    use std::sync::mpsc::Sender;
+
+    use windows::Win32::UI::Accessibility::{
+        IUIAutomationElement, IUIAutomationEventHandler, IUIAutomationEventHandler_Impl,
+        UIA_EVENT_ID,
+    };
+
+    /// A handler that sends a wake to `sender` at each event.
+    pub(super) fn new(sender: Sender<()>) -> IUIAutomationEventHandler {
+        Waking { sender }.into()
+    }
+
+    #[windows_core::implement(IUIAutomationEventHandler)]
+    struct Waking {
+        sender: Sender<()>,
+    }
+
+    impl IUIAutomationEventHandler_Impl for Waking_Impl {
+        fn HandleAutomationEvent(
+            &self,
+            _sender: windows_core::Ref<IUIAutomationElement>,
+            _event: UIA_EVENT_ID,
+        ) -> windows_core::Result<()> {
+            // The receiver is dropped only after the handlers are removed,
+            // so a failed send is an event already past the wait.
+            let _ = self.sender.send(());
+            Ok(())
+        }
+    }
+}
+
 /// Every item of the Alt+Tab switcher's list, read through UI Automation
 /// while the switcher is open, in the list's order: its name, its grid row
 /// and column, each from one, its position in the list, from one, and the
@@ -914,5 +1074,22 @@ mod tests {
             (error.to_string(), reads),
             ("the read failed".to_owned(), 2)
         );
+    }
+
+    #[test]
+    fn the_last_shown_line_skips_blank_rows_and_trailing_space() {
+        let texts = ["flood line 200 one\r\nready> \r\n", "      \r\n\0\0\0", ""];
+        assert_eq!(last_shown_line(&texts), "ready>");
+    }
+
+    #[test]
+    fn the_last_shown_line_reads_rows_from_ranges_of_one_row_each() {
+        let texts = ["ready> .\\long.ps1   ", "flood line 1 one   "];
+        assert_eq!(last_shown_line(&texts), "flood line 1 one");
+    }
+
+    #[test]
+    fn a_text_with_nothing_shown_has_no_last_line() {
+        assert_eq!(last_shown_line(&["  \r\n", ""]), "");
     }
 }

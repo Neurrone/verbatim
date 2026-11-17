@@ -971,6 +971,33 @@ impl AgentClient {
         }
     }
 
+    /// Waits up to `timeout` for the last line the focused UI Automation
+    /// element shows to be `line` ([`Request::WaitForLastShownLine`]), and
+    /// returns whether it was and the last line read.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails.
+    pub fn wait_for_last_shown_line(
+        &mut self,
+        line: &str,
+        timeout: Duration,
+    ) -> io::Result<(bool, String)> {
+        match self.request_waiting(
+            Request::WaitForLastShownLine {
+                line: line.to_owned(),
+                timeout_ms: millis(timeout),
+            },
+            timeout,
+        )? {
+            Frame::Reply {
+                payload: ReplyPayload::LastShownLine { met, last },
+                ..
+            } => Ok((met, last)),
+            other => Err(unexpected("WaitForLastShownLine", &other)),
+        }
+    }
+
     /// The guest's foreground window and visible top-level windows.
     ///
     /// # Errors
