@@ -931,8 +931,8 @@ window before it is handled.
   refused "not focused" for a focus event whose object and ancestors lack
   the focused state, until the first valid focus, read with its
   ancestors up to the first Core already knows.
-- `CurrentFocus`: the focus-now read, its chain cut at the first ancestor
-  Core already knows.
+- `CurrentFocus`: the focus-now read, its walk up through either API
+  stopping at the first ancestor Core already knows.
 - `CompleteUia` (`outpost/completion.rs`): refused "read through MSAA"
   when its window is; else the outpost's own copy of the element is found
   by the route, which goes on, when the listener's walk met an ancestor

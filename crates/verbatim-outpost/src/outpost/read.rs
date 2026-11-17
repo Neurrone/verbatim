@@ -1329,9 +1329,9 @@ fn dialog_text_of(
 /// and `None` is answered, so a stray element is never reported, followed,
 /// or sent a remote operation. `trigger`, what asked for the read, is
 /// logged with it. Answering nothing, it says whether these checks refused
-/// the read or the read failed ([`FocusReadMiss`]). An MSAA focus's walk
-/// up stops at one of `known`, the ancestors Core already knows that the
-/// request names.
+/// the read or the read failed ([`FocusReadMiss`]). The focus's walk up,
+/// through either API, stops at one of `known`, the ancestors Core already
+/// knows that the request names.
 pub(super) fn focused_control_in(
     context: &RequestContext<'_>,
     client: &mut Client,
@@ -1341,7 +1341,7 @@ pub(super) fn focused_control_in(
     let hwnd = checked_focus_window(context)?;
     // The focused element is read from the window's provider at once.
     if window_uses_uia(context, hwnd) {
-        uia_focused_control(context, client, hwnd, trigger)
+        uia_focused_control(context, client, (hwnd, trigger), known)
     } else {
         // The walk stops at an ancestor Core already knows, `known`,
         // comparing what it reads with them by NVDA's equality
@@ -1364,12 +1364,14 @@ pub(super) fn focused_control_in(
 }
 
 /// [`focused_control_in`]'s read through UIA, of the focus window `hwnd`,
-/// for `trigger`.
+/// for `trigger`, its walk up stopping at one of `known`, the ancestors
+/// Core already knows, as NVDA's focus ancestry stops where it meets the
+/// previous focus's.
 fn uia_focused_control(
     context: &RequestContext<'_>,
     client: &mut Client,
-    hwnd: isize,
-    trigger: FocusRead,
+    (hwnd, trigger): (isize, FocusRead),
+    known: &[NodeSnapshot],
 ) -> Result<(isize, FocusedControl), FocusReadMiss> {
     {
         let (uia, nodes) = client
@@ -1405,7 +1407,7 @@ fn uia_focused_control(
             context,
             (uia, &ancestor_request),
             &element,
-            (&[], &mut parent_automation_id, &mut table, Some(&visited)),
+            (known, &mut parent_automation_id, &mut table, Some(&visited)),
             Some(hwnd),
         );
         let enrichment = if let Some(Ok(enrichment)) = remote {
@@ -1417,7 +1419,7 @@ fn uia_focused_control(
                 (uia, &nodes, &ancestor_request),
                 (&element, hwnd),
                 (node.role, &mut parent_automation_id),
-                (&[], Some(&visited)),
+                (known, Some(&visited)),
             )
         };
         let (ancestors, selected_child) =
@@ -1597,8 +1599,8 @@ fn console_text_area_in(node: &mut NodeSnapshot, window_class: impl FnOnce() -> 
 /// ([`foreground_window_of`]). A foreground window that cannot be read, a
 /// ghost's or a hung application's, is a plain window, as its focus is
 /// ([`focused_control_in`]). Returned with the window whose focused element
-/// it read, the control's own window. An MSAA focus's walk up stops at one
-/// of `known` ([`focused_control_in`]).
+/// it read, the control's own window. The focus's walk up stops at one of
+/// `known` ([`focused_control_in`]).
 pub(super) fn focus_now(
     context: &RequestContext<'_>,
     client: &mut Client,

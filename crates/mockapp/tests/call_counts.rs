@@ -4720,6 +4720,64 @@ fn text_field_focus_now_costs(ratchet: &mut Ratchet) {
     }
 }
 
+/// Core's read of the current focus stops its UI Automation walk up at
+/// the first ancestor Core already knows, as NVDA's focus ancestry stops
+/// where it meets the previous focus's ancestors: after "Deep button" was
+/// read as the current focus, a second read, of its sibling "Remember",
+/// meets their group, which Core knows, and reads nothing above it. The
+/// answer names the group's place among the known ancestors and carries
+/// no ancestor. Classically the read is two calls, the focused element and
+/// one step, to the group, and mockapp answers 42 property reads, where a
+/// walk to the top took 8 calls and 129 reads; remotely it is the focused
+/// element and the program, which reads the group alone, 54 property
+/// reads where a walk to the top took 140.
+fn a_focus_now_walk_stops_at_an_ancestor_core_knows() {
+    for (path, remote, expected) in [
+        ("remotely", true, (calls(2, 0, 0), 54)),
+        ("classically", false, (calls(2, 0, 0), 42)),
+    ] {
+        let title = common::unique_title("mockapp-counts-focus-now-known");
+        let mut app = common::spawn("ancestry.json", "uia", &title);
+        let hwnd = common::find_window(&title);
+        let uia = Uia::new().expect("a UIA client");
+        let outpost = OutpostUnderTest::with_options(
+            &app,
+            OutpostOptions {
+                remote_operations: remote,
+            },
+        );
+        app.send("set-focus deep");
+        let focused = common::listener_focus(&uia, hwnd.0 as isize);
+        outpost.read_focus_as(focused.live().element());
+        let (outcome, measured) = outpost.current_focus();
+        let _ = Focused::of(outcome, measured);
+        outpost.settled();
+
+        app.send("set-focus check");
+        let focused = common::listener_focus(&uia, hwnd.0 as isize);
+        outpost.read_focus_as(focused.live().element());
+        common::reset_hits(hwnd);
+        let (outcome, measured) = outpost.current_focus();
+        let now = Focused::of(outcome, measured);
+        assert_eq!(
+            (now.name(), now.ancestor_names(), now.read.met),
+            (Some("Remember"), Vec::<Option<&str>>::new(), Some(2)),
+            "{path}: the focus, no ancestor, and the group's place"
+        );
+        let property_reads = common::read_hits(hwnd)
+            .iter()
+            .find(|(call, _)| *call == "GetPropertyValue")
+            .map_or(0, |&(_, count)| count);
+        assert_eq!(
+            (now.calls, property_reads),
+            expected,
+            "{path}: the read's calls and mockapp's property reads"
+        );
+        drop(outpost);
+        app.quit();
+    }
+}
+
 /// Runs this file's tests through the UIA test runner, which explains why
 /// these binaries do not exit normally (`common/harness.rs`).
 #[expect(clippy::too_many_lines, reason = "one entry per test")]
@@ -4750,6 +4808,10 @@ fn main() {
             caret_tell_reads_cost_exactly,
         ),
         ("starting_reads_cost_exactly", starting_reads_cost_exactly),
+        (
+            "a_focus_now_walk_stops_at_an_ancestor_core_knows",
+            a_focus_now_walk_stops_at_an_ancestor_core_knows,
+        ),
         (
             "an_outposts_probe_that_finds_a_provider_makes_no_connection",
             an_outposts_probe_that_finds_a_provider_makes_no_connection,
