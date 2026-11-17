@@ -1318,6 +1318,26 @@ impl Scenario {
         self.bring_forward(launch, title, Closing::launched(owner_exits), ready)
     }
 
+    /// [`Scenario::launch_titled_once`] for a second Windows Terminal
+    /// window, the program launched unelevated
+    /// ([`AgentClient::launch_unelevated`]), as the running Windows
+    /// Terminal it hands its command line to is.
+    ///
+    /// # Errors
+    ///
+    /// As [`Scenario::launch_titled_once`].
+    pub fn launch_titled_unelevated(
+        &mut self,
+        command: &str,
+        args: &[String],
+        title: &str,
+        ready: Option<&str>,
+    ) -> io::Result<WindowInfo> {
+        self.begin_action(&launch_action(command, title));
+        let launch = self.agent.launch_unelevated(command, args, true)?;
+        self.bring_forward(launch, title, Closing::launched(false), ready)
+    }
+
     /// [`Scenario::launch_titled_once`], bringing the window forward only
     /// once, after `ready` exists, its thread has also answered UI
     /// Automation's first question, `WM_GETOBJECT` for `UiaRootObjectId`,
@@ -1564,7 +1584,8 @@ impl Scenario {
     /// running, such as Windows Terminal. Its windows are closed by its
     /// process at cleanup, and the process must exit then. With `ready`, the window
     /// is brought forward only once that file exists
-    /// ([`Scenario::launch_titled_once`]).
+    /// ([`Scenario::launch_titled_once`]). The program runs unelevated
+    /// ([`AgentClient::launch_unelevated`]).
     ///
     /// # Errors
     ///
@@ -1580,7 +1601,7 @@ impl Scenario {
         settled: Option<&str>,
     ) -> io::Result<WindowInfo> {
         self.begin_action(&launch_action(command, title));
-        let launch = self.agent.launch_minimized(command, args)?;
+        let launch = self.agent.launch_unelevated(command, args, true)?;
         let launched = launch.pid;
         let window =
             self.bring_forward_once(launch, title, Closing::ByOwner, ready, settled, false)?;
@@ -1922,7 +1943,8 @@ impl Scenario {
     /// Runs `command` with `args`, a program that hands what it is asked to
     /// a running instance of itself and exits, such as Windows Terminal's
     /// executable opening a tab in a window of the harness's running
-    /// Windows Terminal, and waits for it to exit.
+    /// Windows Terminal, and waits for it to exit. It runs unelevated
+    /// ([`AgentClient::launch_unelevated`]), as the running instance does.
     ///
     /// # Errors
     ///
@@ -1930,7 +1952,7 @@ impl Scenario {
     /// within the window timeout.
     pub fn run_handing_off(&mut self, command: &str, args: &[String]) -> io::Result<()> {
         self.begin_action(&format!("run {command} {}", args.join(" ")));
-        let launch = self.agent.launch_process(command, args, None, &[], None)?;
+        let launch = self.agent.launch_unelevated(command, args, false)?;
         match self.agent.wait_for_exit(launch.pid, WINDOW_TIMEOUT)? {
             ProcessState::Exited { .. } => Ok(()),
             ProcessState::Running => Err(io::Error::other(format!(

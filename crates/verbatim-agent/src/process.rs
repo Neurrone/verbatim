@@ -34,6 +34,11 @@ use windows::Win32::Foundation::{
     CloseHandle, HANDLE, HANDLE_FLAG_INHERIT, STILL_ACTIVE, SetHandleInformation,
 };
 use windows::Win32::Foundation::{WAIT_OBJECT_0, WAIT_TIMEOUT};
+use windows::Win32::Security::{
+    DuplicateTokenEx, GetTokenInformation, SecurityImpersonation, TOKEN_ADJUST_DEFAULT,
+    TOKEN_ADJUST_SESSIONID, TOKEN_ASSIGN_PRIMARY, TOKEN_DUPLICATE, TOKEN_ELEVATION, TOKEN_QUERY,
+    TokenElevation, TokenPrimary,
+};
 use windows::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS,
 };
@@ -44,16 +49,19 @@ use windows::Win32::System::JobObjects::{
     QueryInformationJobObject, SetInformationJobObject, TerminateJobObject,
 };
 use windows::Win32::System::Threading::{
-    CREATE_NO_WINDOW, CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT, CreateProcessW,
-    DeleteProcThreadAttributeList, EXTENDED_STARTUPINFO_PRESENT, GetExitCodeProcess,
-    InitializeProcThreadAttributeList, LPPROC_THREAD_ATTRIBUTE_LIST, OpenProcess,
+    CREATE_NO_WINDOW, CREATE_PROCESS_LOGON_FLAGS, CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT,
+    CreateProcessW, CreateProcessWithTokenW, DeleteProcThreadAttributeList,
+    EXTENDED_STARTUPINFO_PRESENT, GetCurrentProcess, GetExitCodeProcess,
+    InitializeProcThreadAttributeList, LPPROC_THREAD_ATTRIBUTE_LIST, OpenProcess, OpenProcessToken,
     PROC_THREAD_ATTRIBUTE_HANDLE_LIST, PROCESS_ACCESS_RIGHTS, PROCESS_CREATION_FLAGS,
     PROCESS_INFORMATION, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
     PROCESS_SYNCHRONIZE, PROCESS_TERMINATE, QueryFullProcessImageNameW, ResumeThread,
-    STARTF_USESHOWWINDOW, STARTF_USESTDHANDLES, STARTUPINFOEXW, TerminateProcess,
+    STARTF_USESHOWWINDOW, STARTF_USESTDHANDLES, STARTUPINFOEXW, STARTUPINFOW, TerminateProcess,
     UpdateProcThreadAttribute, WaitForSingleObject,
 };
-use windows::Win32::UI::WindowsAndMessaging::AllowSetForegroundWindow;
+use windows::Win32::UI::WindowsAndMessaging::{
+    AllowSetForegroundWindow, GetShellWindow, GetWindowThreadProcessId,
+};
 use windows::core::{PCWSTR, PWSTR};
 
 use crate::protocol::{KillOutcome, LaunchEnd, ProcessInfo, ProcessState};
@@ -107,7 +115,10 @@ use crate::protocol::{KillOutcome, LaunchEnd, ProcessInfo, ProcessState};
 /// agent does not allow the process the foreground at all, whatever right
 /// it has itself. With `stdin_piped`, the child's standard input is a
 /// pipe whose writing end the agent keeps with the launch, for
-/// [`write_stdin`]; otherwise it has none.
+/// [`write_stdin`]; otherwise it has none. With `unelevated`, the
+/// program runs unelevated even where the agent runs elevated, as on
+/// GitHub's runner ([`unelevated_token`]); such a launch has no capture
+/// file, standard input or console title.
 ///
 /// # Errors
 ///
@@ -116,7 +127,9 @@ use crate::protocol::{KillOutcome, LaunchEnd, ProcessInfo, ProcessState};
 /// be created; each names `command` and the step that failed: the capture
 /// file, with its path, the standard input pipe, the job,
 /// `CreateProcessW`, the job's assignment, or the resume of its first
-/// thread.
+/// thread. An `unelevated` launch from an elevated agent also fails when
+/// the shell's token cannot be taken, the shell itself runs elevated, or
+/// `CreateProcessWithTokenW` fails.
 pub fn launch(
     command: &str,
     args: &[String],
@@ -124,13 +137,18 @@ pub fn launch(
     env: &[(String, String)],
     stderr_to: Option<&str>,
     console_title: Option<&str>,
-    (minimized, withhold_foreground, stdin_piped): (bool, bool, bool),
+    (minimized, withhold_foreground, stdin_piped, unelevated): (bool, bool, bool, bool),
 ) -> io::Result<(u32, bool)> {
     let failed = |step: &str, error: &dyn std::fmt::Display| {
         io::Error::other(format!(
             "could not launch {command}: {step} failed: {error}"
         ))
     };
+    let token = launch_token(
+        unelevated,
+        stderr_to.is_some() || stdin_piped || console_title.is_some(),
+    )
+    .map_err(|error| failed("taking an unelevated token", &error))?;
     let capture = stderr_to
         .map(|path| {
             std::fs::File::create(path)
@@ -166,34 +184,45 @@ pub fn launch(
     set_standard_handles(&mut startup, capture.as_ref(), stdin_reader.as_ref());
     let job = create_job().map_err(|error| failed("creating its job", &error))?;
     let mut info = PROCESS_INFORMATION::default();
-    // SAFETY: every pointer passed points into a buffer that outlives the
-    // call: the command line is writable and nul-terminated, as the
-    // directory and the console title are, and the environment block is
-    // UTF-16 ending in two nuls, as `CREATE_UNICODE_ENVIRONMENT` declares.
-    // The startup information is sized as the extended one it is, and its
-    // attribute list, when there is a capture handle or a stdin pipe, names
-    // those handles alone, each open and inheritable; handles are inherited
-    // only then.
-    unsafe {
-        CreateProcessW(
-            PCWSTR::null(),
-            Some(PWSTR(command_line.as_mut_ptr())),
-            None,
-            None,
-            !inherited.is_empty(),
-            CREATE_SUSPENDED
-                | CREATE_UNICODE_ENVIRONMENT
-                | EXTENDED_STARTUPINFO_PRESENT
-                | console_window(console_title),
-            environment.as_ref().map(|block| block.as_ptr().cast()),
-            directory
-                .as_ref()
-                .map_or(PCWSTR::null(), |directory| PCWSTR(directory.as_ptr())),
-            (&raw const startup).cast(),
-            &raw mut info,
+    if let Some(token) = &token {
+        info = create_with_token(
+            token,
+            &mut command_line,
+            environment.as_deref(),
+            directory.as_deref(),
+            &startup.StartupInfo,
         )
+        .map_err(|error| failed("CreateProcessWithTokenW", &error))?;
+    } else {
+        // SAFETY: every pointer passed points into a buffer that outlives the
+        // call: the command line is writable and nul-terminated, as the
+        // directory and the console title are, and the environment block is
+        // UTF-16 ending in two nuls, as `CREATE_UNICODE_ENVIRONMENT` declares.
+        // The startup information is sized as the extended one it is, and its
+        // attribute list, when there is a capture handle or a stdin pipe, names
+        // those handles alone, each open and inheritable; handles are inherited
+        // only then.
+        unsafe {
+            CreateProcessW(
+                PCWSTR::null(),
+                Some(PWSTR(command_line.as_mut_ptr())),
+                None,
+                None,
+                !inherited.is_empty(),
+                CREATE_SUSPENDED
+                    | CREATE_UNICODE_ENVIRONMENT
+                    | EXTENDED_STARTUPINFO_PRESENT
+                    | console_window(console_title),
+                environment.as_ref().map(|block| block.as_ptr().cast()),
+                directory
+                    .as_ref()
+                    .map_or(PCWSTR::null(), |directory| PCWSTR(directory.as_ptr())),
+                (&raw const startup).cast(),
+                &raw mut info,
+            )
+        }
+        .map_err(|error| failed("CreateProcessW", &error))?;
     }
-    .map_err(|error| failed("CreateProcessW", &error))?;
     drop(handle_list);
     // The child holds its own end of the pipe now; the agent's copy would
     // keep the pipe open after the child exited.
@@ -215,6 +244,22 @@ pub fn launch(
         let _ = unsafe { TerminateProcess(HANDLE(child.as_raw_handle()), 1) };
         return Err(error);
     }
+    record_launch(
+        pid,
+        Launched {
+            child,
+            job,
+            finished_at: None,
+            held: Vec::new(),
+            stdin,
+        },
+    );
+    Ok((pid, foreground_allowed))
+}
+
+/// Keeps `entry` as the launch of `pid`, forgetting the launches finished
+/// long enough ago.
+fn record_launch(pid: u32, entry: Launched) {
     let mut launched = LAUNCHED.lock().unwrap_or_else(PoisonError::into_inner);
     // An entry is no longer needed some time after its child has exited
     // and nothing it started is still running: kept, it would hold handles
@@ -234,17 +279,144 @@ pub fn launch(
         }
         kept
     });
-    launched.insert(
-        pid,
-        Launched {
-            child,
-            job,
-            finished_at: None,
-            held: Vec::new(),
-            stdin,
-        },
-    );
-    Ok((pid, foreground_allowed))
+    launched.insert(pid, entry);
+}
+
+/// Creates the process `command_line` suspended with `token`, a primary
+/// token, through `CreateProcessWithTokenW`, which inherits no handles and
+/// takes the plain startup information: `startup`'s, with no console
+/// title.
+fn create_with_token(
+    token: &OwnedHandle,
+    command_line: &mut [u16],
+    environment: Option<&[u16]>,
+    directory: Option<&[u16]>,
+    startup: &STARTUPINFOW,
+) -> windows::core::Result<PROCESS_INFORMATION> {
+    let mut plain = *startup;
+    plain.cb = u32::try_from(size_of::<STARTUPINFOW>()).unwrap_or(u32::MAX);
+    plain.lpTitle = PWSTR::null();
+    let mut info = PROCESS_INFORMATION::default();
+    // SAFETY: every pointer passed points into a buffer that outlives the
+    // call: the command line is writable and nul-terminated, as the
+    // directory is, and the environment block is UTF-16 ending in two
+    // nuls, as `CREATE_UNICODE_ENVIRONMENT` declares; the token is a
+    // primary token held open by the caller.
+    unsafe {
+        CreateProcessWithTokenW(
+            HANDLE(token.as_raw_handle()),
+            CREATE_PROCESS_LOGON_FLAGS(0),
+            PCWSTR::null(),
+            Some(PWSTR(command_line.as_mut_ptr())),
+            CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT,
+            environment.map(|block| block.as_ptr().cast()),
+            directory.map_or(PCWSTR::null(), |directory| PCWSTR(directory.as_ptr())),
+            &raw const plain,
+            &raw mut info,
+        )
+    }?;
+    Ok(info)
+}
+
+/// The token a launch runs with when it is `unelevated`
+/// ([`unelevated_token`]), none otherwise; a launch with standard handles
+/// or a console title (`with_handles`) cannot be unelevated, since
+/// `CreateProcessWithTokenW` passes neither.
+fn launch_token(unelevated: bool, with_handles: bool) -> io::Result<Option<OwnedHandle>> {
+    match (unelevated, with_handles) {
+        (false, _) => Ok(None),
+        (true, true) => Err(io::Error::other(
+            "an unelevated launch takes no capture file, standard input or console title",
+        )),
+        (true, false) => unelevated_token(),
+    }
+}
+
+/// The token an `unelevated` launch runs with: none, for a launch with
+/// the agent's own, when the agent is not elevated; otherwise the shell's,
+/// that of the `explorer.exe` owning the desktop's shell window,
+/// duplicated as a primary token for `CreateProcessWithTokenW`. On an
+/// elevated runner the console host a program starts puts
+/// "Administrator: " before every console title, and Windows Terminal
+/// hands a command line only to a running instance of its own elevation,
+/// so the harness's Windows Terminal runs as the user's programs do. A
+/// shell that runs elevated too has no unelevated token to give, which is
+/// an error rather than an elevated launch.
+fn unelevated_token() -> io::Result<Option<OwnedHandle>> {
+    // SAFETY: the pseudo handle of the agent's own process needs no
+    // closing.
+    if !token_is_elevated(&process_token(unsafe { GetCurrentProcess() })?)? {
+        return Ok(None);
+    }
+    // SAFETY: a plain call with no arguments.
+    let shell = unsafe { GetShellWindow() };
+    if shell.is_invalid() {
+        return Err(io::Error::other("the desktop has no shell window"));
+    }
+    let mut pid = 0;
+    // SAFETY: `pid` outlives the call.
+    unsafe { GetWindowThreadProcessId(shell, Some(&raw mut pid)) };
+    // SAFETY: a plain call taking a process id; the handle is owned below.
+    let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }
+        .map_err(|error| io::Error::other(format!("opening the shell, pid {pid}: {error}")))?;
+    // SAFETY: just opened, owned here alone.
+    let process = unsafe { OwnedHandle::from_raw_handle(process.0) };
+    let shell_token = process_token(HANDLE(process.as_raw_handle()))?;
+    if token_is_elevated(&shell_token)? {
+        return Err(io::Error::other(format!(
+            "the shell, pid {pid}, runs elevated, so it has no unelevated token to give"
+        )));
+    }
+    let mut primary = HANDLE::default();
+    // SAFETY: `shell_token` is open with `TOKEN_DUPLICATE`, and `primary`
+    // outlives the call.
+    unsafe {
+        DuplicateTokenEx(
+            HANDLE(shell_token.as_raw_handle()),
+            TOKEN_QUERY
+                | TOKEN_DUPLICATE
+                | TOKEN_ASSIGN_PRIMARY
+                | TOKEN_ADJUST_DEFAULT
+                | TOKEN_ADJUST_SESSIONID,
+            None,
+            SecurityImpersonation,
+            TokenPrimary,
+            &raw mut primary,
+        )
+    }
+    .map_err(|error| io::Error::other(format!("duplicating the shell's token: {error}")))?;
+    // SAFETY: just returned by `DuplicateTokenEx`, owned here alone.
+    Ok(Some(unsafe { OwnedHandle::from_raw_handle(primary.0) }))
+}
+
+/// The token of `process`, open for query and duplication.
+fn process_token(process: HANDLE) -> io::Result<OwnedHandle> {
+    let mut token = HANDLE::default();
+    // SAFETY: `process` is open for at least limited query, and `token`
+    // outlives the call.
+    unsafe { OpenProcessToken(process, TOKEN_QUERY | TOKEN_DUPLICATE, &raw mut token) }
+        .map_err(|error| io::Error::other(format!("opening a process's token: {error}")))?;
+    // SAFETY: just returned by `OpenProcessToken`, owned here alone.
+    Ok(unsafe { OwnedHandle::from_raw_handle(token.0) })
+}
+
+/// Whether `token` is elevated.
+fn token_is_elevated(token: &OwnedHandle) -> io::Result<bool> {
+    let mut elevation = TOKEN_ELEVATION::default();
+    let mut length = 0;
+    // SAFETY: the buffer is a `TOKEN_ELEVATION`, sized as passed, and both
+    // it and `length` outlive the call.
+    unsafe {
+        GetTokenInformation(
+            HANDLE(token.as_raw_handle()),
+            TokenElevation,
+            Some((&raw mut elevation).cast()),
+            u32::try_from(size_of::<TOKEN_ELEVATION>()).unwrap_or(u32::MAX),
+            &raw mut length,
+        )
+    }
+    .map_err(|error| io::Error::other(format!("reading a token's elevation: {error}")))?;
+    Ok(elevation.TokenIsElevated != 0)
 }
 
 /// Starts the suspended child `pid` in `job`: has the job watched, assigns
@@ -1049,7 +1221,7 @@ mod tests {
             &[],
             None,
             None,
-            (false, false, false),
+            (false, false, false, false),
         )
         .expect("spawns powershell")
         .0
@@ -1073,6 +1245,20 @@ mod tests {
                 .map(|(pid, (_, image))| (*pid, image.clone()))
                 .collect::<Vec<_>>()),
             jobs.get(&pid).map(|job| job.exits.clone())
+        );
+    }
+
+    #[test]
+    fn an_unelevated_launch_with_standard_handles_is_refused() {
+        let error = launch_token(true, true).expect_err("refuses the launch");
+        assert_eq!(
+            error.to_string(),
+            "an unelevated launch takes no capture file, standard input or console title"
+        );
+        assert!(
+            launch_token(false, true)
+                .expect("a launch as the agent's own needs no token")
+                .is_none()
         );
     }
 
@@ -1118,7 +1304,7 @@ mod tests {
             &[],
             Some(&path_str),
             None,
-            (false, false, false),
+            (false, false, false, false),
         )
         .expect("spawns cmd with a stderr capture path");
         assert_eq!(
@@ -1155,7 +1341,7 @@ mod tests {
             &[],
             Some(&path_str),
             None,
-            (false, false, true),
+            (false, false, true, false),
         )
         .expect("spawns cmd with a stdin pipe");
         write_stdin(pid, "piped text\r\n").expect("writes to the child's stdin");
@@ -1212,7 +1398,7 @@ mod tests {
             &[],
             Some(&path_str),
             None,
-            (false, false, false),
+            (false, false, false, false),
         )
         .expect("spawns powershell with a capture file");
         drop(accepted);
@@ -1245,7 +1431,7 @@ mod tests {
             &[],
             None,
             None,
-            (false, false, false),
+            (false, false, false, false),
         )
         .expect("spawns cmd");
         assert_eq!(
@@ -1269,7 +1455,7 @@ mod tests {
             &[],
             None,
             None,
-            (false, false, false),
+            (false, false, false, false),
         )
         .expect("spawns cmd");
         // cmd, the console host of the window-less console it was started

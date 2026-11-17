@@ -219,6 +219,7 @@ impl AgentClient {
             withhold_foreground: false,
             ignore_foreign_terminals: false,
             stdin_piped: false,
+            unelevated: false,
         })
     }
 
@@ -248,6 +249,7 @@ impl AgentClient {
             withhold_foreground: false,
             ignore_foreign_terminals: false,
             stdin_piped: true,
+            unelevated: false,
         })
     }
 
@@ -278,6 +280,7 @@ impl AgentClient {
             withhold_foreground: false,
             ignore_foreign_terminals: false,
             stdin_piped: true,
+            unelevated: false,
         })
     }
 
@@ -331,6 +334,7 @@ impl AgentClient {
             withhold_foreground: false,
             ignore_foreign_terminals: true,
             stdin_piped: false,
+            unelevated: false,
         })
     }
 
@@ -354,6 +358,41 @@ impl AgentClient {
             withhold_foreground: false,
             ignore_foreign_terminals: false,
             stdin_piped: false,
+            unelevated: false,
+        })
+    }
+
+    /// Launches `command` with `args` unelevated, as the user's programs
+    /// run, even where the agent runs elevated, as on GitHub's runner
+    /// ([`Request::LaunchProcess`]'s `unelevated`): for the harness's
+    /// Windows Terminal, whose console host would otherwise put
+    /// "Administrator: " before its tab's title, and which hands a command
+    /// line only to a running instance of its own elevation. With
+    /// `minimized`, its first window opens minimized and inactive, for the
+    /// caller to bring forward once it is ready.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails or the agent could not spawn
+    /// the process unelevated.
+    pub fn launch_unelevated(
+        &mut self,
+        command: &str,
+        args: &[String],
+        minimized: bool,
+    ) -> io::Result<Launched> {
+        self.launch(Request::LaunchProcess {
+            command: command.to_owned(),
+            args: args.to_vec(),
+            working_dir: None,
+            env: Vec::new(),
+            stderr_to: None,
+            console_title: None,
+            minimized,
+            withhold_foreground: false,
+            ignore_foreign_terminals: false,
+            stdin_piped: false,
+            unelevated: true,
         })
     }
 
@@ -383,6 +422,7 @@ impl AgentClient {
             withhold_foreground: true,
             ignore_foreign_terminals: false,
             stdin_piped: false,
+            unelevated: false,
         })
     }
 
@@ -416,6 +456,7 @@ impl AgentClient {
             withhold_foreground: true,
             ignore_foreign_terminals: false,
             stdin_piped: false,
+            unelevated: false,
         })
     }
 

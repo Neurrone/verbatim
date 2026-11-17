@@ -432,6 +432,7 @@ fn launch(id: u64, request: Request) -> Frame {
         withhold_foreground,
         ignore_foreign_terminals,
         stdin_piped,
+        unelevated,
     } = request
     else {
         return error_frame(id, &io::Error::other("not a launch request"));
@@ -465,7 +466,7 @@ fn launch(id: u64, request: Request) -> Frame {
         &env,
         stderr_to.as_deref(),
         console_title.as_deref(),
-        (minimized, withhold_foreground, stdin_piped),
+        (minimized, withhold_foreground, stdin_piped, unelevated),
     ) {
         Ok((pid, foreground_allowed)) => {
             process::keep_with_launch(pid, held.into_iter().map(|(_, handle)| handle));
@@ -1131,6 +1132,7 @@ mod tests {
             withhold_foreground: false,
             ignore_foreign_terminals: false,
             stdin_piped: false,
+            unelevated: false,
         });
         let Frame::Reply {
             payload: ReplyPayload::Launched { pid, .. },

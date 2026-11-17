@@ -18,7 +18,7 @@ it when the suite is done.
 Public API:
 
 - `protocol` — the agent's own wire vocabulary, versioned separately from
-  the control plane's (`AGENT_PROTOCOL_VERSION`, currently 32) and framed
+  the control plane's (`AGENT_PROTOCOL_VERSION`, currently 36) and framed
   with the same newline-JSON helpers the control plane uses
   (`verbatim_control::protocol::write_message`/`read_message`). Its pids
   are raw OS process ids naming a process a test is driving, not
@@ -272,7 +272,16 @@ Public API:
   `stdin_piped` (protocol version 14) gives the child a pipe as its
   standard input, whose writing end the agent keeps with the launch for
   `WriteStdin`: the recording stops its capture by writing `q` to it,
-  since killing ffmpeg cuts the end off its video. The command
+  since killing ffmpeg cuts the end off its video. `unelevated`
+  (protocol version 36) runs the program unelevated where the agent runs
+  elevated, as on GitHub's runner: with the token of the `explorer.exe`
+  that owns the desktop's shell window, duplicated as a primary token,
+  through `CreateProcessWithTokenW`, which passes no handles or console
+  title, so such a launch has none; a shell that is itself elevated fails
+  the launch. The harness launches its Windows Terminal so, since an
+  elevated console host puts "Administrator: " before the tab's title and
+  Windows Terminal hands a command line only to an instance of its own
+  elevation. The command
   `AGENT_SELF` (protocol version 24) launches the agent's own executable,
   wherever it was deployed: the recording launches it as
   `verbatim-agent capture-desktop --framerate <n> --ffmpeg <path> --

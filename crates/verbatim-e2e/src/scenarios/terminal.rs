@@ -397,7 +397,7 @@ pub(crate) fn open_windows_terminal_window(
     let others_before = other_terminal_windows(scenario, Some(running))?;
     let mut args = new_window();
     args.extend(new_tab(&title, &start, false));
-    let window = scenario.launch_titled_once(&executable, &args, &title, false, Some(&started))?;
+    let window = scenario.launch_titled_unelevated(&executable, &args, &title, Some(&started))?;
     if window.pid != running {
         return Err(io::Error::other(format!(
             "the second window {title:?} belongs to {} pid {}, not to the harness's running Windows Terminal, pid {running}",
