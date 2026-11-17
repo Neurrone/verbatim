@@ -21,10 +21,10 @@
 //! themselves, where NVDA collapses six stars to "6 star" and drops a run
 //! of circles, whose symbol level is above its default; and it has no
 //! delayed character description, the empty utterance NVDA says after a
-//! character it moves to; and it says the text a key removed, so the
-//! Windows Forms box's Control+Backspace, which removes nothing and moves
-//! the caret forward, says "blank" where NVDA says the word it expected to
-//! go.
+//! character it moves to. Control+Backspace says the whole word around the
+//! character before the caret, as the field's provider defines the word,
+//! as NVDA's Backspace scripts do: a run of masked characters is one word
+//! in both fields.
 //!
 //! Every key is a real key press the keyboard hook sees and passes to the
 //! form; each step waits for its speech to be heard in full before the
@@ -242,11 +242,13 @@ pub(crate) fn text_box_body(scenario: &mut Scenario, _state: &mut ScenarioState)
     press(scenario, "end", &["blank"]);
     press_without_description(scenario, "leftarrow", &["star"]);
     press_without_description(scenario, "leftarrow", &["star"]);
-    // Control+Backspace: the edit control deletes nothing and inserts a
-    // DEL character, masked as one more star, moving the caret forward with
-    // nothing removed: "blank", where NVDA says the word it expected to go,
-    // "4 star".
-    press_without_description(scenario, "control+backspace", &["blank"]);
+    // Control+Backspace: the word around the star before the caret, the
+    // four stars, which Uniscribe makes one word of in a plain edit
+    // control, said once the caret moves; NVDA says "4 star"
+    // (`winforms-password-deleting-keys.txt`), though the edit control
+    // deletes nothing and inserts a DEL character, masked as one more
+    // star.
+    press_without_symbols(scenario, "control+backspace", &["****"]);
     press_without_description(scenario, "home", &["star"]);
     // Control+Delete: the box deletes all of its text, leaving nothing at
     // the caret.
@@ -306,9 +308,17 @@ pub(crate) fn wpf_body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     press(scenario, "end", &["blank"]);
     press_without_description(scenario, "leftarrow", &["circle"]);
     press_without_description(scenario, "leftarrow", &["circle"]);
-    // Control+Backspace: the two circles before the caret, which NVDA's
-    // symbol level drops, saying an utterance with no words.
-    press_without_symbols(scenario, "control+backspace", &["\u{25cf}\u{25cf}"]);
+    // Control+Backspace: the word around the circle before the caret, which
+    // NVDA's symbol level drops, saying an utterance with no words
+    // (`wpf-password-deleting-keys.txt`). The PasswordBox's text provider
+    // expands any position in a run of circles to the whole run as its
+    // word (its `ExpandToEnclosingUnit(Word)`, queried on a PasswordBox
+    // holding four circles, 2026-11-18), so the four circles.
+    press_without_symbols(
+        scenario,
+        "control+backspace",
+        &["\u{25cf}\u{25cf}\u{25cf}\u{25cf}"],
+    );
     // Control+Delete at the text's start: the two circles left go, leaving
     // nothing at the caret (`wpf-password-deleting-keys-without-home.txt`).
     press(scenario, "control+delete", &["blank"]);

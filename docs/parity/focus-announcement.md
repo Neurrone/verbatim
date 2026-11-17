@@ -192,10 +192,12 @@ focus.
   `PasswordBox` says the six circles where NVDA says no text
   ("Symbol/punctuation processing, speech dictionaries, character
   descriptions" in [speech-audio.md](speech-audio.md)).
-  The Windows Forms box's Control+Backspace deletes nothing and inserts
-  a DEL character, masked as a star, and says "blank", where NVDA says the
-  word it expected to go, as in any classic edit control
-  ([text.md](text.md), "What Backspace and Delete say"). Pinned by
+  Control+Backspace says the word NVDA expects it to delete, the whole
+  run of masked characters, which is one word in both fields: "****"
+  in the Windows Forms box, where NVDA says "4 star" (its edit control
+  deletes nothing and inserts a DEL character, masked as a star), and
+  the PasswordBox's run of circles, which NVDA drops ([text.md](text.md),
+  "What Backspace and Delete say"). Pinned by
   `text_box_password` and `wpf_password`, from
   `winforms-password-focus.txt` and `wpf-uia-password-focus.txt` in
   `target/e2e-evidence/m42-selection-keys-2026-10-22/` and
