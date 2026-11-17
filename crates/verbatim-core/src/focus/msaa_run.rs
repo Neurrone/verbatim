@@ -120,23 +120,6 @@ fn redirected_to(versions: &super::versions::Versions, ids: &MsaaIds) -> bool {
         .is_some_and(|kept| kept.redirected_to.as_ref() == Some(ids))
 }
 
-/// Whether the redirect `read` names reached the committed focus's own
-/// child, with no focus executed since: Core read that child before the
-/// list's focus came to the front (the dialog's current focus, read at
-/// its foreground), and the list's focus redirected to it is that focus
-/// again, which ends the run as its valid focus, unspoken (Verbatim-only,
-/// design "Focus and foreground", the rule above seen from the child's
-/// side; pinned by `settings_dialog_keys`).
-fn redirected_to_committed(versions: &super::versions::Versions, read: &FocusRead) -> bool {
-    let Some(child) = read.redirected_to.as_ref() else {
-        return false;
-    };
-    versions.committed_read().is_some_and(|kept| {
-        kept.redirected_to.as_ref() == Some(child)
-            || matches!(&kept.read_by, ReadBy::Msaa { event: Some(event), .. } if event == child)
-    })
-}
-
 /// `tried`, newest first, by application, in the order of each
 /// application's newest candidate.
 fn by_application(tried: Vec<Candidate>) -> Vec<Vec<Candidate>> {
@@ -227,10 +210,6 @@ fn executed(cx: &mut Cx<Entries>, candidate: &Candidate, read: &FocusRead, known
     let Some(held) = read.msaa else {
         return;
     };
-    if redirected_to_committed(&cx.facts().versions, read) {
-        cx.facts_mut().run_executed = true;
-        return;
-    }
     let read_by = ReadBy::Msaa {
         event: Some(held.event),
         held_child: held.held_child,

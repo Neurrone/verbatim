@@ -843,16 +843,34 @@ fn a_focus_on_the_child_a_redirect_reached_ends_the_run_with_no_read() {
     assert!(state.queue.front_for_tests().is_none());
 }
 
-/// Verbatim's settings dialog: Core reads the list's focused child as the
-/// dialog's current focus and speaks it, then the list's own focus comes
-/// to the front and its read is redirected to that child, which is not
-/// spoken again (`settings_dialog_keys`' artifacts).
+/// A list's focus that a redirect took to the child Core committed is
+/// spoken again, as NVDA queues it: the child's own focus event was read
+/// and spoken, then the list raises focus on its own object, and the
+/// outpost redirects it to that child. NVDA's duplicate test never holds
+/// for a last focus whose child id is above 0
+/// (`NVDAObjects/IAccessible/__init__.py` 866 to 867), so the redirected
+/// object is queued (`IAccessibleHandler/__init__.py` 740 to 759).
 #[test]
-fn a_redirect_that_reaches_the_committed_focus_ends_the_run_unspoken() {
+fn a_redirect_that_reaches_the_committed_focus_is_spoken_again() {
+    let child = MsaaIds {
+        window: WindowHandle(5),
+        object: -4,
+        child: 2,
+    };
+    let at_child = HeldIds {
+        event: child,
+        held_child: 2,
+    };
     let mut state = ready();
-    feed_at(&mut state, 1_000, entry(msaa_tell(-5)));
+    let mut tell = msaa_tell(-4);
+    tell.object = EventObject::Msaa {
+        window: child.window,
+        object: child.object,
+        child: child.child,
+    };
+    feed_at(&mut state, 1_000, entry(tell));
     let tried = RunRead {
-        tried: vec![Tried::Focus(Box::new(focus_read(Some(held(-5)))))],
+        tried: vec![Tried::Focus(Box::new(focus_read(Some(at_child))))],
     };
     assert_eq!(
         feed_at(&mut state, 2_000, answer(OUTPOST, 1, Reply::Run(tried))),
@@ -863,15 +881,14 @@ fn a_redirect_that_reaches_the_committed_focus_ends_the_run_unspoken() {
         ["send Outpost(Pid(40)) MsaaRun"]
     );
     let mut read = focus_read(Some(held(-4)));
-    read.redirected_to = Some(held(-5).event);
+    read.redirected_to = Some(child);
     let tried = RunRead {
         tried: vec![Tried::Focus(Box::new(read))],
     };
     assert_eq!(
         feed_at(&mut state, 4_000, answer(OUTPOST, 2, Reply::Run(tried))),
-        NOTHING
+        ["Label(\"OK\") Role(Button)"]
     );
-    assert!(state.queue.front_for_tests().is_none());
 }
 
 #[test]
