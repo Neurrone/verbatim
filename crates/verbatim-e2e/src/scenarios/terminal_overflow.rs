@@ -14,9 +14,8 @@
 //! real hold.
 //!
 //! Both limits are 15 ([`HALF`]), half their default, not the 10 of the
-//! other flood scenarios: a write of 12,000 lines lands while a group
-//! plays, and Core asks for what came meanwhile as it hands the group's
-//! last line to speech, so the group must last longer than the write.
+//! other flood scenarios, so that a group's worth of lines is waiting when
+//! the 12,000-line write lands.
 //!
 //! The written script `phased.ps1` prints "before line 1" to "before line
 //! 15", a group's worth, in one write, so that one read takes all 15 and
@@ -27,18 +26,29 @@
 //! one `WriteFile`, unbuffered; `[Console]::Out` would not do, since it is
 //! a `StreamWriter` with a 256-character buffer and automatic flushing, and
 //! so writes the lines in pieces. The script then waits, on its folder's
-//! change notifications, for a go file, which the scenario writes as soon
-//! as the first before line has been heard in full, and then writes its
-//! second part, "after line 1" to "after line 12000", in chunks of whole
-//! lines of at most 256 characters, one `WriteFile` each, so that no read
-//! finds a line whose digits are not yet written. The second part joins the
-//! burst, and is skipped down to its last lines. The prompt follows, and
-//! counts as a line like any other: the last 15 lines are 14 after lines
-//! and the prompt. The outpost reads nothing until Core asks as the group's
-//! last line is handed to speech, 13 lines after the go file, and Windows
-//! Terminal takes a write of 10,000 lines in 1.5 to 1.7 seconds
-//! (`books/dev/src/reference/performance.md`, "A terminal flood"), long before those lines are
-//! heard.
+//! change notifications, for a go file, and then writes its second part,
+//! "after line 1" to "after line 12000", in chunks of whole lines of at
+//! most 256 characters, one `WriteFile` each, so that no read finds a line
+//! whose digits are not yet written. The prompt follows, and counts as a
+//! line like any other: the last 15 lines are 14 after lines and the
+//! prompt.
+//!
+//! Core asks for what came meanwhile as it hands the group's last line to
+//! speech, and the outpost reads nothing until then; the write must have
+//! landed, prompt included, before that ask. How long the write takes is
+//! the terminal's own (a GitHub runner's console host had written 8,934
+//! lines when Core asked, run 44118041181), so the scenario does not race
+//! it against the group: once "before line 1" has started to play, with
+//! "before line 2" and "before line 3" handed to speech behind it, Shift
+//! pauses speech, and Verbatim's report of the pause is the evidence that
+//! no further line is handed to speech, since lines are handed only as
+//! the ones ahead of them play. Then the scenario writes the go file and
+//! waits until the terminal shows the prompt as its last line, read by the
+//! agent from the terminal's own text, the evidence that the whole write
+//! and the prompt have landed; Shift then resumes speech. Shift is not a
+//! key the terminal's model takes, so it reads nothing. The rest of the
+//! group, the skip and the last lines follow, exactly as for a write that
+//! lands while the group plays.
 //!
 //! Verbatim says "skipped more than N lines", N being the number of lines
 //! the terminal's buffer holds, scrollback and visible rows together, less
@@ -61,6 +71,7 @@ use super::terminal::{self, PROMPT};
 use super::terminal_flood::HALF;
 use crate::registry::ScenarioState;
 use crate::scenario::Scenario;
+use crate::speech::Ending;
 
 pub(crate) use super::no_teardown as teardown;
 
@@ -142,13 +153,37 @@ fn start_script(scenario: &mut Scenario, state: &ScenarioState, count: u32) -> S
     directory
 }
 
-/// Writes the go file, letting the script write its second part: in
-/// compare mode a step of its own, apart from the command's.
-fn go(scenario: &mut Scenario, directory: &str) {
+/// Lets the script write its second part while speech is paused on the
+/// group's first line: asserts "before line 1" started with the next two
+/// lines queued behind it, pauses speech with Shift, writes the go file,
+/// waits for the terminal to show the prompt after the whole write, and
+/// resumes speech, then asserts the three lines heard in full. Core hands
+/// no further line to speech while it is paused, so its ask at the group's
+/// last line comes after the write has landed.
+fn go_while_paused(scenario: &mut Scenario, directory: &str) {
+    let first = scenario.speech().expect_started("before line 1");
+    let queued = scenario
+        .speech()
+        .expect_queued(&["before line 2", "before line 3"]);
+    scenario
+        .send_keys(&["shift"])
+        .expect("presses Shift to pause");
+    scenario.speech().expect_paused();
     scenario.begin_action("let the script write its second part");
     scenario
         .write_agent_file(&format!(r"{directory}\{GO_FILE}"), b"")
         .expect("lets the script write its second part");
+    scenario
+        .wait_for_last_shown_line(PROMPT, FLOOD_STEP)
+        .expect("the terminal shows the prompt after the script's second part");
+    scenario
+        .send_keys(&["shift"])
+        .expect("presses Shift to resume");
+    scenario.speech().expect_resumed();
+    scenario.speech().expect_ended(&first, Ending::Completed);
+    for heard in &queued {
+        scenario.speech().expect_ended(heard, Ending::Completed);
+    }
 }
 
 /// Asserts exactly `speech`, in order, each heard in full.
@@ -201,9 +236,8 @@ pub(crate) fn body_overflow_during_group_windows_terminal(
 ) {
     windows_terminal_ready(scenario, state);
     let directory = start_script(scenario, state, 12_000);
-    expect(scenario, &before(1, 1));
-    go(scenario, &directory);
-    let mut rest = before(2, u32::from(HALF));
+    go_while_paused(scenario, &directory);
+    let mut rest = before(4, u32::from(HALF));
     rest.extend(past_history(WINDOWS_TERMINAL_HOLDS));
     expect(scenario, &rest);
 }
@@ -215,9 +249,8 @@ pub(crate) fn body_overflow_during_group_console_host(
 ) {
     console_host_ready(scenario, state);
     let directory = start_script(scenario, state, 12_000);
-    expect(scenario, &before(1, 1));
-    go(scenario, &directory);
-    let mut rest = before(2, u32::from(HALF));
+    go_while_paused(scenario, &directory);
+    let mut rest = before(4, u32::from(HALF));
     rest.extend(past_history(CONSOLE_HOST_HOLDS));
     expect(scenario, &rest);
 }

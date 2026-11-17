@@ -870,9 +870,11 @@ Each exists in both terminals unless named for one.
   count is computed from the same constants.
   The acceptance floods (`scenarios/terminal_overflow.rs`,
   `_scrollback_overflow_during_group`) print a group's worth of lines,
-  wait for a file the scenario writes as the first is heard, then write
-  12,000 lines, past the history, while the group still plays, heard as
-  the rest of the group, "skipped more than N lines", and the last 15, N
+  wait for a file the scenario writes while Shift holds speech paused on
+  the first, then write 12,000 lines, past the history; the scenario
+  resumes speech once the terminal shows the prompt after them, so the
+  write has landed before Core's ask at the group's last line, and they
+  are heard as the rest of the group, "skipped more than N lines", and the last 15, N
   being the lines the terminal's buffer holds less the 15 last lines
   (9,016 in Windows Terminal, 8,986 in the console host), so each
   terminal's provider reads its whole document. The flood policy's counts
