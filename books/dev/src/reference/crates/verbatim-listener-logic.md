@@ -57,7 +57,7 @@ Public API:
 - `foreground` — what the listener learns of each window that came to
   the foreground, for Core: `ForegroundWatch` takes the window in front at
   the start (`start`), each foreground event with whether its window was
-  in front as it was handled (`foreground`), a focus event while a window
+  in front as it was handled (`foreground`), any other event while a window
   not in front waits (`event_seen`, with `has_pending`), and each console
   event (`console_event`), and answers a `Step`: the window to report, with
   when it was observed, and whether to hook or unhook the console's

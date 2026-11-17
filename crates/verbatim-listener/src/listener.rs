@@ -649,16 +649,14 @@ impl Listener {
             let applications = RefCell::new(tells::Applications::default());
             EventHandlers {
                 win_event: Box::new(move |event: WinEvent| {
-                    // Every event is told first, its arrival the time the
-                    // callback received it; the foreground's watch and the
-                    // progress path follow.
-                    tell_win_event(
-                        &outgoing.tells,
+                    on_win_event(
+                        &outgoing,
                         &mut applications.borrow_mut(),
+                        &event_readers,
+                        &knowledge,
+                        &watch,
                         event,
-                        outgoing.now(),
                     );
-                    route_win_event(&outgoing, &event_readers, &knowledge, &watch, event);
                 }),
                 // The idle barrier's query, its round in the first word:
                 // every event delivered before it has been handled, so the
@@ -833,28 +831,46 @@ fn ask((readers, kept, checks): (&Readers<UiaReading>, &Kept, &Checks), ask: Box
     );
 }
 
-/// What the listener does with a `WinEvent` beside its tell: a value
-/// change goes the progress path's way; a console's event, the shell's
-/// foreground and a foreground event feed the watch of the window in
-/// front, and a focus finds a pending foreground's window in front.
-fn route_win_event(
+/// What the listener does with one `WinEvent`, in this order: the
+/// foreground's watch first, so that a window it reports in front reaches
+/// Core before any tell its report decides, the foreground event's own and
+/// those the foreground hold releases with it, since Core judges a
+/// foreground tell against its foreground record
+/// (`docs/design/readers-tell-core-asks-build1.md`, "Focus and foreground");
+/// then the event's tell, its arrival the time the callback received it;
+/// then the progress path's, for a value change. The window in front is
+/// read once ([`Tells::front`](tells::Tells::front)), and the watch and
+/// the foreground hold both judge the event on that read, so that the hold
+/// releases a foreground tell on an event only when the watch has reported
+/// its window.
+fn on_win_event(
     outgoing: &Arc<Outgoing>,
+    applications: &mut tells::Applications,
     readers: &Arc<Readers<UiaReading>>,
     knowledge: &RefCell<ValueChangeKnowledge>,
     watch: &RefCell<ForegroundWatch>,
     event: WinEvent,
 ) {
-    if routed_elsewhere(outgoing, readers, knowledge, event) {
-        return;
-    }
-    let observed_at_us = outgoing.now();
-    match event.kind {
-        WinEventKind::ConsoleUpdate | WinEventKind::ConsoleCaret => {
-            let step = watch
-                .borrow_mut()
-                .console_event(event.hwnd, event.thread, observed_at_us);
-            foreground_step(outgoing, step);
-        }
+    let arrived_us = outgoing.now();
+    let front = outgoing.tells.front();
+    watch_win_event(outgoing, watch, event, (arrived_us, front));
+    tell_win_event(&outgoing.tells, applications, event, (arrived_us, front));
+    route_win_event(outgoing, readers, knowledge, event);
+}
+
+/// What the foreground's watch takes from a `WinEvent` observed at
+/// `observed_at_us`, while `front` is the window in front: the shell's
+/// foreground and a foreground event feed it; any other event finds a
+/// pending foreground's window in front, as any tell the foreground hold
+/// places does; and a console's event names its thread.
+fn watch_win_event(
+    outgoing: &Outgoing,
+    watch: &RefCell<ForegroundWatch>,
+    event: WinEvent,
+    (observed_at_us, front): (u64, isize),
+) {
+    let in_front = |window: isize| front == window;
+    let step = match event.kind {
         // Program Manager or the taskbar in front: a window that came to
         // the foreground for Core.
         WinEventKind::ShellForeground => {
@@ -864,16 +880,7 @@ fn route_win_event(
                 console: false,
                 observed_at_us,
             };
-            let step = watch.borrow_mut().foreground(front, in_front(front.window));
-            foreground_step(outgoing, step);
-        }
-        // A window not in front at its foreground event is sent once an
-        // event finds it there, before the focus that found it.
-        WinEventKind::Focus if watch.borrow().has_pending() => {
-            let step = watch
-                .borrow_mut()
-                .event_seen(front_window(), observed_at_us);
-            foreground_step(outgoing, step);
+            watch.borrow_mut().foreground(front, in_front(front.window))
         }
         WinEventKind::Foreground => {
             let front = Front {
@@ -882,11 +889,24 @@ fn route_win_event(
                 console: event.hwnd != 0 && window_class_name(event.hwnd) == CONSOLE_WINDOW_CLASS,
                 observed_at_us,
             };
-            let step = watch.borrow_mut().foreground(front, in_front(event.hwnd));
-            foreground_step(outgoing, step);
+            watch.borrow_mut().foreground(front, in_front(event.hwnd))
         }
-        _ => {}
-    }
+        kind => {
+            // A window not in front at its foreground event is sent once
+            // an event finds it there, before the tells it releases.
+            if watch.borrow().has_pending() {
+                let step = watch.borrow_mut().event_seen(front, observed_at_us);
+                foreground_step(outgoing, step);
+            }
+            match kind {
+                WinEventKind::ConsoleUpdate | WinEventKind::ConsoleCaret => watch
+                    .borrow_mut()
+                    .console_event(event.hwnd, event.thread, observed_at_us),
+                _ => return,
+            }
+        }
+    };
+    foreground_step(outgoing, step);
 }
 
 /// Starts the thread that makes the listener's desktop-wide UIA
@@ -1594,29 +1614,25 @@ fn in_foreground(window: isize) -> bool {
     front != 0 && (window == front || verbatim_win32::window::is_child(front, window))
 }
 
-/// A value change, taken by the progress path: whether `event` was one,
-/// already handled. An MSAA focus is noted for the value changes' limits
-/// and goes on.
-fn routed_elsewhere(
+/// What the listener does with a `WinEvent` after its tell: a value change
+/// goes the progress path's way, and an MSAA focus is noted for the value
+/// changes' limits.
+fn route_win_event(
     outgoing: &Arc<Outgoing>,
     readers: &Arc<Readers<UiaReading>>,
     knowledge: &RefCell<ValueChangeKnowledge>,
     event: WinEvent,
-) -> bool {
+) {
     match event.kind {
-        WinEventKind::Focus => {
-            knowledge.borrow_mut().focus_moved(BarObject {
-                window: event.hwnd,
-                object: event.id_object,
-                child: event.id_child,
-            });
-            false
-        }
+        WinEventKind::Focus => knowledge.borrow_mut().focus_moved(BarObject {
+            window: event.hwnd,
+            object: event.id_object,
+            child: event.id_child,
+        }),
         WinEventKind::ValueChange => {
             value_change_event(outgoing, readers, &mut knowledge.borrow_mut(), event);
-            true
         }
-        _ => false,
+        _ => {}
     }
 }
 
@@ -1630,12 +1646,6 @@ fn front_window() -> isize {
     use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
     // SAFETY: a local read with no preconditions.
     unsafe { GetForegroundWindow() }.0 as isize
-}
-
-/// Whether `window` is the system's foreground window now, the test a
-/// foreground event's window passes before it is sent, a local call.
-fn in_front(window: isize) -> bool {
-    front_window() == window
 }
 
 /// The window in the foreground now, with the thread Windows names as its
@@ -1784,7 +1794,7 @@ pub fn run_listener(
 mod tests {
     use std::fs::File;
     use std::io::BufReader;
-    use std::sync::atomic::AtomicBool;
+    use std::sync::atomic::{AtomicBool, AtomicIsize};
     use std::sync::mpsc;
     use std::sync::{Mutex, PoisonError};
 
@@ -2732,6 +2742,226 @@ mod tests {
         assert_eq!(
             (timing.observed_at_us, timing.listener_handled_at_us),
             (1_000, 7_000)
+        );
+    }
+
+    /// A plain window of this process, of class `Static`, destroyed on
+    /// drop by the thread that made it.
+    struct StaticWindow(isize);
+
+    impl StaticWindow {
+        fn new() -> Self {
+            use windows::Win32::UI::WindowsAndMessaging::{
+                CreateWindowExW, WINDOW_EX_STYLE, WINDOW_STYLE,
+            };
+            // SAFETY: a plain window of a system class, destroyed on drop.
+            let window = unsafe {
+                CreateWindowExW(
+                    WINDOW_EX_STYLE(0),
+                    windows::core::w!("STATIC"),
+                    None,
+                    WINDOW_STYLE(0),
+                    0,
+                    0,
+                    0,
+                    0,
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+            }
+            .expect("a window of this process");
+            Self(window.0 as isize)
+        }
+    }
+
+    impl Drop for StaticWindow {
+        fn drop(&mut self) {
+            use windows::Win32::UI::WindowsAndMessaging::DestroyWindow;
+            // SAFETY: made on this thread, destroyed once.
+            let _ = unsafe { DestroyWindow(windows::Win32::Foundation::HWND(self.0 as _)) };
+        }
+    }
+
+    /// One MSAA event of `kind` on `window`'s client area, raised by this
+    /// thread.
+    fn client_event(kind: WinEventKind, raw: u32, window: isize) -> WinEvent {
+        WinEvent {
+            kind,
+            event: raw,
+            hwnd: window,
+            id_object: windows::Win32::UI::WindowsAndMessaging::OBJID_CLIENT.0,
+            id_child: 0,
+            // SAFETY: no preconditions.
+            thread: unsafe { windows::Win32::System::Threading::GetCurrentThreadId() },
+            time: 0,
+            raised_ms_ago: 0,
+        }
+    }
+
+    /// What `messages` are, in order: a foreground report or a tell, by
+    /// kind.
+    fn reports_and_tells(messages: Vec<ListenerToCore>) -> Vec<String> {
+        messages
+            .into_iter()
+            .map(|message| match message {
+                ListenerToCore::Foreground { window, .. } => format!("report {window}"),
+                ListenerToCore::Tell(tell) => format!("tell {:?}", tell.kind),
+                other => format!("{other:?}"),
+            })
+            .collect()
+    }
+
+    /// The listener's parts for `on_win_event`, its window in front read
+    /// by `front`, and the pipe's other end.
+    fn listener_reading_front(
+        front: fn() -> isize,
+    ) -> (Arc<Outgoing>, Arc<Readers<UiaReading>>, BufReader<File>) {
+        let (ours, theirs) =
+            pipe(Flow::Outbound, EVENT_PIPE_BUFFER, End::Synchronous).expect("a pipe");
+        let (sender, _finishing) =
+            Sender::start(ours, Waiting::default(), "listener-test", || {}).expect("a sender");
+        let tells = Arc::new(tells::Tells::with_front(sender.clone(), front));
+        let outgoing = Arc::new(Outgoing::with_tells(
+            sender,
+            IgnoredProcesses::default(),
+            tells,
+            None,
+        ));
+        let kept = Arc::new(Kept::default());
+        let readers = Arc::new(Readers::new(UiaReading::new(&outgoing, &kept)));
+        (outgoing, readers, BufReader::new(File::from(theirs)))
+    }
+
+    /// A foreground event whose window is in front as it is handled: Core
+    /// is sent the report that makes the window the foreground before the
+    /// event's tell, since Core judges the tell against the window in
+    /// front (`msaa_flood_then_focus`, `background_progress_bar`).
+    #[test]
+    fn a_foreground_in_front_is_reported_before_its_tell() {
+        static FRONT: AtomicIsize = AtomicIsize::new(0);
+        let window = StaticWindow::new();
+        FRONT.store(window.0, Ordering::SeqCst);
+        let (outgoing, readers, mut reader) =
+            listener_reading_front(|| FRONT.load(Ordering::SeqCst));
+        let watch = RefCell::new(ForegroundWatch::default());
+        let _ = watch.borrow_mut().start(None);
+        on_win_event(
+            &outgoing,
+            &mut tells::Applications::default(),
+            &readers,
+            &RefCell::new(ValueChangeKnowledge::new()),
+            &watch,
+            client_event(
+                WinEventKind::Foreground,
+                windows::Win32::UI::WindowsAndMessaging::EVENT_SYSTEM_FOREGROUND,
+                window.0,
+            ),
+        );
+        readers.stop();
+        assert_eq!(
+            reports_and_tells(sent(&outgoing, &mut reader)),
+            [format!("report {}", window.0), "tell Foreground".to_owned()]
+        );
+    }
+
+    /// A foreground event whose window is not yet in front, then a focus
+    /// in it once it is: the focus's event sends the report first, then
+    /// the held foreground tell and the focus's tell, in order.
+    #[test]
+    fn a_foreground_found_in_front_by_a_focus_is_reported_before_both_tells() {
+        static FRONT: AtomicIsize = AtomicIsize::new(0);
+        let window = StaticWindow::new();
+        let (outgoing, readers, mut reader) =
+            listener_reading_front(|| FRONT.load(Ordering::SeqCst));
+        let watch = RefCell::new(ForegroundWatch::default());
+        let _ = watch.borrow_mut().start(None);
+        let knowledge = RefCell::new(ValueChangeKnowledge::new());
+        let mut applications = tells::Applications::default();
+        on_win_event(
+            &outgoing,
+            &mut applications,
+            &readers,
+            &knowledge,
+            &watch,
+            client_event(
+                WinEventKind::Foreground,
+                windows::Win32::UI::WindowsAndMessaging::EVENT_SYSTEM_FOREGROUND,
+                window.0,
+            ),
+        );
+        FRONT.store(window.0, Ordering::SeqCst);
+        on_win_event(
+            &outgoing,
+            &mut applications,
+            &readers,
+            &knowledge,
+            &watch,
+            client_event(
+                WinEventKind::Focus,
+                windows::Win32::UI::WindowsAndMessaging::EVENT_OBJECT_FOCUS,
+                window.0,
+            ),
+        );
+        readers.stop();
+        assert_eq!(
+            reports_and_tells(sent(&outgoing, &mut reader)),
+            [
+                format!("report {}", window.0),
+                "tell Foreground".to_owned(),
+                "tell MsaaFocus".to_owned(),
+            ]
+        );
+    }
+
+    /// A foreground event whose window is not yet in front, then a name
+    /// change once it is: as the name change's tell releases the held
+    /// foreground tell, the report goes first, so no tell is judged by
+    /// Core before the report of the window it found in front.
+    #[test]
+    fn a_foreground_found_in_front_by_any_event_is_reported_before_the_tells_it_releases() {
+        static FRONT: AtomicIsize = AtomicIsize::new(0);
+        let window = StaticWindow::new();
+        let (outgoing, readers, mut reader) =
+            listener_reading_front(|| FRONT.load(Ordering::SeqCst));
+        let watch = RefCell::new(ForegroundWatch::default());
+        let _ = watch.borrow_mut().start(None);
+        let knowledge = RefCell::new(ValueChangeKnowledge::new());
+        let mut applications = tells::Applications::default();
+        on_win_event(
+            &outgoing,
+            &mut applications,
+            &readers,
+            &knowledge,
+            &watch,
+            client_event(
+                WinEventKind::Foreground,
+                windows::Win32::UI::WindowsAndMessaging::EVENT_SYSTEM_FOREGROUND,
+                window.0,
+            ),
+        );
+        FRONT.store(window.0, Ordering::SeqCst);
+        on_win_event(
+            &outgoing,
+            &mut applications,
+            &readers,
+            &knowledge,
+            &watch,
+            client_event(
+                WinEventKind::NameChange,
+                windows::Win32::UI::WindowsAndMessaging::EVENT_OBJECT_NAMECHANGE,
+                window.0,
+            ),
+        );
+        readers.stop();
+        assert_eq!(
+            reports_and_tells(sent(&outgoing, &mut reader)),
+            [
+                format!("report {}", window.0),
+                "tell Foreground".to_owned(),
+                "tell NameChange".to_owned(),
+            ]
         );
     }
 }

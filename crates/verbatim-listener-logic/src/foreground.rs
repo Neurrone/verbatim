@@ -17,7 +17,7 @@
 //! it opens in front), or refused by Windows' foreground lock
 //! (`docs/parity/focus-events.md`, "Event acceptance"). Such a window is
 //! kept as the pending window, replacing any kept before, and is sent once
-//! a later focus event finds it in front, with that event's
+//! a later event finds it in front, with that event's
 //! observation; a newer foreground event replaces it. None sent replaces
 //! another.
 //!
@@ -77,7 +77,7 @@ pub struct ForegroundWatch {
     /// Whether every console's events are hooked.
     console_events: bool,
     /// The newest foreground event's window, when it was not in front as
-    /// the event was handled: sent once a later focus event finds it in
+    /// the event was handled: sent once a later event finds it in
     /// front, and replaced by a newer foreground event.
     pending: Option<Front>,
 }
@@ -125,13 +125,13 @@ impl ForegroundWatch {
     }
 
     /// Whether a window not in front at its foreground event waits to be
-    /// sent, for which a focus event reads the foreground window.
+    /// sent, for which every event reads the foreground window.
     #[must_use]
     pub fn has_pending(&self) -> bool {
         self.pending.is_some()
     }
 
-    /// A focus event the listener received at `observed_at_us`, with
+    /// An event the listener received at `observed_at_us`, with
     /// `foreground` the window `GetForegroundWindow` names now: the pending
     /// window, when it is that window, is reported with this event's
     /// observation.

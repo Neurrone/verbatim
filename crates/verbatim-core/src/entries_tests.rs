@@ -781,6 +781,70 @@ fn a_second_focus_on_an_item_file_explorer_raises_twice_is_refused_with_no_read(
     assert!(state.queue.front_for_tests().is_none());
 }
 
+/// A foreground tell of window 4, whose window facts found `front` in
+/// front as the listener placed it.
+fn foreground_tell(front: u64) -> Event {
+    let mut tell = msaa_tell(0);
+    tell.kind = EventKind::Foreground;
+    tell.object = EventObject::Msaa {
+        window: WindowHandle(4),
+        object: 0,
+        child: 0,
+    };
+    if let TellWindow::Found(facts) = &mut tell.window {
+        facts.window = facet(4, "Frame");
+        facts.window_to_foreground = Relation::Equal;
+        facts.foreground = WindowHandle(front);
+        facts.foreground_root_owner = WindowHandle(front);
+    }
+    tell
+}
+
+/// The listener's report that window 4 came to the foreground.
+fn window_4_in_front() -> Input<Entry> {
+    Input::Foreground(Foreground {
+        window: WindowHandle(4),
+        root_owner: WindowHandle(4),
+        process: APP,
+        thread: 41,
+        by_class: None,
+        shell: false,
+    })
+}
+
+/// A foreground tell is judged against the foreground record, as NVDA
+/// reads `GetForegroundWindow` as it processes the event
+/// (`IAccessibleHandler/__init__.py` 834 to 841): in the listener's order,
+/// the report that window 4 came to the foreground, then its tell, the
+/// tell is asked (`msaa_flood_then_focus`, `background_progress_bar`).
+#[test]
+fn a_foreground_tell_after_the_report_of_its_window_is_asked() {
+    let mut state = ready();
+    feed_at(&mut state, 500, window_4_in_front());
+    feed_at(
+        &mut state,
+        600,
+        answer_outcome(OUTPOST, 1, WireOutcome::NotThere),
+    );
+    assert_eq!(
+        feed_at(&mut state, 1_000, entry(foreground_tell(4))),
+        ["send Outpost(Pid(40)) MsaaRun"]
+    );
+}
+
+/// A foreground tell that reaches Core ahead of the report of its window
+/// is refused with no read, which is why the listener sends the report
+/// first.
+#[test]
+fn a_foreground_tell_ahead_of_the_report_of_its_window_is_refused() {
+    let mut state = ready();
+    assert_eq!(
+        feed_at(&mut state, 1_000, entry(foreground_tell(4))),
+        NOTHING
+    );
+    assert!(state.queue.front_for_tests().is_none());
+}
+
 #[test]
 fn a_candidate_refused_by_acceptance_is_not_asked() {
     let mut state = ready();

@@ -194,9 +194,13 @@ section 6.3).
   and once its hooks are in, the window then in front
   (`NUDGE_FOREGROUND_START`). An event whose window is not in front is
   kept as the watch's pending window and sent with the observation of a
-  later focus or foreground event that finds it in front, unless a newer
-  foreground event replaces it (`foreground::ForegroundWatch`). The
-  console's events stay unhooked (`verbatim_ia2::suspend_kinds`) unless
+  later event that finds it in front, unless a newer
+  foreground event replaces it (`foreground::ForegroundWatch`). Each
+  `WinEvent` feeds the watch before its tell is placed (`on_win_event`),
+  so the report that a window came to the foreground reaches Core before
+  the tells it decides, the foreground event's own and those the hold
+  releases with it; the watch and the hold judge the event on one read
+  of the window in front (`Tells::front`). The console's events stay unhooked (`verbatim_ia2::suspend_kinds`) unless
   it starts with a console window in front, until one of that window's
   events names its thread.
 - It handles `Ping`, `ApplicationExited` (which ends the application's

@@ -266,7 +266,17 @@ facts and sends them in order (`verbatim_listener_logic::tell`,
 and `the_hold_ends_at_twenty_milliseconds_whatever_the_foreground`). So
 a new window's focus raised while `GetForegroundWindow` still names the
 old window is accepted against the new one (Dickson, 2026-11-15). The
-foreground tell goes before the focus that releases it.
+foreground tell goes before the focus that releases it, and the
+listener's report that its window came to the foreground goes before
+both, since Core judges the tell against its foreground record: the
+listener's watch of the window in front and its hold judge each event on
+one read of `GetForegroundWindow`, and the watch reports the pending
+window on any event that finds it in front (`verbatim-listener`'s
+`a_foreground_found_in_front_by_any_event_is_reported_before_the_tells_it_releases`).
+A hold that ends by its timer, or by a UI Automation tell from a check
+thread, with the window in front sends the foreground tell before the
+watch has reported it, so Core refuses it: a limit until the hold and
+the watch keep the pending window in one place.
 
 - MSAA, in NVDA's order: the listener drops an event whose window has a
   ghost window standing in for it or belongs to an application the

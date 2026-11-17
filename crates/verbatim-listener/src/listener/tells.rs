@@ -116,11 +116,14 @@ type SetHoldTimer = Box<dyn Fn(Option<Duration>) + Send + Sync>;
 /// every tell is placed under: the foreground facts of a tell are read,
 /// and the tell sent, in one step under it, so no tell is placed after a
 /// foreground its facts predate. One timer, armed only while the hold
-/// keeps tells.
+/// keeps tells. Its read of the window in front, `GetForegroundWindow`
+/// in the listener, is the one the foreground's watch reads too
+/// ([`front`](Self::front)).
 pub(super) struct Tells {
     state: Mutex<HoldState>,
     sender: Sender<Waiting>,
     timer: OnceLock<SetHoldTimer>,
+    front: fn() -> isize,
 }
 
 /// The hold, and whether its timer is being closed.
@@ -131,6 +134,12 @@ struct HoldState {
 
 impl Tells {
     pub(super) fn new(sender: Sender<Waiting>) -> Self {
+        Self::with_front(sender, foreground)
+    }
+
+    /// [`new`](Self::new) reading the window in front with `front`, a
+    /// test's stand-in for `GetForegroundWindow`.
+    pub(super) fn with_front(sender: Sender<Waiting>, front: fn() -> isize) -> Self {
         Self {
             state: Mutex::new(HoldState {
                 hold: ForegroundHold::default(),
@@ -138,23 +147,37 @@ impl Tells {
             }),
             sender,
             timer: OnceLock::new(),
+            front,
         }
     }
 
+    /// The window in front now, 0 for none.
+    pub(super) fn front(&self) -> isize {
+        (self.front)()
+    }
+
     /// Places `held` in the order of tells: sent now, or kept behind a
-    /// pending foreground.
+    /// pending foreground, whose window is looked for in front now.
     pub(super) fn place(&self, held: Held) {
+        self.place_seen(held, self.front());
+    }
+
+    /// [`place`](Self::place), `front` the window in front as the
+    /// `WinEvent` callback read it for the foreground's watch, so that the
+    /// hold and the watch judge the event on one read.
+    pub(super) fn place_seen(&self, held: Held, front: isize) {
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
-        let placed = state.hold.place(held, foreground(), now_us());
+        let placed = state.hold.place(held, front, now_us());
         self.apply(&state, placed);
     }
 
     /// Places a foreground event's tell for `window`, `None` for one a
-    /// local drop took, which still awaits its window.
-    pub(super) fn foreground(&self, window: isize, tell: Option<Pending>) {
+    /// local drop took, which still awaits its window, `front` the window
+    /// in front as the callback read it.
+    pub(super) fn foreground(&self, window: isize, tell: Option<Pending>, front: isize) {
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         let held = tell.map(|tell| Held::Tell(Box::new(tell)));
-        let placed = state.hold.foreground(window, held, foreground(), now_us());
+        let placed = state.hold.foreground(window, held, front, now_us());
         self.apply(&state, placed);
     }
 
@@ -192,7 +215,7 @@ impl Timed for Tells {
 
     fn fired(&self) {
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
-        let placed = state.hold.fired(foreground(), now_us());
+        let placed = state.hold.fired(self.front(), now_us());
         self.apply(&state, placed);
     }
 
@@ -269,12 +292,13 @@ fn handle(window: isize) -> WindowHandle {
 /// known (a console window's is its console host, the process of the
 /// thread that raised the event, as Verbatim routes it today), the
 /// window's class and the shown object ([`dropped_by_class`]), and a hung
-/// or ghosted window, read live.
+/// or ghosted window, read live. `front` is the window in front as the
+/// callback read it, which the foreground hold judges the event on.
 pub(super) fn tell_win_event(
     tells: &Tells,
     applications: &mut Applications,
     event: WinEvent,
-    at_us: u64,
+    (at_us, front): (u64, isize),
 ) {
     let Some(kind) = verbatim_ia2::tell_kind(&event) else {
         return;
@@ -296,7 +320,7 @@ pub(super) fn tell_win_event(
     let dropped = |reason: &'static str| {
         tracing::trace!(?kind, window, reason, "a WinEvent is not told");
         if let Some(window) = awaited {
-            tells.foreground(window, None);
+            tells.foreground(window, None, front);
         }
     };
     let class = window_class_name(window);
@@ -347,8 +371,8 @@ pub(super) fn tell_win_event(
         checked: None,
     };
     match awaited {
-        Some(window) => tells.foreground(window, Some(tell)),
-        None => tells.place(Held::Tell(Box::new(tell))),
+        Some(window) => tells.foreground(window, Some(tell), front),
+        None => tells.place_seen(Held::Tell(Box::new(tell)), front),
     }
 }
 
@@ -471,7 +495,12 @@ mod tests {
             window.0,
             OBJID_CLIENT.0,
         );
-        tell_win_event(&tells, &mut Applications::default(), name_change, 5_000);
+        tell_win_event(
+            &tells,
+            &mut Applications::default(),
+            name_change,
+            (5_000, foreground()),
+        );
         let sent = sent_all(&sender, &mut reader);
         let tell = only_tell(&sent);
         assert_eq!(tell.kind, EventKind::NameChange);
@@ -520,7 +549,7 @@ mod tests {
                 OBJID_CLIENT.0,
             ),
         ] {
-            tell_win_event(&tells, &mut applications, told, 1);
+            tell_win_event(&tells, &mut applications, told, (1, foreground()));
         }
         assert_eq!(sent_all(&sender, &mut reader), Vec::<ListenerToCore>::new());
     }
@@ -530,7 +559,12 @@ mod tests {
         let gone = OwnWindow::new().0;
         let (tells, sender, mut reader) = tells();
         let destroy = event(WinEventKind::Destroy, EVENT_OBJECT_DESTROY, gone, 0);
-        tell_win_event(&tells, &mut Applications::default(), destroy, 1);
+        tell_win_event(
+            &tells,
+            &mut Applications::default(),
+            destroy,
+            (1, foreground()),
+        );
         let sent = sent_all(&sender, &mut reader);
         let tell = only_tell(&sent);
         assert_eq!(tell.kind, EventKind::Destroy);
@@ -559,18 +593,23 @@ mod tests {
             window.0,
             OBJID_CLIENT.0,
         );
-        tell_win_event(&tells, &mut applications, foreground_event, 1);
+        tell_win_event(
+            &tells,
+            &mut applications,
+            foreground_event,
+            (1, foreground()),
+        );
         let name_change = event(
             WinEventKind::NameChange,
             EVENT_OBJECT_NAMECHANGE,
             window.0,
             OBJID_CLIENT.0,
         );
-        tell_win_event(&tells, &mut applications, name_change, 2);
+        tell_win_event(&tells, &mut applications, name_change, (2, foreground()));
         tells.place(Held::IdleAnswer(7));
         // A foreground event for the window in front, or for none when
         // nothing is, ends the hold; dropped itself, it is not told.
-        tells.foreground(foreground(), None);
+        tells.foreground(foreground(), None, foreground());
         let order: Vec<String> = sent_all(&sender, &mut reader)
             .into_iter()
             .map(|message| match message {
