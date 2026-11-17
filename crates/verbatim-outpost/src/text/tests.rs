@@ -174,8 +174,11 @@ impl TextSource for Fake {
         end: &usize,
         max_units: usize,
     ) -> TextResult<(Vec<u16>, bool)> {
+        // Offsets past the text read up to its end, as an edit control's
+        // text range does once its text was cut.
         let cut = (*end).min(start + max_units);
-        Ok((self.text[*start..cut].to_vec(), cut < *end))
+        let to = cut.min(self.text.len());
+        Ok((self.text[(*start).min(to)..to].to_vec(), cut < *end))
     }
 
     fn offset_in(&mut self, unit: &Unit<usize>, at: &usize) -> TextResult<usize> {
@@ -390,6 +393,29 @@ fn a_selection_around_the_caret_is_one_change_each_way() {
     assert_eq!(
         changes_from(&mut source, &mut anchors, baseline).0,
         [(false, "lo wo".to_owned(), 5)]
+    );
+}
+
+/// A selection whose text the application deleted, as Backspace over
+/// a selection to the text's end deletes it, is still a change: the old
+/// selection unselected with no text, which Core says as "selection
+/// removed" once the text changed, as NVDA lists the old selection
+/// whatever it now holds (`speech/speech.py` 1364 to 1365).
+#[test]
+fn a_selection_whose_text_was_deleted_is_unselected_with_no_text() {
+    let mut source = Fake::new("hello world", 6);
+    source.selection = Some((6, 11));
+    source.caret = 11;
+    let mut anchors = store();
+    let baseline = held::read_selection(&mut source, &mut anchors.node(1), REPORTED_AT, None)
+        .expect("the fake answers")
+        .baseline;
+    source.text = "hello ".encode_utf16().collect();
+    source.selection = None;
+    source.caret = 6;
+    assert_eq!(
+        changes_from(&mut source, &mut anchors, baseline).0,
+        [(false, String::new(), 0)]
     );
 }
 

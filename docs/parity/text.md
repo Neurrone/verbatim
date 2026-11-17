@@ -319,6 +319,11 @@ the text unselected. Each text selected or unselected, and "selection
 removed", is an utterance of its own, as NVDA speaks each
 (Shift+Control+Home across the selection's anchor says the first line
 selected and then the second unselected, `document_keys` scenarios).
+Every selected part is said before every unselected one, wherever each
+lies, as NVDA speaks its two lists (`speech/speech.py` 1389 to 1407): a
+new selection apart from the old says the new one selected, then the
+old one unselected (mockapp's
+`an_edit_controls_selection_deleted_to_the_end_says_the_selection_removed`).
 
 Different (Dickson, 2026-10-22): a selection's characters are counted as
 grapheme clusters, for the count and for naming a single character,

@@ -530,7 +530,10 @@ read, its watch, the sentence move and a caret tell's read are under
   `characters`. When the old and new selections neither overlap nor
   touch, or either is empty, the old text is unselected then the new
   selected, each whole; otherwise the start side is compared, then the
-  end side. Empty changes are left out. When the node's text changed since
+  end side. A change whose text is empty, its text deleted, is listed
+  too, as NVDA lists it. The list's order is where each part lies, not
+  the order of speech: Core says every selected part first, then every
+  unselected one, as NVDA does. When the node's text changed since
   the compared selection was reported, `content_changed` is set, the
   changes carry no text, and `new_selection` carries the whole new
   selection's text.

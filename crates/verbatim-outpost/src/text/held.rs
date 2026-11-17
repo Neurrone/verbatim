@@ -178,11 +178,15 @@ pub fn read_selection<S: TextSource>(
         read_at_us,
         (true, kept.as_ref().map(|kept| (&kept.ends, kept.collapsed))),
     )?;
+    // A selection whose text reads as empty holds nothing to say.
     let selected = match (&state.selection, selection_text) {
-        (Some(_), Some(units)) if units.len() < SELECTION_TEXT_CAP => change_of(true, &units),
-        (Some((start, end)), _) => change(source, true, start, end)?,
+        (Some(_), Some(units)) if units.len() < SELECTION_TEXT_CAP => {
+            Some(change_of(true, &units))
+        }
+        (Some((start, end)), _) => Some(change(source, true, start, end)?),
         (None, _) => None,
-    };
+    }
+    .filter(|selected| !selected.text.is_empty());
     let difference = match kept {
         None => None,
         Some(kept) => {
@@ -190,7 +194,7 @@ pub fn read_selection<S: TextSource>(
                 _ if kept.collapsed && state.selection.is_none() => Vec::new(),
                 Some(read) => read
                     .into_iter()
-                    .filter_map(|(selected, text)| change_of(selected, &text))
+                    .map(|(selected, text)| change_of(selected, &text))
                     .collect(),
                 None => selection_changes(source, (&kept.ends, kept.collapsed), &state)?,
             };

@@ -421,7 +421,9 @@ pub(crate) struct General<'a> {
     pub(crate) collapsed: bool,
 }
 
-/// The speech for a selection change: each change as NVDA's "selected" or
+/// The speech for a selection change: every selected change, then every
+/// unselected one, as NVDA's `speakSelectionChange` speaks its two lists
+/// (`speech/speech.py` 1389 to 1407), each as NVDA's "selected" or
 /// "unselected", a single character by its name, 512 characters or more as
 /// a count, and a change with no text as nothing. With `general`, the text
 /// having changed since the selection compared with was reported, the
@@ -429,15 +431,19 @@ pub(crate) struct General<'a> {
 /// selection (`docs/parity/text.md`, "TextInfo-equivalent layer";
 /// `docs/nvda/editable-text-and-terminals.md`, "Selection changes"): the
 /// new selection's text as "selected" when something was selected, then,
-/// when something was unselected, the new selection's text as "selected
-/// instead", or "selection removed" when nothing is selected now.
+/// when something was unselected, its text deleted or not, the new
+/// selection's text as "selected instead", or "selection removed" when
+/// nothing is selected now.
 pub(crate) fn selection_segments(
     changes: &[SelectionChange],
     general: Option<General<'_>>,
 ) -> Vec<UtteranceSegment> {
     let Some(general) = general else {
-        return changes
-            .iter()
+        let (selected, unselected): (Vec<_>, Vec<_>) =
+            changes.iter().partition(|change| change.selected);
+        return selected
+            .into_iter()
+            .chain(unselected)
             .filter(|change| change.characters > 0)
             .map(|change| {
                 let text = selection_text(change);

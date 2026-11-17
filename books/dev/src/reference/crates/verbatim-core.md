@@ -978,7 +978,8 @@ The answer updates the caret and speaks, queued:
   an unchanged line. A key
   that removed a selection says only the selection's change
   (`editing::removes_selection`).
-- With Shift, and Control+A: what became selected and unselected
+- With Shift, and Control+A: every part that became selected, then every
+  part that became unselected, as NVDA orders them
   (`editing::selection_segments`), 512 characters or more as their count;
   a change in general terms (`content_changed`) speaks the whole new
   selection.

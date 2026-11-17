@@ -1550,15 +1550,13 @@ pub(crate) fn emit_changes(
             let between = b.text_range_clone(from.0);
             b.text_range_move_endpoint_by_range(between, c.start, from.0, from.1);
             b.text_range_move_endpoint_by_range(between, c.end, to.0, to.1);
+            // A part is listed whatever its text, empty included: a part
+            // whose text was deleted is still a change, as NVDA's
+            // `speakSelectionChange` lists it.
             let text = b.text_range_get_text(between, max_text);
-            let size = b.string_size(text);
-            let none = b.uint(0);
-            let some = b.compare(size, none, Comparison::GreaterThan);
-            b.if_(some, |b| {
-                let flag = b.bool(is_selection);
-                b.array_append(selected, flag);
-                b.array_append(texts, text);
-            });
+            let flag = b.bool(is_selection);
+            b.array_append(selected, flag);
+            b.array_append(texts, text);
         };
         let order = |b: &mut Builder, a: ProgramEnd, other: ProgramEnd| {
             b.text_range_compare_endpoints(a.0, a.1, other.0, other.1)
@@ -2155,9 +2153,7 @@ pub(crate) fn classic_changes(
         between.move_endpoint_to(Endpoint::Start, from.range, from.endpoint)?;
         between.move_endpoint_to(Endpoint::End, to.range, to.endpoint)?;
         let text = between.text(max_text)?;
-        if !text.is_empty() {
-            changes.push(SelectionTextChange { selected, text });
-        }
+        changes.push(SelectionTextChange { selected, text });
         Ok(())
     };
     if old_collapsed

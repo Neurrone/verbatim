@@ -894,7 +894,9 @@ fn the_review_cursor_speaks_a_word_of_one_character_by_its_name() {
 fn shift_movement_speaks_what_was_selected_and_unselected() {
     // A selection key is passed at once and says nothing; its caret tell
     // says what it selected and unselected, each part its own utterance,
-    // as NVDA speaks each selection message on its own.
+    // as NVDA speaks each selection message on its own: every selected
+    // part first, then every unselected one, whatever order the outpost
+    // listed them in (`speech/speech.py` 1389 to 1407).
     let mut text = editing("hello, world\n", 5);
     assert_eq!(text.key(CaretMotion::NextCharacter, true), []);
     let long = "x".repeat(600);
@@ -910,11 +912,11 @@ fn shift_movement_speaks_what_was_selected_and_unselected() {
             queued(vec![phrase(Phrase::Selected(SelectionText::Character(
                 ",".to_owned()
             )))]),
-            queued(vec![phrase(Phrase::Unselected(SelectionText::Text(
-                "hello".to_owned()
-            )))]),
             queued(vec![phrase(Phrase::Selected(SelectionText::Characters(
                 600
+            )))]),
+            queued(vec![phrase(Phrase::Unselected(SelectionText::Text(
+                "hello".to_owned()
             )))]),
         ]
     );

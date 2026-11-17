@@ -823,6 +823,51 @@ fn an_edit_controls_caret_tell_before_its_value_change_is_said_in_general_terms(
     app.quit();
 }
 
+/// The selected last line deleted from a classic edit control, as
+/// Backspace over a selection to the text's end deletes it, its events as
+/// the Windows Forms text box raises them (R1): the old selection's
+/// offsets now hold no text, and the change is still an unselection, which
+/// the value change waiting at the caret tell's answer says as the
+/// selection removed, as NVDA lists the old selection whatever it now
+/// holds (`speech/speech.py` 1364 to 1365, 1408 to 1417).
+fn an_edit_controls_selection_deleted_to_the_end_says_the_selection_removed() {
+    let (mut app, mut core, _) = on_edit("mockapp-caret-watch-edit-deleted-to-end");
+    assert_eq!(
+        core.raise(
+            &mut app,
+            &["caret doc 12 17", "system-caret"],
+            &[WinEventKind::Caret],
+            1
+        )
+        .spoken(),
+        // Apart from the old selection: the outpost lists the old one
+        // unselected, then the new one selected, and Core says every
+        // selected part first, as NVDA does (`speech/speech.py` 1389 to
+        // 1407).
+        selected("gamma")
+            .into_iter()
+            .chain(unselected("alpha"))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        core.raise_at_once(
+            &mut app,
+            &[
+                r"set-text doc alpha beta\n",
+                "caret doc 12",
+                "system-caret",
+                "text-changed doc"
+            ],
+            &[WinEventKind::Caret, WinEventKind::ValueChange],
+            3
+        )
+        .spoken(),
+        [vec![SegmentContent::Message(Message::SelectionRemoved)]]
+    );
+    drop(core);
+    app.quit();
+}
+
 /// "x" typed over the selected "alpha" in a classic edit control, its value
 /// change judged before its caret tell: the value change sets the
 /// text-changed flag, and the caret tell's answer says its change in
@@ -1014,6 +1059,10 @@ fn main() {
         (
             "an_edit_controls_caret_tell_before_its_value_change_is_said_in_general_terms",
             an_edit_controls_caret_tell_before_its_value_change_is_said_in_general_terms,
+        ),
+        (
+            "an_edit_controls_selection_deleted_to_the_end_says_the_selection_removed",
+            an_edit_controls_selection_deleted_to_the_end_says_the_selection_removed,
         ),
         (
             "an_edit_controls_value_change_judged_first_has_the_next_change_said_in_general_terms",

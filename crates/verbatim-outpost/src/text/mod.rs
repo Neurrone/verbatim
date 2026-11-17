@@ -1485,16 +1485,15 @@ fn change<S: TextSource>(
     selected: bool,
     start: &S::Pos,
     end: &S::Pos,
-) -> TextResult<Option<SelectionChange>> {
+) -> TextResult<SelectionChange> {
     let (units, _) = source.text(start, end, MAX_RANGE_UNITS)?;
     Ok(change_of(selected, &units))
 }
 
-/// A selection change of the UTF-16 text `units`, `None` for none.
-fn change_of(selected: bool, units: &[u16]) -> Option<SelectionChange> {
-    if units.is_empty() {
-        return None;
-    }
+/// A selection change of the UTF-16 text `units`, which may be empty: a
+/// part whose text the application deleted is still a change, as NVDA's
+/// `speakSelectionChange` lists it, and Core decides what it says.
+fn change_of(selected: bool, units: &[u16]) -> SelectionChange {
     let (full, _, _) = to_utf8(units, MAX_RANGE_BYTES, &[]);
     let count = characters(&full);
     let mut text = full;
@@ -1502,11 +1501,11 @@ fn change_of(selected: bool, units: &[u16]) -> Option<SelectionChange> {
     if text.len() > MAX_SELECTION_TEXT_BYTES {
         text.truncate(grapheme_floor(&text, MAX_SELECTION_TEXT_BYTES));
     }
-    Some(SelectionChange {
+    SelectionChange {
         selected,
         text,
         characters: count,
-    })
+    }
 }
 
 /// How the selection changed from `previous` (its ends, equal for none,
@@ -1514,7 +1513,8 @@ fn change_of(selected: bool, units: &[u16]) -> Option<SelectionChange> {
 /// contract's rule: two selections that neither overlap nor touch, or
 /// either of which holds nothing, are an unselection of the whole old then
 /// a selection of the whole new; otherwise the start side changes, then the
-/// end side.
+/// end side. Each part is listed whatever its text, empty included: Core
+/// decides the order the parts are spoken in and what an empty one says.
 fn selection_changes<S: TextSource>(
     source: &mut S,
     (previous, old_collapsed): (&(S::Pos, S::Pos), bool),
@@ -1537,21 +1537,21 @@ fn selection_changes<S: TextSource>(
     if whole {
         // A side that holds nothing has no text to read.
         if !old_collapsed {
-            changes.extend(change(source, false, old_start, old_end)?);
+            changes.push(change(source, false, old_start, old_end)?);
         }
         if state.selection.is_some() {
-            changes.extend(change(source, true, &new_start, &new_end)?);
+            changes.push(change(source, true, &new_start, &new_end)?);
         }
         return Ok(changes);
     }
     match source.compare(&new_start, old_start)? {
-        Ordering::Less => changes.extend(change(source, true, &new_start, old_start)?),
-        Ordering::Greater => changes.extend(change(source, false, old_start, &new_start)?),
+        Ordering::Less => changes.push(change(source, true, &new_start, old_start)?),
+        Ordering::Greater => changes.push(change(source, false, old_start, &new_start)?),
         Ordering::Equal => {}
     }
     match source.compare(&new_end, old_end)? {
-        Ordering::Greater => changes.extend(change(source, true, old_end, &new_end)?),
-        Ordering::Less => changes.extend(change(source, false, &new_end, old_end)?),
+        Ordering::Greater => changes.push(change(source, true, old_end, &new_end)?),
+        Ordering::Less => changes.push(change(source, false, &new_end, old_end)?),
         Ordering::Equal => {}
     }
     Ok(changes)
@@ -1960,7 +1960,7 @@ fn select_text<S: TextSource>(
                     read.changes
                         .unwrap_or_default()
                         .into_iter()
-                        .filter_map(|(selected, text)| change_of(selected, &text))
+                        .map(|(selected, text)| change_of(selected, &text))
                         .collect(),
                 )
             }
