@@ -1359,7 +1359,7 @@ fn current_focus(
             nearest: Some(control_window),
             msaa,
             foreground: foreground.as_ref(),
-            value_from_selection: false,
+            value_from_selection: control.value_from_selection,
             runtime_id_reused: false,
             details,
         },

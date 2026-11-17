@@ -109,6 +109,35 @@ fn a_looping_selector_has_its_selected_item_as_its_value() {
     app.quit();
 }
 
+/// The current focus, read by the outpost itself as Core asks it at
+/// startup, answers whether its value comes from its selection, as a focus
+/// event's completion does: a combo box without the `Value` pattern's
+/// does, one with it does not.
+fn the_current_focus_says_whether_its_value_comes_from_its_selection() {
+    let (mut app, hwnd, outpost) = start("mockapp-combo-box-focus-now");
+    let mut answers = Vec::new();
+    for id in ["hour", "size"] {
+        app.send(&format!("set-focus {id}"));
+        outpost.read_focus_as(focused(hwnd).live().element());
+        let (outcome, calls) = outpost.current_focus();
+        let read = common::outpost::Focused::of(outcome, calls).read;
+        let value = match common::outpost::value(&read.focus.read.values, PropertyId::Value) {
+            Some(PropertyValue::Text(value)) => Some(value.clone()),
+            _ => None,
+        };
+        answers.push((id, value, read.value_from_selection));
+    }
+    assert_eq!(
+        answers,
+        [
+            ("hour", Some("Nine".to_owned()), true),
+            ("size", Some("Large".to_owned()), false)
+        ]
+    );
+    drop(outpost);
+    app.quit();
+}
+
 /// No speech.
 const NOTHING: [Vec<SegmentContent>; 0] = [];
 
@@ -353,6 +382,10 @@ fn main() {
         (
             "a_looping_selector_has_its_selected_item_as_its_value",
             a_looping_selector_has_its_selected_item_as_its_value,
+        ),
+        (
+            "the_current_focus_says_whether_its_value_comes_from_its_selection",
+            the_current_focus_says_whether_its_value_comes_from_its_selection,
         ),
         (
             "an_item_selected_in_the_focused_combo_box_changes_its_value",

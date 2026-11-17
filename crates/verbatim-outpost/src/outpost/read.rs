@@ -1367,6 +1367,7 @@ pub(super) fn focused_control_in(
                 node,
                 ancestors,
                 walked: Vec::new(),
+                value_from_selection: false,
             },
         ))
     }
@@ -1437,7 +1438,8 @@ fn uia_focused_control(
         node.details.set_table(table);
         // A combo box without the `Value` pattern, or a looping selector:
         // its first selected item is its value.
-        if fields.value_from_selection() {
+        let value_from_selection = fields.value_from_selection();
+        if value_from_selection {
             node.value = selected_child.and_then(|child| child.name);
         }
         Ok((
@@ -1446,6 +1448,7 @@ fn uia_focused_control(
                 node,
                 ancestors,
                 walked: walked.into_inner(),
+                value_from_selection,
             },
         ))
     }
@@ -1550,6 +1553,11 @@ pub(super) struct FocusedControl {
     /// first, by its runtime id and its own window (0 for none), from which
     /// the routes to its nodes are made; empty for an MSAA focus.
     pub(super) walked: Vec<(Vec<i32>, isize)>,
+    /// Whether its value is its first selected item's name, a UI
+    /// Automation combo box without the `Value` pattern or a looping
+    /// selector (`verbatim_uia::map::value_from_selection`); never for an
+    /// MSAA focus.
+    pub(super) value_from_selection: bool,
 }
 
 /// What asked [`focused_control_in`] to read the application's focus,
