@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 
 /// The format version a recording's header gives and [`crate::print`]
 /// requires.
-pub(crate) const FORMAT_VERSION: u32 = 1;
+pub(crate) const FORMAT_VERSION: u32 = 2;
 
 /// What one event's line holds, every field written, null when it has no
 /// value.
@@ -44,6 +44,8 @@ pub(crate) struct EventData {
     pub object: Option<i32>,
     /// An MSAA event's `idChild`.
     pub child: Option<i32>,
+    /// An MSAA event's pass of the `WinEvent` thread ([`crate::passes`]).
+    pub pass: Option<u64>,
 }
 
 /// A window handle as a line writes it.
@@ -99,6 +101,7 @@ pub(crate) fn event_line(t_us: u64, data: &EventData) -> String {
         ("event", optional(data.event)),
         ("object", optional(data.object)),
         ("child", optional(data.child)),
+        ("pass", optional(data.pass)),
     ])
 }
 

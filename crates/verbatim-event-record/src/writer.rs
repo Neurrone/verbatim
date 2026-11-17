@@ -33,13 +33,18 @@ pub(crate) enum Reason {
     ConsoleControl,
     /// Main's wait failed.
     WaitFailed(String),
+    /// The `WinEvent` thread could not post a pass's message.
+    PassMessageFailed(String),
 }
 
 impl Reason {
     /// The exit code: failures exit 1.
     pub(crate) fn exit_code(&self) -> u32 {
         match self {
-            Self::WriteFailed(_) | Self::StepFailed(_) | Self::WaitFailed(_) => 1,
+            Self::WriteFailed(_)
+            | Self::StepFailed(_)
+            | Self::WaitFailed(_)
+            | Self::PassMessageFailed(_) => 1,
             Self::WindowDestroyed | Self::StepsFinished | Self::ConsoleControl => 0,
         }
     }
@@ -53,6 +58,7 @@ impl Reason {
             Self::StepsFinished => "the steps finished".to_owned(),
             Self::ConsoleControl => "a console control event asked it to".to_owned(),
             Self::WaitFailed(error) => format!("waiting for the recording's end failed: {error}"),
+            Self::PassMessageFailed(error) => error.clone(),
         }
     }
 }

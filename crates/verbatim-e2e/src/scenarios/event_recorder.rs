@@ -82,7 +82,7 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
         .expect("the recording");
     let recording = String::from_utf8_lossy(&contents);
     let lines = parse_lines(&contents);
-    assert_eq!(lines[0]["format_version"], Value::from(1));
+    assert_eq!(lines[0]["format_version"], Value::from(2));
     assert_eq!(lines[0]["target"]["window"], Value::from(handle.clone()));
     let registered: Vec<&Value> = lines
         .iter()

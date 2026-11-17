@@ -23,9 +23,9 @@ use windows::Win32::System::SystemInformation::GetSystemTime;
 use windows::Win32::UI::Accessibility::IUIAutomationElement;
 use windows::Win32::UI::WindowsAndMessaging::{
     EVENT_CONSOLE_CARET, EVENT_CONSOLE_LAYOUT, EVENT_CONSOLE_UPDATE_REGION,
-    EVENT_CONSOLE_UPDATE_SCROLL, EVENT_CONSOLE_UPDATE_SIMPLE, EVENT_MAX, EVENT_MIN,
-    EVENT_OBJECT_CREATE, EVENT_OBJECT_DESCRIPTIONCHANGE, EVENT_OBJECT_DESTROY, EVENT_OBJECT_FOCUS,
-    EVENT_OBJECT_HIDE, EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_NAMECHANGE, EVENT_OBJECT_REORDER,
+    EVENT_CONSOLE_UPDATE_SCROLL, EVENT_CONSOLE_UPDATE_SIMPLE, EVENT_OBJECT_CREATE,
+    EVENT_OBJECT_DESCRIPTIONCHANGE, EVENT_OBJECT_DESTROY, EVENT_OBJECT_FOCUS, EVENT_OBJECT_HIDE,
+    EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_NAMECHANGE, EVENT_OBJECT_REORDER,
     EVENT_OBJECT_SELECTION, EVENT_OBJECT_SELECTIONADD, EVENT_OBJECT_SELECTIONREMOVE,
     EVENT_OBJECT_SELECTIONWITHIN, EVENT_OBJECT_SHOW, EVENT_OBJECT_STATECHANGE,
     EVENT_OBJECT_TEXTSELECTIONCHANGED, EVENT_OBJECT_UNCLOAKED, EVENT_OBJECT_VALUECHANGE,
@@ -35,7 +35,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::core::{AgileReference, BOOL};
 
-use crate::hooks::{RawEvent, Sink, spawn_hook_thread};
+use crate::hooks::{Hook, PassFailed, RawEvent, Sink, spawn_hook_thread};
 use crate::line::{EventData, header};
 use crate::steps::{self, Agent, Step, StepsThread};
 use crate::stop_key::{self, STOP_KEY_ID};
@@ -306,36 +306,33 @@ fn agile(element: &IUIAutomationElement) -> Result<AgileReference<IUIAutomationE
     AgileReference::new(element).map_err(|error| format!("could not move an element: {error}"))
 }
 
-/// Installs the desktop's focus hook and the target's hook, sending the
-/// watcher the target's window changes. The target's hook comes first, so
-/// that a window shown while the desktop's is installed is not missed.
+/// Installs the target's hook and the desktop's focus hook on the
+/// `WinEvent` thread, sending the watcher the target's window changes.
 fn start_hooks(
     target: Target,
     arrivals: &Arc<Arrivals>,
     early: &Arc<EarlyEnd>,
     changes: Sender<WindowChange>,
 ) -> Result<(), String> {
-    {
-        let arrivals = Arc::clone(arrivals);
-        let early = Arc::clone(early);
-        spawn_hook_thread(
-            "verbatim-event-record-target",
-            (EVENT_MIN, EVENT_MAX),
-            target.pid(),
-            move || target_sink(target, arrivals, early, changes),
-        )?;
-    }
     let arrivals = Arc::clone(arrivals);
-    spawn_hook_thread(
-        "verbatim-event-record-focus",
-        (EVENT_OBJECT_FOCUS, EVENT_OBJECT_FOCUS),
-        0,
-        move || focus_sink(target, arrivals),
-    )
+    let early = Arc::clone(early);
+    spawn_hook_thread(target.pid(), move || {
+        let failed: PassFailed = {
+            let early = Arc::clone(&early);
+            Box::new(move |error| early.end(Reason::PassMessageFailed(error)))
+        };
+        let target_sink = target_sink(target, Arc::clone(&arrivals), early, changes);
+        let focus_sink = focus_sink(target, arrivals);
+        let sink: Sink = Box::new(move |raw: RawEvent| match raw.hook {
+            Hook::Target => target_sink(raw),
+            Hook::Focus => focus_sink(raw),
+        });
+        (sink, failed)
+    })
 }
 
-/// What the target's hook does with each event but focus, which the
-/// desktop's hook takes.
+/// What the target's hook does with each event, which is never focus: the
+/// desktop's hook takes that.
 fn target_sink(
     target: Target,
     arrivals: Arc<Arrivals>,
@@ -343,9 +340,6 @@ fn target_sink(
     changes: Sender<WindowChange>,
 ) -> Sink {
     Box::new(move |raw: RawEvent| {
-        if raw.event == EVENT_OBJECT_FOCUS {
-            return;
-        }
         let window_object = raw.object == OBJID_WINDOW.0 && raw.child == CHILDID_SELF;
         let destroyed = raw.event == EVENT_OBJECT_DESTROY && window_object;
         if let Target::Window { hwnd, .. } = target
@@ -418,6 +412,7 @@ fn msaa_line(raw: RawEvent, in_target: bool, pid: Option<u32>) -> EventData {
         event: Some(raw.event),
         object: Some(raw.object),
         child: Some(raw.child),
+        pass: Some(raw.pass),
         ..EventData::default()
     }
 }

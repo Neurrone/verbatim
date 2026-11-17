@@ -136,6 +136,7 @@ impl UiaEvents {
             event: None,
             object: None,
             child: None,
+            pass: None,
         };
         self.arrivals.arrive(Message::Event(Box::new(EventArrival {
             data,
