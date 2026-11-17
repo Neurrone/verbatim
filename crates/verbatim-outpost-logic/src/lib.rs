@@ -409,20 +409,14 @@ impl Reducer {
                 if self.stopping {
                     return;
                 }
-                match &ask.request {
-                    verbatim_model::request::Request::Text {
-                        node,
-                        op: TextOp::Watch(watch),
-                    } => {
-                        self.watches
-                            .arrive((ask.number, ask.window, *node), *watch, now.wall_us);
-                        return;
-                    }
-                    verbatim_model::request::Request::Text {
-                        op: TextOp::StartingRead(_),
-                        ..
-                    } => self.watches.starting_asked(ask.number, now.wall_us),
-                    _ => {}
+                if let verbatim_model::request::Request::Text {
+                    node,
+                    op: TextOp::Watch(watch),
+                } = &ask.request
+                {
+                    self.watches
+                        .arrive((ask.number, ask.window, *node), *watch, now.wall_us);
+                    return;
                 }
                 for replaced in self.asks.push(ask) {
                     effects.push(Effect::Send(Box::new(OutpostToCore::Answer(replaced))));
@@ -443,9 +437,6 @@ impl Reducer {
                 let answer = if self.watches.runs(request) {
                     self.watches.answered(request, *answer)
                 } else {
-                    if let Some(point) = started_point(&answer) {
-                        self.watches.starting_answered(answer.number, point);
-                    }
                     self.asks.answered(*answer)
                 };
                 if let Some(answer) = answer {
@@ -473,7 +464,6 @@ impl Reducer {
                 effects.push(Effect::Send(Box::new(OutpostToCore::Answer(answer))));
                 return;
             }
-            WatchCancelled::Nothing => return,
         }
         match self.asks.cancel(cancel) {
             Cancelled::Dropped(answer) => {
@@ -690,15 +680,5 @@ impl Reducer {
             work,
         })));
         request
-    }
-}
-
-/// The starting point a starting read's `answer` minted, if it is one.
-fn started_point(answer: &verbatim_model::request::Answer) -> Option<verbatim_model::TextAnchor> {
-    match &answer.outcome {
-        verbatim_model::request::Outcome::Result(verbatim_model::request::Reply::Text(
-            verbatim_model::TextReply::Started(started),
-        )) => Some(started.point),
-        _ => None,
     }
 }

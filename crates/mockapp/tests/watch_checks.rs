@@ -3,7 +3,7 @@
 //! mockapp's UIA text provider, through the remote program and through its
 //! classic reads, which must answer alike: a check showing no effect, one
 //! showing the caret moved, one showing a deletion's change of the word at
-//! the caret, and the final read's unit, after an event and at the bound.
+//! the caret, and the final read's unit.
 //! Each test drives `verbatim-outpost`'s text module on this thread as the
 //! outpost's worker does once it has the node's text in hand, as
 //! `text.rs` does.
@@ -191,8 +191,7 @@ fn a_check_after_a_deletion_shows_the_words_change() {
     app.quit();
 }
 
-/// The final read after an event showed the effect: the caret's line and
-/// the key's unit at the caret.
+/// The final read: the caret's line and the key's unit at the caret.
 fn the_final_read_reads_the_keys_unit_at_the_caret() {
     common::init_com();
     let (mut app, hwnd) = start("mockapp-watch-final");

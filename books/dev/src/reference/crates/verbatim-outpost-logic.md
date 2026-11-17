@@ -32,18 +32,20 @@ Public API:
 - A caret key's watch (`Watches`, the `watch` module; the design's "The
   watch" and Table 15): an `Input::Ask` naming `TextOp::Watch` waits in
   the table instead of the queue, its first check due at once, then one
-  a poll after each check began, the check due at the bound the last.
-  Each check or final read is a `Work::Watch` (`WatchProgram`, its
-  `WatchWork` a `Check` with whether to compare the word and whether it
-  is the last, or the `Final` read), dispatched ahead of every other
-  program, the final read ahead of a check, on the shell's timer
-  (`Reducer::next_timer`). A program that ends the watch answers through
+  a poll after each polled check began, the check due at the bound the
+  last. Each check is a `Work::Watch` (`WatchProgram`, its `WatchWork` a
+  `Check` with whether to compare the word and whether it is the last;
+  the table never asks for the `Final` read), dispatched ahead of every
+  other program, the earliest due first, on the shell's timer
+  (`Reducer::next_timer`). A check that shows the effect, and the last
+  check, makes the final read in the same program and answers through
   `Input::Answered`; a check that answers nothing showed no effect, or
-  failed, and the watch goes on; a last check or final read that answers
-  nothing is answered failed. Where the watch names the event rule, a UI
-  Automation caret or text-change entry within `EVENT_WINDOW_US` of the
-  pass, or one heard while the key's starting read was out, makes the
-  final read next. Cancel, window destruction, `NodesHeld` (whose
+  failed, and the watch goes on; a last check that answers nothing is
+  answered failed. Where the watch names the event rule, a UI Automation
+  caret or text-change entry within `EVENT_WINDOW_US` of the pass brings
+  a check forward, due at once (after the check running, if one runs),
+  which compares the word too and ends the watch only with the effect;
+  the polls after it keep their times (Dickson, 2026-11-17). Cancel, window destruction, `NodesHeld` (whose
   release spares the watches' starting points) and the close follow
   Table 15.
 - `Reducer` with `input(input, now)`, which takes one `Input` in

@@ -391,7 +391,7 @@ fn rules() -> Vec<Rule> {
     let at = |us: Us, heard: Heard| (FIRST + us, heard);
     vec![
         (
-            "Notepad's event 3 ms after the key is its effect: the character at the caret",
+            "Notepad's event 3 ms after the key brings a check forward, which finds the move: the character at the caret",
             script(
                 Kind::Notepad,
                 0,
@@ -515,7 +515,7 @@ fn rules() -> Vec<Rule> {
             vec![at(105_000, Heard::Char('b'))],
         ),
         (
-            "an event heard while a key's read before it is out is that key's effect, the caret read at once after the key is sent",
+            "an event heard while a key's read before it is out is nothing special: the key's own move ends its wait",
             script(
                 Kind::Notepad,
                 0,
@@ -525,7 +525,7 @@ fn rules() -> Vec<Rule> {
                 ],
                 None,
             ),
-            vec![at(40_000, Heard::Char('b'))],
+            vec![at(43_000, Heard::Char('a'))],
         ),
     ]
 }

@@ -1002,8 +1002,9 @@ passes, then makes one final read. Core alone judges what the key says.
 - A key that moves nothing pays every check to its bound: 10 in a text
   field, 20 in the console host, 30 in Windows Terminal.
 - In a UI Automation text field other than a terminal, a caret or text
-  change event of the watched node within 60 ms of the pass ends the
-  watch with the final read at once.
+  change event of the watched node within 60 ms of the pass brings a
+  check forward, one round trip more than the polls; a key whose event
+  comes with no move still pays every check to its bound.
 
 ### A caret report, UIA
 

@@ -5,9 +5,9 @@
 //! 17).
 //!
 //! A caret key runs at its turn: a starting read, its stroke sent, then the
-//! outpost's watch, answered by a check that finds the key's effect, a UI
-//! Automation caret event within 60 ms of the pass, or the bound, after
-//! which Core speaks the key's unit. A focus judged pending withdraws the
+//! outpost's watch, answered by a check that finds the key's effect,
+//! polled or brought forward by a UI Automation caret event within 60 ms
+//! of the pass, or at the bound, after which Core speaks the key's unit. A focus judged pending withdraws the
 //! watch and the key says nothing. A caret tell, the outpost's for a UI
 //! Automation caret event or the listener's for the system caret, asks one
 //! caret read naming Core's selection baseline, and Core speaks the
@@ -148,12 +148,12 @@ fn a_keys_move_found_by_its_watch_says_its_unit() {
 }
 
 /// A UI Automation caret event raised as the key moves the caret, within
-/// 60 ms of the pass, ends the watch as the key's effect, as NVDA's
-/// `caretMovementDetectionUsesEvents` has it (`editableText.py` 57, 104 to
-/// 120): the key says its unit, "b", and the caret tell behind it, judged
-/// after the key, says what the move unselected, "alpha", selected with no
-/// key before it.
-fn a_caret_event_within_60_ms_of_the_pass_is_the_keys_effect() {
+/// 60 ms of the pass, brings a check forward, which finds the move
+/// (Dickson, 2026-11-17: an event counts only if the caret is no longer
+/// where it was when the key was pressed): the key says its unit, "b", and
+/// the caret tell behind it, judged after the key, says what the move
+/// unselected, "alpha", selected with no key before it.
+fn a_caret_event_within_60_ms_of_the_pass_brings_a_check_that_finds_the_move() {
     let (mut app, _, mut core) = on_notes("mockapp-caret-watch-event");
     assert_eq!(
         caret_event(&mut app, &mut core, &["caret doc 0 5"]),
@@ -936,8 +936,8 @@ fn main() {
             a_keys_move_found_by_its_watch_says_its_unit,
         ),
         (
-            "a_caret_event_within_60_ms_of_the_pass_is_the_keys_effect",
-            a_caret_event_within_60_ms_of_the_pass_is_the_keys_effect,
+            "a_caret_event_within_60_ms_of_the_pass_brings_a_check_that_finds_the_move",
+            a_caret_event_within_60_ms_of_the_pass_brings_a_check_that_finds_the_move,
         ),
         (
             "a_keys_watch_compares_with_its_starting_read",

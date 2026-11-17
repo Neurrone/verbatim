@@ -56,7 +56,7 @@ Core speaks by NVDA's caret scripts from the watch's answer. With the key's effe
 
 A key is never lost while Verbatim runs: a starting read that fails or that Core stops waiting for sends the key at once, and the key's 150 ms release sends it whatever its turn. Selection keys are not held: their effect is said by the caret event the application raises, whose read Core compares with the selection it last spoke from (`docs/parity/text.md`, "A selection no key made").
 
-No branch on the application but NVDA's. NVDA's one branch is whether a control's caret events are trusted (`caretMovementDetectionUsesEvents`, false for terminals): with it, NVDA takes a caret or text-change event within 60 ms of the key as its effect, without it, it polls the caret. Verbatim takes the same branch in UI Automation text fields; in a classic edit control and MSAA text, whose caret events reach the listener rather than the outpost, the watch polls the caret, as it does in terminals.
+No branch on the application but NVDA's. NVDA's one branch is whether a control's caret events are trusted (`caretMovementDetectionUsesEvents`, false for terminals): with it, NVDA takes a caret or text-change event within 60 ms of the key as its effect, without it, it polls the caret. Verbatim takes the same branch in UI Automation text fields, where such an event brings a check forward and counts only if the caret is no longer where it was when the key was pressed (Dickson, 2026-11-17), because Notepad raised a key's event about 7 ms late, inside the next key's watch; in a classic edit control and MSAA text, whose caret events reach the listener rather than the outpost, the watch polls the caret, as it does in terminals.
 
 ### The outpost
 

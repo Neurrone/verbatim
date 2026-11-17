@@ -316,7 +316,7 @@ them yet.
   `Started` with the starting point the outpost holds, the caret, the
   key's unit and, for Delete, the word; `Watch`, naming the starting
   point, the key's motion, the pass time, the poll interval, whether a UI
-  Automation event within 60 ms counts as the effect, the bound and the
+  Automation event within 60 ms brings a check forward, the bound and the
   `WatchFinalRead`, answered `Watched` (the effect or the bound, with a
   `WatchedRead`, or the bound unread); and `SentenceMove`, answered
   `SentenceMoved`, each answer with the selection baseline it minted and

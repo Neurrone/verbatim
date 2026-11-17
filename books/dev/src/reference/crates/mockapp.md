@@ -661,8 +661,9 @@ Each file's module comment says exactly what it asserts; in outline:
   button), `reuse_text.json` and `text.json`'s classic edit control, with
   Core's reducer driving the outpost (`common/core_driver.rs`, Core's time
   the run's shared clock, on which the outpost times a watch): a caret
-  key's unit found by its watch's check, by a UI Automation caret event
-  within 60 ms of the pass, or said at its bound; its watch compared with
+  key's unit found by its watch's check, polled or brought forward by a
+  UI Automation caret event within 60 ms of the pass, or said at its
+  bound; its watch compared with
   its starting read and withdrawn by a focus; a caret tell, the outpost's
   for a UI Automation caret event or the listener's for the system
   caret, saying the selection's change from Core's baseline, adopting its
