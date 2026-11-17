@@ -252,11 +252,20 @@ fn run_measure(args: &[String]) -> Result<(), String> {
             "xtask measure: {name}: {}",
             if ok { "passed" } else { "FAILED" }
         );
-        // Each run's artifacts are replaced by the next; keep its log.
+        // Each run's artifacts are replaced by the next; keep its logs:
+        // Core's, which the stages report reads, and every child's, whose
+        // per-hop lines say where a request's time went.
         let artifacts = workspace().join(r"target\e2e-artifacts").join(name);
         let kept = folder.join("artifacts").join(name);
         let _ = fs::create_dir_all(&kept);
-        let _ = fs::copy(artifacts.join("stderr.log"), kept.join("stderr.log"));
+        if let Ok(entries) = fs::read_dir(&artifacts) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().is_some_and(|extension| extension == "log") {
+                    let _ = fs::copy(&path, kept.join(entry.file_name()));
+                }
+            }
+        }
     }
     drop(agent);
     fs::write(folder.join("results.txt"), &results).map_err(|error| error.to_string())?;

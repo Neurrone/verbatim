@@ -35,7 +35,7 @@ figure exists. No per-process energy estimates: they are impractical.
 `cargo xtask measure [--release | --verbatim-exe <path>] [--audible]
 [--scenario <name>]... [--label <label>]` runs the measure set (the eight `measure_` scenarios a
 silent run takes; `measure_speech_real` is named with `--scenario` in an
-audible run), keeps each run's `stderr.log`, and writes `stages.txt`: for
+audible run), keeps each run's logs (Core's `stderr.log` and every child's), and writes `stages.txt`: for
 every stage of the latency line, over every announcement, the count, the
 median, the 99th and 99.9th percentiles, the maximum, and the share over
 1 and 2 ms, in milliseconds. A line that closes with the time from the
