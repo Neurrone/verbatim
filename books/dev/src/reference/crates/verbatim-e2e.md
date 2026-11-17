@@ -683,7 +683,9 @@ under `src/scenarios/` documents exactly what it asserts.
   first exiting with code 0, its processes shut down cleanly and nothing
   more said, and the second announcing as a start does; the second exited
   through its menu, the exit sound the last thing played and its exit
-  code 0; the flag cleared once it has exited), `speak_time_and_date` (Verbatim+F12 pressed
+  code 0; the flag cleared once it has exited), `quit_inside_a_modal_dialog`
+  (the Select Synthesizer dialog left open, and the run's quit ending
+  Verbatim with code 0 inside its modal loop), `speak_time_and_date` (Verbatim+F12 pressed
   twice in one burst, the time cut off by the date, the time and date read by the agent first, waiting
   for the minute to turn when it is within two seconds),
   `lock_key_announcements` (Scroll Lock, and Caps Lock by a double tap of

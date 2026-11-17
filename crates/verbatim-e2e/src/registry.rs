@@ -51,6 +51,8 @@
 //!   [`verbatim_lifecycle`](crate::scenarios::verbatim_lifecycle),
 //!   Verbatim started, replaced by a second start and quit, with Windows'
 //!   screen reader flag set and cleared, and
+//!   [`quit_inside_a_modal_dialog`](crate::scenarios::quit_inside_a_modal_dialog),
+//!   Verbatim quit with its Select Synthesizer dialog open, and
 //!   [`speak_time_and_date`](crate::scenarios::speak_time_and_date), the
 //!   time and the date said, and
 //!   [`switch_to_onecore`](crate::scenarios::switch_to_onecore), switching
@@ -174,16 +176,16 @@ use crate::scenarios::{
     explorer_folder_window, foreground_progress_bar, lock_key_announcements, measure,
     menu_and_settings_dialog, msaa_flood_then_focus, notepad_say_all, notepad_spelling_errors,
     object_navigation_in_settings, object_navigation_over_uia, owned_dialog_across_processes,
-    password, quick_link_menu, rapid_tabbing_in_settings, return_from_a_held_application,
-    review_cursor, review_dead_object, review_words, second_application_and_verbatim_menu,
-    selection_keys, settings_combo_box_expanded, settings_dialog_keys, settings_search_suggestions,
-    settings_search_suggestions_reentered, settings_system_page, speak_time_and_date,
-    spelling_errors, switch_to_onecore, system_information_tree, table_cells, terminal_commands,
-    terminal_editing, terminal_flood, terminal_key_timing, terminal_lists, terminal_overflow,
-    terminal_pager, terminal_progress, terminal_review_grid, terminal_review_stays,
-    terminal_screens, terminal_settings_page, terminal_status_bar, terminal_typing,
-    terminal_windows, text_box_say_all, theme_panel, toast, typed_words, verbatim_lifecycle,
-    word_selection,
+    password, quick_link_menu, quit_inside_a_modal_dialog, rapid_tabbing_in_settings,
+    return_from_a_held_application, review_cursor, review_dead_object, review_words,
+    second_application_and_verbatim_menu, selection_keys, settings_combo_box_expanded,
+    settings_dialog_keys, settings_search_suggestions, settings_search_suggestions_reentered,
+    settings_system_page, speak_time_and_date, spelling_errors, switch_to_onecore,
+    system_information_tree, table_cells, terminal_commands, terminal_editing, terminal_flood,
+    terminal_key_timing, terminal_lists, terminal_overflow, terminal_pager, terminal_progress,
+    terminal_review_grid, terminal_review_stays, terminal_screens, terminal_settings_page,
+    terminal_status_bar, terminal_typing, terminal_windows, text_box_say_all, theme_panel, toast,
+    typed_words, verbatim_lifecycle, word_selection,
 };
 use crate::speech::{FailurePoint, SpeechFailure};
 
@@ -467,6 +469,17 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         setup: verbatim_lifecycle::setup,
         body: verbatim_lifecycle::body,
         teardown: verbatim_lifecycle::teardown,
+    },
+    ScenarioDef {
+        name: "quit_inside_a_modal_dialog",
+        group: Group::Speech,
+        settings: None,
+        local_only: false,
+        document: None,
+        comparable: Comparable::No("it quits Verbatim inside Verbatim's own modal dialog"),
+        setup: quit_inside_a_modal_dialog::setup,
+        body: quit_inside_a_modal_dialog::body,
+        teardown: quit_inside_a_modal_dialog::teardown,
     },
     ScenarioDef {
         name: "speak_time_and_date",
