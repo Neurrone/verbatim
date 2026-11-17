@@ -861,6 +861,62 @@ fn a_focus_now_reads_the_foreground_only_for_a_focus_entering_a_new_window() {
     app.quit();
 }
 
+/// The routes a focus-now read records below the ancestor Core already
+/// knows that its walk met go on from that ancestor's route: Core read
+/// "Apple" as the current focus, then reads "Deep button", whose walk
+/// meets mockapp's window, which Core knows, and mints the groups and the
+/// toolbar between, with the unnamed pane the chain does not report. A
+/// listener focus on "Remember" then meets the inner group, and its
+/// completion finds the check box by the inner group's route and follows
+/// it. `remote` reads the current focus's ancestors by the remote
+/// program, else by the classic walk.
+fn routes_below_a_met_ancestor(remote: bool) {
+    let path = if remote { "remote" } else { "classic" };
+    let title = common::unique_title(&format!("mockapp-focus-now-met-route-{path}"));
+    let mut app = common::spawn("ancestry.json", "uia", &title);
+    let client = Client::new(common::find_window(&title));
+    let outpost = OutpostUnderTest::with_options(
+        &app,
+        OutpostOptions {
+            remote_operations: remote,
+        },
+    );
+
+    app.send("set-focus apple");
+    outpost.read_focus_as(client.focused().live().element());
+    let (outcome, calls) = outpost.current_focus();
+    let _ = Focused::of(outcome, calls);
+    app.send("set-focus deep");
+    outpost.read_focus_as(client.focused().live().element());
+    let (outcome, calls) = outpost.current_focus();
+    let deep = Focused::of(outcome, calls);
+    assert_eq!(
+        (deep.read.met, deep.ancestor_names()),
+        (
+            Some(4),
+            vec![Some("Outer group"), Some("Tools"), Some("Inner group")]
+        ),
+        "{path}: the walk meets the window, the fifth ancestor Core names, and mints the containers below it"
+    );
+
+    app.send("set-focus check");
+    let check = client.focused();
+    let reported = outpost.uia_focus_answer(&check);
+    assert_eq!(reported.name(), Some("Remember"), "{path}");
+    assert_followed(&mut app, &outpost, "check", &check);
+
+    drop(outpost);
+    app.quit();
+}
+
+fn routes_below_an_ancestor_a_focus_now_walk_met_are_found_remote() {
+    routes_below_a_met_ancestor(true);
+}
+
+fn routes_below_an_ancestor_a_focus_now_walk_met_are_found_classic() {
+    routes_below_a_met_ancestor(false);
+}
+
 fn a_focus_below_an_ancestor_a_current_focus_read_minted_is_found_and_followed_remote() {
     focus_below_an_ancestor_a_current_focus_read_minted(true);
 }
@@ -3189,6 +3245,14 @@ fn main() {
         (
             "a_focus_now_reads_the_foreground_only_for_a_focus_entering_a_new_window",
             a_focus_now_reads_the_foreground_only_for_a_focus_entering_a_new_window,
+        ),
+        (
+            "routes_below_an_ancestor_a_focus_now_walk_met_are_found_remote",
+            routes_below_an_ancestor_a_focus_now_walk_met_are_found_remote,
+        ),
+        (
+            "routes_below_an_ancestor_a_focus_now_walk_met_are_found_classic",
+            routes_below_an_ancestor_a_focus_now_walk_met_are_found_classic,
         ),
         (
             "a_focus_below_an_ancestor_a_current_focus_read_minted_is_found_and_followed_remote",

@@ -250,7 +250,9 @@ pub(super) fn known_route_to(
 /// `met`, the ancestor Core already knows that it met, from the route to
 /// that ancestor. A later focus whose listener walk meets one of them is
 /// then found by that route, as one minted from the listener's read is
-/// ([`keep_minted`]).
+/// ([`keep_minted`]). A met ancestor the outpost has no route to leaves
+/// the windowless nodes below it with none, as [`known_route`] leaves a
+/// completion below it.
 pub(super) fn keep_read_routes<'a>(
     context: &RequestContext<'_>,
     nodes: impl IntoIterator<Item = &'a NodeSnapshot>,

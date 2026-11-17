@@ -595,7 +595,12 @@ and the inherited pipe handles.
   with a window of its own, or, where the walk met an ancestor Core
   already knows, from that ancestor's route. A later focus whose
   listener walk meets one of these nodes is found by that route, as one
-  below an ancestor a completion minted is.
+  below an ancestor a completion minted is. A limit: where the met
+  ancestor has no route (a completion's element whose listener route led
+  nowhere, as Windows Terminal's tab elements, in no tree), the windowless
+  nodes below it get none, as a completion below that ancestor finds no
+  element either; the walk is not run on to the top for them, since that
+  costs a call per ancestor on every such read.
 - An MSAA client object of a `WS_SYSMENU` window is marked
   `NodeDetails::top_level_client`, read as a pane and presented by its
   title, as NVDA's `isPresentableFocusAncestor` presents it.
