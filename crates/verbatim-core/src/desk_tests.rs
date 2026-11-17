@@ -11,7 +11,7 @@ use verbatim_model::property::{
 };
 use verbatim_model::request::{
     FocusAncestor, FocusCaret, FocusNode, FocusRead, NodeRead, NodeWindow, ObjectClass, ObjectRead,
-    Reply, Request as Wire, Route, RouteEnd, RouteStep,
+    Reply, Request as Wire, Route, RouteEnd, RouteStep, WindowVerdict,
 };
 use verbatim_model::tell::{
     AcceptanceFacts, Checked, ElementToken, Event, EventObject, Payload, Read, Relation,
@@ -213,21 +213,27 @@ fn kind(request: &Wire) -> &'static str {
     }
 }
 
-/// `effects` as [`Heard`], with the requests sent, by number.
-fn heard_of(effects: Vec<Effect<Said>>) -> (Vec<Heard>, Vec<(u64, Reader, Wire)>) {
+/// The requests a step sent, by number, reader and request.
+type Sent = Vec<(u64, Reader, Wire)>;
+
+/// `effects` as [`Heard`], with the requests sent, by number, and the
+/// verdict each carried, by number.
+fn heard_of(effects: Vec<Effect<Said>>) -> (Vec<Heard>, Sent, Vec<(u64, WindowVerdict)>) {
     let mut heard = Vec::new();
     let mut sent = Vec::new();
+    let mut verdicts = Vec::new();
     for effect in effects {
         match effect {
             Effect::Send { to, ask } => {
                 heard.push(Heard::Sent(to.reader, kind(&ask.request)));
+                verdicts.push((ask.number.0, ask.verdict));
                 sent.push((ask.number.0, to.reader, ask.request));
             }
             Effect::Said(said) => heard.extend(said_heard(said)),
             _ => {}
         }
     }
-    (heard, sent)
+    (heard, sent, verdicts)
 }
 
 fn said_heard(said: Said) -> Option<Heard> {
@@ -427,7 +433,7 @@ pub(crate) fn focus_tell(app: App, number: u64, at_us: u64) -> Event {
 
 /// The listener's read of the focus element in `app`: its route to the
 /// application's window.
-fn listener_read(app: App, number: u64) -> ObjectRead {
+pub(crate) fn listener_read(app: App, number: u64) -> ObjectRead {
     ObjectRead {
         object: NodeRead {
             node: None,
@@ -460,7 +466,9 @@ pub(crate) struct Desk {
     /// The last key's number.
     keys: u64,
     /// The requests the last step sent, by number, reader and request.
-    pub(crate) sent: Vec<(u64, Reader, Wire)>,
+    pub(crate) sent: Sent,
+    /// The verdict each request the last step sent carried, by number.
+    pub(crate) verdicts: Vec<(u64, WindowVerdict)>,
 }
 
 impl Desk {
@@ -472,12 +480,13 @@ impl Desk {
             ready: vec![ONE],
             keys: 0,
             sent: Vec::new(),
+            verdicts: Vec::new(),
         }
     }
 
     /// One step: `input` fed at the next moment, its effects heard and its
     /// requests sent.
-    pub(crate) fn step(&mut self, input: Input<Entry>) -> (Vec<Heard>, Vec<(u64, Reader, Wire)>) {
+    pub(crate) fn step(&mut self, input: Input<Entry>) -> (Vec<Heard>, Sent) {
         self.at_us += 1_000;
         let effects = crate::entries::feed(
             &mut self.held.state,
@@ -488,8 +497,9 @@ impl Desk {
             },
         )
         .unwrap();
-        let (heard, sent) = heard_of(effects);
+        let (heard, sent, verdicts) = heard_of(effects);
         self.sent.clone_from(&sent);
+        self.verdicts = verdicts;
         (heard, sent)
     }
 

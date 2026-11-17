@@ -69,14 +69,17 @@ pub(crate) struct Live {
     pub(crate) owner: Owner,
     /// Where it is.
     pub(crate) stage: Stage,
-    /// When it was sent carrying "probe first", whose probe's answer Core
-    /// records when it ends.
+    /// When it was sent to an outpost carrying "probe first", whose
+    /// probe's answer Core records when it ends.
     pub(crate) probing: Option<u64>,
 }
 
 impl Live {
     /// Sends it to `instance` at `now_us`, carrying the verdict in force
-    /// for its window (Table 4, column D).
+    /// for its window (Table 4, column D). Only an outpost probes on a
+    /// request, so only a request to an outpost is probing: the focus
+    /// listener reads the object it was told of and never probes, and its
+    /// answer, which brings no probe, says nothing of the window's verdict.
     fn send(
         &mut self,
         number: RequestNumber,
@@ -85,9 +88,11 @@ impl Live {
         now_us: u64,
     ) -> Order {
         let verdict = backend.for_request(&self.window.judged(), now_us);
-        if verdict == WindowVerdict::ProbeFirst {
-            self.probing = Some(now_us);
-        }
+        self.probing = match (instance.reader, verdict) {
+            (Reader::Outpost(_), WindowVerdict::ProbeFirst) => Some(now_us),
+            (Reader::Outpost(_), WindowVerdict::Uia | WindowVerdict::Msaa)
+            | (Reader::Listener, _) => None,
+        };
         self.stage = Stage::Out(instance);
         Order::Send(
             instance,
@@ -121,7 +126,7 @@ pub(crate) struct Ended {
     pub(crate) ending: Ending,
     /// The window it named.
     pub(crate) window: RequestWindow,
-    /// When it was sent carrying "probe first".
+    /// When it was sent to an outpost carrying "probe first".
     pub(crate) probing: Option<u64>,
 }
 

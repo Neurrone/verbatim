@@ -2526,3 +2526,105 @@ fn losing_half_checked_says_not_checked() {
         vec![queued(vec![not(State::Checked)])]
     );
 }
+
+/// File Explorer's Down Arrow onto the next item, in the order the
+/// readers sent it (GitHub run 44087451603, `explorer_folder_window`):
+/// the listener tells the item's focus while the window's probe from the
+/// last focus is in force, half a second passes before Core asks the
+/// listener to read the element, and only then does Core ask the outpost
+/// to complete the read. The listener never probes, so its answer, which
+/// brings no probe, leaves the lapsed window with no verdict: the
+/// outpost's completion carries "probe first", and the item is read and
+/// spoken, as NVDA probes a window again once its half-second verdict has
+/// lapsed and never takes a missing probe for "no provider"
+/// (`docs/parity/backends.md`, "The UIA provider probe").
+#[test]
+fn a_focus_whose_verdict_lapses_before_the_listener_read_probes_again_at_the_completion() {
+    use verbatim_model::request::{Answer, Outcome, Probe, Reply, Request as Wire, RequestNumber};
+    use verbatim_model::request::{Reader, WindowVerdict};
+
+    use crate::desk_tests::{focus_tell, listener_read};
+    use crate::entries::Entry;
+    use crate::entries::tests::{LISTENER, answer};
+    use crate::event_queue::Input;
+
+    let mut desk = Desk::new();
+    let mut alpha = node(ONE, 1, Role::ListItem, Some("alpha"), None, StateSet::new());
+    alpha.details.position_in_set = Some(2);
+    alpha.details.set_size = Some(4);
+    // The listener's tell carries its probe, begun as it told the focus.
+    let probe_began = desk.at_us + 1_000;
+    assert_eq!(
+        desk.focus(ONE, &alpha, &[]),
+        focus_heard(
+            ONE,
+            focus_now(ONE, 1, &[]),
+            vec![vec![
+                UtteranceSegment::label("alpha"),
+                UtteranceSegment::new(SegmentContent::Position {
+                    position: 2,
+                    set_size: Some(4),
+                }),
+            ]]
+        )
+    );
+
+    // The next item's focus, observed just before the probe's half second
+    // ends, so the listener's check thread did not probe again, and taken
+    // at its turn just after.
+    let mut tell = focus_tell(ONE, 2, probe_began + 499_000);
+    if let Some(checked) = tell.checked.as_mut() {
+        checked.probe = None;
+    }
+    desk.at_us = probe_began + 500_000;
+    let (_, sent) = desk.step(Input::Entry(Entry::of_tell(LISTENER, tell).unwrap()));
+    let [(object, Reader::Listener, Wire::ReadObject(_))] = sent[..] else {
+        panic!("one listener read asked: {sent:?}");
+    };
+    let (_, sent) = desk.step(answer(
+        LISTENER,
+        object,
+        Reply::Object(Box::new(listener_read(ONE, 2))),
+    ));
+    let [(completion, Reader::Outpost(_), Wire::CompleteUia(_))] = sent[..] else {
+        panic!("one completion asked: {sent:?}");
+    };
+    assert_eq!(
+        desk.verdicts,
+        [(completion, WindowVerdict::ProbeFirst)],
+        "the listener's answer brought no probe, so no verdict is in force"
+    );
+
+    let mut beta = node(ONE, 2, Role::ListItem, Some("beta"), None, StateSet::new());
+    beta.details.position_in_set = Some(3);
+    beta.details.set_size = Some(4);
+    let read = Reply::Focus(Box::new(focus_read_of(ONE, &beta, &[])));
+    let probed = Input::Answer {
+        from: ONE.instance(),
+        answer: Answer {
+            number: RequestNumber(completion),
+            outcome: Outcome::Result(read),
+            probes: vec![Probe {
+                window: ONE.window(),
+                thread: 41,
+                provider: true,
+                began_us: desk.at_us + 500,
+            }],
+            detail: String::new(),
+        },
+    };
+    assert_eq!(
+        desk.step(probed).0,
+        focus_heard(
+            ONE,
+            focus_now_in(ONE, 2, &[]),
+            vec![vec![
+                UtteranceSegment::label("beta"),
+                UtteranceSegment::new(SegmentContent::Position {
+                    position: 3,
+                    set_size: Some(4),
+                }),
+            ]]
+        )
+    );
+}

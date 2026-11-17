@@ -60,7 +60,9 @@ pub struct Ask {
     /// sending it and the foreground rule tests.
     pub window: WindowHandle,
     /// Core's backend verdict for the window as the request is sent, or
-    /// "probe first" when none is in force.
+    /// "probe first" when none is in force. Only an outpost acts on it:
+    /// the focus listener reads the object it was told of and never
+    /// probes, and Core takes nothing from its answer about the window.
     pub verdict: WindowVerdict,
     /// What is asked.
     pub request: Request,
@@ -70,7 +72,7 @@ pub struct Ask {
 /// (`docs/design/readers-tell-core-asks-build1.md`, Table 4, column D).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum WindowVerdict {
-    /// No verdict is in force: the reader probes the window for a UI
+    /// No verdict is in force: the outpost probes the window for a UI
     /// Automation provider before the read and returns the probe's answer.
     ProbeFirst,
     /// The window is read through UI Automation.

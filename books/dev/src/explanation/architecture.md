@@ -496,8 +496,10 @@ the whole path of a focus.
 Which backend speaks for a window is a per-window verdict Core keeps,
 from NVDA's class lists or the probe a tell or a request carries, so
 deduplication does not depend on the UIA and MSAA events for one focus
-arriving together, or at all. A request on a window with no verdict in
-force carries "probe first", and its answer returns the verdict. A UIA
+arriving together, or at all. A request to an outpost on a window with
+no verdict in force carries "probe first", and its answer returns the
+verdict; the focus listener never probes on a request, so its answers
+leave the verdict as it was. A UIA
 event is never discarded in favour of an MSAA event that may follow,
 because modern XAML surfaces fire no MSAA focus event at all (the Start
 menu's search box), and a focus event fires once, with nothing to retry.

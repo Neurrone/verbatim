@@ -471,12 +471,14 @@ impl<L: Logic> Core<L> {
     }
 
     /// Delivers a request's ending to its owner: the front's function,
-    /// resumed, or the asker outside the queue. A request sent carrying
-    /// "probe first" whose answer brought no probe of its window counts as
-    /// a probe that timed out, begun when it was sent (Table 4, row "MSAA
-    /// in force"); one its entry withdrew does not, since its reader runs
-    /// it on and its probe may yet answer, so its window keeps no verdict
-    /// and the next request or tell is judged by a probe of its own.
+    /// resumed, or the asker outside the queue. A request sent to an
+    /// outpost carrying "probe first" whose answer brought no probe of its
+    /// window counts as a probe that timed out, begun when it was sent
+    /// (Table 4, row "MSAA in force"); one its entry withdrew does not,
+    /// since its reader runs it on and its probe may yet answer, so its
+    /// window keeps no verdict and the next request or tell is judged by a
+    /// probe of its own. A request to the focus listener is never probing,
+    /// since the listener never probes on a request.
     fn deliver_probed(&mut self, ended: Ended, probed: bool) {
         let withdrawn = matches!(
             ended.ending,
