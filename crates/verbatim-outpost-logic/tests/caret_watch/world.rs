@@ -69,9 +69,13 @@ pub const KEYS: [Key; 9] = [
 /// How the application handles a stroke that reaches it: it takes
 /// strokes in the order they reach it, one at a time, and `change_us`
 /// after it starts on this one its text and caret are as the key leaves
-/// them; in Notepad it raises its events `event_us` after the change, and
-/// never sooner than 3 ms after the stroke. Recorded applications change
-/// within 1 to 13 ms of the key (R1); a loaded one later.
+/// them; in Notepad it raises its events `event_us` after the change,
+/// never sooner than 3 ms after the stroke, and never before the events of
+/// the stroke ahead. Recorded applications change within 1 to 13 ms of the
+/// key (R1); a loaded one later. Notepad raised one key's event about 7 ms
+/// late, inside the next key's watch, after the next key's read before it
+/// had found the first key's move (Dickson's ruling, 2026-11-17), so an
+/// event may come well after its change.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Handling {
     /// From starting on the stroke to the change.
@@ -136,6 +140,8 @@ pub struct App {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Input {
     busy_until: Us,
+    /// When the last stroke's events are raised.
+    raised: Us,
 }
 
 impl Input {
@@ -152,7 +158,13 @@ impl Input {
         let change = at.max(self.busy_until) + handling.change_us;
         self.busy_until = change;
         let event = match kind {
-            Kind::Notepad => Some((change + handling.event_us).max(at + 3 * MS)),
+            Kind::Notepad => {
+                let event = (change + handling.event_us)
+                    .max(at + 3 * MS)
+                    .max(self.raised);
+                self.raised = event;
+                Some(event)
+            }
             Kind::TextBox => None,
         };
         Some((change, event))
@@ -241,11 +253,17 @@ fn delay(lo: Us, hi: Us) -> impl Strategy<Value = Us> {
     (lo * MS)..=(hi * MS)
 }
 
+/// From the change to the events: at once as recorded, or late, as in
+/// the 2026-11-17 incident, past the next key's pass.
+fn event_delay() -> impl Strategy<Value = Us> {
+    prop_oneof![3 => delay(0, 3), 1 => delay(3, 60)]
+}
+
 fn handling() -> impl Strategy<Value = Option<Handling>> {
     prop_oneof![
-        6 => (delay(1, 10), delay(0, 3)).prop_map(|delays| Some(handled(delays))),
-        2 => (delay(20, 110), delay(0, 3)).prop_map(|delays| Some(handled(delays))),
-        1 => (delay(120, 250), delay(0, 3)).prop_map(|delays| Some(handled(delays))),
+        6 => (delay(1, 10), event_delay()).prop_map(|delays| Some(handled(delays))),
+        2 => (delay(20, 110), event_delay()).prop_map(|delays| Some(handled(delays))),
+        1 => (delay(120, 250), event_delay()).prop_map(|delays| Some(handled(delays))),
         1 => Just(None),
     ]
 }

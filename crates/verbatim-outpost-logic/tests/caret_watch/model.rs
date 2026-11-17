@@ -8,11 +8,21 @@
 //!   the key is sent on; after it, the caret is checked at once and then
 //!   every 10 ms (reads here take no time) until 100 ms; the first check
 //!   that finds the key's effect, by the test ADR 0003 keeps ("ends on
-//!   today's 'had an effect' test"), ends the wait. In a UI
-//!   Automation field, whose caret events NVDA trusts (every one but a
-//!   terminal), a caret or text-change event within 60 ms of the key is
-//!   its effect, and the caret is read then. A later key or a pending focus
-//!   ends the wait silently.
+//!   today's 'had an effect' test"), ends the wait. A later key or a
+//!   pending focus ends the wait silently.
+//! - Dickson's ruling of 2026-11-17, which replaces his 2026-11-16
+//!   approval of NVDA's event rule: "An event counts only if the caret is
+//!   no longer where it was when the key was pressed; otherwise the watch
+//!   keeps checking until the caret moves or time runs out." So in a UI
+//!   Automation field (every one but a terminal) a caret or text-change
+//!   event heard within 60 ms of the key's pass only brings a check
+//!   forward, to run at once; that check, as every other, ends the wait
+//!   only when it finds the key's effect against the read before the key.
+//!   An event heard before the pass, while the read before the key is out,
+//!   is nothing special, and one heard later than 60 ms does nothing. A key
+//!   that moves nothing says its unit at 100 ms, as without events.
+//!   Because Notepad raised a key's event about 7 ms late, inside the next
+//!   key's watch, and NVDA's rule spoke the line before the next key moved.
 //! - What a key says (`docs/parity/text.md`): with its effect, or at
 //!   100 ms, a movement key and Delete its unit at the caret then, read
 //!   once more; Backspace, with its effect, what it deleted, from the read
@@ -30,9 +40,7 @@
 //!
 //! - NVDA's caret wait read from its source, as the coordinator gave it
 //!   (`nvda/source/editableText.py`, `_hasCaretMoved`, 70 to 163): a
-//!   change first seen at the bound counts as the effect (124 to 152), and
-//!   an event heard after the key's script began, its read before it
-//!   included, counts within 60 ms (95 to 118).
+//!   change first seen at the bound counts as the effect (124 to 152).
 //!
 //! The model is a simulation of its own over the script's times. Two
 //! things at one microsecond leave their order open, so the model refuses
@@ -77,7 +85,8 @@ pub struct Prediction {
 const BOUND: Us = 100 * MS;
 /// The check interval: NVDA's sleep between tries.
 const POLL: Us = 10 * MS;
-/// How long after the key a UI Automation event counts as its effect.
+/// How long after the key's pass a UI Automation event brings a check
+/// forward.
 const EVENTS: Us = 60 * MS;
 /// The hook's release of a held key.
 const RELEASE: Us = 150 * MS;
@@ -141,10 +150,6 @@ enum Event {
 }
 
 /// The model's run of one script.
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "each is one fact of the model's world, read on its own"
-)]
 pub struct Model<'s> {
     script: &'s Script,
     now: Us,
@@ -157,9 +162,6 @@ pub struct Model<'s> {
     field_committed: bool,
     /// Whether a focus tell waits, counting as pending.
     pending: bool,
-    /// Whether an event the field raised was heard since the front key's
-    /// script began.
-    event_heard: bool,
     queue: VecDeque<Entry>,
     front: Front,
     /// Per key: held by the hook, sent to the application, marked by a
@@ -202,7 +204,6 @@ impl<'s> Model<'s> {
             field_focused: true,
             field_committed: true,
             pending: false,
-            event_heard: false,
             queue: VecDeque::new(),
             front: Front::Idle,
             held: vec![false; keys],
@@ -400,17 +401,11 @@ impl<'s> Model<'s> {
         self.front = Front::Watching {
             key,
             pass,
-            before: before.clone(),
-            // NVDA trusts a UI Automation field's events, and the outpost
-            // hears the committed focus's alone.
+            before,
+            // A UI Automation field's events bring checks forward, and the
+            // outpost hears the committed focus's alone.
             events: self.trusts_events(),
         };
-        if self.trusts_events() && self.event_heard {
-            // An event heard while the read before the key was out is
-            // pending at the loop's first look.
-            self.effect(key, &before);
-            return;
-        }
         let mut check = pass;
         while check <= pass + BOUND {
             self.at(check, Event::Check(pass));
@@ -434,6 +429,9 @@ impl<'s> Model<'s> {
         }
         let changed = had_effect(self.press(key).key, &before, &self.app);
         if self.now < pass + BOUND {
+            // A check before the bound, polled or brought forward by an
+            // event, ends the wait only with the key's effect (Dickson,
+            // 2026-11-17).
             if changed {
                 self.effect(key, &before);
             }
@@ -453,30 +451,16 @@ impl<'s> Model<'s> {
         self.end();
     }
 
-    /// The application raised its events: within 60 ms of the key, or
-    /// while its read before it is out, they are its effect.
+    /// The application raised its events: within 60 ms of the key's pass,
+    /// in a field whose events are heard, they bring a check forward to
+    /// now, which ends the wait only with the key's effect (Dickson,
+    /// 2026-11-17); heard at any other time they do nothing.
     fn raised(&mut self) {
-        match self.front.clone() {
-            Front::Watching {
-                key,
-                pass,
-                before,
-                events,
-            } => {
-                if events && self.now <= pass + EVENTS {
-                    self.effect(key, &before);
-                }
-            }
-            // Heard after the key's script began, while its read before it
-            // is out: NVDA's script runs on its main thread, so the event is
-            // still pending when its loop first looks, at once after the
-            // key is sent, and is the key's effect, the caret read then
-            // (`nvda/source/editableText.py` 70 to 163, the event test 95 to
-            // 118).
-            Front::Reading(_) if self.trusts_events() => {
-                self.event_heard = true;
-            }
-            Front::Idle | Front::Reading(_) | Front::Focusing => {}
+        if let Front::Watching { pass, events, .. } = self.front
+            && events
+            && self.now <= pass + EVENTS
+        {
+            self.check(pass);
         }
     }
 
@@ -530,7 +514,6 @@ impl<'s> Model<'s> {
             self.send(key);
             return;
         }
-        self.event_heard = false;
         self.front = Front::Reading(key);
         self.ask(Work::Read(key));
     }
