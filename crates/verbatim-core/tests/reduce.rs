@@ -3116,6 +3116,77 @@ fn a_task_switching_item_reached_with_alt_held_says_only_itself() {
     );
 }
 
+/// Tab again with Alt held, as `alt_tab_switcher` does: the first item was
+/// said alone and Core kept none of its containers, in what it spoke and
+/// in what it keeps alike, as NVDA's item has the desktop for its
+/// container. So the second item's completion names only the first item as
+/// an ancestor Core knows, and the second item is said alone: Core once
+/// kept the containers it had dropped, the outpost's walk met the list it
+/// was sent, and the focus was dropped unspoken.
+#[test]
+fn a_second_task_switching_item_with_alt_held_knows_no_containers_and_is_said_alone() {
+    let mut desk = Desk::new();
+    switch_to(&mut desk, ONE);
+    alt(&mut desk, true);
+    let first = task_switching_item(4, "Nvda Sw B", Some("SwitchItemListControl"));
+    switcher_focus(
+        &mut desk,
+        ("explorer", task_switcher_window()),
+        &first,
+        &task_switching_containers(),
+    );
+    let second = task_switching_item(5, "Nvda Sw A", Some("SwitchItemListControl"));
+    let mut tell = tell_with(&desk, TWO, &second, task_switcher_window());
+    "explorer".clone_into(&mut tell.application);
+    tell.cached = PropertyValues(vec![
+        PropertyAnswer {
+            id: PropertyId::Role,
+            value: Some(PropertyValue::Role(Role::ListItem)),
+        },
+        PropertyAnswer {
+            id: PropertyId::ClassName,
+            value: Some(PropertyValue::Text("ListViewItem".to_owned())),
+        },
+        PropertyAnswer {
+            id: PropertyId::ParentAutomationId,
+            value: Some(PropertyValue::Text("SwitchItemListControl".to_owned())),
+        },
+    ]);
+    desk.tell(LISTENER, tell);
+    let Some((object, LISTENER, Wire::ReadObject(_))) = one_sent(&desk) else {
+        panic!("the listener's read asked: {:?}", desk.sent);
+    };
+    desk.answer(
+        LISTENER,
+        object,
+        Outcome::Result(Reply::Object(Box::new(listener_read(TWO, 5)))),
+    );
+    let Some((completion, to, Wire::CompleteUia(complete))) = one_sent(&desk) else {
+        panic!("one completion asked: {:?}", desk.sent);
+    };
+    assert_eq!(
+        complete.known,
+        [
+            KnownAncestor::Node(TWO.node(4)),
+            KnownAncestor::Uia(runtime_of(4))
+        ]
+    );
+    let read = focus_read_of(TWO, &second, &task_switching_containers());
+    assert_eq!(
+        desk.answer(
+            to,
+            completion,
+            Outcome::Result(Reply::Focus(Box::new(read)))
+        ),
+        [
+            Heard::Expire(focus_now_with(TWO, 5, &[], Some((TWO, FRAME)))),
+            Heard::Stop,
+            queued(task_switching_item_said("Nvda Sw A")),
+            follow(TWO),
+        ]
+    );
+}
+
 /// The rule drops an item's containers only for a UI Automation list item
 /// in File Explorer, read with Alt held, whose parent is the task
 /// switcher's list, or, in Windows 10 before version 1809, whose window is

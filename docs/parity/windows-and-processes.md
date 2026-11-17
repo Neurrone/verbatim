@@ -252,6 +252,7 @@ read with Alt held, whose parent's automation id is
 none is spoken or kept for the next focus (decision D6). The item says
 its name, row, column and position. Core's unit tests pin the rule
 (`a_task_switching_item_reached_with_alt_held_says_only_itself`,
+`a_second_task_switching_item_with_alt_held_knows_no_containers_and_is_said_alone`,
 `only_the_task_switchers_items_drop_their_containers`), and mockapp's
 `a_focus_carries_its_parents_automation_id` the parent's automation id
 from the listener's read and the outpost's own read. Cases that differ:

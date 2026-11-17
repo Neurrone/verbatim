@@ -235,21 +235,6 @@ pub(crate) fn activation_completed(
     )]
 }
 
-/// A focus's ancestors as Core takes them: as the event reports them, but
-/// none for an item whose containers an application's rule drops
-/// ([`crate::applications::drops_ancestry`]).
-pub(crate) fn focus_ancestors<'a>(
-    window: Option<&WindowFacts>,
-    node: &NodeSnapshot,
-    ancestors: &'a [NodeSnapshot],
-) -> &'a [NodeSnapshot] {
-    if crate::applications::drops_ancestry(window, node) {
-        &[]
-    } else {
-        ancestors
-    }
-}
-
 /// A key command or script with no focus report waiting ahead of it: one
 /// pressed while a held key waits, or while the watch of the held key last
 /// passed on is open, runs after it, as NVDA runs scripts one at a time in

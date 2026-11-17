@@ -363,8 +363,14 @@ fn ready(
         ancestors.push(frame);
     }
     ancestors.reverse();
-    let ancestors =
-        crate::reduce::focus_ancestors(origin.window.as_ref(), &node, &ancestors).to_vec();
+    // An item whose containers an application's rule drops has none, in
+    // what is spoken and in what Core keeps alike, one representation, so
+    // that the next focus is sent none as ancestors Core knows and meets
+    // none of them ([`crate::applications::drops_ancestry`]).
+    if crate::applications::drops_ancestry(origin.window.as_ref(), &node) {
+        ancestors.clear();
+        kept_ancestors.clear();
+    }
     // The top ancestor stands for the foreground object only when the
     // answer could not read it.
     let foreground = read_foreground.or_else(|| ancestors.first().cloned());
