@@ -536,8 +536,12 @@ and the inherited pipe handles.
   the element for remote operations; `remote`, `details`, `support`, and
   `known_support` say whether caret reads try a remote operation, which
   formatting they read, and the `TextSupport` known before and after), or
-  `edit::EditText` over an edit control's messages (offsets; a word is the
-  line segmented by `verbatim-text`'s rules, as NVDA finds it; the plain edit
+  `edit::EditText` over an edit control's messages (offsets; a rich edit's
+  word is the control's own, `EM_FINDWORDBREAK`, and a plain edit's the
+  line broken by Uniscribe, `verbatim_ia2::uniscribe`, with NVDA's two
+  letters appended, so a run of one punctuation mark is one word; a
+  character is Uniscribe's in every edit control, as NVDA's
+  `EditTextInfo` forces both; the plain edit
   control alone answers `TextSource::measure`, a point's offset and the
   text's length, so a location there is answered `OffsetLocation`, and a
   rich edit's is answered `Location`, as NVDA reads a rich edit through

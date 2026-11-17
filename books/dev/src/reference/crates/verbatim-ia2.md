@@ -183,6 +183,23 @@ Public API:
   goes through the window messages' one send, below, and counts as one
   window message; the memory calls are the kernel's and are not counted. A
   password field (`ES_PASSWORD`) reads as stars, as NVDA reads it.
+- `uniscribe` — `character(text, at)` and `word(text, at)`: the span of the
+  character or word containing a UTF-16 offset of a line, as Uniscribe
+  breaks it, ported from NVDA's `_calculateUniscribeOffsets`
+  (`nvdaHelper/local/textUtils.cpp`), which NVDA's `EditTextInfo` uses for
+  an edit control's characters and a plain edit's words. The line is
+  itemized (`ScriptItemize`) and each run broken (`ScriptBreak`) from its
+  start to the end of the line, last run first, so the first run's
+  analysis is left for the whole line, as NVDA does to segment as Notepad
+  does. A character runs from the last `fCharStop` at or before the offset
+  to the next; a word from the last `fWordStop` to the next, then
+  corrected as NVDA's #1656 corrections are: white space at and just
+  before the offset belongs to the word before, and a word ends after the
+  first run of white space from the offset, white space being what the C
+  runtime's `iswspace` says. At or past the line's end the span is the one
+  code unit there, as NVDA's helper answers; the caller decides what the
+  end means. Its tests compare every offset of each line with what the
+  pinned NVDA build's own helper gives.
 - `acquire` — the query-pool side: `snapshot_from_event` (from
   `AccessibleObjectFromEvent` through name, role, value, state,
   description, keyboard-shortcut, and location reads to a `NodeSnapshot` —
@@ -507,8 +524,10 @@ by Core on entering the window: one acquisition; `progress`, an
   counted (`books/dev/src/reference/performance.md`, "What counts as a call").
 - `accessible` and `window` (private) — the safe wrappers `acquire` is
   written against, so that `acquire` holds no `unsafe` code. `unsafe`
-  lives only in these two modules and in `hook`, the WinEvent hook's install,
-  removal, and callback; each block carries a `SAFETY` comment. `Accessible` is an
+  lives only in these two modules, in `hook`, the WinEvent hook's install,
+  removal, and callback, and in the modules that wrap their own platform
+  calls, `event_thread`, `edit` and `uniscribe`; each block carries a
+  `SAFETY` comment. `Accessible` is an
   `IAccessible` with the child id it is read at, and each of its methods
   holds one `IAccessible` or `oleacc` call and counts it as one MSAA call,
   so a caller never counts anything itself:

@@ -260,10 +260,10 @@ fn words_and_characters<S: TextSource>(
 /// the spaces after it, so the line feed after it is a word of its own.
 const UIA_SECOND_WORD: &str = "beta";
 
-/// The word "beta" through the edit control, whose line break is a word
-/// of its own, as NVDA's plain edit word (`plain_word` in the outpost's
-/// `text/edit.rs`).
-const EDIT_SECOND_WORD: &str = "beta";
+/// The word "beta" through the edit control, with the line break after it
+/// as the white space after it, as Uniscribe gives NVDA's plain edit word
+/// (`plain_word` in the outpost's `text/edit.rs`).
+const EDIT_SECOND_WORD: &str = "beta\r\n";
 
 /// A caret key's final read: the caret moved to 6 and the word there,
 /// `second_word`; and then a selection of the first word read as selected
@@ -1255,7 +1255,47 @@ fn edit_control_text(fixture: &str, past_last_line: isize) {
         &mut anchors,
         EDIT_SECOND_WORD,
     );
+    runs_of_one_mark_are_words(&mut app, hwnd, &mut source, &mut anchors);
     app.quit();
+}
+
+/// A run of one punctuation mark is one word of the edit control, with the
+/// white space after it, as Uniscribe breaks NVDA's plain edit words: a
+/// password field's stars are one word, and so are the dots of an
+/// ellipsis.
+fn runs_of_one_mark_are_words(
+    app: &mut common::MockApp,
+    hwnd: HWND,
+    source: &mut EditText,
+    anchors: &mut NodeText<'_, u32>,
+) {
+    common::apply(app, hwnd, "set-text doc ****  ... **");
+    let (_, first) = chunk(read(
+        source,
+        anchors,
+        TextPoint::Start,
+        None,
+        TextUnit::Word,
+    ));
+    let next = Some((TextUnit::Word, 1));
+    let (_, second) = chunk(read(
+        source,
+        anchors,
+        TextPoint::At(point_of(&first)),
+        next,
+        TextUnit::Word,
+    ));
+    let (_, third) = chunk(read(
+        source,
+        anchors,
+        TextPoint::At(point_of(&second)),
+        next,
+        TextUnit::Word,
+    ));
+    assert_eq!(
+        [first.text, second.text, third.text],
+        ["****  ", "... ", "**"]
+    );
 }
 
 /// The attributes mockapp's `formatting.json` reports for plain text, every

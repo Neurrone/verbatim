@@ -658,10 +658,16 @@ word stops) and the three-way paragraph-style setting. NVDA:
   no language given is segmented as Chinese, as NVDA's automatic choice
   does; where the application moves the caret by word, the provider's
   word is spoken.
-- A plain Win32 edit control's word, which the outpost finds itself,
-  is matched: the line segmented by the same rules, each word with the
-  white space after it, null characters and no-break spaces read as
-  spaces, and a carriage return or line feed a word of its own.
+- A Win32 edit control's characters and a plain edit control's words,
+  which the outpost finds itself, are matched: Uniscribe breaks the
+  line as NVDA's helper does (`verbatim_ia2::uniscribe`, ported, its
+  tests checked against the pinned NVDA build's own helper), each word
+  with the white space after it, the line break included, null
+  characters and no-break spaces read as spaces, NVDA's two letters
+  appended, and a carriage return or line feed at the position a word
+  of its own; so a run of one punctuation mark, such as a password
+  field's stars, is one word (mockapp's
+  `edit_control_text_reads_moves_and_answers_caret_keys`).
 - The paragraph-style setting is not yet built (unscheduled).
 
 ### Direction marks in names and values

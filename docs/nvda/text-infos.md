@@ -76,8 +76,9 @@ string splitting. `OffsetsTextInfo`'s character unit calls into
 `nvdaHelperLocal` (`calculateCharacterOffsets`,
 `nvdaHelper/local/textUtils.cpp`), which runs **Uniscribe**
 (`ScriptBreak`) over the line and reads `fCharStop` from its logical
-attributes, so a "character" is a grapheme cluster: surrogate pairs,
-combining marks, and emoji sequences move as one.
+attributes, so a "character" is close to a grapheme cluster: surrogate
+pairs and combining marks move as one, but a carriage return and the
+line feed after it are two characters.
 
 The word unit (`OffsetsTextInfo._getWordOffsets`) hands the line to a
 `WordSegmenter` (`textUtils/_wordSeg/wordSegmenter.py`), which picks a
@@ -105,7 +106,17 @@ strategy (`textUtils/_wordSeg/wordSegStrategy.py`) from the
   strategy and the final fallback when ICU is unavailable. Classes
   that must match a Windows control pin it: `EditTextInfo`
   (`NVDAObjects/window/edit.py`) forces `WordSegFlag.UNISCRIBE` to
-  match the edit control and Notepad.
+  match the edit control and Notepad, and `CharSegFlag.UNISCRIBE` for
+  its characters. The strategy appends two letters ("xx") to the line
+  before breaking it, since Uniscribe breaks a line with no run of more
+  than two letters oddly, and ends the word found at the line's end.
+  `fWordStop` alone ends a word before the white space after it only
+  sometimes, so the helper corrects it (#1656): white space at the
+  offset and just before it belongs to the word before, and a word ends
+  after the first run of white space from the offset, a line break
+  included. A word is therefore its text and the white space after it,
+  and a run of one punctuation mark (a password field's "****", "...")
+  is one word, as is a full stop with the word before it ("tset. ").
 
 Before segmenting, the line has its null characters and no-break spaces
 replaced by spaces, so words break on them. A plain (not rich) edit

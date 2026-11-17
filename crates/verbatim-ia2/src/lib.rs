@@ -34,14 +34,18 @@
 //! - [`edit`] — the standard Win32 edit and rich edit controls' text,
 //!   through their window messages (milestone M4), as NVDA's
 //!   `EditTextInfo` reads them.
+//! - [`uniscribe`] — characters and words as Uniscribe breaks them, which
+//!   NVDA's `EditTextInfo` uses for an edit control's characters and a
+//!   plain edit control's words.
 //!
 //! `unsafe` code lives only in the private modules that wrap the platform:
 //! `accessible`, the safe MSAA wrappers (an `IAccessible` with its child id,
 //! and the `oleacc` acquisition functions) that [`acquire`] is written
 //! against; `window`, the window functions and the list view and tree view
 //! messages; `hook`, the `WinEvent` hooks; [`event_thread`], its message
-//! loop; and [`edit`], the edit
-//! controls' messages and the target memory some of them need.
+//! loop; [`edit`], the edit
+//! controls' messages and the target memory some of them need; and
+//! [`uniscribe`], its calls into Uniscribe and the C runtime.
 //! [`acquire`] itself is safe code.
 
 mod accessible;
@@ -57,6 +61,7 @@ mod hook;
 pub mod list_view;
 pub mod map;
 mod registry;
+pub mod uniscribe;
 mod window;
 
 pub use window::classic_bar_percent;

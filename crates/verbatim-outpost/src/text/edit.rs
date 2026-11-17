@@ -6,11 +6,14 @@
 //! line, soft-wrapped lines included, from its start to the next line's
 //! start, so a hard line break belongs to the line it ends; a paragraph is
 //! a line, as in NVDA. Words are rich edit's own (`EM_FINDWORDBREAK`, from
-//! rich edit 2.0, as NVDA finds them) or, for the plain edit control, the
-//! line segmented by Unicode's word rules with the white space after each
-//! word, and a line break character a word of its own, as NVDA segments a
-//! plain edit control's line ([`plain_word`]). Sentences are left to Core, which
-//! splits the paragraph. There are no pages.
+//! rich edit 2.0, as NVDA finds them) or, for the plain edit control,
+//! Uniscribe's ([`verbatim_ia2::uniscribe`]), each with the white space
+//! after it, and a line break character a word of its own, as NVDA's
+//! `EditTextInfo` forces Uniscribe for a plain edit control's line
+//! ([`plain_word`]), so a run of one punctuation mark, such as a password
+//! field's stars, is one word. Characters are Uniscribe's too, in every
+//! edit control, as NVDA's `EditTextInfo` forces them. Sentences are left
+//! to Core, which splits the paragraph. There are no pages.
 
 use std::cmp::Ordering;
 
@@ -123,16 +126,25 @@ impl EditText {
         let line = self.line(offset)?;
         let text = self.line_text(line, usize::MAX)?;
         let at = (offset - line.start) as usize;
-        let (start, end) = plain_word(&text, at);
+        let (start, end) = plain_word(&text, at).map_err(|error| uniscribe_failed(&error))?;
         Ok((line.start + to_u32(start), line.start + to_u32(end)))
     }
 
-    /// The span of the character (grapheme cluster) containing `offset`.
+    /// The span of the character containing `offset`, as Uniscribe breaks
+    /// its line, which NVDA's `EditTextInfo` forces for every edit
+    /// control's characters (`charSegFlag` in
+    /// `nvda/source/NVDAObjects/window/edit.py`); empty at the end of the
+    /// text.
     fn character(&mut self, offset: u32) -> TextResult<(u32, u32)> {
         let line = self.line(offset)?;
         let text = self.line_text(line, usize::MAX)?;
         let at = (offset - line.start) as usize;
-        let (start, end) = grapheme_units(&text, at);
+        let (start, end) = if at >= text.len() {
+            (text.len(), text.len())
+        } else {
+            verbatim_ia2::uniscribe::character(&text, at)
+                .map_err(|error| uniscribe_failed(&error))?
+        };
         Ok((line.start + to_u32(start), line.start + to_u32(end)))
     }
 
@@ -162,66 +174,41 @@ fn is_break(unit: u16) -> bool {
     matches!(unit, 0x0D | 0x0A)
 }
 
-/// The word containing UTF-16 offset `at` of a line, as NVDA finds a plain
-/// edit control's word (`docs/nvda/text-infos.md`): a carriage return or
-/// line feed at `at` is a word of its own; otherwise the line's text
-/// without its break, a null character or no-break space read as a space,
-/// is segmented by `verbatim-text`'s word rules (with dictionaries for
-/// scripts written without spaces), and each word takes the white space
-/// after it. White space at the line's start is a word of its own. Past
-/// the line's text, which is the end of the text, there is no word: the
-/// span is empty.
-fn plain_word(text: &[u16], at: usize) -> (usize, usize) {
-    let at = at.min(text.len());
-    if text.get(at).copied().is_some_and(is_break) {
-        return (at, at + 1);
-    }
-    let content = text.len()
-        - text
-            .iter()
-            .rev()
-            .take_while(|&&unit| is_break(unit))
-            .count();
-    let units: Vec<u16> = text[..content]
-        .iter()
-        .map(|&unit| if matches!(unit, 0 | 0xA0) { 0x20 } else { unit })
-        .collect();
-    // An unpaired surrogate becomes the replacement character, one code
-    // unit as it was, so offsets stay the control's.
-    let string = String::from_utf16_lossy(&units);
-    let rules = verbatim_text::WordRules::for_text(&string, None);
-    let mut words: Vec<(usize, usize)> = Vec::new();
-    let mut units_before = 0;
-    for range in verbatim_text::Segmenter::new().words(&string, rules) {
-        let segment = &string[range];
-        let length: usize = segment.chars().map(char::len_utf16).sum();
-        let span = (units_before, units_before + length);
-        units_before = span.1;
-        match words.last_mut() {
-            Some(word) if segment.chars().all(verbatim_text::is_space) => word.1 = span.1,
-            _ => words.push(span),
-        }
-    }
-    words
-        .iter()
-        .copied()
-        .find(|&(start, end)| start <= at && at < end)
-        .unwrap_or((at, at))
+/// A failed Uniscribe call as a text error.
+fn uniscribe_failed(error: &windows::core::Error) -> TextError {
+    TextError::Failed(format!("Uniscribe could not break the line: {error}"))
 }
 
-/// The grapheme cluster containing UTF-16 offset `at` of `text`, as UTF-16
-/// offsets; an empty span at the end.
-fn grapheme_units(text: &[u16], at: usize) -> (usize, usize) {
-    let string = String::from_utf16_lossy(text);
-    let mut units = 0;
-    for range in verbatim_text::graphemes(&string) {
-        let length: usize = string[range].chars().map(char::len_utf16).sum();
-        if at < units + length {
-            return (units, units + length);
-        }
-        units += length;
+/// The word containing UTF-16 offset `at` of a line, its line break
+/// included, as NVDA finds a plain edit control's word
+/// (`docs/nvda/text-infos.md`, "Word and character segmentation"): a
+/// carriage return or line feed at `at` is a word of its own
+/// (`EditTextInfo._getWordOffsets` in
+/// `nvda/source/NVDAObjects/window/edit.py`); otherwise the line, a null
+/// character or no-break space read as a space and two letters appended,
+/// is broken by Uniscribe ([`verbatim_ia2::uniscribe::word`]), and the
+/// word found ends at the line's end at the latest
+/// (`UniscribeWordSegmentationStrategy` in
+/// `nvda/source/textUtils/_wordSeg/wordSegStrategy.py`, which appends the
+/// letters because Uniscribe breaks a line with no run of more than two
+/// letters oddly). So each word takes the white space after it, the line's
+/// break included, and a run of one punctuation mark, such as "****", is
+/// one word. Past the line's text, which is the end of the text, there is
+/// no word: the span is empty.
+fn plain_word(text: &[u16], at: usize) -> windows::core::Result<(usize, usize)> {
+    if at >= text.len() {
+        return Ok((text.len(), text.len()));
     }
-    (units, units)
+    if is_break(text[at]) {
+        return Ok((at, at + 1));
+    }
+    let units: Vec<u16> = text
+        .iter()
+        .map(|&unit| if matches!(unit, 0 | 0xA0) { 0x20 } else { unit })
+        .chain("xx".encode_utf16())
+        .collect();
+    let (start, end) = verbatim_ia2::uniscribe::word(&units, at)?;
+    Ok((start, end.min(text.len())))
 }
 
 impl TextSource for EditText {
@@ -388,33 +375,59 @@ mod tests {
         text.encode_utf16().collect()
     }
 
+    /// The plain edit word at `at` of `line`.
+    fn word_at(line: &str, at: usize) -> (usize, usize) {
+        plain_word(&units(line), at).expect("Uniscribe breaks the line")
+    }
+
+    // Every expected span below is what NVDA's own helper
+    // (`calculateWordOffsets` in the pinned build's `nvdaHelperLocal.dll`)
+    // gives for the same line with NVDA's two letters appended, ended at
+    // the line's end.
+
     #[test]
-    fn a_plain_edit_word_is_its_characters_and_the_spaces_after() {
-        let line = units("  one two\r\n");
-        assert_eq!(plain_word(&line, 0), (0, 2), "leading spaces");
-        assert_eq!(plain_word(&line, 2), (2, 6));
-        assert_eq!(plain_word(&line, 4), (2, 6));
-        assert_eq!(plain_word(&line, 5), (2, 6), "the space after the word");
-        assert_eq!(plain_word(&line, 6), (6, 9), "the break is not the word's");
-        assert_eq!(plain_word(&line, 9), (9, 10), "the carriage return");
-        assert_eq!(plain_word(&line, 10), (10, 11), "the line feed");
-        assert_eq!(plain_word(&line, 11), (11, 11), "the end");
+    fn a_plain_edit_word_is_its_characters_and_the_white_space_after() {
+        let line = "  one two\r\n";
+        assert_eq!(word_at(line, 0), (0, 2), "leading spaces");
+        assert_eq!(word_at(line, 2), (2, 6));
+        assert_eq!(word_at(line, 4), (2, 6));
+        assert_eq!(word_at(line, 5), (2, 6), "the space after the word");
         assert_eq!(
-            plain_word(&units("one two"), 7),
-            (7, 7),
-            "the end after a word"
+            word_at(line, 6),
+            (6, 11),
+            "the break is white space after it"
         );
+        assert_eq!(word_at(line, 9), (9, 10), "the carriage return");
+        assert_eq!(word_at(line, 10), (10, 11), "the line feed");
+        assert_eq!(word_at(line, 11), (11, 11), "the end");
+        assert_eq!(word_at("one two", 7), (7, 7), "the end after a word");
     }
 
     #[test]
-    fn a_plain_edit_word_follows_the_word_rules() {
+    fn a_plain_edit_word_is_uniscribes() {
+        // A password field's stars, and WPF's circles, are one word each.
+        for at in 0..4 {
+            assert_eq!(word_at("****", at), (0, 4), "the stars at {at}");
+            assert_eq!(
+                word_at("\u{25cf}\u{25cf}\u{25cf}\u{25cf}", at),
+                (0, 4),
+                "the circles at {at}"
+            );
+        }
+        assert_eq!(
+            word_at("**  **", 3),
+            (0, 4),
+            "the spaces after the first run"
+        );
+        assert_eq!(word_at("**  **", 4), (4, 6), "the second run");
         // Thai, written without spaces: "สวัสดี", "ชาว", "โลก".
-        assert_eq!(plain_word(&units("สวัสดีชาวโลก"), 6), (6, 9));
-        // Punctuation is a word of its own, with the space after it.
-        assert_eq!(plain_word(&units("tset. has"), 4), (4, 6));
+        assert_eq!(word_at("สวัสดีชาวโลก", 6), (6, 9));
+        assert_eq!(word_at("สวัสดีชาวโลก", 9), (9, 12));
+        // A full stop stays in its word, with the space after it.
+        assert_eq!(word_at("tset. has", 4), (0, 6));
         // A no-break space separates words as a space does.
-        assert_eq!(plain_word(&units("a\u{A0}b"), 0), (0, 2));
-        assert_eq!(plain_word(&units("a\u{A0}b"), 2), (2, 3));
+        assert_eq!(word_at("a\u{A0}b", 0), (0, 2));
+        assert_eq!(word_at("a\u{A0}b", 2), (2, 3));
     }
 
     #[test]
@@ -424,18 +437,5 @@ mod tests {
             let mut text = EditText::new(0, version);
             assert!(matches!(text.measure(&3), Ok(None)), "version {version}");
         }
-    }
-
-    #[test]
-    fn a_character_is_a_grapheme_cluster_in_code_units() {
-        let text = units("a😀e\u{301}");
-        assert_eq!(grapheme_units(&text, 0), (0, 1));
-        assert_eq!(
-            grapheme_units(&text, 2),
-            (1, 3),
-            "inside the surrogate pair"
-        );
-        assert_eq!(grapheme_units(&text, 3), (3, 5), "a letter and its accent");
-        assert_eq!(grapheme_units(&text, 5), (5, 5), "the end");
     }
 }
