@@ -38,7 +38,7 @@ use windows::core::{BOOL, PWSTR, w};
 
 use crate::protocol::{
     ForegroundInfo, ForegroundOutcome, MinimizeOutcome, TASKBAR_LIMIT_MS, TaskbarCommand,
-    WindowCondition, WindowInfo,
+    UiaRootAnswer, WindowCondition, WindowInfo,
 };
 use crate::wait;
 
@@ -286,6 +286,63 @@ pub fn minimize_all(timeout: Duration) -> (TaskbarCommand, MinimizeOutcome, Fore
         (false, false) => MinimizeOutcome::Refused { limit_ms },
     };
     (taskbar, outcome, desktop)
+}
+
+/// Sends `window` the question UI Automation asks a window first,
+/// `WM_GETOBJECT` with wParam 0 and `UiaRootObjectId`, sign-extended as UI
+/// Automation sends it, and waits up to `limit` for its thread to answer
+/// ([`Request::WaitForUiaAnswer`](crate::protocol::Request::WaitForUiaAnswer)).
+///
+/// The message is sent with `SMTO_BLOCK`, so the agent's thread does not
+/// re-enter while it waits, and `SMTO_ERRORONEXIT`, so a thread that ends
+/// returns at once; not with `SMTO_ABORTIFHUNG`, since a thread still busy
+/// starting is what this waits out. The answer is only reported: the one
+/// a provider gives, `0x10000`, holds no reference.
+#[must_use]
+pub fn uia_root_answer(window: u64, limit: Duration) -> UiaRootAnswer {
+    use windows::Win32::Foundation::{ERROR_TIMEOUT, GetLastError, SetLastError, WIN32_ERROR};
+    use windows::Win32::UI::Accessibility::UiaRootObjectId;
+    use windows::Win32::UI::WindowsAndMessaging::{SMTO_BLOCK, SMTO_ERRORONEXIT, WM_GETOBJECT};
+
+    let limit_ms = u32::try_from(limit.as_millis()).unwrap_or(u32::MAX);
+    let window = HWND(usize::try_from(window).unwrap_or(0) as *mut c_void);
+    let mut answer = 0usize;
+    // SAFETY: sets this thread's last error, so an error read after a
+    // failure is this call's.
+    unsafe { SetLastError(WIN32_ERROR(0)) };
+    // SAFETY: a message whose arguments carry no pointer, to any window
+    // handle; an invalid one fails the call. The answer is written to a
+    // local that outlives the call.
+    let sent = unsafe {
+        SendMessageTimeoutW(
+            window,
+            WM_GETOBJECT,
+            WPARAM(0),
+            LPARAM(UiaRootObjectId as isize),
+            SMTO_BLOCK | SMTO_ERRORONEXIT,
+            limit_ms,
+            Some(&raw mut answer),
+        )
+    };
+    if sent.0 != 0 {
+        #[expect(
+            clippy::cast_possible_wrap,
+            reason = "the answer is an LRESULT, which SendMessageTimeoutW hands back as unsigned"
+        )]
+        let answer = answer as i64;
+        return UiaRootAnswer::Answered { answer };
+    }
+    // SAFETY: reads this thread's last error; no arguments.
+    let error = unsafe { GetLastError() };
+    if error == ERROR_TIMEOUT {
+        UiaRootAnswer::TimedOut {
+            limit_ms: u64::from(limit_ms),
+        }
+    } else {
+        UiaRootAnswer::Failed {
+            error: windows::core::Error::from(error.to_hresult()).message(),
+        }
+    }
 }
 
 /// Brings `window` to the foreground as clicking its taskbar button does,

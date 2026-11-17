@@ -28,7 +28,8 @@
 //!
 //! Every key is a real key press the keyboard hook sees and passes to the
 //! form; each step waits for its speech to be heard in full before the
-//! next, and there is no other wait.
+//! next, and there is no other wait but the WPF window's, before it comes
+//! forward, for its thread to answer UI Automation.
 
 use std::io;
 
@@ -139,17 +140,22 @@ fn wpf_script(title: &str, ready: &str) -> String {
     )
 }
 
-/// Writes `script` into the run folder named for `name` and runs it in
-/// Windows PowerShell, with `sta` for WPF, bringing the window titled with
-/// [`harness_marker`] of `name` forward once the script says it is shown.
-/// The window closes at cleanup, and Windows PowerShell, which owns it,
-/// exits then.
-fn open(
+/// A form's script written into the run folder named for `name`: the
+/// window's title, [`harness_marker`] of `name`; the arguments that run
+/// the script in Windows PowerShell, with `sta` for WPF; and the file the
+/// script writes once the window is shown.
+struct Launch {
+    title: String,
+    args: Vec<String>,
+    ready: String,
+}
+
+fn write_script(
     scenario: &mut Scenario,
     name: &str,
     script: fn(&str, &str) -> String,
     sta: bool,
-) -> io::Result<()> {
+) -> io::Result<Launch> {
     let title = harness_marker(name);
     let directory = scenario.harness_folder(name);
     let script_path = format!(r"{directory}\form.ps1");
@@ -168,19 +174,33 @@ fn open(
         &script_path,
     ]);
     let args: Vec<String> = args.into_iter().map(str::to_owned).collect();
-    scenario.launch_titled_once("powershell.exe", &args, &title, true, Some(&ready))?;
-    Ok(())
+    Ok(Launch { title, args, ready })
 }
 
-/// Opens the Windows Forms form.
+/// Opens the Windows Forms form, brought forward once the script says it
+/// is shown. The window closes at cleanup, and Windows PowerShell, which
+/// owns it, exits then.
 pub(crate) fn text_box_setup(scenario: &mut Scenario) -> io::Result<ScenarioState> {
-    open(scenario, FORMS_NAME, forms_script, false)?;
+    let launch = write_script(scenario, FORMS_NAME, forms_script, false)?;
+    scenario.launch_titled_once(
+        "powershell.exe",
+        &launch.args,
+        &launch.title,
+        true,
+        Some(&launch.ready),
+    )?;
     Ok(ScenarioState::None)
 }
 
-/// Opens the WPF window.
+/// Opens the WPF window, brought forward once the script says it is shown
+/// and the window has answered UI Automation: WPF's thread can stay busy
+/// for seconds after the window has rendered, and a window that does not
+/// answer UI Automation in time is read through MSAA, as NVDA reads it
+/// then. The window closes at cleanup, and Windows PowerShell, which owns
+/// it, exits then.
 pub(crate) fn wpf_setup(scenario: &mut Scenario) -> io::Result<ScenarioState> {
-    open(scenario, WPF_NAME, wpf_script, true)?;
+    let launch = write_script(scenario, WPF_NAME, wpf_script, true)?;
+    scenario.launch_answering_uia("powershell.exe", &launch.args, &launch.title, &launch.ready)?;
     Ok(ScenarioState::None)
 }
 

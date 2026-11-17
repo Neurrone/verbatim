@@ -71,6 +71,7 @@ A test known to fail is listed with its cause and fix in [the known failures](ht
 - A skipped test is reported as skipped, never as passed.
 - Cleanup closes what the test opened, by process ID or by its window, and fails the test when it cannot. When the test started the program, the process that owned the window must exit. Nothing is killed by image name.
 - Any of Verbatim's own processes that exits unexpectedly during a scenario fails it, and the crash dump, when crash dumps are configured, is kept with the scenario's artifacts.
+- A line in any of Verbatim's logs that states a defect of Verbatim's own, a panic or a message such as an answer that did not decode as its request's reply, fails the scenario after its body, naming the line (`DEFECT_MESSAGES` in `crates/verbatim-e2e/src/artifacts.rs`); a warning about an application misbehaving does not (Dickson, 2026-11-17). Reason: such defects passed unnoticed behind speech that came out right.
 - Errors are never swallowed. Failure artifacts (timeline, logs, flight recorder, Core's focus and navigator) are always kept, and losing one is itself a failure. A recording that cannot start or finish is a failure too.
 - No test is `#[ignore]`d without a recorded decision, and an ignored test's behaviour is covered elsewhere.
 - Everything a demonstration shows is covered by a test.

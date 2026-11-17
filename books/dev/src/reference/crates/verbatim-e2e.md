@@ -412,7 +412,13 @@ input methods above:
   as it starts. `launch_console(command, args, title, ready)` starts a
   console program with its console window titled from its first frame,
   opened minimized and inactive, without the agent's foreground right, and
-  brought forward as `launch_titled_once` does. `launch_owning_window`
+  brought forward as `launch_titled_once` does.
+  `launch_answering_uia(command, args, title, ready)` waits, after
+  `ready`, for the window's thread to answer UI Automation's first
+  question with a provider's answer (the agent's `WaitForUiaAnswer`),
+  since a WPF window's thread can stay busy for seconds after it has
+  rendered and a window that does not answer in time is read through
+  MSAA. `launch_owning_window`
   does the same for a program that must own the window it opens.
   `launch_titled_with_stdin(command, args, title, output_to)` does the
   same with the program's standard input a pipe `write_stdin(pid, line)`
@@ -609,7 +615,12 @@ quit, every frame until the speech connection ends (`take_until_the_end`,
 bounded by the step timeout, its end not coming a problem of the run),
 since the agent shuts the connection down when Verbatim's pipe closes;
 after a failed quit, only what has arrived (`take_remaining`); run the
-teardown; clean up; collect the artifacts (`collect_run_artifacts`);
+teardown; clean up; collect the artifacts (`collect_run_artifacts`),
+failing the run on every line of Verbatim's logs, its own and each
+child's, that states a defect of Verbatim's own, a panic or one of
+`artifacts::DEFECT_MESSAGES` (`artifacts::defect_lines`), such as an
+answer that did not decode as its request's reply, while a warning about
+an application misbehaving fails nothing;
 finish the recording; check that no Windows Terminal window the run did
 not open appeared; write `foreground.txt` and the summary, and archive
 the run. The summary's latency lines (`ScenarioSummary::new`) are built

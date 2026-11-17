@@ -373,6 +373,7 @@ fn dispatch(connection: u64, id: u64, request: Request) -> Frame {
         request @ (Request::ForegroundInfo
         | Request::CloseWindows { .. }
         | Request::SetForeground { .. }
+        | Request::WaitForUiaAnswer { .. }
         | Request::WaitForWindow { .. }
         | Request::MinimizeAll { .. }
         | Request::TakeForeignTerminalWindows
@@ -854,6 +855,13 @@ fn desktop_request(id: u64, request: Request) -> Frame {
         Request::SetForeground { window } => Frame::Reply {
             to: id,
             payload: ReplyPayload::Foreground(desktop::set_foreground(window)),
+        },
+        Request::WaitForUiaAnswer { window, timeout_ms } => Frame::Reply {
+            to: id,
+            payload: ReplyPayload::UiaRoot(desktop::uia_root_answer(
+                window,
+                Duration::from_millis(timeout_ms),
+            )),
         },
         Request::WaitForWindow {
             condition,

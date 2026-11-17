@@ -460,6 +460,56 @@ fn lines_carrying(trace: TraceId, sources: &[(String, String)]) -> Vec<Found> {
     found
 }
 
+/// The log messages that state a defect of Verbatim's own, each as the
+/// process that logs it writes it: a run whose logs hold one fails, so a
+/// defect does not pass unnoticed behind speech that happened to come out
+/// right. Warnings about an application that misbehaves, or a call the
+/// system refused, are not among them.
+pub const DEFECT_MESSAGES: &[&str] = &[
+    // The Rust runtime's panic hook, in every process: a panic is a
+    // defect, caught or not (`thread '<name>' panicked at <file>:<line>`).
+    "' panicked at ",
+    // Verbatim's main process.
+    "the supervisor handed on a listener message that is no tell or answer, a logic bug",
+    "an answer did not decode as its request's reply, the reader's fault",
+    "Core's front entry could not be rebuilt from its checkpoint, a defect in Core",
+    "flight-recorder dump written before panic",
+    "flight-recorder dump failed while handling a panic",
+    "flight-recorder dump panicked while handling a panic",
+    // The supervisor and the pipes between processes.
+    "launched a child for a generation that is not launching, a logic bug",
+    "a write completed for a pipe the relay does not have",
+    "an outpost's message could not be read",
+    "the held nodes could not be encoded; they are dropped",
+    "a completion that is not this reader's",
+    "a frame could not be encoded and is skipped",
+    // Outposts.
+    "a route's end names an ancestor the completion does not",
+    "the outpost cannot watch another application",
+    "the worker failed running a program",
+    "a UIA event callback panicked; the event is dropped",
+    "the lock check failed: ",
+    // The focus listener.
+    "a request asked of a kept element already read",
+    "a walk met a known ancestor the request did not name",
+    "an abandoned read returned of a record no longer held",
+    // The synthesizer host.
+    "an eSpeak NG audio sink panicked; the synthesis stops",
+    "eSpeak NG reported a mark this driver did not place",
+];
+
+/// Every line of the log `text`, a file of Verbatim's named `file`, that
+/// holds one of [`DEFECT_MESSAGES`], with terminal colour codes removed,
+/// each prefixed with the file's name.
+#[must_use]
+pub fn defect_lines(file: &str, text: &str) -> Vec<String> {
+    text.lines()
+        .map(without_colours)
+        .filter(|line| DEFECT_MESSAGES.iter().any(|message| line.contains(message)))
+        .map(|line| format!("{file}: {line}"))
+        .collect()
+}
+
 /// `line` without the escape sequences a terminal colours text with.
 fn without_colours(line: &str) -> String {
     let mut out = String::with_capacity(line.len());
@@ -941,6 +991,44 @@ mod tests {
             text: "OK button".to_owned(),
             event_to_queue_ms: 5,
             event_to_audio_ms,
+        }
+    }
+
+    #[test]
+    fn a_log_s_defect_lines_are_found_with_their_file_and_nothing_else() {
+        // As Verbatim writes its log: coloured, with a warning about an
+        // application and an ordinary line beside the defects.
+        let log = "\u{1b}[2m2026-11-17T10:48:11.261423Z\u{1b}[0m \u{1b}[33m WARN\u{1b}[0m \u{1b}[2mverbatim\u{1b}[0m\u{1b}[2m:\u{1b}[0m an answer did not decode as its request's reply, the reader's fault \u{1b}[3mnumber\u{1b}[0m\u{1b}[2m=\u{1b}[0mrequest 4\n\
+                   2026-11-17T10:48:12.000000Z  WARN verbatim_outpost::outpost: the target application's exit is not watched\n\
+                   2026-11-17T10:48:13.000000Z  INFO verbatim: gesture trace_id=7\n\
+                   thread 'worker' panicked at crates/verbatim-outpost/src/outpost/read.rs:10:5:\n\
+                   2026-11-17T10:48:14.000000Z ERROR verbatim: Core's front entry could not be rebuilt from its checkpoint, a defect in Core replayed=1 original=2\n";
+        assert_eq!(
+            defect_lines("stderr.log", log),
+            vec![
+                "stderr.log: 2026-11-17T10:48:11.261423Z  WARN verbatim: an answer did not decode as its request's reply, the reader's fault number=request 4".to_owned(),
+                "stderr.log: thread 'worker' panicked at crates/verbatim-outpost/src/outpost/read.rs:10:5:".to_owned(),
+                "stderr.log: 2026-11-17T10:48:14.000000Z ERROR verbatim: Core's front entry could not be rebuilt from its checkpoint, a defect in Core replayed=1 original=2".to_owned(),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_log_with_no_defect_has_no_defect_lines() {
+        let log = "2026-11-17T10:48:12.000000Z  WARN verbatim_outpost::outpost: the target application's exit is not watched\n\
+                   2026-11-17T10:48:13.000000Z  WARN verbatim_listener: a bar's read did not return in time; its reader is abandoned pid=4\n";
+        assert_eq!(defect_lines("listener.log", log), Vec::<String>::new());
+    }
+
+    #[test]
+    fn every_defect_message_is_found() {
+        for message in DEFECT_MESSAGES {
+            let line = format!("2026-11-17T10:48:13.000000Z ERROR verbatim: {message}");
+            assert_eq!(
+                defect_lines("outpost-notepad-4.log", &line),
+                vec![format!("outpost-notepad-4.log: {line}")],
+                "{message:?}"
+            );
         }
     }
 }

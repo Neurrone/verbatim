@@ -73,6 +73,13 @@ Public API:
     and observed, the restore observed, and `SetForegroundWindow`'s
     answer, with whether it accepted the window and whether the window
     was then in front),
+    `WaitForUiaAnswer` (protocol version 35: `WM_GETOBJECT` for
+    `UiaRootObjectId` sent to a window with `SendMessageTimeoutW`, blocking
+    and returning when its thread ends but not abandoning a thread Windows
+    judges hung, answered with the window's result, a timeout, or the
+    error, so a window still starting is seen to answer UI Automation
+    before it is brought forward; the result, a provider's `0x10000`, holds
+    no reference),
     `WaitForWindow` with a `WindowCondition` (`Foreground`, optionally
     requiring the title to mark unsaved changes or not; `Present`; `Absent`; `AllMinimized`), where a cloaked window, kept but
     not shown, counts as not shown in every condition, as it does for

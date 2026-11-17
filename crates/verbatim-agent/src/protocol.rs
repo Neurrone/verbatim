@@ -88,10 +88,12 @@ use serde::{Deserialize, Serialize};
 /// wait, up to its timeout, for an item of the switcher's list to have the
 /// focus, since the switcher's window is in front before its list exists;
 /// version 34 added [`Request::WaitForLastShownLine`], so a terminal is
-/// seen to show its prompt, read from the terminal itself. A test run against an older agent is refused
-/// at `Hello` instead of losing its connection mid-run, or running without
-/// the exclusion.
-pub const AGENT_PROTOCOL_VERSION: u32 = 34;
+/// seen to show its prompt, read from the terminal itself; version 35
+/// added [`Request::WaitForUiaAnswer`], so a window still starting is seen
+/// to answer UI Automation before it is brought forward. A test run
+/// against an older agent is refused at `Hello` instead of losing its
+/// connection mid-run, or running without the exclusion.
+pub const AGENT_PROTOCOL_VERSION: u32 = 35;
 
 /// How long the agent gives the taskbar to handle its Minimize All command
 /// ([`Request::MinimizeAll`]), in milliseconds.
@@ -277,6 +279,19 @@ pub enum Request {
     SetForeground {
         /// The window's handle, as [`WindowInfo::window`] reports it.
         window: u64,
+    },
+    /// Sends `window` the message UI Automation asks a window whether it
+    /// has a provider with, `WM_GETOBJECT` for `UiaRootObjectId`, and
+    /// waits up to `timeout_ms` for the window's thread to answer it: the
+    /// evidence that a window still starting answers UI Automation, before
+    /// a test brings it forward for a screen reader to read. Nothing is
+    /// done with the answer but report it; it holds no reference. Answered
+    /// by [`ReplyPayload::UiaRoot`].
+    WaitForUiaAnswer {
+        /// The window's handle, as [`WindowInfo::window`] reports it.
+        window: u64,
+        /// How long to wait, in milliseconds.
+        timeout_ms: u64,
     },
     /// Waits up to `timeout_ms` for `condition` to hold, checking it again
     /// each time Windows reports a top-level window shown, hidden, created,
@@ -912,6 +927,8 @@ pub enum ReplyPayload {
     /// Answer to [`Request::SetForeground`]: the window in front, or the
     /// step that failed.
     Foreground(ForegroundOutcome),
+    /// Answer to [`Request::WaitForUiaAnswer`].
+    UiaRoot(UiaRootAnswer),
     /// Answer to [`Request::SessionInfo`].
     SessionInfo(SessionInfo),
     /// Answer to [`Request::ReadFile`]: the file's raw bytes, base64
@@ -1025,6 +1042,29 @@ pub enum ProcessState {
     Exited {
         /// The process's exit code, when the OS reported one.
         exit_code: Option<i32>,
+    },
+}
+
+/// Answer to [`Request::WaitForUiaAnswer`]: what the window answered UI
+/// Automation's question, or why it did not.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UiaRootAnswer {
+    /// The window's thread answered `answer`: `0x10000` for a window with a
+    /// UI Automation provider, as WPF's are, and 0 for one with none.
+    Answered {
+        /// The window's result.
+        answer: i64,
+    },
+    /// The window's thread did not answer within `limit_ms`.
+    TimedOut {
+        /// How long the answer was waited for.
+        limit_ms: u64,
+    },
+    /// The message failed otherwise, as for a window or thread that is
+    /// gone, with Windows' description of the error.
+    Failed {
+        /// Windows' message for the error.
+        error: String,
     },
 }
 

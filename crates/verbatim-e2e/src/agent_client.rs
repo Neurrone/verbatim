@@ -25,7 +25,7 @@ use verbatim_agent::protocol::{
     AGENT_PROTOCOL_VERSION, EventOutcome, FocusedElement, ForegroundInfo, ForegroundOutcome, Frame,
     KillOutcome, LaunchEnd, MinimizeOutcome, ProcessDiagnostics, ProcessExit, ProcessInfo,
     ProcessState, ReplyPayload, Request, RequestEnvelope, SessionInfo, SwitcherItem,
-    TaskbarCommand, WaitChain, WindowCondition, WindowInfo, minimize_all_limit,
+    TaskbarCommand, UiaRootAnswer, WaitChain, WindowCondition, WindowInfo, minimize_all_limit,
 };
 use verbatim_control::client::Client as ControlClient;
 use verbatim_control::protocol::{MessageReader, write_message};
@@ -561,6 +561,33 @@ impl AgentClient {
                 ..
             } => Ok(outcome),
             other => Err(unexpected("SetForeground", &other)),
+        }
+    }
+
+    /// Asks `window` UI Automation's first question, `WM_GETOBJECT` for
+    /// `UiaRootObjectId`, and waits up to `timeout` for its thread to
+    /// answer; returns the answer or why there was none.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails.
+    pub fn wait_for_uia_answer(
+        &mut self,
+        window: u64,
+        timeout: Duration,
+    ) -> io::Result<UiaRootAnswer> {
+        match self.request_waiting(
+            Request::WaitForUiaAnswer {
+                window,
+                timeout_ms: millis(timeout),
+            },
+            timeout,
+        )? {
+            Frame::Reply {
+                payload: ReplyPayload::UiaRoot(answer),
+                ..
+            } => Ok(answer),
+            other => Err(unexpected("WaitForUiaAnswer", &other)),
         }
     }
 

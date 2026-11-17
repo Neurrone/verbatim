@@ -50,7 +50,7 @@ use std::time::Duration;
 use verbatim_agent::protocol::{
     EventOutcome, ForegroundInfo, ForegroundOutcome, LaunchEnd, ListPosition, MinimizeOutcome,
     ProcessDiagnostics, ProcessExit, ProcessInfo, ProcessState, SwitcherItem, TaskbarCommand,
-    WaitChain, WaitNode, WaitNodeKind, WaitNodeStatus, WindowCondition, WindowInfo,
+    UiaRootAnswer, WaitChain, WaitNode, WaitNodeKind, WaitNodeStatus, WindowCondition, WindowInfo,
 };
 use verbatim_config::{ConfigStore, Settings};
 use verbatim_control::client::{Client as ControlClient, ok_or_error};
@@ -91,6 +91,10 @@ pub const DOCUMENT_MARKER: &str = "verbatim-e2e-";
 /// How long a window the harness waits for is given to appear and take the
 /// foreground, or to go: a bound on a hang.
 pub const WINDOW_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// What a window with a UI Automation provider answers `WM_GETOBJECT` for
+/// `UiaRootObjectId` with ([`Scenario::launch_answering_uia`]).
+const UIA_PROVIDER_ANSWER: i64 = 0x1_0000;
 
 /// How long a window the harness asks to close, or the process that owned
 /// it, is given to go.
@@ -1314,6 +1318,39 @@ impl Scenario {
         self.bring_forward(launch, title, Closing::launched(owner_exits), ready)
     }
 
+    /// [`Scenario::launch_titled_once`], bringing the window forward only
+    /// once, after `ready` exists, its thread has also answered UI
+    /// Automation's first question, `WM_GETOBJECT` for `UiaRootObjectId`,
+    /// with a provider's answer: the evidence that a UI Automation window
+    /// still starting, such as WPF's, which can keep its thread busy for
+    /// seconds after it has rendered, answers a screen reader's read of it
+    /// when it comes forward. The process that owned the window must exit
+    /// at cleanup.
+    ///
+    /// # Errors
+    ///
+    /// As [`Scenario::launch_titled_once`], and when the window does not
+    /// answer within [`WINDOW_TIMEOUT`], or answers that it has no
+    /// provider.
+    pub fn launch_answering_uia(
+        &mut self,
+        command: &str,
+        args: &[String],
+        title: &str,
+        ready: &str,
+    ) -> io::Result<WindowInfo> {
+        self.begin_action(&launch_action(command, title));
+        let launch = self.agent.launch_minimized(command, args)?;
+        self.bring_forward_once(
+            launch,
+            title,
+            Closing::launched(true),
+            Some(ready),
+            None,
+            true,
+        )
+    }
+
     /// [`Scenario::launch_titled`], the program's standard input a pipe
     /// [`Scenario::write_stdin`] writes to and its stdout and stderr
     /// captured into `output_to` on the agent's machine, for a program
@@ -1393,9 +1430,11 @@ impl Scenario {
         closing: Closing,
         ready: Option<&str>,
     ) -> io::Result<WindowInfo> {
-        self.bring_forward_once(launch, title, closing, ready, None)
+        self.bring_forward_once(launch, title, closing, ready, None, false)
     }
 
+    /// [`Scenario::bring_forward`], and with `answers_uia`, only once the
+    /// window has answered UI Automation ([`Scenario::launch_answering_uia`]).
     fn bring_forward_once(
         &mut self,
         launch: AgentLaunch,
@@ -1403,6 +1442,7 @@ impl Scenario {
         closing: Closing,
         ready: Option<&str>,
         settled: Option<&str>,
+        answers_uia: bool,
     ) -> io::Result<WindowInfo> {
         self.launched.push(Launched {
             pid: launch.pid,
@@ -1463,6 +1503,21 @@ impl Scenario {
             );
             self.launch_evidence.push(evidence.clone());
             return Err(WindowWaitFailure::error(message, evidence));
+        }
+        if answers_uia {
+            match self
+                .agent
+                .wait_for_uia_answer(window.window, WINDOW_TIMEOUT)?
+            {
+                UiaRootAnswer::Answered {
+                    answer: UIA_PROVIDER_ANSWER,
+                } => {}
+                other => {
+                    return Err(io::Error::other(format!(
+                        "the window titled {title:?} did not answer UI Automation with a provider before it was brought forward: {other:?}"
+                    )));
+                }
+            }
         }
         // A shell that titles its tab shows "<title> settling", which comes
         // after the console host's "Administrator: " prefix on an elevated
@@ -1527,7 +1582,8 @@ impl Scenario {
         self.begin_action(&launch_action(command, title));
         let launch = self.agent.launch_minimized(command, args)?;
         let launched = launch.pid;
-        let window = self.bring_forward_once(launch, title, Closing::ByOwner, ready, settled)?;
+        let window =
+            self.bring_forward_once(launch, title, Closing::ByOwner, ready, settled, false)?;
         if window.pid != launched {
             return Err(io::Error::other(format!(
                 "the window titled {title:?} belongs to {} (pid {}), not to the process the harness launched, pid {launched}: {}",
@@ -2598,9 +2654,11 @@ impl Scenario {
     /// the timeline, the latency report, Verbatim's stderr log and every
     /// outpost and listener log of this launch, Verbatim's audio, and the
     /// crash dumps of Verbatim's processes written during the run. Returns
-    /// every artifact that could not be collected, every crash dump, and
-    /// every outpost started for a process Verbatim was told to ignore, its
-    /// log named for that process, each a failure of the run. In compare
+    /// every artifact that could not be collected, every crash dump, every
+    /// line of those logs stating a defect of Verbatim's own
+    /// ([`crate::artifacts::DEFECT_MESSAGES`]), and every outpost started
+    /// for a process Verbatim was told to ignore, its log named for that
+    /// process, each a failure of the run. In compare
     /// mode, which has no Verbatim, only the timeline.
     pub fn collect_run_artifacts(&mut self, dir: &Path) -> Vec<String> {
         let mut problems = Vec::new();
@@ -2623,6 +2681,10 @@ impl Scenario {
         }
         match self.agent.read_file(&self.stderr_log_path) {
             Ok(bytes) => {
+                problems.extend(defects_logged(
+                    &dir.join(STDERR_FILE_NAME),
+                    &String::from_utf8_lossy(&bytes),
+                ));
                 if let Err(error) = fs::write(dir.join(STDERR_FILE_NAME), bytes) {
                     problems.push(format!("could not write Verbatim's stderr log: {error}"));
                 }
@@ -2656,6 +2718,8 @@ impl Scenario {
                 problems.push(format!(
                     "could not collect the replaced Verbatim's stderr log {stderr_path}: {error}"
                 ));
+            } else {
+                problems.extend(collected_defects(&replaced_dir.join(STDERR_FILE_NAME)));
             }
             problems.extend(self.collect_outpost_logs(pid, &replaced_dir));
         }
@@ -2702,6 +2766,8 @@ impl Scenario {
             // than one read may be.
             if let Err(error) = self.agent.copy_file(&remote_path, &dir.join(name)) {
                 problems.push(format!("could not collect {remote_path}: {error}"));
+            } else {
+                problems.extend(collected_defects(&dir.join(name)));
             }
         }
         for pid in &self.ignored {
@@ -4421,6 +4487,28 @@ fn document_token() -> String {
         }
     }
     digits.iter().rev().collect()
+}
+
+/// The failures of a run whose log `text`, collected as `path`, states a
+/// defect of Verbatim's own: one for each line holding one of
+/// [`crate::artifacts::DEFECT_MESSAGES`], naming it.
+fn defects_logged(path: &Path, text: &str) -> Vec<String> {
+    crate::artifacts::defect_lines(&path.display().to_string(), text)
+        .into_iter()
+        .map(|line| format!("Verbatim logged a defect of its own: {line}"))
+        .collect()
+}
+
+/// [`defects_logged`] for the log collected as `path`, or the failure to
+/// read it.
+fn collected_defects(path: &Path) -> Vec<String> {
+    match fs::read(path) {
+        Ok(bytes) => defects_logged(path, &String::from_utf8_lossy(&bytes)),
+        Err(error) => vec![format!(
+            "could not read {} to check it for defects: {error}",
+            path.display()
+        )],
+    }
 }
 
 /// How the log of a spare outpost is named, `outpost-spare-<launch>.log`:
