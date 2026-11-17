@@ -47,9 +47,12 @@
 //!   marks steps come after Control's timing-dependent part, so they are
 //!   asserted exactly.
 //! - `*_line_key_flood`: Up Arrow while a flood's first line plays, once
-//!   the flood has ended and the shell shows its prompt (Core receives the
-//!   caret on it). `long.ps1` prints 200 lines of twenty words, so the
-//!   first is still playing when the flood ends. Up Arrow cuts the output
+//!   the flood has ended: `long.ps1` prints 200 lines of twenty words, so
+//!   the first is still playing when the flood ends, and then writes the
+//!   file `long.done`, the evidence the scenario waits for. Core's caret
+//!   on the prompt is no evidence here, since Core holds the terminal's
+//!   output, and reads nothing of it, while the flood policy holds
+//!   (`docs/parity/terminals.md`, "The backlog"). Up Arrow cuts the output
 //!   off, as any key does, and recalls the command, the caret moving to
 //!   its end, so the caret's line is spoken as the key's: "ready>
 //!   .\long.ps1". NVDA, captured live on 2026-10-09, says the recalled line
@@ -64,7 +67,7 @@
 use std::io;
 
 use super::terminal::{self, PROMPT};
-use super::terminal_flood::{FLOOD_STEP, line, wait_for_prompt, watch_for_prompt};
+use super::terminal_flood::{FLOOD_STEP, line};
 use crate::registry::ScenarioState;
 use crate::scenario::Scenario;
 use crate::speech::Ending;
@@ -95,8 +98,12 @@ const SHORT_SCRIPT: &str = "for ($line = 1; $line -le 10; $line++) { \"flood lin
 /// How many lines [`SHORT_SCRIPT`] prints.
 const SHORT_LINES: u32 = 10;
 
-/// Two hundred lines of twenty words.
-const LONG_SCRIPT: &str = "for ($line = 1; $line -le 200; $line++) { \"flood line $line one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen\" }\r\n";
+/// Two hundred lines of twenty words, then [`LONG_DONE`] written.
+const LONG_SCRIPT: &str = "for ($line = 1; $line -le 200; $line++) { \"flood line $line one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen\" }\r\n\
+[IO.File]::WriteAllText(\"$PSScriptRoot\\long.done\", '')\r\n";
+
+/// The file [`LONG_SCRIPT`] writes after its last line.
+const LONG_DONE: &str = "long.done";
 
 /// Line `n` of `long.ps1`.
 fn long_line(n: u32) -> String {
@@ -292,19 +299,18 @@ pub(crate) fn setup_line_key_console_host(scenario: &mut Scenario) -> io::Result
     terminal::open_console_host(scenario, "line-key-flood", &[("long.ps1", LONG_SCRIPT)])
 }
 
-/// Up Arrow while the long flood's first line plays, once the prompt is
-/// shown.
-fn line_key_steps(scenario: &mut Scenario) {
+/// Up Arrow while the long flood's first line plays, once the script has
+/// written its last line.
+fn line_key_steps(scenario: &mut Scenario, directory: &str) {
     terminal::type_hearing(scenario, r".\long.ps1", terminal::Echo::Shown);
-    // Watched from here, so the prompt shown before the command, which
-    // Core may report again, is not taken for the one after the flood.
-    let watch = watch_for_prompt(scenario);
     scenario.send_keys(&["enter"]).expect("presses enter");
     let first = scenario.speech().expect_started(&long_line(1));
     let queued = scenario
         .speech()
         .expect_queued(&[&long_line(2), &long_line(3)]);
-    wait_for_prompt(watch);
+    scenario
+        .wait_for_agent_file(&format!(r"{directory}\{LONG_DONE}"), FLOOD_STEP)
+        .expect("the long flood finishes");
     scenario.send_keys(&["uparrow"]).expect("presses Up");
     scenario.speech().expect_ended(&first, Ending::Cancelled);
     for heard in &queued {
@@ -331,14 +337,14 @@ fn up_typing_steps(scenario: &mut Scenario) {
 pub(crate) fn body_line_key_windows_terminal(scenario: &mut Scenario, state: &mut ScenarioState) {
     opened(scenario, state, true);
     up_typing_steps(scenario);
-    line_key_steps(scenario);
+    line_key_steps(scenario, &directory(state));
 }
 
 /// `conhost_line_key_flood`.
 pub(crate) fn body_line_key_console_host(scenario: &mut Scenario, state: &mut ScenarioState) {
     opened(scenario, state, false);
     up_typing_steps(scenario);
-    line_key_steps(scenario);
+    line_key_steps(scenario, &directory(state));
 }
 
 #[cfg(test)]
@@ -353,5 +359,12 @@ mod tests {
     #[test]
     fn a_long_line_is_what_the_script_prints() {
         assert!(LONG_SCRIPT.contains(&long_line(1).replace("line 1 ", "line $line ")));
+    }
+
+    #[test]
+    fn the_long_script_writes_its_file_after_its_lines() {
+        assert!(LONG_SCRIPT.ends_with(&format!(
+            "[IO.File]::WriteAllText(\"$PSScriptRoot\\{LONG_DONE}\", '')\r\n"
+        )));
     }
 }
