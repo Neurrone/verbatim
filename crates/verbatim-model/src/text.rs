@@ -720,20 +720,52 @@ impl TextDetails {
 
 /// A held caret key's starting read, asked at its turn before Core sends
 /// the key on: the caret and the selection's ends, held by the outpost as
-/// the starting point, with the key's unit at the caret, the line at the
-/// caret and, for Delete and Control+Delete, the word at the caret. It
-/// compares no selection.
+/// the starting point, with the key's unit ([`StartingUnit`]) and the line
+/// at the caret. It compares no selection.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StartingRead {
     /// How the node's text is read.
     pub provider: TextProvider,
     /// What the read fetches beyond the text.
     pub details: TextDetails,
-    /// The key's unit.
-    pub unit: TextUnit,
-    /// Whether the word at the caret is read, for Delete and
-    /// Control+Delete, whose watch compares it.
-    pub word: bool,
+    /// The key's unit, and where it is read.
+    pub unit: StartingUnit,
+}
+
+/// Which unit a caret key's starting read reads, and where.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum StartingUnit {
+    /// The key's unit at the caret.
+    At(TextUnit),
+    /// The key's unit at the caret, and the word at the caret, which the
+    /// watch of Delete and Control+Delete compares.
+    AtWithWord(TextUnit),
+    /// The key's unit around the character before the caret, what
+    /// Backspace and Control+Backspace delete, as NVDA's Backspace scripts
+    /// read it: the caret moved back one character, then expanded to the
+    /// unit; nothing at the text's start (`docs/parity/text.md`, "What
+    /// Backspace and Delete say").
+    BeforeCaret(TextUnit),
+}
+
+impl StartingUnit {
+    /// What `motion`'s starting read reads.
+    #[must_use]
+    pub const fn for_motion(motion: CaretMotion) -> Self {
+        match motion {
+            CaretMotion::Delete | CaretMotion::DeleteWord => Self::AtWithWord(motion.unit()),
+            CaretMotion::Backspace | CaretMotion::BackspaceWord => Self::BeforeCaret(motion.unit()),
+            _ => Self::At(motion.unit()),
+        }
+    }
+
+    /// The unit read.
+    #[must_use]
+    pub const fn unit(self) -> TextUnit {
+        match self {
+            Self::At(unit) | Self::AtWithWord(unit) | Self::BeforeCaret(unit) => unit,
+        }
+    }
 }
 
 /// The answer to [`TextOp::StartingRead`].
@@ -745,8 +777,8 @@ pub struct Started {
     /// The caret: the line at it, with the caret at its offset, and the
     /// selection.
     pub caret: CaretReport,
-    /// The key's unit at the caret, the line where the text has no such
-    /// unit.
+    /// The key's unit where [`StartingUnit`] says, the line where the text
+    /// has no such unit; empty before the caret at the text's start.
     pub unit: TextChunk,
     /// The word at the caret, when the request asked for it.
     #[serde(default)]

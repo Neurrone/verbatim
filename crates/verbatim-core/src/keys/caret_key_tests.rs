@@ -248,8 +248,7 @@ fn starting_read(motion: CaretMotion, provider: TextProvider) -> TextOp {
     TextOp::StartingRead(StartingRead {
         provider,
         details: details(motion),
-        unit: motion.unit(),
-        word: matches!(motion, CaretMotion::Delete | CaretMotion::DeleteWord),
+        unit: verbatim_model::StartingUnit::for_motion(motion),
     })
 }
 
@@ -409,13 +408,47 @@ fn a_key_that_moves_nothing_says_its_unit_at_its_bound_and_backspace_nothing() {
     assert_eq!(ended, Step::default());
 }
 
+/// Backspace and Control+Backspace say the provider's unit around the
+/// character before the caret, which the starting read read, whole, as
+/// NVDA's Backspace scripts do (`editableText.py` 291 to 319): a word the
+/// caret is inside is said whole, and a run of stars is the edit
+/// control's one word.
 #[test]
 fn backspace_says_what_it_deleted_from_its_starting_read() {
-    for (motion, text, offset, said) in [
-        (CaretMotion::Backspace, "abc", 3, character("c")),
-        (CaretMotion::BackspaceWord, "one two", 7, spoken("two")),
+    for (motion, (text, offset), before, said) in [
+        (CaretMotion::Backspace, ("abc", 3), "c", character("c")),
+        (
+            CaretMotion::BackspaceWord,
+            ("one two", 7),
+            "two",
+            spoken("two"),
+        ),
+        (
+            CaretMotion::BackspaceWord,
+            ("alpha beta", 8),
+            "beta",
+            spoken("beta"),
+        ),
+        (
+            CaretMotion::BackspaceWord,
+            ("one two", 4),
+            "one ",
+            spoken("one"),
+        ),
+        (
+            CaretMotion::BackspaceWord,
+            ("****", 2),
+            "****",
+            spoken("****"),
+        ),
+        (CaretMotion::BackspaceWord, ("a b", 1), "a ", spoken("a")),
+        (CaretMotion::BackspaceWord, ("a", 1), "a", character("a")),
     ] {
-        let mut held = watching(motion, line(text, 7, offset), unit(motion.unit(), "", 8));
+        let mut held = watching(
+            motion,
+            line(text, 7, offset),
+            unit(motion.unit(), before, 8),
+        );
         let ended = step(
             &mut held,
             20_000,
@@ -600,7 +633,7 @@ fn backspace_with_a_focus_pending_says_its_deleted_text_then_the_focus_is_taken(
     let mut held = watching(
         CaretMotion::Backspace,
         line("x", 7, 1),
-        unit(TextUnit::Character, "", 8),
+        unit(TextUnit::Character, "x", 8),
     );
     let focus = step(&mut held, 40_000, entry(uia_tell(7, Vec::new())));
     assert_eq!(focus.cancelled, [(4, CancelReason::Withdrawn)]);

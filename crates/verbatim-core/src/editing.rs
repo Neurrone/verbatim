@@ -110,24 +110,37 @@ pub(crate) fn selects(key: CaretKey) -> bool {
     key.select || key.motion == CaretMotion::SelectAll
 }
 
-/// What a Backspace is about to delete, from the caret's line before the
-/// key, `offset` being the caret's byte offset in it, or a selection's
-/// start: the character before it, or for Control+Backspace the text from
-/// the start of the word before it up to it. At the
+/// What a Backspace is about to delete, `offset` being the caret's byte
+/// offset in the caret's `line` before the key, or a selection's start.
+/// Outside a terminal it is the provider's `unit` around the character
+/// before the caret, which the starting read read
+/// ([`verbatim_model::StartingUnit::BeforeCaret`]): the character, or for
+/// Control+Backspace the whole word, as NVDA's Backspace scripts say it
+/// (`docs/parity/text.md`, "What Backspace and Delete say"). At the
 /// start of a line other than a terminal's, a Backspace, with or without
-/// Control, deletes the line break before it, the kind of break the text uses, `line_break`
-/// ([`CaretContext::line_break`]), which NVDA names
+/// Control, deletes the line break before it, the kind of break the text
+/// uses, `line_break` ([`CaretContext::line_break`]), which NVDA names
 /// (`docs/nvda/editable-text-and-terminals.md`, "A line break as a
-/// character"). `None` when that is not known, and for other keys.
+/// character"). In a terminal it is the character before the caret, or
+/// the text from the start of the word before it up to it. `None` when
+/// that is not known, and for other keys.
 fn deleted_text(
-    line: &TextChunk,
-    offset: u32,
-    line_break: Option<&str>,
+    (line, offset): (&TextChunk, u32),
+    (unit, line_break): (&TextChunk, Option<&str>),
     motion: CaretMotion,
     grid: bool,
 ) -> Option<String> {
     let content = text::line_content(&line.text, grid);
     let offset = text::boundary(content, text::byte_offset(offset));
+    if !grid && motion.deletes_back() {
+        return if offset > 0 {
+            Some(unit.text.clone()).filter(|deleted| !deleted.is_empty())
+        } else if line.first {
+            None
+        } else {
+            line_break.map(str::to_owned)
+        };
+    }
     match motion {
         CaretMotion::Backspace => match text::previous_grapheme(content, offset) {
             Some(range) => Some(proven::text_in(content, range).to_owned()),
@@ -159,7 +172,7 @@ pub(crate) fn before_of_caret(
     state: &SrState,
     node: NodeId,
     motion: CaretMotion,
-    (caret, unit): (&verbatim_model::CaretReport, Option<&TextChunk>),
+    (caret, unit): (&verbatim_model::CaretReport, &TextChunk),
 ) -> BeforeRead {
     let line = &caret.line;
     let grid = state
@@ -177,7 +190,7 @@ pub(crate) fn before_of_caret(
             Some(None) => return None,
             None => (line, line.offset),
         };
-        deleted_text(start_line, offset, line_break, motion, grid)
+        deleted_text((start_line, offset), (unit, line_break), motion, grid)
     });
     // Backspace's words if the focus moves first start from the selection's
     // start, NVDA's caret.
@@ -189,7 +202,7 @@ pub(crate) fn before_of_caret(
         _ => line.clone(),
     };
     BeforeRead {
-        unit: unit.cloned().unwrap_or_else(|| line.clone()),
+        unit: unit.clone(),
         line: start_line,
         removed,
     }
@@ -292,12 +305,17 @@ pub(crate) fn sentence_words(line: &TextChunk, sentence: &str) -> Vec<UtteranceS
     text::text_segments(spoken, line.language_at(text::byte_offset(line.offset)))
 }
 
-/// The speech for text a Backspace deleted: a character, or a line break
-/// whichever key deleted it, by its name, and a word as text. A carriage
-/// return and line feed deleted together are spoken as the line feed, as
-/// NVDA speaks them (`docs/parity/text.md`, "TextInfo-equivalent layer").
+/// The speech for text a Backspace deleted, as NVDA's Backspace scripts
+/// speak it: one character, or a line break whichever key deleted it, by
+/// its name, and anything longer as text (`editableText.py` 314 to 318). A
+/// carriage return and line feed deleted together are spoken as the line
+/// feed, as NVDA speaks them (`docs/parity/text.md`, "TextInfo-equivalent
+/// layer").
 fn deleted_segments(deleted: &str, motion: CaretMotion) -> Vec<UtteranceSegment> {
-    if motion == CaretMotion::Backspace || text::line_break(deleted) == Some(deleted) {
+    if motion == CaretMotion::Backspace
+        || text::line_break(deleted) == Some(deleted)
+        || verbatim_text::graphemes(deleted).len() == 1
+    {
         let deleted = if deleted == "\r\n" { "\n" } else { deleted };
         text::character_segments(Some(deleted), None)
     } else {

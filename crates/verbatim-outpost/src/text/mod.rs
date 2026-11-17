@@ -137,9 +137,9 @@ pub struct CaretRequest<'a, P> {
     /// report's comparison; a key's read, for which a caret that moved is a
     /// selection that moved, leaves it false).
     pub previous_collapsed: bool,
-    /// A unit to read at the caret besides its line: a word, a paragraph, a
-    /// page.
-    pub unit: Option<TextUnit>,
+    /// A unit to read besides the caret's line: a word, a paragraph or a
+    /// page at the caret, or the unit a Backspace deletes before it.
+    pub unit: Option<CaretUnit>,
     /// Whose formatting to read, with the attributes the theme asks for.
     pub formats: Option<FormatSpan>,
     /// Whether to read the caret again once everything else is read, to
@@ -158,6 +158,16 @@ pub struct CaretRequest<'a, P> {
     pub read_previous_text: bool,
 }
 
+/// A unit a caret read reads besides the caret's line, and where.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CaretUnit {
+    /// The unit at the caret.
+    At(TextUnit),
+    /// The unit around the character before the caret, what a Backspace
+    /// deletes ([`verbatim_model::StartingUnit::BeforeCaret`]).
+    BeforeCaret(TextUnit),
+}
+
 /// The answer to a [`CaretRequest`].
 pub struct CaretRead<P> {
     /// The caret and the selection.
@@ -172,7 +182,7 @@ pub struct CaretRead<P> {
     pub selection_moved: bool,
     /// The caret's line and the caret's UTF-16 offset in it.
     pub line: (Unit<P>, usize),
-    /// The request's unit at the caret, with the caret's offset in it.
+    /// The request's unit, with the caret's offset in it.
     pub unit: Option<(Unit<P>, usize)>,
     /// The formatting of the request's span, UTF-16 ranges of its text.
     pub formats: Vec<Formatting>,

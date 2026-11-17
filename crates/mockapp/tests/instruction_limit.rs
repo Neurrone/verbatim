@@ -22,7 +22,7 @@ use verbatim_uia::{
     Shape, Uia, runtime_id,
 };
 use verbatim_uia_rops::{
-    Attributes, Builder, CaretLineQuery, CaretQuery, Comparison, ControlledQuery, Error,
+    Attributes, Builder, CaretLineQuery, CaretQuery, CaretUnit, Comparison, ControlledQuery, Error,
     FocusAncestry, FocusQuery, FormatSpan, MOST_RUNS, Movement, NavigationDirection, PathQuery,
     Position, RangeAction, RangeEnd, RangeQuery, RowsQuery, SnapshotQuery, StatesQuery, Status,
     StepQuery, TextAttribute, TextFrom, TextTarget, TreeQuery, UnitsQuery, WatchQuery,
@@ -493,7 +493,7 @@ fn caret_reads_execute_exactly() {
     };
     let worst = counted(|| {
         let mut worst = caret_query(&notes, &pattern, Some(old));
-        worst.unit = Some(TextUnit_Word);
+        worst.unit = Some(CaretUnit::At(TextUnit_Word));
         worst.read_selection_text = true;
         worst.read_previous_text = true;
         worst.recheck = true;
@@ -964,7 +964,7 @@ fn watch_checks_execute_exactly() {
             since: None,
             previous_selection: None,
             previous_collapsed: false,
-            unit: Some(TextUnit_Word),
+            unit: Some(CaretUnit::At(TextUnit_Word)),
             formats: None,
             attributes: Attributes::NONE,
             learning: Attributes::NONE,

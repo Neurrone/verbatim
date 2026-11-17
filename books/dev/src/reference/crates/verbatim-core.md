@@ -979,10 +979,12 @@ The answer updates the caret and speaks, queued:
   word by its name.
 - Up and Down Arrow, the page keys, Control with Home or End: the line.
 - Control with Up or Down Arrow: the paragraph, or the line.
-- Backspace and Control+Backspace: over a selection, the text before the
-  caret as the key found it, then the selection's change; otherwise what
-  the key removed, from evidence (`editing::removal`), including the line
-  break at a line's start, of the kind last seen.
+- Backspace and Control+Backspace: the provider's character or whole word
+  around the character before the caret, or before a selection's start,
+  which the starting read read (`StartingUnit::BeforeCaret`), spoken as a
+  character when it is one and as text otherwise, as NVDA's Backspace
+  scripts speak it; at a line's start the line break, of the kind last
+  seen; over a selection, then the selection's change.
 - Delete and Control+Delete: the character or word now at the caret.
 - Any other passed key that types nothing (`CaretMotion::Other`, from the
   hook's `KeyReport::Passed`, and the clearing keys): text it removed, a

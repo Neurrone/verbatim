@@ -104,8 +104,13 @@ fn a_check_with_nothing_changed_shows_no_effect() {
     common::init_com();
     let (mut app, hwnd) = start("mockapp-watch-none");
     both_ways(&mut app, hwnd, |_, source, anchors| {
-        let started = starting_read(source, anchors, READ_AT, (TextUnit::Word, false))
-            .expect("the starting read");
+        let started = starting_read(
+            source,
+            anchors,
+            READ_AT,
+            verbatim_model::StartingUnit::At(TextUnit::Word),
+        )
+        .expect("the starting read");
         let motion = CaretMotion::NextWord;
         assert_eq!(
             check(
@@ -138,8 +143,13 @@ fn a_check_after_the_caret_moved_shows_the_effect() {
     common::init_com();
     let (mut app, hwnd) = start("mockapp-watch-moved");
     both_ways(&mut app, hwnd, |app, source, anchors| {
-        let started = starting_read(source, anchors, READ_AT, (TextUnit::Word, false))
-            .expect("the starting read");
+        let started = starting_read(
+            source,
+            anchors,
+            READ_AT,
+            verbatim_model::StartingUnit::At(TextUnit::Word),
+        )
+        .expect("the starting read");
         common::apply(app, hwnd, "caret doc 6");
         let checked = check(
             source,
@@ -166,8 +176,13 @@ fn a_check_after_a_deletion_shows_the_words_change() {
     let (mut app, hwnd) = start("mockapp-watch-deleted");
     both_ways(&mut app, hwnd, |app, source, anchors| {
         common::apply(app, hwnd, "caret doc 6");
-        let started = starting_read(source, anchors, READ_AT, (TextUnit::Character, true))
-            .expect("the starting read");
+        let started = starting_read(
+            source,
+            anchors,
+            READ_AT,
+            verbatim_model::StartingUnit::AtWithWord(TextUnit::Character),
+        )
+        .expect("the starting read");
         assert_eq!(
             started.word.as_ref().map(|word| word.text.as_str()),
             Some("beta")

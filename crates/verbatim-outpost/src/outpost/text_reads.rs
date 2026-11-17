@@ -588,7 +588,7 @@ pub(super) fn answer_asked(
     let replied = match op {
         TextOp::StartingRead(read) => {
             on_text!(context, node_id, details, &named, |source, text| {
-                text::held::starting_read(source, text, read_at_us, (read.unit, read.word))
+                text::held::starting_read(source, text, read_at_us, read.unit)
                     .map_or_else(failed_reply, |started| {
                         TextReply::Started(Box::new(started))
                     })
@@ -838,13 +838,7 @@ fn terminal_caret(
         .ok();
         return Ok(None);
     };
-    match text::held::starting_from(
-        source,
-        &mut call.text(),
-        found,
-        answer.started_us,
-        (unit, false),
-    ) {
+    match text::held::starting_from(source, &mut call.text(), found, answer.started_us, unit) {
         Ok(started) => {
             answer.snapshot.caret = Some(started.caret);
             Ok(Some(started.point))

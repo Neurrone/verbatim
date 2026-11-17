@@ -228,9 +228,9 @@ pub struct CaretQuery<'a> {
     /// [`CaretAnswer::selection_moved`] is false. A caret key's watch, for
     /// which a caret that moved is a selection that moved, leaves it false.
     pub previous_collapsed: bool,
-    /// A unit to read at the caret besides the line: a word, a paragraph,
-    /// or a page.
-    pub unit: Option<TextUnit>,
+    /// A unit to read besides the line: a word, a paragraph, or a page at
+    /// the caret, or the unit Backspace deletes before it.
+    pub unit: Option<CaretUnit>,
     /// Whose formatting to read, if any.
     pub formats: Option<FormatSpan>,
     /// The attributes to read.
@@ -260,6 +260,19 @@ pub struct CaretQuery<'a> {
     /// [`previous_collapsed`](Self::previous_collapsed)
     /// ([`CaretAnswer::previous_text`]).
     pub read_previous_text: bool,
+}
+
+/// A unit a caret read reads besides the line ([`CaretQuery::unit`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CaretUnit {
+    /// The unit at the caret.
+    At(TextUnit),
+    /// The unit around the character before the caret, what a Backspace
+    /// deletes, as NVDA's Backspace scripts read it (`editableText.py` 291
+    /// to 319): the caret moved back one character, then expanded to the
+    /// unit; at the document's start, where it moves nothing, the caret
+    /// itself, with no text.
+    BeforeCaret(TextUnit),
 }
 
 /// Text that became selected or stopped being selected
@@ -627,6 +640,37 @@ impl Constants {
     ) -> UnitRegisters {
         let range = b.text_range_clone(point);
         b.text_range_expand_to_enclosing_unit(range, unit);
+        self.unit_read(b, point, range)
+    }
+
+    /// Emits the `unit` around the character before `point`
+    /// ([`CaretUnit::BeforeCaret`]): a copy of `point` moved back one
+    /// character and, when it moved, expanded to the unit.
+    pub(crate) fn unit_before(
+        &self,
+        b: &mut Builder,
+        point: Reg<kind::TextRange>,
+        unit: Reg<kind::Int>,
+    ) -> UnitRegisters {
+        let range = b.text_range_clone(point);
+        let character = b.int(TextUnit_Character.0);
+        let back = b.int(-1);
+        let moved = b.text_range_move(range, character, back);
+        let moved = b.not_equal(moved, self.zero);
+        b.if_(moved, |b| {
+            b.text_range_expand_to_enclosing_unit(range, unit);
+        });
+        self.unit_read(b, point, range)
+    }
+
+    /// Emits the reads of a unit's `range`: its text, and how much of it
+    /// comes before `point`.
+    fn unit_read(
+        &self,
+        b: &mut Builder,
+        point: Reg<kind::TextRange>,
+        range: Reg<kind::TextRange>,
+    ) -> UnitRegisters {
         let text = b.text_range_get_text(range, self.max_text);
         let before = b.text_range_clone(range);
         b.text_range_move_endpoint_by_range(before, self.end, point, self.start);
@@ -1152,9 +1196,15 @@ fn build(b: &mut Builder, query: &CaretQuery<'_>) -> ReadRegisters {
         let first = b.equal(order, c.zero);
         b.set(start_first, first);
     });
-    let unit = query.unit.map(|unit| {
-        let unit = b.int(unit.0);
-        c.unit_at(b, point, unit)
+    let unit = query.unit.map(|unit| match unit {
+        CaretUnit::At(unit) => {
+            let unit = b.int(unit.0);
+            c.unit_at(b, point, unit)
+        }
+        CaretUnit::BeforeCaret(unit) => {
+            let unit = b.int(unit.0);
+            c.unit_before(b, point, unit)
+        }
     });
     let ids: Vec<TextAttribute> = query.attributes.iter().collect();
     let runs = match query.formats {
@@ -1219,7 +1269,7 @@ struct ProgramKey {
     since: Option<i32>,
     previous_selection: Option<(i32, i32)>,
     previous_collapsed: bool,
-    unit: Option<i32>,
+    unit: Option<(i32, bool)>,
     formats: Option<FormatSpan>,
     attributes: Attributes,
     learning: Attributes,
@@ -1241,7 +1291,10 @@ impl ProgramKey {
                 )
             }),
             previous_collapsed: query.previous_collapsed,
-            unit: query.unit.map(|unit| unit.0),
+            unit: query.unit.map(|unit| match unit {
+                CaretUnit::At(unit) => (unit.0, false),
+                CaretUnit::BeforeCaret(unit) => (unit.0, true),
+            }),
             formats: query.formats,
             attributes: query.attributes,
             learning: query.learning,
@@ -1617,6 +1670,31 @@ pub(crate) fn unit_at(
 ) -> Result<UnitRead, Error> {
     let range = point.clone_range()?;
     range.expand(unit)?;
+    unit_read(point, range, max_text)
+}
+
+/// The `unit` around the character before `point`, as
+/// [`Constants::unit_before`] emits it. Six calls, five at the document's
+/// start.
+fn unit_before(
+    point: &IUIAutomationTextRange,
+    unit: TextUnit,
+    max_text: i32,
+) -> Result<UnitRead, Error> {
+    let range = point.clone_range()?;
+    if range.move_by(TextUnit_Character, -1)? != 0 {
+        range.expand(unit)?;
+    }
+    unit_read(point, range, max_text)
+}
+
+/// A unit's `range` read: its text, and how much of it comes before
+/// `point`.
+fn unit_read(
+    point: &IUIAutomationTextRange,
+    range: IUIAutomationTextRange,
+    max_text: i32,
+) -> Result<UnitRead, Error> {
     let text = range.text(max_text)?;
     let before = range.clone_range()?;
     before.move_endpoint_to(Endpoint::End, point, Endpoint::Start)?;
@@ -1876,7 +1954,10 @@ pub fn caret_read_classic(query: &CaretQuery<'_>) -> Result<CaretAnswer, Error> 
     };
     let unit = query
         .unit
-        .map(|unit| unit_at(&point, unit, query.max_text))
+        .map(|unit| match unit {
+            CaretUnit::At(unit) => unit_at(&point, unit, query.max_text),
+            CaretUnit::BeforeCaret(unit) => unit_before(&point, unit, query.max_text),
+        })
         .transpose()?;
     let (runs, unsupported) = classic_formats(query, &point, &line, unit.as_ref())?;
     let moved_while_read = if query.recheck {

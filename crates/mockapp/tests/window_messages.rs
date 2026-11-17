@@ -170,8 +170,7 @@ fn a_slow_edit_control_answers_its_selection() {
             op: TextOp::StartingRead(StartingRead {
                 provider: TextProvider::EditMessages,
                 details: TextDetails::ALL,
-                unit: CaretMotion::NextCharacter.unit(),
-                word: false,
+                unit: verbatim_model::StartingUnit::for_motion(CaretMotion::NextCharacter),
             }),
         },
     );

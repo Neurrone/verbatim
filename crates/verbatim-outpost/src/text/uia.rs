@@ -56,10 +56,10 @@ use verbatim_uia_rops::{
 };
 
 use super::{
-    CaretRead, CaretRequest, CaretState, FormatSpan, Formatting, Located, MAX_CHUNK_UNITS,
-    MAX_RANGE_UNITS, PastEnds, PointFrom, RangeAction, RangeRead, SelectionAfter, SelectionStart,
-    Sentences, TextError, TextResult, TextSource, Unit, UnitRead, UnitsAnswer, UnitsRead,
-    UnitsRequest, WatchRead, WatchRequest,
+    CaretRead, CaretRequest, CaretState, CaretUnit, FormatSpan, Formatting, Located,
+    MAX_CHUNK_UNITS, MAX_RANGE_UNITS, PastEnds, PointFrom, RangeAction, RangeRead, SelectionAfter,
+    SelectionStart, Sentences, TextError, TextResult, TextSource, Unit, UnitRead, UnitsAnswer,
+    UnitsRead, UnitsRequest, WatchRead, WatchRequest,
 };
 
 /// A position in UIA text: an end of a range.
@@ -620,7 +620,12 @@ impl TextSource for UiaText {
             None => None,
         };
         // A unit this text does not have is not read.
-        let unit = request.unit.and_then(|unit| self.unit(unit));
+        let unit = request.unit.and_then(|unit| match unit {
+            CaretUnit::At(unit) => self.unit(unit).map(verbatim_uia_rops::CaretUnit::At),
+            CaretUnit::BeforeCaret(unit) => self
+                .unit(unit)
+                .map(verbatim_uia_rops::CaretUnit::BeforeCaret),
+        });
         let attributes = attributes_for(self.details).without(self.support.unsupported);
         let learning = attributes
             .without(self.support.supported)

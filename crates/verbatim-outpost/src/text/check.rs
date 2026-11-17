@@ -21,9 +21,9 @@ use verbatim_model::{
 };
 
 use super::{
-    CaretRequest, CaretState, FormatSpan, Formatting, LastRead, MAX_CHUNK_BYTES, NodeText,
-    TextError, TextResult, TextSource, Unit, WatchRequest, before_unit_text, beside, caret_line,
-    extra_unit, format_span, report_for, same_state, to_utf8, unit_at_caret,
+    CaretRequest, CaretState, CaretUnit, FormatSpan, Formatting, LastRead, MAX_CHUNK_BYTES,
+    NodeText, TextError, TextResult, TextSource, Unit, WatchRequest, before_unit_text, beside,
+    caret_line, extra_unit, format_span, report_for, same_state, to_utf8, unit_at_caret,
 };
 
 /// How many times a check reads again when the caret moved while it read,
@@ -234,7 +234,7 @@ pub fn final_read<S: TextSource>(
         since: None,
         previous: None,
         previous_collapsed: false,
-        unit: extra_unit(source, unit),
+        unit: extra_unit(source, unit).map(CaretUnit::At),
         formats: span,
         recheck: false,
         read_selection_text: false,

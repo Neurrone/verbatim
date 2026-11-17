@@ -93,10 +93,10 @@ pub use text::{
     LanguageRun, LineStyle, MAX_CHUNK_BYTES, MAX_RANGE_BYTES, MAX_READ_AHEAD, MAX_READ_AHEAD_TEXT,
     MAX_SELECTION_TEXT_BYTES, ReadFacts, Selection, SelectionChange, SelectionDifference,
     SelectionRead, SelectionReadReply, SentenceMove, SentenceMoved, Started, StartingRead,
-    TerminalRead, TerminalReadReply, TextAnchor, TextAttributes, TextChunk, TextDetails,
-    TextFailure, TextMovement, TextOp, TextPoint, TextPosition, TextProvider, TextRead,
-    TextReadAhead, TextReply, TextThrough, TextUnit, Watch, WatchFinalRead, Watched, WatchedRead,
-    had_effect,
+    StartingUnit, TerminalRead, TerminalReadReply, TextAnchor, TextAttributes, TextChunk,
+    TextDetails, TextFailure, TextMovement, TextOp, TextPoint, TextPosition, TextProvider,
+    TextRead, TextReadAhead, TextReply, TextThrough, TextUnit, Watch, WatchFinalRead, Watched,
+    WatchedRead, had_effect,
 };
 pub use theme::{
     DEFAULT_GAIN, Indication, IndicationCategory, IndicationSetting, MAX_GAIN, Presentation,

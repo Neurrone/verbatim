@@ -313,7 +313,9 @@ them yet.
   and `SentTransition`.
 - A caret key's text requests (`TextOp`): `StartingRead`, answered
   `Started` with the starting point the outpost holds, the caret, the
-  key's unit and, for Delete, the word; `Watch`, naming the starting
+  key's unit where its `StartingUnit` says (at the caret, with the word
+  for Delete, or around the character before the caret for Backspace and
+  Control+Backspace, `StartingUnit::for_motion`); `Watch`, naming the starting
   point, the key's motion, the pass time, the poll interval, whether a UI
   Automation event within 60 ms brings a check forward, the bound and the
   `WatchFinalRead`, answered `Watched` (the effect or the bound, with a

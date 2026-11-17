@@ -27,8 +27,8 @@ use common::core_driver::CoreDriver;
 use common::outpost::OutpostUnderTest;
 use verbatim_model::request::Request;
 use verbatim_model::{
-    CaretReport, ReviewCommand, SegmentContent, SpeechMark, TextChunk, TextMovement, TextOp,
-    TextPoint, TextPosition, TextRead, TextReadAhead, TextReply, TextUnit,
+    CaretReport, ReviewCommand, SegmentContent, SpeechMark, StartingUnit, TextChunk, TextMovement,
+    TextOp, TextPoint, TextPosition, TextRead, TextReadAhead, TextReply, TextUnit,
 };
 use verbatim_outpost::text::edit::EditText;
 use verbatim_outpost::text::uia::UiaText;
@@ -36,7 +36,7 @@ use verbatim_outpost::text::{Anchors, NodeText, TextSource, check, held, perform
 use verbatim_uia::Uia;
 use verbatim_uia::text::Endpoint;
 use verbatim_uia_rops::{
-    Attributes, CaretAnswer, CaretQuery, FormatSpan, LocationQuery, Movement, Position,
+    Attributes, CaretAnswer, CaretQuery, CaretUnit, FormatSpan, LocationQuery, Movement, Position,
     RangeAction, RangeAnswer, RangeEnd, RangeQuery, RunAttributes, TextAttribute, TextFrom,
     TextTarget, UnitsAnswer, UnitsQuery, caret_read_classic, caret_read_remote,
     text_location_classic, text_location_remote, text_range_classic, text_range_remote,
@@ -338,6 +338,8 @@ fn uia_text_reads_moves_and_answers_caret_keys() {
         &mut anchors,
         UIA_SECOND_WORD,
     );
+    // Control+Backspace with the caret inside "beta" reads it whole.
+    backspace_reads(&mut app, hwnd, &mut source, &mut anchors, (8, "e", "beta"));
     // And the same keys answered the classic way, with remote operations
     // off.
     let mut classic = uia_notes(hwnd, false);
@@ -349,6 +351,7 @@ fn uia_text_reads_moves_and_answers_caret_keys() {
         &mut anchors,
         UIA_SECOND_WORD,
     );
+    backspace_reads(&mut app, hwnd, &mut classic, &mut anchors, (8, "e", "beta"));
     app.quit();
 }
 
@@ -467,7 +470,10 @@ fn remote_and_classic_caret_reads_agree() {
         ]
     );
     // The word, with its formatting.
-    let word = caret_both(&query(Some(FormatSpan::Unit), Some(TextUnit_Word)));
+    let word = caret_both(&query(
+        Some(FormatSpan::Unit),
+        Some(CaretUnit::At(TextUnit_Word)),
+    ));
     assert_eq!(word.unit, Some(("beta".to_owned(), 1)));
     assert_eq!(word.runs, [(4, mock_attributes(true, false))]);
     // The character alone.
@@ -1295,6 +1301,47 @@ fn runs_of_one_mark_are_words(
     assert_eq!(
         [first.text, second.text, third.text],
         ["****  ", "... ", "**"]
+    );
+    // Control+Backspace inside the stars reads them whole.
+    backspace_reads(app, hwnd, source, anchors, (2, "*", "****  "));
+}
+
+/// What the starting reads of Backspace and Control+Backspace find with
+/// the caret at `caret` (`held::starting_read` with
+/// `StartingUnit::BeforeCaret`), as NVDA's Backspace scripts read what
+/// they delete: the `character` before the caret and the provider's whole
+/// `word` around that character, the caret at the word's end or inside
+/// it; and nothing at the text's start.
+fn backspace_reads<S: TextSource>(
+    app: &mut common::MockApp,
+    hwnd: HWND,
+    source: &mut S,
+    anchors: &mut NodeText<'_, S::Pos>,
+    (caret, character, word): (usize, &str, &str),
+) {
+    let before = |source: &mut S, anchors: &mut NodeText<'_, S::Pos>, unit| {
+        held::starting_read(source, anchors, 1, StartingUnit::BeforeCaret(unit))
+            .expect("the starting read")
+            .unit
+            .text
+    };
+    common::apply(app, hwnd, &format!("caret doc {caret}"));
+    assert_eq!(
+        [
+            before(source, anchors, TextUnit::Character),
+            before(source, anchors, TextUnit::Word),
+        ],
+        [character, word],
+        "the caret at {caret}"
+    );
+    common::apply(app, hwnd, "caret doc 0");
+    assert_eq!(
+        [
+            before(source, anchors, TextUnit::Character),
+            before(source, anchors, TextUnit::Word),
+        ],
+        ["", ""],
+        "the caret at the text's start"
     );
 }
 

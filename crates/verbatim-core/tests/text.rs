@@ -388,7 +388,11 @@ impl Text {
             [Heard::Asked(starting_read(motion, self.provider))]
         );
         let before = self.caret.clone();
-        let at = unit_at(&before.line, motion.unit());
+        let at = if motion.deletes_back() {
+            unit_before(&before, motion.unit())
+        } else {
+            unit_at(&before.line, motion.unit())
+        };
         self.reply(TextReply::Started(Box::new(Started {
             point: TextAnchor(50),
             caret: before,
@@ -592,6 +596,37 @@ fn unit_at(line: &TextChunk, unit: TextUnit) -> TextChunk {
     self::unit(unit, text, line.start.0 + 1_000)
 }
 
+/// The `unit` around the character before the caret of `caret`, or
+/// before its selection's start when that lies on its line, as the
+/// outpost's starting read reads it for a Backspace
+/// (`verbatim_model::StartingUnit::BeforeCaret`): the character, or the
+/// word with the spaces after it, as [`unit_at`] finds them; empty at the
+/// line's start.
+fn unit_before(caret: &CaretReport, unit: TextUnit) -> TextChunk {
+    let line = &caret.line;
+    let at = caret
+        .selection
+        .as_ref()
+        .filter(|selection| selection.range.start.anchor == line.start)
+        .map_or(line.offset, |selection| selection.range.start.offset) as usize;
+    let before = &line.text[..at];
+    let Some(last) = before.chars().last() else {
+        return self::unit(unit, "", line.start.0 + 1_000);
+    };
+    let start = match unit {
+        TextUnit::Word => before
+            .trim_end_matches(' ')
+            .rfind(' ')
+            .map_or(0, |space| space + 1),
+        _ => at - last.len_utf8(),
+    };
+    let from = TextChunk {
+        offset: u32::try_from(start).expect("a short line"),
+        ..line.clone()
+    };
+    unit_at(&from, unit)
+}
+
 fn character(text: &str) -> UtteranceSegment {
     UtteranceSegment::new(SegmentContent::Character(text.to_owned()))
 }
@@ -633,8 +668,7 @@ fn starting_read(motion: CaretMotion, provider: TextProvider) -> TextOp {
     TextOp::StartingRead(verbatim_model::StartingRead {
         provider,
         details: details(motion),
-        unit: motion.unit(),
-        word: matches!(motion, CaretMotion::Delete | CaretMotion::DeleteWord),
+        unit: verbatim_model::StartingUnit::for_motion(motion),
     })
 }
 

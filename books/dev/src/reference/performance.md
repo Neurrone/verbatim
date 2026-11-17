@@ -1049,6 +1049,13 @@ caret and the key's unit (`starting_reads_cost_exactly`).
 - Today: 1 UIA call remotely, 8 classically, 5 window messages in a
   Win32 edit control: the caret report's read, the unit taken from the
   line it read.
+- Backspace's and Control+Backspace's, which read the character or the
+  word around the character before the caret, the text the key would
+  delete: 1 UIA call remotely, the unit read in the same program; 15
+  classically, the caret's copy moved back a character, expanded, and its
+  text and its part before the caret read; 20 window messages in a Win32
+  edit control, the character before the caret and the unit around it
+  each found from its line's messages.
 - Wake-ups: two more of the hook's thread per held key, and the read's
   round trip: roughly 8 to 13 wake-ups and 0.7 to 1.5 ms of processor time
   per held key in the terminals, measured with the read before each key

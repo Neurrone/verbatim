@@ -23,7 +23,7 @@
 use verbatim_model::request::{CancelReason, CaretBinding, Reply, Request as Wire};
 use verbatim_model::{
     CaretKey, CaretMotion, KeySeq, NodeId, OutpostId, SentenceMove, SentenceMoved, Started,
-    StartingRead, TextDetails, TextFailure, TextOp, TextProvider, TextReply, TraceId,
+    StartingRead, StartingUnit, TextDetails, TextFailure, TextOp, TextProvider, TextReply, TraceId,
     UtteranceSegment, Watch, WatchFinalRead, Watched, WatchedRead,
 };
 
@@ -327,11 +327,7 @@ pub(crate) async fn run(mut cx: Cx<Entries>, press: CaretPress) {
     let starting = StartingRead {
         provider: binding.provider,
         details: key_details(&cx, &press),
-        unit: press.key.motion.unit(),
-        word: matches!(
-            press.key.motion,
-            CaretMotion::Delete | CaretMotion::DeleteWord
-        ),
+        unit: StartingUnit::for_motion(press.key.motion),
     };
     let request = StartingReadRequest(OnNode::of(&binding, TextOp::StartingRead(starting)));
     let Some(started) = starting_read(&mut cx, request, due_us).await else {
@@ -731,7 +727,7 @@ fn deleted(
         state,
         binding.node,
         key.motion,
-        (&started.caret, Some(&started.unit)),
+        (&started.caret, &started.unit),
     );
     editing::focus_first_words(
         state,

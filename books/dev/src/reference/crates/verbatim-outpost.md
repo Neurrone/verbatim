@@ -814,8 +814,15 @@ Core's `Request::Text` (`text_reads::answer_asked`, `text::held`) holds
 reads behind ids Core names, released as anchors are (Table 16):
 
 - `StartingRead`: the caret and the selection held as the starting point,
-  with the key's unit at the caret (the line where the text has none) and,
-  for Delete, the word; it compares no selection.
+  with the key's unit where its `StartingUnit` says: at the caret (the
+  line where the text has none), with the word at the caret for Delete,
+  or, for Backspace and Control+Backspace, around the character before
+  the caret, as NVDA's Backspace scripts read what they delete: the
+  caret moved back a character and expanded to the unit, nothing at the
+  text's start (`held::unit_before_caret`). Through UI Automation that
+  unit is read in the caret read's own program (`CaretUnit::BeforeCaret`);
+  an edit control moves back and reads it by its messages. It compares
+  no selection.
 - A focus's caret read (`held::read_focus`): the caret, its line with
   the formatting the focus request's `details` name, and the selection
   with its text, held as the next baseline, compared with nothing.

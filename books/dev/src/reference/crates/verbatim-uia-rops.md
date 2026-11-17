@@ -475,7 +475,10 @@ The `CaretAnswer`:
 - `moved`: the caret is not where `since` says; `selection_moved`: the
   selection's ends are not the known ones.
 - `line` and `unit`: each a `UnitRead`, the range, its text, and how many
-  UTF-16 code units of it come before the caret.
+  UTF-16 code units of it come before the caret. The query's `unit` is a
+  `CaretUnit`: `At` the caret, or `BeforeCaret`, the caret's copy moved
+  back one character and, when it moved, expanded to the unit, what a
+  Backspace deletes.
 - `runs`: the formatting, stretch by stretch, each a `Run`, a length in
   UTF-16 code units and its `RunAttributes`: spelling or grammar error
   (`ANNOTATION_SPELLING_ERROR`, 60001, `ANNOTATION_GRAMMAR_ERROR`,

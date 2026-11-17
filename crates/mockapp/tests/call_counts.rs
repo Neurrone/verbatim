@@ -63,8 +63,8 @@ use verbatim_model::{
     CallCounts, QueryKind, ReportedDetails, Role, SegmentContent, StateSet, WindowHandle,
 };
 use verbatim_model::{
-    TextMovement, TextOp, TextPoint, TextPosition, TextRead, TextReadAhead, TextReply, TextThrough,
-    TextUnit, Theme,
+    StartingUnit, TextMovement, TextOp, TextPoint, TextPosition, TextRead, TextReadAhead,
+    TextReply, TextThrough, TextUnit, Theme,
 };
 use verbatim_outpost::dialog_text::{UiaDialog, dialog_text};
 use verbatim_outpost::text::edit::EditText;
@@ -3998,18 +3998,70 @@ fn caret_tell_reads_cost_exactly() {
 /// messages. Remotely one program; classically the caret report's 8
 /// calls, the unit read from the line already read; in the edit control
 /// the caret report's 5 window messages.
+///
+/// The starting reads of Backspace and Control+Backspace, the caret inside
+/// "alpha", read the character or the word around the character before
+/// the caret too (`StartingUnit::BeforeCaret`): remotely in the same
+/// program, one call; classically the caret read's calls and the unit's,
+/// the caret copied, moved back a character and expanded, its text and
+/// its part before the caret read, 15 calls in all; in the edit control
+/// the caret report's messages, then the character before the caret and
+/// the unit around it, each found from its line's messages, 20 window
+/// messages.
 fn starting_reads_cost_exactly() {
     common::init_com();
     let mut ratchet = Ratchet::default();
-    for (operation, remote, expected) in [
-        ("UIA starting read, remotely", true, calls(1, 0, 0)),
-        ("UIA starting read, classically", false, calls(8, 0, 0)),
+    let character = (StartingUnit::At(TextUnit::Character), "l");
+    let word = (StartingUnit::BeforeCaret(TextUnit::Word), "alpha ");
+    let before = (StartingUnit::BeforeCaret(TextUnit::Character), "a");
+    for (operation, remote, read, expected) in [
+        (
+            "UIA starting read, remotely",
+            true,
+            character,
+            calls(1, 0, 0),
+        ),
+        (
+            "UIA starting read, classically",
+            false,
+            character,
+            calls(8, 0, 0),
+        ),
+        (
+            "UIA Control+Backspace starting read, remotely",
+            true,
+            word,
+            calls(1, 0, 0),
+        ),
+        (
+            "UIA Control+Backspace starting read, classically",
+            false,
+            word,
+            calls(15, 0, 0),
+        ),
+        (
+            "UIA Backspace starting read, remotely",
+            true,
+            before,
+            calls(1, 0, 0),
+        ),
+        (
+            "UIA Backspace starting read, classically",
+            false,
+            before,
+            calls(15, 0, 0),
+        ),
     ] {
         let title = common::unique_title("mockapp-counts-starting-read");
         let mut app = common::spawn("text.json", "uia", &title);
         let hwnd = common::find_window(&title);
         let mut source = uia_notes(hwnd).remote(remote);
-        let measured = starting_read_calls(&mut app, hwnd, &mut source, verbatim_uia::calls::take);
+        let measured = starting_read_calls(
+            &mut app,
+            hwnd,
+            &mut source,
+            (verbatim_uia::calls::take, read),
+        );
         app.quit();
         ratchet.check_calls(operation, measured, expected);
     }
@@ -4026,38 +4078,52 @@ fn starting_reads_cost_exactly() {
         )
     }
     .expect("mockapp's edit control");
-    let mut source = EditText::new(edit.0 as isize, 0);
-    let measured = starting_read_calls(&mut app, hwnd, &mut source, verbatim_ia2::calls::take);
+    for (operation, read, expected) in [
+        ("Edit control starting read", character, calls(0, 0, 5)),
+        (
+            "Edit control Control+Backspace starting read",
+            word,
+            calls(0, 0, 20),
+        ),
+        (
+            "Edit control Backspace starting read",
+            before,
+            calls(0, 0, 20),
+        ),
+    ] {
+        let mut source = EditText::new(edit.0 as isize, 0);
+        let measured = starting_read_calls(
+            &mut app,
+            hwnd,
+            &mut source,
+            (verbatim_ia2::calls::take, read),
+        );
+        ratchet.check_calls(operation, measured, expected);
+    }
     app.quit();
-    ratchet.check_calls("Edit control starting read", measured, calls(0, 0, 5));
     ratchet.finish();
 }
 
-/// The calls of one starting read of `source`, mockapp's "Notes"
-/// document, its caret moved to the second character, as `take` counts
-/// them; the read must find the character there.
+/// The calls of one starting read of `source` for `unit`, mockapp's
+/// "Notes" document, its caret moved to the second character, as `take`
+/// counts them; the read must find `text`, the unit's.
 fn starting_read_calls<S: TextSource>(
     app: &mut common::MockApp,
     hwnd: HWND,
     source: &mut S,
-    take: fn() -> CallCounts,
+    (take, (unit, text)): (fn() -> CallCounts, (StartingUnit, &str)),
 ) -> CallCounts {
     let mut store = Anchors::new(Arc::default());
     let mut anchors = store.node(1);
     common::apply(app, hwnd, "caret doc 1");
     let _ = take();
-    let started = verbatim_outpost::text::held::starting_read(
-        source,
-        &mut anchors,
-        1,
-        (TextUnit::Character, false),
-    )
-    .expect("the starting read");
+    let started = verbatim_outpost::text::held::starting_read(source, &mut anchors, 1, unit)
+        .expect("the starting read");
     let measured = take();
     assert_eq!(
         (started.caret.line.offset, started.unit.text.as_str()),
-        (1, "l"),
-        "the caret and the character at it"
+        (1, text),
+        "the caret and the unit {unit:?}"
     );
     measured
 }
@@ -4116,7 +4182,7 @@ fn watch_checks_cost_exactly() {
             &mut source,
             &mut anchors,
             1,
-            (TextUnit::Line, false),
+            verbatim_model::StartingUnit::At(TextUnit::Line),
         )
         .expect("the starting read");
         common::apply(&mut app, hwnd, "caret doc 11");

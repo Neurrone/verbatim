@@ -778,7 +778,7 @@ fn a_starting_read_holds_the_point_with_the_keys_unit_and_word() {
         &mut source,
         &mut anchors.node(1),
         REPORTED_AT,
-        (TextUnit::Character, true),
+        verbatim_model::StartingUnit::AtWithWord(TextUnit::Character),
     )
     .expect("the fake answers");
     assert_eq!(started.unit.text, "b");
@@ -865,7 +865,7 @@ fn sentence_from(caret: usize, forward: bool) -> (TextReply, usize) {
         &mut source,
         &mut anchors.node(1),
         REPORTED_AT,
-        (TextUnit::Sentence, false),
+        verbatim_model::StartingUnit::At(TextUnit::Sentence),
     )
     .expect("the fake answers");
     let reply =
@@ -971,7 +971,7 @@ fn watched(
         before,
         &mut anchors.node(1),
         REPORTED_AT,
-        (motion.unit(), motion.compares_unit()),
+        verbatim_model::StartingUnit::for_motion(motion),
     )
     .expect("the fake answers");
     after(before);

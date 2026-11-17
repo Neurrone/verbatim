@@ -253,11 +253,18 @@ NVDA's Backspace and Delete scripts speak what they expect the key to
 remove: Control+Backspace in a Windows Forms password box says "4 star"
 (`winforms-password-deleting-keys.txt` in
 `target/e2e-evidence/m42-protected-fixes-2026-10-22/`).
-Verbatim: **matched** (Dickson, 2026-11-16): Backspace and
-Control+Backspace say what the key's starting read shows them about to
-delete, the character or the text from the word's start before the
-caret, or before a selection's start, "blank" at the text's start, once
-the key's effect shows, and nothing at the bound, as NVDA's scripts do
+Verbatim: **matched**: Backspace and Control+Backspace say what the
+key's starting read shows them about to delete, the provider's character
+or whole word around the character before the caret, or before a
+selection's start, as NVDA's scripts move back a character and expand it
+to the unit (`editableText.py` 291 to 319), so Control+Backspace inside a
+word says the whole word and in a password box the run of stars, the
+edit control's one word ("****", "4 star" once symbols are processed);
+spoken as a character when it is one, "blank" at the text's start, once
+the key's effect shows, and nothing at the bound, as NVDA's scripts do.
+The starting read reads the unit in the caret's own remote program
+through UI Automation (one call; 15 classically, 20 window messages in
+an edit control, `starting_reads_cost_exactly`)
 ([holding caret
 keys](../../books/dev/src/explanation/design/key-holding.md); Core's
 `backspace_says_what_it_deleted_from_its_starting_read`). Delete and
@@ -452,7 +459,7 @@ In the Windows Forms text box, over "alpha " or "beta " selected with
 Shift+Control+Right Arrow: Backspace says the character before the
 selection's start, read before the key, "blank" when there is none ("blank" at the text's
 start, "line feed" at a later line's start, and over "beta " "space");
-Control+Backspace the text from the word's start to the caret ("blank"
+Control+Backspace the word before the selection's start ("blank"
 at the text's start, "line feed" at a later line's start, and over
 "beta " "alpha"); Delete and Shift+Delete the
 character now at the caret ("b"); Control+Delete the word now at the

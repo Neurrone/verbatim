@@ -42,9 +42,9 @@ use verbatim_model::tell::{
 };
 use verbatim_model::{
     CaretKey, CaretMotion, CaretReport, Compared, Effect, Input as CoreInput, KeySeq, NodeDetails,
-    NodeId, OutpostId, Pid, Role, SegmentContent, Started, StateSet, TextAnchor, TextChunk, TextOp,
-    TextProvider, TextReply, TextUnit, TraceId, WatchFinalRead, Watched, WatchedRead, WindowHandle,
-    had_effect,
+    NodeId, OutpostId, Pid, Role, SegmentContent, Started, StartingUnit, StateSet, TextAnchor,
+    TextChunk, TextOp, TextProvider, TextReply, TextUnit, TraceId, WatchFinalRead, Watched,
+    WatchedRead, WindowHandle, had_effect,
 };
 use verbatim_outpost_logic::{
     Effect as OutpostEffect, Entry, Input as OutpostInput, Item, Now, Reducer, Request, UiaEvent,
@@ -621,11 +621,28 @@ impl Seam {
             } => {
                 let point = self.anchor();
                 self.points.insert(point.0, app.clone());
+                let (unit, word) = match read.unit {
+                    StartingUnit::At(unit) => (self.unit(unit, app), None),
+                    StartingUnit::AtWithWord(unit) => {
+                        (self.unit(unit, app), Some(self.unit(TextUnit::Word, app)))
+                    }
+                    // The character before the caret, as the outpost reads
+                    // what a Backspace deletes; the world presses no
+                    // Control+Backspace.
+                    StartingUnit::BeforeCaret(TextUnit::Character) => {
+                        let text = app.before().map(String::from).unwrap_or_default();
+                        let start = self.anchor();
+                        (chunk(TextUnit::Character, &text, start, 0), None)
+                    }
+                    StartingUnit::BeforeCaret(unit) => {
+                        panic!("the world presses no key that deletes a {unit:?}")
+                    }
+                };
                 Reply::Text(TextReply::Started(Box::new(Started {
                     point,
                     caret: self.caret(app),
-                    unit: self.unit(read.unit, app),
-                    word: read.word.then(|| self.unit(TextUnit::Word, app)),
+                    unit,
+                    word,
                 })))
             }
             other => panic!("the stand-in answers no request {other:?}"),
