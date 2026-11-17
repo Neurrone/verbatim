@@ -314,10 +314,14 @@ impl Versions {
 
     /// The ancestors Core already knows, sent with a focus request to the
     /// outpost generation `asked` (column H): a reader's committed focus
-    /// itself and its ancestors, only while the readers' last focus is set, a node only
-    /// when the answering generation minted it; none from an ended
-    /// generation; for an own focus, its source's; none for a sourceless
-    /// one. The listener mints no node, so `asked` is `None` for it.
+    /// itself and its ancestors, only while the readers' last focus is set,
+    /// a node only when the answering generation minted it; nothing of an
+    /// ended generation, whose ids name nothing, but the ancestors another
+    /// generation minted stay known, as NVDA's old focus line keeps every
+    /// object when the old focus's application exits
+    /// (`docs/parity/focus-context.md`); for an own focus, its source's;
+    /// none for a sourceless one. The listener mints no node, so `asked` is
+    /// `None` for it.
     pub(crate) fn known_ancestors(&self, asked: Option<OutpostId>) -> Vec<KnownAncestor> {
         self.known_with_places(asked)
             .into_iter()
@@ -337,22 +341,27 @@ impl Versions {
             return Vec::new();
         }
         // A reader's focus is met itself; an own focus stands over its
-        // source, which no walk meets as the focus.
-        let (kept, itself) = match &self.committed {
-            Committed::Read(kept) => (kept, true),
+        // source, which no walk meets as the focus; of a focus whose
+        // generation ended, only what another generation minted is met.
+        let (kept, itself, ended) = match &self.committed {
+            Committed::Read(kept) => (kept, true, None),
+            Committed::Ended(kept) => (kept, true, Some(kept.outpost)),
             Committed::Own {
                 source: Some(source),
-            } => (source, false),
-            Committed::Ended(_) | Committed::Own { source: None } | Committed::Nothing => {
+            } => (source, false, None),
+            Committed::Own { source: None } | Committed::Nothing => {
                 return Vec::new();
             }
         };
-        let mine = asked == Some(kept.outpost);
         let mut known = Vec::new();
         let focus = kept.as_ancestor(None);
         let line = std::iter::once(&focus).chain(kept.ancestors.iter());
         for (place, ancestor) in line.enumerate().skip(usize::from(!itself)) {
-            if mine {
+            let minted_by = ancestor.node.outpost();
+            if Some(minted_by) == ended {
+                continue;
+            }
+            if asked == Some(minted_by) {
                 known.push((place, KnownAncestor::Node(ancestor.node)));
             }
             if let Some(runtime_id) = &ancestor.runtime_id {

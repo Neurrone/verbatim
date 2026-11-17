@@ -972,6 +972,116 @@ fn a_window_owned_across_processes_meets_its_owner_both_ways() {
     );
 }
 
+/// The return to the owner as `owned_dialog_across_processes` recorded it
+/// (2026-11-17): the owner's focus is told, the dialog's application exits
+/// while the listener reads it, ending the committed focus's outpost, and
+/// the listener's walk then answers, having met the owner's window. The
+/// owner's window, which the owner's outpost minted, is still in the
+/// committed focus's line, as NVDA's old focus line keeps it, so the read
+/// is completed against it and the return says only its focus.
+#[test]
+fn a_return_to_the_owner_as_the_dialogs_application_exits_says_its_focus() {
+    let mut desk = Desk::new();
+    let (owner, open) = owner_open();
+    let _ = started(
+        &mut desk,
+        ONE,
+        Some(focus_read_of(ONE, &open, std::slice::from_ref(&owner))),
+    );
+    // The dialog, a pop-up window the owner's window owns, comes to the
+    // foreground.
+    desk.app(TWO);
+    let _ = desk.step(QueueInput::Foreground(ForegroundReport {
+        window: TWO.top_level(),
+        root_owner: ONE.top_level(),
+        process: TWO.pid,
+        thread: 41,
+        class: "Frame".to_owned(),
+    }));
+    // The dialog's focus, its walk meeting the owner's window, which the
+    // owner's outpost minted, as the recording's did.
+    let dialog = window_node(TWO, 4, Role::Window, "Owned", TWO.top);
+    let ok = node(TWO, 5, Role::Button, Some("OK"), None, StateSet::new());
+    desk.app(TWO);
+    let mut facts = TWO.facts();
+    facts.root_owner = ONE.facet(ONE.top_level(), "Frame");
+    let tell = tell_with(&desk, TWO, &ok, facts);
+    let _ = desk.tell(LISTENER, tell);
+    let Some((object, LISTENER, Wire::ReadObject(_))) = one_sent(&desk) else {
+        panic!("the dialog's read asked: {:?}", desk.sent);
+    };
+    let _ = desk.answer(
+        LISTENER,
+        object,
+        Outcome::Result(Reply::Object(Box::new(listener_read(TWO, ok.id.number())))),
+    );
+    let Some((completion, to, Wire::CompleteUia(complete))) = one_sent(&desk) else {
+        panic!("the dialog's completion asked: {:?}", desk.sent);
+    };
+    let owner_window = KnownAncestor::Window(ONE.top_level());
+    let place = complete
+        .known
+        .iter()
+        .position(|known| *known == owner_window)
+        .expect("the owner's window is known");
+    let mut read = focus_read_of(TWO, &ok, std::slice::from_ref(&dialog));
+    read.met = Some(u32::try_from(place).expect("a short list"));
+    read.foreground = None;
+    let heard = desk.answer(
+        to,
+        completion,
+        Outcome::Result(Reply::Focus(Box::new(read))),
+    );
+    assert_eq!(
+        spoken(&heard),
+        vec![
+            label_role("Owned", Role::Window),
+            label_role("OK", Role::Button)
+        ]
+    );
+    let _ = foreground(&mut desk, ONE);
+
+    let tell = focus_tell(ONE, open.id.number(), desk.at_us + 1_000);
+    let _ = desk.tell(LISTENER, tell);
+    let Some((object, LISTENER, Wire::ReadObject(_))) = one_sent(&desk) else {
+        panic!("the listener's read asked: {:?}", desk.sent);
+    };
+    let _ = desk.step(QueueInput::Process(ProcessFact::ApplicationExited(TWO.pid)));
+    let mut read = listener_read(ONE, open.id.number());
+    let met = KnownAncestor::Uia(runtime_of(owner.id.number()));
+    if let Some(route) = read.route.as_mut() {
+        route.end = verbatim_model::request::RouteEnd::Known(met.clone());
+    }
+    let _ = desk.answer(
+        LISTENER,
+        object,
+        Outcome::Result(Reply::Object(Box::new(read))),
+    );
+    let Some((completion, to, Wire::CompleteUia(complete))) = one_sent(&desk) else {
+        panic!("the completion asked: {:?}", desk.sent);
+    };
+    assert_eq!(to, ONE.instance());
+    assert!(
+        complete.known.contains(&KnownAncestor::Node(owner.id)),
+        "the owner's window is known to the outpost that minted it: {:?}",
+        complete.known
+    );
+    let place = complete
+        .known
+        .iter()
+        .position(|known| *known == met)
+        .expect("the ancestor the walk met is known");
+    let mut focus = focus_read_of(ONE, &open, &[]);
+    focus.met = Some(u32::try_from(place).expect("a short list"));
+    focus.foreground = None;
+    let heard = desk.answer(
+        to,
+        completion,
+        Outcome::Result(Reply::Focus(Box::new(focus))),
+    );
+    assert_eq!(spoken(&heard), vec![label_role("Open", Role::Button)]);
+}
+
 /// The last step of a focus, answered by `to` to request `number` with
 /// `reply`, fed with every effect it had, whole.
 fn raw_answer(desk: &mut Desk, to: Instance, number: u64, reply: Reply) -> Vec<Effect> {

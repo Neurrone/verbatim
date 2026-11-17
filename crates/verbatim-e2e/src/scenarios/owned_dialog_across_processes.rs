@@ -94,7 +94,9 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     // says it (`cargo xtask nvda compare owned_dialog_across_processes`,
     // 2026-11-17).
     let dialog_window = format!("{} window", harness_marker(DIALOG));
-    scenario.speech().expect(&[dialog_window.as_str(), "OK button"]);
+    scenario
+        .speech()
+        .expect(&[dialog_window.as_str(), "OK button"]);
 
     scenario.send_keys(&["tab"]).expect("sends tab");
     scenario.speech().expect(&["Cancel button"]);

@@ -255,7 +255,16 @@ dialog that another process opens over a window it owns is entered with
 no owner title, its outpost's stand-in for the owner meeting the owner's
 entry, and the return to the owner says only its focus, as NVDA's
 capture says (the scenario `owned_dialog_across_processes`; Core's
-`a_window_owned_across_processes_meets_its_owner_both_ways`).
+`a_window_owned_across_processes_meets_its_owner_both_ways`). NVDA's old
+focus line keeps its objects whatever becomes of their applications
+(`api.setFocusObject`, `api.py` 98 to 147), so when the dialog's
+application exits as the focus returns, its line's ancestors that another
+application's outpost read, the owner's window among them, stay known,
+and only what the ended outpost read is dropped (Core's
+`a_return_to_the_owner_as_the_dialogs_application_exits_says_its_focus`).
+A walk that met an ancestor the line no longer holds, as after a desktop
+switch, is not completed against it: the application's focus is read
+afresh.
 
 The title rule (Dickson, 2026-10-30): the window's title is always said
 when the focus enters a top-level window it was not in, decided in Core

@@ -19,6 +19,7 @@ use verbatim_model::tell::{ElementToken, Read, TellWindow};
 use super::FOCUS_SET;
 use super::execute::{Known, Origin, again, execute};
 use super::pending::counts_as_pending;
+use super::retake::{CurrentFocusRead, read_by};
 use super::versions::ReadBy;
 use crate::entries::{Entries, UiaFocus, request_window};
 use crate::event_queue::{Cx, FOCUS_DUE_US, Outcome, Reader, Request, RequestWindow};
@@ -203,12 +204,14 @@ pub(crate) async fn run(mut cx: Cx<Entries>, focus: UiaFocus) {
     if let RouteEnd::Known(met) = &route.end
         && !known.sent.contains(met)
     {
-        // The committed focus changed between the two reads (a desktop
-        // switch committed the sleeping focus, or its outpost generation
-        // ended): the ancestor the walk met is no longer one Core knows, so
-        // the chain cannot be completed against it, and the focus read
-        // after the return or the re-take reads the focus afresh.
-        cx.facts_mut().focus_read_failed();
+        // The committed focus's line changed between the two reads (a
+        // desktop switch committed the sleeping focus, or a focus Core
+        // holds over it took its place), so the ancestor the walk met is
+        // no longer in it and the chain cannot be completed against it.
+        // The listener let the element go with its read, so the
+        // application's focus is read afresh against the line as it now
+        // is, as NVDA's walk compares with the focus line at the time.
+        afresh(cx, &focus, window, known, due_us).await;
         return;
     }
     let complete = Completion {
@@ -267,6 +270,38 @@ fn origin(
         facts.alt_held = focus.alt_down;
     }
     origin
+}
+
+/// The read of `focus` afresh, when the ancestor its listener read met
+/// left the committed focus's line before the completion: the current
+/// focus of `window`'s application, read by its outpost against the
+/// ancestors Core now knows, `known`, then executed as the tell's focus.
+/// Any outcome but a result ends it unspoken and clears Core's caret
+/// baseline, as a failed read of the tell's element does.
+async fn afresh(
+    mut cx: Cx<Entries>,
+    focus: &UiaFocus,
+    window: RequestWindow,
+    known: Known,
+    due_us: u64,
+) {
+    let request = CurrentFocusRead {
+        window,
+        known: known.sent.clone(),
+        details: crate::details::focus_details(&cx.facts()),
+        set: crate::details::node_set(&cx.facts(), FOCUS_SET),
+        focused_state_test: false,
+    };
+    let Outcome::Result(read) = cx.ask(request, due_us).await else {
+        cx.facts_mut().focus_read_failed();
+        return;
+    };
+    let Some(read_by) = read_by(&read) else {
+        return;
+    };
+    let origin = origin(focus, window, cx.foreground());
+    let executed = execute(&mut cx.facts_mut(), &origin, &read, &known, read_by);
+    executed.deliver(&mut cx);
 }
 
 /// A completion the outpost of `window`'s application answered, or Core

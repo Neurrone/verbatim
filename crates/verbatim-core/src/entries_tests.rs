@@ -586,8 +586,11 @@ fn a_focus_inside_the_committed_focus_meets_it_and_says_only_itself() {
     );
 }
 
+/// A walk that met an ancestor no longer in the committed focus's line
+/// cannot be completed against it, and the listener let its element go,
+/// so the application's focus is read afresh and spoken: nothing is lost.
 #[test]
-fn a_walk_that_met_an_ancestor_core_no_longer_knows_ends_the_focus_unread() {
+fn a_walk_that_met_an_ancestor_core_no_longer_knows_reads_the_focus_afresh() {
     let mut state = ready();
     assert_eq!(
         feed_at(&mut state, 1_000, entry(uia_tell(1, Vec::new()))),
@@ -603,9 +606,20 @@ fn a_walk_that_met_an_ancestor_core_no_longer_knows_ends_the_focus_unread() {
             2_000,
             answer(LISTENER, 1, Reply::Object(Box::new(object)))
         ),
-        NOTHING
+        ["send Outpost(Pid(40)) CurrentFocus"]
     );
-    assert!(state.focus.object().is_none());
+    assert_eq!(
+        feed_at(
+            &mut state,
+            3_000,
+            answer(OUTPOST, 2, Reply::Focus(Box::new(focus_read(None))))
+        ),
+        [
+            "Label(\"Editor\") Role(Window)",
+            "Label(\"OK\") Role(Button)",
+            "send Outpost(Pid(40)) Follow"
+        ]
+    );
     assert!(state.queue.front_for_tests().is_none());
 }
 

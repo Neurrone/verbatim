@@ -235,3 +235,56 @@ fn an_msaa_focus_read_through_acc_focus_is_kept_with_no_event_ids() {
         Some(ReadBy::Msaa { event: None, .. })
     ));
 }
+
+/// A dialog's focus whose line holds its owner's window, which the owner's
+/// generation minted, and whose own generation ends as the dialog's
+/// application exits: the owner's window stays known, by node only to the
+/// generation that minted it, as NVDA's old focus line keeps its objects
+/// (`owned_dialog_across_processes`).
+#[test]
+fn an_ended_generations_focus_keeps_known_what_another_generation_minted() {
+    const OWNER: OutpostId = OutpostId(4);
+    let mut dialog = kept(10);
+    let mut ancestors = dialog.ancestors.to_vec();
+    ancestors.push(KeptAncestor {
+        node: NodeId::new(2).with_outpost(OWNER),
+        runtime_id: Some(RuntimeId(vec![42, 99])),
+        window: Some(WindowHandle(99)),
+        simple_child: false,
+        dialog_text: None,
+    });
+    dialog.ancestors = ancestors.into();
+    let mut versions = Versions::default();
+    versions.execute(dialog);
+    // While the dialog's generation lives, the owner's node goes only to
+    // the owner's generation.
+    assert_eq!(
+        versions.known_ancestors(Some(OWNER)),
+        vec![
+            KnownAncestor::Uia(RuntimeId(vec![42, 1])),
+            KnownAncestor::Uia(RuntimeId(vec![42, 2])),
+            KnownAncestor::Uia(RuntimeId(vec![42, 3])),
+            KnownAncestor::Window(WindowHandle(10)),
+            KnownAncestor::Node(NodeId::new(2).with_outpost(OWNER)),
+            KnownAncestor::Uia(RuntimeId(vec![42, 99])),
+            KnownAncestor::Window(WindowHandle(99)),
+        ]
+    );
+    assert_eq!(versions.outpost_ended(OUTPOST), ReaderEnd::Retake);
+    let owner = vec![
+        KnownAncestor::Node(NodeId::new(2).with_outpost(OWNER)),
+        KnownAncestor::Uia(RuntimeId(vec![42, 99])),
+        KnownAncestor::Window(WindowHandle(99)),
+    ];
+    assert_eq!(versions.known_ancestors(Some(OWNER)), owner);
+    assert_eq!(versions.known_ancestors(None), owner[1..]);
+    // Its place in the committed line is kept, for the meeting point.
+    assert_eq!(
+        versions
+            .known_with_places(None)
+            .into_iter()
+            .map(|(place, _)| place)
+            .collect::<Vec<_>>(),
+        [3, 3]
+    );
+}
