@@ -641,7 +641,6 @@ impl Seam {
             WatchFinalRead::Terminal => panic!("the stand-in is asked no terminal's watch"),
         };
         let effect = match program.work {
-            WatchWork::Final => true,
             WatchWork::Check { word, .. } => {
                 let before = self
                     .points

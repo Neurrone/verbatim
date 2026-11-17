@@ -34,7 +34,7 @@ use windows::core::AgileReference;
 use verbatim_ia2::CHILDID_SELF;
 use verbatim_model::request::{FocusCaret, FocusCaretRead, Outcome, Reply};
 use verbatim_model::{
-    NodeId, Role, SelectionReadReply, TextDetails, TextOp, TextReply, WatchFinalRead, Watched,
+    NodeId, Role, SelectionReadReply, TextDetails, TextOp, TextReply, WatchFinalRead,
 };
 use verbatim_uia::map::is_terminal_class;
 use verbatim_uia::{Cached, Interning as _, Kept};
@@ -652,39 +652,27 @@ pub(super) fn watch(context: &RequestContext<'_>, program: &WatchProgram) -> Opt
     let read_at_us = context.observed_now();
     // A terminal's watch reads no unit at its end: Core's full read of the
     // terminal follows (build 3).
-    let (unit, details) = match program.watch.final_read {
-        WatchFinalRead::Unit { unit, details } | WatchFinalRead::UnitAtEffect { unit, details } => {
-            (unit, details)
+    let details = match program.watch.final_read {
+        WatchFinalRead::Unit { details, .. } | WatchFinalRead::UnitAtEffect { details, .. } => {
+            details
         }
-        WatchFinalRead::Terminal => (verbatim_model::TextUnit::Character, TextDetails::NONE),
+        WatchFinalRead::Terminal => TextDetails::NONE,
     };
-    let ran = on_text!(
-        context,
-        node_id,
-        details,
-        &named,
-        |source, text| match program.work {
-            WatchWork::Check { word, last } => text::check::check(
-                source,
-                text,
-                text::check::CheckAsk {
-                    point: program.watch.point,
-                    motion: program.watch.motion,
-                    word,
-                    last,
-                    final_read: program.watch.final_read,
-                },
-                read_at_us,
-            ),
-            WatchWork::Final if program.watch.final_read == WatchFinalRead::Terminal => {
-                Ok(Some(Watched::EffectUnread))
-            }
-            WatchWork::Final => {
-                text::check::final_read(source, text, unit, read_at_us)
-                    .map(|read| Some(Watched::Effect(read)))
-            }
-        }
-    );
+    let ran = on_text!(context, node_id, details, &named, |source, text| {
+        let WatchWork::Check { word, last } = program.work;
+        text::check::check(
+            source,
+            text,
+            text::check::CheckAsk {
+                point: program.watch.point,
+                motion: program.watch.motion,
+                word,
+                last,
+                final_read: program.watch.final_read,
+            },
+            read_at_us,
+        )
+    });
     match ran {
         Err(_) | Ok(Err(TextError::Gone)) => Some(Outcome::NotThere),
         Ok(Err(TextError::Failed(reason))) => {

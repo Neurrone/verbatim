@@ -63,10 +63,6 @@ pub enum WatchWork {
         /// at the effect.
         last: bool,
     },
-    /// Make the final read and answer [`verbatim_model::Watched::Effect`].
-    /// The watch table never asks for it, as no event is the effect on its
-    /// own.
-    Final,
 }
 
 /// A watch's program, for the worker.
