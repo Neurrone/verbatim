@@ -466,7 +466,12 @@ async fn watching(
         // longer the committed focus has no `Follow` to hear them.
         events: binding.provider == TextProvider::Uia && committed(&cx.facts(), binding.node),
         bound_us: BOUND_US,
-        final_read: if moves_by_sentence(press, binding) {
+        // A sentence key reads only at its effect: at its bound it moves by
+        // sentence where the text has sentences and says nothing where it
+        // has none, as NVDA's move by a unit UI Automation lacks fails
+        // silently (`editableText.py` 253 to 265; `UIAHandler/__init__.py`
+        // 170 to 176).
+        final_read: if is_sentence_key(press) {
             WatchFinalRead::UnitAtEffect {
                 unit: press.key.motion.unit(),
                 details: key_details(cx, press),
@@ -494,16 +499,21 @@ async fn watching(
             }
         }
         Outcome::NoLongerAwaited(CancelReason::Withdrawn) => {
-            if focus_pending(cx) {
+            // A key, command or key Core sends waiting behind the key is
+            // tested before a pending focus, as NVDA's wait returns on a
+            // waiting script before it looks for a focus event
+            // (`editableText.py` 94 to 98): marked, Backspace says nothing
+            // and the sentence key still moves, saying nothing.
+            if !marked(cx, press) && focus_pending(cx) {
                 if press.key.motion.deletes_back() {
                     let words = deleted(&cx.facts(), binding, press.key, started);
                     say(cx, press, words);
                 }
             } else if moves_by_sentence(press, binding) {
-                // Marked: the sentence key still moves, saying nothing.
                 sentence(cx, press, (binding, started), due_us).await;
             }
         }
+
         Outcome::Refused(_)
         | Outcome::NotThere
         | Outcome::NotResponding
@@ -653,13 +663,18 @@ fn committed(state: &SrState, node: NodeId) -> bool {
     matches!(&state.versions.committed, Committed::Read(kept) if kept.node == node)
 }
 
-/// Whether the key moves by sentence when no effect is seen: a sentence
-/// key in text whose provider has a sentence unit.
-fn moves_by_sentence(press: &CaretPress, binding: &CaretBinding) -> bool {
+/// Whether the key is Alt+Up or Alt+Down, a sentence key.
+fn is_sentence_key(press: &CaretPress) -> bool {
     matches!(
         press.key.motion,
         CaretMotion::PreviousSentence | CaretMotion::NextSentence
-    ) && binding.provider.has_sentences()
+    )
+}
+
+/// Whether the key moves by sentence when no effect is seen: a sentence
+/// key in text whose provider has a sentence unit.
+fn moves_by_sentence(press: &CaretPress, binding: &CaretBinding) -> bool {
+    is_sentence_key(press) && binding.provider.has_sentences()
 }
 
 /// What Backspace or Control+Backspace deleted, from the starting read:

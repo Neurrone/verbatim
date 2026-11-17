@@ -659,14 +659,56 @@ pub(super) fn watch(context: &RequestContext<'_>, program: &WatchProgram) -> Opt
             read_at_us,
         )
     });
+    watch_outcome(ran)
+}
+
+/// What a watch's check that `ran` answers: not there for a node gone; no
+/// answer, as no effect, for a read that failed, the node's text not
+/// opened included, as NVDA's wait counts a caret it could not read as
+/// one that did not move (`editableText.py` 121 to 127); else the check's
+/// answer, if it ended the watch.
+fn watch_outcome(
+    ran: Result<crate::text::TextResult<Option<verbatim_model::Watched>>, TextReply>,
+) -> Option<Outcome> {
     match ran {
-        Err(_) | Ok(Err(TextError::Gone)) => Some(Outcome::NotThere),
+        Err(TextReply::Gone) | Ok(Err(TextError::Gone)) => Some(Outcome::NotThere),
+        Err(reply) => {
+            tracing::debug!(?reply, "a watch's text could not be opened");
+            None
+        }
         Ok(Err(TextError::Failed(reason))) => {
             tracing::debug!(reason, "a watch's read failed");
             None
         }
         Ok(Ok(watched)) => watched
             .map(|watched| Outcome::Result(Reply::Text(TextReply::Watched(Box::new(watched))))),
+    }
+}
+
+#[cfg(test)]
+mod watch_tests {
+    use super::*;
+
+    /// A watch whose node's text cannot be opened, or whose read fails,
+    /// goes on as if the check showed no effect; only a node gone ends it
+    /// as not there.
+    #[test]
+    fn a_watch_read_that_fails_is_no_effect_and_only_a_gone_node_is_not_there() {
+        for failed in [TextReply::Unanswered, TextReply::NoText] {
+            assert_eq!(watch_outcome(Err(failed.clone())), None, "{failed:?}");
+        }
+        assert_eq!(
+            watch_outcome(Ok(Err(TextError::Failed("busy".to_owned())))),
+            None
+        );
+        assert!(matches!(
+            watch_outcome(Err(TextReply::Gone)),
+            Some(Outcome::NotThere)
+        ));
+        assert!(matches!(
+            watch_outcome(Ok(Err(TextError::Gone))),
+            Some(Outcome::NotThere)
+        ));
     }
 }
 

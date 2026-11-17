@@ -1018,6 +1018,68 @@ fn a_later_key_during_a_sentence_keys_watch_still_moves_it_silently() {
     );
 }
 
+/// Alt+Down in UI Automation text, which has no sentence unit: its watch
+/// reads only at its effect, and at its bound the key says nothing and
+/// moves nothing, as NVDA's move by a unit UI Automation lacks raises and
+/// is dropped silently (`editableText.py` 253 to 265;
+/// `UIAHandler/__init__.py` 170 to 176); its effect says the line.
+#[test]
+fn alt_down_in_uia_text_that_does_not_move_says_nothing() {
+    let start = || {
+        let mut held = editing();
+        let binding = bound(&held);
+        let _ = step(
+            &mut held,
+            1_000,
+            held_key(1, CaretMotion::NextSentence, 1_000, &binding),
+        );
+        let passed = step(
+            &mut held,
+            5_000,
+            started(
+                3,
+                line("One. Two.\r\n", 7, 0),
+                unit(TextUnit::Line, "One. Two.\r\n", 8),
+            ),
+        );
+        assert_eq!(
+            passed.text,
+            [(
+                4,
+                2,
+                TextOp::Watch(Watch {
+                    final_read: WatchFinalRead::UnitAtEffect {
+                        unit: TextUnit::Line,
+                        details: TextDetails::ALL,
+                    },
+                    ..match watch(CaretMotion::NextSentence, 5_000, true) {
+                        TextOp::Watch(watch) => watch,
+                        _ => unreachable!("a watch"),
+                    }
+                })
+            )]
+        );
+        held
+    };
+    let mut held = start();
+    let ended = step(&mut held, 105_000, watched(4, Watched::BoundUnread));
+    assert_eq!(ended, Step::default());
+
+    let mut held = start();
+    let ended = step(
+        &mut held,
+        20_000,
+        watched(
+            4,
+            Watched::Effect(read(
+                line("Three.", 12, 0),
+                unit(TextUnit::Line, "Three.", 13),
+            )),
+        ),
+    );
+    assert_eq!(ended.said, [spoken("Three.")]);
+}
+
 #[test]
 fn a_focus_pending_drops_a_sentence_move() {
     let (mut held, _) = sentence_watching();

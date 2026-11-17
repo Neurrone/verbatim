@@ -150,7 +150,11 @@ moves nothing moves the caret by sentence from the key's starting read,
 by Unicode's rules within each paragraph, with the ordinary due time of
 a request, as NVDA blocks until it can move (`editableText.py` 245 to
 262; Dickson, 2026-11-16), and through UI Automation, which has no
-sentence unit, says nothing. Alt+Down moves to the next sentence's
+sentence unit, says nothing and reads nothing at the bound (Core's
+`alt_down_in_uia_text_that_does_not_move_says_nothing`). A check whose
+read fails, the node's text not opened included, counts as showing no
+effect, as NVDA's wait counts a caret it could not read
+(`editableText.py` 121 to 127). Alt+Down moves to the next sentence's
 start, and from a paragraph's last sentence to the next paragraph's
 first; from the text's last sentence it moves to the text's end and says
 "blank", as captured. Alt+Up steps back one character and takes that
