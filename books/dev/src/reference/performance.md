@@ -1290,10 +1290,10 @@ its probe adds 1 window message (above):
   address (`docs/parity/focus-context.md`, "Top-level windows in the
   ancestry"). A focus without text is
   reported before its search.
-- A windowless text focus whose walk up the listener cut, so that no route
-  leads to its element: the application's focused element is read in
-  place of the search, 1 UIA call and 1 connection, and the field found
-  is read as any other. The read is made before the focus is reported, so
+- A focus that no route finds, such as a windowless one whose walk up
+  the listener cut: the application's focused element is read after the
+  search, 1 UIA call and 1 connection, and the element found is read as
+  any other. The read is made before the focus is reported, so
   in an application slow but not hung the report can wait up to the
   transaction timeout of 5 seconds; the same holds when the listener's
   read of the sender failed; mockapp's "Notes" in `ancestry.json`, which has no

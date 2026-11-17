@@ -136,9 +136,9 @@ The taskbar's shell items reads take Core's 11-second due time, as every request
 
 The listener hooks the desktop switch and, scoped to csrss's process, the desktop window's name change. A return to the user's desktop asks the application in front for its focus again 200 ms later, taken without the duplicate rule, as NVDA's handler of the user's desktop does; the virtual desktop's name is read on csrss's reading thread and said before the next focus's entered ancestors, or alone 250 ms after the change, as NVDA says it.
 
-### The outpost's own element (Dickson, 2026-10-10 and 2026-10-21)
+### The outpost's own element (Dickson, 2026-10-10, 2026-10-21 and 2026-11-17)
 
-The outpost finds its own copy of a UI Automation focus by the path the listener sent, one remote operation down the chain's runtime ids from the nearest ancestor with a window. A focus with no text is reported at once and found after; one whose role may have text is found before the report, since its caret and line come in the focus's message (Dickson, 2026-10-21). An element the outpost cannot find is announced from the listener's read, and review and navigation start from its nearest found ancestor (Dickson, 2026-10-10).
+The outpost finds its own copy of a UI Automation focus by the path the listener sent, one remote operation down the chain's runtime ids from the nearest ancestor with a window. A focus with no text is reported at once and found after; one whose role may have text is found before the report, since its caret and line come in the focus's message (Dickson, 2026-10-21). When no route finds the focus, the outpost reads its application's focused element, for every focus, and takes it only when its runtime id is the event's and it belongs to the outpost's own process (Dickson, 2026-11-17), because a focus below an ancestor the outpost could not route to otherwise had no element, so no states, caret or followed changes. An element the outpost still cannot find is announced from the listener's read, and review and navigation start from its nearest found ancestor (Dickson, 2026-10-10).
 
 ### Focus-following subscriptions (Dickson, 2026-10-11)
 

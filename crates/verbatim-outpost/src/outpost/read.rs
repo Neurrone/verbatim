@@ -1467,8 +1467,7 @@ fn uia_focused_control(
 
 /// The UIA element of this application's focus, as [`focused_control_in`]
 /// reads it, with its checks and its process-id check, filled as a node and
-/// nothing more read: for the windowless text focus whose element the
-/// focus's route cannot find (`books/dev/src/reference/adr/0001-focus.md`, "The outpost's own
+/// nothing more read: for the focus whose element no route finds (`books/dev/src/reference/adr/0001-focus.md`, "The outpost's own
 /// element"). `Refused` also when the outpost judges the focus
 /// window MSAA.
 pub(super) fn focused_element_in(
@@ -1573,10 +1572,8 @@ pub(super) struct FocusedControl {
 pub(super) enum FocusRead {
     /// Core's request for the current focus.
     FocusNow,
-    /// A windowless text focus whose walk up the listener cut, so the
-    /// chain it sent holds only the focus and no route leads to its
-    /// element ([`focused_element_in`]).
-    CutWalk,
+    /// A focus whose element no route found ([`focused_element_in`]).
+    NoRoute,
 }
 
 /// The window whose focused element [`focused_control_in`] reads for the

@@ -1111,11 +1111,15 @@ fn a_cut_walks_focused_element_of_another_process_is_not_taken() {
 }
 
 /// A focus with no window of its own whose route holds its ancestors, none
-/// with a window either, has no route to its element, but its walk up was
-/// not cut, so the application's focused element is not read for it,
-/// though that element is the field: the field is not found and its text
-/// is not read, `NotRead`, with no UIA call; read, it would give `NoText`.
-fn a_focus_whose_walk_was_not_cut_is_not_read_as_the_focused_element() {
+/// with a window either, has no route to its element, and though its walk
+/// up was not cut, the application's focused element is read for it and
+/// taken, its runtime id being the field's (Dickson's ruling of
+/// 2026-11-17, `books/dev/src/reference/adr/0001-focus.md`, "The outpost's
+/// own element"): the field is found, and having no text pattern, its text
+/// is answered as none, `NoText`; not found, it would be `NotRead`. The
+/// focused-element read and the field's states and text read, three UIA
+/// calls in all, with no connection.
+fn a_focus_no_route_finds_is_read_as_the_focused_element() {
     let title = common::unique_title("mockapp-uncut-walk");
     let mut app = common::spawn("ancestry.json", "uia", &title);
     let client = Client::new(common::find_window(&title));
@@ -1137,14 +1141,35 @@ fn a_focus_whose_walk_was_not_cut_is_not_read_as_the_focused_element() {
     assert_notes_reported(
         &outpost,
         focus,
-        &FocusCaret::NotRead,
+        &FocusCaret::NoText,
         CallCounts {
-            uia: 0,
+            uia: 3,
             msaa: 0,
             window_messages: 0,
             connections: 0,
         },
     );
+
+    drop(outpost);
+    app.quit();
+}
+
+/// A focus that may have no text, a button, with no route to its element,
+/// is read as the application's focused element as a text field is, and
+/// taken, its runtime id being the button's (Dickson's ruling of
+/// 2026-11-17): its changes are followed from this focus on.
+fn a_button_no_route_finds_is_read_as_the_focused_element_and_followed() {
+    let title = common::unique_title("mockapp-no-route-button");
+    let mut app = common::spawn("small.json", "uia", &title);
+    let client = Client::new(common::find_window(&title));
+    let outpost = OutpostUnderTest::new(&app);
+
+    app.send("set-focus btn1");
+    let button = client.focused();
+    outpost.read_focus_as(button.live().element());
+    let reported = focus_without_a_path(&outpost, &button);
+    assert_eq!(reported.name(), Some("Original Name"));
+    assert_followed(&mut app, &outpost, "btn1", &button);
 
     drop(outpost);
     app.quit();
@@ -3373,8 +3398,12 @@ fn main() {
             a_cut_walks_focused_element_of_another_process_is_not_taken,
         ),
         (
-            "a_focus_whose_walk_was_not_cut_is_not_read_as_the_focused_element",
-            a_focus_whose_walk_was_not_cut_is_not_read_as_the_focused_element,
+            "a_focus_no_route_finds_is_read_as_the_focused_element",
+            a_focus_no_route_finds_is_read_as_the_focused_element,
+        ),
+        (
+            "a_button_no_route_finds_is_read_as_the_focused_element_and_followed",
+            a_button_no_route_finds_is_read_as_the_focused_element_and_followed,
         ),
         (
             "a_route_walk_that_finds_its_element_gone_answers_gone",

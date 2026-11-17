@@ -47,8 +47,7 @@ pub(super) fn complete(
     let focus = complete.completes == CompletionFor::Focus;
     let path = FocusPath::of_route(route).above(known_route(context, &route.end));
     let runtime_id = first.runtime_id.0.clone();
-    let text_focus = focus && may_have_text(first_read);
-    let (found, window_element) = find(context, client, &path, &runtime_id, text_focus);
+    let (found, window_element) = find(context, client, &path, &runtime_id, focus);
     // A focus whose own element is not found still has the element kept
     // under its runtime id judged, so that a stale one's text is never
     // read as the focus's.
@@ -161,26 +160,16 @@ pub(super) fn complete(
     ))))
 }
 
-/// Whether the element the listener read as `read` may have text, by its
-/// role: a text focus whose walk the listener cut is looked for as the
-/// application's focused element when no route leads to it ([`find`]).
-fn may_have_text(read: &PropertyValues) -> bool {
-    matches!(
-        snapshot_of(NodeId::new(0), Backend::Uia, read).role,
-        Role::EditableText | Role::Document | Role::Terminal
-    )
-}
-
 /// The outpost's own copy of the element `runtime_id` names, by the route:
 /// from the nearest element at or above it with a window of its own; for a
-/// text focus whose route the listener's walk cut, the application's
-/// focused element when its runtime id is the focus's.
+/// focus, `focus`, that no route finds, the application's focused element
+/// when its runtime id is the focus's.
 fn find(
     context: &RequestContext<'_>,
     client: &mut Client,
     path: &FocusPath,
     runtime_id: &[i32],
-    text_focus: bool,
+    focus: bool,
 ) -> (Option<Cached<Node>>, Option<Cached<Node>>) {
     let mut window_element = None;
     if let Some(route) = path.route_to(runtime_id) {
@@ -198,16 +187,14 @@ fn find(
         }
         window_element = read_window;
     }
-    // Only a text focus whose walk the listener cut, so that no element of
-    // its chain has a window of its own, and that the route did not find,
-    // is read as the application's focused element: a walk down from the
-    // nearest window finds it only as that window's child
-    // (`books/dev/src/reference/adr/0001-focus.md`, "The outpost's own
-    // element").
-    if !text_focus || !path.is_cut_at(runtime_id) {
+    // A focus that no route found is read as the application's focused
+    // element, taken only when it is the focus's own element by its runtime
+    // id and its process (`books/dev/src/reference/adr/0001-focus.md`,
+    // "The outpost's own element").
+    if !focus {
         return (None, window_element);
     }
-    let element = read::focused_element_in(context, client, read::FocusRead::CutWalk).ok();
+    let element = read::focused_element_in(context, client, read::FocusRead::NoRoute).ok();
     (
         element.filter(|element| element.runtime_id() == runtime_id),
         window_element,

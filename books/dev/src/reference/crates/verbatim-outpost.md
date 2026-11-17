@@ -650,12 +650,12 @@ and the inherited pipe handles.
   its nearest window, so that no element of its chain has a window of its
   own, is routed from that nearest window, which the route carries, down
   by every runtime id of the chain (`FocusPath::route_to`), which finds it
-  when the chain's outermost element is that window's child. A text focus
-  whose chain holds only the focus (`FocusPath::is_cut_at`) and that this
-  does not find is read as its application's focused element instead
-  (`read::focused_element_in`, trigger `read::FocusRead::CutWalk`), and
-  kept when its runtime id is the focus's. It finds the element only while
-  the element still has the keyboard focus, a limit.
+  when the chain's outermost element is that window's child.
+- Any focus that no route finds is read as its application's focused
+  element instead (`read::focused_element_in`, trigger
+  `read::FocusRead::NoRoute`), and kept only when its runtime id is the
+  focus's and its process is the outpost's own. It finds the element only
+  while the element still has the keyboard focus, a limit.
 - An MSAA focus is one application's candidates of a run (`MsaaRun`),
   each acquired with NVDA's child-0-on-a-list redirect and the `accFocus`
   redirect (`focus_candidate`), read in full even when it repeats the

@@ -19,9 +19,6 @@ use verbatim_reader_rules::verdicts::Verdicts;
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct FocusPath {
     chain: Vec<(Vec<i32>, Option<Window>)>,
-    /// Whether the listener's walk up from the focus did not reach the
-    /// top: its read failed, or the walk was cut or ended at a failed step.
-    cut: bool,
     /// The focus's nearest window, as the read carries it, for a chain that
     /// was cut: where a route starts when no element of the chain at or
     /// above the one wanted has a window of its own.
@@ -66,7 +63,6 @@ impl FocusPath {
         );
         Self {
             chain,
-            cut,
             nearest: window(route.window).filter(|_| cut),
             above: None,
         }
@@ -81,7 +77,6 @@ impl FocusPath {
     pub fn of_chain(chain: Vec<(Vec<i32>, Option<Window>)>) -> Self {
         Self {
             chain,
-            cut: false,
             nearest: None,
             above: None,
         }
@@ -94,17 +89,6 @@ impl FocusPath {
     #[must_use]
     pub fn above(self, above: Option<Route>) -> Self {
         Self { above, ..self }
-    }
-
-    /// Whether the chain begins with the focus `runtime_id` names, holds no
-    /// window of its own anywhere, and the listener's walk up from it did
-    /// not reach the top: the walk was cut below the focus's nearest
-    /// window, so no route leads to its element ([`Self::route_to`]).
-    #[must_use]
-    pub fn is_cut_at(&self, runtime_id: &[i32]) -> bool {
-        self.cut
-            && self.chain.first().is_some_and(|(id, _)| id == runtime_id)
-            && self.chain.iter().all(|(_, window)| window.is_none())
     }
 
     /// The route to the element of the chain whose runtime id is
@@ -222,33 +206,6 @@ mod tests {
     /// [`focus_route`] with no nearest window.
     fn focus_read(own: isize, windows: [isize; 2], end: RouteEnd) -> ReadRoute {
         focus_route(own, windows, end, 0)
-    }
-
-    /// The window 70, where a cut walk goes on.
-    fn at_70() -> WindowHandle {
-        WindowHandle(70)
-    }
-
-    /// A chain is cut at its focus only when the walk up from it did not
-    /// reach the top and no element of it has a window of its own; never
-    /// at an ancestor.
-    #[test]
-    fn a_chain_is_cut_at_a_windowless_focus_whose_walk_did_not_reach_the_top() {
-        let focus = [42, 1];
-        let cut = FocusPath::of_route(&focus_read(0, [0, 0], RouteEnd::PlainFrom(at_70())));
-        assert!(cut.is_cut_at(&focus));
-        assert!(!cut.is_cut_at(&[42, 2]), "an ancestor is not the focus");
-        let failed = FocusPath::of_route(&focus_read(0, [0, 0], RouteEnd::ContinueFrom(at_70())));
-        assert!(failed.is_cut_at(&focus));
-        let whole = FocusPath::of_route(&focus_read(0, [0, 0], RouteEnd::Root));
-        assert!(!whole.is_cut_at(&focus));
-        let windowed_ancestor =
-            FocusPath::of_route(&focus_read(0, [0, 80], RouteEnd::PlainFrom(at_70())));
-        assert!(!windowed_ancestor.is_cut_at(&focus));
-        let windowed_focus =
-            FocusPath::of_route(&focus_read(60, [0, 0], RouteEnd::PlainFrom(at_70())));
-        assert!(!windowed_focus.is_cut_at(&focus));
-        assert!(!FocusPath::default().is_cut_at(&focus));
     }
 
     /// A windowless chain whose walk up failed below the focus's nearest
