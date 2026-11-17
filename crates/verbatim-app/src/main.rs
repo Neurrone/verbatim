@@ -1144,6 +1144,12 @@ impl ReducerThread<'_> {
     /// mapped to the hung window it stands in for, and the hook's view takes
     /// its integrity and keyboard thread.
     fn foreground(&mut self, report: &verbatim_supervisor::ForegroundReport) {
+        // At info, with the starts it may decide, to time an outpost's
+        // start from what asked for it.
+        tracing::info!(
+            process = report.process,
+            "the listener's foreground report reached Core"
+        );
         let window = WindowHandle(u64::from_ne_bytes(report.window.to_ne_bytes()));
         let root_owner = WindowHandle(u64::from_ne_bytes(report.root_owner.to_ne_bytes()));
         self.apply(Input::Foreground(ForegroundWindow {
@@ -1649,7 +1655,10 @@ impl ReducerThread<'_> {
                 );
             }
             QueueEffect::WakeAt(due) => self.queue_due = due,
-            QueueEffect::StartOutpost(process) => self.context.supervisor.start_outpost(process),
+            QueueEffect::StartOutpost(process) => {
+                tracing::info!(%process, "Core starts an outpost");
+                self.context.supervisor.start_outpost(process);
+            }
             QueueEffect::EndOutpost(instance) => {
                 if matches!(instance.reader, Reader::Outpost(_)) {
                     self.context

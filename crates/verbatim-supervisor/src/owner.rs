@@ -747,7 +747,10 @@ impl Owner {
         match event {
             OwnerEvent::Shutdown(reply) => self.shut_down_all(reply),
             OwnerEvent::BackoffClock(clock) => self.backoff_clock = clock,
-            OwnerEvent::StartOutpost(pid) => self.start_outpost(pid),
+            OwnerEvent::StartOutpost(pid) => {
+                tracing::info!(%pid, "the owner is asked to start an outpost");
+                self.start_outpost(pid);
+            }
             OwnerEvent::Pong { outpost, abandoned } => self.ponged(outpost, abandoned),
             OwnerEvent::Unreadable(outpost) => self.on_pipe_closed(outpost),
             OwnerEvent::Launched { outpost, result } => self.on_launched(outpost, result),
@@ -1784,6 +1787,7 @@ fn launch_child(
     (outpost, role): (OutpostId, Role),
     (writers, commands): (&Writers, &CommandPipes),
 ) -> io::Result<Launch> {
+    tracing::info!(%outpost, ?role, "launching");
     let (launched, pipes) = process::launch(exe_path, role, options, listener)?;
     tracing::info!(%outpost, process_id = %launched.process_id, ?role, "launched");
     // A failure from here drops the process's job, which kills it.
