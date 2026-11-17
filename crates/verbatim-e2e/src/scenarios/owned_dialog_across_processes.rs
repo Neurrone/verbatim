@@ -19,6 +19,13 @@ use crate::scenario::{Scenario, harness_marker};
 
 pub(crate) use super::{no_setup as setup, no_teardown as teardown};
 
+/// PENDING CAPTURE: the dialog is now a real owned pop-up, so Verbatim
+/// judges the owner related and may say less than the expectations written
+/// for the old dialog. This sentinel is never spoken, so the step fails
+/// loudly; replace it, in each run, with NVDA's capture of the run
+/// (`cargo xtask nvda compare owned_dialog_across_processes`).
+const PENDING_CAPTURE: &str = "PENDING NVDA CAPTURE of owned_dialog_across_processes";
+
 /// The owner window's name in the run.
 const OWNER: &str = "Mockapp Owner";
 
@@ -93,7 +100,8 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     // The dialog is entered with no owner title said: the owner's stand-in
     // is the owner's own object.
     let dialog_window = format!("{} window", harness_marker(DIALOG));
-    scenario.speech().expect(&[&dialog_window, "OK button"]);
+    let _ = (&dialog_window, "OK button");
+    scenario.speech().expect(&[PENDING_CAPTURE]);
 
     scenario.send_keys(&["tab"]).expect("sends tab");
     scenario.speech().expect(&["Cancel button"]);
@@ -105,5 +113,6 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     // Space presses "Cancel", which closes the dialog; the return to the
     // owner says its focus alone.
     scenario.send_keys(&["space"]).expect("sends space");
-    scenario.speech().expect(&["Open button"]);
+    let _ = "Open button";
+    scenario.speech().expect(&[PENDING_CAPTURE]);
 }

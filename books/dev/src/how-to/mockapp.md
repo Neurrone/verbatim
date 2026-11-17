@@ -25,7 +25,7 @@ answering, then reads commands from stdin until `quit`.
 
 One mockapp window can own another's, as a dialog another process opens
 is owned by the window it opens over: `--owner-title <title>` makes the
-new window an owned window of the top-level window of that exact title,
+new window an owned pop-up of the top-level window of that exact title,
 which must already exist. The fixtures `owner_window.json` and
 `owned_dialog.json` are such a pair, a UIA window with an "Open" button,
 whose root raises UIA's focus event for "Open" each time the window is

@@ -41,7 +41,8 @@ application opens with its focus on a control.
   no stdout, and waits on such an event it created instead
   (`return_from_a_held_application`).
 - With `--owner-title <title>`, the window is an owned window of the
-  top-level window of that exact title, found as mockapp starts, as a
+  top-level window of that exact title, found as mockapp starts, and a
+  pop-up (so its root owner is that window), as a
   dialog another process opens is owned by the window it opens over: the
   owned-window fixture is `owner_window.json` and `owned_dialog.json` run
   in two processes ([the mockapp tooling guide](../../how-to/mockapp.md)).

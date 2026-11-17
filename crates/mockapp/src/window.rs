@@ -30,7 +30,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     GetClassNameW, GetMessageW, GetWindowLongPtrW, HMENU, MSG, OBJID_CLIENT, PostMessageW,
     PostQuitMessage, RegisterClassExW, SW_SHOW, SetWindowLongPtrW, SetWindowTextW, ShowWindow,
     TranslateMessage, WINDOW_EX_STYLE, WM_ACTIVATE, WM_APP, WM_DESTROY, WM_GETOBJECT, WM_KEYDOWN,
-    WNDCLASSEXW, WS_CHILD, WS_OVERLAPPEDWINDOW, WS_POPUP,
+    WNDCLASSEXW, WS_CAPTION, WS_CHILD, WS_OVERLAPPEDWINDOW, WS_POPUP, WS_SYSMENU,
 };
 use windows::core::{PCWSTR, w};
 use windows_core::Interface;
@@ -115,7 +115,8 @@ impl From<windows::core::Error> for WindowError {
 /// client object with the scripted root; with `dialog_keys`, it takes a
 /// dialog's keys; with `focus_on_activate`, it raises its focused node's
 /// UIA focus event on each activation. With `owner`, the window is owned
-/// by the top-level window of that exact title, which must exist.
+/// by the top-level window of that exact title, which must exist, and is
+/// a pop-up (a frameless window stays the strip it is).
 pub(crate) fn run(
     backend: Option<Backend>,
     tree: SharedTree,
@@ -143,6 +144,10 @@ pub(crate) fn run(
     // is given a strip's, as the taskbar is.
     let (style, x, y, width, height) = if frameless {
         (WS_POPUP, 0, 0, 640, 48)
+    } else if owner.is_some() {
+        // An owned dialog is a pop-up, as a Win32 dialog is: only a pop-up's
+        // root owner is its owner (`GetAncestor` with `GA_ROOTOWNER`).
+        (WS_POPUP | WS_CAPTION | WS_SYSMENU, 120, 120, 480, 320)
     } else {
         (
             WS_OVERLAPPEDWINDOW,
