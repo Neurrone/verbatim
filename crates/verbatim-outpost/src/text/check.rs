@@ -220,6 +220,10 @@ fn read_by_parts<S: TextSource>(
 /// A watch's final read after a check in one go found the key's effect
 /// only by the text: the caret, its line, the key's `unit` at it and the
 /// formatting of `span`, in one round trip ([`TextSource::caret_read`]).
+///
+/// # Errors
+///
+/// When the application does not answer or the node is gone.
 pub fn final_read<S: TextSource>(
     source: &mut S,
     anchors: &mut NodeText<'_, S::Pos>,

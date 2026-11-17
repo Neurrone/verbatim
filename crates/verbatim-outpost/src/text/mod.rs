@@ -1366,7 +1366,6 @@ fn format_span(unit: TextUnit) -> Option<FormatSpan> {
 }
 
 /// The unit at the caret in `last`, the node's last read, as text: the
-
 /// character cut from its line, the unit it fetched when that is the same
 /// kind, or else its line.
 fn before_unit_text<P>(last: &LastRead<P>, unit: TextUnit) -> String {

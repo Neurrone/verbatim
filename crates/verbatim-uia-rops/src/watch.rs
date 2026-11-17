@@ -249,6 +249,10 @@ fn emit_unit(
     (read, registers)
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "one program's reads, in the order it makes them"
+)]
 fn build(b: &mut Builder, query: &WatchQuery<'_>) -> Registers {
     let element = b.import_element(query.element);
     let start = b.import_text_range(query.start.range);
