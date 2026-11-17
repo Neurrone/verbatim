@@ -955,6 +955,49 @@ fn a_selection_said_after_a_modifiers_cut_carries_the_selection_keys_number() {
     assert_eq!(text.stamps, [Some(KeySeq::new(1))]);
 }
 
+/// A caret tell asks its read, then Shift+Control+Right Arrow comes, in
+/// the hook's order: Control's cut, the arrow's cut and its press. The
+/// read, answered after the arrow joined the queue, sees the selection
+/// the arrow made, so its words are the arrow's and carry its number,
+/// which the arrow's own cut does not silence (`notepad_selection_keys`,
+/// Control+X then Shift+Control+Right Arrow, whose Control+X caret tell
+/// was read after the arrow).
+#[test]
+fn a_selection_read_after_a_key_joined_carries_that_keys_number() {
+    let mut text = editing("hello, world\n", 7);
+    assert_eq!(
+        text.caret_tell(FIELD),
+        [Heard::Asked(TextOp::ReadSelection(
+            verbatim_model::SelectionRead {
+                provider: TextProvider::Uia,
+                baseline: Some(TextAnchor(1)),
+                adopt: None,
+            }
+        ))]
+    );
+    // Control is key 1; the arrow cuts speech and joins as key 2.
+    assert_eq!(text.cut(), []);
+    assert_eq!(
+        text.step(QueueInput::SpeechCut {
+            key: KeySeq::new(2)
+        }),
+        []
+    );
+    assert_eq!(text.key(CaretMotion::NextWord, true), []);
+    assert_eq!(
+        text.reply(TextReply::SelectionRead(Box::new(SelectionReadReply {
+            caret: caret_on(line("hello, world\n", 100, 12), Some(selected(7, 12))),
+            baseline: TextAnchor(2),
+            difference: Some(differing(&[(true, "world")], None)),
+            edit_selection: None,
+        }))),
+        [queued(vec![phrase(Phrase::Selected(SelectionText::Text(
+            "world".to_owned()
+        )))])]
+    );
+    assert_eq!(text.stamps, [Some(KeySeq::new(2))]);
+}
+
 /// A modifier's cut and then an event the application raised on its own:
 /// its speech carries the cut's number, so the speech queue speaks it, as
 /// NVDA runs an event that arrives after the cut it queued

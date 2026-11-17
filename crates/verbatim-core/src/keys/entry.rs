@@ -77,9 +77,9 @@ impl Arrivals {
         Fence(self.newest.max(self.cut))
     }
 
-    /// The fence of a caret tell joining now: the newest key to join the
-    /// queue, whose words its selection speech stands for, never a later
-    /// cut. NVDA speaks a selection key's selection inside the key's
+    /// The fence of a caret tell's selection speech, read as it joins and
+    /// again at its read's answer: the newest key to join the queue, whose
+    /// words its selection speech stands for, never a later cut. NVDA speaks a selection key's selection inside the key's
     /// script, which runs before the cut a modifier pressed after it
     /// queues, so the cut silences it (`docs/parity/text.md`, "Speech cut
     /// off by a modifier").

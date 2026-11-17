@@ -348,12 +348,18 @@ selection key's selection inside the key's script
 Control pressed 30 ms after Shift+Right Arrow cuts "a selected" off,
 heard in two captures at the pin (`notepad_selection_then_control`).
 An event that reaches NVDA after the cut runs after it and is spoken.
-Verbatim: **matched**. A modifier's cut joins no queue; a caret tell,
-whose selection speech stands for its key's words, carries the newest
-key that joined the queue, so a later modifier's cut silences it, while
-every other entry an application raised after the cut carries the cut's
-number and is spoken. Limit: a caret tell no key caused that arrives
-after a modifier's cut is silenced with it.
+Verbatim: **matched**. A modifier's cut joins no queue; a caret tell's
+selection speech stands for the words of the keys whose selection its
+read saw, so it carries the newest key that joined the queue before the
+read's answer, and a later modifier's cut silences it, while a key that
+joined while the read was out, whose selection the read saw, speaks it
+past its own cut (Control+X then Shift+Control+Right Arrow in
+`notepad_selection_keys`, where Control+X's caret tell was read after the
+arrow). Every other entry an application raised after the cut carries
+the cut's number and is spoken. Limits: a caret tell no key caused that
+arrives after a modifier's cut is silenced with it; a read out while a
+key joins that saw the selection only before that key is spoken past
+the key's cut.
 
 ### A selection no key made
 

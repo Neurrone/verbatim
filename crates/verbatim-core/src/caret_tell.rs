@@ -337,10 +337,18 @@ fn answered(
             collapsed,
         }),
     );
+    // The read saw the selection every key that joined the queue before
+    // its answer made, so its words are the newest such key's and carry
+    // its number: a modifier's later cut silences them, while the cut of
+    // a key that joined while the read was out, whose selection the read
+    // saw, does not (`docs/parity/text.md`, "Speech cut off by a
+    // modifier").
+    let fence = tell.fence.max(cx.facts().arrivals.key_fence());
     // Each part is its own utterance, as NVDA speaks each selection
     // message on its own.
-    for said in crate::editing::speak_each(tell.tell.trace_id, segments) {
-        cx.emit(said);
+    for mut said in crate::editing::speak_each(tell.tell.trace_id, segments) {
+        crate::keys::entry::stamp(fence, &mut said);
+        cx.emit_stamped(said);
     }
 }
 

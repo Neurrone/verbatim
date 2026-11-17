@@ -893,6 +893,11 @@ impl<L: Logic> Cx<L> {
         shared.effects.push(Effect::Said(said));
     }
 
+    /// Emits `said` as its function stamped it, not by its entry.
+    pub(crate) fn emit_stamped(&mut self, said: L::Said) {
+        self.shared.borrow_mut().effects.push(Effect::Said(said));
+    }
+
     /// Sends `request` outside the event queue under the due time
     /// `due_us`, in order with the queue's requests, awaiting no answer:
     /// its ending changes nothing in Core. A rebuilt function's sends are
