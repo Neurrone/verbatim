@@ -658,6 +658,9 @@ and the inherited pipe handles.
   redirect (`focus_candidate`), read in full even when it repeats the
   focus, since Core judges repeats, and accepted only when it or an
   ancestor has the focused state, read live, which a menu start skips.
+  Its answer names the child a redirect reached only when the redirect
+  moved it (`FocusCandidate::key`), never by the address its node is kept
+  at, which can differ with no redirect.
 - A focus walk stops at the ancestors Core already knows, which its
   request names, comparing what it reads with them by NVDA's equality,
   and gathers the text of every dialog below them, which the focus

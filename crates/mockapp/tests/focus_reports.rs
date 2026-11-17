@@ -436,6 +436,33 @@ fn a_controls_own_focus_reports_its_focused_child() {
     app.quit();
 }
 
+/// A focus that was not redirected says so, whatever address its node is
+/// kept at: a focus event on mockapp's window client, whose role is
+/// window, is read as the window's own object, kept under `OBJID_WINDOW`,
+/// and answered with no redirect, as NVDA redirects only a focus on a
+/// list's own object, or on an object's own child id 0, to the child its
+/// `accFocus` names (`IAccessibleHandler/__init__.py` 734 to 759).
+fn a_focus_that_was_not_redirected_reports_no_redirect() {
+    let title = common::unique_title("mockapp-no-redirect");
+    let mut app = common::spawn("counts.json", "msaa", &title);
+    let hwnd = common::find_window(&title);
+    common::apply(&mut app, hwnd, "set-focus root");
+    let outpost = OutpostUnderTest::new(&app);
+
+    let reported = outpost.msaa_focus_answer(MsaaIds {
+        window: WindowHandle(hwnd.0 as u64),
+        object: windows::Win32::UI::WindowsAndMessaging::OBJID_CLIENT.0,
+        child: 0,
+    });
+    assert_eq!(
+        (reported.role(), reported.read.redirected_to),
+        (Role::Window, None)
+    );
+
+    drop(outpost);
+    app.quit();
+}
+
 /// An MSAA focus event at the address of the focus last committed is read
 /// in full and answered again, a full object under the same node and a
 /// simple child too, since whether it repeats the focus is Core's verdict
@@ -3145,6 +3172,10 @@ fn main() {
         (
             "a_focus_without_a_path_is_followed_from_its_next_focus_event",
             a_focus_without_a_path_is_followed_from_its_next_focus_event,
+        ),
+        (
+            "a_focus_that_was_not_redirected_reports_no_redirect",
+            a_focus_that_was_not_redirected_reports_no_redirect,
         ),
         (
             "a_fake_focus_whose_focused_ancestor_core_knows_is_spoken",

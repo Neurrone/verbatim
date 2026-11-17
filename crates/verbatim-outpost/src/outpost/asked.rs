@@ -1227,6 +1227,18 @@ fn try_candidate(
         }
     }
     let held_child = candidate.resolved_child();
+    // The child a redirect from the event's object reached, when one did:
+    // the address the candidate is at after the redirect, which only a
+    // redirect moves; the node it is read as may be kept at another
+    // address with no redirect at all, a window's client re-keyed as the
+    // window, or an object NVDA's equality matched to a known one.
+    let (window, object, child) = candidate.key();
+    let redirected_to =
+        ((window, object, child) != (hwnd, ids.object, ids.child)).then(|| MsaaIds {
+            window: window_handle(window),
+            object,
+            child,
+        });
     let stops = known_stops(&run.known);
     let candidates = candidates_of(&stops);
     let node = candidate.read(context.nodes(), Some(&candidates));
@@ -1246,14 +1258,6 @@ fn try_candidate(
         event: ids,
         held_child,
     };
-    let key = context.store.key_of(node.id);
-    let redirected_to = key
-        .filter(|&(window, object, child)| (window, object, child) != (hwnd, ids.object, ids.child))
-        .map(|(window, object, child)| MsaaIds {
-            window: window_handle(window),
-            object,
-            child,
-        });
     // A focus that met none of the ancestors Core knows enters a new
     // window: its foreground object is read with it, as NVDA reads it then.
     let foreground = met
