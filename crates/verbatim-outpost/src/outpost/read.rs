@@ -32,12 +32,11 @@ use crate::gates;
 use verbatim_model::protocol::DumpedTree;
 use verbatim_win32::window::window_class_name;
 
-use super::window::{foreground_window_of, main_window_of, window_style, window_text};
+use super::window::{main_window_of, window_style, window_text};
 use super::{Context, RequestContext};
 use verbatim_reader_rules::CONSOLE_WINDOW_CLASS;
 use verbatim_win32::window::{
     desktop_window, parent, served_by, top_level_of, window_belongs_to_hidden_frame, window_exists,
-    window_is_hidden_frame,
 };
 
 /// Depth cap for a tree dump (the root is depth 0).
@@ -1541,20 +1540,11 @@ pub(super) struct FocusedControl {
     pub(super) walked: Vec<(Vec<i32>, isize)>,
 }
 
-/// What a read of the application's current focus finds ([`focus_now`]).
-pub(super) struct FocusNow {
-    /// The application's top-level window, when it is the system's
-    /// foreground window.
-    pub(super) window: Option<NodeSnapshot>,
-    /// The focused control, when the application has one.
-    pub(super) focus: Option<FocusedControl>,
-}
-
 /// What asked [`focused_control_in`] to read the application's focus,
 /// logged with each read, so a run's log shows how often each makes it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum FocusRead {
-    /// Core's request for the current focus ([`focus_now`]).
+    /// Core's request for the current focus.
     FocusNow,
     /// A windowless text focus whose walk up the listener cut, so the
     /// chain it sent holds only the focus and no route leads to its
@@ -1591,35 +1581,6 @@ fn console_text_area_in(node: &mut NodeSnapshot, window_class: impl FnOnce() -> 
         node.role = Role::Terminal;
         node.name = None;
     }
-}
-
-/// The application's current focus, for Core's request for it: the
-/// application's foreground window, if it holds the system foreground, and
-/// its focused control. A console host's is its console window
-/// ([`foreground_window_of`]). A foreground window that cannot be read, a
-/// ghost's or a hung application's, is a plain window, as its focus is
-/// ([`focused_control_in`]). Returned with the window whose focused element
-/// it read, the control's own window. The focus's walk up stops at one of
-/// `known` ([`focused_control_in`]).
-pub(super) fn focus_now(
-    context: &RequestContext<'_>,
-    client: &mut Client,
-    known: &[NodeSnapshot],
-) -> (FocusNow, Option<isize>) {
-    // A foreground window that cannot be read is a plain window, with no
-    // call, as the focus in it is ([`focused_control_in`]).
-    let window = foreground_window_of(context.target_pid())
-        .filter(|&hwnd| !window_is_hidden_frame(hwnd))
-        .map(|hwnd| {
-            if window_exists(hwnd) && context.window_unreadable(hwnd).is_some() {
-                plain_window(context, hwnd)
-            } else {
-                foreground_window(context, client, hwnd).1
-            }
-        });
-    let control = focused_control_in(context, client, FocusRead::FocusNow, known);
-    let (control_window, focus) = control.ok().unzip();
-    (FocusNow { window, focus }, control_window)
 }
 
 /// The foreground object a focus entering a new window is told with, as

@@ -7,12 +7,10 @@ use std::ffi::c_void;
 
 use windows::Win32::Foundation::{CloseHandle, HWND};
 use windows::Win32::UI::WindowsAndMessaging::{
-    GWL_STYLE, GetForegroundWindow, GetWindowLongPtrW, WS_DISABLED, WS_SYSMENU,
+    GWL_STYLE, GetWindowLongPtrW, WS_DISABLED, WS_SYSMENU,
 };
 
 use verbatim_model::WindowHandle;
-
-use verbatim_win32::window::served_by;
 
 /// The observation `timing` holds, in microseconds on the run's shared
 /// clock; now, when `timing` holds none.
@@ -63,17 +61,6 @@ pub(super) fn window_style(handle: isize) -> WindowStyle {
 }
 
 pub(super) use verbatim_win32::window::window_text;
-
-/// `GetForegroundWindow()` if it is `target_pid`'s ([`served_by`]), else
-/// `None`. Always a genuine top-level window when it returns `Some`.
-pub(super) fn foreground_window_of(target_pid: u32) -> Option<isize> {
-    // SAFETY: GetForegroundWindow has no preconditions.
-    let window = unsafe { GetForegroundWindow() };
-    if window.0.is_null() {
-        return None;
-    }
-    served_by(window.0 as isize, target_pid).then_some(window.0 as isize)
-}
 
 pub(super) use verbatim_win32::window::main_window_of;
 

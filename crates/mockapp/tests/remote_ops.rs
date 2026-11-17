@@ -1033,16 +1033,17 @@ fn focus_now_with_a_missing_grandparent(
 /// parent read fails (`NVDAObjects/UIA/__init__.py` 2142 to 2145,
 /// `Window._get_parent`): here the desktop, so the chain is the ancestors
 /// read, and NVDA's too skips the top-level window. The read's UIA calls
-/// are the program's: the focused element's read and the program, one
-/// call each, so a fallback to the classic walk, which steps hop by hop,
-/// cannot pass for the program's answer.
+/// are the program's, the focused element's read and the program, one
+/// call each, and the foreground window's element, which a focus that met
+/// no ancestor Core knows is read with, so a fallback to the classic walk,
+/// which steps hop by hop, cannot pass for the program's answer.
 fn a_focus_now_whose_program_finds_no_parent_below_the_window_goes_on_from_its_windows_parent() {
     assert_eq!(
         focus_now_with_a_missing_grandparent(true, "none", &[]),
         (
             Some("Deep button".to_owned()),
             vec![Some("Inner group".to_owned())],
-            2
+            3
         )
     );
 }
@@ -1058,7 +1059,7 @@ fn a_focus_now_whose_program_ends_below_the_window_at_an_element_reporting_a_han
  {
     assert_eq!(
         focus_now_with_a_missing_grandparent(true, "none", &["report-window group2"]),
-        (Some("Deep button".to_owned()), vec![None], 2)
+        (Some("Deep button".to_owned()), vec![None], 3)
     );
 }
 

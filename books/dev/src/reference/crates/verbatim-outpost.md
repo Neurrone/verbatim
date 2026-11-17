@@ -569,12 +569,16 @@ and the inherited pipe handles.
 ### The current focus
 
 - The answer to Core's `CurrentFocus` request (`asked::current_focus`)
-  is the foreground window, when the application holds the foreground
-  (the outpost's foreground reader, `GetForegroundWindow`, never
-  `hwndFocus`), and the focused control (`hwndFocus`, through its window's
-  backend) with its ancestors up to one Core already knows, its selected
-  child and its caret (a console's text area reads as a nameless
-  terminal, `read::console_text_area`). A foreground or focus window that
+  is the focused control (`hwndFocus`, through its window's backend) with
+  its ancestors up to one Core already knows, its selected child and its
+  caret (a console's text area reads as a nameless terminal,
+  `read::console_text_area`); and, for a focus that met no ancestor Core
+  knows, the foreground object, read after the focus as every focus
+  answer reads it (`read::foreground_object_among`, the outpost's
+  foreground reader, `GetForegroundWindow`, when the application holds
+  the foreground), as NVDA reads `objectInForeground` after the focus's
+  ancestry only when it shares nothing below the desktop with the old
+  focus's (`eventHandler.py` 402 to 413). A foreground or focus window that
   is a ghost's or a hung application's is answered as a plain window, the
   focus with the plain windows above it, with no call, a deliberate
   difference from NVDA, which says nothing (Dickson, 2026-10-29). Through

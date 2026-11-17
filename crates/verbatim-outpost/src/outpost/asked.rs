@@ -1271,15 +1271,23 @@ fn try_candidate(
 }
 
 /// The application's current focus, as a focus-now read finds it, with its
-/// ancestors up to one Core already knows.
+/// ancestors up to one Core already knows; and, when it met none, so that
+/// it enters a new window, the foreground object, read after it, as NVDA
+/// reads `objectInForeground` after the focus's ancestry, only when that
+/// ancestry shares nothing below the desktop with the old focus's
+/// (`eventHandler.py` 402 to 413).
 fn current_focus(
     context: &RequestContext<'_>,
     client: &mut Client,
     set: &[PropertyId],
     (known, baseline): (&[KnownAncestor], Option<TextAnchor>),
 ) -> Outcome {
-    let (now, control_window) = read::focus_now(context, client, &known_stops(known));
-    let Some(mut control) = now.focus else {
+    let Ok((control_window, mut control)) = read::focused_control_in(
+        context,
+        client,
+        read::FocusRead::FocusNow,
+        &known_stops(known),
+    ) else {
         return Outcome::NotThere;
     };
     let (mut ancestors, met) = cut_at_known(context, control.ancestors, known);
@@ -1291,6 +1299,10 @@ fn current_focus(
         &control.walked,
         met.and_then(|place| known.get(usize::try_from(place).ok()?)),
     );
+    let foreground = met
+        .is_none()
+        .then(|| read::foreground_object_among(context, client, &ancestors))
+        .flatten();
     read::describe_dialogs(
         context,
         client,
@@ -1305,16 +1317,15 @@ fn current_focus(
     let msaa = (control.node.backend == Backend::Msaa)
         .then(|| held_ids(context, &control.node))
         .flatten();
-    let foreground = now.window.as_ref();
     Outcome::Result(Reply::Focus(Box::new(focus_read(
         context,
         &Focus {
             node: &control.node,
             ancestors: &ancestors,
             met,
-            nearest: control_window,
+            nearest: Some(control_window),
             msaa,
-            foreground,
+            foreground: foreground.as_ref(),
             value_from_selection: false,
             runtime_id_reused: false,
             baseline,

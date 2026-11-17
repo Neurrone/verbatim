@@ -783,6 +783,53 @@ fn focus_below_an_ancestor_a_current_focus_read_minted(remote: bool) {
     app.quit();
 }
 
+/// Core's read of the current focus reads the foreground window after the
+/// focus, and only for a focus whose walk met no ancestor Core already
+/// knows, as NVDA reads `objectInForeground` only when the new focus's
+/// ancestry shares nothing below the desktop with the old one's
+/// (`eventHandler.py` 402 to 413): the first read, of "Deep button", enters
+/// mockapp's window and carries it as its foreground, taken from the
+/// focus's own chain; the second, of its sibling "Remember", meets their
+/// group and reads no foreground window at all.
+fn a_focus_now_reads_the_foreground_only_for_a_focus_entering_a_new_window() {
+    let title = common::unique_title("mockapp-focus-now-foreground");
+    let mut app = common::spawn("ancestry.json", "uia", &title);
+    let client = Client::new(common::find_window(&title));
+    let outpost = OutpostUnderTest::new(&app);
+
+    app.send("set-focus deep");
+    outpost.read_focus_as(client.focused().live().element());
+    let (outcome, calls) = outpost.current_focus();
+    let first = Focused::of(outcome, calls);
+    assert_eq!(
+        (
+            first.read.met,
+            first.read.foreground.as_ref().map(common::outpost::name_of)
+        ),
+        (None, Some(Some("Mockapp Ancestry Fixture"))),
+        "the first read enters the window"
+    );
+
+    app.send("set-focus check");
+    outpost.read_focus_as(client.focused().live().element());
+    let reads = outpost.foreground_reads();
+    let (outcome, calls) = outpost.current_focus();
+    let second = Focused::of(outcome, calls);
+    assert_eq!(
+        (
+            second.name(),
+            second.read.met,
+            second.read.foreground.is_none(),
+            outpost.foreground_reads() - reads
+        ),
+        (Some("Remember"), Some(2), true, 0),
+        "the second read meets the group and reads no foreground"
+    );
+
+    drop(outpost);
+    app.quit();
+}
+
 fn a_focus_below_an_ancestor_a_current_focus_read_minted_is_found_and_followed_remote() {
     focus_below_an_ancestor_a_current_focus_read_minted(true);
 }
@@ -1173,8 +1220,10 @@ fn a_foreground_event_for_a_window_read_through_uia_is_dropped() {
 /// application's current focus 50 ms later, and Core refuses an MSAA answer
 /// whose object neither has the focused state nor is inside one that has,
 /// its state cleared by `set-states`, as NVDA refuses its fake focus before
-/// it is queued (`docs/parity/focus-events.md`): nothing is said. With the
-/// focused state, the same answer is spoken.
+/// it is queued (`docs/parity/focus-events.md`): nothing is said. The read
+/// is the focus and its ancestors, and mockapp's window as its foreground,
+/// since it met no ancestor Core knows. With the focused state, the same
+/// answer is spoken.
 fn a_fake_focus_on_an_msaa_object_without_the_focused_state_answers_nothing() {
     let title = common::unique_title("mockapp-fake-focus-unfocused");
     let mut app = common::spawn("counts.json", "msaa", &title);
@@ -1194,7 +1243,7 @@ fn a_fake_focus_on_an_msaa_object_without_the_focused_state_answers_nothing() {
         (
             Vec::new(),
             CallCounts {
-                msaa: 31,
+                msaa: 42,
                 ..CallCounts::default()
             }
         ),
@@ -3010,6 +3059,10 @@ fn main() {
         (
             "a_focus_without_a_path_is_followed_from_its_next_focus_event",
             a_focus_without_a_path_is_followed_from_its_next_focus_event,
+        ),
+        (
+            "a_focus_now_reads_the_foreground_only_for_a_focus_entering_a_new_window",
+            a_focus_now_reads_the_foreground_only_for_a_focus_entering_a_new_window,
         ),
         (
             "a_focus_below_an_ancestor_a_current_focus_read_minted_is_found_and_followed_remote",
