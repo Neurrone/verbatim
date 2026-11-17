@@ -22,6 +22,7 @@
 
 #include <wx/wx.h>
 #include <wx/access.h>
+#include <wx/evtloop.h>
 #include <wx/filedlg.h>
 #include <wx/listctrl.h>
 #include <wx/taskbar.h>
@@ -1493,7 +1494,14 @@ void shut_down() {
         g_shell->frame->Close(true);
         g_shell->frame = nullptr;
     }
-    wxTheApp->ExitMainLoop();
+    // Shutdown can arrive inside a nested loop, a modal dialog's or a
+    // menu's, where ExitMainLoop does nothing because the main loop is not
+    // the one running; ScheduleExit ends the main loop once the nested one
+    // has returned. A native message or file box, which EndModal cannot
+    // end, holds the exit until it is closed.
+    wxEventLoopBase* main_loop = wxTheApp->GetMainLoop();
+    wxCHECK_RET(main_loop != nullptr, "shutdown arrives only from the running event loop");
+    main_loop->ScheduleExit(0);
 }
 
 } // namespace verbatim_gui

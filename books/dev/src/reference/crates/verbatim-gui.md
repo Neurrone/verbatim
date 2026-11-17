@@ -23,7 +23,10 @@ Public API:
   loop on the calling thread (the app calls it from the process main thread); once the
   frame and tray exist, `on_ready` hands out the `GuiHandle`. It returns
   when the loop ends: after `Shutdown`, or when a replacing instance posts
-  `WM_QUIT` to the hidden frame's thread. It runs once per process; a
+  `WM_QUIT` to the hidden frame's thread. A `Shutdown` that arrives inside
+  a nested loop, a modal dialog's or a menu's, ends Verbatim's own modal
+  dialog and schedules the main loop's exit, which follows once the nested
+  loop returns; a native message or file box holds it until it is closed. It runs once per process; a
   second call fails, since wxWidgets cannot start again after it ends.
 - `shell_items` — the system tray and taskbar items the systrayList
   replica lists. `ShellItemsHost` (trait) is how the GUI gets them: its
