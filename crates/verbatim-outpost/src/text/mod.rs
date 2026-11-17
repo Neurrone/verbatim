@@ -1352,14 +1352,14 @@ fn extra_unit<S: TextSource>(source: &S, unit: TextUnit) -> Option<TextUnit> {
 }
 
 /// Whose formatting a caret key's final read reads: the character, the
-/// word, or the line spoken; none for a paragraph or a page, as NVDA
-/// reports no spelling errors when the caret moves by paragraph, for speed
-/// (`docs/nvda/document-formatting.md`), nor for a sentence key, whose
-/// final read says the line only where the application moved the caret.
+/// word, the paragraph or the line spoken, every key's unit (a page key
+/// and a sentence key speak the line). For a paragraph the request's
+/// details leave out spelling and grammar errors, as NVDA does for speed
+/// (`speech/speech.py` 1595 to 1597); every other attribute is read.
 fn format_span(unit: TextUnit) -> Option<FormatSpan> {
     match unit {
         TextUnit::Character => Some(FormatSpan::Character),
-        TextUnit::Word => Some(FormatSpan::Unit),
+        TextUnit::Word | TextUnit::Paragraph => Some(FormatSpan::Unit),
         TextUnit::Line => Some(FormatSpan::Line),
         _ => None,
     }

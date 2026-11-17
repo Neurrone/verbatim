@@ -206,6 +206,24 @@ fn a_focus_line_and_a_keys_unit_are_said_with_their_formatting() {
             SegmentContent::Text("beta".to_owned()),
         ]]
     );
+    // A paragraph is read with every reported attribute but spelling and
+    // grammar errors, which NVDA leaves out of a paragraph for speed
+    // (`speech/speech.py` 1595 to 1597): onto "gamma", nothing changes
+    // that is said, and back onto the first paragraph its bold start and
+    // end are said, its misspelt "beta" not.
+    assert_eq!(
+        key_to(CaretMotion::NextParagraph, "caret doc 11"),
+        [vec![SegmentContent::Text("gamma".to_owned())]]
+    );
+    assert_eq!(
+        key_to(CaretMotion::PreviousParagraph, "caret doc 0"),
+        [vec![
+            SegmentContent::Format(TextFormat::Bold),
+            SegmentContent::Text("alpha".to_owned()),
+            SegmentContent::Format(TextFormat::NotBold),
+            SegmentContent::Text("beta".to_owned()),
+        ]]
+    );
     drop(core);
     app.quit();
 }

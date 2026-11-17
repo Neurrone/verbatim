@@ -701,11 +701,14 @@ keys and a focus's line (`docs/parity/speech-audio.md`, "Formatting
 while the caret moves"), and the options are theme indications. The
 focus's line is read with the formatting the settings report, which
 every focus request names, and a caret key's unit with the formatting
-of its character, word or line, read in the watch's program with the
-unit; a paragraph or a page is read with none, and a sentence move,
-made only in classic edit controls, whose text Verbatim reads with no
-formatting, with none (mockapp's
-`a_focus_line_and_a_keys_unit_are_said_with_their_formatting`).
+of its character, word, paragraph or line (a page key's unit is the
+line), read in the watch's program with the unit; a paragraph leaves out
+spelling and grammar errors, as NVDA does for speed (`speech/speech.py`
+1595 to 1597) (mockapp's
+`a_focus_line_and_a_keys_unit_are_said_with_their_formatting`). Not yet
+matched, for Dickson to rule: a classic edit control's text, the only
+text moved by sentence, is read with no formatting, where NVDA's
+`EditTextInfo` reports the window's font.
 
 ### The role-shaped behavior layer
 

@@ -392,9 +392,12 @@ fn unit_segments(
         (TextUnit::Line, _) | (_, None) => formatted(line, grid, text::Spoken::Text, reported)
             .unwrap_or_else(|| text::text_segments(content, line.language_at(0))),
         (unit, Some(chunk)) => {
-            if unit == TextUnit::Word
-                && let Some(segments) = formatted(chunk, grid, text::Spoken::Word, reported)
-            {
+            let how = if unit == TextUnit::Word {
+                text::Spoken::Word
+            } else {
+                text::Spoken::Text
+            };
+            if let Some(segments) = formatted(chunk, grid, how, reported) {
                 return segments;
             }
             let read = text::chunk_content(chunk, grid);
