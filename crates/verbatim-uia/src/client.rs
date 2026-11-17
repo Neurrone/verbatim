@@ -38,6 +38,10 @@ pub struct Uia {
     client: IUIAutomation,
 }
 
+/// Told of an ancestor a walk steps to, by its runtime id and its own
+/// window, 0 for none ([`AncestorStops::visited`]).
+pub type Visited<'a> = &'a dyn Fn(&[i32], isize);
+
 /// Where an ancestor walk ([`Uia::ancestors`]) stops short of the root.
 #[derive(Clone, Copy)]
 pub struct AncestorStops<'a> {
@@ -49,6 +53,12 @@ pub struct AncestorStops<'a> {
     /// Whether the walk's time is up, checked before each hop and after a
     /// hop that fails: it then gives up, reporting the chain as incomplete.
     pub out_of_time: Option<&'a dyn Fn() -> bool>,
+    /// Told of each ancestor the walk steps to, nearest first, reported or
+    /// not, by its runtime id and its own window (0 for none), unless it is
+    /// the root of a window read through the other API: the raw view's
+    /// chain, by which an element is found again from a window
+    /// down its runtime ids.
+    pub visited: Option<Visited<'a>>,
 }
 
 /// How an ancestor walk ended ([`Uia::ancestors`]).
@@ -671,11 +681,7 @@ impl Uia {
         (max_hops, parent_automation_id): (u32, &mut Option<String>),
         stops: &AncestorStops<'_>,
     ) -> windows::core::Result<(Vec<NodeSnapshot>, Option<isize>, AncestorWalk)> {
-        let AncestorStops {
-            read_by_other_api,
-            known,
-            out_of_time,
-        } = *stops;
+        let out_of_time = stops.out_of_time;
         let walker = self.raw_view_walker()?;
         let mut chain = Vec::new();
         let mut current = element.clone();
@@ -757,7 +763,7 @@ impl Uia {
             if hops == 1 {
                 *parent_automation_id = read.automation_id;
             }
-            match take_shaped_ancestor(&parent, registry, read_by_other_api, known, &mut chain) {
+            match take_shaped_ancestor(&parent, registry, stops, &mut chain) {
                 Taken::Continue => current = parent.live().clone(),
                 Taken::Crossed(hwnd) => {
                     chain.reverse();
@@ -788,13 +794,7 @@ impl Uia {
     ) -> (Vec<NodeSnapshot>, Option<isize>, AncestorWalk) {
         let mut chain = Vec::new();
         for parent in parents {
-            match take_shaped_ancestor(
-                parent,
-                registry,
-                stops.read_by_other_api,
-                stops.known,
-                &mut chain,
-            ) {
+            match take_shaped_ancestor(parent, registry, stops, &mut chain) {
                 Taken::Continue => {}
                 Taken::Crossed(hwnd) => {
                     chain.reverse();
@@ -826,13 +826,7 @@ impl Uia {
     ) -> (Vec<NodeSnapshot>, Option<isize>, AncestorWalk) {
         let mut chain = Vec::new();
         for parent in parents {
-            match take_ancestor_parts(
-                parent,
-                registry,
-                stops.read_by_other_api,
-                stops.known,
-                &mut chain,
-            ) {
+            match take_ancestor_parts(parent, registry, stops, &mut chain) {
                 Taken::Continue => {}
                 Taken::Crossed(hwnd) => {
                     chain.reverse();
@@ -1054,14 +1048,16 @@ enum Taken {
 fn take_shaped_ancestor(
     parent: &Cached<Ancestor>,
     registry: &dyn Interning,
-    read_by_other_api: &dyn Fn(isize) -> bool,
-    known: &dyn Fn(verbatim_model::NodeId) -> bool,
+    stops: &AncestorStops<'_>,
     chain: &mut Vec<NodeSnapshot>,
 ) -> Taken {
     let read = parent.read();
     let hwnd = read.node.role.hwnd;
-    if hwnd != 0 && read_by_other_api(hwnd) {
+    if hwnd != 0 && (stops.read_by_other_api)(hwnd) {
         return Taken::Crossed(hwnd);
+    }
+    if let Some(visited) = stops.visited {
+        visited(&parent.runtime_id(), hwnd);
     }
     let snapshot = parent.snapshot(registry);
     let description = read.layout_description();
@@ -1069,7 +1065,7 @@ fn take_shaped_ancestor(
         snapshot,
         read.is_control_and_content(),
         description.as_deref(),
-        known,
+        stops.known,
         chain,
     )
 }
@@ -1080,12 +1076,14 @@ fn take_shaped_ancestor(
 fn take_ancestor_parts(
     parent: &AncestorParts,
     registry: &dyn Interning,
-    read_by_other_api: &dyn Fn(isize) -> bool,
-    known: &dyn Fn(verbatim_model::NodeId) -> bool,
+    stops: &AncestorStops<'_>,
     chain: &mut Vec<NodeSnapshot>,
 ) -> Taken {
-    if parent.hwnd != 0 && read_by_other_api(parent.hwnd) {
+    if parent.hwnd != 0 && (stops.read_by_other_api)(parent.hwnd) {
         return Taken::Crossed(parent.hwnd);
+    }
+    if let Some(visited) = stops.visited {
+        visited(&parent.parts.runtime_id, parent.hwnd);
     }
     let parts = &parent.parts;
     let snapshot = NodeSnapshot {
@@ -1102,7 +1100,7 @@ fn take_ancestor_parts(
         snapshot,
         parent.content,
         description.as_deref(),
-        known,
+        stops.known,
         chain,
     )
 }
@@ -1516,6 +1514,7 @@ mod presentation_tests {
             read_by_other_api: &|hwnd| hwnd == 77,
             known: &|_| false,
             out_of_time: None,
+            visited: None,
         };
         let (chain, crossed, walked) =
             super::Uia::ancestor_chain_from_parts(&parents, &registry, &stops);
@@ -1546,6 +1545,7 @@ mod presentation_tests {
             read_by_other_api: &|_| false,
             known: &|id| id == known,
             out_of_time: None,
+            visited: None,
         };
         let (chain, crossed, walked) =
             super::Uia::ancestor_chain_from_parts(&parents, &registry, &stops);

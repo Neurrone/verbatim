@@ -72,6 +72,21 @@ impl FocusPath {
         }
     }
 
+    /// The chain of a UI Automation element the outpost read itself, a
+    /// current-focus read's focus: the element, then its ancestors, nearest
+    /// first, each with its runtime id and its own window, if it has one,
+    /// the walk up from it having reached its outermost element, or met an
+    /// ancestor Core already knows, which [`Self::above`] gives.
+    #[must_use]
+    pub fn of_chain(chain: Vec<(Vec<i32>, Option<Window>)>) -> Self {
+        Self {
+            chain,
+            cut: false,
+            nearest: None,
+            above: None,
+        }
+    }
+
     /// This chain going on above at `above`, the route to the ancestor Core
     /// already knows that the listener's walk met and left out of the
     /// chain: a window's own element, or an element the outpost has a

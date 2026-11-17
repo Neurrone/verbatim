@@ -584,7 +584,14 @@ and the inherited pipe handles.
   retries. Its UIA ancestry is one remote operation
   (`verbatim_uia_rops::focus_ancestry`); with remote operations off, or
   for a window whose element cannot be imported (a proxy, marked for the
-  window's life), the per-hop walk is used.
+  window's life), the per-hop walk is used. Each UIA node it answers keeps
+  a route to its element (`completion::keep_read_routes`), made from the
+  raw view's chain the walk stepped through (`AncestorStops::visited`),
+  unreported ancestors included: from the nearest element at or above it
+  with a window of its own, or, where the walk met an ancestor Core
+  already knows, from that ancestor's route. A later focus whose
+  listener walk meets one of these nodes is found by that route, as one
+  below an ancestor a completion minted is.
 - An MSAA client object of a `WS_SYSMENU` window is marked
   `NodeDetails::top_level_client`, read as a pane and presented by its
   title, as NVDA's `isPresentableFocusAncestor` presents it.

@@ -74,7 +74,7 @@ pub mod text;
 
 pub use checks::{CONSOLE_TEXT_AREA, console_reports_formatting, held_console_reports_formatting};
 pub use client::{
-    AncestorParts, AncestorStops, AncestorWalk, FailedHop, UIA_CONNECTION_TIMEOUT, Uia,
+    AncestorParts, AncestorStops, AncestorWalk, FailedHop, UIA_CONNECTION_TIMEOUT, Uia, Visited,
     release_mta_usage,
 };
 pub use com::{

@@ -5,6 +5,8 @@
 
 #![forbid(unsafe_code)]
 
+use std::cell::RefCell;
+
 use windows::Win32::UI::WindowsAndMessaging::{OBJID_CLIENT, OBJID_WINDOW};
 
 use verbatim_ia2::CHILDID_SELF;
@@ -50,6 +52,10 @@ pub(super) const MAX_ANCESTOR_HOPS: u32 = 64;
 /// A focus's ancestors, outermost first, complete to the desktop; and its
 /// selected child, for a selection container.
 pub(super) type Enrichment = (Vec<NodeSnapshot>, Option<NodeSnapshot>);
+
+/// Told of each ancestor a UI Automation walk steps to, by its runtime id
+/// and its own window ([`verbatim_uia::AncestorStops::visited`]).
+type Visited<'a> = Option<verbatim_uia::Visited<'a>>;
 
 /// A window a focus's chain went on from, which this outpost reads through
 /// UIA, had an element that could not be read: the focus is lost, as
@@ -292,13 +298,13 @@ pub(super) fn uia_enrichment(
     (uia, nodes, ancestors): (&Uia, &Request<Node>, &Request<Ancestor>),
     (element, nearest): (&Cached<Node>, isize),
     (role, parent_automation_id): (Role, &mut Option<String>),
-    previous: &[NodeSnapshot],
+    (previous, visited): (&[NodeSnapshot], Visited<'_>),
 ) -> Result<Enrichment, FocusLost> {
     let ancestors = uia_ancestors(
         context,
         (uia, ancestors),
         (element.live(), element.read().role.hwnd, nearest),
-        (previous, parent_automation_id),
+        (previous, parent_automation_id, visited),
     )?;
     let selected = if wants_selected_child(role) || element.read().value_from_selection() {
         match uia.selected_node(element.live(), nodes, context.nodes()) {
@@ -336,7 +342,7 @@ fn uia_ancestors(
     context: &RequestContext<'_>,
     (uia, request): (&Uia, &Request<Ancestor>),
     (element, element_window, nearest): (&Live, isize, isize),
-    (previous, parent_automation_id): (&[NodeSnapshot], &mut Option<String>),
+    (previous, parent_automation_id, visited): (&[NodeSnapshot], &mut Option<String>, Visited<'_>),
 ) -> Result<Vec<NodeSnapshot>, FocusLost> {
     let read_by_msaa = |hwnd: isize| uia_walk_leaves(context, nearest, hwnd);
     let known = |id: NodeId| previous.iter().any(|node| node.id == id);
@@ -349,6 +355,7 @@ fn uia_ancestors(
             read_by_other_api: &read_by_msaa,
             known: &known,
             out_of_time: None,
+            visited,
         },
     ) else {
         return onward_after_failure(
@@ -707,7 +714,7 @@ fn window_object_onward(
             context,
             (uia, request),
             (element.live(), hwnd, hwnd),
-            (previous, &mut None),
+            (previous, &mut None, None),
         )?;
         return Ok(Some(above.into_iter().chain(below).collect()));
     }
@@ -785,6 +792,7 @@ pub(super) fn uia_chain_from_read(
             read_by_other_api: &read_by_msaa,
             known: &known,
             out_of_time: None,
+            visited: None,
         },
     );
     // A stop within the chain read comes first; else the chain goes on as
@@ -868,10 +876,11 @@ fn uia_remote_enrichment(
     context: &RequestContext<'_>,
     (uia, request): (&Uia, &Request<Ancestor>),
     element: &Cached<Node>,
-    (previous, parent_automation_id, table): (
+    (previous, parent_automation_id, table, visited): (
         &[NodeSnapshot],
         &mut Option<String>,
         &mut Option<TableId>,
+        Visited<'_>,
     ),
     window: Option<isize>,
 ) -> Option<Result<Result<Enrichment, FocusLost>, NotFocused>> {
@@ -976,6 +985,7 @@ fn uia_remote_enrichment(
             read_by_other_api: &read_by_msaa,
             known: &is_known,
             out_of_time: None,
+            visited,
         },
     );
     // The classic walk stopped at a step into a window read as a plain
@@ -1342,7 +1352,14 @@ pub(super) fn focused_control_in(
         let node = object.read(context.nodes(), Some(&candidates));
         let (ancestors, _) = msaa_enrichment(context, client, (&node, known, Some(&candidates)))
             .map_err(|FocusLost| FocusReadMiss::Failed(None))?;
-        Ok((hwnd, FocusedControl { node, ancestors }))
+        Ok((
+            hwnd,
+            FocusedControl {
+                node,
+                ancestors,
+                walked: Vec::new(),
+            },
+        ))
     }
 }
 
@@ -1368,6 +1385,12 @@ fn uia_focused_control(
         // an application's elements (decision D6): no call.
         let fields = element.read();
         node.details.class_name.clone_from(&fields.role.class_name);
+        // The raw view's chain the walk up steps through, for the routes
+        // to the nodes this read mints.
+        let walked = RefCell::new(vec![(element.runtime_id(), fields.role.hwnd)]);
+        let visited = |runtime_id: &[i32], hwnd: isize| {
+            walked.borrow_mut().push((runtime_id.to_vec(), hwnd));
+        };
         console_text_area(&mut node, Some(hwnd));
         context.store.record_nearest_window(
             node.id,
@@ -1382,7 +1405,7 @@ fn uia_focused_control(
             context,
             (uia, &ancestor_request),
             &element,
-            (&[], &mut parent_automation_id, &mut table),
+            (&[], &mut parent_automation_id, &mut table, Some(&visited)),
             Some(hwnd),
         );
         let enrichment = if let Some(Ok(enrichment)) = remote {
@@ -1394,7 +1417,7 @@ fn uia_focused_control(
                 (uia, &nodes, &ancestor_request),
                 (&element, hwnd),
                 (node.role, &mut parent_automation_id),
-                &[],
+                (&[], Some(&visited)),
             )
         };
         let (ancestors, selected_child) =
@@ -1406,7 +1429,14 @@ fn uia_focused_control(
         if fields.value_from_selection() {
             node.value = selected_child.and_then(|child| child.name);
         }
-        Ok((hwnd, FocusedControl { node, ancestors }))
+        Ok((
+            hwnd,
+            FocusedControl {
+                node,
+                ancestors,
+                walked: walked.into_inner(),
+            },
+        ))
     }
 }
 
@@ -1502,6 +1532,11 @@ pub(super) struct FocusedControl {
     /// short, by its time or a failed step, is completed by plain windows
     /// (`books/dev/src/reference/adr/0001-focus.md`, "Object identity").
     pub(super) ancestors: Vec<NodeSnapshot>,
+    /// For a UI Automation focus, the raw view's chain its walk up stepped
+    /// through: the focus, then each ancestor, reported or not, nearest
+    /// first, by its runtime id and its own window (0 for none), from which
+    /// the routes to its nodes are made; empty for an MSAA focus.
+    pub(super) walked: Vec<(Vec<i32>, isize)>,
 }
 
 /// What a read of the application's current focus finds ([`focus_now`]).
@@ -1721,7 +1756,7 @@ pub(super) fn ancestors(
             context,
             (uia, &request),
             (element.live(), own_window, own_window),
-            (&[], &mut None),
+            (&[], &mut None, None),
         )
         .map_err(|FocusLost| {
             ReadError::Failed("a UIA window's element on the way could not be read".to_owned())

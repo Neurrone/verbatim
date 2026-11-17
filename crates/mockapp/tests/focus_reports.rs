@@ -52,7 +52,7 @@ use verbatim_listener_logic::check::Call;
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::RuntimeId;
 use verbatim_model::property::{PropertyId, PropertyValue};
-use verbatim_model::request::{FocusCaret, MsaaIds, RouteEnd};
+use verbatim_model::request::{FocusCaret, KnownAncestor, MsaaIds, RouteEnd};
 use verbatim_model::tell::ElementToken;
 use verbatim_model::tell::{EventObject, Payload};
 
@@ -731,6 +731,64 @@ fn a_focus_without_a_path_is_followed_from_its_next_focus_event() {
 
     drop(outpost);
     app.quit();
+}
+
+/// A windowless UI Automation focus whose listener walk met an ancestor
+/// that a current-focus read minted is found by the outpost, by the route
+/// that read recorded for the ancestor, and followed: Core read "Deep
+/// button" as the current focus, as it does at startup, and the focus then
+/// moves to its sibling "Remember", whose walk stops at their group, which
+/// has no window of its own. The route runs down the raw view, through
+/// the unnamed pane the chain does not report. Without the recorded route
+/// the completion finds no element, so nothing of the check box is
+/// followed. `remote` reads the current focus's ancestors by the remote
+/// program, else by the classic walk.
+fn focus_below_an_ancestor_a_current_focus_read_minted(remote: bool) {
+    let path = if remote { "remote" } else { "classic" };
+    let title = common::unique_title(&format!("mockapp-focus-now-route-{path}"));
+    let mut app = common::spawn("ancestry.json", "uia", &title);
+    let client = Client::new(common::find_window(&title));
+    let outpost = OutpostUnderTest::with_options(
+        &app,
+        OutpostOptions {
+            remote_operations: remote,
+        },
+    );
+
+    app.send("set-focus deep");
+    outpost.read_focus_as(client.focused().live().element());
+    let (outcome, calls) = outpost.current_focus();
+    let now = Focused::of(outcome, calls);
+    let group = &now.read.ancestors.first().expect("the button's group").node;
+    assert_eq!(
+        common::outpost::name_of(group),
+        Some("Inner group"),
+        "the current focus's nearest ancestor"
+    );
+    let group_id = group.runtime_id.clone().expect("the group's runtime id");
+
+    app.send("set-focus check");
+    let check = client.focused();
+    let (focus, _) = outpost.listener_focus(&check);
+    assert_eq!(
+        route_end(&focus),
+        RouteEnd::Known(KnownAncestor::Uia(group_id)),
+        "the listener's walk meets the group"
+    );
+    let reported = completed(&outpost, focus);
+    assert_eq!(reported.name(), Some("Remember"));
+    assert_followed(&mut app, &outpost, "check", &check);
+
+    drop(outpost);
+    app.quit();
+}
+
+fn a_focus_below_an_ancestor_a_current_focus_read_minted_is_found_and_followed_remote() {
+    focus_below_an_ancestor_a_current_focus_read_minted(true);
+}
+
+fn a_focus_below_an_ancestor_a_current_focus_read_minted_is_found_and_followed_classic() {
+    focus_below_an_ancestor_a_current_focus_read_minted(false);
 }
 
 /// A text field with no window of its own whose walk up the listener's
@@ -2952,6 +3010,14 @@ fn main() {
         (
             "a_focus_without_a_path_is_followed_from_its_next_focus_event",
             a_focus_without_a_path_is_followed_from_its_next_focus_event,
+        ),
+        (
+            "a_focus_below_an_ancestor_a_current_focus_read_minted_is_found_and_followed_remote",
+            a_focus_below_an_ancestor_a_current_focus_read_minted_is_found_and_followed_remote,
+        ),
+        (
+            "a_focus_below_an_ancestor_a_current_focus_read_minted_is_found_and_followed_classic",
+            a_focus_below_an_ancestor_a_current_focus_read_minted_is_found_and_followed_classic,
         ),
         (
             "a_windowless_text_focus_whose_walk_failed_is_found_as_the_focused_element",

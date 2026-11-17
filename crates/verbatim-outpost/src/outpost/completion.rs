@@ -215,26 +215,94 @@ fn find(
 }
 
 /// The route to the ancestor Core already knows that the listener's walk
-/// met, `end`, which the route's steps leave out: a window's own element,
-/// or an element whose node the outpost keeps a route to. `None` for any
-/// other end, or a known element the outpost has no route to.
+/// met, `end`, which the route's steps leave out ([`known_route_to`]).
+/// `None` for any other end.
 fn known_route(context: &RequestContext<'_>, end: &RouteEnd) -> Option<super::focus_path::Route> {
     match end {
-        RouteEnd::Known(KnownAncestor::Window(window)) => {
-            let hwnd = hwnd_of(*window);
-            let low = u32::try_from(window.0 & 0xFFFF_FFFF).ok()?;
-            Some(super::focus_path::Route {
-                window: verbatim_reader_rules::Window::new(hwnd)?,
-                path: Vec::new(),
-                runtime_id: vec![42, low.cast_signed()],
-            })
-        }
-        RouteEnd::Known(KnownAncestor::Uia(runtime_id)) => context.store.route_to(&runtime_id.0),
-        RouteEnd::Known(KnownAncestor::Node(node)) => context
-            .store
-            .runtime_id_of(*node)
-            .and_then(|runtime_id| context.store.route_to(&runtime_id)),
+        RouteEnd::Known(known) => known_route_to(context, known),
         _ => None,
+    }
+}
+
+/// The route to `known`, an ancestor Core already knows: a window's own
+/// element, or an element whose node the outpost keeps a route to. `None`
+/// for a known element the outpost has no route to.
+pub(super) fn known_route_to(
+    context: &RequestContext<'_>,
+    known: &KnownAncestor,
+) -> Option<super::focus_path::Route> {
+    let runtime_id = known_runtime_id(context, known)?;
+    match known {
+        KnownAncestor::Window(window) => Some(super::focus_path::Route {
+            window: verbatim_reader_rules::Window::new(hwnd_of(*window))?,
+            path: Vec::new(),
+            runtime_id,
+        }),
+        KnownAncestor::Uia(_) | KnownAncestor::Node(_) => context.store.route_to(&runtime_id),
+    }
+}
+
+/// Each UI Automation node of a focus the outpost read itself, `nodes`,
+/// the focus and its reported ancestors, keeps the route to its element,
+/// by `walked`, the raw view's chain the read's walk up stepped through,
+/// nearest first, by runtime id and own window: from the nearest element
+/// at or above it with a window of its own; or, where the walk stopped at
+/// `met`, the ancestor Core already knows that it met, from the route to
+/// that ancestor. A later focus whose listener walk meets one of them is
+/// then found by that route, as one minted from the listener's read is
+/// ([`keep_minted`]).
+pub(super) fn keep_read_routes<'a>(
+    context: &RequestContext<'_>,
+    nodes: impl IntoIterator<Item = &'a NodeSnapshot>,
+    walked: &[(Vec<i32>, isize)],
+    met: Option<&KnownAncestor>,
+) {
+    // The walk's chain below the ancestor it met, which the route to that
+    // ancestor continues.
+    let met_at = met.and_then(|met| {
+        let runtime_id = known_runtime_id(context, met)?;
+        walked.iter().position(|(id, _)| *id == runtime_id)
+    });
+    let below = met_at.map_or(walked, |at| &walked[..at]);
+    let above = met
+        .filter(|_| met_at.is_some())
+        .and_then(|met| known_route_to(context, met));
+    let path = FocusPath::of_chain(
+        below
+            .iter()
+            .map(|(runtime_id, hwnd)| {
+                (
+                    runtime_id.clone(),
+                    verbatim_reader_rules::Window::new(*hwnd),
+                )
+            })
+            .collect(),
+    )
+    .above(above);
+    for node in nodes {
+        if node.backend != Backend::Uia {
+            continue;
+        }
+        if let Some(route) = context
+            .store
+            .runtime_id_of(node.id)
+            .and_then(|runtime_id| path.route_to(&runtime_id))
+        {
+            context.store.record_route(node.id, route);
+        }
+    }
+}
+
+/// The runtime id of `known`, an ancestor Core already knows: a window's
+/// own element's, its own, or its node's.
+fn known_runtime_id(context: &RequestContext<'_>, known: &KnownAncestor) -> Option<Vec<i32>> {
+    match known {
+        KnownAncestor::Window(window) => {
+            let low = u32::try_from(window.0 & 0xFFFF_FFFF).ok()?;
+            Some(vec![42, low.cast_signed()])
+        }
+        KnownAncestor::Uia(runtime_id) => Some(runtime_id.0.clone()),
+        KnownAncestor::Node(node) => context.store.runtime_id_of(*node),
     }
 }
 
@@ -469,6 +537,7 @@ fn ancestors(
                 read_by_other_api: &read_by_msaa,
                 known: &known,
                 out_of_time: None,
+                visited: None,
             },
         );
         let nearest_first = chain.into_iter().rev().collect();

@@ -178,7 +178,12 @@ calls: an element that is its window's own has that window, one with none
 above one that had its own is hosted by that window's parent window, and
 one with none above one with none has the same window as it
 (`parent_window` is `GetAncestor` with `GA_PARENT`). Telling the root is
-two local calls, made only when a hop fails.
+two local calls, made only when a hop fails. `AncestorStops::visited`,
+when set, is told of each ancestor stepped to, reported or not, by its
+runtime id and its own window, unless it is the root of a window read
+through the other API: the raw view's chain, by which the outpost finds
+an element again from a window down its runtime ids. `ancestors_from`
+and `ancestor_chain_from_parts` tell it the same way.
 
 The walk never steps across the process boundary
 (`books/dev/src/explanation/design/listener-without-connections.md`, section 3): before each

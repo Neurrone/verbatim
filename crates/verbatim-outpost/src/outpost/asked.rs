@@ -1283,6 +1283,14 @@ fn current_focus(
         return Outcome::NotThere;
     };
     let (mut ancestors, met) = cut_at_known(context, control.ancestors, known);
+    // The nodes this read minted keep their routes, so that a later focus
+    // whose listener walk meets one of them finds its element.
+    super::completion::keep_read_routes(
+        context,
+        std::iter::once(&control.node).chain(&ancestors),
+        &control.walked,
+        met.and_then(|place| known.get(usize::try_from(place).ok()?)),
+    );
     read::describe_dialogs(
         context,
         client,
