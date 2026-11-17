@@ -423,13 +423,19 @@ fn a_controls_own_focus_reports_its_focused_child() {
         Some((Role::Tree, Some("Categories")))
     );
     assert_eq!(
-        reported.read.redirected_to,
-        Some(MsaaIds {
-            window: WindowHandle(hwnd.0 as u64),
-            object: tree,
-            child: 1,
-        }),
-        "the item the redirect reached, which its own event names"
+        (
+            reported.read.redirected,
+            reported.read.msaa.map(|held| held.event)
+        ),
+        (
+            true,
+            Some(MsaaIds {
+                window: WindowHandle(hwnd.0 as u64),
+                object: tree,
+                child: 1,
+            })
+        ),
+        "the item the redirect reached, named by the ids its own event names"
     );
 
     drop(outpost);
@@ -455,8 +461,8 @@ fn a_focus_that_was_not_redirected_reports_no_redirect() {
         child: 0,
     });
     assert_eq!(
-        (reported.role(), reported.read.redirected_to),
-        (Role::Window, None)
+        (reported.role(), reported.read.redirected),
+        (Role::Window, false)
     );
 
     drop(outpost);

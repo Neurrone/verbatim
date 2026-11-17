@@ -372,7 +372,7 @@ fn focus_read(depth: u64, console: bool) -> FocusRead {
             runtime_id: Some(RuntimeId(vec![42, 12])),
         },
         msaa: None,
-        redirected_to: None,
+        redirected: false,
         ancestors,
         met: None,
         foreground: None,

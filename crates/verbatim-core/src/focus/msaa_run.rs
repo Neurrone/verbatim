@@ -115,9 +115,10 @@ const OBJID_CLIENT: i32 = -4;
 /// the run without a read (Verbatim-only, design "Focus and foreground";
 /// pinned by `theme_panel`).
 fn redirected_to(versions: &super::versions::Versions, ids: &MsaaIds) -> bool {
-    versions
-        .committed_read()
-        .is_some_and(|kept| kept.redirected_to.as_ref() == Some(ids))
+    versions.committed_read().is_some_and(|kept| {
+        kept.redirected
+            && matches!(&kept.read_by, ReadBy::Msaa { event: Some(event), .. } if event == ids)
+    })
 }
 
 /// `tried`, newest first, by application, in the order of each

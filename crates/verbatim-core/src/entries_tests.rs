@@ -156,7 +156,7 @@ pub(crate) fn focus_read(msaa: Option<HeldIds>) -> FocusRead {
             runtime_id: msaa.is_none().then(|| RuntimeId(vec![42, 1])),
         },
         msaa,
-        redirected_to: None,
+        redirected: false,
         ancestors: vec![FocusAncestor {
             node: FocusNode {
                 read: NodeRead {
@@ -894,8 +894,18 @@ fn a_foreground_marker_empties_the_last_focus_for_an_unrelated_window() {
 fn a_focus_on_the_child_a_redirect_reached_ends_the_run_with_no_read() {
     let mut state = ready();
     feed_at(&mut state, 1_000, entry(msaa_tell(-4)));
-    let mut read = focus_read(Some(held(-4)));
-    read.redirected_to = Some(held(-5).event);
+    // The list's focus, child 0, redirected to its item, child 2, whose
+    // ids the answer names as its event's, as NVDA's redirected object.
+    let child = MsaaIds {
+        window: WindowHandle(5),
+        object: -4,
+        child: 2,
+    };
+    let mut read = focus_read(Some(HeldIds {
+        event: child,
+        held_child: 2,
+    }));
+    read.redirected = true;
     let tried = RunRead {
         tried: vec![Tried::Focus(Box::new(read))],
     };
@@ -903,8 +913,31 @@ fn a_focus_on_the_child_a_redirect_reached_ends_the_run_with_no_read() {
         feed_at(&mut state, 2_000, answer(OUTPOST, 1, Reply::Run(tried))),
         SPOKEN
     );
-    assert_eq!(feed_at(&mut state, 3_000, entry(msaa_tell(-5))), NOTHING);
+    let mut tell = msaa_tell(-4);
+    tell.object = EventObject::Msaa {
+        window: child.window,
+        object: child.object,
+        child: child.child,
+    };
+    assert_eq!(feed_at(&mut state, 3_000, entry(tell)), NOTHING);
     assert!(state.queue.front_for_tests().is_none());
+    // The limiter never drops the item's events, by the ids NVDA's
+    // redirected object carries, and caps the list's own.
+    let key = |id| crate::event_queue::MsaaKey {
+        kind: EventKind::MsaaFocus,
+        window: child.window,
+        object: child.object,
+        child: id,
+        thread: 41,
+    };
+    assert!(<Entries as crate::event_queue::Logic>::exempt_from_cap(
+        &state,
+        &key(2)
+    ));
+    assert!(!<Entries as crate::event_queue::Logic>::exempt_from_cap(
+        &state,
+        &key(0)
+    ));
 }
 
 /// A list's focus that a redirect took to the child Core committed is
@@ -944,8 +977,8 @@ fn a_redirect_that_reaches_the_committed_focus_is_spoken_again() {
         feed_at(&mut state, 3_000, entry(msaa_tell(-4))),
         ["send Outpost(Pid(40)) MsaaRun"]
     );
-    let mut read = focus_read(Some(held(-4)));
-    read.redirected_to = Some(child);
+    let mut read = focus_read(Some(at_child));
+    read.redirected = true;
     let tried = RunRead {
         tried: vec![Tried::Focus(Box::new(read))],
     };

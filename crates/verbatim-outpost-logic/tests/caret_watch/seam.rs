@@ -770,7 +770,7 @@ fn focus_read(node: NodeId, window: NodeWindow, values: PropertyValues) -> Focus
             runtime_id: None,
         },
         msaa: None,
-        redirected_to: None,
+        redirected: false,
         ancestors: vec![FocusAncestor {
             node: FocusNode {
                 read: NodeRead {

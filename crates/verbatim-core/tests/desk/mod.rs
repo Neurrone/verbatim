@@ -359,7 +359,7 @@ pub fn focus_read_of(app: App, focus: &NodeSnapshot, ancestors: &[NodeSnapshot])
     FocusRead {
         focus: focus_node(app, focus),
         msaa: None,
-        redirected_to: None,
+        redirected: false,
         ancestors: ancestors
             .iter()
             .rev()

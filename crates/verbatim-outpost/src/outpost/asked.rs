@@ -1080,7 +1080,7 @@ pub(super) fn focus_read(
     FocusRead {
         focus: focus_node(focus.node, nearest),
         msaa: focus.msaa,
-        redirected_to: None,
+        redirected: false,
         ancestors,
         met: focus.met,
         foreground: focus
@@ -1227,14 +1227,21 @@ fn try_candidate(
     // the address the candidate is at after the redirect, which only a
     // redirect moves; the node it is read as may be kept at another
     // address with no redirect at all, a window's client re-keyed as the
-    // window, or an object NVDA's equality matched to a known one.
+    // window, or an object NVDA's equality matched to a known one. Its ids
+    // are the focus's event ids from then on, as NVDA builds the
+    // redirected object with the child's id as its event's
+    // (`IAccessibleHandler/__init__.py` 746 to 757).
     let (window, object, child) = candidate.key();
-    let redirected_to =
-        ((window, object, child) != (hwnd, ids.object, ids.child)).then(|| MsaaIds {
+    let redirected = (window, object, child) != (hwnd, ids.object, ids.child);
+    let event = if redirected {
+        MsaaIds {
             window: window_handle(window),
             object,
             child,
-        });
+        }
+    } else {
+        ids
+    };
     let stops = known_stops(&run.known);
     let candidates = candidates_of(&stops);
     let node = candidate.read(context.nodes(), Some(&candidates));
@@ -1250,10 +1257,7 @@ fn try_candidate(
         (ancestors.iter_mut().chain(std::iter::once(&mut node)), None),
         &[],
     );
-    let msaa = HeldIds {
-        event: ids,
-        held_child,
-    };
+    let msaa = HeldIds { event, held_child };
     // A focus that met none of the ancestors Core knows enters a new
     // window: its foreground object is read with it, as NVDA reads it then.
     let foreground = met
@@ -1275,7 +1279,7 @@ fn try_candidate(
         },
         &run.set,
     );
-    read.redirected_to = redirected_to;
+    read.redirected = redirected;
     Tried::Focus(Box::new(read))
 }
 

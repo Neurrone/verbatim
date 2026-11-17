@@ -243,6 +243,16 @@ mod tests {
         assert!(!msaa_duplicate(Some(&last), &ids(3, -4, 0)));
     }
 
+    /// An event on a child above 0 that resolved to a full object, held
+    /// by child 0: its repeat is a duplicate, as NVDA's object's own child
+    /// id is then 0 (`docs/parity/focus-events.md`, "Duplicate focus
+    /// suppression").
+    #[test]
+    fn a_repeat_of_a_child_event_held_as_a_full_object_is_a_duplicate() {
+        let last = msaa_last_held(Some(ids(3, -4, 5)), 0);
+        assert!(msaa_duplicate(Some(&last), &ids(3, -4, 5)));
+    }
+
     #[test]
     fn an_msaa_focus_with_other_ids_is_not_a_duplicate() {
         let last = msaa_last(Some(ids(3, -4, 0)));

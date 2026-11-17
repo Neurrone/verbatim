@@ -409,7 +409,7 @@ fn ready(
         place,
         window: origin.asked,
         ancestors: kept_ancestors.into(),
-        redirected_to: read.redirected_to,
+        redirected: read.redirected,
         foreground: read.foreground.as_ref().and_then(|node| node.read.node),
         value_from_selection: read.value_from_selection,
         class: read.class,

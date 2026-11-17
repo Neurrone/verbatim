@@ -122,8 +122,9 @@ pub(crate) struct Kept {
     /// application, so shared: a checkpoint, which every entry that asks
     /// takes, copies a pointer, not the chain.
     pub(crate) ancestors: Arc<[KeptAncestor]>,
-    /// The focused child's ids, when a redirect from a list reached it.
-    pub(crate) redirected_to: Option<MsaaIds>,
+    /// Whether a redirect from a list reached it, its MSAA event ids then
+    /// naming the focused child.
+    pub(crate) redirected: bool,
     /// The foreground window it entered under, when it could be read.
     pub(crate) foreground: Option<NodeId>,
     /// Whether its value comes from its selection.

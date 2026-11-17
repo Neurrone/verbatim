@@ -581,8 +581,10 @@ pub struct MsaaIds {
 /// the object by.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct HeldIds {
-    /// The ids the event named; a focus read through `accFocus` carries no
-    /// object id of its own, as NVDA's.
+    /// The ids the event named, or, for a focus a redirect from a list
+    /// took to its focused child, that child's ids, as NVDA builds the
+    /// redirected object with the child's id as its event's; a focus read
+    /// through `accFocus` carries no object id of its own, as NVDA's.
     pub event: MsaaIds,
     /// The child id the outpost holds the object by.
     pub held_child: i32,
@@ -634,9 +636,10 @@ pub struct FocusRead {
     pub focus: FocusNode,
     /// The MSAA ids it was read by, `None` for a UI Automation focus.
     pub msaa: Option<HeldIds>,
-    /// The focused child's ids, when the focus was reached by a redirect
-    /// from a list to its focused child.
-    pub redirected_to: Option<MsaaIds>,
+    /// Whether the focus was reached by a redirect from a list to its
+    /// focused child; its MSAA event ids then name that child, as NVDA's
+    /// redirected object's do.
+    pub redirected: bool,
     /// Its ancestors, nearest first, up to the ancestor Core already knows
     /// that the walk met, which is not among them.
     pub ancestors: Vec<FocusAncestor>,

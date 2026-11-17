@@ -323,7 +323,7 @@ fn focus_read(
                 })
             }
         },
-        redirected_to: None,
+        redirected: false,
         ancestors: ancestors
             .iter()
             .rev()
