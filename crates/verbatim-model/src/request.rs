@@ -1333,7 +1333,8 @@ pub enum OutsideOutcome {
     Result(Reply),
     /// Refused by the reader, with its reason.
     Refused(Refusal),
-    /// A result that did not decode as the request's reply.
+    /// A result that did not decode as the request's reply: a malformed
+    /// answer.
     Undecodable,
     /// The object is not there.
     NotThere,
@@ -1394,8 +1395,8 @@ pub enum QueueEffect {
         /// Whether it was late or named no request out to its sender.
         late: bool,
     },
-    /// A result did not decode as its request's reply: log it as the
-    /// reader's fault.
+    /// A result did not decode as its request's reply: log it as a
+    /// malformed answer, since every answer a correct reader gives decodes.
     Undecodable(RequestNumber),
     /// The front entry's paused function could not be rebuilt from its
     /// checkpoint, a defect in Core: log it; the input was not handled.

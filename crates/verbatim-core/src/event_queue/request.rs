@@ -20,8 +20,11 @@ pub(crate) trait Request: Debug + Unpin + 'static {
     fn window(&self) -> RequestWindow;
     /// The request as it is sent.
     fn wire(&self) -> Wire;
-    /// A result as it arrived, decoded; `None` when it is not this
-    /// request's reply, a fault of the reader's.
+    /// A result as it arrived, decoded. The reply type holds every result
+    /// a correct reader can answer the request with, its failures
+    /// included (a text request's [`verbatim_model::TextFailure`]), so
+    /// `None` is only for a malformed answer: a result of another
+    /// request's kind.
     fn decode(reply: Reply) -> Option<Self::Reply>;
 }
 
@@ -31,7 +34,7 @@ pub(crate) enum Refused {
     /// The reader refused it, with its reason.
     Reader(Refusal),
     /// The reader answered a result that does not decode as the request's
-    /// reply: the reader's fault, logged, and the reader is not replaced
+    /// reply, a malformed answer: logged, and the reader is not replaced
     /// (Dickson, 2026-11-14).
     Undecodable,
 }

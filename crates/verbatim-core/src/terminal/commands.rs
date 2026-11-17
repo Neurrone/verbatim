@@ -16,7 +16,8 @@ use std::collections::BTreeSet;
 
 use verbatim_model::request::{Reply, Request as Wire};
 use verbatim_model::{
-    Effect, Message, NodeId, TextAnchor, TextOp, TextPoint, TextReply, TraceId, UtteranceSegment,
+    Effect, Message, NodeId, TextAnchor, TextFailure, TextOp, TextPoint, TextReply, TraceId,
+    UtteranceSegment,
 };
 
 use crate::entries::Entries;
@@ -35,7 +36,7 @@ struct FollowUp {
 }
 
 impl Request for FollowUp {
-    type Reply = TextReply;
+    type Reply = Result<TextReply, TextFailure>;
 
     fn reader(&self) -> Reader {
         Reader::Outpost(self.window.process)
@@ -52,13 +53,13 @@ impl Request for FollowUp {
         }
     }
 
-    fn decode(reply: Reply) -> Option<TextReply> {
-        match reply {
-            Reply::Text(
-                reply @ (TextReply::TerminalHistory { .. } | TextReply::TerminalFound { .. }),
-            ) => Some(reply),
+    fn decode(reply: Reply) -> Option<Self::Reply> {
+        crate::text_request::decode_text(reply, |reply| match reply {
+            reply @ (TextReply::TerminalHistory { .. } | TextReply::TerminalFound { .. }) => {
+                Some(reply)
+            }
             _ => None,
-        }
+        })
     }
 }
 
@@ -88,8 +89,15 @@ pub(crate) async fn fresh(cx: &mut Cx<Entries>, trace_id: TraceId, node: NodeId,
         return;
     };
     let reply = match cx.ask(asked, due_us).await {
-        Outcome::Result(reply) => Some(reply),
-        _ => None,
+        // A read that fails, the terminal's text unread included, brings
+        // nothing.
+        Outcome::Result(Ok(reply)) => Some(reply),
+        Outcome::Result(Err(_))
+        | Outcome::Refused(_)
+        | Outcome::NotThere
+        | Outcome::NotResponding
+        | Outcome::ReaderEnded
+        | Outcome::NoLongerAwaited(_) => None,
     };
     if let Some(reply) = reply.as_deref() {
         cx.emit(reading::observed(&asked.terminal, reply, trace_id));
@@ -180,11 +188,13 @@ pub(crate) async fn answer(
         // The terminal's output read meanwhile is heard before the
         // command's words (build 3, "Answers and speech").
         reading::speak_read(cx, None);
-        let Outcome::Result(TextReply::TerminalHistory {
+        // A history read that fails, the terminal's text unread included,
+        // ends the command saying nothing.
+        let Outcome::Result(Ok(TextReply::TerminalHistory {
             text,
             above: rows_above,
             ..
-        }) = outcome
+        })) = outcome
         else {
             return None;
         };
@@ -249,7 +259,7 @@ pub(crate) async fn command_mark(
         reading::speak_read(cx, None);
         // A search that never ran ends the move, saying nothing, every mark
         // kept.
-        let Outcome::Result(TextReply::TerminalFound { matches, .. }) = outcome else {
+        let Outcome::Result(Ok(TextReply::TerminalFound { matches, .. })) = outcome else {
             return None;
         };
         let facts = cx.facts();
@@ -311,5 +321,44 @@ fn status_bar_said(trace_id: TraceId, repeat: u8, footer: &[String]) -> Effect {
             crate::review_text::spell_or_blank(&footer.join(" "), false, None),
         ),
         _ => Effect::CopyToClipboard(footer.join("\r\n")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use verbatim_model::TextUnit;
+
+    use super::*;
+
+    /// Every failure a history read or a search can be answered decodes as
+    /// its answer, a terminal whose text was not read included; only a
+    /// reply of another op's or request's kind is malformed.
+    #[test]
+    fn a_follow_ups_failures_decode_and_another_reply_does_not() {
+        for (reply, failure) in [
+            (TextReply::NoText, TextFailure::NoText),
+            (TextReply::Unsupported, TextFailure::Unsupported),
+            (
+                TextReply::UnsupportedUnit(TextUnit::Line),
+                TextFailure::UnsupportedUnit(TextUnit::Line),
+            ),
+            (TextReply::AnchorLost, TextFailure::AnchorLost),
+            (TextReply::Gone, TextFailure::Gone),
+            (TextReply::Unanswered, TextFailure::Unanswered),
+        ] {
+            assert_eq!(
+                FollowUp::decode(Reply::Text(reply)),
+                Some(Err(failure)),
+                "{failure:?}"
+            );
+        }
+        assert_eq!(
+            FollowUp::decode(Reply::Text(TextReply::Range {
+                text: String::new(),
+                truncated: false,
+            })),
+            None
+        );
+        assert_eq!(FollowUp::decode(Reply::Followed), None);
     }
 }

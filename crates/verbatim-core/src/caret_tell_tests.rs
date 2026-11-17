@@ -96,6 +96,7 @@ struct Step {
     other: usize,
     said: Vec<Vec<String>>,
     observed: Vec<Observed>,
+    undecodable: Vec<u64>,
 }
 
 fn step(held: &mut Held, at_us: u64, input: Input<Entry>) -> Step {
@@ -115,6 +116,7 @@ fn step(held: &mut Held, at_us: u64, input: Input<Entry>) -> Step {
                     .collect(),
             ),
             Effect::Said(Said::Observed(observed)) => step.observed.push(*observed),
+            Effect::Undecodable(number) => step.undecodable.push(number.0),
             _ => {}
         }
     }
@@ -432,6 +434,82 @@ fn a_failed_caret_read_keeps_the_baseline_and_the_flag() {
     assert_eq!(failed.said, Vec::<Vec<String>>::new());
     assert_eq!(baseline(&held), Some(TextAnchor(70)));
     assert!(text_changed(&held));
+}
+
+/// `wpf_password` on GitHub run 44066588632: a caret tell's read of a
+/// focus with no text, read as a plain MSAA window, is answered "no text",
+/// which decodes as the read's answer: nothing is said, and Core holds no
+/// caret and no selection for the node, as a focus answer with no text
+/// holds none; NVDA's caret event says nothing for an object that is not
+/// editable text (`NVDAObjects/__init__.py` 1424 to 1429).
+#[test]
+fn a_caret_read_answered_no_text_decodes_says_nothing_and_drops_the_caret_and_selection() {
+    let mut held = edit_control();
+    with_baseline(&mut held, system_caret(), TextProvider::EditMessages, 2);
+    let _ = step(&mut held, 1_500, value_change());
+    assert!(text_changed(&held));
+    let asked = step(&mut held, 2_000, system_caret());
+    assert_eq!(
+        asked.text,
+        [(3, read_adopting(TextProvider::EditMessages, Some(70), None))]
+    );
+    let answered = step(
+        &mut held,
+        2_100,
+        answer(OUTPOST, 3, Reply::Text(TextReply::NoText)),
+    );
+    assert_eq!(answered, Step::default());
+    assert_eq!(baseline(&held), None);
+    assert!(!text_changed(&held));
+    assert_eq!(held.state.focus_caret(node(2)), None);
+}
+
+/// Every other failure a caret tell's read can be answered decodes, says
+/// nothing and keeps the baseline and the flag, as a read that fails does
+/// (Table 17, column I).
+#[test]
+fn a_caret_read_answered_with_a_failure_decodes_and_keeps_the_baseline_and_the_flag() {
+    for (index, failure) in [
+        TextReply::Unsupported,
+        TextReply::UnsupportedUnit(TextUnit::Sentence),
+        TextReply::AnchorLost,
+        TextReply::Gone,
+        TextReply::Unanswered,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut held = edit_control();
+        with_baseline(&mut held, system_caret(), TextProvider::EditMessages, 2);
+        let _ = step(&mut held, 1_500, value_change());
+        let _ = step(&mut held, 2_000, system_caret());
+        let answered = step(
+            &mut held,
+            2_100,
+            answer(OUTPOST, 3, Reply::Text(failure.clone())),
+        );
+        assert_eq!(answered, Step::default(), "failure {index}: {failure:?}");
+        assert_eq!(baseline(&held), Some(TextAnchor(70)), "{failure:?}");
+        assert!(text_changed(&held), "{failure:?}");
+    }
+}
+
+/// A result of another request's kind is a malformed answer: undecodable,
+/// logged, nothing said, the baseline kept.
+#[test]
+fn a_caret_read_answered_with_another_requests_reply_is_undecodable() {
+    let mut held = edit_control();
+    with_baseline(&mut held, system_caret(), TextProvider::EditMessages, 2);
+    let _ = step(&mut held, 2_000, system_caret());
+    let answered = step(&mut held, 2_100, answer(OUTPOST, 3, Reply::Followed));
+    assert_eq!(
+        answered,
+        Step {
+            undecodable: vec![3],
+            ..Step::default()
+        }
+    );
+    assert_eq!(baseline(&held), Some(TextAnchor(70)));
 }
 
 /// Table 17, columns G then D: an edit control's value change sets the

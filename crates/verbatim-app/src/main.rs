@@ -1636,7 +1636,10 @@ impl ReducerThread<'_> {
                 tracing::debug!(%number, late, "an answer was dropped");
             }
             QueueEffect::Undecodable(number) => {
-                tracing::warn!(%number, "an answer did not decode as its request's reply, the reader's fault");
+                tracing::warn!(
+                    %number,
+                    "a malformed answer: its result is no reply its request can have"
+                );
             }
             QueueEffect::Mismatch { replayed, original } => {
                 tracing::error!(

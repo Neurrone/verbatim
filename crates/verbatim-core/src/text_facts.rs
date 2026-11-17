@@ -69,6 +69,21 @@ pub(crate) fn minted(state: &mut SrState, node: NodeId, baseline: TextAnchor) {
     }
 }
 
+/// A caret tell's read found that `node`, the committed focus, has no
+/// text: Core holds no caret and no selection for it, as a focus answer
+/// with no text holds none ([`focus_answered`]), nothing said. NVDA has no
+/// selection to compare for an object with no text interface, which is no
+/// `EditableText`, so its caret event says nothing
+/// (`NVDAObjects/__init__.py` 1424 to 1429).
+pub(crate) fn no_text(state: &mut SrState, node: NodeId) {
+    if state.focus_matches(node) {
+        state.forget_caret();
+    }
+    if let Some(kept) = committed_on(state, node) {
+        kept.selection = SelectionFacts::default();
+    }
+}
+
 /// A value change of the committed focus, editable text with automatic
 /// selection detection, reached its turn (column G): the flag is set, with
 /// no request and nothing said. NVDA: `NVDAObjects/IAccessible/__init__.py`

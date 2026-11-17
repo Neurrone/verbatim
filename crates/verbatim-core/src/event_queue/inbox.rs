@@ -157,8 +157,8 @@ pub(crate) enum Effect<S> {
         /// Whether it was late or named no request out to its sender.
         late: bool,
     },
-    /// A result did not decode as its request's reply: logged as the
-    /// reader's fault.
+    /// A result did not decode as its request's reply: a malformed answer,
+    /// logged, since every answer a correct reader gives decodes.
     Undecodable(RequestNumber),
     /// What an entry's function emitted.
     Said(S),

@@ -1314,3 +1314,91 @@ fn a_keys_formatting_memory_is_not_written_to_a_later_focus_record() {
         verbatim_model::TextAttributes::default()
     );
 }
+
+/// Every failure a caret key's starting read can be answered decodes as
+/// its answer (an undecodable one is an effect these tests do not read):
+/// the key passes unread and nothing is said or asked. A node with no
+/// text has no caret to report, as NVDA binds its caret scripts to
+/// editable text alone.
+#[test]
+fn a_starting_read_answered_with_a_failure_passes_the_key_saying_nothing() {
+    for failure in [
+        TextReply::NoText,
+        TextReply::Unsupported,
+        TextReply::UnsupportedUnit(TextUnit::Character),
+        TextReply::AnchorLost,
+        TextReply::Gone,
+        TextReply::Unanswered,
+    ] {
+        let mut held = editing();
+        let binding = bound(&held);
+        let _ = step(
+            &mut held,
+            1_000,
+            held_key(1, CaretMotion::NextCharacter, 1_000, &binding),
+        );
+        let answered = step(
+            &mut held,
+            5_000,
+            answer(OUTPOST, 3, Reply::Text(failure.clone())),
+        );
+        assert_eq!(
+            answered,
+            Step {
+                strokes: vec![vec![1]],
+                ..Step::default()
+            },
+            "{failure:?}"
+        );
+    }
+}
+
+/// Every failure a watch can be answered decodes as its answer and says
+/// nothing, as a watch refused does.
+#[test]
+fn a_watch_answered_with_a_failure_says_nothing() {
+    for failure in [
+        TextReply::NoText,
+        TextReply::Unsupported,
+        TextReply::Unanswered,
+    ] {
+        let mut held = watching(
+            CaretMotion::NextCharacter,
+            line("line 01", 7, 0),
+            unit(TextUnit::Character, "l", 8),
+        );
+        let ended = step(
+            &mut held,
+            20_000,
+            answer(OUTPOST, 4, Reply::Text(failure.clone())),
+        );
+        assert_eq!(ended, Step::default(), "{failure:?}");
+    }
+}
+
+/// Every failure a sentence move can be answered decodes as its answer
+/// and says nothing, the baseline unminted, as NVDA's sentence script
+/// swallows its exception (`editableText.py` 240 to 264): a source with no
+/// sentence unit, a starting point no longer held, no paragraph read.
+#[test]
+fn a_sentence_move_answered_with_a_failure_says_nothing() {
+    for failure in [
+        TextReply::UnsupportedUnit(TextUnit::Sentence),
+        TextReply::AnchorLost,
+        TextReply::Unsupported,
+        TextReply::NoText,
+        TextReply::Gone,
+        TextReply::Unanswered,
+    ] {
+        let (mut held, _) = sentence_watching();
+        let _ = step(&mut held, 105_000, watched(4, Watched::BoundUnread));
+        let before = crate::text_facts::held(&held.state);
+        let failed = step(
+            &mut held,
+            106_000,
+            answer(OUTPOST, 5, Reply::Text(failure.clone())),
+        );
+        assert_eq!(failed, Step::default(), "{failure:?}");
+        assert_eq!(crate::text_facts::held(&held.state), before, "{failure:?}");
+    }
+}

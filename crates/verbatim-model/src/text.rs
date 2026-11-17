@@ -1206,6 +1206,62 @@ pub enum TextReply {
     Unanswered,
 }
 
+/// The answers an outpost can give any text request in place of its op's
+/// own reply: the variants of [`TextReply`] that no op names as its own.
+/// Core parses every text request's result into either the op's own reply
+/// or one of these, so no answer a correct outpost gives fails to decode.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TextFailure {
+    /// [`TextReply::UnsupportedUnit`].
+    UnsupportedUnit(TextUnit),
+    /// [`TextReply::Unsupported`].
+    Unsupported,
+    /// [`TextReply::NoText`]: the node has no text, so no caret and no
+    /// selection.
+    NoText,
+    /// [`TextReply::AnchorLost`].
+    AnchorLost,
+    /// [`TextReply::Gone`].
+    Gone,
+    /// [`TextReply::Unanswered`].
+    Unanswered,
+}
+
+impl TextReply {
+    /// The failure this reply is, or the reply itself when it is an op's
+    /// own reply.
+    ///
+    /// # Errors
+    ///
+    /// The reply itself, when it is no failure.
+    pub fn into_failure(self) -> Result<TextFailure, Self> {
+        match self {
+            TextReply::UnsupportedUnit(unit) => Ok(TextFailure::UnsupportedUnit(unit)),
+            TextReply::Unsupported => Ok(TextFailure::Unsupported),
+            TextReply::NoText => Ok(TextFailure::NoText),
+            TextReply::AnchorLost => Ok(TextFailure::AnchorLost),
+            TextReply::Gone => Ok(TextFailure::Gone),
+            TextReply::Unanswered => Ok(TextFailure::Unanswered),
+            own @ (TextReply::Started(_)
+            | TextReply::Watched(_)
+            | TextReply::Sentence(_)
+            | TextReply::SelectionRead(_)
+            | TextReply::Read { .. }
+            | TextReply::Chunks { .. }
+            | TextReply::Range { .. }
+            | TextReply::Moved { .. }
+            | TextReply::Selected(_)
+            | TextReply::CaretPlaced { .. }
+            | TextReply::SelectionPlaced { .. }
+            | TextReply::TerminalRead(_)
+            | TextReply::TerminalHistory { .. }
+            | TextReply::TerminalFound { .. }
+            | TextReply::Location { .. }
+            | TextReply::OffsetLocation { .. }) => Err(own),
+        }
+    }
+}
+
 /// What a caret key does, as Core's caret handling knows it: the motion
 /// the application performs, and whether it extends the selection (the
 /// key was pressed with Shift).

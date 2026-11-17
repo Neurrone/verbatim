@@ -590,7 +590,10 @@ read, its watch, the sentence move and a caret tell's read are under
 
 Any request can also be answered `NoText` (no text interface; Core reviews
 the value or name as flat text), `AnchorLost`, `Gone` (the node no longer
-exists), or `Unanswered` (no answer in time, or the read failed).
+exists), `Unanswered` (no answer in time, or the read failed),
+`Unsupported` or `UnsupportedUnit`. These six are the `TextFailure`s
+(`TextReply::into_failure`), which Core's typed text requests decode
+beside the op's own reply, so no answer of them fails to decode.
 
 ### Inputs from the shell
 

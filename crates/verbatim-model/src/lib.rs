@@ -94,8 +94,9 @@ pub use text::{
     MAX_SELECTION_TEXT_BYTES, ReadFacts, Selection, SelectionChange, SelectionDifference,
     SelectionRead, SelectionReadReply, SentenceMove, SentenceMoved, Started, StartingRead,
     TerminalRead, TerminalReadReply, TextAnchor, TextAttributes, TextChunk, TextDetails,
-    TextMovement, TextOp, TextPoint, TextPosition, TextProvider, TextRead, TextReadAhead,
-    TextReply, TextThrough, TextUnit, Watch, WatchFinalRead, Watched, WatchedRead, had_effect,
+    TextFailure, TextMovement, TextOp, TextPoint, TextPosition, TextProvider, TextRead,
+    TextReadAhead, TextReply, TextThrough, TextUnit, Watch, WatchFinalRead, Watched, WatchedRead,
+    had_effect,
 };
 pub use theme::{
     DEFAULT_GAIN, Indication, IndicationCategory, IndicationSetting, MAX_GAIN, Presentation,

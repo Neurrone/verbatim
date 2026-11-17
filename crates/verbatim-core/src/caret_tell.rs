@@ -26,7 +26,8 @@ use verbatim_model::property::RuntimeId;
 use verbatim_model::request::{MsaaIds, Reply, Request as Wire};
 use verbatim_model::tell::{ElementToken, Event, EventObject};
 use verbatim_model::{
-    NodeId, OutpostId, SelectionRead, SelectionReadReply, TextOp, TextProvider, TextReply,
+    NodeId, OutpostId, SelectionRead, SelectionReadReply, TextFailure, TextOp, TextProvider,
+    TextReply,
 };
 
 use crate::changes::MsaaChange;
@@ -121,7 +122,7 @@ struct SelectionReadRequest {
 }
 
 impl Request for SelectionReadRequest {
-    type Reply = SelectionReadReply;
+    type Reply = Result<SelectionReadReply, TextFailure>;
 
     fn reader(&self) -> Reader {
         Reader::Outpost(self.window.process)
@@ -138,11 +139,11 @@ impl Request for SelectionReadRequest {
         }
     }
 
-    fn decode(reply: Reply) -> Option<SelectionReadReply> {
-        match reply {
-            Reply::Text(TextReply::SelectionRead(read)) => Some(*read),
+    fn decode(reply: Reply) -> Option<Self::Reply> {
+        crate::text_request::decode_text(reply, |reply| match reply {
+            TextReply::SelectionRead(read) => Some(*read),
             _ => None,
-        }
+        })
     }
 }
 
@@ -236,10 +237,27 @@ pub(crate) async fn run(mut cx: Cx<Entries>, tell: CaretTell) {
         },
     };
     let due_us = cx.due_in(OTHER_DUE_US);
-    // A read that fails says nothing and keeps the baseline and the flag
-    // (Table 17, column I). NVDA: `editableText.py` 433 to 436.
-    let Outcome::Result(read) = cx.ask(request, due_us).await else {
-        return;
+    let read = match cx.ask(request, due_us).await {
+        Outcome::Result(Ok(read)) => read,
+        // The node has no text: no caret and no selection, nothing said.
+        Outcome::Result(Err(TextFailure::NoText)) => {
+            crate::text_facts::no_text(&mut cx.facts_mut(), kept.node);
+            return;
+        }
+        // A read that fails says nothing and keeps the baseline and the
+        // flag (Table 17, column I). NVDA: `editableText.py` 433 to 436.
+        Outcome::Result(Err(
+            TextFailure::Unsupported
+            | TextFailure::UnsupportedUnit(_)
+            | TextFailure::AnchorLost
+            | TextFailure::Gone
+            | TextFailure::Unanswered,
+        ))
+        | Outcome::Refused(_)
+        | Outcome::NotThere
+        | Outcome::NotResponding
+        | Outcome::ReaderEnded
+        | Outcome::NoLongerAwaited(_) => return,
     };
     answered(&mut cx, &tell, (&kept, provider), read);
 }

@@ -5,7 +5,7 @@
 //! text resolve it here at their turn.
 
 use verbatim_model::request::{Reply, Request as Wire};
-use verbatim_model::{NodeId, Pid, Role, TextOp, TextReply};
+use verbatim_model::{NodeId, Pid, Role, TextFailure, TextOp, TextReply};
 
 use crate::event_queue::{Reader, Request, RequestWindow};
 use crate::focus::versions::Committed;
@@ -48,6 +48,24 @@ impl Request for TextRequest {
             Reply::Text(reply) => Some(reply),
             _ => None,
         }
+    }
+}
+
+/// A text request's result, parsed: the op's own reply, which `own` takes,
+/// or one of the failures any text request can be answered
+/// ([`TextFailure`]), so every answer a correct outpost gives decodes, and
+/// the function that asked handles each. `None` only for a result that is
+/// no text reply, or another op's own reply: a malformed answer.
+pub(crate) fn decode_text<T>(
+    reply: Reply,
+    own: impl FnOnce(TextReply) -> Option<T>,
+) -> Option<Result<T, TextFailure>> {
+    let Reply::Text(reply) = reply else {
+        return None;
+    };
+    match reply.into_failure() {
+        Ok(failure) => Some(Err(failure)),
+        Err(reply) => own(reply).map(Ok),
     }
 }
 

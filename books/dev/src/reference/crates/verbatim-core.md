@@ -153,7 +153,13 @@ a token (a terminal's output reads and baseline).
   that its late answer is dropped, and forgotten when that instance ends.
 - Only the front entry may have a request out; its function is paused at
   the request and resumed with the outcome, decoded once as the request's
-  reply type, so no paused function outlives its entry.
+  reply type, so no paused function outlives its entry. A reply type
+  holds every result a correct reader can give the request: a text
+  request's is the op's own reply or a `TextFailure`
+  (`text_request::decode_text`), each handled where the request is made.
+  A result that still does not decode, one of another request's kind, is
+  a malformed answer: refused as undecodable and logged, the reader not
+  replaced.
 - The table also keeps the recovery set, the windows found hung, which the
   shell checks every half second until each answers again.
 
@@ -881,7 +887,11 @@ set or, in an edit control, when a value change of the focus waits in
 the queue (taken out as counted), else in specific terms, then clears the
 flag and takes the new baseline. An edit control's answer whose
 selection offsets equal the last caret tell's (`SrState::edit_selection`)
-changes nothing. A value change of an edit control that is the committed
+changes nothing. An answer that the node has no text (`TextFailure::NoText`)
+leaves Core no caret and no selection for it, the baseline and the flag
+cleared, nothing said (`text_facts::no_text`), as NVDA's caret event says
+nothing for an object that is not editable text; any other failure says
+nothing and keeps the baseline and the flag. A value change of an edit control that is the committed
 focus sets the flag and says nothing; a UI Automation value change of an
 element with a text pattern says nothing. Answers to `MoveCaret`, a
 sentence move and `Select` on the focused text mint the next baseline.

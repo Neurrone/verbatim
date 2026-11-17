@@ -22,8 +22,8 @@ use verbatim_model::request::{
     CancelReason, Follow, FollowGroup, Followed, Reply, Request as Wire,
 };
 use verbatim_model::{
-    Effect, NodeId, Role, TerminalRead, TerminalReadReply, TerminalScope, TextAnchor, TextOp,
-    TextReply, TextUnit, TraceId,
+    Effect, NodeId, Role, TerminalRead, TerminalReadReply, TerminalScope, TextAnchor, TextFailure,
+    TextOp, TextReply, TextUnit, TraceId,
 };
 
 use crate::entries::{Entries, Entry};
@@ -1147,7 +1147,7 @@ pub(crate) struct EntryRead {
 }
 
 impl Request for EntryRead {
-    type Reply = Box<TerminalReadReply>;
+    type Reply = Result<Box<TerminalReadReply>, TextFailure>;
 
     fn reader(&self) -> Reader {
         Reader::Outpost(self.terminal.window.process)
@@ -1165,7 +1165,10 @@ impl Request for EntryRead {
     }
 
     fn decode(reply: Reply) -> Option<Self::Reply> {
-        read_reply(reply)
+        crate::text_request::decode_text(reply, |reply| match reply {
+            TextReply::TerminalRead(read) => Some(read),
+            _ => None,
+        })
     }
 }
 

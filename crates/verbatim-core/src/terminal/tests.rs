@@ -1317,6 +1317,95 @@ fn typing_the_terminal_showed_is_echoed_by_the_typing_echo_settings() {
     assert_eq!(spoken(&effects), Vec::<String>::new());
 }
 
+/// A review command's fresh read of the terminal answered with a failure,
+/// the terminal's text unread or its read failed, decodes as the read's
+/// answer: the command answers from Core's memory as after any read that
+/// brings nothing, and nothing is logged as malformed.
+#[test]
+fn a_review_commands_fresh_read_answered_with_a_failure_decodes() {
+    use verbatim_model::request::{
+        Answer, Outcome, Press, PressAction, QueueEffect, QueueInput, Reply,
+    };
+    // Review current line pressed as key `key`, its fresh read answered
+    // `outcome`: whether anything was logged as malformed, and what was
+    // said.
+    let review = |state: &mut SrState, key: u64, outcome: Outcome| -> (bool, Vec<String>) {
+        let effects = reduce(
+            state,
+            &mut crate::Runtime::default(),
+            &Input::Queue {
+                trace_id: TraceId::from_raw(7),
+                at_us: key * 10_000,
+                input: QueueInput::Press(Box::new(Press {
+                    key_seq: verbatim_model::KeySeq::new(key),
+                    pressed_at_us: key * 10_000,
+                    action: PressAction::Command {
+                        command: ReviewCommand::ReviewCurrentLine,
+                        repeat: 0,
+                    },
+                })),
+            },
+        );
+        let numbers: Vec<_> = effects
+            .into_iter()
+            .filter_map(|effect| match effect {
+                Effect::Queue(QueueEffect::Send { ask, .. }) => Some(ask.number),
+                _ => None,
+            })
+            .collect();
+        let [number] = numbers[..] else {
+            panic!("one read asked: {numbers:?}");
+        };
+        let effects = reduce(
+            state,
+            &mut crate::Runtime::default(),
+            &Input::Queue {
+                trace_id: TraceId::from_raw(8),
+                at_us: key * 10_000 + 1_000,
+                input: QueueInput::Answer {
+                    from: crate::entries::tests::OUTPOST,
+                    answer: Answer {
+                        number,
+                        outcome,
+                        probes: Vec::new(),
+                        detail: String::new(),
+                    },
+                },
+            },
+        );
+        let undecodable = effects
+            .iter()
+            .any(|effect| matches!(effect, Effect::Queue(QueueEffect::Undecodable(_))));
+        let spoken = effects
+            .into_iter()
+            .map(|effect| match effect {
+                Effect::ForKey(_, effect) => *effect,
+                effect => effect,
+            })
+            .filter_map(|effect| match effect {
+                Effect::Speak(utterance, _) => Some(words(&utterance.segments)),
+                _ => None,
+            })
+            .collect();
+        (undecodable, spoken)
+    };
+    for failure in [TextReply::NoText, TextReply::Unanswered] {
+        let mut state = terminal();
+        let read = Outcome::Result(Reply::Text(TextReply::TerminalRead(Box::new(read_reply(
+            "ready>",
+        )))));
+        assert_eq!(
+            review(&mut state, 1, read),
+            (false, vec!["ready>".to_owned()])
+        );
+        assert_eq!(
+            review(&mut state, 2, Outcome::Result(Reply::Text(failure.clone()))),
+            (false, vec!["ready>".to_owned()]),
+            "{failure:?}"
+        );
+    }
+}
+
 #[test]
 fn the_review_cursor_reads_at_the_caret_once_it_followed_it() {
     use verbatim_model::request::{

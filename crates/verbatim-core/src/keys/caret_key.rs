@@ -23,8 +23,8 @@
 use verbatim_model::request::{CancelReason, CaretBinding, Reply, Request as Wire};
 use verbatim_model::{
     CaretKey, CaretMotion, KeySeq, NodeId, OutpostId, SentenceMove, SentenceMoved, Started,
-    StartingRead, TextDetails, TextOp, TextProvider, TextReply, TraceId, UtteranceSegment, Watch,
-    WatchFinalRead, Watched, WatchedRead,
+    StartingRead, TextDetails, TextFailure, TextOp, TextProvider, TextReply, TraceId,
+    UtteranceSegment, Watch, WatchFinalRead, Watched, WatchedRead,
 };
 
 use crate::editing;
@@ -126,7 +126,7 @@ impl OnNode {
 struct StartingReadRequest(OnNode);
 
 impl Request for StartingReadRequest {
-    type Reply = Started;
+    type Reply = Result<Started, TextFailure>;
 
     fn reader(&self) -> Reader {
         Reader::Outpost(self.0.window.process)
@@ -140,11 +140,11 @@ impl Request for StartingReadRequest {
         self.0.wire()
     }
 
-    fn decode(reply: Reply) -> Option<Started> {
-        match reply {
-            Reply::Text(TextReply::Started(started)) => Some(*started),
+    fn decode(reply: Reply) -> Option<Self::Reply> {
+        crate::text_request::decode_text(reply, |reply| match reply {
+            TextReply::Started(started) => Some(*started),
             _ => None,
-        }
+        })
     }
 }
 
@@ -153,7 +153,7 @@ impl Request for StartingReadRequest {
 struct WatchRequest(OnNode);
 
 impl Request for WatchRequest {
-    type Reply = Watched;
+    type Reply = Result<Watched, TextFailure>;
 
     fn reader(&self) -> Reader {
         Reader::Outpost(self.0.window.process)
@@ -167,11 +167,11 @@ impl Request for WatchRequest {
         self.0.wire()
     }
 
-    fn decode(reply: Reply) -> Option<Watched> {
-        match reply {
-            Reply::Text(TextReply::Watched(watched)) => Some(*watched),
+    fn decode(reply: Reply) -> Option<Self::Reply> {
+        crate::text_request::decode_text(reply, |reply| match reply {
+            TextReply::Watched(watched) => Some(*watched),
             _ => None,
-        }
+        })
     }
 }
 
@@ -180,7 +180,7 @@ impl Request for WatchRequest {
 struct SentenceRequest(OnNode);
 
 impl Request for SentenceRequest {
-    type Reply = SentenceMoved;
+    type Reply = Result<SentenceMoved, TextFailure>;
 
     fn reader(&self) -> Reader {
         Reader::Outpost(self.0.window.process)
@@ -194,11 +194,11 @@ impl Request for SentenceRequest {
         self.0.wire()
     }
 
-    fn decode(reply: Reply) -> Option<SentenceMoved> {
-        match reply {
-            Reply::Text(TextReply::Sentence(moved)) => Some(*moved),
+    fn decode(reply: Reply) -> Option<Self::Reply> {
+        crate::text_request::decode_text(reply, |reply| match reply {
+            TextReply::Sentence(moved) => Some(*moved),
             _ => None,
-        }
+        })
     }
 }
 
@@ -236,6 +236,33 @@ pub(crate) fn withdrawn_by(
         TextOp::Watch(_) | TextOp::ReadTerminal(_) => arriving_key || arriving_focus,
         TextOp::MoveBySentence(_) => arriving_focus,
         _ => false,
+    }
+}
+
+/// Asks a caret key's starting read: its answer, or `None` for any other
+/// outcome, after which the key only passes. A node with no text has no
+/// caret to report, as NVDA binds its caret scripts to editable text
+/// alone (`editableText.py`); any other failure passes the key unread.
+async fn starting_read(
+    cx: &mut Cx<Entries>,
+    request: StartingReadRequest,
+    due_us: u64,
+) -> Option<Started> {
+    match cx.ask(request, due_us).await {
+        Outcome::Result(Ok(started)) => Some(started),
+        Outcome::Result(Err(
+            TextFailure::NoText
+            | TextFailure::Unsupported
+            | TextFailure::UnsupportedUnit(_)
+            | TextFailure::AnchorLost
+            | TextFailure::Gone
+            | TextFailure::Unanswered,
+        ))
+        | Outcome::Refused(_)
+        | Outcome::NotThere
+        | Outcome::NotResponding
+        | Outcome::ReaderEnded
+        | Outcome::NoLongerAwaited(_) => None,
     }
 }
 
@@ -307,7 +334,7 @@ pub(crate) async fn run(mut cx: Cx<Entries>, press: CaretPress) {
         ),
     };
     let request = StartingReadRequest(OnNode::of(&binding, TextOp::StartingRead(starting)));
-    let Outcome::Result(started) = cx.ask(request, due_us).await else {
+    let Some(started) = starting_read(&mut cx, request, due_us).await else {
         pass(&mut cx, &press);
         return;
     };
@@ -385,8 +412,10 @@ async fn terminal_key(cx: &mut Cx<Entries>, press: &CaretPress, binding: &CaretB
     };
     let request = WatchRequest(OnNode::of(binding, TextOp::Watch(watch)));
     match cx.ask(request, due_us).await {
-        Outcome::Result(_) => {}
-        Outcome::Refused(_)
+        Outcome::Result(Ok(_)) => {}
+        // A watch answered with a failure ended as one refused.
+        Outcome::Result(Err(_))
+        | Outcome::Refused(_)
         | Outcome::NotThere
         | Outcome::NotResponding
         | Outcome::ReaderEnded
@@ -409,8 +438,15 @@ async fn terminal_read(
     let now_us = cx.now_us();
     let asked = crate::terminal::reading::entry_read(&mut cx.facts_mut(), node, starting, now_us)?;
     let reply = match cx.ask(asked, due_us).await {
-        Outcome::Result(reply) => Some(reply),
-        _ => None,
+        // A read that fails, the terminal's text unread included, brings
+        // nothing.
+        Outcome::Result(Ok(reply)) => Some(reply),
+        Outcome::Result(Err(_))
+        | Outcome::Refused(_)
+        | Outcome::NotThere
+        | Outcome::NotResponding
+        | Outcome::ReaderEnded
+        | Outcome::NoLongerAwaited(_) => None,
     };
     if let Some(reply) = reply.as_deref() {
         cx.emit(crate::terminal::reading::observed(
@@ -485,15 +521,15 @@ async fn watching(
     };
     let request = WatchRequest(OnNode::of(binding, TextOp::Watch(watch)));
     match cx.ask(request, due_us).await {
-        Outcome::Result(Watched::Effect(read)) => {
+        Outcome::Result(Ok(Watched::Effect(read))) => {
             let words = effect_words(&mut cx.facts_mut(), binding, press.key, (started, &read));
             finish(cx, press, binding, read, words);
         }
-        Outcome::Result(Watched::Bound(read)) => {
+        Outcome::Result(Ok(Watched::Bound(read))) => {
             let words = bound_words(&mut cx.facts_mut(), binding, press.key, &read);
             finish(cx, press, binding, read, words);
         }
-        Outcome::Result(Watched::BoundUnread | Watched::EffectUnread) => {
+        Outcome::Result(Ok(Watched::BoundUnread | Watched::EffectUnread)) => {
             if moves_by_sentence(press, binding) {
                 sentence(cx, press, (binding, started), due_us).await;
             }
@@ -514,7 +550,9 @@ async fn watching(
             }
         }
 
-        Outcome::Refused(_)
+        // A watch answered with a failure says nothing, as one refused.
+        Outcome::Result(Err(_))
+        | Outcome::Refused(_)
         | Outcome::NotThere
         | Outcome::NotResponding
         | Outcome::ReaderEnded
@@ -540,7 +578,10 @@ async fn sentence(
             details: key_details(cx, press),
         }),
     ));
-    let Outcome::Result(moved) = cx.ask(request, due_us).await else {
+    // A move that fails says nothing, as NVDA's sentence script swallows
+    // its exception (`editableText.py` 240 to 264), a source with no
+    // sentence unit or a starting point no longer held included.
+    let Outcome::Result(Ok(moved)) = cx.ask(request, due_us).await else {
         return;
     };
     // The answer mints the next selection baseline, as Verbatim's own move,
