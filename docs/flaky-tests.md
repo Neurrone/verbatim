@@ -136,11 +136,11 @@ Scenarios: `measure_keys_conhost` and `measure_keys_conhost_unmoved` (release bu
 
 ## Windows Terminal's two windows, the elevated title at launch
 
-- Scenarios: `windows_terminal_two_windows` on GitHub's runner: runs 42654703245, 42861051487 and 42861605191.
-- How: the scenario's first step hears only "Administrator: verbatim-e2e-two-a-... window". The title then settles on the one the terminal's title sequence sets, and the expected terminal and "blank" lines never come.
-- How often: 3 of 7 code runs since 2026-11-09, always at the first step, about 4 seconds after the previous scenario; 4 runs passed between them, and the runs at 7969a2a8 and c037e645 failed.
-- Cause: a race at launch between the console host's "Administrator: " prefix, which an elevated PowerShell adds on GitHub's runner, and the terminal's title sequence. The first focus is read while the window still has the prefixed title.
-- Fix: none yet; the scenario's opening has to wait for the title its shell sets.
+- Scenarios: `windows_terminal_two_windows` on GitHub's runner, most recently run 44073013757 (2026-11-17), after the title handshake of 4f5770c4.
+- How: the first step hears "Administrator: verbatim-e2e-two-a-... window" where "verbatim-e2e-two-a-... window" is expected, then the terminal and "blank" as expected; the step fails on the window's title alone.
+- How often: run 44073013757 since 4f5770c4; 3 of 7 code runs before it, at the same step.
+- Cause: the harness saw the window titled exactly with its title, after the shell's "settling" title, before it brought the minimized window forward; Verbatim then read the window's name with the prefix, and the recording's first frame of the restored window shows the tab titled "Administrator: verbatim-e2e-...", the next frame the title without it. The prefix is the console host's, which runs elevated with Windows Terminal on GitHub's runner, so a title the shell sets cannot keep it away: it reaches Windows Terminal's window after the harness's last look at the title. Which of the console host's titles, its first or a later one, the restored window shows is not established.
+- Fix: none yet. Waiting for the title before bringing the window forward cannot hold, since the prefixed title is seen only after the window is restored; the remaining fix is to run the harness's Windows Terminal unelevated on the runner, which no run has yet shown to be reliable.
 
 ## A new application's window not shown in time
 
