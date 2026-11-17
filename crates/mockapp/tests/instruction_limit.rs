@@ -985,6 +985,94 @@ fn watch_checks_execute_exactly() {
     assert!(worst < LIMIT / 2);
 }
 
+/// A caret key's watch check reading its unit's formatting with every
+/// attribute (`emit_formats`): a check that finds nothing pays only the
+/// branch's test, 10 instructions over the check without formatting
+/// (`watch_checks_execute_exactly`'s typical 91); a line key whose check finds the caret moved reads the
+/// line's stretches in `text.json`; and in `mixed.json`, where every
+/// stretch is walked by words and characters, a line of 16 stretches at
+/// the bound, counted, and the worst, the check at the bound of a
+/// paragraph key over a line of 80 cut at 64 stretches, which the counting
+/// form cannot run, since it executes twice as many: run as Verbatim runs
+/// it, it stays under the limit.
+fn watch_check_formatting_executes_exactly() {
+    common::init_com();
+    let mut plain = Fixture::start("text.json", "mockapp-instructions-watch-formats");
+    let notes = plain.find("Notes");
+    let pattern = verbatim_uia::text::text_pattern(&notes).expect("a text pattern");
+    common::apply(&mut plain.app, plain.hwnd, "caret doc 0");
+    let before = verbatim_uia::text::TextPatternExt::selection(&pattern)
+        .expect("the selection")
+        .remove(0);
+    let start = RangeEnd {
+        range: &before,
+        endpoint: Endpoint::Start,
+    };
+    let line = |last: bool| WatchQuery {
+        element: &notes,
+        pattern: &pattern,
+        start,
+        start_selection: (start, start),
+        word: false,
+        unit: None,
+        last,
+        formats: Some(FormatSpan::Line),
+        attributes: Attributes::ALL,
+        max_text: 1024,
+    };
+    let nothing = counted(|| {
+        let answer = watch_check_remote(&line(false)).expect("the check");
+        assert!(!answer.caret_moved && answer.runs.is_none());
+    });
+    common::apply(&mut plain.app, plain.hwnd, "caret doc 11");
+    let moved = counted(|| {
+        let answer = watch_check_remote(&line(false)).expect("the check");
+        assert_eq!(answer.runs.map(|runs| runs.len()), Some(1));
+    });
+    plain.app.quit();
+
+    let mut mixed = Fixture::start("mixed.json", "mockapp-instructions-watch-mixed");
+    let notes = mixed.find("Notes");
+    let pattern = verbatim_uia::text::text_pattern(&notes).expect("a text pattern");
+    common::apply(&mut mixed.app, mixed.hwnd, "caret doc 0");
+    let before = verbatim_uia::text::TextPatternExt::selection(&pattern)
+        .expect("the selection")
+        .remove(0);
+    let start = RangeEnd {
+        range: &before,
+        endpoint: Endpoint::Start,
+    };
+    let at_bound = |unit: Option<_>, formats| WatchQuery {
+        element: &notes,
+        pattern: &pattern,
+        start,
+        start_selection: (start, start),
+        word: false,
+        unit,
+        last: true,
+        formats: Some(formats),
+        attributes: Attributes::ALL,
+        max_text: 1024,
+    };
+    let sixteen = counted(|| {
+        let answer = watch_check_remote(&at_bound(None, FormatSpan::Line)).expect("the check");
+        assert_eq!(answer.runs.map(|runs| runs.len()), Some(17));
+    });
+    common::apply(&mut mixed.app, mixed.hwnd, "caret doc 50");
+    let worst = watch_check_remote(&at_bound(Some(TextUnit_Paragraph), FormatSpan::Unit))
+        .map(|answer| answer.runs.map(|runs| runs.len()));
+    mixed.app.quit();
+    assert_eq!(
+        [nothing, moved, sixteen],
+        [101, 190, 2181],
+        "a check that finds nothing, a moved line key's, and 17 mixed stretches at the bound"
+    );
+    match worst {
+        Ok(runs) => assert_eq!(runs, Some(64)),
+        Err(error) => panic!("80 characters at the bound: {error}"),
+    }
+}
+
 /// A focus completion's read after the focus's registration
 /// (`verbatim_uia_rops::focus_states`): typically, a button's states with
 /// its dialog window's four children, `dialog_class_window.json`'s three
@@ -1104,6 +1192,10 @@ fn main() {
         ),
         ("tree_dumps_execute_exactly", tree_dumps_execute_exactly),
         ("watch_checks_execute_exactly", watch_checks_execute_exactly),
+        (
+            "watch_check_formatting_executes_exactly",
+            watch_check_formatting_executes_exactly,
+        ),
         ("focus_states_execute_exactly", focus_states_execute_exactly),
     ]);
 }

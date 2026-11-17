@@ -4064,6 +4064,92 @@ fn starting_read_calls<S: TextSource>(
     measured
 }
 
+/// A line key's watch check that finds the caret moved, the key's final
+/// read made with it (`verbatim_outpost::text::check::check`), its line's
+/// formatting read with the details the default theme reports and with
+/// every detail, and with none: remotely one program each way, the
+/// formatting read in it; classically the check's 13 calls, and 8 more for
+/// the formatting of mockapp's one-stretch line, whose annotation types
+/// and attributes are read with the default theme's details or every
+/// detail alike.
+fn watch_checks_cost_exactly() {
+    common::init_com();
+    let mut ratchet = Ratchet::default();
+    for (operation, remote, details, expected) in [
+        (
+            "UIA line key's check, no details, classically",
+            false,
+            verbatim_model::TextDetails::NONE,
+            calls(13, 0, 0),
+        ),
+        (
+            "UIA line key's check, default details, remotely",
+            true,
+            Theme::builtin_default().reported().text,
+            calls(1, 0, 0),
+        ),
+        (
+            "UIA line key's check, default details, classically",
+            false,
+            Theme::builtin_default().reported().text,
+            calls(21, 0, 0),
+        ),
+        (
+            "UIA line key's check, every detail, remotely",
+            true,
+            verbatim_model::TextDetails::ALL,
+            calls(1, 0, 0),
+        ),
+        (
+            "UIA line key's check, every detail, classically",
+            false,
+            verbatim_model::TextDetails::ALL,
+            calls(21, 0, 0),
+        ),
+    ] {
+        let title = common::unique_title("mockapp-counts-watch-check");
+        let mut app = common::spawn("text.json", "uia", &title);
+        let hwnd = common::find_window(&title);
+        let mut source = uia_notes(hwnd).remote(remote).details(details);
+        let mut store = Anchors::new(Arc::default());
+        let mut anchors = store.node(1);
+        common::apply(&mut app, hwnd, "caret doc 0");
+        let started = verbatim_outpost::text::held::starting_read(
+            &mut source,
+            &mut anchors,
+            1,
+            (TextUnit::Line, false),
+        )
+        .expect("the starting read");
+        common::apply(&mut app, hwnd, "caret doc 11");
+        let _ = verbatim_uia::calls::take();
+        let watched = verbatim_outpost::text::check::check(
+            &mut source,
+            &mut anchors,
+            verbatim_outpost::text::check::CheckAsk {
+                point: started.point,
+                motion: verbatim_model::CaretMotion::NextLine,
+                word: false,
+                last: false,
+                final_read: verbatim_model::WatchFinalRead::Unit {
+                    unit: TextUnit::Line,
+                    details,
+                },
+            },
+            2,
+        )
+        .expect("the check");
+        let measured = verbatim_uia::calls::take();
+        app.quit();
+        assert!(
+            matches!(&watched, Some(verbatim_model::Watched::Effect(read)) if read.caret.line.text == "gamma\n"),
+            "{operation}: {watched:?}"
+        );
+        ratchet.check_calls(operation, measured, expected);
+    }
+    ratchet.finish();
+}
+
 /// An edit control's review copy select and caret location, each by its
 /// window messages.
 fn edit_control_select_and_location_cost_exactly() {
@@ -4432,6 +4518,17 @@ fn uia_text_focus(
     remote: bool,
     setup: &[&str],
 ) -> (Vec<Utterance>, CallCounts) {
+    uia_text_focus_reporting(fixture, id, (remote, None), setup)
+}
+
+/// [`uia_text_focus`], with Core's settings reporting `reported` when
+/// given, every detail otherwise.
+fn uia_text_focus_reporting(
+    fixture: &str,
+    id: &str,
+    (remote, reported): (bool, Option<verbatim_model::ReportedDetails>),
+    setup: &[&str],
+) -> (Vec<Utterance>, CallCounts) {
     let title = common::unique_title("mockapp-counts-text-focus");
     let mut app = common::spawn(fixture, "uia", &title);
     let hwnd = common::find_window(&title);
@@ -4444,6 +4541,9 @@ fn uia_text_focus(
             },
         ),
     );
+    if let Some(reported) = reported {
+        core.reported(reported);
+    }
     for command in setup {
         app.send(command);
     }
@@ -4622,6 +4722,33 @@ fn text_field_focuses_cost_exactly() {
         assert_eq!(said, expected_said, "{operation}: what Core said");
         ratchet.check_calls(operation, measured, expected);
     }
+    // With the default theme's details, as most users have them: the
+    // line's formatting read classically costs what it does with every
+    // detail, its annotation types and attributes asked of the line
+    // either way.
+    let (said, measured) = uia_text_focus_reporting(
+        "text.json",
+        "doc",
+        (false, Some(Theme::builtin_default().reported())),
+        &[],
+    );
+    assert_eq!(
+        said,
+        text_said(
+            false,
+            &vec![
+                SegmentContent::Text("alpha".to_owned()),
+                SegmentContent::Format(verbatim_model::TextFormat::SpellingError),
+                SegmentContent::Text("beta".to_owned()),
+            ]
+        ),
+        "default theme: what Core said"
+    );
+    ratchet.check_calls(
+        "UIA text field focus with its caret, default details, classically",
+        measured,
+        first_focus(46),
+    );
 
     let title = common::unique_title("mockapp-counts-edit-focus");
     let mut app = common::spawn("text.json", "msaa", &title);
@@ -4824,6 +4951,7 @@ fn main() {
             caret_tell_reads_cost_exactly,
         ),
         ("starting_reads_cost_exactly", starting_reads_cost_exactly),
+        ("watch_checks_cost_exactly", watch_checks_cost_exactly),
         (
             "a_focus_now_walk_stops_at_an_ancestor_core_knows",
             a_focus_now_walk_stops_at_an_ancestor_core_knows,

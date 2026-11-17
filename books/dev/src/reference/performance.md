@@ -1005,6 +1005,16 @@ passes, then makes one final read. Core alone judges what the key says.
   change event of the watched node within 60 ms of the pass brings a
   check forward, one round trip more than the polls; a key whose event
   comes with no move still pays every check to its bound.
+- The unit's formatting, which the key says: remotely read in the check
+  that shows the effect, in the same program, at no call of its own; a
+  check that finds nothing pays 10 instructions for the branch's test
+  (`watch_check_formatting_executes_exactly`: 101 against 91, 190 for a
+  moved line key, 2,181 at the bound for 17 mixed stretches, and the
+  64-stretch worst runs under the limit). Classically a line key's check
+  costs 13 calls and its line's formatting 8 more, with the default
+  theme's details or every detail (`watch_checks_cost_exactly`). A check
+  that finds the effect only by the text reads the caret, the unit and
+  its formatting in one more round trip.
 
 ### A caret report, UIA
 
@@ -1255,8 +1265,10 @@ text for every focus it queues. A UIA focus's parts:
 - the enrichment: 1 UIA call;
 - the caret read: 1 remotely; classically 35 for mockapp's document, 40
   with a selection, and 17 for its terminal, and its line's formatting
-  besides, read in the same program remotely and 27 calls more classically
-  with every attribute (`text_field_focuses_cost_exactly`);
+  besides, read in the same program remotely and 27 calls more classically,
+  with the default theme's details as with every attribute: a classic
+  focus on mockapp's document costs 46 calls either way
+  (`text_field_focuses_cost_exactly`);
 - the selected text, only when something is selected, a protected field's
   too: 1 remotely, 4 classically.
 
