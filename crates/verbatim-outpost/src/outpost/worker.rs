@@ -36,6 +36,7 @@ use verbatim_model::property::{
     NodeDetailSet, PropertyAnswer, PropertyId, PropertyValue, PropertyValues, RuntimeId,
 };
 use verbatim_model::{CallCounts, NodeId, TraceId};
+use verbatim_uia::{Cached, Kept};
 use windows::Win32::UI::Accessibility::{
     UIA_ControllerForPropertyId, UIA_HelpTextPropertyId, UIA_NamePropertyId,
     UIA_RangeValueValuePropertyId, UIA_ValueValuePropertyId,
@@ -366,14 +367,27 @@ pub(super) fn win_kind(kind: WinEventKind) -> Option<WinKind> {
 /// value it carried; for a help text change a description change and for a
 /// `ControllerFor` change a suggestions change, each with no value, since
 /// Core asks the node for them (`docs/design/readers-tell-core-asks-build1.md`,
-/// "Changes on objects"). `None` for a property no `Follow` group
-/// registers.
-fn told_property(id: i32, parts: &UiaSnapshotFact) -> Option<(PropertyId, Option<PropertyValue>)> {
+/// "Changes on objects"). The states of a menu item that no pattern makes
+/// checkable are completed from `element`'s legacy MSAA state, as NVDA's
+/// menu item reads its states (`NVDAObjects/UIA/__init__.py`, `MenuItem`).
+/// `None` for a property no `Follow` group registers.
+fn told_property(
+    id: i32,
+    parts: &UiaSnapshotFact,
+    element: Option<&Cached<Kept>>,
+) -> Option<(PropertyId, Option<PropertyValue>)> {
     let text = |text: &Option<String>| text.clone().map(PropertyValue::Text);
     Some(match id {
         id if is_state_property(id) => (
             PropertyId::States,
-            Some(PropertyValue::States(parts.states)),
+            Some(PropertyValue::States(match element {
+                Some(element) => verbatim_uia::map::with_legacy_checked_states(
+                    element.live().element(),
+                    parts.role,
+                    parts.states,
+                ),
+                None => parts.states,
+            })),
         ),
         id if id == UIA_NamePropertyId.0 => (PropertyId::Name, text(&parts.name)),
         id if id == UIA_ValueValuePropertyId.0 || id == UIA_RangeValueValuePropertyId.0 => {
@@ -538,11 +552,12 @@ impl Worker<'_> {
                 text_pattern,
                 window,
             } => {
-                if let Some(key) = event.element {
-                    drop(self.context.store.take_parked(key));
-                }
+                let element = event
+                    .element
+                    .and_then(|key| self.context.store.take_parked(key))
+                    .and_then(super::store::Parked::element);
                 self.property_tell(
-                    event,
+                    (event, element.as_ref()),
                     (*id, *text_pattern, (**window).clone()),
                     trace,
                     observed_at_us,
@@ -651,12 +666,12 @@ impl Worker<'_> {
     /// drops", "Changes on objects").
     fn property_tell(
         &self,
-        event: &UiaEvent,
+        (event, element): (&UiaEvent, Option<&Cached<Kept>>),
         (id, text_pattern, window): (i32, bool, verbatim_model::tell::TellWindow),
         trace: TraceId,
         observed_at_us: u64,
     ) {
-        let Some((property, value)) = told_property(id, &event.parts) else {
+        let Some((property, value)) = told_property(id, &event.parts, element) else {
             return;
         };
         let tell = self.followed_tell(

@@ -2032,6 +2032,46 @@ fn a_menu_items_legacy_state_is_read_with_its_focus() {
     app.quit();
 }
 
+/// A state change on a followed menu item that no pattern makes checkable
+/// carries its legacy MSAA checked state, as NVDA's menu item reads its
+/// states with `LegacyIAccessibleState` whatever raised the change
+/// (`NVDAObjects/UIA/__init__.py`, `MenuItem`): mockapp's "Copy", focused
+/// and followed, is checked, which its UIA states say nothing of and its
+/// legacy state does, and raises a state change.
+fn a_menu_items_state_change_carries_its_legacy_checked_state() {
+    let title = common::unique_title("mockapp-menu-item-legacy-change");
+    let mut app = common::spawn("modal_owner.json", "uia", &title);
+    let client = Client::new(common::find_window(&title));
+    let outpost = OutpostUnderTest::new(&app);
+
+    app.send("set-focus copy");
+    let copy = client.focused();
+    let _ = outpost.uia_focus_answer(&copy);
+    app.send("set-states copy focusable checked");
+    match outpost.next() {
+        OutpostToCore::Tell(tell) => assert_eq!(
+            (tell.object, tell.payload),
+            (
+                EventObject::Followed {
+                    runtime_id: RuntimeId(copy.runtime_id())
+                },
+                Payload::PropertyChanged {
+                    property: PropertyId::States,
+                    value: Some(PropertyValue::States(StateSet::from_iter([
+                        State::Focusable,
+                        State::Checkable,
+                        State::Checked
+                    ]))),
+                }
+            )
+        ),
+        other => panic!("the outpost said {other:?}, not the item's states"),
+    }
+
+    drop(outpost);
+    app.quit();
+}
+
 /// The console host's window is the parent of its text area, reports the
 /// keyboard focus whenever the text area has it, and raises focus events
 /// around the text area's; those are never the focus (NVDA refuses them
@@ -3447,6 +3487,10 @@ fn main() {
         (
             "a_focus_dropped_before_its_window_is_in_front_is_reported_once_it_is",
             a_focus_dropped_before_its_window_is_in_front_is_reported_once_it_is,
+        ),
+        (
+            "a_menu_items_state_change_carries_its_legacy_checked_state",
+            a_menu_items_state_change_carries_its_legacy_checked_state,
         ),
         (
             "a_console_windows_own_focus_is_never_reported",

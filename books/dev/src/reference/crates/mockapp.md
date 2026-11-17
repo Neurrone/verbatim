@@ -393,6 +393,9 @@ method list and message numbers cannot drift apart.
   `CurrentSelectedItem`, the last selected, and `ItemCount`), and a tab
   control's does not, so the tests see a provider with
   `SelectionPattern2` and one without.
+  A menu item serves an `ILegacyIAccessibleProvider` that answers only
+  its state, with MSAA's checked bit when the node is `checked`, as a
+  Windows Forms menu item says it is checked only there.
 - **Raw-view host furniture.** A real window's UIA raw tree can include
   host-provided native elements, such as window-chrome furniture merged in
   through `HostRawElementProvider`, alongside the fixture's own children.

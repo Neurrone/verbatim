@@ -691,7 +691,9 @@ and the inherited pipe handles.
   window; above the process boundary every window is plain, and the test
   ends with no call there.
 - A menu item's legacy MSAA checked state is one more live call
-  (`verbatim_uia::map::with_legacy_checked_state`).
+  (`verbatim_uia::map::with_legacy_checked_state`), for its focus and for
+  each state change the `Follow` group tells of it, read from the event's
+  element (`verbatim_uia::map::with_legacy_checked_states`).
 - A UIA navigation step (`read::uia_remote_step`) is one remote operation
   (`verbatim_uia_rops::navigation_step`) from the kept element, but classic
   from a top-level window (a program's walk ends there), with remote

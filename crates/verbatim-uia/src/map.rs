@@ -195,14 +195,27 @@ pub fn with_legacy_checked_state(
     element: &IUIAutomationElement,
     mut node: NodeSnapshot,
 ) -> NodeSnapshot {
-    if wants_legacy_checked_state(node.role, node.states) {
+    node.states = with_legacy_checked_states(element, node.role, node.states);
+    node
+}
+
+/// `states`, of `element` of `role`, completed from its legacy MSAA state
+/// as [`with_legacy_checked_state`] completes a node's. Cross-process; the
+/// outpost's worker only.
+#[must_use]
+pub fn with_legacy_checked_states(
+    element: &IUIAutomationElement,
+    role: Role,
+    mut states: StateSet,
+) -> StateSet {
+    if wants_legacy_checked_state(role, states) {
         let legacy = element
             .current_i32_ignoring_default(UIA_LegacyIAccessibleStatePropertyId)
             .ok()
             .flatten();
-        add_legacy_checked_state(&mut node.states, legacy);
+        add_legacy_checked_state(&mut states, legacy);
     }
-    node
+    states
 }
 
 /// Pure mapping from raw cached UIA state inputs to a normalized [`StateSet`].

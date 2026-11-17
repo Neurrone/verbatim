@@ -1339,16 +1339,17 @@ mod handler {
     use windows::Win32::System::Variant::VARIANT;
     use windows::Win32::UI::Accessibility::{
         IExpandCollapseProvider, IExpandCollapseProvider_Impl, IGridItemProvider,
-        IGridItemProvider_Impl, IInvokeProvider, IInvokeProvider_Impl,
-        IRawElementProviderAdviseEvents, IRawElementProviderAdviseEvents_Impl,
-        IRawElementProviderFragment, IRawElementProviderFragment_Impl,
-        IRawElementProviderFragmentRoot, IRawElementProviderFragmentRoot_Impl,
-        IRawElementProviderSimple, IRawElementProviderSimple_Impl, ISelectionItemProvider,
-        ISelectionItemProvider_Impl, ISelectionProvider, ISelectionProvider_Impl,
-        ISelectionProvider2, ISelectionProvider2_Impl, IToggleProvider, IToggleProvider_Impl,
-        NavigateDirection, ProviderOptions, ProviderOptions_ServerSideProvider,
-        ProviderOptions_UseComThreading, UIA_EVENT_ID, UIA_ExpandCollapsePatternId,
-        UIA_GridItemPatternId, UIA_InvokePatternId, UIA_PATTERN_ID, UIA_PROPERTY_ID,
+        IGridItemProvider_Impl, IInvokeProvider, IInvokeProvider_Impl, ILegacyIAccessibleProvider,
+        ILegacyIAccessibleProvider_Impl, IRawElementProviderAdviseEvents,
+        IRawElementProviderAdviseEvents_Impl, IRawElementProviderFragment,
+        IRawElementProviderFragment_Impl, IRawElementProviderFragmentRoot,
+        IRawElementProviderFragmentRoot_Impl, IRawElementProviderSimple,
+        IRawElementProviderSimple_Impl, ISelectionItemProvider, ISelectionItemProvider_Impl,
+        ISelectionProvider, ISelectionProvider_Impl, ISelectionProvider2, ISelectionProvider2_Impl,
+        IToggleProvider, IToggleProvider_Impl, NavigateDirection, ProviderOptions,
+        ProviderOptions_ServerSideProvider, ProviderOptions_UseComThreading, UIA_EVENT_ID,
+        UIA_ExpandCollapsePatternId, UIA_GridItemPatternId, UIA_InvokePatternId,
+        UIA_LegacyIAccessiblePatternId, UIA_PATTERN_ID, UIA_PROPERTY_ID,
         UIA_SelectionItemPatternId, UIA_SelectionPattern2Id, UIA_SelectionPatternId,
         UIA_TextPattern2Id, UIA_TextPatternId, UIA_TogglePatternId, UIA_ValuePatternId, UiaRect,
     };
@@ -1696,6 +1697,14 @@ mod handler {
             let provider: IUnknown = InvokeProvider.into();
             return Ok(provider);
         }
+        if pattern_id == UIA_LegacyIAccessiblePatternId && role == verbatim_model::Role::MenuItem {
+            let provider: IUnknown = LegacyIAccessibleProvider {
+                tree: tree.clone(),
+                index,
+            }
+            .into();
+            return Ok(provider);
+        }
         if pattern_id == UIA_TogglePatternId && props::toggle_available(role) {
             let provider: IUnknown = ToggleProvider {
                 tree: tree.clone(),
@@ -1817,6 +1826,68 @@ mod handler {
         fn Invoke(&self) -> WinResult<()> {
             hits::hit(hits::Method::Invoke);
             Ok(())
+        }
+    }
+
+    /// The `LegacyIAccessiblePattern` provider for a menu item node, which
+    /// answers only its state, with MSAA's checked bit when the node is
+    /// checked, as a Windows Forms menu item says it is checked only there.
+    #[implement(ILegacyIAccessibleProvider, Agile = false)]
+    struct LegacyIAccessibleProvider {
+        tree: SharedTree,
+        index: usize,
+    }
+
+    impl ILegacyIAccessibleProvider_Impl for LegacyIAccessibleProvider_Impl {
+        fn Select(&self, _flags: i32) -> WinResult<()> {
+            Err(Error::from_hresult(windows::Win32::Foundation::E_NOTIMPL))
+        }
+        fn DoDefaultAction(&self) -> WinResult<()> {
+            Err(Error::from_hresult(windows::Win32::Foundation::E_NOTIMPL))
+        }
+        fn SetValue(&self, _value: &windows::core::PCWSTR) -> WinResult<()> {
+            Err(Error::from_hresult(windows::Win32::Foundation::E_NOTIMPL))
+        }
+        fn GetIAccessible(&self) -> WinResult<windows::Win32::UI::Accessibility::IAccessible> {
+            Err(Error::from_hresult(windows::Win32::Foundation::E_NOTIMPL))
+        }
+        fn ChildId(&self) -> WinResult<i32> {
+            Ok(0)
+        }
+        fn Name(&self) -> WinResult<windows::core::BSTR> {
+            Ok(windows::core::BSTR::new())
+        }
+        fn Value(&self) -> WinResult<windows::core::BSTR> {
+            Ok(windows::core::BSTR::new())
+        }
+        fn Description(&self) -> WinResult<windows::core::BSTR> {
+            Ok(windows::core::BSTR::new())
+        }
+        fn Role(&self) -> WinResult<u32> {
+            Ok(0)
+        }
+        fn State(&self) -> WinResult<u32> {
+            let checked = self
+                .tree
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .nodes[self.index]
+                .states
+                .contains(verbatim_model::State::Checked);
+            // MSAA's `STATE_SYSTEM_CHECKED`.
+            Ok(if checked { 0x10 } else { 0 })
+        }
+        fn Help(&self) -> WinResult<windows::core::BSTR> {
+            Ok(windows::core::BSTR::new())
+        }
+        fn KeyboardShortcut(&self) -> WinResult<windows::core::BSTR> {
+            Ok(windows::core::BSTR::new())
+        }
+        fn GetSelection(&self) -> WinResult<*mut SAFEARRAY> {
+            Ok(std::ptr::null_mut())
+        }
+        fn DefaultAction(&self) -> WinResult<windows::core::BSTR> {
+            Ok(windows::core::BSTR::new())
         }
     }
 
