@@ -339,6 +339,22 @@ character, says 680 in both). A selected carriage return and line feed
 has no name of its own and is spoken as white space, which sounds as
 NVDA's "selected" with no text (`text_box_caret_keys`).
 
+### Speech cut off by a modifier
+
+NVDA queues a key's speech cut on its event queue behind the scripts
+and events before it (`inputCore.py` 583 to 604), and speaks a
+selection key's selection inside the key's script
+(`script_caret_changeSelection`, `editableText.py` 480 to 492), so
+Control pressed 30 ms after Shift+Right Arrow cuts "a selected" off,
+heard in two captures at the pin (`notepad_selection_then_control`).
+An event that reaches NVDA after the cut runs after it and is spoken.
+Verbatim: **matched**. A modifier's cut joins no queue; a caret tell,
+whose selection speech stands for its key's words, carries the newest
+key that joined the queue, so a later modifier's cut silences it, while
+every other entry an application raised after the cut carries the cut's
+number and is spoken. Limit: a caret tell no key caused that arrives
+after a modifier's cut is silenced with it.
+
 ### A selection no key made
 
 NVDA reports any selection change of a UIA or classic edit focus after

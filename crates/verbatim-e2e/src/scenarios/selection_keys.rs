@@ -346,22 +346,18 @@ pub(crate) fn notepad_cut_setup(scenario: &mut Scenario) -> io::Result<ScenarioS
     Ok(ScenarioState::None)
 }
 
-/// What `notepad_selection_then_control` expects until NVDA's capture of
-/// its step is in: no utterance has this text, so a run fails at the
-/// step, and compare mode records NVDA's speech in its place.
-const PENDING_CAPTURE: &str =
-    "pending NVDA's capture of Shift+Right Arrow then Control 30 ms apart";
-
 /// `notepad_selection_then_control`: Shift+Right Arrow, then Control 30 ms
-/// later, as a person starting Control+C, in Windows 11 Notepad. Control
-/// cuts speech and joins no queue; whether NVDA says the selection, cut
-/// off or in full, decides whether Verbatim's selection speech may carry
-/// Control's number. The expectation waits for that capture
-/// ([`PENDING_CAPTURE`]).
+/// later, as a person starting Control+C, in Windows 11 Notepad. NVDA
+/// says "a selected", cut off by Control's cancel, in both of its
+/// captures at the pin (2026-11-17,
+/// `cargo xtask nvda compare notepad_selection_then_control`): Control's
+/// cut silences the selection key's words, even when its caret tell
+/// reaches Core after the cut (`docs/parity/text.md`, "Speech cut off by
+/// a modifier").
 pub(crate) fn notepad_cut_body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     super::expect_notepad_in_front(scenario, CUT_NAME, LINE);
     scenario
         .send_keys_paced(&["shift+rightarrow", "control"], 30)
         .expect("sends shift+rightarrow and control");
-    scenario.speech().expect_sequence(&[heard(PENDING_CAPTURE)]);
+    scenario.speech().expect_sequence(&[cut_off("a selected")]);
 }

@@ -23,8 +23,9 @@ use crate::event_queue::Cx;
 
 /// An entry's speech fence: when the entry joined the queue, the newer of
 /// the newest key to join the queue and the newest key whose press cut
-/// speech ([`Arrivals`]). Every utterance its function speaks carries it,
-/// so a key pressed after the entry arrived, whose press cut speech, fences
+/// speech, or for a caret tell the newest key to join alone
+/// ([`Arrivals`]). Every utterance its function speaks carries it, so a
+/// key pressed after the entry arrived, whose press cut speech, fences
 /// that speech off.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Fence(KeySeq);
@@ -69,9 +70,21 @@ impl Arrivals {
         self.cut = self.cut.max(key);
     }
 
-    /// The fence of an entry joining now.
+    /// The fence of an entry an application raised, joining now: speech
+    /// of an event that arrived after a key's cut is spoken past it, as
+    /// NVDA queues the cut and runs the event after it.
     pub(crate) fn fence(self) -> Fence {
         Fence(self.newest.max(self.cut))
+    }
+
+    /// The fence of a caret tell joining now: the newest key to join the
+    /// queue, whose words its selection speech stands for, never a later
+    /// cut. NVDA speaks a selection key's selection inside the key's
+    /// script, which runs before the cut a modifier pressed after it
+    /// queues, so the cut silences it (`docs/parity/text.md`, "Speech cut
+    /// off by a modifier").
+    pub(crate) fn key_fence(self) -> Fence {
+        Fence(self.newest)
     }
 
     /// Whether the caret key numbered `key` is marked silent: a key joined
@@ -334,6 +347,8 @@ mod tests {
         arrivals.speech_cut(KeySeq::new(5));
         assert!(!arrivals.marks(KeySeq::new(4)));
         assert_eq!(arrivals.fence().key(), Some(KeySeq::new(5)));
+        // A caret tell's speech stands for the key before the cut.
+        assert_eq!(arrivals.key_fence().key(), Some(KeySeq::new(4)));
         // The next key joins: its own number is the fence again.
         arrivals.key_joined(KeySeq::new(6));
         assert!(arrivals.marks(KeySeq::new(4)));

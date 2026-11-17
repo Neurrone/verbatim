@@ -523,7 +523,13 @@ impl Logic for Entries {
                 );
             }
         }
-        entry.set_fence(facts.arrivals.fence());
+        // A caret tell's selection speech is its key's words, so it is
+        // fenced as the key's.
+        let fence = match entry {
+            Entry::Caret(_) => facts.arrivals.key_fence(),
+            _ => facts.arrivals.fence(),
+        };
+        entry.set_fence(fence);
     }
 
     fn stamp(entry: &Entry, said: &mut Said) {

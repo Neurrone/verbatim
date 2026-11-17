@@ -920,24 +920,66 @@ fn shift_movement_speaks_what_was_selected_and_unselected() {
 }
 
 /// A modifier pressed after a selection key, in the hook's order: its cut
-/// of speech reaches Core before the caret tell, which speaks what was
-/// selected carrying the modifier's number, so the speech queue, which
-/// drops speech numbered below the cut, speaks it.
+/// of speech reaches Core before the caret tell, whose selection speech is
+/// the selection key's words and carries its number, so the speech queue,
+/// which drops speech numbered below the cut, silences it, as NVDA's
+/// queued cut silences the key's script (`docs/parity/text.md`, "Speech
+/// cut off by a modifier").
 #[test]
-fn speech_arriving_after_a_modifiers_cut_carries_the_modifiers_number() {
-    let mut text = editing("hello, world\n", 5);
+fn a_selection_said_after_a_modifiers_cut_carries_the_selection_keys_number() {
+    let mut text = editing(
+        "hello, world
+",
+        5,
+    );
     // Shift+Right Arrow is key 1, Control key 2.
     assert_eq!(text.key(CaretMotion::NextCharacter, true), []);
     assert_eq!(text.cut(), []);
     assert_eq!(
         text.selection(
-            caret_on(line("hello, world\n", 100, 6), None),
+            caret_on(
+                line(
+                    "hello, world
+",
+                    100,
+                    6
+                ),
+                None
+            ),
             Some(differing(&[(true, ",")], None))
         ),
         [queued(vec![phrase(Phrase::Selected(
             SelectionText::Character(",".to_owned())
         ))])]
     );
+    assert_eq!(text.stamps, [Some(KeySeq::new(1))]);
+}
+
+/// A modifier's cut and then an event the application raised on its own:
+/// its speech carries the cut's number, so the speech queue speaks it, as
+/// NVDA runs an event that arrives after the cut it queued
+/// (`docs/parity/text.md`, "Speech cut off by a modifier").
+#[test]
+fn an_event_after_a_modifiers_cut_carries_the_cuts_number() {
+    let mut text = editing("ab", 2);
+    // "c" typed is key 1, Control key 2.
+    let _ = text.typed("c");
+    assert_eq!(text.cut(), []);
+    text.stamps.clear();
+    let tell = Event {
+        payload: Payload::PropertyChanged {
+            property: verbatim_model::property::PropertyId::Name,
+            value: Some(verbatim_model::property::PropertyValue::Text(
+                "Renamed".to_owned(),
+            )),
+        },
+        ..text.followed(FIELD, EventKind::UiaPropertyChanged)
+    };
+    let heard = text.step(QueueInput::Tell {
+        from: ONE.instance(),
+        tell: Box::new(tell),
+    });
+    assert_eq!(heard, [queued(vec![UtteranceSegment::label("Renamed")])]);
     assert_eq!(text.stamps, [Some(KeySeq::new(2))]);
 }
 
