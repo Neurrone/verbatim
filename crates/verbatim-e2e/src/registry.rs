@@ -2118,6 +2118,15 @@ fn run(def: &ScenarioDef) {
             |failure| (failure.message.clone(), failure.point.clone()),
         )
     });
+    // An application that stopped responding is asked what it waits on
+    // at once, before anything else, while it may still hang.
+    let body_failure =
+        body_failure.map(
+            |(message, point)| match scenario.record_not_responding_wait_chains() {
+                Some(note) => (format!("{message}\n{note}"), point),
+                None => (message, point),
+            },
+        );
     // A key the body held, as Control through a tab switcher, is released
     // first, whether the body passed or failed, so nothing after it runs
     // with a modifier down.

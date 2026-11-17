@@ -74,6 +74,10 @@ const AUDIO_FILE_NAME: &str = "verbatim-audio.wav";
 /// foreground in time
 /// ([`window_wait_chains`]), one chain a line.
 const WAIT_CHAINS_FILE_NAME: &str = "wait-chains.txt";
+/// The wait chains recorded when a failed body had heard the
+/// application-not-responding sound
+/// ([`Scenario::record_not_responding_wait_chains`]), one chain a line.
+const NOT_RESPONDING_WAIT_CHAINS_FILE_NAME: &str = "not-responding-wait-chains.txt";
 
 /// The start of the names of the files recording the launched process
 /// when its window did not open or take the foreground in time
@@ -336,6 +340,10 @@ pub struct Scenario {
     /// or take the foreground in time ([`LaunchEvidence`]), for the
     /// scenario's artifacts.
     launch_evidence: Vec<LaunchEvidence>,
+    /// The wait chains recorded when the body failed after Verbatim had
+    /// played the application-not-responding sound, one a line, for the
+    /// scenario's artifacts ([`Scenario::record_not_responding_wait_chains`]).
+    not_responding_chains: Option<Vec<String>>,
     /// The executable Verbatim was launched from, for a second start
     /// ([`Scenario::replace_verbatim`]); empty in compare mode.
     launch_exe: String,
@@ -558,6 +566,7 @@ impl Scenario {
                 held: Vec::new(),
                 nvda: Some(nvda),
                 launch_evidence: Vec::new(),
+                not_responding_chains: None,
                 launch_exe: String::new(),
                 launch_env: Vec::new(),
                 replaced: Vec::new(),
@@ -677,6 +686,7 @@ impl Scenario {
             held: Vec::new(),
             nvda: None,
             launch_evidence: Vec::new(),
+            not_responding_chains: None,
             launch_exe: exe_str,
             launch_env,
             replaced: Vec::new(),
@@ -2672,6 +2682,30 @@ impl Scenario {
         fs::write(dir.join(crate::artifacts::FLIGHT_RECORDER_FILE), bytes)
     }
 
+    /// For a body that failed after Verbatim played the
+    /// application-not-responding sound, records at once, while the
+    /// application may still hang, the wait chain of the thread of every
+    /// window the desktop reports as not responding, and of the foreground
+    /// window's (`Request::WaitChains`), so the failure names what the
+    /// application waited on; written to the artifacts as
+    /// `not-responding-wait-chains.txt`. Returns a note for the failure's
+    /// message, or `None` when the sound was not heard.
+    pub fn record_not_responding_wait_chains(&mut self) -> Option<String> {
+        if self.is_comparing() || !self.speech.not_responding_heard() {
+            return None;
+        }
+        let chains = match self.agent.foreground_info() {
+            Ok(desktop) => not_responding_wait_chains(&mut self.agent, &desktop),
+            Err(error) => vec![format!("the desktop could not be read: {error}")],
+        };
+        let note = format!(
+            "Verbatim played the application-not-responding sound; what the windows not responding, and the foreground window, waited on when the body failed ({NOT_RESPONDING_WAIT_CHAINS_FILE_NAME}):\n{}",
+            chains.join("\n")
+        );
+        self.not_responding_chains = Some(chains);
+        Some(note)
+    }
+
     /// Collects the run's artifacts into `dir`, once Verbatim has exited:
     /// the timeline, the latency report, Verbatim's stderr log and every
     /// outpost and listener log of this launch, Verbatim's audio, and the
@@ -2693,6 +2727,16 @@ impl Scenario {
         if let Err(error) = write_launch_evidence(dir, &self.launch_evidence) {
             problems.push(format!(
                 "could not write what was recorded of a launch whose window did not appear: {error}"
+            ));
+        }
+        if let Some(chains) = &self.not_responding_chains
+            && let Err(error) = fs::write(
+                dir.join(NOT_RESPONDING_WAIT_CHAINS_FILE_NAME),
+                chains.join("\n") + "\n",
+            )
+        {
+            problems.push(format!(
+                "could not write the wait chains of the windows not responding: {error}"
             ));
         }
         if self.is_comparing() {
@@ -4368,6 +4412,34 @@ fn window_wait_chains(
         Ok(chains) => chains.iter().map(describe_wait_chain).collect(),
         Err(error) => vec![format!("the wait chains could not be read: {error}")],
     }
+}
+
+/// With `desktop` as the body failed: the wait chain of the thread owning
+/// each window `desktop` reports as not responding, then of the
+/// foreground window's, when it is not one of them, each on one line
+/// ([`describe_wait_chain`]); one line saying why when they could not be
+/// read, and one saying so when no window is not responding.
+fn not_responding_wait_chains(agent: &mut AgentClient, desktop: &ForegroundInfo) -> Vec<String> {
+    let mut windows: Vec<u64> = Vec::new();
+    for window in desktop.foreground.iter().chain(&desktop.windows) {
+        if window.hung && !windows.contains(&window.window) {
+            windows.push(window.window);
+        }
+    }
+    let mut lines = Vec::new();
+    if windows.is_empty() {
+        lines.push("no window was reported as not responding".to_owned());
+    }
+    if let Some(foreground) = &desktop.foreground
+        && !windows.contains(&foreground.window)
+    {
+        windows.push(foreground.window);
+    }
+    match agent.wait_chains(windows, Vec::new()) {
+        Ok(chains) => lines.extend(chains.iter().map(describe_wait_chain)),
+        Err(error) => lines.push(format!("the wait chains could not be read: {error}")),
+    }
+    lines
 }
 
 /// `chain` as one line: whose thread it is, then each node in order, then

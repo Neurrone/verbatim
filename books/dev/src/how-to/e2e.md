@@ -542,6 +542,14 @@ losing any of them fails the run:
   window was the scenario's document, which opens before Verbatim, the
   launch fails before any other artifact is collected, and this file and
   the two below are the only ones.
+- `not-responding-wait-chains.txt`, only when the body failed after
+  Verbatim had played the application-not-responding sound: read as soon
+  as the body fails, while the application may still hang, the wait chain
+  of the thread owning each window the desktop reports as not responding,
+  then of the foreground window's when it is not one of them, one a line
+  as in `wait-chains.txt`, with a first line saying so when no window is
+  reported as not responding. The same lines are appended to the failure
+  message.
 - `launched-process-<pid>.txt`, beside `wait-chains.txt` and only with
   it: the process the harness launched to open the window, as the agent
   read it when the wait ran out. One fact a line: whether it still runs

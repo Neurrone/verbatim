@@ -434,6 +434,10 @@ enum Absorbed {
     Other,
 }
 
+/// The indication of the sound Verbatim plays when an application does not
+/// respond (`app-not-responding`), as a [`Frame::Sound`] names it.
+const NOT_RESPONDING_INDICATION: &str = "app-not-responding";
+
 /// Subscribes to and collects speech frames on its own control-plane
 /// connection.
 pub struct SpeechCollector {
@@ -467,6 +471,10 @@ pub struct SpeechCollector {
     /// Pauses, `true`, and resumes, `false`, read and not yet matched by
     /// an assertion, oldest first.
     pauses: VecDeque<bool>,
+    /// Whether the application-not-responding sound has been read, for a
+    /// failed run's record of what the windows not responding wait on
+    /// ([`Self::not_responding_heard`]).
+    not_responding_heard: bool,
     /// Whether the scenario asserts no speech, as the measurement
     /// workloads do ([`Self::collect_only`]): unmatched utterances are
     /// collected in [`Self::collected`] instead of failing it.
@@ -568,6 +576,7 @@ impl SpeechCollector {
             order: Vec::new(),
             next_sound: u64::MAX,
             pauses: VecDeque::new(),
+            not_responding_heard: false,
             collect_only: false,
             collected: Vec::new(),
             compare: None,
@@ -621,6 +630,9 @@ impl SpeechCollector {
             // utterance's text reads. It has no ending of its own, so it
             // counts as heard in full at once.
             Frame::Sound { indication, .. } => {
+                if indication == NOT_RESPONDING_INDICATION {
+                    self.not_responding_heard = true;
+                }
                 let text = format!("sound: {indication}");
                 let utterance = UtteranceId(self.next_sound);
                 self.next_sound -= 1;
@@ -642,6 +654,13 @@ impl SpeechCollector {
             },
             _ => Absorbed::Other,
         }
+    }
+
+    /// Whether Verbatim has played the application-not-responding sound in
+    /// the run so far, as read from the speech connection.
+    #[must_use]
+    pub fn not_responding_heard(&self) -> bool {
+        self.not_responding_heard
     }
 
     fn text_of(&self, utterance: UtteranceId) -> &str {
@@ -2725,6 +2744,25 @@ mod tests {
             at_ms: 0,
         }]);
         speech.expect(&["sound: exit"]);
+    }
+
+    #[test]
+    fn the_not_responding_sound_is_noted_once_read() {
+        let mut speech = collector(vec![
+            Frame::Sound {
+                indication: "exit".to_owned(),
+                at_ms: 0,
+            },
+            Frame::Sound {
+                indication: "app-not-responding".to_owned(),
+                at_ms: 1,
+            },
+        ]);
+        assert!(!speech.not_responding_heard());
+        speech.expect(&["sound: exit"]);
+        assert!(!speech.not_responding_heard());
+        speech.expect(&["sound: app-not-responding"]);
+        assert!(speech.not_responding_heard());
     }
 
     #[test]

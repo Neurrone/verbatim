@@ -109,10 +109,10 @@ Recorded by Claude, 2026-11-04.
 
 ## File Explorer
 
-- `explorer_folder_window`, Explorer's folder window not responding (locally 2026-10-31; GitHub run 42654703245, where the window took the foreground and no focus event followed)
+- `explorer_folder_window`, Explorer's folder window not responding (locally 2026-10-31; GitHub run 42654703245, where the window took the foreground and no focus event followed; GitHub run 44123231466, where Explorer's UI thread stopped pumping messages for over 5 s and Verbatim played the application-not-responding sound)
   - How: nothing is spoken after the desktop's "Recycle Bin 1 of 13"; the folder window, opened in a new `explorer.exe` process, never takes the foreground, its UI thread stops answering about 1.5 s after it opens (an arbitration probe of its `ShellTabWindowClass` window times out at 3 s, an MSAA call waits 13 s), and it does not close within 15 s, so the next scenarios fail at launch on the window left open. Once in 13 runs, with the keep-id fix; the next 10 passed.
   - Cause: not found. Verbatim's outpost was the one waiting on Explorer; no Verbatim call was found that Explorer waited on.
-  - Fix: none yet.
+  - Fix: none yet. A body that fails after Verbatim played the application-not-responding sound now records, as it fails, the wait chain of each not-responding window's thread and of the foreground window's, in the failure message and in `not-responding-wait-chains.txt` ([the end-to-end guide](../books/dev/src/how-to/e2e.md)); the next failure's artifacts are to be read for what Explorer's thread waits on.
 
 - `explorer_folder_window` opening its folder window (locally, 2026-11-09, at f51b89bb 1 of 3 runs and at 9e4fc9ea 0 of 3 run alone and 6 of 6 run straight after a batch of other scenarios; GitHub run 42602389212)
   - How: the new window's first focus is sometimes on its `ShellTabWindowClass` child, named without " - File Explorer", rather than on `CabinetWClass`, or the speech that follows differs; the scenario then fails on its opening utterances.
