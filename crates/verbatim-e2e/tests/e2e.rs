@@ -78,6 +78,7 @@ const LIVE: &[&str] = scenario_tests! {
     notepad_editing
     text_box_editing
     notepad_selection_keys
+    notepad_selection_then_control
     text_box_selection_keys
     notepad_caret_keys
     text_box_caret_keys

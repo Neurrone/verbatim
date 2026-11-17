@@ -751,6 +751,17 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         teardown: selection_keys::teardown,
     },
     ScenarioDef {
+        name: "notepad_selection_then_control",
+        group: Group::Text,
+        settings: None,
+        local_only: true,
+        document: Some(selection_keys::cut_document),
+        comparable: Comparable::Yes,
+        setup: selection_keys::notepad_cut_setup,
+        body: selection_keys::notepad_cut_body,
+        teardown: selection_keys::teardown,
+    },
+    ScenarioDef {
         name: "text_box_selection_keys",
         group: Group::Text,
         settings: None,
