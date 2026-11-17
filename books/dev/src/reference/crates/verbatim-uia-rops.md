@@ -153,11 +153,11 @@ decodes it.
 element's raw-view ancestors and what a focus report needs besides. A
 `FocusQuery` holds:
 
-- `element`, a `verbatim_uia::Cached<FocusInput>`, whose control type and
-  window are in its cache (decision 8 of `books/dev/src/explanation/design/uia-shapes.md`);
+- `element`, a `verbatim_uia::Cached<FocusInput>`, whose control type,
+  class and window are in its cache (decision 8 of `books/dev/src/explanation/design/uia-shapes.md`);
   `known`, the runtime ids the caller already has; and `depth_limit`;
 - `fill`, the `verbatim_uia::Fill<Ancestor>` every ancestor is filled by,
-  and `element_fill`, the element's and its selected child's, which adds
+  and `element_fill`, the element's and its value's selected item's, which adds
   the node's place since each is read alone (decision 9 of
   `books/dev/src/explanation/design/uia-shapes.md`);
 - `previous`, the element the caller holds under the same runtime id,
@@ -187,7 +187,7 @@ element's raw-view ancestors and what a focus report needs besides. A
   between its steps; a caller with such a window above the focus runs the
   classic walk instead. And `progress`, told each fact as the walk reads
   it (`Progress`: the previous element's keyboard focus, the element read
-  afresh, the selected child, and each ancestor kept), so a caller keeps
+  afresh, the value's selected item, and each ancestor kept), so a caller keeps
   what was read should a later call fail. Nothing of the query's ends the
   classic walk early: each call waits for the provider, up to UIA's
   transaction timeout.
@@ -216,10 +216,11 @@ the element does not have the focus, and otherwise an `Ancestry`:
 - `plain_window`: the window, read as plain by the query's `plain`, at
   whose step the classic walk stopped; callers go on from it as a plain
   window and by the window hierarchy.
-- `selected_child`: for a list or tab control, the first selected child,
-  which the outpost reports as its node; for a combo box without the
-  `Value` pattern, its first selected item, which is its value
-  (`verbatim_uia::map::value_from_selection`). It is optional: when its
+- `selected_child`: for a combo box without the `Value` pattern or a
+  looping selector, its first selected item, which is its value
+  (`verbatim_uia::map::value_from_selection`); a list's or tab control's
+  is never read, since a focused list's selected item is not spoken
+  (Dickson, 2026-11-17). It is optional: when its
   read fails, as on an item gone, or in the classic walk times out, it is
   `None` and the rest is read without it, as NVDA's walk reads no
   selection.
@@ -236,10 +237,9 @@ the element does not have the focus, and otherwise an `Ancestry`:
   the classic walk, whose caller makes one live read. A menu item that no
   pattern makes checkable, as a Windows Forms one, says it is checked only
   there.
-- `element_table` and `selected_table`: the table of the element and of its
-  selected child, when each is a cell read with the theme's cell
-  coordinates, a step of the program (`read_table`) and one call of the
-  classic walk. `FocusQuery::is_cell` says whether the element is a cell
+- `element_table`: the table of the element, when it is a cell read with
+  the theme's cell coordinates, a step of the program (`read_table`) and
+  one call of the classic walk. `FocusQuery::is_cell` says whether the element is a cell
   when the caller's cache knows, so the program grows only for one.
 
 Only reaching the top ends a walk as known. In the classic view a
@@ -261,10 +261,10 @@ The remote program reads `HasKeyboardFocus` and halts when it is false,
 then reads the previous element's. UIA fails a whole run before its first
 instruction when an imported element is gone, so `focus_ancestry` runs
 the program once more without a gone `previous` and answers it as not
-focused. For a list or tab control the program reads
+focused. For a looping selector or a combo box the program reads
 `Selection2FirstSelectedItem` (`SelectionPattern2`), else the `Selection`
-property; for a combo box it asks `IsValuePatternAvailable` itself, all
-inside a try block whose catch leaves the selected child out. Then
+property; for a combo box it asks `IsValuePatternAvailable` first, all
+inside a try block whose catch leaves the selected item out. Then
 it walks with `Navigate` to the parent, filling each ancestor's cache
 inside the provider and stopping at the first whose runtime id, turned
 into a string with `Stringify` (`[42,14681214,4,5]`), is in a string map
@@ -275,7 +275,7 @@ goes on up, returning nothing more, until it does.
 
 The classic walk is the focus listener's read, which makes no remote
 operation (`books/dev/src/explanation/design/listener-without-connections.md`, section 2), and
-the outposts' fallback: the same live reads, the selected child through
+the outposts' fallback: the same live reads, the value's selected item through
 `Uia::selected`, and one `GetParentElementBuildCache` per ancestor filled
 by `Fill::request`. It returns elements, not the filtered snapshots of
 `Uia::ancestors`: the presentable-ancestor filter, the switch to MSAA,
@@ -298,7 +298,7 @@ its error is returned. In the classic walk a read of `previous` that
 times out answers it gone, a keyboard focus read that times out lets the
 focus through, and a hop that times out ends the walk at a failed step
 (`Ancestry::failed_hop`), so a walk that hit the timeout is never
-reported as a short but complete ancestry; a selected child that times
+reported as a short but complete ancestry; a selected item that times
 out or is gone is left out and the walk goes on. It fails only when the
 element's fresh cache, a cache request, the desktop root or the tree
 walker fails. NVDA makes each call site check `remote.isSupported()`

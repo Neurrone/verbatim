@@ -387,7 +387,6 @@ fn ready(
         whole_window: origin.whole_window,
         node: node.clone(),
         ancestors: Arc::from(ancestors),
-        selected_child: None,
         text: Some(focus_text(&read.caret)),
         earlier: read.runtime_id_reused.then_some(EarlierElement::Gone),
         top_level: Some(origin.asked.top_level),
@@ -536,7 +535,6 @@ fn observed(report: &Report) -> Effect {
             node: report.node.clone(),
             whole_window: report.whole_window,
             ancestors: report.ancestors.to_vec(),
-            selected_child: report.selected_child.clone(),
             text: report.text.clone().map(Box::new),
             earlier: report.earlier,
             group: None,
@@ -624,7 +622,6 @@ pub(crate) fn again(state: &mut SrState, trace_id: TraceId) -> Vec<Effect> {
         whole_window: false,
         node: focus.snapshot.clone(),
         ancestors: Arc::clone(&focus.ancestors),
-        selected_child: None,
         text: None,
         earlier: None,
 

@@ -1516,40 +1516,6 @@ pub fn activate(
     Ok(name.map(verbatim_model::ActionName::Named))
 }
 
-/// Reads the selected child of a selection container via `accSelection`: a
-/// `VT_I4` result names a child by id on the container itself, a
-/// `VT_DISPATCH` carries the child's own `IAccessible`. A multi-selection
-/// (`VT_UNKNOWN` carrying an `IEnumVARIANT`) and an empty selection both
-/// report `None` — the reducer speaks one item, and richer multi-selection
-/// reporting is deliberately out of M3's scope. Only meaningful for a key
-/// addressing a full object (`CHILDID_SELF`); a child-id key reports `None`
-/// since a simple child cannot contain anything. Blocking; worker only.
-#[must_use]
-pub fn selected_child(node: NodeId, registry: &dyn Interning) -> Option<NodeSnapshot> {
-    let (acc, (hwnd, id_object, _), at) = locate(node, registry).ok()?;
-    if acc.child() != CHILDID_SELF {
-        return None;
-    }
-    match acc.selection().ok()? {
-        Related::Child(child_id) => {
-            let child_key = (hwnd, id_object, child_id);
-            Some(read_snapshot(
-                &acc.with_child(child_id),
-                child_key,
-                at,
-                registry,
-            ))
-        }
-        selection @ Related::Object(_) => {
-            let child_acc = selection.object()?;
-            let child_hwnd = child_acc.window().unwrap_or(hwnd);
-            let child_key = (child_hwnd, OBJID_CLIENT.0, CHILDID_SELF);
-            Some(read_snapshot(&child_acc, child_key, false, registry))
-        }
-        Related::Nothing | Related::Other => None,
-    }
-}
-
 /// The focused object in `hwnd`, the window with the keyboard focus, for a
 /// focus-now query (including Core's after a menu closes), acquired but
 /// not yet read, so the caller can make NVDA's focused-state test on it

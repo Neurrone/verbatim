@@ -374,41 +374,39 @@ fn a_remotely_read_element_without_validity_reads_valid_with_no_failed_read() {
     fixture.app.quit();
 }
 
-fn a_list_and_a_tab_control_report_their_selected_child() {
+/// A focused list's or tab control's selected child is read neither way,
+/// since a focused list's selected item is not spoken (Dickson's ruling of
+/// 2026-11-17, `docs/parity/changes-and-selection.md`): only a node whose
+/// value is its first selected item reads it.
+fn a_list_and_a_tab_control_read_no_selected_child() {
     let mut fixture = Fixture::start("mockapp-rops-selection");
-    for (id, name, selected) in [
-        ("fruits", "Fruits", "Banana"),
-        ("pages", "Pages", "General"),
-    ] {
+    for (id, name) in [("fruits", "Fruits"), ("pages", "Pages")] {
         let container = fixture.focus(id, name);
         let ancestry = both_agree(&fixture.uia, &query(&container, &[], &fixture.fill));
-        let child = ancestry.selected_child.expect("a selected child");
-        assert_eq!(names(&[child]), [selected]);
-        assert_eq!(names(&ancestry.ancestors), ["Mockapp Ancestry Fixture"]);
+        assert_eq!(
+            (
+                ancestry.selected_child.is_none(),
+                names(&ancestry.ancestors)
+            ),
+            (true, vec!["Mockapp Ancestry Fixture".to_owned()]),
+            "{name}"
+        );
     }
-    // A selection made after the fixture loaded.
-    fixture.app.send("select apple");
-    let fruits = fixture.focus("fruits", "Fruits");
-    let ancestry = both_agree(&fixture.uia, &query(&fruits, &[], &fixture.fill));
-    assert_eq!(
-        names(&[ancestry.selected_child.expect("selected")]),
-        ["Apple"]
-    );
     fixture.app.quit();
 }
 
-/// A list whose selected item is gone, the list still naming it
-/// (`disconnect`), is read both ways with its ancestors and without the
-/// item, never failing for it: the selected item is optional
-/// (`books/dev/src/reference/crates/verbatim-uia-rops.md`, "Layer 3: the focus ancestry"), as
-/// NVDA's walk reads no selection.
+/// A combo box without the `Value` pattern whose selected item is gone,
+/// the combo box still naming it (`disconnect`), is read both ways with its
+/// ancestors and without the item, never failing for it: the selected item
+/// is optional (`books/dev/src/reference/crates/verbatim-uia-rops.md`,
+/// "Layer 3: the focus ancestry"), as NVDA's walk reads no selection.
 fn a_focus_whose_selected_item_is_gone_is_reported_without_it() {
-    let mut fixture = Fixture::start("mockapp-rops-selection-gone");
-    fixture.app.send("disconnect banana");
-    let fruits = fixture.focus("fruits", "Fruits");
+    let mut fixture = Fixture::with("mockapp-rops-selection-gone", "combo_box.json");
+    fixture.app.send("disconnect nine");
+    let hour = fixture.focus("hour", "Hour");
     for (label, ancestry) in BOTH {
         let ancestry = focused(
-            ancestry(&fixture.uia, &query(&fruits, &[], &fixture.fill)),
+            ancestry(&fixture.uia, &query(&hour, &[], &fixture.fill)),
             label,
         );
         assert!(
@@ -417,7 +415,7 @@ fn a_focus_whose_selected_item_is_gone_is_reported_without_it() {
         );
         assert_eq!(
             names(&ancestry.ancestors),
-            ["Mockapp Ancestry Fixture"],
+            ["Mockapp Combo Box Fixture"],
             "{label}"
         );
         assert!(
@@ -432,7 +430,7 @@ fn a_focus_whose_selected_item_is_gone_is_reported_without_it() {
 /// A combo box's selected item is read, both ways alike, only when the
 /// combo box has no `Value` pattern: the remote program asks the combo
 /// box inside the provider, and the classic walk, with no fresh copy of
-/// the element, asks it live.
+/// the element, asks it live. A looping selector's is read always.
 fn a_combo_box_reads_its_selected_item_only_without_the_value_pattern() {
     let mut fixture = Fixture::with("mockapp-rops-combo-box", "combo_box.json");
     let hour = fixture.focus("hour", "Hour");
@@ -446,6 +444,13 @@ fn a_combo_box_reads_its_selected_item_only_without_the_value_pattern() {
     assert!(
         ancestry.selected_child.is_none(),
         "a combo box with the Value pattern has its own value"
+    );
+    // A looping selector's first selected item is its value too.
+    let minute = fixture.focus("minute", "Minute");
+    let ancestry = both_agree(&fixture.uia, &query(&minute, &[], &fixture.fill));
+    assert_eq!(
+        names(&[ancestry.selected_child.expect("the selected item")]),
+        ["Five"]
     );
     fixture.app.quit();
 }
@@ -1547,8 +1552,8 @@ fn main() {
             a_remotely_read_element_without_validity_reads_valid_with_no_failed_read,
         ),
         (
-            "a_list_and_a_tab_control_report_their_selected_child",
-            a_list_and_a_tab_control_report_their_selected_child,
+            "a_list_and_a_tab_control_read_no_selected_child",
+            a_list_and_a_tab_control_read_no_selected_child,
         ),
         (
             "a_focus_whose_selected_item_is_gone_is_reported_without_it",
@@ -1634,7 +1639,7 @@ fn main() {
 }
 
 /// A cell's table is answered alike by the program and the classic walk,
-/// for the focus, its selected child and a navigation step's neighbour; a
+/// for the focus and a navigation step's neighbour; a
 /// grid's other cell is in the same table and another grid's is not, and
 /// nothing is read of an element that is no cell or when the theme leaves
 /// cell coordinates out.
@@ -1650,7 +1655,6 @@ fn a_cells_table_is_read_alike_by_the_program_and_the_classic_way() {
         let remote = focused(focus_ancestry_remote(&fixture.uia, &query), "remote");
         let classic = focused(focus_ancestry_classic(&fixture.uia, &query), "classic");
         assert_eq!(remote.element_table, classic.element_table);
-        assert_eq!(remote.selected_table, classic.selected_table);
         remote
     };
     let first = fixture.focus("first", "First");
@@ -1669,13 +1673,6 @@ fn a_cells_table_is_read_alike_by_the_program_and_the_classic_way() {
 
     let plain = fixture.focus("plain", "Plain");
     assert_eq!(both(&fixture, &plain, false).element_table, None);
-
-    // The list's selected item is a cell read with it.
-    let list = fixture.focus("grid-a", "Grid A");
-    assert_eq!(
-        both(&fixture, &list, false).selected_table,
-        Some(first_table)
-    );
 
     // The theme leaves cell coordinates out: the program reads no table.
     let off = Fill::new(

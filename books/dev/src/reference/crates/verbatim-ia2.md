@@ -299,7 +299,7 @@ Public API:
   local window data, which has no object, is acquired at its address).
   `navigate`, `activate`, and `ancestor_chain` answer `AcquireError::Gone`
   when the node is no longer kept, its window no longer exists, or its
-  object has disconnected, and `selected_child` answers `None`:
+  object has disconnected:
   `ancestor_chain`, and `ancestor_chain_until` with `AncestorLimits`
   (stopping at a known ancestor, `Walked::MetKnown`; when the caller's
   `out_of_time` check says its time is up, or at `max_hops`, `Walked::Cut`
@@ -336,7 +336,7 @@ by Core on entering the window: one acquisition; `progress`, an
   returns `Ok(None)` for a genuine edge and
   `Err(AcquireError::Gone)` when the source node itself is no longer
   reachable, so the outpost can report `Gone` rather than a fake edge),
-  `selected_child`, and `activate` (`accDoDefaultAction`, MSAA's only
+  and `activate` (`accDoDefaultAction`, MSAA's only
   activation primitive, answering the `accDefaultAction` name read first). Every snapshot is minted through `node_for`,
   which matches a new sighting against the kept nodes in NVDA's
   comparison order (`docs/parity/focus-events.md`, "Held objects"): the same COM
@@ -526,8 +526,8 @@ by Core on entering the window: one acquisition; `progress`, an
   - `parent` (`accParent`, then a counted `QueryInterface` for
     `IAccessible`), `child_count`, `children` (`AccessibleChildren`),
     `navigate` (`accNavigate`), `focus` (`accFocus`), `child_object`
-    (`accChild`, then a counted `QueryInterface`), `selection`
-    (`accSelection`), `window` (`WindowFromAccessibleObject`), and
+    (`accChild`, then a counted `QueryInterface`), `window`
+    (`WindowFromAccessibleObject`), and
     `identity_string` (a counted `QueryInterface` for `IAccIdentity`, then
     `GetIdentityString`).
   - `canonical` (the `IUnknown` identity) and `agile` (an agile reference

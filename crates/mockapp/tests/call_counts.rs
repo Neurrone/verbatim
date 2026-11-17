@@ -297,21 +297,20 @@ fn msaa_focus_changes_cost_exactly() {
     ratchet.check(
         "MSAA focus into a list",
         &cost,
-        calls(0, 40, 0),
+        calls(0, 30, 0),
         0,
         &[
             ("WM_GETOBJECT", 2),
-            ("accParent", 7),
+            ("accParent", 6),
             ("get_accChild", 2),
-            ("get_accName", 4),
-            ("get_accValue", 4),
-            ("get_accDescription", 4),
-            ("get_accRole", 5),
-            ("get_accState", 4),
-            ("get_accKeyboardShortcut", 4),
+            ("get_accName", 3),
+            ("get_accValue", 3),
+            ("get_accDescription", 3),
+            ("get_accRole", 4),
+            ("get_accState", 3),
+            ("get_accKeyboardShortcut", 3),
             ("accFocus", 1),
-            ("accSelection", 1),
-            ("accLocation", 3),
+            ("accLocation", 2),
         ],
     );
 
@@ -1399,20 +1398,18 @@ fn uia_focus_changes_cost_exactly_remote() {
                 ],
             ),
             into_list: (
-                connected(9, 0, 0),
+                connected(7, 0, 0),
                 0,
                 &[
                     ("WM_GETOBJECT", 11),
-                    ("ProviderOptions", 79),
-                    ("GetPatternProvider", 83),
-                    ("GetPropertyValue", 134),
-                    ("HostRawElementProvider", 37),
-                    ("Navigate", 20),
-                    ("GetRuntimeId", 15),
-                    ("BoundingRectangle", 5),
-                    ("FragmentRoot", 23),
-                    ("IsSelected", 1),
-                    ("FirstSelectedItem", 1),
+                    ("ProviderOptions", 65),
+                    ("GetPatternProvider", 67),
+                    ("GetPropertyValue", 111),
+                    ("HostRawElementProvider", 29),
+                    ("Navigate", 19),
+                    ("GetRuntimeId", 10),
+                    ("BoundingRectangle", 4),
+                    ("FragmentRoot", 16),
                 ],
             ),
             next_item: (
@@ -1470,20 +1467,18 @@ fn uia_focus_changes_cost_exactly_classic() {
                 ],
             ),
             into_list: (
-                connected(12, 0, 0),
+                connected(10, 0, 0),
                 0,
                 &[
                     ("WM_GETOBJECT", 11),
-                    ("ProviderOptions", 76),
-                    ("GetPatternProvider", 83),
-                    ("GetPropertyValue", 131),
-                    ("HostRawElementProvider", 34),
-                    ("Navigate", 15),
-                    ("GetRuntimeId", 13),
-                    ("BoundingRectangle", 5),
-                    ("FragmentRoot", 24),
-                    ("IsSelected", 1),
-                    ("FirstSelectedItem", 1),
+                    ("ProviderOptions", 62),
+                    ("GetPatternProvider", 67),
+                    ("GetPropertyValue", 108),
+                    ("HostRawElementProvider", 26),
+                    ("Navigate", 14),
+                    ("GetRuntimeId", 8),
+                    ("BoundingRectangle", 4),
+                    ("FragmentRoot", 17),
                 ],
             ),
             next_item: (
@@ -2808,19 +2803,21 @@ fn warm_runtime_id(element: &IUIAutomationElement) {
     );
 }
 
-/// A container's selected child, through `SelectionPattern2` (mockapp's
-/// list has it) and, for a provider without it (mockapp's tab control),
-/// through the `Selection` pattern, both ways the outpost reads it: inside
-/// the focus's remote program, and classically. The calls of the focus
-/// ancestry around it are those of the focus ledger above; these are the
-/// selected child's alone classically, and the whole program remotely.
+/// The selected item that is a focus's value
+/// (`verbatim_uia::map::value_from_selection`), through `SelectionPattern2`
+/// (mockapp's looping selector, a list, has it) and, for a provider without
+/// it (mockapp's combo box without the `Value` pattern), through the
+/// `Selection` pattern, both ways the outpost reads it: inside the focus's
+/// remote program, and classically. The calls of the focus ancestry around
+/// it are those of the focus ledger above; these are the selected item's
+/// alone classically, and the whole program remotely.
 #[expect(
     clippy::too_many_lines,
     reason = "both containers' pinned provider hits, listed in full"
 )]
 fn uia_selected_children_cost_exactly() {
     let title = common::unique_title("mockapp-counts-uia-selection");
-    let mut app = common::spawn("ancestry.json", "uia", &title);
+    let mut app = common::spawn("combo_box.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let under_test = UiaUnderTest::new(hwnd);
     let nodes = under_test
@@ -2855,7 +2852,7 @@ fn uia_selected_children_cost_exactly() {
         vec![
             ("WM_GETOBJECT", 2),
             ("ProviderOptions", 24),
-            ("GetPatternProvider", 27 + extra_pattern),
+            ("GetPatternProvider", 26 + extra_pattern),
             ("GetPropertyValue", 48),
             ("HostRawElementProvider", 10),
             ("Navigate", 8),
@@ -2870,9 +2867,9 @@ fn uia_selected_children_cost_exactly() {
         // `FirstSelectedItem`, cached in the call that also caches the
         // `Selection` pattern, and the item's cache.
         (
-            "fruits",
-            "Fruits",
-            "Banana",
+            "minute",
+            "Minute",
+            "Five",
             2,
             vec![
                 ("ProviderOptions", 14),
@@ -2891,11 +2888,12 @@ fn uia_selected_children_cost_exactly() {
         // `FirstSelectedItem` answered "not supported" in the same call
         // that cached the `Selection` pattern, then its selection and the
         // item's cache: 3, as the `Selection` pattern alone took. The
-        // program asks for `SelectionPattern2` once more.
+        // program asks for `SelectionPattern2` once more, and for the
+        // `Value` pattern, whose absence makes the item the value.
         (
-            "pages",
-            "Pages",
-            "General",
+            "hour",
+            "Hour",
+            "Nine",
             3,
             vec![
                 ("ProviderOptions", 14),
@@ -2909,7 +2907,7 @@ fn uia_selected_children_cost_exactly() {
                 ("IsSelected", 1),
                 ("GetSelection", 1),
             ],
-            program(1, ("GetSelection", 1)),
+            program(2, ("GetSelection", 1)),
         ),
     ] {
         common::apply(&mut app, hwnd, &format!("set-focus {id}"));
@@ -2925,7 +2923,7 @@ fn uia_selected_children_cost_exactly() {
             Some(selected)
         );
         ratchet.check(
-            &format!("UIA selected child of {name}, classically"),
+            &format!("UIA selected item of {name}, classically"),
             &cost,
             calls(classic_calls, 0, 0),
             0,
@@ -2974,7 +2972,7 @@ fn uia_selected_children_cost_exactly() {
             Some(selected)
         );
         ratchet.check(
-            &format!("UIA focus on {name} with its selected child, remotely"),
+            &format!("UIA focus on {name} with its selected item, remotely"),
             &cost,
             calls(1, 0, 0),
             0,

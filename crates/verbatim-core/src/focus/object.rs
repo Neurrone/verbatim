@@ -34,7 +34,6 @@ pub(crate) struct Report {
     pub(crate) whole_window: bool,
     /// Its ancestors as Core takes them, outermost first.
     pub(crate) ancestors: Arc<[NodeSnapshot]>,
-    pub(crate) selected_child: Option<NodeSnapshot>,
     pub(crate) text: Option<FocusText>,
     pub(crate) earlier: Option<EarlierElement>,
     /// The top-level window its read named, which stands for the entry

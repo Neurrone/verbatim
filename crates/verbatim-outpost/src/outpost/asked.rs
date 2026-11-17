@@ -1018,7 +1018,7 @@ fn walk(
     let stops = known_stops(known);
     let candidates = candidates_of(&stops);
     let chain = if node.backend == Backend::Msaa {
-        read::msaa_enrichment(context, client, (node, &stops, Some(&candidates)))?.0
+        read::msaa_enrichment(context, client, (node, &stops, Some(&candidates)))?
     } else {
         read::ancestors(context, client, node.id).map_err(|_| read::FocusLost)?
     };
@@ -1245,7 +1245,7 @@ fn try_candidate(
     let stops = known_stops(&run.known);
     let candidates = candidates_of(&stops);
     let node = candidate.read(context.nodes(), Some(&candidates));
-    let Ok((chain, _)) = read::msaa_enrichment(context, client, (&node, &stops, Some(&candidates)))
+    let Ok(chain) = read::msaa_enrichment(context, client, (&node, &stops, Some(&candidates)))
     else {
         return Tried::NotThere;
     };

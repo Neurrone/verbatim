@@ -523,9 +523,8 @@ Each file's module comment says exactly what it asserts; in outline:
   but UIA merges the real window's rectangle into the window-hosted root).
   `uia_tree.rs` also navigates remotely from a node kept from a text
   event, read as the `Kept` shape, and activates `activation.json`'s
-  elements, each by the first of Invoke, Toggle and SelectionItem it has; `msaa_tree.rs` reads a list's selected
-  child through `verbatim_ia2::acquire::selected_child` after a `select`,
-  and that `slow-acc-parent` answers a node's `accParent` late, its wait
+  elements, each by the first of Invoke, Toggle and SelectionItem it has; `msaa_tree.rs` checks
+  that `slow-acc-parent` answers a node's `accParent` late, its wait
   bracketed by its two lines inside the client's call, and
   `fail-acc-parent` fails it with `E_FAIL` while the node's name still
   reads. A client's first call on a new MSAA object's proxy that is
@@ -706,14 +705,16 @@ Each file's module comment says exactly what it asserts; in outline:
   blocks, colours requests, and the read before a held key.
 - `remote_ops.rs` runs `verbatim-uia-rops`'s remote and classic focus
   ancestry over `ancestry.json` (a five-level chain, a list and a tab
-  control with selected children) and asserts they return the same
+  control with selected children, which neither reads) and
+  `combo_box.json` (whose combo box and looping selector have their
+  selected item as their value) and asserts they return the same
   ancestors with the same cached properties, that an element that lost
   the focus returns early, and how both behave against a stalled mockapp
   and one that has exited; that a walk that hits UIA's transaction
   timeout is a failure both ways and never answered by the classic walk,
   and a real outpost then reports the focus below mockapp's window, a
   plain window named by its title;
-  that a list whose selected item is gone is read both ways without it;
+  that a combo box whose selected item is gone is read both ways without it;
   that the listener drops a focus whose nearest window's lookup timed out
   for that reason, with no call after the lookup;
   and that `Uia::selected` fails with UIA's timeout when mockapp is slow
@@ -736,7 +737,7 @@ Each file's module comment says exactly what it asserts; in outline:
   the provider calls they cost; that the focus listener's reader makes no
   connection to a window by its handle; that a focus chain stops below the
   process boundary and continues through MSAA above a parent with a UIA
-  provider; a container's selected child; a caret move, a caret report and
+  provider; the selected item that is a focus's value; a caret move, a caret report and
   a caret key's watch on both stacks; say-all's batches over forty-five
   lines and over `languages.json`; and a line's mixed italic formatting
   over `italic.json`.

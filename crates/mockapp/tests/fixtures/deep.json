@@ -307,6 +307,7 @@
                                                                                                                            "id": "fruits",
                                                                                                                            "role": "list",
                                                                                                                            "name": "Fruits",
+                                                                                                                           "class_name": "LoopingSelector",
                                                                                                                            "states": [
                                                                                                                             "focusable"
                                                                                                                            ],

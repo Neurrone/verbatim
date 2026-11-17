@@ -226,7 +226,8 @@ Provider calls are mockapp's hits, pinned beside the counts.
 How a UIA focus is measured: the listener reads it from the event's own
 element the classic way, with no remote operation or connection
 (`books/dev/src/explanation/design/listener-without-connections.md`, sections 2 and 3): after
-NVDA's checks, the cache refreshed, a container's selected item, and one
+NVDA's checks, the cache refreshed, the selected item that is a combo
+box's or a looping selector's value, and one
 `GetParentElementBuildCache` per ancestor up to a known one, the
 desktop's root or the process boundary. The test runs the listener's
 reader and a real outpost in its process, so the figures are both
@@ -519,16 +520,13 @@ Debug builds, 2026-11-08.
 
 ### A focus change into a list, UIA
 
-The focus lands on the list, and its selected item is read with it.
+The focus lands on the list. Its selected item is not read, since a
+focused list's selected item is not spoken (Dickson, 2026-11-17).
 
-- Minimum and today: 6 UIA calls, all the listener's: a steady-state
-  focus's four, and the selected item's two (`SelectionPattern2`'s
-  `FirstSelectedItem`, fetched with the `Selection` pattern, and
-  `BuildUpdatedCache` on it); met. 352 provider calls with the outpost's
-  remote walk and 347 with its classic walk, 15 of them the grid items'
-  row and column, the selected item's among them, and the ancestors'
-  automation ids.
-- Bound: one selected item per focus.
+- Minimum and today: 4 UIA calls, all the listener's, a steady-state
+  focus's; met. 7 UIA calls and 1 connection with the outpost's remote
+  walk, 10 with its classic walk, pinned with their provider calls by
+  `uia_focus_changes_cost_exactly_remote` and `_classic`.
 
 ### A focus change onto a combo box without the Value pattern, UIA
 
@@ -544,7 +542,7 @@ Pinned by `uia_combo_box_costs_exactly`, both ways.
   the selected item's three through the `Selection` pattern, since
   mockapp's combo box has no `SelectionPattern2`. A combo box with the
   `Value` pattern reads no selected item (`FocusQuery::value_available`);
-  a looping selector is read as a list, 6. The selection 2, in the
+  a looping selector, a list with `SelectionPattern2`, 6. The selection 2, in the
   outpost: the controlled-list test every selection is given first, as
   NVDA's `event_selection` reads `ControllerFor` first, and one
   `FindFirstBuildCache` over the children.
@@ -676,13 +674,12 @@ Windows Forms form's (`tests/fixtures/form.json` with `form-client`,
 
 ### A focus change into a list, MSAA
 
-- Minimum: 28 MSAA calls: the focus (8), `accFocus` on the list (1,
-  NVDA's check whether a list's focus moves to its focused item), the
-  first ancestor recognized (9), and the selected item: `accSelection`,
-  its `IAccessible`, its window and its seven properties (10).
-- Today: 29: the walk asks the window for its parent because the window
-  is not recognized. mockapp answered 30 provider calls.
-- Target: 28. Bound: one selected item per focus.
+- Minimum: 18 MSAA calls: the focus (8), `accFocus` on the list (1,
+  NVDA's check whether a list's focus moves to its focused item), and the
+  first ancestor recognized (9). Its selected item is not read, since a
+  focused list's selected item is not spoken (Dickson, 2026-11-17).
+- Today: 30, pinned by the MSAA focus ledger in `call_counts.rs`.
+- Target: 18.
 
 ### Arrowing through a list, MSAA
 
@@ -1131,15 +1128,15 @@ speaks a grid item's row and column (`docs/parity/focus-announcement.md`,
   `GetAsyncKeyState`, and the row and column as two properties.
 - Today: the minimum. Every ancestor's request holds
   its automation id (`verbatim_uia::Ancestor`). The requests of an element
-  read alone (the focus, its selected child, a navigation step's
+  read alone (the focus, its value's selected item, a navigation step's
   neighbour) hold the `GridItem` pattern's availability, row and column
   (`verbatim_uia::Cell`), which costs mockapp 3 `GetPatternProvider` calls
   per such element; no read of many elements asks for them. One
   `GetAsyncKeyState` per reported focus change. A cell read for a focus or
   the review also reads its containing grid: one more call in the focus
   listener's classic read, only for a cell, and none in a remote program,
-  which asks a selected child or a neighbour whether it is a cell, about
-  ten instructions, and reads the table only of a cell.
+  which asks a neighbour whether it is a cell, about ten instructions,
+  and reads the table only of a cell.
 
 ### Core's meeting of chains
 
@@ -1845,24 +1842,22 @@ the learning in `crates/mockapp/tests/text.rs`.
   14-stretch line 0.30 to 0.37 and 0.82 to 1.3 (every indication on 0.47
   to 0.61 and 9.2 to 10.6, 94 calls).
 
-### A container's selected item
+### A value's selected item
 
-A focused list's or tab control's selected item is read through
+The selected item that is a focus's value
+(`verbatim_uia::map::value_from_selection`) is read through
 `SelectionPattern2`'s `FirstSelectedItem` where the provider has it, and
 through the `Selection` pattern where it does not, classically and in the
 focus's program (`books/dev/src/reference/crates/verbatim-uia.md`). Pinned over
-`tests/fixtures/ancestry.json`, whose list has `SelectionPattern2` and
-whose tab control does not (`uia_selected_children_cost_exactly`).
-Classically one `BuildUpdatedCache` on the container caches both the
-property and the pattern, so a provider without `SelectionPattern2` costs
-no extra call.
+`tests/fixtures/combo_box.json`, whose looping selector has
+`SelectionPattern2` and whose combo box does not
+(`uia_selected_children_cost_exactly`). Classically one
+`BuildUpdatedCache` on the container caches both the property and the
+pattern, so a provider without `SelectionPattern2` costs no extra call.
 
-- A list's selected item classically: 2 UIA calls, 74 provider calls,
-  0.41 ms at the median (0.48 at the 95th percentile, 200 runs).
-- A tab control's classically: 3 calls (the cache, `GetCurrentSelection`
-  on the cached pattern, the item's cache), 0.54 ms.
-- Inside the focus's program: 1 call either way, 1.10 ms at the median for
-  the list and 1.07 for the tab control.
+- With `SelectionPattern2` classically: 2 UIA calls; without it, 3 (the
+  cache, `GetCurrentSelection` on the cached pattern, the item's cache).
+- Inside the focus's program: 1 call either way.
 
 ## Text range conformance
 

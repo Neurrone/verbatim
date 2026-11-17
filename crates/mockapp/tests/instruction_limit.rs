@@ -245,11 +245,12 @@ fn the_instruction_limit_is_measured() {
     fixture.app.quit();
 }
 
-/// The focus ancestry at its worst in mockapp: a list in sixty nested
-/// groups (`deep.json`; a fixture's nesting is bounded by its JSON
-/// parser's), every ancestor up to the window walked under the depth limit
-/// the outpost uses (64), against 64 known ancestors none of which it
-/// meets, with the list's selected item and a held element's focus read;
+/// The focus ancestry at its worst in mockapp: a looping selector, a list
+/// whose selected item is its value, in sixty nested groups (`deep.json`; a
+/// fixture's nesting is bounded by its JSON parser's), every ancestor up to
+/// the window walked under the depth limit the outpost uses (64), against
+/// 64 known ancestors none of which it meets, with the list's selected item
+/// and a held element's focus read;
 /// the same walk stopped by a depth limit of 30 and walking on to the
 /// window; and the list whose group is known, which stops the walk at once
 /// but for the window, still sixty-one levels up (mockapp's elements below
@@ -327,7 +328,7 @@ fn focus_and_navigation_execute_exactly() {
 
     assert_eq!(
         [worst, limited, typical, far, near_step],
-        [2456, 1869, 1134, 890, 159],
+        [2446, 1859, 1124, 890, 159],
         "focus ancestry worst, at depth limit 30, typical; navigation far and near"
     );
     assert!(worst < LIMIT / 2 && far < LIMIT / 2);
@@ -402,7 +403,7 @@ fn reads_and_paths_execute_exactly() {
 
     assert_eq!(
         [read, deepest, near, missing],
-        [2478, 1143, 157, 150],
+        [2469, 1143, 157, 150],
         "the listener's refreshed read; a path down sixty-two levels, down one, and to nothing"
     );
     assert!(read < LIMIT / 2 && deepest < LIMIT / 2);

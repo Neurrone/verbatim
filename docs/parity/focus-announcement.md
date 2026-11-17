@@ -257,13 +257,13 @@ object's `GridItem` pattern, and leaves out a row or column the same as
 the last it spoke in the same table ([Speech](../nvda/speech.md), "Table
 cell coordinates"). Verbatim: the outpost reads the `GridItem` pattern's
 availability, row and column for an element read alone, a focus, its
-selected child and a navigation step's neighbour, never among many
+value's selected item and a navigation step's neighbour, never among many
 (`verbatim_uia::Cell`), and only while the theme reports the cell
 coordinates indication (`cell-coordinates`, on by default, as NVDA's
 "Cell coordinates" option is); the snapshot carries them one-based
 (`NodeDetails::cell`), and Core speaks them in NVDA's place, where they
-also stand in for a name in deciding whether a role is spoken. A focus,
-its selected child and a navigation step's neighbour also read the
+also stand in for a name in deciding whether a role is spoken. A focus
+and a navigation step's neighbour also read the
 cell's table, the runtime id of its `ContainingGrid` (`TableId`), and
 Core remembers the table, row and column last spoken (`CellMemory`): a
 row or column unchanged within one table is left out, entering another

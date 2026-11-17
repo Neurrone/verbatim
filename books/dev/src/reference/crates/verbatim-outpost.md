@@ -570,8 +570,8 @@ and the inherited pipe handles.
 
 - The answer to Core's `CurrentFocus` request (`asked::current_focus`)
   is the focused control (`hwndFocus`, through its window's backend) with
-  its ancestors up to one Core already knows, its selected child and its
-  caret (a console's text area reads as a nameless terminal,
+  its ancestors up to one Core already knows, the selected item that is
+  its value where it has one, and its caret (a console's text area reads as a nameless terminal,
   `read::console_text_area`); and, for a focus that met no ancestor Core
   knows, the foreground object, read after the focus as every focus
   answer reads it (`read::foreground_object_among`, the outpost's
@@ -629,8 +629,8 @@ and the inherited pipe handles.
   (`NodeDetails::class_name`) and its parent's automation id
   (`NodeDetails::parent_automation_id`) for Core's per-application rules.
   A node read alone carries grid row and column when Core's request names
-  cell coordinates, and a focus, its selected child and a navigation
-  step's neighbour their table (`NodeDetails::cell`), read in the remote
+  cell coordinates, and a focus and a navigation step's neighbour their
+  table (`NodeDetails::cell`), read in the remote
   program where one runs (`FocusQuery::is_cell`).
 
 ### Reading the focus

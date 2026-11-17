@@ -528,15 +528,17 @@ uia_shape! {
 
 uia_shape! {
     /// What the remote focus query reads of its input element
-    /// (`verbatim-uia-rops`): whether it is a list or tab control, whose
-    /// selected child is read with it, and its own window. Never requested:
-    /// every shape the query is given covers it.
+    /// (`verbatim-uia-rops`): whether it is a combo box or a looping
+    /// selector, whose first selected item may be its value, and its own
+    /// window. Never requested: every shape the query is given covers it.
     pub struct FocusInput {
         gates: none;
         groups {}
         properties {
             /// The control type id.
             control_type: UIA_ControlTypePropertyId => i32,
+            /// The UIA class name.
+            class_name: UIA_ClassNamePropertyId => string,
             /// The element's own window, 0 for an element that is not one.
             hwnd: UIA_NativeWindowHandlePropertyId => window_handle,
         }

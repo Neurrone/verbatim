@@ -10,7 +10,6 @@ use windows::Win32::UI::Accessibility::{
     UIA_LegacyIAccessibleStatePropertyId, UIA_ListControlTypeId, UIA_MenuItemControlTypeId,
     UIA_NativeWindowHandlePropertyId, UIA_PATTERN_ID, UIA_PROPERTY_ID, UIA_RuntimeIdPropertyId,
     UIA_Selection2FirstSelectedItemPropertyId, UIA_SelectionSelectionPropertyId,
-    UIA_TabControlTypeId,
 };
 
 pub use verbatim_uia::runtime_id_key;
@@ -127,9 +126,8 @@ pub enum Progress<'a> {
     /// The element with its cache filled afresh ([`Ancestry::element`]),
     /// and its table ([`Ancestry::element_table`]).
     Element(&'a Cached<Ancestor>, Option<TableId>),
-    /// The first selected child ([`Ancestry::selected_child`]), and its
-    /// table ([`Ancestry::selected_table`]).
-    SelectedChild(&'a Cached<Ancestor>, Option<TableId>),
+    /// The first selected child ([`Ancestry::selected_child`]).
+    SelectedChild(&'a Cached<Ancestor>),
     /// The next ancestor kept, nearest first ([`Ancestry::ancestors`]).
     Ancestor(&'a Cached<Ancestor>),
 }
@@ -181,10 +179,10 @@ pub struct Ancestry {
     /// not kept, and the chain goes on from that window as a plain window.
     /// Set by the classic walk only.
     pub plain_window: Option<isize>,
-    /// For a list or tab control, the first selected child, filled by the
-    /// query's element fill: what `verbatim_uia::Uia::selected_node` reports; for a
-    /// combo box without the `Value` pattern, its first selected item, its
-    /// value (`verbatim_uia::map::value_from_selection`). Optional: `None`
+    /// For a combo box without the `Value` pattern or a looping selector,
+    /// its first selected item, its value
+    /// (`verbatim_uia::map::value_from_selection`), filled by the query's
+    /// element fill, as `verbatim_uia::Uia::selected_node` reads it. Optional: `None`
     /// too when its read failed, as on an item gone, or, in the classic
     /// walk, timed out, the rest of the ancestry read without it.
     pub selected_child: Option<Cached<Ancestor>>,
@@ -218,9 +216,6 @@ pub struct Ancestry {
     /// theme's cell coordinates; `None` also when it names no grid or the
     /// read failed.
     pub element_table: Option<TableId>,
-    /// The table of [`Ancestry::selected_child`], as
-    /// [`Ancestry::element_table`] is of the element.
-    pub selected_table: Option<TableId>,
 }
 
 impl Ancestry {
@@ -333,19 +328,20 @@ fn is_element_gone(error: &Error) -> bool {
         .is_some_and(|code| code.0.cast_unsigned() == UIA_E_ELEMENTNOTAVAILABLE)
 }
 
-/// Whether the focused element's selected child is read with it, by its
-/// cached control type: a list's or a tab control's, reported with it, as
-/// `wants_selected_child` decides from the mapped role, and a combo box's,
-/// its value when it has no `Value` pattern
-/// (`verbatim_uia::map::value_from_selection`), which is asked of the
-/// element where the selection is read. Every shape the query's element is
-/// read as holds the control type, so it is never read live.
+/// Whether the focused element's selected child may be its value
+/// (`verbatim_uia::map::value_from_selection`), by its cached control type
+/// and class: a combo box's, when it has no `Value` pattern, which is asked
+/// of the element where the selection is read, and a looping selector's.
+/// A list's selected item is otherwise never read with its focus, as it is
+/// not spoken (Dickson, 2026-11-17). Every shape the query's element is
+/// read as holds both, so neither is read live.
 fn wants_selected_child(element: &FocusInput) -> bool {
-    element.control_type.is_some_and(|control_type| {
-        control_type == UIA_ListControlTypeId.0
-            || control_type == UIA_TabControlTypeId.0
-            || control_type == UIA_ComboBoxControlTypeId.0
-    })
+    element.control_type == Some(UIA_ComboBoxControlTypeId.0)
+        || (element.control_type == Some(UIA_ListControlTypeId.0)
+            && element
+                .class_name
+                .as_deref()
+                .is_some_and(|class| class.contains("LoopingSelector")))
 }
 
 /// Whether the classic walk reads the focused element's selected child
@@ -635,9 +631,6 @@ pub fn focus_ancestry_remote(_uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
         );
     }
 
-    let selected_table =
-        (reads_table && wants_selected_child(&input)).then(|| read_table(&mut b, selected));
-
     let known = b.new_string_map();
     for (index, runtime_id) in query.known.iter().enumerate() {
         let key = b.string(&runtime_id_key(runtime_id));
@@ -790,7 +783,6 @@ pub fn focus_ancestry_remote(_uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
             None => None,
         },
         element_table: table_answered(&outcome, element_table)?,
-        selected_table: table_answered(&outcome, selected_table)?,
     }))
 }
 
@@ -1079,15 +1071,8 @@ pub fn focus_ancestry_classic(uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
         Ok(false) => None,
         Err(error) => optional(Err(error))?,
     };
-    let selected_table = selected_child
-        .as_ref()
-        .filter(|child| child.read().node.is_cell())
-        .and_then(|child| {
-            before_call("the cell's containing grid");
-            containing_grid(child.live().element())
-        });
     if let Some(child) = &selected_child {
-        progress(Progress::SelectedChild(child, selected_table));
+        progress(Progress::SelectedChild(child));
     }
     // The desktop root is served in this process, so reading it is local.
     before_call("the desktop root and the tree walker");
@@ -1105,7 +1090,6 @@ pub fn focus_ancestry_classic(uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
         element,
         legacy_state: None,
         element_table,
-        selected_table,
     };
     let mut current = live.clone();
     let mut current_window = input.hwnd;

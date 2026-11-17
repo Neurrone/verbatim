@@ -529,8 +529,9 @@ code is in `reduce.rs` unless named.
   adds "52 items" (`Phrase::Items`). A `Button` with the Toggle pattern is
   `Role::ToggleButton` with `Pressed` ([verbatim-uia](verbatim-uia.md)).
 - Selections (same document, "Selection announcements" and "Selection in
-  a list the focus controls"). A focus on a selection container carries
-  its selected child, spoken after it; a `SelectionChanged` while focus
+  a list the focus controls"). A focus on a selection container is
+  spoken without its selected item, as NVDA speaks it (Dickson,
+  2026-11-17); a `SelectionChanged` while focus
   stays on the container speaks each newly selected item once,
   deduplicated against the focus's own child. A `ControlledSelection` is
   spoken as a focus, interrupting, and moves the navigator, only while

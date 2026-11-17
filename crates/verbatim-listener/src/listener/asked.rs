@@ -533,7 +533,7 @@ impl Walked {
                 read.parts.details.set_table(table);
                 self.fresh = Some((read, fresh.read().node.value_from_selection()));
             }
-            Progress::SelectedChild(child, _) => {
+            Progress::SelectedChild(child) => {
                 self.selected_name = child.read().node.parts(child.runtime_id()).name;
             }
             Progress::Ancestor(ancestor) => self.ancestors.push(Read::of(ancestor)),

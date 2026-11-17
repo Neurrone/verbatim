@@ -304,35 +304,6 @@ fn msaa_activation_answers_the_default_actions_name() {
     app.quit();
 }
 
-/// The selected child of a list, read through `verbatim-ia2`'s own
-/// `selected_child` from the list object kept when the tree was walked, after
-/// a scripted selection (audit item 21: `accSelection` used to be stubbed).
-fn msaa_client_reads_a_lists_selected_child() {
-    common::init_com();
-    let title = common::unique_title("mockapp-msaa-selection");
-    let mut app = common::spawn("tree.json", "msaa", &title);
-    let hwnd = common::find_window(&title);
-    let registry = verbatim_ia2::NodeIdRegistry::new(std::sync::Arc::new(
-        std::sync::atomic::AtomicU64::new(1),
-    ));
-    let (root, _) = verbatim_ia2::acquire::walk_tree(hwnd.0 as isize, &registry, (64, 4096), false)
-        .expect("walk the tree");
-    let list = find(&root, "Items").expect("the list is in the tree");
-    assert_eq!(
-        verbatim_ia2::acquire::selected_child(list, &registry),
-        None,
-        "nothing is selected yet"
-    );
-
-    // Acknowledged once applied, so the selection is there to read.
-    app.send("select item2");
-    let selected =
-        verbatim_ia2::acquire::selected_child(list, &registry).and_then(|node| node.name);
-    assert_eq!(selected.as_deref(), Some("Second"));
-
-    app.quit();
-}
-
 /// A live object seen again at its address is the node already issued:
 /// oleacc hands the outpost a new wrapper for every request, so each
 /// sighting after the first is matched by address, comparing a fresh read of the kept
@@ -603,10 +574,6 @@ fn main() {
         (
             "msaa_activation_answers_the_default_actions_name",
             msaa_activation_answers_the_default_actions_name,
-        ),
-        (
-            "msaa_client_reads_a_lists_selected_child",
-            msaa_client_reads_a_lists_selected_child,
         ),
         (
             "msaa_sightings_of_one_live_object_are_one_node",

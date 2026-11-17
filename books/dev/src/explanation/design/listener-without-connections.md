@@ -149,7 +149,7 @@ Calls per focus, from the ratchet (`call_counts.rs` against mockapp's `counts.js
 
 - Steady state: 5 UIA calls against 4 (the nearest window, the comparison and the keyboard focus, as before; then the refreshed cache and one step to the known ancestor, where one remote operation read both). The minimum is 5 for a sender without a window of its own and 4 for one that is a window.
 - Cold: 6 UIA calls and the raw probe, against 3 and the probe.
-- Into a list: 7 against 4 (the selected item's two calls). To the next list item: 5 against 4.
+- Into a list: 5 against 4, as for a steady-state focus, since a focused list's selected item is not read. To the next list item: 5 against 4.
 - Per window, once: the console check from the sender, four calls on held elements where the check by handle made five, a connection among them.
 - The outposts' calls are unchanged.
 

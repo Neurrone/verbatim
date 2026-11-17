@@ -985,9 +985,8 @@ mod props {
     }
 
     /// Whether `role` serves the `SelectionPattern`: a list or a tab
-    /// control, the containers whose selected child the focus reports, and
-    /// a combo box, whose selected item is its value when it has no
-    /// `Value` pattern.
+    /// control, as real ones do, and a combo box, whose selected item is
+    /// its value when it has no `Value` pattern.
     pub(super) fn selection_container(role: verbatim_model::Role) -> bool {
         matches!(
             role,

@@ -313,14 +313,6 @@ impl Accessible {
         Related::Object(Some(dispatch)).object()
     }
 
-    /// `accSelection`: the selected child or object within this one.
-    pub(crate) fn selection(&self) -> windows::core::Result<Related> {
-        count(CallKind::Msaa)?;
-        // SAFETY: a live interface; the method takes no other arguments.
-        let selection = unsafe { self.object.accSelection() }?;
-        Ok(related(&selection))
-    }
-
     /// The window that owns the object (`WindowFromAccessibleObject`), or
     /// `None` when the call fails or finds no window, as it does for an
     /// object none of whose ancestors says which window it is in.
@@ -388,7 +380,7 @@ pub(crate) fn decompose(identity: &[u8]) -> Option<(isize, i32, i32)> {
 }
 
 /// What an MSAA method that names another object answered (`accNavigate`,
-/// `accFocus`, `accSelection`, and each entry of `AccessibleChildren`).
+/// `accFocus`, and each entry of `AccessibleChildren`).
 #[derive(Debug)]
 pub(crate) enum Related {
     /// Nothing (`VT_EMPTY`).

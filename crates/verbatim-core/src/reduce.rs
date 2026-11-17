@@ -312,7 +312,6 @@ struct FocusReport<'a> {
     whole_window: bool,
     /// Its ancestors, outermost first, complete to the desktop.
     ancestors: &'a [NodeSnapshot],
-    selected_child: Option<&'a NodeSnapshot>,
     /// What the outpost's caret read found, for a focus that may have text.
     text: Option<&'a FocusText>,
     /// What its reader read of the element it held before under its node.
@@ -338,7 +337,6 @@ impl Report {
             observed_at_us: self.observed_at_us,
             whole_window: self.whole_window,
             ancestors: &self.ancestors,
-            selected_child: self.selected_child.as_ref(),
             text: self.text.as_ref(),
             earlier: self.earlier,
         }
@@ -744,23 +742,13 @@ fn focus_speech(
             None,
         ));
     }
-    let mut segments = if reads_text && report.node.value.is_some() {
+    let segments = if reads_text && report.node.value.is_some() {
         let mut node = report.node.clone();
         node.value = None;
         node_segments(&node, Reason::Focus, last_level, cell_memory)
     } else {
         node_segments(report.node, Reason::Focus, last_level, cell_memory)
     };
-    // A selection container introduces its selected item right after
-    // itself — the roadmap's "announce a focused list's selected item".
-    if let Some(selected) = report.selected_child {
-        segments.extend(node_segments(
-            selected,
-            Reason::Focus,
-            last_level,
-            cell_memory,
-        ));
-    }
     effects.push(Effect::Speak(
         Utterance {
             trace_id,

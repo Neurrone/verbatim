@@ -1769,7 +1769,6 @@ fn an_executed_focus_is_the_control_planes_focus_change() {
                 node: msaa_node(2, "OK", Role::Button),
                 whole_window: false,
                 ancestors: vec![msaa_node(1, "Editor", Role::Window)],
-                selected_child: None,
                 text: Some(Box::new(verbatim_model::FocusText::NotRead)),
                 earlier: None,
                 group: None,

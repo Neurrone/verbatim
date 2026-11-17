@@ -95,7 +95,7 @@ expanded. **matched (verified)** (the `theme_panel` scenario).
 
 ### Selection announcements
 
-Selection announcements (focused list's selected child; changes
+Selection announcements (a focused list's selected item; changes
 while focus stays on container; combo box exclusion). NVDA has no rule
 that speaks a newly selected item while focus rests on a list or tab
 control; its base `event_selection` speaks only a selection inside an
@@ -112,10 +112,10 @@ controller-for relation read live, and an item that is an object the
 focus controls, or inside one, is spoken as a focus, while any other is
 a change of state of the selected object, spoken only on the focus or an
 ancestor (`docs/design/readers-tell-core-asks-build1.md`, "Changes on
-objects"). **matched (unverified)**. **Different** (Dickson, 2026-10-08;
-the roadmap's M3 item "announce a focused list's selected item"): a
-focused list's selected item is said with the focus ("Fruits list
-Apple" where NVDA says "Fruits list").
+objects"). **matched (unverified)**. A focused list's selected item is
+not said with the focus, as NVDA says "Fruits list" (Dickson,
+2026-11-17), and neither reader reads it: only the selected item that is
+a combo box's or a looping selector's value is read with its focus.
 
 ### A selection container's selected item through UIA
 
@@ -123,11 +123,11 @@ NVDA reads `SelectionPattern2` where the provider has it, and counts a
 provider without it, or a failing selection container, as no selection
 without cutting focus speech short ([The UIA client](../nvda/uia.md),
 "Element wrapping"). Verbatim: **partial**. Matched for the selected
-item it reports with a focused list or tab control: the first selected
-item from `SelectionPattern2`'s `FirstSelectedItem`, classically and in
-the focus's remote program, and the `Selection` pattern for a provider
-without `SelectionPattern2`; any failure is no selected item and the
-focus is still reported. Verbatim reads the selection from the
+item that is a focus's value (below, "A combo box's value from its
+selected item"): the first selected item from `SelectionPattern2`'s
+`FirstSelectedItem`, classically and in the focus's remote program, and
+the `Selection` pattern for a provider without `SelectionPattern2`; any
+failure is no selected item and the focus is still reported. Verbatim reads the selection from the
 container, so the item's own selection container is never read. Not
 yet built: NVDA's use of `ItemCount` to leave "selected" unsaid on a
 focused selectable item (a cell, a header) that is the only one
