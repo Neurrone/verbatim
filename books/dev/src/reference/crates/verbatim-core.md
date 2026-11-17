@@ -703,7 +703,8 @@ number, so a key pressed within the 30 ms does not silence it, as NVDA's
 announcement after its timer is heard; it never waits behind a held key,
 since NVDA starts that timer when the key is pressed, outside its script
 queue. A menu, popup or switcher end whose run executed no focus makes
-the check entry 50 ms later (`focus::menus`, NVDA's fake focus): with the
+the check entry 50 ms later (`focus::menus`, NVDA's fake focus), one for
+the ends of one pump (`event_queue::PUMP_WINDOW_US`): with the
 committed focus unchanged, it asks the foreground application's current
 focus with the focused-state test (`Request::CurrentFocus`,
 `focused_state_test`), which the outpost runs on an MSAA focus over every

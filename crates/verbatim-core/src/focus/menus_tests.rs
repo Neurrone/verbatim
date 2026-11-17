@@ -102,6 +102,36 @@ fn a_checked_msaa_focus_refused_as_unfocused_is_not_spoken() {
     assert!(state.queue.front_for_tests().is_none());
 }
 
+/// The popup end and the menu end that closing Verbatim's menu raises
+/// 0.4 ms apart, in the order of `theme_panel`'s recording, make one check:
+/// NVDA's limiter keeps one menu event of a pump
+/// (`orderedWinEventLimiter.py` 76 to 78, 93 to 95), so it calls
+/// `_fakeFocus` once (`IAccessibleHandler/__init__.py` 976 to 991). The
+/// check finds nothing there, which ends it: no second check reads the
+/// dialog that has opened meanwhile, whose own focus speaks it.
+#[test]
+fn a_popup_end_and_a_menu_end_of_one_pump_make_one_check() {
+    let mut state = in_front();
+    let mut popup_end = msaa_tell(-4);
+    popup_end.kind = EventKind::PopupEnd;
+    assert_eq!(feed_at(&mut state, 1_000, entry(popup_end)), NOTHING);
+    assert_eq!(feed_at(&mut state, 1_400, menu_end()), NOTHING);
+    assert_eq!(
+        feed_at(&mut state, 51_000, Input::Tick),
+        ["send Outpost(Pid(40)) CurrentFocus with the focused-state test"]
+    );
+    assert_eq!(feed_at(&mut state, 51_400, Input::Tick), NOTHING);
+    assert_eq!(
+        feed_at(
+            &mut state,
+            60_000,
+            crate::entries::tests::answer_outcome(OUTPOST, 2, Outcome::NotThere)
+        ),
+        NOTHING
+    );
+    assert!(state.queue.front_for_tests().is_none());
+}
+
 #[test]
 fn a_focus_committed_before_the_check_ends_it_with_no_read() {
     let mut state = in_front();

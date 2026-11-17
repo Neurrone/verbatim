@@ -50,7 +50,7 @@ use crate::focus::backend::{Backend, BackendCache, JudgedWindow, WindowKey};
 
 pub(crate) use driver::{Core, Cx, Queue, ReplayMismatch, State};
 pub(crate) use inbox::{CoreRequest, Effect, Input, Timed};
-pub(crate) use limiter::{MsaaClass, MsaaKey, Place};
+pub(crate) use limiter::{MsaaClass, MsaaKey, PUMP_WINDOW_US, Place};
 pub(crate) use request::{Outcome, Refused, Request};
 pub(crate) use table::Asker;
 

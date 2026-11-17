@@ -857,6 +857,24 @@ impl<L: Logic> Cx<L> {
         shared.state.queue.timers.push((at_us, entry));
     }
 
+    /// Whether an entry [`append_after`](Self::append_after) set to come,
+    /// one `picks` takes, is due within `window_us` of `after_us` from now.
+    pub(crate) fn timer_due_near(
+        &self,
+        after_us: u64,
+        window_us: u64,
+        picks: impl Fn(&L::Entry) -> bool,
+    ) -> bool {
+        let shared = self.shared.borrow();
+        let at_us = shared.state.queue.now_us.saturating_add(after_us);
+        shared
+            .state
+            .queue
+            .timers
+            .iter()
+            .any(|(due_us, entry)| due_us.abs_diff(at_us) <= window_us && picks(entry))
+    }
+
     /// Moves `entry`, the front's own entry as it is to be judged again,
     /// to the back of the queue, behind every entry waiting, keeping its
     /// speech fence: the front's function then ends.
