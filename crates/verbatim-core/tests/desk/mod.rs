@@ -475,6 +475,13 @@ pub struct Desk {
     pub sent: Vec<(u64, Instance, Wire)>,
     /// The wake Core last asked for.
     pub wake: Option<u64>,
+    /// Every input fed, with how many effects it had, as the flight
+    /// recorder keeps them: a replay fixture's inputs.
+    pub recorded: Vec<verbatim_core::RecordedInput>,
+    /// Every request sent since the desk was made, in order.
+    pub asked: Vec<(u64, Instance, Wire)>,
+    /// Every request Core cancelled, by number.
+    pub cancelled: Vec<u64>,
 }
 
 impl Default for Desk {
@@ -495,6 +502,9 @@ impl Desk {
             keys: 0,
             sent: Vec::new(),
             wake: None,
+            recorded: Vec::new(),
+            asked: Vec::new(),
+            cancelled: Vec::new(),
         };
         let _ = desk.step(QueueInput::Process(ProcessFact::ListenerStarted(
             LISTENER.generation,
@@ -521,15 +531,23 @@ impl Desk {
 
     /// Feeds `input` at the queue's time, its effects as they came.
     pub fn feed(&mut self, input: QueueInput) -> Vec<Effect> {
-        reduce(
-            &mut self.state,
-            &mut self.runtime,
-            &Input::Queue {
-                trace_id: TraceId::from_raw(9),
-                at_us: self.at_us,
-                input,
-            },
-        )
+        let input = Input::Queue {
+            trace_id: TraceId::from_raw(9),
+            at_us: self.at_us,
+            input,
+        };
+        let effects = reduce(&mut self.state, &mut self.runtime, &input);
+        self.recorded.push(verbatim_core::RecordedInput {
+            input,
+            effect_count: effects.len(),
+        });
+        effects
+    }
+
+    /// One step, as [`Desk::step`], with `input` fed at `at_us`.
+    pub fn step_at(&mut self, at_us: u64, input: QueueInput) -> Vec<Heard> {
+        self.at_us = at_us.saturating_sub(1_000);
+        self.step(input)
     }
 
     /// One step: `input` fed at the next moment, an outpost Core asks for
@@ -554,8 +572,12 @@ impl Desk {
                     }
                     Effect::Queue(QueueEffect::Send { to, ask }) => {
                         self.sent.push((ask.number.0, *to, ask.request.clone()));
+                        self.asked.push((ask.number.0, *to, ask.request.clone()));
                     }
                     Effect::Queue(QueueEffect::WakeAt(wake)) => self.wake = *wake,
+                    Effect::Queue(QueueEffect::Cancel { cancel, .. }) => {
+                        self.cancelled.push(cancel.number.0);
+                    }
                     _ => {}
                 }
                 heard.extend(heard_of(effect));
