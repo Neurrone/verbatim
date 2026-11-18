@@ -180,7 +180,9 @@ fn read_effect(step: &mut Step, effect: Effect<Said>) {
                 })
                 .collect(),
         ),
-        Effect::AnswerDropped { .. } | Effect::StartOutpost(_) => {}
+        Effect::AnswerDropped { .. }
+        | Effect::StartOutpost(_)
+        | Effect::Said(Said::DropExpiredSpeech(_)) => {}
         other => panic!("an effect these tests read: {other:?}"),
     }
 }

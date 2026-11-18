@@ -535,3 +535,78 @@ fn a_menu_start_behind_the_key_is_confirmed_for_its_role() {
         }
     }
 }
+
+// Disagreements 1, 3 and 4 of the design, hand-written cross-process
+// sequences, NVDA's speech from source: a stray event inside a 100 ms watch
+// has no trigger a capture can produce on demand.
+
+/// Disagreement 1, from source (`IAccessibleHandler/__init__.py` 845 to
+/// 854): a foreground event on the field's own frame while the watch is
+/// out is refused for pending too, so the key speaks.
+#[test]
+fn a_foreground_on_the_fields_own_frame_does_not_silence_the_key() {
+    let mut held = watching(
+        CaretMotion::NextCharacter,
+        line("line 01", 7, 0),
+        unit(TextUnit::Character, "l", 8),
+    );
+    // The field's frame, window 4, is its ancestor's window, as a real
+    // field's walk reads it.
+    if let Some(last) = held.state.versions.last.as_mut() {
+        last.place.ancestor_windows = vec![WindowHandle(4)].into();
+    }
+    let mut tell = msaa_tell(0);
+    tell.kind = verbatim_model::event_kind::EventKind::Foreground;
+    tell.object = verbatim_model::tell::EventObject::Msaa {
+        window: WindowHandle(4),
+        object: 0,
+        child: 0,
+    };
+    tell.at_us = 29_000;
+    if let verbatim_model::tell::TellWindow::Found(facts) = &mut tell.window {
+        facts.window = facts.root.clone();
+        facts.window_to_foreground = verbatim_model::tell::Relation::Equal;
+    }
+    let arrived = step(&mut held, 30_000, entry(tell));
+    assert_eq!(arrived, Step::default(), "the watch goes on");
+    let ended = step(&mut held, 40_000, moved_onto_i(4));
+    assert_eq!(ended.said, [character("i")]);
+}
+
+/// Disagreement 3, Verbatim-only: the hidden frame's own MSAA focus behind
+/// the key is refused with no read, and the key speaks.
+#[test]
+fn the_hidden_frames_own_focus_does_not_silence_the_key() {
+    let mut held = watching(
+        CaretMotion::NextCharacter,
+        line("line 01", 7, 0),
+        unit(TextUnit::Character, "l", 8),
+    );
+    let mut tell = msaa_tell(-4);
+    tell.at_us = 29_000;
+    if let verbatim_model::tell::TellWindow::Found(facts) = &mut tell.window {
+        facts.hidden_frame = true;
+    }
+    let arrived = step(&mut held, 30_000, entry(tell));
+    assert_eq!(arrived, Step::default());
+    let ended = step(&mut held, 40_000, moved_onto_i(4));
+    assert_eq!(ended.said, [character("i")]);
+}
+
+/// Disagreement 4, from source (`UIAHandler/__init__.py` 809 to 818, 853 to
+/// 868): a UI Automation menu opening on the committed element counts as
+/// pending, executing it again: the key is silent.
+#[test]
+fn a_menu_opening_on_the_committed_element_silences_the_key() {
+    let mut held = watching(
+        CaretMotion::NextCharacter,
+        line("line 01", 7, 0),
+        unit(TextUnit::Character, "l", 8),
+    );
+    let mut tell = uia_tell(1, Vec::new());
+    tell.kind = verbatim_model::event_kind::EventKind::UiaMenuOpened;
+    tell.at_us = 29_000;
+    let arrived = step(&mut held, 30_000, entry(tell));
+    assert_eq!(arrived.cancelled, [(4, CancelReason::Withdrawn)]);
+    assert_eq!(arrived.text, NO_REQUESTS);
+}

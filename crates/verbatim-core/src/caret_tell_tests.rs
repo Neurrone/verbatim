@@ -417,6 +417,31 @@ fn a_caret_tell_with_a_focus_pending_asks_nothing() {
     assert_eq!(answered.other, 1);
 }
 
+/// Code-level, marked as such: in 19 recorded Save As openings the folder
+/// tree's stale MSAA focus arrived 159 to 355 ms before the keys' caret
+/// events, never behind one. Placed behind the caret tell, an MSAA focus no
+/// read has confirmed does not count and is not read, as NVDA's events not
+/// yet pumped are not pending: the caret tell reads its selection
+/// (design, "The two decided questions").
+#[test]
+fn a_caret_tell_with_an_unconfirmed_msaa_focus_behind_it_reads_its_selection() {
+    let mut held = uia_field();
+    let _ = step(&mut held, 1_000, uia_caret(1));
+    let _ = step(&mut held, 1_010, system_caret());
+    let _ = step(
+        &mut held,
+        1_020,
+        entry(crate::entries::tests::msaa_tell(-9)),
+    );
+    let answered = step(
+        &mut held,
+        1_100,
+        selection_read(3, (caret(1, 0), 70), None, None),
+    );
+    assert_eq!(answered.text.len(), 1, "the waiting caret tell reads");
+    assert_eq!(answered.other, 0, "the MSAA focus is not read meanwhile");
+}
+
 #[test]
 fn a_failed_caret_read_keeps_the_baseline_and_the_flag() {
     let mut held = edit_control();
