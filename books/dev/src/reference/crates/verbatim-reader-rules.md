@@ -32,8 +32,10 @@ Public API:
   are the shell's top-level windows. `post_probe_check`, `PostProbeCheck`,
   `provider_usable` and `has_windows_forms_class` are NVDA's checks of a
   window with a provider before it is used, the outposts' arbitrator's
-  whole test and the listener's value changes' (the listener answering a
-  console with a provider `Uia` with no check, a limit its guide states).
+  whole test. `listener_provider(classes, raw_provider)` is the focus
+  listener's answer from them, the one its check threads' probes and its
+  value changes are judged by: a list view's provider counts only from
+  Windows Forms, and a console's with no check, a limit its guide states.
 - `verdicts` — the kept verdicts on a window's provider: `Verdicts`,
   `Probe`, `Probed`, `VerdictChange`. An outpost's reducer holds them as an
   immutable snapshot, and the listener's event thread keeps a record per

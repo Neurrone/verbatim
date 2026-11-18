@@ -1138,9 +1138,7 @@ impl CoreDriver {
                         .map_or(Read::Failed, Read::Answered),
                 ),
                 Call::Classes(window) => {
-                    check.classed(verbatim_reader_rules::class::class_verdict(
-                        &verbatim_win32::window::window_classes(window),
-                    ));
+                    check.classed(verbatim_win32::window::window_classes(window));
                 }
                 Call::Probe(window) => {
                     let began_us = now();

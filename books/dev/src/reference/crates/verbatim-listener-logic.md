@@ -68,14 +68,17 @@ Public API:
 - `check` — the calls a UI Automation event's check makes at delivery on
   its application's check thread, NVDA's handler for its kind in its
   order, as one pure step function: `Check::next` names the next `Call`
-  (the walk to the nearest window, the window's class verdict, the probe,
+  (the walk to the nearest window, the window's classes, the probe,
   each kept element's keyboard focus, the previous sibling, the parent's
   automation id, the element's keyboard focus) and the thread records each answer. `Handler::of` maps a
   kind to its handler: a focus or menu opening makes every call, a walk
   that finds no window ending it; an
   element selected, a window opened and a property change walk and probe;
-  a notification walks alone, a failed walk telling no window. A window on
-  one of NVDA's lists is not probed, nor one whose probe in the thread's
+  a notification walks alone, a failed walk telling no window. The probe
+  the tell carries, and the record keeps, is the raw probe's answer with
+  NVDA's checks after it (`listener_provider`, judged with the classes
+  `Check::classed` recorded): a list view's provider counts only from
+  Windows Forms. A window on one of NVDA's lists is not probed, nor one whose probe in the thread's
   `ProbeRecord` began within `PROBE_RECORD_US` (half a second), the record
   keeping whether a provider answered: the record only spares a probe
   call, since Core recorded the same probe from the earlier tell. A window

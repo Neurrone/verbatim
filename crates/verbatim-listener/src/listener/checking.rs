@@ -41,7 +41,6 @@ use verbatim_model::request::Probe;
 use verbatim_model::tell::{ElementToken, EventObject, Payload, Read};
 use verbatim_model::{Pid, StateSet, TraceId, WindowHandle};
 use verbatim_process::clock::now_us;
-use verbatim_reader_rules::class::class_verdict;
 use verbatim_uia::{Agile, Cached, Direction, ElementExt, ListenerEvent, Request, Uia};
 
 use super::Outgoing;
@@ -587,9 +586,7 @@ fn check(
                     .map_or(Read::Failed, Read::Answered)
             })),
             Call::Classes(window) => {
-                check.classed(class_verdict(&verbatim_win32::window::window_classes(
-                    window,
-                )));
+                check.classed(verbatim_win32::window::window_classes(window));
             }
             Call::Probe(window) => {
                 let began_us = now_us();

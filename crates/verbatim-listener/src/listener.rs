@@ -116,9 +116,7 @@ use verbatim_process::clock::now_us;
 use verbatim_process::held::IgnoredProcesses;
 use verbatim_process::message::{decode_message, put_message};
 use verbatim_reader_rules::CONSOLE_WINDOW_CLASS;
-use verbatim_reader_rules::class::{
-    ClassVerdict, PostProbeCheck, class_verdict, has_windows_forms_class, post_probe_check,
-};
+use verbatim_reader_rules::class::{ClassVerdict, class_verdict, listener_provider};
 use verbatim_reader_rules::verdicts::Probe;
 use verbatim_win32::window::{WindowReadabilityReader, window_class_name};
 
@@ -1608,9 +1606,10 @@ pub fn read_classic_bar(
 }
 
 /// What NVDA's test of `hwnd`'s backend answers, on a reading thread: by
-/// its class lists, then the raw probe and the checks after it, as the
-/// outposts' arbitrator judges it. `None` when the probe learned nothing.
-/// A console with a provider is answered [`WindowAnswer::Uia`] with no check
+/// its class lists, then the raw probe and the checks after it, by the
+/// function the check threads judge their probes by
+/// ([`listener_provider`]). `None` when the probe learned nothing. A
+/// console with a provider is answered [`WindowAnswer::Uia`] with no check
 /// of its provider: `crate::value_change` says why.
 fn window_judged(hwnd: isize) -> Option<WindowAnswer> {
     let classes = verbatim_win32::window::window_classes(hwnd);
@@ -1629,12 +1628,10 @@ fn window_judged(hwnd: isize) -> Option<WindowAnswer> {
     if !probed.has_provider() {
         return Some(WindowAnswer::NotUia);
     }
-    Some(match post_probe_check(&classes) {
-        Some(PostProbeCheck::Console) | None => WindowAnswer::Uia,
-        Some(PostProbeCheck::WindowsFormsListView) if has_windows_forms_class(&classes.raw) => {
-            WindowAnswer::Uia
-        }
-        Some(PostProbeCheck::WindowsFormsListView) => WindowAnswer::Excluded,
+    Some(if listener_provider(&classes, true) {
+        WindowAnswer::Uia
+    } else {
+        WindowAnswer::Excluded
     })
 }
 

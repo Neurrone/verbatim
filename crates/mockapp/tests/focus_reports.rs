@@ -2542,6 +2542,39 @@ fn a_console_text_areas_focus_is_checked_from_the_text_area() {
     app.quit();
 }
 
+/// A UIA focus in a list view window that is not Windows Forms, whose
+/// provider answers the probe: NVDA counts a list view's provider only
+/// from Windows Forms (`UIAHandler/__init__.py` 1346 to 1361), and so does
+/// the check thread, so the tell's probe finds none, Core's backend cache
+/// reads the window through MSAA and drops the focus unspoken, its MSAA
+/// focus speaking for it, as in NVDA. With the raw probe's answer, the
+/// window was read through UIA and the item said again: "Mockapp List
+/// View Class Window Fixture window", "Letters list", "beta".
+fn a_list_views_provider_counts_only_from_windows_forms() {
+    let title = common::unique_title("mockapp-list-view-class");
+    let mut app = common::spawn("list_view_class_window.json", "uia", &title);
+    let client = Client::new(common::find_window(&title));
+    // Nothing is in front as Core starts, so Core's first verdict for the
+    // window is the one the focus's tell carries.
+    let outpost = OutpostUnderTest::new(&app);
+    let window = outpost.app_window();
+    outpost.set_foreground(HWND(std::ptr::null_mut()));
+    let mut core = CoreDriver::new(&app, outpost);
+    core.outpost.set_foreground(window);
+
+    app.send("select beta");
+    app.send("set-focus beta");
+    let step = core.uia_focus(&client.focused());
+    assert_eq!(
+        (step.said, step.calls.uia),
+        (Vec::new(), 0),
+        "nothing said, and nothing read past the listener's check"
+    );
+
+    drop(core);
+    app.quit();
+}
+
 /// A UIA focus in a window with no UIA provider, on no class list, through
 /// UIA's MSAA proxy: the check thread's probe of its window finds no
 /// provider, and it goes on to the element's keyboard focus, Core's backend
@@ -3937,6 +3970,10 @@ fn main() {
         (
             "a_focus_in_a_window_with_no_uia_provider_is_dropped_by_its_probe",
             a_focus_in_a_window_with_no_uia_provider_is_dropped_by_its_probe,
+        ),
+        (
+            "a_list_views_provider_counts_only_from_windows_forms",
+            a_list_views_provider_counts_only_from_windows_forms,
         ),
         (
             "a_focus_that_leaves_between_the_two_keyboard_focus_reads_is_announced_once",

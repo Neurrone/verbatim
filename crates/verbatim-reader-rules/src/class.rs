@@ -200,6 +200,30 @@ pub fn provider_usable(
     }
 }
 
+/// Whether the focus listener counts a window of classes `classes`, whose
+/// raw probe answered `raw_provider`, as read through UI Automation: the
+/// probe's answer with NVDA's checks after it
+/// (`nvda/source/UIAHandler/__init__.py` 1344 to 1361), the one function
+/// its check threads and its reading threads judge by, so the probe a
+/// tell carries and the answer a value change is judged by agree. A list
+/// view counts only when its raw class is a Windows Forms class
+/// ([`provider_usable`]); a console counts with no check of its provider,
+/// the listener's recorded limit, since the check needs a UI Automation
+/// connection the listener does not make (the `value_change` module of
+/// `verbatim-listener` records it). No call.
+#[must_use]
+pub fn listener_provider(classes: &WindowClasses, raw_provider: bool) -> bool {
+    if !raw_provider {
+        return false;
+    }
+    match post_probe_check(classes) {
+        None | Some(PostProbeCheck::Console) => true,
+        Some(check @ PostProbeCheck::WindowsFormsListView) => {
+            provider_usable(check, classes, || None) == Some(true)
+        }
+    }
+}
+
 /// The class names arbitration decides on, which the caller reads with
 /// inexpensive local calls safe on any thread
 /// (`verbatim_win32::window::window_classes`).
@@ -453,6 +477,30 @@ mod tests {
                 console_never_asked
             ),
             Some(false)
+        );
+    }
+
+    /// The listener's answer: no provider is never UI Automation; a list
+    /// view's provider counts only from Windows Forms; a console's counts
+    /// with no check; any other window's counts as the probe found it.
+    #[test]
+    fn the_listener_counts_a_provider_after_nvdas_checks() {
+        let forms = WindowClasses::new("WindowsForms10.SysListView32.app.0.2bf8098_r6_ad1", "x");
+        let comctl = WindowClasses::new("SysListView32", "x");
+        let console = WindowClasses::new("ConsoleWindowClass", "ConsoleWindowClass");
+        let other = WindowClasses::new("Notepad", "Notepad");
+        let answers: Vec<(bool, bool)> = [&forms, &comctl, &console, &other]
+            .iter()
+            .map(|classes| {
+                (
+                    listener_provider(classes, true),
+                    listener_provider(classes, false),
+                )
+            })
+            .collect();
+        assert_eq!(
+            answers,
+            [(true, false), (false, false), (true, false), (true, false)]
         );
     }
 

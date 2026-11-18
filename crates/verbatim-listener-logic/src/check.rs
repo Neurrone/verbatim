@@ -38,6 +38,11 @@
 //!   that fails telling no window, as it finds none (1063 onward,
 //!   1114 to 1119).
 //!
+//! A probe's answer is the raw probe's with NVDA's checks after it
+//! (`UIAHandler/__init__.py` 1344 to 1361), judged by
+//! [`listener_provider`]: a list view's provider counts only from Windows
+//! Forms, and a console's with no check, the listener's recorded limit.
+//!
 //! The probe record keeps each probe's answer with when it began, only to
 //! skip repeating a probe call within half a second: a guess that can only
 //! cost calls, since Core recorded the same probe from the earlier tell at
@@ -50,7 +55,7 @@ use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::{PropertyAnswer, PropertyId, PropertyValue};
 use verbatim_model::request::Probe;
 use verbatim_model::tell::{Checked, ElementToken, Read};
-use verbatim_reader_rules::class::ClassVerdict;
+use verbatim_reader_rules::class::{ClassVerdict, WindowClasses, class_verdict, listener_provider};
 
 /// How long an answer in a check thread's probe record stands, in
 /// microseconds: NVDA keeps its `isUIAWindow` answer for half a second
@@ -95,8 +100,8 @@ pub enum Call {
     /// The walk to the element's nearest window: a call into the
     /// application ([`Check::walked`]).
     NearestWindow,
-    /// The class verdict of the nearest window by NVDA's lists: local
-    /// calls ([`Check::classed`]).
+    /// The classes of the nearest window, which NVDA's lists and the
+    /// checks after its probe judge: local calls ([`Check::classed`]).
     Classes(isize),
     /// The probe of the nearest window: a window message to the
     /// application ([`Check::probed`]).
@@ -197,6 +202,9 @@ pub struct Check {
     /// focus is read.
     kept: Vec<ElementToken>,
     walked: Option<Walked>,
+    /// The nearest window's classes, once read: the probe's answer is
+    /// judged with them.
+    classes: Option<WindowClasses>,
     probing: Option<Probing>,
     kept_answers: Vec<(ElementToken, Read<bool>)>,
     previous_sibling: Option<Read<bool>>,
@@ -220,6 +228,7 @@ impl Check {
                 Vec::new()
             },
             walked: (handler == Handler::None).then_some(Walked::NotWalked),
+            classes: None,
             probing: None,
             kept_answers: Vec::new(),
             previous_sibling: None,
@@ -291,18 +300,27 @@ impl Check {
         });
     }
 
-    /// Records the nearest window's class verdict: only a window on
-    /// neither list is probed.
-    pub fn classed(&mut self, verdict: ClassVerdict) {
-        self.probing = Some(match verdict {
+    /// Records the nearest window's classes: by NVDA's lists' verdict,
+    /// only a window on neither list is probed.
+    pub fn classed(&mut self, classes: WindowClasses) {
+        self.probing = Some(match class_verdict(&classes) {
             ClassVerdict::Unknown => Probing::Due,
             ClassVerdict::Uia => Probing::Uia,
             ClassVerdict::NonUia => Probing::Msaa,
         });
+        self.classes = Some(classes);
     }
 
-    /// Records the probe's answer, in the thread's `record` too.
-    pub fn probed(&mut self, probe: Probe, record: &mut ProbeRecord) {
+    /// Records the raw probe, `raw`, whose `provider` is whether the window
+    /// answered with a provider: the probe the tell carries, and the
+    /// thread's `record` keeps, is the checked answer
+    /// ([`listener_provider`]).
+    pub fn probed(&mut self, raw: Probe, record: &mut ProbeRecord) {
+        let provider = self
+            .classes
+            .as_ref()
+            .is_some_and(|classes| listener_provider(classes, raw.provider));
+        let probe = Probe { provider, ..raw };
         if let Ok(window) = isize::try_from(probe.window.0.cast_signed()) {
             record.record(window, probe.began_us, probe.provider);
         }
@@ -413,10 +431,28 @@ mod tests {
         (calls, walked, checked, parent)
     }
 
+    /// A window on neither of NVDA's lists, which is probed.
+    fn unlisted() -> WindowClasses {
+        WindowClasses::new("Notepad", "Notepad")
+    }
+
+    /// A window on NVDA's good list.
+    fn listed_uia() -> WindowClasses {
+        WindowClasses::new(
+            "CASCADIA_HOSTING_WINDOW_CLASS",
+            "CASCADIA_HOSTING_WINDOW_CLASS",
+        )
+    }
+
+    /// A window on NVDA's bad list.
+    fn listed_msaa() -> WindowClasses {
+        WindowClasses::new("Edit", "#32770")
+    }
+
     #[derive(Debug)]
     enum Answer {
         Nearest(Read<Option<isize>>),
-        Class(ClassVerdict),
+        Class(WindowClasses),
         Provider(bool),
         Focus(Read<bool>),
         Parent(Read<Option<String>>),
@@ -439,7 +475,7 @@ mod tests {
                 1_000,
                 |call| match call {
                     Call::NearestWindow => Answer::Nearest(Read::Answered(Some(5))),
-                    Call::Classes(_) => Answer::Class(ClassVerdict::Unknown),
+                    Call::Classes(_) => Answer::Class(unlisted()),
                     Call::Probe(_) => Answer::Provider(true),
                     Call::KeptFocus(ElementToken(3)) => Answer::Focus(Read::Answered(true)),
                     Call::KeptFocus(_) => Answer::Focus(Read::Failed),
@@ -488,7 +524,7 @@ mod tests {
     fn the_switchers_item_reads_its_parents_automation_id_and_only_it() {
         let answer = |call| match call {
             Call::NearestWindow => Answer::Nearest(Read::Answered(Some(5))),
-            Call::Classes(_) => Answer::Class(ClassVerdict::Uia),
+            Call::Classes(_) => Answer::Class(listed_uia()),
             Call::KeptFocus(_) | Call::KeyboardFocus | Call::PreviousSibling => {
                 Answer::Focus(Read::Answered(true))
             }
@@ -568,12 +604,12 @@ mod tests {
     /// reads in a window read through MSAA too.
     #[test]
     fn a_window_on_a_list_is_not_probed_and_the_checks_go_on() {
-        for verdict in [ClassVerdict::Uia, ClassVerdict::NonUia] {
+        for classes in [listed_uia(), listed_msaa()] {
             let check = Check::new(EventKind::UiaFocus, true, vec![ElementToken(2)]);
             let (calls, _, checked, _) =
                 run(check, &mut ProbeRecord::default(), 0, |call| match call {
                     Call::NearestWindow => Answer::Nearest(Read::Answered(Some(5))),
-                    Call::Classes(_) => Answer::Class(verdict),
+                    Call::Classes(_) => Answer::Class(classes.clone()),
                     _ => Answer::Focus(Read::Answered(true)),
                 });
             assert_eq!(
@@ -585,7 +621,7 @@ mod tests {
                     Call::PreviousSibling,
                     Call::KeyboardFocus,
                 ],
-                "{verdict:?}"
+                "{classes:?}"
             );
             assert_eq!(checked.probe, None);
         }
@@ -602,7 +638,7 @@ mod tests {
             let check = Check::new(EventKind::UiaFocus, false, vec![ElementToken(4)]);
             run(check, record, now_us, |call| match call {
                 Call::NearestWindow => Answer::Nearest(Read::Answered(Some(5))),
-                Call::Classes(_) => Answer::Class(ClassVerdict::Unknown),
+                Call::Classes(_) => Answer::Class(unlisted()),
                 Call::Probe(_) => Answer::Provider(false),
                 _ => Answer::Focus(Read::Answered(false)),
             })
@@ -662,7 +698,7 @@ mod tests {
         let check = Check::new(EventKind::UiaFocus, false, Vec::new());
         let (calls, _, told, _) = run(check, &mut record, 1_200, |call| match call {
             Call::NearestWindow => Answer::Nearest(Read::Answered(Some(5))),
-            Call::Classes(_) => Answer::Class(ClassVerdict::Unknown),
+            Call::Classes(_) => Answer::Class(unlisted()),
             _ => Answer::Focus(Read::Answered(true)),
         });
         assert_eq!(
@@ -671,6 +707,49 @@ mod tests {
         );
         assert_eq!(told.probe, None);
         assert_eq!(told.keyboard_focus, Some(Read::Answered(true)));
+    }
+
+    /// The probe a tell carries is the raw probe's answer with NVDA's
+    /// checks after it: a list view's provider counts only from Windows
+    /// Forms, a console's with no further call, and any other window's as
+    /// the probe found it; the record keeps the checked answer.
+    #[test]
+    fn the_probe_carries_the_checked_answer() {
+        for (raw, counted) in [
+            ("SysListView32", false),
+            ("WindowsForms10.SysListView32.app.0.2bf8098_r6_ad1", true),
+            ("ConsoleWindowClass", true),
+        ] {
+            let mut record = ProbeRecord::default();
+            let check = Check::new(EventKind::UiaFocus, false, Vec::new());
+            let (calls, _, checked, _) = run(check, &mut record, 1_000, |call| match call {
+                Call::NearestWindow => Answer::Nearest(Read::Answered(Some(5))),
+                Call::Classes(_) => Answer::Class(WindowClasses::new(raw, "#32770")),
+                Call::Probe(_) => Answer::Provider(true),
+                _ => Answer::Focus(Read::Answered(true)),
+            });
+            assert_eq!(
+                calls,
+                [
+                    Call::NearestWindow,
+                    Call::Classes(5),
+                    Call::Probe(5),
+                    Call::KeyboardFocus
+                ],
+                "{raw}"
+            );
+            assert_eq!(
+                checked.probe,
+                Some(Probe {
+                    window: WindowHandle(5),
+                    thread: 7,
+                    provider: counted,
+                    began_us: 1_000,
+                }),
+                "{raw}"
+            );
+            assert_eq!(record.standing(5, 1_000), Some(counted), "{raw}");
+        }
     }
 
     /// A probe begun within the last half second stands: the window is
@@ -682,7 +761,7 @@ mod tests {
             let check = Check::new(EventKind::UiaElementSelected, false, Vec::new());
             let (calls, _, checked, _) = run(check, record, now_us, |call| match call {
                 Call::NearestWindow => Answer::Nearest(Read::Answered(Some(5))),
-                Call::Classes(_) => Answer::Class(ClassVerdict::Unknown),
+                Call::Classes(_) => Answer::Class(unlisted()),
                 _ => Answer::Provider(false),
             });
             (
@@ -708,7 +787,7 @@ mod tests {
             let (calls, walked, checked, _) =
                 run(check, &mut ProbeRecord::default(), 0, |call| match call {
                     Call::NearestWindow => Answer::Nearest(Read::Answered(Some(5))),
-                    Call::Classes(_) => Answer::Class(ClassVerdict::Unknown),
+                    Call::Classes(_) => Answer::Class(unlisted()),
                     _ => Answer::Provider(true),
                 });
             assert_eq!(
@@ -753,7 +832,7 @@ mod tests {
             let (calls, _, checked, _) =
                 run(check, &mut ProbeRecord::default(), 0, |call| match call {
                     Call::NearestWindow => Answer::Nearest(Read::Answered(Some(5))),
-                    Call::Classes(_) => Answer::Class(ClassVerdict::Uia),
+                    Call::Classes(_) => Answer::Class(listed_uia()),
                     Call::PreviousSibling => Answer::Focus(sibling),
                     _ => Answer::Focus(Read::Answered(true)),
                 });

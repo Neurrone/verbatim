@@ -1,0 +1,18 @@
+{
+  "id": "root",
+  "role": "window",
+  "name": "Mockapp List View Class Window Fixture",
+  "window_class": "ATL:SysListView32",
+  "children": [
+    {
+      "id": "letters",
+      "role": "list",
+      "name": "Letters",
+      "children": [
+        { "id": "alpha", "role": "list_item", "name": "alpha", "states": ["focusable", "selectable"] },
+        { "id": "beta", "role": "list_item", "name": "beta", "states": ["focusable", "selectable"] },
+        { "id": "gamma", "role": "list_item", "name": "gamma", "states": ["focusable", "selectable"] }
+      ]
+    }
+  ]
+}
