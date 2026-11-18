@@ -286,14 +286,41 @@ clients asks
   ancestor state rule is a difference recorded in
   `docs/parity/focus-announcement.md`, "Focus announcement content and
   property order".
-- Caret and text changes: on a focus that has text, alone. NVDA takes
-  text changes only from Word, the console host, and Windows Terminal
-  (when its notifications are off); Verbatim takes them from any text
-  focus, for typed text and terminal output.
+- Caret and text changes: the caret event is in the local group of
+  every focus; text changes only on the focuses the next section names.
 - NVDA checks that the element is still focused before registering on
   it (comparing it with `GetFocusedElement`, a call). Verbatim does
   not: the registering thread registers only the newest focus a
   registration was handed, and a newer focus replaces it.
+
+### Which focus takes text-change events
+
+NVDA, under selective registration, gives the local group with text
+changes only to a focus of UI Automation class `_WwG` (Word's document),
+of automation id "Text Area" (the console host's text area), or of class
+`TermControl` or `WPFTermControl` (Windows Terminal) unless Windows
+Terminal is set to notifications, which it is not by default; every
+other focus gets the local group whose text event is the caret event
+alone (`UIAHandler/__init__.py`, `textChangeUIAClassNames`,
+`textChangeUIAAutomationIDs` and `windowsTerminalUIAClassNames`). Under
+global registration it takes text changes desktop-wide but drops those
+from other classes, so the outcome is the same. Its wait for a caret
+key's effect therefore counts a text change only in those controls
+(`editableText.py`, `_hasCaretMoved`).
+
+Verbatim: **matched**. Core alone names the group in `Follow`: a
+terminal its terminal group (Windows Terminal's text area with text
+changes; the console host's text area without them, its console's own
+events telling its output), Word's document, by its class `_WwG`, the
+extended group, and every other focus, edit fields and documents
+included, the base group, with the caret event. A focus's completion in
+the outpost decides nothing: it gives the new node the base group, and
+the node `Follow` names keeps the group Core named. Not covered: an
+element with automation id "Text Area" outside a console host, which
+Verbatim does not read as a terminal. Limit: between a Word document's
+completion and Core's `Follow`, one commit, it has the base group, so a
+caret key there hears its caret event but no text change; NVDA registers
+when it handles the focus.
 
 ### The active text position
 
@@ -307,7 +334,8 @@ caret to the range's line and speaking the line when the caret was not
 already on it; an event whose element is gone, or from an application
 that is not responding, is dropped, and outside browse mode nothing
 happens. Verbatim: **partial**. Matched as far as it goes: the outpost
-registers for it on a text focus, in the same event handler group as
+registers for it on a focus Core names with text changes (see "Which
+focus takes text-change events"), in the same event handler group as
 its caret and text changes (the range belongs to the application and
 cannot travel to another process, so the focus listener cannot carry
 it), keeps the range's start as a position in the focus's text, and

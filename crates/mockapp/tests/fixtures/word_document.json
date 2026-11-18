@@ -1,0 +1,15 @@
+{
+  "id": "root",
+  "role": "window",
+  "name": "Mockapp Word Document Fixture",
+  "children": [
+    {
+      "id": "doc",
+      "role": "editable_text",
+      "name": "Document",
+      "class_name": "_WwG",
+      "states": ["focusable"],
+      "text": "alpha beta\ngamma\n"
+    }
+  ]
+}

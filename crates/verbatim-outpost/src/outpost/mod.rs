@@ -1416,9 +1416,12 @@ fn capture_text(context: &Context, event: &Cached<TextEvent>, kind: UiaKind) -> 
 /// groups are NVDA's two local groups (`UIAHandler/__init__.py`,
 /// `_createLocalEventHandlerGroup`): the base group, given every UIA focus,
 /// holds the name, value, and state changes ([`FOCUS_PROPERTIES`]) and the
-/// caret event (`Text_TextSelectionChanged`); the extended group, given a
-/// focus with text read through UIA, also holds the text changes
-/// (`Text_TextChanged`) and the active text position changes. A third
+/// caret event (`Text_TextSelectionChanged`); the extended group, given
+/// only the focus Core's `Follow` names with it (Word's document and
+/// Windows Terminal's text area, as NVDA's list has it), also holds the
+/// text changes (`Text_TextChanged`) and the active text position changes.
+/// A focus's completion gives the base group, except to the node `Follow`
+/// names, which keeps the group Core named. A third
 /// group, given only the parent of a focus that is a `SensitiveSlider`'s
 /// thumb, holds its value changes alone. Selections and notifications come
 /// desktop-wide from the listener instead.

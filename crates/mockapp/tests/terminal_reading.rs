@@ -287,6 +287,22 @@ fn a_text_change_is_told_and_core_reads_it_from_its_start() {
     terminal.quit();
 }
 
+/// A focus repeated on the followed Windows Terminal: its completion keeps
+/// the group Core's `Follow` named, with text changes, since Core alone
+/// decides the group (`docs/parity/backends.md`, "Which focus takes
+/// text-change events"), so the output written after it is still told.
+fn a_completion_on_the_followed_terminal_keeps_its_text_changes() {
+    let mut terminal = start("mockapp-terminal-completion-keeps");
+    terminal.app.send("set-focus term");
+    let again = terminal.outpost.uia_focus_answer(&focused(terminal.hwnd));
+    assert_eq!(again.node(), terminal.node);
+    terminal.outpost.settled();
+    write(&mut terminal, &["three"]);
+    let read = terminal.fresh_from(terminal.start);
+    assert_eq!(text(&read.snapshot), after(&["three"]));
+    terminal.quit();
+}
+
 /// A caret event of the followed terminal is told, as its text change is,
 /// and the tells of one terminal are each told: the caret event waiting
 /// ahead of a text change is no longer planned after it, since Core's
@@ -650,6 +666,10 @@ fn main() {
         (
             "a_text_change_is_told_and_core_reads_it_from_its_start",
             a_text_change_is_told_and_core_reads_it_from_its_start,
+        ),
+        (
+            "a_completion_on_the_followed_terminal_keeps_its_text_changes",
+            a_completion_on_the_followed_terminal_keeps_its_text_changes,
         ),
         (
             "a_caret_event_is_told_as_a_text_change_is",

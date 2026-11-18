@@ -326,10 +326,11 @@ pub enum Request {
 /// The events a followed node's registration takes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum FollowGroup {
-    /// The base group: property changes and selection.
+    /// The base group: property changes and the caret event, for every
+    /// focus but those below, text fields included.
     Base,
-    /// The extended group, adding text and caret events, for a node that
-    /// may have text.
+    /// The extended group, adding text changes, for Word's document alone
+    /// (`docs/parity/backends.md`, "Which focus takes text-change events").
     Extended,
     /// A terminal: the extended group, but a console host's terminal
     /// without its text and caret events, which its console's own events

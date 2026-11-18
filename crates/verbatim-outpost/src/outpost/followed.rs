@@ -14,6 +14,8 @@
 
 #![forbid(unsafe_code)]
 
+use std::time::Instant;
+
 use verbatim_model::NodeId;
 use verbatim_model::request::{Follow, FollowGroup, Outcome, Reply};
 use verbatim_uia::{Group, Scope};
@@ -90,6 +92,8 @@ pub(super) fn follow(
         context.hook_console();
     }
     context.named.lock().clone_from(&named);
+    let started = Instant::now();
+    let moved = named.as_ref().map(|named| (named.node, named.group));
     match named {
         Some(named) => registration.retarget_with(
             Scope::Elements(vec![named.element]),
@@ -103,6 +107,7 @@ pub(super) fn follow(
         None => registration.retarget(Scope::Nothing),
     }
     registration.settle();
+    log_move("Follow", moved, started);
     if not_there {
         Outcome::NotThere
     } else {
@@ -110,29 +115,58 @@ pub(super) fn follow(
     }
 }
 
-/// Adds the registration of a focus's `element`, node `node`, with
-/// `group`, keeping what `Follow` named, and waits until it is in: the
-/// completion of a UI Automation focus, which registers before it reads
-/// the node's states.
+/// Adds the registration of a focus's `element`, node `node`, keeping
+/// what `Follow` named, and waits until it is in: the completion of a UI
+/// Automation focus, which registers before it reads the node's states.
+/// Core alone decides a node's group, so a node other than the one
+/// `Follow` names is given the base group, and the node `Follow` names
+/// keeps the group Core named, with its extra object: a repeated focus or
+/// a re-take on a followed terminal leaves its text changes coming.
 pub(super) fn add_focus(
     context: &Context,
     (node, element): (NodeId, AgileReference<IUIAutomationElement>),
-    group: Group,
 ) {
     let Some(registration) = context.focus_events.get() else {
         return;
     };
     let named = context.named.lock().clone();
-    let kept = named
-        .into_iter()
-        .filter(|named| named.node != node)
-        .flat_map(|named| {
-            std::iter::once((named.element, named.group))
-                .chain(named.extra.map(|extra| (extra, Group::Value)))
-        })
-        .collect();
+    let (group, kept) = match named {
+        Some(named) if named.node == node => (
+            named.group,
+            named
+                .extra
+                .map(|extra| (extra, Group::Value))
+                .into_iter()
+                .collect(),
+        ),
+        named => (
+            Group::Base,
+            named
+                .into_iter()
+                .flat_map(|named| {
+                    std::iter::once((named.element, named.group))
+                        .chain(named.extra.map(|extra| (extra, Group::Value)))
+                })
+                .collect(),
+        ),
+    };
+    let started = Instant::now();
     registration.retarget_with(Scope::Elements(vec![element]), group, kept);
     registration.settle();
+    log_move("a focus's completion", Some((node, group)), started);
+}
+
+/// Logs one move of the focus registration, made for `by` and settled,
+/// with the node given its group, or `None` when the move names nothing,
+/// and how long the worker waited for it from `started`: the add on the
+/// new element, then the removals.
+fn log_move(by: &str, moved: Option<(NodeId, Group)>, started: Instant) {
+    tracing::debug!(
+        by,
+        ?moved,
+        elapsed_us = started.elapsed().as_micros(),
+        "the focus registration moved"
+    );
 }
 
 /// Window `hwnd` was destroyed: when the node `Follow` names is in it, its

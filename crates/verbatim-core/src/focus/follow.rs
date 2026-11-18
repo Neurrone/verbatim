@@ -80,14 +80,23 @@ impl Request for FollowRequest {
     }
 }
 
-/// The event group of a focus node of `role`: a terminal's, with whether
-/// it is a console host's; the extended group for a node that may have
-/// text; the base group otherwise.
-fn group(role: Role, console: bool) -> FollowGroup {
-    match role {
-        Role::Terminal => FollowGroup::Terminal { console },
-        Role::EditableText | Role::Document => FollowGroup::Extended,
-        _ => FollowGroup::Base,
+/// The UI Automation class of Word's document, the one focus outside a
+/// terminal that takes text-change events (`docs/parity/backends.md`,
+/// "Which focus takes text-change events").
+const WORD_DOCUMENT_CLASS: &str = "_WwG";
+
+/// The event group of the focus node `node`: a terminal's, with whether it
+/// is a console host's; the extended group, which adds text changes, for
+/// Word's document alone; the base group, whose caret event serves every
+/// other text field, otherwise (`docs/parity/backends.md`, "Which focus
+/// takes text-change events").
+fn group(node: &NodeSnapshot, console: bool) -> FollowGroup {
+    if node.role == Role::Terminal {
+        FollowGroup::Terminal { console }
+    } else if node.details.class_name.as_deref() == Some(WORD_DOCUMENT_CLASS) {
+        FollowGroup::Extended
+    } else {
+        FollowGroup::Base
     }
 }
 
@@ -120,7 +129,7 @@ impl Follows {
                         generation: kept.outpost,
                         followed: Followed {
                             node: kept.node,
-                            group: group(node.role, console),
+                            group: group(node, console),
                             extra,
                         },
                         window: kept.window,

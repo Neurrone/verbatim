@@ -440,10 +440,18 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
   node's registration, adding it when absent, and removes every other. The
   completion of a UI Automation focus adds the new node's registration
   while keeping the one `Follow` named, so the old focus stays followed
-  until Core commits the new one. The base group holds name, value, and
-  state changes and `Text_TextSelectionChanged`; the extended group, for a
-  focus with text read through UIA, adds `Text_TextChanged` and the active
-  text position changed event. The console host's text area takes the
+  until Core commits the new one. Core alone decides the group: the
+  completion gives the new node the base group, unless it is the node
+  `Follow` names, which keeps the group and extra object Core named, so a
+  repeated focus or a re-take on a followed terminal leaves its text
+  changes coming. The base group holds name, value, and state changes and
+  `Text_TextSelectionChanged`; the extended group, which Core names for
+  Word's document and Windows Terminal's text area alone
+  (`docs/parity/backends.md`, "Which focus takes text-change events"),
+  adds `Text_TextChanged` and the active text position changed event.
+  Each settled move is logged at debug level as "the focus registration
+  moved", with what made it and the worker's wait (`elapsed_us`). The
+  console host's text area takes the
   group without its text events (`Group::ExtendedWithoutTextEvents`), and
   the console's caret events are its caret events
   (`books/dev/src/explanation/design/wake-ups.md`, item 15). The extra

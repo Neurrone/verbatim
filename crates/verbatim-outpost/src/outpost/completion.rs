@@ -18,7 +18,7 @@ use verbatim_model::protocol::{UiaAncestorFact, UiaSnapshotFact};
 use verbatim_model::request::{
     CompleteUia, CompletionFor, KnownAncestor, ObjectRead, Outcome, Refusal, Reply, RouteEnd,
 };
-use verbatim_model::{Backend, NodeId, NodeSnapshot, Role, State};
+use verbatim_model::{Backend, NodeId, NodeSnapshot, State};
 use verbatim_uia::map::with_legacy_checked_state;
 use verbatim_uia::{Cached, DialogText, Fill, Interning as _, Kept, Node};
 use verbatim_uia_rops::{Path, StatesQuery, focus_states};
@@ -66,7 +66,7 @@ pub(super) fn complete(
     let own_window = snapshot.details.window.map_or(nearest, hwnd_of);
     read::console_text_area(&mut snapshot, Some(own_window));
     if focus && let Some(element) = &found {
-        register(context, element, node, snapshot.role);
+        register(context, element, node);
     }
     // The node's window, fixed as it is made, as NVDA's object fixes its
     // own (`NVDAObjects/UIA/__init__.py` 1604 to 1607), for a step from it
@@ -386,20 +386,16 @@ fn replaced_stale(
     stale
 }
 
-/// Adds the registration of the focus `element`, node `node` of `role`,
-/// on the registering thread, keeping what `Follow` named, and waits until
-/// it is in: the extended group for a node that may have text, else the
-/// base group.
-fn register(context: &RequestContext<'_>, element: &Cached<Node>, node: NodeId, role: Role) {
+/// Adds the registration of the focus `element`, node `node`, on the
+/// registering thread, keeping what `Follow` named, and waits until it is
+/// in. Core alone decides a node's group: the completion asks for the base
+/// group, and the node `Follow` names keeps the group Core named for it
+/// ([`super::followed::add_focus`]).
+fn register(context: &RequestContext<'_>, element: &Cached<Node>, node: NodeId) {
     let Ok(agile) = element.agile() else {
         return;
     };
-    let group = if text_reads::may_have_text(context, node, role) {
-        verbatim_uia::Group::Extended
-    } else {
-        verbatim_uia::Group::Base
-    };
-    super::followed::add_focus(context, (node, agile.reference()), group);
+    super::followed::add_focus(context, (node, agile.reference()));
 }
 
 /// Reads the states of the focus `element`, whose registration is in, into

@@ -44,9 +44,10 @@ use windows::Win32::UI::Accessibility::{
 
 use common::outpost::OutpostUnderTest;
 
-/// The events an outpost registers for on a focused document: its name,
-/// value, and state changes, and its caret, text, and active text position
-/// changes.
+/// The events an outpost may register for on a focused document: its name,
+/// value, and state changes and its caret changes, the base group's, and
+/// its text and active text position changes, which the extended group
+/// adds.
 const EVENTS: [i32; 4] = [
     UIA_AutomationPropertyChangedEventId.0,
     UIA_Text_TextSelectionChangedEventId.0,
@@ -71,7 +72,8 @@ fn focused(hwnd: HWND) -> verbatim_uia::Cached<verbatim_uia::ListenerEvent> {
 
 /// Focuses mockapp's "Notes" document and returns its node: the focus
 /// read as Core reads it, then Core's `Follow` of the committed document
-/// with the extended group, which must answer applied, as Core sends it at
+/// with the base group, as Core names it for a text field other than
+/// Word's document, which must answer applied, as Core sends it at
 /// the commit.
 fn focus_notes(app: &mut common::MockApp, outpost: &OutpostUnderTest, hwnd: HWND) -> NodeId {
     app.send("set-focus doc");
@@ -83,7 +85,7 @@ fn focus_notes(app: &mut common::MockApp, outpost: &OutpostUnderTest, hwnd: HWND
         Request::Follow(Follow {
             node: Some(Followed {
                 node,
-                group: FollowGroup::Extended,
+                group: FollowGroup::Base,
                 extra: None,
             }),
         }),
@@ -148,8 +150,8 @@ fn shut_down_during(name: &str, read: &Read) {
     let notes = focus_notes(&mut app, &outpost, hwnd);
     assert_eq!(
         registrations(hwnd),
-        [1, 1, 1, 1],
-        "the outpost's handlers follow the focused document"
+        [1, 1, 0, 0],
+        "the outpost's handlers of the base group follow the focused document"
     );
 
     app.hold();

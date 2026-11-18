@@ -164,30 +164,38 @@ fn the_outposts_generation_ending_names_nothing() {
 }
 
 #[test]
-fn the_group_follows_the_role_and_a_console_window() {
+fn the_group_follows_the_role_the_class_and_a_console_window() {
     let focus = uia(APP);
     let cases = [
-        (Role::EditableText, false, FollowGroup::Extended),
-        (Role::Document, false, FollowGroup::Extended),
+        (
+            Role::Document,
+            Some("RichEditD2DPT"),
+            false,
+            FollowGroup::Base,
+        ),
+        (Role::EditableText, None, false, FollowGroup::Base),
+        (Role::Document, Some("_WwG"), false, FollowGroup::Extended),
         (
             Role::Terminal,
+            None,
             true,
             FollowGroup::Terminal { console: true },
         ),
         (
             Role::Terminal,
+            Some("TermControl"),
             false,
             FollowGroup::Terminal { console: false },
         ),
-        (Role::ListItem, false, FollowGroup::Base),
+        (Role::ListItem, None, false, FollowGroup::Base),
     ];
-    for (role, console, group) in cases {
+    for (role, class, console, group) in cases {
         let mut follows = Follows::default();
-        let node = snapshot(focus.node, role, None);
+        let node = snapshot(focus.node, role, class);
         assert_eq!(
             follows.committed(Some((&focus, &node, None)), console),
             [naming(APP, focus.node, group)],
-            "{role:?}, a console host's: {console}"
+            "{role:?} of class {class:?}, a console host's: {console}"
         );
     }
 }

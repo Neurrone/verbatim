@@ -870,18 +870,33 @@ fn a_uia_selection_typed_over_says_what_its_range_now_holds() {
     app.send(r"set-text doc xlpha beta\ngamma\n");
     app.send("caret doc 1");
     app.send("caret-event doc");
+    // Raised as Notepad raises it, and not heard: a text field other than
+    // Word's document is followed with the base group, which takes no
+    // text changes (`docs/parity/backends.md`, "Which focus takes
+    // text-change events").
     app.send("text-changed doc");
     let mut said = core.told(1).spoken();
-    core.outpost.heard(&[
-        Heard::UiaTextSelection,
-        Heard::UiaTextSelection,
-        Heard::UiaTextChanged,
-    ]);
+    core.outpost
+        .heard(&[Heard::UiaTextSelection, Heard::UiaTextSelection]);
     said.extend(core.pump().spoken());
     assert_eq!(
         said,
         phrase(Phrase::Unselected(SelectionText::Character("x".to_owned())))
     );
+    drop(core);
+    app.quit();
+}
+
+/// Word's document, of UI Automation class `_WwG`, followed with the
+/// extended group Core names for it: its text change is heard, as NVDA
+/// registers text changes there alone among text fields
+/// (`docs/parity/backends.md`, "Which focus takes text-change events").
+fn a_word_document_is_followed_with_its_text_changes() {
+    let (mut app, hwnd, mut core) = start("word_document.json", "mockapp-caret-watch-word");
+    app.send("set-focus doc");
+    let _ = core.uia_focus(&focused(hwnd));
+    app.send("text-changed doc");
+    core.outpost.heard(&[Heard::UiaTextChanged]);
     drop(core);
     app.quit();
 }
@@ -1150,6 +1165,10 @@ fn main() {
         (
             "a_uia_selection_typed_over_says_what_its_range_now_holds",
             a_uia_selection_typed_over_says_what_its_range_now_holds,
+        ),
+        (
+            "a_word_document_is_followed_with_its_text_changes",
+            a_word_document_is_followed_with_its_text_changes,
         ),
         (
             "an_edit_controls_caret_tell_before_its_value_change_is_said_in_general_terms",
