@@ -444,6 +444,7 @@ impl<E> ListenerKept<E> {
 
     /// The kept elements of `pid`'s a check of an event with `runtime_id`
     /// reads the keyboard focus of, with their tokens (column G).
+    #[must_use]
     pub fn with_runtime_id(&self, pid: Pid, runtime_id: &RuntimeId) -> Vec<(ElementToken, E)>
     where
         E: Clone,
