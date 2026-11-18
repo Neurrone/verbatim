@@ -110,6 +110,14 @@ Recorded by Claude, 2026-11-04.
   - How: the setup failed with "the shell shows its first prompt": the shell's `prompt-ready` file was not written within 30 s.
   - Cause: the console's shell (PowerShell) did not reach its first prompt; Verbatim's outpost in the console answered every request within a few milliseconds and then sat idle (the report's flight recorder, lines 41 to 67), so nothing of Verbatim's held the console. Why the shell was slow is not found.
   - Fix: none planned.
+- `explorer_folder_window` placeholder said twice (GitHub run 44409298708, 2026-11-19)
+  - How: after Enter, "Working on it..." was said twice, 19 ms apart, where the scenario accepts it at most once.
+  - Cause: File Explorer raised two UI Automation focus events on the placeholder 0.7 ms apart; the listener's keyboard focus read of the second failed (`UIA_E_ELEMENTNOTAVAILABLE`), so Core's duplicate test, which needs that read to say focused, let it through (`docs/parity/focus-events.md`, "A focus whose keyboard focus read fails"); NVDA lets such an event through too.
+  - Fix: a question for Dickson, whether the placeholder may be said twice.
+- `windows_terminal_review_stays_on_line` launch said three times (GitHub run 44409298708, 2026-11-19)
+  - How: the new terminal's "... terminal" was said three times at launch, where `LAUNCH_REPEATS` accepts one repeat.
+  - Cause: Windows Terminal moved the UI Automation focus from one element to another and back 190 ms later; each is a new focus by NVDA's duplicate test, so NVDA would say it three times too.
+  - Fix: a question for Dickson, whether the launch allowance should accept a return.
 - `conhost_typing`
   - How: missed a typed "o" in 2 of 6 runs on the base build.
   - Cause: not found.
