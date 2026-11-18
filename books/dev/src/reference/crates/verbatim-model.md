@@ -272,10 +272,17 @@ them yet.
   the ancestors Core already knows and its purpose), and the properties,
   navigation, find, children, text and activate requests, and the focus
   requests: `CompleteUia` (the completion of a UI Automation read from the
-  listener's `Route`), `MsaaRun` (one application's `RunCandidate`s, each
-  of a `CandidateKind`, a focus, a foreground or a menu start, answered
-  `RunRead` with each candidate `Tried`) and the current focus,
-  each answered with a `FocusRead`, which carries what Core keeps with the
+  listener's `Route`), `MsaaRun` (one `RunCandidate` of a
+  `CandidateKind`, a focus, a foreground or a menu start, read to the
+  `Depth` Core asks, `Facts`, `FullIfFocused` or `Full`, with a `spare`
+  node and anchor Core keeps held while it is out) and the current focus
+  (`CurrentFocus`, with its depth), both answered with a
+  `CandidateAnswer`: the `CandidateFacts` the outpost found (skipped, not
+  there, or found, with its focused state when asked, a menu start's
+  role, its window's class and the `Redirect` that reached it, NVDA's list
+  redirect or the wider one, with the child's ids), and the full read when
+  the depth asked for one. The completion and a candidate's full read are
+  a `FocusRead`, which carries what Core keeps with the
   committed focus and its `FocusCaret`: no text, text not read, or the
   caret read (`FocusCaretRead`), its line with the formatting the
   request's `details` name, and the selection baseline the outpost

@@ -72,14 +72,17 @@ Public API:
   each kept element's keyboard focus, the previous sibling, the parent's
   automation id, the element's keyboard focus) and the thread records each answer. `Handler::of` maps a
   kind to its handler: a focus or menu opening makes every call, a walk
-  that finds no window, or a window read through MSAA, ending it; an
+  that finds no window ending it; an
   element selected, a window opened and a property change walk and probe;
   a notification walks alone, a failed walk telling no window. A window on
   one of NVDA's lists is not probed, nor one whose probe in the thread's
   `ProbeRecord` began within `PROBE_RECORD_US` (half a second), the record
-  keeping whether a provider answered. A window on NVDA's MSAA list, or
-  one the probe or the record finds with no provider, ends the check, as
-  NVDA's native-element test fails and its handler returns. A nameless
+  keeping whether a provider answered: the record only spares a probe
+  call, since Core recorded the same probe from the earlier tell. A window
+  read through MSAA, by a list, the probe or the record, does not end the
+  check: Core's backend cache is the one owner of a window's verdict and
+  judges NVDA's native-element test, so the keyboard-focus reads are made
+  whatever was found. A nameless
   `NetUITWMenuItem` menu item has its previous sibling read, and with
   none, or none read, its keyboard focus is not, as NVDA's placeholder
   allows its focus. A focus whose cache names a list item of
@@ -118,12 +121,13 @@ Public API:
   object; `dropped_by_class`, Windows Live Messenger's hidden window and a
   show of neither a client nor a custom object, and a name change of the
   mouse pointer (`OBJID_CURSOR`), whose name is its shape; and
-  `ForegroundHold`, which keeps every item placed behind a foreground
+  `ForegroundHold`, which keeps every MSAA item placed behind a foreground
   event whose window `GetForegroundWindow` does not name until it does or
   `FOREGROUND_HOLD_US` (20 ms) pass, a newer foreground awaiting its own
   window and counting its time again, a dropped foreground's window still
   awaited, and answers what to send, in order, and how its one timer
-  changes.
+  changes; a UI Automation tell passes it (`ForegroundHold::passing`),
+  sent at once, never held.
 
 `cargo xtask ci` reads `schedule.rs` by the pure rule
 (`xtask/src/ownership.rs`).

@@ -714,12 +714,55 @@ the check entry 50 ms later (`focus::menus`, NVDA's fake focus), one for
 the ends of one pump that noted the same committed focus
 (`event_queue::PUMP_WINDOW_US`): with the
 committed focus unchanged, it asks the foreground application's current
-focus with the focused-state test (`Request::CurrentFocus`,
-`focused_state_test`), which the outpost runs on an MSAA focus over every
-ancestor up to the desktop and refuses "not focused", saying nothing; an
-MSAA answer is then judged by the duplicate test, as NVDA's
-`processFocusNVDAEvent` tests IAccessible objects only, so a UI
-Automation answer of the focus Core holds is spoken again.
+focus at depth `FullIfFocused` (`Request::CurrentFocus`), the outpost
+reading an MSAA focus's focused state over every ancestor up to the
+desktop as a fact; the answer is judged by the one definition's
+menu-check rows, the focused state and the duplicate test for an MSAA
+answer, as NVDA's `processFocusNVDAEvent` tests IAccessible objects
+only, so a UI Automation answer of the focus Core holds is spoken again.
+
+### One definition of a candidate's validity
+
+`focus/validity.rs` is the one place a focus candidate is judged: a
+focus-kind tell (an MSAA focus, foreground or menu start, a UI
+Automation focus or menu opening), the menu check's read, or a recovered
+read (`Subject`). `judge(subject, view, facts, purpose)` runs its rows in
+order against Core's facts now (`View`: the two versions of the focus,
+the foreground record, the backend cache, and whether the run before a
+menu start executed a valid focus) and what an outpost read of it, if
+anything (`CandidateFacts`), for its own turn or for whether it is
+pending (`Purpose`), and answers `Validity`: valid (read in full, or the
+committed focus executed again), a duplicate (valid, nothing read or
+said, ending a run), refused with a `Reason`, or needing a read (`Need`:
+the focused state or a menu start's role). `depth` says how far the
+turn's read goes. `pending` maps an answer to `Pending` (counts,
+unconfirmed, no), and `pending_behind` judges what waits behind the
+front item by item, a run walked newest first, the first valid
+candidate counting even behind a newer one needing a read; with a bound,
+a candidate needing a read raised at or after it is not pending. The
+callers are the run (`focus/msaa_run.rs`, one request per candidate,
+strictly newest first across applications), the UI Automation focus
+(`focus/uia_focus.rs`), the menu start and check and the menu opening's
+drop (`focus/menus.rs`), the recovered read (`focus/retake.rs`), the
+caret key, the caret tell and the alert, so the turn and the pending
+judgement agree by construction. `duplicate.rs`'s tests are its private
+primitives.
+
+The redirect guard (`LastFocus::redirect`): a focus executed through a
+redirect leaves on the readers' last focus which redirect fired and the
+speech fence of its tell (`Versions::guard`). At a turn, the reached
+child's own focus with that fence is a duplicate, and so is a list's own
+focus whose facts carry NVDA's list redirect to that child; the pending
+judgement does not apply it. Anything that replaces the last focus ends
+it, and so does a candidate tried and answered refused or not there
+(`Reason::tried`, `Versions::tried_and_refused`). A candidate on the
+desktop window is refused (`Reason::NoReader`), so Core starts no outpost
+for its process.
+
+A candidate's `Confirmation` is written only by `store_facts`, from a
+caret key's confirmation, and read by the rows as its facts: each
+candidate is read at most once while it waits, and a stored refusal also
+serves its turn, which asks nothing.
 
 The desktop's news (`desktop.rs`, `Input::Desktop`): the user's desktop
 returned asks the application in front for its focus again
@@ -846,11 +889,22 @@ a key bound to a terminal runs today's handling until terminals' keys
 take the watch. A held key asks its starting read, then sends its stroke
 (the pass) and asks the watch, then says its unit by its script; at the
 bound a sentence key in text with a sentence unit moves by sentence from
-its starting point. A later key withdraws the watch, a focus pending
-withdraws the starting read (but Backspace's), the watch and the sentence
-move, and the key says nothing, except Backspace and Control+Backspace,
-which say what they deleted from the starting read. Whether a key is
-marked is read from `SrState::arrivals`, never stored.
+its starting point. The key picks its path once at its turn, the edit
+field's or the terminal's, and each path's stage (`CaretStage`,
+`TerminalStage`) is derived from the request out, never stored; each has
+its stage table, `withdrawn_by` one arm per cell, judging an `Arrival` (a
+key, or a focus judged alone by the one definition, with when it was
+raised). A later key withdraws the watch; a focus that counts withdraws
+the starting read (but Backspace's), the watch and the sentence move; an
+unconfirmed MSAA focus raised before the bound withdraws the watch. After
+the pass the key judges what waits behind it with `pending_behind` up to
+its bound: a focus that counts leaves it silent; an unconfirmed one is
+confirmed by an `MsaaRun` at depth `Facts` naming the candidate's window,
+its `spare` keeping the key's starting point held, its answer stored on
+the waiting candidate and judged again; with neither, the watch runs for
+the rest of the bound. Silent, Backspace and Control+Backspace still say
+what they deleted from the starting read. Whether a key is marked is read
+from `SrState::arrivals`, never stored.
 
 `keys/strokes.rs` is Core's stroke line (`SrState::strokes`): each held
 stroke, from the press's arrival, and each deferred transition

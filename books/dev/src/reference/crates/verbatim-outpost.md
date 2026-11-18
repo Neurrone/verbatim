@@ -36,7 +36,7 @@ calls into its application only for a request.
 
 The requests an outpost answers: the completion of a UI Automation focus
 from the listener's route (`Request::CompleteUia`, `outpost::completion`),
-one application's candidates of an MSAA run (`MsaaRun`), the
+one MSAA candidate read to the depth Core asks (`MsaaRun`), the
 application's current focus (`CurrentFocus`), a node's properties,
 navigation, children and finds, a node's text (`Text`), an activation,
 the registration that follows the committed focus (`Follow`), a tree dump
@@ -660,15 +660,18 @@ and the inherited pipe handles.
   `read::FocusRead::NoRoute`), and kept only when its runtime id is the
   focus's and its process is the outpost's own. It finds the element only
   while the element still has the keyboard focus, a limit.
-- An MSAA focus is one application's candidates of a run (`MsaaRun`),
-  each acquired with NVDA's child-0-on-a-list redirect and the `accFocus`
-  redirect (`focus_candidate`), read in full even when it repeats the
-  focus, since Core judges repeats, and accepted only when it or an
-  ancestor has the focused state, read live, which a menu start skips.
-  When a redirect moved it (`FocusCandidate::key`), never judged by the
-  address its node is kept at, which can differ with no redirect, its
-  answer is marked redirected and names the child's ids as its event ids,
-  as NVDA builds the redirected object with the child's id as its event's.
+- An MSAA focus is one candidate per request (`MsaaRun`), acquired with
+  NVDA's child-0-on-a-list redirect and the `accFocus` redirect
+  (`focus_candidate`). The outpost reports facts and judges none: a focus
+  event's focused state over the object and its ancestors, read live; a
+  menu start's role; its window's class; and the redirect that reached
+  it, by its branch (`FocusCandidate::redirect`), never judged by the
+  address its node is kept at, which can differ with no redirect. It then
+  reads it in full unless the depth is `Facts`, or `FullIfFocused` with
+  the object not focused, even when it repeats the focus, since Core
+  judges repeats; a redirected focus names the child's ids as its event
+  ids, as NVDA builds the redirected object with the child's id as its
+  event's.
 - A focus walk stops at the ancestors Core already knows, which its
   request names, comparing what it reads with them by NVDA's equality,
   and gathers the text of every dialog below them, which the focus
@@ -951,18 +954,18 @@ window before it is handled.
   inside one (`InsideControlled`); an MSAA object, or a focus that is not
   a UI Automation node, controls nothing. A selection's relation falls
   back to its place among the nodes Core names.
-- `MsaaRun`: each candidate newest first, skipped when its window is read
-  through UI Automation, not there when no object is at its address,
-  refused "not focused" for a focus event whose object and ancestors lack
-  the focused state, until the first valid focus, read with its
-  ancestors up to the first Core already knows.
+- `MsaaRun`: one candidate, answered skipped when its window is read
+  through UI Automation, not there when no object is at its address, else
+  its facts and, to the depth asked, its full read with its ancestors up
+  to the first Core already knows.
 - `CurrentFocus`: the focus-now read, its walk up through either API
   stopping at the first ancestor Core already knows. The window with the
   keyboard focus is taken first, before any call that can block, the
   request's probe included, as NVDA's fake focus takes it when its timer
-  fires. With `focused_state_test`, the check after a menu end, an MSAA
-  focus is refused "not focused" when neither it nor any ancestor up to
-  the desktop has the focused state, before it is read.
+  fires. It answers a `CandidateAnswer`; with `FullIfFocused`, the check
+  after a menu end, an MSAA focus's focused state over it and every
+  ancestor up to the desktop is read as a fact, and the focus read in full
+  only when it has it.
 - `CompleteUia` (`outpost/completion.rs`): refused "read through MSAA"
   when its window is; else the outpost's own copy of the element is found
   by the route, which goes on, when the listener's walk met an ancestor

@@ -174,10 +174,11 @@ section 6.3).
   (`Applications`), the input desktop's openness for a switch, and
   acceptance's window facts, the window's own read as the event arrives
   and the foreground's as the tell is placed. Every tell, and the idle
-  barrier's answer, is placed under one lock (`Tells`), behind a
-  foreground event whose window `GetForegroundWindow` does not yet name
-  until it names it or 20 ms pass, on a threadpool timer armed only while
-  the hold keeps tells. A menu's or the switcher's end, a desktop switch
+  barrier's answer, is placed under one lock (`Tells`); an MSAA tell and
+  the idle barrier's answer wait behind a foreground event whose window
+  `GetForegroundWindow` does not yet name until it names it or 20 ms
+  pass, on a threadpool timer armed only while the hold keeps tells, and
+  a UI Automation tell is sent at once (`Tells::pass_hold`). A menu's or the switcher's end, a desktop switch
   and the desktop window's name change are tells like any other; their
   delays are Core's. Through one `Registration`, the focus handler
   (`Subscription::Focus`) then element selected, menu opened,

@@ -14,9 +14,11 @@ has no test for a foreground or menu focus
 ([Event handling](../nvda/events.md),
 [The UIA client](../nvda/uia.md)).
 
-Verbatim: **matched**, with one difference, the last entry below. Both
-tests are Core's alone (`crates/verbatim-core/src/focus/duplicate.rs`),
-judged at the focus's turn in the event queue against the readers' last
+Verbatim: **matched**, with two differences, the last two entries
+below. Both tests are Core's alone, rows of the one definition of a
+candidate's validity (`crates/verbatim-core/src/focus/validity.rs`, its
+primitives in `duplicate.rs`), judged at the focus's turn in the event
+queue and for whether it is pending alike, against the readers' last
 focus, the newest focus a reader read that Core executed, which stands
 for NVDA's last queued focus. A duplicate ends with no read, and nothing
 is kept or said. With the readers' last focus empty nothing is a
@@ -30,8 +32,9 @@ duplicate.
   redirected to its focused item carries the item's ids as its event's,
   as NVDA builds the redirected object (`IAccessibleHandler/__init__.py`
   746 to 757), so its duplicate test, the limiter's exemption of the last
-  focus and the foreground's same-ids test compare the item's ids, and it
-  is never a duplicate, its child id being above 0. A
+  focus and the foreground's same-ids test compare the item's ids, and by
+  NVDA's test it is never a duplicate, its child id being above 0 (the
+  redirect guard, the last entry, is Verbatim's own). A
   focus read through `accFocus` carries no object id, as NVDA's, so no
   later event is its duplicate. Core's
   `an_msaa_focus_with_the_last_focuss_ids_and_no_child_is_a_duplicate`,
@@ -100,6 +103,33 @@ duplicate.
   `the_return_after_a_uia_splash_window_is_spoken`). Silence while in the
   application that does not answer matches NVDA's ("A focus UIA does not
   deliver").
+- Different, deliberately (Dickson, 2026-11-18): an item said twice
+  because its control's focus events split is said once. When a focus
+  is read through a redirect (NVDA's list redirect, or Verbatim's wider
+  redirect of a child id 0 to a focused child), the readers' last focus
+  carries the redirect that fired and the speech fence of the focus
+  tell it was read for. At its turn, the reached child's own focus with
+  the same fence ends with no read, for either redirect; and a list's
+  own focus that NVDA's list redirect takes to that same child ends
+  unspoken at its answer. NVDA queues both, its duplicate test never
+  holding for a child id above 0 (`NVDAObjects/IAccessible/__init__.py`
+  866 to 867); the pending judgement does not apply the guard, as NVDA
+  queues them. The guard ends on a key, which moves the fence; on
+  anything that replaces the readers' last focus; and on a candidate
+  tried at its turn and answered refused or not there, so a return to
+  the list after a click whose read failed is spoken. Verbatim's
+  settings dialog raises its list's own focus twice, 1.0 to 1.5 ms apart,
+  and mockapp's list raises its own focus then its item's 0.1 to 0.3 ms
+  apart on a mouse return, NVDA saying the item once. Limits: an
+  application that moves the focus to another item under the same child
+  id, or focuses the list again on the same item, with no key, no failed
+  try and nothing replacing the last focus, is not spoken; a stale
+  candidate refused between a list's focus and its item's would let the
+  item be said twice (no recording shows an event between the two).
+  Core's `a_lists_second_own_focus_redirected_to_the_guarded_item_ends_unspoken`,
+  `the_reached_items_own_focus_ends_with_no_read`,
+  `after_a_key_the_items_own_focus_is_read_and_spoken` and
+  `a_candidate_tried_and_not_there_ends_the_guard`.
 
 ### A focus whose keyboard focus read fails
 
@@ -118,9 +148,8 @@ does; a failed read of a kept earlier element's keyboard focus makes the
 focus no duplicate. The walk to the nearest window is the one check
 whose failure drops the focus, as NVDA's lookup answering none makes the
 element not native ("A focus whose element is gone before its read").
-Core's `a_uia_focus_counts_as_pending_unless_it_lost_the_keyboard_focus`,
-`a_failed_read_of_the_earlier_element_is_not_a_duplicate` and
-`a_uia_focus_whose_walk_found_no_window_does_not_count`.
+Core's `a_uia_focus_is_valid_with_no_read_unless_a_row_refuses_it` and
+`a_failed_read_of_the_earlier_element_is_not_a_duplicate`.
 
 ### Stale focus events
 
@@ -264,17 +293,24 @@ that moment, as NVDA judges it as it processes the event. Core judges
 the test at the entry's turn in the event queue, before any request, so
 a background window's event costs no call into its application.
 
-NVDA's hold for a foreground event's window is matched: while a
-foreground event's window is not yet the one `GetForegroundWindow`
-names, the listener holds every tell behind it, in order, until it is,
+NVDA's hold for a foreground event's window is matched for MSAA events,
+the ones NVDA's hold defers: while a foreground event's window is not
+yet the one `GetForegroundWindow` names, the listener holds every MSAA
+tell behind it, in order, until it is,
 or for 20 ms, two of NVDA's cycles, a newer foreground event restarting
 the hold for its own window; it then reads each held tell's foreground
 facts and sends them in order (`verbatim_listener_logic::tell`,
 `FOREGROUND_HOLD_US`; its
 `a_held_foreground_is_sent_before_the_focus_that_finds_its_window_in_front`
 and `the_hold_ends_at_twenty_milliseconds_whatever_the_foreground`). So
-a new window's focus raised while `GetForegroundWindow` still names the
-old window is accepted against the new one (Dickson, 2026-11-15). The
+a new window's MSAA focus raised while `GetForegroundWindow` still names
+the old window is accepted against the new one (Dickson, 2026-11-15). A
+UI Automation tell is never held: it is sent at once, its foreground
+facts read as it is sent, as NVDA judges a UI Automation event at its
+delivery (`UIAHandler/__init__.py` 924 to 930; `eventHandler.py` 536 to
+552), so a UI Automation focus raised while Windows still names the old
+window is refused as unrelated (Dickson, 2026-11-17;
+`a_uia_tell_passes_a_held_foreground_and_is_sent_at_once`). The
 foreground tell goes before the focus that releases it, and the
 listener's report that its window came to the foreground goes before
 both, since Core judges the tell against its foreground record: the
@@ -282,10 +318,10 @@ listener's watch of the window in front and its hold judge each event on
 one read of `GetForegroundWindow`, and the watch reports the pending
 window on any event that finds it in front (`verbatim-listener`'s
 `a_foreground_found_in_front_by_any_event_is_reported_before_the_tells_it_releases`).
-A hold that ends by its timer, or by a UI Automation tell from a check
-thread, with the window in front sends the foreground tell before the
-watch has reported it, so Core refuses it: a limit until the hold and
-the watch keep the pending window in one place.
+A hold that ends by its timer with the window in front sends the
+foreground tell before the watch has reported it, so Core refuses it: a
+limit until the hold and the watch keep the pending window in one
+place.
 
 - MSAA, in NVDA's order: the listener drops an event whose window has a
   ghost window standing in for it or belongs to an application the
@@ -371,7 +407,16 @@ of 0 becomes the desktop window for every event kind, and an invalid
 non-zero window becomes the desktop window for a menu end, a popup menu
 end and a switch end, any other event with one being dropped; and
 `MSNHiddenWindowClass` is dropped. Core's acceptance then accepts the
-desktop window by rule 8. Program Manager's and the taskbar's foreground events are not
+desktop window by rule 8. A focus candidate on the desktop window itself
+is then refused with no read, a limit: no reader reads it, since Core
+starts no outpost for the desktop window's process (csrss.exe, whose
+launch fails), and the listener mints no node. NVDA would speak the
+desktop object if it or an ancestor had the focused state
+(`IAccessibleHandler/__init__.py` 692 to 760;
+`NVDAObjects/IAccessible/__init__.py` 874 to 892); no recording shows
+one focused. Core's
+`a_focus_on_the_desktop_window_starts_no_outpost_and_asks_nothing`.
+Program Manager's and the taskbar's foreground events are not
 queued as foreground events, as NVDA drops them, but they update Core's
 foreground record ("Attention").
 
@@ -414,11 +459,12 @@ focus is already due within the limiter's pump window, as NVDA's pump
 keeps one menu event and fakes the focus once; a focus committed between
 the two ends puts the later end in a later pump of NVDA's, which fakes
 the focus again. At its turn, if the committed focus is
-unchanged, Core asks the foreground application's outpost for its focus
-with NVDA's focused-state test, which the outpost runs on an MSAA focus
-over every ancestor up to the desktop, refusing one where none has the
-focused state, and judges an MSAA answer by NVDA's duplicate test, a UI
-Automation answer by neither. The outpost finds an MSAA focus as NVDA's
+unchanged, Core asks the foreground application's outpost for its focus,
+the outpost reading an MSAA focus's focused state over every ancestor up
+to the desktop as a fact and reading the focus in full only when it has
+it; Core judges the answer by the one definition's menu-check rows, the
+focused state and NVDA's duplicate test for an MSAA answer, neither for
+a UI Automation answer, which carries no focused fact. The outpost finds an MSAA focus as NVDA's
 `objectWithFocus` does: from the focus window's client, `accFocus`
 followed until it names nothing or the object it was asked of, a child id
 turned into the child's own object by `accChild` where it has one; NVDA
@@ -426,7 +472,7 @@ follows it with no limit, the outpost for at most 64 steps. The outpost takes th
 keyboard focus at once, before any call that can block, as NVDA's timer
 takes the foreground window and its thread's focus window. Core's
 `a_menu_end_checks_the_focus_50_ms_later_and_speaks_a_focused_answer`,
-`a_checked_msaa_focus_refused_as_unfocused_is_not_spoken`; mockapp's
+`a_checked_msaa_focus_answered_unfocused_is_refused_and_not_spoken`; mockapp's
 `a_fake_focus_whose_focused_ancestor_core_knows_is_spoken`,
 `a_focus_now_takes_the_focus_window_before_its_probe`,
 `a_focus_committed_before_the_check_ends_it_with_no_read` and
@@ -635,35 +681,60 @@ that change what is spoken, from the pinned source:
   and a selected candidate is reported only when no focus is pending
   (`reportSelectedCandidate`, `NVDAObjects/IAccessible/mscandui.py` 16).
 
-Verbatim: **partial**. Core judges whether a focus is pending at the
-moment it judges the entry, with no read: a focus or foreground tell
-waiting or asked in the event queue counts when, judged on its tell's
-facts, its backend verdict, NVDA's overrides and acceptance pass, a UI
-Automation focus's keyboard-focus answer lets it through, and it is not
-a duplicate of the readers' last focus, so it counts from the point
-NVDA would have queued it (`crates/verbatim-core/src/focus/pending.rs`).
-Built:
+Verbatim: **partial**. Whether a focus is pending is judged by the one
+definition of a candidate's validity, the same rows its own turn runs
+(`crates/verbatim-core/src/focus/validity.rs`), over what waits behind
+the entry judged, item by item, a run judged as a run: a candidate the
+definition finds valid counts; one it refuses, or a duplicate, does not;
+an MSAA focus or menu start that needs a read of its focused state or
+role is unconfirmed. A run walks newest first, so a newest duplicate
+hides the candidates older than it, as NVDA's pump stops at it
+(`IAccessibleHandler/__init__.py` 1087 to 1092). So a focus counts from
+the point NVDA would have queued it: its backend verdict, NVDA's
+overrides, acceptance, a UI Automation focus's keyboard-focus answer, the
+duplicate tests and a foreground's refusals all apply. Built:
 
-- A caret key starting or watching, or a sentence move: its request is
-  withdrawn and the key says nothing; Backspace and Control+Backspace
-  first say the text they delete, from Core's copy of the starting read
-  (Dickson, 2026-11-16). Core's
+- A caret key confirms an unconfirmed MSAA focus behind it with a read of
+  its facts alone, as NVDA's wait pumps its `WinEvent`s and queues only
+  a focus that has the focused state (`editableText.py` 93 to 99;
+  `IAccessibleHandler/__init__.py` 762 to 782; Dickson, 2026-11-18): the
+  read names the candidate's window and is stored on the waiting
+  candidate, read at most once, and the key judges again. A focus that
+  counts, by its tell or by its confirmation, withdraws the key's
+  request and the key says nothing; Backspace and Control+Backspace first
+  say the text they delete, from Core's copy of the starting read
+  (Dickson, 2026-11-16). A focus raised at or after the key's 100 ms bound
+  is not confirmed, as NVDA's wait ends at its timeout. Before the
+  starting read's answer, an unconfirmed focus does not stop the key and
+  is judged at the pass. Core's
   `a_focus_pending_withdraws_the_watch_and_the_key_says_nothing`,
-  `backspace_with_a_focus_pending_says_its_deleted_text_then_the_focus_is_taken`
-  and `a_focus_pending_drops_a_sentence_move`.
-- A caret event ends with no read (Core's
-  `a_caret_tell_with_a_focus_pending_asks_nothing`).
+  `backspace_with_a_focus_pending_says_its_deleted_text_then_the_focus_is_taken`,
+  `a_focus_pending_drops_a_sentence_move`,
+  `an_unconfirmed_focus_found_not_focused_lets_the_key_watch_on_and_speak`
+  and `an_unconfirmed_focus_found_focused_silences_the_key_and_is_read_at_its_turn`.
+- A caret event ends with no read when a focus counts (Core's
+  `a_caret_tell_with_a_focus_pending_asks_nothing`); an unconfirmed MSAA
+  focus does not count and is not read, as NVDA's events not yet pumped
+  are not pending (Core's
+  `a_caret_tell_with_an_unconfirmed_msaa_focus_behind_it_reads_its_selection`).
 - A UIA menu opening is dropped as it reaches Core when a focus that
   counts as pending, and whose listener callback time precedes the
-  opening's, waits or is asked ahead of it; a focus raised after the opening, whose
+  opening's, waits or is asked ahead of it; an unconfirmed MSAA focus
+  does not count; a focus raised after the opening, whose
   tell reached Core first because the opening waited for its check, does
   not count (Core's
   `a_menu_opening_behind_a_pending_focus_raised_before_it_is_dropped`).
   The rule is global, as NVDA's, over every application's focuses.
-- An MSAA alert with a focus pending behind it is moved once behind
+- An MSAA alert with a focus that counts behind it is moved once behind
   every entry waiting, as NVDA runs the whole queue, then judged at its
   turn (Core's
   `an_alert_with_a_focus_pending_behind_it_is_moved_once_behind_it`).
+
+Limits: with no backend verdict in force for a UI Automation focus's
+window, the verdict row refuses nothing and the focus counts; and NVDA
+queues a foreground only if its object converts
+(`IAccessibleHandler/__init__.py` 880 to 894), so a foreground whose
+object is already gone counts here and not there.
 
 Not yet: the MSAA menu item's and the taskbar's silent focus, the
 selection key without automatic selection detection, and the input
