@@ -444,6 +444,56 @@ fn a_controls_own_focus_reports_its_focused_child() {
     app.quit();
 }
 
+/// The outpost reads a candidate to the depth Core asks and judges none of
+/// its facts: at `Facts` it stops after the focused state, at
+/// `FullIfFocused` a focused candidate is read in full, and a menu start's
+/// role is read as a fact.
+fn a_candidate_is_read_to_the_depth_core_asks() {
+    use verbatim_model::request::{CandidateFacts, CandidateKind, Depth};
+    let title = common::unique_title("mockapp-candidate-depth");
+    let mut app = common::spawn("counts.json", "msaa", &title);
+    let hwnd = common::find_window(&title);
+    common::apply(&mut app, hwnd, "set-focus root");
+    let outpost = OutpostUnderTest::new(&app);
+    let ids = MsaaIds {
+        window: WindowHandle(hwnd.0 as u64),
+        object: windows::Win32::UI::WindowsAndMessaging::OBJID_CLIENT.0,
+        child: 0,
+    };
+    let (facts_only, _) = outpost.msaa_run((ids, CandidateKind::Focus), Depth::Facts);
+    assert!(
+        matches!(
+            facts_only.facts,
+            CandidateFacts::Found {
+                focused: Some(true),
+                role: None,
+                redirect: None,
+                ..
+            }
+        ),
+        "{:?}",
+        facts_only.facts
+    );
+    assert!(facts_only.read.is_none(), "no full read at Facts");
+    let (read, _) = outpost.msaa_run((ids, CandidateKind::Focus), Depth::FullIfFocused);
+    assert!(read.read.is_some(), "a focused candidate is read in full");
+    let (start, _) = outpost.msaa_run((ids, CandidateKind::MenuStart), Depth::Facts);
+    assert!(
+        matches!(
+            start.facts,
+            CandidateFacts::Found {
+                focused: None,
+                role: Some(Role::Window),
+                ..
+            }
+        ),
+        "{:?}",
+        start.facts
+    );
+    drop(outpost);
+    app.quit();
+}
+
 /// A focus that was not redirected says so, whatever address its node is
 /// kept at: a focus event on mockapp's window client, whose role is
 /// window, is read as the window's own object, kept under `OBJID_WINDOW`,
@@ -3408,6 +3458,10 @@ fn main() {
         (
             "a_focus_carries_its_parents_automation_id",
             a_focus_carries_its_parents_automation_id,
+        ),
+        (
+            "a_candidate_is_read_to_the_depth_core_asks",
+            a_candidate_is_read_to_the_depth_core_asks,
         ),
         (
             "a_focus_whose_element_lost_the_keyboard_focus_before_it_was_read_is_dropped",

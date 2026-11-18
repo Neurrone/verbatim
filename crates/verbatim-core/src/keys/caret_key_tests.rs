@@ -126,6 +126,15 @@ struct Step {
     strokes: Vec<Vec<u32>>,
     /// Each cancel: its request's number and its reason.
     cancelled: Vec<(u64, CancelReason)>,
+    /// Each MSAA candidate asked: its number, its object id, the reader
+    /// asked, its depth and the anchor it keeps held.
+    runs: Vec<(
+        u64,
+        i32,
+        crate::event_queue::Reader,
+        verbatim_model::request::Depth,
+        Option<TextAnchor>,
+    )>,
 }
 
 /// Feeds `input` at `at_us` and reads the step.
@@ -140,8 +149,15 @@ fn step(held: &mut Held, at_us: u64, input: Input<Entry>) -> Step {
 
 fn read_effect(step: &mut Step, effect: Effect<Said>) {
     match effect {
-        Effect::Send { ask, .. } => match ask.request {
+        Effect::Send { ask, to } => match ask.request {
             Wire::Text { node, op } => step.text.push((ask.number.0, node.number(), op)),
+            Wire::MsaaRun(run) => step.runs.push((
+                ask.number.0,
+                run.candidate.ids.object,
+                to.reader,
+                run.depth,
+                run.spare.map(|(_, anchor)| anchor),
+            )),
             other => step.other.push(match other {
                 Wire::ReadObject(_) => "ReadObject",
                 Wire::Follow(_) => "Follow",
@@ -164,7 +180,7 @@ fn read_effect(step: &mut Step, effect: Effect<Said>) {
                 })
                 .collect(),
         ),
-        Effect::AnswerDropped { .. } => {}
+        Effect::AnswerDropped { .. } | Effect::StartOutpost(_) => {}
         other => panic!("an effect these tests read: {other:?}"),
     }
 }
@@ -1440,3 +1456,6 @@ fn a_sentence_move_answered_with_a_failure_says_nothing() {
         assert_eq!(crate::text_facts::held(&held.state), before, "{failure:?}");
     }
 }
+
+#[path = "caret_confirm_tests.rs"]
+mod confirm;
