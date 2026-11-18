@@ -212,8 +212,12 @@ reviewable surface.
   `|` the texts of the others (`tests/fixtures/list_view.json`).
   `list-view-focus <row>` gives the list view the keyboard focus and its
   row the focused and selected states; `list-view-delete <row>` deletes
-  the row and focuses the row now at its place, whose focus event comctl32
-  raises at the deleted item's child id (MSAA only).
+  the row as the desktop's list deletes its focused item (recording of
+  2026-11-18): it takes the row's focus away, deletes it, raises the
+  list's reset (destroy and create on its client, child 0), focuses the
+  row now at its place, whose focus event names the deleted item's child
+  id, raised by comctl32 when the window is in front and by mockapp when
+  it is not, and raises the selection within the list (MSAA only).
 - `buttons`: a `native` `group_box` node is a standard group box (`Button`
   with `BS_GROUPBOX`) with its children as push buttons inside its
   rectangle, and a `native` `button` node a push button beside it; each

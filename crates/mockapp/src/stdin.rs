@@ -179,10 +179,12 @@ pub(crate) enum Command {
     /// which comctl32 raises the item's focus event for. MSAA-only.
     ListViewFocus(usize),
     /// `list-view-delete <row>`: deletes the list view's 0-based row `row`
-    /// (`LVM_DELETEITEM`) and gives the row now at that place, if any, the
-    /// focused and selected states, as an application focuses the next
-    /// item after deleting the focused one: comctl32 raises its focus event
-    /// at the deleted item's child id. MSAA-only.
+    /// as the desktop's list deletes its focused item: the row loses the
+    /// focus first, is deleted (`LVM_DELETEITEM`), the list's reset is
+    /// raised (destroy and create on its client, child 0), the row now at
+    /// that place, if any, is focused, its focus event at the deleted
+    /// item's child id, and the selection within the list is raised.
+    /// MSAA-only.
     ListViewDelete(usize),
     /// `text-changed <id>`: raises UIA's text changed event from a text
     /// node, as a terminal reports that its text changed, or, in the MSAA

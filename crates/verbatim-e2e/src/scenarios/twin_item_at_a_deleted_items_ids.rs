@@ -1,18 +1,20 @@
 //! The identity check in the duplicate test with a real list view
 //! (`docs/parity/focus-events.md`, "Duplicate focus suppression"): mockapp's
 //! comctl32 list view holds two items both named "Copy". The first takes
-//! the focus and is spoken; with no key between, mockapp deletes it and
-//! focuses the second, now at the first's child id. Its MSAA focus is read
-//! unless it is the first by its ids and its reading, and it is not, its set
-//! one smaller: "Copy 1 of 1".
+//! the focus and is spoken; with no key between, mockapp deletes it as the
+//! desktop's list deletes its focused item, the list's reset raised and
+//! then a focus at the deleted item's child id, where the second now is.
+//! Its MSAA focus is read unless it is the first by its ids and its
+//! reading, and it is not, its set one smaller: "Copy 1 of 1".
 //!
-//! Code-level: no recording of a real application gives a deletion that
-//! focuses the next item with no key. The desktop's list, recorded deleting
-//! its focused item by the Delete key (2026-11-18), raised its focus at the
-//! deleted item's child id after the key, and focused nothing. The speech
-//! is not yet captured from NVDA; NVDA's duplicate test never holds for a
-//! child id above 0, so it queues the second item's focus as Verbatim reads
-//! it.
+//! The stand-in imitates the desktop list's recording of its focused item
+//! deleted (2026-11-18, 5 of 5 runs: destroy and create on the list's
+//! client, child 0, then the focus at the deleted item's child id, then the
+//! selection within), checked by mockapp's
+//! `the_twin_deletion_stand_in_matches_the_desktop_lists_recording`. There
+//! the Delete key came first, and NVDA's File Explorer rule refused the
+//! focus; here no key comes between, and mockapp's list has no such rule.
+//! The speech is to be captured from NVDA on this stand-in.
 
 use crate::registry::ScenarioState;
 use crate::scenario::{Scenario, harness_marker};

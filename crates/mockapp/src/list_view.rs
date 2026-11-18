@@ -146,13 +146,74 @@ pub(crate) fn focus_row(list: HWND, row: usize) {
     );
 }
 
-/// Deletes `list`'s 0-based row `row`, then focuses the row now at that
-/// place, if any.
+/// Deletes `list`'s 0-based row `row` as the desktop's list deletes its
+/// focused item (recording of 2026-11-18, `recording-delete-desktop`): the
+/// row loses its focused and selected states first, so comctl32 moves no
+/// focus as it deletes it; then the list's reset is raised, destroy and
+/// create on its client with child 0, the row now at that place, if any,
+/// is focused, which comctl32 raises at the deleted item's child id, as
+/// its child ids are positions, and the selection within the list is
+/// raised. comctl32 also raises the destroy of the deleted item's own
+/// child, which the desktop's list, resetting its items, does not.
 pub(crate) fn delete_row(list: HWND, row: usize) {
+    let cleared = LVITEMW {
+        stateMask: windows::Win32::UI::Controls::LIST_VIEW_ITEM_STATE_FLAGS(
+            LVIS_FOCUSED.0 | LVIS_SELECTED.0,
+        ),
+        ..Default::default()
+    };
+    send(
+        list,
+        LVM_SETITEMSTATE,
+        row,
+        std::ptr::from_ref(&cleared) as isize,
+    );
     send(list, LVM_DELETEITEM, row, 0);
+    let raise = |event, child| {
+        // SAFETY: `list` is this thread's own live list view, whose client
+        // object the events name.
+        unsafe {
+            windows::Win32::UI::Accessibility::NotifyWinEvent(
+                event,
+                list,
+                windows::Win32::UI::WindowsAndMessaging::OBJID_CLIENT.0,
+                child,
+            );
+        }
+    };
+    raise(
+        windows::Win32::UI::WindowsAndMessaging::EVENT_OBJECT_DESTROY,
+        0,
+    );
+    raise(
+        windows::Win32::UI::WindowsAndMessaging::EVENT_OBJECT_CREATE,
+        0,
+    );
     if usize::try_from(send(list, LVM_GETITEMCOUNT, 0, 0)).is_ok_and(|count| row < count) {
         focus_row(list, row);
+        // comctl32 raises the focus only while its window is in front; on a
+        // test's own desktop, where it is not, it is raised here.
+        // SAFETY: a local read of the window in front.
+        let front = unsafe { windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow() };
+        // SAFETY: a local read of the list's root window.
+        let root = unsafe {
+            windows::Win32::UI::WindowsAndMessaging::GetAncestor(
+                list,
+                windows::Win32::UI::WindowsAndMessaging::GA_ROOT,
+            )
+        };
+        let in_front = front == root;
+        if !in_front {
+            raise(
+                windows::Win32::UI::WindowsAndMessaging::EVENT_OBJECT_FOCUS,
+                i32::try_from(row + 1).unwrap_or(i32::MAX),
+            );
+        }
     }
+    raise(
+        windows::Win32::UI::WindowsAndMessaging::EVENT_OBJECT_SELECTIONWITHIN,
+        0,
+    );
 }
 
 /// Sends `msg` to the list view on this thread.

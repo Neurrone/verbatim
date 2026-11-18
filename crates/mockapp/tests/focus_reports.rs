@@ -521,14 +521,24 @@ fn a_candidate_is_read_unless_it_is_the_object_named() {
     app.quit();
 }
 
-/// Code-level, as no recording of a real application gives it: of a real
-/// list view's two items both named "Copy" (`tests/fixtures/list_view_twins.json`),
-/// the first focused is deleted and the second, now at the first's child
-/// id, focused: read unless it is the first by its ids and its reading, it
-/// reads in full, since its set is one smaller, "1 of 1". The read is
-/// asked with no position in its set, as with position reporting off, and
-/// the identity still compares the position and the set's size.
-fn a_twin_at_a_deleted_items_ids_is_read_in_full() {
+/// The stand-in of `twin_item_at_a_deleted_items_ids`, checked against
+/// the desktop list's recording of a focused item deleted (2026-11-18,
+/// 5 of 5 runs): after the deletion the list raises destroy and create on
+/// its client with child 0, then `EVENT_OBJECT_FOCUS` on its client at the
+/// deleted item's child id, then the selection within it. mockapp's list
+/// view, of two items both named "Copy", the first focused, deletes it as
+/// `list-view-delete 0` does: the events hooked here, the destroys and the
+/// focus, come in the recording's order, the focus at child id 1, the
+/// deleted item's, before which comctl32 raises the destroy of the deleted
+/// item's own child, which the recording's list, resetting its items, does
+/// not. mockapp's window is not in front on the test's own desktop, so
+/// mockapp raises the focus that comctl32 raises when it is. The object at that child id is then the twin, "Copy" in a set one
+/// smaller, which the outpost asked unless it is the first item reads in
+/// full. The read is asked with no position in its set, as with position
+/// reporting off, and the identity still compares the position and the
+/// set's size.
+fn the_twin_deletion_stand_in_matches_the_desktop_lists_recording() {
+    use verbatim_ia2::WinEventKind;
     use verbatim_model::property::PropertyId;
     use verbatim_model::request::{Depth, Reply};
     use windows::Win32::UI::WindowsAndMessaging::{FindWindowExW, OBJID_CLIENT};
@@ -562,7 +572,23 @@ fn a_twin_at_a_deleted_items_ids_is_read_in_full() {
         ),
         (Some("Copy"), Some(1), Some(2))
     );
-    common::apply(&mut app, host, "list-view-delete 0");
+    let events = common::core_driver::win_events(
+        app.pid(),
+        || app.send("list-view-delete 0"),
+        &[WinEventKind::Destroy, WinEventKind::Focus],
+        3,
+    );
+    assert_eq!(
+        events
+            .iter()
+            .map(|event| (event.kind, event.hwnd, event.id_object, event.id_child))
+            .collect::<Vec<_>>(),
+        [
+            (WinEventKind::Destroy, list.0 as isize, OBJID_CLIENT.0, 1),
+            (WinEventKind::Destroy, list.0 as isize, OBJID_CLIENT.0, 0),
+            (WinEventKind::Focus, list.0 as isize, OBJID_CLIENT.0, 1),
+        ]
+    );
     let without_position: Vec<PropertyId> = common::outpost::focus_set()
         .into_iter()
         .filter(|id| !matches!(id, PropertyId::PositionInSet | PropertyId::SetSize))
@@ -3748,8 +3774,8 @@ fn main() {
             a_candidate_is_read_unless_it_is_the_object_named,
         ),
         (
-            "a_twin_at_a_deleted_items_ids_is_read_in_full",
-            a_twin_at_a_deleted_items_ids_is_read_in_full,
+            "the_twin_deletion_stand_in_matches_the_desktop_lists_recording",
+            the_twin_deletion_stand_in_matches_the_desktop_lists_recording,
         ),
         (
             "the_stale_tree_focus_stand_in_matches_the_open_dialogs_recording",
