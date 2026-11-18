@@ -108,10 +108,12 @@ use verbatim_listener_logic::focus::{
     BarObject, BarRaiser, BarVerdict, ClassicBarRead, WindowAnswer, classic_value_change,
 };
 use verbatim_listener_logic::foreground::{ForegroundWatch, Front, Step};
+use verbatim_listener_logic::kept::{Reported, View};
 use verbatim_listener_logic::schedule::JobKind;
 use verbatim_model::protocol::{
     CoreToListener, EventTiming, ListenerToCore, Responder, UiaSnapshotFact, hop_us,
 };
+use verbatim_model::tell::ElementToken;
 use verbatim_process::clock::now_us;
 use verbatim_process::held::IgnoredProcesses;
 use verbatim_process::message::{decode_message, put_message};
@@ -184,6 +186,11 @@ struct Waiting {
     /// Tells, with the key each is merged by, answers and reports, and the
     /// idle barrier's answers, in order.
     queued: VecDeque<(Option<TellKey>, ListenerToCore)>,
+    /// The numbering of the messages carrying tokens, in the order they
+    /// are written, as Core counts them, and where each token's tell was
+    /// written, which judges Core's held views
+    /// ([`verbatim_listener_logic::kept::Reported`]).
+    reported: Reported,
 }
 
 /// One item the listener sends Core.
@@ -209,7 +216,12 @@ impl Backlog for Waiting {
     fn push(&mut self, item: Sent) -> Result<(), Infallible> {
         match item {
             Sent::Urgent(message) | Sent::Message(message) => self.urgent.push_back(message),
-            Sent::Tell(key, message) => self.merged(key, message),
+            Sent::Tell(key, message) => {
+                if let Some(token) = message.carried_token() {
+                    self.reported.queued(token);
+                }
+                self.merged(key, message);
+            }
             Sent::Report(message) => self.queued.push_back((None, message)),
             Sent::IdleAnswer(round) => self
                 .queued
@@ -241,6 +253,10 @@ impl Backlog for Waiting {
         // listener's time from the pipe's, taken as the write begins,
         // whichever thread writes.
         message.written(now_us());
+        // Numbered as it is written, in pipe order.
+        if let Some(token) = message.carried_token() {
+            self.reported.written(token);
+        }
         put_message(buffer, &message)
     }
 }
@@ -258,7 +274,11 @@ impl Waiting {
         let mut index = after_answer;
         while index < self.queued.len() {
             if self.queued[index].0.as_ref() == Some(&key) {
-                self.queued.remove(index);
+                if let Some((_, replaced)) = self.queued.remove(index)
+                    && let Some(token) = replaced.carried_token()
+                {
+                    self.reported.withdrawn(token);
+                }
             } else {
                 index += 1;
             }
@@ -312,8 +332,7 @@ fn sent(sent: &Result<(), SendError<Infallible>>) {
 
 /// A threadpool timer (`docs/design/communication.md`, section 4.7): no
 /// thread of the listener's waits for it, and its callback acts itself, on
-/// what it was made for: a menu end's grace ([`MenuEnd`]) or the
-/// foreground hold ([`Tells`]).
+/// what it was made for: the foreground hold ([`Tells`]).
 struct PoolTimer<T: Timed> {
     timer: PTP_TIMER,
     /// What the callback is given, kept alive until the timer is closed.
@@ -440,6 +459,13 @@ impl Outgoing {
 
     fn urgent(&self, message: ListenerToCore) {
         sent(&self.sender.send(Sent::Urgent(message)));
+    }
+
+    /// Runs `inspect` on the writer's record of the tells it numbered,
+    /// under the writer's lock, which is taken after the kept elements'.
+    fn with_reported<R>(&self, inspect: impl FnOnce(&mut Reported) -> R) -> R {
+        self.sender
+            .with_backlog(|waiting| inspect(&mut waiting.reported))
     }
 
     /// Sends Core the answer to one of its requests, in the order answers
@@ -620,10 +646,14 @@ impl Listener {
     /// # Errors
     ///
     /// As [`Self::start`].
-    fn new(sender: Sender<Waiting>, ignored: IgnoredProcesses) -> io::Result<Self> {
+    fn new(
+        sender: Sender<Waiting>,
+        generation: u64,
+        ignored: IgnoredProcesses,
+    ) -> io::Result<Self> {
         Self::start(
             sender,
-            ignored,
+            (generation, ignored),
             Box::new(|outgoing, readers, checks| {
                 install_desktop_subscriptions(
                     (outgoing, readers, checks),
@@ -655,11 +685,11 @@ impl Listener {
     /// starting the thread that installs the UIA subscriptions.
     fn start(
         sender: Sender<Waiting>,
-        ignored: IgnoredProcesses,
+        (generation, ignored): (u64, IgnoredProcesses),
         install: InstallSubscriptions,
     ) -> io::Result<Self> {
         let outgoing = Arc::new(Outgoing::new(sender, ignored)?);
-        Self::with_outgoing(outgoing, install)
+        Self::with_outgoing(outgoing, generation, install)
     }
 
     /// [`start`](Self::start) sending through `outgoing`.
@@ -668,8 +698,12 @@ impl Listener {
     ///
     /// Returns the error of starting the thread that installs the UIA
     /// subscriptions.
-    fn with_outgoing(outgoing: Arc<Outgoing>, install: InstallSubscriptions) -> io::Result<Self> {
-        let kept = Arc::new(Kept::default());
+    fn with_outgoing(
+        outgoing: Arc<Outgoing>,
+        generation: u64,
+        install: InstallSubscriptions,
+    ) -> io::Result<Self> {
+        let kept = Arc::new(Kept::new(generation));
         let readers = Arc::new(Readers::new(UiaReading::new(&outgoing, &kept)));
         let checks = Arc::new(Checks::new(&outgoing, &readers, &kept));
         let idle_checks = Arc::clone(&checks);
@@ -803,13 +837,34 @@ impl Listener {
             }
             CoreToListener::IdleQuery { round } => self.idle_query(round),
             CoreToListener::Request(ask) => self.request(ask),
-            CoreToListener::Cancel(cancel) => self.readers.cancel(cancel),
+            CoreToListener::Cancel(cancel) => {
+                let abandons = cancel.reason.abandons_call();
+                let number = cancel.number;
+                self.readers.cancel(cancel);
+                // A read abandoned for the foreground lets its kept
+                // reference go; its thread releases its own as its call
+                // returns.
+                if abandons
+                    && let Some((pid, element)) = self.kept.read_abandoned(&self.outgoing, number.0)
+                {
+                    self.checks.release(pid, vec![element]);
+                }
+            }
+            CoreToListener::ElementsHeld {
+                generation,
+                tokens,
+                acknowledged,
+            } => elements_held(
+                (&self.kept, &self.checks, &self.outgoing),
+                generation,
+                (tokens, acknowledged),
+            ),
         }
     }
 
     /// Core's request `ask` ([`ask`]).
     fn request(&self, ask: Box<Ask>) {
-        self::ask((&self.readers, &self.kept, &self.checks), ask);
+        self::ask((&self.readers, &self.kept), ask);
     }
 
     /// The idle barrier's query for `round` (`docs/design/communication.md`,
@@ -826,12 +881,37 @@ impl Listener {
     }
 }
 
+/// Core's held view of the listener `generation`, `tokens` held with
+/// `acknowledged` the position of the last message carrying tokens Core
+/// handled: dropped when it names another generation, its tokens naming
+/// nothing here; else every kept element it rules out is released on its
+/// application's check thread ([`Kept::view`]).
+fn elements_held(
+    (kept, checks, outgoing): (&Kept, &Arc<Checks>, &Outgoing),
+    generation: u64,
+    (tokens, acknowledged): (Vec<ElementToken>, u64),
+) {
+    if !kept.is_own(generation) {
+        tracing::debug!(
+            generation,
+            "a held view of another listener generation is dropped"
+        );
+        return;
+    }
+    let view = View {
+        tokens: tokens.into_iter().collect(),
+        acknowledged,
+    };
+    for (pid, released) in kept.view(outgoing, view) {
+        checks.release(pid, released);
+    }
+}
+
 /// Core's request `ask`: queued for the reading thread of its object's
 /// application, or answered at once when the listener holds no such
-/// object or cannot read it. A focus read first names the readers' last
-/// focus, so every other element a focus read read is let go (Table 6,
-/// column C).
-fn ask((readers, kept, checks): (&Readers<UiaReading>, &Kept, &Checks), ask: Box<Ask>) {
+/// object, the token naming another listener generation, or cannot read
+/// it.
+fn ask((readers, kept): (&Readers<UiaReading>, &Kept), ask: Box<Ask>) {
     let answer = |outcome: Outcome| {
         readers.reading().outgoing.answer(Answer {
             number: ask.number,
@@ -845,16 +925,13 @@ fn ask((readers, kept, checks): (&Readers<UiaReading>, &Kept, &Checks), ask: Box
         return;
     };
     let focus = match read.purpose {
-        Purpose::Focus { keep } => {
-            for (pid, released) in kept.focus_request(keep) {
-                checks.release(pid, released);
-            }
-            true
-        }
+        Purpose::Focus => true,
         Purpose::Change | Purpose::Other => false,
     };
     let pid = match &read.object {
-        ObjectRef::Kept(token) => kept.owner(*token),
+        ObjectRef::Kept { listener, token } => {
+            kept.is_own(*listener).then(|| kept.owner(*token)).flatten()
+        }
         ObjectRef::Msaa { window, .. } => {
             Some(Pid(window_pid(asked::hwnd_of(*window)))).filter(|pid| pid.0 != 0)
         }
@@ -1563,8 +1640,8 @@ pub fn read_classic_bar(
         return;
     }
     // A window's answer: a native UIA window's bar comes through the group,
-    // as NVDA's own hook drops this event (`internalWinEventHandler.py` 570
-    // to 583).
+    // as NVDA drops a native UIA window's `WinEvent`
+    // (`IAccessibleHandler/__init__.py` 576 to 582).
     let read = if read == ClassicBarRead::Probe {
         let Some(answer) = window_judged(object.window) else {
             return;
@@ -1786,7 +1863,8 @@ fn process_of_thread(thread: u32) -> Option<u32> {
 /// thread that produces a message writes it itself. Returns once Core asks
 /// it to shut down or its command pipe ends, after a clean shutdown that
 /// waits for every write in flight. Both ends must be overlapped.
-/// `ignored` names the processes none of whose events is told.
+/// `generation` is the listener's, which Core's views and requests name,
+/// and `ignored` names the processes none of whose events is told.
 ///
 /// # Errors
 ///
@@ -1795,10 +1873,11 @@ fn process_of_thread(thread: u32) -> Option<u32> {
 pub fn run_listener(
     pipe_in: OwnedHandle,
     pipe_out: OwnedHandle,
+    generation: u64,
     ignored: IgnoredProcesses,
 ) -> io::Result<()> {
     let (mut io, sender) = ChildIo::new(pipe_in, pipe_out, Waiting::default())?;
-    let listener = Listener::new(sender.clone(), ignored)?;
+    let listener = Listener::new(sender.clone(), generation, ignored)?;
     // This thread is the listener's I/O thread from here on.
     prioritize_role("listener I/O", IO_PRIORITY);
     let served = io.serve(&sender, |body| {
@@ -2026,7 +2105,7 @@ mod tests {
             IgnoredProcesses::hold([Pid(window_pid(hwnd))]),
         );
         let outgoing = Arc::new(outgoing);
-        let kept = Arc::new(Kept::default());
+        let kept = Arc::new(Kept::new(1));
         let readers = Arc::new(Readers::new(UiaReading::new(&outgoing, &kept)));
         value_change_event(
             &outgoing,
@@ -2139,7 +2218,7 @@ mod tests {
             answer(asked.len() - 1)
         });
         let outgoing = Arc::new(outgoing);
-        let kept = Arc::new(Kept::default());
+        let kept = Arc::new(Kept::new(1));
         let readers = Arc::new(Readers::new(UiaReading {
             outgoing: Arc::clone(&outgoing),
             kept: Arc::clone(&kept),
@@ -2200,7 +2279,7 @@ mod tests {
         let client = windows::Win32::UI::WindowsAndMessaging::OBJID_CLIENT.0;
         let request = |number, read| {
             ask(
-                (&parts.readers, &parts.kept, &parts.checks),
+                (&parts.readers, &parts.kept),
                 read_of(number, desktop_handle(), read),
             );
         };
@@ -2266,11 +2345,18 @@ mod tests {
             purpose: Purpose::Other,
         };
         ask(
-            (&parts.readers, &parts.kept, &parts.checks),
-            read_of(1, desktop_handle(), read(ObjectRef::Kept(ElementToken(9)))),
+            (&parts.readers, &parts.kept),
+            read_of(
+                1,
+                desktop_handle(),
+                read(ObjectRef::Kept {
+                    listener: 1,
+                    token: ElementToken(9),
+                }),
+            ),
         );
         ask(
-            (&parts.readers, &parts.kept, &parts.checks),
+            (&parts.readers, &parts.kept),
             read_of(
                 2,
                 desktop_handle(),
@@ -2440,6 +2526,64 @@ mod tests {
         parts.stop();
     }
 
+    /// A held view and a request naming another listener generation, as
+    /// one written for the listener before it crashed reaches its
+    /// replacement: the view is dropped and releases nothing, and the
+    /// request is answered not there, the token naming nothing here. The
+    /// listener's own view, its tell handled, lets the element go.
+    #[test]
+    fn a_view_and_a_request_of_another_generation_name_nothing_here() {
+        let uia = verbatim_uia::Uia::new().expect("a UIA client");
+        let sender = desktop_sender::<ListenerEvent>(&uia);
+        let asked = Arc::new(Mutex::new(Vec::new()));
+        let parts = listening(|_| Readability::Readable, &asked);
+        let Subscription::Focus { callback } =
+            focus_subscription(&parts.outgoing, &parts.readers, &parts.checks)
+        else {
+            unreachable!("the focus subscription");
+        };
+        callback(&sender);
+        drop(callback);
+        let tell = next_tell(&parts);
+        let EventObject::Uia { token, .. } = tell.object else {
+            panic!("a kept element: {:?}", tell.object);
+        };
+        let pid = Pid(sender.read().process_id.expect("a process"));
+        elements_held(
+            (&parts.kept, &parts.checks, &parts.outgoing),
+            2,
+            (Vec::new(), 40),
+        );
+        assert_eq!(parts.kept.owner(token), Some(pid));
+        let read = |listener| ReadObject {
+            object: ObjectRef::Kept { listener, token },
+            set: vec![PropertyId::Name],
+            relation: None,
+            descendants: false,
+            walk: None,
+            purpose: Purpose::Other,
+        };
+        ask(
+            (&parts.readers, &parts.kept),
+            read_of(1, desktop_handle(), read(2)),
+        );
+        let ListenerToCore::Answer(answer) = parts.next() else {
+            panic!("an answer");
+        };
+        assert_eq!(
+            (answer.number, answer.outcome),
+            (RequestNumber(1), Outcome::NotThere)
+        );
+        elements_held(
+            (&parts.kept, &parts.checks, &parts.outgoing),
+            1,
+            (Vec::new(), 1),
+        );
+        assert_eq!(parts.kept.owner(token), None);
+        let stopped = parts.stop();
+        assert_eq!(stopped, Vec::new());
+    }
+
     /// Core's read of a kept element, here the desktop's root element a
     /// focus event named, is answered on its application's reading thread
     /// with its properties by the set, from the same element the event
@@ -2469,7 +2613,7 @@ mod tests {
             PropertyId::RuntimeId,
         ];
         let read = ReadObject {
-            object: ObjectRef::Kept(token),
+            object: ObjectRef::Kept { listener: 1, token },
             set: set.clone(),
             relation: None,
             descendants: false,
@@ -2478,7 +2622,7 @@ mod tests {
         };
         for number in [1, 2] {
             ask(
-                (&parts.readers, &parts.kept, &parts.checks),
+                (&parts.readers, &parts.kept),
                 read_of(number, desktop_handle(), read.clone()),
             );
         }
@@ -2629,7 +2773,7 @@ mod tests {
             let _ = released.recv_timeout(Duration::from_secs(10));
             None
         });
-        let listener = Listener::start(sender, IgnoredProcesses::default(), install)
+        let listener = Listener::start(sender, (1, IgnoredProcesses::default()), install)
             .expect("the listener starts");
 
         // A hidden window of this thread's, with no parent, to raise an
@@ -2926,7 +3070,7 @@ mod tests {
             tells,
             None,
         ));
-        let kept = Arc::new(Kept::default());
+        let kept = Arc::new(Kept::new(1));
         let readers = Arc::new(Readers::new(UiaReading::new(&outgoing, &kept)));
         (outgoing, readers, BufReader::new(File::from(theirs)))
     }

@@ -104,20 +104,29 @@ Public API:
   wait, or exit by removing its record once idle for `IDLE_US`
   (30 seconds); `checked` says whether its tell is placed, only while the
   record is its own; `ended` drops an ended application's queue untold;
-  `stop` drops every queue; and `when_idle` holds the idle barrier's
-  waiter until every event pushed before it is told or dropped.
+  `stop` drops every queue; `push_to_running` queues a release on a
+  thread whose record lives, starting none, and hands it back otherwise;
+  and `when_idle` holds the idle barrier's waiter until every event pushed
+  before it is told or dropped.
 - `kept` — one application's kept elements (`KeptElements`, Table 6 of
-  the build design): told and not yet asked about, in read, read and not
-  yet named, and named as the readers' last focus by a focus request
-  (`focus_request`); `with_runtime_id` lists those the check thread reads
-  the keyboard focus of, one in read included, since an element in read
-  keeps a reference for the check beside the reading thread's own, and
-  the readers' last focus may be the element Core is reading; `sweep`
-  lets go of told elements past `KEPT_FOR_US` (60 seconds) or beyond the
-  newest `KEPT_PER_APPLICATION` (64); `ended` lets go of every kept
-  reference, and a read in flight releases its own as it ends. Every
-  element let go is handed back for release on its application's
-  reading thread.
+  the build design): told, with whether its event was a focus or a menu
+  opening, in read for a request, a focus read or not, read, and
+  released, each kept until Core's held view (`View`) leaves it out.
+  `with_runtime_id` lists those a check reads the keyboard focus of, the
+  ones that can be the readers' last focus: told by a focus or a menu
+  opening, in a focus read, and read. `view` lets go of every told or
+  read element a view rules out, one in read left for its read's end;
+  `read_ended` keeps a focus read's element as read unless the last view
+  rules it out; `read_abandoned` hands back the kept reference of the
+  element a request cancelled for the foreground was reading; `ended`
+  lets go of every kept reference, a read in flight releasing its own as
+  it ends. `Reported` is the writer's numbering of the messages carrying
+  tokens, in pipe order, and where each token's tell was written
+  (`queued`, `written`, `withdrawn`, `forget`), the outposts' record of
+  reported nodes in the same shape; `too_early` says a view cannot judge
+  a token whose tell waits to be written or was written after the
+  position it acknowledges. Every element let go is handed back with its
+  token for release on a thread that may block.
 - `tell` — what the listener decides of a `WinEvent` before it tells
   Core of it: `tell_window`, NVDA's mapping of a window of 0 to the
   desktop window, and of an invalid one to it for the end of a menu, a

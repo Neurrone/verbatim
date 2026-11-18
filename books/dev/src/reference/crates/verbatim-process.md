@@ -309,8 +309,10 @@ Public API:
   `--pipe-out`, its `OutpostTarget` (`--target-pid <pid>`, or `--spare
   <launch>` for a spare), and `--classic-uia` when `OutpostOptions`'
   `remote_operations` is off. `ListenerArguments` is the focus listener's,
-  `--listener` first (`LISTENER_ARG`), then the pipes and the ignored
-  pids (`--ignore-pids`, `IGNORE_PIDS_ARG`).
+  `--listener` first (`LISTENER_ARG`), then the pipes, its generation
+  (`--generation`, required: the launch's id, which Core's views and
+  requests name), and the ignored pids (`--ignore-pids`,
+  `IGNORE_PIDS_ARG`).
   Each executable's `main` parses its own and refuses the other's: an
   outpost refuses `--listener`, and the listener refuses an outpost's
   options.

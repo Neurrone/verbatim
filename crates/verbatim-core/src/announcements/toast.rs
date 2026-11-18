@@ -49,7 +49,10 @@ pub(crate) async fn run(mut cx: Cx<Entries>, announcement: Announcement) {
     let read = ListenerRead {
         window,
         read: ReadObject {
-            object: ObjectRef::Kept(kept.token),
+            object: ObjectRef::Kept {
+                listener: kept.listener,
+                token: kept.token,
+            },
             set: crate::details::node_set(&cx.facts(), FOCUS_SET),
             relation: None,
             descendants: false,

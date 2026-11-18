@@ -12,7 +12,6 @@ use verbatim_model::request::{
     CompleteUia, CompletionFor, FocusRead, ObjectRead, ObjectRef, Purpose, ReadObject, Reply,
     Request as Wire, RouteEnd,
 };
-use verbatim_model::tell::ElementToken;
 
 use super::FOCUS_SET;
 use super::execute::{Known, Origin, again, execute};
@@ -87,15 +86,6 @@ impl Request for Completion {
     }
 }
 
-/// The readers' last focus's token, which the listener keeps while it is
-/// a UI Automation focus it holds.
-fn kept_token(cx: &Cx<Entries>) -> Option<ElementToken> {
-    match cx.facts().versions.last.as_ref().map(|last| &last.read_by) {
-        Some(ReadBy::Uia { token, .. }) => *token,
-        Some(ReadBy::Msaa { .. }) | None => None,
-    }
-}
-
 /// The function of a UI Automation focus entry, or of a menu opening: a
 /// menu opening on the committed focus executes it again; otherwise the
 /// native-element test with the verdict, the overrides, acceptance, the
@@ -120,16 +110,18 @@ pub(crate) async fn run(mut cx: Cx<Entries>, focus: UiaFocus) {
     };
     let due_us = cx.due_in(FOCUS_DUE_US);
     let walk = Known::of(&cx.facts(), None).sent;
-    let keep = kept_token(&cx);
     let read = ListenerRead {
         window,
         read: ReadObject {
-            object: ObjectRef::Kept(focus.token),
+            object: ObjectRef::Kept {
+                listener: focus.listener,
+                token: focus.token,
+            },
             set: crate::details::walk_set(&cx.facts(), FOCUS_SET),
             relation: None,
             descendants: false,
             walk: Some(walk),
-            purpose: Purpose::Focus { keep },
+            purpose: Purpose::Focus,
         },
     };
     let object = match cx.ask(read, due_us).await {

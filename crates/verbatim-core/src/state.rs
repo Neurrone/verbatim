@@ -947,6 +947,36 @@ impl SrState {
         held
     }
 
+    /// The tokens of the running listener's told elements Core holds
+    /// (`crate::held_tokens`): those its waiting entries, its front entry
+    /// and the entries it appends later name, and the readers' last
+    /// focus's; `None` while no listener runs. The shell sends the
+    /// listener a view of them, and the listener lets go of every element
+    /// it keeps that is left out and whose tell Core has handled.
+    #[must_use]
+    pub fn held_tokens(&self) -> Option<crate::HeldTokens> {
+        use crate::event_queue::Logic as _;
+        let generation = self.queue.listener()?;
+        let mut tokens: BTreeSet<verbatim_model::tell::ElementToken> = self
+            .queue
+            .entries()
+            .chain(self.queue.later())
+            .filter_map(crate::entries::Entries::told_token)
+            .filter(|(listener, _)| *listener == generation)
+            .map(|(_, token)| token)
+            .collect();
+        // The readers' last focus's token is cleared when its listener
+        // ends, so it is the running listener's.
+        if let Some(last) = &self.versions.last
+            && let crate::focus::versions::ReadBy::Uia {
+                token: Some(token), ..
+            } = &last.read_by
+        {
+            tokens.insert(*token);
+        }
+        Some(crate::HeldTokens { generation, tokens })
+    }
+
     /// Every text anchor the state refers to, grouped by the outpost that
     /// minted it: the caret's line and selection, the review cursor's line or
     /// point, the start marker, and say-all's positions. The shell sends

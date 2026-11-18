@@ -54,7 +54,7 @@ use verbatim_model::property::RuntimeId;
 use verbatim_model::property::{PropertyId, PropertyValue};
 use verbatim_model::request::{FocusCaret, KnownAncestor, MsaaIds, RouteEnd};
 use verbatim_model::tell::ElementToken;
-use verbatim_model::tell::{EventObject, Payload};
+use verbatim_model::tell::{EventObject, Payload, Read};
 
 use common::outpost::Focused;
 
@@ -2582,6 +2582,81 @@ fn a_list_views_provider_counts_only_from_windows_forms() {
     app.quit();
 }
 
+/// Two UIA focuses on one element, the second checked before Core has
+/// handled the first, in the listener's order, as the console raises its
+/// terminal's focus twice (GitHub run 44344991044): the first's element
+/// is kept from its tell, so the second's check reads its keyboard focus,
+/// and Core takes the second as a duplicate of the readers' last focus,
+/// the first: said once. With only the elements Core had read listed
+/// (ce3305a1, reverted), the second's check read none and the focus was
+/// said twice.
+fn a_second_focus_checked_before_the_first_is_handled_is_said_once() {
+    let title = common::unique_title("mockapp-second-focus");
+    let mut app = common::spawn("small.json", "uia", &title);
+    let client = Client::new(common::find_window(&title));
+    let mut core = CoreDriver::new(&app, OutpostUnderTest::new(&app));
+
+    app.send("set-focus btn1");
+    let first = core.uia_tell(EventKind::UiaFocus, &client.focused(), None, Payload::None);
+    let second = core.uia_tell(EventKind::UiaFocus, &client.focused(), None, Payload::None);
+    assert_eq!(
+        second.checked.as_ref().map(|checked| checked.kept.clone()),
+        Some(vec![(ElementToken(1), Read::Answered(true))])
+    );
+    assert_eq!(core.tell(first).spoken(), window_and_button());
+    assert_eq!(core.tell(second).spoken(), NOTHING);
+
+    drop(core);
+    app.quit();
+}
+
+/// Twenty UIA focuses on one element of a window with no UIA provider,
+/// each refused by its window's verdict, as `measure_focus_text_box`'s
+/// returns to a Windows Forms text box are: the view Core sends after the
+/// pass that refused each lets its element go, so every later check
+/// reads no kept element's keyboard focus, only its own. With the sweep
+/// that kept the 64 newest told elements, the check read one more kept
+/// element each time, 0 rising to 19.
+fn refused_focuses_are_let_go_so_each_check_reads_its_own_focus_alone() {
+    let title = common::unique_title("mockapp-refused-focuses");
+    let mut app = common::spawn("small.json", "msaa", &title);
+    let hwnd = common::find_window(&title);
+    let client = Client::new(hwnd);
+    let mut core = CoreDriver::new(&app, OutpostUnderTest::new(&app));
+
+    let listener = client
+        .uia
+        .request_fixed::<ListenerEvent>()
+        .expect("the listener's cache request");
+    app.send("set-focus root");
+    let window = client
+        .uia
+        .any_window_element(hwnd.0 as isize, &listener)
+        .expect("mockapp's window element, through the MSAA proxy");
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let seen = Arc::clone(&calls);
+    core.observe_check(Some(Box::new(move |moment| {
+        if let CheckMoment::Calling(call @ (Call::KeptFocus(_) | Call::KeyboardFocus)) = moment {
+            seen.lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push(call);
+        }
+    })));
+    let mut reads = Vec::new();
+    for _ in 0..20 {
+        let step = core.uia_focus(&window);
+        assert_eq!(step.said, Vec::new());
+        reads.push(std::mem::take(
+            &mut *calls.lock().unwrap_or_else(PoisonError::into_inner),
+        ));
+    }
+    core.observe_check(None);
+    assert_eq!(reads, vec![vec![Call::KeyboardFocus]; 20]);
+
+    drop(core);
+    app.quit();
+}
+
 /// A UIA focus in a window with no UIA provider, on no class list, through
 /// UIA's MSAA proxy: the check thread's probe of its window finds no
 /// provider, and it goes on to the element's keyboard focus, Core's backend
@@ -3981,6 +4056,14 @@ fn main() {
         (
             "a_list_views_provider_counts_only_from_windows_forms",
             a_list_views_provider_counts_only_from_windows_forms,
+        ),
+        (
+            "a_second_focus_checked_before_the_first_is_handled_is_said_once",
+            a_second_focus_checked_before_the_first_is_handled_is_said_once,
+        ),
+        (
+            "refused_focuses_are_let_go_so_each_check_reads_its_own_focus_alone",
+            refused_focuses_are_let_go_so_each_check_reads_its_own_focus_alone,
         ),
         (
             "a_focus_that_leaves_between_the_two_keyboard_focus_reads_is_announced_once",

@@ -82,7 +82,13 @@ tests. `Frames::arrived` (from
 each frame, stamps node ids with the outpost's id, records when the relay
 read it, and numbers the messages that carry node ids
 (`docs/design/communication.md`, section 4.8), the position `NodesHeld`
-acknowledges. A frame that is not a message
+acknowledges. `send_elements_held` writes Core's held view of the
+listener's told elements (`CoreToListener::ElementsHeld`) behind every
+command sent before it, and `leave_elements_held` leaves one in the
+listener's writer's slot for the next command, as the held nodes are
+left; while the listener launches, a view to write is held with its
+commands and one to leave is dropped. The listener is launched with its
+generation, its launch's id, on its command line. A frame that is not a message
 ends its outpost: `Frames` drops that outpost's later frames at once,
 handing on only its end, and the relay drops every frame from an outpost
 it has already ended. Messages go through the `EventSink` given to `new` (a

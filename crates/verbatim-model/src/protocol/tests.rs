@@ -75,7 +75,10 @@ fn next_core_to_listener(previous: Option<&CoreToListener>) -> Option<CoreToList
             window: crate::WindowHandle(8),
             verdict: crate::request::WindowVerdict::Uia,
             request: crate::request::Request::ReadObject(crate::request::ReadObject {
-                object: crate::request::ObjectRef::Kept(crate::tell::ElementToken(3)),
+                object: crate::request::ObjectRef::Kept {
+                    listener: 1,
+                    token: crate::tell::ElementToken(3),
+                },
                 set: vec![crate::property::PropertyId::Name],
                 relation: None,
                 descendants: false,
@@ -87,7 +90,12 @@ fn next_core_to_listener(previous: Option<&CoreToListener>) -> Option<CoreToList
             number: crate::request::RequestNumber(1),
             reason: crate::request::CancelReason::Foreground,
         }),
-        CoreToListener::Cancel(_) => return None,
+        CoreToListener::Cancel(_) => CoreToListener::ElementsHeld {
+            generation: 1,
+            tokens: vec![crate::tell::ElementToken(2)],
+            acknowledged: 4,
+        },
+        CoreToListener::ElementsHeld { .. } => return None,
     })
 }
 
@@ -197,6 +205,7 @@ fn every_variant_has_its_reviewed_kind() {
             "Shutdown: Lifecycle",
             "Request: Ask",
             "Cancel: Ask",
+            "ElementsHeld: Release",
         ]
     );
     assert_eq!(
@@ -286,6 +295,47 @@ fn only_an_answer_with_a_result_carries_nodes() {
         detail: String::new(),
     });
     assert!(answer.carries_nodes());
+}
+
+/// Only a listener tell naming a kept element carries a token, as the
+/// listener numbers its messages and verbatim.exe counts them.
+#[test]
+fn only_a_tell_naming_a_kept_element_carries_a_token() {
+    let carried: Vec<(String, bool)> = chain(next_listener_to_core)
+        .iter()
+        .map(|message| (name(message), message.carries_tokens()))
+        .collect();
+    assert_eq!(
+        carried,
+        [
+            ("Ready".to_owned(), false),
+            ("ExitHandled".to_owned(), false),
+            ("Progress".to_owned(), false),
+            ("Foreground".to_owned(), false),
+            ("Tell".to_owned(), false),
+            ("Answer".to_owned(), false),
+            ("Pong".to_owned(), false),
+            ("Fault".to_owned(), false),
+            ("IdleAnswer".to_owned(), false),
+        ]
+    );
+    let told = ListenerToCore::Tell(Box::new(crate::tell::Event {
+        trace_id: crate::TraceId::from_raw(5),
+        kind: crate::event_kind::EventKind::UiaFocus,
+        process: Pid(2),
+        application: "notepad".to_owned(),
+        thread: 3,
+        at_us: 1,
+        object: crate::tell::EventObject::Uia {
+            token: crate::tell::ElementToken(7),
+            runtime_id: crate::property::RuntimeId(vec![42, 1]),
+        },
+        cached: crate::property::PropertyValues(Vec::new()),
+        payload: crate::tell::Payload::None,
+        window: crate::tell::TellWindow::NoWindow,
+        checked: None,
+    }));
+    assert_eq!(told.carried_token(), Some(crate::tell::ElementToken(7)));
 }
 
 #[test]

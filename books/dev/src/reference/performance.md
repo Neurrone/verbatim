@@ -375,20 +375,30 @@ fact").
   it. The listener's check thread walks to the nearest window and probes
   it, one window message, unless its record answered within half a
   second. It then reads the keyboard focus of the element and of every
-  element it keeps with the event's runtime id, and sends the tell. Core
-  drops the focus by the window's verdict, asking nothing
-  (`a_focus_in_a_window_with_no_uia_provider_is_dropped_by_its_probe`).
-  - Calls: 1, plus one for each element kept with that runtime id, read
-    or only told, up to the 64 an application keeps
-    (`KEPT_PER_APPLICATION`). Elements only told must be read, because
-    Core may still read them after the check: leaving them out (ce3305a1,
-    reverted) spoke a second focus on one element twice.
-  - Measured 2026-11-18, release, `measure_focus_text_box` (two Windows
-    Forms text boxes): the count grew from 1 to 22 over 20 returns, at
-    about 0.3 ms per call, since Core never asks about the told elements
-    of a window read through MSAA. The growth is bounded by the 64 kept;
-    ending it needs those elements let go when Core decides against
-    them, an open item.
+  element it keeps with the event's runtime id that can be the readers'
+  last focus, reads the window's acceptance facts, and sends the tell.
+  Core drops the focus by the window's verdict, asking nothing
+  (`a_focus_in_a_window_with_no_uia_provider_is_dropped_by_its_probe`),
+  and the held view written after that pass lets its element go.
+  - Calls: 1 or 2 keyboard-focus calls: the element's own, and one kept
+    element whose view is still in flight
+    (`refused_focuses_are_let_go_so_each_check_reads_its_own_focus_alone`;
+    the replay of `measure_focus_text_box`'s recording,
+    `refused_text_box_focuses_are_let_go_so_each_check_reads_its_own_focus`).
+    Before Core's held view released told elements, the count grew from 1
+    to 22 over 20 returns (measured 2026-11-18, release, at about 0.3 ms
+    per call).
+  - The held view: about one `ElementsHeld` per listener tell Core does
+    not hold, plus one per focus read whose entry ends without becoming
+    the last focus. Each wakes the listener's pipe thread, takes the kept
+    elements' lock once and the writer's lock once, and queues one release
+    on the application's check thread, which needs no new thread or UI
+    Automation client while the check thread runs. The view lists every
+    token Core holds: the waiting and front entries' and the last focus's,
+    a handful. Not yet measured: the wake-ups and processor time of the
+    listener and Core on `measure_focus_text_box` and a File Explorer
+    notification flood, the reading threads and clients the releases
+    start, and the view's size and computation per pass under the flood.
   - Speech is not delayed, since Core speaks the MSAA focus. The
     application's later UI Automation events wait behind the check.
   - NVDA makes none of these keyboard-focus calls for a non-native

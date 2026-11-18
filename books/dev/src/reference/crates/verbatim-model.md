@@ -394,7 +394,12 @@ that carries them on the pipes is
     whose MSAA nodes, text facts and followed registration the outpost
     forgets, and whose queued requests it answers "not there").
   - `CoreToListener`: `ApplicationExited` (answered by `ExitHandled`),
-    `Ping`, `IdleQuery`, `Shutdown`, `Request` and `Cancel`.
+    `Ping`, `IdleQuery`, `Shutdown`, `Request`, `Cancel` and
+    `ElementsHeld { generation, tokens, acknowledged }`, the told elements
+    Core holds, with the position of the last message carrying tokens it
+    handled; a request names a kept element by
+    `ObjectRef::Kept { listener, token }`, the listener's generation
+    beside its token, since each listener mints its tokens from 1.
   - `OutpostToCore`: `Ready`, `Pong` (with `parked_count`, the abandoned
     workers not yet returned, less `parked_on_hung`, those parked on a
     window found hung while their program ran), `NotResponding { window }`,
@@ -411,6 +416,10 @@ that carries them on the pipes is
   wildcard matches over its enums, and a test holds the reviewed list of
   every variant's kind, built from a chain of samples (`samples`) whose
   matches name every variant; verbatim.exe sends no report.
+- `ListenerToCore::carried_token` names the kept element's token a
+  listener tell carries (`carries_tokens`), and the listener and
+  verbatim.exe count the positions `ElementsHeld` acknowledges with this
+  one function.
 - `OutpostToCore::carries_nodes` says which messages carry node ids, an
   answer with a result and a tell, and the outpost and verbatim.exe count
   the positions `NodesHeld` acknowledges with this one function.

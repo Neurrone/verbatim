@@ -158,7 +158,8 @@ fn listener_stand_in(
             }
             CoreToListener::ApplicationExited { .. }
             | CoreToListener::Request(_)
-            | CoreToListener::Cancel(_) => {}
+            | CoreToListener::Cancel(_)
+            | CoreToListener::ElementsHeld { .. } => {}
         }
     }
 }

@@ -194,6 +194,14 @@ pub(crate) trait Logic: Sized + 'static {
     /// The function of `entry`, run when it reaches the front.
     fn run(cx: Cx<Self>, entry: Self::Entry) -> Function;
 
+    /// The listener's told element `entry` names, with the generation of
+    /// the listener that keeps it, which Core holds while the entry waits
+    /// or runs (`crate::state::SrState::held_tokens`).
+    fn told_token(entry: &Self::Entry) -> Option<(u64, verbatim_model::tell::ElementToken)> {
+        let _ = entry;
+        None
+    }
+
     /// Whether `entry`'s function asks nothing, ending in its first poll:
     /// no checkpoint is taken for it. One that asks fails the driver's
     /// check that a paused function has its checkpoint.

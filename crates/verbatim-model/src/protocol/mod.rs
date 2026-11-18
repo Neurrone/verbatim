@@ -321,6 +321,21 @@ pub enum CoreToListener {
     /// Cancel a request: one queued is dropped and answered cancelled; one
     /// running is abandoned for the foreground, or else left alone.
     Cancel(crate::request::Cancel),
+    /// The elements Core holds of those the listener keeps for its tells
+    /// (design of the listener group, "Told elements released by Core's
+    /// held view"): the listener lets go of every kept element absent from
+    /// `tokens` whose tell was written at or before `acknowledged`, the
+    /// position of the last message carrying tokens Core has handled
+    /// ([`ListenerToCore::carries_tokens`]). A view naming another
+    /// listener generation is dropped.
+    ElementsHeld {
+        /// The listener generation it is for.
+        generation: u64,
+        /// The tokens Core holds.
+        tokens: Vec<crate::tell::ElementToken>,
+        /// The position of the last message carrying tokens Core handled.
+        acknowledged: u64,
+    },
 }
 
 impl CoreToListener {
@@ -333,7 +348,8 @@ impl CoreToListener {
             | CoreToListener::ApplicationExited { .. }
             | CoreToListener::Shutdown
             | CoreToListener::Request(_)
-            | CoreToListener::Cancel(_) => {}
+            | CoreToListener::Cancel(_)
+            | CoreToListener::ElementsHeld { .. } => {}
         }
     }
 
@@ -347,7 +363,8 @@ impl CoreToListener {
             | CoreToListener::ApplicationExited { .. }
             | CoreToListener::Shutdown
             | CoreToListener::Request(_)
-            | CoreToListener::Cancel(_) => 0,
+            | CoreToListener::Cancel(_)
+            | CoreToListener::ElementsHeld { .. } => 0,
         }
     }
 
@@ -361,6 +378,7 @@ impl CoreToListener {
             CoreToListener::ApplicationExited { .. }
             | CoreToListener::Ping { .. }
             | CoreToListener::Shutdown => Kind::Lifecycle,
+            CoreToListener::ElementsHeld { .. } => Kind::Release,
         }
     }
 }
@@ -731,6 +749,40 @@ impl Named {
 }
 
 impl ListenerToCore {
+    /// The token of the kept element this message names, when it is a
+    /// listener tell naming one: the messages the listener numbers as it
+    /// writes them and Core counts as it handles them, so that a view's
+    /// `acknowledged` position names a point in the listener's stream
+    /// ([`CoreToListener::ElementsHeld`]). Every variant is listed: one
+    /// that names a kept element and is not counted would let the listener
+    /// release an element Core still holds.
+    #[must_use]
+    pub fn carried_token(&self) -> Option<crate::tell::ElementToken> {
+        match self {
+            ListenerToCore::Tell(tell) => match &tell.object {
+                crate::tell::EventObject::Uia { token, .. } => Some(*token),
+                crate::tell::EventObject::Msaa { .. }
+                | crate::tell::EventObject::Followed { .. }
+                | crate::tell::EventObject::Terminal { .. } => None,
+            },
+            ListenerToCore::Ready { .. }
+            | ListenerToCore::Pong { .. }
+            | ListenerToCore::Fault { .. }
+            | ListenerToCore::Progress { .. }
+            | ListenerToCore::Foreground { .. }
+            | ListenerToCore::Answer(_)
+            | ListenerToCore::IdleAnswer { .. }
+            | ListenerToCore::ExitHandled { .. } => None,
+        }
+    }
+
+    /// Whether this message carries a kept element's token
+    /// ([`carried_token`](Self::carried_token)).
+    #[must_use]
+    pub fn carries_tokens(&self) -> bool {
+        self.carried_token().is_some()
+    }
+
     /// What kind of message this is.
     #[must_use]
     pub fn kind(&self) -> Kind {

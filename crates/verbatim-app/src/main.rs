@@ -925,6 +925,10 @@ struct ReducerThread<'a> {
     /// Outpost generations that have started and not yet ended. A message
     /// from an outpost that has ended is dropped before the reducer sees it.
     live: LiveOutposts,
+    /// The running listener's count of its messages carrying tokens that
+    /// Core handled, and the last view of the tokens Core holds sent to
+    /// it ([`verbatim_core::ListenerView`]).
+    listener_view: verbatim_core::ListenerView,
     /// Whether Core has known a focus, which readiness was told once.
     focus_known: bool,
     /// The highest numbered harness key handled so far.
@@ -1055,6 +1059,7 @@ impl ReducerThread<'_> {
                 self.queue(QueueInput::Process(ProcessFact::SparesReady(waiting)));
             }
             OutpostMessage::ListenerStarted { listener, .. } => {
+                self.listener_view.started(listener.0);
                 self.queue(QueueInput::Process(ProcessFact::ListenerStarted(
                     listener.0,
                 )));
@@ -1068,6 +1073,11 @@ impl ReducerThread<'_> {
             }
             OutpostMessage::Listener { listener, message } => {
                 let from = listener_instance(listener);
+                // Counted as the listener numbered it as it wrote it, so a
+                // view's position names a point in its stream.
+                if let Some(token) = message.carried_token() {
+                    self.listener_view.handled(listener.0, token);
+                }
                 match *message {
                     ListenerToCore::Tell(tell) => {
                         self.tell_received(&tell);
@@ -1487,6 +1497,24 @@ impl ReducerThread<'_> {
     /// changes with every key, and a write for each would cost a pipe
     /// write and the outpost's reader wake on the typing path.
     fn send_views(&mut self) {
+        // The listener's told elements Core holds: a view written at once
+        // when a token Core handled is no longer held, so the listener
+        // lets go of it within one pipe hop; additions are left for the
+        // next command (`verbatim_core::held_tokens`).
+        let held_tokens = self.state.held_tokens();
+        match self.listener_view.after_pass(held_tokens.as_ref()) {
+            verbatim_core::ViewSend::Nothing => {}
+            verbatim_core::ViewSend::Now(view) => {
+                self.context
+                    .supervisor
+                    .send_elements_held(elements_held(view));
+            }
+            verbatim_core::ViewSend::Leave(view) => {
+                self.context
+                    .supervisor
+                    .leave_elements_held(elements_held(view));
+            }
+        }
         let held = self.state.held_nodes();
         let anchors = self.state.held_anchors();
         for (outpost, live) in self.live.iter_mut() {
@@ -1884,6 +1912,16 @@ fn outpost_instance(target_pid: Pid, outpost: OutpostId) -> Instance {
     }
 }
 
+/// Core's view of the listener's told elements it holds, as the listener
+/// is told it.
+fn elements_held(view: verbatim_core::View) -> CoreToListener {
+    CoreToListener::ElementsHeld {
+        generation: view.generation,
+        tokens: view.tokens,
+        acknowledged: view.acknowledged,
+    }
+}
+
 /// The instance of the listener of generation `listener`.
 fn listener_instance(listener: OutpostId) -> Instance {
     Instance {
@@ -1926,6 +1964,7 @@ fn reducer_loop(
         runtime: verbatim_core::Runtime::default(),
         outside: requests::Outside::default(),
         live: LiveOutposts::default(),
+        listener_view: verbatim_core::ListenerView::default(),
         focus_known: false,
         handled_input: 0,
         frames: context.supervisor.frames(),

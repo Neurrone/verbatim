@@ -446,6 +446,35 @@ fn accepted_apart_from_foreground(tell: &Event) -> bool {
 pub(crate) struct Entries;
 
 impl Logic for Entries {
+    fn told_token(entry: &Entry) -> Option<(u64, ElementToken)> {
+        match entry {
+            Entry::UiaFocus(focus) => Some((focus.listener, focus.token)),
+            Entry::Announcement(announcement) => match &announcement.kind {
+                crate::announcements::Kind::Toast(kept)
+                | crate::announcements::Kind::UiaSelection(kept) => {
+                    Some((kept.listener, kept.token))
+                }
+                crate::announcements::Kind::Notification { .. }
+                | crate::announcements::Kind::Alert { .. }
+                | crate::announcements::Kind::DesktopName { .. }
+                | crate::announcements::Kind::Show { .. } => None,
+            },
+            Entry::Candidate(_)
+            | Entry::Run(_)
+            | Entry::Menu(_)
+            | Entry::MenuCheck(_)
+            | Entry::CurrentFocus(_)
+            | Entry::MsaaChange(_)
+            | Entry::UiaChange(_)
+            | Entry::Caret(_)
+            | Entry::ForegroundMarker { .. }
+            | Entry::Press(_)
+            | Entry::Mark(..)
+            | Entry::SayAllRead(..)
+            | Entry::TerminalSpeech(_) => None,
+        }
+    }
+
     type Entry = Entry;
     type Facts = SrState;
     type Said = Said;

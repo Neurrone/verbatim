@@ -1042,7 +1042,10 @@ impl OutpostUnderTest {
             element,
             nearest,
             &ReadObject {
-                object: ObjectRef::Kept(verbatim_model::tell::ElementToken(0)),
+                object: ObjectRef::Kept {
+                    listener: 1,
+                    token: verbatim_model::tell::ElementToken(0),
+                },
                 set: {
                     let mut walked = self.reported_set.borrow().clone();
                     if !walked.contains(&PropertyId::Description) {
@@ -1053,7 +1056,7 @@ impl OutpostUnderTest {
                 relation: None,
                 descendants: false,
                 walk: Some(sent.clone()),
-                purpose: Purpose::Focus { keep: None },
+                purpose: Purpose::Focus,
             },
         );
         let Outcome::Result(Reply::Object(object)) = outcome else {

@@ -86,6 +86,15 @@ pub(super) enum OwnerEvent {
     /// From the app: a command for the listener, a request or cancel of
     /// Core's.
     ToListener(CoreToListener),
+    /// From the app: Core's held view for the listener
+    /// ([`CoreToListener::ElementsHeld`]), written now when `now`, else
+    /// left for the next command written to it.
+    ListenerHeld {
+        /// The view.
+        view: CoreToListener,
+        /// Whether it is written now.
+        now: bool,
+    },
     /// From the app, Core's effect: end this outpost generation.
     EndOutpost(OutpostId),
     /// From the app: Verbatim is exiting. Every child is shut down, and the
@@ -760,6 +769,7 @@ impl Owner {
             }
             OwnerEvent::IdleRound(round) => self.idle_round(round),
             OwnerEvent::ToListener(command) => self.tell_listener(command),
+            OwnerEvent::ListenerHeld { view, now } => self.listener_held(view, now),
             OwnerEvent::EndOutpost(outpost) => {
                 if let Some(pid) = self.pid_of(outpost) {
                     self.end(pid, EndReason::Killed, "Core ended it");
@@ -1167,6 +1177,24 @@ impl Owner {
         }
     }
 
+    /// Writes Core's held view `view` to the listener now when `now`, in
+    /// place of a view left and not yet written, or leaves it in its
+    /// writer's slot for the next command written to it. While the
+    /// listener launches, a view to write now is held with its commands, in
+    /// order, and one to leave is dropped: it releases nothing. The
+    /// listener drops a view naming another generation.
+    fn listener_held(&mut self, view: CoreToListener, now: bool) {
+        let Some(listener) = self.listener.as_mut() else {
+            return;
+        };
+        match (listener.child.running(), now) {
+            (Some(child), true) => child.writer.send_held(view),
+            (Some(child), false) => child.writer.leave_held(view),
+            (None, true) => listener.pending.push(view),
+            (None, false) => {}
+        }
+    }
+
     /// Launches a child on a helper thread. The helper makes the child's
     /// writer on the relay's port and, for an outpost, registers it; then
     /// it reports [`OwnerEvent::Launched`]. The relay sends `Started` to the
@@ -1179,6 +1207,7 @@ impl Owner {
     fn launch(&self, outpost: OutpostId, role: Role) {
         let listener = match role {
             Role::Listener => ListenerArguments {
+                generation: outpost.0,
                 ignored: self.ignored.pids(),
             },
             Role::Outpost(_) | Role::Spare(_) => ListenerArguments::default(),

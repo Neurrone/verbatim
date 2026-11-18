@@ -175,7 +175,10 @@ async fn selected(
     let read = ListenerRead {
         window,
         read: ReadObject {
-            object: ObjectRef::Kept(kept.token),
+            object: ObjectRef::Kept {
+                listener: kept.listener,
+                token: kept.token,
+            },
             set: crate::details::walk_set(&cx.facts(), FOCUS_SET),
             relation: None,
             descendants: false,

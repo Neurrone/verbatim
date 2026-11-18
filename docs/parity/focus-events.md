@@ -62,12 +62,22 @@ duplicate.
   and the replay `the_desktops_next_item_is_spoken_after_delete`.
 - UI Automation: the readers' last focus is a UI Automation object, the
   runtime ids are equal, and the earlier element still has the keyboard
-  focus. The listener keeps the element it read for each focus Core
-  executes, and the check thread, at the new focus's delivery, reads the
-  keyboard focus of each element it keeps with the event's runtime id,
-  in NVDA's order after the walk and the probe
+  focus. The listener keeps each focus's element from its tell until
+  Core's held view leaves it out, as NVDA keeps an event's object while
+  the event is queued (`eventHandler.py` 48 to 67): Core holds it while
+  its entry waits or runs, and afterwards while it is the readers' last
+  focus. The check thread, at the new focus's delivery, reads the keyboard
+  focus of each element it keeps with the event's runtime id that can be
+  the readers' last focus, one told by a focus or a menu opening, one in
+  a focus read, or one read, in NVDA's order after the walk and the probe
   (`UIAHandler/__init__.py` 902 to 923); Core uses the answer carried for
-  the element that is the readers' last focus, with no read of its own. A
+  the element that is the readers' last focus, with no read of its own.
+  So a focus checked before Core handled an earlier one on the same
+  element finds it kept, as the console's repeated terminal focus is
+  (`a_second_focus_checked_before_the_first_is_handled_is_said_once`, the
+  replay `the_consoles_repeated_focus_says_terminal_once`), and an element
+  Core refused is let go within one pipe hop
+  (`refused_focuses_are_let_go_so_each_check_reads_its_own_focus_alone`). A
   failed read, or a last focus the listener no longer holds (after a
   re-take, whose focus an outpost read), means not a duplicate. Core's
   `a_uia_focus_on_the_last_focuss_element_still_focused_is_a_duplicate`,

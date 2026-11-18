@@ -1,7 +1,7 @@
 //! `verbatim-listener.exe` — the focus listener process (decision D13).
 //!
 //! Spawned by Core's supervisor with `--listener --pipe-in <handle>
-//! --pipe-out <handle> [--ignore-pids <pid,pid>] [--hooks-in
+//! --pipe-out <handle> --generation <n> [--ignore-pids <pid,pid>] [--hooks-in
 //! <pid:outpost,pid:outpost>]` (`verbatim_process::arguments::ListenerArguments`).
 //! It holds the desktop-global UIA registration and the global MSAA hooks,
 //! tells Core of every event it hears, but those of the processes
@@ -29,7 +29,7 @@ fn main() -> ExitCode {
     let Some((pipes, arguments)) = ListenerArguments::parse(&args) else {
         report_error!(
             "verbatim-listener is spawned by verbatim.exe. Usage:\n  \
-             verbatim-listener --listener --pipe-in <handle> --pipe-out <handle> [--ignore-pids <pid,pid>] [--hooks-in <pid:outpost,pid:outpost>]"
+             verbatim-listener --listener --pipe-in <handle> --pipe-out <handle> --generation <n> [--ignore-pids <pid,pid>] [--hooks-in <pid:outpost,pid:outpost>]"
         );
         return ExitCode::FAILURE;
     };
@@ -48,7 +48,7 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    match run_listener(reader, writer, ignored) {
+    match run_listener(reader, writer, arguments.generation, ignored) {
         Ok(()) => end_without_detach(0),
         Err(error) => {
             report_error!("listener pipe loop ended with error: {error}");

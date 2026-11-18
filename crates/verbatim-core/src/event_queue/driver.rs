@@ -227,6 +227,16 @@ impl<E, F> Queue<E, F> {
         self.table.requests()
     }
 
+    /// Every entry Core appends later ([`Cx::append_after`]).
+    pub(crate) fn later(&self) -> impl Iterator<Item = &E> {
+        self.timers.iter().map(|(_, entry)| entry)
+    }
+
+    /// The listener generation the owner thread last reported started.
+    pub(crate) fn listener(&self) -> Option<u64> {
+        self.record.listener
+    }
+
     /// The front entry and every entry waiting behind it, a run's
     /// candidates and the menu slot's included: the ids each names stay
     /// held.

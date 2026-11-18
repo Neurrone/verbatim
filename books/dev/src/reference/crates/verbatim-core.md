@@ -89,6 +89,20 @@ guide maps those behaviors onto the crate's types and modules.
     line or point, the start marker, and say-all's positions). The shell
     sends each outpost its own, which keeps them alive
     ([verbatim-model](verbatim-model.md), "The text protocol").
+  - `held_tokens()`: the tokens of the running listener's told elements
+    Core holds (`HeldTokens`): those its waiting entries, its front entry
+    and the entries it appends later name (`Logic::told_token`: a UI
+    Automation focus or menu opening, a toast candidate, a UI Automation
+    selection), and the readers' last focus's; `None` while no listener
+    runs. A token is held from its tell while its entry waits or runs,
+    and afterwards only while it is the readers' last focus; the set never
+    takes back a token it dropped. `ListenerView` is the shell's record
+    of the views it sends (`held_tokens`, the module): it counts the
+    listener's messages carrying tokens as they are handed to Core
+    (`handled`), and after each pass answers `ViewSend::Now` when a token
+    handled, or one the last view held, is not held now, `Leave` when only
+    additions or the position moved, and `Nothing` otherwise; a listener
+    generation started counts from 0 (`started`).
   - The details the active theme reports, as the last `Input::Reported`
     set them (everything until then), kept in the state a dump restores.
     Core chooses each request's details from them (`details.rs`): a node

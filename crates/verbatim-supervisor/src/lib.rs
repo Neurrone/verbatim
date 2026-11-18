@@ -731,6 +731,28 @@ impl Supervisor {
         let _ = self.owner.send(owner::OwnerEvent::ToListener(command));
     }
 
+    /// Writes Core's held view of the listener's told elements
+    /// ([`CoreToListener::ElementsHeld`]) behind every command sent to the
+    /// listener before, in place of a view left and not yet written: the
+    /// app writes it after a pass in which a token Core handled is not
+    /// held, so the listener lets go of it within one pipe hop. Held, in
+    /// order, while the listener launches.
+    pub fn send_elements_held(&self, view: CoreToListener) {
+        let _ = self
+            .owner
+            .send(owner::OwnerEvent::ListenerHeld { view, now: true });
+    }
+
+    /// Leaves Core's held view for the listener, written by the next
+    /// command written to it, a request or the relay's ping: a view that
+    /// only adds tokens, or moves the position with every handled token
+    /// held, releases nothing. A newer view replaces one not yet written.
+    pub fn leave_elements_held(&self, view: CoreToListener) {
+        let _ = self
+            .owner
+            .send(owner::OwnerEvent::ListenerHeld { view, now: false });
+    }
+
     /// Ends the outpost generation `outpost`, as Core's generation record
     /// asks: it missed its pings, or its application exited before it was
     /// ready. Nothing happens when it has ended already; its

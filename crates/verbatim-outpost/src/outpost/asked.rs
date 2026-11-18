@@ -643,7 +643,7 @@ fn read_object(
 ) -> Outcome {
     let (snapshot, relation, nearest) = match &read.object {
         // The listener's.
-        ObjectRef::Kept(_) => return Outcome::Refused(Refusal::Unsupported),
+        ObjectRef::Kept { .. } => return Outcome::Refused(Refusal::Unsupported),
         ObjectRef::Node(node) => {
             let relation = match &read.relation {
                 None => None,

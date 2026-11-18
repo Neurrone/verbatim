@@ -44,14 +44,23 @@ this shape are in `books/dev/src/explanation/architecture.md`, section 1
   nothing to check; at shutdown one inside a call is let go.
 - Kept elements (Table 6). Each told element is kept behind the token its
   tell names, in `Kept`, one record per application
-  (`verbatim_listener_logic::kept`): swept at each tell past 60 seconds or
-  beyond the newest 64, released at the application's exit, and those
-  read by a request that is not a focus read released as the read ends. A
-  focus read's element is kept, read and not yet named, until the next
-  focus request names the readers' last focus's token, which keeps that
-  one and lets every other read element go, across applications. Every
-  element let go is released as a job on its application's reading
-  thread, since a release can call into it.
+  (`verbatim_listener_logic::kept`), until Core's held view leaves it out
+  (`CoreToListener::ElementsHeld`). The listener's generation, given on
+  its command line (`--generation`), is in every view and every request
+  naming a kept element: one naming another generation is dropped, or
+  answered "not there". The writer numbers each message carrying a token
+  as it writes it, in pipe order, in its backlog (`Waiting`, its
+  `Reported` record, under the writer's lock, taken after the kept
+  elements' lock), and a view releases only an element whose tell was
+  written at or before the position it acknowledges. A read that is not
+  a focus read releases its element as it ends; a focus read's element is
+  kept, read, unless the last view rules it out; a request cancelled for
+  the foreground lets the kept reference of the element it reads go.
+  Every element a view lets go is released on its application's check
+  thread while one runs (`CheckJob::Release`), which checked it and has a
+  UI Automation client, else as a job on its reading thread; at the
+  application's exit, on its reading thread; never under a lock or on a
+  callback thread, since a release can call into the application.
 - Requests (`listener::asked`). Core's `CoreToListener::Request` is the
   generic read of the object an event names (`Request::ReadObject`); any
   other request, a relation, or descendants are refused unsupported, and a

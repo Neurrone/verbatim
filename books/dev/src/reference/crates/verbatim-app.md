@@ -276,6 +276,15 @@ Milestone M4's text protocol is wired here (`books/dev/src/reference/crates/verb
   (`docs/design/communication.md`, step 11): the caret's anchor changes
   with every key, and a terminal's output changes the position with every
   message (`books/dev/src/explanation/design/wake-ups.md`, item 4).
+- The listener's told elements Core holds (`SrState::held_tokens`) go to
+  the listener by the same rule, through `verbatim_core::ListenerView`:
+  the thread counts each listener message carrying a token as it hands it
+  to Core (`ListenerToCore::carried_token`), and after each pass writes
+  the view at once (`Supervisor::send_elements_held`) when a token Core
+  handled is no longer held and no view written said so, so the listener
+  lets go of a tell Core refused within one pipe hop; additions alone are
+  left for the next command (`Supervisor::leave_elements_held`). A
+  listener started (`ListenerStarted`) counts from 0.
 
 Milestone M4's themes and earcons are wired here too
 ([verbatim-model](verbatim-model.md), "Themes"):

@@ -32,6 +32,9 @@ impl Default for OutpostOptions {
 /// The flag a listener's arguments begin with.
 pub const LISTENER_ARG: &str = "--listener";
 
+/// The flag of a listener's generation.
+const GENERATION_ARG: &str = "--generation";
+
 /// The command-line option that hands the focus listener the pids of the
 /// processes Verbatim ignores ([`crate::held::IgnoredProcesses`]).
 pub const IGNORE_PIDS_ARG: &str = "--ignore-pids";
@@ -135,6 +138,9 @@ impl OutpostArguments {
 /// ignored.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ListenerArguments {
+    /// The listener's generation, its launch's id: Core's views and
+    /// requests name it, and the listener drops any naming another.
+    pub generation: u64,
     /// The processes Verbatim ignores entirely, whose facts the listener
     /// drops.
     pub ignored: Vec<Pid>,
@@ -151,12 +157,16 @@ impl ListenerArguments {
             let pids: Vec<String> = self.ignored.iter().map(|pid| pid.0.to_string()).collect();
             format!(" {IGNORE_PIDS_ARG} {}", pids.join(","))
         };
-        format!("{LISTENER_ARG} --pipe-in {pipe_in} --pipe-out {pipe_out}{ignore}")
+        let generation = self.generation;
+        format!(
+            "{LISTENER_ARG} --pipe-in {pipe_in} --pipe-out {pipe_out} {GENERATION_ARG} {generation}{ignore}"
+        )
     }
 
     /// The arguments in `args`, the command line after the program's name;
-    /// `None` when they do not begin with [`LISTENER_ARG`], are incomplete,
-    /// or carry an outpost's options.
+    /// `None` when they do not begin with [`LISTENER_ARG`], are incomplete
+    /// (the pipes and the generation are required), or carry an outpost's
+    /// options.
     #[must_use]
     pub fn parse(args: &[String]) -> Option<(Pipes, Self)> {
         if args.first().map(String::as_str) != Some(LISTENER_ARG) {
@@ -164,6 +174,7 @@ impl ListenerArguments {
         }
         let mut pipe_in = None;
         let mut pipe_out = None;
+        let mut generation = None;
         let mut arguments = Self::default();
         let mut index = 1;
         while index < args.len() {
@@ -171,12 +182,14 @@ impl ListenerArguments {
             match args[index].as_str() {
                 "--pipe-in" => pipe_in = value.parse().ok(),
                 "--pipe-out" => pipe_out = value.parse().ok(),
+                GENERATION_ARG => generation = value.parse().ok(),
                 IGNORE_PIDS_ARG => arguments.ignored = crate::held::parse_pids(value),
                 "--target-pid" | "--spare" | "--classic-uia" | "--attach" => return None,
                 _ => {}
             }
             index += 2;
         }
+        arguments.generation = generation?;
         Some((
             Pipes {
                 pipe_in: pipe_in?,
@@ -233,14 +246,18 @@ mod tests {
     fn a_listeners_arguments_round_trip_through_the_command_line() {
         for (arguments, line) in [
             (
-                ListenerArguments::default(),
-                "--listener --pipe-in 412 --pipe-out 416",
+                ListenerArguments {
+                    generation: 1,
+                    ignored: Vec::new(),
+                },
+                "--listener --pipe-in 412 --pipe-out 416 --generation 1",
             ),
             (
                 ListenerArguments {
+                    generation: 7,
                     ignored: vec![Pid(30), Pid(31)],
                 },
-                "--listener --pipe-in 412 --pipe-out 416 --ignore-pids 30,31",
+                "--listener --pipe-in 412 --pipe-out 416 --generation 7 --ignore-pids 30,31",
             ),
         ] {
             assert_eq!(arguments.command_line(PIPES), line);
@@ -262,8 +279,15 @@ mod tests {
         assert_eq!(OutpostArguments::parse(&split(&listener)), None);
         assert_eq!(ListenerArguments::parse(&split(&outpost)), None);
         assert_eq!(
-            ListenerArguments::parse(&split("--listener --pipe-in 412 --pipe-out 416 --spare 7")),
+            ListenerArguments::parse(&split(
+                "--listener --pipe-in 412 --pipe-out 416 --generation 1 --spare 7"
+            )),
             None
+        );
+        assert_eq!(
+            ListenerArguments::parse(&split("--listener --pipe-in 412 --pipe-out 416")),
+            None,
+            "a listener's generation is required"
         );
     }
 }

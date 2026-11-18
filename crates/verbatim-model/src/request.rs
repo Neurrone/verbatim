@@ -100,8 +100,16 @@ pub struct Probe {
 /// The object a read names.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ObjectRef {
-    /// A UI Automation element the listener kept for a tell.
-    Kept(ElementToken),
+    /// A UI Automation element the listener kept for a tell: its token,
+    /// and the generation of the listener that minted it, since each
+    /// listener mints its tokens from 1. A listener answers "not there"
+    /// for a token of any other generation.
+    Kept {
+        /// The listener's generation.
+        listener: u64,
+        /// The element's token.
+        token: ElementToken,
+    },
     /// An MSAA object, by the ids its event named.
     Msaa {
         /// The window.
@@ -166,13 +174,9 @@ pub enum RelationFound {
 /// Why a read of an event's object is made.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Purpose {
-    /// A focus read, whose element becomes "read, not yet named"; it names
-    /// the readers' last focus's token, which the reader keeps.
-    Focus {
-        /// The readers' last focus's token, `None` while it is empty or
-        /// not this reader's.
-        keep: Option<ElementToken>,
-    },
+    /// A focus read, whose element the listener keeps as read once the
+    /// read ends, until Core's held view lets it go.
+    Focus,
     /// A change of a property of one of the nodes its relation names
     /// (`docs/design/readers-tell-core-asks-build1.md`, "Changes on
     /// objects"): an object that is none of them answers not there, read
@@ -1574,14 +1578,15 @@ mod tests {
             window: WindowHandle(5),
             verdict: WindowVerdict::ProbeFirst,
             request: Request::ReadObject(ReadObject {
-                object: ObjectRef::Kept(ElementToken(3)),
+                object: ObjectRef::Kept {
+                    listener: 1,
+                    token: ElementToken(3),
+                },
                 set: vec![PropertyId::Name, PropertyId::Role],
                 relation: Some(RelationQuery::OneOf(vec![NodeId::new(4)])),
                 descendants: false,
                 walk: Some(vec![KnownAncestor::Uia(RuntimeId(vec![42, 1]))]),
-                purpose: Purpose::Focus {
-                    keep: Some(ElementToken(2)),
-                },
+                purpose: Purpose::Focus,
             }),
         };
         let json = serde_json::to_string(&ask).unwrap();

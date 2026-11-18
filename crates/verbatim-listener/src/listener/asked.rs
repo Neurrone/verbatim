@@ -95,7 +95,6 @@ pub(crate) struct KeptRead {
     pid: Pid,
     token: ElementToken,
     element: Agile<ListenerEvent>,
-    focus: bool,
 }
 
 /// The listener's reading: Core's requests, bar reads and releases.
@@ -140,7 +139,9 @@ impl UiaReading {
             return (Outcome::Refused(Refusal::Unsupported), None);
         };
         match &read.object {
-            ObjectRef::Kept(token) => self.read_kept(thread, *token, ask.window, read),
+            ObjectRef::Kept { token, .. } => {
+                self.read_kept(thread, (*token, ask.number), ask.window, read)
+            }
             ObjectRef::Msaa {
                 window,
                 object,
@@ -158,14 +159,15 @@ impl UiaReading {
     fn read_kept(
         &self,
         thread: &ReadingThread,
-        token: ElementToken,
+        (token, number): (ElementToken, RequestNumber),
         window: WindowHandle,
         read: &ReadObject,
     ) -> (Outcome, Option<KeptRead>) {
         let Some(pid) = self.kept.owner(token) else {
             return (Outcome::NotThere, None);
         };
-        let element = match self.kept.start_read(pid, token) {
+        let focus = matches!(read.purpose, Purpose::Focus);
+        let element = match self.kept.start_read(pid, token, (number.0, focus)) {
             Start::Read(element) => element,
             Start::NotThere => return (Outcome::NotThere, None),
             Start::NotAsked => {
@@ -173,7 +175,6 @@ impl UiaReading {
                 return (Outcome::Refused(Refusal::Unsupported), None);
             }
         };
-        let focus = matches!(read.purpose, Purpose::Focus { .. });
         let outcome = match (thread.uia.as_ref(), element.resolve()) {
             (Some(uia), Ok(sender)) => read_element(
                 (uia, &self.readability),
@@ -191,7 +192,6 @@ impl UiaReading {
                 pid,
                 token,
                 element,
-                focus,
             }),
         )
     }
@@ -275,11 +275,11 @@ impl Reading for UiaReading {
 
     fn done(&self, done: Self::Done, send: bool) -> Self::Leftover {
         let (answer, kept) = done?;
-        // The element's end comes before its answer, so a focus request
-        // that names it after the answer finds it read (Table 6).
+        // The element's end comes before its answer, so a view Core sends
+        // after it handled the answer finds it read.
         let released = kept.and_then(|kept| {
             self.kept
-                .read_ended(kept.pid, kept.token, kept.element, kept.focus && send)
+                .read_ended(&self.outgoing, (kept.pid, kept.token), kept.element, send)
         });
         if send {
             self.outgoing.answer(answer);
@@ -585,7 +585,7 @@ pub(crate) fn read_element(
     let fields = sender.read();
     let hwnd = fields.role.hwnd;
     let nearest = if hwnd == 0 { nearest } else { hwnd };
-    let focus = matches!(read.purpose, Purpose::Focus { .. });
+    let focus = matches!(read.purpose, Purpose::Focus);
     let (known, places) = known_runtime_ids(read.walk.as_deref().unwrap_or_default());
     let (ended, mut walked) = walk(
         (uia, readability),
