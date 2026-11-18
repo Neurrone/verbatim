@@ -2436,7 +2436,7 @@ mod tests {
             Some(verbatim_model::tell::Checked {
                 probe: None,
                 keyboard_focus: Some(verbatim_model::tell::Read::Answered(false)),
-                kept: vec![(ElementToken(1), verbatim_model::tell::Read::Answered(false))],
+                kept: Vec::new(),
                 previous_sibling: None,
             })
         );
