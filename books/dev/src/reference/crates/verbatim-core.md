@@ -1153,7 +1153,10 @@ commands and say-all read no formatting.
 when a character that is not a word grapheme ends it
 (`verbatim_text::is_word_grapheme`), then each printable character, each
 in its own queued utterance. "Only in edit controls" means a focus that is
-an edit field, a terminal, or a document that is not read-only. A
+an edit field, a document or a terminal that is not read-only
+(`editing::is_editable`), as NVDA excludes a read-only focus of every
+role; the model has no editable state, which NVDA also counts, until the
+IAccessible2, MSHTML and Java Access Bridge backends bring it. A
 protected field echoes only "star". In a terminal, unless terminal
 passwords are spoken, typing is held until its
 `NormalizedEvent::TextChanged` arrives, and Enter drops what was held. A

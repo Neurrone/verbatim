@@ -500,7 +500,7 @@ mod tests {
             class_name: None,
             columns: Vec::new(),
             state_images: false,
-            edit_version_6: false,
+            edit: crate::fixture::EditKind::Classic,
             content: true,
             msaa_client: false,
             dialog_keys: false,

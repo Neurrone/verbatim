@@ -63,6 +63,7 @@ const LIVE: &[&str] = scenario_tests! {
     background_progress_bar_off
     msaa_flood_then_focus
     stale_focus_behind_a_caret_key
+    read_only_field_typing
     twin_item_at_a_deleted_items_ids
     controlled_list_selections
     table_cells

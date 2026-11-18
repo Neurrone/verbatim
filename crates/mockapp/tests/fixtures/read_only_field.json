@@ -1,0 +1,15 @@
+{
+  "id": "root",
+  "role": "window",
+  "name": "Mockapp Read-only Field Fixture",
+  "children": [
+    {
+      "id": "location",
+      "role": "editable_text",
+      "name": "Location:",
+      "states": ["focusable", "read_only"],
+      "edit_read_only": true,
+      "text": "C:\\Users\\Public"
+    }
+  ]
+}

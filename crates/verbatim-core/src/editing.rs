@@ -3,19 +3,17 @@
 //! typed character and word echo with the password rules
 //! (`docs/parity/text.md` and `docs/parity/terminals.md`, "Typing").
 //!
-//! A caret key's lifecycle is the key line (`crate::key_line`); here are
-//! its words: the character after Left or Right Arrow, Home, and End; the
-//! provider's word after Control with Left or Right Arrow; the line after
-//! Up or Down Arrow, the page keys, and Control with Home or End; the
-//! paragraph after Control with Up or Down Arrow; what Backspace deleted;
-//! the character or word now at the caret after Delete. A key with Shift
-//! speaks what became selected or unselected instead, as does a selection
-//! Verbatim makes itself (the review copy's first press, in `review_text`);
-//! one the mouse or the application makes is not spoken. A newer key, a typed
-//! character, or a focus change supersedes a key still watched, so speech
-//! never lags behind fast typing, a later edit is not spoken as an earlier
-//! key's answer, and a focus announcement wins over a caret line. A key that
-//! moves nothing says its unit at its bound, as NVDA's script does.
+//! A caret key's lifecycle is its event-queue entry
+//! (`crate::keys::caret_key`); here are its words: the character after
+//! Left or Right Arrow, Home, and End; the provider's word after Control
+//! with Left or Right Arrow; the line after Up or Down Arrow, the page keys,
+//! and Control with Home or End; the paragraph after Control with Up or
+//! Down Arrow; what Backspace deleted; the character or word now at the
+//! caret after Delete. A key with Shift speaks what became selected or
+//! unselected instead, as does a selection Verbatim makes itself (the
+//! review copy's first press, in `review_text`); one the mouse or the
+//! application makes is not spoken. A key that moves nothing says its unit
+//! at its bound, as NVDA's script does.
 //!
 //! Formatting (milestone M4 item 7) is spoken as it changes, as NVDA
 //! speaks it (`docs/nvda/document-formatting.md`): the outpost sends the
@@ -61,14 +59,11 @@ pub(crate) fn is_grid(role: Role) -> bool {
 }
 
 /// Whether a node is a place text can be typed, for the typing echo
-/// settings' "only in edit controls": an edit field, a terminal, or a
-/// document that is not read-only.
+/// settings' "only in edit controls": an edit field, a document or a
+/// terminal that is not read-only, as NVDA excludes a read-only focus of
+/// every role (`docs/parity/input.md`, "Typed-character echo").
 fn is_editable(node: &NodeSnapshot) -> bool {
-    match node.role {
-        Role::EditableText | Role::Terminal => true,
-        Role::Document => !node.states.contains(State::ReadOnly),
-        _ => false,
-    }
+    may_have_text(node.role) && !node.states.contains(State::ReadOnly)
 }
 
 /// Queued speech for how a selection changed, each phrase its own
@@ -924,8 +919,7 @@ pub(crate) fn clearing_key(state: &mut SrState) {
 pub(crate) fn character_typed(state: &mut SrState, trace_id: TraceId, typed: &str) -> Vec<Effect> {
     let mut effects = crate::say_all::stop(state);
     // A caret key still watched is not answered by the caret the typing
-    // moves: the typing's key press has marked it (`key_line::mark_later`),
-    // so its answer only keeps the caret current.
+    // moves: the typing's key press has marked it (`crate::keys::caret_key`).
     let Some(focus) = state.live_focus() else {
         return effects;
     };
@@ -1000,4 +994,44 @@ pub(crate) fn echo(state: &mut SrState, trace_id: TraceId, typed: &str) -> Vec<E
         }
     }
     effects
+}
+
+#[cfg(test)]
+mod tests {
+    use verbatim_model::{Backend, NodeDetails, StateSet};
+
+    use super::*;
+
+    /// A node of `role`, read-only or not.
+    fn node(role: Role, read_only: bool) -> NodeSnapshot {
+        let states = if read_only {
+            StateSet::new().with(State::ReadOnly)
+        } else {
+            StateSet::new()
+        };
+        NodeSnapshot {
+            id: NodeId::new(1),
+            backend: Backend::Msaa,
+            role,
+            name: None,
+            value: None,
+            states,
+            details: NodeDetails::default(),
+        }
+    }
+
+    /// An edit field, a document or a terminal is a place text is typed
+    /// unless it is read-only, as NVDA's test excludes a read-only focus of
+    /// every role; nothing else is, read-only or not.
+    #[test]
+    fn only_a_writable_field_document_or_terminal_is_editable() {
+        for role in [Role::EditableText, Role::Document, Role::Terminal] {
+            assert!(is_editable(&node(role, false)), "{role:?}");
+            assert!(!is_editable(&node(role, true)), "{role:?} read-only");
+        }
+        for role in [Role::Button, Role::StaticText, Role::ComboBox] {
+            assert!(!is_editable(&node(role, false)), "{role:?}");
+            assert!(!is_editable(&node(role, true)), "{role:?} read-only");
+        }
+    }
 }

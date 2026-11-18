@@ -24,6 +24,8 @@ use std::path::Path;
 use serde::Deserialize;
 use verbatim_model::{Role, State, StateSet};
 
+pub(crate) use crate::edit::EditKind;
+
 /// Everything that can go wrong loading a fixture: the file, its JSON, or an
 /// unrecognized role or state name.
 #[derive(Debug)]
@@ -38,6 +40,9 @@ pub(crate) enum FixtureError {
     UnknownState { id: String, state: String },
     /// Two nodes in the fixture declared the same `id`.
     DuplicateId(String),
+    /// A node asked for both `edit_version_6` and `edit_read_only`, a
+    /// pairing no stand-in has.
+    TwoEditKinds(String),
     /// A `controller_for` named an `id` no node declares.
     UnknownControlled { id: String, controlled: String },
     /// A `cell`'s `grid` named an `id` no node declares.
@@ -56,6 +61,9 @@ impl fmt::Display for FixtureError {
                 write!(f, "node {id:?} has unknown state {state:?}")
             }
             Self::DuplicateId(id) => write!(f, "duplicate node id {id:?}"),
+            Self::TwoEditKinds(id) => {
+                write!(f, "node {id:?} sets both edit_version_6 and edit_read_only")
+            }
             Self::UnknownControlled { id, controlled } => {
                 write!(f, "node {id:?} controls unknown node {controlled:?}")
             }
@@ -151,6 +159,8 @@ struct RawNode {
     state_images: bool,
     #[serde(default)]
     edit_version_6: bool,
+    #[serde(default)]
+    edit_read_only: bool,
     #[serde(default = "content_by_default")]
     content: bool,
     #[serde(default)]
@@ -307,10 +317,10 @@ pub(crate) struct FixtureNode {
     /// Whether a real tree view gives its items state images, as
     /// applications that draw their own check boxes do.
     pub(crate) state_images: bool,
-    /// Whether, on the MSAA backend, the edit control holding the node's
-    /// text is Common Controls version 6's, as a Windows Forms text box is,
-    /// rather than the classic one.
-    pub(crate) edit_version_6: bool,
+    /// On the MSAA backend, which edit control holds the node's text
+    /// (fixture `edit_version_6` or `edit_read_only`, the classic one when
+    /// neither is set).
+    pub(crate) edit: EditKind,
     /// Whether UIA counts the node as content (`IsContentElement`), as
     /// every node is unless the fixture says `"content": false`, which
     /// makes it layout to a client that, as NVDA, presents a UIA element
@@ -370,11 +380,11 @@ impl FixtureNode {
         taken
     }
 
-    /// Whether the first node with text, depth first, the one the MSAA
-    /// backend's edit control holds, asks for Common Controls version 6's
-    /// edit control.
-    pub(crate) fn edit_version_6(&self) -> bool {
-        self.first_text().is_some_and(|node| node.edit_version_6)
+    /// The edit control the first node with text, depth first, the one the
+    /// MSAA backend's edit control holds, asks for.
+    pub(crate) fn edit_kind(&self) -> EditKind {
+        self.first_text()
+            .map_or(EditKind::Classic, |node| node.edit.clone())
     }
 
     /// The first node with text, depth first.
@@ -451,6 +461,14 @@ fn convert(
             })?;
         states.insert(state);
     }
+    let edit = match (raw.edit_version_6, raw.edit_read_only) {
+        (false, false) => EditKind::Classic,
+        (true, false) => EditKind::Version6,
+        (false, true) => EditKind::ReadOnly {
+            label: raw.name.clone(),
+        },
+        (true, true) => return Err(FixtureError::TwoEditKinds(raw.id)),
+    };
     let mut children = Vec::with_capacity(raw.children.len());
     for child in raw.children {
         let child: RawNode = serde_json::from_value(child).map_err(FixtureError::Json)?;
@@ -488,7 +506,7 @@ fn convert(
         class_name: raw.class_name,
         columns: raw.columns,
         state_images: raw.state_images,
-        edit_version_6: raw.edit_version_6,
+        edit,
         content: raw.content,
         msaa_client: raw.msaa_client,
         dialog_keys: raw.dialog_keys,

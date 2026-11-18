@@ -1492,6 +1492,67 @@ fn echo_only_in_edit_controls_stays_quiet_elsewhere() {
     assert_eq!(text.typed("a"), words(vec![character("a")]));
 }
 
+/// Characters and words typed into an edit field, both echoed only in edit
+/// controls: `field` focused, "ab" and a space typed.
+fn typed_into(field: &NodeSnapshot) -> [Vec<Heard>; 3] {
+    let mut text = Text::new();
+    text.settings(ReaderSettings {
+        speak_typed_characters: verbatim_model::TypingEcho::EditControls,
+        speak_typed_words: verbatim_model::TypingEcho::EditControls,
+        ..ReaderSettings::default()
+    });
+    let _ = text.focus(field, caret_read(caret_on(line("", 100, 0), None), None, 1));
+    [text.typed("a"), text.typed("b"), text.typed(" ")]
+}
+
+/// A read-only edit field echoes no character and no word typed into it,
+/// as NVDA's read-only Location field of a file's Properties (captured
+/// 2026-11-19); a writable one echoes both.
+#[test]
+fn a_read_only_edit_field_echoes_nothing_typed() {
+    let read_only = StateSet::new().with(verbatim_model::State::ReadOnly);
+    assert_eq!(
+        typed_into(&node(FIELD, Role::EditableText, read_only)),
+        [vec![], vec![], vec![]]
+    );
+    assert_eq!(
+        typed_into(&node(FIELD, Role::EditableText, StateSet::new())),
+        [
+            words(vec![character("a")]),
+            words(vec![character("b")]),
+            vec![
+                queued(vec![UtteranceSegment::text("ab")]),
+                queued(vec![character(" ")])
+            ],
+        ]
+    );
+}
+
+/// A read-only terminal echoes nothing typed into it with only in edit
+/// controls, even with terminal passwords spoken, which echo typing as it
+/// is typed; a writable one echoes it.
+#[test]
+fn a_read_only_terminal_echoes_nothing_typed() {
+    let typed = |states: StateSet| {
+        let mut text = Text::new();
+        text.settings(ReaderSettings {
+            speak_typed_characters: verbatim_model::TypingEcho::EditControls,
+            speak_terminal_passwords: true,
+            ..ReaderSettings::default()
+        });
+        let _ = text.focus(
+            &node(FIELD, Role::Terminal, states),
+            caret_read(caret_on(line("", 100, 0), None), None, 1),
+        );
+        text.typed("a")
+    };
+    assert_eq!(
+        typed(StateSet::new().with(verbatim_model::State::ReadOnly)),
+        []
+    );
+    assert_eq!(typed(StateSet::new()), words(vec![character("a")]));
+}
+
 impl Text {
     /// Answers the one text request out with a line read that moved
     /// `moved` lines and found `chunk`.

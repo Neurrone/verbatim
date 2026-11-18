@@ -1,5 +1,5 @@
 //! A real Win32 edit control for the MSAA backend (milestone M4): the
-//! first fixture node with `text` becomes a multi-line `EDIT` child window
+//! first fixture node with `text` becomes an `EDIT` child window ([`EditKind`])
 //! of the host window, holding that text, so a client reads it through the
 //! edit control's own window messages, as Verbatim reads the edit fields of
 //! applications it otherwise reads through MSAA. MSAA has no text
@@ -38,30 +38,70 @@ thread_local! {
 /// The edit control's window class.
 const EDIT_CLASS: PCWSTR = w!("EDIT");
 
-/// Creates the edit control inside `parent`, holding `text` (UTF-16, with
-/// bare line feeds): the classic one, or with `version_6` Common Controls
-/// version 6's, as a Windows Forms text box is. Both are of the class
-/// `Edit` and answer the same messages, but not always alike: past the last
-/// line, `EM_LINEINDEX` answers -1 from the classic control sign-extended
-/// into the result and from version 6's zero-extended.
+/// Which edit control holds a fixture's text on the MSAA backend.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum EditKind {
+    /// The classic multi-line edit control.
+    Classic,
+    /// Common Controls version 6's multi-line edit control, as a Windows
+    /// Forms text box is. Both are of the class `Edit` and answer the same
+    /// messages, but not always alike: past the last line, `EM_LINEINDEX`
+    /// answers -1 from the classic control sign-extended into the result
+    /// and from version 6's zero-extended.
+    Version6,
+    /// The stand-in for the read-only Location field of a file's
+    /// Properties (`read_only_field_typing`): the classic
+    /// single-line edit control with that field's style, `ES_READONLY` and
+    /// `ES_AUTOHSCROLL` with no `WS_TABSTOP`, so that the system's MSAA
+    /// proxy answers it as editable text (role 42) with the read-only
+    /// state. With `label`, a static text control holding it comes just
+    /// before the field, and the proxy names the field by it, as the
+    /// dialog's "Location:" label names its field.
+    ReadOnly {
+        /// The label's text.
+        label: Option<String>,
+    },
+}
+
+/// The read-only field's style, the Location field's: `WS_CHILD`,
+/// `WS_VISIBLE`, `ES_READONLY` and `ES_AUTOHSCROLL`.
+const READ_ONLY_STYLE: u32 = 0x5000_0880;
+
+/// The width of a read-only field's label, which the field follows.
+const LABEL_WIDTH: i32 = 100;
+
+/// Creates the edit control `kind` inside `parent`, holding `text`
+/// (UTF-16, with bare line feeds), with its label before it when it has
+/// one.
 ///
 /// # Errors
 ///
 /// The window creation's error, or the activation context's.
-pub(crate) fn create(parent: HWND, text: &[u16], version_6: bool) -> windows::core::Result<HWND> {
-    let _common_controls = if version_6 {
+pub(crate) fn create(parent: HWND, text: &[u16], kind: &EditKind) -> windows::core::Result<HWND> {
+    let _common_controls = if *kind == EditKind::Version6 {
         Some(crate::common_controls::CommonControls6::activate()?)
     } else {
         None
     };
     let contents = contents(text);
-    let style = WINDOW_STYLE(
-        WS_CHILD.0
-            | WS_VISIBLE.0
-            | WS_VSCROLL.0
-            | ES_MULTILINE.cast_unsigned()
-            | ES_AUTOVSCROLL.cast_unsigned(),
-    );
+    let (style, x, height) = match kind {
+        EditKind::Classic | EditKind::Version6 => (
+            WINDOW_STYLE(
+                WS_CHILD.0
+                    | WS_VISIBLE.0
+                    | WS_VSCROLL.0
+                    | ES_MULTILINE.cast_unsigned()
+                    | ES_AUTOVSCROLL.cast_unsigned(),
+            ),
+            0,
+            200,
+        ),
+        EditKind::ReadOnly { label: None } => (WINDOW_STYLE(READ_ONLY_STYLE), 0, 24),
+        EditKind::ReadOnly { label: Some(label) } => {
+            create_label(parent, label)?;
+            (WINDOW_STYLE(READ_ONLY_STYLE), LABEL_WIDTH, 24)
+        }
+    };
     // SAFETY: `EDIT` is a system class; `contents` is a live, NUL-terminated
     // buffer for the duration of the call; `parent` is the host window,
     // created on this thread.
@@ -71,16 +111,50 @@ pub(crate) fn create(parent: HWND, text: &[u16], version_6: bool) -> windows::co
             EDIT_CLASS,
             PCWSTR(contents.as_ptr()),
             style,
-            0,
+            x,
             0,
             400,
-            200,
+            height,
             Some(parent),
             None::<HMENU>,
             None,
             None,
         )
     }
+}
+
+/// Creates a static text control holding `label` inside `parent`, which
+/// the edit control created next follows.
+fn create_label(parent: HWND, label: &str) -> windows::core::Result<HWND> {
+    let text: Vec<u16> = label.encode_utf16().chain(std::iter::once(0)).collect();
+    // SAFETY: `STATIC` is a system class; `text` is a live, NUL-terminated
+    // buffer for the duration of the call; `parent` is the host window,
+    // created on this thread.
+    unsafe {
+        CreateWindowExW(
+            WINDOW_EX_STYLE(0),
+            w!("STATIC"),
+            PCWSTR(text.as_ptr()),
+            WINDOW_STYLE(WS_CHILD.0 | WS_VISIBLE.0),
+            0,
+            0,
+            LABEL_WIDTH,
+            24,
+            Some(parent),
+            None::<HMENU>,
+            None,
+            None,
+        )
+    }
+}
+
+/// Gives the edit control the keyboard focus (`SetFocus`), on the thread
+/// that owns it, as UI Automation's `SetFocus` focused the Location field
+/// in the recording its stand-in follows.
+pub(crate) fn focus(edit: HWND) {
+    // SAFETY: `edit` is this thread's own live control; the window it had
+    // the focus from is not needed.
+    let _ = unsafe { windows::Win32::UI::Input::KeyboardAndMouse::SetFocus(Some(edit)) };
 }
 
 /// `text` (UTF-16, with bare line feeds) as the control holds it, each line

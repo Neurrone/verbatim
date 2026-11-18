@@ -174,6 +174,10 @@ pub(crate) enum Command {
     /// the Open dialog's folder tree raises a stale focus while the "File
     /// name" field has it (survey `np_open`). MSAA-only.
     StaleFocusOnLeft,
+    /// `edit-focus`: gives the window's edit control the keyboard focus
+    /// (`SetFocus`), raising no event of mockapp's own, as UI Automation's
+    /// `SetFocus` focuses a field that is no tab stop. MSAA-only.
+    EditFocus,
     /// `list-view-focus <row>`: gives the window's list view the keyboard
     /// focus and its 0-based row `row` the focused and selected states,
     /// which comctl32 raises the item's focus event for. MSAA-only.
@@ -736,6 +740,7 @@ pub(crate) fn parse_command(line: &str) -> Option<Command> {
         }
         "client-name" => Some(Command::ClientName(rest.to_owned())),
         "stale-focus-on-left" if rest.is_empty() => Some(Command::StaleFocusOnLeft),
+        "edit-focus" if rest.is_empty() => Some(Command::EditFocus),
         "list-view-focus" => rest.trim().parse().ok().map(Command::ListViewFocus),
         "list-view-delete" => rest.trim().parse().ok().map(Command::ListViewDelete),
         "set-title" => Some(Command::SetTitle(rest.to_owned())),

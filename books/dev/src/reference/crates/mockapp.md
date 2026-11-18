@@ -139,6 +139,13 @@ complete name tables. The fields:
 - `edit_version_6`, on the node with the text: the edit control is Common
   Controls version 6's, as a Windows Forms text box is
   (`tests/fixtures/text_version_6.json`), rather than the classic one.
+- `edit_read_only`, on the node with the text: the edit control is the
+  stand-in for the read-only Location field of a file's Properties, the
+  classic single-line edit with `ES_READONLY` and no tab stop, labelled
+  by a static text control holding the node's name, so the system's MSAA
+  proxy answers it as read-only editable text named by the label
+  (`tests/fixtures/read_only_field.json`). A node cannot set it with
+  `edit_version_6`.
 
 ## Modules
 

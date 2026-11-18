@@ -112,7 +112,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
     let dialog_keys = root.dialog_keys;
     let focus_on_activate = root.focus_on_activate;
     let native = root.take_native();
-    let edit_version_6 = root.edit_version_6();
+    let edit = root.edit_kind();
     let tree = std::sync::Arc::new(std::sync::Mutex::new(tree::Tree::build(root)));
     if cli.count_registrations {
         uia::count_registrations();
@@ -132,7 +132,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
         backend,
         tree,
         native,
-        edit_version_6,
+        &edit,
         (&cli.title, window_class.as_deref(), frameless),
         (cli.show, cli.owner_title.as_deref()),
         (msaa_client, dialog_keys, focus_on_activate),

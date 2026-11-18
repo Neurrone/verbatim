@@ -121,7 +121,7 @@ pub(crate) fn run(
     backend: Option<Backend>,
     tree: SharedTree,
     native: Vec<crate::fixture::FixtureNode>,
-    edit_version_6: bool,
+    edit: &crate::edit::EditKind,
     (title, class, frameless): (&str, Option<&str>, bool),
     (show, owner): (bool, Option<&str>),
     (msaa_client, dialog_keys, focus_on_activate): (bool, bool, bool),
@@ -188,7 +188,7 @@ pub(crate) fn run(
             .iter()
             .find_map(|node| node.text.clone());
         if let Some(text) = text {
-            crate::edit::create(hwnd, &text, edit_version_6)?;
+            crate::edit::create(hwnd, &text, edit)?;
         }
         // A help balloon or tooltip in a window of the tooltip class, as a
         // real one is.

@@ -832,6 +832,98 @@ fn the_stale_tree_focus_stand_in_matches_the_open_dialogs_recording() {
     app.quit();
 }
 
+/// The stand-in of `read_only_field_typing`, checked against the recording
+/// of the read-only Location field of a file's Properties (recording R4 of
+/// the keys-and-text study, 2026-11-19): there the field is an `Edit` of
+/// style 0x50000880 (`ES_READONLY` and `ES_AUTOHSCROLL`, no `WS_TABSTOP`),
+/// focused by `SetFocus` with `EVENT_OBJECT_FOCUS` on its client, read
+/// through MSAA as role 42, editable text, named "Location:" by its label,
+/// with the read-only, focused and focusable states (0x100044), and a typed
+/// character changes nothing. mockapp's read-only edit, given the focus by
+/// `edit-focus`, raises the same focus event and the outpost reads the same
+/// object; a character sent to it leaves its text as it was.
+fn the_read_only_field_stand_in_matches_the_location_fields_recording() {
+    use verbatim_ia2::WinEventKind;
+    use windows::Win32::Foundation::{LPARAM, WPARAM};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        FindWindowExW, GWL_STYLE, GetWindowLongW, GetWindowTextW, OBJID_CLIENT, SendMessageW,
+        WM_CHAR,
+    };
+    use windows::core::w;
+
+    let title = common::unique_title("mockapp-read-only-field");
+    let mut app = common::spawn("read_only_field.json", "msaa", &title);
+    let hwnd = common::find_window(&title);
+    // SAFETY: a local search of mockapp's window's children by class.
+    let edit = unsafe { FindWindowExW(Some(hwnd), None, w!("EDIT"), None) }.expect("the edit");
+    // SAFETY: reads a live window's style.
+    let style = unsafe { GetWindowLongW(edit, GWL_STYLE) }.cast_unsigned();
+    assert_eq!(style, 0x5000_0880, "the Location field's style");
+
+    // The window active, its focus on itself, as the recording's dialog
+    // was, its focus on the Read-only check box, before the field's.
+    common::apply(&mut app, hwnd, "window-focus");
+    let pid = app.pid();
+    let events = common::core_driver::win_events(
+        pid,
+        || common::apply(&mut app, hwnd, "edit-focus"),
+        &[WinEventKind::Focus],
+        1,
+    );
+    let [event] = &events[..] else {
+        unreachable!("one event awaited");
+    };
+    assert_eq!(
+        (event.hwnd, event.id_object, event.id_child),
+        (edit.0 as isize, OBJID_CLIENT.0, 0),
+        "the edit's client, as the recording's"
+    );
+    assert_eq!(
+        thread_focus_window(hwnd),
+        Some(edit),
+        "the edit has the focus"
+    );
+
+    let outpost = OutpostUnderTest::new(&app);
+    let ids = MsaaIds {
+        window: WindowHandle(edit.0 as u64),
+        object: OBJID_CLIENT.0,
+        child: 0,
+    };
+    // The system's proxy gives the focused state only to the foreground
+    // thread's focus, and no window on the test's desktop is in front, so
+    // the read here has the recording's states less focused.
+    let focused = outpost.msaa_focus_answer(ids);
+    assert_eq!(
+        (focused.role(), focused.name(), focused.states()),
+        (
+            Role::EditableText,
+            Some("Location:"),
+            StateSet::from_iter([State::Focusable, State::ReadOnly])
+        )
+    );
+    drop(outpost);
+
+    // SAFETY: a message with no pointers to mockapp's own edit.
+    let _ = unsafe {
+        SendMessageW(
+            edit,
+            WM_CHAR,
+            Some(WPARAM(usize::from(b'a'))),
+            Some(LPARAM(0)),
+        )
+    };
+    let mut text = [0u16; 64];
+    // SAFETY: `text` is a local buffer the call fills, of the length given.
+    let length = unsafe { GetWindowTextW(edit, &mut text) };
+    assert_eq!(
+        String::from_utf16_lossy(&text[..usize::try_from(length).expect("a length")]),
+        r"C:\Users\Public",
+        "a typed character changes nothing"
+    );
+    app.quit();
+}
+
 /// A focus that was not redirected is read by its event's own ids, whatever
 /// address its node is kept at: a focus event on mockapp's window client,
 /// whose role is window, is read as the window's own object, kept under
@@ -3944,6 +4036,10 @@ fn main() {
         (
             "the_stale_tree_focus_stand_in_matches_the_open_dialogs_recording",
             the_stale_tree_focus_stand_in_matches_the_open_dialogs_recording,
+        ),
+        (
+            "the_read_only_field_stand_in_matches_the_location_fields_recording",
+            the_read_only_field_stand_in_matches_the_location_fields_recording,
         ),
         (
             "a_focus_whose_element_lost_the_keyboard_focus_before_it_was_read_is_dropped",

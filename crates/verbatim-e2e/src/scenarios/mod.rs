@@ -42,6 +42,7 @@ pub(crate) mod password;
 pub(crate) mod quick_link_menu;
 pub(crate) mod quit_inside_a_modal_dialog;
 pub(crate) mod rapid_tabbing_in_settings;
+pub(crate) mod read_only_field_typing;
 pub(crate) mod return_from_a_held_application;
 pub(crate) mod review_cursor;
 pub(crate) mod review_dead_object;

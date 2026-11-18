@@ -133,11 +133,15 @@ through UI Automation, which has no sentence unit, it moves nothing
 window behind the document).
 
 Verbatim: **matched** (Dickson, 2026-10-29 and 2026-11-08). The key's
-bound is NVDA's, 100 ms from when the key is passed on, multiplied by
-1.5 in a console host older than the improved API level and by 3 in
-Windows Terminal, and carried in the watch Core asks for
-(`editableText.py` 86 to 88; `NVDAObjects/UIA/winConsoleUIA.py` 365 to
-376, 470, 486). A key with no effect by then has one final read,
+bound is NVDA's, 100 ms from when the key is passed on, multiplied by 3
+in Windows Terminal, and carried in the watch Core asks for
+(`editableText.py` 86 to 88; `NVDAObjects/UIA/winConsoleUIA.py` 470,
+486). NVDA's multiplier of 1.5 for a console host older than the
+improved API level (`winConsoleUIA.py` 373 to 375) applies only where
+a user forces UI Automation onto such a console, since its default
+reads the console through UI Automation only from the formatted level
+up (`UIAHandler/utils.py` 337 to 347; `config/configSpec.py` 304);
+Verbatim has no such setting, so it has no such bound. A key with no effect by then has one final read,
 and a read showing no effect is the bound answer: the line after Up and
 Down Arrow, the page keys and Control with Home or End; the character
 after Left and Right Arrow, Home and End, "blank" where there is none;
@@ -740,10 +744,14 @@ of its character, word, paragraph or line (a page key's unit is the
 line), read in the watch's program with the unit; a paragraph leaves out
 spelling and grammar errors, as NVDA does for speed (`speech/speech.py`
 1595 to 1597) (mockapp's
-`a_focus_line_and_a_keys_unit_are_said_with_their_formatting`). Not yet
-matched, for Dickson to rule: a classic edit control's text, the only
-text moved by sentence, is read with no formatting, where NVDA's
-`EditTextInfo` reports the window's font.
+`a_focus_line_and_a_keys_unit_are_said_with_their_formatting`). A
+plain edit control (edit API version 0: the Win32 and Windows Forms
+text box) is read with no formatting, matched: NVDA's `EditTextInfo`
+gives it only the line number, and only with "report line number" on,
+off by default (`NVDAObjects/window/edit.py` 321 to 329;
+`textInfos/offsets.py` 421 to 434). Not yet matched: a rich edit
+control's formatting, links among it, which NVDA reads through the text
+object model and Verbatim, reading it by window messages, does not.
 
 ### The role-shaped behavior layer
 

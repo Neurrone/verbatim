@@ -90,8 +90,17 @@ NVDA: in-process reports; UIA textEdit
 events where applicable. Verbatim: **matched (unverified)**, implemented
 in Core: "Speak typed characters" (only in edit controls, by default)
 and "Speak typed words" (off), each off, only in edit controls, or
-always, toggled by Verbatim+2 and Verbatim+3; a word is spoken when a
-character that is not a letter, mark, or number by its general category
+always, toggled by Verbatim+2 and Verbatim+3. "Only in edit controls"
+means an edit field, document or terminal that is not read-only, as
+NVDA's `isFocusEditable` excludes a read-only focus of every role
+(`nvda/source/speech/speech.py` 1436 to 1446): NVDA echoes nothing of
+"ab" typed into the read-only Location field of a file's Properties
+(captured 2026-11-19), which `read_only_field_typing` types into its
+stand-in. Limitation: NVDA also counts any object with the editable
+state, which IAccessible2, MSHTML and Java Access Bridge objects carry;
+Verbatim's model has no editable state until those backends arrive (M7
+and later). A word is spoken when a character that is not a letter,
+mark, or number by its general category
 ends it, before that character, so a virama or
 a Thai tone mark continues the word, as in NVDA. The word typed so far
 is forgotten when a key of the caret table that does not select is

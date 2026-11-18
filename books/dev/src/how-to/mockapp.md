@@ -314,6 +314,9 @@ parses them.
 - `window-focus` gives the host window the keyboard focus within its
   thread (`SetFocus`), so it is its thread's focus window, and is
   rejected if the window did not take it.
+- `edit-focus` (MSAA only) gives the window's edit control the keyboard
+  focus (`SetFocus`), whose focus event the system raises, as UI
+  Automation's `SetFocus` focuses a field that is no tab stop.
 - `hold` makes the next provider call, whichever client makes it, print
   `held <method>` as it begins and wait until `release`, so a test knows a
   client's call is in progress and decides when it ends.
