@@ -105,13 +105,9 @@ Public API:
   the build design): told and not yet asked about, in read, read and not
   yet named, and named as the readers' last focus by a focus request
   (`focus_request`); `with_runtime_id` lists those the check thread reads
-  the keyboard focus of: the elements Core read, one in read included,
-  since an element in read keeps a reference for the check beside the
-  reading thread's own, and the readers' last focus may be the element
-  Core is reading; an element only told is never the readers' last focus
-  and is not read, so the reads stay a few however many elements with the
-  runtime id are told and never asked about, as in a window read through
-  MSAA; `sweep`
+  the keyboard focus of, one in read included, since an element in read
+  keeps a reference for the check beside the reading thread's own, and
+  the readers' last focus may be the element Core is reading; `sweep`
   lets go of told elements past `KEPT_FOR_US` (60 seconds) or beyond the
   newest `KEPT_PER_APPLICATION` (64); `ended` lets go of every kept
   reference, and a read in flight releases its own as it ends. Every

@@ -126,26 +126,16 @@ impl<E> KeptElements<E> {
         );
     }
 
-    /// Every kept element with `runtime_id` that Core read, with its
-    /// token, oldest first, for the check thread to read: the readers'
-    /// last focus is always one of these, a focus read's element (in read,
-    /// read and not yet named, or named), as NVDA's duplicate test reads
-    /// its last queued focus's element alone (`UIAHandler/__init__.py` 901
-    /// to 923). An element only told was never read, so it is never the
-    /// readers' last focus, and is not read: elements Core never asks
-    /// about, as in a window read through MSAA, would otherwise pile up and
-    /// each be read at every later focus with their runtime id. So the
-    /// reads are at most the few elements Core is reading or holds, never
-    /// growing with the elements told.
+    /// Every kept element with `runtime_id`, with its token, oldest
+    /// first, for the check thread to read: one in read included, since
+    /// the readers' last focus may be the element Core is reading.
     pub fn with_runtime_id<'a>(
         &'a self,
         runtime_id: &'a RuntimeId,
     ) -> impl Iterator<Item = (ElementToken, &'a E)> + 'a {
         self.kept
             .iter()
-            .filter(move |(_, kept)| {
-                kept.runtime_id() == runtime_id && !matches!(kept, Kept::Told { .. })
-            })
+            .filter(move |(_, kept)| kept.runtime_id() == runtime_id)
             .map(|(token, kept)| (*token, kept.element()))
     }
 
@@ -376,12 +366,12 @@ mod tests {
         assert_eq!(kept.start_read(ElementToken(3)), Start::Read(3));
     }
 
-    /// The check thread reads the kept elements with the event's runtime
-    /// id that Core read, one in read included: the readers' last focus may
-    /// be the element Core is reading as a later event with its runtime id
-    /// is checked. An element only told is not read.
+    /// The check thread reads every kept element with the event's runtime
+    /// id, one in read included: the readers' last focus may be the
+    /// element Core is reading as a later event with its runtime id is
+    /// checked.
     #[test]
-    fn the_check_reads_the_read_kept_elements_with_the_runtime_id_and_none_only_told() {
+    fn the_check_reads_every_kept_element_with_the_runtime_id_one_in_read_included() {
         let mut kept = KeptElements::default();
         for token in 1..=4 {
             kept.keep(ElementToken(token), token, rid(7), token);
@@ -394,29 +384,15 @@ mod tests {
             .with_runtime_id(&rid(7))
             .map(|(token, element)| (token, *element))
             .collect();
-        assert_eq!(found, [(ElementToken(2), 2), (ElementToken(3), 3)]);
-    }
-
-    /// Returning to the same element again and again, each focus told and
-    /// never asked about, as in a window read through MSAA, keeps the
-    /// check's reads constant: the one element Core named, however many
-    /// were told (the latency measurement of 2026-11-18 found one more
-    /// read per return).
-    #[test]
-    fn many_returns_to_one_element_leave_one_read_for_the_check() {
-        let mut kept = KeptElements::default();
-        kept.keep(ElementToken(1), 1, rid(7), 1);
-        let _ = kept.start_read(ElementToken(1));
-        let _ = kept.read_ended(ElementToken(1), 1, true);
-        let _ = kept.focus_request(Some(ElementToken(1)));
-        for token in 2..=60 {
-            kept.keep(ElementToken(token), token, rid(7), token);
-            assert_eq!(
-                kept.with_runtime_id(&rid(7)).count(),
-                1,
-                "after return {token}"
-            );
-        }
+        assert_eq!(
+            found,
+            [
+                (ElementToken(1), 1),
+                (ElementToken(2), 2),
+                (ElementToken(3), 3),
+                (ElementToken(4), 4)
+            ]
+        );
     }
 
     /// The sweep releases told elements past a minute and beyond the

@@ -378,12 +378,17 @@ fact").
   element it keeps with the event's runtime id, and sends the tell. Core
   drops the focus by the window's verdict, asking nothing
   (`a_focus_in_a_window_with_no_uia_provider_is_dropped_by_its_probe`).
-  - Calls: 1, plus each element kept with that runtime id that Core
-    read, whatever was only told (ce3305a1).
+  - Calls: 1, plus one for each element kept with that runtime id, read
+    or only told, up to the 64 an application keeps
+    (`KEPT_PER_APPLICATION`). Elements only told must be read, because
+    Core may still read them after the check: leaving them out (ce3305a1,
+    reverted) spoke a second focus on one element twice.
   - Measured 2026-11-18, release, `measure_focus_text_box` (two Windows
-    Forms text boxes): 1 call per focus, over 132 focuses. The check took
-    P50 1.6 to 2.2 ms. Before the change, the count grew from 1 to 22 over
-    20 returns, at about 0.3 ms per call.
+    Forms text boxes): the count grew from 1 to 22 over 20 returns, at
+    about 0.3 ms per call, since Core never asks about the told elements
+    of a window read through MSAA. The growth is bounded by the 64 kept;
+    ending it needs those elements let go when Core decides against
+    them, an open item.
   - Speech is not delayed, since Core speaks the MSAA focus. The
     application's later UI Automation events wait behind the check.
   - NVDA makes none of these keyboard-focus calls for a non-native

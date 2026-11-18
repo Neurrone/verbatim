@@ -64,11 +64,8 @@ duplicate.
   runtime ids are equal, and the earlier element still has the keyboard
   focus. The listener keeps the element it read for each focus Core
   executes, and the check thread, at the new focus's delivery, reads the
-  keyboard focus of each element with the event's runtime id that it
-  keeps from a read of Core's, the readers' last focus always among them,
-  as NVDA reads its last queued focus's element alone; an element only
-  told, never read, is not read, so the reads do not grow with the
-  elements told; in NVDA's order after the walk and the probe
+  keyboard focus of each element it keeps with the event's runtime id,
+  in NVDA's order after the walk and the probe
   (`UIAHandler/__init__.py` 902 to 923); Core uses the answer carried for
   the element that is the readers' last focus, with no read of its own. A
   failed read, or a last focus the listener no longer holds (after a
