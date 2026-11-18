@@ -171,6 +171,15 @@ impl Tells {
         self.apply(&state, placed);
     }
 
+    /// Sends a UI Automation tell `held` at once, past any pending
+    /// foreground, which keeps what it holds (change B: the hold holds
+    /// MSAA events only, Dickson, 2026-11-17).
+    pub(super) fn pass_hold(&self, held: Held) {
+        let state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        let placed = state.hold.passing(held);
+        self.apply(&state, placed);
+    }
+
     /// Places a foreground event's tell for `window`, `None` for one a
     /// local drop took, which still awaits its window, `front` the window
     /// in front as the callback read it.

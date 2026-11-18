@@ -25,10 +25,12 @@
 //!   item, a `ListViewItem` list item, its raw-view parent's automation
 //!   id, which NVDA's File Explorer module reads as it chooses the item's
 //!   class (`appModules/explorer.py` 303 to 311), one call made for that
-//!   class alone. A walk that finds no window,
-//!   or a window the class lists, the probe or the probe record find read
-//!   through MSAA, ends the check, as NVDA's native-element test then
-//!   returns false and its handler returns (887 to 899);
+//!   class alone. A walk that finds no window ends the check. A window the
+//!   class lists, the probe or the probe record find read through MSAA
+//!   does not: Core's backend cache is the one owner of a window's
+//!   verdict and judges NVDA's native-element test (887 to 899), so the
+//!   check makes the keyboard-focus reads whatever it found and carries
+//!   any probe it made;
 //! - an element selected, a window opened and a property change, NVDA's
 //!   automation-event and property-change handlers: the walk and the probe
 //!   of its native-element test (819 to 824);
@@ -36,9 +38,10 @@
 //!   that fails telling no window, as it finds none (1063 onward,
 //!   1114 to 1119).
 //!
-//! The probe record keeps each probe's answer with when it began, so a
-//! window the record finds read through MSAA ends the check as the probe
-//! would.
+//! The probe record keeps each probe's answer with when it began, only to
+//! skip repeating a probe call within half a second: a guess that can only
+//! cost calls, since Core recorded the same probe from the earlier tell at
+//! its arrival, so Core never lacks a verdict the record had.
 
 use std::collections::BTreeMap;
 
@@ -170,12 +173,12 @@ enum Probing {
     /// probe made.
     Uia,
     /// Read through MSAA, by NVDA's lists or the record, with no probe
-    /// made: the check ends.
+    /// made.
     Msaa,
     /// The probe is to be made.
     Due,
     /// Made, with its answer: a provider reads the window through UI
-    /// Automation, none through MSAA, which ends the check.
+    /// Automation, none through MSAA.
     Made(Probe),
 }
 
@@ -253,15 +256,12 @@ impl Check {
                 None => return Some(Call::Probe(window)),
             }
         }
-        let native = match self.probing {
-            None => return Some(Call::Classes(window)),
-            Some(Probing::Uia) => true,
-            Some(Probing::Made(probe)) => probe.provider,
-            Some(Probing::Msaa | Probing::Due) => false,
-        };
-        // A window read through MSAA fails NVDA's native-element test, and
-        // its handler returns before any other call.
-        if self.handler != Handler::Focus || !native {
+        if self.probing.is_none() {
+            return Some(Call::Classes(window));
+        }
+        // Only the focus handler reads more. Whatever the verdict found, it
+        // goes on: Core judges the native-element test.
+        if self.handler != Handler::Focus {
             return None;
         }
         if let Some(&token) = self.kept.get(self.kept_answers.len()) {
@@ -562,12 +562,13 @@ mod tests {
         }
     }
 
-    /// A window on one of NVDA's lists is not probed: on the UI Automation
-    /// list the focus's checks go on, and on the MSAA list the check ends
-    /// there, as NVDA's handler returns.
+    /// A window on one of NVDA's lists is not probed, and the focus's
+    /// checks go on whichever list it is on: Core's backend cache judges
+    /// the native-element test, so the check makes the keyboard-focus
+    /// reads in a window read through MSAA too.
     #[test]
-    fn a_window_on_a_list_is_not_probed_and_the_msaa_list_ends_the_check() {
-        for (verdict, goes_on) in [(ClassVerdict::Uia, true), (ClassVerdict::NonUia, false)] {
+    fn a_window_on_a_list_is_not_probed_and_the_checks_go_on() {
+        for verdict in [ClassVerdict::Uia, ClassVerdict::NonUia] {
             let check = Check::new(EventKind::UiaFocus, true, vec![ElementToken(2)]);
             let (calls, _, checked, _) =
                 run(check, &mut ProbeRecord::default(), 0, |call| match call {
@@ -575,24 +576,27 @@ mod tests {
                     Call::Classes(_) => Answer::Class(verdict),
                     _ => Answer::Focus(Read::Answered(true)),
                 });
-            let mut expected = vec![Call::NearestWindow, Call::Classes(5)];
-            if goes_on {
-                expected.extend([
+            assert_eq!(
+                calls,
+                [
+                    Call::NearestWindow,
+                    Call::Classes(5),
                     Call::KeptFocus(ElementToken(2)),
                     Call::PreviousSibling,
                     Call::KeyboardFocus,
-                ]);
-            }
-            assert_eq!(calls, expected, "{verdict:?}");
+                ],
+                "{verdict:?}"
+            );
             assert_eq!(checked.probe, None);
         }
     }
 
-    /// A probe that finds no provider ends a focus's check before the kept
-    /// elements' and its own keyboard focus, and so does the record of such
-    /// a probe within half a second.
+    /// A probe that finds no provider is carried, and the focus's checks go
+    /// on to the kept elements' and its own keyboard focus; the record of
+    /// that probe within half a second only spares the next check the
+    /// probe call, as Core recorded the probe from the earlier tell.
     #[test]
-    fn a_window_the_probe_finds_read_through_msaa_ends_the_check() {
+    fn a_window_the_probe_finds_read_through_msaa_still_has_its_keyboard_focus_read() {
         let mut record = ProbeRecord::default();
         let checked = |record: &mut ProbeRecord, now_us| {
             let check = Check::new(EventKind::UiaFocus, false, vec![ElementToken(4)]);
@@ -600,13 +604,19 @@ mod tests {
                 Call::NearestWindow => Answer::Nearest(Read::Answered(Some(5))),
                 Call::Classes(_) => Answer::Class(ClassVerdict::Unknown),
                 Call::Probe(_) => Answer::Provider(false),
-                _ => Answer::Focus(Read::Answered(true)),
+                _ => Answer::Focus(Read::Answered(false)),
             })
         };
         let (calls, _, told, _) = checked(&mut record, 1_000);
         assert_eq!(
             calls,
-            [Call::NearestWindow, Call::Classes(5), Call::Probe(5)]
+            [
+                Call::NearestWindow,
+                Call::Classes(5),
+                Call::Probe(5),
+                Call::KeptFocus(ElementToken(4)),
+                Call::KeyboardFocus,
+            ]
         );
         assert_eq!(
             told,
@@ -617,19 +627,27 @@ mod tests {
                     provider: false,
                     began_us: 1_000,
                 }),
-                keyboard_focus: None,
-                kept: Vec::new(),
+                keyboard_focus: Some(Read::Answered(false)),
+                kept: vec![(ElementToken(4), Read::Answered(false))],
                 previous_sibling: None,
             }
         );
         let (calls, _, told, _) = checked(&mut record, 2_000);
-        assert_eq!(calls, [Call::NearestWindow, Call::Classes(5)]);
+        assert_eq!(
+            calls,
+            [
+                Call::NearestWindow,
+                Call::Classes(5),
+                Call::KeptFocus(ElementToken(4)),
+                Call::KeyboardFocus,
+            ]
+        );
         assert_eq!(
             told,
             Checked {
                 probe: None,
-                keyboard_focus: None,
-                kept: Vec::new(),
+                keyboard_focus: Some(Read::Answered(false)),
+                kept: vec![(ElementToken(4), Read::Answered(false))],
                 previous_sibling: None,
             }
         );

@@ -469,7 +469,7 @@ impl Checks {
                 window: told.window,
                 checked: Some(told.checked),
             };
-            self.tells().place(Held::Tell(Box::new(tell)));
+            self.tells().pass_hold(Held::Tell(Box::new(tell)));
         } else {
             unplaced = Some(event.element);
         }

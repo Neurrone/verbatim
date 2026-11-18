@@ -2416,7 +2416,12 @@ mod tests {
             (probe.window, probe.thread, probe.provider),
             (desktop, desktop_thread, false)
         );
-        assert_eq!(checked.keyboard_focus, None);
+        // A window the probe finds read through MSAA still has its
+        // keyboard-focus reads made: Core judges the verdict.
+        assert_eq!(
+            checked.keyboard_focus,
+            Some(verbatim_model::tell::Read::Answered(false))
+        );
         assert_eq!(checked.kept, Vec::new());
         assert_eq!(checked.previous_sibling, None);
         assert_eq!(
@@ -2430,8 +2435,8 @@ mod tests {
             second.checked,
             Some(verbatim_model::tell::Checked {
                 probe: None,
-                keyboard_focus: None,
-                kept: Vec::new(),
+                keyboard_focus: Some(verbatim_model::tell::Read::Answered(false)),
+                kept: vec![(ElementToken(1), verbatim_model::tell::Read::Answered(false))],
                 previous_sibling: None,
             })
         );

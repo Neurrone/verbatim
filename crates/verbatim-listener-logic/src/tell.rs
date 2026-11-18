@@ -3,9 +3,9 @@
 //! `docs/design/readers-tell-core-asks-build1.md`, "Readers' local drops"
 //! and "The listener in this build"): NVDA's local drops that cannot hang,
 //! the window a tell names, and the foreground hold, which keeps every
-//! tell behind a foreground event until `GetForegroundWindow` names its
-//! window or 20 ms pass. Each is pure over the reads the listener makes,
-//! so every case is a test here.
+//! MSAA tell behind a foreground event until `GetForegroundWindow` names
+//! its window or 20 ms pass; a UI Automation tell is never held. Each is
+//! pure over the reads the listener makes, so every case is a test here.
 
 use verbatim_model::event_kind::EventKind;
 
@@ -109,8 +109,10 @@ pub fn dropped_by_class(kind: EventKind, class: &str, object: i32) -> Option<&'s
 /// counts its time again, as NVDA sets the deferred window and resets its
 /// count at each foreground event
 /// (`IAccessibleHandler/internalWinEventHandler.py` 175 to 177, 233 to
-/// 263). Every item goes through it, so the listener's order of tells is
-/// the order they were placed in.
+/// 263). Every MSAA item goes through it, so the order of those tells is
+/// the order they were placed in; a UI Automation tell passes it by
+/// ([`ForegroundHold::passing`]), as NVDA's hold defers its `WinEvent`
+/// pump alone, and is sent at once (Dickson, 2026-11-17).
 #[derive(Debug)]
 pub struct ForegroundHold<T> {
     hold: Option<Hold<T>>,
@@ -188,6 +190,17 @@ impl<T> ForegroundHold<T> {
         Placed {
             send: Vec::new(),
             timer: TimerChange::Arm(FOREGROUND_HOLD_US),
+        }
+    }
+
+    /// A UI Automation tell `item`: sent at once, never held, whatever the
+    /// hold keeps. Its foreground facts are read as it is sent, so a focus
+    /// raised while Windows still names the old window is judged against
+    /// that window, as NVDA judges a UI Automation event at its delivery.
+    pub fn passing(&self, item: T) -> Placed<T> {
+        Placed {
+            send: vec![item],
+            timer: TimerChange::Keep,
         }
     }
 
@@ -465,6 +478,27 @@ mod tests {
                 send: vec!["first", "change", "second"],
                 timer: TimerChange::Disarm
             }
+        );
+    }
+
+    /// A UI Automation focus placed while an MSAA foreground is held is
+    /// sent at once, ahead of the held foreground, which still awaits its
+    /// window (change B).
+    #[test]
+    fn a_uia_tell_passes_a_held_foreground_and_is_sent_at_once() {
+        let mut hold = ForegroundHold::default();
+        hold.foreground(1, Some("foreground"), 2, 0);
+        assert_eq!(
+            hold.passing("uia focus"),
+            Placed {
+                send: vec!["uia focus"],
+                timer: TimerChange::Keep
+            }
+        );
+        assert!(hold.holding());
+        assert_eq!(
+            hold.place("msaa focus", 1, 5_000).send,
+            ["foreground", "msaa focus"]
         );
     }
 
