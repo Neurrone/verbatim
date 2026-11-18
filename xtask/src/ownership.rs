@@ -757,11 +757,12 @@ const DETERMINISM_ENTRIES: [&str; 122] = [
 /// the replay fixtures' tests, which read their files; the mint's own test;
 /// the conformance corpus's reader and its test; and each generated test's
 /// exploration test, which reads its seed and case count.
-const EXPECT_EXCEPTIONS: [&str; 10] = [
+const EXPECT_EXCEPTIONS: [&str; 11] = [
     "crates/verbatim-text/tests/terminal_cost.rs",
     "crates/verbatim-core/tests/terminal_cost.rs",
     "crates/verbatim-core/tests/replay_fixture.rs",
     "crates/verbatim-core/tests/replay_validity.rs",
+    "crates/verbatim-core/tests/replay_announcements.rs",
     "crates/verbatim-model/src/lib.rs",
     "crates/verbatim-term-sim/src/conformance.rs",
     "crates/verbatim-term-sim/tests/conformance.rs",
@@ -772,11 +773,12 @@ const EXPECT_EXCEPTIONS: [&str; 10] = [
 
 /// The files the rule of whole modules excepts: the exceptions above but
 /// the mint's test, which names no module.
-const MODULE_EXCEPTIONS: [&str; 9] = [
+const MODULE_EXCEPTIONS: [&str; 10] = [
     "crates/verbatim-text/tests/terminal_cost.rs",
     "crates/verbatim-core/tests/terminal_cost.rs",
     "crates/verbatim-core/tests/replay_fixture.rs",
     "crates/verbatim-core/tests/replay_validity.rs",
+    "crates/verbatim-core/tests/replay_announcements.rs",
     "crates/verbatim-term-sim/src/conformance.rs",
     "crates/verbatim-term-sim/tests/conformance.rs",
     "crates/verbatim-reader-rules/src/in_flight/tests/explore.rs",

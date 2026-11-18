@@ -143,7 +143,7 @@ fn a_shapes_properties_are_its_fields_union_without_repeats() {
     for (shape, properties, expected) in [
         ("Kept", Kept::PROPERTIES, 2),
         ("TextEvent", TextEvent::PROPERTIES, 3),
-        ("PropertyEvent", PropertyEvent::PROPERTIES, 24),
+        ("PropertyEvent", PropertyEvent::PROPERTIES, 25),
         ("ListenerEvent", ListenerEvent::PROPERTIES, 15),
         ("ListenerProgress", ListenerProgress::PROPERTIES, 18),
         // A node's, without its place, with the rest of the listener's.
