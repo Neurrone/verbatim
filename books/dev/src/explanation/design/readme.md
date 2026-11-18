@@ -6,6 +6,7 @@ Records of work still being designed or built are kept in the repository and are
 
 - [Ownership](ownership.md) — one owner for every fact, the rules every component follows, and the five builds that applied them: the one judge, input, messages, output, and the outpost store and reducer.
 - [How focus works](focus.md) — how a focus change travels from an application to speech, with its decisions in [ADR 0001](../../reference/adr/0001-focus.md).
+- [Focus validity](focus-validity.md) — how every focus candidate, MSAA and UI Automation, is judged by one definition in Core, at its turn and while a caret key waits, with its decisions in [ADR 0004](../../reference/adr/0004-focus-validity.md).
 - [The listener without connections](listener-without-connections.md) — why only an application's own outpost connects to it.
 - [UIA shapes](uia-shapes.md) — every cached UIA read declared with its request.
 - [Wake-ups](wake-ups.md) — the sources of Verbatim's wake-ups and the reason for each fix.

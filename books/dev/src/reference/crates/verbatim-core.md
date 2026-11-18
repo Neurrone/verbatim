@@ -726,12 +726,12 @@ only, so a UI Automation answer of the focus Core holds is spoken again.
 `focus/validity.rs` is the one place a focus candidate is judged: a
 focus-kind tell (an MSAA focus, foreground or menu start, a UI
 Automation focus or menu opening), the menu check's read, or a recovered
-read (`Subject`). `judge(subject, view, facts, purpose)` runs its rows in
+read (`Subject`). `judge(subject, view, facts)` runs its rows in
 order against Core's facts now (`View`: the two versions of the focus,
 the foreground record, the backend cache, and whether the run before a
 menu start executed a valid focus) and what an outpost read of it, if
-anything (`CandidateFacts`), for its own turn or for whether it is
-pending (`Purpose`), and answers `Validity`: valid (read in full, or the
+anything (`CandidateFacts`), the same rows for its own turn and for
+whether it is pending, and answers `Validity`: valid (read in full, or the
 committed focus executed again), a duplicate (valid, nothing read or
 said, ending a run), refused with a `Reason`, or needing a read (`Need`:
 the focused state or a menu start's role). Its rows take the facts as

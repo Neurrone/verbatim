@@ -658,6 +658,11 @@ tooltip and notification-bar classes, configured progress bars and toast
 alerts are accepted from anywhere as background. Background events never
 move focus or the navigator and are spoken at Queued priority.
 
+Whether a focus candidate is valid, at its turn and while something
+waits behind it, is judged by one definition in Core, with the readers
+reporting only facts and a caret key confirming a stale MSAA focus with a
+read ([ADR 0004](../reference/adr/0004-focus-validity.md)).
+
 ### Where the rules run (D14)
 
 Every rule that decides what is spoken is Core's, written from the
