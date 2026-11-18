@@ -37,6 +37,20 @@
 //!   field, after the new focus; no settle: the next key reads at its turn;
 //!   the outpost runs one read at a time, and a read no longer wanted is
 //!   left to finish (ADR 0003, "A frozen window").
+//! - Dickson's decision of 2026-11-18 (the focus validity design, "The
+//!   caret key"), after NVDA's caret wait, which pumps events at each try,
+//!   its pump reading each MSAA focus's object and queuing it only when
+//!   focused (`nvda/source/editableText.py` 93 to 99;
+//!   `IAccessibleHandler/__init__.py` 762 to 782;
+//!   `NVDAObjects/IAccessible/__init__.py` 874 to 892): an MSAA focus not
+//!   yet read is not pending. It does not stop a key's read before it;
+//!   at the key's pass, or told while the key watches, it is confirmed by
+//!   one outpost read of its focused state, the watch stopped meanwhile.
+//!   Focused, it is pending, and is read in full at its own turn; refused,
+//!   the key watches on for the rest of its bound, checking at once, and
+//!   the focus's turn says nothing. A UI Automation focus is pending when
+//!   told. A later key withdraws the confirmation, leaving the focus
+//!   unread.
 //!
 //! - NVDA's caret wait read from its source, as the coordinator gave it
 //!   (`nvda/source/editableText.py`, `_hasCaretMoved`, 70 to 163): a
@@ -113,8 +127,25 @@ enum Front {
         before: App,
         events: bool,
     },
+    /// Key `0`, sent at `pass` with its field as `before`, waits on the
+    /// confirmation of the MSAA focus told.
+    Confirming { key: usize, pass: Us, before: App },
     /// The focus is being read.
     Focusing,
+}
+
+/// The focus told, until its turn ends it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Told {
+    /// None waits.
+    None,
+    /// An MSAA focus not yet read: not pending.
+    Unread,
+    /// A focus that counts as pending: a UI Automation focus, or an MSAA
+    /// focus confirmed focused.
+    Pending,
+    /// An MSAA focus whose confirmation found it not focused.
+    Refused,
 }
 
 /// A read the outpost's worker runs, one at a time in the order asked.
@@ -124,6 +155,8 @@ enum Work {
     Read(usize),
     /// The focus's read, or its completion.
     Focus,
+    /// The read of an MSAA focus's focused state, for a caret key.
+    Confirm,
 }
 
 /// Something that happens at a time.
@@ -160,8 +193,8 @@ pub struct Model<'s> {
     field_focused: bool,
     /// Whether Core's committed focus is the field.
     field_committed: bool,
-    /// Whether a focus tell waits, counting as pending.
-    pending: bool,
+    /// The focus told and not yet taken.
+    told: Told,
     queue: VecDeque<Entry>,
     front: Front,
     /// Per key: held by the hook, sent to the application, marked by a
@@ -203,7 +236,7 @@ impl<'s> Model<'s> {
             input: Input::default(),
             field_focused: true,
             field_committed: true,
-            pending: false,
+            told: Told::None,
             queue: VecDeque::new(),
             front: Front::Idle,
             held: vec![false; keys],
@@ -332,6 +365,12 @@ impl<'s> Model<'s> {
                 self.marked[ahead] = true;
                 self.end();
             }
+            Front::Confirming { key: ahead, .. } => {
+                // A later key withdraws the confirmation, the focus unread.
+                self.marked[ahead] = true;
+                self.withdraw(Work::Confirm);
+                self.end();
+            }
             Front::Idle | Front::Focusing => {}
         }
         self.held[key] = self.field_committed;
@@ -364,8 +403,21 @@ impl<'s> Model<'s> {
     /// silently, Backspace saying what it deleted first; a key reading
     /// before it is sent stops reading and is sent, but Backspace reads on.
     fn focus_told(&mut self) {
-        self.pending = true;
         self.queue.push_back(Entry::Focus);
+        if self.script.kind == Kind::TextBox {
+            // An MSAA focus: unread, so a key's read before it reads on and
+            // a watch is stopped for its confirmation. Every focus told
+            // during a key's wait was raised before its bound.
+            self.told = Told::Unread;
+            if let Front::Watching {
+                key, pass, before, ..
+            } = self.front.clone()
+            {
+                self.confirm(key, pass, before);
+            }
+            return;
+        }
+        self.told = Told::Pending;
         match self.front.clone() {
             Front::Reading(key) if self.press(key).key != Key::Backspace => {
                 self.withdraw(Work::Read(key));
@@ -378,7 +430,48 @@ impl<'s> Model<'s> {
                 }
                 self.end();
             }
-            Front::Idle | Front::Reading(_) | Front::Focusing => {}
+            Front::Idle | Front::Reading(_) | Front::Confirming { .. } | Front::Focusing => {}
+        }
+    }
+
+    /// Key `key`, sent at `pass`, stops its watch while the outpost reads
+    /// the MSAA focus's focused state.
+    fn confirm(&mut self, key: usize, pass: Us, before: App) {
+        self.end();
+        self.front = Front::Confirming { key, pass, before };
+        self.ask(Work::Confirm);
+    }
+
+    /// The confirmation answers: focused, the focus is pending and the key
+    /// ends silently, Backspace saying what it deleted; refused, the key
+    /// watches the rest of its bound, checking at once.
+    fn confirmed(&mut self) {
+        let Front::Confirming { key, pass, before } = self.front.clone() else {
+            unreachable!("a confirmation no longer wanted is withdrawn");
+        };
+        // The application's focus is on the button once it moved there.
+        if !self.field_focused {
+            self.told = Told::Pending;
+            if self.press(key).key == Key::Backspace {
+                self.say(deleted(&before));
+            }
+            self.end();
+            return;
+        }
+        self.told = Told::Refused;
+        self.front = Front::Watching {
+            key,
+            pass,
+            before,
+            events: self.trusts_events(),
+        };
+        self.at(self.now, Event::Check(pass));
+        let mut check = pass;
+        while check <= pass + BOUND {
+            if check > self.now {
+                self.at(check, Event::Check(pass));
+            }
+            check += POLL;
         }
     }
 
@@ -391,13 +484,17 @@ impl<'s> Model<'s> {
         if self.marked[key] {
             return;
         }
-        if self.pending {
+        if self.told == Told::Pending {
             if self.press(key).key == Key::Backspace {
                 self.say(deleted(&before));
             }
             return;
         }
         let pass = self.now;
+        if self.told == Told::Unread {
+            self.confirm(key, pass, before);
+            return;
+        }
         self.front = Front::Watching {
             key,
             pass,
@@ -488,6 +585,11 @@ impl<'s> Model<'s> {
                 return;
             };
             match entry {
+                Entry::Focus if self.told == Told::Refused => {
+                    // A refused confirmation serves the focus's turn,
+                    // which asks nothing and says nothing.
+                    self.told = Told::None;
+                }
                 Entry::Focus => {
                     // A UI Automation focus is read in two requests, the
                     // listener's then the outpost's; an MSAA focus in one,
@@ -510,7 +612,8 @@ impl<'s> Model<'s> {
         if !self.held[key] || self.released[key] {
             return;
         }
-        if self.marked[key] || (self.pending && self.press(key).key != Key::Backspace) {
+        if self.marked[key] || (self.told == Told::Pending && self.press(key).key != Key::Backspace)
+        {
             self.send(key);
             return;
         }
@@ -534,7 +637,9 @@ impl<'s> Model<'s> {
         };
         let takes = match work {
             Work::Read(key) => self.press(key).read_us,
-            Work::Focus => self.script.focus.expect("a focus told").completion_us,
+            // The world gives every outpost read of the button one
+            // latency.
+            Work::Focus | Work::Confirm => self.script.focus.expect("a focus told").completion_us,
         };
         self.running = Some((work, true));
         self.at(self.now + takes, Event::WorkerDone);
@@ -560,9 +665,10 @@ impl<'s> Model<'s> {
         }
         match work {
             Work::Read(key) => self.read_done(key),
+            Work::Confirm => self.confirmed(),
             Work::Focus => {
                 self.field_committed = false;
-                self.pending = false;
+                self.told = Told::None;
                 self.say(Heard::Focus("OK".to_owned()));
                 self.end();
             }
