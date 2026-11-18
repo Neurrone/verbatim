@@ -298,6 +298,9 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
         Command::ClientName(_) => {
             return Err("client-name is not supported on the uia backend".into());
         }
+        Command::StaleFocusOnLeft(_) => {
+            return Err("stale-focus-on-left is not supported on the uia backend".into());
+        }
         Command::FocusChild(..) => {
             return Err("focus-child is not supported on the uia backend".into());
         }

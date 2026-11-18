@@ -13,11 +13,13 @@ use std::cell::RefCell;
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::UI::Accessibility::NotifyWinEvent;
 use windows::Win32::UI::Controls::{EM_REPLACESEL, EM_SETSEL};
+use windows::Win32::UI::Input::KeyboardAndMouse::VK_LEFT;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CallWindowProcW, CreateWindowExW, ES_AUTOVSCROLL, ES_MULTILINE, EVENT_OBJECT_VALUECHANGE,
-    FindWindowExW, GWLP_WNDPROC, HMENU, InSendMessage, OBJID_CLIENT, SendMessageW,
-    SetWindowLongPtrW, WINDOW_EX_STYLE, WINDOW_STYLE, WM_GETTEXT, WM_GETTEXTLENGTH, WM_SETTEXT,
-    WNDPROC, WS_CHILD, WS_VISIBLE, WS_VSCROLL,
+    CallWindowProcW, CreateWindowExW, ES_AUTOVSCROLL, ES_MULTILINE, EVENT_OBJECT_FOCUS,
+    EVENT_OBJECT_VALUECHANGE, FindWindowExW, GWLP_WNDPROC, HMENU, InSendMessage, KillTimer,
+    OBJID_CLIENT, SendMessageW, SetTimer, SetWindowLongPtrW, WINDOW_EX_STYLE, WINDOW_STYLE,
+    WM_GETTEXT, WM_GETTEXTLENGTH, WM_KEYDOWN, WM_SETTEXT, WM_TIMER, WNDPROC, WS_CHILD, WS_VISIBLE,
+    WS_VSCROLL,
 };
 use windows::core::{PCWSTR, w};
 
@@ -28,7 +30,13 @@ thread_local! {
     /// The text [`write_on_read`] waits to type, as another thread next
     /// reads the control's text.
     static WRITE_ON_READ: RefCell<Option<String>> = const { RefCell::new(None) };
+    /// The stale focus [`stale_focus_on_left`] raises after each Left
+    /// Arrow: the window, its child id, and the delay in milliseconds.
+    static STALE_FOCUS: RefCell<Option<(isize, i32, u32)>> = const { RefCell::new(None) };
 }
+
+/// The timer that raises the stale focus.
+const STALE_FOCUS_TIMER: usize = 0x5743;
 
 /// The edit control's window class.
 const EDIT_CLASS: PCWSTR = w!("EDIT");
@@ -138,6 +146,22 @@ pub(crate) fn select(edit: HWND, start: usize, end: usize) {
 /// before it is on its way, the value change raised during that read.
 pub(crate) fn write_on_read(edit: HWND, text: &str) {
     WRITE_ON_READ.with_borrow_mut(|waiting| *waiting = Some(text.to_owned()));
+    watch_messages(edit);
+}
+
+/// Raises `EVENT_OBJECT_FOCUS` on child `child` of `window`, a control that
+/// does not have the focus, `delay_ms` after each Left Arrow the edit
+/// control receives (`stale-focus-on-left`): the stale focus of the Open
+/// dialog's folder tree, raised while the "File name" field has the focus
+/// (survey `np_open`), placed inside a caret key's watch.
+pub(crate) fn stale_focus_on_left(edit: HWND, (window, child): (HWND, i32), delay_ms: u32) {
+    STALE_FOCUS.with_borrow_mut(|stale| *stale = Some((window.0 as isize, child, delay_ms)));
+    watch_messages(edit);
+}
+
+/// Puts [`read_watching_proc`] in front of the edit control's own
+/// procedure, once.
+fn watch_messages(edit: HWND) {
     EDIT_PROC.with_borrow_mut(|original| {
         if original.is_none() {
             // SAFETY: `edit` is this thread's own control, and
@@ -150,20 +174,43 @@ pub(crate) fn write_on_read(edit: HWND, text: &str) {
     });
 }
 
-/// The edit control's window procedure once [`write_on_read`] is used:
-/// types the waiting text at a read sent from another thread, then passes
-/// every message on to the control's own procedure.
+/// The edit control's window procedure once [`write_on_read`] or
+/// [`stale_focus_on_left`] is used: types the waiting text at a read sent
+/// from another thread; at a Left Arrow sets the stale focus's timer, and
+/// at the timer raises it; then passes every message on to the control's
+/// own procedure.
 ///
 /// # Safety
 ///
 /// Installed only as the edit control's window procedure by
-/// [`write_on_read`].
+/// [`watch_messages`].
 unsafe extern "system" fn read_watching_proc(
     hwnd: HWND,
     msg: u32,
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
+    if let Some((window, child, delay_ms)) = STALE_FOCUS.with_borrow(|stale| *stale) {
+        if msg == WM_KEYDOWN && wparam.0 == usize::from(VK_LEFT.0) {
+            // SAFETY: `hwnd` is this thread's own control; the timer posts
+            // `WM_TIMER` to it.
+            unsafe { SetTimer(Some(hwnd), STALE_FOCUS_TIMER, delay_ms, None) };
+        } else if msg == WM_TIMER && wparam.0 == STALE_FOCUS_TIMER {
+            // SAFETY: the timer is this control's own.
+            let _ = unsafe { KillTimer(Some(hwnd), STALE_FOCUS_TIMER) };
+            // SAFETY: the event names a live window of this thread, which
+            // answers for its client.
+            unsafe {
+                NotifyWinEvent(
+                    EVENT_OBJECT_FOCUS,
+                    HWND(window as *mut _),
+                    OBJID_CLIENT.0,
+                    child,
+                );
+            }
+            return LRESULT(0);
+        }
+    }
     // The control's text and selection messages, `EM_GETSEL` to
     // `EM_GETIMESTATUS`, and its text.
     let is_read = matches!(msg, WM_GETTEXT | WM_GETTEXTLENGTH | 0x00B0..=0x00D9);

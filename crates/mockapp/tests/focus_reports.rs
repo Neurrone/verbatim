@@ -494,6 +494,98 @@ fn a_candidate_is_read_to_the_depth_core_asks() {
     app.quit();
 }
 
+/// The stand-in of `stale_focus_behind_a_caret_key`, checked against the
+/// Open dialog's recording (survey `np_open`): there the folder tree's
+/// stale focus is `EVENT_OBJECT_FOCUS` on a `SysTreeView32` window's client,
+/// an item's child id (16), raised while the "File name" edit has the
+/// focus, and NVDA refused it as not focused in every run. mockapp's edit,
+/// given the focus, raises after a Left Arrow the same event on its tree
+/// view's selected item, its edit keeping the focus, and the outpost finds
+/// the item without the focused state on it or any ancestor.
+fn the_stale_tree_focus_stand_in_matches_the_open_dialogs_recording() {
+    use verbatim_ia2::WinEventKind;
+    use verbatim_model::request::{CandidateFacts, CandidateKind, Depth};
+    use windows::Win32::Foundation::{LPARAM, WPARAM};
+    use windows::Win32::UI::Input::KeyboardAndMouse::VK_LEFT;
+    use windows::Win32::UI::WindowsAndMessaging::{FindWindowExW, PostMessageW, WM_KEYDOWN};
+    use windows::core::w;
+
+    let title = common::unique_title("mockapp-stale-tree");
+    let mut app = common::spawn("stale_tree.json", "msaa", &title);
+    let hwnd = common::find_window(&title);
+    common::apply(&mut app, hwnd, "stale-focus-on-left 10");
+    // SAFETY: local searches of mockapp's window's children by class.
+    let edit = unsafe { FindWindowExW(Some(hwnd), None, w!("EDIT"), None) }.expect("the edit");
+    // SAFETY: as above.
+    let tree = unsafe { FindWindowExW(Some(hwnd), None, w!("SysTreeView32"), None) }
+        .expect("the tree view");
+    assert_eq!(
+        thread_focus_window(hwnd),
+        Some(edit),
+        "the edit has the focus"
+    );
+    let events = common::core_driver::win_events(
+        app.pid(),
+        || {
+            // SAFETY: posts a key's message to mockapp's own edit control.
+            unsafe {
+                PostMessageW(
+                    Some(edit),
+                    WM_KEYDOWN,
+                    WPARAM(usize::from(VK_LEFT.0)),
+                    LPARAM(0),
+                )
+            }
+            .expect("posts the key");
+        },
+        &[WinEventKind::Focus],
+        1,
+    );
+    let [event] = &events[..] else {
+        unreachable!("one event awaited");
+    };
+    assert_eq!(
+        (
+            event.hwnd,
+            event.id_object,
+            verbatim_win32::window::window_class_name(event.hwnd)
+        ),
+        (
+            tree.0 as isize,
+            windows::Win32::UI::WindowsAndMessaging::OBJID_CLIENT.0,
+            "SysTreeView32".to_owned()
+        ),
+        "the tree's client, as the recording's"
+    );
+    assert!(event.id_child > 0, "an item's child id: {}", event.id_child);
+    assert_eq!(
+        thread_focus_window(hwnd),
+        Some(edit),
+        "the edit keeps the focus"
+    );
+    let outpost = OutpostUnderTest::new(&app);
+    let ids = MsaaIds {
+        window: WindowHandle(tree.0 as u64),
+        object: event.id_object,
+        child: event.id_child,
+    };
+    let (answer, _) = outpost.msaa_run((ids, CandidateKind::Focus), Depth::Facts);
+    assert!(
+        matches!(
+            &answer.facts,
+            CandidateFacts::Found {
+                focused: Some(false),
+                window_class,
+                ..
+            } if window_class == "SysTreeView32"
+        ),
+        "{:?}",
+        answer.facts
+    );
+    drop(outpost);
+    app.quit();
+}
+
 /// A focus that was not redirected says so, whatever address its node is
 /// kept at: a focus event on mockapp's window client, whose role is
 /// window, is read as the window's own object, kept under `OBJID_WINDOW`,
@@ -3474,6 +3566,10 @@ fn main() {
         (
             "a_candidate_is_read_to_the_depth_core_asks",
             a_candidate_is_read_to_the_depth_core_asks,
+        ),
+        (
+            "the_stale_tree_focus_stand_in_matches_the_open_dialogs_recording",
+            the_stale_tree_focus_stand_in_matches_the_open_dialogs_recording,
         ),
         (
             "a_focus_whose_element_lost_the_keyboard_focus_before_it_was_read_is_dropped",

@@ -26,13 +26,14 @@ use windows::Win32::UI::Accessibility::{
 use windows::Win32::UI::Controls::{
     HTREEITEM, ICC_TREEVIEW_CLASSES, INITCOMMONCONTROLSEX, InitCommonControlsEx,
     TREE_VIEW_ITEM_STATE_FLAGS, TVE_EXPAND, TVGN_CARET, TVI_LAST, TVI_ROOT, TVIF_STATE, TVIF_TEXT,
-    TVINSERTSTRUCTW, TVINSERTSTRUCTW_0, TVIS_STATEIMAGEMASK, TVITEMW, TVM_EXPAND, TVM_INSERTITEMW,
-    TVM_SELECTITEM, TVM_SETITEMW, TVS_HASBUTTONS, TVS_HASLINES, WC_TREEVIEWW,
+    TVINSERTSTRUCTW, TVINSERTSTRUCTW_0, TVIS_STATEIMAGEMASK, TVITEMW, TVM_EXPAND, TVM_GETNEXTITEM,
+    TVM_INSERTITEMW, TVM_MAPHTREEITEMTOACCID, TVM_SELECTITEM, TVM_SETITEMW, TVS_HASBUTTONS,
+    TVS_HASLINES, WC_TREEVIEWW,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CallWindowProcW, CreateWindowExW, GetClassInfoExW, HMENU, OBJID_CLIENT, RegisterClassExW,
-    SendMessageW, WINDOW_EX_STYLE, WINDOW_STYLE, WM_GETOBJECT, WNDCLASSEXW, WNDPROC, WS_CHILD,
-    WS_VISIBLE,
+    CallWindowProcW, CreateWindowExW, FindWindowExW, GetClassInfoExW, HMENU, OBJID_CLIENT,
+    RegisterClassExW, SendMessageW, WINDOW_EX_STYLE, WINDOW_STYLE, WM_GETOBJECT, WNDCLASSEXW,
+    WNDPROC, WS_CHILD, WS_VISIBLE,
 };
 use windows::core::{PCWSTR, PWSTR};
 use windows_core::Interface;
@@ -100,6 +101,23 @@ fn create_in_context(parent: HWND, node: &FixtureNode) -> windows::core::Result<
     }?;
     insert_items(tree, TVI_ROOT, &node.children, node.state_images);
     Ok(tree)
+}
+
+/// The tree view inside `parent`, if one was created, of comctl32's class.
+pub(crate) fn find(parent: HWND) -> Option<HWND> {
+    // SAFETY: a local search of `parent`'s children by class.
+    unsafe { FindWindowExW(Some(parent), None, WC_TREEVIEWW, PCWSTR::null()) }.ok()
+}
+
+/// The MSAA child id of `tree`'s selected item, the item its focus names
+/// (`TVM_GETNEXTITEM` with `TVGN_CARET`, `TVM_MAPHTREEITEMTOACCID`); 0, the
+/// tree itself, with no item selected.
+pub(crate) fn selected_child(tree: HWND) -> i32 {
+    let item = send(tree, TVM_GETNEXTITEM, TVGN_CARET as usize, 0);
+    if item == 0 {
+        return 0;
+    }
+    i32::try_from(send(tree, TVM_MAPHTREEITEMTOACCID, item.cast_unsigned(), 0)).unwrap_or(0)
 }
 
 /// Inserts `items` under `parent`, depth first, then expands and selects

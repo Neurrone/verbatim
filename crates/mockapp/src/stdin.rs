@@ -167,6 +167,13 @@ pub(crate) enum Command {
     /// as an application handles a typed character during a client's read
     /// of the caret event before it.
     WriteOnRead(String, String),
+    /// `stale-focus-on-left <delay ms>`: gives the window's edit control
+    /// the focus, then `delay ms` after each Left Arrow it receives, raises
+    /// `EVENT_OBJECT_FOCUS` on
+    /// the selected item of its tree view, which does not have the focus,
+    /// as the Open dialog's folder tree raises a stale focus while the
+    /// "File name" field has it (survey `np_open`). MSAA-only.
+    StaleFocusOnLeft(u32),
     /// `text-changed <id>`: raises UIA's text changed event from a text
     /// node, as a terminal reports that its text changed, or, in the MSAA
     /// backend, `EVENT_OBJECT_VALUECHANGE` from the edit control's client
@@ -716,6 +723,7 @@ pub(crate) fn parse_command(line: &str) -> Option<Command> {
             (!id.is_empty()).then(|| Command::SetText(id.to_owned(), unescape(text)))
         }
         "client-name" => Some(Command::ClientName(rest.to_owned())),
+        "stale-focus-on-left" => rest.trim().parse().ok().map(Command::StaleFocusOnLeft),
         "set-title" => Some(Command::SetTitle(rest.to_owned())),
         "client-identity" => Some(Command::ClientIdentity),
         "form-client" => Some(Command::FormClient),

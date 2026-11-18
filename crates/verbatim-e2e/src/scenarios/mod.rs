@@ -55,6 +55,7 @@ pub(crate) mod settings_search_suggestions_reentered;
 pub(crate) mod settings_system_page;
 pub(crate) mod speak_time_and_date;
 pub(crate) mod spelling_errors;
+pub(crate) mod stale_focus_behind_a_caret_key;
 pub(crate) mod switch_to_onecore;
 pub(crate) mod system_information_tree;
 pub(crate) mod table_cells;

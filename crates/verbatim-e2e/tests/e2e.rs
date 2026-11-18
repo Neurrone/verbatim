@@ -62,6 +62,7 @@ const LIVE: &[&str] = scenario_tests! {
     background_progress_bar
     background_progress_bar_off
     msaa_flood_then_focus
+    stale_focus_behind_a_caret_key
     controlled_list_selections
     table_cells
     alt_tab_switcher

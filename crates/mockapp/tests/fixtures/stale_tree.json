@@ -1,0 +1,22 @@
+{
+  "id": "root",
+  "role": "window",
+  "name": "Mockapp Stale Tree Fixture",
+  "children": [
+    {
+      "id": "file",
+      "role": "editable_text",
+      "states": ["focusable"],
+      "text": ""
+    },
+    {
+      "id": "folders",
+      "role": "tree",
+      "native": "tree_view",
+      "children": [
+        { "id": "pc", "role": "tree_item", "name": "This PC", "states": ["selected"] },
+        { "id": "network", "role": "tree_item", "name": "Network" }
+      ]
+    }
+  ]
+}

@@ -180,12 +180,12 @@ use crate::scenarios::{
     return_from_a_held_application, review_cursor, review_dead_object, review_words,
     second_application_and_verbatim_menu, selection_keys, settings_combo_box_expanded,
     settings_dialog_keys, settings_search_suggestions, settings_search_suggestions_reentered,
-    settings_system_page, speak_time_and_date, spelling_errors, switch_to_onecore,
-    system_information_tree, table_cells, terminal_commands, terminal_editing, terminal_flood,
-    terminal_key_timing, terminal_lists, terminal_overflow, terminal_pager, terminal_progress,
-    terminal_review_grid, terminal_review_stays, terminal_screens, terminal_settings_page,
-    terminal_status_bar, terminal_typing, terminal_windows, text_box_say_all, theme_panel, toast,
-    typed_words, verbatim_lifecycle, word_selection,
+    settings_system_page, speak_time_and_date, spelling_errors, stale_focus_behind_a_caret_key,
+    switch_to_onecore, system_information_tree, table_cells, terminal_commands, terminal_editing,
+    terminal_flood, terminal_key_timing, terminal_lists, terminal_overflow, terminal_pager,
+    terminal_progress, terminal_review_grid, terminal_review_stays, terminal_screens,
+    terminal_settings_page, terminal_status_bar, terminal_typing, terminal_windows,
+    text_box_say_all, theme_panel, toast, typed_words, verbatim_lifecycle, word_selection,
 };
 use crate::speech::{FailurePoint, SpeechFailure};
 
@@ -515,6 +515,19 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         setup: msaa_flood_then_focus::setup,
         body: msaa_flood_then_focus::body,
         teardown: msaa_flood_then_focus::teardown,
+    },
+    ScenarioDef {
+        name: "stale_focus_behind_a_caret_key",
+        group: Group::Speech,
+        settings: None,
+        local_only: false,
+        document: None,
+        comparable: Comparable::No(
+            "mockapp's stand-in places the stale focus inside the key's watch, which no capture can",
+        ),
+        setup: stale_focus_behind_a_caret_key::setup,
+        body: stale_focus_behind_a_caret_key::body,
+        teardown: stale_focus_behind_a_caret_key::teardown,
     },
     ScenarioDef {
         name: "foreground_progress_bar",
