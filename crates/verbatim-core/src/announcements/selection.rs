@@ -2,8 +2,14 @@
 //! (`NVDAObjects/UIA/__init__.py` 2508 to 2509 routing it to
 //! `event_selection`, `NVDAObjects/__init__.py` 1314 to 1340):
 //!
-//! - on the committed focus, it is the focus's state change, judged on the
-//!   states its tell carries, with no request;
+//! - on the committed focus or one of its kept ancestors, it is that
+//!   node's state change, judged on the states its tell carries, with no
+//!   request, and spoken only when its element was the committed focus as
+//!   its tell joined the queue, NVDA's focus when the event was delivered
+//!   (`docs/parity/changes-and-selection.md`, "State changes and the focus
+//!   line"); an ancestor's states are compared with those last spoken of
+//!   it, which an ancestor that was the previous focus keeps from its own
+//!   focus;
 //! - otherwise Core asks the listener to read the item and the item's
 //!   outpost to complete it, under one due time; the completion reads the
 //!   committed focus's controller-for relation live, as NVDA reads
@@ -38,13 +44,14 @@ use verbatim_model::{
 };
 
 use super::{Announcement, Kind, accepted, native, text};
+use crate::changes::AtArrival;
 use crate::entries::Entries;
 use crate::entries::window_facts;
 use crate::event_queue::{Cx, OTHER_DUE_US, Outcome, Reader, Request, RequestWindow};
 use crate::focus::FOCUS_SET;
 use crate::focus::execute::Known;
 use crate::focus::uia_focus::ListenerRead;
-use crate::focus::versions::{Kept as CommittedFocus, ReadBy};
+use crate::focus::versions::Kept as CommittedFocus;
 
 /// The item's outpost completing the listener's read of a selected item.
 #[derive(Debug)]
@@ -115,7 +122,7 @@ impl Request for NodeProperties {
 
 /// The function of a UI Automation selection entry.
 pub(crate) async fn run(mut cx: Cx<Entries>, announcement: Announcement) {
-    let Kind::UiaSelection(kept) = &announcement.kind else {
+    let Kind::UiaSelection(kept, at_arrival) = &announcement.kind else {
         return;
     };
     let tell = &announcement.tell;
@@ -139,37 +146,46 @@ pub(crate) async fn run(mut cx: Cx<Entries>, announcement: Announcement) {
     if !accepted(tell) && list.is_none() {
         return;
     }
-    selected(&mut cx, &announcement, (kept, window, &committed), due_us).await;
+    selected(
+        &mut cx,
+        &announcement,
+        (kept, *at_arrival, window, &committed),
+        due_us,
+    )
+    .await;
     if list == Some(window.handle) && cached_role(tell) == Some(Role::ListItem) {
         combo_box_value(&mut cx, tell.trace_id, &committed, due_us).await;
     }
 }
 
-/// The selection's own handling (`event_selection`): the committed
-/// focus's state change, an item the focus controls spoken as a focus, or
-/// the value change of the combo box that is the item's parent.
+/// The selection's own handling (`event_selection`): the state change of
+/// the committed focus or a kept ancestor, an item the focus controls
+/// spoken as a focus, or the value change of the combo box that is the
+/// item's parent.
 async fn selected(
     cx: &mut Cx<Entries>,
     announcement: &Announcement,
-    (kept, window, committed): (&super::Kept, RequestWindow, &CommittedFocus),
+    (kept, at_arrival, window, committed): (
+        &super::Kept,
+        AtArrival,
+        RequestWindow,
+        &CommittedFocus,
+    ),
     due_us: u64,
 ) {
     let tell = &announcement.tell;
     let trace_id = tell.trace_id;
-    // A selection of the committed focus is its state change, judged on the
-    // states its tell carries.
-    if matches!(&committed.read_by, ReadBy::Uia { runtime_id, .. } if runtime_id == &kept.runtime_id)
-    {
+    // A selection of the committed focus or a kept ancestor is its state
+    // change, judged on the states its tell carries, when its element was
+    // on the line at its arrival.
+    if let Some(node) = crate::changes::node_of(committed, &kept.runtime_id) {
+        if at_arrival == AtArrival::OffLine {
+            return;
+        }
         let Some(states) = cached_states(tell) else {
             return;
         };
-        crate::changes::speak_change(
-            cx,
-            trace_id,
-            committed.node,
-            &PropertyChange::States(states),
-            None,
-        );
+        crate::changes::speak_change(cx, trace_id, node, &PropertyChange::States(states), None);
         return;
     }
     let read = ListenerRead {

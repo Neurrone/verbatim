@@ -851,3 +851,201 @@ fn a_uia_property_change_of_a_window_acceptance_refuses_says_nothing() {
         );
     }
 }
+
+/// The outpost's tell of a state change of `[42, runtime]` to `states`.
+fn followed_states(runtime: i32, states: StateSet) -> Input<crate::entries::Entry> {
+    let tell = Event {
+        object: EventObject::Followed {
+            runtime_id: RuntimeId(vec![42, runtime]),
+        },
+        ..followed_change(PropertyId::States, Some(PropertyValue::States(states)))
+    };
+    Input::Entry(crate::entries::Entry::of_tell(OUTPOST, tell).unwrap())
+}
+
+/// The focus on `[42, 3]`, node 3, told and its listener read out
+/// (request 4).
+fn focus_on_three(state: &mut Held) {
+    assert_eq!(
+        feed_at(
+            state,
+            4_000,
+            entry(crate::entries::tests::uia_tell(3, Vec::new()))
+        ),
+        ["send Listener ReadObject"]
+    );
+}
+
+/// The listener's read of the focus [`focus_on_three`] asked, answered at
+/// `at_us`: the completion asked (request 5).
+fn three_routed(state: &mut Held, at_us: u64) {
+    let mut listened = crate::entries::tests::listener_answer();
+    if let Some(route) = listened.route.as_mut() {
+        route.steps[0].runtime_id = RuntimeId(vec![42, 3]);
+    }
+    assert_eq!(
+        feed_at(
+            state,
+            at_us,
+            answer(LISTENER, 4, Reply::Object(Box::new(listened)))
+        ),
+        ["send Outpost(Pid(40)) CompleteUia"]
+    );
+}
+
+/// The completion of the focus [`focus_on_three`] asked: node 3, named
+/// `name`, of `role`, with `states`, under the frame and, when given, the
+/// list "Cities", node 6, runtime id `[42, 6]`.
+fn three_read(name: &str, role: Role, states: StateSet, in_cities: bool) -> Reply {
+    use verbatim_model::request::{FocusAncestor, FocusNode};
+    let mut read = focus_read(None);
+    read.focus.read.node = Some(node(3));
+    read.focus.read.values = values(name, role);
+    read.focus.read.values.0.push(PropertyAnswer {
+        id: PropertyId::States,
+        value: Some(PropertyValue::States(states)),
+    });
+    read.focus.runtime_id = Some(RuntimeId(vec![42, 3]));
+    if in_cities {
+        read.ancestors.insert(
+            0,
+            FocusAncestor {
+                node: FocusNode {
+                    read: NodeRead {
+                        node: Some(node(6)),
+                        window: win(5),
+                        values: values("Cities", Role::List),
+                    },
+                    runtime_id: Some(RuntimeId(vec![42, 6])),
+                },
+                simple_child: false,
+                dialog_text: None,
+            },
+        );
+    }
+    Reply::Focus(Box::new(read))
+}
+
+/// The arrival table for an outpost's state change, at its turn on the
+/// committed focus: told while the focus on node 3 is read by the
+/// listener, before its completion is out, node 3 is on no line and the
+/// change says nothing once node 3 is committed.
+#[test]
+fn a_state_change_of_a_focus_told_before_its_completion_is_silent() {
+    let mut state = committed();
+    focus_on_three(&mut state);
+    let expanded = StateSet::default().with(State::Expanded);
+    assert_eq!(
+        feed_at(&mut state, 4_100, followed_states(3, expanded)),
+        NOTHING
+    );
+    three_routed(&mut state, 4_200);
+    assert_eq!(
+        feed_at(
+            &mut state,
+            4_300,
+            answer(
+                OUTPOST,
+                5,
+                three_read("Paris", Role::ListItem, StateSet::default(), false)
+            )
+        ),
+        ["Label(\"Paris\")", "send Outpost(Pid(40)) Follow"]
+    );
+    assert!(state.queue.front_for_tests().is_none());
+}
+
+/// The arrival table's "a kept ancestor at its turn": the list "Cities",
+/// an ancestor of the committed focus, expanding is spoken as the
+/// ancestor's change when it was on the line at its arrival, and not when
+/// it arrived while the focus inside it was read, before any of it was
+/// committed.
+#[test]
+fn an_ancestors_state_change_is_spoken_only_when_on_the_line_at_its_arrival() {
+    let expanded = StateSet::default().with(State::Expanded);
+    // On the line at arrival: the focus inside "Cities" committed first.
+    let mut state = committed();
+    focus_on_three(&mut state);
+    three_routed(&mut state, 4_200);
+    feed_at(
+        &mut state,
+        4_300,
+        answer(
+            OUTPOST,
+            5,
+            three_read("Paris", Role::ListItem, StateSet::default(), true),
+        ),
+    );
+    assert_eq!(
+        feed_at(&mut state, 4_400, followed_states(6, expanded)),
+        ["State(Expanded)"]
+    );
+    // Off the line at arrival: told while the focus inside it is read.
+    let mut state = committed();
+    focus_on_three(&mut state);
+    assert_eq!(
+        feed_at(&mut state, 4_100, followed_states(6, expanded)),
+        NOTHING
+    );
+    three_routed(&mut state, 4_200);
+    assert_eq!(
+        feed_at(
+            &mut state,
+            4_300,
+            answer(
+                OUTPOST,
+                5,
+                three_read("Paris", Role::ListItem, StateSet::default(), true)
+            )
+        ),
+        [
+            "Label(\"Cities\") Role(List)",
+            "Label(\"Paris\")",
+            "send Outpost(Pid(40)) Follow"
+        ]
+    );
+    assert!(state.queue.front_for_tests().is_none());
+}
+
+/// The menu button "File" expanding as soon as it is focused: the outpost
+/// registers it as the completion reaches it, reads it collapsed, then
+/// tells its expand change before its answer. The focus in flight is on
+/// the line, so the change is spoken once, after the focus: "expanded".
+#[test]
+fn a_state_change_told_while_the_focus_completion_is_out_is_spoken_after_the_focus() {
+    let mut state = committed();
+    focus_on_three(&mut state);
+    three_routed(&mut state, 4_200);
+    let focused = StateSet::default()
+        .with(State::Focusable)
+        .with(State::Focused);
+    assert_eq!(
+        feed_at(
+            &mut state,
+            4_250,
+            followed_states(3, focused.with(State::Expanded))
+        ),
+        NOTHING
+    );
+    assert_eq!(
+        feed_at(
+            &mut state,
+            4_300,
+            answer(
+                OUTPOST,
+                5,
+                three_read(
+                    "File",
+                    Role::MenuButton,
+                    focused.with(State::Collapsed),
+                    false
+                )
+            )
+        ),
+        [
+            "Label(\"File\") Role(MenuButton) State(Collapsed)",
+            "send Outpost(Pid(40)) Follow",
+            "State(Expanded)"
+        ]
+    );
+}

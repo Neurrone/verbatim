@@ -3436,3 +3436,215 @@ fn the_task_switching_panes_foreground_change_or_msaa_focus_is_taken() {
         )
     );
 }
+
+// ---- Changes and the focus line (`docs/parity/changes-and-selection.md`) ----
+
+/// File Explorer's Properties sheet, read through MSAA: Space on Apply,
+/// in the order the listener tells what Explorer raised (captured
+/// 2026-11-19, five runs alike): Apply's state change, disabled and
+/// without the focused state, read while a focus with no window, which
+/// the listener tells on the desktop window, and the focus on Read-only
+/// wait behind it. NVDA says "unavailable", then the page, then
+/// Read-only: the change is spoken, Apply being the focus when it is
+/// handled, whatever its own focused state.
+#[test]
+fn an_msaa_button_disabled_as_the_focus_leaves_it_says_unavailable_then_the_new_focus() {
+    let mut desk = Desk::new();
+    let sheet = node(
+        ONE,
+        50,
+        Role::Dialog,
+        Some("apply.txt Properties"),
+        None,
+        StateSet::new(),
+    );
+    let page = node(
+        ONE,
+        51,
+        Role::PropertyPage,
+        Some("General"),
+        None,
+        StateSet::new(),
+    );
+    let apply_window = WindowHandle(ONE.top + 2);
+    let read_only_window = WindowHandle(ONE.top + 3);
+    let focused = states(&[State::Focusable, State::Focused]);
+    // Each control is a window of its own, which its read names.
+    let in_own_window = |window: WindowHandle, focus: &NodeSnapshot, ancestors: &[NodeSnapshot]| {
+        let mut read = msaa_read_in(window, ONE, -4, focus, ancestors);
+        read.focus.read.window.handle = window;
+        read
+    };
+    let apply = node(ONE, 52, Role::Button, Some("Apply"), None, focused);
+    let _ = msaa_focus(
+        &mut desk,
+        ONE,
+        -4,
+        in_own_window(apply_window, &apply, std::slice::from_ref(&sheet)),
+    );
+    let state_change = Event {
+        kind: EventKind::StateChange,
+        ..msaa_tell(&desk, ONE, apply_window, -4)
+    };
+    assert_eq!(
+        desk.tell(LISTENER, state_change),
+        [Heard::Sent(Reader::Outpost(ONE.pid), "ReadObject")]
+    );
+    let Some((change_read, _, _)) = one_sent(&desk) else {
+        panic!("the change's read asked: {:?}", desk.sent);
+    };
+    // The focus with no window, which the listener tells on the desktop
+    // window, served by the desktop's process (`TWO` stands for it).
+    let mut desktop = msaa_tell(&desk, TWO, WindowHandle(10), -4);
+    if let TellWindow::Found(facts) = &mut desktop.window {
+        facts.desktop = true;
+    }
+    assert_eq!(desk.tell(LISTENER, desktop), []);
+    assert_eq!(
+        desk.tell(LISTENER, msaa_tell(&desk, ONE, read_only_window, -4)),
+        []
+    );
+    let read = desk.answer(
+        ONE.instance(),
+        change_read,
+        Outcome::Result(Reply::Object(Box::new(ObjectRead {
+            relation: Some(verbatim_model::request::RelationFound::Is(0)),
+            ..listener_object(
+                ONE,
+                apply.id,
+                PropertyId::States,
+                PropertyValue::States(states(&[State::Focusable, State::Disabled])),
+            )
+        }))),
+    );
+    let Some((run, to, Wire::MsaaRun(_))) = one_sent(&desk) else {
+        panic!("the run of focuses asked: {:?}", desk.sent);
+    };
+    assert_eq!(
+        read,
+        [
+            queued(vec![state(State::Disabled)]),
+            Heard::Sent(Reader::Outpost(ONE.pid), "MsaaRun")
+        ]
+    );
+    let read_only = node(ONE, 53, Role::CheckBox, Some("Read-only"), None, focused);
+    assert_eq!(
+        desk.answer(
+            to,
+            run,
+            Outcome::Result(Reply::Candidate(CandidateAnswer::focused(in_own_window(
+                read_only_window,
+                &read_only,
+                &[sheet, page]
+            ))))
+        ),
+        msaa_heard(
+            focus_now_in(ONE, 53, &[50, 51]),
+            vec![
+                label_role("General", Role::PropertyPage),
+                vec![
+                    UtteranceSegment::label("Read-only"),
+                    role(Role::CheckBox),
+                    not(State::Checked)
+                ],
+            ]
+        )
+    );
+}
+
+/// A WPF window's Apply button, read through UI Automation, disabling
+/// itself and focusing OK: WPF raises OK's focus first and Apply's
+/// change after it, with states lacking the focused state (captured
+/// 2026-11-19, five runs alike). The outpost's tell of the change can
+/// reach Core before the listener's tell of the focus; its states show
+/// the focus had left, so it is not spoken, and Verbatim says "OK button"
+/// alone, as NVDA does.
+#[test]
+fn a_uia_button_disabled_after_the_focus_left_it_says_only_the_new_focus() {
+    let mut desk = Desk::new();
+    let focused = states(&[State::Focusable, State::Focused]);
+    let apply = node(ONE, 62, Role::Button, Some("Apply"), None, focused);
+    let _ = desk.focus(ONE, &apply, &[]);
+    assert_eq!(
+        desk.followed_change(
+            ONE,
+            62,
+            PropertyId::States,
+            Some(PropertyValue::States(states(&[
+                State::Focusable,
+                State::Disabled
+            ])))
+        ),
+        [],
+        "the change's states lack the focused state"
+    );
+    let ok = node(ONE, 61, Role::Button, Some("OK"), None, focused);
+    assert_eq!(
+        desk.focus(ONE, &ok, &[]),
+        focus_heard(
+            ONE,
+            focus_now_in(ONE, 61, &[]),
+            vec![label_role("OK", Role::Button)]
+        )
+    );
+}
+
+/// The list item X is the focus; the application focuses the button Y
+/// inside it, then selects X. In the listener's order: X's focus, Y's
+/// focus tell, X's selection tell while Y is read, and Y's read answered
+/// with X already selected. NVDA says Y, then "selected": X, its focus
+/// when the selection was delivered, is Y's ancestor when it is handled,
+/// and is compared with the states spoken of it as the focus.
+#[test]
+fn an_item_selected_as_the_focus_moves_inside_it_says_the_new_focus_then_selected() {
+    let mut desk = Desk::new();
+    let list = node(ONE, 70, Role::List, Some("Files"), None, StateSet::new());
+    let selectable = states(&[State::Focusable, State::Focused, State::Selectable]);
+    let x = node(ONE, 71, Role::ListItem, Some("X"), None, selectable);
+    let _ = desk.focus(ONE, &x, std::slice::from_ref(&list));
+    let y = node(
+        ONE,
+        72,
+        Role::Button,
+        Some("Y"),
+        None,
+        states(&[State::Focusable, State::Focused]),
+    );
+    let _ = desk.tell(LISTENER, focus_tell(ONE, 72, desk.at_us + 1_000));
+    let Some((object, LISTENER, Wire::ReadObject(_))) = one_sent(&desk) else {
+        panic!("the listener's read asked: {:?}", desk.sent);
+    };
+    let x_selected = states(&[State::Focusable, State::Selectable, State::Selected]);
+    assert_eq!(
+        desk.tell(LISTENER, selected(&desk, ONE, 71, x_selected)),
+        []
+    );
+    let _ = desk.answer(
+        LISTENER,
+        object,
+        Outcome::Result(Reply::Object(Box::new(listener_read(ONE, 72)))),
+    );
+    let Some((completion, to, Wire::CompleteUia(_))) = one_sent(&desk) else {
+        panic!("the completion asked: {:?}", desk.sent);
+    };
+    let mut x_now = x.clone();
+    x_now.states = x_selected;
+    let mut heard = focus_heard(
+        ONE,
+        focus_now_in(ONE, 72, &[70, 71]),
+        vec![label_role("Y", Role::Button)],
+    );
+    heard.push(queued(vec![state(State::Selected)]));
+    assert_eq!(
+        desk.answer(
+            to,
+            completion,
+            Outcome::Result(Reply::Focus(Box::new(focus_read_of(
+                ONE,
+                &y,
+                &[list, x_now]
+            ))))
+        ),
+        heard
+    );
+}

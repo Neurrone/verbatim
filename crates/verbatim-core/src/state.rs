@@ -42,9 +42,10 @@ pub(crate) struct FocusContext {
     /// A focus change replaces the whole chain, never edits it.
     pub(crate) ancestors: Arc<[NodeSnapshot]>,
     /// The focused node reported itself focused when it became the focus,
-    /// so a later state set without the focused state means the focus has
-    /// left it before the next focus event arrived (`docs/parity/changes-and-selection.md`,
-    /// "State changes after the focus has left").
+    /// so a later state set without the focused state, from an outpost's
+    /// UI Automation change, means the focus had left it when the change
+    /// was raised (`docs/parity/changes-and-selection.md`, "State changes
+    /// after the focus has left").
     pub(crate) reported_focused: bool,
     /// The trace of the event Core took this focus from.
     pub(crate) trace_id: Option<TraceId>,
@@ -54,9 +55,9 @@ pub(crate) struct FocusContext {
     /// What Core last spoke of the focus and its ancestors. A focus taken
     /// writes it, as does a report that speaks the focus's reading, a name,
     /// value or description change on the focus, a state change on the
-    /// focus other than the focused state's loss on a focus that reported
-    /// itself focused, and a state change of an ancestor with an entry; a
-    /// repeat never does.
+    /// focus other than an outpost's change losing the focused state on a
+    /// focus that reported itself focused, and a state change of an
+    /// ancestor with an entry; a repeat never does.
     pub(crate) spoken: SpokenRecord,
     /// The formatting last reported in the focus's text (milestone M4 item
     /// 7): NVDA's per-object cache, kept on the focus object as NVDA keeps

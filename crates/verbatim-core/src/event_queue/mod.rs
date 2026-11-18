@@ -397,10 +397,15 @@ pub(crate) trait Logic: Sized + 'static {
 
     /// `entry` joins the back of the queue: what Core's facts keep of the
     /// arrivals changes, and the entry is stamped with what it needs of
-    /// them. Called for every entry that joins, before the limiter places
-    /// it; an entry dropped at its arrival never joins.
-    fn arrival(facts: &mut Self::Facts, entry: &mut Self::Entry) {
-        let _ = (facts, entry);
+    /// them and of the front, `front`, with its request waiting or out.
+    /// Called for every entry that joins, before the limiter places it; an
+    /// entry dropped at its arrival never joins.
+    fn arrival(
+        facts: &mut Self::Facts,
+        front: Option<(&Self::Entry, Option<&verbatim_model::request::Request>)>,
+        entry: &mut Self::Entry,
+    ) {
+        let _ = (facts, front, entry);
     }
 
     /// `said`, emitted by the front entry `entry`'s function, stamped with

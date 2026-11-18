@@ -451,7 +451,7 @@ impl Logic for Entries {
             Entry::UiaFocus(focus) => Some((focus.listener, focus.token)),
             Entry::Announcement(announcement) => match &announcement.kind {
                 crate::announcements::Kind::Toast(kept)
-                | crate::announcements::Kind::UiaSelection(kept) => {
+                | crate::announcements::Kind::UiaSelection(kept, _) => {
                     Some((kept.listener, kept.token))
                 }
                 crate::announcements::Kind::Notification { .. }
@@ -534,7 +534,14 @@ impl Logic for Entries {
         }
     }
 
-    fn arrival(facts: &mut SrState, entry: &mut Entry) {
+    fn arrival(facts: &mut SrState, front: Option<(&Entry, Option<&Wire>)>, entry: &mut Entry) {
+        // A UI Automation change or selection records whether its element
+        // was on the focus line as it joined.
+        match entry {
+            Entry::UiaChange(change) => crate::changes::arrived(facts, front, change),
+            Entry::Announcement(announcement) => announcement.arrived(facts),
+            _ => {}
+        }
         if let Entry::Press(press) = entry {
             facts.arrivals.key_joined(press.press.key_seq);
             // A key reaching the focused terminal is taken by its model as
@@ -865,9 +872,6 @@ impl Logic for Entries {
             }
             (Entry::Caret(waiting), Entry::Caret(arriving)) => {
                 crate::caret_tell::merges(waiting, arriving)
-            }
-            (Entry::Announcement(waiting), Entry::Announcement(arriving)) => {
-                waiting.merged_by(arriving)
             }
             (Entry::UiaChange(waiting), Entry::UiaChange(arriving)) => {
                 (&waiting.runtime_id, waiting.property, waiting.tell.thread)

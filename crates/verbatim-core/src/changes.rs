@@ -18,7 +18,12 @@
 //! committed focus, on the committed focus's runtime id or an ancestor's,
 //! runs on that node with no read, speaking the value its tell carries;
 //! but a description (help text) change and a suggestions (controller-for)
-//! change, which Core asks one read for.
+//! change, which Core asks one read for. Its state and description speech
+//! is given only when its element was on the focus line as its tell
+//! joined the queue ([`AtArrival`]), as NVDA judges a state change by its
+//! focus when the event was delivered and its focus line when it is
+//! handled (`docs/parity/changes-and-selection.md`, "State changes and the
+//! focus line").
 //!
 //! What is spoken comes from today's announcement code
 //! ([`crate::reduce::property_changed`]), which compares each property with
@@ -68,6 +73,74 @@ pub(crate) struct UiaChange {
     pub(crate) fence: crate::keys::entry::Fence,
     /// Its new value, as the tell carries it.
     pub(crate) value: Option<PropertyValue>,
+    /// Whether its element was on the focus line when it joined the
+    /// queue, set then.
+    pub(crate) at_arrival: AtArrival,
+}
+
+/// Whether the element of a UI Automation change or selection was on the
+/// focus line when its tell joined the queue, NVDA's focus when the event
+/// was delivered (`docs/parity/changes-and-selection.md`, "State changes
+/// and the focus line"). For an outpost's change the line is the committed
+/// focus, a kept ancestor of it, or the UI Automation focus whose
+/// completion is out; for the listener's selection it is the committed
+/// focus alone. Its state and description speech is given only for an
+/// element on the line at arrival that is, at its turn, still the
+/// committed focus or a kept ancestor.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) enum AtArrival {
+    /// On the line.
+    OnLine,
+    /// Not on the line; a tell's value from its parse until it joins.
+    #[default]
+    OffLine,
+}
+
+impl AtArrival {
+    fn of(on_line: bool) -> Self {
+        if on_line { Self::OnLine } else { Self::OffLine }
+    }
+}
+
+/// The runtime id of the UI Automation focus in flight: the front, a UI
+/// Automation focus whose completion is waiting or out. The outpost
+/// registers its element as the completion reaches it, so a change it
+/// tells of the element was raised after that, when NVDA hears it too.
+fn in_flight<'a>(
+    front: Option<(&'a crate::entries::Entry, Option<&Wire>)>,
+) -> Option<&'a RuntimeId> {
+    match front? {
+        (crate::entries::Entry::UiaFocus(focus), Some(Wire::CompleteUia(complete)))
+            if complete.completes == verbatim_model::request::CompletionFor::Focus =>
+        {
+            Some(&focus.runtime_id)
+        }
+        _ => None,
+    }
+}
+
+/// Sets `change`'s arrival fact as it joins the queue behind `front`: on
+/// the line when its element is the committed focus, a kept ancestor or
+/// the focus in flight.
+pub(crate) fn arrived(
+    facts: &SrState,
+    front: Option<(&crate::entries::Entry, Option<&Wire>)>,
+    change: &mut UiaChange,
+) {
+    let committed = facts
+        .versions
+        .committed_read()
+        .is_some_and(|kept| node_of(kept, &change.runtime_id).is_some());
+    change.at_arrival = AtArrival::of(committed || in_flight(front) == Some(&change.runtime_id));
+}
+
+/// The arrival fact of the listener's selection of the element whose
+/// runtime id is `runtime_id`: on the line when it is the committed focus.
+pub(crate) fn selection_arrived(facts: &SrState, runtime_id: &RuntimeId) -> AtArrival {
+    AtArrival::of(matches!(
+        facts.versions.committed_read().map(|kept| &kept.read_by),
+        Some(ReadBy::Uia { runtime_id: focus, .. }) if focus == runtime_id
+    ))
 }
 
 /// Whether `kind` is an MSAA change this module takes.
@@ -481,7 +554,7 @@ pub(crate) fn speak_change(
 
 /// The node of the committed focus, or of one of its ancestors, whose
 /// runtime id is `runtime_id`.
-fn node_of(kept: &Kept, runtime_id: &RuntimeId) -> Option<NodeId> {
+pub(crate) fn node_of(kept: &Kept, runtime_id: &RuntimeId) -> Option<NodeId> {
     if matches!(&kept.read_by, ReadBy::Uia { runtime_id: focus, .. } if focus == runtime_id) {
         return Some(kept.node);
     }
@@ -515,8 +588,13 @@ fn uia_target(facts: &SrState, change: &UiaChange) -> Option<(Kept, NodeId)> {
 
 /// Judges a UI Automation property change on the committed focus, or on
 /// one of its ancestors, from the value its tell carries, with no read: a
-/// name, value or state change. A description or suggestions change is
-/// asked ([`uia_entry`]) and says nothing here.
+/// name, value or state change. A state change is spoken only when its
+/// element was on the line at its arrival, and, on the focus, not when the
+/// focus reported the focused state and the change's states, taken from
+/// the event's cache as the application raised it, lack it: the focus had
+/// moved before the change was raised (`docs/parity/changes-and-selection.md`,
+/// "State changes after the focus has left"). A description or
+/// suggestions change is asked ([`uia_entry`]) and says nothing here.
 pub(crate) fn uia_changed(facts: &mut SrState, change: &UiaChange) -> Vec<verbatim_model::Effect> {
     let Some((_, node)) = uia_target(facts, change) else {
         return Vec::new();
@@ -539,7 +617,17 @@ pub(crate) fn uia_changed(facts: &mut SrState, change: &UiaChange) -> Vec<verbat
     let Some(property) = uia_change(change.property, change.value.as_ref()) else {
         return Vec::new();
     };
-    crate::reduce::property_changed(facts, change.tell.trace_id, node, &property, None)
+    match property {
+        PropertyChange::States(states) => {
+            if change.at_arrival == AtArrival::OffLine {
+                return Vec::new();
+            }
+            crate::reduce::outpost_states_changed(facts, change.tell.trace_id, node, states)
+        }
+        property => {
+            crate::reduce::property_changed(facts, change.tell.trace_id, node, &property, None)
+        }
+    }
 }
 
 /// Whether the UI Automation property change `change` passes acceptance
@@ -566,14 +654,15 @@ pub(crate) fn uia(cx: &mut Cx<Entries>, change: &UiaChange) {
 /// which passes acceptance on its tell's facts first. A
 /// help text change, told as a description change, and a controller-for
 /// change, told as a suggestions change, are the two Core asks for: one
-/// read of the node's description, which NVDA reads when it handles the
-/// change (the full description, else the help text), and one of whether
-/// its suggestions are open, NVDA reading `controllerFor` live
-/// (`NVDAObjects/behaviors.py` 231 to 236). Both are asked only on the
-/// committed focus: a description change is spoken for no other node
-/// (`NVDAObjects/__init__.py` 1415 to 1417), and a suggestions change on
-/// any other plays the suggestions-closed indication unread. Any other change speaks the
-/// value its tell carries ([`uia`]).
+/// read of the node's description, read when the change is handled (the
+/// full description, else the help text), and one of whether its
+/// suggestions are open, read live (`docs/parity/changes-and-selection.md`,
+/// "Suggestions appearing and going away"). Both are asked only on the
+/// committed focus: a description change is spoken for no other node, nor
+/// for one off the line at its arrival, and a suggestions change on any
+/// other plays the suggestions-closed indication unread when its element
+/// is a suggestions field. Any other change speaks the value its tell
+/// carries ([`uia`]).
 pub(crate) async fn uia_entry(mut cx: Cx<Entries>, change: UiaChange) {
     let asked = match change.property {
         PropertyId::Description => PropertyId::Description,
@@ -586,16 +675,19 @@ pub(crate) async fn uia_entry(mut cx: Cx<Entries>, change: UiaChange) {
     let target = uia_target(&cx.facts(), &change);
     let Some((kept, node)) = target.filter(|(kept, node)| *node == kept.node) else {
         // A suggestions change on anything but the committed focus plays
-        // the suggestions-closed indication with no read, the opening's
-        // test applying only to the focus (`NVDAObjects/behaviors.py`
-        // 231 to 236).
-        if asked == PropertyId::Suggestions {
+        // the suggestions-closed indication with no read, for a
+        // suggestions field alone, the opening's test applying only to the
+        // focus.
+        if asked == PropertyId::Suggestions && suggestions_field(&change.tell) {
             cx.emit(verbatim_model::Effect::PlayEarcon(
                 verbatim_model::Earcon::SuggestionsClosed,
             ));
         }
         return;
     };
+    if asked == PropertyId::Description && change.at_arrival == AtArrival::OffLine {
+        return;
+    }
     let read = crate::announcements::selection::NodeProperties {
         window: kept.window,
         node,
@@ -635,7 +727,29 @@ pub(crate) fn uia_of_tell(tell: Event, runtime_id: RuntimeId) -> Option<UiaChang
         property,
         value,
         fence: crate::keys::entry::Fence::default(),
+        at_arrival: AtArrival::default(),
     })
+}
+
+/// Whether a suggestions change's element is a suggestions field, by the
+/// two facts its outpost's tell carries from the event's cache: editable
+/// text, which an element with a text pattern is taken to be, or a search
+/// field known by its automation id `SearchTextBox` or `TextBox`
+/// (`docs/parity/changes-and-selection.md`, "Suggestions appearing and
+/// going away").
+fn suggestions_field(tell: &Event) -> bool {
+    let cached = |id| {
+        tell.cached
+            .answer(id)
+            .and_then(|answer| answer.value.as_ref())
+    };
+    matches!(
+        cached(PropertyId::HasTextPattern),
+        Some(PropertyValue::Flag(true))
+    ) || matches!(
+        cached(PropertyId::AutomationId),
+        Some(PropertyValue::Text(id)) if id == "SearchTextBox" || id == "TextBox"
+    )
 }
 
 #[cfg(test)]

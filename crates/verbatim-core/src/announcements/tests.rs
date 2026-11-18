@@ -187,17 +187,73 @@ fn a_most_recent_notification_cuts_speech_and_another_is_queued() {
     assert_eq!(judged(NotificationProcessing::All), SpeechPriority::Queued);
 }
 
+/// What `input` at `at_us` said, each utterance with its priority.
+fn said_with_priority(
+    state: &mut Held,
+    at_us: u64,
+    input: crate::event_queue::Input<crate::entries::Entry>,
+) -> Vec<(SpeechPriority, String)> {
+    crate::entries::feed(
+        &mut state.state,
+        &mut state.runtime,
+        crate::event_queue::Timed { at_us, input },
+    )
+    .unwrap()
+    .into_iter()
+    .filter_map(|effect| match effect {
+        crate::event_queue::Effect::Said(verbatim_model::Effect::Speak(utterance, _)) => Some((
+            utterance.priority,
+            utterance
+                .segments
+                .iter()
+                .filter(|segment| {
+                    !matches!(segment.content, verbatim_model::SegmentContent::Mark(_))
+                })
+                .map(|segment| format!("{:?}", segment.content))
+                .collect::<Vec<_>>()
+                .join(" "),
+        )),
+        _ => None,
+    })
+    .collect()
+}
+
+/// Two notifications of one sender, kind, processing and activity, waiting
+/// behind a toast whose read is out, are both spoken in their order, as
+/// NVDA handles each: the second does not replace the first.
 #[test]
-fn notifications_merge_by_sender_kind_processing_and_activity() {
-    let of = |tell| Announcement::of_tell(1, tell).unwrap();
-    let waiting = of(notification(APP, NotificationProcessing::All, "a"));
-    assert!(waiting.merged_by(&of(notification(APP, NotificationProcessing::All, "a"))));
-    assert!(!waiting.merged_by(&of(notification(APP, NotificationProcessing::All, "b"))));
-    assert!(!waiting.merged_by(&of(notification(
-        APP,
-        NotificationProcessing::MostRecent,
-        "a"
-    ))));
+fn two_notifications_of_one_key_waiting_behind_an_ask_are_both_spoken_in_order() {
+    let mut state = committed();
+    assert_eq!(
+        feed_at(&mut state, 4_000, entry(toast())),
+        ["send Listener ReadObject"]
+    );
+    let copying = |text: &str| {
+        let mut tell = notification(APP, NotificationProcessing::All, "copy");
+        tell.payload = Payload::Notification {
+            text: text.to_owned(),
+            kind: NotificationKind::ActionCompleted,
+            processing: NotificationProcessing::All,
+            activity: "copy".to_owned(),
+        };
+        tell
+    };
+    assert_eq!(
+        feed_at(&mut state, 4_100, entry(copying("Copying 1 of 3"))),
+        NOTHING
+    );
+    assert_eq!(
+        feed_at(&mut state, 4_200, entry(copying("Copying 2 of 3"))),
+        NOTHING
+    );
+    assert_eq!(
+        feed_at(
+            &mut state,
+            5_000,
+            answer_outcome(LISTENER, 4, WireOutcome::NotThere)
+        ),
+        ["Text(\"Copying 1 of 3\")", "Text(\"Copying 2 of 3\")"]
+    );
 }
 
 fn toast() -> Event {
@@ -288,6 +344,8 @@ fn selected(runtime: i32, states: StateSet) -> Event {
     }
 }
 
+/// The arrival table's cell "the committed focus at its turn, on the line
+/// at arrival": spoken as the focus's change.
 #[test]
 fn a_selection_of_the_committed_focus_is_its_state_change_with_no_request() {
     let mut state = committed();
@@ -296,6 +354,145 @@ fn a_selection_of_the_committed_focus_is_its_state_change_with_no_request() {
     assert_eq!(
         feed_at(&mut state, 4_000, entry(selected(1, states))),
         ["State(Selected)"]
+    );
+}
+
+/// A UI Automation focus on `[42, 3]`, "Paris", under `ancestors`, read by
+/// the listener and asked of the outpost: the request out is the
+/// completion, number 5.
+fn paris_asked(state: &mut Held) {
+    assert_eq!(
+        feed_at(state, 4_000, entry(uia_tell(3, Vec::new()))),
+        ["send Listener ReadObject"]
+    );
+}
+
+/// The completion of the focus [`paris_asked`] asked: "Paris", node 3,
+/// runtime id `[42, 3]`, under the frame and `ancestor`, its node 6 and
+/// runtime id `[42, 6]`.
+fn paris_read(ancestor: Option<(&str, Role)>) -> Reply {
+    use verbatim_model::request::{FocusAncestor, FocusNode};
+    let mut read = focus_read(None);
+    read.focus.read.node = Some(node(3));
+    read.focus.read.values = values("Paris", Role::ListItem);
+    read.focus.runtime_id = Some(RuntimeId(vec![42, 3]));
+    if let Some((name, role)) = ancestor {
+        read.ancestors.insert(
+            0,
+            FocusAncestor {
+                node: FocusNode {
+                    read: NodeRead {
+                        node: Some(node(6)),
+                        window: win(5),
+                        values: values(name, role),
+                    },
+                    runtime_id: Some(RuntimeId(vec![42, 6])),
+                },
+                simple_child: false,
+                dialog_text: None,
+            },
+        );
+    }
+    Reply::Focus(Box::new(read))
+}
+
+/// The listener's read of the focus [`paris_asked`] asked, its route to
+/// the application's window.
+fn paris_route() -> Reply {
+    let mut listened = crate::entries::tests::listener_answer();
+    if let Some(route) = listened.route.as_mut() {
+        route.steps[0].runtime_id = RuntimeId(vec![42, 3]);
+    }
+    Reply::Object(Box::new(listened))
+}
+
+/// The arrival table's cell "the committed focus at its turn, not on the
+/// line at arrival": a selection of "Paris" arriving while its own focus is
+/// read, before it is committed, is silent at its turn, as NVDA, given the
+/// event before its focus was "Paris", makes a new object that is never its
+/// focus.
+#[test]
+fn a_selection_of_a_focus_not_yet_committed_at_its_arrival_is_silent() {
+    let mut state = committed();
+    paris_asked(&mut state);
+    let mut states = StateSet::default();
+    states.insert(State::Selected);
+    assert_eq!(
+        feed_at(&mut state, 4_100, entry(selected(3, states))),
+        NOTHING
+    );
+    assert_eq!(
+        feed_at(&mut state, 4_200, answer(LISTENER, 4, paris_route())),
+        ["send Outpost(Pid(40)) CompleteUia"]
+    );
+    assert_eq!(
+        feed_at(&mut state, 4_300, answer(OUTPOST, 5, paris_read(None))),
+        ["Label(\"Paris\")", "send Outpost(Pid(40)) Follow"]
+    );
+    assert!(state.queue.front_for_tests().is_none());
+}
+
+/// The arrival table's cell "a kept ancestor at its turn, not on the line
+/// at arrival": a selection of the list "Cities", arriving while the focus
+/// inside it is read and before any of it is committed, is silent once
+/// "Cities" is an ancestor of the committed focus.
+#[test]
+fn a_selection_of_an_ancestor_off_the_line_at_its_arrival_is_silent() {
+    let mut state = committed();
+    paris_asked(&mut state);
+    let mut states = StateSet::default();
+    states.insert(State::Selected);
+    assert_eq!(
+        feed_at(&mut state, 4_100, entry(selected(6, states))),
+        NOTHING
+    );
+    feed_at(&mut state, 4_200, answer(LISTENER, 4, paris_route()));
+    assert_eq!(
+        feed_at(
+            &mut state,
+            4_300,
+            answer(OUTPOST, 5, paris_read(Some(("Cities", Role::List))))
+        ),
+        [
+            "Label(\"Cities\") Role(List)",
+            "Label(\"Paris\")",
+            "send Outpost(Pid(40)) Follow"
+        ]
+    );
+    assert!(state.queue.front_for_tests().is_none());
+}
+
+/// The arrival table's cell "neither at its turn, on the line at arrival":
+/// a selection of "OK", the committed focus as it arrives behind the focus
+/// on "Paris", is no state change once "Paris" is committed, "OK" being
+/// neither it nor an ancestor: the item is read, as any other selection,
+/// and gone, it says nothing.
+#[test]
+fn a_selection_of_the_focus_left_before_its_turn_is_no_state_change() {
+    let mut state = committed();
+    paris_asked(&mut state);
+    let mut states = StateSet::default();
+    states.insert(State::Selected);
+    assert_eq!(
+        feed_at(&mut state, 4_100, entry(selected(1, states))),
+        NOTHING
+    );
+    feed_at(&mut state, 4_200, answer(LISTENER, 4, paris_route()));
+    assert_eq!(
+        feed_at(&mut state, 4_300, answer(OUTPOST, 5, paris_read(None))),
+        [
+            "Label(\"Paris\")",
+            "send Outpost(Pid(40)) Follow",
+            "send Listener ReadObject"
+        ]
+    );
+    assert_eq!(
+        feed_at(
+            &mut state,
+            4_400,
+            answer_outcome(LISTENER, 7, WireOutcome::NotThere)
+        ),
+        NOTHING
     );
 }
 
@@ -342,6 +539,8 @@ fn item(relation: RelationFound, met: Option<u32>) -> Reply {
     }))
 }
 
+/// The item was never on the focus line: the arrival fact does not gate a
+/// selection inside an object the focus controls.
 #[test]
 fn a_selected_item_the_focus_controls_is_read_completed_and_spoken_as_a_focus() {
     let mut state = committed();
@@ -651,6 +850,47 @@ fn an_item_of_the_focused_combo_box_without_the_value_pattern_reads_and_speaks_i
             )
         ),
         ["Value(\"Ten\")"]
+    );
+}
+
+/// Two selections of one item the focus controls, the second arriving
+/// while the first is read, are both handled: the item is spoken, then
+/// spoken again cutting the first, as NVDA cancels speech and reports the
+/// item for each.
+#[test]
+fn two_selections_of_one_controlled_item_are_each_spoken_cutting_the_last() {
+    let mut state = committed();
+    assert_eq!(
+        feed_at(&mut state, 4_000, entry(selected(8, StateSet::default()))),
+        ["send Listener ReadObject"]
+    );
+    assert_eq!(
+        feed_at(&mut state, 4_100, entry(selected(8, StateSet::default()))),
+        NOTHING
+    );
+    assert_eq!(
+        feed_at(&mut state, 5_000, answer(LISTENER, 4, item_read())),
+        ["send Outpost(Pid(40)) CompleteUia"]
+    );
+    assert_eq!(
+        said_with_priority(
+            &mut state,
+            6_000,
+            answer(OUTPOST, 5, item(RelationFound::Controlled, None))
+        ),
+        [(SpeechPriority::Interrupt, "Label(\"Paris\")".to_owned())]
+    );
+    assert_eq!(
+        feed_at(&mut state, 7_000, answer(LISTENER, 6, item_read())),
+        ["send Outpost(Pid(40)) CompleteUia"]
+    );
+    assert_eq!(
+        said_with_priority(
+            &mut state,
+            8_000,
+            answer(OUTPOST, 7, item(RelationFound::Controlled, None))
+        ),
+        [(SpeechPriority::Interrupt, "Label(\"Paris\")".to_owned())]
     );
 }
 

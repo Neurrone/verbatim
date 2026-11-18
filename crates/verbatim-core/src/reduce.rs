@@ -853,9 +853,13 @@ pub(crate) fn property_changed(
         PropertyChange::Value(value) => {
             reduce_value_changed(state, trace_id, node_id, value.clone())
         }
-        PropertyChange::States(new_states) => {
-            states_event(state, trace_id, node_id, *new_states, child_count)
-        }
+        PropertyChange::States(new_states) => states_event(
+            state,
+            trace_id,
+            node_id,
+            (*new_states, StatesFrom::Other),
+            child_count,
+        ),
         PropertyChange::Description(description) => {
             reduce_description_changed(state, trace_id, node_id, description.as_ref())
         }
@@ -867,16 +871,54 @@ pub(crate) fn property_changed(
     effects
 }
 
-fn states_event(
+/// A state change of `node_id` to the states an outpost's UI Automation
+/// property change carries from its event's cache, judged as
+/// [`property_changed`] judges one, but that on the focus the focused
+/// state's loss drops it ([`StatesFrom::OutpostEvent`]).
+pub(crate) fn outpost_states_changed(
     state: &mut SrState,
     trace_id: TraceId,
     node_id: NodeId,
     new_states: StateSet,
+) -> Vec<Effect> {
+    let effects = states_event(
+        state,
+        trace_id,
+        node_id,
+        (new_states, StatesFrom::OutpostEvent),
+        None,
+    );
+    sync_navigator_with_focus(state);
+    effects
+}
+
+/// Where a state change's states come from, which decides whether the
+/// focused state's loss on the focus drops it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StatesFrom {
+    /// An outpost's UI Automation property change, its states from the
+    /// event's cache, taken as the application raised it: a focus that
+    /// reported the focused state and lacks it here had lost it before
+    /// the change was raised, so the focus event came first and the change
+    /// is not spoken (`docs/parity/changes-and-selection.md`, "State
+    /// changes after the focus has left").
+    OutpostEvent,
+    /// An MSAA change's read, or a selection's tell: spoken whatever its
+    /// focused state, the change and the focus sharing one pipe in the
+    /// order they were raised.
+    Other,
+}
+
+fn states_event(
+    state: &mut SrState,
+    trace_id: TraceId,
+    node_id: NodeId,
+    (new_states, from): (StateSet, StatesFrom),
     child_count: Option<u32>,
 ) -> Vec<Effect> {
     match change_on(state, ChangeKind::States, node_id) {
         Some(ChangeTarget::Focus) => {
-            reduce_states_changed(state, trace_id, node_id, new_states, child_count)
+            reduce_states_changed(state, trace_id, node_id, (new_states, from), child_count)
         }
         Some(ChangeTarget::Ancestor) => {
             reduce_ancestor_states_changed(state, trace_id, node_id, new_states)
@@ -1470,7 +1512,9 @@ fn indicate_progress(state: &mut SrState, place: (i32, i32), percent: Percent) -
 /// announces, queued, the gained states and the lost states
 /// spoken by their absence, by the rules and in the order of "Which states
 /// are spoken, and in what order" in `docs/nvda/speech.md`. Ignored for any
-/// node other than the focused one; a no-op if nothing speakable changed.
+/// node other than the focused one; a no-op if nothing speakable changed,
+/// and for states `from` an outpost's event that lack the focused state on
+/// a focus that reported it, its states still kept ([`StatesFrom`]).
 /// When the change makes the focus expanded and carries the node's number
 /// of children, which the outpost reads only for a Win32 tree view item,
 /// the number follows as an utterance of its own ("How many items an
@@ -1479,7 +1523,7 @@ fn reduce_states_changed(
     state: &mut SrState,
     trace_id: TraceId,
     node_id: NodeId,
-    new_states: StateSet,
+    (new_states, from): (StateSet, StatesFrom),
     child_count: Option<u32>,
 ) -> Vec<Effect> {
     if change_on(state, ChangeKind::States, node_id) != Some(ChangeTarget::Focus) {
@@ -1495,16 +1539,14 @@ fn reduce_states_changed(
     if old_states == new_states {
         return Vec::new();
     }
-    // NVDA speaks a state change only while the changed object is its
-    // focus, which a focus event changes when NVDA handles it, in the order
-    // the events came (`docs/nvda/events.md`, "The focus gate"). An outpost
-    // can deliver the state change of the control the focus has just left
-    // before the slower focus event for the control it went to, such as a
-    // button disabled once the focus has moved off it. The object's own
-    // states tell: one that reported itself focused and no longer does has
-    // lost the focus, and NVDA, having handled the focus event first, would
-    // not speak its change.
-    if focus.reported_focused && !new_states.contains(State::Focused) {
+    // An outpost's change can reach Core before the listener's focus event
+    // for the control the focus went to, raised before it; its states,
+    // from the event's cache, tell that the focus had moved when the
+    // change was raised, so the focus came first, as NVDA hears it.
+    if from == StatesFrom::OutpostEvent
+        && focus.reported_focused
+        && !new_states.contains(State::Focused)
+    {
         return Vec::new();
     }
     focus.spoken().states = new_states;
@@ -1640,8 +1682,10 @@ fn reduce_ancestor_states_changed(
 /// A description change on the focus, spoken as NVDA's base handler speaks
 /// it ("The focus gate" in `docs/nvda/events.md`): the new description
 /// alone, queued, when it differs from the one last spoken of it
-/// ([`SpokenRecord`]) and has text, and
-/// is not the focus's name over again. Ignored for any other node.
+/// ([`SpokenRecord`]) and has text, even when it is the focus's name over
+/// again, a change's speech having no name to compare it with
+/// (`docs/parity/changes-and-selection.md`, "A description change").
+/// Ignored for any other node.
 /// An editable field's suggestions appeared (`open`) or went away: the
 /// focus's opening plays the suggestions-opened indication, and any other
 /// change the suggestions-closed one, the focus test applying only to an
@@ -1673,10 +1717,7 @@ fn reduce_description_changed(
     if unchanged {
         return Vec::new();
     }
-    let Some(text) = description
-        .filter(|text| !text.trim().is_empty())
-        .filter(|text| focus.snapshot.name.as_ref() != Some(*text))
-    else {
+    let Some(text) = description.filter(|text| !text.trim().is_empty()) else {
         return Vec::new();
     };
     vec![Effect::Speak(

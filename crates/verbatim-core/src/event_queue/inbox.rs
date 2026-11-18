@@ -686,6 +686,14 @@ impl<L: Logic> Core<L> {
 /// `entry` joins the back of the queue: the logic sees it arrive, then the
 /// limiter places it.
 fn join<L: Logic>(state: &mut State<L::Entry, L::Facts>, mut entry: L::Entry) {
-    L::arrival(&mut state.facts, &mut entry);
+    let queue = &state.queue;
+    let front = queue.front.as_ref().map(|front| {
+        let request = front
+            .asked
+            .and_then(|number| queue.table.live(number))
+            .map(|live| &live.request);
+        (&front.entry, request)
+    });
+    L::arrival(&mut state.facts, front, &mut entry);
     limiter::arrive::<L>(&state.facts, &mut state.queue.waiting, entry);
 }

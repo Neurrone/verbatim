@@ -5,7 +5,11 @@
 //!
 //! Each kind's entry is one [`Announcement`], the tell with what its kind
 //! parsed from it: the queue's rules read the kind for its place, its
-//! merge, its window and whether the foreground stop reaches it.
+//! window and whether the foreground stop reaches it. No UI Automation
+//! announcement merges a waiting one: notifications and selections are
+//! handled one by one, in arrival order (`docs/parity/alerts.md`,
+//! "UIA notification events"; `docs/parity/changes-and-selection.md`,
+//! "Selection announcements").
 
 pub(crate) mod alert;
 pub(crate) mod desktop_name;
@@ -58,8 +62,10 @@ pub(crate) enum Kind {
     /// A UI Automation window opened, a toast candidate, the element kept
     /// by the listener.
     Toast(Kept),
-    /// A UI Automation element selected, the element kept by the listener.
-    UiaSelection(Kept),
+    /// A UI Automation element selected, the element kept by the
+    /// listener, with whether it was the committed focus when its tell
+    /// joined the queue, set then.
+    UiaSelection(Kept, crate::changes::AtArrival),
     /// An MSAA alert.
     Alert {
         /// The ids its event named.
@@ -130,7 +136,7 @@ impl Announcement {
                 if kind == EventKind::UiaWindowOpened {
                     Kind::Toast(kept)
                 } else {
-                    Kind::UiaSelection(kept)
+                    Kind::UiaSelection(kept, crate::changes::AtArrival::default())
                 }
             }
             (
@@ -190,7 +196,7 @@ impl Announcement {
                 notification::run(&mut cx, &announcement);
             }),
             Kind::Toast(_) => Box::pin(toast::run(cx, announcement)),
-            Kind::UiaSelection(_) => Box::pin(selection::run(cx, announcement)),
+            Kind::UiaSelection(..) => Box::pin(selection::run(cx, announcement)),
             Kind::Alert { .. } => Box::pin(alert::run(cx, announcement)),
             Kind::Show { .. } => Box::pin(show::run(cx, announcement)),
             Kind::DesktopName { .. } => Box::pin(desktop_name::run(cx, announcement)),
@@ -198,7 +204,8 @@ impl Announcement {
     }
 
     /// How it waits: an MSAA kind by its key, a UI Automation kind merging
-    /// a waiting one of the same kind and object (Table 12, column F).
+    /// nothing (Table 12, column F). A toast's repeat is dropped at its
+    /// turn instead.
     pub(crate) fn place(&self) -> Place {
         let msaa = |ids: &MsaaIds, class: MsaaClass| Place::Msaa {
             key: MsaaKey {
@@ -215,42 +222,19 @@ impl Announcement {
         match &self.kind {
             Kind::Alert { ids, .. } | Kind::DesktopName { ids } => msaa(ids, MsaaClass::Other),
             Kind::Show { ids, .. } => msaa(ids, MsaaClass::Show),
-            Kind::Notification { .. } | Kind::Toast(_) | Kind::UiaSelection(_) => Place::Other {
-                merges: true,
+            Kind::Notification { .. } | Kind::Toast(_) | Kind::UiaSelection(..) => Place::Other {
+                merges: false,
                 focus_kind: false,
                 ends_run: false,
             },
         }
     }
 
-    /// Whether `arriving` replaces it as it waits: a notification of the
-    /// same sender, kind, processing and activity; a selection of the same
-    /// element. A toast's repeat is dropped at its turn instead.
-    pub(crate) fn merged_by(&self, arriving: &Self) -> bool {
-        match (&self.kind, &arriving.kind) {
-            (
-                Kind::Notification {
-                    sender,
-                    kind,
-                    processing,
-                    activity,
-                    ..
-                },
-                Kind::Notification {
-                    sender: other_sender,
-                    kind: other_kind,
-                    processing: other_processing,
-                    activity: other_activity,
-                    ..
-                },
-            ) => {
-                (sender, kind, processing, activity)
-                    == (other_sender, other_kind, other_processing, other_activity)
-            }
-            (Kind::UiaSelection(waiting), Kind::UiaSelection(other)) => {
-                (&waiting.runtime_id, self.tell.thread) == (&other.runtime_id, arriving.tell.thread)
-            }
-            _ => false,
+    /// Sets a selection's arrival fact as it joins the queue: whether its
+    /// element was then the committed focus.
+    pub(crate) fn arrived(&mut self, facts: &crate::state::SrState) {
+        if let Kind::UiaSelection(kept, at_arrival) = &mut self.kind {
+            *at_arrival = crate::changes::selection_arrived(facts, &kept.runtime_id);
         }
     }
 
@@ -259,7 +243,7 @@ impl Announcement {
     pub(crate) fn window(&self) -> Option<RequestWindow> {
         match &self.kind {
             Kind::Notification { .. } => None,
-            Kind::Toast(_) | Kind::UiaSelection(_) | Kind::DesktopName { .. } => {
+            Kind::Toast(_) | Kind::UiaSelection(..) | Kind::DesktopName { .. } => {
                 request_window(&self.tell)
             }
             Kind::Alert { window, .. } | Kind::Show { window, .. } => Some(*window),
@@ -272,7 +256,7 @@ impl Announcement {
     pub(crate) fn exempt_from_foreground(&self) -> bool {
         match &self.kind {
             Kind::Notification { .. } | Kind::Toast(_) | Kind::Show { .. } => true,
-            Kind::UiaSelection(_) | Kind::Alert { .. } | Kind::DesktopName { .. } => matches!(
+            Kind::UiaSelection(..) | Kind::Alert { .. } | Kind::DesktopName { .. } => matches!(
                 acceptance::accept(self.tell.kind, window_facts(&self.tell), false),
                 Ok(Accepted::NoWindow
                     | Accepted::Toast
@@ -288,7 +272,7 @@ impl Announcement {
     /// The probe its check made, which the backend cache records.
     pub(crate) fn probe(&self) -> Option<Probe> {
         match &self.kind {
-            Kind::Toast(_) | Kind::UiaSelection(_) => self.tell.checked.as_ref()?.probe,
+            Kind::Toast(_) | Kind::UiaSelection(..) => self.tell.checked.as_ref()?.probe,
             Kind::Notification { .. }
             | Kind::Alert { .. }
             | Kind::Show { .. }
@@ -299,7 +283,7 @@ impl Announcement {
     /// Whether the listener of generation `listener` keeps its element.
     pub(crate) fn kept_by(&self, listener: u64) -> bool {
         match &self.kind {
-            Kind::Toast(kept) | Kind::UiaSelection(kept) => kept.listener == listener,
+            Kind::Toast(kept) | Kind::UiaSelection(kept, _) => kept.listener == listener,
             Kind::Notification { .. }
             | Kind::Alert { .. }
             | Kind::Show { .. }

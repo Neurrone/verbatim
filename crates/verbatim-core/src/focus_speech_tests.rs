@@ -2,7 +2,7 @@
 //! queue ([`crate::desk_tests`]): the focus's own words, the containers it
 //! enters, and its name, value, state and description changing.
 
-use verbatim_model::property::{PropertyId, PropertyValue};
+use verbatim_model::property::{PropertyAnswer, PropertyId, PropertyValue};
 use verbatim_model::{
     NodeDetails, NodeSnapshot, Role, SegmentContent, SpeechPriority, State, StateSet,
     UtteranceSegment,
@@ -516,9 +516,10 @@ fn property(id: PropertyId, value: PropertyValue) -> verbatim_model::request::Re
 }
 
 /// A description change on the focus speaks the new description alone, as
-/// NVDA's base handler does, read from the focus when its change is told;
-/// the same description again, one that only repeats the name, or another
-/// node's change says nothing.
+/// NVDA's base handler does, read from the focus when its change is told,
+/// even one that repeats the name, NVDA's change speech having no name to
+/// compare it with; the same description again, or another node's change,
+/// says nothing.
 #[test]
 fn a_description_change_on_the_focus_is_spoken() {
     let mut desk = Desk::new();
@@ -550,8 +551,10 @@ fn a_description_change_on_the_focus_is_spoken() {
     assert_eq!(described(&mut desk, "Too short"), vec![], "unchanged");
     assert_eq!(
         described(&mut desk, "Password"),
-        vec![],
-        "only the name again"
+        vec![queued(vec![UtteranceSegment::new(
+            SegmentContent::Description("Password".to_owned())
+        )])],
+        "the name again"
     );
     assert_eq!(
         desk.uia_change(ONE, 42, PropertyId::Description, None),
@@ -592,10 +595,57 @@ fn suggestions_opening_on_the_focus_and_closing_play_their_indications() {
         suggestions(&mut desk, false),
         vec![Heard::Earcon(Earcon::SuggestionsClosed)]
     );
+    // Off the focus, a change plays the suggestions-closed indication only
+    // for a suggestions field, by the facts its tell carries: a text
+    // pattern, or a search field's automation id.
+    let off_focus = |desk: &mut Desk, cached: Vec<PropertyAnswer>| {
+        let tell = verbatim_model::tell::Event {
+            kind: verbatim_model::event_kind::EventKind::UiaPropertyChanged,
+            cached: verbatim_model::property::PropertyValues(cached),
+            payload: verbatim_model::tell::Payload::PropertyChanged {
+                property: PropertyId::Suggestions,
+                value: None,
+            },
+            checked: None,
+            ..crate::desk_tests::focus_tell(ONE, 42, desk.at_us + 1_000)
+        };
+        desk.step(crate::event_queue::Input::Entry(
+            crate::entries::Entry::of_tell(ONE.instance(), tell).unwrap(),
+        ))
+        .0
+    };
     assert_eq!(
-        desk.uia_change(ONE, 42, PropertyId::Suggestions, None),
+        off_focus(&mut desk, Vec::new()),
+        vec![],
+        "no suggestions field"
+    );
+    assert_eq!(
+        off_focus(
+            &mut desk,
+            vec![PropertyAnswer {
+                id: PropertyId::HasTextPattern,
+                value: Some(PropertyValue::Flag(true)),
+            }]
+        ),
         vec![Heard::Earcon(Earcon::SuggestionsClosed)],
-        "not the focus"
+        "editable text"
+    );
+    assert_eq!(
+        off_focus(
+            &mut desk,
+            vec![
+                PropertyAnswer {
+                    id: PropertyId::HasTextPattern,
+                    value: Some(PropertyValue::Flag(false)),
+                },
+                PropertyAnswer {
+                    id: PropertyId::AutomationId,
+                    value: Some(PropertyValue::Text("SearchTextBox".to_owned())),
+                },
+            ]
+        ),
+        vec![Heard::Earcon(Earcon::SuggestionsClosed)],
+        "a search field"
     );
 }
 

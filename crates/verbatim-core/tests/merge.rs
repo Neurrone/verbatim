@@ -6,7 +6,9 @@
 //! the front entry's request is out, does exactly what the same sequence
 //! does without the older tell: every effect and the focus Core holds
 //! are the same, so the older tell is gone and the newer is judged at its
-//! own place. What the newer tell says is asserted on its own.
+//! own place. What the newer tell says is asserted on its own. UI
+//! Automation notifications and selections merge nothing, as NVDA handles
+//! each one (ADR 0003, "Flood limiters and the merge").
 
 mod desk;
 
@@ -22,8 +24,8 @@ use verbatim_model::request::{
 };
 use verbatim_model::tell::{Checked, Event, EventObject, Payload, TellWindow};
 use verbatim_model::{
-    Backend, Earcon, NodeDetails, NodeSnapshot, Role, SegmentContent, SpeechPriority, State,
-    StateSet, TraceId, UtteranceSegment, WindowHandle,
+    Backend, Earcon, NodeDetails, NodeSnapshot, Role, SegmentContent, State, StateSet, TraceId,
+    UtteranceSegment, WindowHandle,
 };
 
 /// The focus's window, the pane in it, and the edit field "Notes" Core
@@ -405,88 +407,6 @@ fn a_suggestions_change_merged_is_the_newer_one() {
         PropertyId::Suggestions,
         PropertyValue::Flag(true),
         &[Heard::Earcon(Earcon::SuggestionsOpened)],
-    );
-}
-
-/// The listener's tell that node `number`'s element was selected.
-fn selected(number: u64) -> Told {
-    let mut tell = focus_tell(ONE, number, 0);
-    tell.kind = EventKind::UiaElementSelected;
-    tell.checked = None;
-    tell.cached = PropertyValues(vec![PropertyAnswer {
-        id: PropertyId::States,
-        value: Some(PropertyValue::States(StateSet::new().with(State::Selected))),
-    }]);
-    Told {
-        from: LISTENER,
-        tell,
-    }
-}
-
-/// The answers to a selected item's two reads: the listener's, and the
-/// outpost's completion, reading item `number` named `name` with
-/// `relation` to the focus.
-fn item_answer(
-    number: u64,
-    name: &'static str,
-    relation: RelationFound,
-) -> impl Fn(&Wire) -> Outcome {
-    move |request: &Wire| match request {
-        Wire::ReadObject(_) => Outcome::Result(Reply::Object(Box::new(listener_read(ONE, number)))),
-        Wire::CompleteUia(_) => Outcome::Result(Reply::Object(Box::new(ObjectRead {
-            object: NodeRead {
-                node: Some(ONE.node(number)),
-                window: ONE.node_window(),
-                values: desk::values_of(&node(
-                    number,
-                    Role::ListItem,
-                    name,
-                    StateSet::new().with(State::Selected),
-                )),
-            },
-            relation: Some(relation),
-            descendants: Vec::new(),
-            ancestors: Vec::new(),
-            met: None,
-            route: None,
-        }))),
-        other => unasked(other),
-    }
-}
-
-/// The two requests a selected item's reads send.
-fn item_reads() -> Vec<Heard> {
-    vec![
-        Heard::Sent(Reader::Listener, "ReadObject"),
-        Heard::Sent(Reader::Outpost(ONE.pid), "CompleteUia"),
-    ]
-}
-
-#[test]
-fn a_selection_merged_is_the_newer_selection() {
-    equivalent(
-        &selected(5),
-        &selected(5),
-        &item_answer(5, "One, renamed", RelationFound::Unrelated),
-        &item_reads(),
-    );
-}
-
-#[test]
-fn a_controlled_selection_merged_is_the_newer_one() {
-    let mut heard = item_reads();
-    heard.push(Heard::Say(
-        SpeechPriority::Interrupt,
-        vec![
-            UtteranceSegment::label("Suggestion two"),
-            UtteranceSegment::new(SegmentContent::State(State::Selected)),
-        ],
-    ));
-    equivalent(
-        &selected(6),
-        &selected(6),
-        &item_answer(6, "Suggestion two", RelationFound::Controlled),
-        &heard,
     );
 }
 

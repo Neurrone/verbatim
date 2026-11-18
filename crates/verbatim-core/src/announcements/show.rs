@@ -1,12 +1,11 @@
-//! A show at its turn (Table 12): of the six classes NVDA accepts a show
-//! from, only `tooltips_class32` is handled, with one outpost request for
-//! the object's snapshot, its role judged at the answer as NVDA tells them
-//! apart (`NVDAObjects/IAccessible/__init__.py` 2845 to 2846): a help
-//! balloon is spoken, from any application, as NVDA speaks it by default;
-//! an ordinary tooltip is not, as NVDA's tooltip reporting is off by
-//! default (`NVDAObjects/behaviors.py` 992, 1008). The other five classes'
-//! handling waits for application support (`docs/parity/focus-events.md`,
-//! "Background events"). Spoken queued, as today.
+//! A show at its turn (Table 12; `docs/parity/alerts.md`, "Help
+//! balloons"): of the six classes NVDA accepts a show from, only
+//! `tooltips_class32` is handled, with one outpost request for the
+//! object's snapshot, its role judged at the answer: a help balloon is
+//! spoken, from any application, as NVDA speaks it by default; an ordinary
+//! tooltip is not, as NVDA's tooltip reporting is off by default. The
+//! other five classes' handling waits for application support
+//! (`docs/parity/focus-events.md`, "Background events"). Spoken queued.
 
 use verbatim_model::request::{FocusNode, ObjectRef, Purpose, ReadObject};
 use verbatim_model::{Backend, Role, SpeechPriority};

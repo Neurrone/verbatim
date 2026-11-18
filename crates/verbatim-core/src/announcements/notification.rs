@@ -1,17 +1,14 @@
-//! A UI Automation notification at its turn (Table 12): spoken with no
-//! request when it is from the committed focus's application, as NVDA's
-//! default drops a background application's (`NVDAObjects/UIA/__init__.py`
-//! 2541 to 2543); the shell's window-snap results are spoken from File
-//! Explorer whatever the focus, queued and never cutting, as its module
-//! speaks them (`appModules/explorer.py` 527 to 528, 548 to 550). A
-//! notification whose check found no window is dropped, as NVDA's default
-//! `shouldProcessUIANotificationEvent` drops it (`appModuleHandler.py` 842
-//! to 845), but the snap results, which take the desktop window.
+//! A UI Automation notification at its turn (Table 12;
+//! `docs/parity/alerts.md`, "UIA notification events"): spoken with no
+//! request when it is from the committed focus's application; the shell's
+//! window-snap results are spoken from File Explorer whatever the focus,
+//! queued and never cutting. A notification whose check found no window is
+//! dropped, but the snap results, which take the desktop window.
 //!
-//! Speech, as NVDA's (`NVDAObjects/UIA/__init__.py` 2545 to 2556): a
-//! notification processed "most recent" or "important most recent" cuts
-//! speech, or during say-all is spoken without cutting; every other
-//! processing is queued.
+//! Speech: a notification processed "most recent" or "important most
+//! recent" cuts speech, or during say-all is spoken at Next, after the
+//! line being read, until M6.3 gives speech an interrupt-and-resume
+//! priority; every other processing is queued.
 
 use verbatim_model::tell::TellWindow;
 use verbatim_model::{
