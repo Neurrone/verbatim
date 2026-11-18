@@ -106,6 +106,10 @@ Recorded by Claude, 2026-11-04.
   - How (2026-11-19, 2 of 13 runs locally): the second window is said as "... window unavailable" when UI Automation focuses the console window itself before its text area.
   - Cause: the outpost's remote states read (`focus_states_remote`, `crates/verbatim-uia-rops/src/focus_states.rs`) fills the cache in the provider's process, where a property the provider does not supply is stored as its default; `IsEnabled` is read as a plain flag (`crates/verbatim-uia/src/shape/shapes.rs`), so its default of false becomes Disabled. Ordinary reads of the same window in the same 10 ms say enabled. NVDA reads `IsEnabled` ignoring the default and treats a missing value as enabled (`NVDAObjects/UIA/__init__.py` 2022).
   - Fix: read `IsEnabled` as absent when the remote program finds it unsupported, and absent as enabled; to build once a recording confirms what the remote program returns on a console window.
+- `conhost_editing` on GitHub's runner (run 44399039765, 2026-11-19)
+  - How: the setup failed with "the shell shows its first prompt": the shell's `prompt-ready` file was not written within 30 s.
+  - Cause: the console's shell (PowerShell) did not reach its first prompt; Verbatim's outpost in the console answered every request within a few milliseconds and then sat idle (the report's flight recorder, lines 41 to 67), so nothing of Verbatim's held the console. Why the shell was slow is not found.
+  - Fix: none planned.
 - `conhost_typing`
   - How: missed a typed "o" in 2 of 6 runs on the base build.
   - Cause: not found.
