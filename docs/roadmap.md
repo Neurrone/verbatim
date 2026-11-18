@@ -167,6 +167,29 @@ drag events and effects, layout invalidated for suggestion lists).
 - The build notes list about twenty statements in the project's own
   documents that the pinned NVDA source or the code contradicts.
 
+## Exact replay of a paused entry
+
+Its own phase (Dickson, 2026-11-19); its place in the order is not yet set.
+A flight dump whose window starts while an entry is paused at the front of
+Core's queue, a caret key waiting on its read for example, cannot replay
+that entry: a paused function cannot be saved, and the inputs that started
+it are older than the window. Since the caret key confirms an unconfirmed
+focus with a read, such dumps report a mismatch where none happened live.
+
+- The recorder's bound is 64 MiB with no bound on the number of inputs
+  (Dickson, 2026-11-19).
+- Taking snapshots only when no entry is paused would make every paused
+  entry replayable from its start, except after a flood with no quiet
+  moment before the bound; terminal output, whose reads are recorded whole,
+  makes such floods likely, so the phase starts by measuring the recorded
+  input rate and size under terminal and MSAA floods.
+- Rebuilding a paused entry from its starting state and the log was
+  designed and reviewed (2026-11-19) and judged too complex for what it
+  buys; the phase weighs it again against the measurements.
+- A dump never blocks Core: the dump takes the recorder's segments under
+  its lock by an exchange and copies them outside it (built separately, not
+  part of this phase).
+
 ## Misc fixes
 
 Next (Dickson, 2026-11-10). Nothing here is built. This entry holds
