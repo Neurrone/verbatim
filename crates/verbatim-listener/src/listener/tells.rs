@@ -15,7 +15,7 @@ use std::time::Duration;
 
 use verbatim_ia2::{WinEvent, WinEventKind};
 use verbatim_listener_logic::tell::{
-    ForegroundHold, Placed, TimerChange, dropped_by_class, tell_window,
+    ForegroundHold, Placed, TimerChange, dropped_by_class, hang_tested, tell_window,
 };
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::PropertyValues;
@@ -301,7 +301,8 @@ fn handle(window: isize) -> WindowHandle {
 /// known (a console window's is its console host, the process of the
 /// thread that raised the event, as Verbatim routes it today), the
 /// window's class and the shown object ([`dropped_by_class`]), and a hung
-/// or ghosted window, read live. `front` is the window in front as the
+/// or ghosted window, read live, for the kinds NVDA tests
+/// ([`hang_tested`]). `front` is the window in front as the
 /// callback read it, which the foreground hold judges the event on.
 pub(super) fn tell_win_event(
     tells: &Tells,
@@ -348,7 +349,7 @@ pub(super) fn tell_win_event(
     if let Some(reason) = dropped_by_class(kind, &class, event.id_object) {
         return dropped(reason);
     }
-    if kind != EventKind::Destroy && verbatim_win32::window::readability(window).is_hung() {
+    if hang_tested(kind) && verbatim_win32::window::readability(window).is_hung() {
         return dropped("its window is hung");
     }
     let payload = if kind == EventKind::DesktopSwitch {

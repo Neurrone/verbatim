@@ -76,6 +76,33 @@ pub fn tell_window(
     }
 }
 
+/// Whether an event of `kind` is dropped when its window is hung or
+/// ghosted, as NVDA tests for a hang only in `winEventToNVDAEvent`
+/// (`IAccessibleHandler/__init__.py` 556 to 576). The kinds that never
+/// reach that test answer false: a window's destruction, handled on its
+/// own (`processDestroyWinEvent`, 911); the end of a menu, a popup menu
+/// or the task switcher, which go to the fake focus (1082 to 1084), whose
+/// read 50 ms later is not tested either (989 to 1002); the system caret's
+/// location change and show, which `processGenericWinEvent` queues as a
+/// caret event (636 to 667); and the desktop switch (1076 to 1077). Every
+/// other kind is tested, a menu start, a popup start and a caret hide,
+/// which is no system caret event, among them. Core asks of an untested
+/// kind's hung window as of any other, and its shell's live hang check
+/// refuses the request, the not-responding sound playing while the window
+/// holds attention (Dickson, 2026-11-19).
+#[must_use]
+pub fn hang_tested(kind: EventKind) -> bool {
+    !matches!(
+        kind,
+        EventKind::Destroy
+            | EventKind::MenuEnd
+            | EventKind::PopupEnd
+            | EventKind::SwitchEnd
+            | EventKind::SystemCaret
+            | EventKind::DesktopSwitch
+    )
+}
+
 /// Why an event on a window of class `class`, its object `object` (a
 /// window object already read as its client), is dropped by its window's
 /// class or its object: any event of [`MSN_HIDDEN_CLASS`]; a show of
@@ -265,6 +292,42 @@ mod tests {
     use super::*;
 
     const DESKTOP: isize = 0x10;
+
+    /// Every kind the listener tells of a `WinEvent`, with whether NVDA
+    /// tests its window for a hang: only those `winEventToNVDAEvent`
+    /// reaches.
+    #[test]
+    fn a_hung_window_drops_only_the_kinds_nvda_tests() {
+        let rows = [
+            (EventKind::MsaaFocus, true),
+            (EventKind::Foreground, true),
+            (EventKind::ShellForeground, true),
+            (EventKind::MenuStart, true),
+            (EventKind::MenuEnd, false),
+            (EventKind::PopupStart, true),
+            (EventKind::PopupEnd, false),
+            (EventKind::SwitchEnd, false),
+            (EventKind::DesktopSwitch, false),
+            (EventKind::Alert, true),
+            (EventKind::NameChange, true),
+            (EventKind::ValueChange, true),
+            (EventKind::StateChange, true),
+            (EventKind::DescriptionChange, true),
+            (EventKind::Selection, true),
+            (EventKind::SelectionAdd, true),
+            (EventKind::SelectionRemove, true),
+            (EventKind::SelectionWithin, true),
+            (EventKind::Show, true),
+            (EventKind::Hide, true),
+            (EventKind::Destroy, false),
+            (EventKind::SystemCaret, false),
+        ];
+        let answered: Vec<(EventKind, bool)> = rows
+            .iter()
+            .map(|&(kind, _)| (kind, hang_tested(kind)))
+            .collect();
+        assert_eq!(answered, rows);
+    }
 
     #[test]
     fn a_window_of_0_is_the_desktop_window_for_every_kind() {

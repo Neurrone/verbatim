@@ -846,7 +846,16 @@ by stopping the wait (Dickson, 2026-11-04; ADR 0003, "A frozen window";
 "Slow and hung applications"). "Hung" is judged live and stored nowhere,
 in two places. The focus listener drops events from a hung or ghosted
 window as they arrive, as NVDA's handlers do: a `WinEvent` by its
-window, a UIA event by its sender's own cached window. Core's shell asks
+window, a UIA event by its sender's own cached window. Only the
+`WinEvent` kinds `winEventToNVDAEvent` reaches are dropped so: a
+window's destruction, the end of a menu, a popup menu or the task
+switcher (the fake focus, lines 1082 to 1084, whose read 50 ms later is
+not tested either, 989 to 1002), the system caret's location change and
+show (636 to 667) and the desktop switch (1076 to 1077) are told from a
+hung window. Their requests meet the shell's check below, so a menu's
+end in a hung window holding attention plays the sound, where NVDA's
+read blocks until its watchdog cancels it (`watchdog.py`, from line 151;
+Dickson, 2026-11-19). Core's shell asks
 Windows whether a request's window is hung before sending it, a ghost
 mapped to its hung window, and answers a request to a hung window "not
 responding" without sending it; while any request is out it asks again

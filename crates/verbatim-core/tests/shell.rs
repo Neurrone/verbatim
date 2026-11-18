@@ -609,6 +609,29 @@ const SETTINGS: App = App {
     top: 10,
 };
 
+/// A menu's end told from a hung window holding attention: the listener
+/// tells it, as NVDA tests no menu end for a hang
+/// (`verbatim_listener_logic::tell::hang_tested`), and Core's check of the
+/// focus 50 ms later is refused by the shell's live hang check, which
+/// plays the not-responding sound, as Dickson decided (2026-11-19). In
+/// NVDA the check's read blocks until the watchdog cancels it.
+#[test]
+fn a_menu_end_from_a_hung_window_holding_attention_plays_the_sound() {
+    let mut desk = Desk::new();
+    assert_eq!(
+        started_on(&mut desk, ONE, msaa_ok(ONE)),
+        msaa_ok_heard(ONE, None)
+    );
+    menu_ended(&mut desk, ONE);
+    let [(check, _, _)] = desk.sent[..] else {
+        panic!("one check asked: {:?}", desk.sent);
+    };
+    assert_eq!(
+        desk.step(QueueInput::RefusedHung(RequestNumber(check))),
+        [Heard::Earcon(Earcon::AppNotResponding)]
+    );
+}
+
 /// A hang met by a request for a process whose focus is in the window in
 /// front plays the sound, as a Settings page (`SystemSettings`) hangs
 /// inside `ApplicationFrameHost`'s frame, which is in front; a hang in a

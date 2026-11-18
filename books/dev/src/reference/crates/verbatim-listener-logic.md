@@ -123,7 +123,12 @@ Public API:
   window, and a window's destruction told only for the window's own
   object; `dropped_by_class`, Windows Live Messenger's hidden window and a
   show of neither a client nor a custom object, and a name change of the
-  mouse pointer (`OBJID_CURSOR`), whose name is its shape; and
+  mouse pointer (`OBJID_CURSOR`), whose name is its shape; `hang_tested`,
+  whether a hung or ghosted window drops an event of a kind, true only
+  for the kinds NVDA's `winEventToNVDAEvent` tests, so a window's
+  destruction, the end of a menu, a popup menu or the task switcher, the
+  system caret and the desktop switch are told from a hung window and
+  Core's shell refuses its request there; and
   `ForegroundHold`, which keeps every MSAA item placed behind a foreground
   event whose window `GetForegroundWindow` does not name until it does or
   `FOREGROUND_HOLD_US` (20 ms) pass, a newer foreground awaiting its own
