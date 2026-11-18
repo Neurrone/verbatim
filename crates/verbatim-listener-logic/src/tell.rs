@@ -18,6 +18,9 @@ const OBJID_CLIENT: i32 = -4;
 /// `CHILDID_SELF`.
 const CHILDID_SELF: i32 = 0;
 
+/// `OBJID_CURSOR`, the mouse pointer.
+pub const OBJID_CURSOR: i32 = -9;
+
 /// The class of the window whose events NVDA ignores entirely, since a
 /// message to it makes Windows Live Messenger 2009 exit
 /// (`IAccessibleHandler/internalWinEventHandler.py` 183 to 187).
@@ -78,12 +81,19 @@ pub fn tell_window(
 /// class or its object: any event of [`MSN_HIDDEN_CLASS`]; a show of
 /// anything but a client or custom object, as NVDA keeps only those
 /// (`IAccessibleHandler/__init__.py` 905, 1039 to 1055), the system
-/// caret's show being a caret event and not a show. `None` when it is
-/// kept.
+/// caret's show being a caret event and not a show; and a name change of
+/// the mouse pointer ([`OBJID_CURSOR`]), whose name is its shape, which
+/// NVDA hands to its mouse-shape reporting before any other handling and
+/// speaks only with that reporting on, off by default
+/// (`IAccessibleHandler/__init__.py` 673 to 676, `config/configSpec.py`
+/// 165): Verbatim has no such reporting. `None` when it is kept.
 #[must_use]
 pub fn dropped_by_class(kind: EventKind, class: &str, object: i32) -> Option<&'static str> {
     if class == MSN_HIDDEN_CLASS {
         return Some("a window of Windows Live Messenger's hidden class");
+    }
+    if kind == EventKind::NameChange && object == OBJID_CURSOR {
+        return Some("a change of the mouse pointer's shape");
     }
     if kind == EventKind::Show && object != OBJID_CLIENT && object <= 0 {
         return Some("a show of neither a client nor a custom object");
@@ -320,6 +330,30 @@ mod tests {
         assert_eq!(dropped_by_class(EventKind::Show, "TTrayAlert", 3), None);
         assert!(dropped_by_class(EventKind::Show, "TTrayAlert", -2).is_some());
         assert_eq!(dropped_by_class(EventKind::SystemCaret, "Edit", -8), None);
+    }
+
+    /// The recorded pointer change: a name change on the desktop window,
+    /// object `OBJID_CURSOR`, child 0, its name the shape ("Normal").
+    #[test]
+    fn a_name_change_of_the_mouse_pointer_is_dropped_and_the_desktops_own_is_kept() {
+        assert_eq!(
+            dropped_by_class(EventKind::NameChange, "#32769", OBJID_CURSOR),
+            Some("a change of the mouse pointer's shape")
+        );
+        assert_eq!(
+            dropped_by_class(EventKind::NameChange, "#32769", OBJID_CLIENT),
+            None
+        );
+        assert_eq!(
+            dropped_by_class(EventKind::NameChange, "#32769", OBJID_WINDOW),
+            None
+        );
+        // Only the name change: the pointer's other events are judged as
+        // any object's.
+        assert_eq!(
+            dropped_by_class(EventKind::StateChange, "#32769", OBJID_CURSOR),
+            None
+        );
     }
 
     #[test]

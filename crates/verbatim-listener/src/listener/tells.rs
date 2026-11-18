@@ -623,6 +623,57 @@ mod tests {
         );
     }
 
+    /// The recorded pointer change, a name change on the desktop window of
+    /// object `OBJID_CURSOR` and child 0, is not told, and the desktop's
+    /// own name change after it, a virtual desktop's, is.
+    #[test]
+    fn a_pointer_shape_change_is_not_told_and_the_desktops_name_change_after_it_is() {
+        // SAFETY: GetDesktopWindow has no preconditions.
+        let desktop =
+            unsafe { windows::Win32::UI::WindowsAndMessaging::GetDesktopWindow() }.0 as isize;
+        let (tells, sender, mut reader) = tells();
+        let mut applications = Applications::default();
+        for (told, at_us) in [
+            (
+                event(
+                    WinEventKind::NameChange,
+                    EVENT_OBJECT_NAMECHANGE,
+                    desktop,
+                    verbatim_listener_logic::tell::OBJID_CURSOR,
+                ),
+                1,
+            ),
+            (
+                event(
+                    WinEventKind::NameChange,
+                    EVENT_OBJECT_NAMECHANGE,
+                    desktop,
+                    OBJID_CLIENT.0,
+                ),
+                2,
+            ),
+        ] {
+            tell_win_event(&tells, &mut applications, told, (at_us, foreground()));
+        }
+        let sent = sent_all(&sender, &mut reader);
+        let tell = only_tell(&sent);
+        assert_eq!(tell.kind, EventKind::NameChange);
+        assert_eq!(tell.at_us, 2);
+        assert_eq!(
+            tell.object,
+            EventObject::Msaa {
+                window: handle(desktop),
+                object: OBJID_CLIENT.0,
+                child: 0,
+            }
+        );
+        let TellWindow::Found(facts) = &tell.window else {
+            panic!("its window's facts: {:?}", tell.window);
+        };
+        assert_eq!(facts.window.class, "#32769");
+        assert!(facts.desktop);
+    }
+
     /// Waiting tells merge, one per object, kind and raising thread, the
     /// newest at the back.
     #[test]

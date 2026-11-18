@@ -116,7 +116,8 @@ Public API:
   popup menu or the task switcher, dropping any other event of an invalid
   window, and a window's destruction told only for the window's own
   object; `dropped_by_class`, Windows Live Messenger's hidden window and a
-  show of neither a client nor a custom object; and
+  show of neither a client nor a custom object, and a name change of the
+  mouse pointer (`OBJID_CURSOR`), whose name is its shape; and
   `ForegroundHold`, which keeps every item placed behind a foreground
   event whose window `GetForegroundWindow` does not name until it does or
   `FOREGROUND_HOLD_US` (20 ms) pass, a newer foreground awaiting its own

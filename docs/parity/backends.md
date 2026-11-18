@@ -468,6 +468,23 @@ by NVDA, whose slot keeps only the later event
 (`IAccessibleHandler/__init__.py` 1093 to 1103). Each needs two menu
 events within one flush, so they are rare, and none is changed.
 
+### MSAA mouse pointer shape changes
+
+When the mouse pointer changes shape, Windows raises a name change on
+the desktop window with the object `OBJID_CURSOR`, whose name is the
+shape ("Normal", "Working in background"). NVDA hands such a name
+change to its mouse-shape reporting before any other handling, so it
+never reaches the desktop's virtual-desktop-name check
+(`IAccessibleHandler/__init__.py` 673 to 676), and that reporting
+speaks only with "Report mouse shape changes" on, off by default
+(`config/configSpec.py` 165). Verbatim: **matched (verified)** with that
+reporting off, which Verbatim does not offer: the listener drops a name
+change of `OBJID_CURSOR` before telling Core (`dropped_by_class`,
+`verbatim-listener-logic`), so the pointer's shape is never announced as
+a virtual desktop's name, and a name change of the desktop's own object
+after it still is (the listener's test
+`a_pointer_shape_change_is_not_told_and_the_desktops_name_change_after_it_is`).
+
 ### IA2 upgrade of MSAA objects
 
 NVDA: `normalizeIAccessible`
