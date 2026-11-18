@@ -14,7 +14,9 @@
 //! The speech is NVDA's, captured on this scenario's steps against the same
 //! mockapp (10 of 10 runs, the pinned build, 2026-11-18): "<title> window";
 //! the field's focus, "edit multi line blank", as mockapp's edit is
-//! `ES_MULTILINE`; and the arrow's "blank" about 105 ms after the key, the
+//! `ES_MULTILINE`, which Verbatim speaks as two utterances, the field then
+//! its empty line, as every scenario hears a focused field and its line;
+//! and the arrow's "blank" about 105 ms after the key, the
 //! stale focus arriving 23 to 44 ms after the arrow, inside NVDA's caret
 //! wait, and refused, never silencing the key. That capture placed the
 //! focus 30 ms after the key; the speech does not depend on the trigger.
@@ -60,7 +62,7 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     // The field takes the focus, and the tree's stale focus is armed.
     send_to_mockapp(scenario, app, "stale-focus-on-left");
     await_mockapp(scenario, app);
-    scenario.speech().expect(&["edit multi line blank"]);
+    scenario.speech().expect(&["edit multi line", "blank"]);
     // The arrow in the empty field: the tree's focus, raised at the watch's
     // first read, is found not focused, and the arrow says its character,
     // blank.
