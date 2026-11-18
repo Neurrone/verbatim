@@ -34,8 +34,8 @@ use windows::Win32::Foundation::RECT;
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::{
     IUIAutomationCacheRequest, IUIAutomationCondition, IUIAutomationElement,
-    IUIAutomationTreeWalker, TreeScope, UIA_IsDataValidForFormPropertyId, UIA_PATTERN_ID,
-    UIA_PROPERTY_ID,
+    IUIAutomationTreeWalker, TreeScope, UIA_IsDataValidForFormPropertyId, UIA_IsEnabledPropertyId,
+    UIA_PATTERN_ID, UIA_PROPERTY_ID,
 };
 use windows::core::{AgileReference, IUnknown, Interface};
 
@@ -106,12 +106,15 @@ pub trait Covers<T: Ungated>: Shape {}
 
 /// The properties a remote program leaves out of an element's cache when
 /// the element does not support them, each recorded in the element's
-/// [`Absent`] record: `IsDataValidForForm`, whose default of false, which
-/// a remotely filled cache stores where a locally built one stores UIA's
-/// "not supported" value, would read as an invalid entry. (`ValueIsReadOnly`
-/// and `RangeValueValue` are read only where their patterns are available
-/// instead.)
-pub const LEFT_OUT_WHEN_UNSUPPORTED: &[UIA_PROPERTY_ID] = &[UIA_IsDataValidForFormPropertyId];
+/// [`Absent`] record, whose default of false a remotely filled cache
+/// stores where a locally built one stores UIA's "not supported" value:
+/// `IsDataValidForForm`, whose false would read as an invalid entry, and
+/// `IsEnabled`, whose false would read as disabled, as the console host's
+/// own provider for its window, which supplies none, was read (found
+/// 2026-11-19). (`ValueIsReadOnly` and `RangeValueValue` are read only
+/// where their patterns are available instead.)
+pub const LEFT_OUT_WHEN_UNSUPPORTED: &[UIA_PROPERTY_ID] =
+    &[UIA_IsDataValidForFormPropertyId, UIA_IsEnabledPropertyId];
 
 /// Which of the [`LEFT_OUT_WHEN_UNSUPPORTED`] properties a remote program
 /// left out of an element's cache, as the program reports it: bit `i` for

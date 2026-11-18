@@ -328,7 +328,7 @@ fn focus_and_navigation_execute_exactly() {
 
     assert_eq!(
         [worst, limited, typical, far, near_step],
-        [2446, 1859, 1124, 890, 159],
+        [3078, 2243, 1278, 967, 235],
         "focus ancestry worst, at depth limit 30, typical; navigation far and near"
     );
     assert!(worst < LIMIT / 2 && far < LIMIT / 2);
@@ -403,7 +403,7 @@ fn reads_and_paths_execute_exactly() {
 
     assert_eq!(
         [read, deepest, near, missing],
-        [2469, 1143, 157, 150],
+        [3109, 1219, 233, 218],
         "the listener's refreshed read; a path down sixty-two levels, down one, and to nothing"
     );
     assert!(read < LIMIT / 2 && deepest < LIMIT / 2);
@@ -442,7 +442,7 @@ fn controlled_selections_execute_exactly() {
 
     assert_eq!(
         [deep, near, missing],
-        [179, 211, 223],
+        [255, 287, 291],
         "controlled selection inside a group, second child, not found"
     );
 }
@@ -890,16 +890,16 @@ fn tree_dumps_execute_exactly() {
     assert_eq!(
         (deep.clone(), wide.clone()),
         (
-            vec![Some(4097), Some(746)],
+            vec![Some(4635), Some(876)],
             vec![
-                Some(2545),
-                Some(654),
-                Some(588),
-                Some(588),
-                Some(588),
-                Some(588),
-                Some(588),
-                Some(356)
+                Some(3083),
+                Some(719),
+                Some(645),
+                Some(645),
+                Some(645),
+                Some(645),
+                Some(645),
+                Some(413)
             ]
         ),
         "the deep window's runs; the wide window's"
@@ -1130,7 +1130,7 @@ fn focus_states_execute_exactly() {
     );
     assert_eq!(
         (typical.clone(), worst.clone()),
-        ((287, vec![Some(4)]), (1630, vec![None])),
+        ((442, vec![Some(4)]), (2233, vec![None])),
         "a dialog window's four children; a hundred, past the run's sixty"
     );
     assert!(typical.0 < LIMIT / 2 && worst.0 < LIMIT / 2);

@@ -312,12 +312,14 @@ locally built cache stores "not supported", so a read that ignores
 defaults cannot tell the two apart (`books/dev/src/explanation/design/uia-shapes.md`, section
 7). `ValueIsReadOnly` and `RangeValueValue` are therefore read only when
 `IsValuePatternAvailable` and `IsRangeValuePatternAvailable` say the
-pattern is there. `IsDataValidForForm` has no pattern, so the program
-leaves it out of the cache of an element that does not support it: since
+pattern is there. `IsDataValidForForm` and `IsEnabled` have no pattern,
+so the program leaves each out of the cache of an element that does not
+support it (the console host's own provider for its window supplies no
+`IsEnabled`, which a filled cache would hold as false, disabled): since
 `PopulateCache` replaces an element's cache, it builds one request per
 combination of such properties (`verbatim_uia::LEFT_OUT_WHEN_UNSUPPORTED`,
-one property, so two requests), picks one per element after an
-`IsNotSupported` test, and returns which were left out
+two properties, so four requests), picks one per element after an
+`IsNotSupported` test of each, and returns which were left out
 (`verbatim_uia::Absent`), so the element, wrapped as a `Cached<S>` with
 that record (`Fill::claim`), answers the property as "not supported"
 without asking UI Automation (decision 3 of `books/dev/src/explanation/design/uia-shapes.md`).

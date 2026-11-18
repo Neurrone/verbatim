@@ -1676,7 +1676,7 @@ fn uia_focus_changes_cost_exactly_remote() {
                     ("WM_GETOBJECT", 12),
                     ("ProviderOptions", 84),
                     ("GetPatternProvider", 78),
-                    ("GetPropertyValue", 135),
+                    ("GetPropertyValue", 137),
                     ("HostRawElementProvider", 38),
                     ("Navigate", 24),
                     ("GetRuntimeId", 14),
@@ -1691,7 +1691,7 @@ fn uia_focus_changes_cost_exactly_remote() {
                     ("WM_GETOBJECT", 10),
                     ("ProviderOptions", 78),
                     ("GetPatternProvider", 67),
-                    ("GetPropertyValue", 115),
+                    ("GetPropertyValue", 117),
                     ("HostRawElementProvider", 36),
                     ("Navigate", 22),
                     ("GetRuntimeId", 15),
@@ -1706,7 +1706,7 @@ fn uia_focus_changes_cost_exactly_remote() {
                     ("WM_GETOBJECT", 11),
                     ("ProviderOptions", 65),
                     ("GetPatternProvider", 67),
-                    ("GetPropertyValue", 111),
+                    ("GetPropertyValue", 113),
                     ("HostRawElementProvider", 29),
                     ("Navigate", 19),
                     ("GetRuntimeId", 10),
@@ -1721,7 +1721,7 @@ fn uia_focus_changes_cost_exactly_remote() {
                     ("WM_GETOBJECT", 10),
                     ("ProviderOptions", 84),
                     ("GetPatternProvider", 67),
-                    ("GetPropertyValue", 116),
+                    ("GetPropertyValue", 118),
                     ("HostRawElementProvider", 38),
                     ("Navigate", 24),
                     ("GetRuntimeId", 16),
@@ -2820,7 +2820,7 @@ fn uia_navigation_steps_cost_exactly() {
             ("WM_GETOBJECT", 1),
             ("ProviderOptions", 26),
             ("GetPatternProvider", 15),
-            ("GetPropertyValue", 25),
+            ("GetPropertyValue", 26),
             ("HostRawElementProvider", 9),
             ("Navigate", 9),
             ("GetRuntimeId", 3),
@@ -2837,7 +2837,7 @@ fn uia_navigation_steps_cost_exactly() {
             ("WM_GETOBJECT", 1),
             ("ProviderOptions", 27),
             ("GetPatternProvider", 15),
-            ("GetPropertyValue", 25),
+            ("GetPropertyValue", 26),
             ("HostRawElementProvider", 9),
             ("Navigate", 9),
             ("GetRuntimeId", 3),
@@ -3165,7 +3165,7 @@ fn uia_selected_children_cost_exactly() {
             ("WM_GETOBJECT", 2),
             ("ProviderOptions", 24),
             ("GetPatternProvider", 26 + extra_pattern),
-            ("GetPropertyValue", 48),
+            ("GetPropertyValue", 50),
             ("HostRawElementProvider", 10),
             ("Navigate", 8),
             ("GetRuntimeId", 3),
@@ -4814,7 +4814,7 @@ fn uia_combo_box_costs_exactly() {
                     ("WM_GETOBJECT", 11),
                     ("ProviderOptions", 73),
                     ("GetPatternProvider", 84),
-                    ("GetPropertyValue", 133),
+                    ("GetPropertyValue", 135),
                     ("HostRawElementProvider", 36),
                     ("Navigate", 18),
                     ("GetRuntimeId", 14),
@@ -4831,7 +4831,7 @@ fn uia_combo_box_costs_exactly() {
                     ("WM_GETOBJECT", 10),
                     ("ProviderOptions", 91),
                     ("GetPatternProvider", 84),
-                    ("GetPropertyValue", 120),
+                    ("GetPropertyValue", 121),
                     ("HostRawElementProvider", 42),
                     ("Navigate", 22),
                     ("GetRuntimeId", 19),
@@ -5252,11 +5252,11 @@ fn text_field_focus_now_costs(ratchet: &mut Ratchet) {
 /// no ancestor. Classically the read is two calls, the focused element and
 /// one step, to the group, and mockapp answers 42 property reads, where a
 /// walk to the top took 8 calls and 129 reads; remotely it is the focused
-/// element and the program, which reads the group alone, 54 property
-/// reads where a walk to the top took 140.
+/// element and the program, which reads the group alone, 55 property
+/// reads.
 fn a_focus_now_walk_stops_at_an_ancestor_core_knows() {
     for (path, remote, expected) in [
-        ("remotely", true, (calls(2, 0, 0), 54)),
+        ("remotely", true, (calls(2, 0, 0), 55)),
         ("classically", false, (calls(2, 0, 0), 42)),
     ] {
         let title = common::unique_title("mockapp-counts-focus-now-known");
@@ -5556,7 +5556,7 @@ fn a_cells_table_costs_exactly() {
             ("WM_GETOBJECT", 2),
             ("ProviderOptions", 29),
             ("GetPatternProvider", 22),
-            ("GetPropertyValue", 48),
+            ("GetPropertyValue", 50),
             ("HostRawElementProvider", 11),
             ("Navigate", 9),
             ("GetRuntimeId", 4),
@@ -5572,7 +5572,7 @@ fn a_cells_table_costs_exactly() {
             ("WM_GETOBJECT", 2),
             ("ProviderOptions", 32),
             ("GetPatternProvider", 24),
-            ("GetPropertyValue", 49),
+            ("GetPropertyValue", 51),
             ("HostRawElementProvider", 13),
             ("Navigate", 10),
             ("GetRuntimeId", 5),

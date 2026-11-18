@@ -2340,6 +2340,51 @@ mod tests {
         });
     }
 
+    /// The console host's own provider for its window supplies no
+    /// `IsEnabled`; UI Automation's proxy for the window answers true. The
+    /// remote states read, whose cache is filled in the console host's
+    /// process, leaves the property out, so the window reads as enabled
+    /// both ways rather than disabled, as NVDA reads it (found 2026-11-19,
+    /// a new console window said "window unavailable").
+    #[test]
+    fn a_console_window_reads_enabled_remotely_and_classically() {
+        use verbatim_model::State;
+        use verbatim_uia::{DialogText, ElementExt as _, Fill, Node, Shape as _, Uia};
+        use verbatim_uia_rops::{StatesQuery, focus_states_classic, focus_states_remote};
+        use windows::Win32::UI::Accessibility::UIA_IsEnabledPropertyId;
+        verbatim_test_console::Console::with(|console| {
+            let uia = Uia::new().expect("a UIA client");
+            let live = uia
+                .window_live(console.window)
+                .expect("the console window's element");
+            assert_eq!(
+                live.element().current_bool(UIA_IsEnabledPropertyId),
+                Ok(true),
+                "the ordinary read"
+            );
+            let fill = Fill::new(&uia.request::<Node>(Node::all_on()).expect("a node request"));
+            let children = Fill::new(
+                &uia.request_fixed::<DialogText>()
+                    .expect("a dialog text request"),
+            );
+            let query = StatesQuery {
+                focus: &live,
+                fill: &fill,
+                dialogs: &[],
+                children: &children,
+            };
+            let read = |states: verbatim_uia_rops::States| {
+                let states = states.focus.expect("the window's states").read().states;
+                let disabled = states.states(Role::Window, false).contains(State::Disabled);
+                (states.enabled, disabled)
+            };
+            let remote = read(focus_states_remote(&uia, &query).expect("the remote read"));
+            let classic = read(focus_states_classic(&uia, &query).expect("the classic read"));
+            assert_eq!(remote, (None, false), "the remote read");
+            assert_eq!(classic, (Some(true), false), "the classic read");
+        });
+    }
+
     #[test]
     fn a_walk_meeting_nothing_known_is_kept_whole() {
         let previous = [node(1)];

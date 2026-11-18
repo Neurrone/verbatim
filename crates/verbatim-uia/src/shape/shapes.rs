@@ -161,8 +161,9 @@ uia_shape! {
             has_focus: UIA_HasKeyboardFocusPropertyId => bool,
             /// Whether it can take the keyboard focus.
             focusable: UIA_IsKeyboardFocusablePropertyId => bool,
-            /// Whether it is enabled.
-            enabled: UIA_IsEnabledPropertyId => bool,
+            /// Whether it is enabled, `None` when not supported, which
+            /// [`States::states`] reads as enabled.
+            enabled: UIA_IsEnabledPropertyId => optional_bool,
             /// Whether it has the Toggle pattern.
             toggle_available: UIA_IsTogglePatternAvailablePropertyId => bool,
             /// The toggle state, meaningful only with the pattern.
@@ -201,7 +202,12 @@ impl States {
         let raw = RawUiaStates {
             has_focus: self.has_focus,
             focusable: self.focusable,
-            enabled: self.enabled,
+            // NVDA reads `IsEnabled` ignoring UIA's default and takes a
+            // value it cannot read, unsupported or failed, as enabled
+            // (`NVDAObjects/UIA/__init__.py` 2022 to 2026): the console
+            // host's own provider supplies none, which a remotely filled
+            // cache would store as false.
+            enabled: self.enabled != Some(false),
             offscreen,
             toggle_available: self.toggle_available,
             toggle_state: self.toggle_state,

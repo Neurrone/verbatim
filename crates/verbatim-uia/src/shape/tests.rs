@@ -5,18 +5,19 @@ use windows::Win32::Foundation::RECT;
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::{
     UIA_AutomationIdPropertyId, UIA_HasKeyboardFocusPropertyId, UIA_IsContentElementPropertyId,
-    UIA_IsControlElementPropertyId, UIA_PATTERN_ID, UIA_PROPERTY_ID, UIA_SelectionPatternId,
-    UIA_TextPatternId, UiaGetReservedNotSupportedValue,
+    UIA_IsControlElementPropertyId, UIA_IsEnabledPropertyId, UIA_PATTERN_ID, UIA_PROPERTY_ID,
+    UIA_SelectionPatternId, UIA_TextPatternId, UiaGetReservedNotSupportedValue,
 };
 use windows::core::IUnknown;
 
 use super::{
     Absent, Ancestor, CachedReads, Cell, ComboBoxRefresh, Description, DialogText, FocusInput,
-    Kept, ListenerEvent, ListenerProgress, ListenerSelection, Node, Place, Position, PropertyEvent,
-    ProviderOrigin, Reader, RecordedEvent, RoleCore, SelectionContainer, Shape, ShellButton,
-    Shortcut, States, SuggestionsRefresh, TextAreaPattern, TextEvent, ValueSet, WindowLookup,
-    request_properties,
+    Kept, LEFT_OUT_WHEN_UNSUPPORTED, ListenerEvent, ListenerProgress, ListenerSelection, Node,
+    Place, Position, PropertyEvent, ProviderOrigin, Reader, RecordedEvent, RoleCore,
+    SelectionContainer, Shape, ShellButton, Shortcut, States, SuggestionsRefresh, TextAreaPattern,
+    TextEvent, ValueSet, WindowLookup, request_properties,
 };
+use verbatim_model::{Role, State};
 
 /// A cache that answers every read, and records what was read.
 #[derive(Default)]
@@ -236,5 +237,74 @@ fn a_focus_event_lacks_the_keyboard_focus_unless_its_cache_holds_true() {
     assert_eq!(
         [None, Some(false), Some(true)].map(lacked),
         [true, true, false]
+    );
+}
+
+/// An element's cache whose `IsEnabled` is the given boolean, or not
+/// supported (`None`): stored as UIA's default of false, which is what a
+/// remotely filled cache holds for it, with "not supported" answered only
+/// when UIA's default is ignored, as a locally built cache answers it.
+struct Enabled(Option<bool>);
+
+impl CachedReads for Enabled {
+    fn value(&self, property: UIA_PROPERTY_ID) -> Option<VARIANT> {
+        if property == UIA_IsEnabledPropertyId {
+            Some(VARIANT::from(self.0.unwrap_or(false)))
+        } else {
+            Some(VARIANT::default())
+        }
+    }
+
+    fn value_ignoring_default(&self, property: UIA_PROPERTY_ID) -> Option<VARIANT> {
+        if property == UIA_IsEnabledPropertyId && self.0.is_none() {
+            // SAFETY: a local call that returns UIA's process-wide sentinel.
+            let sentinel = unsafe { UiaGetReservedNotSupportedValue() }.ok()?;
+            Some(VARIANT::from(sentinel))
+        } else {
+            self.value(property)
+        }
+    }
+
+    fn rect(&self, _: UIA_PROPERTY_ID) -> Option<RECT> {
+        None
+    }
+
+    fn pattern(&self, _: UIA_PATTERN_ID) -> Option<IUnknown> {
+        None
+    }
+}
+
+/// An element whose provider supplies no `IsEnabled` is enabled, as NVDA
+/// reads it, whether its cache was built locally, answering "not
+/// supported", or filled remotely, holding UIA's default of false with the
+/// remote program's absent record saying it left the property out, as the
+/// console host's own provider for its window was read (found 2026-11-19).
+/// A supplied false is disabled.
+#[test]
+fn an_element_without_is_enabled_is_enabled_however_its_cache_was_filled() {
+    let bit = LEFT_OUT_WHEN_UNSUPPORTED
+        .iter()
+        .position(|&property| property == UIA_IsEnabledPropertyId)
+        .expect("a remote program leaves IsEnabled out when unsupported");
+    let disabled = |enabled: Option<bool>, absent: Absent| {
+        States::read_from(
+            &Reader {
+                source: &Enabled(enabled),
+                absent,
+            },
+            &(),
+        )
+        .states(Role::Window, false)
+        .contains(State::Disabled)
+    };
+    let left_out = Absent::from_bits(1 << bit);
+    assert_eq!(
+        [
+            disabled(None, Absent::NONE),
+            disabled(None, left_out),
+            disabled(Some(false), Absent::NONE),
+            disabled(Some(true), Absent::NONE),
+        ],
+        [false, false, true, false]
     );
 }

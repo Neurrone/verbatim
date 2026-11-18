@@ -313,9 +313,10 @@ before the program runs, so nothing depends on it.
 The caveat a static shape cannot express: a cache filled by a remote
 program stores a property's default where a locally built cache stores
 "not supported". For `IsDataValidForForm` the default, false, would read as
-an invalid entry, so the program checks support and leaves the property out
-of an element that does not support it, and a read of the absent property
-would then be a failed read. Three resolutions were weighed:
+an invalid entry, and for `IsEnabled`, which the console host's own provider
+for its window does not supply, as disabled, so the program checks support
+and leaves each such property out of an element that does not support it,
+and a read of the absent property would then be a failed read. Three resolutions were weighed:
 
 - A per-element absent record: the program returns the support mask it
   already computes, one integer per element, and a read of a property the

@@ -684,10 +684,12 @@ patterns its request holds.
   from the token's list is reviewed code, not something the compiler
   proves.
 - `Absent` and `LEFT_OUT_WHEN_UNSUPPORTED`: the record a remote program
-  returns of the properties (`IsDataValidForForm`) it left out of an
-  element's cache because the element does not support them, so a read of
-  one answers "not supported" without asking UIA (decision 3 of
-  `books/dev/src/explanation/design/uia-shapes.md`). A local fill's record is empty.
+  returns of the properties (`IsDataValidForForm` and `IsEnabled`) it left
+  out of an element's cache because the element does not support them, so
+  a read of one answers "not supported" without asking UIA (decision 3 of
+  `books/dev/src/explanation/design/uia-shapes.md`). A local fill's record is empty. `IsEnabled`
+  is read ignoring UIA's default, and an element that does not support it
+  is enabled, as NVDA reads it.
 
 The shape module's reader is the only cached read in the workspace.
 `cargo xtask ci` rejects a raw cached read anywhere but the shape module

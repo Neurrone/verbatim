@@ -2048,26 +2048,26 @@ instructions, so only programs under half the limit can be counted.
 Pinned exactly in `crates/mockapp/tests/instruction_limit.rs`, worst case
 first, the share of the limit in brackets:
 
-- The focus ancestry: 2,446 (24 percent) for a list sixty groups deep,
+- The focus ancestry: 3,078 (31 percent) for a list sixty groups deep,
   every ancestor returned under the depth limit of 64, with the selected
-  item, whose read in a try block costs 3; 1,859 at a depth limit of 30;
-  1,124 for a list whose group is known. A deeper tree adds about a dozen
+  item, whose read in a try block costs 3; 2,243 at a depth limit of 30;
+  1,278 for a list whose group is known. A deeper tree adds about a dozen
   a level beyond the depth limit.
-- The listener's refreshed read 2,459 at the worst case; the outpost's
-  path walk 1,143 down sixty-two levels, 157 down one, and 150 to an
+- The listener's refreshed read 3,109 at the worst case; the outpost's
+  path walk 1,219 down sixty-two levels, 233 down one, and 218 to an
   element not found.
-- The navigation step: 879 (9 percent) sixty-two levels below its window,
-  148 right under it, about 12 a level.
-- The tree dump: 4,097 (41 percent) for a run reading its sixty children
+- The navigation step: 967 (10 percent) sixty-two levels below its window,
+  235 right under it, about 12 a level.
+- The tree dump: 4,635 (46 percent) for a run reading its sixty children
   (`CHILDREN_PER_RUN`) down `deep.json`'s sixty-two nested groups, then
-  746; `wide.json`'s hundred items 2,545, then 654, 588 for each sixteen
-  items, and 356.
-- A focus's states with its dialogs' children: 1,630 (16 percent) for a
+  876; `wide.json`'s hundred items 3,083, then 719, 645 for each sixteen
+  items, and 413.
+- A focus's states with its dialogs' children: 2,233 (22 percent) for a
   run stopped at its sixty children (`DIALOG_CHILDREN_PER_RUN`) in
-  `wide.json`'s hundred items, 287 for a button with its dialog window's
+  `wide.json`'s hundred items, 442 for a button with its dialog window's
   four children.
-- The controlled selection: 183 inside a group of the controlled list, 215
-  for its second child, 238 for an item outside it, about 35 an element
+- The controlled selection: 255 inside a group of the controlled list, 287
+  for its second child, 291 for an item outside it, about 35 an element
   passed, plus 11 to read the current selection of an element not found
   and 4 for each further controlled element. About 280 elements fit under
   the limit; the controlled list is the one bound the application sets
