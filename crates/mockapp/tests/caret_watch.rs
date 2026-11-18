@@ -240,12 +240,18 @@ fn a_caret_event_within_60_ms_of_the_pass_brings_a_check_that_finds_the_move() {
         caret_event(&mut app, &mut core, &["caret doc 0 5"]),
         selected("alpha")
     );
+    let told = core.tells();
     let mut said = core
         .caret_key(key(CaretMotion::NextCharacter), || {
             app.send("caret doc 6");
             app.send("caret-event doc");
         })
         .spoken();
+    said.extend(core.answered().spoken());
+    // The caret event's tell is delivered on UI Automation's own thread,
+    // so it can reach Core after the watch's answer, when the watch's poll
+    // found the move first: waited for as evidence, then its read.
+    said.extend(core.until_told(told + 1).spoken());
     said.extend(core.answered().spoken());
     let mut expected = character("b");
     expected.extend(unselected("alpha"));

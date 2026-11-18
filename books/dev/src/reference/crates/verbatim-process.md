@@ -316,6 +316,13 @@ Public API:
   Each executable's `main` parses its own and refuses the other's: an
   outpost refuses `--listener`, and the listener refuses an outpost's
   options.
+- `held_slot` — `HeldSlot`, the one rule for when a child's writer
+  writes the latest list of what Core holds (an outpost's held nodes,
+  the listener's held view): a list left replaces one not yet written and
+  goes after the frame of the next command written once the commands
+  queued before it are written, never with the shutdown message; one
+  written at once supersedes it. The supervisor's writer and the tests'
+  stand-ins for the listener keep the same slot.
 - `held` — processes held open by handle, so a pid names one process and
   no other while held. `Target::open(pid)` holds a target application
   (`NotHeld` when it has exited or cannot be opened), with `has_exited`

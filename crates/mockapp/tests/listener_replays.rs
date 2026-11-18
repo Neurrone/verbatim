@@ -45,6 +45,7 @@ use verbatim_model::request::{
 };
 use verbatim_model::tell::{ElementToken, EventObject, Read};
 use verbatim_model::{Effect, Input, Message, Pid, Role, SegmentContent, State};
+use verbatim_process::held_slot::HeldSlot;
 
 /// One utterance's contents, its index marks left out.
 type Utterance = Vec<SegmentContent>;
@@ -71,7 +72,7 @@ struct Listener {
     shell: ListenerView,
     /// A view left for the next request, as the supervisor's writer leaves
     /// it in its slot for the next command.
-    left: Option<HeldView>,
+    left: HeldSlot<HeldView>,
     /// The element each request out reads, by its number.
     reading: BTreeMap<u64, (Pid, ElementToken)>,
     /// What Core sent and the listener has not taken yet, each with the
@@ -227,7 +228,7 @@ fn replay(name: &str) -> Replayed {
                             },
                         ));
                     }
-                    if let Some(view) = listener.left.take() {
+                    if let Some(view) = listener.left.carried(false) {
                         listener.pending.push((now_us, Action::View(view)));
                     }
                 }
@@ -241,10 +242,10 @@ fn replay(name: &str) -> Replayed {
         {
             ViewSend::Nothing => {}
             ViewSend::Now(view) => {
-                listener.left = None;
+                listener.left.superseded();
                 listener.pending.push((now_us, Action::View(view)));
             }
-            ViewSend::Leave(view) => listener.left = Some(view),
+            ViewSend::Leave(view) => listener.left.leave(view, 0),
         }
     }
     replayed

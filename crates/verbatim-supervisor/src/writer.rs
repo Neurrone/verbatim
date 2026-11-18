@@ -48,6 +48,7 @@ use verbatim_process::overlapped::{Completion, Port};
 use verbatim_process::transport::{Backlog, SendError, Sender};
 
 use verbatim_process::clock::now_us;
+use verbatim_process::held_slot::HeldSlot;
 use verbatim_process::message::{Message, put_message};
 
 /// How many commands may wait for one child before the overload policy
@@ -158,22 +159,16 @@ impl std::fmt::Display for QueueError {
 #[derive(Debug)]
 pub(super) struct Queue<M: ToChild> {
     items: VecDeque<Outgoing<M>>,
-    /// The latest held nodes' list not yet sent, which the next command
-    /// written carries after its own frame, once every command queued
-    /// before it was left has been written. Only an outpost's is left.
-    held: Option<M>,
-    /// How many of the commands waiting were queued before `held` was
-    /// left: the list goes with the last of them, or, with none, with the
-    /// next command written.
-    held_behind: usize,
+    /// The latest held list not yet sent, an outpost's held nodes or the
+    /// listener's held view ([`HeldSlot`]).
+    held: HeldSlot<M>,
 }
 
 impl<M: ToChild> Default for Queue<M> {
     fn default() -> Self {
         Self {
             items: VecDeque::new(),
-            held: None,
-            held_behind: 0,
+            held: HeldSlot::default(),
         }
     }
 }
@@ -198,15 +193,14 @@ impl<M: ToChild> Queue<M> {
 
     fn pop(&mut self) -> Option<Outgoing<M>> {
         let item = self.items.pop_front()?;
-        self.held_behind = self.held_behind.saturating_sub(1);
+        self.held.popped();
         Some(item)
     }
 
     /// Leaves `held` in the slot, replacing a list not yet sent, behind
     /// every command waiting now.
     fn leave(&mut self, held: M) {
-        self.held = Some(held);
-        self.held_behind = self.items.len();
+        self.held.leave(held, self.items.len());
     }
 }
 
@@ -231,9 +225,9 @@ impl<M: ToChild> Backlog for Queue<M> {
     /// item's write then carries; the shutdown message carries none, since
     /// the outpost is ending.
     fn encode(&mut self, item: Outgoing<M>, buffer: &mut Vec<u8>) -> io::Result<()> {
-        let carries = !matches!(item, Outgoing::Shutdown) && self.held_behind == 0;
+        let carried = self.held.carried(matches!(item, Outgoing::Shutdown));
         put_message(buffer, &item.relayed())?;
-        if carries && let Some(held) = self.held.take() {
+        if let Some(held) = carried {
             let before = buffer.len();
             if let Err(error) = put_message(buffer, &held) {
                 buffer.truncate(before);
@@ -288,7 +282,7 @@ impl<M: ToChild> WriterHandle<M> {
     /// queue is full it is left in the slot instead, for the next command
     /// written to carry.
     pub(super) fn send_held(&self, held: M) {
-        self.sender.with_backlog(|queue| queue.held = None);
+        self.sender.with_backlog(|queue| queue.held.superseded());
         if let Err(QueueError::Full) = self.push(Outgoing::Other(held.clone())) {
             self.leave_held(held);
         }

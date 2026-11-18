@@ -38,6 +38,7 @@ pub mod child;
 pub mod clock;
 pub mod event;
 pub mod held;
+pub mod held_slot;
 pub mod message;
 pub mod overlapped;
 pub mod port_queue;

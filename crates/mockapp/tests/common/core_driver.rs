@@ -55,6 +55,7 @@ use verbatim_model::{
     BarChange, CallCounts, CaretKey, Earcon, Effect, Input, OutpostId, Pid, SegmentContent,
     StateSet, TraceId, WindowHandle,
 };
+use verbatim_process::held_slot::HeldSlot;
 use verbatim_uia::{Cached, Direction, ElementExt, ListenerEvent, Uia};
 use verbatim_win32::window_facts::{WindowPart, WindowReads};
 use windows::Win32::Foundation::HWND;
@@ -129,8 +130,9 @@ pub struct CoreDriver {
     reported: Reported,
     /// The shell's record of the views it sends the listener.
     view: ListenerView,
-    /// A view left for the next request to the listener.
-    left: Option<verbatim_core::View>,
+    /// A view left for the next request to the listener, in the
+    /// supervisor's writer's slot.
+    left: HeldSlot<verbatim_core::View>,
 
     next_token: u64,
     /// The last key's number.
@@ -292,7 +294,7 @@ impl CoreDriver {
             kept: ListenerKept::default(),
             reported: Reported::default(),
             view: ListenerView::default(),
-            left: None,
+            left: HeldSlot::default(),
             next_token: 0,
             next_key: 0,
             started: false,
@@ -1069,10 +1071,10 @@ impl CoreDriver {
         {
             ViewSend::Nothing => {}
             ViewSend::Now(view) => {
-                self.left = None;
+                self.left.superseded();
                 self.take_view(view);
             }
-            ViewSend::Leave(view) => self.left = Some(view),
+            ViewSend::Leave(view) => self.left.leave(view, 0),
         }
     }
 
@@ -1100,7 +1102,7 @@ impl CoreDriver {
     /// after it.
     fn listener_answer(&mut self, ask: &Ask) -> Answer {
         let answer = self.listener_read(ask);
-        if let Some(view) = self.left.take() {
+        if let Some(view) = self.left.carried(false) {
             self.take_view(view);
         }
         answer
