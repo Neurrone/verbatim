@@ -69,24 +69,109 @@ the rules in "Which states are spoken, and in what order" in
 [Speech](../nvda/speech.md). Verbatim: **matched (unverified)**, checked
 against NVDA's source; it needs a live NVDA comparison across roles.
 
+### State changes and the focus line
+
+NVDA's `event_stateChange` speaks for its focus or any of its focus's
+ancestors, judged by instance (`NVDAObjects/__init__.py` 1343 to 1352).
+For UI Automation, the handler gives a change to the focus's own
+instance when the event is delivered, before its queue runs
+(`UIAHandler/__init__.py` 1007 to 1018, and 806 to 818 for automation
+events such as an element selected); `setFocusObject` keeps that
+instance as an ancestor of a new focus inside it (`api.py` 80 to 141).
+So two versions of the focus decide a UI Automation state change: the
+focus when it was delivered, and the focus line when it is handled. An
+element selected inside an object the focus controls, and a list item's
+value change on its combo box, are judged by the focus at handling alone
+("Selection announcements", "A combo box's value from its selected
+item").
+
+Verbatim: **matched (unverified)**. Core names the two versions: the
+line at arrival, when the tell joins its event queue, and the line at
+its turn, the committed focus and its kept ancestors when the entry
+runs. Each UI Automation change and selection records, as it joins,
+whether its element was on the line then:
+
+- an outpost's change: the committed focus, a kept ancestor, or the UI
+  Automation focus whose completion is out (the focus in flight). The
+  outpost tells only elements it follows, and registers a new focus as
+  its completion reaches it, so a change on the focus in flight was
+  raised after that, when NVDA too hears it, read into the focus or
+  given to it;
+- the listener's selection: the committed focus alone, as NVDA's
+  handler gives the event to its focus; listener tells share one pipe
+  with the focus tells, so their arrival order is the order they were
+  delivered.
+
+The state speech of a UI Automation property change or selection, and a
+description change, is given only when both hold:
+
+| At its turn | On the line at arrival | Not on the line at arrival |
+| --- | --- | --- |
+| The committed focus | spoken as the focus's change | silent |
+| A kept ancestor | spoken as the ancestor's change | silent |
+| Neither | silent | silent |
+
+A merged property change takes the newest tell's fact. An ancestor's
+change is compared with the states last spoken of it, which an ancestor
+that was the previous focus keeps from when it was spoken as the focus.
+Sequence: list item X is the focus; the application focuses button Y
+inside X, then selects X. NVDA says Y, then "selected"; Verbatim says
+the same, X being the committed focus when its selection arrived and
+Y's ancestor at its turn. Every other outcome of a selection or change
+keeps its own rule: an item the focus controls, the combo box value
+paths and the suggestions sound. The narrow ordering rule still judges
+the committed focus's waiting state changes before a focus inside it
+("A combo box opened into its list").
+
 ### State changes after the focus has left
 
-NVDA speaks a state change
-only while the changed object is its focus, and its focus changes when
-it handles the focus event, in the order the events came ("The focus
-gate" in [Event handling](../nvda/events.md)): the state change of a
-control the focus has already left, raised after the focus event for
-the next control, is silent. Verbatim's outposts can deliver that state
-change before the focus event, which takes longer to read, so Core
-can still hold the old control as the focus when it arrives. Verbatim
-judges it by the changed object's own states: a focus that reported
-itself focused when it became the focus, and whose new state set no
-longer includes focused, has lost the focus, and its change is not
-spoken (its states are still kept). A control that never reports the
-focused state is unaffected. A focus that has expired is not spoken
-for either: the focus listener drops a focus that lost the keyboard
-focus before it was read, so it never becomes Core's focus, as the
-Control+Tab case in [terminals](terminals.md) records. **matched
+NVDA speaks a state change only on its focus line when it handles it,
+and its focus changes when it handles the focus event, in the order the
+events came ("The focus gate" in [Event handling](../nvda/events.md)).
+An MSAA change and the focus reach Core on the listener's one pipe, in
+the order they were raised, so Core judges them as NVDA does: captured
+on File Explorer's Properties sheet (2026-11-19, five runs alike),
+Space on Apply raises Apply's state change, disabled, a focus with no
+window, and the focus on Read-only within a millisecond, and NVDA says
+"unavailable", "General, property page" with the page's text, then
+"Read-only, check box, not checked, Alt plus, r"; Verbatim says the
+same, whatever Apply's own focused state.
+
+A UI Automation change comes from the outpost following the element and
+the focus from the listener, two processes with no order between them,
+so the change can reach Core before a focus raised before it. Its states
+come from the event's cache, taken as the application raised it: a
+committed focus that reported itself focused, and whose change's states
+lack the focused state, had lost the focus when the change was raised,
+so the focus came first, and the change is not spoken (its states are
+still kept). Captured on a WPF window (2026-11-19, five runs alike):
+Apply's click disables it and focuses OK, and WPF raises OK's focus
+first; NVDA says "OK, button" alone, and so does Verbatim, in either
+order of arrival. A control that never reports the focused state is
+unaffected. A focus that has expired is not spoken for either: the
+focus listener drops a focus that lost the keyboard focus before it
+was read, so it never becomes Core's focus, as the Control+Tab case in
+[terminals](terminals.md) records. **matched (unverified)**.
+
+Different, decided without Dickson under his rule to match NVDA unless
+that is proven impossible (2026-11-19), since two orders across the two
+pipes cannot be matched without NVDA's single queue:
+
+- an application that drops a focused UI Automation button's keyboard
+  focus before raising a change that comes first, where NVDA says
+  "unavailable", "OK, button", and Verbatim "OK button";
+- a change raised just after a new focus whose tell reaches Core before
+  that focus is committed, spoken as the old focus's or an ancestor's,
+  where NVDA, given it after its focus moved, is silent.
+
+### A description change
+
+NVDA drops a description equal to the name only when it speaks an
+object for another reason than a change (`speech/speech.py` 752 to
+757). Verbatim: a description change on the focus is spoken, the new
+description alone, queued, when it differs from the one last spoken of
+it and has text, even when it repeats the name; a focus announcement
+still leaves out a description equal to the name. **matched
 (unverified)**.
 
 ### The number of items an expanded tree view item holds
@@ -112,14 +197,18 @@ item itself is such a change of state, and Verbatim speaks it
 ("selected"), as NVDA does ([verbatim-core](../../books/dev/src/reference/crates/verbatim-core.md)).
 Verbatim: selection events take NVDA's rule (Dickson, 2026-11-15),
 judged in Core at the event's turn against the committed focus: a UI
-Automation selection on the committed focus is its change of state,
-judged on the states its event carries; any other, and every plain MSAA
-selection, has Core ask for the item with the committed focus's
+Automation selection on the committed focus or a kept ancestor is its
+change of state, judged on the states its event carries, by the arrival
+rule of "State changes and the focus line"; any other, and every plain
+MSAA selection, has Core ask for the item with the committed focus's
 controller-for relation read live, and an item that is an object the
 focus controls, or inside one, is spoken as a focus, while any other is
 a change of state of the selected object, spoken only on the focus or an
 ancestor (`docs/design/readers-tell-core-asks-build1.md`, "Changes on
-objects"). **matched (unverified)**. A focused list's selected item is
+objects"). Each selection is handled in turn: two selections of one
+item the focus controls each speak it, the second cutting the first, as
+NVDA cancels speech and reports the item for each (`NVDAObjects/__init__.py`
+1314 to 1338). **matched (unverified)**. A focused list's selected item is
 not said with the focus, as NVDA says "Fruits list" (Dickson,
 2026-11-17), and neither reader reads it: only the selected item that is
 a combo box's or a looping selector's value is read with its focus.
@@ -214,10 +303,16 @@ relation of a focused editable field or search field changes, NVDA
 plays its suggestions-opened sound if the field is the focus and now
 names elements, and its suggestions-closed sound otherwise
 ([Event handling](../nvda/events.md), "Selection in a list the focus
-controls"). Verbatim: the outpost follows ControllerFor on the focus,
-reads it live for an element with a text pattern or the automation id
-"SearchTextBox" or "TextBox", and Core plays the suggestions-opened or
-suggestions-closed indication. NVDA's editable-text condition also asks
+controls"). NVDA plays either only from a suggestions field
+(`InputFieldWithSuggestions`, `NVDAObjects/behaviors.py` 205, 231 to
+236); any other object's change does nothing. Verbatim: the outpost
+follows ControllerFor on the focus, reads it live for an element with a
+text pattern or the automation id "SearchTextBox" or "TextBox", and
+Core plays the suggestions-opened or suggestions-closed indication. A
+change told of an element that is no longer the committed focus plays
+the suggestions-closed indication with no read when its tell, from the
+event's cache, says the element has a text pattern or one of those
+automation ids, and nothing otherwise. NVDA's editable-text condition also asks
 for navigable text or a text selection; Verbatim takes the text pattern
 alone. Help text changes on the focus are followed too, and spoken as
 NVDA speaks a description change. The item status is not followed:

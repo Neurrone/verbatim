@@ -540,9 +540,10 @@ code is in `reduce.rs` unless named.
   separate object, so reporting it moves the record only when it equals
   the reading. A name, value or description change on the focus moves it
   to the new reading even when nothing is spoken, as NVDA's property
-  cache does, and so does a state change on the focus, except one without
-  the focused state on a focus that reported itself focused, which the
-  focus has left. A state change of an ancestor with an entry moves that
+  cache does, and so does a state change on the focus, except an
+  outpost's UI Automation change without the focused state on a focus
+  that reported itself focused, which the focus had left when it was
+  raised. A state change of an ancestor with an entry moves that
   entry.
   An ancestor the previous focus line held, the
   previous focus among them, keeps its entry, so an expansion of a combo
@@ -555,7 +556,22 @@ code is in `reduce.rs` unless named.
   on the focus or a spoken ancestor is diffed against the record: gained
   states, and lost ones spoken by their absence. A focus that reported
   itself focused (`FocusContext::reported_focused`) and loses the focused
-  state keeps its states silently. An expansion carrying `child_count`
+  state in an outpost's UI Automation change keeps its states silently
+  (`reduce::outpost_states_changed`); an MSAA change or a selection is
+  spoken whatever its focused state, sharing the listener's pipe with the
+  focus in the order they were raised. A UI Automation change or
+  selection records, as it joins the event queue, whether its element was
+  on the focus line (`changes::AtArrival`): for an outpost's change the
+  committed focus, a kept ancestor, or the UI Automation focus whose
+  completion is out, the front's (`Logic::arrival` is given the front and
+  its request); for the listener's selection the committed focus. Its
+  state and description speech is given only when it was on the line and
+  is still the committed focus or a kept ancestor at its turn
+  (`docs/parity/changes-and-selection.md`, "State changes and the focus
+  line"). A description change is spoken even when it repeats the name.
+  A suggestions change off the focus plays the closed sound only for a
+  suggestions field, by the text pattern and automation id its tell
+  carries. An expansion carrying `child_count`
   adds "52 items" (`Phrase::Items`). A `Button` with the Toggle pattern is
   `Role::ToggleButton` with `Pressed` ([verbatim-uia](verbatim-uia.md)).
 - Selections (same document, "Selection announcements" and "Selection in
@@ -571,8 +587,10 @@ code is in `reduce.rs` unless named.
   once the value moves a percent from the last one indicated at the same
   place on screen (`SrState::progress_reported`, the last 32 places).
 - Notifications: a UIA `Notification` speaks its display string,
-  interrupting for `MostRecent` and `ImportantMostRecent`, queued
-  otherwise.
+  interrupting for `MostRecent` and `ImportantMostRecent`, at Next for
+  them during say-all, queued otherwise. Neither notifications nor UI
+  Automation selections merge a waiting entry: each is handled in
+  arrival order (ADR 0003, "Flood limiters and the merge").
 - Outpost replacement (`docs/parity/focus-events.md`, "Recovery after an
   outpost is replaced"). Node ids carry the outpost generation. On
   `Input::OutpostEnded` the focus and the waiting reports of that
