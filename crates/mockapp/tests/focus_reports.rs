@@ -1625,10 +1625,12 @@ fn a_focus_event_naming_another_applications_window_is_not_read() {
     app.quit();
 }
 
-/// A UIA focus whose window's class is on NVDA's MSAA class list ends the
-/// check thread's check at the window's class, after its walk, the one
-/// call into the application, as NVDA's native-element test fails, and
-/// Core drops it, asking nothing: the window's MSAA events speak for it.
+/// A UIA focus whose window's class is on NVDA's MSAA class list: the
+/// check thread reads the window's class after its walk, and still the
+/// element's keyboard focus, since Core's backend cache is the one owner
+/// of the verdict; Core drops it by the class's verdict, asking nothing,
+/// as NVDA's native-element test fails: the window's MSAA events speak
+/// for it.
 fn the_listener_skips_a_focus_in_a_class_listed_window() {
     let title = common::unique_title("mockapp-class-listed");
     let mut app = common::spawn("msaa_class_window.json", "uia", &title);
@@ -1657,7 +1659,11 @@ fn the_listener_skips_a_focus_in_a_class_listed_window() {
         (
             Vec::new(),
             CallCounts::default(),
-            vec![Call::NearestWindow, Call::Classes(hwnd.0 as isize)]
+            vec![
+                Call::NearestWindow,
+                Call::Classes(hwnd.0 as isize),
+                Call::KeyboardFocus
+            ]
         )
     );
 
@@ -2199,10 +2205,12 @@ fn a_console_text_areas_focus_is_checked_from_the_text_area() {
 
 /// A UIA focus in a window with no UIA provider, on no class list, through
 /// UIA's MSAA proxy: the check thread's probe of its window finds no
-/// provider, which ends the check, as NVDA's native-element test fails,
-/// and Core drops the focus by the probe's verdict, asking nothing, the
-/// window's MSAA focus speaking for it. The application sees the probe's
-/// one `WM_GETOBJECT` and nothing of its `IAccessible` is asked.
+/// provider, and it goes on to the element's keyboard focus, Core's backend
+/// cache being the one owner of the verdict; Core drops the focus by the
+/// probe's verdict, as NVDA's native-element test fails, asking nothing,
+/// the window's MSAA focus speaking for it. The application sees the
+/// probe's one `WM_GETOBJECT` and the keyboard-focus read's one
+/// `get_accState` through the proxy.
 fn a_focus_in_a_window_with_no_uia_provider_is_dropped_by_its_probe() {
     let title = common::unique_title("mockapp-msaa-window-focus");
     let mut app = common::spawn("small.json", "msaa", &title);
@@ -2223,7 +2231,11 @@ fn a_focus_in_a_window_with_no_uia_provider_is_dropped_by_its_probe() {
     let step = core.uia_focus(&window);
     assert_eq!(
         (step.said, step.calls, common::read_hits(hwnd)),
-        (Vec::new(), CallCounts::default(), vec![("WM_GETOBJECT", 1)])
+        (
+            Vec::new(),
+            CallCounts::default(),
+            vec![("WM_GETOBJECT", 1), ("get_accState", 1)]
+        )
     );
 
     drop(core);

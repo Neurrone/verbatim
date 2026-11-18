@@ -679,7 +679,7 @@ async fn terminal_key(cx: &mut Cx<Entries>, press: &CaretPress, binding: &CaretB
                 }
             }
             Pending::No => {
-                let request = WatchRequest(OnNode::of(binding, TextOp::Watch(watch.clone())));
+                let request = WatchRequest(OnNode::of(binding, TextOp::Watch(watch)));
                 match cx.ask(request, due_us).await {
                     Outcome::Result(Ok(_)) => break,
                     Outcome::NoLongerAwaited(CancelReason::Withdrawn) => true,
