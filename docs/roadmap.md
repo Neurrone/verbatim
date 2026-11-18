@@ -24,13 +24,14 @@ are built (Dickson, 2026-11-10). Next, in this order (Dickson,
 Core asks" placed first on 2026-11-13):
 
 1. "Readers tell, Core asks", below;
-2. the misc fixes below, whose last item lets M5's build A start;
-3. M5;
-4. M6;
-5. M4.3;
-6. M4.8 (Guardian) and M4.7 (Containment);
-7. M4.9 (Lints and unsafe);
-8. M6.2's remaining items, with the rest after.
+2. the exact replay of a paused entry, below (Dickson, 2026-11-19);
+3. the misc fixes below, whose last item lets M5's build A start;
+4. M5;
+5. M6;
+6. M4.3;
+7. M4.8 (Guardian) and M4.7 (Containment);
+8. M4.9 (Lints and unsafe);
+9. M6.2's remaining items, with the rest after.
 
 The published site's homepage, `books/index.html`, carries one line of
 this status per milestone, and changes with it.
@@ -169,15 +170,15 @@ drag events and effects, layout invalidated for suggestion lists).
 
 ## Exact replay of a paused entry
 
-Its own phase (Dickson, 2026-11-19); its place in the order is not yet set.
+Its own phase, after "Readers tell, Core asks" (Dickson, 2026-11-19).
 A flight dump whose window starts while an entry is paused at the front of
 Core's queue, a caret key waiting on its read for example, cannot replay
 that entry: a paused function cannot be saved, and the inputs that started
 it are older than the window. Since the caret key confirms an unconfirmed
 focus with a read, such dumps report a mismatch where none happened live.
 
-- The recorder's bound is 64 MiB with no bound on the number of inputs
-  (Dickson, 2026-11-19).
+- The recorder's bound becomes 64 MiB with no bound on the number of
+  inputs, built in this phase (Dickson, 2026-11-19).
 - Taking snapshots only when no entry is paused would make every paused
   entry replayable from its start, except after a flood with no quiet
   moment before the bound; terminal output, whose reads are recorded whole,
