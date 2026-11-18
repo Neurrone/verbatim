@@ -253,7 +253,9 @@ Public API:
   own focus with a focused child"); the
   `accFocus` VARIANT is parsed in one shared place, `read_acc_focus`, which
   `focused_object` also uses, so the child-id and child-object forms are
-  handled once), `focus_candidate` (the same acquisition and redirect,
+  handled once), `menu_start_candidate` (a menu start's object at its
+  event's address with no redirect, as NVDA builds it),
+  `focus_candidate` (the same acquisition and redirect,
   reading no more than the redirect needs, so the outpost can make NVDA's
   checks before the read: `key()` is the address after the redirect, for
   NVDA's duplicate check and the ids a redirected focus is read by;

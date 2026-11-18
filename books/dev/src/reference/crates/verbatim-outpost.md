@@ -662,7 +662,8 @@ and the inherited pipe handles.
   while the element still has the keyboard focus, a limit.
 - An MSAA focus is one candidate per request (`MsaaRun`), acquired with
   NVDA's child-0-on-a-list redirect and the `accFocus` redirect
-  (`focus_candidate`). The outpost reports facts and judges none: a focus
+  (`focus_candidate`); a menu start with neither, at its event's address
+  (`menu_start_candidate`), as NVDA builds it. The outpost reports facts and judges none: a focus
   event's focused state over the object and its ancestors, read live; a
   menu start's role. It then reads it in full unless the depth is
   `Facts`, or `FullIfFocused` with the object not focused, even when it

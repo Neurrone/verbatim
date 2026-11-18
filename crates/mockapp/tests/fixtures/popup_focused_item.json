@@ -1,0 +1,17 @@
+{
+  "id": "root",
+  "role": "window",
+  "name": "Mockapp Popup Fixture",
+  "children": [
+    {
+      "id": "context",
+      "role": "menu",
+      "name": "Context",
+      "states": ["focusable"],
+      "children": [
+        { "id": "copy", "role": "menu_item", "name": "Copy", "states": ["focusable"] },
+        { "id": "paste", "role": "menu_item", "name": "Paste", "states": ["focusable"] }
+      ]
+    }
+  ]
+}

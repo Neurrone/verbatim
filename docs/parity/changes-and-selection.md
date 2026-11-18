@@ -47,7 +47,14 @@ the application in the foreground for its real focus, as NVDA's fake
 focus reads the focus from the foreground window when no focus followed
 the close. Focus usually returns to another application than the one
 that owned the menu, which a check inside the menu's own outpost
-could not see. **matched (unverified)**.
+could not see. A menu start's or popup start's object is its event's
+own, with no redirect to the child its `accFocus` names, as NVDA builds
+it from the event alone (`IAccessibleHandler/__init__.py` 942 to 973; its
+redirect is only a focus event's, 741 to 757): a popup whose item
+already has the focus is read as the popup, a menu popup, and spoken as
+the menu, not refused as no menu popup (Dickson, 2026-11-18; mockapp's
+`a_menu_start_on_a_popup_with_a_focused_item_reads_the_popup`).
+**matched (unverified)**.
 
 ### Toggle button role and "pressed"/"not pressed" wording
 

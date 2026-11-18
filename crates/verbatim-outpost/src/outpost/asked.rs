@@ -1147,7 +1147,8 @@ fn msaa_run(
 }
 
 /// One MSAA candidate read as NVDA's pump reads it, to the depth Core
-/// asks: the object at its event's address, after NVDA's redirect; the
+/// asks: the object at its event's address, after NVDA's redirect for a
+/// focus and with none for a menu start; the
 /// facts Core judges, a focus event's focused state over the object and
 /// its ancestors and a menu start's role; then, unless the depth stops
 /// there, the full read, with its ancestors up to one Core already knows.
@@ -1167,8 +1168,14 @@ fn try_candidate(
     });
     let ids = asked.ids;
     let hwnd = hwnd_of(ids.window);
-    let Some(mut candidate) = verbatim_ia2::acquire::focus_candidate(hwnd, ids.object, ids.child)
-    else {
+    // A menu start's object is its event's own, with no redirect, as
+    // NVDA's (`IAccessibleHandler/__init__.py` 942 to 973).
+    let acquired = if asked.kind == CandidateKind::MenuStart {
+        verbatim_ia2::acquire::menu_start_candidate(hwnd, ids.object, ids.child)
+    } else {
+        verbatim_ia2::acquire::focus_candidate(hwnd, ids.object, ids.child)
+    };
+    let Some(mut candidate) = acquired else {
         return not_there;
     };
     let focused = (asked.kind == CandidateKind::Focus).then(|| {

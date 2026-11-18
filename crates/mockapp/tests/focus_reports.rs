@@ -616,6 +616,51 @@ fn the_twin_deletion_stand_in_matches_the_desktop_lists_recording() {
     app.quit();
 }
 
+/// A menu start on a popup whose item already has the focus is read as the
+/// popup, with no redirect to the item, so its role is a menu popup's and
+/// Core takes it as the menu, not refusing it as no menu popup: NVDA
+/// builds a menu start's object from its event alone
+/// (`IAccessibleHandler/__init__.py` 942 to 973), its redirect to
+/// `accFocus` being only a focus event's (741 to 757). mockapp's popup
+/// (`tests/fixtures/popup_focused_item.json`), whose `accFocus` names its
+/// first item, focused, which a focus event's wider redirect would reach.
+fn a_menu_start_on_a_popup_with_a_focused_item_reads_the_popup() {
+    use verbatim_model::request::{CandidateFacts, CandidateKind, Depth};
+    let title = common::unique_title("mockapp-menu-start-popup");
+    let mut app = common::spawn("popup_focused_item.json", "msaa", &title);
+    let hwnd = common::find_window(&title);
+    common::apply(&mut app, hwnd, "focus-child context copy");
+    let outpost = OutpostUnderTest::new(&app);
+    // The popup is node 1, after the root, so its object id is 2.
+    let popup = MsaaIds {
+        window: WindowHandle(hwnd.0 as u64),
+        object: 2,
+        child: 0,
+    };
+    let (start, _) = outpost.msaa_run((popup, CandidateKind::MenuStart), Depth::Full);
+    let read = start.read.expect("the popup read in full");
+    assert_eq!(
+        (
+            start.facts,
+            common::outpost::role_of(&read.focus),
+            common::outpost::name_of(&read.focus).map(str::to_owned)
+        ),
+        (
+            CandidateFacts::Found {
+                focused: None,
+                role: Some(Role::Menu),
+            },
+            Role::Menu,
+            Some("Context".to_owned())
+        )
+    );
+    // A focus event on the popup is still redirected to its focused item.
+    let focus = outpost.msaa_focus_answer(popup);
+    assert_eq!((focus.role(), focus.name()), (Role::MenuItem, Some("Copy")));
+    drop(outpost);
+    app.quit();
+}
+
 /// The outpost reads a candidate to the depth Core asks and judges none of
 /// its facts: at `Facts` it stops after the focused state, at
 /// `FullIfFocused` a focused candidate is read in full, and a menu start's
@@ -3768,6 +3813,10 @@ fn main() {
         (
             "a_candidate_is_read_to_the_depth_core_asks",
             a_candidate_is_read_to_the_depth_core_asks,
+        ),
+        (
+            "a_menu_start_on_a_popup_with_a_focused_item_reads_the_popup",
+            a_menu_start_on_a_popup_with_a_focused_item_reads_the_popup,
         ),
         (
             "a_candidate_is_read_unless_it_is_the_object_named",

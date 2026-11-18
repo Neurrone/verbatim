@@ -499,6 +499,29 @@ pub fn focus_candidate(hwnd: isize, id_object: i32, id_child: i32) -> Option<Foc
     })
 }
 
+/// Acquires the object a menu start or popup start names, at its event's
+/// address with no redirect: NVDA builds a menu start's object from its
+/// event alone (`IAccessibleHandler/__init__.py` 942 to 973), its redirect
+/// to `accFocus` being only for a focus event's (741 to 757), so a popup
+/// whose item already has the focus is the popup. Its role is read for a
+/// child id 0, as [`focus_candidate`] reads it. `None` if the object
+/// cannot be acquired. Blocking; worker only.
+#[must_use]
+pub fn menu_start_candidate(hwnd: isize, id_object: i32, id_child: i32) -> Option<FocusCandidate> {
+    let acc = Accessible::from_event(hwnd, id_object, id_child)?;
+    let role = if id_child == CHILDID_SELF {
+        Prefetched::Read(acc.role())
+    } else {
+        Prefetched::Unread
+    };
+    Some(FocusCandidate {
+        acc,
+        key: (hwnd, id_object, id_child),
+        role,
+        state: Prefetched::Unread,
+    })
+}
+
 impl FocusCandidate {
     /// The address the focus is at, after the redirect.
     #[must_use]
