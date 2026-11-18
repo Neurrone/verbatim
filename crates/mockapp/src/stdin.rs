@@ -174,6 +174,16 @@ pub(crate) enum Command {
     /// the Open dialog's folder tree raises a stale focus while the "File
     /// name" field has it (survey `np_open`). MSAA-only.
     StaleFocusOnLeft,
+    /// `list-view-focus <row>`: gives the window's list view the keyboard
+    /// focus and its 0-based row `row` the focused and selected states,
+    /// which comctl32 raises the item's focus event for. MSAA-only.
+    ListViewFocus(usize),
+    /// `list-view-delete <row>`: deletes the list view's 0-based row `row`
+    /// (`LVM_DELETEITEM`) and gives the row now at that place, if any, the
+    /// focused and selected states, as an application focuses the next
+    /// item after deleting the focused one: comctl32 raises its focus event
+    /// at the deleted item's child id. MSAA-only.
+    ListViewDelete(usize),
     /// `text-changed <id>`: raises UIA's text changed event from a text
     /// node, as a terminal reports that its text changed, or, in the MSAA
     /// backend, `EVENT_OBJECT_VALUECHANGE` from the edit control's client
@@ -724,6 +734,8 @@ pub(crate) fn parse_command(line: &str) -> Option<Command> {
         }
         "client-name" => Some(Command::ClientName(rest.to_owned())),
         "stale-focus-on-left" if rest.is_empty() => Some(Command::StaleFocusOnLeft),
+        "list-view-focus" => rest.trim().parse().ok().map(Command::ListViewFocus),
+        "list-view-delete" => rest.trim().parse().ok().map(Command::ListViewDelete),
         "set-title" => Some(Command::SetTitle(rest.to_owned())),
         "client-identity" => Some(Command::ClientIdentity),
         "form-client" => Some(Command::FormClient),

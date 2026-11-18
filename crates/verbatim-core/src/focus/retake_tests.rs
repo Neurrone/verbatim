@@ -335,3 +335,70 @@ fn the_silent_retake_mints_the_baseline_in_the_new_generation_and_keeps_the_flag
         }
     );
 }
+
+/// The readers' last focus's fence, `None` with no last focus.
+#[expect(
+    clippy::option_option,
+    reason = "no last focus, its fence cleared, or its fence"
+)]
+fn since(state: &Held) -> Option<Option<crate::keys::entry::Fence>> {
+    state.versions.last.as_ref().map(|last| last.since)
+}
+
+/// The startup read executed keeps its entry's fence.
+#[test]
+fn the_startup_read_keeps_its_entrys_fence() {
+    let mut state = ready();
+    state.arrivals.key_joined(verbatim_model::KeySeq::new(2));
+    feed_at(&mut state, 500, Input::Foreground(IN_FRONT));
+    assert_eq!(
+        feed_at(
+            &mut state,
+            600,
+            answer(
+                OUTPOST,
+                1,
+                Reply::Candidate(CandidateAnswer::focused(focus_read(None)))
+            )
+        ),
+        SPOKEN_FOLLOWED
+    );
+    assert_eq!(since(&state), Some(Some(state.arrivals.fence())));
+}
+
+/// The re-take taken silently keeps its entry's fence; a re-take answered
+/// not there clears it.
+#[test]
+fn the_retake_keeps_its_fence_and_one_not_there_clears_it() {
+    let mut state = started();
+    state.arrivals.key_joined(verbatim_model::KeySeq::new(3));
+    feed_at(&mut state, 1_000, Input::ReaderEnded(OUTPOST));
+    ready_at(&mut state, 1_100, REPLACEMENT);
+    let read = minted_anew(focus_read(None));
+    feed_at(
+        &mut state,
+        1_200,
+        answer(
+            REPLACEMENT,
+            3,
+            Reply::Candidate(CandidateAnswer::focused(read)),
+        ),
+    );
+    assert_eq!(since(&state), Some(Some(state.arrivals.fence())));
+    let second = Instance {
+        reader: Reader::Outpost(APP),
+        generation: GENERATION + 2,
+    };
+    feed_at(&mut state, 2_000, Input::ReaderEnded(REPLACEMENT));
+    ready_at(&mut state, 2_100, second);
+    feed_at(
+        &mut state,
+        2_200,
+        crate::entries::tests::answer_outcome(
+            second,
+            5,
+            verbatim_model::request::Outcome::NotThere,
+        ),
+    );
+    assert_eq!(since(&state), Some(None));
+}

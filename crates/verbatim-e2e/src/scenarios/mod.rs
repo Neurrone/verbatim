@@ -79,6 +79,7 @@ pub(crate) mod text_box;
 pub(crate) mod text_box_say_all;
 pub(crate) mod theme_panel;
 pub(crate) mod toast;
+pub(crate) mod twin_item_at_a_deleted_items_ids;
 pub(crate) mod typed_words;
 pub(crate) mod verbatim_lifecycle;
 pub(crate) mod word_selection;

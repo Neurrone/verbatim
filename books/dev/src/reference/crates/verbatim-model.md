@@ -274,15 +274,18 @@ them yet.
   requests: `CompleteUia` (the completion of a UI Automation read from the
   listener's `Route`), `MsaaRun` (one `RunCandidate` of a
   `CandidateKind`, a focus, a foreground or a menu start, read to the
-  `Depth` Core asks, `Facts`, `FullIfFocused` or `Full`, with a `spare`
+  `Depth` Core asks, `Facts`, `FullIfFocused`, `Full` or
+  `FullUnlessSame`, which names the ids and the `Identity` (states, role,
+  position and set size, name, value) of the readers' last focus, with a
+  `spare`
   node and anchor Core keeps held while it is out) and the current focus
   (`CurrentFocus`, with its `FocusDepth`, which has no depth stopping at
   the facts), both answered with a
   `CandidateAnswer`: the `CandidateFacts` the outpost found (skipped, not
-  there, or found, with its focused state when asked, a menu start's
-  role and the `Redirect` that reached it, NVDA's list
-  redirect or the wider one, with the child's ids), and the full read when
-  the depth asked for one. The completion and a candidate's full read are
+  there, or found, with its focused state when asked and a menu start's
+  role), and the full read when the depth asked for one; or, at
+  `FullUnlessSame`, `Reply::CandidateSame` when the object reached is the
+  one named. The completion and a candidate's full read are
   a `FocusRead`, which carries what Core keeps with the
   committed focus and its `FocusCaret`: no text, text not read, or the
   caret read (`FocusCaretRead`), its line with the formatting the

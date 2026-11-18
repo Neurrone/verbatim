@@ -618,7 +618,7 @@ fn window_title<'a>(
         container.id == entry.id
             && !is_menu(container)
             && (is_sensitive_slider(container) || is_presentable_container(container))
-            && !container_segments(container).is_empty()
+            && !container_segments(container, true).is_empty()
     });
     (!spoken && has_text(entry.name.as_deref())).then_some(entry)
 }
@@ -684,6 +684,7 @@ fn focus_speech(
     report: &FocusReport<'_>,
     (title, entered, desktop_name): (Option<&NodeSnapshot>, Vec<&NodeSnapshot>, Option<Effect>),
 ) -> Vec<Effect> {
+    let positions = speaks_positions(state);
     let last_level = &mut state.last_tree_level;
     let cell_memory = &mut state.cell_memory;
     let reads_text = editing::may_have_text(report.node.role);
@@ -693,7 +694,7 @@ fn focus_speech(
             Utterance {
                 trace_id,
                 priority: SpeechPriority::Queued,
-                segments: unremembered_segments(title, Reason::Focus),
+                segments: unremembered_segments(title, Reason::Focus, positions),
                 source: Some(source_of(title)),
                 say_all: false,
                 validity: Some(FocusValidity {
@@ -722,7 +723,7 @@ fn focus_speech(
         if !sensitive_slider && !is_presentable_container(container) {
             continue;
         }
-        let segments = container_segments(container);
+        let segments = container_segments(container, positions);
         if segments.is_empty() {
             continue;
         }
@@ -745,9 +746,14 @@ fn focus_speech(
     let segments = if reads_text && report.node.value.is_some() {
         let mut node = report.node.clone();
         node.value = None;
-        node_segments(&node, Reason::Focus, last_level, cell_memory)
+        node_segments(&node, Reason::Focus, (last_level, cell_memory), positions)
     } else {
-        node_segments(report.node, Reason::Focus, last_level, cell_memory)
+        node_segments(
+            report.node,
+            Reason::Focus,
+            (last_level, cell_memory),
+            positions,
+        )
     };
     effects.push(Effect::Speak(
         Utterance {
@@ -1007,7 +1013,8 @@ pub(crate) fn announce_object(
             trace_id,
             priority,
             node,
-            (Reason::Focus, &mut None, &mut CellMemory::default()),
+            // Its read names the position only as the settings report it.
+            (Reason::Focus, &mut None, &mut CellMemory::default(), true),
         ),
         None,
     )
@@ -1077,7 +1084,13 @@ pub(crate) fn navigator_utterance(
     object: &NodeSnapshot,
     reason: Reason,
 ) -> Effect {
-    let levels = (reason, &mut state.last_tree_level, &mut state.cell_memory);
+    let positions = speaks_positions(state);
+    let levels = (
+        reason,
+        &mut state.last_tree_level,
+        &mut state.cell_memory,
+        positions,
+    );
     let utterance = if editing::may_have_text(object.role) && object.value.is_some() {
         let mut announced = object.clone();
         announced.value = None;
@@ -1130,10 +1143,12 @@ pub(crate) fn announce_query(
     object: &NodeSnapshot,
 ) -> Utterance {
     focus_read_spoken(state, object);
+    let positions = speaks_positions(state);
     let levels = (
         Reason::Query,
         &mut state.last_tree_level,
         &mut state.cell_memory,
+        positions,
     );
     if editing::may_have_text(object.role) && object.value.is_some() {
         let mut announced = object.clone();
@@ -1341,6 +1356,7 @@ pub(crate) fn reduce_controlled_selection(
         return Vec::new();
     }
     state.navigator = Some(Navigator::on(node.clone()));
+    let positions = speaks_positions(state);
     let effects = vec![Effect::Speak(
         announce_node(
             trace_id,
@@ -1350,6 +1366,7 @@ pub(crate) fn reduce_controlled_selection(
                 Reason::Focus,
                 &mut state.last_tree_level,
                 &mut state.cell_memory,
+                positions,
             ),
         ),
         None,
@@ -1940,9 +1957,9 @@ fn is_presentable_container(node: &NodeSnapshot) -> bool {
 /// is spoken" and "When values and descriptions are spoken" in
 /// `docs/nvda/speech.md`). A slider that focuses its thumb is spoken as a
 /// focus, whole ([`is_sensitive_slider`]).
-fn container_segments(node: &NodeSnapshot) -> Vec<UtteranceSegment> {
+fn container_segments(node: &NodeSnapshot, positions: bool) -> Vec<UtteranceSegment> {
     if is_sensitive_slider(node) {
-        return unremembered_segments(node, Reason::Focus);
+        return unremembered_segments(node, Reason::Focus, positions);
     }
     let mut entered = node.clone();
     entered.value = None;
@@ -1952,13 +1969,31 @@ fn container_segments(node: &NodeSnapshot) -> Vec<UtteranceSegment> {
     }
     // An entered container speaks no level and is read without a cell, so
     // nothing is remembered.
-    unremembered_segments(&entered, Reason::Focus)
+    unremembered_segments(&entered, Reason::Focus, positions)
 }
 
 /// [`node_segments`] for what remembers nothing it says: a window's title or
 /// an entered container.
-fn unremembered_segments(node: &NodeSnapshot, reason: Reason) -> Vec<UtteranceSegment> {
-    node_segments(node, reason, &mut None, &mut CellMemory::default())
+fn unremembered_segments(
+    node: &NodeSnapshot,
+    reason: Reason,
+    positions: bool,
+) -> Vec<UtteranceSegment> {
+    node_segments(
+        node,
+        reason,
+        (&mut None, &mut CellMemory::default()),
+        positions,
+    )
+}
+
+/// Whether a node's position in its set is spoken, as the settings report
+/// it.
+fn speaks_positions(state: &SrState) -> bool {
+    state
+        .reported
+        .node
+        .contains(verbatim_model::property::NodeDetail::Position)
 }
 
 /// Why a node is being spoken, which decides whether its role is
@@ -2035,8 +2070,8 @@ fn speaks_role(node: &NodeSnapshot, reason: Reason) -> bool {
 fn node_segments(
     node: &NodeSnapshot,
     reason: Reason,
-    last_level: &mut Option<u32>,
-    cell_memory: &mut CellMemory,
+    (last_level, cell_memory): (&mut Option<u32>, &mut CellMemory),
+    positions: bool,
 ) -> Vec<UtteranceSegment> {
     let mut segments = Vec::new();
     if node.details.desktop_window {
@@ -2090,7 +2125,10 @@ fn node_segments(
         )));
         cell_memory.forget_table();
     }
-    if let Some(position) = node.details.position_in_set {
+    // A focus read carries its position whatever the settings, for the
+    // identity check (`crate::details::focus_set`): the setting decides
+    // only whether it is spoken.
+    if let Some(position) = node.details.position_in_set.filter(|_| positions) {
         segments.push(UtteranceSegment::new(SegmentContent::Position {
             position,
             set_size: node.details.set_size,
@@ -2114,12 +2152,12 @@ fn announce_node(
     trace_id: TraceId,
     priority: SpeechPriority,
     node: &NodeSnapshot,
-    (reason, last_level, cell_memory): (Reason, &mut Option<u32>, &mut CellMemory),
+    (reason, last_level, cell_memory, positions): (Reason, &mut Option<u32>, &mut CellMemory, bool),
 ) -> Utterance {
     Utterance {
         trace_id,
         priority,
-        segments: node_segments(node, reason, last_level, cell_memory),
+        segments: node_segments(node, reason, (last_level, cell_memory), positions),
         source: Some(source_of(node)),
         say_all: false,
         validity: None,

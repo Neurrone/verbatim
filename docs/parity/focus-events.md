@@ -34,9 +34,10 @@ duplicate.
   746 to 757), so its duplicate test, the limiter's exemption of the last
   focus and the foreground's same-ids test compare the item's ids, and by
   NVDA's test it is never a duplicate, its child id being above 0 (the
-  redirect guard, the last entry, is Verbatim's own). A
-  focus read through `accFocus` carries no object id, as NVDA's, so no
-  later event is its duplicate. Core's
+  identity check, the last entry, is Verbatim's own). A focus read
+  through `accFocus` carries the ids it is held by, as NVDA's object gets
+  its ids from `IAccIdentity` (`NVDAObjects/IAccessible/__init__.py` 803
+  to 808). Core's
   `an_msaa_focus_with_the_last_focuss_ids_and_no_child_is_a_duplicate`,
   `a_repeat_of_a_focus_held_by_a_child_above_zero_is_not_a_duplicate`
   and `nothing_is_a_duplicate_of_a_focus_read_through_acc_focus`.
@@ -106,33 +107,52 @@ duplicate.
   `the_return_after_a_uia_splash_window_is_spoken`). Silence while in the
   application that does not answer matches NVDA's ("A focus UIA does not
   deliver").
-- Different, deliberately (Dickson, 2026-11-18): an item said twice
-  because its control's focus events split is said once. When a focus
-  is read through a redirect (NVDA's list redirect, or Verbatim's wider
-  redirect of a child id 0 to a focused child), the readers' last focus
-  carries the redirect that fired and the speech fence of the focus
-  tell it was read for. At its turn, the reached child's own focus with
-  the same fence ends with no read, for either redirect; and a list's
-  own focus that NVDA's list redirect takes to that same child ends
-  unspoken at its answer. NVDA queues both, its duplicate test never
-  holding for a child id above 0 (`NVDAObjects/IAccessible/__init__.py`
-  866 to 867); the pending judgement does not apply the guard, as NVDA
-  queues them. The guard ends on a key, which moves the fence; on
-  anything that replaces the readers' last focus; and on a candidate
-  tried at its turn and answered refused or not there, so a return to
-  the list after a click whose read failed is spoken. Verbatim's
-  settings dialog raises its list's own focus twice, 1.0 to 1.5 ms apart,
-  and mockapp's list raises its own focus then its item's 0.1 to 0.3 ms
-  apart on a mouse return, NVDA saying the item once. Limits: an
-  application that moves the focus to another item under the same child
-  id, or focuses the list again on the same item, with no key, no failed
-  try and nothing replacing the last focus, is not spoken; a stale
-  candidate refused between a list's focus and its item's would let the
-  item be said twice (no recording shows an event between the two).
-  Core's `a_lists_second_own_focus_redirected_to_the_guarded_item_ends_unspoken`,
-  `the_reached_items_own_focus_ends_with_no_read`,
-  `after_a_key_the_items_own_focus_is_read_and_spoken` and
-  `a_candidate_tried_and_not_there_ends_the_guard`.
+- Different, deliberately (Dickson, 2026-11-18): the identity check. A
+  later MSAA focus is not spoken when, with no key between, the object it
+  reaches, after the outpost's redirect, has the ids of the readers' last
+  focus and reads as it does. NVDA's duplicate test never holds for a
+  child id above 0, as child ids are positions
+  (`NVDAObjects/IAccessible/__init__.py` 863 to 872, the exit at 866 to
+  867); the identity check extends only that branch. The readers' last
+  focus keeps the speech fence of the entry that executed it (`since`):
+  a run's or a menu start's executed candidate's own, any other entry's
+  own. A key moves later candidates' fence; a candidate tried at its turn
+  and refused, not there or whose reader ended clears it, so the mouse
+  return to a list after a click whose read failed is spoken ("Alpha 1
+  of 3"). An MSAA focus of an equal fence, whose last focus is held by a
+  child id above 0 and is the committed focus, is asked unless it is that
+  focus (`FullUnlessSame`): the outpost compares the reached ids and, if
+  equal, the object's states, role, position in its set and the set's
+  size where the control gives them with no walk (a `SysListView32`
+  item's), name and value, in that order, stopping at the first that
+  differs and then reading in full; an object that reads as named is
+  answered `CandidateSame` and Core makes it a duplicate. The position
+  and size are read whatever the position-reporting setting, which
+  decides only whether they are spoken (Dickson, 2026-11-18). A pending
+  judgement makes no identity read, so a child id above 0 is never a
+  duplicate there, as in NVDA. Startup and the return after a desktop
+  switch execute with no duplicate test, as NVDA queues those focuses.
+  NVDA once compared objects this way and removed it (c47d518ee, the
+  foobar2000 playlist) because it read the old object again, and a
+  position-identified child then answered as its new occupant; Verbatim
+  compares against Core's reading of the focus spoken, which no later
+  read changes. Verbatim's settings dialog raises its list's own focus
+  twice after the menu check read its item, and mockapp's list raises
+  its own focus then its item's on a mouse return; NVDA says the item two
+  or three times there, Verbatim once. Limits: a different object at
+  reused ids that reads the same with the same position and set size,
+  only an identical item deleted and another added at once, is not
+  spoken where NVDA speaks it, and a tree view item's position is not
+  compared, so its twin is not spoken either; a stale candidate refused
+  between a pair clears the fence, so the item is said twice; a click
+  whose candidate is refused with no read keeps the fence, so the return
+  to the list is not spoken; startup or the return after a run says the
+  item twice, as NVDA does. Core's identity tests
+  (`the_items_own_focus_again_is_read_unless_it_is_the_same`,
+  `the_lists_own_focus_reaching_the_same_item_says_nothing`,
+  `a_try_refused_or_gone_clears_the_fence`,
+  `every_order_of_the_check_and_the_pair_says_the_item_once`) and the
+  replay `the_recorded_settings_dialog_says_its_item_once`.
 
 ### A focus whose keyboard focus read fails
 

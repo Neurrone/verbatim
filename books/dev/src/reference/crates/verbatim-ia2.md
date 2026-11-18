@@ -256,9 +256,12 @@ Public API:
   handled once), `focus_candidate` (the same acquisition and redirect,
   reading no more than the redirect needs, so the outpost can make NVDA's
   checks before the read: `key()` is the address after the redirect, for
-  NVDA's duplicate check; `redirect()` the branch that fired, NVDA's list
-  redirect or the wider one for a focused child, which Core's redirect
-  guard judges; `role()` the object's role, read once and kept, which a
+  NVDA's duplicate check and the ids a redirected focus is read by;
+  `reads_as(identity, registry)` the identity check, the object's states
+  and role, a `SysListView32` item's position and set size, its name and
+  its value, compared with the identity Core names in that order by the
+  functions the full read uses and stopping at the first that differs;
+  `role()` the object's role, read once and kept, which a
   menu start's facts carry; `has_focused_state(max_hops, plain,
   parent_window)` is NVDA's `shouldAllowIAccessibleFocusEvent`, the
   object's state and then each ancestor's read live through `accParent`,

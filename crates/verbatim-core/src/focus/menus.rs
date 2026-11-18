@@ -27,15 +27,14 @@ use verbatim_model::event_kind::EventKind;
 use super::FOCUS_SET;
 use super::backend::BackendCache;
 use super::execute::{Origin, execute};
-use super::msaa_run::{FullIfFocused, known_for, read_in_full};
+use super::msaa_run::{FullIfFocused, known_for, read_full};
 use super::retake::{CurrentFocusRead, read_by};
-use super::validity::{self, Answered, Pending, Purpose, Settled, Subject, Validity, View, Within};
+use super::validity::{self, Answered, Pending, Settled, Subject, Validity, View, Within};
 use super::versions::{Committed, ReadBy};
 use crate::entries::{Candidate, Entries, Entry};
 use crate::event_queue::{Cx, FOCUS_DUE_US, Item, Outcome};
 use crate::state::SrState;
 use std::collections::VecDeque;
-use verbatim_model::request::Depth;
 
 /// How long after a menu or switcher end Core appends its check: NVDA's
 /// 50 ms (`IAccessibleHandler/__init__.py` 976 to 991).
@@ -109,15 +108,8 @@ pub(crate) async fn slot(mut cx: Cx<Entries>, candidate: Candidate, run_executed
 /// test; it executes as a focus when it is a menu popup, a start on
 /// anything else saying nothing.
 async fn start(cx: &mut Cx<Entries>, candidate: &Candidate, run_executed: bool) {
-    let judged = |cx: &Cx<Entries>, facts| {
-        validity::at(
-            cx,
-            Subject::Msaa(candidate),
-            facts,
-            Purpose::Turn,
-            run_executed,
-        )
-    };
+    let judged =
+        |cx: &Cx<Entries>, facts| validity::at(cx, Subject::Msaa(candidate), facts, run_executed);
     match judged(cx, candidate.confirmation.facts()) {
         Validity::Refused(reason) => {
             if reason.tried() {
@@ -130,7 +122,7 @@ async fn start(cx: &mut Cx<Entries>, candidate: &Candidate, run_executed: bool) 
     }
     let known = known_for(cx, candidate.tell.process);
     let due_us = cx.due_in(FOCUS_DUE_US);
-    let Some(answered) = read_in_full(cx, candidate, Depth::Full, (&known, due_us)).await else {
+    let Some(answered) = read_full(cx, candidate, (&known, due_us)).await else {
         return;
     };
     let (facts, read) = match answered {
@@ -142,13 +134,7 @@ async fn start(cx: &mut Cx<Entries>, candidate: &Candidate, run_executed: bool) 
         }
         Answered::Read { facts, read } => (facts, read),
     };
-    match validity::read_at(
-        cx,
-        Subject::Msaa(candidate),
-        &facts,
-        Purpose::Turn,
-        run_executed,
-    ) {
+    match validity::read_at(cx, Subject::Msaa(candidate), &facts, run_executed) {
         Settled::Valid(_) => {}
         Settled::Refused(reason) => {
             if reason.tried() {
@@ -165,7 +151,12 @@ async fn start(cx: &mut Cx<Entries>, candidate: &Candidate, run_executed: bool) 
         event: Some(held.event),
         held_child: held.held_child,
     };
-    let origin = Origin::of_tell(&candidate.tell, candidate.window, cx.foreground());
+    let origin = Origin::of_tell(
+        &candidate.tell,
+        candidate.window,
+        cx.foreground(),
+        candidate.fence,
+    );
     let executed = execute(&mut cx.facts_mut(), &origin, &read, &known, read_by);
     executed.deliver(cx);
 }
@@ -187,12 +178,21 @@ pub(crate) async fn check(mut cx: Cx<Entries>, check: MenuCheck) {
         window,
         known: known.sent.clone(),
         details: crate::details::focus_details(&cx.facts()),
-        set: crate::details::node_set(&cx.facts(), FOCUS_SET),
+        set: crate::details::focus_set(&cx.facts(), FOCUS_SET),
         depth: std::marker::PhantomData,
     };
-    let Outcome::Result(answered) = cx.ask(request, due_us).await else {
-        cx.facts_mut().focus_read_failed();
-        return;
+    let answered = match cx.ask(request, due_us).await {
+        Outcome::Result(answered) => answered,
+        outcome => {
+            // A check answered not there, or whose reader ended, tried the
+            // focus and found it gone: the readers' last focus's fence ends.
+            let mut facts = cx.facts_mut();
+            if matches!(outcome, Outcome::NotThere | Outcome::ReaderEnded) {
+                facts.versions.tried_and_refused();
+            }
+            facts.focus_read_failed();
+            return;
+        }
     };
     let (facts, read) = match answered {
         Answered::Unread(unread) => {
@@ -204,13 +204,7 @@ pub(crate) async fn check(mut cx: Cx<Entries>, check: MenuCheck) {
         Answered::Read { facts, read } => (facts, read),
     };
     let ids = read.msaa.map(|held| held.event);
-    match validity::read_at(
-        &cx,
-        Subject::MenuCheck(ids.as_ref()),
-        &facts,
-        Purpose::Turn,
-        false,
-    ) {
+    match validity::read_at(&cx, Subject::MenuCheck(ids.as_ref()), &facts, false) {
         Settled::Valid(_) => {}
         Settled::Refused(reason) => {
             if reason.tried() {
@@ -223,7 +217,7 @@ pub(crate) async fn check(mut cx: Cx<Entries>, check: MenuCheck) {
     let Some(read_by) = read_by(&read) else {
         return;
     };
-    let origin = Origin::of_read(check.trace_id, window);
+    let origin = Origin::of_read(check.trace_id, window, check.fence);
     let executed = execute(&mut cx.facts_mut(), &origin, &read, &known, read_by);
     executed.deliver(&mut cx);
 }

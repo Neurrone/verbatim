@@ -9,8 +9,8 @@ use verbatim_model::property::{
 use verbatim_model::request::{
     Answer, Ask, CandidateAnswer, CandidateFacts, CompleteUia, Depth, FocusAncestor, FocusCaret,
     FocusNode, FocusRead, HeldIds, KnownAncestor, NodeRead, ObjectClass, ObjectRead,
-    Outcome as WireOutcome, Redirect, Refusal, Reply, Request as Wire, RequestNumber, Route,
-    RouteEnd, RouteStep,
+    Outcome as WireOutcome, Refusal, Reply, Request as Wire, RequestNumber, Route, RouteEnd,
+    RouteStep,
 };
 use verbatim_model::tell::{
     AcceptanceFacts, Checked, ElementToken, Payload, Read, Relation, WindowFacet,
@@ -678,18 +678,6 @@ fn a_checkpoint_that_does_not_replay_is_an_error_and_leaves_the_state() {
     assert_eq!(cloned, before);
 }
 
-/// The answer of a focused candidate a redirect took to `child`.
-pub(crate) fn redirected(read: FocusRead, redirect: Redirect, child: MsaaIds) -> CandidateAnswer {
-    CandidateAnswer {
-        facts: CandidateFacts::Found {
-            focused: Some(true),
-            role: None,
-            redirect: Some((redirect, child)),
-        },
-        read: Some(Box::new(read)),
-    }
-}
-
 /// The run's held ids for the candidate of object `object`.
 pub(crate) fn held(object: i32) -> HeldIds {
     HeldIds {
@@ -721,7 +709,6 @@ pub(crate) fn not_focused() -> CandidateAnswer {
         facts: CandidateFacts::Found {
             focused: Some(false),
             role: None,
-            redirect: None,
         },
         read: None,
     }
@@ -794,7 +781,7 @@ fn an_msaa_duplicate_of_the_readers_last_focus_ends_the_run_with_no_read() {
         },
         class: ObjectClass::Plain,
         role: verbatim_model::Role::Button,
-        redirect: None,
+        since: None,
     });
     assert_eq!(feed_at(&mut state, 1_000, entry(msaa_tell(-4))), NOTHING);
     assert!(state.queue.front_for_tests().is_none());
@@ -949,8 +936,13 @@ fn a_foreground_marker_empties_the_last_focus_for_an_unrelated_window() {
 
 // The rules judged at a run's turn and at execution.
 
+/// The item a list's focus was redirected to raises its own focus with no
+/// key between: read unless it is that item by its ids and its reading,
+/// which its outpost answers it is, so it says nothing (the identity check
+/// in the duplicate test, `docs/parity/focus-events.md`, "Duplicate focus
+/// suppression").
 #[test]
-fn a_focus_on_the_child_a_redirect_reached_ends_the_run_with_no_read() {
+fn the_item_a_redirect_reached_says_nothing_when_its_outpost_finds_it_the_same() {
     let mut state = ready();
     feed_at(&mut state, 1_000, entry(msaa_tell(-4)));
     // The list's focus, child 0, redirected to its item, child 2, whose
@@ -964,7 +956,7 @@ fn a_focus_on_the_child_a_redirect_reached_ends_the_run_with_no_read() {
         event: child,
         held_child: 2,
     }));
-    let tried = redirected(read, Redirect::List, child);
+    let tried = CandidateAnswer::focused(read);
     assert_eq!(
         feed_at(
             &mut state,
@@ -979,7 +971,14 @@ fn a_focus_on_the_child_a_redirect_reached_ends_the_run_with_no_read() {
         object: child.object,
         child: child.child,
     };
-    assert_eq!(feed_at(&mut state, 3_000, entry(tell)), NOTHING);
+    assert_eq!(
+        feed_at(&mut state, 3_000, entry(tell)),
+        ["send Outpost(Pid(40)) MsaaRun"]
+    );
+    assert_eq!(
+        feed_at(&mut state, 4_000, answer(OUTPOST, 2, Reply::CandidateSame)),
+        NOTHING
+    );
     assert!(state.queue.front_for_tests().is_none());
     // The limiter never drops the item's events, by the ids NVDA's
     // redirected object carries, and caps the list's own.
@@ -1000,16 +999,15 @@ fn a_focus_on_the_child_a_redirect_reached_ends_the_run_with_no_read() {
     ));
 }
 
-/// A list's focus that a redirect took to the child Core committed is
-/// spoken again, as NVDA queues it: the child's own focus event was read
-/// and spoken, then the list raises focus on its own object, and the
-/// outpost redirects it to that child. NVDA's duplicate test never holds
-/// for a last focus whose child id is above 0, so the redirected object is
-/// queued (`docs/parity/focus-events.md`, "Duplicate focus suppression";
-/// `docs/parity/windows-and-processes.md`, "A control's own focus with a
-/// focused child").
+/// A list's focus that a redirect took to the child Core committed, whose
+/// outpost reads it in full because it no longer reads as that child, is
+/// spoken: the child's own focus event was read and spoken, then the list
+/// raises focus on its own object with no key between, read unless it is
+/// that child by its ids and its reading (`docs/parity/focus-events.md`,
+/// "Duplicate focus suppression"; `docs/parity/windows-and-processes.md`,
+/// "A control's own focus with a focused child").
 #[test]
-fn a_redirect_that_reaches_the_committed_focus_is_spoken_again() {
+fn a_redirect_to_the_committed_focus_that_reads_differently_is_spoken() {
     let child = MsaaIds {
         window: WindowHandle(5),
         object: -4,
@@ -1040,7 +1038,7 @@ fn a_redirect_that_reaches_the_committed_focus_is_spoken_again() {
         feed_at(&mut state, 3_000, entry(msaa_tell(-4))),
         ["send Outpost(Pid(40)) MsaaRun"]
     );
-    let tried = redirected(focus_read(Some(at_child)), Redirect::List, child);
+    let tried = CandidateAnswer::focused(focus_read(Some(at_child)));
     assert_eq!(
         feed_at(
             &mut state,

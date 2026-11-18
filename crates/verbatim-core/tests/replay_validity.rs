@@ -32,7 +32,7 @@ use verbatim_core::{SrState, dump, replay};
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::request::{
     CandidateAnswer, CandidateFacts, CaretBinding, FocusCaret, FocusCaretRead, FocusRead,
-    ForegroundReport, HeldIds, MsaaIds, Outcome, Press, PressAction, QueueInput, Redirect, Reply,
+    ForegroundReport, HeldIds, MsaaIds, Outcome, Press, PressAction, QueueInput, Reply,
 };
 use verbatim_model::stroke::{HeldStroke, Stroke};
 use verbatim_model::tell::{Event, EventObject, Relation, TellWindow};
@@ -157,6 +157,11 @@ fn sent_of(desk: &Desk, kind: &str) -> u64 {
 
 /// Answers the one candidate the last step asked with `answer` at `at_us`.
 fn answer_run(desk: &mut Desk, at_us: u64, answer: CandidateAnswer) {
+    answer_run_with(desk, at_us, Reply::Candidate(answer));
+}
+
+/// Answers the one candidate the last step asked with `reply` at `at_us`.
+fn answer_run_with(desk: &mut Desk, at_us: u64, reply: Reply) {
     let (number, to) = run_sent(desk);
     desk.step_at(
         at_us,
@@ -164,7 +169,7 @@ fn answer_run(desk: &mut Desk, at_us: u64, answer: CandidateAnswer) {
             from: to,
             answer: verbatim_model::request::Answer {
                 number: verbatim_model::request::RequestNumber(number),
-                outcome: Outcome::Result(Reply::Candidate(answer)),
+                outcome: Outcome::Result(reply),
                 probes: Vec::new(),
                 detail: String::new(),
             },
@@ -188,25 +193,11 @@ fn answer_at(desk: &mut Desk, at_us: u64, app: App, number: u64, reply: Reply) {
     );
 }
 
-/// Facts of a candidate found, focused or not, with no redirect.
+/// Facts of a candidate found, focused or not.
 fn found(focused: bool) -> CandidateFacts {
     CandidateFacts::Found {
         focused: Some(focused),
         role: None,
-        redirect: None,
-    }
-}
-
-/// A candidate found focused, read in full, redirected by NVDA's list rule
-/// to `child`.
-fn listed(read: FocusRead, child: MsaaIds) -> CandidateAnswer {
-    CandidateAnswer {
-        facts: CandidateFacts::Found {
-            focused: Some(true),
-            role: None,
-            redirect: Some((Redirect::List, child)),
-        },
-        read: Some(Box::new(read)),
     }
 }
 
@@ -339,8 +330,9 @@ fn play(desk: &mut Desk, windows: &mut Windows, events: &[Recorded], at_us: u64)
 /// dialog's foreground, refused with no read with no report of it in front
 /// yet; the list's own focus, read alone with Core idle; and its second
 /// own focus 1.489 ms later. Code-level: the first read's answer comes
-/// after the second focus, both redirected to "Speech": "Speech 1 of 3"
-/// once.
+/// after the second focus, redirected to "Speech"; the second is read
+/// unless it is that item by its ids and reading, which its outpost
+/// answers it is: "Speech 1 of 3" once.
 fn settings_list(desk: &mut Desk) {
     let events = recording("settings_dialog_keys_309_313");
     let mut windows = Windows::new(ONE, Some(&events[0].window));
@@ -350,8 +342,8 @@ fn settings_list(desk: &mut Desk) {
     let categories = msaa_node(ONE, 10, Role::List, Some("Categories:"));
     let child = ids(list, -4, 1);
     let read = by_ids(focus_read_of(ONE, &speech, &[categories]), child);
-    answer_run(desk, 2_800_300, listed(read.clone(), child));
-    answer_run(desk, 2_800_700, listed(read, child));
+    answer_run(desk, 2_800_300, CandidateAnswer::focused(read));
+    answer_run_with(desk, 2_800_700, Reply::CandidateSame);
 }
 
 /// mockapp's list on a mouse return (`validity_list_button_run1`): the
@@ -374,7 +366,7 @@ fn mouse_return(desk: &mut Desk) {
         focus_read_of(ONE, &alpha, &[msaa_node(ONE, 30, Role::List, None)]),
         child,
     );
-    answer_run(desk, 1_533_000, listed(read, child));
+    answer_run(desk, 1_533_000, CandidateAnswer::focused(read));
 }
 
 /// Five Tabs in a Properties sheet (`c7_held_tab_run1`, the MSAA events
@@ -799,7 +791,11 @@ fn the_recorded_settings_dialog_says_its_item_once() {
             &["Label(\"Context\")", "Role(Menu)"],
             &["Label(\"Settings...\")", "Shortcut(\"s\")"],
             &["Label(\"Verbatim Settings: Speech\")", "Role(Dialog)"],
-            &["Label(\"Categories:\")", "Role(List)", "Shortcut(\"Alt+c\")"],
+            &[
+                "Label(\"Categories:\")",
+                "Role(List)",
+                "Shortcut(\"Alt+c\")"
+            ],
             &[
                 "Label(\"Speech\")",
                 "Position { position: 1, set_size: Some(3) }"

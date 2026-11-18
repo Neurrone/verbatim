@@ -534,16 +534,46 @@ pub enum CandidateKind {
 /// How far a candidate's read goes, which Core chooses so that the
 /// outpost holds no rule (`docs/parity/focus-events.md`, "Event
 /// acceptance").
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Depth {
-    /// Only the facts: whether it is there, its focused state or role, and
-    /// which redirect reached it.
+    /// Only the facts: whether it is there, and its focused state or role.
     Facts,
     /// The facts, and the full read when the object or an ancestor has the
     /// focused state.
     FullIfFocused,
     /// The facts and the full read.
     Full,
+    /// As [`Depth::FullIfFocused`], unless the object reached, after the
+    /// redirect, is at `ids` and reads as `identity`: then the facts alone,
+    /// answered [`Reply::CandidateSame`] (`docs/parity/focus-events.md`,
+    /// "Duplicate focus suppression", the identity check).
+    FullUnlessSame {
+        /// The ids of the readers' last focus.
+        ids: MsaaIds,
+        /// What the readers' last focus reads as.
+        identity: Box<Identity>,
+    },
+}
+
+/// What an MSAA object reads as, which the identity check compares, each
+/// value as a full read gives it: its states, its role, its position in its
+/// set and the set's size, its name and its value. The outpost compares
+/// them in that order and stops at the first that differs.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Identity {
+    /// Its states.
+    pub states: crate::StateSet,
+    /// Its role.
+    pub role: crate::Role,
+    /// Its position in its set, compared only where the control gives it
+    /// with no walk: a `SysListView32` item's.
+    pub position_in_set: Option<u32>,
+    /// Its set's size, compared as its position is.
+    pub set_size: Option<u32>,
+    /// Its name.
+    pub name: Option<String>,
+    /// Its value.
+    pub value: Option<String>,
 }
 
 /// How far a read of the application's current focus goes: always at
@@ -563,19 +593,6 @@ impl From<FocusDepth> for Depth {
             FocusDepth::Full => Self::Full,
         }
     }
-}
-
-/// Which redirect took a focus event's object to the child `accFocus`
-/// names.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum Redirect {
-    /// NVDA's list redirect: a list's own object, or a `SysListView32`
-    /// window's client, redirected to its focused child
-    /// (`IAccessibleHandler/__init__.py` 741 to 757).
-    List,
-    /// Verbatim's wider redirect: another object's child id 0 redirected
-    /// to the child `accFocus` names when that child has the focused state.
-    FocusedChild,
 }
 
 /// The outpost reads one MSAA candidate to the depth Core asks.
@@ -613,9 +630,6 @@ pub enum CandidateFacts {
         focused: Option<bool>,
         /// Its role, read for a menu start; `None` otherwise.
         role: Option<crate::Role>,
-        /// The redirect that reached it, with the ids of the child it
-        /// reached, when one did.
-        redirect: Option<(Redirect, MsaaIds)>,
     },
 }
 
@@ -631,15 +645,14 @@ pub struct CandidateAnswer {
 }
 
 impl CandidateAnswer {
-    /// The answer of a focused candidate read in full with no redirect,
-    /// its role taken from the read.
+    /// The answer of a focused candidate read in full, its role taken from
+    /// the read.
     #[must_use]
     pub fn focused(read: FocusRead) -> Self {
         Self {
             facts: CandidateFacts::Found {
                 focused: Some(true),
                 role: None,
-                redirect: None,
             },
             read: Some(Box::new(read)),
         }
@@ -661,10 +674,12 @@ pub struct MsaaIds {
 /// the object by.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct HeldIds {
-    /// The ids the event named, or, for a focus a redirect from a list
-    /// took to its focused child, that child's ids, as NVDA builds the
-    /// redirected object with the child's id as its event's; a focus read
-    /// through `accFocus` carries no object id of its own, as NVDA's.
+    /// The ids the event named; for a focus a redirect took to its
+    /// focused child, that child's ids, as NVDA builds the redirected
+    /// object with the child's id as its event's; and for a focus read
+    /// through `accFocus`, the ids it is held by, as NVDA's object gets its
+    /// ids from `IAccIdentity` (`NVDAObjects/IAccessible/__init__.py` 803
+    /// to 808).
     pub event: MsaaIds,
     /// The child id the outpost holds the object by.
     pub held_child: i32,
@@ -783,6 +798,10 @@ pub enum Reply {
     Focus(Box<FocusRead>),
     /// The answer to [`Request::MsaaRun`] and [`Request::CurrentFocus`].
     Candidate(CandidateAnswer),
+    /// The answer to [`Request::MsaaRun`] at [`Depth::FullUnlessSame`]
+    /// when the object reached is at the ids named, has the focused state,
+    /// and reads as the identity named: nothing more read.
+    CandidateSame,
     /// The answer to [`Request::Navigate`]: the node reached, `None` at a
     /// genuine edge of the tree.
     Navigated(Option<NodeRead>),
@@ -980,6 +999,7 @@ impl Answer {
                 | Reply::Text(_)
                 | Reply::Activated(_)
                 | Reply::Followed
+                | Reply::CandidateSame
                 | Reply::Tree(_)
                 | Reply::ShellItems(_)
                 | Reply::ShellItemPosition(_) => {}
@@ -1043,6 +1063,7 @@ impl Answer {
             | Reply::Text(_)
             | Reply::Activated(_)
             | Reply::Followed
+            | Reply::CandidateSame
             | Reply::ShellItems(_)
             | Reply::ShellItemPosition(_) => {}
         }

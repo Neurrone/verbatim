@@ -67,7 +67,7 @@ impl FocusReadDepth for super::msaa_run::FullIfFocused {
     const DEPTH: FocusDepth = FocusDepth::FullIfFocused;
     type Parsed = super::validity::Answered;
     fn parse(answer: CandidateAnswer) -> Option<Self::Parsed> {
-        super::validity::Answered::parse(answer, Self::DEPTH.into())
+        super::validity::Answered::parse(answer, &Self::DEPTH.into())
     }
 }
 
@@ -77,7 +77,7 @@ impl FocusReadDepth for super::msaa_run::Full {
     const DEPTH: FocusDepth = FocusDepth::Full;
     type Parsed = Box<FocusRead>;
     fn parse(answer: CandidateAnswer) -> Option<Self::Parsed> {
-        match super::validity::Answered::parse(answer, Self::DEPTH.into())? {
+        match super::validity::Answered::parse(answer, &Self::DEPTH.into())? {
             super::validity::Answered::Read { read, .. } => Some(read),
             super::validity::Answered::Unread(_) => None,
         }
@@ -232,14 +232,15 @@ pub(crate) async fn run(mut cx: Cx<Entries>, entry: CurrentFocus) {
         window: entry.window,
         known: Vec::new(),
         details: crate::details::focus_details(&cx.facts()),
-        set: crate::details::node_set(&cx.facts(), FOCUS_SET),
+        set: crate::details::focus_set(&cx.facts(), FOCUS_SET),
         depth: std::marker::PhantomData,
     };
     let read = match cx.ask(request, due_us).await {
         Outcome::Result(read) => read,
         outcome => {
             // A re-take answered not there, or whose reader ended, tried
-            // the focus and found it gone: the redirect guard ends.
+            // the focus and found it gone: the readers' last focus's fence
+            // ends.
             if matches!(outcome, Outcome::NotThere | Outcome::ReaderEnded) {
                 cx.facts_mut().versions.tried_and_refused();
             }
@@ -251,14 +252,9 @@ pub(crate) async fn run(mut cx: Cx<Entries>, entry: CurrentFocus) {
         return;
     };
     let duplicate = entry.why == Why::Recovered
-        && super::validity::at(
-            &cx,
-            super::validity::Subject::Recovered(&read),
-            None,
-            super::validity::Purpose::Turn,
-            false,
-        ) == super::validity::Validity::Duplicate;
-    let origin = Origin::of_read(entry.trace_id, entry.window);
+        && super::validity::at(&cx, super::validity::Subject::Recovered(&read), None, false)
+            == super::validity::Validity::Duplicate;
+    let origin = Origin::of_read(entry.trace_id, entry.window, entry.fence);
     let executed = {
         let mut facts = cx.facts_mut();
         match entry.why {

@@ -394,8 +394,9 @@ fn a_focus_reports_the_states_read_when_it_is_handled() {
 /// ancestor; a run of the tree's event alone, as when it is read before
 /// the item's arrives, asks the tree's `accFocus` and answers the item it
 /// names (`docs/parity/windows-and-processes.md`, "A control's own focus
-/// with a focused child"), with the child's ids the redirect reached, so
-/// that the item's own event, its duplicate, says nothing more.
+/// with a focused child"), read by the child's ids the redirect reached,
+/// which the identity check in Core's duplicate test compares the item's
+/// own event with.
 fn a_controls_own_focus_reports_its_focused_child() {
     let title = common::unique_title("mockapp-focus-child");
     let mut app = common::spawn("focus_child.json", "msaa", &title);
@@ -427,19 +428,164 @@ fn a_controls_own_focus_reports_its_focused_child() {
         object: tree,
         child: 1,
     };
-    let redirect = match &reported.facts {
-        Some(verbatim_model::request::CandidateFacts::Found { redirect, .. }) => *redirect,
-        other => panic!("the candidate's facts are {other:?}"),
-    };
     assert_eq!(
-        (redirect, reported.read.msaa.map(|held| held.event)),
-        (
-            Some((verbatim_model::request::Redirect::FocusedChild, reached)),
-            Some(reached)
-        ),
+        reported.read.msaa.map(|held| held.event),
+        Some(reached),
         "the item the redirect reached, named by the ids its own event names"
     );
 
+    drop(outpost);
+    app.quit();
+}
+
+/// The identity of `read`'s focus as Core names it from its snapshot.
+fn identity_of(read: &verbatim_model::request::FocusRead) -> verbatim_model::request::Identity {
+    use verbatim_model::property::{PropertyId, PropertyValue};
+    let values = &read.focus.read.values;
+    let value = |id| values.answer(id).and_then(|answer| answer.value.clone());
+    let count = |id| match value(id) {
+        Some(PropertyValue::Count(count)) => Some(count),
+        _ => None,
+    };
+    let text = |id| match value(id) {
+        Some(PropertyValue::Text(text)) => Some(text),
+        _ => None,
+    };
+    verbatim_model::request::Identity {
+        states: match value(PropertyId::States) {
+            Some(PropertyValue::States(states)) => states,
+            _ => verbatim_model::StateSet::default(),
+        },
+        role: match value(PropertyId::Role) {
+            Some(PropertyValue::Role(role)) => role,
+            _ => Role::Unknown,
+        },
+        position_in_set: count(PropertyId::PositionInSet),
+        set_size: count(PropertyId::SetSize),
+        name: text(PropertyId::Name),
+        value: text(PropertyId::Value),
+    }
+}
+
+/// The outpost at [`verbatim_model::request::Depth::FullUnlessSame`]: an
+/// object at the ids named that reads as the identity named is answered
+/// the same; one whose identity differs, or at other ids, is read in
+/// full; one without the focused state answers its facts alone
+/// (`docs/parity/focus-events.md`, "Duplicate focus suppression").
+fn a_candidate_is_read_unless_it_is_the_object_named() {
+    use verbatim_model::request::{CandidateAnswer, CandidateFacts, Depth, Reply};
+    let title = common::unique_title("mockapp-candidate-unless-same");
+    let mut app = common::spawn("counts.json", "msaa", &title);
+    let hwnd = common::find_window(&title);
+    common::apply(&mut app, hwnd, "set-focus first");
+    let outpost = OutpostUnderTest::new(&app);
+    // The counts fixture's first and second buttons, at object ids 3 and 4.
+    let at = |object| MsaaIds {
+        window: WindowHandle(hwnd.0 as u64),
+        object,
+        child: 0,
+    };
+    let identity = identity_of(&outpost.msaa_focus_answer(at(3)).read);
+    let unless = |ids, identity| {
+        outpost
+            .msaa_run_reply(
+                at(3),
+                Depth::FullUnlessSame {
+                    ids,
+                    identity: Box::new(identity),
+                },
+            )
+            .0
+    };
+    let in_full =
+        |reply: &Reply| matches!(reply, Reply::Candidate(answer) if answer.read.is_some());
+    assert_eq!(unless(at(3), identity.clone()), Reply::CandidateSame);
+    let renamed = verbatim_model::request::Identity {
+        name: Some("Second".to_owned()),
+        ..identity.clone()
+    };
+    assert!(in_full(&unless(at(3), renamed)), "another reading");
+    assert!(in_full(&unless(at(4), identity.clone())), "other ids");
+    common::apply(&mut app, hwnd, "set-focus second");
+    assert_eq!(
+        unless(at(3), identity),
+        Reply::Candidate(CandidateAnswer {
+            facts: CandidateFacts::Found {
+                focused: Some(false),
+                role: None,
+            },
+            read: None,
+        })
+    );
+    drop(outpost);
+    app.quit();
+}
+
+/// Code-level, as no recording of a real application gives it: of a real
+/// list view's two items both named "Copy" (`tests/fixtures/list_view_twins.json`),
+/// the first focused is deleted and the second, now at the first's child
+/// id, focused: read unless it is the first by its ids and its reading, it
+/// reads in full, since its set is one smaller, "1 of 1". The read is
+/// asked with no position in its set, as with position reporting off, and
+/// the identity still compares the position and the set's size.
+fn a_twin_at_a_deleted_items_ids_is_read_in_full() {
+    use verbatim_model::property::PropertyId;
+    use verbatim_model::request::{Depth, Reply};
+    use windows::Win32::UI::WindowsAndMessaging::{FindWindowExW, OBJID_CLIENT};
+    use windows::core::w;
+    let title = common::unique_title("mockapp-twin-deleted");
+    let mut app = common::spawn("list_view_twins.json", "msaa", &title);
+    let host = common::find_window(&title);
+    // SAFETY: a local search of the host window's children.
+    let list = unsafe {
+        FindWindowExW(
+            Some(host),
+            None,
+            w!("SysListView32"),
+            windows::core::PCWSTR::null(),
+        )
+    }
+    .expect("mockapp made the list view");
+    common::apply(&mut app, host, "list-view-focus 0");
+    let outpost = OutpostUnderTest::new(&app);
+    let first = MsaaIds {
+        window: WindowHandle(list.0 as u64),
+        object: OBJID_CLIENT.0,
+        child: 1,
+    };
+    let identity = identity_of(&outpost.msaa_focus_answer(first).read);
+    assert_eq!(
+        (
+            identity.name.as_deref(),
+            identity.position_in_set,
+            identity.set_size
+        ),
+        (Some("Copy"), Some(1), Some(2))
+    );
+    common::apply(&mut app, host, "list-view-delete 0");
+    let without_position: Vec<PropertyId> = common::outpost::focus_set()
+        .into_iter()
+        .filter(|id| !matches!(id, PropertyId::PositionInSet | PropertyId::SetSize))
+        .collect();
+    let (reply, _) = outpost.msaa_run_reply_with(
+        first,
+        Depth::FullUnlessSame {
+            ids: first,
+            identity: Box::new(identity),
+        },
+        without_position,
+    );
+    let Reply::Candidate(answer) = reply else {
+        panic!("the twin was answered the same: {reply:?}");
+    };
+    let read = answer.read.expect("the twin read in full");
+    assert_eq!(
+        (
+            common::outpost::name_of(&read.focus),
+            read.msaa.map(|held| held.event)
+        ),
+        (Some("Copy"), Some(first))
+    );
     drop(outpost);
     app.quit();
 }
@@ -467,7 +613,6 @@ fn a_candidate_is_read_to_the_depth_core_asks() {
             CandidateFacts::Found {
                 focused: Some(true),
                 role: None,
-                redirect: None,
                 ..
             }
         ),
@@ -616,29 +761,30 @@ fn the_stale_tree_focus_stand_in_matches_the_open_dialogs_recording() {
     app.quit();
 }
 
-/// A focus that was not redirected says so, whatever address its node is
-/// kept at: a focus event on mockapp's window client, whose role is
-/// window, is read as the window's own object, kept under `OBJID_WINDOW`,
-/// and answered with no redirect, as NVDA redirects only a focus on a
-/// list's own object, or on an object's own child id 0, to the child its
-/// `accFocus` names (`IAccessibleHandler/__init__.py` 734 to 759).
-fn a_focus_that_was_not_redirected_reports_no_redirect() {
+/// A focus that was not redirected is read by its event's own ids, whatever
+/// address its node is kept at: a focus event on mockapp's window client,
+/// whose role is window, is read as the window's own object, kept under
+/// `OBJID_WINDOW`, and carries the event's ids, as NVDA redirects only a
+/// focus on a list's own object, or on an object's own child id 0, to the
+/// child its `accFocus` names (`IAccessibleHandler/__init__.py` 734 to
+/// 759).
+fn a_focus_that_was_not_redirected_carries_its_own_ids() {
     let title = common::unique_title("mockapp-no-redirect");
     let mut app = common::spawn("counts.json", "msaa", &title);
     let hwnd = common::find_window(&title);
     common::apply(&mut app, hwnd, "set-focus root");
     let outpost = OutpostUnderTest::new(&app);
 
-    let reported = outpost.msaa_focus_answer(MsaaIds {
+    let ids = MsaaIds {
         window: WindowHandle(hwnd.0 as u64),
         object: windows::Win32::UI::WindowsAndMessaging::OBJID_CLIENT.0,
         child: 0,
-    });
-    let redirect = match &reported.facts {
-        Some(verbatim_model::request::CandidateFacts::Found { redirect, .. }) => *redirect,
-        other => panic!("the candidate's facts are {other:?}"),
     };
-    assert_eq!((reported.role(), redirect), (Role::Window, None));
+    let reported = outpost.msaa_focus_answer(ids);
+    assert_eq!(
+        (reported.role(), reported.read.msaa.map(|held| held.event)),
+        (Role::Window, Some(ids))
+    );
 
     drop(outpost);
     app.quit();
@@ -3598,6 +3744,14 @@ fn main() {
             a_candidate_is_read_to_the_depth_core_asks,
         ),
         (
+            "a_candidate_is_read_unless_it_is_the_object_named",
+            a_candidate_is_read_unless_it_is_the_object_named,
+        ),
+        (
+            "a_twin_at_a_deleted_items_ids_is_read_in_full",
+            a_twin_at_a_deleted_items_ids_is_read_in_full,
+        ),
+        (
             "the_stale_tree_focus_stand_in_matches_the_open_dialogs_recording",
             the_stale_tree_focus_stand_in_matches_the_open_dialogs_recording,
         ),
@@ -3622,8 +3776,8 @@ fn main() {
             a_focus_without_a_path_is_followed_from_its_next_focus_event,
         ),
         (
-            "a_focus_that_was_not_redirected_reports_no_redirect",
-            a_focus_that_was_not_redirected_reports_no_redirect,
+            "a_focus_that_was_not_redirected_carries_its_own_ids",
+            a_focus_that_was_not_redirected_carries_its_own_ids,
         ),
         (
             "a_fake_focus_whose_focused_ancestor_core_knows_is_spoken",

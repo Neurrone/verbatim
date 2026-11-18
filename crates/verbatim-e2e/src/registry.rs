@@ -185,7 +185,8 @@ use crate::scenarios::{
     terminal_flood, terminal_key_timing, terminal_lists, terminal_overflow, terminal_pager,
     terminal_progress, terminal_review_grid, terminal_review_stays, terminal_screens,
     terminal_settings_page, terminal_status_bar, terminal_typing, terminal_windows,
-    text_box_say_all, theme_panel, toast, typed_words, verbatim_lifecycle, word_selection,
+    text_box_say_all, theme_panel, toast, twin_item_at_a_deleted_items_ids, typed_words,
+    verbatim_lifecycle, word_selection,
 };
 use crate::speech::{FailurePoint, SpeechFailure};
 
@@ -526,6 +527,17 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         setup: stale_focus_behind_a_caret_key::setup,
         body: stale_focus_behind_a_caret_key::body,
         teardown: stale_focus_behind_a_caret_key::teardown,
+    },
+    ScenarioDef {
+        name: "twin_item_at_a_deleted_items_ids",
+        group: Group::Speech,
+        settings: None,
+        local_only: false,
+        document: None,
+        comparable: Comparable::Yes,
+        setup: twin_item_at_a_deleted_items_ids::setup,
+        body: twin_item_at_a_deleted_items_ids::body,
+        teardown: twin_item_at_a_deleted_items_ids::teardown,
     },
     ScenarioDef {
         name: "foreground_progress_bar",

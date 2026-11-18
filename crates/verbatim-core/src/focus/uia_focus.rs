@@ -103,13 +103,7 @@ fn kept_token(cx: &Cx<Entries>) -> Option<ElementToken> {
 /// the two reads; then execution. Any outcome but a result ends it
 /// unspoken and clears Core's caret baseline.
 pub(crate) async fn run(mut cx: Cx<Entries>, focus: UiaFocus) {
-    match validity::at(
-        &cx,
-        Subject::Uia(&focus),
-        None,
-        validity::Purpose::Turn,
-        false,
-    ) {
+    match validity::at(&cx, Subject::Uia(&focus), None, false) {
         Validity::Valid(How::Again) => {
             let said = again(&mut cx.facts_mut(), focus.tell.trace_id);
             for said in said {
@@ -219,7 +213,7 @@ fn origin(
     window: RequestWindow,
     foreground: Option<crate::event_queue::Foreground>,
 ) -> Origin {
-    let mut origin = Origin::of_tell(&focus.tell, window, foreground);
+    let mut origin = Origin::of_tell(&focus.tell, window, foreground, focus.fence);
     if let Some(facts) = origin.window.as_mut() {
         facts.alt_held = focus.alt_down;
     }
@@ -243,12 +237,19 @@ async fn afresh(
         window,
         known: known.sent.clone(),
         details: crate::details::focus_details(&cx.facts()),
-        set: crate::details::node_set(&cx.facts(), FOCUS_SET),
+        set: crate::details::focus_set(&cx.facts(), FOCUS_SET),
         depth: std::marker::PhantomData,
     };
-    let Outcome::Result(read) = cx.ask(request, due_us).await else {
-        cx.facts_mut().focus_read_failed();
-        return;
+    let read = match cx.ask(request, due_us).await {
+        Outcome::Result(read) => read,
+        outcome => {
+            refused_or_not_there(&mut cx, &outcome);
+            if matches!(outcome, Outcome::ReaderEnded) {
+                cx.facts_mut().versions.tried_and_refused();
+            }
+            cx.facts_mut().focus_read_failed();
+            return;
+        }
     };
     let Some(read_by) = read_by(&read) else {
         return;
@@ -259,7 +260,7 @@ async fn afresh(
 }
 
 /// A UI Automation focus read tried at its own turn and answered refused or
-/// not there ends the redirect guard (Dickson, 2026-11-18).
+/// not there ends the readers' last focus's fence (Dickson, 2026-11-18).
 fn refused_or_not_there<T>(cx: &mut Cx<Entries>, outcome: &Outcome<T>) {
     // A malformed answer is no try (`Refused::Undecodable`).
     if matches!(

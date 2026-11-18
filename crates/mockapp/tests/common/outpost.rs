@@ -1183,6 +1183,42 @@ impl OutpostUnderTest {
         (run, calls)
     }
 
+    /// One MSAA focus candidate of mockapp's at `ids`, read to `depth` as
+    /// Core asks it, with no verdict in force: the reply as the outpost
+    /// answered it, committing nothing, and its calls.
+    pub fn msaa_run_reply(&self, ids: MsaaIds, depth: Depth) -> (Reply, CallCounts) {
+        self.msaa_run_reply_with(ids, depth, focus_set())
+    }
+
+    /// [`Self::msaa_run_reply`] with the properties `set`.
+    pub fn msaa_run_reply_with(
+        &self,
+        ids: MsaaIds,
+        depth: Depth,
+        set: Vec<PropertyId>,
+    ) -> (Reply, CallCounts) {
+        let number = self.request(
+            hwnd(ids.window),
+            Request::MsaaRun(MsaaRun {
+                candidate: RunCandidate {
+                    ids,
+                    kind: CandidateKind::Focus,
+                    verdict: WindowVerdict::ProbeFirst,
+                },
+                depth,
+                spare: None,
+                set,
+                known: self.known(),
+                details: verbatim_model::TextDetails::NONE,
+            }),
+        );
+        let (answer, calls) = self.answer_with_calls(number);
+        let Outcome::Result(reply) = answer.outcome else {
+            panic!("the run answered {:?}", answer.outcome);
+        };
+        (reply, calls)
+    }
+
     /// The focus an MSAA run of one candidate, the focus event at `ids`,
     /// finds, which it must: as [`Self::msaa_run`].
     pub fn msaa_focus_answer(&self, ids: MsaaIds) -> Focused {

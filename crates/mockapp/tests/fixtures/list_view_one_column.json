@@ -1,0 +1,18 @@
+{
+  "id": "root",
+  "role": "pane",
+  "name": "Mockapp One Column List View Fixture",
+  "states": ["focused"],
+  "children": [
+    {
+      "id": "categories",
+      "role": "list",
+      "native": "list_view",
+      "columns": [["Name", 200]],
+      "children": [
+        { "id": "speech", "role": "list_item", "name": "Speech" },
+        { "id": "mouse", "role": "list_item", "name": "Mouse" }
+      ]
+    }
+  ]
+}

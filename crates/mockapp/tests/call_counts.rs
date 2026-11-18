@@ -884,6 +884,308 @@ fn msaa_list_view_costs_exactly() {
     app.quit();
 }
 
+/// The identity `read` reads as, built from its focus node's values as
+/// Core builds it from its snapshot.
+fn identity_of(read: &verbatim_model::request::FocusRead) -> verbatim_model::request::Identity {
+    use verbatim_model::property::{PropertyId, PropertyValue};
+    let values = &read.focus.read.values;
+    let value = |id| values.answer(id).and_then(|answer| answer.value.clone());
+    let text = |id| match value(id) {
+        Some(PropertyValue::Text(text)) => Some(text),
+        _ => None,
+    };
+    let count = |id| match value(id) {
+        Some(PropertyValue::Count(count)) => Some(count),
+        _ => None,
+    };
+    verbatim_model::request::Identity {
+        states: match value(PropertyId::States) {
+            Some(PropertyValue::States(states)) => states,
+            _ => StateSet::default(),
+        },
+        role: match value(PropertyId::Role) {
+            Some(PropertyValue::Role(role)) => role,
+            _ => Role::Unknown,
+        },
+        position_in_set: count(PropertyId::PositionInSet),
+        set_size: count(PropertyId::SetSize),
+        name: text(PropertyId::Name),
+        value: text(PropertyId::Value),
+    }
+}
+
+/// The identity check's read of a generic MSAA object (the counts
+/// fixture's first button) at the ids Core names
+/// (`docs/parity/focus-events.md`, "Duplicate focus suppression"): the
+/// object acquired and its focused state read, then its role, then its
+/// name, then its value, compared in that order and stopping at the first
+/// that differs, then the full read. An object that reads as named is
+/// answered the same with nothing more read; one whose name differs is read
+/// in full with its value read once, by the full read; one whose value
+/// alone differs reads its value twice; one at other ids reads no identity.
+#[expect(
+    clippy::too_many_lines,
+    reason = "each case of the identity check and its pinned provider hits, listed in full"
+)]
+fn msaa_identity_check_costs_exactly() {
+    use verbatim_model::request::{Depth, MsaaIds, Reply};
+    common::init_com();
+    let title = common::unique_title("mockapp-counts-msaa-identity");
+    let mut app = common::spawn("counts.json", "msaa", &title);
+    let hwnd = common::find_window(&title);
+    common::apply(&mut app, hwnd, "set-focus first");
+    let outpost = OutpostUnderTest::on_frozen_time(&app);
+    let mut ratchet = Ratchet::default();
+    let first = MsaaIds {
+        window: WindowHandle(hwnd.0 as u64),
+        object: i32::try_from(FIRST + 1).expect("an object id"),
+        child: 0,
+    };
+    let focused = outpost.msaa_focus_answer(first);
+    let identity = identity_of(&focused.read);
+    let unless = |identity: verbatim_model::request::Identity, ids: MsaaIds| {
+        common::reset_hits(hwnd);
+        let (reply, calls) = outpost.msaa_run_reply(
+            first,
+            Depth::FullUnlessSame {
+                ids,
+                identity: Box::new(identity),
+            },
+        );
+        (
+            reply,
+            Cost {
+                calls,
+                hits: common::read_hits(hwnd),
+                failed_reads: 0,
+            },
+        )
+    };
+    let read_in_full =
+        |reply: &Reply| matches!(reply, Reply::Candidate(answer) if answer.read.is_some());
+
+    let (reply, cost) = unless(identity.clone(), first);
+    assert_eq!(reply, Reply::CandidateSame);
+    ratchet.check(
+        "MSAA identity check, the same",
+        &cost,
+        calls(0, 6, 0),
+        0,
+        &[
+            ("WM_GETOBJECT", 1),
+            ("accParent", 1),
+            ("get_accChild", 1),
+            ("get_accName", 1),
+            ("get_accValue", 1),
+            ("get_accRole", 1),
+            ("get_accState", 1),
+            ("accFocus", 1),
+        ],
+    );
+
+    let (reply, cost) = unless(
+        verbatim_model::request::Identity {
+            name: Some("Other".to_owned()),
+            ..identity.clone()
+        },
+        first,
+    );
+    assert!(read_in_full(&reply), "{reply:?}");
+    ratchet.check(
+        "MSAA identity check, the name differs",
+        &cost,
+        calls(0, 24, 0),
+        0,
+        // The name read once more than the full read reads it, the value
+        // not: the check stopped at the name.
+        &[
+            ("WM_GETOBJECT", 1),
+            ("accParent", 12),
+            ("get_accChild", 1),
+            ("get_accName", 3),
+            ("get_accValue", 2),
+            ("get_accDescription", 2),
+            ("get_accRole", 3),
+            ("get_accState", 2),
+            ("get_accKeyboardShortcut", 2),
+            ("accFocus", 1),
+            ("accLocation", 3),
+        ],
+    );
+
+    let (reply, cost) = unless(
+        verbatim_model::request::Identity {
+            value: Some("Other".to_owned()),
+            ..identity.clone()
+        },
+        first,
+    );
+    assert!(read_in_full(&reply), "{reply:?}");
+    ratchet.check(
+        "MSAA identity check, the value alone differs",
+        &cost,
+        calls(0, 25, 0),
+        0,
+        &[
+            ("WM_GETOBJECT", 1),
+            ("accParent", 12),
+            ("get_accChild", 1),
+            ("get_accName", 3),
+            ("get_accValue", 3),
+            ("get_accDescription", 2),
+            ("get_accRole", 3),
+            ("get_accState", 2),
+            ("get_accKeyboardShortcut", 2),
+            ("accFocus", 1),
+            ("accLocation", 3),
+        ],
+    );
+
+    let second = MsaaIds {
+        object: i32::try_from(SECOND + 1).expect("an object id"),
+        ..first
+    };
+    let (reply, cost) = unless(identity.clone(), second);
+    assert!(read_in_full(&reply), "{reply:?}");
+    ratchet.check(
+        "MSAA identity check, other ids",
+        &cost,
+        calls(0, 23, 0),
+        0,
+        // The full read alone: no identity read.
+        &[
+            ("WM_GETOBJECT", 1),
+            ("accParent", 12),
+            ("get_accChild", 1),
+            ("get_accName", 2),
+            ("get_accValue", 2),
+            ("get_accDescription", 2),
+            ("get_accRole", 3),
+            ("get_accState", 2),
+            ("get_accKeyboardShortcut", 2),
+            ("accFocus", 1),
+            ("accLocation", 3),
+        ],
+    );
+
+    common::apply(&mut app, hwnd, "set-focus second");
+    let (reply, cost) = unless(identity, first);
+    assert_eq!(
+        reply,
+        Reply::Candidate(verbatim_model::request::CandidateAnswer {
+            facts: verbatim_model::request::CandidateFacts::Found {
+                focused: Some(false),
+                role: None,
+            },
+            read: None,
+        })
+    );
+    ratchet.check(
+        "MSAA identity check, not focused",
+        &cost,
+        calls(0, 14, 0),
+        0,
+        // The focused-state test over the object and its ancestors alone.
+        &[
+            ("WM_GETOBJECT", 1),
+            ("accParent", 5),
+            ("get_accChild", 1),
+            ("get_accRole", 4),
+            ("get_accState", 3),
+            ("accFocus", 1),
+        ],
+    );
+    ratchet.finish();
+    drop(outpost);
+    app.quit();
+}
+
+/// The identity check's read of an item of a real one-column report-view
+/// list view (`tests/fixtures/list_view_one_column.json`), as Verbatim's
+/// settings list is one (`verbatim-gui/cpp/gui.cpp` 942 to 944): its
+/// states and role, then its set's size, one `LVM_GETITEMCOUNT`, its
+/// position being its child id, then its name by its columns, read through
+/// the control's messages, and no value, which a list view item has none
+/// of. The item's own focus that reads as named is answered the same; the
+/// item named with a set one larger, as before a deletion, stops at the
+/// size and is read in full. The list's own focus redirected to the item is
+/// not measured here: comctl32 answers `accFocus` with its focused item
+/// only while the list has the keyboard focus, which a window on the
+/// test's own desktop does not get. The provider is comctl32's, so only
+/// the client's calls are pinned.
+fn msaa_list_view_identity_check_costs_exactly() {
+    use verbatim_model::request::{Depth, MsaaIds, Reply};
+    use windows::Win32::UI::WindowsAndMessaging::{FindWindowExW, OBJID_CLIENT};
+    use windows::core::w;
+    common::init_com();
+    let title = common::unique_title("mockapp-counts-msaa-list-view-identity");
+    let mut app = common::spawn("list_view_one_column.json", "msaa", &title);
+    let host = common::find_window(&title);
+    // SAFETY: a local search of the host window's children.
+    let list = unsafe {
+        FindWindowExW(
+            Some(host),
+            None,
+            w!("SysListView32"),
+            windows::core::PCWSTR::null(),
+        )
+    }
+    .expect("mockapp made the list view");
+    common::apply(&mut app, host, "list-view-focus 0");
+    let outpost = OutpostUnderTest::on_frozen_time(&app);
+    let mut ratchet = Ratchet::default();
+    let ids = |child| MsaaIds {
+        window: WindowHandle(list.0 as u64),
+        object: OBJID_CLIENT.0,
+        child,
+    };
+    let speech = outpost.msaa_focus_answer(ids(1));
+    let identity = identity_of(&speech.read);
+    assert_eq!(
+        (
+            identity.name.as_deref(),
+            identity.position_in_set,
+            identity.set_size
+        ),
+        (Some("Speech"), Some(1), Some(2))
+    );
+    let unless = |identity: verbatim_model::request::Identity| {
+        outpost.msaa_run_reply(
+            ids(1),
+            Depth::FullUnlessSame {
+                ids: ids(1),
+                identity: Box::new(identity),
+            },
+        )
+    };
+    let (reply, cost) = unless(identity.clone());
+    assert_eq!(reply, Reply::CandidateSame);
+    // On the test's own desktop the list has no keyboard focus, so the
+    // focused-state test walks to the fixture's focused root: 10 of the
+    // MSAA calls are that walk's, which a focused item does not make.
+    ratchet.check_calls(
+        "MSAA list view item's identity, the same",
+        cost,
+        calls(0, 13, 6),
+    );
+    let (reply, cost) = unless(verbatim_model::request::Identity {
+        set_size: Some(3),
+        ..identity
+    });
+    assert!(
+        matches!(&reply, Reply::Candidate(answer) if answer.read.is_some()),
+        "{reply:?}"
+    );
+    ratchet.check_calls(
+        "MSAA list view item's identity, a set one smaller, then the full read",
+        cost,
+        calls(0, 30, 7),
+    );
+    ratchet.finish();
+    drop(outpost);
+    app.quit();
+}
+
 /// A UIA message box's text, gathered as the outpost's worker gathers it
 /// for a dialog the focus newly entered (`describe_dialogs` in
 /// `verbatim-outpost`'s `read.rs`): the dialog's element is the one the
@@ -5064,6 +5366,14 @@ fn main() {
             msaa_form_focus_costs_exactly,
         ),
         ("msaa_list_view_costs_exactly", msaa_list_view_costs_exactly),
+        (
+            "msaa_identity_check_costs_exactly",
+            msaa_identity_check_costs_exactly,
+        ),
+        (
+            "msaa_list_view_identity_check_costs_exactly",
+            msaa_list_view_identity_check_costs_exactly,
+        ),
         (
             "uia_dialog_text_costs_exactly",
             uia_dialog_text_costs_exactly,

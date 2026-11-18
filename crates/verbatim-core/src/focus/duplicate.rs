@@ -132,7 +132,7 @@ mod tests {
             place: place(3),
             class: ObjectClass::Plain,
             role: verbatim_model::Role::Button,
-            redirect: None,
+            since: None,
         }
     }
 
@@ -145,7 +145,7 @@ mod tests {
             place: place(3),
             class: ObjectClass::Plain,
             role: verbatim_model::Role::Button,
-            redirect: None,
+            since: None,
         }
     }
 

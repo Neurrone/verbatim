@@ -718,6 +718,32 @@ another item, named by its four columns as NVDA names it.
   it which window it is in.
 - Bound: the number of columns.
 
+### The identity check of an MSAA focus
+
+A later MSAA focus with no key since the readers' last focus, held by a
+child id above 0, is asked unless it is that focus
+(`docs/parity/focus-events.md`, "Duplicate focus suppression";
+`msaa_identity_check_costs_exactly`,
+`msaa_list_view_identity_check_costs_exactly`). One silent request for
+the second focus of a split pair; every other focus is read as before.
+
+- Today, a generic MSAA object that reads as named: 6 MSAA calls, the
+  acquisition, its focused state, role, name and value, and one
+  `accFocus` of the wider redirect's test, with nothing more read. One
+  whose name differs stops there and is read in full (24 calls, against
+  23 for the full read alone); one whose value alone differs reads its
+  value too (25).
+- Today, an item of a one-column report-view list view that reads as
+  named: its states and role, its set's size (`LVM_GETITEMCOUNT`) and its
+  name by its column, 6 window messages, with the 10 MSAA calls of the
+  focused-state check the test's list view without the keyboard focus
+  makes and a focused item does not. The same item named with a set one
+  larger stops at the size, 1 window message, and is read in full.
+- A focus read asks the position and the set's size whatever the
+  position-reporting setting: one `LVM_GETITEMCOUNT` more per list view
+  item's focus with the setting off.
+- Bound: a list view item's columns, as its full read.
+
 ### A tree view item expanded or collapsed, MSAA
 
 - Today: 2 MSAA calls, the acquisition and the item's state, and 7 window

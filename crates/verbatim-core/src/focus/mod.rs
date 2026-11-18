@@ -16,7 +16,7 @@ pub(crate) mod duplicate;
 pub(crate) mod execute;
 pub(crate) mod follow;
 #[cfg(test)]
-mod guard_tests;
+mod identity_tests;
 pub(crate) mod menus;
 pub(crate) mod msaa_run;
 pub(crate) mod narrow;

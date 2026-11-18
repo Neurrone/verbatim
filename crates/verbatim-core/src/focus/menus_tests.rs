@@ -61,7 +61,6 @@ fn focused(focused: bool) -> Reply {
         facts: verbatim_model::request::CandidateFacts::Found {
             focused: Some(focused),
             role: None,
-            redirect: None,
         },
         read: focused.then(|| Box::new(read)),
     })
@@ -182,7 +181,6 @@ fn a_menu_end_after_a_focus_committed_since_the_first_end_makes_its_own_check() 
                     facts: verbatim_model::request::CandidateFacts::Found {
                         focused: None,
                         role: None,
-                        redirect: None,
                     },
                     read: Some(Box::new(focus_read(None))),
                 })
@@ -317,7 +315,6 @@ fn read_as(role: verbatim_model::Role) -> Reply {
         facts: verbatim_model::request::CandidateFacts::Found {
             focused: None,
             role: Some(role),
-            redirect: None,
         },
         read: Some(Box::new(read)),
     })
@@ -440,7 +437,7 @@ fn a_menu_opening_behind_a_run_whose_newest_is_a_duplicate_is_kept() {
         },
         class: verbatim_model::request::ObjectClass::Plain,
         role: verbatim_model::Role::EditableText,
-        redirect: None,
+        since: None,
     });
     let candidate = |object: i32, at_us: u64, focused: bool| {
         let mut tell = msaa_tell(object);
@@ -453,7 +450,6 @@ fn a_menu_opening_behind_a_run_whose_newest_is_a_duplicate_is_kept() {
                 Confirmation::Read(verbatim_model::request::CandidateFacts::Found {
                     focused: Some(true),
                     role: None,
-                    redirect: None,
                 });
         }
         Entry::Candidate(candidate)
@@ -482,4 +478,64 @@ fn a_menu_opening_behind_a_run_whose_newest_is_a_duplicate_is_kept() {
         candidate(-4, 1_000, false),
         candidate(-9, 1_002, true)
     ]));
+}
+
+/// The readers' last focus's fence, `None` with no last focus.
+#[expect(
+    clippy::option_option,
+    reason = "no last focus, its fence cleared, or its fence"
+)]
+fn since(state: &Held) -> Option<Option<crate::keys::entry::Fence>> {
+    state.versions.last.as_ref().map(|last| last.since)
+}
+
+/// The check's read executed keeps the check's own fence, set at its due
+/// time; a later check answered not there clears it.
+#[test]
+fn the_checks_read_keeps_its_fence_and_a_check_not_there_clears_it() {
+    let mut state = in_front();
+    state.arrivals.key_joined(verbatim_model::KeySeq::new(4));
+    feed_at(&mut state, 1_000, menu_end());
+    feed_at(&mut state, 51_000, Input::Tick);
+    assert_eq!(
+        feed_at(&mut state, 52_000, answer(OUTPOST, 2, focused(true))),
+        SPOKEN
+    );
+    assert_eq!(since(&state), Some(Some(state.arrivals.fence())));
+    feed_at(&mut state, 60_000, menu_end());
+    assert_eq!(
+        feed_at(&mut state, 111_000, Input::Tick),
+        ["send Outpost(Pid(40)) CurrentFocus with the focused state as a fact"]
+    );
+    feed_at(
+        &mut state,
+        112_000,
+        crate::entries::tests::answer_outcome(OUTPOST, 3, Outcome::NotThere),
+    );
+    assert_eq!(since(&state), Some(None));
+}
+
+/// A menu start executed keeps its own fence; a later one found not to be
+/// a menu popup was tried and refused, and clears it.
+#[test]
+fn a_menu_start_keeps_its_fence_and_one_not_a_menu_popup_clears_it() {
+    let mut state = ready();
+    state.arrivals.key_joined(verbatim_model::KeySeq::new(5));
+    feed_at(&mut state, 1_000, menu_start());
+    feed_at(
+        &mut state,
+        2_000,
+        answer(OUTPOST, 1, read_as(verbatim_model::Role::Menu)),
+    );
+    assert_eq!(since(&state), Some(Some(state.arrivals.fence())));
+    feed_at(&mut state, 3_000, menu_start());
+    assert_eq!(
+        feed_at(
+            &mut state,
+            4_000,
+            answer(OUTPOST, 2, read_as(verbatim_model::Role::Button))
+        ),
+        NOTHING
+    );
+    assert_eq!(since(&state), Some(None));
 }

@@ -346,6 +346,16 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
             // it had the focus from is not needed.
             let _ = unsafe { windows::Win32::UI::Input::KeyboardAndMouse::SetFocus(Some(edit)) };
         }
+        Command::ListViewFocus(row) => {
+            let list = crate::list_view::find(hwnd).ok_or("the window hosts no list view")?;
+            // SAFETY: `list` is this thread's own live control.
+            let _ = unsafe { windows::Win32::UI::Input::KeyboardAndMouse::SetFocus(Some(list)) };
+            crate::list_view::focus_row(list, row);
+        }
+        Command::ListViewDelete(row) => {
+            let list = crate::list_view::find(hwnd).ok_or("the window hosts no list view")?;
+            crate::list_view::delete_row(list, row);
+        }
         Command::WriteOnRead(_, text) => {
             // The text is the edit control's.
             let edit = crate::edit::find(hwnd).ok_or("the window hosts no edit control")?;

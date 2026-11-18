@@ -1,6 +1,6 @@
-//! The one definition, row by row: each row crossed with the purpose and
-//! the facts an outpost read (none, focused, not focused, not there,
-//! skipped, redirected), asserting the exact answer and the depth with it;
+//! The one definition, row by row: each row crossed with the facts an
+//! outpost read (none, focused, not focused, not there, skipped),
+//! asserting the exact answer and the depth with it; the identity check;
 //! the overrides; and the agreement of the turn's walk with the pending
 //! judgement.
 
@@ -13,9 +13,11 @@ use verbatim_model::tell::{
 };
 use verbatim_model::{KeySeq, Pid, WindowHandle};
 
+use super::super::msaa_run::TurnDepth;
 use super::super::versions::{Committed, LastFocus, Place, ReadBy};
 use super::*;
 use crate::keys::entry::Arrivals;
+use crate::keys::entry::Fence;
 
 fn facet(handle: u64, class: &str) -> WindowFacet {
     WindowFacet {
@@ -157,7 +159,7 @@ fn last_msaa(object: i32, child: i32) -> LastFocus {
         },
         class: ObjectClass::Plain,
         role: Role::Button,
-        redirect: None,
+        since: None,
     }
 }
 
@@ -182,7 +184,6 @@ fn found(focused: Option<bool>) -> CandidateFacts {
     CandidateFacts::Found {
         focused,
         role: None,
-        redirect: None,
     }
 }
 
@@ -190,13 +191,11 @@ fn msaa_answer(
     candidate: &Candidate,
     versions: &Versions,
     facts: Option<&CandidateFacts>,
-    purpose: Purpose,
 ) -> Validity {
     judge(
         Subject::Msaa(candidate),
         &view(versions, &BackendCache::default()),
         facts,
-        purpose,
     )
 }
 
@@ -218,8 +217,7 @@ fn the_console_windows_own_element_is_refused() {
         judge(
             Subject::Uia(&uia(tell.clone())),
             &view(&none, &BackendCache::default()),
-            None,
-            Purpose::Pending
+            None
         ),
         Validity::Refused(Reason::Override)
     );
@@ -253,24 +251,14 @@ fn an_unnamed_first_netui_menu_item_is_let_through_whatever_its_keyboard_focus()
     let tell = uia_tell(cached.clone(), "NetUIHWND", checked.clone());
     assert_eq!(focus_override(&tell), Override::NetUiMenuItem);
     assert_eq!(
-        judge(
-            Subject::Uia(&uia(tell)),
-            &view(&none, &cache),
-            None,
-            Purpose::Pending
-        ),
+        judge(Subject::Uia(&uia(tell)), &view(&none, &cache), None),
         Validity::Valid(How::Read)
     );
     checked.previous_sibling = Some(Read::Answered(true));
     let second = uia_tell(cached, "NetUIHWND", checked);
     assert_eq!(focus_override(&second), Override::None);
     assert_eq!(
-        judge(
-            Subject::Uia(&uia(second)),
-            &view(&none, &cache),
-            None,
-            Purpose::Pending
-        ),
+        judge(Subject::Uia(&uia(second)), &view(&none, &cache), None),
         Validity::Refused(Reason::KeyboardFocusLost)
     );
 }
@@ -308,14 +296,7 @@ fn file_explorers_switcher_frames_are_refused_and_only_there() {
 fn a_uia_focus_is_valid_with_no_read_unless_a_row_refuses_it() {
     let none = versions(None);
     let cache = BackendCache::default();
-    let answer = |tell: Event| {
-        judge(
-            Subject::Uia(&uia(tell)),
-            &view(&none, &cache),
-            None,
-            Purpose::Pending,
-        )
-    };
+    let answer = |tell: Event| judge(Subject::Uia(&uia(tell)), &view(&none, &cache), None);
     assert_eq!(
         answer(uia_tell(
             Vec::new(),
@@ -339,13 +320,18 @@ fn a_uia_focus_is_valid_with_no_read_unless_a_row_refuses_it() {
     let mut no_window = uia_tell(Vec::new(), "UiaHost", focused(Read::Answered(true)));
     no_window.window = TellWindow::NoWindow;
     assert_eq!(answer(no_window), Validity::Refused(Reason::NoWindow));
+    let none = versions(None);
     assert_eq!(
-        depth(Subject::Uia(&uia(uia_tell(
-            Vec::new(),
-            "UiaHost",
-            focused(Read::Answered(true))
-        )))),
-        Depth::Full
+        depth(
+            Subject::Uia(&uia(uia_tell(
+                Vec::new(),
+                "UiaHost",
+                focused(Read::Answered(true))
+            ))),
+            &view(&none, &BackendCache::default()),
+            None
+        ),
+        TurnDepth::Full
     );
 }
 
@@ -363,7 +349,7 @@ fn a_uia_focus_in_a_window_read_through_msaa_is_refused_by_the_verdict() {
     let mut at = view(&none, &cache);
     at.now_us = 1_100;
     assert_eq!(
-        judge(Subject::Uia(&uia(tell)), &at, None, Purpose::Turn),
+        judge(Subject::Uia(&uia(tell)), &at, None),
         Validity::Refused(Reason::Verdict)
     );
 }
@@ -381,13 +367,12 @@ fn a_uia_focus_on_the_last_focuss_element_still_focused_is_a_duplicate() {
     checked.kept = vec![(ElementToken(3), Read::Answered(true))];
     let tell = uia_tell(Vec::new(), "UiaHost", checked);
     let with = versions(Some(last));
-    for purpose in [Purpose::Turn, Purpose::Pending] {
+    {
         assert_eq!(
             judge(
                 Subject::Uia(&uia(tell.clone())),
                 &view(&with, &BackendCache::default()),
-                None,
-                purpose
+                None
             ),
             Validity::Duplicate
         );
@@ -398,7 +383,7 @@ fn a_uia_focus_on_the_last_focuss_element_still_focused_is_a_duplicate() {
 fn the_menu_opening_on_the_committed_element_takes_acceptance_then_executes_it_again() {
     let committed = crate::focus::versions::tests::kept(4);
     let both = Versions {
-        last: Some(committed.last()),
+        last: Some(committed.last(Fence::default())),
         committed: Committed::Read(Box::new(committed)),
     };
     let cache = BackendCache::default();
@@ -410,12 +395,7 @@ fn the_menu_opening_on_the_committed_element_takes_acceptance_then_executes_it_a
             facts.root_owner_to_foreground = Relation::Outside;
             facts.root_owner_is_foregrounds = false;
         }
-        judge(
-            Subject::Uia(&uia(tell)),
-            &view(&both, &cache),
-            None,
-            Purpose::Pending,
-        )
+        judge(Subject::Uia(&uia(tell)), &view(&both, &cache), None)
     };
     assert_eq!(
         opening(focused(Read::Answered(true)), true),
@@ -437,10 +417,16 @@ fn the_menu_opening_on_the_committed_element_takes_acceptance_then_executes_it_a
 fn an_msaa_focus_needs_its_focused_state_and_the_facts_decide() {
     let none = versions(None);
     let candidate = focus(-4);
-    assert_eq!(depth(Subject::Msaa(&candidate)), Depth::FullIfFocused);
-    for purpose in [Purpose::Turn, Purpose::Pending] {
-        let answer =
-            |facts: Option<&CandidateFacts>| msaa_answer(&candidate, &none, facts, purpose);
+    assert_eq!(
+        depth(
+            Subject::Msaa(&candidate),
+            &view(&none, &BackendCache::default()),
+            None
+        ),
+        TurnDepth::FullIfFocused
+    );
+    {
+        let answer = |facts: Option<&CandidateFacts>| msaa_answer(&candidate, &none, facts);
         assert_eq!(answer(None), Validity::NeedsRead(Need::FocusedState));
         assert_eq!(answer(Some(&found(Some(true)))), Validity::Valid(How::Read));
         assert_eq!(
@@ -463,13 +449,10 @@ fn an_msaa_duplicate_and_the_repeated_item_are_judged_with_no_read() {
     let list = focus(-4);
     let duplicate = versions(Some(last_msaa(-4, 0)));
     let other = versions(Some(last_msaa(-5, 0)));
-    for purpose in [Purpose::Turn, Purpose::Pending] {
+    {
+        assert_eq!(msaa_answer(&list, &duplicate, None), Validity::Duplicate);
         assert_eq!(
-            msaa_answer(&list, &duplicate, None, purpose),
-            Validity::Duplicate
-        );
-        assert_eq!(
-            msaa_answer(&list, &other, None, purpose),
+            msaa_answer(&list, &other, None),
             Validity::NeedsRead(Need::FocusedState)
         );
     }
@@ -480,8 +463,7 @@ fn an_msaa_duplicate_and_the_repeated_item_are_judged_with_no_read() {
         msaa_answer(
             &candidate(EventKind::MsaaFocus, (-4, 3), 1_000, 7),
             &repeated,
-            None,
-            Purpose::Pending
+            None
         ),
         Validity::Refused(Reason::RepeatedItem)
     );
@@ -497,7 +479,7 @@ fn an_msaa_focus_refused_by_acceptance_the_verdict_or_the_hidden_frame_needs_no_
         facts.root_owner_is_foregrounds = false;
     }
     assert_eq!(
-        msaa_answer(&unrelated, &none, None, Purpose::Pending),
+        msaa_answer(&unrelated, &none, None),
         Validity::Refused(Reason::Acceptance)
     );
     let mut hidden = focus(-4);
@@ -505,7 +487,7 @@ fn an_msaa_focus_refused_by_acceptance_the_verdict_or_the_hidden_frame_needs_no_
         facts.hidden_frame = true;
     }
     assert_eq!(
-        msaa_answer(&hidden, &none, None, Purpose::Pending),
+        msaa_answer(&hidden, &none, None),
         Validity::Refused(Reason::HiddenFrame)
     );
 }
@@ -520,110 +502,165 @@ fn a_candidate_on_the_desktop_window_is_refused_as_having_no_reader() {
     if let TellWindow::Found(facts) = &mut desktop.tell.window {
         facts.desktop = true;
     }
-    for purpose in [Purpose::Turn, Purpose::Pending] {
+    {
         assert_eq!(
-            msaa_answer(&desktop, &none, None, purpose),
+            msaa_answer(&desktop, &none, None),
             Validity::Refused(Reason::NoReader)
         );
     }
 }
 
-// The redirect guard (change A).
+// The identity check in the duplicate test (section 11).
 
-#[test]
-fn the_guard_ends_the_reached_childs_own_focus_at_its_turn_only_with_an_equal_fence() {
-    let mut guarded = last_msaa(-4, 2);
-    guarded.redirect = Some((Redirect::List, fence(3)));
-    let state = versions(Some(guarded));
-    let mut child = candidate(EventKind::MsaaFocus, (-4, 2), 1_000, 7);
-    child.fence = fence(3);
-    assert_eq!(
-        msaa_answer(&child, &state, None, Purpose::Turn),
-        Validity::Duplicate
-    );
-    // The guard is not applied to the pending check (Dickson, 2026-11-18).
-    assert_eq!(
-        msaa_answer(&child, &state, None, Purpose::Pending),
-        Validity::NeedsRead(Need::FocusedState)
-    );
-    // A key since moves the candidate's fence.
-    child.fence = fence(4);
-    assert_eq!(
-        msaa_answer(&child, &state, None, Purpose::Turn),
-        Validity::NeedsRead(Need::FocusedState)
-    );
+/// The item "Copy", 2 of 3, at child 2 of window 5's client, committed and
+/// the readers' last focus, executed for an entry of fence 3, with its
+/// reading.
+fn committed_item() -> (Versions, NodeSnapshot) {
+    let mut kept = super::super::versions::tests::kept(4);
+    kept.read_by = ReadBy::Msaa {
+        event: Some(MsaaIds {
+            window: WindowHandle(5),
+            object: -4,
+            child: 2,
+        }),
+        held_child: 2,
+    };
+    let snapshot = NodeSnapshot {
+        id: kept.node,
+        backend: verbatim_model::Backend::Msaa,
+        role: Role::ListItem,
+        name: Some("Copy".to_owned()),
+        value: None,
+        states: verbatim_model::StateSet::default(),
+        details: verbatim_model::NodeDetails {
+            position_in_set: Some(2),
+            set_size: Some(3),
+            ..verbatim_model::NodeDetails::default()
+        },
+    };
+    let mut versions = Versions::default();
+    versions.execute(kept, fence(3));
+    (versions, snapshot)
 }
 
+/// An MSAA focus with no key since the readers' last focus executed, a
+/// child above 0 that is committed, is read unless it reaches that focus by
+/// its ids and its reading, named from Core's snapshot; a key since, a
+/// failed try since, or a foreground or menu start is read as before.
 #[test]
-fn the_guard_ends_a_lists_own_focus_redirected_by_the_list_rule_to_the_guarded_child() {
-    let reached = MsaaIds {
-        window: WindowHandle(5),
-        object: -4,
-        child: 2,
-    };
-    let redirected = |redirect| CandidateFacts::Found {
-        focused: Some(true),
-        role: None,
-        redirect: Some((redirect, reached)),
-    };
-    let mut guarded = last_msaa(-4, 2);
-    guarded.redirect = Some((Redirect::List, fence(3)));
-    let state = versions(Some(guarded));
+fn a_focus_with_no_key_since_names_the_committed_items_ids_and_identity() {
+    let (state, snapshot) = committed_item();
+    let cache = BackendCache::default();
+    let at = view(&state, &cache);
     let mut list = focus(-4);
     list.fence = fence(3);
-    assert_eq!(
-        msaa_answer(
-            &list,
-            &state,
-            Some(&redirected(Redirect::List)),
-            Purpose::Turn
-        ),
-        Validity::Duplicate
-    );
-    assert_eq!(
-        msaa_answer(
-            &list,
-            &state,
-            Some(&redirected(Redirect::FocusedChild)),
-            Purpose::Turn
-        ),
-        Validity::Valid(How::Read)
-    );
-    assert_eq!(
-        msaa_answer(
-            &list,
-            &state,
-            Some(&redirected(Redirect::List)),
-            Purpose::Pending
-        ),
-        Validity::Valid(How::Read)
-    );
+    let named = TurnDepth::UnlessSame(super::super::msaa_run::UnlessSame {
+        ids: MsaaIds {
+            window: WindowHandle(5),
+            object: -4,
+            child: 2,
+        },
+        identity: verbatim_model::request::Identity {
+            states: verbatim_model::StateSet::default(),
+            role: Role::ListItem,
+            position_in_set: Some(2),
+            set_size: Some(3),
+            name: Some("Copy".to_owned()),
+            value: None,
+        },
+    });
+    assert_eq!(depth(Subject::Msaa(&list), &at, Some(&snapshot)), named);
+    // A key since.
     list.fence = fence(4);
     assert_eq!(
-        msaa_answer(
-            &list,
-            &state,
-            Some(&redirected(Redirect::List)),
-            Purpose::Turn
-        ),
-        Validity::Valid(How::Read)
+        depth(Subject::Msaa(&list), &at, Some(&snapshot)),
+        TurnDepth::FullIfFocused
     );
-    // With no guard, it is read and spoken.
-    let plain = versions(Some(last_msaa(-4, 2)));
+    // A failed try since.
     list.fence = fence(3);
+    let mut tried = state.clone();
+    tried.tried_and_refused();
     assert_eq!(
-        msaa_answer(
-            &list,
-            &plain,
-            Some(&redirected(Redirect::List)),
-            Purpose::Turn
+        depth(Subject::Msaa(&list), &view(&tried, &cache), Some(&snapshot)),
+        TurnDepth::FullIfFocused
+    );
+    // Core's own focus committed over it.
+    let mut own = state.clone();
+    own.commit_own(false);
+    assert_eq!(
+        depth(Subject::Msaa(&list), &view(&own, &cache), Some(&snapshot)),
+        TurnDepth::FullIfFocused
+    );
+    // A foreground and a menu start are judged by their own rows.
+    let mut foreground = candidate(EventKind::Foreground, (0, 0), 1_000, 7);
+    foreground.fence = fence(3);
+    assert_eq!(
+        depth(Subject::Msaa(&foreground), &at, Some(&snapshot)),
+        TurnDepth::Full
+    );
+}
+
+/// A last focus held by child id 0 keeps NVDA's test, equal ids a
+/// duplicate with no read, and names no identity to other ids.
+#[test]
+fn a_last_focus_held_by_child_0_names_no_identity() {
+    let mut last = last_msaa(-4, 0);
+    last.since = Some(fence(3));
+    let state = versions(Some(last));
+    let cache = BackendCache::default();
+    let mut other = focus(-5);
+    other.fence = fence(3);
+    assert_eq!(
+        depth(Subject::Msaa(&other), &view(&state, &cache), None),
+        TurnDepth::FullIfFocused
+    );
+    let mut same = focus(-4);
+    same.fence = fence(3);
+    assert_eq!(msaa_answer(&same, &state, None), Validity::Duplicate);
+}
+
+/// A pending judgement has no identity row: a focus at the committed
+/// item's ids with no key since counts, as NVDA's duplicate test never
+/// holds for a child id above 0 (decided).
+#[test]
+fn a_pending_focus_at_the_committed_items_ids_counts() {
+    let (state, _) = committed_item();
+    let mut item = candidate(EventKind::MsaaFocus, (-4, 2), 1_000, 7);
+    item.fence = fence(3);
+    item.confirmation = Confirmation::Read(found(Some(true)));
+    let waiting: VecDeque<Item<Entry>> =
+        std::iter::once(Item::One(Entry::Candidate(Box::new(item)))).collect();
+    assert_eq!(
+        pending_behind(
+            &waiting,
+            &view(&state, &BackendCache::default()),
+            Within::ALL
         ),
-        Validity::Valid(How::Read)
+        Pending::Counts
+    );
+}
+
+/// The identity row at an answer that the object is the one named: a
+/// duplicate, unless a row before the duplicate test refuses the candidate
+/// now.
+#[test]
+fn the_object_named_is_a_duplicate_unless_refused_before_the_duplicate_test() {
+    let (state, _) = committed_item();
+    let cache = BackendCache::default();
+    let list = focus(-4);
+    assert_eq!(judge_same(&list, &view(&state, &cache)), None);
+    let mut hidden = focus(-4);
+    if let TellWindow::Found(facts) = &mut hidden.tell.window {
+        facts.hidden_frame = true;
+    }
+    assert_eq!(
+        judge_same(&hidden, &view(&state, &cache)),
+        Some(Reason::HiddenFrame)
     );
 }
 
 #[test]
-fn only_a_refusal_a_read_answered_ends_the_guard() {
+fn only_a_refusal_a_read_answered_ends_the_fence() {
     for (reason, tried) in [
         (Reason::NotThere, true),
         (Reason::NotFocused, true),
@@ -642,43 +679,40 @@ fn only_a_refusal_a_read_answered_ends_the_guard() {
 #[test]
 fn a_foreground_is_valid_with_no_read_unless_a_foreground_row_refuses_it() {
     let foreground = candidate(EventKind::Foreground, (0, 0), 1_000, 7);
-    assert_eq!(depth(Subject::Msaa(&foreground)), Depth::Full);
     let none = versions(None);
     assert_eq!(
-        msaa_answer(&foreground, &none, None, Purpose::Pending),
+        depth(
+            Subject::Msaa(&foreground),
+            &view(&none, &BackendCache::default()),
+            None
+        ),
+        TurnDepth::Full
+    );
+    assert_eq!(
+        msaa_answer(&foreground, &none, None),
         Validity::Valid(How::Read)
     );
     let cache = BackendCache::default();
     let mut elsewhere = view(&none, &cache);
     elsewhere.in_front = Some(WindowHandle(8));
     assert_eq!(
-        judge(
-            Subject::Msaa(&foreground),
-            &elsewhere,
-            None,
-            Purpose::Pending
-        ),
+        judge(Subject::Msaa(&foreground), &elsewhere, None),
         Validity::Refused(Reason::NotInFront)
     );
     let own = versions(Some(last_msaa(-4, 0)));
     assert_eq!(
-        msaa_answer(&foreground, &own, None, Purpose::Pending),
+        msaa_answer(&foreground, &own, None),
         Validity::Refused(Reason::LastFocusWindow)
     );
     let mut same = last_msaa(0, 0);
     same.place.window = WindowHandle(8);
     let same = versions(Some(same));
     assert_eq!(
-        msaa_answer(&foreground, &same, None, Purpose::Turn),
+        msaa_answer(&foreground, &same, None),
         Validity::Refused(Reason::SameIds)
     );
     assert_eq!(
-        msaa_answer(
-            &foreground,
-            &none,
-            Some(&CandidateFacts::NotThere),
-            Purpose::Turn
-        ),
+        msaa_answer(&foreground, &none, Some(&CandidateFacts::NotThere)),
         Validity::Refused(Reason::NotThere)
     );
 }
@@ -688,24 +722,30 @@ fn a_foreground_is_valid_with_no_read_unless_a_foreground_row_refuses_it() {
 #[test]
 fn a_menu_start_needs_its_role_and_only_a_menu_popup_is_valid() {
     let start = candidate(EventKind::PopupStart, (-4, 0), 1_000, 7);
-    assert_eq!(depth(Subject::Msaa(&start)), Depth::Full);
     let none = versions(None);
+    assert_eq!(
+        depth(
+            Subject::Msaa(&start),
+            &view(&none, &BackendCache::default()),
+            None
+        ),
+        TurnDepth::Full
+    );
     let role = |role| CandidateFacts::Found {
         focused: None,
         role: Some(role),
-        redirect: None,
     };
-    for purpose in [Purpose::Turn, Purpose::Pending] {
+    {
         assert_eq!(
-            msaa_answer(&start, &none, None, purpose),
+            msaa_answer(&start, &none, None),
             Validity::NeedsRead(Need::MenuRole)
         );
         assert_eq!(
-            msaa_answer(&start, &none, Some(&role(Role::Menu)), purpose),
+            msaa_answer(&start, &none, Some(&role(Role::Menu))),
             Validity::Valid(How::Read)
         );
         assert_eq!(
-            msaa_answer(&start, &none, Some(&role(Role::Window)), purpose),
+            msaa_answer(&start, &none, Some(&role(Role::Window))),
             Validity::Refused(Reason::NotMenuPopup)
         );
     }
@@ -716,7 +756,7 @@ fn a_menu_start_needs_its_role_and_only_a_menu_popup_is_valid() {
     let mut after_valid = view(&on_menu, &cache);
     after_valid.run_before_valid = true;
     assert_eq!(
-        judge(Subject::Msaa(&start), &after_valid, None, Purpose::Turn),
+        judge(Subject::Msaa(&start), &after_valid, None),
         Validity::Refused(Reason::OnMenu)
     );
 }
@@ -732,10 +772,12 @@ fn the_menu_checks_read_is_judged_by_its_focused_fact_and_the_duplicate_test() {
             Subject::MenuCheck(ids),
             &view(versions, &cache),
             Some(facts),
-            Purpose::Turn,
         )
     };
-    assert_eq!(depth(Subject::MenuCheck(None)), Depth::FullIfFocused);
+    assert_eq!(
+        depth(Subject::MenuCheck(None), &view(&none, &cache), None),
+        TurnDepth::FullIfFocused
+    );
     // A UI Automation answer carries no focused fact, and passes.
     assert_eq!(check(None, &found(None), &none), Validity::Valid(How::Read));
     let ids = MsaaIds {
@@ -797,14 +839,7 @@ fn a_recovered_read_of_the_last_focuss_element_is_a_duplicate_and_any_other_is_v
     };
     let state = versions(Some(last));
     let cache = BackendCache::default();
-    let recovered = |read: &FocusRead| {
-        judge(
-            Subject::Recovered(read),
-            &view(&state, &cache),
-            None,
-            Purpose::Turn,
-        )
-    };
+    let recovered = |read: &FocusRead| judge(Subject::Recovered(read), &view(&state, &cache), None);
     assert_eq!(
         recovered(&read_of(None, Some(RuntimeId(vec![42, 1])))),
         Validity::Duplicate
@@ -826,8 +861,7 @@ fn a_recovered_read_of_the_last_focuss_element_is_a_duplicate_and_any_other_is_v
         judge(
             Subject::Recovered(&read_of(Some(held), None)),
             &view(&msaa_last, &cache),
-            None,
-            Purpose::Turn
+            None
         ),
         Validity::Valid(How::Read)
     );
@@ -866,7 +900,7 @@ fn run_of(candidates: Vec<Candidate>) -> VecDeque<Item<Entry>> {
 fn walked(candidates: &[Candidate], versions: &Versions) -> Option<(Validity, TraceId)> {
     let cache = BackendCache::default();
     let newest_first: Vec<Candidate> = candidates.iter().rev().cloned().collect();
-    judge_run(&newest_first, &view(versions, &cache), Purpose::Turn)
+    judge_run(&newest_first, &view(versions, &cache))
         .found
         .map(|found| (found.answer, found.candidate.tell.trace_id))
 }

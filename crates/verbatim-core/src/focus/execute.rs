@@ -24,6 +24,7 @@ use crate::event_queue::Cx;
 use crate::event_queue::RequestWindow;
 use crate::focus::object::Report;
 use crate::foreground::ForegroundFact;
+use crate::keys::entry::Fence;
 use crate::state::SrState;
 
 /// The ancestors Core already knows, as a focus request sent them: each
@@ -254,15 +255,22 @@ pub(crate) struct Origin {
     /// The automation id of the focus's parent, which a UI Automation tell
     /// carries for the task switcher's item alone.
     pub(crate) parent_automation_id: Option<String>,
+    /// The speech fence of the entry that read it: a run's or a menu
+    /// start's executed candidate's own, never the run's, and the entry's
+    /// for any other, which the readers' last focus keeps when it executes
+    /// ([`super::versions::LastFocus::since`]).
+    pub(crate) fence: Fence,
 }
 
 impl Origin {
     /// The origin of a focus a tell named, read on `asked`, with
-    /// `foreground` the foreground record.
+    /// `foreground` the foreground record, for an entry of speech fence
+    /// `fence`.
     pub(crate) fn of_tell(
         tell: &Event,
         asked: RequestWindow,
         foreground: Option<crate::event_queue::Foreground>,
+        fence: Fence,
     ) -> Self {
         let facts = window_facts(tell);
         Self {
@@ -282,11 +290,13 @@ impl Origin {
                 Some(PropertyValue::Text(id)) => Some(id.clone()),
                 _ => None,
             },
+            fence,
         }
     }
 
-    /// The origin of a focus Core read itself on `asked`, under `trace_id`.
-    pub(crate) fn of_read(trace_id: TraceId, asked: RequestWindow) -> Self {
+    /// The origin of a focus Core read itself on `asked`, under `trace_id`,
+    /// for an entry of speech fence `fence`.
+    pub(crate) fn of_read(trace_id: TraceId, asked: RequestWindow, fence: Fence) -> Self {
         Self {
             trace_id,
             source: asked.process,
@@ -297,6 +307,7 @@ impl Origin {
             asked,
             frame_owned: false,
             parent_automation_id: None,
+            fence,
         }
     }
 }
@@ -591,7 +602,7 @@ fn commit(state: &mut SrState, origin: &Origin, ready: Ready) -> Vec<FollowReque
             )
         })
         .flatten();
-    state.versions.execute(ready.kept);
+    state.versions.execute(ready.kept, origin.fence);
     let follows = follows
         .into_iter()
         .map(|follow| {

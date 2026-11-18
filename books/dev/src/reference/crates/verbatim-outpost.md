@@ -664,14 +664,15 @@ and the inherited pipe handles.
   NVDA's child-0-on-a-list redirect and the `accFocus` redirect
   (`focus_candidate`). The outpost reports facts and judges none: a focus
   event's focused state over the object and its ancestors, read live; a
-  menu start's role; and the redirect that reached
-  it, by its branch (`FocusCandidate::redirect`), never judged by the
-  address its node is kept at, which can differ with no redirect. It then
-  reads it in full unless the depth is `Facts`, or `FullIfFocused` with
-  the object not focused, even when it repeats the focus, since Core
-  judges repeats; a redirected focus names the child's ids as its event
-  ids, as NVDA builds the redirected object with the child's id as its
-  event's.
+  menu start's role. It then reads it in full unless the depth is
+  `Facts`, or `FullIfFocused` with the object not focused, even when it
+  repeats the focus, since Core judges repeats; a redirected focus names
+  the child's ids as its event ids, as NVDA builds the redirected object
+  with the child's id as its event's. At `FullUnlessSame`, a focused
+  object reached at the ids Core names whose identity reads as Core names
+  it (`FocusCandidate::reads_as`) is answered `Reply::CandidateSame`, with
+  nothing more read: the outpost computes the comparison as a fact against
+  the values Core names, and Core decides the duplicate.
 - A focus walk stops at the ancestors Core already knows, which its
   request names, comparing what it reads with them by NVDA's equality,
   and gathers the text of every dialog below them, which the focus
@@ -957,7 +958,8 @@ window before it is handled.
 - `MsaaRun`: one candidate, answered skipped when its window is read
   through UI Automation, not there when no object is at its address, else
   its facts and, to the depth asked, its full read with its ancestors up
-  to the first Core already knows.
+  to the first Core already knows, or, at `FullUnlessSame`, the same as
+  named.
 - `CurrentFocus`: the focus-now read, its walk up through either API
   stopping at the first ancestor Core already knows. The window with the
   keyboard focus is taken first, before any call that can block, the

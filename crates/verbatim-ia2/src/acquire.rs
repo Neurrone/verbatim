@@ -448,7 +448,6 @@ pub struct FocusCandidate {
     key: MsaaKey,
     role: Prefetched,
     state: Prefetched,
-    redirect: Option<verbatim_model::request::Redirect>,
 }
 
 /// Acquires the object named by an `EVENT_OBJECT_FOCUS` `WinEvent` and
@@ -481,7 +480,7 @@ pub fn focus_candidate(hwnd: isize, id_object: i32, id_child: i32) -> Option<Foc
         Prefetched::Read(role) => role,
         Prefetched::Unread => None,
     };
-    if let Some((focus_acc, key, state, redirect)) =
+    if let Some((focus_acc, key, state)) =
         redirect_focus_to_child(&acc, (hwnd, id_object, id_child), read_role)
     {
         // A redirect for a focused child read its state word already.
@@ -490,7 +489,6 @@ pub fn focus_candidate(hwnd: isize, id_object: i32, id_child: i32) -> Option<Foc
             key,
             role: Prefetched::Unread,
             state,
-            redirect: Some(redirect),
         });
     }
     Some(FocusCandidate {
@@ -498,7 +496,6 @@ pub fn focus_candidate(hwnd: isize, id_object: i32, id_child: i32) -> Option<Foc
         key: (hwnd, id_object, id_child),
         role,
         state: Prefetched::Unread,
-        redirect: None,
     })
 }
 
@@ -507,13 +504,6 @@ impl FocusCandidate {
     #[must_use]
     pub fn key(&self) -> MsaaKey {
         self.key
-    }
-
-    /// Which redirect reached the focus, when one did: its branch, NVDA's
-    /// list redirect or Verbatim's wider one for a focused child.
-    #[must_use]
-    pub fn redirect(&self) -> Option<verbatim_model::request::Redirect> {
-        self.redirect
     }
 
     /// The object's role, read once and kept for the read that follows:
@@ -635,6 +625,73 @@ impl FocusCandidate {
         false
     }
 
+    /// Whether the object reads as `named`, each value read as a full read
+    /// ([`FocusCandidate::read`]) gives it, by the same functions, and
+    /// compared as it is read, stopping at the first that differs
+    /// (`docs/parity/focus-events.md`, "Duplicate focus suppression", the
+    /// identity check): its states and role, from the state word the
+    /// focused-state test read and its role, read once; then, for a
+    /// `SysListView32` item, its position, its child id, and the set's
+    /// size, one `LVM_GETITEMCOUNT`, a tree view item's position needing a
+    /// walk and so not compared; then its name, a list view item's by its
+    /// columns first, its own name asked only when it shows none; then its
+    /// value, last, which a list view item has none of, so with no call.
+    /// The role and state words read are kept for the full read that
+    /// follows a difference. `registry` says the details the full read
+    /// reads, the description an owner-drawn list view's name may come
+    /// from among them.
+    pub fn reads_as(
+        &mut self,
+        named: &verbatim_model::request::Identity,
+        registry: &dyn Interning,
+    ) -> bool {
+        let raw_role = self.role.or_read(|| self.acc.role());
+        self.role = Prefetched::Read(raw_role);
+        let state = self.state.or_read(|| self.acc.state());
+        self.state = Prefetched::Read(state);
+        let role = raw_role.map_or(Role::Unknown, |r| role_from_msaa(r.cast_unsigned()));
+        let (role, states, _) = role_and_states(&self.acc, self.key, role, state);
+        if states != named.states || role != named.role {
+            return false;
+        }
+        let list_view_item = is_list_view_item(&self.acc, self.key, role);
+        if list_view_item
+            && position_of(self.key.0, self.acc.child(), role, None)
+                != (named.position_in_set, named.set_size)
+        {
+            return false;
+        }
+        let acc = &self.acc;
+        let own_name = || labelled_name(acc, role, visible_text(acc.name()));
+        let mut name = if list_view_item {
+            columned_name(acc, self.key, own_name, || {
+                registry
+                    .details()
+                    .contains(NodeDetail::Description)
+                    .then(|| non_empty(acc.description()))
+                    .flatten()
+            })
+        } else {
+            own_name()
+        };
+        if let Some(text) = &mut name {
+            verbatim_text::strip_bidi_controls(text);
+        }
+        if name != named.name {
+            return false;
+        }
+        let mut value =
+            if list_view_item || (role == Role::TreeItem && is_systreeview32(self.key.0)) {
+                None
+            } else {
+                value_for(acc, self.key, role, visible_text(acc.value()))
+            };
+        if let Some(text) = &mut value {
+            verbatim_text::strip_bidi_controls(text);
+        }
+        value == named.value
+    }
+
     /// Reads the object, as a focus is read to be announced, comparing it
     /// with `candidates` by NVDA's equality when no lookup places it
     /// ([`Candidates`]).
@@ -753,12 +810,7 @@ fn redirect_focus_to_child(
     acc: &Accessible,
     (hwnd, id_object, id_child): MsaaKey,
     role: Option<i32>,
-) -> Option<(
-    Accessible,
-    MsaaKey,
-    Prefetched,
-    verbatim_model::request::Redirect,
-)> {
+) -> Option<(Accessible, MsaaKey, Prefetched)> {
     let list = focus_event_names_list((hwnd, id_object, id_child), role);
     if !list && id_child != CHILDID_SELF {
         return None;
@@ -775,7 +827,6 @@ fn redirect_focus_to_child(
                     child,
                     (hwnd, id_object, real_child),
                     Prefetched::Read(state),
-                    verbatim_model::request::Redirect::FocusedChild,
                 ))
         }
         // A child by id: redirect only when it is a real child (greater than
@@ -784,7 +835,6 @@ fn redirect_focus_to_child(
             acc.with_child(real_child),
             (hwnd, id_object, real_child),
             Prefetched::Unread,
-            verbatim_model::request::Redirect::List,
         )),
         // A `VT_DISPATCH` child object, `None`, or a self/zero child id: keep
         // the container (see this function's doc for why the dispatch form is
@@ -1569,7 +1619,6 @@ pub fn focused_object(hwnd: isize, serves: &dyn Fn(isize) -> bool) -> Option<Foc
             key,
             role: Prefetched::Unread,
             state: Prefetched::Unread,
-            redirect: None,
         },
         at_address,
     })
@@ -2116,8 +2165,9 @@ fn read_snapshot_with(
     // A list view item has no description either, as NVDA's has none, and
     // one that shows columns is named by them ("content; Header:
     // content"), as NVDA names it.
+    let shown = || description.clone();
     let (mut name, mut description) = if list_view_item {
-        (columned_name(acc, key, name, || description.clone()), None)
+        (columned_name(acc, key, || name, shown), None)
     } else {
         (name, description)
     };
@@ -2507,20 +2557,20 @@ fn labelled_name(acc: &Accessible, role: Role, name: Option<String>) -> Option<S
     name.filter(|_| role != Role::EditableText || !in_labelled_combo_box(acc))
 }
 
-/// `name`, the name of `acc`, a list view item at `key`, as a snapshot is
-/// named: by the columns it shows ("content; Header: content"), as NVDA
-/// names it, else `name`; `description` is its description, which the
-/// columns may name it by.
+/// The name of `acc`, a list view item at `key`, as a snapshot is named:
+/// by the columns it shows ("content; Header: content"), as NVDA names it,
+/// else `name`, its own name, asked only then; `description` is its
+/// description, which the columns may name it by.
 fn columned_name(
     acc: &Accessible,
     key: MsaaKey,
-    name: Option<String>,
+    name: impl FnOnce() -> Option<String>,
     description: impl FnOnce() -> Option<String>,
 ) -> Option<String> {
     crate::list_view::column_name(key.0, acc.child(), description)
         .ok()
         .flatten()
-        .or(name)
+        .or_else(name)
 }
 
 /// The name of `acc`, of `role` at `key`, read live and normalised exactly
@@ -2534,13 +2584,18 @@ fn live_name(
 ) -> Option<String> {
     let name = labelled_name(acc, role, visible_text(acc.name()));
     let mut name = if is_list_view_item(acc, key, role) {
-        columned_name(acc, key, name, || {
-            registry
-                .details()
-                .contains(NodeDetail::Description)
-                .then(|| non_empty(acc.description()))
-                .flatten()
-        })
+        columned_name(
+            acc,
+            key,
+            || name,
+            || {
+                registry
+                    .details()
+                    .contains(NodeDetail::Description)
+                    .then(|| non_empty(acc.description()))
+                    .flatten()
+            },
+        )
     } else {
         name
     };

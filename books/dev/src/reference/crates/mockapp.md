@@ -210,6 +210,10 @@ reviewable surface.
   `columns`, each a header and a width (0 hides it), and its `list_item`
   children as items, each named by its first column, its value split at
   `|` the texts of the others (`tests/fixtures/list_view.json`).
+  `list-view-focus <row>` gives the list view the keyboard focus and its
+  row the focused and selected states; `list-view-delete <row>` deletes
+  the row and focuses the row now at its place, whose focus event comctl32
+  raises at the deleted item's child id (MSAA only).
 - `buttons`: a `native` `group_box` node is a standard group box (`Button`
   with `BS_GROUPBOX`) with its children as push buttons inside its
   rectangle, and a `native` `button` node a push button beside it; each

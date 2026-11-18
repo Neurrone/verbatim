@@ -1,0 +1,18 @@
+{
+  "id": "root",
+  "role": "pane",
+  "name": "Mockapp Twin Items List View Fixture",
+  "states": ["focused"],
+  "children": [
+    {
+      "id": "clipboard",
+      "role": "list",
+      "native": "list_view",
+      "columns": [["Name", 200]],
+      "children": [
+        { "id": "first", "role": "list_item", "name": "Copy" },
+        { "id": "second", "role": "list_item", "name": "Copy" }
+      ]
+    }
+  ]
+}

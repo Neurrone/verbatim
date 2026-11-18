@@ -1182,20 +1182,20 @@ fn msaa_run(
 ) -> Outcome {
     let candidate = &run.candidate;
     let window = hwnd_of(candidate.ids.window);
-    let answer = match verdict(context, window, candidate.verdict, probes) {
+    let reply = match verdict(context, window, candidate.verdict, probes) {
         // Read through UI Automation, whose own focus speaks for it, as
         // NVDA drops a native UI Automation window's `WinEvent`.
-        Some(true) => CandidateAnswer {
+        Some(true) => Reply::Candidate(CandidateAnswer {
             facts: CandidateFacts::Skipped,
             read: None,
-        },
-        None => CandidateAnswer {
+        }),
+        None => Reply::Candidate(CandidateAnswer {
             facts: CandidateFacts::NotThere,
             read: None,
-        },
+        }),
         Some(false) => try_candidate(context, client, candidate, run),
     };
-    Outcome::Result(Reply::Candidate(answer))
+    Outcome::Result(reply)
 }
 
 /// One MSAA candidate read as NVDA's pump reads it, to the depth Core
@@ -1203,17 +1203,20 @@ fn msaa_run(
 /// facts Core judges, a focus event's focused state over the object and
 /// its ancestors and a menu start's role; then, unless the depth stops
 /// there, the full read, with its ancestors up to one Core already knows.
-/// The outpost judges none of the facts.
+/// At [`Depth::FullUnlessSame`], a focused object reached at the ids Core
+/// names that reads as the identity Core names is answered
+/// [`Reply::CandidateSame`] with nothing more read: the outpost compares
+/// values Core names, and judges none of the facts.
 fn try_candidate(
     context: &RequestContext<'_>,
     client: &mut Client,
     asked: &RunCandidate,
     run: &MsaaRun,
-) -> CandidateAnswer {
-    let not_there = CandidateAnswer {
+) -> Reply {
+    let not_there = Reply::Candidate(CandidateAnswer {
         facts: CandidateFacts::NotThere,
         read: None,
-    };
+    });
     let ids = asked.ids;
     let hwnd = hwnd_of(ids.window);
     let Some(mut candidate) = verbatim_ia2::acquire::focus_candidate(hwnd, ids.object, ids.child)
@@ -1228,36 +1231,35 @@ fn try_candidate(
     let role = (asked.kind == CandidateKind::MenuStart)
         .then(|| candidate.role())
         .flatten();
-    // The child a redirect from the event's object reached, when one did.
-    // Its ids are the focus's event ids from then on, as NVDA builds the
-    // redirected object with the child's id as its event's
+    let facts = CandidateFacts::Found { focused, role };
+    // The ids the object was reached at, after the redirect: a redirected
+    // focus's are its child's from then on, as NVDA builds the redirected
+    // object with the child's id as its event's
     // (`IAccessibleHandler/__init__.py` 746 to 757).
     let (window, object, child) = candidate.key();
-    let redirect = candidate.redirect().map(|redirect| {
-        (
-            redirect,
-            MsaaIds {
-                window: window_handle(window),
-                object,
-                child,
-            },
-        )
-    });
-    let facts = CandidateFacts::Found {
-        focused,
-        role,
-        redirect,
+    let event = MsaaIds {
+        window: window_handle(window),
+        object,
+        child,
     };
-    let full = match run.depth {
+    let full = match &run.depth {
         Depth::Facts => false,
         Depth::FullIfFocused => focused != Some(false),
         Depth::Full => true,
+        Depth::FullUnlessSame { ids, identity } => {
+            if focused == Some(false) {
+                false
+            } else if event == *ids && candidate.reads_as(identity, context.nodes()) {
+                return Reply::CandidateSame;
+            } else {
+                true
+            }
+        }
     };
     if !full {
-        return CandidateAnswer { facts, read: None };
+        return Reply::Candidate(CandidateAnswer { facts, read: None });
     }
     let held_child = candidate.resolved_child();
-    let event = redirect.map_or(ids, |(_, reached)| reached);
     let stops = known_stops(&run.known);
     let candidates = candidates_of(&stops);
     let node = candidate.read(context.nodes(), Some(&candidates));
@@ -1295,10 +1297,10 @@ fn try_candidate(
         },
         &run.set,
     );
-    CandidateAnswer {
+    Reply::Candidate(CandidateAnswer {
         facts,
         read: Some(Box::new(read)),
-    }
+    })
 }
 
 /// The application's current focus, as a focus-now read finds it, with its
@@ -1343,7 +1345,6 @@ fn current_focus(
                 facts: CandidateFacts::Found {
                     focused: Some(false),
                     role: None,
-                    redirect: None,
                 },
                 read: None,
             }));
@@ -1397,7 +1398,6 @@ fn current_focus(
         facts: CandidateFacts::Found {
             focused,
             role: None,
-            redirect: None,
         },
         read: Some(Box::new(read)),
     }))

@@ -622,7 +622,6 @@ impl Seam {
                     facts: verbatim_model::request::CandidateFacts::Found {
                         focused: Some(true),
                         role: None,
-                        redirect: None,
                     },
                     read: None,
                 })

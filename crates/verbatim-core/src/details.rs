@@ -16,6 +16,26 @@ pub(crate) fn node_set(state: &SrState, base: &[PropertyId]) -> Vec<PropertyId> 
     state.reported.node.choose(base)
 }
 
+/// The property set of a focus read: [`node_set`], with the position in
+/// the set and the set's size kept whatever the settings, as the identity
+/// check in the duplicate test compares them (Dickson, 2026-11-18;
+/// `docs/parity/focus-events.md`, "Duplicate focus suppression"). The
+/// setting decides only whether they are spoken, which the focus's speech
+/// does. One `LVM_GETITEMCOUNT` more for a list view item's focus with the
+/// setting off.
+pub(crate) fn focus_set(state: &SrState, base: &[PropertyId]) -> Vec<PropertyId> {
+    base.iter()
+        .copied()
+        .filter(|id| {
+            matches!(id, PropertyId::PositionInSet | PropertyId::SetSize)
+                || id
+                    .entry()
+                    .detail
+                    .is_none_or(|detail| state.reported.node.contains(detail))
+        })
+        .collect()
+}
+
 /// The property set of a listener read whose walk a completion judges
 /// ([`node_set`]), with the description kept whatever the settings: the
 /// completion judges each ancestor's layout with it, as NVDA's

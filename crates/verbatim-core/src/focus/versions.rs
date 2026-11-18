@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use verbatim_model::property::RuntimeId;
-use verbatim_model::request::{KnownAncestor, MsaaIds, ObjectClass, Redirect};
+use verbatim_model::request::{KnownAncestor, MsaaIds, ObjectClass};
 use verbatim_model::tell::ElementToken;
 use verbatim_model::{NodeId, OutpostId, Pid, Role, WindowHandle};
 
@@ -32,12 +32,13 @@ pub(crate) enum ReadBy {
         /// The listener's token for it.
         token: Option<ElementToken>,
     },
-    /// An MSAA object: the ids its event named and the child id the
-    /// outpost holds it by. A focus read through `accFocus` names no ids
-    /// of an event, so no later event is its duplicate.
+    /// An MSAA object: the ids it was read by and the child id the
+    /// outpost holds it by. A focus read through `accFocus` carries the ids
+    /// it is held by, as NVDA's object gets its ids from `IAccIdentity`
+    /// (`NVDAObjects/IAccessible/__init__.py` 803 to 808); a focus read
+    /// that carries none names no ids, so no later event is its duplicate.
     Msaa {
-        /// The ids its event named, `None` for a focus read through
-        /// `accFocus`.
+        /// The ids it was read by, `None` for a read that carries none.
         event: Option<MsaaIds>,
         /// The child id the outpost holds it by.
         held_child: i32,
@@ -99,20 +100,20 @@ pub(crate) struct LastFocus {
     pub(crate) class: ObjectClass,
     /// Its role, which the menu-start rule judges.
     pub(crate) role: Role,
-    /// The redirect guard (design, change A): when its read was reached by
-    /// a redirect, which redirect fired and the speech fence of the focus
-    /// tell it was read for. The reached child's own focus, and a list's
-    /// own focus redirected to it, with that same fence end unread. Ended
-    /// by anything that replaces the last focus, and by a candidate tried
-    /// and refused or not there (Dickson, 2026-11-18).
-    pub(crate) redirect: Option<(Redirect, Fence)>,
+    /// The speech fence of the entry that executed it, while no key has
+    /// come since and no focus read was tried and refused since: `None`
+    /// once a read was tried and refused or found nothing (Dickson,
+    /// 2026-11-18). A later MSAA focus of that fence is "with no key
+    /// between", which the identity check in the duplicate test reads
+    /// (`docs/parity/focus-events.md`, "Duplicate focus suppression").
+    pub(crate) since: Option<Fence>,
 }
 
 impl LastFocus {
-    /// Whether it names the same focus as `other`, whatever their guards.
-    pub(crate) fn same_focus(&self, other: &Self) -> bool {
+    /// Whether it names the focus Core keeps as `kept`, whatever its fence.
+    pub(crate) fn names(&self, kept: &Kept) -> bool {
         (&self.read_by, &self.place, self.class, self.role)
-            == (&other.read_by, &other.place, other.class, other.role)
+            == (&kept.read_by, &kept.place, kept.class, kept.role)
     }
 }
 
@@ -197,14 +198,15 @@ impl Kept {
         }
     }
 
-    /// The readers' last focus this focus becomes when it executes.
-    pub(crate) fn last(&self) -> LastFocus {
+    /// The readers' last focus this focus becomes when it executes for an
+    /// entry of speech fence `since`.
+    pub(crate) fn last(&self, since: Fence) -> LastFocus {
         LastFocus {
             read_by: self.read_by.clone(),
             place: self.place.clone(),
             class: self.class,
             role: self.role,
-            redirect: None,
+            since: Some(since),
         }
     }
 }
@@ -251,9 +253,10 @@ pub(crate) enum ReaderEnd {
 }
 
 impl Versions {
-    /// A reader's focus executes (column B): both versions become it.
-    pub(crate) fn execute(&mut self, kept: Kept) {
-        self.last = Some(kept.last());
+    /// A reader's focus executes (column B), for an entry of speech fence
+    /// `since`: both versions become it.
+    pub(crate) fn execute(&mut self, kept: Kept, since: Fence) {
+        self.last = Some(kept.last(since));
         self.committed = Committed::Read(Box::new(kept));
     }
 
@@ -272,19 +275,12 @@ impl Versions {
         };
     }
 
-    /// The focus just executed was reached by `redirect` for a tell of
-    /// speech fence `fence`: the readers' last focus carries the guard.
-    pub(crate) fn guard(&mut self, redirect: Redirect, fence: Fence) {
-        if let Some(last) = self.last.as_mut() {
-            last.redirect = Some((redirect, fence));
-        }
-    }
-
     /// A focus read was tried at its own turn and answered refused or not
-    /// there: the redirect guard ends (Dickson, 2026-11-18).
+    /// there, or its reader ended: the readers' last focus's fence ends, so
+    /// no later focus is "with no key between" it (Dickson, 2026-11-18).
     pub(crate) fn tried_and_refused(&mut self) {
         if let Some(last) = self.last.as_mut() {
-            last.redirect = None;
+            last.since = None;
         }
     }
 
@@ -411,7 +407,7 @@ impl Versions {
     pub(crate) fn caret_target(&self) -> Option<&Kept> {
         let last = self.last.as_ref()?;
         match &self.committed {
-            Committed::Read(kept) if kept.last().same_focus(last) => Some(kept),
+            Committed::Read(kept) if last.names(kept) => Some(kept),
             _ => None,
         }
     }

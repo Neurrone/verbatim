@@ -301,6 +301,9 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
         Command::StaleFocusOnLeft => {
             return Err("stale-focus-on-left is not supported on the uia backend".into());
         }
+        Command::ListViewFocus(_) | Command::ListViewDelete(_) => {
+            return Err("the list view commands are not supported on the uia backend".into());
+        }
         Command::FocusChild(..) => {
             return Err("focus-child is not supported on the uia backend".into());
         }

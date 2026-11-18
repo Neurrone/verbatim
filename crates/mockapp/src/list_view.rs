@@ -9,8 +9,9 @@
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::UI::Controls::{
     ICC_LISTVIEW_CLASSES, INITCOMMONCONTROLSEX, InitCommonControlsEx, LVCF_SUBITEM, LVCF_TEXT,
-    LVCF_WIDTH, LVCOLUMNW, LVIF_TEXT, LVITEMW, LVM_INSERTCOLUMNW, LVM_INSERTITEMW,
-    LVM_SETITEMTEXTW, LVS_REPORT, WC_LISTVIEWW,
+    LVCF_WIDTH, LVCOLUMNW, LVIF_TEXT, LVIS_FOCUSED, LVIS_SELECTED, LVITEMW, LVM_DELETEITEM,
+    LVM_GETITEMCOUNT, LVM_INSERTCOLUMNW, LVM_INSERTITEMW, LVM_SETITEMSTATE, LVM_SETITEMTEXTW,
+    LVS_REPORT, WC_LISTVIEWW,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, HMENU, SendMessageW, WINDOW_EX_STYLE, WINDOW_STYLE, WS_CHILD, WS_VISIBLE,
@@ -112,6 +113,46 @@ fn create_in_context(parent: HWND, node: &FixtureNode) -> windows::core::Result<
         }
     }
     Ok(list)
+}
+
+/// The list view `parent` hosts, if any.
+pub(crate) fn find(parent: HWND) -> Option<HWND> {
+    // SAFETY: a local search of `parent`'s children by class.
+    unsafe {
+        windows::Win32::UI::WindowsAndMessaging::FindWindowExW(
+            Some(parent),
+            None,
+            WC_LISTVIEWW,
+            PCWSTR::null(),
+        )
+    }
+    .ok()
+}
+
+/// Gives `list`'s 0-based row `row` the focused and selected states.
+pub(crate) fn focus_row(list: HWND, row: usize) {
+    let both =
+        windows::Win32::UI::Controls::LIST_VIEW_ITEM_STATE_FLAGS(LVIS_FOCUSED.0 | LVIS_SELECTED.0);
+    let state = LVITEMW {
+        stateMask: both,
+        state: both,
+        ..Default::default()
+    };
+    send(
+        list,
+        LVM_SETITEMSTATE,
+        row,
+        std::ptr::from_ref(&state) as isize,
+    );
+}
+
+/// Deletes `list`'s 0-based row `row`, then focuses the row now at that
+/// place, if any.
+pub(crate) fn delete_row(list: HWND, row: usize) {
+    send(list, LVM_DELETEITEM, row, 0);
+    if usize::try_from(send(list, LVM_GETITEMCOUNT, 0, 0)).is_ok_and(|count| row < count) {
+        focus_row(list, row);
+    }
 }
 
 /// Sends `msg` to the list view on this thread.

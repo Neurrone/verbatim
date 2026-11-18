@@ -758,24 +758,32 @@ recovered read (`focus/retake.rs`), the caret key, the caret tell and the
 alert. `duplicate.rs`'s tests are its private primitives.
 
 Each read of a candidate is a request typed by its depth
-(`msaa_run::RunRequest<D>`: `FactsOnly`, `FullIfFocused`, `Full`; and
-`retake::CurrentFocusRead<D>`), whose answer is parsed at its decode
-(`validity::Answered`: refused unread, `Unread`, or found and read in
-full; a confirmation's facts alone). An answer that breaks its depth's
+(`msaa_run::RunRequest<D>`: `FactsOnly`, `FullIfFocused`, `Full`,
+`UnlessSame`; and `retake::CurrentFocusRead<D>`), whose answer is parsed
+at its decode (`validity::Answered`: refused unread, `Unread`, or found
+and read in full; a confirmation's facts alone; at `UnlessSame`,
+`TurnAnswer::SameAsNamed` too). An answer that breaks its depth's
 rule, a found candidate without its read or a confirmation with one, is
 undecodable, logged as a malformed answer (`QueueEffect::Undecodable`),
 and the entry ends.
 
-The redirect guard (`LastFocus::redirect`): a focus executed through a
-redirect leaves on the readers' last focus which redirect fired and the
-speech fence of its tell (`Versions::guard`). At a turn, the reached
-child's own focus with that fence is a duplicate, and so is a list's own
-focus whose facts carry NVDA's list redirect to that child; the pending
-judgement does not apply it. Anything that replaces the last focus ends
-it, and so does a candidate tried and answered refused or not there
-(`Reason::tried`, `Versions::tried_and_refused`). A candidate on the
-desktop window is refused (`Reason::NoReader`), so Core starts no outpost
-for its process.
+The identity check (`docs/parity/focus-events.md`, "Duplicate focus
+suppression"): the readers' last focus keeps the speech fence of the
+entry that executed it (`LastFocus::since`), set by
+`Versions::execute(kept, since)` from `Origin::fence`, which every path
+names explicitly (a run's or menu start's executed candidate's own fence,
+any other entry's own); a candidate tried and refused, not there or whose
+reader ended clears it (`Reason::tried`, `Versions::tried_and_refused`).
+`validity::depth` gives an MSAA focus `TurnDepth::UnlessSame` when its
+fence equals `since`, the last focus is held by a child id above 0, and
+it is the committed focus; the `Identity` is made from the committed
+snapshot then and kept nowhere. The outpost's `Reply::CandidateSame`
+parses to `TurnAnswer::SameAsNamed`, which `validity::judge_same` makes a
+duplicate unless a row before the duplicate test now refuses the
+candidate. A focus read asks the position in the set and the set's size
+whatever the settings (`details::focus_set`), and speech leaves them out
+with position reporting off. A candidate on the desktop window is refused
+(`Reason::NoReader`), so Core starts no outpost for its process.
 
 A candidate's `Confirmation` is written only by `store_facts`, from a
 caret key's confirmation, and read by the rows as its facts: each

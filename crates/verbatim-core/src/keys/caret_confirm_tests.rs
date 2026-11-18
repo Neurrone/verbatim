@@ -187,7 +187,6 @@ fn confirmed(number: u64, focused: bool) -> Input<Entry> {
             facts: CandidateFacts::Found {
                 focused: Some(focused),
                 role: None,
-                redirect: None,
             },
             read: None,
         }),
@@ -264,7 +263,7 @@ fn an_unconfirmed_focus_found_focused_silences_the_key_and_is_read_at_its_turn()
     assert_eq!(answered.text, NO_REQUESTS);
     assert_eq!(
         answered.runs,
-        [(6, -5, Reader::Outpost(APP), Depth::Full, None)]
+        [(6, -5, Reader::Outpost(APP), Depth::FullIfFocused, None)]
     );
 }
 
@@ -354,7 +353,7 @@ fn a_focus_raised_before_the_bound_and_confirmed_after_it_counts() {
     assert_eq!(answered.said, NO_WORDS);
     assert_eq!(
         answered.runs,
-        [(6, -5, Reader::Outpost(APP), Depth::Full, None)]
+        [(6, -5, Reader::Outpost(APP), Depth::FullIfFocused, None)]
     );
 }
 
@@ -551,7 +550,6 @@ fn a_menu_start_behind_the_key_is_confirmed_for_its_role() {
                     facts: CandidateFacts::Found {
                         focused: None,
                         role: Some(role),
-                        redirect: None,
                     },
                     read: None,
                 }),

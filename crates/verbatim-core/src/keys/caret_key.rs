@@ -424,7 +424,7 @@ async fn confirm(
         return Confirmed::Judged;
     };
     let known = crate::focus::msaa_run::known_for(cx, candidate.tell.process);
-    let request = RunRequest::<FactsOnly>::of(cx, &candidate, spare, &known);
+    let request = RunRequest::of(cx, (&candidate, &FactsOnly), spare, &known);
     match cx.ask(request, due_us).await {
         Outcome::Result(facts) => {
             crate::focus::validity::store_facts(cx, trace, facts);
