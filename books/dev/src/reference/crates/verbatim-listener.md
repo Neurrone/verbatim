@@ -173,7 +173,10 @@ section 6.3).
   process's executable name, read once per process held open
   (`Applications`), the input desktop's openness for a switch, and
   acceptance's window facts, the window's own read as the event arrives
-  and the foreground's as the tell is placed. Every tell, and the idle
+  and the foreground's as the tell is placed; a UI Automation focus, menu
+  opening, element selected or window opened has all of them read by its
+  check thread where NVDA judges acceptance (`Call::Acceptance`,
+  `PendingWindow::Whole`). Every tell, and the idle
   barrier's answer, is placed under one lock (`Tells`); an MSAA tell and
   the idle barrier's answer wait behind a foreground event whose window
   `GetForegroundWindow` does not yet name until it names it or 20 ms

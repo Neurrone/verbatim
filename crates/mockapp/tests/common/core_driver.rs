@@ -1127,6 +1127,10 @@ impl CoreDriver {
         let clock = self.clock;
         let now = move || clock.now();
         let mut observer = self.check_observer.take();
+        let reads = TestReads {
+            foreground: self.outpost.foreground(),
+        };
+        let mut accepted = None;
         let _ = verbatim_uia::calls::take();
         while let Some(call) = check.next(record, now()) {
             if let Some(observer) = observer.as_mut() {
@@ -1153,6 +1157,10 @@ impl CoreDriver {
                         },
                         record,
                     );
+                }
+                Call::Acceptance(window) => {
+                    accepted = Some(WindowPart::read(&reads, window, None).with_foreground(&reads));
+                    check.accepted();
                 }
                 Call::KeptFocus(token) => {
                     let focused = kept
@@ -1196,9 +1204,6 @@ impl CoreDriver {
             Walked::NotWalked => (fields.role.hwnd != 0).then_some(fields.role.hwnd),
             Walked::NoWindow | Walked::Failed => None,
         };
-        let reads = TestReads {
-            foreground: self.outpost.foreground(),
-        };
         self.next_token += 1;
         let token = ElementToken(self.next_token);
         self.kept.push((token, element.clone()));
@@ -1221,12 +1226,13 @@ impl CoreDriver {
                 cached
             },
             payload,
-            window: match (window, found) {
-                (Some(window), _) => TellWindow::Found(Box::new(
+            window: match (window, found, accepted) {
+                (Some(_), _, Some(facts)) => TellWindow::Found(Box::new(facts)),
+                (Some(window), _, None) => TellWindow::Found(Box::new(
                     WindowPart::read(&reads, window, None).with_foreground(&reads),
                 )),
-                (None, Walked::Failed) => TellWindow::Failed,
-                (None, _) => TellWindow::NoWindow,
+                (None, Walked::Failed, _) => TellWindow::Failed,
+                (None, _, _) => TellWindow::NoWindow,
             },
             checked: Some(checked),
         }

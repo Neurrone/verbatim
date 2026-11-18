@@ -20,7 +20,7 @@ use verbatim_listener_logic::tell::{
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::PropertyValues;
 use verbatim_model::protocol::ListenerToCore;
-use verbatim_model::tell::{Checked, Event, EventObject, Payload, TellWindow};
+use verbatim_model::tell::{AcceptanceFacts, Checked, Event, EventObject, Payload, TellWindow};
 use verbatim_model::{Pid, TraceId, WindowHandle};
 use verbatim_process::clock::now_us;
 use verbatim_process::held::Target;
@@ -42,7 +42,9 @@ pub(super) struct TellKey {
 }
 
 /// A tell before it is placed in the listener's order: everything but the
-/// foreground's part of its window facts, which is read as it is placed.
+/// foreground's part of its window facts, which is read as it is placed,
+/// unless its check thread read them where NVDA judges acceptance
+/// ([`PendingWindow::Whole`]).
 pub(super) struct Pending {
     pub(super) trace_id: TraceId,
     pub(super) kind: EventKind,
@@ -58,10 +60,15 @@ pub(super) struct Pending {
 }
 
 /// The window a tell is judged by, before it is placed: found, with the
-/// part of its facts that depends on it alone, or why there is none.
+/// part of its facts that depends on it alone or with all of them, or why
+/// there is none.
 pub(super) enum PendingWindow {
-    /// Found.
+    /// Found, the foreground's part of its facts read as the tell is
+    /// placed.
     Found(WindowPart),
+    /// Found, with every acceptance fact read by its check thread where
+    /// NVDA judges acceptance (`verbatim_listener_logic::check`).
+    Whole(Box<AcceptanceFacts>),
     /// The check thread's walk found no window.
     NoWindow,
     /// The check thread's walk failed.
@@ -79,6 +86,7 @@ impl Pending {
         };
         let window = match self.window {
             PendingWindow::Found(part) => TellWindow::Found(Box::new(part.with_foreground(reads))),
+            PendingWindow::Whole(facts) => TellWindow::Found(facts),
             PendingWindow::NoWindow => TellWindow::NoWindow,
             PendingWindow::Failed => TellWindow::Failed,
         };
@@ -113,9 +121,13 @@ type SetHoldTimer = Box<dyn Fn(Option<Duration>) + Send + Sync>;
 
 /// The listener's order of tells and its foreground hold
 /// (`verbatim_listener_logic::tell::ForegroundHold`), under the one lock
-/// every tell is placed under: the foreground facts of a tell are read,
-/// and the tell sent, in one step under it, so no tell is placed after a
-/// foreground its facts predate. One timer, armed only while the hold
+/// every tell is placed under: the foreground facts of a tell whose check
+/// did not read them are read, and the tell sent, in one step under it,
+/// so no such tell is placed after a foreground its facts predate. A UI
+/// Automation focus, menu opening, element selected or window opened has
+/// its facts read by its check where NVDA judges acceptance, before the
+/// object's own calls, and may be placed after a foreground they predate,
+/// as NVDA's event is (Dickson, 2026-11-19). One timer, armed only while the hold
 /// keeps tells. Its read of the window in front, `GetForegroundWindow`
 /// in the listener, is the one the foreground's watch reads too
 /// ([`front`](Self::front)).

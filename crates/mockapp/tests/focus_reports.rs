@@ -1969,7 +1969,8 @@ fn a_focus_event_naming_another_applications_window_is_not_read() {
 /// element's keyboard focus, since Core's backend cache is the one owner
 /// of the verdict; Core drops it by the class's verdict, asking nothing,
 /// as NVDA's native-element test fails: the window's MSAA events speak
-/// for it.
+/// for it. The acceptance facts are read before the keyboard focus, where
+/// NVDA judges acceptance.
 fn the_listener_skips_a_focus_in_a_class_listed_window() {
     let title = common::unique_title("mockapp-class-listed");
     let mut app = common::spawn("msaa_class_window.json", "uia", &title);
@@ -2001,6 +2002,7 @@ fn the_listener_skips_a_focus_in_a_class_listed_window() {
             vec![
                 Call::NearestWindow,
                 Call::Classes(hwnd.0 as isize),
+                Call::Acceptance(hwnd.0 as isize),
                 Call::KeyboardFocus
             ]
         )
@@ -2044,6 +2046,7 @@ fn a_repeated_focus_on_the_still_focused_element_is_a_duplicate() {
 fn a_focus_that_leaves_between_the_two_keyboard_focus_reads_is_announced_once() {
     let title = common::unique_title("mockapp-focus-leaves-between");
     let mut app = common::spawn("small.json", "uia", &title);
+    let hwnd = common::find_window(&title).0 as isize;
     let client = Client::new(common::find_window(&title));
     let mut core = CoreDriver::new(&app, OutpostUnderTest::new(&app));
 
@@ -2087,8 +2090,12 @@ fn a_focus_that_leaves_between_the_two_keyboard_focus_reads_is_announced_once() 
         .collect();
     assert_eq!(
         focus_reads,
-        [Call::KeptFocus(ElementToken(1)), Call::KeyboardFocus],
-        "the earlier element's keyboard focus first, then the sender's"
+        [
+            Call::KeptFocus(ElementToken(1)),
+            Call::Acceptance(hwnd),
+            Call::KeyboardFocus
+        ],
+        "the earlier element's keyboard focus first, then acceptance, then the sender's"
     );
     assert_eq!((step.said, step.calls), (Vec::new(), CallCounts::default()));
     core.observe_check(None);

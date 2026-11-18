@@ -579,6 +579,8 @@ fn check(
     )
     .reading_parent(event.switcher_item);
     let failed = || Read::Failed;
+    // The acceptance facts, read where NVDA judges acceptance.
+    let mut accepted = None;
     while let Some(call) = check.next(record, now_us()) {
         match call {
             Call::NearestWindow => check.walked(sender.as_ref().map_or(Read::Failed, |sender| {
@@ -601,6 +603,12 @@ fn check(
                     },
                     record,
                 );
+            }
+            Call::Acceptance(window) => {
+                accepted = Some(
+                    WindowPart::read(&SystemReads, window, None).with_foreground(&SystemReads),
+                );
+                check.accepted();
             }
             Call::KeptFocus(token) => {
                 let focused = kept
@@ -650,10 +658,13 @@ fn check(
         Walked::NoWindow | Walked::Failed => None,
     };
     Told {
-        window: match (window, found) {
-            (Some(window), _) => PendingWindow::Found(WindowPart::read(&SystemReads, window, None)),
-            (None, Walked::Failed) => PendingWindow::Failed,
-            (None, _) => PendingWindow::NoWindow,
+        window: match (window, found, accepted) {
+            (Some(_), _, Some(facts)) => PendingWindow::Whole(Box::new(facts)),
+            (Some(window), _, None) => {
+                PendingWindow::Found(WindowPart::read(&SystemReads, window, None))
+            }
+            (None, Walked::Failed, _) => PendingWindow::Failed,
+            (None, _, _) => PendingWindow::NoWindow,
         },
         thread: window.map_or(0, |window| verbatim_win32::window::window_owner(window).0),
         checked,

@@ -16,7 +16,8 @@
 //!   1540) when its class is on neither of NVDA's lists and this thread's
 //!   record holds no answer begun within the last half second; for each
 //!   kept element with the event's runtime id, its keyboard focus (902 to
-//!   923); for a `NetUITWMenuItem` menu item with no name, its previous
+//!   923); the window's acceptance facts, where NVDA judges acceptance
+//!   (`shouldAcceptEvent`, 925), before its object is made (932); for a `NetUITWMenuItem` menu item with no name, its previous
 //!   sibling, which NVDA's object reads as it chooses its class
 //!   (`NVDAObjects/UIA/__init__.py` 1227 to 1231); and the element's own
 //!   keyboard focus (`shouldAllowUIAFocusEvent`, 1632 to 1636), which NVDA
@@ -33,10 +34,12 @@
 //!   any probe it made;
 //! - an element selected, a window opened and a property change, NVDA's
 //!   automation-event and property-change handlers: the walk and the probe
-//!   of its native-element test (819 to 824);
+//!   of its native-element test (819 to 824), then the window's acceptance
+//!   facts, as the handler judges acceptance next (832);
 //! - a notification, NVDA's notification handler: the walk alone, a walk
 //!   that fails telling no window, as it finds none (1063 onward,
-//!   1114 to 1119).
+//!   1114 to 1119). NVDA judges no acceptance there; the facts serve
+//!   Core's own rules and are read as the tell is placed.
 //!
 //! A probe's answer is the raw probe's with NVDA's checks after it
 //! (`UIAHandler/__init__.py` 1344 to 1361), judged by
@@ -110,6 +113,11 @@ pub enum Call {
     /// keyboard focus: a call into the application
     /// ([`Check::kept_focus`]).
     KeptFocus(ElementToken),
+    /// The acceptance facts of the nearest window, the foreground's part
+    /// included: calls to Windows, made where NVDA judges acceptance
+    /// (`shouldAcceptEvent`, `UIAHandler/__init__.py` 925), before the
+    /// object's own calls ([`Check::accepted`]).
+    Acceptance(isize),
     /// Whether the element has a previous sibling: a call into the
     /// application ([`Check::previous_sibling`]).
     PreviousSibling,
@@ -207,6 +215,8 @@ pub struct Check {
     classes: Option<WindowClasses>,
     probing: Option<Probing>,
     kept_answers: Vec<(ElementToken, Read<bool>)>,
+    /// Whether the acceptance facts were read.
+    accepted: bool,
     previous_sibling: Option<Read<bool>>,
     parent_automation_id: Option<Read<Option<String>>>,
     keyboard_focus: Option<Read<bool>>,
@@ -231,6 +241,7 @@ impl Check {
             classes: None,
             probing: None,
             kept_answers: Vec::new(),
+            accepted: false,
             previous_sibling: None,
             switcher_item: false,
             parent_automation_id: None,
@@ -269,12 +280,19 @@ impl Check {
             return Some(Call::Classes(window));
         }
         // Only the focus handler reads more. Whatever the verdict found, it
-        // goes on: Core judges the native-element test.
+        // goes on: Core judges the native-element test. The automation-event
+        // handler judges acceptance last.
         if self.handler != Handler::Focus {
-            return None;
+            return (!self.accepted).then_some(Call::Acceptance(window));
         }
         if let Some(&token) = self.kept.get(self.kept_answers.len()) {
             return Some(Call::KeptFocus(token));
+        }
+        // NVDA judges acceptance after its duplicate test and before its
+        // object reads the previous sibling and the parent's automation id
+        // and the keyboard focus (902 to 953).
+        if !self.accepted {
+            return Some(Call::Acceptance(window));
         }
         if self.placeholder_candidate {
             match self.previous_sibling {
@@ -331,6 +349,12 @@ impl Check {
     /// focus.
     pub fn kept_focus(&mut self, token: ElementToken, focused: Read<bool>) {
         self.kept_answers.push((token, focused));
+    }
+
+    /// Records that the acceptance facts were read: the thread keeps them
+    /// for the tell.
+    pub fn accepted(&mut self) {
+        self.accepted = true;
     }
 
     /// Records whether the element has a previous sibling.
@@ -406,6 +430,10 @@ mod tests {
         let mut calls = Vec::new();
         while let Some(call) = check.next(record, now_us) {
             calls.push(call);
+            if let Call::Acceptance(_) = call {
+                check.accepted();
+                continue;
+            }
             match (call, answer(call)) {
                 (Call::NearestWindow, Answer::Nearest(nearest)) => check.walked(nearest),
                 (Call::Classes(_), Answer::Class(verdict)) => check.classed(verdict),
@@ -483,6 +511,7 @@ mod tests {
                         Answer::Focus(Read::Answered(false))
                     }
                     Call::ParentAutomationId => Answer::Parent(Read::Failed),
+                    Call::Acceptance(_) => panic!("the run reads the facts"),
                 },
             );
         assert_eq!(
@@ -493,6 +522,7 @@ mod tests {
                 Call::Probe(5),
                 Call::KeptFocus(ElementToken(3)),
                 Call::KeptFocus(ElementToken(4)),
+                Call::Acceptance(5),
                 Call::KeyboardFocus,
             ]
         );
@@ -532,6 +562,7 @@ mod tests {
                 Answer::Parent(Read::Answered(Some("SwitchItemListControl".to_owned())))
             }
             Call::Probe(_) => Answer::Provider(true),
+            Call::Acceptance(_) => panic!("the run reads the facts"),
         };
         let check =
             Check::new(EventKind::UiaFocus, false, vec![ElementToken(3)]).reading_parent(true);
@@ -543,6 +574,7 @@ mod tests {
                     Call::NearestWindow,
                     Call::Classes(5),
                     Call::KeptFocus(ElementToken(3)),
+                    Call::Acceptance(5),
                     Call::ParentAutomationId,
                     Call::KeyboardFocus,
                 ],
@@ -557,7 +589,12 @@ mod tests {
         assert_eq!(
             (calls, parent),
             (
-                vec![Call::NearestWindow, Call::Classes(5), Call::KeyboardFocus],
+                vec![
+                    Call::NearestWindow,
+                    Call::Classes(5),
+                    Call::Acceptance(5),
+                    Call::KeyboardFocus
+                ],
                 None
             )
         );
@@ -566,7 +603,10 @@ mod tests {
         let (calls, _, _, parent) = run(check, &mut ProbeRecord::default(), 0, answer);
         assert_eq!(
             (calls, parent),
-            (vec![Call::NearestWindow, Call::Classes(5)], None)
+            (
+                vec![Call::NearestWindow, Call::Classes(5), Call::Acceptance(5)],
+                None
+            )
         );
     }
 
@@ -618,6 +658,7 @@ mod tests {
                     Call::NearestWindow,
                     Call::Classes(5),
                     Call::KeptFocus(ElementToken(2)),
+                    Call::Acceptance(5),
                     Call::PreviousSibling,
                     Call::KeyboardFocus,
                 ],
@@ -651,6 +692,7 @@ mod tests {
                 Call::Classes(5),
                 Call::Probe(5),
                 Call::KeptFocus(ElementToken(4)),
+                Call::Acceptance(5),
                 Call::KeyboardFocus,
             ]
         );
@@ -675,6 +717,7 @@ mod tests {
                 Call::NearestWindow,
                 Call::Classes(5),
                 Call::KeptFocus(ElementToken(4)),
+                Call::Acceptance(5),
                 Call::KeyboardFocus,
             ]
         );
@@ -703,7 +746,12 @@ mod tests {
         });
         assert_eq!(
             calls,
-            [Call::NearestWindow, Call::Classes(5), Call::KeyboardFocus]
+            [
+                Call::NearestWindow,
+                Call::Classes(5),
+                Call::Acceptance(5),
+                Call::KeyboardFocus
+            ]
         );
         assert_eq!(told.probe, None);
         assert_eq!(told.keyboard_focus, Some(Read::Answered(true)));
@@ -734,6 +782,7 @@ mod tests {
                     Call::NearestWindow,
                     Call::Classes(5),
                     Call::Probe(5),
+                    Call::Acceptance(5),
                     Call::KeyboardFocus
                 ],
                 "{raw}"
@@ -792,7 +841,12 @@ mod tests {
                 });
             assert_eq!(
                 calls,
-                [Call::NearestWindow, Call::Classes(5), Call::Probe(5)],
+                [
+                    Call::NearestWindow,
+                    Call::Classes(5),
+                    Call::Probe(5),
+                    Call::Acceptance(5)
+                ],
                 "{kind:?}"
             );
             assert_eq!(walked, Walked::Found(5));
@@ -840,6 +894,7 @@ mod tests {
                 Call::NearestWindow,
                 Call::Classes(5),
                 Call::KeptFocus(ElementToken(8)),
+                Call::Acceptance(5),
                 Call::PreviousSibling,
             ];
             if then_focus {

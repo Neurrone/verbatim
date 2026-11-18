@@ -69,11 +69,13 @@ Public API:
   its application's check thread, NVDA's handler for its kind in its
   order, as one pure step function: `Check::next` names the next `Call`
   (the walk to the nearest window, the window's classes, the probe,
-  each kept element's keyboard focus, the previous sibling, the parent's
-  automation id, the element's keyboard focus) and the thread records each answer. `Handler::of` maps a
+  each kept element's keyboard focus, the window's acceptance facts, the
+  previous sibling, the parent's automation id, the element's keyboard
+  focus) and the thread records each answer. `Handler::of` maps a
   kind to its handler: a focus or menu opening makes every call, a walk
   that finds no window ending it; an
-  element selected, a window opened and a property change walk and probe;
+  element selected, a window opened and a property change walk and probe,
+  then read the acceptance facts, where NVDA's handler judges acceptance;
   a notification walks alone, a failed walk telling no window. The probe
   the tell carries, and the record keeps, is the raw probe's answer with
   NVDA's checks after it (`listener_provider`, judged with the classes

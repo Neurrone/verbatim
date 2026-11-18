@@ -309,9 +309,18 @@ owner, topmost for the window and its root, the live foreground window
 and its root owner, the window's and its root owner's relation to the
 foreground window and to the foreground thread's active window, and
 whether it is the desktop window. It reads them at a `WinEvent`'s
-arrival, and for a UI Automation event as the tell is placed after its
-check thread's calls, so an event is judged against the foreground of
-that moment, as NVDA judges it as it processes the event. Core judges
+arrival; for a UI Automation focus, menu opening, element selected or
+window opened on its check thread where NVDA's handler calls
+`shouldAcceptEvent` (`UIAHandler/__init__.py` 925, 832), after the walk,
+the probe and the kept elements' keyboard focus and before the previous
+sibling, the parent's automation id and the element's keyboard focus,
+which NVDA reads as it makes its object (932, 953); and for a
+notification, which NVDA judges no acceptance for (1063 to 1145), as its
+tell is placed. So an event is judged against the foreground of the
+moment NVDA judges it (Dickson, 2026-11-19). A window whose UI
+Automation focus came before Windows named it the foreground, the
+foreground arriving during the check's last calls, is refused, as NVDA
+refuses it; no recording has shown that order. Core judges
 the test at the entry's turn in the event queue, before any request, so
 a background window's event costs no call into its application.
 
