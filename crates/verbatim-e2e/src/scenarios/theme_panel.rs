@@ -103,7 +103,7 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
         &["tab"],
         &[
             "Description: edit read only multi line Alt+d",
-            "Everything spoken as NVDA speaks it, with NVDA's sounds where NVDA plays them.",
+            "Matches NVDA's speech and sounds.",
         ],
     );
     press(scenario, &["tab"], &["Sound volume: slider 100 Alt+u"]);

@@ -288,7 +288,7 @@ toggle-state-off = { $key } off
 ## events, and the problems found loading a theme.
 
 theme-default-name = Default
-theme-default-description = Everything spoken as NVDA speaks it, with NVDA's sounds where NVDA plays them.
+theme-default-description = Matches NVDA's speech and sounds.
 indication-category-roles = Roles
 indication-category-states = States
 indication-category-properties = Properties

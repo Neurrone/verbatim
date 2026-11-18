@@ -41,13 +41,6 @@ Scenarios: the `windows_terminal_` scenarios generally, for example `windows_ter
 - Cause: Settings raised the combo box's expand and collapse change (property 30070) about 5 ms after the list item's focus was observed. Today's outpost follows only the focused element, so by then it dropped the combo box's change unpublished. In the passing run the change came 10.9 ms before the focus. Neither order is guaranteed.
 - Fix: the event queue and focus build of [Readers tell, Core asks](roadmap.md#readers-tell-core-asks). Core moves the outpost's `Follow` only after committing the new focus, so the combo box is still followed when it raises "expanded"; the change waits in Core's queue while the item's focus is read, and the narrow ordering rule speaks it first. NVDA likewise unregisters the old focus only when it handles the new one (`NVDAObjects/UIA/__init__.py` 1628 to 1630). An NVDA capture of the late order confirms what NVDA speaks before a test asserts it.
 
-## A description's first line wraps by the window's width
-
-- Scenarios: `theme_panel`, 2 of 2 runs locally on 2026-11-14, with the session parked on the console.
-- How: the Theme page's read-only multi-line Description field speaks "Everything spoken as NVDA speaks it, with NVDA's sounds " where the expectation has the whole sentence.
-- Cause: on focus, a multi-line edit speaks its current line, as NVDA does, and the field's first line ends where the edit control wraps it, which depends on its width in pixels under the session's display settings. The expectation holds only where the field is wide enough. The scenario depends on the display, which the testing standard forbids.
-- Fix: the scenario's expectation, or the field's text, made independent of the wrap; not yet planned.
-
 ## Settings' page focus never delivered by UI Automation
 
 - `settings_system_page` on GitHub's runner (run 42492633218, 2026-11-08)

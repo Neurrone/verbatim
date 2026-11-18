@@ -1080,7 +1080,7 @@ mod tests {
         assert!(!page.can_rename && !page.can_remove, "the built-in theme");
         assert_eq!(
             page.description,
-            "Everything spoken as NVDA speaks it, with NVDA's sounds where NVDA plays them.\n\
+            "Matches NVDA's speech and sounds.\n\
              No problems found."
         );
         assert_eq!(page.volume, 100);
