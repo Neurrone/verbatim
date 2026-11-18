@@ -334,7 +334,10 @@ impl ReducerRecorder {
     /// ready to feed to [`replay`] from [`FlightRecorder::checkpoint`].
     #[must_use]
     pub fn dump_inputs(&self) -> Vec<Input> {
-        self.entries().map(|entry| entry.input.clone()).collect()
+        self.entries()
+            .into_iter()
+            .map(|entry| entry.input.clone())
+            .collect()
     }
 }
 

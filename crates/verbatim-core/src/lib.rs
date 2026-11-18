@@ -92,7 +92,7 @@ pub use dump::{
     write_dump,
 };
 pub use entries::Runtime;
-pub use flight_recorder::FlightRecorder;
+pub use flight_recorder::{FlightRecorder, FlightSnapshot};
 pub use focus_rules::is_selection_container;
 pub use recorder::{RecordedInput, ReducerRecorder, replay};
 pub use reduce::{SNAP_RESULTS_ACTIVITY, reduce};

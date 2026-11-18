@@ -169,14 +169,14 @@ impl From<io::Error> for DumpReadError {
 /// # Errors
 ///
 /// Returns any I/O error from `writer`.
-pub fn write_dump<W: Write>(
+pub fn write_dump<'a, W: Write>(
     writer: &mut W,
     crate_version: &str,
     commit: &str,
     uncommitted_changes: bool,
     timestamp: &str,
     base: &SrState,
-    inputs: &[RecordedInput],
+    inputs: impl IntoIterator<Item = &'a RecordedInput>,
 ) -> io::Result<()> {
     write_line(
         writer,

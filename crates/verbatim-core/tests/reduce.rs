@@ -651,7 +651,7 @@ fn a_window_that_dropped_its_start_replays_from_its_checkpoint() {
             .collect::<Vec<_>>()
     );
 
-    let entries: Vec<_> = live.recorder.entries().cloned().collect();
+    let snapshot = live.recorder.snapshot();
     let mut buffer = Vec::new();
     verbatim_core::write_dump(
         &mut buffer,
@@ -659,8 +659,8 @@ fn a_window_that_dropped_its_start_replays_from_its_checkpoint() {
         verbatim_core::UNKNOWN_COMMIT,
         false,
         "now",
-        live.recorder.checkpoint(),
-        &entries,
+        snapshot.checkpoint(),
+        snapshot.entries(),
     )
     .expect("writes");
     let contents = verbatim_core::read_dump(&mut buffer.as_slice()).expect("reads");

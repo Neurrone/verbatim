@@ -1024,6 +1024,17 @@ that ends unheard.
   hook's report and one deadline of the reducer's, a step each; a menu
   or the task switcher ending is one step.
 
+### A flight-recorder dump
+
+A dump takes the recorder's lock, which the reducer takes for every
+input, only to clone one `Arc` per segment of the window, at most three
+(`FlightSnapshot`, in `books/dev/src/reference/crates/verbatim-core.md`,
+"The flight recorder"), so the reducer waits at most that step however
+many entries or bytes the window holds. Reading, serializing and writing
+the entries run on the dumping thread after the lock is released. Each
+recorded input allocates one link, where the window's list grew in place
+before.
+
 ### Threads after the output build
 
 Debug builds, 2026-10-31, after the output ownership build

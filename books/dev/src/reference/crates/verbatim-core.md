@@ -222,12 +222,26 @@ segments, each starting at a checkpoint:
 - `checkpoint()` and `entries()` read the window; `len()`, `is_empty()`
   and `bytes()` measure it; `max_entries()` and `max_bytes()` give its
   bounds.
+- `snapshot()` returns a `FlightSnapshot<T, S>`, the window as it stands
+  (`checkpoint()`, `entries()`, `len()`, `is_empty()`), sharing rather
+  than copying it, for a dump taken on another thread.
 
 So the window always starts at a checkpoint, holds between half and all
 of each bound, takes a checkpoint once per half window, and keeps at most
 three alive. Their size is not counted against the byte bound; the
 state's large parts that exist today (the ancestor chain, the text lines,
 the terminal readers) are held behind `Arc`s, which a clone shares.
+
+A dump must never hold up the reducer, which takes the recorder's lock
+for every input, so nothing is copied under that lock. Each segment's
+entries are a chain of immutable links behind `Arc`, each new entry
+pointing at the one before it, and its checkpoint is behind an `Arc`
+too; `snapshot()` clones one `Arc` per segment, at most three, whatever
+the entries hold. The recorder goes on appending links and dropping old
+segments, which the snapshot keeps alive until it is dropped, and the
+dump walks the chains after the lock is released. A link's `Drop` frees
+the chain behind it in a loop, stopping at a link a snapshot still
+holds, so dropping a long segment never recurses once per entry.
 
 `ReducerRecorder` is `FlightRecorder<RecordedInput, SrState>`:
 `with_default_bounds(initial)` uses the shell's bounds,

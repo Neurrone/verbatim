@@ -536,11 +536,14 @@ knowing for review:
   `latency`
   command newest first. Core-originated speech with no event reports its
   queue time as the timeline start.
-- `flight_dump` (milestone M2) — `dump_now(recorder, dumps_dir)` clones the
-  shared `Arc<Mutex<ReducerRecorder>>`'s retained entries and the
-  checkpoint state they start from under a brief lock (recovering a poisoned lock rather than propagating it, since the
-  reducer thread panicking while holding it is exactly the case the panic
-  hook below exists for), then writes them through
+- `flight_dump` (milestone M2) — `dump_now(recorder, dumps_dir)` takes a
+  `FlightSnapshot` of the shared `Arc<Mutex<ReducerRecorder>>` under its
+  lock, one `Arc` per segment and no entry copied, so the reducer waits
+  at most that step whatever the window holds (recovering a poisoned lock
+  rather than propagating it, since the reducer thread panicking while
+  holding it is exactly the case the panic hook below exists for); the
+  recorder keeps its window for later dumps. After releasing the lock it
+  writes the snapshot's checkpoint and entries through
   `verbatim_core::dump::write_dump` to `dumps_dir` as
   `flight-<UTC timestamp>.jsonl`, creating the folder if needed and logging
   the path. `install_panic_hook(recorder, dumps_dir)` chains the previous

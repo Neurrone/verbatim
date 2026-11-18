@@ -5,10 +5,11 @@
 //!
 //! The recorder itself lives behind `Arc<Mutex<ReducerRecorder>>`, shared
 //! between the reducer thread (which records each input as it processes it)
-//! and both dump triggers here. Locking is brief in every case: recording
-//! is a bounded push, and dumping only clones the retained entries and the
-//! checkpoint they start from before releasing the lock and doing file
-//! I/O.
+//! and both dump triggers here. A dump never holds up the reducer: under
+//! the lock it only takes a `FlightSnapshot`, a shared reference to each of
+//! the window's few segments (at most three), whatever the number or size
+//! of the entries, and it reads, serializes and writes them after releasing
+//! the lock, while the reducer goes on recording.
 
 use std::fs;
 use std::io;
@@ -113,14 +114,12 @@ pub fn dump_now(recorder: &Arc<Mutex<ReducerRecorder>>, dumps_dir: &Path) -> io:
     // Timed in two parts, so a slow dump shows whether it waited on the
     // reducer's lock or on the disk.
     let started = Instant::now();
-    let (base, inputs): (_, Vec<_>) = {
-        let recorder = recorder.lock().unwrap_or_else(PoisonError::into_inner);
-        (
-            recorder.checkpoint().clone(),
-            recorder.entries().cloned().collect(),
-        )
-    };
-    let copied = started.elapsed();
+    let snapshot = recorder
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .snapshot();
+    let locked = started.elapsed();
+    let inputs = snapshot.entries();
 
     fs::create_dir_all(dumps_dir)?;
     let now = utc_now();
@@ -132,13 +131,13 @@ pub fn dump_now(recorder: &Arc<Mutex<ReducerRecorder>>, dumps_dir: &Path) -> io:
         env!("VERBATIM_COMMIT"),
         env!("VERBATIM_UNCOMMITTED_CHANGES") == "true",
         &now.header,
-        &base,
-        &inputs,
+        snapshot.checkpoint(),
+        inputs.iter().copied(),
     )?;
     tracing::debug!(
         path = %path.display(),
         entries = inputs.len(),
-        copy_ms = copied.as_secs_f64() * 1_000.0,
+        lock_ms = locked.as_secs_f64() * 1_000.0,
         total_ms = started.elapsed().as_secs_f64() * 1_000.0,
         "flight-recorder dump written"
     );
