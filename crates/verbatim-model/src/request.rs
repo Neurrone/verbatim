@@ -687,16 +687,14 @@ pub struct HeldIds {
 
 /// The classes whose rules change how Core judges an object, such as the
 /// MSAA duplicate test. Word's, Outlook's and Internet Explorer's join with
-/// the milestones that read them.
+/// the milestones that read them. File Explorer's items that raise a
+/// second focus event have no class: the identity check in the duplicate
+/// test says their second focus once (Dickson, 2026-11-18;
+/// `docs/parity/focus-events.md`, "Duplicate focus suppression").
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ObjectClass {
     /// No class with rules of its own.
     Plain,
-    /// An item File Explorer raises a second focus event for: an item of
-    /// the desktop's list or a menu item of a classic list view. While it
-    /// is the readers' last focus, an MSAA focus with its ids is refused
-    /// (`docs/parity/focus-events.md`, "Duplicate focus suppression").
-    FocusRaisedTwice,
 }
 
 /// One node of a focus answer.

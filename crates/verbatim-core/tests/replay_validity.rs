@@ -679,6 +679,61 @@ fn save_as(desk: &mut Desk) {
 
 /// Every fixture: its name and its session.
 /// A session, which drives a desk through a recorded order.
+/// The desktop's list (`deldesk_run1`): its items a.txt, 14 of 16, and
+/// b.txt, 15 of 16, focused as their names were typed, each read and
+/// spoken; the Delete key 38.1 ms before the list's focus at child 15, the
+/// deleted item's child id, where c.txt now is, 15 of 15. The key comes
+/// between, so the focus is read in full and spoken, where NVDA's File
+/// Explorer rule refuses it (Dickson, 2026-11-18: "I do want it to read").
+/// The typed keys and every answer are code-level.
+fn desktop_delete(desk: &mut Desk) {
+    let events = recording("deldesk_run1");
+    let mut windows = Windows::new(ONE, None);
+    let start = 4_000_000;
+    let at = |event: &Recorded| start + event.t_us - events[0].t_us;
+    let list = windows.handle(&events[0].window);
+    let desktop = msaa_node(ONE, 50, Role::List, Some("Desktop"));
+    let file = |number, name, (position, size)| {
+        let node = item(
+            msaa_node(ONE, number, Role::ListItem, Some(name)),
+            position,
+            size,
+        );
+        CandidateAnswer::focused(by_ids(
+            focus_read_of(ONE, &node, std::slice::from_ref(&desktop)),
+            ids(list, -4, i32::try_from(position).expect("a child id")),
+        ))
+    };
+    play(desk, &mut windows, &events[..1], at(&events[0]));
+    answer_run(
+        desk,
+        at(&events[0]) + 1_000,
+        file(51, "zz-verbatim-rec-a.txt", (14, 16)),
+    );
+    play(desk, &mut windows, &events[1..2], at(&events[1]));
+    answer_run(
+        desk,
+        at(&events[1]) + 1_000,
+        file(52, "zz-verbatim-rec-b.txt", (15, 16)),
+    );
+    desk.keys += 1;
+    let delete_us = at(&events[2]) - 38_100;
+    desk.step_at(
+        delete_us,
+        QueueInput::Press(Box::new(Press {
+            key_seq: KeySeq::new(desk.keys),
+            pressed_at_us: delete_us,
+            action: PressAction::Passed,
+        })),
+    );
+    play(desk, &mut windows, &events[2..], at(&events[2]));
+    answer_run(
+        desk,
+        at(&events[2]) + 1_000,
+        file(53, "zz-verbatim-rec-c.txt", (15, 15)),
+    );
+}
+
 type Session = fn(&mut Desk);
 
 fn sessions() -> Vec<(&'static str, Session)> {
@@ -698,6 +753,7 @@ fn sessions() -> Vec<(&'static str, Session)> {
             open_dialog_second_arrow,
         ),
         ("validity_save_as", save_as),
+        ("validity_desktop_delete", desktop_delete),
     ]
 }
 
@@ -799,6 +855,30 @@ fn the_recorded_settings_dialog_says_its_item_once() {
             &[
                 "Label(\"Speech\")",
                 "Position { position: 1, set_size: Some(3) }"
+            ],
+        ])
+    );
+}
+
+/// The desktop's next item is read and spoken after Delete, as Dickson
+/// ruled (2026-11-18), where NVDA says nothing.
+#[test]
+fn the_desktops_next_item_is_spoken_after_delete() {
+    assert_eq!(
+        replayed("validity_desktop_delete"),
+        said(&[
+            &["Label(\"Desktop\")", "Role(List)"],
+            &[
+                "Label(\"zz-verbatim-rec-a.txt\")",
+                "Position { position: 14, set_size: Some(16) }"
+            ],
+            &[
+                "Label(\"zz-verbatim-rec-b.txt\")",
+                "Position { position: 15, set_size: Some(16) }"
+            ],
+            &[
+                "Label(\"zz-verbatim-rec-c.txt\")",
+                "Position { position: 15, set_size: Some(15) }"
             ],
         ])
     );

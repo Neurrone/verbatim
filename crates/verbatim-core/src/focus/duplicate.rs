@@ -29,35 +29,9 @@ pub(super) fn msaa_duplicate(last: Option<&LastFocus>, ids: &MsaaIds) -> bool {
             event: Some(earlier),
             held_child,
         } => match last.class {
-            ObjectClass::Plain | ObjectClass::FocusRaisedTwice => {
-                earlier == ids && *held_child <= 0
-            }
+            ObjectClass::Plain => earlier == ids && *held_child <= 0,
         },
         ReadBy::Msaa { event: None, .. } | ReadBy::Uia { .. } => false,
-    }
-}
-
-/// Whether an MSAA focus named by `ids` is refused as the second focus
-/// File Explorer raises for an item: the readers' last focus is such an
-/// item, of [`ObjectClass::FocusRaisedTwice`], with equal window, object
-/// and child ids, whatever the child id (`docs/parity/focus-events.md`,
-/// "Duplicate focus suppression"). Unlike a duplicate it is not a valid
-/// focus: a run goes on to its older candidates. Equal ids in the item's
-/// own list stand for the item's class, which only a read would show.
-pub(super) fn msaa_refused_repeat(last: Option<&LastFocus>, ids: &MsaaIds) -> bool {
-    last.is_some_and(|last| last.class == ObjectClass::FocusRaisedTwice)
-        && last_msaa_ids(last) == Some(ids)
-}
-
-/// The event ids the readers' last focus was read by, when it is an MSAA
-/// focus read from an event.
-fn last_msaa_ids(last: Option<&LastFocus>) -> Option<&MsaaIds> {
-    match &last?.read_by {
-        ReadBy::Msaa {
-            event: Some(earlier),
-            ..
-        } => Some(earlier),
-        ReadBy::Msaa { event: None, .. } | ReadBy::Uia { .. } => None,
     }
 }
 
@@ -83,7 +57,7 @@ pub(super) fn uia_duplicate(
         return false;
     };
     let allows_duplicate = match last.class {
-        ObjectClass::Plain | ObjectClass::FocusRaisedTwice => false,
+        ObjectClass::Plain => false,
     };
     !allows_duplicate
         && earlier == runtime_id
@@ -273,31 +247,5 @@ mod tests {
             &RuntimeId(vec![42, 1]),
             Some(&found)
         ));
-    }
-
-    fn raised_twice_last(event: MsaaIds) -> LastFocus {
-        LastFocus {
-            class: ObjectClass::FocusRaisedTwice,
-            role: verbatim_model::Role::ListItem,
-            ..msaa_last(Some(event))
-        }
-    }
-
-    #[test]
-    fn a_second_focus_on_an_item_explorer_raises_twice_is_refused_and_the_run_goes_on() {
-        let last = raised_twice_last(ids(3, -4, 3));
-        assert!(msaa_refused_repeat(Some(&last), &ids(3, -4, 3)));
-    }
-
-    #[test]
-    fn a_focus_on_another_item_after_one_explorer_raises_twice_is_tried() {
-        let last = raised_twice_last(ids(3, -4, 3));
-        assert!(!msaa_refused_repeat(Some(&last), &ids(3, -4, 4)));
-    }
-
-    #[test]
-    fn a_plain_items_second_focus_on_a_child_is_tried() {
-        let last = msaa_last(Some(ids(3, -4, 3)));
-        assert!(!msaa_refused_repeat(Some(&last), &ids(3, -4, 3)));
     }
 }

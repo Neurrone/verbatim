@@ -31,7 +31,7 @@ use verbatim_model::{NodeSnapshot, Role, TraceId, WindowHandle};
 
 use super::acceptance;
 use super::backend::{BackendCache, Judged, JudgedWindow, Judgement, WindowKey, by_class};
-use super::duplicate::{msaa_duplicate, msaa_refused_repeat, uia_duplicate};
+use super::duplicate::{msaa_duplicate, uia_duplicate};
 use super::msaa_run::{TurnDepth, UnlessSame};
 use super::versions::{LastFocus, ReadBy, Versions};
 use crate::entries::{Candidate, Entries, Entry, UiaFocus};
@@ -90,8 +90,6 @@ pub(crate) enum Reason {
     LastFocusWindow,
     /// A foreground tell whose ids equal the last focus's.
     SameIds,
-    /// The second focus File Explorer raises for the last focus's item.
-    RepeatedItem,
     /// A menu start after a run that executed a focus on an MSAA menu.
     OnMenu,
     /// A menu start whose object is not a menu popup.
@@ -810,13 +808,8 @@ fn msaa<M>(
                 return Ok(Settled::Refused(Reason::SameIds));
             }
         }
-    } else if !menu_start {
-        if msaa_duplicate(last, ids) {
-            return Ok(Settled::Duplicate);
-        }
-        if msaa_refused_repeat(last, ids) {
-            return Ok(Settled::Refused(Reason::RepeatedItem));
-        }
+    } else if !menu_start && msaa_duplicate(last, ids) {
+        return Ok(Settled::Duplicate);
     }
     if menu_start {
         // `IAccessibleHandler/__init__.py` 942 to 973.
@@ -880,13 +873,8 @@ fn menu_check<M>(
     view: &View<'_>,
     facts: Result<&CandidateFacts, M>,
 ) -> Result<Settled, (Need, M)> {
-    if let Some(ids) = ids {
-        if msaa_duplicate(view.last(), ids) {
-            return Ok(Settled::Duplicate);
-        }
-        if msaa_refused_repeat(view.last(), ids) {
-            return Ok(Settled::Refused(Reason::RepeatedItem));
-        }
+    if ids.is_some_and(|ids| msaa_duplicate(view.last(), ids)) {
+        return Ok(Settled::Duplicate);
     }
     let facts = match facts {
         Ok(facts) => facts,

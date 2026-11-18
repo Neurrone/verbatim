@@ -456,16 +456,16 @@ fn an_msaa_duplicate_and_the_repeated_item_are_judged_with_no_read() {
             Validity::NeedsRead(Need::FocusedState)
         );
     }
-    let mut item = last_msaa(-4, 3);
-    item.class = ObjectClass::FocusRaisedTwice;
-    let repeated = versions(Some(item));
+    // A child above 0 with equal ids is never a duplicate by the test:
+    // File Explorer's second focus on an item has no rule of its own.
+    let item = versions(Some(last_msaa(-4, 3)));
     assert_eq!(
         msaa_answer(
             &candidate(EventKind::MsaaFocus, (-4, 3), 1_000, 7),
-            &repeated,
+            &item,
             None
         ),
-        Validity::Refused(Reason::RepeatedItem)
+        Validity::NeedsRead(Need::FocusedState)
     );
 }
 

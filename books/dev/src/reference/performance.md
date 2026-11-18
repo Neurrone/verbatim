@@ -152,8 +152,16 @@ only.
 - A request Core stopped waiting for has its late answer dropped by
   number, and its counts with it. A request withdrawn before it started
   made none.
-- In a run of several focus events, the newest is tried first and older
-  ones only if it is refused; each counts its own calls.
+- A run of several focus candidates is tried newest first, one request
+  per candidate ([How focus works](../explanation/design/focus.md)). A
+  candidate Core refuses from its stored facts costs no request. A
+  candidate refused after its read costs one more crossing to its
+  outpost and back: 1.0 to 1.5 ms, and 3.0 ms once, when the outpost's
+  worker had events queued, measured with the outpost logging at debug;
+  Core's turn is 0.20 to 0.27 ms of it, the rest the pipes and the
+  outpost's queue. It also costs one wake each of Core and the outpost's
+  worker. Its calls into the application are those the read would have
+  made anyway. Each request counts its own calls.
 
 ## The floor and the ratio
 
@@ -363,14 +371,25 @@ when its nearest window's class is on NVDA's MSAA class list, and reads
 every other one (Dickson, 2026-10-30; [ADR 0001](adr/0001-focus.md), "One judge per
 fact").
 
-- A focus in an MSAA window off the class lists, as UIA's MSAA proxy
-  delivers it: the listener's check thread walks to its nearest window and
-  probes it, one window message, finds no provider and ends the check, and
-  Core drops the focus by the probe's verdict, asking nothing; nothing of
-  the application's `IAccessible` is asked
+- A UI Automation focus in an MSAA window, as UIA's MSAA proxy delivers
+  it. The listener's check thread walks to the nearest window and probes
+  it, one window message, unless its record answered within half a
+  second. It then reads the keyboard focus of the element and of every
+  element it keeps with the event's runtime id, and sends the tell. Core
+  drops the focus by the window's verdict, asking nothing
   (`a_focus_in_a_window_with_no_uia_provider_is_dropped_by_its_probe`).
-  Probes per such focus change: one, the check thread's, as NVDA makes
-  one.
+  - Calls: 1, plus each element kept with that runtime id that Core
+    read, whatever was only told (ce3305a1).
+  - Measured 2026-11-18, release, `measure_focus_text_box` (two Windows
+    Forms text boxes): 1 call per focus, over 132 focuses. The check took
+    P50 1.6 to 2.2 ms. Before the change, the count grew from 1 to 22 over
+    20 returns, at about 0.3 ms per call.
+  - Speech is not delayed, since Core speaks the MSAA focus. The
+    application's later UI Automation events wait behind the check.
+  - NVDA makes none of these keyboard-focus calls for a non-native
+    element (`UIAHandler/__init__.py` 887 to 899).
+  - Probes per such focus change: at most one, the check thread's, as
+    NVDA makes one.
 - A focus in a window on the class lists: the class verdict, local calls
   only, and the drop.
 - The listener's exposure to a busy MSAA application: its read through the
@@ -513,10 +532,44 @@ Debug builds, 2026-11-08.
   call into the application.
 - Per case: `measure_focus_flood`, a burst of focuses over ten buttons of
   one window, median 0.3 ms and 99th percentile 1.3 ms, the listener's
-  handling median 11.9 ms; `measure_focus_text_box` median 0.3 ms and
-  99th percentile 1.9 ms; `measure_focus_windows_terminal_tabs` 0.4 ms
+  handling median 11.9 ms; `measure_focus_windows_terminal_tabs` 0.4 ms
   (two announcements), the listener's handling 43.6 ms. Returns are in
   "A return between top-level windows".
+
+Release and debug, 2026-11-18, `cargo xtask measure` at info level. Each
+figure runs from the listener's callback receiving the event to the
+speech being queued, and gives the median (P50), P99 and maximum in ms.
+
+- A focus whose newest candidate is valid: `settings_dialog_keys`, Tab
+  and Alt+letter in the settings dialog.
+  - Release: P50 4.9, P99 10.9, max 11.1, over 100 focuses. Debug: 6.0,
+    12.2 and 12.8.
+  - Control+Tab: release P50 14.0, P99 18.5, max 18.7, over 15 focuses.
+    Core first serves the requests for events queued ahead of the focus,
+    5 to 10 ms.
+  - The time is the outpost's read: 36 MSAA calls for a plain control,
+    and 99 to 103 for one that enters a group or a page. The listener's
+    part is P50 0.2 and P99 0.5. Speech is queued P50 0.1 and P99 0.3 ms
+    after the answer.
+- A focus whose newest candidate is refused after its read: the settings
+  dialog closing onto File Explorer's desktop list.
+  - Release: P50 45.5, P99 51.3, max 51.3, over 25 focuses. Debug: max
+    57.5.
+  - The refused candidate's request takes 8 to 40 ms. It waits 3.6 to
+    24.8 ms behind the events Explorer raises as the foreground returns,
+    and Explorer answers its 10 MSAA calls in 3.8 to 20.3 ms. The valid
+    candidate's read follows: 87 MSAA calls, 10.5 to 14.5 ms.
+  - Before and after the focus validity build, release, 5 runs each: 54.5,
+    79.7 and 81.4 at 17e50fce; 49.0, 75.0 and 76.3 at 7ee82b09. The tails
+    come from File Explorer in both builds: its answers and its outpost's
+    queue take up to 45 ms, and the listener sometimes delivers its
+    focuses 33 to 40 ms after it observed them. The run's extra crossing
+    per refused candidate is about 1 ms.
+- A foreground change between two Windows Forms text boxes
+  (`measure_focus_text_box`): release P50 34.9, P99 54.1. The
+  foreground's read is 34 MSAA calls, which take 30 to 45 ms in the
+  PowerShell window as it activates. The 2026-11-08 figure for this
+  workload began after the read and is replaced, not compared.
 
 ### A focus change into a list, UIA
 
@@ -742,6 +795,9 @@ the second focus of a split pair; every other focus is read as before.
 - A focus read asks the position and the set's size whatever the
   position-reporting setting: one `LVM_GETITEMCOUNT` more per list view
   item's focus with the setting off.
+- Latency, release, `settings_dialog_keys`, 2026-11-18: the split pair's
+  second focus answered "same" and was silent. It took 0.8 and 1.7 ms
+  from the answer before it, in 2 of 5 runs.
 - Bound: a list view item's columns, as its full read.
 
 ### A tree view item expanded or collapsed, MSAA
@@ -1093,6 +1149,24 @@ caret and the key's unit (`starting_reads_cost_exactly`).
   lock-free store; the hook's thread is not woken.
 - A held key costs Core at most one wake-up for its 150 ms release, none
   when its turn comes sooner.
+
+### A caret key's confirmation of a focus behind it
+
+An MSAA focus behind a caret key, which no read has yet confirmed, is
+confirmed with one request for its facts. The request is made only while
+the key waits.
+
+- Calls: the candidate's facts, its focused state over it and its
+  ancestors; there is no full read.
+- Latency, `stale_focus_behind_a_caret_key`, 2026-11-18, from the focus
+  reaching Core to its facts answer: release P50 2.0, max 2.5 (10 runs);
+  debug P50 2.2, P99 6.9, max 7.8 (20 runs).
+- The confirmation runs inside the key's watch bound, so it adds nothing
+  to the key's latency. The arrow's "blank" in the empty field is spoken
+  at the bound: release P50 101.5 ms, max 102.2. NVDA's capture of the
+  same steps gives about 105 ms.
+- Bound: one request for each candidate entry raised before the key's
+  bound. Behind a hung candidate application, the hang check, about 5 s.
 
 ### The shell's staging windows
 

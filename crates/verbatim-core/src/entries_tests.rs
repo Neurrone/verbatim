@@ -788,12 +788,15 @@ fn an_msaa_duplicate_of_the_readers_last_focus_ends_the_run_with_no_read() {
 }
 
 /// File Explorer raises a second focus on the desktop's item it focused,
-/// child 3 of its list, as it does when a program starts from the desktop
+/// child 3 of its list, as it does when the desktop comes back from
+/// another application (NVDA's #2988) or a program starts from it
 /// (`text_box_caret_keys`' artifacts): the first is read and spoken, and
-/// the second, with the same ids, is refused with no read, though a
-/// child above 0 is never a duplicate.
+/// the second, with the same ids and no key between, is asked unless it
+/// is that item, which its outpost answers it is: said once, by the
+/// identity check, with no rule of File Explorer's own (Dickson,
+/// 2026-11-18).
 #[test]
-fn a_second_focus_on_an_item_file_explorer_raises_twice_is_refused_with_no_read() {
+fn a_second_focus_on_the_desktops_item_with_no_key_between_is_said_once() {
     let mut state = ready();
     let item = |state: &mut Held, at_us| {
         let mut tell = msaa_tell(-4);
@@ -805,7 +808,7 @@ fn a_second_focus_on_an_item_file_explorer_raises_twice_is_refused_with_no_read(
         feed_at(state, at_us, entry(tell))
     };
     assert_eq!(item(&mut state, 1_000), ["send Outpost(Pid(40)) MsaaRun"]);
-    let mut read = focus_read(Some(HeldIds {
+    let read = focus_read(Some(HeldIds {
         event: MsaaIds {
             window: WindowHandle(5),
             object: -4,
@@ -813,7 +816,6 @@ fn a_second_focus_on_an_item_file_explorer_raises_twice_is_refused_with_no_read(
         },
         held_child: 3,
     }));
-    read.class = ObjectClass::FocusRaisedTwice;
     let tried = CandidateAnswer::focused(read);
     assert_eq!(
         feed_at(
@@ -823,7 +825,11 @@ fn a_second_focus_on_an_item_file_explorer_raises_twice_is_refused_with_no_read(
         ),
         SPOKEN
     );
-    assert_eq!(item(&mut state, 3_000), NOTHING);
+    assert_eq!(item(&mut state, 3_000), ["send Outpost(Pid(40)) MsaaRun"]);
+    assert_eq!(
+        feed_at(&mut state, 4_000, answer(OUTPOST, 2, Reply::CandidateSame)),
+        NOTHING
+    );
     assert!(state.queue.front_for_tests().is_none());
 }
 

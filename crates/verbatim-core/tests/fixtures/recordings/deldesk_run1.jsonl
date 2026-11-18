@@ -1,0 +1,4 @@
+{"source": "verbatim-event-record, deldesk (2026-11-18), run 1: the desktop list's items a.txt and b.txt focused as their names were typed, then, after the Delete key, the focus at the deleted item's child id; the list's destroy and create on its client, between the key and that focus, left out"}
+{"t_us": 4627534, "kind": "msaa_focus", "window": "0x1010A", "class": "SysListView32", "object": -4, "child": 14, "pass": 17}
+{"t_us": 4677964, "kind": "msaa_focus", "window": "0x1010A", "class": "SysListView32", "object": -4, "child": 15, "pass": 19}
+{"t_us": 7225395, "kind": "msaa_focus", "window": "0x1010A", "class": "SysListView32", "object": -4, "child": 15, "pass": 68}

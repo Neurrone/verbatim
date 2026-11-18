@@ -41,23 +41,25 @@ duplicate.
   `an_msaa_focus_with_the_last_focuss_ids_and_no_child_is_a_duplicate`,
   `a_repeat_of_a_focus_held_by_a_child_above_zero_is_not_a_duplicate`
   and `nothing_is_a_duplicate_of_a_focus_read_through_acc_focus`.
-- File Explorer raises a second MSAA focus on some items: a menu item
-  of a classic list view (`SysListView32`), and an item of the desktop's
-  list, which it focuses again when a program starts from the desktop.
-  NVDA's Explorer app module classes these items
-  (`SysListView32EmittingDuplicateFocusEvents`) and refuses a focus on
-  one whose window, object and child ids equal the last queued focus's
-  when that is of the same class, whatever the child id; the refusal is
-  its focused-state test's, so unlike a duplicate the focus is not
-  valid, and a run goes on to its older candidates. Verbatim: the outpost
-  classes such an item `FocusRaisedTwice` in its focus answer, knowing
-  the desktop's list by its top-level window, `Progman` or `WorkerW`,
-  where NVDA walks its simple parents to the desktop; Core refuses a
-  focus with the readers' last focus's ids while that focus is of the
-  class, in a run, in the pending test and in the check after a menu
-  end, with no read; equal ids in the item's own list stand for the
-  new object's class. Core's
-  `a_second_focus_on_an_item_file_explorer_raises_twice_is_refused_with_no_read`.
+- Different, deliberately (Dickson, 2026-11-18: "I do want it to
+  read"): File Explorer raises a second MSAA focus on some items, a menu
+  item of a classic list view (`SysListView32`, the start menu's Places
+  and frequently used programs) and an item of the desktop's list, when
+  the focus moves to it (NVDA's #474) and when the desktop comes back
+  from another application (#2988). NVDA's Explorer app module classes
+  these items (`SysListView32EmittingDuplicateFocusEvents`,
+  `appModules/explorer.py` 56 to 72, chosen at 265 to 272) and refuses a
+  focus whose window, object and child ids equal the last queued focus's
+  of the same class, whatever came between. Verbatim has no such rule:
+  the identity check (the last entry) says the second focus on the same
+  item once, with no key between, and reads a focus at the same ids
+  after a key or with another reading. After Delete on the desktop the
+  list raises destroy and create on its client, then a focus at the
+  deleted item's child id, where the next item now is (recording of
+  2026-11-18, 5 of 5 runs): NVDA says nothing, and Verbatim, the Delete
+  key between, says the next item ("zz-verbatim-rec-c.txt 15 of 15").
+  Core's `a_second_focus_on_the_desktops_item_with_no_key_between_is_said_once`
+  and the replay `the_desktops_next_item_is_spoken_after_delete`.
 - UI Automation: the readers' last focus is a UI Automation object, the
   runtime ids are equal, and the earlier element still has the keyboard
   focus. The listener keeps the element it read for each focus Core
