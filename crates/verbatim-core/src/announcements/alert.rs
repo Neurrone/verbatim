@@ -19,7 +19,7 @@ use verbatim_model::{Backend, NodeId, NodeSnapshot, OutpostId, Role, SpeechPrior
 
 use super::{Announcement, Kind, msaa_passes};
 use crate::changes::ChangeRead;
-use crate::entries::{Entries, pending_focus};
+use crate::entries::Entries;
 use crate::event_queue::{Cx, OTHER_DUE_US, Outcome, Reader};
 use crate::focus::FOCUS_SET;
 
@@ -112,12 +112,11 @@ pub(crate) async fn run(mut cx: Cx<Entries>, announcement: Announcement) {
 }
 
 /// Whether an entry waiting behind the alert is a focus that counts as
-/// pending.
+/// pending by the one definition: an unconfirmed MSAA focus does not, and
+/// is not read, as NVDA's events not yet pumped are not pending.
 fn focus_pending_behind(cx: &Cx<Entries>) -> bool {
-    let facts = cx.facts();
-    let backend = cx.backend();
-    let now_us = cx.now_us();
-    cx.any_waiting(|entry| pending_focus(&facts, entry, &backend, now_us))
+    crate::focus::validity::pending_behind_front(cx, None)
+        == crate::focus::validity::Pending::Counts
 }
 
 /// Whether NVDA speaks `child`, a descendant of an alert that has a

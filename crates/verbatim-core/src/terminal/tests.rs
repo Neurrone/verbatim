@@ -56,7 +56,9 @@ fn terminal() -> SrState {
         answer(
             OUTPOST,
             1,
-            verbatim_model::request::Reply::Focus(Box::new(read)),
+            verbatim_model::request::Reply::Candidate(
+                verbatim_model::request::CandidateAnswer::focused(read),
+            ),
         ),
     );
     assert_eq!(
@@ -1654,7 +1656,9 @@ fn output_read_before_the_outpost_ended_is_spoken_and_nothing_is_asked_of_it() {
             answer: verbatim_model::request::Answer {
                 number: verbatim_model::request::RequestNumber(4),
                 outcome: verbatim_model::request::Outcome::Result(
-                    verbatim_model::request::Reply::Focus(Box::new(read)),
+                    verbatim_model::request::Reply::Candidate(
+                        verbatim_model::request::CandidateAnswer::focused(read),
+                    ),
                 ),
                 probes: Vec::new(),
                 detail: String::new(),

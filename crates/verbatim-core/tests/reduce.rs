@@ -14,8 +14,8 @@ use verbatim_core::{ReducerRecorder, Runtime, SrState, replay};
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::{PropertyAnswer, PropertyId, PropertyValue, PropertyValues};
 use verbatim_model::request::{
-    FocusRead, ForegroundReport, HeldIds, Instance, KnownAncestor, MsaaIds, ObjectRead, Outcome,
-    ProcessFact, QueueInput, Reader, Reply, Request as Wire, RunRead, Tried,
+    CandidateAnswer, FocusRead, ForegroundReport, HeldIds, Instance, KnownAncestor, MsaaIds,
+    ObjectRead, Outcome, ProcessFact, QueueInput, Reader, Reply, Request as Wire,
 };
 use verbatim_model::tell::{
     AcceptanceFacts, ElementToken, Event, EventObject, Payload, Relation, TellWindow,
@@ -109,7 +109,9 @@ fn started(desk: &mut Desk, app: App, read: Option<FocusRead>) -> Vec<Heard> {
         panic!("the focus at startup asked: {:?}", desk.sent);
     };
     let outcome = match read {
-        Some(read) => Outcome::Result(Reply::Focus(Box::new(read))),
+        Some(read) => Outcome::Result(Reply::Candidate(
+            verbatim_model::request::CandidateAnswer::focused(read),
+        )),
         None => Outcome::NotThere,
     };
     desk.answer(to, number, outcome)
@@ -123,11 +125,13 @@ fn switch_to(desk: &mut Desk, app: App) {
         let _ = desk.answer(
             to,
             number,
-            Outcome::Result(Reply::Focus(Box::new(focus_read_of(
-                app,
-                &frame(app, "App"),
-                &[],
-            )))),
+            Outcome::Result(Reply::Candidate(
+                verbatim_model::request::CandidateAnswer::focused(focus_read_of(
+                    app,
+                    &frame(app, "App"),
+                    &[],
+                )),
+            )),
         );
     } else {
         let _ = desk.focus(app, &frame(app, "App"), &[]);
@@ -277,9 +281,7 @@ fn msaa_focus(desk: &mut Desk, app: App, object: i32, read: FocusRead) -> Vec<He
     desk.answer(
         to,
         run,
-        Outcome::Result(Reply::Run(RunRead {
-            tried: vec![Tried::Focus(Box::new(read))],
-        })),
+        Outcome::Result(Reply::Candidate(CandidateAnswer::focused(read))),
     )
 }
 
@@ -825,9 +827,7 @@ fn in_front(desk: &mut Desk, app: App, window: &NodeSnapshot) -> Vec<Heard> {
     desk.answer(
         to,
         run,
-        Outcome::Result(Reply::Run(RunRead {
-            tried: vec![Tried::Focus(Box::new(read))],
-        })),
+        Outcome::Result(Reply::Candidate(CandidateAnswer::focused(read))),
     )
 }
 
@@ -1110,9 +1110,7 @@ fn raw_msaa_focus(desk: &mut Desk, app: App, object: i32, read: FocusRead) -> Ve
         desk,
         to,
         run,
-        Reply::Run(RunRead {
-            tried: vec![Tried::Focus(Box::new(read))],
-        }),
+        Reply::Candidate(CandidateAnswer::focused(read)),
     )
 }
 
@@ -1563,7 +1561,13 @@ fn replaced(desk: &mut Desk, app: App, read: FocusRead) -> Vec<Heard> {
         panic!("the replacement asked for the focus: {:?}", desk.sent);
     };
     assert_eq!(to, app.replaced().instance());
-    desk.answer(to, number, Outcome::Result(Reply::Focus(Box::new(read))))
+    desk.answer(
+        to,
+        number,
+        Outcome::Result(Reply::Candidate(
+            verbatim_model::request::CandidateAnswer::focused(read),
+        )),
+    )
 }
 
 /// A replacement outpost's focus that is not a silent re-take meets the
@@ -2403,9 +2407,7 @@ fn a_uia_group_and_an_msaa_group_of_one_window_are_two_entries() {
         desk.answer(
             to,
             run,
-            Outcome::Result(Reply::Run(RunRead {
-                tried: vec![Tried::Focus(Box::new(read))],
-            })),
+            Outcome::Result(Reply::Candidate(CandidateAnswer::focused(read))),
         ),
         focus_heard(
             ONE,

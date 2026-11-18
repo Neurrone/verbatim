@@ -1,0 +1,802 @@
+//! The one definition of a focus candidate's validity
+//! (`docs/parity/focus-events.md`, "Duplicate focus suppression", "Event
+//! acceptance", "While a focus is pending" and "The focus after a menu or
+//! the switcher closes"). A candidate is a focus-kind tell (an MSAA focus,
+//! foreground or menu start, a UI Automation focus or menu opening), the
+//! menu check's read, or a recovered read. Every place that judges one
+//! calls [`judge`], [`judge_run`] or [`pending_behind`], so the turn that
+//! reads a candidate and the rules that ask whether one is pending agree
+//! by construction.
+//!
+//! A candidate is judged on the facts Core holds now ([`View`]) and on
+//! what an outpost read of it, if anything ([`CandidateFacts`]): at its
+//! turn ([`Purpose::Turn`]) or while something waits behind it
+//! ([`Purpose::Pending`]). An answer needing a read names it
+//! ([`Validity::NeedsRead`]); nothing here asks.
+
+use std::collections::VecDeque;
+
+use serde::{Deserialize, Serialize};
+use verbatim_model::event_kind::EventKind;
+use verbatim_model::property::{PropertyId, PropertyValue, PropertyValues};
+use verbatim_model::request::{CandidateFacts, Depth, FocusRead, MsaaIds, Redirect};
+use verbatim_model::tell::{Event, Read, TellWindow};
+use verbatim_model::{Role, TraceId, WindowHandle};
+
+use super::acceptance;
+use super::backend::{BackendCache, Judged, JudgedWindow, Judgement, WindowKey, by_class};
+use super::duplicate::{msaa_duplicate, msaa_refused_repeat, uia_duplicate};
+use super::versions::{LastFocus, ReadBy, Versions};
+use crate::entries::{Candidate, Entries, Entry, UiaFocus};
+use crate::event_queue::{Cx, Item};
+use crate::keys::entry::Fence;
+
+/// File Explorer, by its executable name.
+const FILE_EXPLORER: &str = "explorer";
+
+/// The object id of a window itself.
+const OBJID_WINDOW: i32 = 0;
+/// The object id of a window's client area.
+const OBJID_CLIENT: i32 = -4;
+
+/// What an override makes of a UI Automation focus.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Override {
+    /// No override applies.
+    None,
+    /// Refused at its tell.
+    Refused,
+    /// Let through whatever its keyboard-focus answer, and redirected at
+    /// its read to its nearest popup menu ancestor within four parents.
+    NetUiMenuItem,
+}
+
+/// When a candidate is judged.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Purpose {
+    /// At its own turn, to be read and executed.
+    Turn,
+    /// While it waits behind another entry, which asks whether it is
+    /// pending.
+    Pending,
+}
+
+/// How a valid candidate is executed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum How {
+    /// Read in full and executed.
+    Read,
+    /// The committed focus executed again.
+    Again,
+}
+
+/// Why a candidate is refused.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) enum Reason {
+    /// A UI Automation candidate whose walk found no window.
+    NoWindow,
+    /// Its window is read through the other backend.
+    Verdict,
+    /// One of NVDA's focus overrides refused it.
+    Override,
+    /// Verbatim's hidden frame's own object (Verbatim-only).
+    HiddenFrame,
+    /// The acceptance test refused its window.
+    Acceptance,
+    /// An event of the desktop window, which no reader reads: Core starts
+    /// no outpost for its process (a limit; `docs/parity/focus-events.md`).
+    NoReader,
+    /// Its element lost the keyboard focus by the check thread's answer.
+    KeyboardFocusLost,
+    /// A foreground tell whose window is not the foreground record's.
+    NotInFront,
+    /// A foreground tell of the last focus's window or an ancestor's.
+    LastFocusWindow,
+    /// A foreground tell whose ids equal the last focus's.
+    SameIds,
+    /// The second focus File Explorer raises for the last focus's item.
+    RepeatedItem,
+    /// A menu start after a run that executed a focus on an MSAA menu.
+    OnMenu,
+    /// A menu start whose object is not a menu popup.
+    NotMenuPopup,
+    /// Its window is read through UI Automation, so it was not read.
+    Skipped,
+    /// Its object is not there.
+    NotThere,
+    /// Neither it nor an ancestor has the focused state.
+    NotFocused,
+}
+
+impl Reason {
+    /// Whether the refusal came from a read of the candidate that answered
+    /// refused or not there, which ends the redirect guard (Dickson,
+    /// 2026-11-18): a candidate refused before any read was never tried,
+    /// and one skipped was never tried through MSAA.
+    pub(crate) fn tried(self) -> bool {
+        matches!(self, Self::NotThere | Self::NotFocused | Self::NotMenuPopup)
+    }
+}
+
+/// The read a candidate needs before it can be judged.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Need {
+    /// Whether it or an ancestor has the focused state.
+    FocusedState,
+    /// Its role: whether it is a menu popup.
+    MenuRole,
+}
+
+/// The one answer about a candidate.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Validity {
+    /// Valid: executed.
+    Valid(How),
+    /// Valid, but the focus it names is the readers' last focus: nothing is
+    /// read or said, and it ends a run.
+    Duplicate,
+    /// Refused: a run goes on to its older candidates.
+    Refused(Reason),
+    /// It cannot be judged without a read.
+    NeedsRead(Need),
+}
+
+/// Whether a candidate counts as pending
+/// (`docs/parity/focus-events.md`, "While a focus is pending").
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Pending {
+    /// It counts: NVDA would have queued it.
+    Counts,
+    /// It counts only if a read confirms it: the candidate of this trace.
+    Unconfirmed(TraceId),
+    /// It does not count.
+    No,
+}
+
+/// Whether a waiting candidate's facts were read by a caret key's
+/// confirmation (design, "Confirming, and its bound"): written only by
+/// [`crate::event_queue::Cx::store_facts`], so each candidate is read at
+/// most once while it waits.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) enum Confirmation {
+    /// Not read.
+    #[default]
+    Unread,
+    /// Read, with what the read found.
+    Read(CandidateFacts),
+}
+
+impl Confirmation {
+    /// The facts read, if any.
+    pub(crate) fn facts(&self) -> Option<&CandidateFacts> {
+        match self {
+            Self::Unread => None,
+            Self::Read(facts) => Some(facts),
+        }
+    }
+}
+
+/// Core's facts a candidate is judged against, as they are now.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct View<'a> {
+    /// The two versions of the focus.
+    pub(crate) versions: &'a Versions,
+    /// The foreground record's window.
+    pub(crate) in_front: Option<WindowHandle>,
+    /// The backend verdicts.
+    pub(crate) backend: &'a BackendCache,
+    /// The time of the input being handled.
+    pub(crate) now_us: u64,
+    /// Whether the run before a menu start executed a valid focus.
+    pub(crate) run_before_valid: bool,
+}
+
+impl View<'_> {
+    fn last(&self) -> Option<&LastFocus> {
+        self.versions.last.as_ref()
+    }
+}
+
+/// What is judged.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum Subject<'a> {
+    /// A UI Automation focus or menu opening.
+    Uia(&'a UiaFocus),
+    /// An MSAA focus, foreground or menu start.
+    Msaa(&'a Candidate),
+    /// The menu check's read, by the MSAA ids it carries, if any.
+    MenuCheck(Option<&'a MsaaIds>),
+    /// A recovered read: the current focus read after a hung window
+    /// answered again.
+    Recovered(&'a FocusRead),
+}
+
+/// The one definition: how `subject` stands against `view`, with `facts`
+/// the outpost read of it, if any, judged for `purpose`. The rows, in
+/// order, each answer or pass on (design, "The definition").
+pub(crate) fn judge(
+    subject: Subject<'_>,
+    view: &View<'_>,
+    facts: Option<&CandidateFacts>,
+    purpose: Purpose,
+) -> Validity {
+    match subject {
+        Subject::Uia(focus) => uia(focus, view),
+        Subject::Msaa(candidate) => msaa(candidate, view, facts, purpose),
+        Subject::MenuCheck(ids) => menu_check(ids, view, facts),
+        Subject::Recovered(read) => recovered(view, read),
+    }
+}
+
+/// How far a candidate's read at its own turn goes: a focus, or the menu
+/// check's read, only as far as its focused state unless it has it; a
+/// foreground and a menu start in full.
+pub(crate) fn depth(subject: Subject<'_>) -> Depth {
+    match subject {
+        Subject::Msaa(candidate) if candidate.tell.kind == EventKind::MsaaFocus => {
+            Depth::FullIfFocused
+        }
+        Subject::MenuCheck(_) => Depth::FullIfFocused,
+        Subject::Msaa(_) | Subject::Uia(_) | Subject::Recovered(_) => Depth::Full,
+    }
+}
+
+/// Whether `answer` counts as pending: valid counts, a needed read leaves
+/// it unconfirmed, and a duplicate or a refusal does not count.
+pub(crate) fn pending(answer: Validity, trace: TraceId) -> Pending {
+    match answer {
+        Validity::Valid(_) => Pending::Counts,
+        Validity::NeedsRead(_) => Pending::Unconfirmed(trace),
+        Validity::Duplicate | Validity::Refused(_) => Pending::No,
+    }
+}
+
+/// The first answer of a run, `candidates` newest first, that is not a
+/// refusal, with the candidate it is about: a newest duplicate hides its
+/// older candidates, as NVDA's pump stops at it
+/// (`IAccessibleHandler/__init__.py` 1087 to 1092).
+pub(crate) fn judge_run<'a>(
+    candidates: impl IntoIterator<Item = &'a Candidate>,
+    view: &View<'_>,
+    purpose: Purpose,
+) -> Option<(Validity, &'a Candidate)> {
+    candidates.into_iter().find_map(|candidate| {
+        let answer = judge(
+            Subject::Msaa(candidate),
+            view,
+            candidate.confirmation.facts(),
+            purpose,
+        );
+        (!matches!(answer, Validity::Refused(_))).then_some((answer, candidate))
+    })
+}
+
+/// A waiting entry, judged alone for [`Purpose::Pending`]: its answer, its
+/// trace and when it was raised; `None` for an entry that is no
+/// candidate.
+pub(crate) fn judge_alone(entry: &Entry, view: &View<'_>) -> Option<(Validity, TraceId, u64)> {
+    let (answer, tell) = match entry {
+        Entry::UiaFocus(focus) => (
+            judge(Subject::Uia(focus), view, None, Purpose::Pending),
+            &focus.tell,
+        ),
+        Entry::Candidate(candidate) => (judge_candidate(candidate, view), &candidate.tell),
+        Entry::Menu(candidate) if is_menu_start(candidate.tell.kind) => {
+            (judge_candidate(candidate, view), &candidate.tell)
+        }
+        Entry::Run(_)
+        | Entry::Menu(_)
+        | Entry::MenuCheck(_)
+        | Entry::CurrentFocus(_)
+        | Entry::MsaaChange(_)
+        | Entry::UiaChange(_)
+        | Entry::Caret(_)
+        | Entry::ForegroundMarker { .. }
+        | Entry::Press(_)
+        | Entry::Mark(..)
+        | Entry::SayAllRead(..)
+        | Entry::Announcement(_)
+        | Entry::TerminalSpeech(_) => return None,
+    };
+    Some((answer, tell.trace_id, tell.at_us))
+}
+
+fn judge_candidate(candidate: &Candidate, view: &View<'_>) -> Validity {
+    judge(
+        Subject::Msaa(candidate),
+        view,
+        candidate.confirmation.facts(),
+        Purpose::Pending,
+    )
+}
+
+/// Whether anything waiting, `waiting` in arrival order, counts as
+/// pending, item by item, a run judged as a run. A candidate needing a read
+/// raised at or after `bound_us`, when given, reads as not pending: a
+/// caret key confirms only what was raised before its bound.
+///
+/// A run walks newest first. The first valid candidate counts, even behind
+/// a newer one needing a read, whose read could only make it count or be
+/// refused down to the older one. A duplicate gives unconfirmed if a newer
+/// candidate needed a read, else not pending; the end of the run gives
+/// unconfirmed if any candidate needed a read. Over the queue: counts if
+/// any item counts, otherwise the newest unconfirmed, otherwise not
+/// pending.
+pub(crate) fn pending_behind(
+    waiting: &VecDeque<Item<Entry>>,
+    view: &View<'_>,
+    bound_us: Option<u64>,
+) -> Pending {
+    let raised_before = |at_us: u64| bound_us.is_none_or(|bound| at_us < bound);
+    let one = |entry: &Entry| match judge_alone(entry, view) {
+        Some((Validity::NeedsRead(_), _, at_us)) if !raised_before(at_us) => Pending::No,
+        Some((answer, trace, _)) => pending(answer, trace),
+        None => Pending::No,
+    };
+    let mut newest_unconfirmed = None;
+    for item in waiting {
+        let answer = match item {
+            Item::One(entry) | Item::Menu { entry, .. } => one(entry),
+            Item::Run(entries) => {
+                let mut unconfirmed = None;
+                let mut answer = None;
+                for entry in entries.iter().rev() {
+                    match one(entry) {
+                        Pending::Counts => {
+                            answer = Some(Pending::Counts);
+                            break;
+                        }
+                        Pending::Unconfirmed(trace) => {
+                            unconfirmed.get_or_insert(trace);
+                        }
+                        Pending::No => {
+                            if let Some((Validity::Duplicate, ..)) = judge_alone(entry, view) {
+                                break;
+                            }
+                        }
+                    }
+                }
+                answer.unwrap_or(unconfirmed.map_or(Pending::No, Pending::Unconfirmed))
+            }
+        };
+        match answer {
+            Pending::Counts => return Pending::Counts,
+            Pending::Unconfirmed(trace) => newest_unconfirmed = Some(trace),
+            Pending::No => {}
+        }
+    }
+    newest_unconfirmed.map_or(Pending::No, Pending::Unconfirmed)
+}
+
+/// [`judge`] from inside an entry's function, against Core's facts now;
+/// `run_before_valid` says whether the run before a menu start executed a
+/// valid focus.
+pub(crate) fn at(
+    cx: &Cx<Entries>,
+    subject: Subject<'_>,
+    facts: Option<&CandidateFacts>,
+    purpose: Purpose,
+    run_before_valid: bool,
+) -> Validity {
+    let state = cx.facts();
+    let backend = cx.backend();
+    let view = View {
+        versions: &state.versions,
+        in_front: cx.foreground().map(|foreground| foreground.window),
+        backend: &backend,
+        now_us: cx.now_us(),
+        run_before_valid,
+    };
+    judge(subject, &view, facts, purpose)
+}
+
+/// [`pending_behind`] from inside the front entry's function, over the
+/// entries waiting behind it.
+pub(crate) fn pending_behind_front(cx: &Cx<Entries>, bound_us: Option<u64>) -> Pending {
+    let state = cx.facts();
+    let backend = cx.backend();
+    let view = View {
+        versions: &state.versions,
+        in_front: cx.foreground().map(|foreground| foreground.window),
+        backend: &backend,
+        now_us: cx.now_us(),
+        run_before_valid: false,
+    };
+    pending_behind(&cx.waiting(), &view, bound_us)
+}
+
+/// The waiting candidate of trace `trace`, alone or in a run: an MSAA
+/// focus, foreground or menu start.
+pub(crate) fn waiting_candidate(cx: &Cx<Entries>, trace: TraceId) -> Option<Candidate> {
+    cx.waiting().iter().find_map(|item| {
+        let entries = match item {
+            Item::One(entry) | Item::Menu { entry, .. } => std::slice::from_ref(entry),
+            Item::Run(entries) => entries.as_slice(),
+        };
+        entries.iter().find_map(|entry| match entry {
+            Entry::Candidate(candidate) | Entry::Menu(candidate)
+                if candidate.tell.trace_id == trace =>
+            {
+                Some((**candidate).clone())
+            }
+            _ => None,
+        })
+    })
+}
+
+/// Writes the facts a caret key's confirmation read, `facts`, onto the
+/// waiting candidate of trace `trace`, alone or in a run, its confirmation
+/// going from unread to read: the only writer of a candidate's
+/// confirmation. A candidate merged away or capped meanwhile is not
+/// written.
+pub(crate) fn store_facts(cx: &mut Cx<Entries>, trace: TraceId, facts: CandidateFacts) {
+    let mut waiting = cx.waiting_mut();
+    let found = waiting.iter_mut().find_map(|item| {
+        let entries = match item {
+            Item::One(entry) | Item::Menu { entry, .. } => std::slice::from_mut(entry),
+            Item::Run(entries) => entries.as_mut_slice(),
+        };
+        entries.iter_mut().find_map(|entry| match entry {
+            Entry::Candidate(candidate) | Entry::Menu(candidate)
+                if candidate.tell.trace_id == trace =>
+            {
+                Some(candidate)
+            }
+            _ => None,
+        })
+    });
+    if let Some(candidate) = found {
+        candidate.confirmation = Confirmation::Read(facts);
+    }
+}
+
+fn is_menu_start(kind: EventKind) -> bool {
+    matches!(kind, EventKind::MenuStart | EventKind::PopupStart)
+}
+
+/// The rows for a UI Automation focus or menu opening.
+fn uia(focus: &UiaFocus, view: &View<'_>) -> Validity {
+    let tell = &focus.tell;
+    let facts = match &tell.window {
+        TellWindow::Found(facts) => Some(facts.as_ref()),
+        TellWindow::NoWindow | TellWindow::Failed => None,
+    };
+    // The menu opening on the committed element is a focus on it
+    // (`UIAHandler/__init__.py` 826 to 835): acceptance, then its
+    // keyboard-focus answer.
+    if opens_on_committed(view.versions, focus) {
+        if acceptance::accept(tell.kind, facts, false).is_err() {
+            return Validity::Refused(Reason::Acceptance);
+        }
+        if keyboard_focus(tell) == Some(Read::Answered(false)) {
+            return Validity::Refused(Reason::KeyboardFocusLost);
+        }
+        return Validity::Valid(How::Again);
+    }
+    let Some(window) = judged_window(tell) else {
+        return Validity::Refused(Reason::NoWindow);
+    };
+    if view
+        .backend
+        .judge(Judged::Uia, &window, tell.at_us, view.now_us)
+        == Judgement::Drop
+    {
+        return Validity::Refused(Reason::Verdict);
+    }
+    let overridden = focus_override(tell);
+    if overridden == Override::Refused {
+        return Validity::Refused(Reason::Override);
+    }
+    if uia_on_hidden_frame(focus) {
+        return Validity::Refused(Reason::HiddenFrame);
+    }
+    if acceptance::accept(tell.kind, facts, false).is_err() {
+        return Validity::Refused(Reason::Acceptance);
+    }
+    if overridden != Override::NetUiMenuItem && keyboard_focus(tell) == Some(Read::Answered(false))
+    {
+        return Validity::Refused(Reason::KeyboardFocusLost);
+    }
+    if uia_duplicate(view.last(), &focus.runtime_id, tell.checked.as_ref()) {
+        return Validity::Duplicate;
+    }
+    Validity::Valid(How::Read)
+}
+
+/// The rows for an MSAA focus, foreground or menu start.
+fn msaa(
+    candidate: &Candidate,
+    view: &View<'_>,
+    facts: Option<&CandidateFacts>,
+    purpose: Purpose,
+) -> Validity {
+    let tell = &candidate.tell;
+    let ids = &candidate.ids;
+    let last = view.last();
+    if view.backend.judge(
+        Judged::Msaa,
+        &candidate.window.judged(),
+        tell.at_us,
+        view.now_us,
+    ) == Judgement::Drop
+    {
+        return Validity::Refused(Reason::Verdict);
+    }
+    if msaa_on_hidden_frame(candidate) {
+        return Validity::Refused(Reason::HiddenFrame);
+    }
+    if acceptance::accept(tell.kind, candidate.facts(), false).is_err() {
+        return Validity::Refused(Reason::Acceptance);
+    }
+    if candidate.facts().is_some_and(|facts| facts.desktop) {
+        return Validity::Refused(Reason::NoReader);
+    }
+    let menu_start = is_menu_start(tell.kind);
+    if tell.kind == EventKind::Foreground {
+        // `IAccessibleHandler/__init__.py` 834 to 863.
+        if view.in_front != Some(ids.window) {
+            return Validity::Refused(Reason::NotInFront);
+        }
+        if let Some(last) = last {
+            if last.place.holds_window(ids.window) {
+                return Validity::Refused(Reason::LastFocusWindow);
+            }
+            if last_event_ids(last) == Some(ids) {
+                return Validity::Refused(Reason::SameIds);
+            }
+        }
+    } else if !menu_start {
+        if msaa_duplicate(last, ids) {
+            return Validity::Duplicate;
+        }
+        if msaa_refused_repeat(last, ids) {
+            return Validity::Refused(Reason::RepeatedItem);
+        }
+        if purpose == Purpose::Turn && guarded(last, ids, candidate.fence) {
+            return Validity::Duplicate;
+        }
+    }
+    if menu_start {
+        // `IAccessibleHandler/__init__.py` 942 to 973.
+        if view.run_before_valid && last_is_msaa_menu(last) {
+            return Validity::Refused(Reason::OnMenu);
+        }
+        let Some(facts) = facts else {
+            return Validity::NeedsRead(Need::MenuRole);
+        };
+        if let Some(refused) = refused_by(facts) {
+            return refused;
+        }
+        return match facts {
+            CandidateFacts::Found {
+                role: Some(Role::Menu),
+                ..
+            } => Validity::Valid(How::Read),
+            _ => Validity::Refused(Reason::NotMenuPopup),
+        };
+    }
+    let Some(facts) = facts else {
+        return if tell.kind == EventKind::MsaaFocus {
+            Validity::NeedsRead(Need::FocusedState)
+        } else {
+            Validity::Valid(How::Read)
+        };
+    };
+    if let Some(refused) = refused_by(facts) {
+        return refused;
+    }
+    if purpose == Purpose::Turn && guarded_list(last, facts, candidate.fence) {
+        return Validity::Duplicate;
+    }
+    Validity::Valid(How::Read)
+}
+
+/// The rows for the menu check's read.
+fn menu_check(ids: Option<&MsaaIds>, view: &View<'_>, facts: Option<&CandidateFacts>) -> Validity {
+    if let Some(ids) = ids {
+        if msaa_duplicate(view.last(), ids) {
+            return Validity::Duplicate;
+        }
+        if msaa_refused_repeat(view.last(), ids) {
+            return Validity::Refused(Reason::RepeatedItem);
+        }
+    }
+    let Some(facts) = facts else {
+        return Validity::NeedsRead(Need::FocusedState);
+    };
+    refused_by(facts).unwrap_or(Validity::Valid(How::Read))
+}
+
+/// The recovered read's one row: a UI Automation answer whose runtime id
+/// equals the readers' last focus's is a duplicate, its keyboard focus
+/// taken as true because the read is of the keyboard focus. Any other is
+/// valid, and goes on to the re-take's same-reading comparison.
+fn recovered(view: &View<'_>, read: &FocusRead) -> Validity {
+    match (
+        view.last().map(|last| &last.read_by),
+        &read.msaa,
+        &read.focus.runtime_id,
+    ) {
+        (Some(ReadBy::Uia { runtime_id, .. }), None, Some(answered)) if runtime_id == answered => {
+            Validity::Duplicate
+        }
+        _ => Validity::Valid(How::Read),
+    }
+}
+
+/// The refusal the facts an outpost read give, if any.
+fn refused_by(facts: &CandidateFacts) -> Option<Validity> {
+    match facts {
+        CandidateFacts::Skipped => Some(Validity::Refused(Reason::Skipped)),
+        CandidateFacts::NotThere => Some(Validity::Refused(Reason::NotThere)),
+        CandidateFacts::Found {
+            focused: Some(false),
+            ..
+        } => Some(Validity::Refused(Reason::NotFocused)),
+        CandidateFacts::Found { .. } => None,
+    }
+}
+
+/// The redirect guard (design, change A): the readers' last focus was
+/// reached by a redirect from a focus of fence `fence`, and `ids` are the
+/// reached child's own: its own focus ends with no read.
+fn guarded(last: Option<&LastFocus>, ids: &MsaaIds, fence: Fence) -> bool {
+    last.is_some_and(|last| {
+        last.redirect.is_some_and(|(_, guard)| guard == fence) && last_event_ids(last) == Some(ids)
+    })
+}
+
+/// The guard's second cell: a list's own focus whose read NVDA's list
+/// redirect took to the guarded child ends unspoken at its answer.
+fn guarded_list(last: Option<&LastFocus>, facts: &CandidateFacts, fence: Fence) -> bool {
+    let CandidateFacts::Found {
+        redirect: Some((Redirect::List, reached)),
+        ..
+    } = facts
+    else {
+        return false;
+    };
+    guarded(last, reached, fence)
+}
+
+/// The event ids the readers' last focus was read by, when it is an MSAA
+/// focus read from an event.
+fn last_event_ids(last: &LastFocus) -> Option<&MsaaIds> {
+    match &last.read_by {
+        ReadBy::Msaa {
+            event: Some(earlier),
+            ..
+        } => Some(earlier),
+        ReadBy::Msaa { event: None, .. } | ReadBy::Uia { .. } => None,
+    }
+}
+
+/// Whether the readers' last focus is an MSAA menu popup or menu item.
+fn last_is_msaa_menu(last: Option<&LastFocus>) -> bool {
+    last.is_some_and(|last| {
+        matches!(last.read_by, ReadBy::Msaa { .. })
+            && matches!(last.role, Role::Menu | Role::MenuItem)
+    })
+}
+
+/// Whether `focus` is a menu opening on the committed focus's runtime id.
+fn opens_on_committed(versions: &Versions, focus: &UiaFocus) -> bool {
+    focus.tell.kind == EventKind::UiaMenuOpened
+        && versions.committed_read().is_some_and(|kept| {
+            matches!(&kept.read_by, ReadBy::Uia { runtime_id, .. } if *runtime_id == focus.runtime_id)
+        })
+}
+
+/// The keyboard-focus answer the check thread carried.
+fn keyboard_focus(tell: &Event) -> Option<Read<bool>> {
+    tell.checked
+        .as_ref()
+        .and_then(|checked| checked.keyboard_focus)
+}
+
+/// Whether `focus` names Verbatim's hidden frame's own element
+/// (Verbatim-only, design "Focus and foreground").
+fn uia_on_hidden_frame(focus: &UiaFocus) -> bool {
+    let TellWindow::Found(facts) = &focus.tell.window else {
+        return false;
+    };
+    facts.hidden_frame
+        && matches!(
+            focus
+                .tell
+                .cached
+                .answer(PropertyId::NativeWindow)
+                .and_then(|answer| answer.value.as_ref()),
+            Some(PropertyValue::Window(window)) if *window == facts.window.handle
+        )
+}
+
+/// Whether `candidate` names Verbatim's hidden frame's own object
+/// (Verbatim-only, design "Focus and foreground").
+fn msaa_on_hidden_frame(candidate: &Candidate) -> bool {
+    candidate.facts().is_some_and(|facts| {
+        facts.hidden_frame
+            && candidate.ids.window == facts.window.handle
+            && matches!(candidate.ids.object, OBJID_WINDOW | OBJID_CLIENT)
+            && candidate.ids.child == 0
+    })
+}
+
+fn text(values: &PropertyValues, id: PropertyId) -> Option<&str> {
+    match values.answer(id).and_then(|answer| answer.value.as_ref()) {
+        Some(PropertyValue::Text(text)) => Some(text),
+        _ => None,
+    }
+}
+
+fn role(values: &PropertyValues) -> Option<Role> {
+    match values
+        .answer(PropertyId::Role)
+        .and_then(|answer| answer.value.as_ref())
+    {
+        Some(PropertyValue::Role(role)) => Some(*role),
+        _ => None,
+    }
+}
+
+/// NVDA's focus overrides for a UI Automation focus `tell`, from its
+/// cached automation id, class name and role and its nearest window's
+/// class: the console window's own element, Excel's `EXCEL6` pane and an
+/// unnamed first `NetUITWMenuItem`; and File Explorer's task switcher
+/// frame, by the tell's application name.
+pub(crate) fn focus_override(tell: &Event) -> Override {
+    let values = &tell.cached;
+    let window_class = match &tell.window {
+        TellWindow::Found(facts) => Some(facts.window.class.as_str()),
+        TellWindow::NoWindow | TellWindow::Failed => None,
+    };
+    let automation_id = text(values, PropertyId::AutomationId);
+    let class_name = text(values, PropertyId::ClassName);
+    let role = role(values);
+    if automation_id == Some("Console Window") && window_class == Some("ConsoleWindowClass") {
+        return Override::Refused;
+    }
+    if window_class == Some("EXCEL6") && role == Some(Role::Pane) {
+        return Override::Refused;
+    }
+    if tell.application == FILE_EXPLORER
+        && matches!(
+            (class_name, role),
+            (Some("MultitaskingViewFrame"), Some(Role::Window))
+                | (
+                    Some("Windows.UI.Input.InputSite.WindowClass"),
+                    Some(Role::Pane)
+                )
+        )
+    {
+        return Override::Refused;
+    }
+    let unnamed = text(values, PropertyId::Name).is_none_or(str::is_empty);
+    let first = tell
+        .checked
+        .as_ref()
+        .and_then(|checked| checked.previous_sibling)
+        == Some(Read::Answered(false));
+    if class_name == Some("NetUITWMenuItem") && role == Some(Role::MenuItem) && unnamed && first {
+        return Override::NetUiMenuItem;
+    }
+    Override::None
+}
+
+/// The window `tell` is judged by, as the backend cache judges it.
+fn judged_window(tell: &Event) -> Option<JudgedWindow> {
+    let TellWindow::Found(facts) = &tell.window else {
+        return None;
+    };
+    Some(JudgedWindow {
+        key: WindowKey {
+            handle: facts.window.handle.0,
+            thread: facts.window.thread,
+        },
+        by_class: by_class(&facts.window.class, &facts.root.class),
+    })
+}
+
+#[cfg(test)]
+#[path = "validity_tests.rs"]
+mod tests;

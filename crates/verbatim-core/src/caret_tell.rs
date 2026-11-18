@@ -220,7 +220,11 @@ pub(crate) async fn run(mut cx: Cx<Entries>, tell: CaretTell) {
     if matches!(tell.target, Target::System(_)) && console_terminal_committed(&cx.facts()) {
         return;
     }
-    if crate::keys::caret_key::focus_pending(&cx) {
+    // An unconfirmed MSAA focus does not count and is not read, as NVDA's
+    // events not yet pumped are not pending.
+    if crate::focus::validity::pending_behind_front(&cx, None)
+        == crate::focus::validity::Pending::Counts
+    {
         return;
     }
     let Some(kept) = target(&cx, &tell) else {

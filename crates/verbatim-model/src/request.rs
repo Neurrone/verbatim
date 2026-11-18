@@ -256,7 +256,7 @@ pub enum Request {
     },
     /// The completion of a UI Automation read from the listener's route.
     CompleteUia(Box<CompleteUia>),
-    /// One application's candidates of an MSAA run.
+    /// One MSAA candidate, read to the depth Core asks.
     MsaaRun(MsaaRun),
     /// The application's current focus, with NVDA's MSAA ids.
     CurrentFocus {
@@ -267,12 +267,13 @@ pub enum Request {
         /// What the focus's caret read fetches beyond the text, as the
         /// settings report it: its line's formatting ([`FocusCaret`]).
         details: TextDetails,
-        /// Whether an MSAA focus is refused [`Refusal::NotFocused`] when
-        /// neither it nor any of its ancestors, up to the desktop, has the
-        /// focused state: the check after a menu end, NVDA's fake focus,
-        /// which is tested before it is queued
-        /// (`shouldAllowIAccessibleFocusEvent`).
-        focused_state_test: bool,
+        /// How far the read goes: [`Depth::Full`] for a read Core makes
+        /// itself, [`Depth::FullIfFocused`] for the check after a menu end,
+        /// NVDA's fake focus, whose MSAA focus is read in full only when it
+        /// or an ancestor, up to the desktop, has the focused state
+        /// (`shouldAllowIAccessibleFocusEvent`). The answer carries the
+        /// focused state as a fact, and Core judges it.
+        depth: Depth,
     },
     /// A read or move in a node's text.
     Text {
@@ -505,8 +506,8 @@ pub struct CompleteUia {
     pub details: TextDetails,
 }
 
-/// One MSAA focus or foreground candidate of a run, by the ids its event
-/// named, with its window's verdict.
+/// One MSAA focus, foreground or menu start candidate, by the ids its
+/// event named, with its window's verdict.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunCandidate {
     /// The ids its event named.
@@ -517,26 +518,58 @@ pub struct RunCandidate {
     pub verdict: WindowVerdict,
 }
 
-/// What kind of event named a run candidate, which decides what the
-/// outpost tests inside its read.
+/// What kind of event named a candidate, which decides what facts the
+/// outpost reads of it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum CandidateKind {
-    /// A focus event: the object or an ancestor must have the focused
-    /// state.
+    /// A focus event: whether the object or an ancestor has the focused
+    /// state is read.
     Focus,
     /// A foreground event.
     Foreground,
-    /// A menu start or popup start, read as a focus with neither the
-    /// duplicate test nor the focused-state test; Core judges its role.
+    /// A menu start or popup start: its role is read, which Core judges.
     MenuStart,
 }
 
-/// The outpost reads one application's candidates of an MSAA run, newest
-/// first, and answers the first valid focus.
+/// How far a candidate's read goes, which Core chooses so that the
+/// outpost holds no rule (`docs/parity/focus-events.md`, "Event
+/// acceptance").
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Depth {
+    /// Only the facts: whether it is there, its focused state or role, and
+    /// which redirect reached it.
+    Facts,
+    /// The facts, and the full read when the object or an ancestor has the
+    /// focused state.
+    FullIfFocused,
+    /// The facts and the full read.
+    Full,
+}
+
+/// Which redirect took a focus event's object to the child `accFocus`
+/// names.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Redirect {
+    /// NVDA's list redirect: a list's own object, or a `SysListView32`
+    /// window's client, redirected to its focused child
+    /// (`IAccessibleHandler/__init__.py` 741 to 757).
+    List,
+    /// Verbatim's wider redirect: another object's child id 0 redirected
+    /// to the child `accFocus` names when that child has the focused state.
+    FocusedChild,
+}
+
+/// The outpost reads one MSAA candidate to the depth Core asks.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MsaaRun {
-    /// The candidates, newest first.
-    pub candidates: Vec<RunCandidate>,
+    /// The candidate.
+    pub candidate: RunCandidate,
+    /// How far its read goes.
+    pub depth: Depth,
+    /// A node and text anchor of another request Core keeps held while
+    /// this one is out, a caret key's starting point while it confirms a
+    /// focus; the outpost reads nothing of it.
+    pub spare: Option<(NodeId, TextAnchor)>,
     /// The properties of each node.
     pub set: Vec<PropertyId>,
     /// The ancestors Core already knows.
@@ -546,26 +579,55 @@ pub struct MsaaRun {
     pub details: TextDetails,
 }
 
-/// How one run candidate was tried.
+/// What an outpost found of a candidate, which Core judges.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Tried {
-    /// Its window is read through UI Automation: skipped, the next older
-    /// candidate tried.
+pub enum CandidateFacts {
+    /// Its window is read through UI Automation, so it was not read.
     Skipped,
-    /// Refused, with the reason.
-    Refused(Refusal),
     /// The object is not there.
     NotThere,
-    /// The valid focus, whose read ends the run.
-    Focus(Box<FocusRead>),
+    /// The object was found.
+    Found {
+        /// Whether it or an ancestor has the focused state; `None` when
+        /// not asked, for a foreground or menu start, or a UI Automation
+        /// focus.
+        focused: Option<bool>,
+        /// Its role, read for a menu start; `None` otherwise.
+        role: Option<crate::Role>,
+        /// Its window's class.
+        window_class: String,
+        /// The redirect that reached it, with the ids of the child it
+        /// reached, when one did.
+        redirect: Option<(Redirect, MsaaIds)>,
+    },
 }
 
-/// The answer to [`MsaaRun`]: each candidate tried, newest first, up to
-/// and including the valid focus, if any.
+/// The answer to [`MsaaRun`] and [`Request::CurrentFocus`]: the facts
+/// found, and the full read when the depth asked for one and the object
+/// was found.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RunRead {
-    /// Each candidate tried, in the request's order.
-    pub tried: Vec<Tried>,
+pub struct CandidateAnswer {
+    /// The facts.
+    pub facts: CandidateFacts,
+    /// The full read.
+    pub read: Option<Box<FocusRead>>,
+}
+
+impl CandidateAnswer {
+    /// The answer of a focused candidate read in full with no redirect,
+    /// its role taken from the read.
+    #[must_use]
+    pub fn focused(read: FocusRead) -> Self {
+        Self {
+            facts: CandidateFacts::Found {
+                focused: Some(true),
+                role: None,
+                window_class: String::new(),
+                redirect: None,
+            },
+            read: Some(Box::new(read)),
+        }
+    }
 }
 
 /// An MSAA object's ids.
@@ -638,10 +700,6 @@ pub struct FocusRead {
     pub focus: FocusNode,
     /// The MSAA ids it was read by, `None` for a UI Automation focus.
     pub msaa: Option<HeldIds>,
-    /// Whether the focus was reached by a redirect from a list to its
-    /// focused child; its MSAA event ids then name that child, as NVDA's
-    /// redirected object's do.
-    pub redirected: bool,
     /// Its ancestors, nearest first, up to the ancestor Core already knows
     /// that the walk met, which is not among them.
     pub ancestors: Vec<FocusAncestor>,
@@ -705,10 +763,10 @@ pub enum Reply {
     Object(Box<ObjectRead>),
     /// The answer to [`Request::Properties`].
     Properties(PropertyValues),
-    /// The answer to [`Request::CompleteUia`] and [`Request::CurrentFocus`].
+    /// The answer to [`Request::CompleteUia`].
     Focus(Box<FocusRead>),
-    /// The answer to [`Request::MsaaRun`].
-    Run(RunRead),
+    /// The answer to [`Request::MsaaRun`] and [`Request::CurrentFocus`].
+    Candidate(CandidateAnswer),
     /// The answer to [`Request::Navigate`]: the node reached, `None` at a
     /// genuine edge of the tree.
     Navigated(Option<NodeRead>),
@@ -893,11 +951,9 @@ impl Answer {
             };
             match reply {
                 Reply::Focus(focus) => caret(&focus.caret),
-                Reply::Run(run) => {
-                    for tried in &run.tried {
-                        if let Tried::Focus(focus) = tried {
-                            caret(&focus.caret);
-                        }
+                Reply::Candidate(answer) => {
+                    if let Some(focus) = &answer.read {
+                        caret(&focus.caret);
                     }
                 }
                 Reply::Object(_)
@@ -953,11 +1009,9 @@ impl Answer {
                 }
             }
             Reply::Focus(read) => focus(read, visit),
-            Reply::Run(run) => {
-                for tried in &mut run.tried {
-                    if let Tried::Focus(read) = tried {
-                        focus(read, visit);
-                    }
+            Reply::Candidate(answer) => {
+                if let Some(read) = &mut answer.read {
+                    focus(read, visit);
                 }
             }
             Reply::Navigated(Some(node)) | Reply::Found(Some(node)) => read(node, visit),

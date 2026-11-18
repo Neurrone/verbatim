@@ -354,7 +354,6 @@ pub(crate) fn focus_read_of(
     FocusRead {
         focus: focus_node(app, focus),
         msaa: None,
-        redirected: false,
         ancestors: ancestors
             .iter()
             .rev()

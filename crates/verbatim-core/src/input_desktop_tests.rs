@@ -1,5 +1,6 @@
 //! The secure desktop and the lock state (Table 8): a switch away handled
 //! at once, the read after the return, and the lock state.
+use verbatim_model::request::CandidateAnswer;
 
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::PropertyValues;
@@ -35,7 +36,11 @@ fn started() -> Held {
         feed_at(
             &mut held,
             600,
-            answer(OUTPOST, 1, Reply::Focus(Box::new(focus_read(None))))
+            answer(
+                OUTPOST,
+                1,
+                Reply::Candidate(CandidateAnswer::focused(focus_read(None)))
+            )
         ),
         SPOKEN_FOLLOWED
     );
@@ -162,7 +167,11 @@ fn the_return_reads_the_front_focus_200_ms_later_and_says_its_title() {
         feed_at(
             &mut held,
             300_000,
-            answer(OUTPOST, 4, Reply::Focus(Box::new(focus_read(None))))
+            answer(
+                OUTPOST,
+                4,
+                Reply::Candidate(CandidateAnswer::focused(focus_read(None)))
+            )
         ),
         SPOKEN_FOLLOWED
     );

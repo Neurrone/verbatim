@@ -33,10 +33,10 @@ use verbatim_model::property::{
     NodeDetailSet, PropertyAnswer, PropertyId, PropertyValue, PropertyValues, RuntimeId,
 };
 use verbatim_model::request::{
-    Answer, Ask, FindScope, FocusAncestor, FocusCaret, FocusNode, FocusRead, HeldIds,
-    KnownAncestor, MsaaIds, MsaaRun, NodeRead, NodeWindow, ObjectClass, ObjectRead, ObjectRef,
-    Outcome, Probe, Purpose, ReadObject, Refusal, RelationFound, RelationQuery, Reply, Request,
-    RouteEnd, RunRead, Tried, WindowVerdict,
+    Answer, Ask, CandidateAnswer, CandidateFacts, CandidateKind, Depth, FindScope, FocusAncestor,
+    FocusCaret, FocusNode, FocusRead, HeldIds, KnownAncestor, MsaaIds, MsaaRun, NodeRead,
+    NodeWindow, ObjectClass, ObjectRead, ObjectRef, Outcome, Probe, Purpose, ReadObject, Refusal,
+    RelationFound, RelationQuery, Reply, Request, RouteEnd, RunCandidate, WindowVerdict,
 };
 use verbatim_model::{
     Backend, NodeDetails, NodeId, NodeSnapshot, Pid, QueryKind, Role, State, StateSet, TextDetails,
@@ -128,13 +128,13 @@ pub(super) fn answer(context: &RequestContext<'_>, client: &mut Client, ask: &As
             set,
             known,
             details,
-            focused_state_test,
+            depth,
         } => current_focus(
             context,
             client,
             (ask, &mut probes),
             set,
-            (known, *details, *focused_state_test),
+            (known, *details, *depth),
         ),
         Request::CompleteUia(complete) => {
             match verdict(
@@ -1080,7 +1080,6 @@ pub(super) fn focus_read(
     FocusRead {
         focus: focus_node(focus.node, nearest),
         msaa: focus.msaa,
-        redirected: false,
         ancestors,
         met: focus.met,
         foreground: focus
@@ -1173,81 +1172,99 @@ fn held_ids(context: &RequestContext<'_>, node: &NodeSnapshot) -> Option<HeldIds
     })
 }
 
-/// An MSAA run, its candidates tried newest first until one is a valid
-/// focus.
+/// One MSAA candidate Core asks about, its window's verdict consulted
+/// first.
 fn msaa_run(
     context: &RequestContext<'_>,
     client: &mut Client,
     run: &MsaaRun,
     probes: &mut Vec<Probe>,
 ) -> Outcome {
-    let mut tried = Vec::new();
-    for candidate in &run.candidates {
-        let ids = candidate.ids;
-        let hwnd = hwnd_of(ids.window);
-        let outcome = match verdict(context, hwnd, candidate.verdict, probes) {
-            // Read through UI Automation, whose own focus speaks for it,
-            // as NVDA drops a native UI Automation window's `WinEvent`.
-            Some(true) => Tried::Skipped,
-            None => Tried::NotThere,
-            Some(false) => try_candidate(context, client, (ids, candidate.kind), run),
-        };
-        let found = matches!(outcome, Tried::Focus(_));
-        tried.push(outcome);
-        if found {
-            break;
-        }
-    }
-    Outcome::Result(Reply::Run(RunRead { tried }))
+    let candidate = &run.candidate;
+    let window = hwnd_of(candidate.ids.window);
+    let answer = match verdict(context, window, candidate.verdict, probes) {
+        // Read through UI Automation, whose own focus speaks for it, as
+        // NVDA drops a native UI Automation window's `WinEvent`.
+        Some(true) => CandidateAnswer {
+            facts: CandidateFacts::Skipped,
+            read: None,
+        },
+        None => CandidateAnswer {
+            facts: CandidateFacts::NotThere,
+            read: None,
+        },
+        Some(false) => try_candidate(context, client, candidate, run),
+    };
+    Outcome::Result(Reply::Candidate(answer))
 }
 
-/// One MSAA run candidate read as NVDA's pump reads it: the object at its
-/// event's address, a focus event's object or an ancestor having the
-/// focused state, then its ancestors up to one Core already knows.
+/// One MSAA candidate read as NVDA's pump reads it, to the depth Core
+/// asks: the object at its event's address, after NVDA's redirect; the
+/// facts Core judges, a focus event's focused state over the object and
+/// its ancestors and a menu start's role; then, unless the depth stops
+/// there, the full read, with its ancestors up to one Core already knows.
+/// The outpost judges none of the facts.
 fn try_candidate(
     context: &RequestContext<'_>,
     client: &mut Client,
-    (ids, kind): (MsaaIds, verbatim_model::request::CandidateKind),
+    asked: &RunCandidate,
     run: &MsaaRun,
-) -> Tried {
+) -> CandidateAnswer {
+    let not_there = CandidateAnswer {
+        facts: CandidateFacts::NotThere,
+        read: None,
+    };
+    let ids = asked.ids;
     let hwnd = hwnd_of(ids.window);
     let Some(mut candidate) = verbatim_ia2::acquire::focus_candidate(hwnd, ids.object, ids.child)
     else {
-        return Tried::NotThere;
+        return not_there;
     };
-    if kind == verbatim_model::request::CandidateKind::Focus {
+    let focused = (asked.kind == CandidateKind::Focus).then(|| {
         let plain = |window| read::reads_as_plain(context, window);
         let mut parent = |window| read::parent_window_for_focused_state(context, client, window);
-        if !candidate.has_focused_state(read::MAX_ANCESTOR_HOPS, &plain, &mut parent) {
-            return Tried::Refused(Refusal::NotFocused);
-        }
-    }
-    let held_child = candidate.resolved_child();
-    // The child a redirect from the event's object reached, when one did:
-    // the address the candidate is at after the redirect, which only a
-    // redirect moves; the node it is read as may be kept at another
-    // address with no redirect at all, a window's client re-keyed as the
-    // window, or an object NVDA's equality matched to a known one. Its ids
-    // are the focus's event ids from then on, as NVDA builds the
+        candidate.has_focused_state(read::MAX_ANCESTOR_HOPS, &plain, &mut parent)
+    });
+    let role = (asked.kind == CandidateKind::MenuStart)
+        .then(|| candidate.role())
+        .flatten();
+    // The child a redirect from the event's object reached, when one did.
+    // Its ids are the focus's event ids from then on, as NVDA builds the
     // redirected object with the child's id as its event's
     // (`IAccessibleHandler/__init__.py` 746 to 757).
     let (window, object, child) = candidate.key();
-    let redirected = (window, object, child) != (hwnd, ids.object, ids.child);
-    let event = if redirected {
-        MsaaIds {
-            window: window_handle(window),
-            object,
-            child,
-        }
-    } else {
-        ids
+    let redirect = candidate.redirect().map(|redirect| {
+        (
+            redirect,
+            MsaaIds {
+                window: window_handle(window),
+                object,
+                child,
+            },
+        )
+    });
+    let facts = CandidateFacts::Found {
+        focused,
+        role,
+        window_class: verbatim_win32::window::window_class_name(hwnd),
+        redirect,
     };
+    let full = match run.depth {
+        Depth::Facts => false,
+        Depth::FullIfFocused => focused != Some(false),
+        Depth::Full => true,
+    };
+    if !full {
+        return CandidateAnswer { facts, read: None };
+    }
+    let held_child = candidate.resolved_child();
+    let event = redirect.map_or(ids, |(_, reached)| reached);
     let stops = known_stops(&run.known);
     let candidates = candidates_of(&stops);
     let node = candidate.read(context.nodes(), Some(&candidates));
     let Ok(chain) = read::msaa_enrichment(context, client, (&node, &stops, Some(&candidates)))
     else {
-        return Tried::NotThere;
+        return not_there;
     };
     let (mut ancestors, met) = cut_at_known(context, chain, &run.known);
     let mut node = node;
@@ -1264,7 +1281,7 @@ fn try_candidate(
         .is_none()
         .then(|| read::foreground_object(context, client))
         .flatten();
-    let mut read = focus_read(
+    let read = focus_read(
         context,
         &Focus {
             node: &node,
@@ -1279,8 +1296,10 @@ fn try_candidate(
         },
         &run.set,
     );
-    read.redirected = redirected;
-    Tried::Focus(Box::new(read))
+    CandidateAnswer {
+        facts,
+        read: Some(Box::new(read)),
+    }
 }
 
 /// The application's current focus, as a focus-now read finds it, with its
@@ -1296,16 +1315,17 @@ fn try_candidate(
 /// when its timer fires (`NVDAObjects/window/__init__.py` 165 to 173), and
 /// a probe of a window whose thread is busy, Verbatim's hidden frame as its
 /// settings dialog opens, would let the focus move on before it is taken.
-/// With `focused_state_test`, an MSAA focus that neither has the focused
-/// state nor has an ancestor with it is refused "not focused", every
-/// ancestor up to the desktop tested, as NVDA tests its fake focus
-/// (`NVDAObjects/IAccessible/__init__.py` 874 to 892).
+/// With [`Depth::FullIfFocused`], an MSAA focus's focused state is read
+/// over it and every ancestor up to the desktop, as NVDA tests its fake
+/// focus (`NVDAObjects/IAccessible/__init__.py` 874 to 892), and the
+/// answer carries it as a fact, with the full read only when focused;
+/// Core judges it.
 fn current_focus(
     context: &RequestContext<'_>,
     client: &mut Client,
     (ask, probes): (&Ask, &mut Vec<Probe>),
     set: &[PropertyId],
-    (known, details, focused_state_test): (&[KnownAncestor], TextDetails, bool),
+    (known, details, depth): (&[KnownAncestor], TextDetails, Depth),
 ) -> Outcome {
     let window = read::checked_focus_window(context);
     let _ = verdict(context, hwnd_of(ask.window), ask.verdict, probes);
@@ -1314,12 +1334,22 @@ fn current_focus(
             context,
             client,
             (hwnd, read::FocusRead::FocusNow),
-            (&known_stops(known), focused_state_test),
+            (&known_stops(known), depth),
         )
     });
-    let (control_window, mut control) = match read {
-        Ok(read) => read,
-        Err(read::FocusReadMiss::Unfocused) => return Outcome::Refused(Refusal::NotFocused),
+    let (control_window, mut control, focused) = match read {
+        Ok(read::Focused::Read(window, control, focused)) => (window, *control, focused),
+        Ok(read::Focused::Unfocused(window)) => {
+            return Outcome::Result(Reply::Candidate(CandidateAnswer {
+                facts: CandidateFacts::Found {
+                    focused: Some(false),
+                    role: None,
+                    window_class: verbatim_win32::window::window_class_name(window),
+                    redirect: None,
+                },
+                read: None,
+            }));
+        }
         Err(read::FocusReadMiss::Refused | read::FocusReadMiss::Failed(_)) => {
             return Outcome::NotThere;
         }
@@ -1350,7 +1380,7 @@ fn current_focus(
     let msaa = (control.node.backend == Backend::Msaa)
         .then(|| held_ids(context, &control.node))
         .flatten();
-    Outcome::Result(Reply::Focus(Box::new(focus_read(
+    let read = focus_read(
         context,
         &Focus {
             node: &control.node,
@@ -1364,7 +1394,16 @@ fn current_focus(
             details,
         },
         set,
-    ))))
+    );
+    Outcome::Result(Reply::Candidate(CandidateAnswer {
+        facts: CandidateFacts::Found {
+            focused,
+            role: None,
+            window_class: verbatim_win32::window::window_class_name(control_window),
+            redirect: None,
+        },
+        read: Some(Box::new(read)),
+    }))
 }
 
 /// The route's end as the outpost's continuation above it takes it.

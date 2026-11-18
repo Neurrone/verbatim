@@ -740,19 +740,12 @@ impl<L: Logic> Cx<L> {
         Ref::map(self.shared.borrow(), |shared| &shared.state.queue.waiting)
     }
 
-    /// Whether any entry waiting behind this one, a run's candidates and
-    /// the menu slot's included, is one `pick` chooses.
-    pub(crate) fn any_waiting(&self, pick: impl Fn(&L::Entry) -> bool) -> bool {
-        self.shared
-            .borrow()
-            .state
-            .queue
-            .waiting
-            .iter()
-            .any(|item| match item {
-                Item::One(entry) | Item::Menu { entry, .. } => pick(entry),
-                Item::Run(candidates) => candidates.iter().any(&pick),
-            })
+    /// The entries waiting behind this one, to change in place: what a
+    /// confirmation read is written onto its waiting candidate.
+    pub(crate) fn waiting_mut(&mut self) -> RefMut<'_, VecDeque<Item<L::Entry>>> {
+        RefMut::map(self.shared.borrow_mut(), |shared| {
+            &mut shared.state.queue.waiting
+        })
     }
 
     /// Takes out of the queue the waiting single entries `pick` chooses, in

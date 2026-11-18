@@ -371,7 +371,7 @@ impl<L: Logic> Core<L> {
                     (&front.entry, &live.request),
                     &entry,
                     &state.queue.backend,
-                    state.queue.now_us,
+                    (state.queue.now_us, state.queue.foreground),
                 )
                 .then_some(number)
             })
@@ -397,7 +397,7 @@ impl<L: Logic> Core<L> {
                 &ahead,
                 &entry,
                 &state.queue.backend,
-                state.queue.now_us,
+                (state.queue.now_us, state.queue.foreground),
             );
             if !dropped {
                 join::<L>(state, entry);

@@ -882,7 +882,9 @@ fn bring_forward(
             "CurrentFocus"
         )]
     );
-    desk.reply(verbatim_model::request::Reply::Focus(Box::new(read)))
+    desk.reply(verbatim_model::request::Reply::Candidate(
+        verbatim_model::request::CandidateAnswer::focused(read),
+    ))
 }
 
 #[test]

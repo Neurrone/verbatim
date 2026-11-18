@@ -50,7 +50,7 @@ use crate::focus::backend::{Backend, BackendCache, JudgedWindow, WindowKey};
 
 pub(crate) use driver::{Core, Cx, Queue, ReplayMismatch, State};
 pub(crate) use inbox::{CoreRequest, Effect, Input, Timed};
-pub(crate) use limiter::{MsaaClass, MsaaKey, PUMP_WINDOW_US, Place};
+pub(crate) use limiter::{Item, MsaaClass, MsaaKey, PUMP_WINDOW_US, Place};
 pub(crate) use request::{Outcome, Refused, Request};
 pub(crate) use table::Asker;
 
@@ -209,13 +209,13 @@ pub(crate) trait Logic: Sized + 'static {
 
     /// Whether `arriving`, joining the back, withdraws `request`, the
     /// request out of the front entry `front`, judged with the backend
-    /// verdicts at `now_us`.
+    /// verdicts at `now_us` and the foreground record `foreground`.
     fn withdraws(
         facts: &Self::Facts,
         front: (&Self::Entry, &verbatim_model::request::Request),
         arriving: &Self::Entry,
         backend: &BackendCache,
-        now_us: u64,
+        now_us: (u64, Option<Foreground>),
     ) -> bool;
 
     /// The entry appended when `window`, in the recovery set, answers
@@ -366,13 +366,14 @@ pub(crate) trait Logic: Sized + 'static {
     }
 
     /// Whether `arriving` is dropped at its arrival, judged against the
-    /// entries `ahead` of it, the front first.
+    /// entries `ahead` of it, the front first, at `now_us` with the
+    /// foreground record.
     fn dropped_at_arrival(
         facts: &Self::Facts,
         ahead: &[&Self::Entry],
         arriving: &Self::Entry,
         backend: &BackendCache,
-        now_us: u64,
+        now_us: (u64, Option<Foreground>),
     ) -> bool {
         let _ = (facts, ahead, arriving, backend, now_us);
         false

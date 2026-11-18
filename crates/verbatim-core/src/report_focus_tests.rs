@@ -2,6 +2,7 @@
 //! focus's node at its turn, "No focus" with nothing committed, silence
 //! for any outcome but a result, and the not-responding sound for a hung
 //! window.
+use verbatim_model::request::CandidateAnswer;
 
 use verbatim_model::property::{
     PropertyAnswer, PropertyId, PropertyValue, PropertyValues, TextSummary,
@@ -38,7 +39,11 @@ fn committed() -> Held {
         feed_at(
             &mut state,
             600,
-            answer(OUTPOST, 1, Reply::Focus(Box::new(focus_read(None))))
+            answer(
+                OUTPOST,
+                1,
+                Reply::Candidate(CandidateAnswer::focused(focus_read(None)))
+            )
         ),
         SPOKEN_FOLLOWED
     );

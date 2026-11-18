@@ -1,10 +1,9 @@
-//! The tests that judge a focus against the readers' last focus, with no
-//! read (design, "Focus and foreground"; `docs/parity/focus-events.md`,
-//! "Duplicate focus suppression"): the two duplicate tests, the
-//! whole-window refusal and a run's refusals. With the readers' last focus
-//! empty every test finds nothing, as with no earlier focus.
+//! The duplicate tests that judge a focus against the readers' last focus,
+//! with no read (`docs/parity/focus-events.md`, "Duplicate focus
+//! suppression"), private to the rows of `super::validity`. With the
+//! readers' last focus empty every test finds nothing, as with no earlier
+//! focus.
 
-use verbatim_model::WindowHandle;
 use verbatim_model::property::RuntimeId;
 use verbatim_model::request::{MsaaIds, ObjectClass};
 use verbatim_model::tell::{Checked, Read};
@@ -21,7 +20,7 @@ use super::versions::{LastFocus, ReadBy};
 /// never is. A focus read through `accFocus`
 /// names no event ids, so nothing is its duplicate. The class verdict may
 /// change the test; no class read yet changes it.
-pub(crate) fn msaa_duplicate(last: Option<&LastFocus>, ids: &MsaaIds) -> bool {
+pub(super) fn msaa_duplicate(last: Option<&LastFocus>, ids: &MsaaIds) -> bool {
     let Some(last) = last else {
         return false;
     };
@@ -45,7 +44,7 @@ pub(crate) fn msaa_duplicate(last: Option<&LastFocus>, ids: &MsaaIds) -> bool {
 /// "Duplicate focus suppression"). Unlike a duplicate it is not a valid
 /// focus: a run goes on to its older candidates. Equal ids in the item's
 /// own list stand for the item's class, which only a read would show.
-pub(crate) fn msaa_refused_repeat(last: Option<&LastFocus>, ids: &MsaaIds) -> bool {
+pub(super) fn msaa_refused_repeat(last: Option<&LastFocus>, ids: &MsaaIds) -> bool {
     last.is_some_and(|last| last.class == ObjectClass::FocusRaisedTwice)
         && last_msaa_ids(last) == Some(ids)
 }
@@ -68,7 +67,7 @@ fn last_msaa_ids(last: Option<&LastFocus>) -> Option<&MsaaIds> {
 /// has the keyboard focus, by the answer the check carried for the token
 /// that is the readers' last focus. A failed read, or the listener no
 /// longer holding the earlier element, is not a duplicate.
-pub(crate) fn uia_duplicate(
+pub(super) fn uia_duplicate(
     last: Option<&LastFocus>,
     runtime_id: &RuntimeId,
     checked: Option<&Checked>,
@@ -96,73 +95,11 @@ pub(crate) fn uia_duplicate(
         })
 }
 
-/// Whether a foreground tell for the window `top_level` is refused as one
-/// of the window the readers' last focus is in.
-pub(crate) fn whole_window_refused(last: Option<&LastFocus>, top_level: WindowHandle) -> bool {
-    last.is_some_and(|last| last.place.top_level == top_level)
-}
-
-/// Why a run's candidate is refused with no read, judged against the
-/// readers' last focus.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum RunRefusal {
-    /// A foreground tell whose window is not the foreground record's.
-    NotInFront,
-    /// A foreground tell of the last focus's window or an ancestor's.
-    LastFocusWindow,
-    /// A foreground tell whose ids equal the last focus's.
-    SameIds,
-    /// The second focus File Explorer raises for the last focus's item.
-    RepeatedItem,
-}
-
-/// What a run makes of one candidate before asking.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum RunJudgement {
-    /// Refused, with no read.
-    Refused(RunRefusal),
-    /// An MSAA duplicate of the last focus: it ends the run as its valid
-    /// focus, with no read.
-    Duplicate,
-    /// Tried by its application's outpost.
-    Try,
-}
-
-/// How a run judges the candidate named by `ids`, a foreground tell's when
-/// `foreground`, while `in_front` is the foreground record's window.
-pub(crate) fn judge_candidate(
-    last: Option<&LastFocus>,
-    ids: &MsaaIds,
-    foreground: bool,
-    in_front: Option<WindowHandle>,
-) -> RunJudgement {
-    if foreground {
-        if in_front != Some(ids.window) {
-            return RunJudgement::Refused(RunRefusal::NotInFront);
-        }
-        if let Some(last) = last {
-            if last.place.holds_window(ids.window) {
-                return RunJudgement::Refused(RunRefusal::LastFocusWindow);
-            }
-            if matches!(&last.read_by, ReadBy::Msaa { event: Some(earlier), .. } if earlier == ids)
-            {
-                return RunJudgement::Refused(RunRefusal::SameIds);
-            }
-        }
-        return RunJudgement::Try;
-    }
-    if msaa_duplicate(last, ids) {
-        RunJudgement::Duplicate
-    } else if msaa_refused_repeat(last, ids) {
-        RunJudgement::Refused(RunRefusal::RepeatedItem)
-    } else {
-        RunJudgement::Try
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use verbatim_model::tell::ElementToken;
+
+    use verbatim_model::WindowHandle;
 
     use super::super::versions::Place;
     use super::*;
@@ -195,6 +132,7 @@ mod tests {
             place: place(3),
             class: ObjectClass::Plain,
             role: verbatim_model::Role::Button,
+            redirect: None,
         }
     }
 
@@ -207,6 +145,7 @@ mod tests {
             place: place(3),
             class: ObjectClass::Plain,
             role: verbatim_model::Role::Button,
+            redirect: None,
         }
     }
 
@@ -336,75 +275,6 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn a_foreground_tell_of_the_last_focuss_top_level_window_is_refused() {
-        let last = msaa_last(None);
-        assert!(whole_window_refused(Some(&last), WindowHandle(1)));
-        assert!(!whole_window_refused(Some(&last), WindowHandle(7)));
-        assert!(!whole_window_refused(None, WindowHandle(1)));
-    }
-
-    #[test]
-    fn a_foreground_candidate_not_in_front_is_refused() {
-        assert_eq!(
-            judge_candidate(None, &ids(7, 0, 0), true, Some(WindowHandle(8))),
-            RunJudgement::Refused(RunRefusal::NotInFront)
-        );
-    }
-
-    #[test]
-    fn a_foreground_candidate_of_the_last_focuss_window_or_an_ancestors_is_refused() {
-        let last = uia_last(Some(5));
-        for window in [3, 2, 1] {
-            assert_eq!(
-                judge_candidate(
-                    Some(&last),
-                    &ids(window, 0, 0),
-                    true,
-                    Some(WindowHandle(window))
-                ),
-                RunJudgement::Refused(RunRefusal::LastFocusWindow)
-            );
-        }
-    }
-
-    #[test]
-    fn a_foreground_candidate_with_the_last_focuss_ids_is_refused() {
-        let mut last = msaa_last(Some(ids(9, 0, 0)));
-        last.place = Place {
-            window: WindowHandle(8),
-            top_level: WindowHandle(8),
-            root_owner: WindowHandle(8),
-            ancestor_windows: Vec::new().into(),
-        };
-        assert_eq!(
-            judge_candidate(Some(&last), &ids(9, 0, 0), true, Some(WindowHandle(9))),
-            RunJudgement::Refused(RunRefusal::SameIds)
-        );
-    }
-
-    #[test]
-    fn a_foreground_candidate_in_front_and_elsewhere_is_tried() {
-        let last = msaa_last(Some(ids(3, -4, 0)));
-        assert_eq!(
-            judge_candidate(Some(&last), &ids(7, 0, 0), true, Some(WindowHandle(7))),
-            RunJudgement::Try
-        );
-    }
-
-    #[test]
-    fn a_focus_candidate_duplicating_the_last_focus_ends_the_run() {
-        let last = msaa_last(Some(ids(3, -4, 0)));
-        assert_eq!(
-            judge_candidate(Some(&last), &ids(3, -4, 0), false, None),
-            RunJudgement::Duplicate
-        );
-        assert_eq!(
-            judge_candidate(Some(&last), &ids(3, -4, 1), false, None),
-            RunJudgement::Try
-        );
-    }
-
     fn raised_twice_last(event: MsaaIds) -> LastFocus {
         LastFocus {
             class: ObjectClass::FocusRaisedTwice,
@@ -417,29 +287,17 @@ mod tests {
     fn a_second_focus_on_an_item_explorer_raises_twice_is_refused_and_the_run_goes_on() {
         let last = raised_twice_last(ids(3, -4, 3));
         assert!(msaa_refused_repeat(Some(&last), &ids(3, -4, 3)));
-        assert_eq!(
-            judge_candidate(Some(&last), &ids(3, -4, 3), false, None),
-            RunJudgement::Refused(RunRefusal::RepeatedItem)
-        );
     }
 
     #[test]
     fn a_focus_on_another_item_after_one_explorer_raises_twice_is_tried() {
         let last = raised_twice_last(ids(3, -4, 3));
         assert!(!msaa_refused_repeat(Some(&last), &ids(3, -4, 4)));
-        assert_eq!(
-            judge_candidate(Some(&last), &ids(3, -4, 4), false, None),
-            RunJudgement::Try
-        );
     }
 
     #[test]
     fn a_plain_items_second_focus_on_a_child_is_tried() {
         let last = msaa_last(Some(ids(3, -4, 3)));
         assert!(!msaa_refused_repeat(Some(&last), &ids(3, -4, 3)));
-        assert_eq!(
-            judge_candidate(Some(&last), &ids(3, -4, 3), false, None),
-            RunJudgement::Try
-        );
     }
 }

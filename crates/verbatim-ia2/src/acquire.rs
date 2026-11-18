@@ -448,6 +448,7 @@ pub struct FocusCandidate {
     key: MsaaKey,
     role: Prefetched,
     state: Prefetched,
+    redirect: Option<verbatim_model::request::Redirect>,
 }
 
 /// Acquires the object named by an `EVENT_OBJECT_FOCUS` `WinEvent` and
@@ -480,7 +481,7 @@ pub fn focus_candidate(hwnd: isize, id_object: i32, id_child: i32) -> Option<Foc
         Prefetched::Read(role) => role,
         Prefetched::Unread => None,
     };
-    if let Some((focus_acc, key, state)) =
+    if let Some((focus_acc, key, state, redirect)) =
         redirect_focus_to_child(&acc, (hwnd, id_object, id_child), read_role)
     {
         // A redirect for a focused child read its state word already.
@@ -489,6 +490,7 @@ pub fn focus_candidate(hwnd: isize, id_object: i32, id_child: i32) -> Option<Foc
             key,
             role: Prefetched::Unread,
             state,
+            redirect: Some(redirect),
         });
     }
     Some(FocusCandidate {
@@ -496,6 +498,7 @@ pub fn focus_candidate(hwnd: isize, id_object: i32, id_child: i32) -> Option<Foc
         key: (hwnd, id_object, id_child),
         role,
         state: Prefetched::Unread,
+        redirect: None,
     })
 }
 
@@ -504,6 +507,21 @@ impl FocusCandidate {
     #[must_use]
     pub fn key(&self) -> MsaaKey {
         self.key
+    }
+
+    /// Which redirect reached the focus, when one did: its branch, NVDA's
+    /// list redirect or Verbatim's wider one for a focused child.
+    #[must_use]
+    pub fn redirect(&self) -> Option<verbatim_model::request::Redirect> {
+        self.redirect
+    }
+
+    /// The object's role, read once and kept for the read that follows:
+    /// a menu start's, which Core judges.
+    pub fn role(&mut self) -> Option<verbatim_model::Role> {
+        let role = self.role.or_read(|| self.acc.role());
+        self.role = Prefetched::Read(role);
+        role.map(|role| role_from_msaa(role.cast_unsigned()))
     }
 
     /// The child id of the object acquired, as `AccessibleObjectFromEvent`
@@ -735,7 +753,12 @@ fn redirect_focus_to_child(
     acc: &Accessible,
     (hwnd, id_object, id_child): MsaaKey,
     role: Option<i32>,
-) -> Option<(Accessible, MsaaKey, Prefetched)> {
+) -> Option<(
+    Accessible,
+    MsaaKey,
+    Prefetched,
+    verbatim_model::request::Redirect,
+)> {
     let list = focus_event_names_list((hwnd, id_object, id_child), role);
     if !list && id_child != CHILDID_SELF {
         return None;
@@ -752,6 +775,7 @@ fn redirect_focus_to_child(
                     child,
                     (hwnd, id_object, real_child),
                     Prefetched::Read(state),
+                    verbatim_model::request::Redirect::FocusedChild,
                 ))
         }
         // A child by id: redirect only when it is a real child (greater than
@@ -760,6 +784,7 @@ fn redirect_focus_to_child(
             acc.with_child(real_child),
             (hwnd, id_object, real_child),
             Prefetched::Unread,
+            verbatim_model::request::Redirect::List,
         )),
         // A `VT_DISPATCH` child object, `None`, or a self/zero child id: keep
         // the container (see this function's doc for why the dispatch form is
@@ -1544,6 +1569,7 @@ pub fn focused_object(hwnd: isize, serves: &dyn Fn(isize) -> bool) -> Option<Foc
             key,
             role: Prefetched::Unread,
             state: Prefetched::Unread,
+            redirect: None,
         },
         at_address,
     })

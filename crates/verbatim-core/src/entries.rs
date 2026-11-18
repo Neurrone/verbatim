@@ -92,6 +92,9 @@ pub(crate) struct Candidate {
     pub(crate) window: RequestWindow,
     /// Its speech fence, set when it joins the queue.
     pub(crate) fence: Fence,
+    /// Whether a caret key's confirmation read its facts while it waited.
+    #[serde(default)]
+    pub(crate) confirmation: crate::focus::validity::Confirmation,
 }
 
 impl Candidate {
@@ -293,6 +296,7 @@ impl Entry {
                     ids,
                     window,
                     fence: Fence::default(),
+                    confirmation: crate::focus::validity::Confirmation::default(),
                 });
                 Some(match kind {
                     EventKind::MsaaFocus | EventKind::Foreground => Self::Candidate(candidate),
@@ -541,16 +545,29 @@ impl Logic for Entries {
         (front, request): (&Entry, &Wire),
         arriving: &Entry,
         backend: &BackendCache,
-        now_us: u64,
+        (now_us, foreground): (u64, Option<Foreground>),
     ) -> bool {
         if let Some(caret) = crate::keys::caret_key::of_entry(front) {
-            let arriving_key = matches!(arriving, Entry::Press(_));
-            let arriving_focus = pending_focus(facts, arriving, backend, now_us);
-            return crate::keys::caret_key::withdrawn_by(
-                &caret,
-                request,
-                (arriving_key, arriving_focus),
-            );
+            let arrival = match arriving {
+                Entry::Press(_) => crate::keys::caret_key::Arrival::Key,
+                other => {
+                    let view = crate::focus::validity::View {
+                        versions: &facts.versions,
+                        in_front: foreground.map(|foreground| foreground.window),
+                        backend,
+                        now_us,
+                        run_before_valid: false,
+                    };
+                    match crate::focus::validity::judge_alone(other, &view) {
+                        Some((answer, trace, at_us)) => crate::keys::caret_key::Arrival::Focus {
+                            pending: crate::focus::validity::pending(answer, trace),
+                            at_us,
+                        },
+                        None => crate::keys::caret_key::Arrival::Other,
+                    }
+                }
+            };
+            return crate::keys::caret_key::withdrawn_by(&caret, request, arrival);
         }
         // Any key stops say-all, so a key arriving withdraws its read.
         matches!((front, arriving), (Entry::SayAllRead(..), Entry::Press(_)))
@@ -703,10 +720,10 @@ impl Logic for Entries {
         ahead: &[&Entry],
         arriving: &Entry,
         backend: &BackendCache,
-        now_us: u64,
+        now: (u64, Option<Foreground>),
     ) -> bool {
         crate::caret_tell::dropped_in_console(facts, arriving)
-            || crate::focus::menus::opening_dropped(facts, ahead, arriving, backend, now_us)
+            || crate::focus::menus::opening_dropped(facts, ahead, arriving, backend, now)
     }
 
     fn place(facts: &SrState, entry: &Entry) -> Place {
@@ -920,37 +937,6 @@ impl Logic for Entries {
             root_owner: foreground.root_owner,
             fence: Fence::default(),
         })
-    }
-}
-
-/// Whether `entry`, waiting behind the front or arriving, is a focus that
-/// counts as pending, judged now on its tell's facts with no read
-/// (design, "A focus is pending").
-pub(crate) fn pending_focus(
-    facts: &SrState,
-    entry: &Entry,
-    backend: &BackendCache,
-    now_us: u64,
-) -> bool {
-    let last = facts.versions.last.as_ref();
-    let pending =
-        |tell: &Event| crate::focus::pending::counts_as_pending(tell, last, backend, now_us);
-    match entry {
-        Entry::UiaFocus(focus) => pending(&focus.tell),
-        Entry::Candidate(candidate) => pending(&candidate.tell),
-        Entry::Run(candidates) => candidates.iter().any(|candidate| pending(&candidate.tell)),
-        Entry::Menu(_)
-        | Entry::MenuCheck(_)
-        | Entry::CurrentFocus(_)
-        | Entry::MsaaChange(_)
-        | Entry::UiaChange(_)
-        | Entry::Caret(_)
-        | Entry::ForegroundMarker { .. }
-        | Entry::Press(_)
-        | Entry::Mark(..)
-        | Entry::SayAllRead(..)
-        | Entry::Announcement(_)
-        | Entry::TerminalSpeech(_) => false,
     }
 }
 

@@ -14,9 +14,9 @@ use desk::{App, Desk, Heard, LISTENER, follow, queued, values_of};
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::{PropertyValues, RuntimeId};
 use verbatim_model::request::{
-    FocusAncestor, FocusCaret, FocusNode, FocusRead, ForegroundReport, HeldIds, MsaaIds, NodeRead,
-    NodeWindow, ObjectClass, ObjectRead, Outcome, QueueInput, Reader, Reply, Request as Wire,
-    Route, RouteEnd, RouteStep, RunRead, Tried,
+    CandidateAnswer, FocusAncestor, FocusCaret, FocusNode, FocusRead, ForegroundReport, HeldIds,
+    MsaaIds, NodeRead, NodeWindow, ObjectClass, ObjectRead, Outcome, QueueInput, Reader, Reply,
+    Request as Wire, Route, RouteEnd, RouteStep,
 };
 use verbatim_model::tell::{
     AcceptanceFacts, Checked, ElementToken, Event, EventObject, Payload, Read, Relation,
@@ -323,7 +323,6 @@ fn focus_read(
                 })
             }
         },
-        redirected: false,
         ancestors: ancestors
             .iter()
             .rev()
@@ -387,9 +386,7 @@ fn focus(
     answered(desk, heard, &|request| match request {
         Wire::ReadObject(_) => Reply::Object(Box::new(listener_read(app, win, number))),
         Wire::CompleteUia(_) => Reply::Focus(Box::new(read.clone())),
-        Wire::MsaaRun(_) => Reply::Run(RunRead {
-            tried: vec![Tried::Focus(Box::new(read.clone()))],
-        }),
+        Wire::MsaaRun(_) => Reply::Candidate(CandidateAnswer::focused(read.clone())),
         other => panic!("a focus read asked: {other:?}"),
     })
 }
@@ -508,7 +505,9 @@ fn in_the_edit() -> Desk {
         Some(&main_window()),
     );
     let _ = answered(&mut desk, Vec::new(), &|_| {
-        Reply::Focus(Box::new(read.clone()))
+        Reply::Candidate(verbatim_model::request::CandidateAnswer::focused(
+            read.clone(),
+        ))
     });
     // UI Automation's focus event for the edit, which the listener keeps,
     // so that a repeat of it is a duplicate.

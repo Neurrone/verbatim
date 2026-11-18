@@ -768,12 +768,10 @@ fn edit_control(text: &str, offset: u32) -> Text {
         ..desk::focus_read_of(ONE, &node(FIELD, Role::EditableText, StateSet::new()), &[])
     };
     read.focus.runtime_id = None;
-    let tried = verbatim_model::request::RunRead {
-        tried: vec![verbatim_model::request::Tried::Focus(Box::new(read))],
-    };
+    let tried = verbatim_model::request::CandidateAnswer::focused(read);
     let _ = field
         .desk
-        .answer(to, run, Outcome::Result(Reply::Run(tried)));
+        .answer(to, run, Outcome::Result(Reply::Candidate(tried)));
     field.caret = caret;
     field
 }
@@ -2720,7 +2718,13 @@ impl Text {
             ..desk::focus_read_of(next, snapshot, &[])
         };
         self.desk
-            .answer(to, number, Outcome::Result(Reply::Focus(Box::new(read))))
+            .answer(
+                to,
+                number,
+                Outcome::Result(Reply::Candidate(
+                    verbatim_model::request::CandidateAnswer::focused(read),
+                )),
+            )
             .into_iter()
             .filter_map(|heard| match heard {
                 desk::Heard::Say(_, segments) => Some(segments),
@@ -3911,11 +3915,9 @@ impl Text {
             ..desk::focus_read_of(app, &nameless, &[])
         };
         read.focus.runtime_id = None;
-        let tried = verbatim_model::request::RunRead {
-            tried: vec![verbatim_model::request::Tried::Focus(Box::new(read))],
-        };
+        let tried = verbatim_model::request::CandidateAnswer::focused(read);
         self.desk
-            .answer(to, run, Outcome::Result(Reply::Run(tried)))
+            .answer(to, run, Outcome::Result(Reply::Candidate(tried)))
             .into_iter()
             .filter_map(|heard| match heard {
                 desk::Heard::Say(_, segments) => Some(segments),

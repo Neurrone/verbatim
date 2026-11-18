@@ -164,7 +164,7 @@ impl Logic for Limited {
         _: (&Entry, &verbatim_model::request::Request),
         _: &Entry,
         _: &crate::focus::backend::BackendCache,
-        _: u64,
+        _: (u64, Option<crate::event_queue::Foreground>),
     ) -> bool {
         false
     }

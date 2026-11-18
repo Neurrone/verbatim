@@ -422,18 +422,20 @@ fn a_controls_own_focus_reports_its_focused_child() {
         )),
         Some((Role::Tree, Some("Categories")))
     );
+    let reached = MsaaIds {
+        window: WindowHandle(hwnd.0 as u64),
+        object: tree,
+        child: 1,
+    };
+    let redirect = match &reported.facts {
+        Some(verbatim_model::request::CandidateFacts::Found { redirect, .. }) => *redirect,
+        other => panic!("the candidate's facts are {other:?}"),
+    };
     assert_eq!(
+        (redirect, reported.read.msaa.map(|held| held.event)),
         (
-            reported.read.redirected,
-            reported.read.msaa.map(|held| held.event)
-        ),
-        (
-            true,
-            Some(MsaaIds {
-                window: WindowHandle(hwnd.0 as u64),
-                object: tree,
-                child: 1,
-            })
+            Some((verbatim_model::request::Redirect::FocusedChild, reached)),
+            Some(reached)
         ),
         "the item the redirect reached, named by the ids its own event names"
     );
@@ -460,10 +462,11 @@ fn a_focus_that_was_not_redirected_reports_no_redirect() {
         object: windows::Win32::UI::WindowsAndMessaging::OBJID_CLIENT.0,
         child: 0,
     });
-    assert_eq!(
-        (reported.role(), reported.read.redirected),
-        (Role::Window, false)
-    );
+    let redirect = match &reported.facts {
+        Some(verbatim_model::request::CandidateFacts::Found { redirect, .. }) => *redirect,
+        other => panic!("the candidate's facts are {other:?}"),
+    };
+    assert_eq!((reported.role(), redirect), (Role::Window, None));
 
     drop(outpost);
     app.quit();
@@ -1456,7 +1459,7 @@ fn a_focus_now_takes_the_focus_window_before_its_probe() {
             set: common::outpost::focus_set(),
             known: Vec::new(),
             details: verbatim_model::TextDetails::NONE,
-            focused_state_test: false,
+            depth: verbatim_model::request::Depth::Full,
         },
     );
     assert_eq!(app.held(), "GetObject", "the probe of the request's window");
@@ -2638,15 +2641,25 @@ fn the_focused_state_test_continues_past_a_failed_acc_parent() {
     app.send("fail-acc-parent save");
     common::reset_hits(host);
     // The button, index 1, at its object id in the child window.
-    let (run, _) = outpost.msaa_run(&[(
-        common::outpost::node_ids(child, 1),
-        verbatim_model::request::CandidateKind::Focus,
-    )]);
-    assert_eq!(
-        run.tried,
-        [verbatim_model::request::Tried::Refused(
-            verbatim_model::request::Refusal::NotFocused
-        )]
+    let (run, _) = outpost.msaa_run(
+        (
+            common::outpost::node_ids(child, 1),
+            verbatim_model::request::CandidateKind::Focus,
+        ),
+        verbatim_model::request::Depth::FullIfFocused,
+    );
+    assert!(
+        matches!(
+            run,
+            verbatim_model::request::CandidateAnswer {
+                facts: verbatim_model::request::CandidateFacts::Found {
+                    focused: Some(false),
+                    ..
+                },
+                read: None,
+            }
+        ),
+        "found not focused, and not read further: {run:?}"
     );
     assert_eq!(
         common::read_get_objects(host)

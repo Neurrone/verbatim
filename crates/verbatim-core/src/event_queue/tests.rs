@@ -182,7 +182,7 @@ impl Logic for Test {
         (front, _): (&Entry, &verbatim_model::request::Request),
         arriving: &Entry,
         _: &BackendCache,
-        _: u64,
+        _: (u64, Option<Foreground>),
     ) -> bool {
         matches!(front, Entry::Read { .. }) && *arriving == Entry::Key
     }
@@ -1447,7 +1447,7 @@ impl Logic for Probing {
         _: (&Withdraws, &verbatim_model::request::Request),
         arriving: &Withdraws,
         _: &BackendCache,
-        _: u64,
+        _: (u64, Option<Foreground>),
     ) -> bool {
         *arriving
     }

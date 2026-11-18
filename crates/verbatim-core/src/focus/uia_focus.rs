@@ -8,18 +8,16 @@
 use std::iter;
 
 use verbatim_model::OutpostId;
-use verbatim_model::event_kind::EventKind;
-use verbatim_model::property::{PropertyId, PropertyValue};
 use verbatim_model::request::{
     CompleteUia, CompletionFor, FocusRead, ObjectRead, ObjectRef, Purpose, ReadObject, Reply,
     Request as Wire, RouteEnd,
 };
-use verbatim_model::tell::{ElementToken, Read, TellWindow};
+use verbatim_model::tell::ElementToken;
 
 use super::FOCUS_SET;
 use super::execute::{Known, Origin, again, execute};
-use super::pending::counts_as_pending;
 use super::retake::{CurrentFocusRead, read_by};
+use super::validity::{self, How, Subject, Validity};
 use super::versions::ReadBy;
 use crate::entries::{Entries, UiaFocus, request_window};
 use crate::event_queue::{Cx, FOCUS_DUE_US, Outcome, Reader, Request, RequestWindow};
@@ -98,49 +96,6 @@ fn kept_token(cx: &Cx<Entries>) -> Option<ElementToken> {
     }
 }
 
-/// Whether `focus` is a menu opening on the committed focus's runtime id.
-fn opens_on_committed(cx: &Cx<Entries>, focus: &UiaFocus) -> bool {
-    focus.tell.kind == EventKind::UiaMenuOpened
-        && cx
-            .facts()
-            .versions
-            .committed_read()
-            .is_some_and(|kept| {
-                matches!(&kept.read_by, ReadBy::Uia { runtime_id, .. } if *runtime_id == focus.runtime_id)
-            })
-}
-
-/// Whether the check thread found `focus`'s element without the keyboard
-/// focus at delivery. A menu opening on the committed focus is a focus on
-/// it, subject to that answer as any focus is
-/// (`docs/parity/focus-events.md`), so one whose element lost the keyboard
-/// focus is dropped.
-fn lost_keyboard_focus(focus: &UiaFocus) -> bool {
-    focus
-        .tell
-        .checked
-        .as_ref()
-        .and_then(|checked| checked.keyboard_focus)
-        == Some(Read::Answered(false))
-}
-
-/// Whether `focus` names Verbatim's hidden frame's own element, which is
-/// dropped (Verbatim-only, design "Focus and foreground").
-fn on_hidden_frame(focus: &UiaFocus) -> bool {
-    let TellWindow::Found(facts) = &focus.tell.window else {
-        return false;
-    };
-    facts.hidden_frame
-        && matches!(
-            focus
-                .tell
-                .cached
-                .answer(PropertyId::NativeWindow)
-                .and_then(|answer| answer.value.as_ref()),
-            Some(PropertyValue::Window(window)) if *window == facts.window.handle
-        )
-}
-
 /// The function of a UI Automation focus entry, or of a menu opening: a
 /// menu opening on the committed focus executes it again; otherwise the
 /// native-element test with the verdict, the overrides, acceptance, the
@@ -148,31 +103,25 @@ fn on_hidden_frame(focus: &UiaFocus) -> bool {
 /// the two reads; then execution. Any outcome but a result ends it
 /// unspoken and clears Core's caret baseline.
 pub(crate) async fn run(mut cx: Cx<Entries>, focus: UiaFocus) {
-    if opens_on_committed(&cx, &focus) {
-        if lost_keyboard_focus(&focus) {
+    match validity::at(
+        &cx,
+        Subject::Uia(&focus),
+        None,
+        validity::Purpose::Turn,
+        false,
+    ) {
+        Validity::Valid(How::Again) => {
+            let said = again(&mut cx.facts_mut(), focus.tell.trace_id);
+            for said in said {
+                cx.emit(said);
+            }
             return;
         }
-        let said = again(&mut cx.facts_mut(), focus.tell.trace_id);
-        for said in said {
-            cx.emit(said);
-        }
-        return;
+        Validity::Valid(How::Read) => {}
+        Validity::Duplicate | Validity::Refused(_) | Validity::NeedsRead(_) => return,
     }
-    if on_hidden_frame(&focus) {
-        return;
-    }
-    let passes = {
-        let facts = cx.facts();
-        let backend = cx.backend();
-        counts_as_pending(
-            &focus.tell,
-            facts.versions.last.as_ref(),
-            &backend,
-            cx.now_us(),
-        )
-    };
-    // Passing, the focus's walk found its nearest window.
-    let (true, Some(window)) = (passes, request_window(&focus.tell)) else {
+    // Valid, the focus's walk found its nearest window.
+    let Some(window) = request_window(&focus.tell) else {
         return;
     };
     let due_us = cx.due_in(FOCUS_DUE_US);
@@ -189,9 +138,13 @@ pub(crate) async fn run(mut cx: Cx<Entries>, focus: UiaFocus) {
             purpose: Purpose::Focus { keep },
         },
     };
-    let Outcome::Result(object) = cx.ask(read, due_us).await else {
-        cx.facts_mut().focus_read_failed();
-        return;
+    let object = match cx.ask(read, due_us).await {
+        Outcome::Result(object) => object,
+        outcome => {
+            refused_or_not_there(&mut cx, &outcome);
+            cx.facts_mut().focus_read_failed();
+            return;
+        }
     };
     // A focus read without its route is the listener's fault.
     let Some(route) = object.route else {
@@ -235,10 +188,11 @@ pub(crate) async fn run(mut cx: Cx<Entries>, focus: UiaFocus) {
             cx.facts_mut().focus_read_failed();
             return;
         }
-        Outcome::Refused(_)
+        outcome @ (Outcome::Refused(_)
         | Outcome::NotThere
         | Outcome::NotResponding
-        | Outcome::NoLongerAwaited(_) => {
+        | Outcome::NoLongerAwaited(_)) => {
+            refused_or_not_there(&mut cx, &outcome);
             cx.facts_mut().focus_read_failed();
             unexecuted(&mut cx, window);
             return;
@@ -290,10 +244,14 @@ async fn afresh(
         known: known.sent.clone(),
         details: crate::details::focus_details(&cx.facts()),
         set: crate::details::node_set(&cx.facts(), FOCUS_SET),
-        focused_state_test: false,
+        depth: verbatim_model::request::Depth::Full,
     };
-    let Outcome::Result(read) = cx.ask(request, due_us).await else {
+    let Outcome::Result(answered) = cx.ask(request, due_us).await else {
         cx.facts_mut().focus_read_failed();
+        return;
+    };
+    let Some(read) = answered.read else {
+        // A current-focus answer with no full read: the outpost's fault.
         return;
     };
     let Some(read_by) = read_by(&read) else {
@@ -302,6 +260,14 @@ async fn afresh(
     let origin = origin(focus, window, cx.foreground());
     let executed = execute(&mut cx.facts_mut(), &origin, &read, &known, read_by);
     executed.deliver(&mut cx);
+}
+
+/// A UI Automation focus read tried at its own turn and answered refused or
+/// not there ends the redirect guard (Dickson, 2026-11-18).
+fn refused_or_not_there<T>(cx: &mut Cx<Entries>, outcome: &Outcome<T>) {
+    if matches!(outcome, Outcome::Refused(_) | Outcome::NotThere) {
+        cx.facts_mut().versions.tried_and_refused();
+    }
 }
 
 /// A completion the outpost of `window`'s application answered, or Core

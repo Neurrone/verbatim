@@ -2263,16 +2263,26 @@ fn the_focused_state_walk_makes_no_call_above_the_process_boundary() {
     // The button, index 1, without the focused state, tried as Core asks
     // an MSAA run of its focus event: refused, with no ancestor in the
     // window holding the focused state.
-    let (run, _) = outpost.msaa_run(&[(
-        common::outpost::node_ids(hwnd, 1),
-        verbatim_model::request::CandidateKind::Focus,
-    )]);
+    let (run, _) = outpost.msaa_run(
+        (
+            common::outpost::node_ids(hwnd, 1),
+            verbatim_model::request::CandidateKind::Focus,
+        ),
+        verbatim_model::request::Depth::FullIfFocused,
+    );
     let judged_at = common::now_us();
-    assert_eq!(
-        run.tried,
-        [verbatim_model::request::Tried::Refused(
-            verbatim_model::request::Refusal::NotFocused
-        )]
+    assert!(
+        matches!(
+            run,
+            verbatim_model::request::CandidateAnswer {
+                facts: verbatim_model::request::CandidateFacts::Found {
+                    focused: Some(false),
+                    ..
+                },
+                read: None,
+            }
+        ),
+        "found not focused, and not read further: {run:?}"
     );
     let ended = parent_app.stall_ended(stall);
     assert!(

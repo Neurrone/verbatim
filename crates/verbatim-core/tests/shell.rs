@@ -461,7 +461,9 @@ fn started_on(desk: &mut Desk, app: App, read: FocusRead) -> Vec<Heard> {
         bring_forward(desk, app),
         [Heard::Sent(Reader::Outpost(app.pid), "CurrentFocus")]
     );
-    desk.reply(Reply::Focus(Box::new(read)))
+    desk.reply(Reply::Candidate(
+        verbatim_model::request::CandidateAnswer::focused(read),
+    ))
 }
 
 /// What a UI Automation focus on the "OK" button of `app` does, as the
@@ -682,7 +684,12 @@ fn a_fake_focus_on_the_msaa_focus_core_holds_says_nothing() {
             id: PropertyId::States,
             value: Some(PropertyValue::States(StateSet::new().with(State::Focused))),
         });
-    assert_eq!(desk.reply(Reply::Focus(Box::new(read))), []);
+    assert_eq!(
+        desk.reply(Reply::Candidate(
+            verbatim_model::request::CandidateAnswer::focused(read)
+        )),
+        []
+    );
 }
 
 /// The check after a menu's end reads the UI Automation focus Core holds:
@@ -697,7 +704,9 @@ fn a_fake_focus_on_the_uia_focus_core_holds_is_spoken_again() {
     );
     menu_ended(&mut desk, ONE);
     assert_eq!(
-        desk.reply(Reply::Focus(Box::new(focus_read_of(ONE, &ok(ONE), &[])))),
+        desk.reply(Reply::Candidate(
+            verbatim_model::request::CandidateAnswer::focused(focus_read_of(ONE, &ok(ONE), &[]))
+        )),
         focus_heard(ONE, focus_now_in(ONE, 5, &[]), vec![ok_button()])
     );
 }
@@ -733,7 +742,9 @@ fn a_desktop_return_s_focus_is_spoken_again_on_the_focus_core_holds() {
         [Heard::Sent(Reader::Outpost(ONE.pid), "CurrentFocus")]
     );
     assert_eq!(
-        desk.reply(Reply::Focus(Box::new(msaa_ok(ONE)))),
+        desk.reply(Reply::Candidate(
+            verbatim_model::request::CandidateAnswer::focused(msaa_ok(ONE))
+        )),
         msaa_ok_heard(ONE, Some((ONE, FRAME)))
     );
 }

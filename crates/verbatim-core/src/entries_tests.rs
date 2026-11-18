@@ -7,9 +7,10 @@ use verbatim_model::property::{
     PropertyAnswer, PropertyId, PropertyValue, PropertyValues, RuntimeId,
 };
 use verbatim_model::request::{
-    Answer, Ask, CompleteUia, FocusAncestor, FocusCaret, FocusNode, FocusRead, HeldIds,
-    KnownAncestor, NodeRead, ObjectClass, ObjectRead, Outcome as WireOutcome, Refusal, Reply,
-    Request as Wire, RequestNumber, Route, RouteEnd, RouteStep, RunRead, Tried,
+    Answer, Ask, CandidateAnswer, CandidateFacts, CompleteUia, Depth, FocusAncestor, FocusCaret,
+    FocusNode, FocusRead, HeldIds, KnownAncestor, NodeRead, ObjectClass, ObjectRead,
+    Outcome as WireOutcome, Redirect, Refusal, Reply, Request as Wire, RequestNumber, Route,
+    RouteEnd, RouteStep,
 };
 use verbatim_model::tell::{
     AcceptanceFacts, Checked, ElementToken, Payload, Read, Relation, WindowFacet,
@@ -156,7 +157,6 @@ pub(crate) fn focus_read(msaa: Option<HeldIds>) -> FocusRead {
             runtime_id: msaa.is_none().then(|| RuntimeId(vec![42, 1])),
         },
         msaa,
-        redirected: false,
         ancestors: vec![FocusAncestor {
             node: FocusNode {
                 read: NodeRead {
@@ -324,13 +324,13 @@ pub(crate) fn kind(ask: &Ask) -> &'static str {
         Wire::CompleteUia(_) => "CompleteUia",
         Wire::MsaaRun(_) => "MsaaRun",
         Wire::CurrentFocus {
-            focused_state_test: false,
+            depth: verbatim_model::request::Depth::Full,
             ..
         } => "CurrentFocus",
         Wire::CurrentFocus {
-            focused_state_test: true,
+            depth: verbatim_model::request::Depth::FullIfFocused,
             ..
-        } => "CurrentFocus with the focused-state test",
+        } => "CurrentFocus with the focused state as a fact",
         Wire::Follow(_) => "Follow",
         _ => "other",
     }
@@ -612,7 +612,11 @@ fn a_walk_that_met_an_ancestor_core_no_longer_knows_reads_the_focus_afresh() {
         feed_at(
             &mut state,
             3_000,
-            answer(OUTPOST, 2, Reply::Focus(Box::new(focus_read(None))))
+            answer(
+                OUTPOST,
+                2,
+                Reply::Candidate(CandidateAnswer::focused(focus_read(None)))
+            )
         ),
         [
             "Label(\"Editor\") Role(Window)",
@@ -674,6 +678,19 @@ fn a_checkpoint_that_does_not_replay_is_an_error_and_leaves_the_state() {
     assert_eq!(cloned, before);
 }
 
+/// The answer of a focused candidate a redirect took to `child`.
+pub(crate) fn redirected(read: FocusRead, redirect: Redirect, child: MsaaIds) -> CandidateAnswer {
+    CandidateAnswer {
+        facts: CandidateFacts::Found {
+            focused: Some(true),
+            role: None,
+            window_class: String::new(),
+            redirect: Some((redirect, child)),
+        },
+        read: Some(Box::new(read)),
+    }
+}
+
 /// The run's held ids for the candidate of object `object`.
 pub(crate) fn held(object: i32) -> HeldIds {
     HeldIds {
@@ -686,45 +703,72 @@ pub(crate) fn held(object: i32) -> HeldIds {
     }
 }
 
+/// The object of the one candidate the MSAA request out names, with its
+/// depth.
+fn asked_candidate(state: &Held) -> Option<(i32, Depth)> {
+    state
+        .queue
+        .table_for_tests()
+        .into_iter()
+        .find_map(|request| match request {
+            Wire::MsaaRun(run) => Some((run.candidate.ids.object, run.depth)),
+            _ => None,
+        })
+}
+
+/// An answer finding the candidate without the focused state.
+pub(crate) fn not_focused() -> CandidateAnswer {
+    CandidateAnswer {
+        facts: CandidateFacts::Found {
+            focused: Some(false),
+            role: None,
+            window_class: String::new(),
+            redirect: None,
+        },
+        read: None,
+    }
+}
+
 #[test]
-fn a_run_asks_its_application_newest_first_and_executes_the_valid_focus() {
+fn a_run_asks_one_candidate_at_a_time_newest_first_and_executes_the_valid_focus() {
     let mut state = ready();
     assert_eq!(
         feed_at(&mut state, 1_000, entry(msaa_tell(-4))),
         ["send Outpost(Pid(40)) MsaaRun"]
     );
+    assert_eq!(asked_candidate(&state), Some((-4, Depth::FullIfFocused)));
     // The first candidate is asked alone; two more join a run behind it.
     feed_at(&mut state, 1_100, entry(msaa_tell(-5)));
     feed_at(&mut state, 1_200, entry(msaa_tell(-6)));
-    let tried = RunRead {
-        tried: vec![Tried::NotThere],
+    let gone = CandidateAnswer {
+        facts: CandidateFacts::NotThere,
+        read: None,
     };
     assert_eq!(
-        feed_at(&mut state, 2_000, answer(OUTPOST, 1, Reply::Run(tried))),
+        feed_at(
+            &mut state,
+            2_000,
+            answer(OUTPOST, 1, Reply::Candidate(gone))
+        ),
         ["send Outpost(Pid(40)) MsaaRun"]
     );
-    let asked = state
-        .queue
-        .table_for_tests()
-        .into_iter()
-        .find_map(|request| match request {
-            Wire::MsaaRun(run) => Some(
-                run.candidates
-                    .iter()
-                    .map(|candidate| candidate.ids.object)
-                    .collect::<Vec<_>>(),
-            ),
-            _ => None,
-        });
-    assert_eq!(asked, Some(vec![-6, -5]));
-    let tried = RunRead {
-        tried: vec![
-            Tried::Refused(Refusal::NotFocused),
-            Tried::Focus(Box::new(focus_read(Some(held(-5))))),
-        ],
-    };
+    assert_eq!(asked_candidate(&state), Some((-6, Depth::FullIfFocused)));
     assert_eq!(
-        feed_at(&mut state, 3_000, answer(OUTPOST, 2, Reply::Run(tried))),
+        feed_at(
+            &mut state,
+            2_500,
+            answer(OUTPOST, 2, Reply::Candidate(not_focused()))
+        ),
+        ["send Outpost(Pid(40)) MsaaRun"]
+    );
+    assert_eq!(asked_candidate(&state), Some((-5, Depth::FullIfFocused)));
+    let tried = CandidateAnswer::focused(focus_read(Some(held(-5))));
+    assert_eq!(
+        feed_at(
+            &mut state,
+            3_000,
+            answer(OUTPOST, 3, Reply::Candidate(tried))
+        ),
         SPOKEN
     );
     assert_eq!(
@@ -752,6 +796,7 @@ fn an_msaa_duplicate_of_the_readers_last_focus_ends_the_run_with_no_read() {
         },
         class: ObjectClass::Plain,
         role: verbatim_model::Role::Button,
+        redirect: None,
     });
     assert_eq!(feed_at(&mut state, 1_000, entry(msaa_tell(-4))), NOTHING);
     assert!(state.queue.front_for_tests().is_none());
@@ -784,11 +829,13 @@ fn a_second_focus_on_an_item_file_explorer_raises_twice_is_refused_with_no_read(
         held_child: 3,
     }));
     read.class = ObjectClass::FocusRaisedTwice;
-    let tried = RunRead {
-        tried: vec![Tried::Focus(Box::new(read))],
-    };
+    let tried = CandidateAnswer::focused(read);
     assert_eq!(
-        feed_at(&mut state, 2_000, answer(OUTPOST, 1, Reply::Run(tried))),
+        feed_at(
+            &mut state,
+            2_000,
+            answer(OUTPOST, 1, Reply::Candidate(tried))
+        ),
         SPOKEN
     );
     assert_eq!(item(&mut state, 3_000), NOTHING);
@@ -915,16 +962,17 @@ fn a_focus_on_the_child_a_redirect_reached_ends_the_run_with_no_read() {
         object: -4,
         child: 2,
     };
-    let mut read = focus_read(Some(HeldIds {
+    let read = focus_read(Some(HeldIds {
         event: child,
         held_child: 2,
     }));
-    read.redirected = true;
-    let tried = RunRead {
-        tried: vec![Tried::Focus(Box::new(read))],
-    };
+    let tried = redirected(read, Redirect::List, child);
     assert_eq!(
-        feed_at(&mut state, 2_000, answer(OUTPOST, 1, Reply::Run(tried))),
+        feed_at(
+            &mut state,
+            2_000,
+            answer(OUTPOST, 1, Reply::Candidate(tried))
+        ),
         SPOKEN
     );
     let mut tell = msaa_tell(-4);
@@ -981,24 +1029,26 @@ fn a_redirect_that_reaches_the_committed_focus_is_spoken_again() {
         child: child.child,
     };
     feed_at(&mut state, 1_000, entry(tell));
-    let tried = RunRead {
-        tried: vec![Tried::Focus(Box::new(focus_read(Some(at_child))))],
-    };
+    let tried = CandidateAnswer::focused(focus_read(Some(at_child)));
     assert_eq!(
-        feed_at(&mut state, 2_000, answer(OUTPOST, 1, Reply::Run(tried))),
+        feed_at(
+            &mut state,
+            2_000,
+            answer(OUTPOST, 1, Reply::Candidate(tried))
+        ),
         SPOKEN
     );
     assert_eq!(
         feed_at(&mut state, 3_000, entry(msaa_tell(-4))),
         ["send Outpost(Pid(40)) MsaaRun"]
     );
-    let mut read = focus_read(Some(at_child));
-    read.redirected = true;
-    let tried = RunRead {
-        tried: vec![Tried::Focus(Box::new(read))],
-    };
+    let tried = redirected(focus_read(Some(at_child)), Redirect::List, child);
     assert_eq!(
-        feed_at(&mut state, 4_000, answer(OUTPOST, 2, Reply::Run(tried))),
+        feed_at(
+            &mut state,
+            4_000,
+            answer(OUTPOST, 2, Reply::Candidate(tried))
+        ),
         ["Label(\"OK\") Role(Button)"]
     );
 }
@@ -1052,11 +1102,13 @@ fn a_focus_in_a_window_the_hidden_frame_owns_takes_the_frame_as_its_foreground()
         },
         runtime_id: None,
     });
-    let tried = RunRead {
-        tried: vec![Tried::Focus(Box::new(read))],
-    };
+    let tried = CandidateAnswer::focused(read);
     assert_eq!(
-        feed_at(&mut state, 2_000, answer(OUTPOST, 1, Reply::Run(tried))),
+        feed_at(
+            &mut state,
+            2_000,
+            answer(OUTPOST, 1, Reply::Candidate(tried))
+        ),
         ["Label(\"Verbatim\") Role(Window)", "Label(\"Settings...\")",]
     );
 }
@@ -1105,11 +1157,13 @@ fn a_focused_dialog_the_hidden_frame_owns_is_not_its_own_ancestor() {
         },
         runtime_id: None,
     });
-    let tried = RunRead {
-        tried: vec![Tried::Focus(Box::new(read))],
-    };
+    let tried = CandidateAnswer::focused(read);
     assert_eq!(
-        feed_at(&mut state, 2_000, answer(OUTPOST, 1, Reply::Run(tried))),
+        feed_at(
+            &mut state,
+            2_000,
+            answer(OUTPOST, 1, Reply::Candidate(tried))
+        ),
         ["Label(\"Settings\") Role(Dialog)"]
     );
 }
@@ -1158,11 +1212,13 @@ fn a_focus_in_the_hidden_frames_popup_menu_with_no_owner_says_the_frames_title()
         },
         runtime_id: None,
     });
-    let tried = RunRead {
-        tried: vec![Tried::Focus(Box::new(read))],
-    };
+    let tried = CandidateAnswer::focused(read);
     assert_eq!(
-        feed_at(&mut state, 2_000, answer(OUTPOST, 1, Reply::Run(tried))),
+        feed_at(
+            &mut state,
+            2_000,
+            answer(OUTPOST, 1, Reply::Candidate(tried))
+        ),
         ["Label(\"Verbatim\")", "Label(\"Context\") Role(Menu)"]
     );
 }
@@ -1256,14 +1312,12 @@ fn a_focus_moving_in_the_hidden_frames_popup_menu_says_the_frames_title_once() {
     );
     feed_at(&mut state, 1_000, entry(frame_menu_tell(0)));
     let menu = frame_menu_read(3, "Context", Role::Menu, 0, true);
-    let tried = |read| RunRead {
-        tried: vec![Tried::Focus(Box::new(read))],
-    };
+    let tried = |read| CandidateAnswer::focused(read);
     assert_eq!(
         feed_at(
             &mut state,
             2_000,
-            answer(OUTPOST, 2, Reply::Run(tried(menu)))
+            answer(OUTPOST, 2, Reply::Candidate(tried(menu)))
         ),
         ["Label(\"Verbatim\")", "Label(\"Context\") Role(Menu)"]
     );
@@ -1274,7 +1328,7 @@ fn a_focus_moving_in_the_hidden_frames_popup_menu_says_the_frames_title_once() {
         feed_at(
             &mut state,
             4_000,
-            answer(OUTPOST, 3, Reply::Run(tried(settings)))
+            answer(OUTPOST, 3, Reply::Candidate(tried(settings)))
         ),
         ["Label(\"Settings...\")"]
     );
@@ -1295,7 +1349,7 @@ fn a_focus_moving_in_the_hidden_frames_popup_menu_says_the_frames_title_once() {
         feed_at(
             &mut state,
             6_000,
-            answer(OUTPOST, 4, Reply::Run(tried(exit)))
+            answer(OUTPOST, 4, Reply::Candidate(tried(exit)))
         ),
         ["Label(\"Exit\")"]
     );
@@ -1729,15 +1783,13 @@ fn msaa_node(number: u64, name: &str, role: Role) -> verbatim_model::NodeSnapsho
 fn an_executed_focus_is_the_control_planes_focus_change() {
     let mut state = ready();
     let _ = feed_at(&mut state, 1_000, entry(msaa_tell(-4)));
-    let tried = RunRead {
-        tried: vec![Tried::Focus(Box::new(focus_read(Some(held(-4)))))],
-    };
+    let tried = CandidateAnswer::focused(focus_read(Some(held(-4))));
     let observed: Vec<verbatim_model::Observed> = feed(
         &mut state.state,
         &mut state.runtime,
         Timed {
             at_us: 2_000,
-            input: answer(OUTPOST, 1, Reply::Run(tried)),
+            input: answer(OUTPOST, 1, Reply::Candidate(tried)),
         },
     )
     .unwrap()

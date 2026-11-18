@@ -14,9 +14,11 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use verbatim_model::property::RuntimeId;
-use verbatim_model::request::{KnownAncestor, MsaaIds, ObjectClass};
+use verbatim_model::request::{KnownAncestor, MsaaIds, ObjectClass, Redirect};
 use verbatim_model::tell::ElementToken;
 use verbatim_model::{NodeId, OutpostId, Pid, Role, WindowHandle};
+
+use crate::keys::entry::Fence;
 
 /// How a reader's focus is named, which the duplicate tests compare.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -97,6 +99,22 @@ pub(crate) struct LastFocus {
     pub(crate) class: ObjectClass,
     /// Its role, which the menu-start rule judges.
     pub(crate) role: Role,
+    /// The redirect guard (design, change A): when its read was reached by
+    /// a redirect, which redirect fired and the speech fence of the focus
+    /// tell it was read for. The reached child's own focus, and a list's
+    /// own focus redirected to it, with that same fence end unread. Ended
+    /// by anything that replaces the last focus, and by a candidate tried
+    /// and refused or not there (Dickson, 2026-11-18).
+    #[serde(default)]
+    pub(crate) redirect: Option<(Redirect, Fence)>,
+}
+
+impl LastFocus {
+    /// Whether it names the same focus as `other`, whatever their guards.
+    pub(crate) fn same_focus(&self, other: &Self) -> bool {
+        (&self.read_by, &self.place, self.class, self.role)
+            == (&other.read_by, &other.place, other.class, other.role)
+    }
 }
 
 /// What Core keeps with a committed focus a reader read, each from its
@@ -122,9 +140,6 @@ pub(crate) struct Kept {
     /// application, so shared: a checkpoint, which every entry that asks
     /// takes, copies a pointer, not the chain.
     pub(crate) ancestors: Arc<[KeptAncestor]>,
-    /// Whether a redirect from a list reached it, its MSAA event ids then
-    /// naming the focused child.
-    pub(crate) redirected: bool,
     /// The foreground window it entered under, when it could be read.
     pub(crate) foreground: Option<NodeId>,
     /// Whether its value comes from its selection.
@@ -190,6 +205,7 @@ impl Kept {
             place: self.place.clone(),
             class: self.class,
             role: self.role,
+            redirect: None,
         }
     }
 }
@@ -255,6 +271,22 @@ impl Versions {
         self.committed = Committed::Own {
             source: source.filter(|_| !sourceless),
         };
+    }
+
+    /// The focus just executed was reached by `redirect` for a tell of
+    /// speech fence `fence`: the readers' last focus carries the guard.
+    pub(crate) fn guard(&mut self, redirect: Redirect, fence: Fence) {
+        if let Some(last) = self.last.as_mut() {
+            last.redirect = Some((redirect, fence));
+        }
+    }
+
+    /// A focus read was tried at its own turn and answered refused or not
+    /// there: the redirect guard ends (Dickson, 2026-11-18).
+    pub(crate) fn tried_and_refused(&mut self) {
+        if let Some(last) = self.last.as_mut() {
+            last.redirect = None;
+        }
     }
 
     /// A foreground marker for `window`, of root owner `root_owner`,
@@ -380,7 +412,7 @@ impl Versions {
     pub(crate) fn caret_target(&self) -> Option<&Kept> {
         let last = self.last.as_ref()?;
         match &self.committed {
-            Committed::Read(kept) if kept.last() == *last => Some(kept),
+            Committed::Read(kept) if kept.last().same_focus(last) => Some(kept),
             _ => None,
         }
     }

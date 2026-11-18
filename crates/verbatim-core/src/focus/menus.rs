@@ -6,39 +6,35 @@
 //! the run before it executed no focus notes the committed focus, and
 //! 50 ms later Core appends a check entry. At its turn, if the committed
 //! focus is unchanged, Core asks the foreground application's outpost for
-//! its focus with NVDA's focused-state test, which the outpost runs on an
-//! MSAA focus over every ancestor up to the desktop, refusing one where
-//! neither the object nor an ancestor has the focused state; Core judges
-//! an MSAA answer by NVDA's duplicate test, and a UI Automation answer by
-//! neither. NVDA: `IAccessibleHandler/__init__.py` 976 to 1002, 760 to
+//! its focus with the focused state as a fact, which the outpost reads of
+//! an MSAA focus over every ancestor up to the desktop, reading the focus
+//! in full only when focused; Core judges the answer by the one
+//! definition's menu-check rows (`super::validity`): NVDA's duplicate test
+//! and the focused state for an MSAA answer, neither for a UI Automation
+//! one. NVDA: `IAccessibleHandler/__init__.py` 976 to 1002, 760 to
 //! 782; `NVDAObjects/IAccessible/__init__.py` 874 to 892.
 //!
 //! The UI Automation menu opening is dropped at its arrival while a
-//! focus-kind entry that counts as pending, raised before it, waits or is
-//! asked ahead of it (`UIAHandler/__init__.py` 772 to 777); on the
+//! focus-kind entry that counts as pending by the one definition, raised
+//! before it, waits or is asked ahead of it (`UIAHandler/__init__.py` 772 to 777); on the
 //! committed focus's runtime id the committed focus is executed again;
 //! otherwise it is judged and read as a focus (`crate::focus::uia_focus`).
 
 use serde::{Deserialize, Serialize};
+use verbatim_model::TraceId;
 use verbatim_model::event_kind::EventKind;
-use verbatim_model::property::{PropertyId, PropertyValue};
-use verbatim_model::{OutpostId, TraceId};
 
 use super::FOCUS_SET;
-use super::acceptance;
 use super::backend::BackendCache;
-use super::backend::{Judged, Judgement};
-use super::duplicate::{msaa_duplicate, msaa_refused_repeat};
-use super::execute::{Known, Origin, execute};
-use super::msaa_run::RunRequest;
-use super::pending::counts_as_pending;
+use super::execute::{Origin, execute};
+use super::msaa_run::{RunRequest, known_for};
 use super::retake::{CurrentFocusRead, read_by};
-use super::versions::{Committed, LastFocus, ReadBy};
+use super::validity::{self, Pending, Purpose, Subject, Validity, View};
+use super::versions::{Committed, ReadBy};
 use crate::entries::{Candidate, Entries, Entry};
-use crate::event_queue::{Cx, FOCUS_DUE_US, Outcome, Reader};
+use crate::event_queue::{Cx, FOCUS_DUE_US, Outcome};
 use crate::state::SrState;
-use verbatim_model::Role;
-use verbatim_model::request::{CandidateKind, MsaaRun, RunCandidate, Tried};
+use verbatim_model::request::Depth;
 
 /// How long after a menu or switcher end Core appends its check: NVDA's
 /// 50 ms (`IAccessibleHandler/__init__.py` 976 to 991).
@@ -102,79 +98,57 @@ pub(crate) async fn slot(mut cx: Cx<Entries>, candidate: Candidate, run_executed
     cx.append_after(CHECK_AFTER_US, Entry::MenuCheck(Box::new(check)));
 }
 
-/// Whether the readers' last focus is an MSAA menu popup or menu item.
-fn last_is_msaa_menu(last: Option<&LastFocus>) -> bool {
-    last.is_some_and(|last| {
-        matches!(last.read_by, ReadBy::Msaa { .. })
-            && matches!(last.role, Role::Menu | Role::MenuItem)
-    })
-}
-
 /// The menu-start rule (design, "Focus and foreground"; NVDA:
-/// `IAccessibleHandler/__init__.py` 942 to 973, 1082 to 1103): a menu or
-/// popup start is dropped when the run before it just executed a focus
-/// and the readers' last focus is an MSAA menu popup or menu item, since
-/// the focus is already on the menu. Otherwise, passing acceptance and the
-/// verdict on its tell's facts, its object is read as a focus with neither
-/// the duplicate test nor the focused-state test; it executes as a focus
-/// when it is a menu popup, a start on anything else saying nothing.
+/// `IAccessibleHandler/__init__.py` 942 to 973, 1082 to 1103), as the one
+/// definition judges it: a menu or popup start is refused when the run
+/// before it just executed a focus and the readers' last focus is an MSAA
+/// menu popup or menu item, since the focus is already on the menu.
+/// Otherwise, passing acceptance and the verdict, its object is read in
+/// full as a focus with neither the duplicate test nor the focused-state
+/// test; it executes as a focus when it is a menu popup, a start on
+/// anything else saying nothing.
 async fn start(cx: &mut Cx<Entries>, candidate: &Candidate, run_executed: bool) {
-    if run_executed && last_is_msaa_menu(cx.facts().versions.last.as_ref()) {
-        return;
-    }
-    if acceptance::accept(candidate.tell.kind, candidate.facts(), false).is_err() {
-        return;
-    }
-    let verdict = {
-        let backend = cx.backend();
-        let now_us = cx.now_us();
-        if backend.judge(
-            Judged::Msaa,
-            &candidate.window.judged(),
-            candidate.tell.at_us,
-            now_us,
-        ) == Judgement::Drop
-        {
+    let judged = |cx: &Cx<Entries>, facts| {
+        validity::at(
+            cx,
+            Subject::Msaa(candidate),
+            facts,
+            Purpose::Turn,
+            run_executed,
+        )
+    };
+    match judged(cx, candidate.confirmation.facts()) {
+        Validity::Refused(reason) => {
+            if reason.tried() {
+                cx.facts_mut().versions.tried_and_refused();
+            }
             return;
         }
-        backend.for_request(&candidate.window.judged(), now_us)
-    };
-    let process = candidate.tell.process;
-    let generation = cx
-        .instance(Reader::Outpost(process))
-        .map(|instance| OutpostId(instance.generation));
-    let known = Known::of(&cx.facts(), generation);
-    let request = RunRequest {
-        window: candidate.window,
-        process,
-        run: MsaaRun {
-            candidates: vec![RunCandidate {
-                ids: candidate.ids,
-                kind: CandidateKind::MenuStart,
-                verdict,
-            }],
-            set: crate::details::node_set(&cx.facts(), FOCUS_SET),
-            known: known.sent.clone(),
-            details: crate::details::focus_details(&cx.facts()),
-        },
-    };
+        Validity::Duplicate => return,
+        Validity::Valid(_) | Validity::NeedsRead(_) => {}
+    }
+    let known = known_for(cx, candidate.tell.process);
+    let request = RunRequest::of(cx, candidate, (Depth::Full, None), &known);
     let due_us = cx.due_in(FOCUS_DUE_US);
     let Outcome::Result(answered) = cx.ask(request, due_us).await else {
         cx.facts_mut().focus_read_failed();
         return;
     };
-    let Some(Tried::Focus(read)) = answered.tried.into_iter().next() else {
+    match judged(cx, Some(&answered.facts)) {
+        Validity::Valid(_) => {}
+        Validity::Refused(reason) => {
+            if reason.tried() {
+                cx.facts_mut().versions.tried_and_refused();
+            }
+            return;
+        }
+        Validity::Duplicate | Validity::NeedsRead(_) => return,
+    }
+    let Some(read) = answered.read.as_deref() else {
+        // A valid answer with no full read: the outpost's fault.
         return;
     };
-    let popup = matches!(
-        read.focus
-            .read
-            .values
-            .answer(PropertyId::Role)
-            .and_then(|answer| answer.value.as_ref()),
-        Some(PropertyValue::Role(Role::Menu))
-    );
-    let (true, Some(held)) = (popup, read.msaa) else {
+    let Some(held) = read.msaa else {
         return;
     };
     let read_by = ReadBy::Msaa {
@@ -182,11 +156,13 @@ async fn start(cx: &mut Cx<Entries>, candidate: &Candidate, run_executed: bool) 
         held_child: held.held_child,
     };
     let origin = Origin::of_tell(&candidate.tell, candidate.window, cx.foreground());
-    let executed = execute(&mut cx.facts_mut(), &origin, &read, &known, read_by);
+    let executed = execute(&mut cx.facts_mut(), &origin, read, &known, read_by);
     executed.deliver(cx);
 }
 
-/// The function of a check entry.
+/// The function of a check entry: the foreground application's focus read
+/// with its focused state as a fact, in full only when focused, then
+/// judged by the one definition's menu-check rows.
 pub(crate) async fn check(mut cx: Cx<Entries>, check: MenuCheck) {
     if cx.facts().versions.committed != check.committed {
         return;
@@ -195,36 +171,44 @@ pub(crate) async fn check(mut cx: Cx<Entries>, check: MenuCheck) {
         return;
     };
     let window = foreground.window();
-    let generation = cx
-        .instance(Reader::Outpost(window.process))
-        .map(|instance| OutpostId(instance.generation));
-    let known = Known::of(&cx.facts(), generation);
+    let known = known_for(&cx, window.process);
     let due_us = cx.due_in(FOCUS_DUE_US);
     let request = CurrentFocusRead {
         window,
         known: known.sent.clone(),
         details: crate::details::focus_details(&cx.facts()),
         set: crate::details::node_set(&cx.facts(), FOCUS_SET),
-        focused_state_test: true,
+        depth: validity::depth(Subject::MenuCheck(None)),
     };
-    let read = match cx.ask(request, due_us).await {
-        Outcome::Result(read) => read,
-        // NVDA's focused-state test refused it: nothing is queued.
-        Outcome::Refused(_) => return,
-        Outcome::NotThere
-        | Outcome::NotResponding
-        | Outcome::ReaderEnded
-        | Outcome::NoLongerAwaited(_) => {
-            cx.facts_mut().focus_read_failed();
+    let Outcome::Result(answered) = cx.ask(request, due_us).await else {
+        cx.facts_mut().focus_read_failed();
+        return;
+    };
+    let ids = answered
+        .read
+        .as_ref()
+        .and_then(|read| read.msaa)
+        .map(|held| held.event);
+    match validity::at(
+        &cx,
+        Subject::MenuCheck(ids.as_ref()),
+        Some(&answered.facts),
+        Purpose::Turn,
+        false,
+    ) {
+        Validity::Valid(_) => {}
+        Validity::Refused(reason) => {
+            if reason.tried() {
+                cx.facts_mut().versions.tried_and_refused();
+            }
             return;
         }
-    };
-    if let Some(held) = &read.msaa
-        && (msaa_duplicate(cx.facts().versions.last.as_ref(), &held.event)
-            || msaa_refused_repeat(cx.facts().versions.last.as_ref(), &held.event))
-    {
-        return;
+        Validity::Duplicate | Validity::NeedsRead(_) => return,
     }
+    let Some(read) = answered.read else {
+        // A valid answer with no full read: the outpost's fault.
+        return;
+    };
     let Some(read_by) = read_by(&read) else {
         return;
     };
@@ -235,13 +219,14 @@ pub(crate) async fn check(mut cx: Cx<Entries>, check: MenuCheck) {
 
 /// Whether the UI Automation menu opening `arriving` is dropped at its
 /// arrival: a focus-kind entry `ahead` of it, raised before it, counts as
-/// pending on its tell's facts.
+/// pending by the one definition. An unconfirmed MSAA focus does not count
+/// and is not read, as NVDA's events not yet pumped are not pending.
 pub(crate) fn opening_dropped(
     facts: &SrState,
     ahead: &[&Entry],
     arriving: &Entry,
     backend: &BackendCache,
-    now_us: u64,
+    (now_us, foreground): (u64, Option<crate::event_queue::Foreground>),
 ) -> bool {
     let Entry::UiaFocus(opening) = arriving else {
         return false;
@@ -249,29 +234,24 @@ pub(crate) fn opening_dropped(
     if opening.tell.kind != EventKind::UiaMenuOpened {
         return false;
     }
-    let last = facts.versions.last.as_ref();
-    ahead
-        .iter()
-        .flat_map(|entry| match entry {
-            Entry::UiaFocus(focus) => vec![&focus.tell],
-            Entry::Candidate(candidate) => vec![&candidate.tell],
-            Entry::Run(candidates) => candidates.iter().map(|candidate| &candidate.tell).collect(),
-            Entry::Menu(_)
-            | Entry::MsaaChange(_)
-            | Entry::UiaChange(_)
-            | Entry::Caret(_)
-            | Entry::MenuCheck(_)
-            | Entry::CurrentFocus(_)
-            | Entry::ForegroundMarker { .. }
-            | Entry::Press(_)
-            | Entry::Mark(..)
-            | Entry::SayAllRead(..)
-            | Entry::Announcement(_)
-            | Entry::TerminalSpeech(_) => Vec::new(),
+    let view = View {
+        versions: &facts.versions,
+        in_front: foreground.map(|foreground| foreground.window),
+        backend,
+        now_us,
+        run_before_valid: false,
+    };
+    let counts = |entry: &Entry| {
+        validity::judge_alone(entry, &view).is_some_and(|(answer, trace, at_us)| {
+            at_us < opening.tell.at_us && validity::pending(answer, trace) == Pending::Counts
         })
-        .any(|tell| {
-            tell.at_us < opening.tell.at_us && counts_as_pending(tell, last, backend, now_us)
-        })
+    };
+    ahead.iter().any(|entry| match entry {
+        Entry::Run(candidates) => candidates
+            .iter()
+            .any(|candidate| counts(&Entry::Candidate(Box::new(candidate.clone())))),
+        other => counts(other),
+    })
 }
 
 #[cfg(test)]

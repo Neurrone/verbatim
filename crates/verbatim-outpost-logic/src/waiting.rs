@@ -191,7 +191,7 @@ mod tests {
                 set: Vec::new(),
                 known: Vec::new(),
                 details: verbatim_model::TextDetails::NONE,
-                focused_state_test: false,
+                depth: verbatim_model::request::Depth::Full,
             },
         })
     }

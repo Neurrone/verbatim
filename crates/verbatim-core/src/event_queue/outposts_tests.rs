@@ -2,7 +2,7 @@
 //! inputs as the owner thread reports its process facts.
 
 use verbatim_model::Pid;
-use verbatim_model::request::{ProcessFact, QueueEffect, QueueInput, Reply, RunRead, Tried};
+use verbatim_model::request::{CandidateAnswer, ProcessFact, QueueEffect, QueueInput, Reply};
 use verbatim_model::{Effect as Said, TraceId, WindowHandle};
 
 use crate::entries::tests::{
@@ -84,9 +84,9 @@ fn run_answer(from: Instance, number: u64) -> QueueInput {
         from,
         answer: verbatim_model::request::Answer {
             number: verbatim_model::request::RequestNumber(number),
-            outcome: verbatim_model::request::Outcome::Result(Reply::Run(RunRead {
-                tried: vec![Tried::Focus(Box::new(focus_read(Some(held(-4)))))],
-            })),
+            outcome: verbatim_model::request::Outcome::Result(Reply::Candidate(
+                CandidateAnswer::focused(focus_read(Some(held(-4)))),
+            )),
             probes: Vec::new(),
             detail: String::new(),
         },

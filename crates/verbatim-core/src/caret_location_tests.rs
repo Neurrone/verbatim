@@ -2,6 +2,7 @@
 //! committed focus's caret at its turn, holding the queue until its
 //! answer, "No caret" with nothing committed, "Not supported" for a focus
 //! with no text, and silence for any outcome but a result.
+use verbatim_model::request::CandidateAnswer;
 
 use verbatim_model::request::{Outcome as WireOutcome, Press, PressAction, Reply, Request as Wire};
 use verbatim_model::{KeySeq, ReviewCommand, Role, TextOp, TextPoint, TextReply, TraceId};
@@ -33,7 +34,7 @@ fn committed(name: &str, role: Role) -> Held {
     let _ = feed_at(
         &mut state,
         600,
-        answer(OUTPOST, 1, Reply::Focus(Box::new(read))),
+        answer(OUTPOST, 1, Reply::Candidate(CandidateAnswer::focused(read))),
     );
     state
 }

@@ -2,6 +2,7 @@
 //! (Table 3, row "Startup"), the re-take after a reader's replacement
 //! (column F) and the read after a hung window answers again (Table 18,
 //! column B).
+use verbatim_model::request::CandidateAnswer;
 
 use verbatim_model::request::{FocusCaret, FocusCaretRead, FocusRead, Reply, Request as Wire};
 use verbatim_model::tell::{ElementToken, Read};
@@ -55,7 +56,11 @@ fn started() -> Held {
         feed_at(
             &mut state,
             600,
-            answer(OUTPOST, 1, Reply::Focus(Box::new(focus_read(None))))
+            answer(
+                OUTPOST,
+                1,
+                Reply::Candidate(CandidateAnswer::focused(focus_read(None)))
+            )
         ),
         SPOKEN_FOLLOWED
     );
@@ -109,7 +114,11 @@ fn the_committed_focus_read_again_after_its_outpost_ends_is_taken_silently() {
         feed_at(
             &mut state,
             1_200,
-            answer(REPLACEMENT, 3, Reply::Focus(Box::new(read)))
+            answer(
+                REPLACEMENT,
+                3,
+                Reply::Candidate(CandidateAnswer::focused(read))
+            )
         ),
         // Taken silently, and named to the replacement generation.
         ["send Outpost(Pid(40)) Follow"]
@@ -137,7 +146,7 @@ fn a_focus_whose_outpost_ended_holds_no_caret_key_and_echoes_nothing() {
     let _ = feed_at(
         &mut state,
         600,
-        answer(OUTPOST, 1, Reply::Focus(Box::new(read))),
+        answer(OUTPOST, 1, Reply::Candidate(CandidateAnswer::focused(read))),
     );
     assert!(state.holds_caret_keys());
     assert_eq!(
@@ -168,7 +177,11 @@ fn a_different_focus_read_after_its_outpost_ends_is_spoken() {
         feed_at(
             &mut state,
             1_200,
-            answer(REPLACEMENT, 3, Reply::Focus(Box::new(read)))
+            answer(
+                REPLACEMENT,
+                3,
+                Reply::Candidate(CandidateAnswer::focused(read))
+            )
         ),
         // None of the ended generation's ancestors is sent as known, so
         // the walk goes to the top and the window is said again.
@@ -196,7 +209,11 @@ fn the_listeners_end_clears_its_token_and_reads_the_attended_applications_focus(
     feed_at(
         &mut state,
         3_200,
-        answer(OUTPOST, 4, Reply::Focus(Box::new(focus_read(None)))),
+        answer(
+            OUTPOST,
+            4,
+            Reply::Candidate(CandidateAnswer::focused(focus_read(None))),
+        ),
     );
     // A later focus of the listener's waits behind the re-take and is
     // dropped with the listener's element.
@@ -253,7 +270,11 @@ fn a_recovered_window_reads_the_focus_and_a_uia_focus_on_the_last_runtime_id_is_
         feed_at(
             &mut state,
             1_700,
-            answer(OUTPOST, 4, Reply::Focus(Box::new(focus_read(None))))
+            answer(
+                OUTPOST,
+                4,
+                Reply::Candidate(CandidateAnswer::focused(focus_read(None)))
+            )
         ),
         NOTHING
     );
@@ -295,7 +316,11 @@ fn the_silent_retake_mints_the_baseline_in_the_new_generation_and_keeps_the_flag
         feed_at(
             &mut state,
             1_200,
-            answer(REPLACEMENT, 3, Reply::Focus(Box::new(read)))
+            answer(
+                REPLACEMENT,
+                3,
+                Reply::Candidate(CandidateAnswer::focused(read))
+            )
         ),
         ["send Outpost(Pid(40)) Follow"]
     );

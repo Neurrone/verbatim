@@ -27,9 +27,14 @@ use verbatim_model::{
     UtteranceSegment, Watch, WatchFinalRead, Watched, WatchedRead,
 };
 
+use verbatim_model::TextAnchor;
+use verbatim_model::request::{CandidateFacts, Depth};
+
 use crate::editing;
 use crate::entries::{Entries, Entry};
 use crate::event_queue::{Cx, OTHER_DUE_US, Outcome, Reader, Request, RequestWindow};
+use crate::focus::msaa_run::RunRequest;
+use crate::focus::validity::{Pending, pending_behind_front};
 use crate::focus::versions::Committed;
 use crate::keys::strokes::StrokeStatus;
 use crate::state::SrState;
@@ -217,25 +222,217 @@ pub(crate) fn unneeded(state: &SrState, front: &CaretPress, request: &Wire) -> b
     starting && front.held && state.strokes.status(front.key_seq) != StrokeStatus::Unsent
 }
 
-/// Whether `arriving`, joining behind the front caret key `front`, withdraws
-/// `request`. A later key, command or key Core sends withdraws its watch
-/// (Table 7, S4, column B), and a terminal's final read; a focus counting
-/// as pending withdraws its starting read, but Backspace's and
-/// Control+Backspace's, its watch and its sentence move (column C).
-pub(crate) fn withdrawn_by(
-    front: &CaretPress,
-    request: &Wire,
-    (arriving_key, arriving_focus): (bool, bool),
-) -> bool {
-    let Wire::Text { op, .. } = request else {
-        return false;
+/// What joins the queue behind a caret key, as its stage tables read it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Arrival {
+    /// A key, command or key Core sends.
+    Key,
+    /// A focus-kind entry, judged alone by the one definition before the
+    /// limiter places it, raised at `at_us`.
+    Focus {
+        /// Whether it counts as pending.
+        pending: Pending,
+        /// When it was raised.
+        at_us: u64,
+    },
+    /// Anything else.
+    Other,
+}
+
+impl Arrival {
+    /// A focus that counts.
+    fn counts(self) -> bool {
+        matches!(
+            self,
+            Self::Focus {
+                pending: Pending::Counts,
+                ..
+            }
+        )
+    }
+
+    /// An unconfirmed focus raised before `bound_at_us`.
+    fn unconfirmed_before(self, bound_at_us: u64) -> bool {
+        matches!(
+            self,
+            Self::Focus {
+                pending: Pending::Unconfirmed(_),
+                at_us,
+            } if at_us < bound_at_us
+        )
+    }
+}
+
+/// The stage of a caret key in an edit field, derived from the request it
+/// has out, never stored (design, "Stage and arrival"; ADR 0003 rejects
+/// "Core's sequences written as step functions in a reducer, each wait a
+/// named stage", so the key stays an async function and this only reads
+/// its request).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CaretStage {
+    /// Its starting read is out.
+    Starting {
+        /// Whether the key is Backspace or Control+Backspace, whose read
+        /// is kept to say what it deleted.
+        deletes_back: bool,
+    },
+    /// Its watch is out, looking for its effect until `bound_at_us`.
+    Watching {
+        /// The watch's bound.
+        bound_at_us: u64,
+    },
+    /// It asks an unconfirmed focus's facts.
+    Confirming,
+    /// It moves by sentence.
+    Sentence,
+}
+
+impl CaretStage {
+    /// The stage `request`, out for `press`, puts the key in.
+    fn of(press: &CaretPress, request: &Wire) -> Option<Self> {
+        match request {
+            Wire::Text { op, .. } => match op {
+                TextOp::StartingRead(_) => Some(Self::Starting {
+                    deletes_back: press.key.motion.deletes_back(),
+                }),
+                TextOp::Watch(watch) => Some(Self::Watching {
+                    bound_at_us: watch.passed_at_us.saturating_add(u64::from(watch.bound_us)),
+                }),
+                TextOp::MoveBySentence(_) => Some(Self::Sentence),
+                _ => None,
+            },
+            Wire::MsaaRun(run) if run.depth == Depth::Facts => Some(Self::Confirming),
+            _ => None,
+        }
+    }
+
+    /// Whether `arrival` withdraws the request of this stage: one arm per
+    /// cell of the edit path's stage table (design, "The stage table").
+    fn withdrawn_by(self, arrival: Arrival) -> bool {
+        match self {
+            Self::Starting { deletes_back } => arrival.counts() && !deletes_back,
+            Self::Watching { bound_at_us } => {
+                arrival == Arrival::Key
+                    || arrival.counts()
+                    || arrival.unconfirmed_before(bound_at_us)
+            }
+            Self::Confirming => arrival == Arrival::Key || arrival.counts(),
+            Self::Sentence => arrival.counts(),
+        }
+    }
+}
+
+/// The stage of a caret key in a terminal, derived from its request as
+/// [`CaretStage`] is, with a stage table of its own.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TerminalStage {
+    /// Its starting read, the terminal's full read, is out.
+    Starting,
+    /// Its watch is out, looking for its effect until `bound_at_us`.
+    Watching {
+        /// The watch's bound.
+        bound_at_us: u64,
+    },
+    /// It asks an unconfirmed focus's facts.
+    Confirming,
+    /// Its final read is out, after the bound.
+    Final,
+}
+
+impl TerminalStage {
+    /// The stage `request` puts a terminal's key in.
+    fn of(request: &Wire) -> Option<Self> {
+        match request {
+            Wire::Text { op, .. } => match op {
+                TextOp::ReadTerminal(read) if read.starting.is_some() => Some(Self::Starting),
+                TextOp::ReadTerminal(_) => Some(Self::Final),
+                TextOp::Watch(watch) => Some(Self::Watching {
+                    bound_at_us: watch.passed_at_us.saturating_add(u64::from(watch.bound_us)),
+                }),
+                _ => None,
+            },
+            Wire::MsaaRun(run) if run.depth == Depth::Facts => Some(Self::Confirming),
+            _ => None,
+        }
+    }
+
+    /// Whether `arrival` withdraws the request of this stage: one arm per
+    /// cell of the terminal path's stage table. The final read comes after
+    /// the bound, so an unconfirmed focus never withdraws it.
+    fn withdrawn_by(self, arrival: Arrival) -> bool {
+        match self {
+            Self::Starting => arrival.counts(),
+            Self::Watching { bound_at_us } => {
+                arrival == Arrival::Key
+                    || arrival.counts()
+                    || arrival.unconfirmed_before(bound_at_us)
+            }
+            Self::Confirming | Self::Final => arrival == Arrival::Key || arrival.counts(),
+        }
+    }
+}
+
+/// Whether `press` takes the terminal's path: it is bound to a grid, a
+/// terminal. The key picks its path once, at its turn, by the same test.
+fn terminal_path(press: &CaretPress) -> bool {
+    press
+        .bound
+        .as_ref()
+        .is_some_and(|bound| editing::is_grid(bound.role))
+}
+
+/// Whether `arrival`, joining behind the front caret key `front`,
+/// withdraws `request`, by the stage table of the key's path.
+pub(crate) fn withdrawn_by(front: &CaretPress, request: &Wire, arrival: Arrival) -> bool {
+    if terminal_path(front) {
+        TerminalStage::of(request).is_some_and(|stage| stage.withdrawn_by(arrival))
+    } else {
+        CaretStage::of(front, request).is_some_and(|stage| stage.withdrawn_by(arrival))
+    }
+}
+
+/// How a confirmation ended.
+enum Confirmed {
+    /// Its facts were stored, or there was nothing to read: judge again.
+    Judged,
+    /// Withdrawn by an arrival: judge the arrival.
+    Withdrawn,
+    /// Not responding, past its due time, or stopped by the foreground:
+    /// the key is silent.
+    Silent,
+}
+
+/// Confirms the waiting candidate `trace` with a read of its facts alone,
+/// naming the candidate's window, so that the hang check, the
+/// not-responding sound and the foreground stop all judge the window
+/// being read; `spare`, the key's node and starting point, stays held
+/// while it is out (design, "Confirming, and its bound").
+async fn confirm(
+    cx: &mut Cx<Entries>,
+    trace: TraceId,
+    spare: Option<(NodeId, TextAnchor)>,
+    due_us: u64,
+) -> Confirmed {
+    let Some(candidate) = crate::focus::validity::waiting_candidate(cx, trace) else {
+        return Confirmed::Judged;
     };
-    match op {
-        TextOp::StartingRead(_) => arriving_focus && !front.key.motion.deletes_back(),
-        TextOp::ReadTerminal(read) if read.starting.is_some() => arriving_focus,
-        TextOp::Watch(_) | TextOp::ReadTerminal(_) => arriving_key || arriving_focus,
-        TextOp::MoveBySentence(_) => arriving_focus,
-        _ => false,
+    let known = crate::focus::msaa_run::known_for(cx, candidate.tell.process);
+    let request = RunRequest::of(cx, &candidate, (Depth::Facts, spare), &known);
+    match cx.ask(request, due_us).await {
+        Outcome::Result(answer) => {
+            crate::focus::validity::store_facts(cx, trace, answer.facts);
+            Confirmed::Judged
+        }
+        // The candidate's outpost ended, or its object is gone: stored as
+        // not there, and judged again.
+        Outcome::ReaderEnded | Outcome::NotThere => {
+            crate::focus::validity::store_facts(cx, trace, CandidateFacts::NotThere);
+            Confirmed::Judged
+        }
+        Outcome::NoLongerAwaited(CancelReason::Withdrawn) => Confirmed::Withdrawn,
+        Outcome::Refused(_) | Outcome::NotResponding | Outcome::NoLongerAwaited(_) => {
+            Confirmed::Silent
+        }
     }
 }
 
@@ -319,7 +516,9 @@ pub(crate) async fn run(mut cx: Cx<Entries>, press: CaretPress) {
         pass(&mut cx, &press);
         return;
     }
-    if focus_pending(&cx) && !press.key.motion.deletes_back() {
+    // Before the starting read, only a focus that counts stops the key;
+    // an unconfirmed one waits behind it, judged at the pass.
+    if !press.key.motion.deletes_back() && counts_behind(&cx) {
         pass(&mut cx, &press);
         return;
     }
@@ -337,25 +536,84 @@ pub(crate) async fn run(mut cx: Cx<Entries>, press: CaretPress) {
     let passed_at_us = cx.now_us();
     pass(&mut cx, &press);
     if marked(&cx, &press) {
-        if moves_by_sentence(&press, &binding) {
-            sentence(&mut cx, &press, (&binding, &started), due_us).await;
-        }
+        marked_end(&mut cx, &press, (&binding, &started), due_us).await;
         return;
     }
-    if focus_pending(&cx) {
-        if press.key.motion.deletes_back() {
-            let words = deleted(&cx.facts(), &binding, press.key, &started);
-            say(&mut cx, &press, words);
-        }
-        return;
-    }
-    watching(
+    after_pass(
         &mut cx,
         &press,
         (&binding, &started),
         (passed_at_us, due_us),
     )
     .await;
+}
+
+/// After the pass: the key judges what waits behind it by the one
+/// definition until its bound (design, "Confirming, and its bound"). A
+/// focus that counts silences it; an unconfirmed one is confirmed by a
+/// read of its facts, then judged again; with neither, the watch runs
+/// for the rest of the bound. A withdrawn watch or confirmation judges
+/// the arrival: a key marks it, a focus is judged again.
+async fn after_pass(
+    cx: &mut Cx<Entries>,
+    press: &CaretPress,
+    (binding, started): (&CaretBinding, &Started),
+    (passed_at_us, due_us): (u64, u64),
+) {
+    let bound_at_us = passed_at_us.saturating_add(u64::from(BOUND_US));
+    loop {
+        let withdrawn = match pending_behind_front(cx, Some(bound_at_us)) {
+            Pending::Counts => {
+                silent(cx, press, (binding, started));
+                return;
+            }
+            Pending::Unconfirmed(trace) => {
+                match confirm(cx, trace, Some((binding.node, started.point)), due_us).await {
+                    Confirmed::Judged => false,
+                    Confirmed::Withdrawn => true,
+                    Confirmed::Silent => {
+                        silent(cx, press, (binding, started));
+                        return;
+                    }
+                }
+            }
+            Pending::No => {
+                match watching(cx, press, (binding, started), (passed_at_us, due_us)).await {
+                    WatchEnd::Ended => return,
+                    WatchEnd::Withdrawn => true,
+                }
+            }
+        };
+        // A key, command or key Core sends waiting behind the key is tested
+        // before a pending focus, as NVDA's wait returns on a waiting script
+        // before it looks for a focus event (`editableText.py` 94 to 98).
+        if withdrawn && marked(cx, press) {
+            marked_end(cx, press, (binding, started), due_us).await;
+            return;
+        }
+    }
+}
+
+/// The key is silent because a focus counts or its read failed: Backspace
+/// and Control+Backspace still say what they deleted.
+fn silent(cx: &mut Cx<Entries>, press: &CaretPress, (binding, started): (&CaretBinding, &Started)) {
+    if press.key.motion.deletes_back() {
+        let words = deleted(&cx.facts(), binding, press.key, started);
+        say(cx, press, words);
+    }
+}
+
+/// The key is marked: Backspace says nothing and the sentence key still
+/// moves, saying nothing.
+async fn marked_end(
+    cx: &mut Cx<Entries>,
+    press: &CaretPress,
+    (binding, started): (&CaretBinding, &Started),
+    due_us: u64,
+) {
+    if moves_by_sentence(press, binding) {
+        sentence(cx, press, (binding, started), due_us).await;
+    }
 }
 
 /// A terminal's caret key at its turn (`docs/design/readers-tell-core-asks-build1.md`,
@@ -367,7 +625,7 @@ pub(crate) async fn run(mut cx: Cx<Entries>, press: CaretPress) {
 /// terminal's speech waiting in the queue ahead of the first focus first
 /// (build 3, "Answers and speech").
 async fn terminal_key(cx: &mut Cx<Entries>, press: &CaretPress, binding: &CaretBinding) {
-    if marked(cx, press) || focus_pending(cx) {
+    if marked(cx, press) || counts_behind(cx) {
         terminal_pass(cx, press);
         return;
     }
@@ -386,7 +644,7 @@ async fn terminal_key(cx: &mut Cx<Entries>, press: &CaretPress, binding: &CaretB
     };
     let passed_at_us = cx.now_us();
     terminal_pass(cx, press);
-    if marked(cx, press) || focus_pending(cx) {
+    if marked(cx, press) {
         return;
     }
     // The starting point is the read's; a read that minted none, a
@@ -406,16 +664,38 @@ async fn terminal_key(cx: &mut Cx<Entries>, press: &CaretPress, binding: &CaretB
         bound_us: if console { BOUND_US } else { TERMINAL_BOUND_US },
         final_read: WatchFinalRead::Terminal,
     };
-    let request = WatchRequest(OnNode::of(binding, TextOp::Watch(watch)));
-    match cx.ask(request, due_us).await {
-        Outcome::Result(Ok(_)) => {}
-        // A watch answered with a failure ended as one refused.
-        Outcome::Result(Err(_))
-        | Outcome::Refused(_)
-        | Outcome::NotThere
-        | Outcome::NotResponding
-        | Outcome::ReaderEnded
-        | Outcome::NoLongerAwaited(_) => return,
+    let bound_at_us = passed_at_us.saturating_add(u64::from(watch.bound_us));
+    // As the edit path judges after its pass, with the terminal's own
+    // stages: a counting focus silences the key, an unconfirmed one is
+    // confirmed, and with neither the watch runs for the rest of the bound.
+    loop {
+        let withdrawn = match pending_behind_front(cx, Some(bound_at_us)) {
+            Pending::Counts => return,
+            Pending::Unconfirmed(trace) => {
+                match confirm(cx, trace, Some((binding.node, point)), due_us).await {
+                    Confirmed::Judged => false,
+                    Confirmed::Withdrawn => true,
+                    Confirmed::Silent => return,
+                }
+            }
+            Pending::No => {
+                let request = WatchRequest(OnNode::of(binding, TextOp::Watch(watch.clone())));
+                match cx.ask(request, due_us).await {
+                    Outcome::Result(Ok(_)) => break,
+                    Outcome::NoLongerAwaited(CancelReason::Withdrawn) => true,
+                    // A watch answered with a failure ended as one refused.
+                    Outcome::Result(Err(_))
+                    | Outcome::Refused(_)
+                    | Outcome::NotThere
+                    | Outcome::NotResponding
+                    | Outcome::ReaderEnded
+                    | Outcome::NoLongerAwaited(_) => return,
+                }
+            }
+        };
+        if withdrawn && marked(cx, press) {
+            return;
+        }
     }
     let _ = terminal_read(cx, press, binding.node, None, due_us).await;
 }
@@ -478,13 +758,21 @@ fn terminal_pass(cx: &mut Cx<Entries>, press: &CaretPress) {
     }
 }
 
+/// How a watch ended.
+enum WatchEnd {
+    /// It answered, and the key said what its script says, or failed.
+    Ended,
+    /// An arrival withdrew it.
+    Withdrawn,
+}
+
 /// S4: the watch, then the key's words by its script.
 async fn watching(
     cx: &mut Cx<Entries>,
     press: &CaretPress,
     (binding, started): (&CaretBinding, &Started),
     (passed_at_us, due_us): (u64, u64),
-) {
+) -> WatchEnd {
     let watch = Watch {
         provider: binding.provider,
         point: started.point,
@@ -530,21 +818,7 @@ async fn watching(
                 sentence(cx, press, (binding, started), due_us).await;
             }
         }
-        Outcome::NoLongerAwaited(CancelReason::Withdrawn) => {
-            // A key, command or key Core sends waiting behind the key is
-            // tested before a pending focus, as NVDA's wait returns on a
-            // waiting script before it looks for a focus event
-            // (`editableText.py` 94 to 98): marked, Backspace says nothing
-            // and the sentence key still moves, saying nothing.
-            if !marked(cx, press) && focus_pending(cx) {
-                if press.key.motion.deletes_back() {
-                    let words = deleted(&cx.facts(), binding, press.key, started);
-                    say(cx, press, words);
-                }
-            } else if moves_by_sentence(press, binding) {
-                sentence(cx, press, (binding, started), due_us).await;
-            }
-        }
+        Outcome::NoLongerAwaited(CancelReason::Withdrawn) => return WatchEnd::Withdrawn,
 
         // A watch answered with a failure says nothing, as one refused.
         Outcome::Result(Err(_))
@@ -554,6 +828,7 @@ async fn watching(
         | Outcome::ReaderEnded
         | Outcome::NoLongerAwaited(_) => {}
     }
+    WatchEnd::Ended
 }
 
 /// S5: the move by sentence from the starting point, its words said
@@ -679,12 +954,10 @@ fn marked(cx: &Cx<Entries>, press: &CaretPress) -> bool {
     cx.facts().arrivals.marks(press.key_seq)
 }
 
-/// Whether a focus waiting behind the key counts as pending, judged now.
-pub(crate) fn focus_pending(cx: &Cx<Entries>) -> bool {
-    let facts = cx.facts();
-    let backend = cx.backend();
-    let now_us = cx.now_us();
-    cx.any_waiting(|entry| crate::entries::pending_focus(&facts, entry, &backend, now_us))
+/// Whether a focus waiting behind the key counts as pending, judged now
+/// by the one definition: an unconfirmed MSAA focus does not.
+fn counts_behind(cx: &Cx<Entries>) -> bool {
+    pending_behind_front(cx, None) == Pending::Counts
 }
 
 /// Whether the key's bound node is still held: its outpost generation is

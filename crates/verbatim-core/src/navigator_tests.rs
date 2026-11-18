@@ -1,6 +1,7 @@
 //! The navigator object's commands as event-queue entries: each resolves
 //! the navigator at its turn, makes its reads as the queue's requests on
 //! the object's window and holds the queue until its last answer.
+use verbatim_model::request::CandidateAnswer;
 
 use verbatim_model::property::{PropertyAnswer, PropertyId, PropertyValue, PropertyValues};
 use verbatim_model::request::{
@@ -37,7 +38,11 @@ fn committed() -> Held {
     let _ = feed_at(
         &mut state,
         600,
-        answer(OUTPOST, 1, Reply::Focus(Box::new(focus_read(None)))),
+        answer(
+            OUTPOST,
+            1,
+            Reply::Candidate(CandidateAnswer::focused(focus_read(None))),
+        ),
     );
     state
 }
@@ -567,7 +572,11 @@ fn the_navigator_follows_a_focus_retaken_silently_from_a_replacement_outpost() {
         feed_at(
             &mut state,
             1_200,
-            answer(REPLACEMENT, 3, Reply::Focus(Box::new(read)))
+            answer(
+                REPLACEMENT,
+                3,
+                Reply::Candidate(CandidateAnswer::focused(read))
+            )
         ),
         ["send Outpost(Pid(40)) Follow"]
     );

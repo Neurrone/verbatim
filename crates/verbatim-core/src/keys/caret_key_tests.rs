@@ -4,6 +4,7 @@
 //! release, the foreground and the sentence move. Ported from the key
 //! line's tests where their speech holds (`tests/text.rs`), with the
 //! sequences "What users hear" changes.
+use verbatim_model::request::CandidateAnswer;
 
 use verbatim_model::request::{
     CancelReason, CaretBinding, Outcome as WireOutcome, Press, PressAction, QueueEffect,
@@ -46,7 +47,7 @@ fn editing() -> Held {
     let _ = feed_at(
         &mut state,
         600,
-        answer(OUTPOST, 1, Reply::Focus(Box::new(read))),
+        answer(OUTPOST, 1, Reply::Candidate(CandidateAnswer::focused(read))),
     );
     state
 }
@@ -1230,7 +1231,11 @@ fn a_caret_key_binds_to_a_committed_field_and_not_to_a_button() {
     let _ = feed_at(
         &mut button,
         600,
-        answer(OUTPOST, 1, Reply::Focus(Box::new(focus_read(None)))),
+        answer(
+            OUTPOST,
+            1,
+            Reply::Candidate(CandidateAnswer::focused(focus_read(None))),
+        ),
     );
     assert_eq!(caret_key::binding(&button.state), None);
 }

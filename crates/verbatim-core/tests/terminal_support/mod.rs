@@ -372,7 +372,6 @@ fn focus_read(depth: u64, console: bool) -> FocusRead {
             runtime_id: Some(RuntimeId(vec![42, 12])),
         },
         msaa: None,
-        redirected: false,
         ancestors,
         met: None,
         foreground: None,
@@ -753,9 +752,12 @@ impl Session {
         }
         let outcome = match &ask.request {
             Wire::Follow(_) => Outcome::Result(Reply::Followed),
-            Wire::CurrentFocus { .. } => {
-                Outcome::Result(Reply::Focus(Box::new(focus_read(self.depth, self.console))))
-            }
+            Wire::CurrentFocus { .. } => Outcome::Result(Reply::Candidate(
+                verbatim_model::request::CandidateAnswer::focused(focus_read(
+                    self.depth,
+                    self.console,
+                )),
+            )),
             Wire::Text { op, .. } => match op {
                 TextOp::ReadTerminal(read) => {
                     if self.hold_whole && read.scope == TerminalScope::Whole {
@@ -1093,7 +1095,12 @@ impl Session {
         );
         let mut read = focus_read(self.depth, self.console);
         read.runtime_id_reused = runtime_id_reused;
-        self.reply(&ask, Outcome::Result(Reply::Focus(Box::new(read))));
+        self.reply(
+            &ask,
+            Outcome::Result(Reply::Candidate(
+                verbatim_model::request::CandidateAnswer::focused(read),
+            )),
+        );
         while let Some(ask) = self.pending.pop_front() {
             self.answer(ask);
         }

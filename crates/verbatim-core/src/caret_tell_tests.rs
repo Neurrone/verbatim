@@ -7,8 +7,8 @@
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::{PropertyAnswer, PropertyId, PropertyValue};
 use verbatim_model::request::{
-    FocusCaret, FocusCaretRead, Outcome as WireOutcome, Refusal, Reply, Request as Wire, RunRead,
-    Tried,
+    CandidateAnswer, FocusCaret, FocusCaretRead, Outcome as WireOutcome, Refusal, Reply,
+    Request as Wire,
 };
 use verbatim_model::tell::{ElementToken, EventObject, Payload};
 use verbatim_model::{
@@ -45,7 +45,7 @@ fn uia_field() -> Held {
     let _ = feed_at(
         &mut held,
         600,
-        answer(OUTPOST, 1, Reply::Focus(Box::new(read))),
+        answer(OUTPOST, 1, Reply::Candidate(CandidateAnswer::focused(read))),
     );
     held
 }
@@ -57,10 +57,8 @@ fn edit_control() -> Held {
     let _ = feed_at(&mut state, 500, entry(msaa_tell(-4)));
     let mut read = focus_read(Some(held(-4)));
     read.focus.read.values = values("Name", Role::EditableText);
-    let tried = RunRead {
-        tried: vec![Tried::Focus(Box::new(read))],
-    };
-    let _ = feed_at(&mut state, 600, answer(OUTPOST, 1, Reply::Run(tried)));
+    let tried = CandidateAnswer::focused(read);
+    let _ = feed_at(&mut state, 600, answer(OUTPOST, 1, Reply::Candidate(tried)));
     state
 }
 
@@ -815,13 +813,11 @@ fn edit_focus(held: &mut Held, (object, number): (i32, u64), caret: FocusCaret) 
     let mut read = focus_read(Some(crate::entries::tests::held(object)));
     read.focus.read.values = values("Name", Role::EditableText);
     read.caret = caret;
-    let tried = RunRead {
-        tried: vec![Tried::Focus(Box::new(read))],
-    };
+    let tried = CandidateAnswer::focused(read);
     sent.extend(feed_at(
         held,
         500 * number + 100,
-        answer(OUTPOST, number, Reply::Run(tried)),
+        answer(OUTPOST, number, Reply::Candidate(tried)),
     ));
     sent
 }

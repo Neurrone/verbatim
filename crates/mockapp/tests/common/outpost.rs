@@ -65,9 +65,9 @@ use std::time::{Duration, Instant};
 use verbatim_model::property::{PropertyId, PropertyValue, PropertyValues};
 use verbatim_model::protocol::{CoreToOutpost, OutpostToCore};
 use verbatim_model::request::{
-    Answer, CandidateKind, CompleteUia, CompletionFor, FocusNode, FocusRead, KnownAncestor,
-    MsaaIds, MsaaRun, NodeRead, ObjectRead, ObjectRef, Outcome, Purpose, ReadObject, Reply,
-    Request, RequestNumber, RunCandidate, RunRead, Tried, WindowVerdict,
+    Answer, CandidateAnswer, CandidateFacts, CandidateKind, CompleteUia, CompletionFor, Depth,
+    FocusNode, FocusRead, KnownAncestor, MsaaIds, MsaaRun, NodeRead, ObjectRead, ObjectRef,
+    Outcome, Purpose, ReadObject, Reply, Request, RequestNumber, RunCandidate, WindowVerdict,
 };
 use verbatim_model::{CallCounts, NodeId, Pid, QueryKind, Role, StateSet, WindowHandle};
 use verbatim_outpost::{Heard, Outpost};
@@ -1140,6 +1140,7 @@ impl OutpostUnderTest {
         match outcome {
             Outcome::Result(Reply::Focus(read)) => Focused {
                 read: *read,
+                facts: None,
                 calls,
                 failed_reads: listener_failed + self.take_failed_reads(),
             },
@@ -1147,36 +1148,36 @@ impl OutpostUnderTest {
         }
     }
 
-    /// One MSAA run of mockapp's candidates, newest first, each by the ids
-    /// its event named and its kind, with no verdict in force for their
-    /// windows, as Core asks it with the ancestors it already knows; the
-    /// focus it finds is committed. Returns the run's answer and its calls.
-    pub fn msaa_run(&self, candidates: &[(MsaaIds, CandidateKind)]) -> (RunRead, CallCounts) {
+    /// One MSAA candidate of mockapp's, by the ids its event named and its
+    /// kind, with no verdict in force for its window, read to `depth` as
+    /// Core asks it with the ancestors it already knows; the focus it
+    /// reads is committed. Returns the answer and its calls.
+    pub fn msaa_run(
+        &self,
+        (ids, kind): (MsaaIds, CandidateKind),
+        depth: Depth,
+    ) -> (CandidateAnswer, CallCounts) {
         let sent = self.known();
-        let window = candidates
-            .first()
-            .map_or(self.app_window, |(ids, _)| hwnd(ids.window));
         let number = self.request(
-            window,
+            hwnd(ids.window),
             Request::MsaaRun(MsaaRun {
-                candidates: candidates
-                    .iter()
-                    .map(|&(ids, kind)| RunCandidate {
-                        ids,
-                        kind,
-                        verdict: WindowVerdict::ProbeFirst,
-                    })
-                    .collect(),
+                candidate: RunCandidate {
+                    ids,
+                    kind,
+                    verdict: WindowVerdict::ProbeFirst,
+                },
+                depth,
+                spare: None,
                 set: focus_set(),
                 known: sent.clone(),
                 details: verbatim_model::TextDetails::NONE,
             }),
         );
         let (answer, calls) = self.answer_with_calls(number);
-        let Outcome::Result(Reply::Run(run)) = answer.outcome else {
+        let Outcome::Result(Reply::Candidate(run)) = answer.outcome else {
             panic!("the run answered {:?}", answer.outcome);
         };
-        if let Some(Tried::Focus(read)) = run.tried.last() {
+        if let Some(read) = &run.read {
             self.commit_focus(read, &sent);
         }
         (run, calls)
@@ -1191,14 +1192,18 @@ impl OutpostUnderTest {
     /// The focus an MSAA run of the one candidate `ids` of `kind` finds,
     /// which it must.
     pub fn run_focus(&self, ids: MsaaIds, kind: CandidateKind) -> Focused {
-        let (mut run, calls) = self.msaa_run(&[(ids, kind)]);
-        match run.tried.pop() {
-            Some(Tried::Focus(read)) => Focused {
+        let (run, calls) = self.msaa_run((ids, kind), Depth::Full);
+        match run.read {
+            Some(read) => Focused {
                 read: *read,
+                facts: Some(run.facts),
                 calls,
                 failed_reads: self.take_failed_reads(),
             },
-            other => panic!("the run tried {other:?}, not a focus"),
+            None => panic!(
+                "the candidate's facts are {:?}, with no focus read",
+                run.facts
+            ),
         }
     }
 
@@ -1213,11 +1218,14 @@ impl OutpostUnderTest {
                 set: focus_set(),
                 known: sent.clone(),
                 details: verbatim_model::TextDetails::NONE,
-                focused_state_test: false,
+                depth: verbatim_model::request::Depth::Full,
             },
         );
         let (answer, calls) = self.answer_with_calls(number);
-        if let Outcome::Result(Reply::Focus(read)) = &answer.outcome {
+        if let Outcome::Result(Reply::Candidate(CandidateAnswer {
+            read: Some(read), ..
+        })) = &answer.outcome
+        {
             self.commit_focus(read, &sent);
         }
         (answer.outcome, calls)
@@ -1462,6 +1470,8 @@ pub struct ListenerFocus {
 pub struct Focused {
     /// The answer.
     pub read: FocusRead,
+    /// The facts an MSAA candidate's or a current focus's answer carried.
+    pub facts: Option<CandidateFacts>,
     /// The calls the reads made, the listener's and the outpost's.
     pub calls: CallCounts,
     /// The failed cached reads they made.
@@ -1469,11 +1479,22 @@ pub struct Focused {
 }
 
 impl Focused {
-    /// The focus `outcome` answers, which it must, with `calls`.
+    /// The focus `outcome`, a completion's or a current focus's answer,
+    /// reads, which it must, with `calls`.
     pub fn of(outcome: Outcome, calls: CallCounts) -> Self {
         match outcome {
             Outcome::Result(Reply::Focus(read)) => Self {
                 read: *read,
+                facts: None,
+                calls,
+                failed_reads: 0,
+            },
+            Outcome::Result(Reply::Candidate(CandidateAnswer {
+                facts,
+                read: Some(read),
+            })) => Self {
+                read: *read,
+                facts: Some(facts),
                 calls,
                 failed_reads: 0,
             },

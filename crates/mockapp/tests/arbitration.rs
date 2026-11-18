@@ -15,7 +15,7 @@ use std::time::Duration;
 
 use verbatim_model::protocol::OutpostToCore;
 use verbatim_model::request::{
-    CandidateKind, MsaaIds, MsaaRun, Outcome, Reply, Request, RunCandidate, Tried, WindowVerdict,
+    CandidateKind, Depth, MsaaIds, MsaaRun, Outcome, Reply, Request, RunCandidate, WindowVerdict,
 };
 use verbatim_model::{CallCounts, WindowHandle};
 use verbatim_outpost::arbitration::{Arbitrator, Verdicts};
@@ -111,7 +111,7 @@ fn a_probe_that_timed_out_is_made_once_in_its_request() {
     let number = outpost.request(
         window,
         Request::MsaaRun(MsaaRun {
-            candidates: vec![RunCandidate {
+            candidate: RunCandidate {
                 ids: MsaaIds {
                     window: WindowHandle(window.0 as u64),
                     object: 0,
@@ -119,7 +119,9 @@ fn a_probe_that_timed_out_is_made_once_in_its_request() {
                 },
                 kind: CandidateKind::Foreground,
                 verdict: WindowVerdict::ProbeFirst,
-            }],
+            },
+            depth: Depth::Full,
+            spare: None,
             set: common::outpost::focus_set(),
             known: Vec::new(),
             details: verbatim_model::TextDetails::NONE,
@@ -143,13 +145,12 @@ fn a_probe_that_timed_out_is_made_once_in_its_request() {
         [false],
         "the window is probed once, and its probe found no provider"
     );
-    let Outcome::Result(Reply::Run(mut run)) = answer.outcome else {
+    let Outcome::Result(Reply::Candidate(run)) = answer.outcome else {
         panic!("the run answered {:?}", answer.outcome);
     };
-    let Some(Tried::Focus(read)) = run.tried.pop() else {
-        panic!("the run found no focus: {:?}", run.tried);
+    let Some(read) = run.read else {
+        panic!("the candidate was not read: {:?}", run.facts);
     };
-    assert!(run.tried.is_empty(), "one candidate tried");
     assert_eq!(
         common::outpost::name_of(&read.focus),
         Some(title.as_str()),

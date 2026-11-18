@@ -12,7 +12,7 @@
 
 use serde::{Deserialize, Serialize};
 use verbatim_model::property::PropertyId;
-use verbatim_model::request::{FocusRead, KnownAncestor, Reply, Request as Wire};
+use verbatim_model::request::{CandidateAnswer, FocusRead, KnownAncestor, Reply, Request as Wire};
 use verbatim_model::{TextDetails, TraceId};
 
 use super::FOCUS_SET;
@@ -63,13 +63,13 @@ pub(crate) struct CurrentFocusRead {
     pub(crate) details: TextDetails,
     /// The properties of each node, chosen from the settings.
     pub(crate) set: Vec<PropertyId>,
-    /// Whether an MSAA answer with no focused state on it or any ancestor
-    /// is refused: the check after a menu end, NVDA's fake focus.
-    pub(crate) focused_state_test: bool,
+    /// How far the read goes: in full, or, for the check after a menu end,
+    /// NVDA's fake focus, in full only when focused.
+    pub(crate) depth: verbatim_model::request::Depth,
 }
 
 impl Request for CurrentFocusRead {
-    type Reply = Box<FocusRead>;
+    type Reply = CandidateAnswer;
 
     fn reader(&self) -> Reader {
         Reader::Outpost(self.window.process)
@@ -84,13 +84,13 @@ impl Request for CurrentFocusRead {
             set: self.set.clone(),
             known: self.known.clone(),
             details: self.details,
-            focused_state_test: self.focused_state_test,
+            depth: self.depth,
         }
     }
 
     fn decode(reply: Reply) -> Option<Self::Reply> {
         match reply {
-            Reply::Focus(read) => Some(read),
+            Reply::Candidate(answer) => Some(answer),
             _ => None,
         }
     }
@@ -190,20 +190,6 @@ pub(crate) fn reader_ended(
     })
 }
 
-/// Whether the recovered read `read` is a duplicate: a UI Automation
-/// focus whose runtime id is the readers' last focus's, since the read is
-/// of the current keyboard focus.
-fn recovered_duplicate(state: &SrState, read: &FocusRead) -> bool {
-    match (
-        state.versions.last.as_ref().map(|last| &last.read_by),
-        &read.msaa,
-        &read.focus.runtime_id,
-    ) {
-        (Some(ReadBy::Uia { runtime_id, .. }), None, Some(answered)) => runtime_id == answered,
-        _ => false,
-    }
-}
-
 /// The function of a current-focus entry. A failed read clears Core's
 /// caret baseline.
 pub(crate) async fn run(mut cx: Cx<Entries>, entry: CurrentFocus) {
@@ -213,15 +199,35 @@ pub(crate) async fn run(mut cx: Cx<Entries>, entry: CurrentFocus) {
         known: Vec::new(),
         details: crate::details::focus_details(&cx.facts()),
         set: crate::details::node_set(&cx.facts(), FOCUS_SET),
-        focused_state_test: false,
+        depth: verbatim_model::request::Depth::Full,
     };
-    let Outcome::Result(read) = cx.ask(request, due_us).await else {
-        cx.facts_mut().focus_read_failed();
+    let read = match cx.ask(request, due_us).await {
+        Outcome::Result(answered) => answered.read,
+        outcome => {
+            // A re-take answered not there, or whose reader ended, tried
+            // the focus and found it gone: the redirect guard ends.
+            if matches!(outcome, Outcome::NotThere | Outcome::ReaderEnded) {
+                cx.facts_mut().versions.tried_and_refused();
+            }
+            cx.facts_mut().focus_read_failed();
+            return;
+        }
+    };
+    let Some(read) = read else {
+        // A current-focus answer with no full read: the outpost's fault.
         return;
     };
     let Some(read_by) = read_by(&read) else {
         return;
     };
+    let duplicate = entry.why == Why::Recovered
+        && super::validity::at(
+            &cx,
+            super::validity::Subject::Recovered(&read),
+            None,
+            super::validity::Purpose::Turn,
+            false,
+        ) == super::validity::Validity::Duplicate;
     let origin = Origin::of_read(entry.trace_id, entry.window);
     let executed = {
         let mut facts = cx.facts_mut();
@@ -229,7 +235,7 @@ pub(crate) async fn run(mut cx: Cx<Entries>, entry: CurrentFocus) {
             Why::Startup | Why::Returned => {
                 execute(&mut facts, &origin, &read, &Known::default(), read_by)
             }
-            Why::Recovered if recovered_duplicate(&facts, &read) => Executed::default(),
+            Why::Recovered if duplicate => Executed::default(),
             Why::Retake | Why::Recovered => retake(&mut facts, &origin, &read, read_by).1,
         }
     };

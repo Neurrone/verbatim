@@ -30,10 +30,11 @@ use verbatim_model::property::{
 };
 use verbatim_model::protocol::{OutpostToCore, UiaSnapshotFact};
 use verbatim_model::request::{
-    Answer, Ask, CaretBinding, FocusAncestor, FocusCaret, FocusCaretRead, FocusNode, FocusRead,
-    ForegroundReport, HeldIds, Instance, MsaaIds, NodeRead, NodeWindow, ObjectClass, ObjectRead,
-    Outcome, Press as WirePress, PressAction, Probe, ProcessFact, QueueEffect, QueueInput, Reader,
-    Reply, Request as Wire, Route, RouteEnd, RouteStep, RunRead, Tried, WindowVerdict,
+    Answer, Ask, CandidateAnswer, CaretBinding, FocusAncestor, FocusCaret, FocusCaretRead,
+    FocusNode, FocusRead, ForegroundReport, HeldIds, Instance, MsaaIds, NodeRead, NodeWindow,
+    ObjectClass, ObjectRead, Outcome, Press as WirePress, PressAction, Probe, ProcessFact,
+    QueueEffect, QueueInput, Reader, Reply, Request as Wire, Route, RouteEnd, RouteStep,
+    WindowVerdict,
 };
 use verbatim_model::stroke::{HeldStroke, SentTransition, Stroke};
 use verbatim_model::tell::{
@@ -609,12 +610,12 @@ impl Seam {
     /// What `verbatim-outpost`'s program answers to `ask`, read from `app`.
     fn reply(&mut self, ask: &Ask, app: &App) -> Reply {
         match &ask.request {
-            Wire::CurrentFocus { .. } => Reply::Focus(Box::new(self.field_read(app))),
+            Wire::CurrentFocus { .. } => {
+                Reply::Candidate(CandidateAnswer::focused(self.field_read(app)))
+            }
             Wire::Follow(_) => Reply::Followed,
             Wire::CompleteUia(_) => Reply::Focus(Box::new(button_read(self.kind))),
-            Wire::MsaaRun(_) => Reply::Run(RunRead {
-                tried: vec![Tried::Focus(Box::new(button_read(self.kind)))],
-            }),
+            Wire::MsaaRun(_) => Reply::Candidate(CandidateAnswer::focused(button_read(self.kind))),
             Wire::Text {
                 op: TextOp::StartingRead(read),
                 ..
@@ -787,7 +788,6 @@ fn focus_read(node: NodeId, window: NodeWindow, values: PropertyValues) -> Focus
             runtime_id: None,
         },
         msaa: None,
-        redirected: false,
         ancestors: vec![FocusAncestor {
             node: FocusNode {
                 read: NodeRead {

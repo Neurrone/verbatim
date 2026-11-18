@@ -50,7 +50,6 @@ pub(crate) fn kept(top_level: u64) -> Kept {
             },
         ]
         .into(),
-        redirected: false,
         foreground: None,
         value_from_selection: false,
         class: ObjectClass::Plain,
