@@ -253,11 +253,13 @@ impl Backlog for Waiting {
         // listener's time from the pipe's, taken as the write begins,
         // whichever thread writes.
         message.written(now_us());
-        // Numbered as it is written, in pipe order.
+        put_message(buffer, &message)?;
+        // Numbered once it is encoded, in pipe order: a message that could
+        // not be encoded is skipped, and Core never counts it.
         if let Some(token) = message.carried_token() {
             self.reported.written(token);
         }
-        put_message(buffer, &message)
+        Ok(())
     }
 }
 

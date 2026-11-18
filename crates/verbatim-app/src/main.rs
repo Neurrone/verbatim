@@ -1503,13 +1503,17 @@ impl ReducerThread<'_> {
         // next command (`verbatim_core::held_tokens`).
         let held_tokens = self.state.held_tokens();
         match self.listener_view.after_pass(held_tokens.as_ref()) {
-            verbatim_core::ViewSend::Nothing => {}
-            verbatim_core::ViewSend::Now(view) => {
+            Ok(verbatim_core::ViewSend::Nothing) => {}
+            Err(mismatch) => tracing::error!(
+                ?mismatch,
+                "Core holds tokens of another listener generation than the shell counts, a logic bug: no view is sent"
+            ),
+            Ok(verbatim_core::ViewSend::Now(view)) => {
                 self.context
                     .supervisor
                     .send_elements_held(elements_held(view));
             }
-            verbatim_core::ViewSend::Leave(view) => {
+            Ok(verbatim_core::ViewSend::Leave(view)) => {
                 self.context
                     .supervisor
                     .leave_elements_held(elements_held(view));

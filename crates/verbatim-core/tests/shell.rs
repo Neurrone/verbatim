@@ -613,8 +613,10 @@ const SETTINGS: App = App {
 /// tells it, as NVDA tests no menu end for a hang
 /// (`verbatim_listener_logic::tell::hang_tested`), and Core's check of the
 /// focus 50 ms later is refused by the shell's live hang check, which
-/// plays the not-responding sound, as Dickson decided (2026-11-19). In
-/// NVDA the check's read blocks until the watchdog cancels it.
+/// plays the not-responding sound, as Dickson decided (2026-11-19). A
+/// recorded difference awaiting his review: NVDA's fake focus finds the
+/// window hung and announces it as a plain window
+/// (`NVDAObjects/window/__init__.py` 91 to 98).
 #[test]
 fn a_menu_end_from_a_hung_window_holding_attention_plays_the_sound() {
     let mut desk = Desk::new();

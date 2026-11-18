@@ -39,7 +39,7 @@ use verbatim_core::{Runtime, SrState, reduce};
 use verbatim_ia2::{WinEvent, WinEventHook, WinEventKind};
 use verbatim_listener_logic::check::{Call, Check, ProbeRecord, Walked};
 use verbatim_listener_logic::focus::{BarObject, BarVerdict, ClassicBarRead, WindowAnswer};
-use verbatim_listener_logic::kept::{Ended, KeptElements, Reported, Start, View};
+use verbatim_listener_logic::kept::{ListenerKept, Reported, Start, View};
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::{
     PropertyAnswer, PropertyId, PropertyValue, PropertyValues, RuntimeId,
@@ -124,15 +124,14 @@ pub struct CoreDriver {
     uia: Uia,
     app: Pid,
     /// The elements the stand-in for the listener keeps, by token.
-    kept: KeptElements<Cached<ListenerEvent>>,
+    kept: ListenerKept<Cached<ListenerEvent>>,
     /// The listener's numbering of its tells, as written to Core.
     reported: Reported,
     /// The shell's record of the views it sends the listener.
     view: ListenerView,
     /// A view left for the next request to the listener.
     left: Option<verbatim_core::View>,
-    /// The last view the listener took.
-    last_view: Option<View>,
+
     next_token: u64,
     /// The last key's number.
     next_key: u64,
@@ -290,11 +289,10 @@ impl CoreDriver {
             runtime: Runtime::default(),
             uia: Uia::new().expect("a UIA client for the listener's reads"),
             app: Pid(app.pid()),
-            kept: KeptElements::default(),
+            kept: ListenerKept::default(),
             reported: Reported::default(),
             view: ListenerView::default(),
             left: None,
-            last_view: None,
             next_token: 0,
             next_key: 0,
             started: false,
@@ -1064,7 +1062,11 @@ impl CoreDriver {
     /// the stand-in for the listener at once, or left for the next request
     /// to it.
     fn send_views(&mut self) {
-        match self.view.after_pass(self.state.held_tokens().as_ref()) {
+        match self
+            .view
+            .after_pass(self.state.held_tokens().as_ref())
+            .expect("Core and the shell count one listener generation")
+        {
             ViewSend::Nothing => {}
             ViewSend::Now(view) => {
                 self.left = None;
@@ -1085,13 +1087,12 @@ impl CoreDriver {
             tokens: view.tokens.into_iter().collect(),
             acknowledged: view.acknowledged,
         };
-        let reported = &self.reported;
-        let released = self.kept.view(&view, |token| reported.report(token));
-        for (token, _) in &released {
-            self.reported.forget(*token);
-            self.log.push(format!("The listener lets go of {token:?}"));
+        for (_, released) in self.kept.view(view, &mut self.reported) {
+            self.log.push(format!(
+                "The listener lets go of {} elements",
+                released.len()
+            ));
         }
-        self.last_view = Some(view);
     }
 
     /// The listener's answer to Core's `ask`: its read of the element it
@@ -1121,7 +1122,10 @@ impl CoreDriver {
         };
         assert_eq!(listener, LISTENER.generation, "a token of another listener");
         let focus = matches!(read.purpose, verbatim_model::request::Purpose::Focus);
-        let element = match self.kept.start_read(token, ask.number.0, focus) {
+        let element = match self
+            .kept
+            .start_read((self.app, token), (ask.number.0, focus))
+        {
             Start::Read(element) => element,
             Start::NotThere => {
                 return Answer {
@@ -1145,15 +1149,9 @@ impl CoreDriver {
             read,
         );
         self.calls += verbatim_uia::calls::take();
-        let ruled_out = self
-            .last_view
-            .as_ref()
-            .is_some_and(|view| view.rules_out(token, self.reported.report(token)));
-        if let Ended::Release(_) = self.kept.read_ended(token, element, ruled_out)
-            && !self.kept.holds(token)
-        {
-            self.reported.forget(token);
-        }
+        let _ = self
+            .kept
+            .read_ended((self.app, token), element, true, &mut self.reported);
         Answer {
             number: ask.number,
             outcome,
@@ -1178,11 +1176,7 @@ impl CoreDriver {
     ) -> Event {
         let fields = element.read();
         let runtime_id = RuntimeId(element.runtime_id());
-        let kept: Vec<(ElementToken, Cached<ListenerEvent>)> = self
-            .kept
-            .with_runtime_id(&runtime_id)
-            .map(|(token, element)| (token, element.clone()))
-            .collect();
+        let kept = self.kept.with_runtime_id(self.app, &runtime_id);
         let name = fields.name.as_deref().unwrap_or_default();
         let placeholder = fields.role.class_name.as_deref() == Some("NetUITWMenuItem")
             && fields.role.control_type
@@ -1294,10 +1288,9 @@ impl CoreDriver {
         self.next_token += 1;
         let token = ElementToken(self.next_token);
         self.kept.keep(
-            token,
-            element.clone(),
-            runtime_id.clone(),
-            matches!(kind, EventKind::UiaFocus | EventKind::UiaMenuOpened),
+            (self.app, token),
+            (element.clone(), runtime_id.clone()),
+            kind,
         );
         self.reported.queued(token);
         Event {

@@ -101,8 +101,10 @@ guide maps those behaviors onto the crate's types and modules.
     listener's messages carrying tokens as they are handed to Core
     (`handled`), and after each pass answers `ViewSend::Now` when a token
     handled, or one the last view held, is not held now, `Leave` when only
-    additions or the position moved, and `Nothing` otherwise; a listener
-    generation started counts from 0 (`started`).
+    additions or the position moved, and `Nothing` otherwise, as when no
+    listener runs; a held set of another generation than the one counted
+    is an error (`GenerationMismatch`), a logic bug, and sends nothing; a
+    listener generation started counts from 0 (`started`).
   - The details the active theme reports, as the last `Input::Reported`
     set them (everything until then), kept in the state a dump restores.
     Core chooses each request's details from them (`details.rs`): a node

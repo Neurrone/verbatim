@@ -33,7 +33,7 @@ use windows::Win32::UI::Accessibility::{
 
 use verbatim_listener_logic::check::{Call, Check, ProbeRecord, SWITCHER_ITEM_CLASS, Walked};
 use verbatim_listener_logic::check_threads::{CheckThreads, Pushed, Take};
-use verbatim_listener_logic::kept::{Ended, KeptElements, Start, View};
+use verbatim_listener_logic::kept::{ListenerKept, Start, View};
 use verbatim_listener_logic::schedule::JobKind;
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::{
@@ -192,25 +192,17 @@ fn with_answer(mut cached: PropertyValues, answer: Option<PropertyAnswer>) -> Pr
     cached
 }
 
-/// Every application's kept elements, under their own lock, taken after
-/// the reading threads' and the check threads' locks and before the
-/// writer's, whose record of the tells it numbered judges a view
-/// ([`verbatim_listener_logic::kept`]), with no call made under it; and
-/// the last view of Core's held tokens, with the listener's generation,
-/// which every view and request names. An element let go is handed back,
-/// for release on a thread that may block.
+/// Every application's kept elements and Core's last held view
+/// ([`ListenerKept`]), under their own lock, taken after the reading
+/// threads' and the check threads' locks and before the writer's, whose
+/// record of the tells it numbered judges a view, with no call made under
+/// it; and the listener's generation, which every view and request names.
+/// An element let go is handed back, for release on a thread that may
+/// block.
 pub(crate) struct Kept {
     /// The listener's generation.
     generation: u64,
-    state: Mutex<KeptState>,
-}
-
-/// What sits under the kept elements' lock.
-#[derive(Default)]
-struct KeptState {
-    elements: HashMap<Pid, KeptElements<Agile<ListenerEvent>>>,
-    /// Core's last held view.
-    view: Option<View>,
+    state: Mutex<ListenerKept<Agile<ListenerEvent>>>,
 }
 
 /// Elements let go, by application, to release.
@@ -221,11 +213,11 @@ impl Kept {
     pub(crate) fn new(generation: u64) -> Self {
         Self {
             generation,
-            state: Mutex::new(KeptState::default()),
+            state: Mutex::new(ListenerKept::default()),
         }
     }
 
-    fn lock(&self) -> MutexGuard<'_, KeptState> {
+    fn lock(&self) -> MutexGuard<'_, ListenerKept<Agile<ListenerEvent>>> {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
@@ -238,11 +230,7 @@ impl Kept {
 
     /// The application whose elements hold `token`.
     pub(crate) fn owner(&self, token: ElementToken) -> Option<Pid> {
-        self.lock()
-            .elements
-            .iter()
-            .find(|(_, kept)| kept.holds(token))
-            .map(|(pid, _)| *pid)
+        self.lock().owner(token)
     }
 
     /// `pid`'s reading thread starts the read of `token` for request
@@ -251,49 +239,23 @@ impl Kept {
         &self,
         pid: Pid,
         token: ElementToken,
-        (request, focus): (u64, bool),
+        read: (u64, bool),
     ) -> Start<Agile<ListenerEvent>> {
-        self.lock()
-            .elements
-            .get_mut(&pid)
-            .map_or(Start::NotThere, |kept| {
-                kept.start_read(token, request, focus)
-            })
+        self.lock().start_read((pid, token), read)
     }
 
     /// The read of `pid`'s `token` ended with `element` (column B), its
-    /// answer sent when `sent`: the element to release, if any. A focus
-    /// read's element is kept unless Core's last view already rules it out,
-    /// by the writer's record of its tell, read from `outgoing`; one whose
-    /// answer was not sent, its request abandoned, is released.
+    /// answer sent when `sent`: the element to release, if any
+    /// ([`ListenerKept::read_ended`]).
     pub(crate) fn read_ended(
         &self,
         outgoing: &Outgoing,
-        (pid, token): (Pid, ElementToken),
+        at: (Pid, ElementToken),
         element: Agile<ListenerEvent>,
         sent: bool,
     ) -> Option<Agile<ListenerEvent>> {
-        let mut state = self.lock();
-        let KeptState { elements, view } = &mut *state;
-        let Some(kept) = elements.get_mut(&pid) else {
-            return Some(element);
-        };
-        let ruled_out = !sent
-            || view.as_ref().is_some_and(|view| {
-                view.rules_out(
-                    token,
-                    outgoing.with_reported(|reported| reported.report(token)),
-                )
-            });
-        match kept.read_ended(token, element, ruled_out) {
-            Ended::Kept => None,
-            Ended::Release(element) => {
-                if !kept.holds(token) {
-                    outgoing.with_reported(|reported| reported.forget(token));
-                }
-                Some(element)
-            }
-        }
+        let mut kept = self.lock();
+        outgoing.with_reported(|reported| kept.read_ended(at, element, sent, reported))
     }
 
     /// Core cancelled request `request` for the foreground (column E): the
@@ -304,59 +266,26 @@ impl Kept {
         outgoing: &Outgoing,
         request: u64,
     ) -> Option<(Pid, Agile<ListenerEvent>)> {
-        let mut state = self.lock();
-        let (pid, (token, element)) = state
-            .elements
-            .iter_mut()
-            .find_map(|(pid, kept)| kept.read_abandoned(request).map(|found| (*pid, found)))?;
-        outgoing.with_reported(|reported| reported.forget(token));
-        Some((pid, element))
+        let mut kept = self.lock();
+        outgoing.with_reported(|reported| kept.read_abandoned(request, reported))
     }
 
-    /// Core's held view of this generation arrived, `tokens` held with
-    /// `acknowledged` the position of the last message carrying tokens
-    /// Core handled (columns C and D): kept as the last view, and every
-    /// element it rules out, by the writer's record of each tell read from
-    /// `outgoing`, handed back by application to release.
+    /// Core's held view of this generation arrived (columns C and D): kept
+    /// as the last view, and every element it rules out handed back by
+    /// application to release ([`ListenerKept::view`]).
     pub(crate) fn view(&self, outgoing: &Outgoing, view: View) -> Released {
-        let mut state = self.lock();
-        let KeptState {
-            elements,
-            view: last,
-        } = &mut *state;
-        let released: Released = outgoing.with_reported(|reported| {
-            elements
-                .iter_mut()
-                .map(|(pid, kept)| {
-                    let let_go = kept.view(&view, |token| reported.report(token));
-                    for (token, _) in &let_go {
-                        reported.forget(*token);
-                    }
-                    (
-                        *pid,
-                        let_go.into_iter().map(|(_, element)| element).collect(),
-                    )
-                })
-                .filter(|(_, released): &(Pid, Vec<_>)| !released.is_empty())
-                .collect()
-        });
-        *last = Some(view);
-        released
+        let mut kept = self.lock();
+        outgoing.with_reported(|reported| kept.view(view, reported))
     }
 
-    /// Keeps `element` of `pid`'s behind `token`, its event a focus or a
-    /// menu opening when `focus_kind`.
+    /// Keeps `element` of `pid`'s behind `token`, its event of `kind`.
     fn keep(
         &self,
-        (pid, token): (Pid, ElementToken),
-        (element, runtime_id): (Agile<ListenerEvent>, RuntimeId),
-        focus_kind: bool,
+        at: (Pid, ElementToken),
+        told: (Agile<ListenerEvent>, RuntimeId),
+        kind: EventKind,
     ) {
-        self.lock()
-            .elements
-            .entry(pid)
-            .or_default()
-            .keep(token, element, runtime_id, focus_kind);
+        self.lock().keep(at, told, kind);
     }
 
     /// The kept elements of `pid`'s a check of an event with `runtime_id`
@@ -366,37 +295,19 @@ impl Kept {
         pid: Pid,
         runtime_id: &RuntimeId,
     ) -> Vec<(ElementToken, Agile<ListenerEvent>)> {
-        self.lock()
-            .elements
-            .get(&pid)
-            .map(|kept| {
-                kept.with_runtime_id(runtime_id)
-                    .map(|(token, element)| (token, element.clone()))
-                    .collect()
-            })
-            .unwrap_or_default()
+        self.lock().with_runtime_id(pid, runtime_id)
     }
 
     /// `pid`'s application ended (column F): every element it keeps, the
     /// kept reference of one in read included.
     fn ended(&self, outgoing: &Outgoing, pid: Pid) -> Vec<Agile<ListenerEvent>> {
-        let ended = self
-            .lock()
-            .elements
-            .remove(&pid)
-            .map(|mut kept| kept.ended())
-            .unwrap_or_default();
-        outgoing.with_reported(|reported| {
-            for (token, _) in &ended {
-                reported.forget(*token);
-            }
-        });
-        ended.into_iter().map(|(_, element)| element).collect()
+        let mut kept = self.lock();
+        outgoing.with_reported(|reported| kept.ended(pid, reported))
     }
 
     /// Every element kept, for the listener's shutdown.
-    fn clear(&self) -> HashMap<Pid, KeptElements<Agile<ListenerEvent>>> {
-        std::mem::take(&mut self.lock().elements)
+    fn clear(&self) -> Vec<Agile<ListenerEvent>> {
+        self.lock().clear()
     }
 }
 
@@ -612,7 +523,7 @@ impl Checks {
             self.kept.keep(
                 (pid, token),
                 (event.element, event.runtime_id.clone()),
-                matches!(event.kind, EventKind::UiaFocus | EventKind::UiaMenuOpened),
+                event.kind,
             );
             let application = self
                 .applications

@@ -23,8 +23,21 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use verbatim_model::Pid;
+use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::RuntimeId;
 use verbatim_model::tell::ElementToken;
+
+use crate::check::Handler;
+
+/// Whether an event of `kind` is of a focus kind: a focus or a menu
+/// opening, the only kinds whose element can become the readers' last
+/// focus, as only NVDA's focus handler sends one there; a later check
+/// reads such a told element's keyboard focus.
+#[must_use]
+pub fn focus_kind(kind: EventKind) -> bool {
+    Handler::of(kind) == Handler::Focus
+}
 
 /// One kept element's state, each carrying what is valid in it.
 #[derive(Debug)]
@@ -223,22 +236,21 @@ impl<E> Default for KeptElements<E> {
 }
 
 impl<E> KeptElements<E> {
-    /// Keeps `element`, with `runtime_id`, behind `token` as its event is
-    /// told; `focus_kind` is whether the event was a focus or a menu
-    /// opening.
+    /// Keeps `element`, with `runtime_id`, behind `token` as its event,
+    /// of `kind`, is told.
     pub fn keep(
         &mut self,
         token: ElementToken,
         element: E,
         runtime_id: RuntimeId,
-        focus_kind: bool,
+        kind: EventKind,
     ) {
         self.kept.insert(
             token,
             Kept::Told {
                 element,
                 runtime_id,
-                focus_kind,
+                focus_kind: focus_kind(kind),
             },
         );
     }
@@ -385,6 +397,178 @@ impl<E> KeptElements<E> {
     }
 }
 
+/// Every application's kept elements and Core's last held view: the
+/// listener's whole judgement of its told elements, which its check
+/// threads, its reading threads and its pipe thread call under one lock,
+/// each with the writer's record of its tells (`Reported`), whose reports
+/// of released tokens it forgets.
+#[derive(Debug)]
+pub struct ListenerKept<E> {
+    elements: BTreeMap<Pid, KeptElements<E>>,
+    /// Core's last held view.
+    view: Option<View>,
+}
+
+impl<E> Default for ListenerKept<E> {
+    fn default() -> Self {
+        Self {
+            elements: BTreeMap::new(),
+            view: None,
+        }
+    }
+}
+
+impl<E> ListenerKept<E> {
+    /// Keeps `element` of `pid`'s, with `runtime_id`, behind `token` as its
+    /// event, of `kind`, is told.
+    pub fn keep(
+        &mut self,
+        (pid, token): (Pid, ElementToken),
+        (element, runtime_id): (E, RuntimeId),
+        kind: EventKind,
+    ) {
+        self.elements
+            .entry(pid)
+            .or_default()
+            .keep(token, element, runtime_id, kind);
+    }
+
+    /// The application whose elements hold `token`.
+    #[must_use]
+    pub fn owner(&self, token: ElementToken) -> Option<Pid> {
+        self.elements
+            .iter()
+            .find(|(_, kept)| kept.holds(token))
+            .map(|(pid, _)| *pid)
+    }
+
+    /// The kept elements of `pid`'s a check of an event with `runtime_id`
+    /// reads the keyboard focus of, with their tokens (column G).
+    pub fn with_runtime_id(&self, pid: Pid, runtime_id: &RuntimeId) -> Vec<(ElementToken, E)>
+    where
+        E: Clone,
+    {
+        self.elements
+            .get(&pid)
+            .map(|kept| {
+                kept.with_runtime_id(runtime_id)
+                    .map(|(token, element)| (token, element.clone()))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// `pid`'s reading thread starts the read of `token` for request
+    /// `request`, a focus read when `focus` (column A).
+    pub fn start_read(
+        &mut self,
+        (pid, token): (Pid, ElementToken),
+        (request, focus): (u64, bool),
+    ) -> Start<E>
+    where
+        E: Clone,
+    {
+        self.elements.get_mut(&pid).map_or(Start::NotThere, |kept| {
+            kept.start_read(token, request, focus)
+        })
+    }
+
+    /// The read of `pid`'s `token` ended with `element`, its answer sent
+    /// when `sent` (column B): the element to release, if any. A focus
+    /// read's element is kept, read, unless the last view rules it out by
+    /// `reported`; one whose answer was not sent, its request abandoned,
+    /// is released.
+    pub fn read_ended(
+        &mut self,
+        (pid, token): (Pid, ElementToken),
+        element: E,
+        sent: bool,
+        reported: &mut Reported,
+    ) -> Option<E> {
+        let Some(kept) = self.elements.get_mut(&pid) else {
+            return Some(element);
+        };
+        let ruled_out = !sent
+            || self
+                .view
+                .as_ref()
+                .is_some_and(|view| view.rules_out(token, reported.report(token)));
+        match kept.read_ended(token, element, ruled_out) {
+            Ended::Kept => None,
+            Ended::Release(element) => {
+                if !kept.holds(token) {
+                    reported.forget(token);
+                }
+                Some(element)
+            }
+        }
+    }
+
+    /// Core cancelled request `request` for the foreground (column E): the
+    /// kept reference of the element in its read, with its application, to
+    /// release.
+    pub fn read_abandoned(&mut self, request: u64, reported: &mut Reported) -> Option<(Pid, E)> {
+        let (pid, (token, element)) = self
+            .elements
+            .iter_mut()
+            .find_map(|(pid, kept)| kept.read_abandoned(request).map(|found| (*pid, found)))?;
+        reported.forget(token);
+        Some((pid, element))
+    }
+
+    /// Core's held view `view` arrived (columns C and D): kept as the last
+    /// view, and every element it rules out by `reported` handed back by
+    /// application to release.
+    pub fn view(&mut self, view: View, reported: &mut Reported) -> Vec<(Pid, Vec<E>)> {
+        let released = self
+            .elements
+            .iter_mut()
+            .map(|(pid, kept)| {
+                let let_go = kept.view(&view, |token| reported.report(token));
+                for (token, _) in &let_go {
+                    reported.forget(*token);
+                }
+                (
+                    *pid,
+                    let_go
+                        .into_iter()
+                        .map(|(_, element)| element)
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .filter(|(_, released)| !released.is_empty())
+            .collect();
+        self.view = Some(view);
+        released
+    }
+
+    /// `pid`'s application ended (column F): every element it keeps, the
+    /// kept reference of one in read included.
+    pub fn ended(&mut self, pid: Pid, reported: &mut Reported) -> Vec<E> {
+        let ended = self
+            .elements
+            .remove(&pid)
+            .map(|mut kept| kept.ended())
+            .unwrap_or_default();
+        ended
+            .into_iter()
+            .map(|(token, element)| {
+                reported.forget(token);
+                element
+            })
+            .collect()
+    }
+
+    /// Every element kept, for the listener's shutdown.
+    pub fn clear(&mut self) -> Vec<E> {
+        std::mem::take(&mut self.elements)
+            .into_values()
+            .flat_map(|mut kept| kept.ended())
+            .map(|(_, element)| element)
+            .collect()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -402,7 +586,7 @@ mod tests {
                 ElementToken(token),
                 token,
                 rid(i32::try_from(token).unwrap()),
-                true,
+                EventKind::UiaFocus,
             );
         }
         kept
@@ -523,7 +707,7 @@ mod tests {
         let mut kept = KeptElements::default();
         reported.queued(ElementToken(1));
         reported.written(ElementToken(1));
-        kept.keep(ElementToken(2), 2_u64, rid(2), true);
+        kept.keep(ElementToken(2), 2_u64, rid(2), EventKind::UiaFocus);
         reported.queued(ElementToken(2));
         assert_eq!(
             kept.view(&view(&[], 1), |token| reported.report(token)),
@@ -548,6 +732,63 @@ mod tests {
         reported.forget(ElementToken(2));
         assert_eq!(reported.report(ElementToken(2)), None);
         assert_eq!(reported.position(), 2);
+    }
+
+    /// The listener's whole judgement, by application: a view lets go of
+    /// what it rules out and forgets its reports; a focus read whose answer
+    /// was not sent, or that the last view rules out, is released at its
+    /// end, and one the view holds is kept; an abandoned read's kept
+    /// reference and an ended application's elements are handed back.
+    #[test]
+    fn the_listeners_kept_elements_judge_by_application_and_the_last_view() {
+        let (one, two) = (Pid(1), Pid(2));
+        let mut reported = Reported::default();
+        let mut kept = ListenerKept::default();
+        for (pid, token) in [(one, 1), (two, 2), (one, 3), (one, 4)] {
+            kept.keep(
+                (pid, ElementToken(token)),
+                (token, rid(7)),
+                EventKind::UiaFocus,
+            );
+            reported.queued(ElementToken(token));
+            reported.written(ElementToken(token));
+        }
+        assert_eq!(kept.owner(ElementToken(2)), Some(two));
+        assert_eq!(
+            kept.with_runtime_id(one, &rid(7)),
+            vec![
+                (ElementToken(1), 1),
+                (ElementToken(3), 3),
+                (ElementToken(4), 4)
+            ]
+        );
+        let _ = kept.start_read((one, ElementToken(3)), (5, true));
+        let _ = kept.start_read((one, ElementToken(4)), (6, true));
+        assert_eq!(
+            kept.view(view(&[3], 4), &mut reported),
+            vec![(one, vec![1]), (two, vec![2])]
+        );
+        assert_eq!(reported.report(ElementToken(1)), None);
+        assert_eq!(
+            kept.read_ended((one, ElementToken(3)), 3, true, &mut reported),
+            None
+        );
+        assert_eq!(
+            kept.read_ended((one, ElementToken(4)), 4, true, &mut reported),
+            Some(4)
+        );
+        let _ = kept.view(view(&[3], 4), &mut reported);
+        kept.keep((one, ElementToken(5)), (5, rid(8)), EventKind::UiaFocus);
+        let _ = kept.start_read((one, ElementToken(5)), (7, true));
+        assert_eq!(
+            kept.read_ended((one, ElementToken(5)), 5, false, &mut reported),
+            Some(5)
+        );
+        kept.keep((one, ElementToken(6)), (6, rid(8)), EventKind::UiaFocus);
+        let _ = kept.start_read((one, ElementToken(6)), (8, true));
+        assert_eq!(kept.read_abandoned(8, &mut reported), Some((one, 6)));
+        assert_eq!(kept.ended(one, &mut reported), vec![3]);
+        assert_eq!(kept.clear(), Vec::<u64>::new());
     }
 
     /// Column E: a read abandoned for the foreground lets its token go,
@@ -596,12 +837,12 @@ mod tests {
     #[test]
     fn the_check_reads_only_what_can_be_the_readers_last_focus() {
         let mut kept = KeptElements::default();
-        kept.keep(ElementToken(1), 1, rid(7), true);
-        kept.keep(ElementToken(2), 2, rid(7), false);
-        kept.keep(ElementToken(3), 3, rid(7), true);
-        kept.keep(ElementToken(4), 4, rid(7), false);
-        kept.keep(ElementToken(5), 5, rid(7), true);
-        kept.keep(ElementToken(6), 6, rid(8), true);
+        kept.keep(ElementToken(1), 1, rid(7), EventKind::UiaFocus);
+        kept.keep(ElementToken(2), 2, rid(7), EventKind::UiaElementSelected);
+        kept.keep(ElementToken(3), 3, rid(7), EventKind::UiaFocus);
+        kept.keep(ElementToken(4), 4, rid(7), EventKind::UiaElementSelected);
+        kept.keep(ElementToken(5), 5, rid(7), EventKind::UiaFocus);
+        kept.keep(ElementToken(6), 6, rid(8), EventKind::UiaFocus);
         let _ = kept.start_read(ElementToken(3), 1, true);
         let _ = kept.start_read(ElementToken(4), 2, false);
         let _ = kept.start_read(ElementToken(5), 3, true);

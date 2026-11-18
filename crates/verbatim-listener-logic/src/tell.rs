@@ -81,15 +81,21 @@ pub fn tell_window(
 /// (`IAccessibleHandler/__init__.py` 556 to 576). The kinds that never
 /// reach that test answer false: a window's destruction, handled on its
 /// own (`processDestroyWinEvent`, 911); the end of a menu, a popup menu
-/// or the task switcher, which go to the fake focus (1082 to 1084), whose
-/// read 50 ms later is not tested either (989 to 1002); the system caret's
-/// location change and show, which `processGenericWinEvent` queues as a
-/// caret event (636 to 667); and the desktop switch (1076 to 1077). Every
-/// other kind is tested, a menu start, a popup start and a caret hide,
-/// which is no system caret event, among them. Core asks of an untested
-/// kind's hung window as of any other, and its shell's live hang check
-/// refuses the request, the not-responding sound playing while the window
-/// holds attention (Dickson, 2026-11-19).
+/// or the task switcher, which go to the fake focus (1082 to 1084); the
+/// system caret's location change and show, which `processGenericWinEvent`
+/// queues as a caret event (636 to 667); and the desktop switch (1076 to
+/// 1077). Every other kind is tested, a menu start, a popup start and a
+/// caret hide, which is no system caret event, among them. Core asks of an
+/// untested kind's hung window as of any other, and its shell's live hang
+/// check refuses the request, the not-responding sound playing while the
+/// window holds attention (Dickson, 2026-11-19). For a caret event this
+/// matches NVDA, whose caret handling blocks on the hung application. For
+/// a menu's end it is a recorded difference awaiting Dickson's review:
+/// NVDA's fake focus 50 ms later reads the focus window and, finding it
+/// hung, makes a plain window object of it with no call into the
+/// application (`NVDAObjects/window/__init__.py` 91 to 98) and queues its
+/// focus (`IAccessibleHandler/__init__.py` 989 to 1002), so NVDA, by its
+/// source, announces that window where Verbatim plays the sound.
 #[must_use]
 pub fn hang_tested(kind: EventKind) -> bool {
     !matches!(

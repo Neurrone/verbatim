@@ -95,22 +95,35 @@ impl ListenerView {
     /// What to send after a pass in which Core came to hold `held`: a view
     /// at once when a token handled since the last view, or one that view
     /// held, is not held now; otherwise a view left for the next command
-    /// when the set or the position moved; otherwise nothing.
-    pub fn after_pass(&mut self, held: Option<&HeldTokens>) -> ViewSend {
-        let Some(generation) = self.generation else {
-            return ViewSend::Nothing;
+    /// when the set or the position moved; otherwise nothing, as when no
+    /// listener runs (`held` is `None`).
+    ///
+    /// # Errors
+    ///
+    /// A held set of another listener generation than the one counted, a
+    /// logic bug, since both learn of a listener's start from the same
+    /// input: nothing is sent, so no view releases what Core holds.
+    pub fn after_pass(
+        &mut self,
+        held: Option<&HeldTokens>,
+    ) -> Result<ViewSend, GenerationMismatch> {
+        let (Some(generation), Some(held)) = (self.generation, held) else {
+            return Ok(ViewSend::Nothing);
         };
-        let empty = BTreeSet::new();
-        let tokens = held
-            .filter(|held| held.generation == generation)
-            .map_or(&empty, |held| &held.tokens);
+        if held.generation != generation {
+            return Err(GenerationMismatch {
+                counted: generation,
+                held: held.generation,
+            });
+        }
+        let tokens = &held.tokens;
         let released = self
             .handled
             .iter()
             .chain(self.last.0.iter())
             .any(|token| !tokens.contains(token));
         if !released && self.last.0 == *tokens && self.last.1 == self.position {
-            return ViewSend::Nothing;
+            return Ok(ViewSend::Nothing);
         }
         self.last = (tokens.clone(), self.position);
         self.handled.clear();
@@ -119,12 +132,22 @@ impl ListenerView {
             tokens: tokens.iter().copied().collect(),
             acknowledged: self.position,
         };
-        if released {
+        Ok(if released {
             ViewSend::Now(view)
         } else {
             ViewSend::Leave(view)
-        }
+        })
     }
+}
+
+/// A held set of another listener generation than the one the shell's
+/// record counts ([`ListenerView::after_pass`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GenerationMismatch {
+    /// The generation the record counts.
+    pub counted: u64,
+    /// The generation of the held set.
+    pub held: u64,
 }
 
 #[cfg(test)]
@@ -135,6 +158,12 @@ mod tests {
         HeldTokens {
             generation: 1,
             tokens: tokens.iter().copied().map(ElementToken).collect(),
+        }
+    }
+
+    impl ListenerView {
+        fn after_pass_ok(&mut self, held: Option<&HeldTokens>) -> ViewSend {
+            self.after_pass(held).expect("one generation")
         }
     }
 
@@ -155,10 +184,10 @@ mod tests {
         record.started(1);
         record.handled(1, ElementToken(1));
         assert_eq!(
-            record.after_pass(Some(&held(&[]))),
+            record.after_pass_ok(Some(&held(&[]))),
             ViewSend::Now(view(&[], 1))
         );
-        assert_eq!(record.after_pass(Some(&held(&[]))), ViewSend::Nothing);
+        assert_eq!(record.after_pass_ok(Some(&held(&[]))), ViewSend::Nothing);
     }
 
     /// An addition alone writes nothing: it is left for the next command;
@@ -169,17 +198,17 @@ mod tests {
         record.started(1);
         record.handled(1, ElementToken(1));
         assert_eq!(
-            record.after_pass(Some(&held(&[1]))),
+            record.after_pass_ok(Some(&held(&[1]))),
             ViewSend::Leave(view(&[1], 1))
         );
-        assert_eq!(record.after_pass(Some(&held(&[1]))), ViewSend::Nothing);
+        assert_eq!(record.after_pass_ok(Some(&held(&[1]))), ViewSend::Nothing);
         record.handled(1, ElementToken(2));
         assert_eq!(
-            record.after_pass(Some(&held(&[1, 2]))),
+            record.after_pass_ok(Some(&held(&[1, 2]))),
             ViewSend::Leave(view(&[1, 2], 2))
         );
         assert_eq!(
-            record.after_pass(Some(&held(&[2]))),
+            record.after_pass_ok(Some(&held(&[2]))),
             ViewSend::Now(view(&[2], 2))
         );
     }
@@ -193,27 +222,27 @@ mod tests {
         record.handled(1, ElementToken(1));
         record.handled(1, ElementToken(2));
         assert_eq!(
-            record.after_pass(Some(&held(&[1, 2]))),
+            record.after_pass_ok(Some(&held(&[1, 2]))),
             ViewSend::Leave(view(&[1, 2], 2))
         );
         record.handled(1, ElementToken(3));
         assert_eq!(
-            record.after_pass(Some(&held(&[1, 3]))),
+            record.after_pass_ok(Some(&held(&[1, 3]))),
             ViewSend::Now(view(&[1, 3], 3))
         );
     }
 
     /// A new generation counts from 0 and forgets the last view; a message
-    /// of another generation is not counted, and a set of another
-    /// generation holds nothing of this one.
+    /// of another generation is not counted, and a held set of another
+    /// generation is an error that sends nothing.
     #[test]
     fn a_new_generation_counts_from_zero() {
         let mut record = ListenerView::default();
-        assert_eq!(record.after_pass(None), ViewSend::Nothing);
+        assert_eq!(record.after_pass_ok(None), ViewSend::Nothing);
         record.started(1);
         record.handled(1, ElementToken(7));
         assert_eq!(
-            record.after_pass(Some(&held(&[7]))),
+            record.after_pass_ok(Some(&held(&[7]))),
             ViewSend::Leave(view(&[7], 1))
         );
         record.started(2);
@@ -222,6 +251,16 @@ mod tests {
         assert_eq!(record.position(), 1);
         assert_eq!(
             record.after_pass(Some(&held(&[7]))),
+            Err(GenerationMismatch {
+                counted: 2,
+                held: 1
+            })
+        );
+        assert_eq!(
+            record.after_pass_ok(Some(&HeldTokens {
+                generation: 2,
+                tokens: BTreeSet::new(),
+            })),
             ViewSend::Now(View {
                 generation: 2,
                 tokens: Vec::new(),

@@ -10,13 +10,13 @@ mod desk;
 
 use std::collections::BTreeSet;
 
-use desk::{App, Desk, LISTENER, ONE, focus_read_of, focus_tell, listener_read};
+use desk::{App, Desk, LISTENER, ONE, focus_read_of, focus_tell, listener_read, runtime_of};
 use verbatim_core::HeldTokens;
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::request::{
     Instance, Outcome, ProcessFact, QueueInput, Reader, Reply, Request as Wire,
 };
-use verbatim_model::tell::{ElementToken, Payload, Read};
+use verbatim_model::tell::{ElementToken, EventObject, Payload, Read};
 use verbatim_model::{Backend, NodeDetails, NodeSnapshot, Role, StateSet, TraceId};
 
 /// A button of `app`, node `number`, named `name`.
@@ -169,4 +169,70 @@ fn the_set_never_regains_a_dropped_token() {
             tokens: BTreeSet::new(),
         })
     );
+}
+
+/// The tell of `kind` on node `number` of `app`, kept by the listener
+/// behind `token`.
+fn told_as(
+    app: App,
+    kind: EventKind,
+    number: u64,
+    token: u64,
+    at_us: u64,
+) -> verbatim_model::tell::Event {
+    let mut tell = focus_tell(app, number, at_us);
+    tell.kind = kind;
+    tell.object = EventObject::Uia {
+        token: ElementToken(token),
+        runtime_id: runtime_of(number),
+    };
+    if kind != EventKind::UiaFocus {
+        tell.checked = None;
+    }
+    tell
+}
+
+/// While a focus's read is out, a later focus on one element waits, and a
+/// newer focus on the same element merges it away: the merged token leaves
+/// the set, the newer is held; a toast candidate and a UI Automation
+/// selection waiting behind it are held too.
+#[test]
+fn waiting_entries_are_held_and_a_merged_one_is_not() {
+    let mut desk = Desk::new();
+    told(&mut desk, ONE, 5);
+    let at = desk.at_us + 1_000;
+    let _ = desk.tell(LISTENER, told_as(ONE, EventKind::UiaFocus, 9, 10, at));
+    assert_eq!(desk.state.held_tokens(), Some(held(&[5, 10])));
+    let at = desk.at_us + 1_000;
+    let _ = desk.tell(LISTENER, told_as(ONE, EventKind::UiaFocus, 9, 11, at));
+    assert_eq!(desk.state.held_tokens(), Some(held(&[5, 11])));
+    let at = desk.at_us + 1_000;
+    let _ = desk.tell(
+        LISTENER,
+        told_as(ONE, EventKind::UiaWindowOpened, 20, 12, at),
+    );
+    let at = desk.at_us + 1_000;
+    let _ = desk.tell(
+        LISTENER,
+        told_as(ONE, EventKind::UiaElementSelected, 21, 13, at),
+    );
+    assert_eq!(desk.state.held_tokens(), Some(held(&[5, 11, 12, 13])));
+}
+
+/// A menu's end appends Core's check of the focus 50 ms later: that entry
+/// names no told element, and nothing is held for it.
+#[test]
+fn an_entry_core_appends_later_holds_nothing() {
+    let mut desk = Desk::new();
+    let mut tell = focus_tell(ONE, 5, desk.at_us + 1_000);
+    tell.kind = EventKind::MenuEnd;
+    tell.object = EventObject::Msaa {
+        window: ONE.window(),
+        object: -4,
+        child: 0,
+    };
+    tell.checked = None;
+    assert_eq!(desk.tell(LISTENER, tell), []);
+    assert!(desk.wake.is_some(), "the check is appended later");
+    assert_eq!(desk.state.held_tokens(), Some(held(&[])));
 }

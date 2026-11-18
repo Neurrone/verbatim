@@ -10,11 +10,15 @@
 //! What a dump does not give is code-level: a check is made at its
 //! event's time, the tell's `at_us`, with every request and view Core sent
 //! before then taken and none sent later, as the check thread makes its
-//! calls before the tell reaches Core; a kept element of the tell's
-//! runtime id answers the keyboard-focus read as the tell's own element
-//! answered it at its check, the same element at the same moment; and a
-//! request's read starts as Core sends it and ends with the recorded
-//! answer of its number.
+//! calls before the tell reaches Core; and a request's read starts as
+//! Core sends it and ends with the recorded answer of its number. Which
+//! kept elements a check reads is the listener's own rule, but their
+//! keyboard-focus answers are made up, a limit: each is answered as the
+//! tell's own element answered at its check, the same element at the same
+//! moment, since the dump carries no answer for an element the run's
+//! check did not read. The console replay's "terminal said once" rests on
+//! that made-up answer; what it proves of the code is which elements each
+//! check reads.
 //!
 //! The fixtures (`tests/fixtures/replays/`):
 //!
@@ -34,14 +38,13 @@ use std::io::BufReader;
 use std::path::PathBuf;
 
 use verbatim_core::{ListenerView, Runtime, View as HeldView, ViewSend, read_dump, reduce};
-use verbatim_listener_logic::check::Handler;
-use verbatim_listener_logic::kept::{KeptElements, Reported, Start, View};
+use verbatim_listener_logic::kept::{ListenerKept, Reported, Start, View, focus_kind};
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::request::{
     ObjectRef, ProcessFact, Purpose, QueueEffect, QueueInput, Reader, Request,
 };
 use verbatim_model::tell::{ElementToken, EventObject, Read};
-use verbatim_model::{Effect, Input, Message, Role, SegmentContent, State};
+use verbatim_model::{Effect, Input, Message, Pid, Role, SegmentContent, State};
 
 /// One utterance's contents, its index marks left out.
 type Utterance = Vec<SegmentContent>;
@@ -58,19 +61,19 @@ enum Action {
     View(HeldView),
 }
 
-/// The stand-in for the listener, its told elements carrying nothing.
+/// The stand-in for the listener, its told elements carrying nothing,
+/// judged by the listener's own `ListenerKept`.
 #[derive(Default)]
 struct Listener {
-    kept: KeptElements<()>,
+    kept: ListenerKept<()>,
     reported: Reported,
     /// The shell's record of the views it sends.
     shell: ListenerView,
-    /// A view left for the next request.
+    /// A view left for the next request, as the supervisor's writer leaves
+    /// it in its slot for the next command.
     left: Option<HeldView>,
-    /// The last view taken.
-    last: Option<View>,
-    /// The token each request out reads, by its number.
-    reading: BTreeMap<u64, ElementToken>,
+    /// The element each request out reads, by its number.
+    reading: BTreeMap<u64, (Pid, ElementToken)>,
     /// What Core sent and the listener has not taken yet, each with the
     /// time Core sent it.
     pending: Vec<(u64, Action)>,
@@ -92,52 +95,42 @@ impl Listener {
                     number,
                     focus,
                 } => {
-                    if let Start::Read(()) = self.kept.start_read(token, number, focus) {
-                        self.reading.insert(number, token);
+                    if let Some(pid) = self.kept.owner(token)
+                        && let Start::Read(()) = self.kept.start_read((pid, token), (number, focus))
+                    {
+                        self.reading.insert(number, (pid, token));
                     }
                 }
-                Action::View(view) => self.take(view),
+                Action::View(view) => {
+                    let view = View {
+                        tokens: view.tokens.into_iter().collect(),
+                        acknowledged: view.acknowledged,
+                    };
+                    let _ = self.kept.view(view, &mut self.reported);
+                }
             }
         }
     }
 
-    /// Takes `view`: every element it rules out is let go.
-    fn take(&mut self, view: HeldView) {
-        let view = View {
-            tokens: view.tokens.into_iter().collect(),
-            acknowledged: view.acknowledged,
-        };
-        let reported = &self.reported;
-        let released = self.kept.view(&view, |token| reported.report(token));
-        for (token, ()) in released {
-            self.reported.forget(token);
-        }
-        self.last = Some(view);
-    }
-
-    /// The tell of `kind` naming `token` with `runtime_id`, of the
-    /// listener `generation`, checked at `at_us`: the kept elements its
+    /// The tell of `kind` from `pid` naming `token` with `runtime_id`, of
+    /// the listener `generation`, checked at `at_us`: the kept elements its
     /// check reads, then the element kept and its tell written.
     fn told(
         &mut self,
-        (kind, generation, at_us): (EventKind, u64, u64),
+        (kind, pid, generation, at_us): (EventKind, Pid, u64, u64),
         (token, runtime_id): (ElementToken, &verbatim_model::property::RuntimeId),
     ) -> Vec<ElementToken> {
         self.reach(at_us);
-        let read = if Handler::of(kind) == Handler::Focus {
+        let read = if focus_kind(kind) {
             self.kept
-                .with_runtime_id(runtime_id)
+                .with_runtime_id(pid, runtime_id)
+                .into_iter()
                 .map(|(kept, ())| kept)
                 .collect()
         } else {
             Vec::new()
         };
-        self.kept.keep(
-            token,
-            (),
-            runtime_id.clone(),
-            matches!(kind, EventKind::UiaFocus | EventKind::UiaMenuOpened),
-        );
+        self.kept.keep((pid, token), ((), runtime_id.clone()), kind);
         self.reported.queued(token);
         self.reported.written(token);
         self.shell.handled(generation, token);
@@ -145,15 +138,11 @@ impl Listener {
     }
 
     /// The answer to request `number` reached Core at `at_us`: its read
-    /// ended just before.
+    /// ended just before, its answer sent.
     fn answered(&mut self, number: u64, at_us: u64) {
         self.reach(at_us);
-        if let Some(token) = self.reading.remove(&number) {
-            let ruled_out = self
-                .last
-                .as_ref()
-                .is_some_and(|view| view.rules_out(token, self.reported.report(token)));
-            let _ = self.kept.read_ended(token, (), ruled_out);
+        if let Some(at) = self.reading.remove(&number) {
+            let _ = self.kept.read_ended(at, (), true, &mut self.reported);
         }
     }
 }
@@ -197,10 +186,10 @@ fn replay(name: &str) -> Replayed {
                 QueueInput::Tell { from, tell } if from.reader == Reader::Listener => {
                     if let EventObject::Uia { token, runtime_id } = &tell.object {
                         let read = listener.told(
-                            (tell.kind, from.generation, tell.at_us),
+                            (tell.kind, tell.process, from.generation, tell.at_us),
                             (*token, runtime_id),
                         );
-                        if Handler::of(tell.kind) == Handler::Focus
+                        if focus_kind(tell.kind)
                             && let Some(checked) = tell.checked.as_mut()
                         {
                             let own = checked.keyboard_focus.unwrap_or(Read::Failed);
@@ -245,7 +234,11 @@ fn replay(name: &str) -> Replayed {
                 _ => {}
             }
         }
-        match listener.shell.after_pass(state.held_tokens().as_ref()) {
+        match listener
+            .shell
+            .after_pass(state.held_tokens().as_ref())
+            .expect("Core and the shell count one listener generation")
+        {
             ViewSend::Nothing => {}
             ViewSend::Now(view) => {
                 listener.left = None;

@@ -390,10 +390,14 @@ fact").
     per call).
   - The held view: about one `ElementsHeld` per listener tell Core does
     not hold, plus one per focus read whose entry ends without becoming
-    the last focus. Each wakes the listener's pipe thread, takes the kept
-    elements' lock once and the writer's lock once, and queues one release
-    on the application's check thread, which needs no new thread or UI
-    Automation client while the check thread runs. The view lists every
+    the last focus, a notification flood sending one per notification.
+    Each wakes the supervisor's owner thread, then the listener's pipe
+    thread, takes the kept elements' lock once and the writer's lock
+    once, and queues one release on the application's check thread, a
+    wake of it, which needs no new thread or UI Automation client while
+    the check thread runs. A view left for the next command, one for each
+    handled listener tell Core holds, wakes the owner thread too
+    (`OwnerEvent::ListenerHeld`), and nothing in the listener. The view lists every
     token Core holds: the waiting and front entries' and the last focus's,
     a handful. Not yet measured: the wake-ups and processor time of the
     listener and Core on `measure_focus_text_box` and a File Explorer

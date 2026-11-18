@@ -3977,3 +3977,57 @@ fn a_terminal_keeps_a_cell_column_and_reads_past_the_text_as_blank() {
     session.input(&terminal_command(ReviewCommand::ReviewCurrentCharacter));
     assert_eq!(session.heard(), terminal_heard(&["e"]));
 }
+
+/// A system caret event in a hung edit control holding attention: the
+/// listener tells it, as NVDA tests no caret event for a hang
+/// (`verbatim_listener_logic::tell::hang_tested`), and its read is refused
+/// by the shell's live hang check, which plays the not-responding sound,
+/// as Dickson decided (2026-11-19); NVDA's caret handling blocks on the
+/// hung application until its watchdog cancels the call.
+#[test]
+fn a_caret_event_in_a_hung_window_holding_attention_plays_the_sound() {
+    let mut text = edit_control("hello, world\n", 2);
+    // The control's application is in front, holding attention.
+    let fg = text.desk.feed(QueueInput::Foreground(
+        verbatim_model::request::ForegroundReport {
+            window: ONE.top_level(),
+            root_owner: ONE.top_level(),
+            process: ONE.pid,
+            thread: 41,
+            class: "Frame".to_owned(),
+        },
+    ));
+    let [
+        Effect::Queue(QueueEffect::Send { to, ask }),
+        Effect::Queue(QueueEffect::WakeAt(_)),
+    ] = &fg[..]
+    else {
+        panic!("the foreground's read asked: {fg:?}");
+    };
+    let _ = text.desk.answer(*to, ask.number.0, Outcome::NotThere);
+    let tell = text.edit_tell(EventKind::SystemCaret, -8);
+    let asked: Vec<verbatim_model::request::RequestNumber> = text
+        .desk
+        .feed(QueueInput::Tell {
+            from: desk::LISTENER,
+            tell: Box::new(tell),
+        })
+        .into_iter()
+        .filter_map(|effect| match effect {
+            Effect::Queue(QueueEffect::Send { ask, .. }) => Some(ask.number),
+            _ => None,
+        })
+        .collect();
+    let [read] = asked[..] else {
+        panic!("one read asked: {asked:?}");
+    };
+    let refused = text.desk.feed(QueueInput::RefusedHung(read));
+    let earcons: Vec<verbatim_model::Earcon> = refused
+        .into_iter()
+        .filter_map(|effect| match effect {
+            Effect::PlayEarcon(earcon) => Some(earcon),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(earcons, [verbatim_model::Earcon::AppNotResponding]);
+}

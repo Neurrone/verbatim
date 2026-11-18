@@ -15,9 +15,12 @@
 //!   the probe of that window (`isUIAWindow`, 1368 to 1381 and 1531 to
 //!   1540) when its class is on neither of NVDA's lists and this thread's
 //!   record holds no answer begun within the last half second; for each
-//!   kept element with the event's runtime id that can be the readers' last
-//!   focus, its keyboard focus (902 to 923, `kept::KeptElements::with_runtime_id`); the window's acceptance facts, where NVDA judges acceptance
-//!   (`shouldAcceptEvent`, 925), before its object is made (932); for a `NetUITWMenuItem` menu item with no name, its previous
+//!   kept element with the event's runtime id that can be the readers'
+//!   last focus, its keyboard focus (902 to 923,
+//!   `kept::KeptElements::with_runtime_id`); the window's acceptance
+//!   facts, where NVDA judges acceptance (`shouldAcceptEvent`, 925),
+//!   before its object is made (932); for a `NetUITWMenuItem` menu item
+//!   with no name, its previous
 //!   sibling, which NVDA's object reads as it chooses its class
 //!   (`NVDAObjects/UIA/__init__.py` 1227 to 1231); and the element's own
 //!   keyboard focus (`shouldAllowUIAFocusEvent`, 1632 to 1636), which NVDA

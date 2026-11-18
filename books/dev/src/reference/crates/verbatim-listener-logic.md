@@ -125,8 +125,13 @@ Public API:
   (`queued`, `written`, `withdrawn`, `forget`), the outposts' record of
   reported nodes in the same shape; `too_early` says a view cannot judge
   a token whose tell waits to be written or was written after the
-  position it acknowledges. Every element let go is handed back with its
-  token for release on a thread that may block.
+  position it acknowledges. `ListenerKept` is the listener's whole
+  judgement: every application's `KeptElements` and Core's last view,
+  each call given the writer's `Reported`, whose reports of released
+  tokens it forgets; a read whose answer was not sent is released at its
+  end. `focus_kind` is the one rule of which kinds a check reads a told
+  element for, a focus or a menu opening. Every element let go is handed
+  back for release on a thread that may block.
 - `tell` — what the listener decides of a `WinEvent` before it tells
   Core of it: `tell_window`, NVDA's mapping of a window of 0 to the
   desktop window, and of an invalid one to it for the end of a menu, a

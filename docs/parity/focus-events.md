@@ -868,13 +868,20 @@ window as they arrive, as NVDA's handlers do: a `WinEvent` by its
 window, a UIA event by its sender's own cached window. Only the
 `WinEvent` kinds `winEventToNVDAEvent` reaches are dropped so: a
 window's destruction, the end of a menu, a popup menu or the task
-switcher (the fake focus, lines 1082 to 1084, whose read 50 ms later is
-not tested either, 989 to 1002), the system caret's location change and
-show (636 to 667) and the desktop switch (1076 to 1077) are told from a
-hung window. Their requests meet the shell's check below, so a menu's
-end in a hung window holding attention plays the sound, where NVDA's
-read blocks until its watchdog cancels it (`watchdog.py`, from line 151;
-Dickson, 2026-11-19). Core's shell asks
+switcher (the fake focus, lines 1082 to 1084), the system caret's
+location change and show (636 to 667) and the desktop switch (1076 to
+1077) are told from a hung window. Their requests meet the shell's check
+below, so a caret event or a menu's end in a hung window holding
+attention plays the sound (Dickson, 2026-11-19). For the caret this
+matches NVDA, whose caret handling blocks on the hung application until
+its watchdog cancels the call (`watchdog.py`, from line 151). For a
+menu's end it is **different**, a recorded difference awaiting Dickson's
+review: NVDA's fake focus 50 ms later (989 to 1002) finds the focus
+window hung, makes a plain window object of it named by
+`InternalGetWindowText`, with no call into the application
+(`NVDAObjects/window/__init__.py` 91 to 98), and queues its focus, so by
+its source NVDA announces the window as a plain window; no capture has
+been taken. Core's shell asks
 Windows whether a request's window is hung before sending it, a ghost
 mapped to its hung window, and answers a request to a hung window "not
 responding" without sending it; while any request is out it asks again
