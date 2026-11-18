@@ -769,6 +769,45 @@ fn the_settings_lists_second_own_focus_says_the_item_once() {
     );
 }
 
+/// The release run 02 of `settings_dialog_keys` at ce3305a1, its flight
+/// recorder dump as Core wrote it (`fixtures/settings_dialog_keys_run02`):
+/// the menu check's read of the settings list answers first and says
+/// "Speech 1 of 3", and the list's own focus, raised twice behind it, is
+/// then the same item at the same ids with no key between, and says
+/// nothing. The dump is replayed for its speech only, as its answers are
+/// the real outposts'.
+#[test]
+fn the_recorded_settings_dialog_says_its_item_once() {
+    let file = fs::File::open(fixture_path("settings_dialog_keys_run02")).expect("fixture file");
+    let contents = dump::read_dump(&mut BufReader::new(file)).expect("fixture parses");
+    let inputs: Vec<_> = contents.inputs.iter().map(|r| r.input.clone()).collect();
+    let first = replay(&contents.base, &inputs);
+    assert_eq!(
+        first,
+        replay(&contents.base, &inputs),
+        "replay is deterministic"
+    );
+    assert_eq!(
+        speech(&first),
+        said(&[
+            &["Label(\"Desktop\")", "Role(List)"],
+            &[
+                "Label(\"NVDA\")",
+                "Position { position: 3, set_size: Some(13) }"
+            ],
+            &["Label(\"Verbatim\")"],
+            &["Label(\"Context\")", "Role(Menu)"],
+            &["Label(\"Settings...\")", "Shortcut(\"s\")"],
+            &["Label(\"Verbatim Settings: Speech\")", "Role(Dialog)"],
+            &["Label(\"Categories:\")", "Role(List)", "Shortcut(\"Alt+c\")"],
+            &[
+                "Label(\"Speech\")",
+                "Position { position: 1, set_size: Some(3) }"
+            ],
+        ])
+    );
+}
+
 #[test]
 fn the_mouse_return_says_the_lists_item_once() {
     assert_eq!(
