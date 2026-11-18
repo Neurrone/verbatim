@@ -30,18 +30,20 @@ use crate::registry::ScenarioState;
 use crate::scenario::Scenario;
 
 /// Each category of the tree, the first indication in it as the default
-/// theme reports it, and how many it holds, after the category's own
-/// announcement collapsed.
-const CATEGORIES: [(&str, &str, &str); 6] = [
+/// theme reports it, the category's own announcement expanded, and how
+/// many indications it holds as its expansion says it.
+const CATEGORIES: [(&str, &str, &str, &str); 6] = [
     (
         "Roles collapsed 1 of 6 level 0",
         "level 1 window: speech 1 of 71",
         "level 0 Roles expanded 1 of 6",
+        "71 items",
     ),
     (
         "States collapsed 2 of 6 level 0",
         "level 1 selected: speech 1 of 19",
         "level 0 States expanded 2 of 6",
+        "19 items",
     ),
     // Five, with the cell coordinates indication NVDA's "Cell coordinates"
     // option matches (`docs/parity/focus-announcement.md`, "Table cell
@@ -50,21 +52,25 @@ const CATEGORIES: [(&str, &str, &str); 6] = [
         "Properties collapsed 3 of 6 level 0",
         "level 1 description: speech 1 of 5",
         "level 0 Properties expanded 3 of 6",
+        "5 items",
     ),
     (
         "Text formatting collapsed 4 of 6 level 0",
         "level 1 spelling error: speech and sound (textError.wav) 1 of 12",
         "level 0 Text formatting expanded 4 of 6",
+        "12 items",
     ),
     (
         "Structure collapsed 5 of 6 level 0",
         "level 1 blank: speech 1 of 2",
         "level 0 Structure expanded 5 of 6",
+        "2 items",
     ),
     (
         "Events collapsed 6 of 6 level 0",
         "level 1 application not responding: sound (tone, 220 hertz, 150 milliseconds) 1 of 9",
         "",
+        "9 items",
     ),
 ];
 
@@ -128,17 +134,20 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     // "expanded", as NVDA says it for a Win32 tree view item. Each
     // category is expanded to hear its first indication, then left by
     // going back to it, collapsing it, and moving down to the next.
-    press(scenario, &["rightarrow"], &["expanded", "71 items"]);
-    for (index, (_, first, expanded)) in CATEGORIES.iter().enumerate() {
-        let keys: &[&str] = if index == 0 {
-            &["downarrow"]
-        } else {
-            &["rightarrow", "downarrow"]
-        };
-        press(scenario, keys, &[first]);
-        if let Some((next, _, _)) = CATEGORIES.get(index + 1) {
+    //
+    // Each key is its own press: sent in one batch, a key lands within a
+    // millisecond of the state change the one before it raised, which no
+    // one typing does, and Verbatim's cut for it then reaches the change's
+    // speech (NVDA, pumping non-focus events up to 10 ms late, cuts first).
+    // The speech is NVDA's for one key at a time in a Win32 tree view
+    // (captured 2026-11-19).
+    for (index, (_, first, expanded, count)) in CATEGORIES.iter().enumerate() {
+        press(scenario, &["rightarrow"], &["expanded", count]);
+        press(scenario, &["downarrow"], &[first]);
+        if let Some((next, _, _, _)) = CATEGORIES.get(index + 1) {
             press(scenario, &["leftarrow"], &[expanded]);
-            press(scenario, &["leftarrow", "downarrow"], &[next]);
+            press(scenario, &["leftarrow"], &["collapsed"]);
+            press(scenario, &["downarrow"], &[next]);
         }
     }
 
