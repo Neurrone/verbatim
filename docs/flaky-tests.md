@@ -118,6 +118,14 @@ Recorded by Claude, 2026-11-04.
   - How: the new terminal's "... terminal" was said three times at launch, where `LAUNCH_REPEATS` accepts one repeat.
   - Cause: Windows Terminal moved the UI Automation focus from one element to another and back 190 ms later; each is a new focus by NVDA's duplicate test, so NVDA would say it three times too.
   - Fix: a question for Dickson, whether the launch allowance should accept a return.
+- `windows_terminal_long_lines` on GitHub's runner (run 44414430624, 2026-11-19)
+  - How: nothing was said after the new Windows Terminal window opened.
+  - Cause: UI Automation never delivered the terminal's focus to the listener: its log has one UI Automation event in the run, before its subscriptions were installed; the terminal's MSAA focus events reached Core and were rightly left to UI Automation. A focus UI Automation never delivers is lost, as in NVDA ([ADR 0001](../books/dev/src/reference/adr/0001-focus.md), its limits), as under "Settings' page focus never delivered by UI Automation".
+  - Fix: none in Verbatim.
+- `outpost::read::tests::only_the_console_host_reads_the_focus_in_its_console_window` under `cargo xtask ci` on GitHub's runner (run 44414430624, 2026-11-19)
+  - How: the test console panicked with "the console's window took its client's title" (`crates/verbatim-test-console/src/lib.rs`), before the test read anything.
+  - Cause: not found; the console window did not take its program's title within the helper's wait on the runner.
+  - Fix: none yet.
 - `conhost_typing`
   - How: missed a typed "o" in 2 of 6 runs on the base build.
   - Cause: not found.
