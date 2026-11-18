@@ -550,6 +550,7 @@ impl Worker<'_> {
             UiaKind::Property {
                 id,
                 text_pattern,
+                automation_id,
                 window,
             } => {
                 let element = event
@@ -558,7 +559,11 @@ impl Worker<'_> {
                     .and_then(super::store::Parked::element);
                 self.property_tell(
                     (event, element.as_ref()),
-                    (*id, *text_pattern, (**window).clone()),
+                    (
+                        *id,
+                        (*text_pattern, automation_id.as_deref()),
+                        (**window).clone(),
+                    ),
                     trace,
                     observed_at_us,
                 );
@@ -657,9 +662,12 @@ impl Worker<'_> {
     /// Tells Core of the change of UI Automation property `id` that the
     /// `Follow` registration delivered for `event`'s element, with the
     /// value it carried, whether the element has the Text pattern
-    /// (`text_pattern`) and the facts of the followed node's window its
-    /// callback gathered, which Core's acceptance reads, as NVDA applies
-    /// `shouldAcceptEvent` in its property-change handler. The outpost
+    /// (`text_pattern`), for a suggestions change its automation id
+    /// (`automation_id`), both from the event's cache, which Core's rule
+    /// for a suggestions change off the focus reads, and the facts of the
+    /// followed node's window its callback gathered, which Core's
+    /// acceptance reads, as NVDA applies `shouldAcceptEvent` in its
+    /// property-change handler. The outpost
     /// judges nothing of it: Core finds the
     /// node by its runtime id among the committed focus and its ancestors
     /// (`docs/design/readers-tell-core-asks-build1.md`, "Readers' local
@@ -667,23 +675,34 @@ impl Worker<'_> {
     fn property_tell(
         &self,
         (event, element): (&UiaEvent, Option<&Cached<Kept>>),
-        (id, text_pattern, window): (i32, bool, verbatim_model::tell::TellWindow),
+        (id, (text_pattern, automation_id), window): (
+            i32,
+            (bool, Option<&str>),
+            verbatim_model::tell::TellWindow,
+        ),
         trace: TraceId,
         observed_at_us: u64,
     ) {
         let Some((property, value)) = told_property(id, &event.parts, element) else {
             return;
         };
+        let mut cached = vec![PropertyAnswer {
+            id: PropertyId::HasTextPattern,
+            value: Some(PropertyValue::Flag(text_pattern)),
+        }];
+        if property == PropertyId::Suggestions {
+            cached.push(PropertyAnswer {
+                id: PropertyId::AutomationId,
+                value: automation_id.map(|id| PropertyValue::Text(id.to_owned())),
+            });
+        }
         let tell = self.followed_tell(
             verbatim_model::event_kind::EventKind::UiaPropertyChanged,
             verbatim_model::tell::EventObject::Followed {
                 runtime_id: RuntimeId(event.parts.runtime_id.clone()),
             },
             (
-                PropertyValues(vec![PropertyAnswer {
-                    id: PropertyId::HasTextPattern,
-                    value: Some(PropertyValue::Flag(text_pattern)),
-                }]),
+                PropertyValues(cached),
                 verbatim_model::tell::Payload::PropertyChanged { property, value },
             ),
             window,

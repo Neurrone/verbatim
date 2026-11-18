@@ -61,8 +61,12 @@ pub enum UiaKind {
         /// The UI Automation property id.
         id: i32,
         /// Whether the element has the Text pattern, from the event's
-        /// cache, which Core's rule for a value change reads.
+        /// cache, which Core's rules for a value change and for a
+        /// suggestions change off the focus read.
         text_pattern: bool,
+        /// The element's automation id, from the event's cache, which
+        /// Core's rule for a suggestions change off the focus reads.
+        automation_id: Option<String>,
         /// The facts of the followed node's known window, gathered by the
         /// callback with calls to Windows only, which Core's acceptance
         /// reads; no window when no node is followed.

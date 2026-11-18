@@ -476,6 +476,9 @@ uia_shape! {
             process_id: UIA_ProcessIdPropertyId => process_id,
             /// Whether it has the Text pattern.
             text_available: UIA_IsTextPatternAvailablePropertyId => bool,
+            /// The automation id, which with the Text pattern tells a
+            /// suggestions field ([`SuggestionsRefresh::reports_suggestions`]).
+            automation_id: UIA_AutomationIdPropertyId => string,
         }
         prefetch {}
         covers { Kept }

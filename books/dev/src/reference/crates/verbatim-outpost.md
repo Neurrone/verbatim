@@ -1006,7 +1006,11 @@ window before it is handled.
   whether it has the Text pattern, and the value it carried: the states,
   name or value from the event's cache; a help text change as a
   description change and a `ControllerFor` change as a suggestions
-  change, each with no value, which Core asks for.
+  change, each with no value, which Core asks for. A suggestions change
+  also carries the element's automation id from the event's cache
+  (`UiaKind::Property`), so Core plays the suggestions-closed sound for
+  an element that is no longer the focus only when it is a suggestions
+  field, with no call added.
 - `WindowDestroyed`: the requests queued on the window are answered not
   there at once (`Asks::destroyed`), and a program forgets the window's
   MSAA nodes and text facts, and the registration of a followed node in

@@ -1943,11 +1943,14 @@ for every event, so each request holds only what is read from it.
   paid for every selection on the desktop, spoken or not.
 - The outpost's text registration asks for 3 properties (`TextEvent`),
   since the worker reads the text itself, and its property registration
-  for 23 (`PropertyEvent`), without a node's details or its off-screen
-  state (`books/dev/src/explanation/design/uia-shapes.md`, decision 9).
+  for 24 (`PropertyEvent`), without a node's details or its off-screen
+  state (`books/dev/src/explanation/design/uia-shapes.md`, decision 9);
+  its automation id, with the Text pattern, tells Core whether a
+  suggestions change off the focus is a suggestions field's, one provider
+  call more per property event and no call across processes.
 - Pinned on demand (`uia_event_caches_cost_exactly`), because the calls
   UIA makes to route an event vary with load: the text events' request 3
-  `GetPropertyValue`; the property changes' 12 `GetPropertyValue` and 11
+  `GetPropertyValue`; the property changes' 13 `GetPropertyValue` and 12
   `GetPatternProvider`; the listener's 15 `GetPropertyValue` and 3
   `GetPatternProvider`, and for an element selected 27 and 16; each also
   5 `ProviderOptions`, 3 `HostRawElementProvider`, 3 `FragmentRoot` and 2

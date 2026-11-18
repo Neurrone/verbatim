@@ -1298,6 +1298,7 @@ fn capture_property(
         kind: UiaKind::Property {
             id: property_id,
             text_pattern: fields.text_available,
+            automation_id: fields.automation_id.clone(),
             window: Box::new(followed_window(context)),
         },
         parts: UiaSnapshotFact {

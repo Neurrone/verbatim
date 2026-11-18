@@ -3356,7 +3356,11 @@ fn uia_event_caches_cost_exactly() {
     // (`NVDAObjects/UIA/__init__.py` 2511 to 2514, added with the tells
     // of a followed node's property changes;
     // `docs/design/readers-tell-core-asks-build1.md`, "Selection and the
-    // caret's text facts").
+    // caret's text facts"). It caches the automation id too, one property
+    // more, which a suggestions change's tell carries, so that Core plays
+    // the suggestions-closed sound off the focus only for a suggestions
+    // field (`docs/parity/changes-and-selection.md`, "Suggestions
+    // appearing and going away").
     let (_, cost) = under_test.measure(hwnd, |_| {
         live.refresh(&property)
             .expect("the element's cache is filled")
@@ -3369,7 +3373,7 @@ fn uia_event_caches_cost_exactly() {
         &[
             ("ProviderOptions", 5),
             ("GetPatternProvider", 12),
-            ("GetPropertyValue", 12),
+            ("GetPropertyValue", 13),
             ("HostRawElementProvider", 3),
             ("GetRuntimeId", 2),
             ("FragmentRoot", 3),

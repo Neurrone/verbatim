@@ -622,8 +622,9 @@ patterns its request holds.
   `Description`, `Shortcut`, `Position`, `Cell` and the level, 40
   properties, a `Node`'s without its `Place`; `parts(runtime_id)`),
   `PropertyEvent`
-  (`RoleCore`, name, `ValueSet`, `States`, the process id and the Text
-  pattern's availability; `parts(runtime_id)`), and `TextEvent` (process id, native window handle
+  (`RoleCore`, name, `ValueSet`, `States`, the process id, the Text
+  pattern's availability and the automation id, which with the Text
+  pattern tell a suggestions field; `parts(runtime_id)`), and `TextEvent` (process id, native window handle
   and class name). All four cover `Kept`, `ListenerEvent` covers
   `FocusInput` and `TextAreaPattern`, and `ListenerSelection` covers
   `ListenerEvent` and both of those.
