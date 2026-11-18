@@ -90,12 +90,10 @@ use serde::{Deserialize, Serialize};
 /// version 34 added [`Request::WaitForLastShownLine`], so a terminal is
 /// seen to show its prompt, read from the terminal itself; version 35
 /// added [`Request::WaitForUiaAnswer`], so a window still starting is seen
-/// to answer UI Automation before it is brought forward; version 36
-/// added `unelevated` to [`Request::LaunchProcess`], so the harness's
-/// Windows Terminal runs unelevated where the agent runs elevated. A test run
+/// to answer UI Automation before it is brought forward. A test run
 /// against an older agent is refused at `Hello` instead of losing its
 /// connection mid-run, or running without the exclusion.
-pub const AGENT_PROTOCOL_VERSION: u32 = 36;
+pub const AGENT_PROTOCOL_VERSION: u32 = 35;
 
 /// How long the agent gives the taskbar to handle its Minimize All command
 /// ([`Request::MinimizeAll`]), in milliseconds.
@@ -216,13 +214,6 @@ pub enum Request {
         /// no standard input.
         #[serde(default)]
         stdin_piped: bool,
-        /// Whether the program runs unelevated where the agent runs
-        /// elevated, with the token of the desktop's shell, as a program
-        /// the user starts does; with no capture file, standard input or
-        /// console title. Where the agent is not elevated it changes
-        /// nothing.
-        #[serde(default)]
-        unelevated: bool,
     },
     /// Writes `text` to the standard input of a child launched with
     /// `stdin_piped`, such as the `q` that has ffmpeg finish its output and
@@ -1606,7 +1597,6 @@ mod tests {
                 withhold_foreground: false,
                 ignore_foreign_terminals: true,
                 stdin_piped: true,
-                unelevated: true,
             },
         };
         let frame = Frame::Reply {

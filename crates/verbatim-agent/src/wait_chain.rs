@@ -431,7 +431,7 @@ mod tests {
             &[],
             None,
             None,
-            (false, false, false, false),
+            (false, false, false),
         )
         .expect("spawns cmd");
         assert_eq!(
