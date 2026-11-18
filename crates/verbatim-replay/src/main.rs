@@ -254,7 +254,7 @@ mod tests {
     const LINE_3: &str =
         "3: Queue trace 1, at_us 1000, input Process ListenerStarted 1. 1 effect: Queue";
     const LINE_4: &str = "4: Queue trace 2, at_us 2000, input ReaderReady generation 1, reader \"Listener\". 1 effect: Queue";
-    const LINE_5: &str = "5: Queue trace 3, at_us 3000, input Tell from (generation 1, reader \"Listener\"), tell (application \"app\", at_us 3000, checked (keyboard_focus Answered true, probe (be... (749 characters). 2 effects: Queue Send (ask (number 1, request ReadObject descendants false, object Kept 1, purpose Foc... (144 characters); Queue WakeAt 503000";
+    const LINE_5: &str = "5: Queue trace 3, at_us 3000, input Tell from (generation 1, reader \"Listener\"), tell (application \"app\", at_us 3000, checked (keyboard_focus Answered true, probe (be... (749 characters). 2 effects: Queue Send (ask (number 1, request ReadObject descendants false, object Kept listener 1, to... (144 characters); Queue WakeAt 503000";
     const LINE_6: &str = "6: Queue trace 4, at_us 4000, input Answer answer (number 1, outcome Result Object (object (window (handle 4001, process 40, root_... (134 characters), from (generation 1, reader \"Listener\"). 2 effects: Queue StartOutpost 40; Queue WakeAt 13003000";
     const LINE_7: &str = "7: Queue trace 5, at_us 5000, input Process OutpostStarted (generation 3, process 40). 1 effect: Queue WakeAt 9005000";
     const LINE_8: &str = "8: Queue trace 6, at_us 6000, input ReaderReady generation 3, reader Outpost 40. 2 effects: Queue Send (ask (number 2, request CompleteUia completes \"Focus\", details (formats 255, gra... (144 characters); Queue WakeAt 506000";
