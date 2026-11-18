@@ -324,11 +324,11 @@ pub(crate) fn kind(ask: &Ask) -> &'static str {
         Wire::CompleteUia(_) => "CompleteUia",
         Wire::MsaaRun(_) => "MsaaRun",
         Wire::CurrentFocus {
-            depth: verbatim_model::request::Depth::Full,
+            depth: verbatim_model::request::FocusDepth::Full,
             ..
         } => "CurrentFocus",
         Wire::CurrentFocus {
-            depth: verbatim_model::request::Depth::FullIfFocused,
+            depth: verbatim_model::request::FocusDepth::FullIfFocused,
             ..
         } => "CurrentFocus with the focused state as a fact",
         Wire::Follow(_) => "Follow",
@@ -684,7 +684,6 @@ pub(crate) fn redirected(read: FocusRead, redirect: Redirect, child: MsaaIds) ->
         facts: CandidateFacts::Found {
             focused: Some(true),
             role: None,
-            window_class: String::new(),
             redirect: Some((redirect, child)),
         },
         read: Some(Box::new(read)),
@@ -722,7 +721,6 @@ pub(crate) fn not_focused() -> CandidateAnswer {
         facts: CandidateFacts::Found {
             focused: Some(false),
             role: None,
-            window_class: String::new(),
             redirect: None,
         },
         read: None,

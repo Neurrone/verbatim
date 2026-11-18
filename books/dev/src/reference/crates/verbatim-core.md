@@ -734,19 +734,37 @@ anything (`CandidateFacts`), for its own turn or for whether it is
 pending (`Purpose`), and answers `Validity`: valid (read in full, or the
 committed focus executed again), a duplicate (valid, nothing read or
 said, ending a run), refused with a `Reason`, or needing a read (`Need`:
-the focused state or a menu start's role). `depth` says how far the
-turn's read goes. `pending` maps an answer to `Pending` (counts,
-unconfirmed, no), and `pending_behind` judges what waits behind the
-front item by item, a run walked newest first, the first valid
-candidate counting even behind a newer one needing a read; with a bound,
-a candidate needing a read raised at or after it is not pending. The
-callers are the run (`focus/msaa_run.rs`, one request per candidate,
-strictly newest first across applications), the UI Automation focus
-(`focus/uia_focus.rs`), the menu start and check and the menu opening's
-drop (`focus/menus.rs`), the recovered read (`focus/retake.rs`), the
-caret key, the caret tell and the alert, so the turn and the pending
-judgement agree by construction. `duplicate.rs`'s tests are its private
-primitives.
+the focused state or a menu start's role). Its rows take the facts as
+`Result<&CandidateFacts, M>`: with facts, `judge_read` instantiates `M`
+uninhabited, so its answer is `Settled`, which has no needed read.
+`depth` says how far the turn's read goes. `pending` maps an answer to
+`Pending` (counts, unconfirmed, no).
+
+`judge_run` is the one walk of a run, newest first, each candidate judged
+with the facts stored on it: it answers the refusals on the way and the
+first candidate not refused (`Found`, with the older candidates, where the
+walk goes on). The run's turn (`focus/msaa_run.rs`, one request per
+candidate, strictly newest first across applications) steps through it,
+reading the found candidate and going on past one its read refuses;
+`pending_behind` walks each waiting run through it, the first valid
+candidate counting even behind a newer one needing a read, only the
+candidates `Within` names judged: with a caret key's bound, one needing a
+read raised at or after it is not pending; for a UI Automation menu
+opening's drop, only what was raised before the opening, the front
+included. So the turn, the pending judgement and the opening's drop
+agree by construction. The other callers are the UI Automation focus
+(`focus/uia_focus.rs`), the menu start and check (`focus/menus.rs`), the
+recovered read (`focus/retake.rs`), the caret key, the caret tell and the
+alert. `duplicate.rs`'s tests are its private primitives.
+
+Each read of a candidate is a request typed by its depth
+(`msaa_run::RunRequest<D>`: `FactsOnly`, `FullIfFocused`, `Full`; and
+`retake::CurrentFocusRead<D>`), whose answer is parsed at its decode
+(`validity::Answered`: refused unread, `Unread`, or found and read in
+full; a confirmation's facts alone). An answer that breaks its depth's
+rule, a found candidate without its read or a confirmation with one, is
+undecodable, logged as a malformed answer (`QueueEffect::Undecodable`),
+and the entry ends.
 
 The redirect guard (`LastFocus::redirect`): a focus executed through a
 redirect leaves on the readers' last focus which redirect fired and the

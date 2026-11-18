@@ -1,0 +1,4 @@
+{"source": "verbatim-event-record, validity-saveas-control (2026-11-18), run 1: the File name edit focus, the folder tree stale focus, Shift+Right caret event"}
+{"t_us": 1501706, "kind": "msaa_focus", "window": "0xD054E", "class": "Edit", "object": -4, "child": 0, "pass": 493}
+{"t_us": 1635119, "kind": "msaa_focus", "window": "0x4003B4", "class": "SysTreeView32", "object": -4, "child": 16, "pass": 639}
+{"t_us": 3250412, "kind": "msaa_location", "window": "0xD054E", "class": "Edit", "object": -8, "child": 0, "pass": 776}

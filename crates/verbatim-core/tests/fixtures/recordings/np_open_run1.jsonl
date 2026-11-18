@@ -1,0 +1,3 @@
+{"source": "verbatim-event-record, survey np_open, the first opening: the File name edit focus, then the folder tree stale focus"}
+{"t_us": 1769656, "kind": "msaa_focus", "window": "0x21E029A", "class": "Edit", "object": -4, "child": 0, "pass": 124}
+{"t_us": 2201345, "kind": "msaa_focus", "window": "0x2B9017C", "class": "SysTreeView32", "object": -4, "child": 16, "pass": 462}

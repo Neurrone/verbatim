@@ -49,7 +49,7 @@ fn next_core_to_outpost(previous: Option<&CoreToOutpost>) -> Option<CoreToOutpos
                 set: vec![crate::property::PropertyId::Name],
                 known: Vec::new(),
                 details: crate::TextDetails::NONE,
-                depth: crate::request::Depth::Full,
+                depth: crate::request::FocusDepth::Full,
             },
         })),
         CoreToOutpost::Request(_) => CoreToOutpost::Cancel(crate::request::Cancel {

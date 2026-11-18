@@ -105,7 +105,6 @@ pub(crate) struct LastFocus {
     /// own focus redirected to it, with that same fence end unread. Ended
     /// by anything that replaces the last focus, and by a candidate tried
     /// and refused or not there (Dickson, 2026-11-18).
-    #[serde(default)]
     pub(crate) redirect: Option<(Redirect, Fence)>,
 }
 

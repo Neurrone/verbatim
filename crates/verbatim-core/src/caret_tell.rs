@@ -222,7 +222,7 @@ pub(crate) async fn run(mut cx: Cx<Entries>, tell: CaretTell) {
     }
     // An unconfirmed MSAA focus does not count and is not read, as NVDA's
     // events not yet pumped are not pending.
-    if crate::focus::validity::pending_behind_front(&cx, None)
+    if crate::focus::validity::pending_behind_front(&cx, crate::focus::validity::Within::ALL)
         == crate::focus::validity::Pending::Counts
     {
         return;

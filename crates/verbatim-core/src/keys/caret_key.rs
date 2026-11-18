@@ -33,8 +33,8 @@ use verbatim_model::request::{CandidateFacts, Depth};
 use crate::editing;
 use crate::entries::{Entries, Entry};
 use crate::event_queue::{Cx, OTHER_DUE_US, Outcome, Reader, Request, RequestWindow};
-use crate::focus::msaa_run::RunRequest;
-use crate::focus::validity::{Pending, pending_behind_front};
+use crate::focus::msaa_run::{FactsOnly, RunRequest};
+use crate::focus::validity::{Pending, Within, pending_behind_front};
 use crate::focus::versions::Committed;
 use crate::keys::strokes::StrokeStatus;
 use crate::state::SrState;
@@ -359,6 +359,10 @@ impl TerminalStage {
     /// Whether `arrival` withdraws the request of this stage: one arm per
     /// cell of the terminal path's stage table. The final read comes after
     /// the bound, so an unconfirmed focus never withdraws it.
+    #[expect(
+        clippy::match_same_arms,
+        reason = "one arm per cell of the stage table, as the design asks"
+    )]
     fn withdrawn_by(self, arrival: Arrival) -> bool {
         match self {
             Self::Starting => arrival.counts(),
@@ -367,7 +371,8 @@ impl TerminalStage {
                     || arrival.counts()
                     || arrival.unconfirmed_before(bound_at_us)
             }
-            Self::Confirming | Self::Final => arrival == Arrival::Key || arrival.counts(),
+            Self::Confirming => arrival == Arrival::Key || arrival.counts(),
+            Self::Final => arrival == Arrival::Key || arrival.counts(),
         }
     }
 }
@@ -397,9 +402,11 @@ enum Confirmed {
     Judged,
     /// Withdrawn by an arrival: judge the arrival.
     Withdrawn,
-    /// Not responding, past its due time, or stopped by the foreground:
-    /// the key is silent.
-    Silent,
+    /// Not responding, past its due time, stopped by the foreground, or a
+    /// malformed answer: the key ends saying nothing, Backspace included,
+    /// as a key whose watch ends so does (the stage table's "Core stops"
+    /// and "as today" cells).
+    Stopped,
 }
 
 /// Confirms the waiting candidate `trace` with a read of its facts alone,
@@ -417,10 +424,10 @@ async fn confirm(
         return Confirmed::Judged;
     };
     let known = crate::focus::msaa_run::known_for(cx, candidate.tell.process);
-    let request = RunRequest::of(cx, &candidate, (Depth::Facts, spare), &known);
+    let request = RunRequest::<FactsOnly>::of(cx, &candidate, spare, &known);
     match cx.ask(request, due_us).await {
-        Outcome::Result(answer) => {
-            crate::focus::validity::store_facts(cx, trace, answer.facts);
+        Outcome::Result(facts) => {
+            crate::focus::validity::store_facts(cx, trace, facts);
             Confirmed::Judged
         }
         // The candidate's outpost ended, or its object is gone: stored as
@@ -431,7 +438,7 @@ async fn confirm(
         }
         Outcome::NoLongerAwaited(CancelReason::Withdrawn) => Confirmed::Withdrawn,
         Outcome::Refused(_) | Outcome::NotResponding | Outcome::NoLongerAwaited(_) => {
-            Confirmed::Silent
+            Confirmed::Stopped
         }
     }
 }
@@ -562,7 +569,7 @@ async fn after_pass(
 ) {
     let bound_at_us = passed_at_us.saturating_add(u64::from(BOUND_US));
     loop {
-        let withdrawn = match pending_behind_front(cx, Some(bound_at_us)) {
+        let withdrawn = match pending_behind_front(cx, Within::key(bound_at_us)) {
             Pending::Counts => {
                 silent(cx, press, (binding, started));
                 return;
@@ -571,10 +578,7 @@ async fn after_pass(
                 match confirm(cx, trace, Some((binding.node, started.point)), due_us).await {
                     Confirmed::Judged => false,
                     Confirmed::Withdrawn => true,
-                    Confirmed::Silent => {
-                        silent(cx, press, (binding, started));
-                        return;
-                    }
+                    Confirmed::Stopped => return,
                 }
             }
             Pending::No => {
@@ -669,13 +673,13 @@ async fn terminal_key(cx: &mut Cx<Entries>, press: &CaretPress, binding: &CaretB
     // stages: a counting focus silences the key, an unconfirmed one is
     // confirmed, and with neither the watch runs for the rest of the bound.
     loop {
-        let withdrawn = match pending_behind_front(cx, Some(bound_at_us)) {
+        let withdrawn = match pending_behind_front(cx, Within::key(bound_at_us)) {
             Pending::Counts => return,
             Pending::Unconfirmed(trace) => {
                 match confirm(cx, trace, Some((binding.node, point)), due_us).await {
                     Confirmed::Judged => false,
                     Confirmed::Withdrawn => true,
-                    Confirmed::Silent => return,
+                    Confirmed::Stopped => return,
                 }
             }
             Pending::No => {
@@ -957,7 +961,7 @@ fn marked(cx: &Cx<Entries>, press: &CaretPress) -> bool {
 /// Whether a focus waiting behind the key counts as pending, judged now
 /// by the one definition: an unconfirmed MSAA focus does not.
 fn counts_behind(cx: &Cx<Entries>) -> bool {
-    pending_behind_front(cx, None) == Pending::Counts
+    pending_behind_front(cx, Within::ALL) == Pending::Counts
 }
 
 /// Whether the key's bound node is still held: its outpost generation is

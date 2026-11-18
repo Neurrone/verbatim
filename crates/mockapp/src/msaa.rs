@@ -338,14 +338,10 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
             let edit = crate::edit::find(hwnd).ok_or("the window hosts no edit control")?;
             crate::edit::set_text(edit, &text);
         }
-        Command::StaleFocusOnLeft(delay_ms) => {
+        Command::StaleFocusOnLeft => {
             let edit = crate::edit::find(hwnd).ok_or("the window hosts no edit control")?;
             let tree = crate::tree_view::find(hwnd).ok_or("the window hosts no tree view")?;
-            crate::edit::stale_focus_on_left(
-                edit,
-                (tree, crate::tree_view::selected_child(tree)),
-                delay_ms,
-            );
+            crate::edit::stale_focus_on_left(edit, (tree, crate::tree_view::selected_child(tree)));
             // SAFETY: `edit` is this thread's own live control; the window
             // it had the focus from is not needed.
             let _ = unsafe { windows::Win32::UI::Input::KeyboardAndMouse::SetFocus(Some(edit)) };

@@ -61,7 +61,6 @@ fn focused(focused: bool) -> Reply {
         facts: verbatim_model::request::CandidateFacts::Found {
             focused: Some(focused),
             role: None,
-            window_class: String::new(),
             redirect: None,
         },
         read: focused.then(|| Box::new(read)),
@@ -183,7 +182,6 @@ fn a_menu_end_after_a_focus_committed_since_the_first_end_makes_its_own_check() 
                     facts: verbatim_model::request::CandidateFacts::Found {
                         focused: None,
                         role: None,
-                        window_class: String::new(),
                         redirect: None,
                     },
                     read: Some(Box::new(focus_read(None))),
@@ -319,7 +317,6 @@ fn read_as(role: verbatim_model::Role) -> Reply {
         facts: verbatim_model::request::CandidateFacts::Found {
             focused: None,
             role: Some(role),
-            window_class: String::new(),
             redirect: None,
         },
         read: Some(Box::new(read)),
@@ -414,4 +411,75 @@ fn a_menu_start_after_a_run_that_executed_another_focus_reads_its_object() {
             "send Outpost(Pid(40)) MsaaRun"
         ]
     );
+}
+
+/// A run waiting ahead of a UI Automation menu opening is walked as a run
+/// (review, M4): a newest duplicate of the readers' last focus hides the
+/// older candidate that would count, as NVDA's pump stops at the
+/// duplicate and queues nothing, so the opening is kept; with the order
+/// reversed the newer candidate counts and the opening is dropped.
+#[test]
+fn a_menu_opening_behind_a_run_whose_newest_is_a_duplicate_is_kept() {
+    use std::collections::VecDeque;
+
+    use crate::entries::Entry;
+    use crate::event_queue::Item;
+    use crate::focus::validity::Confirmation;
+
+    let mut state = crate::state::SrState::default();
+    state.versions.last = Some(crate::focus::versions::LastFocus {
+        read_by: crate::focus::versions::ReadBy::Msaa {
+            event: Some(held(-4).event),
+            held_child: 0,
+        },
+        place: crate::focus::versions::Place {
+            window: WindowHandle(5),
+            top_level: WindowHandle(4),
+            root_owner: WindowHandle(4),
+            ancestor_windows: Vec::new().into(),
+        },
+        class: verbatim_model::request::ObjectClass::Plain,
+        role: verbatim_model::Role::EditableText,
+        redirect: None,
+    });
+    let candidate = |object: i32, at_us: u64, focused: bool| {
+        let mut tell = msaa_tell(object);
+        tell.at_us = at_us;
+        let Some(Entry::Candidate(mut candidate)) = Entry::of_tell(LISTENER, tell) else {
+            unreachable!("an MSAA focus is a candidate");
+        };
+        if focused {
+            candidate.confirmation =
+                Confirmation::Read(verbatim_model::request::CandidateFacts::Found {
+                    focused: Some(true),
+                    role: None,
+                    redirect: None,
+                });
+        }
+        Entry::Candidate(candidate)
+    };
+    let Input::Entry(arriving) = opening(2, 5_000) else {
+        unreachable!("an entry");
+    };
+    let backend = crate::focus::backend::BackendCache::default();
+    let dropped = |run: Vec<Entry>| {
+        let waiting = VecDeque::from([Item::Run(run)]);
+        crate::focus::menus::opening_dropped(
+            &state,
+            (None, &waiting),
+            &arriving,
+            &backend,
+            (6_000, Some(IN_FRONT)),
+        )
+    };
+    // The focus confirmed focused, then the duplicate, newer.
+    assert!(!dropped(vec![
+        candidate(-9, 1_000, true),
+        candidate(-4, 1_002, false)
+    ]));
+    // The duplicate, then the focus confirmed focused, newer.
+    assert!(dropped(vec![
+        candidate(-4, 1_000, false),
+        candidate(-9, 1_002, true)
+    ]));
 }

@@ -105,8 +105,9 @@ one raw `WM_GETOBJECT` for `UiaRootObjectId`, counting only the answer
 process's queued remote operation (`e34`), under `e38`'s trigger, and on
 new console and File Explorer windows. Its verdict is the one verdict per
 window, as NVDA's one cache is, judging both routes' events by the verdict
-that stood at each event's observation; the focus listener makes none and
-reads every UIA focus whose window's class is not on NVDA's MSAA list. No
+that stood at each event's observation; the focus listener judges none, its
+check thread making every UIA focus's keyboard-focus reads whatever its
+window's verdict, and carrying the probe it made, for Core to judge. No
 connection to the window follows the probe, where NVDA's probe connects as
 part of it, so a new File Explorer window gets no UIA connection at
 Verbatim's first sight of it. The window is asked once. A window that did

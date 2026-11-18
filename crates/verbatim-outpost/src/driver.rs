@@ -93,7 +93,7 @@ impl<'a> Driver<'a> {
                 set: every_property(),
                 known: Vec::new(),
                 details: verbatim_model::TextDetails::ALL,
-                depth: verbatim_model::request::Depth::Full,
+                depth: verbatim_model::request::FocusDepth::Full,
             },
         )
     }

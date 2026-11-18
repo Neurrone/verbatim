@@ -115,7 +115,7 @@ pub(crate) async fn run(mut cx: Cx<Entries>, announcement: Announcement) {
 /// pending by the one definition: an unconfirmed MSAA focus does not, and
 /// is not read, as NVDA's events not yet pumped are not pending.
 fn focus_pending_behind(cx: &Cx<Entries>) -> bool {
-    crate::focus::validity::pending_behind_front(cx, None)
+    crate::focus::validity::pending_behind_front(cx, crate::focus::validity::Within::ALL)
         == crate::focus::validity::Pending::Counts
 }
 

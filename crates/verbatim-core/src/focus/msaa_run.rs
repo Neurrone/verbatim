@@ -1,41 +1,93 @@
 //! A run of MSAA focus and foreground candidates at the front (design,
-//! "Focus and foreground"): walked newest first, strictly, across
+//! "Focus and foreground"): walked by the one definition's run walk
+//! (`super::validity::judge_run`), newest first, strictly, across
 //! applications, as NVDA's pump has no grouping by application
-//! (`IAccessibleHandler/__init__.py` 1087 to 1092). Each candidate is
-//! judged by the one definition (`super::validity`) on the facts Core holds
-//! and any a caret key's confirmation stored on it: a refusal goes on with
-//! no request, a duplicate ends the run as its valid focus, and any other
+//! (`IAccessibleHandler/__init__.py` 1087 to 1092). Refusals go on with no
+//! request, a duplicate ends the run as its valid focus, and any other
 //! answer asks that candidate's outpost to its depth, naming the
-//! candidate's window, then judges the answer the same way. The valid focus
-//! is executed. One request per candidate: Core decides every candidate,
-//! the outpost only reporting facts (Dickson, 2026-11-18).
+//! candidate's window; the answer, parsed at its decode, is judged the
+//! same way, and a candidate refused after its read is passed over by the
+//! walk's next step. The valid focus is executed. One request per
+//! candidate: Core decides every candidate, the outpost only reporting
+//! facts (Dickson, 2026-11-18).
 
+use std::marker::PhantomData;
+
+use verbatim_model::event_kind::EventKind;
 use verbatim_model::request::{
-    CandidateAnswer, CandidateFacts, CandidateKind, Depth, FocusRead, MsaaRun, Reply,
-    Request as Wire, RunCandidate,
+    CandidateFacts, CandidateKind, Depth, FocusRead, MsaaRun, Reply, Request as Wire, RunCandidate,
 };
-use verbatim_model::{OutpostId, Pid};
+use verbatim_model::{NodeId, OutpostId, Pid, TextAnchor};
 
 use super::FOCUS_SET;
 use super::execute::{Known, Origin, execute};
-use super::validity::{self, Purpose, Subject, Validity};
+use super::validity::{self, Answered, Purpose, Reason, Settled, Subject, Validity};
 use super::versions::ReadBy;
 use crate::entries::{Candidate, Entries};
 use crate::event_queue::{Cx, FOCUS_DUE_US, Outcome, Reader, Request, RequestWindow};
 
-/// One MSAA candidate asked of its application's outpost.
+/// A depth a candidate is read to, as a request's type, with how its answer
+/// is parsed at its decode.
+pub(crate) trait ReadDepth: std::fmt::Debug + Unpin + 'static {
+    /// The depth.
+    const DEPTH: Depth;
+    /// The answer, parsed.
+    type Parsed: std::fmt::Debug + 'static;
+    /// `answer` parsed, `None` for one that breaks the depth's rule.
+    fn parse(answer: verbatim_model::request::CandidateAnswer) -> Option<Self::Parsed>;
+}
+
+/// The facts alone: a caret key's confirmation.
 #[derive(Debug)]
-pub(crate) struct RunRequest {
+pub(crate) struct FactsOnly;
+
+/// The facts, and the full read when focused: a focus's turn.
+#[derive(Debug)]
+pub(crate) struct FullIfFocused;
+
+/// The facts and the full read: a foreground's, a menu start's, or a
+/// candidate a confirmation found focused.
+#[derive(Debug)]
+pub(crate) struct Full;
+
+impl ReadDepth for FactsOnly {
+    const DEPTH: Depth = Depth::Facts;
+    type Parsed = CandidateFacts;
+    fn parse(answer: verbatim_model::request::CandidateAnswer) -> Option<CandidateFacts> {
+        validity::parse_facts(answer)
+    }
+}
+
+impl ReadDepth for FullIfFocused {
+    const DEPTH: Depth = Depth::FullIfFocused;
+    type Parsed = Answered;
+    fn parse(answer: verbatim_model::request::CandidateAnswer) -> Option<Answered> {
+        Answered::parse(answer, Self::DEPTH)
+    }
+}
+
+impl ReadDepth for Full {
+    const DEPTH: Depth = Depth::Full;
+    type Parsed = Answered;
+    fn parse(answer: verbatim_model::request::CandidateAnswer) -> Option<Answered> {
+        Answered::parse(answer, Self::DEPTH)
+    }
+}
+
+/// One MSAA candidate asked of its application's outpost, read to `D`.
+#[derive(Debug)]
+pub(crate) struct RunRequest<D: ReadDepth> {
     /// The candidate's window.
     pub(crate) window: RequestWindow,
     /// The application.
     pub(crate) process: Pid,
     /// The candidate and the read's depth.
     pub(crate) run: MsaaRun,
+    depth: PhantomData<D>,
 }
 
-impl Request for RunRequest {
-    type Reply = CandidateAnswer;
+impl<D: ReadDepth> Request for RunRequest<D> {
+    type Reply = D::Parsed;
 
     fn reader(&self) -> Reader {
         Reader::Outpost(self.process)
@@ -51,31 +103,27 @@ impl Request for RunRequest {
 
     fn decode(reply: Reply) -> Option<Self::Reply> {
         match reply {
-            Reply::Candidate(answer) => Some(answer),
+            Reply::Candidate(answer) => D::parse(answer),
             _ => None,
         }
     }
 }
 
-impl RunRequest {
-    /// The request for `candidate` at `depth`, its outpost knowing the
-    /// ancestors `known` sends, with `spare` kept held while it is out.
+impl<D: ReadDepth> RunRequest<D> {
+    /// The request for `candidate`, its outpost knowing the ancestors
+    /// `known` sends, with `spare` kept held while it is out.
     pub(crate) fn of(
         cx: &Cx<Entries>,
         candidate: &Candidate,
-        (depth, spare): (
-            Depth,
-            Option<(verbatim_model::NodeId, verbatim_model::TextAnchor)>,
-        ),
+        spare: Option<(NodeId, TextAnchor)>,
         known: &Known,
     ) -> Self {
         let verdict = cx
             .backend()
             .for_request(&candidate.window.judged(), cx.now_us());
         let kind = match candidate.tell.kind {
-            verbatim_model::event_kind::EventKind::Foreground => CandidateKind::Foreground,
-            verbatim_model::event_kind::EventKind::MenuStart
-            | verbatim_model::event_kind::EventKind::PopupStart => CandidateKind::MenuStart,
+            EventKind::Foreground => CandidateKind::Foreground,
+            EventKind::MenuStart | EventKind::PopupStart => CandidateKind::MenuStart,
             _ => CandidateKind::Focus,
         };
         Self {
@@ -87,12 +135,13 @@ impl RunRequest {
                     kind,
                     verdict,
                 },
-                depth,
+                depth: D::DEPTH,
                 spare,
                 set: crate::details::node_set(&cx.facts(), FOCUS_SET),
                 known: known.sent.clone(),
                 details: crate::details::focus_details(&cx.facts()),
             },
+            depth: PhantomData,
         }
     }
 }
@@ -106,13 +155,40 @@ pub(crate) fn known_for(cx: &Cx<Entries>, process: Pid) -> Known {
     Known::of(&cx.facts(), generation)
 }
 
-/// What one candidate's turn came to.
-enum Turn {
-    /// Refused: the run goes on.
-    Refused,
-    /// The run ends: a duplicate, a valid focus executed, or a read that
-    /// failed.
-    Ended,
+/// Reads `candidate` in full at its turn, to `depth`: its answer parsed,
+/// or the outcome that ended it.
+pub(crate) async fn read_in_full(
+    cx: &mut Cx<Entries>,
+    candidate: &Candidate,
+    depth: Depth,
+    (known, due_us): (&Known, u64),
+) -> Option<Answered> {
+    let outcome = if depth == Depth::FullIfFocused {
+        let request = RunRequest::<FullIfFocused>::of(cx, candidate, None, known);
+        cx.ask(request, due_us).await
+    } else {
+        let request = RunRequest::<Full>::of(cx, candidate, None, known);
+        cx.ask(request, due_us).await
+    };
+    match outcome {
+        Outcome::Result(answered) => Some(answered),
+        Outcome::Refused(_)
+        | Outcome::NotThere
+        | Outcome::NotResponding
+        | Outcome::ReaderEnded
+        | Outcome::NoLongerAwaited(_) => {
+            cx.facts_mut().focus_read_failed();
+            None
+        }
+    }
+}
+
+/// A refusal at a candidate's turn: one that came from a read of it ends
+/// the redirect guard.
+fn refused(cx: &mut Cx<Entries>, reason: Reason) {
+    if reason.tried() {
+        cx.facts_mut().versions.tried_and_refused();
+    }
 }
 
 /// The function of a run entry, its candidates oldest first. An outcome
@@ -120,73 +196,60 @@ enum Turn {
 /// candidates are not tried (a limit).
 pub(crate) async fn run(mut cx: Cx<Entries>, candidates: Vec<Candidate>) {
     let due_us = cx.due_in(FOCUS_DUE_US);
-    for candidate in candidates.iter().rev() {
-        match turn(&mut cx, candidate, due_us).await {
-            Turn::Refused => {}
-            Turn::Ended => return,
+    let newest_first: Vec<Candidate> = candidates.into_iter().rev().collect();
+    let mut rest = newest_first.as_slice();
+    loop {
+        let walk = validity::with_view(&cx, false, |view| {
+            validity::judge_run(rest, view, Purpose::Turn)
+        });
+        for reason in walk.refused {
+            refused(&mut cx, reason);
         }
-    }
-}
-
-/// One candidate's turn.
-async fn turn(cx: &mut Cx<Entries>, candidate: &Candidate, due_us: u64) -> Turn {
-    let stored = candidate.confirmation.facts();
-    match judged(cx, candidate, stored) {
-        Validity::Refused(reason) => {
-            if reason.tried() {
-                cx.facts_mut().versions.tried_and_refused();
-            }
-            return Turn::Refused;
-        }
-        Validity::Duplicate => {
+        let Some(found) = walk.found else {
+            return;
+        };
+        let candidate = found.candidate;
+        let depth = match found.answer {
             // A duplicate or the redirect's child ends the run as its valid
             // focus, which the menu slot's entry after it judges.
-            cx.facts_mut().run_executed = true;
-            return Turn::Ended;
-        }
-        Validity::Valid(_) | Validity::NeedsRead(_) => {}
-    }
-    // A candidate a confirmation found focused is read in full, its new
-    // facts replacing the stored ones.
-    let depth = if stored.is_some() {
-        Depth::Full
-    } else {
-        validity::depth(Subject::Msaa(candidate))
-    };
-    let known = known_for(cx, candidate.tell.process);
-    let request = RunRequest::of(cx, candidate, (depth, None), &known);
-    let Outcome::Result(answered) = cx.ask(request, due_us).await else {
-        cx.facts_mut().focus_read_failed();
-        return Turn::Ended;
-    };
-    match judged(cx, candidate, Some(&answered.facts)) {
-        Validity::Refused(reason) => {
-            if reason.tried() {
-                cx.facts_mut().versions.tried_and_refused();
+            Validity::Duplicate => {
+                cx.facts_mut().run_executed = true;
+                return;
             }
-            Turn::Refused
-        }
-        Validity::Duplicate => {
-            cx.facts_mut().run_executed = true;
-            Turn::Ended
-        }
-        // Facts answered leave nothing to read: the outpost's fault.
-        Validity::NeedsRead(_) => Turn::Ended,
-        Validity::Valid(_) => {
-            // A valid answer with no full read: the outpost's fault, and
-            // the run ends unspoken.
-            let Some(read) = answered.read else {
-                return Turn::Ended;
-            };
-            executed(cx, candidate, (&read, &answered.facts), &known);
-            Turn::Ended
+            // A candidate a confirmation found focused is read in full, its
+            // new facts replacing the stored ones.
+            Validity::Valid(_) if candidate.confirmation.facts().is_some() => Depth::Full,
+            Validity::Valid(_) | Validity::NeedsRead(_) | Validity::Refused(_) => {
+                validity::depth(Subject::Msaa(candidate))
+            }
+        };
+        let known = known_for(&cx, candidate.tell.process);
+        let Some(answered) = read_in_full(&mut cx, candidate, depth, (&known, due_us)).await else {
+            return;
+        };
+        let (facts, read) = match answered {
+            Answered::Unread(unread) => {
+                refused(&mut cx, unread.reason());
+                rest = found.older;
+                continue;
+            }
+            Answered::Read { facts, read } => (facts, read),
+        };
+        match validity::read_at(&cx, Subject::Msaa(candidate), &facts, Purpose::Turn, false) {
+            Settled::Refused(reason) => {
+                refused(&mut cx, reason);
+                rest = found.older;
+            }
+            Settled::Duplicate => {
+                cx.facts_mut().run_executed = true;
+                return;
+            }
+            Settled::Valid(_) => {
+                executed(&mut cx, candidate, (&read, &facts), &known);
+                return;
+            }
         }
     }
-}
-
-/// `candidate` judged at its turn with `facts`.
-fn judged(cx: &Cx<Entries>, candidate: &Candidate, facts: Option<&CandidateFacts>) -> Validity {
-    validity::at(cx, Subject::Msaa(candidate), facts, Purpose::Turn, false)
 }
 
 /// Executes the valid focus `read` of `candidate`, whose facts name the

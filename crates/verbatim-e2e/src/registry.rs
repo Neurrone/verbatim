@@ -522,9 +522,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
-        comparable: Comparable::No(
-            "mockapp's stand-in places the stale focus inside the key's watch, which no capture can",
-        ),
+        comparable: Comparable::Yes,
         setup: stale_focus_behind_a_caret_key::setup,
         body: stale_focus_behind_a_caret_key::body,
         teardown: stale_focus_behind_a_caret_key::teardown,

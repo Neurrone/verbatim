@@ -27,13 +27,14 @@ use verbatim_model::event_kind::EventKind;
 use super::FOCUS_SET;
 use super::backend::BackendCache;
 use super::execute::{Origin, execute};
-use super::msaa_run::{RunRequest, known_for};
+use super::msaa_run::{FullIfFocused, known_for, read_in_full};
 use super::retake::{CurrentFocusRead, read_by};
-use super::validity::{self, Pending, Purpose, Subject, Validity, View};
+use super::validity::{self, Answered, Pending, Purpose, Settled, Subject, Validity, View, Within};
 use super::versions::{Committed, ReadBy};
 use crate::entries::{Candidate, Entries, Entry};
-use crate::event_queue::{Cx, FOCUS_DUE_US, Outcome};
+use crate::event_queue::{Cx, FOCUS_DUE_US, Item, Outcome};
 use crate::state::SrState;
+use std::collections::VecDeque;
 use verbatim_model::request::Depth;
 
 /// How long after a menu or switcher end Core appends its check: NVDA's
@@ -128,26 +129,35 @@ async fn start(cx: &mut Cx<Entries>, candidate: &Candidate, run_executed: bool) 
         Validity::Valid(_) | Validity::NeedsRead(_) => {}
     }
     let known = known_for(cx, candidate.tell.process);
-    let request = RunRequest::of(cx, candidate, (Depth::Full, None), &known);
     let due_us = cx.due_in(FOCUS_DUE_US);
-    let Outcome::Result(answered) = cx.ask(request, due_us).await else {
-        cx.facts_mut().focus_read_failed();
+    let Some(answered) = read_in_full(cx, candidate, Depth::Full, (&known, due_us)).await else {
         return;
     };
-    match judged(cx, Some(&answered.facts)) {
-        Validity::Valid(_) => {}
-        Validity::Refused(reason) => {
+    let (facts, read) = match answered {
+        Answered::Unread(unread) => {
+            if unread.reason().tried() {
+                cx.facts_mut().versions.tried_and_refused();
+            }
+            return;
+        }
+        Answered::Read { facts, read } => (facts, read),
+    };
+    match validity::read_at(
+        cx,
+        Subject::Msaa(candidate),
+        &facts,
+        Purpose::Turn,
+        run_executed,
+    ) {
+        Settled::Valid(_) => {}
+        Settled::Refused(reason) => {
             if reason.tried() {
                 cx.facts_mut().versions.tried_and_refused();
             }
             return;
         }
-        Validity::Duplicate | Validity::NeedsRead(_) => return,
+        Settled::Duplicate => return,
     }
-    let Some(read) = answered.read.as_deref() else {
-        // A valid answer with no full read: the outpost's fault.
-        return;
-    };
     let Some(held) = read.msaa else {
         return;
     };
@@ -156,7 +166,7 @@ async fn start(cx: &mut Cx<Entries>, candidate: &Candidate, run_executed: bool) 
         held_child: held.held_child,
     };
     let origin = Origin::of_tell(&candidate.tell, candidate.window, cx.foreground());
-    let executed = execute(&mut cx.facts_mut(), &origin, read, &known, read_by);
+    let executed = execute(&mut cx.facts_mut(), &origin, &read, &known, read_by);
     executed.deliver(cx);
 }
 
@@ -173,42 +183,43 @@ pub(crate) async fn check(mut cx: Cx<Entries>, check: MenuCheck) {
     let window = foreground.window();
     let known = known_for(&cx, window.process);
     let due_us = cx.due_in(FOCUS_DUE_US);
-    let request = CurrentFocusRead {
+    let request = CurrentFocusRead::<FullIfFocused> {
         window,
         known: known.sent.clone(),
         details: crate::details::focus_details(&cx.facts()),
         set: crate::details::node_set(&cx.facts(), FOCUS_SET),
-        depth: validity::depth(Subject::MenuCheck(None)),
+        depth: std::marker::PhantomData,
     };
     let Outcome::Result(answered) = cx.ask(request, due_us).await else {
         cx.facts_mut().focus_read_failed();
         return;
     };
-    let ids = answered
-        .read
-        .as_ref()
-        .and_then(|read| read.msaa)
-        .map(|held| held.event);
-    match validity::at(
+    let (facts, read) = match answered {
+        Answered::Unread(unread) => {
+            if unread.reason().tried() {
+                cx.facts_mut().versions.tried_and_refused();
+            }
+            return;
+        }
+        Answered::Read { facts, read } => (facts, read),
+    };
+    let ids = read.msaa.map(|held| held.event);
+    match validity::read_at(
         &cx,
         Subject::MenuCheck(ids.as_ref()),
-        Some(&answered.facts),
+        &facts,
         Purpose::Turn,
         false,
     ) {
-        Validity::Valid(_) => {}
-        Validity::Refused(reason) => {
+        Settled::Valid(_) => {}
+        Settled::Refused(reason) => {
             if reason.tried() {
                 cx.facts_mut().versions.tried_and_refused();
             }
             return;
         }
-        Validity::Duplicate | Validity::NeedsRead(_) => return,
+        Settled::Duplicate => return,
     }
-    let Some(read) = answered.read else {
-        // A valid answer with no full read: the outpost's fault.
-        return;
-    };
     let Some(read_by) = read_by(&read) else {
         return;
     };
@@ -218,12 +229,14 @@ pub(crate) async fn check(mut cx: Cx<Entries>, check: MenuCheck) {
 }
 
 /// Whether the UI Automation menu opening `arriving` is dropped at its
-/// arrival: a focus-kind entry `ahead` of it, raised before it, counts as
-/// pending by the one definition. An unconfirmed MSAA focus does not count
-/// and is not read, as NVDA's events not yet pumped are not pending.
+/// arrival: a focus-kind entry ahead of it, the front `front` or one
+/// waiting, raised before it, counts as pending by the one definition,
+/// each run walked as a run ([`validity::pending_behind`]). An unconfirmed
+/// MSAA focus does not count and is not read, as NVDA's events not yet
+/// pumped are not pending.
 pub(crate) fn opening_dropped(
     facts: &SrState,
-    ahead: &[&Entry],
+    (front, waiting): (Option<&Entry>, &VecDeque<Item<Entry>>),
     arriving: &Entry,
     backend: &BackendCache,
     (now_us, foreground): (u64, Option<crate::event_queue::Foreground>),
@@ -241,17 +254,24 @@ pub(crate) fn opening_dropped(
         now_us,
         run_before_valid: false,
     };
-    let counts = |entry: &Entry| {
-        validity::judge_alone(entry, &view).is_some_and(|(answer, trace, at_us)| {
-            at_us < opening.tell.at_us && validity::pending(answer, trace) == Pending::Counts
-        })
+    let within = Within {
+        raised_before: Some(opening.tell.at_us),
+        unconfirmed_before: None,
     };
-    ahead.iter().any(|entry| match entry {
-        Entry::Run(candidates) => candidates
-            .iter()
-            .any(|candidate| counts(&Entry::Candidate(Box::new(candidate.clone())))),
-        other => counts(other),
-    })
+    let ahead: VecDeque<Item<Entry>> = front
+        .map(|front| match front {
+            Entry::Run(candidates) => Item::Run(
+                candidates
+                    .iter()
+                    .map(|candidate| Entry::Candidate(Box::new(candidate.clone())))
+                    .collect(),
+            ),
+            other => Item::One(other.clone()),
+        })
+        .into_iter()
+        .chain(waiting.iter().cloned())
+        .collect();
+    validity::pending_behind(&ahead, &view, within) == Pending::Counts
 }
 
 #[cfg(test)]

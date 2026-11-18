@@ -52,6 +52,7 @@ fn every_cell_of_the_edit_paths_stage_table() {
         (starting, counts(), true),
         (backspace, counts(), false),
         (starting, unconfirmed(50_000), false),
+        (starting, unconfirmed(500_000), false),
         (starting, not_pending(), false),
         (starting, OTHER, false),
         (watching, KEY, true),
@@ -63,11 +64,15 @@ fn every_cell_of_the_edit_paths_stage_table() {
         (CaretStage::Confirming, KEY, true),
         (CaretStage::Confirming, counts(), true),
         (CaretStage::Confirming, unconfirmed(50_000), false),
+        (CaretStage::Confirming, unconfirmed(500_000), false),
         (CaretStage::Confirming, not_pending(), false),
+        (CaretStage::Confirming, OTHER, false),
         (CaretStage::Sentence, KEY, false),
         (CaretStage::Sentence, counts(), true),
         (CaretStage::Sentence, unconfirmed(50_000), false),
+        (CaretStage::Sentence, unconfirmed(500_000), false),
         (CaretStage::Sentence, not_pending(), false),
+        (CaretStage::Sentence, OTHER, false),
     ] {
         assert_eq!(
             stage.withdrawn_by(arrival),
@@ -89,18 +94,23 @@ fn every_cell_of_the_terminal_paths_stage_table() {
         (TerminalStage::Starting, counts(), true),
         (TerminalStage::Starting, unconfirmed(50_000), false),
         (TerminalStage::Starting, not_pending(), false),
+        (TerminalStage::Starting, OTHER, false),
         (watching, KEY, true),
         (watching, counts(), true),
         (watching, unconfirmed(299_999), true),
         (watching, unconfirmed(300_000), false),
         (watching, not_pending(), false),
+        (watching, OTHER, false),
         (TerminalStage::Confirming, KEY, true),
         (TerminalStage::Confirming, counts(), true),
         (TerminalStage::Confirming, unconfirmed(50_000), false),
+        (TerminalStage::Confirming, not_pending(), false),
+        (TerminalStage::Confirming, OTHER, false),
         (TerminalStage::Final, KEY, true),
         (TerminalStage::Final, counts(), true),
         (TerminalStage::Final, unconfirmed(50_000), false),
         (TerminalStage::Final, not_pending(), false),
+        (TerminalStage::Final, OTHER, false),
     ] {
         assert_eq!(
             stage.withdrawn_by(arrival),
@@ -177,7 +187,6 @@ fn confirmed(number: u64, focused: bool) -> Input<Entry> {
             facts: CandidateFacts::Found {
                 focused: Some(focused),
                 role: None,
-                window_class: "Button".to_owned(),
                 redirect: None,
             },
             read: None,
@@ -407,10 +416,10 @@ fn a_confirmation_whose_outpost_ended_stores_not_there_and_the_key_watches_on() 
     );
 }
 
-/// A confirmation whose window does not respond leaves the key silent;
-/// Backspace still says what it deleted.
+/// A confirmation whose window does not respond ends the key saying
+/// nothing, Backspace included, as a key whose watch is stopped does.
 #[test]
-fn a_confirmation_not_responding_leaves_the_key_silent() {
+fn a_confirmation_not_responding_ends_the_key_saying_nothing() {
     let mut held = watching(
         CaretMotion::Backspace,
         line("x", 7, 1),
@@ -422,8 +431,34 @@ fn a_confirmation_not_responding_leaves_the_key_silent() {
         31_000,
         answer_outcome(OUTPOST, 5, WireOutcome::NotResponding),
     );
-    assert_eq!(hung.said, [character("x")]);
+    assert_eq!(hung.said, NO_WORDS);
     assert_eq!(hung.text, NO_REQUESTS);
+}
+
+/// The foreground stopping Backspace's confirmation ends the key saying
+/// nothing, as the foreground stopping its watch does.
+#[test]
+fn backspace_whose_confirmation_the_foreground_stops_says_nothing() {
+    let mut held = watching(
+        CaretMotion::Backspace,
+        line("x", 7, 1),
+        unit(TextUnit::Character, "x", 8),
+    );
+    let _ = step(&mut held, 30_000, msaa_focus(-5, 29_000, 100));
+    let elsewhere = step(
+        &mut held,
+        31_000,
+        Input::Foreground(Foreground {
+            window: WindowHandle(70),
+            root_owner: WindowHandle(70),
+            process: verbatim_model::Pid(41),
+            thread: 0,
+            by_class: None,
+            shell: false,
+        }),
+    );
+    assert_eq!(elsewhere.cancelled, [(5, CancelReason::Foreground)]);
+    assert_eq!(elsewhere.said, NO_WORDS);
 }
 
 /// A confirmation that finds the window read through UI Automation stores
@@ -516,7 +551,6 @@ fn a_menu_start_behind_the_key_is_confirmed_for_its_role() {
                     facts: CandidateFacts::Found {
                         focused: None,
                         role: Some(role),
-                        window_class: "#32768".to_owned(),
                         redirect: None,
                     },
                     read: None,

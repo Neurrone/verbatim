@@ -499,21 +499,25 @@ fn a_candidate_is_read_to_the_depth_core_asks() {
 /// stale focus is `EVENT_OBJECT_FOCUS` on a `SysTreeView32` window's client,
 /// an item's child id (16), raised while the "File name" edit has the
 /// focus, and NVDA refused it as not focused in every run. mockapp's edit,
-/// given the focus, raises after a Left Arrow the same event on its tree
-/// view's selected item, its edit keeping the focus, and the outpost finds
-/// the item without the focused state on it or any ancestor.
+/// given the focus, raises after a Left Arrow, at the next read of its
+/// text from another process, the same event on its tree view's selected
+/// item, its edit keeping the focus, and the outpost finds the item
+/// without the focused state on it or any ancestor.
 fn the_stale_tree_focus_stand_in_matches_the_open_dialogs_recording() {
     use verbatim_ia2::WinEventKind;
     use verbatim_model::request::{CandidateFacts, CandidateKind, Depth};
     use windows::Win32::Foundation::{LPARAM, WPARAM};
+    use windows::Win32::UI::Controls::{TVGN_CARET, TVM_GETNEXTITEM, TVM_MAPHTREEITEMTOACCID};
     use windows::Win32::UI::Input::KeyboardAndMouse::VK_LEFT;
-    use windows::Win32::UI::WindowsAndMessaging::{FindWindowExW, PostMessageW, WM_KEYDOWN};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        FindWindowExW, SendMessageW, WM_GETTEXTLENGTH, WM_KEYDOWN,
+    };
     use windows::core::w;
 
     let title = common::unique_title("mockapp-stale-tree");
     let mut app = common::spawn("stale_tree.json", "msaa", &title);
     let hwnd = common::find_window(&title);
-    common::apply(&mut app, hwnd, "stale-focus-on-left 10");
+    common::apply(&mut app, hwnd, "stale-focus-on-left");
     // SAFETY: local searches of mockapp's window's children by class.
     let edit = unsafe { FindWindowExW(Some(hwnd), None, w!("EDIT"), None) }.expect("the edit");
     // SAFETY: as above.
@@ -527,16 +531,21 @@ fn the_stale_tree_focus_stand_in_matches_the_open_dialogs_recording() {
     let events = common::core_driver::win_events(
         app.pid(),
         || {
-            // SAFETY: posts a key's message to mockapp's own edit control.
-            unsafe {
-                PostMessageW(
-                    Some(edit),
+            // The key's message, sent so that the edit has taken it before
+            // the read after it: a posted one could come after the read.
+            // SAFETY: a message with no pointers to mockapp's own edit.
+            let _ = unsafe {
+                SendMessageW(
+                    edit,
                     WM_KEYDOWN,
-                    WPARAM(usize::from(VK_LEFT.0)),
-                    LPARAM(0),
+                    Some(WPARAM(usize::from(VK_LEFT.0))),
+                    Some(LPARAM(0)),
                 )
-            }
-            .expect("posts the key");
+            };
+            // A reader's look for the key's effect: a read of the edit's
+            // text from another process.
+            // SAFETY: a message with no pointers to mockapp's own edit.
+            let _ = unsafe { SendMessageW(edit, WM_GETTEXTLENGTH, None, None) };
         },
         &[WinEventKind::Focus],
         1,
@@ -557,7 +566,29 @@ fn the_stale_tree_focus_stand_in_matches_the_open_dialogs_recording() {
         ),
         "the tree's client, as the recording's"
     );
-    assert!(event.id_child > 0, "an item's child id: {}", event.id_child);
+    // SAFETY: messages with no pointers to mockapp's own tree view.
+    let selected = unsafe {
+        SendMessageW(
+            tree,
+            TVM_GETNEXTITEM,
+            Some(WPARAM(TVGN_CARET as usize)),
+            None,
+        )
+    };
+    // SAFETY: as above.
+    let child = unsafe {
+        SendMessageW(
+            tree,
+            TVM_MAPHTREEITEMTOACCID,
+            Some(WPARAM(selected.0.cast_unsigned())),
+            None,
+        )
+    };
+    assert_eq!(
+        event.id_child,
+        i32::try_from(child.0).expect("a child id"),
+        "the selected item's child id"
+    );
     assert_eq!(
         thread_focus_window(hwnd),
         Some(edit),
@@ -575,9 +606,8 @@ fn the_stale_tree_focus_stand_in_matches_the_open_dialogs_recording() {
             &answer.facts,
             CandidateFacts::Found {
                 focused: Some(false),
-                window_class,
                 ..
-            } if window_class == "SysTreeView32"
+            }
         ),
         "{:?}",
         answer.facts
@@ -1601,7 +1631,7 @@ fn a_focus_now_takes_the_focus_window_before_its_probe() {
             set: common::outpost::focus_set(),
             known: Vec::new(),
             details: verbatim_model::TextDetails::NONE,
-            depth: verbatim_model::request::Depth::Full,
+            depth: verbatim_model::request::FocusDepth::Full,
         },
     );
     assert_eq!(app.held(), "GetObject", "the probe of the request's window");

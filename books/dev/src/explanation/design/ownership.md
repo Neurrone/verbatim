@@ -147,7 +147,7 @@ On 2026-10-30:
 - Reading the application's focus when no UI Automation focus follows a `WinEvent` focus was evaluated and discarded: an application that has not raised its focus is usually not responding anyway, and NVDA has no such read ([ADR 0001](../../reference/adr/0001-focus.md), "A focus UI Automation does not deliver"). The supervisor's owner thread becomes a pure state machine in M6.2, after the refactor (`docs/roadmap.md`). Amended on 2026-10-31.
 - The title rule belongs to the focus pipeline rework; the refactor preserves behaviour except the kept speech changes.
 - The version rule's configuration instance is built in M5: the rule tables and the fetch configuration get a version published by Core alone, named by every judgement made under them.
-- The listener skips a UIA focus whose window's class is on NVDA's MSAA list before any read; the outpost's verdict owns every other window.
+- The listener judges no window's backend: its check thread makes a UIA focus's keyboard-focus reads whatever its window's verdict, and Core's backend cache, fed by the probes tells and outposts carry, owns every window's verdict.
 - `NodesHeld` is written on its own only when the held set changes or after a focus report.
 
 On 2026-10-31, all the builders' departures were accepted as built: the choices stated in each area above, the plain-event wakes, the 2-second exit bound, the driver's values saved and snapped back at once, the full earcon lane dropping and logging, the hook thread taking only keys with control protocol version 3, scenario gestures counting repeats within 500 ms, the split into the store and reducer builds, the watchdog folded into the reducer's wait, and the hand-over's hold of the whole stream.

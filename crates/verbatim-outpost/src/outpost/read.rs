@@ -30,7 +30,7 @@ use crate::dialog_text::is_dialog;
 
 use crate::gates;
 use verbatim_model::protocol::DumpedTree;
-use verbatim_model::request::Depth;
+use verbatim_model::request::FocusDepth;
 use verbatim_win32::window::window_class_name;
 
 use super::window::{main_window_of, window_style, window_text};
@@ -1300,7 +1300,7 @@ fn dialog_text_of(
 /// by following `accFocus` down, each object it reaches checked as one of a
 /// window this application serves before anything more is asked of it
 /// ([`verbatim_ia2::acquire::focused_object`]): another process's
-/// answers no focused control. With [`Depth::FullIfFocused`], the check
+/// answers no focused control. With [`FocusDepth::FullIfFocused`], the check
 /// after a menu end, whether it or an ancestor, up to the desktop, has the
 /// focused state is read, as NVDA's `processFocusNVDAEvent` tests an
 /// `IAccessible` object before it queues it, and it is read only when
@@ -1325,7 +1325,7 @@ pub(super) fn focused_control_in(
     context: &RequestContext<'_>,
     client: &mut Client,
     (hwnd, trigger): (isize, FocusRead),
-    (known, depth): (&[NodeSnapshot], Depth),
+    (known, depth): (&[NodeSnapshot], FocusDepth),
 ) -> Result<Focused, FocusReadMiss> {
     // The focused element is read from the window's provider at once.
     if window_uses_uia(context, hwnd) {
@@ -1339,7 +1339,7 @@ pub(super) fn focused_control_in(
         let mut object =
             verbatim_ia2::acquire::focused_object(hwnd, &|window| serves(context, window))
                 .ok_or(FocusReadMiss::Failed(None))?;
-        let focused = (depth == Depth::FullIfFocused).then(|| {
+        let focused = (depth == FocusDepth::FullIfFocused).then(|| {
             object.has_focused_state(
                 MAX_ANCESTOR_HOPS,
                 &|window| reads_as_plain(context, window),
@@ -1351,7 +1351,7 @@ pub(super) fn focused_control_in(
                 hwnd,
                 "the focused MSAA object has no focused state, nor any ancestor"
             );
-            return Ok(Focused::Unfocused(hwnd));
+            return Ok(Focused::Unfocused);
         }
         let node = object.read(context.nodes(), Some(&candidates));
         let ancestors = msaa_enrichment(context, client, (&node, known, Some(&candidates)))
@@ -1374,9 +1374,9 @@ pub(super) enum Focused {
     /// The focus, read in the window it names, with its focused state
     /// when the depth asked for it.
     Read(isize, Box<FocusedControl>, Option<bool>),
-    /// An MSAA focus in the window it names with no focused state on it or
-    /// any ancestor, not read further.
-    Unfocused(isize),
+    /// An MSAA focus with no focused state on it or any ancestor, not read
+    /// further.
+    Unfocused,
 }
 
 /// [`focused_control_in`]'s read through UIA, of the focus window `hwnd`,

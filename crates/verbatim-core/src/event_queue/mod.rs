@@ -366,11 +366,14 @@ pub(crate) trait Logic: Sized + 'static {
     }
 
     /// Whether `arriving` is dropped at its arrival, judged against the
-    /// entries `ahead` of it, the front first, at `now_us` with the
-    /// foreground record.
+    /// entries ahead of it, the front and the items waiting, at `now_us`
+    /// with the foreground record.
     fn dropped_at_arrival(
         facts: &Self::Facts,
-        ahead: &[&Self::Entry],
+        ahead: (
+            Option<&Self::Entry>,
+            &std::collections::VecDeque<Item<Self::Entry>>,
+        ),
         arriving: &Self::Entry,
         backend: &BackendCache,
         now_us: (u64, Option<Foreground>),

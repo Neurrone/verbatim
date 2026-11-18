@@ -1218,7 +1218,7 @@ impl OutpostUnderTest {
                 set: focus_set(),
                 known: sent.clone(),
                 details: verbatim_model::TextDetails::NONE,
-                depth: verbatim_model::request::Depth::Full,
+                depth: verbatim_model::request::FocusDepth::Full,
             },
         );
         let (answer, calls) = self.answer_with_calls(number);

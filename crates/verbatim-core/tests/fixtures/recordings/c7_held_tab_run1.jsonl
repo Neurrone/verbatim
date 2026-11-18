@@ -1,0 +1,8 @@
+{"source": "NVDA debug log, capture C7 run 1 (2026-11-17), the flush after five Tabs: the MSAA focus and state events NVDA emitted, in order"}
+{"t_us": 47483596000, "kind": "msaa_focus", "window": "0x127008e", "class": "Button", "object": -4, "child": 0, "pass": null}
+{"t_us": 47483596000, "kind": "msaa_state", "window": "0x4903ba", "class": "Button", "object": -4, "child": 0, "pass": null}
+{"t_us": 47483596000, "kind": "msaa_focus", "window": "0x3b0552", "class": "Button", "object": -4, "child": 0, "pass": null}
+{"t_us": 47483596000, "kind": "msaa_focus", "window": "0x9502fe", "class": "SysTabControl32", "object": -4, "child": 0, "pass": null}
+{"t_us": 47483596000, "kind": "msaa_focus", "window": "0x9502fe", "class": "SysTabControl32", "object": -4, "child": 1, "pass": null}
+{"t_us": 47483596000, "kind": "msaa_state", "window": "0x3b0552", "class": "Button", "object": -4, "child": 0, "pass": null}
+{"t_us": 47483596000, "kind": "msaa_state", "window": "0x127008e", "class": "Button", "object": -4, "child": 0, "pass": null}

@@ -15,11 +15,14 @@
 //! ([`Validity::NeedsRead`]); nothing here asks.
 
 use std::collections::VecDeque;
+use std::convert::Infallible;
 
 use serde::{Deserialize, Serialize};
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::{PropertyId, PropertyValue, PropertyValues};
-use verbatim_model::request::{CandidateFacts, Depth, FocusRead, MsaaIds, Redirect};
+use verbatim_model::request::{
+    CandidateAnswer, CandidateFacts, Depth, FocusRead, MsaaIds, Redirect,
+};
 use verbatim_model::tell::{Event, Read, TellWindow};
 use verbatim_model::{Role, TraceId, WindowHandle};
 
@@ -141,6 +144,111 @@ pub(crate) enum Validity {
     NeedsRead(Need),
 }
 
+/// An answer about a candidate that needs no read: [`Validity`] without
+/// its needed read.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Settled {
+    /// Valid: executed.
+    Valid(How),
+    /// Valid, but a duplicate: nothing read or said.
+    Duplicate,
+    /// Refused.
+    Refused(Reason),
+}
+
+impl From<Settled> for Validity {
+    fn from(settled: Settled) -> Self {
+        match settled {
+            Settled::Valid(how) => Self::Valid(how),
+            Settled::Duplicate => Self::Duplicate,
+            Settled::Refused(reason) => Self::Refused(reason),
+        }
+    }
+}
+
+/// A full read's answer, parsed once as it is decoded: either refused by
+/// its facts with nothing more read, or found and read in full. A found
+/// candidate the depth asked to read always carries its read, so an answer
+/// breaking that is undecodable, logged as a malformed answer
+/// (`QueueEffect::Undecodable`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Answered {
+    /// Not read further, refused by its facts.
+    Unread(Unread),
+    /// Found and read in full.
+    Read {
+        /// The facts found, always [`CandidateFacts::Found`].
+        facts: CandidateFacts,
+        /// The full read.
+        read: Box<FocusRead>,
+    },
+}
+
+/// Why a full read's candidate was not read further.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Unread {
+    /// Its window is read through UI Automation.
+    Skipped,
+    /// Its object is not there.
+    NotThere,
+    /// Neither it nor an ancestor has the focused state, at
+    /// [`Depth::FullIfFocused`].
+    NotFocused,
+}
+
+impl Unread {
+    /// The refusal it is.
+    pub(crate) fn reason(self) -> Reason {
+        match self {
+            Self::Skipped => Reason::Skipped,
+            Self::NotThere => Reason::NotThere,
+            Self::NotFocused => Reason::NotFocused,
+        }
+    }
+}
+
+impl Answered {
+    /// `answer`, to a read of depth `depth`, parsed: `None` for an answer
+    /// that breaks the depth's rule, a reader's fault.
+    pub(crate) fn parse(answer: CandidateAnswer, depth: Depth) -> Option<Self> {
+        let unfocused = matches!(
+            answer.facts,
+            CandidateFacts::Found {
+                focused: Some(false),
+                ..
+            }
+        );
+        match (answer.facts, answer.read, depth) {
+            (CandidateFacts::Skipped, None, Depth::Full | Depth::FullIfFocused) => {
+                Some(Self::Unread(Unread::Skipped))
+            }
+            (CandidateFacts::NotThere, None, Depth::Full | Depth::FullIfFocused) => {
+                Some(Self::Unread(Unread::NotThere))
+            }
+            (CandidateFacts::Found { .. }, None, Depth::FullIfFocused) if unfocused => {
+                Some(Self::Unread(Unread::NotFocused))
+            }
+            // A found candidate is read in full, but one found without the
+            // focused state at the depth that stops there.
+            (facts @ CandidateFacts::Found { .. }, Some(read), Depth::Full) => {
+                Some(Self::Read { facts, read })
+            }
+            (facts @ CandidateFacts::Found { .. }, Some(read), Depth::FullIfFocused)
+                if !unfocused =>
+            {
+                Some(Self::Read { facts, read })
+            }
+            _ => None,
+        }
+    }
+}
+
+/// A confirmation's answer, its facts alone, parsed: `None` for one that
+/// carries a read it did not ask for.
+pub(crate) fn parse_facts(answer: CandidateAnswer) -> Option<CandidateFacts> {
+    answer.read.is_none().then_some(answer.facts)
+}
+
 /// Whether a candidate counts as pending
 /// (`docs/parity/focus-events.md`, "While a focus is pending").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -220,11 +328,35 @@ pub(crate) fn judge(
     facts: Option<&CandidateFacts>,
     purpose: Purpose,
 ) -> Validity {
-    match subject {
-        Subject::Uia(focus) => uia(focus, view),
-        Subject::Msaa(candidate) => msaa(candidate, view, facts, purpose),
-        Subject::MenuCheck(ids) => menu_check(ids, view, facts),
-        Subject::Recovered(read) => recovered(view, read),
+    let settled = match subject {
+        Subject::Uia(focus) => Ok(uia(focus, view)),
+        Subject::Recovered(read) => Ok(recovered(view, read)),
+        Subject::Msaa(candidate) => msaa(candidate, view, facts.ok_or(()), purpose),
+        Subject::MenuCheck(ids) => menu_check(ids, view, facts.ok_or(())),
+    };
+    match settled {
+        Ok(settled) => settled.into(),
+        Err((need, ())) => Validity::NeedsRead(need),
+    }
+}
+
+/// [`judge`] with the facts an outpost read: the answer is settled, as
+/// facts leave nothing to read, which the types say.
+pub(crate) fn judge_read(
+    subject: Subject<'_>,
+    view: &View<'_>,
+    facts: &CandidateFacts,
+    purpose: Purpose,
+) -> Settled {
+    let settled = match subject {
+        Subject::Uia(focus) => Ok(uia(focus, view)),
+        Subject::Recovered(read) => Ok(recovered(view, read)),
+        Subject::Msaa(candidate) => msaa(candidate, view, Ok::<_, Infallible>(facts), purpose),
+        Subject::MenuCheck(ids) => menu_check(ids, view, Ok::<_, Infallible>(facts)),
+    };
+    match settled {
+        Ok(settled) => settled,
+        Err((_, never)) => match never {},
     }
 }
 
@@ -251,24 +383,65 @@ pub(crate) fn pending(answer: Validity, trace: TraceId) -> Pending {
     }
 }
 
-/// The first answer of a run, `candidates` newest first, that is not a
-/// refusal, with the candidate it is about: a newest duplicate hides its
-/// older candidates, as NVDA's pump stops at it
-/// (`IAccessibleHandler/__init__.py` 1087 to 1092).
+/// One step of a run's walk ([`judge_run`]).
+#[derive(Debug)]
+pub(crate) struct RunWalk<'a> {
+    /// Each candidate refused on the way, newest first: why.
+    pub(crate) refused: Vec<Reason>,
+    /// The first candidate not refused; `None` when every candidate was
+    /// refused.
+    pub(crate) found: Option<Found<'a>>,
+}
+
+/// The first candidate a run's walk did not refuse.
+#[derive(Debug)]
+pub(crate) struct Found<'a> {
+    /// Its answer.
+    pub(crate) answer: Validity,
+    /// The candidate.
+    pub(crate) candidate: &'a Candidate,
+    /// The candidates older than it, newest first, where the walk goes on.
+    pub(crate) older: &'a [Candidate],
+}
+
+/// The walk of a run, `candidates` newest first, each judged with the
+/// facts stored on it: the refusals on the way, and the first answer that
+/// is not one. A newest duplicate hides its older candidates, as NVDA's
+/// pump stops at it (`IAccessibleHandler/__init__.py` 1087 to 1092). The
+/// one walk of a run: the run's turn (`super::msaa_run`), the pending
+/// judgement and the menu opening's drop all step through it.
 pub(crate) fn judge_run<'a>(
-    candidates: impl IntoIterator<Item = &'a Candidate>,
+    candidates: &'a [Candidate],
     view: &View<'_>,
     purpose: Purpose,
-) -> Option<(Validity, &'a Candidate)> {
-    candidates.into_iter().find_map(|candidate| {
-        let answer = judge(
+) -> RunWalk<'a> {
+    let mut refused = Vec::new();
+    let mut rest = candidates;
+    while let Some((candidate, older)) = rest.split_first() {
+        match judge(
             Subject::Msaa(candidate),
             view,
             candidate.confirmation.facts(),
             purpose,
-        );
-        (!matches!(answer, Validity::Refused(_))).then_some((answer, candidate))
-    })
+        ) {
+            Validity::Refused(reason) => refused.push(reason),
+            answer => {
+                return RunWalk {
+                    refused,
+                    found: Some(Found {
+                        answer,
+                        candidate,
+                        older,
+                    }),
+                };
+            }
+        }
+        rest = older;
+    }
+    RunWalk {
+        refused,
+        found: None,
+    }
 }
 
 /// A waiting entry, judged alone for [`Purpose::Pending`]: its answer, its
@@ -310,54 +483,71 @@ fn judge_candidate(candidate: &Candidate, view: &View<'_>) -> Validity {
     )
 }
 
+/// Which waiting candidates a pending judgement looks at.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Within {
+    /// A candidate raised at or after this time is left out, as if it had
+    /// not come: a menu opening judges only what was raised before it.
+    pub(crate) raised_before: Option<u64>,
+    /// A candidate needing a read raised at or after this time is not
+    /// pending: a caret key confirms only what was raised before its
+    /// bound.
+    pub(crate) unconfirmed_before: Option<u64>,
+}
+
+impl Within {
+    /// Everything waiting.
+    pub(crate) const ALL: Self = Self {
+        raised_before: None,
+        unconfirmed_before: None,
+    };
+
+    /// What a caret key judges, its bound at `bound_us`.
+    pub(crate) fn key(bound_us: u64) -> Self {
+        Self {
+            raised_before: None,
+            unconfirmed_before: Some(bound_us),
+        }
+    }
+
+    fn raised(at: Option<u64>, at_us: u64) -> bool {
+        at.is_none_or(|before| at_us < before)
+    }
+}
+
 /// Whether anything waiting, `waiting` in arrival order, counts as
-/// pending, item by item, a run judged as a run. A candidate needing a read
-/// raised at or after `bound_us`, when given, reads as not pending: a
-/// caret key confirms only what was raised before its bound.
+/// pending, item by item, a run walked as a run ([`judge_run`]), only the
+/// candidates `within` names judged.
 ///
 /// A run walks newest first. The first valid candidate counts, even behind
 /// a newer one needing a read, whose read could only make it count or be
-/// refused down to the older one. A duplicate gives unconfirmed if a newer
-/// candidate needed a read, else not pending; the end of the run gives
-/// unconfirmed if any candidate needed a read. Over the queue: counts if
-/// any item counts, otherwise the newest unconfirmed, otherwise not
-/// pending.
+/// refused down to the older one, so the walk goes on past a candidate
+/// needing a read. A duplicate gives unconfirmed if a newer candidate
+/// needed a read, else not pending; the end of the run gives unconfirmed
+/// if any candidate needed a read. Over the queue: counts if any item
+/// counts, otherwise the newest unconfirmed, otherwise not pending.
 pub(crate) fn pending_behind(
     waiting: &VecDeque<Item<Entry>>,
     view: &View<'_>,
-    bound_us: Option<u64>,
+    within: Within,
 ) -> Pending {
-    let raised_before = |at_us: u64| bound_us.is_none_or(|bound| at_us < bound);
-    let one = |entry: &Entry| match judge_alone(entry, view) {
-        Some((Validity::NeedsRead(_), _, at_us)) if !raised_before(at_us) => Pending::No,
-        Some((answer, trace, _)) => pending(answer, trace),
-        None => Pending::No,
-    };
     let mut newest_unconfirmed = None;
     for item in waiting {
         let answer = match item {
-            Item::One(entry) | Item::Menu { entry, .. } => one(entry),
-            Item::Run(entries) => {
-                let mut unconfirmed = None;
-                let mut answer = None;
-                for entry in entries.iter().rev() {
-                    match one(entry) {
-                        Pending::Counts => {
-                            answer = Some(Pending::Counts);
-                            break;
-                        }
-                        Pending::Unconfirmed(trace) => {
-                            unconfirmed.get_or_insert(trace);
-                        }
-                        Pending::No => {
-                            if let Some((Validity::Duplicate, ..)) = judge_alone(entry, view) {
-                                break;
-                            }
-                        }
-                    }
+            Item::One(Entry::UiaFocus(focus)) => {
+                if Within::raised(within.raised_before, focus.tell.at_us) {
+                    pending(
+                        judge(Subject::Uia(focus), view, None, Purpose::Pending),
+                        focus.tell.trace_id,
+                    )
+                } else {
+                    Pending::No
                 }
-                answer.unwrap_or(unconfirmed.map_or(Pending::No, Pending::Unconfirmed))
             }
+            Item::One(entry) | Item::Menu { entry, .. } => {
+                run_pending(candidates_of(std::slice::from_ref(entry)), view, within)
+            }
+            Item::Run(entries) => run_pending(candidates_of(entries), view, within),
         };
         match answer {
             Pending::Counts => return Pending::Counts,
@@ -368,16 +558,58 @@ pub(crate) fn pending_behind(
     newest_unconfirmed.map_or(Pending::No, Pending::Unconfirmed)
 }
 
-/// [`judge`] from inside an entry's function, against Core's facts now;
-/// `run_before_valid` says whether the run before a menu start executed a
-/// valid focus.
-pub(crate) fn at(
+/// The candidates among `entries`, oldest first, newest first: an MSAA
+/// focus, foreground or menu start.
+fn candidates_of(entries: &[Entry]) -> Vec<Candidate> {
+    entries
+        .iter()
+        .rev()
+        .filter_map(|entry| match entry {
+            Entry::Candidate(candidate) => Some((**candidate).clone()),
+            Entry::Menu(candidate) if is_menu_start(candidate.tell.kind) => {
+                Some((**candidate).clone())
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// A run's pending judgement, `candidates` newest first.
+fn run_pending(candidates: Vec<Candidate>, view: &View<'_>, within: Within) -> Pending {
+    let candidates: Vec<Candidate> = candidates
+        .into_iter()
+        .filter(|candidate| Within::raised(within.raised_before, candidate.tell.at_us))
+        .collect();
+    let mut unconfirmed = None;
+    let mut rest = candidates.as_slice();
+    loop {
+        let found = judge_run(rest, view, Purpose::Pending).found;
+        let unconfirmed_or_no = unconfirmed.map_or(Pending::No, Pending::Unconfirmed);
+        let Some(found) = found else {
+            return unconfirmed_or_no;
+        };
+        match found.answer {
+            Validity::Valid(_) => return Pending::Counts,
+            Validity::Duplicate | Validity::Refused(_) => return unconfirmed_or_no,
+            Validity::NeedsRead(_) => {
+                let tell = &found.candidate.tell;
+                if Within::raised(within.unconfirmed_before, tell.at_us) {
+                    unconfirmed.get_or_insert(tell.trace_id);
+                }
+                rest = found.older;
+            }
+        }
+    }
+}
+
+/// `judged` with a view of Core's facts now, from inside an entry's
+/// function; `run_before_valid` says whether the run before a menu start
+/// executed a valid focus.
+pub(crate) fn with_view<T>(
     cx: &Cx<Entries>,
-    subject: Subject<'_>,
-    facts: Option<&CandidateFacts>,
-    purpose: Purpose,
     run_before_valid: bool,
-) -> Validity {
+    judged: impl FnOnce(&View<'_>) -> T,
+) -> T {
     let state = cx.facts();
     let backend = cx.backend();
     let view = View {
@@ -387,22 +619,41 @@ pub(crate) fn at(
         now_us: cx.now_us(),
         run_before_valid,
     };
-    judge(subject, &view, facts, purpose)
+    judged(&view)
+}
+
+/// [`judge`] from inside an entry's function.
+pub(crate) fn at(
+    cx: &Cx<Entries>,
+    subject: Subject<'_>,
+    facts: Option<&CandidateFacts>,
+    purpose: Purpose,
+    run_before_valid: bool,
+) -> Validity {
+    with_view(cx, run_before_valid, |view| {
+        judge(subject, view, facts, purpose)
+    })
+}
+
+/// [`judge_read`] from inside an entry's function.
+pub(crate) fn read_at(
+    cx: &Cx<Entries>,
+    subject: Subject<'_>,
+    facts: &CandidateFacts,
+    purpose: Purpose,
+    run_before_valid: bool,
+) -> Settled {
+    with_view(cx, run_before_valid, |view| {
+        judge_read(subject, view, facts, purpose)
+    })
 }
 
 /// [`pending_behind`] from inside the front entry's function, over the
 /// entries waiting behind it.
-pub(crate) fn pending_behind_front(cx: &Cx<Entries>, bound_us: Option<u64>) -> Pending {
-    let state = cx.facts();
-    let backend = cx.backend();
-    let view = View {
-        versions: &state.versions,
-        in_front: cx.foreground().map(|foreground| foreground.window),
-        backend: &backend,
-        now_us: cx.now_us(),
-        run_before_valid: false,
-    };
-    pending_behind(&cx.waiting(), &view, bound_us)
+pub(crate) fn pending_behind_front(cx: &Cx<Entries>, within: Within) -> Pending {
+    with_view(cx, false, |view| {
+        pending_behind(&cx.waiting(), view, within)
+    })
 }
 
 /// The waiting candidate of trace `trace`, alone or in a run: an MSAA
@@ -455,7 +706,7 @@ fn is_menu_start(kind: EventKind) -> bool {
 }
 
 /// The rows for a UI Automation focus or menu opening.
-fn uia(focus: &UiaFocus, view: &View<'_>) -> Validity {
+fn uia(focus: &UiaFocus, view: &View<'_>) -> Settled {
     let tell = &focus.tell;
     let facts = match &tell.window {
         TellWindow::Found(facts) => Some(facts.as_ref()),
@@ -466,50 +717,53 @@ fn uia(focus: &UiaFocus, view: &View<'_>) -> Validity {
     // keyboard-focus answer.
     if opens_on_committed(view.versions, focus) {
         if acceptance::accept(tell.kind, facts, false).is_err() {
-            return Validity::Refused(Reason::Acceptance);
+            return Settled::Refused(Reason::Acceptance);
         }
         if keyboard_focus(tell) == Some(Read::Answered(false)) {
-            return Validity::Refused(Reason::KeyboardFocusLost);
+            return Settled::Refused(Reason::KeyboardFocusLost);
         }
-        return Validity::Valid(How::Again);
+        return Settled::Valid(How::Again);
     }
     let Some(window) = judged_window(tell) else {
-        return Validity::Refused(Reason::NoWindow);
+        return Settled::Refused(Reason::NoWindow);
     };
     if view
         .backend
         .judge(Judged::Uia, &window, tell.at_us, view.now_us)
         == Judgement::Drop
     {
-        return Validity::Refused(Reason::Verdict);
+        return Settled::Refused(Reason::Verdict);
     }
     let overridden = focus_override(tell);
     if overridden == Override::Refused {
-        return Validity::Refused(Reason::Override);
+        return Settled::Refused(Reason::Override);
     }
     if uia_on_hidden_frame(focus) {
-        return Validity::Refused(Reason::HiddenFrame);
+        return Settled::Refused(Reason::HiddenFrame);
     }
     if acceptance::accept(tell.kind, facts, false).is_err() {
-        return Validity::Refused(Reason::Acceptance);
+        return Settled::Refused(Reason::Acceptance);
     }
     if overridden != Override::NetUiMenuItem && keyboard_focus(tell) == Some(Read::Answered(false))
     {
-        return Validity::Refused(Reason::KeyboardFocusLost);
+        return Settled::Refused(Reason::KeyboardFocusLost);
     }
     if uia_duplicate(view.last(), &focus.runtime_id, tell.checked.as_ref()) {
-        return Validity::Duplicate;
+        return Settled::Duplicate;
     }
-    Validity::Valid(How::Read)
+    Settled::Valid(How::Read)
 }
 
-/// The rows for an MSAA focus, foreground or menu start.
-fn msaa(
+/// The rows for an MSAA focus, foreground or menu start, `facts` what an
+/// outpost read of it or, missing, `M`: a row that needs the missing facts
+/// answers the read it needs with `M`. With facts given, `M` is
+/// uninhabited, so the answer is settled.
+fn msaa<M>(
     candidate: &Candidate,
     view: &View<'_>,
-    facts: Option<&CandidateFacts>,
+    facts: Result<&CandidateFacts, M>,
     purpose: Purpose,
-) -> Validity {
+) -> Result<Settled, (Need, M)> {
     let tell = &candidate.tell;
     let ids = &candidate.ids;
     let last = view.last();
@@ -520,119 +774,125 @@ fn msaa(
         view.now_us,
     ) == Judgement::Drop
     {
-        return Validity::Refused(Reason::Verdict);
+        return Ok(Settled::Refused(Reason::Verdict));
     }
     if msaa_on_hidden_frame(candidate) {
-        return Validity::Refused(Reason::HiddenFrame);
+        return Ok(Settled::Refused(Reason::HiddenFrame));
     }
     if acceptance::accept(tell.kind, candidate.facts(), false).is_err() {
-        return Validity::Refused(Reason::Acceptance);
+        return Ok(Settled::Refused(Reason::Acceptance));
     }
     if candidate.facts().is_some_and(|facts| facts.desktop) {
-        return Validity::Refused(Reason::NoReader);
+        return Ok(Settled::Refused(Reason::NoReader));
     }
     let menu_start = is_menu_start(tell.kind);
     if tell.kind == EventKind::Foreground {
         // `IAccessibleHandler/__init__.py` 834 to 863.
         if view.in_front != Some(ids.window) {
-            return Validity::Refused(Reason::NotInFront);
+            return Ok(Settled::Refused(Reason::NotInFront));
         }
         if let Some(last) = last {
             if last.place.holds_window(ids.window) {
-                return Validity::Refused(Reason::LastFocusWindow);
+                return Ok(Settled::Refused(Reason::LastFocusWindow));
             }
             if last_event_ids(last) == Some(ids) {
-                return Validity::Refused(Reason::SameIds);
+                return Ok(Settled::Refused(Reason::SameIds));
             }
         }
     } else if !menu_start {
         if msaa_duplicate(last, ids) {
-            return Validity::Duplicate;
+            return Ok(Settled::Duplicate);
         }
         if msaa_refused_repeat(last, ids) {
-            return Validity::Refused(Reason::RepeatedItem);
+            return Ok(Settled::Refused(Reason::RepeatedItem));
         }
         if purpose == Purpose::Turn && guarded(last, ids, candidate.fence) {
-            return Validity::Duplicate;
+            return Ok(Settled::Duplicate);
         }
     }
     if menu_start {
         // `IAccessibleHandler/__init__.py` 942 to 973.
         if view.run_before_valid && last_is_msaa_menu(last) {
-            return Validity::Refused(Reason::OnMenu);
+            return Ok(Settled::Refused(Reason::OnMenu));
         }
-        let Some(facts) = facts else {
-            return Validity::NeedsRead(Need::MenuRole);
+        let facts = match facts {
+            Ok(facts) => facts,
+            Err(missing) => return Err((Need::MenuRole, missing)),
         };
         if let Some(refused) = refused_by(facts) {
-            return refused;
+            return Ok(refused);
         }
-        return match facts {
+        return Ok(match facts {
             CandidateFacts::Found {
                 role: Some(Role::Menu),
                 ..
-            } => Validity::Valid(How::Read),
-            _ => Validity::Refused(Reason::NotMenuPopup),
-        };
+            } => Settled::Valid(How::Read),
+            _ => Settled::Refused(Reason::NotMenuPopup),
+        });
     }
-    let Some(facts) = facts else {
-        return if tell.kind == EventKind::MsaaFocus {
-            Validity::NeedsRead(Need::FocusedState)
-        } else {
-            Validity::Valid(How::Read)
-        };
+    let facts = match facts {
+        Ok(facts) => facts,
+        Err(missing) if tell.kind == EventKind::MsaaFocus => {
+            return Err((Need::FocusedState, missing));
+        }
+        Err(_) => return Ok(Settled::Valid(How::Read)),
     };
     if let Some(refused) = refused_by(facts) {
-        return refused;
+        return Ok(refused);
     }
     if purpose == Purpose::Turn && guarded_list(last, facts, candidate.fence) {
-        return Validity::Duplicate;
+        return Ok(Settled::Duplicate);
     }
-    Validity::Valid(How::Read)
+    Ok(Settled::Valid(How::Read))
 }
 
-/// The rows for the menu check's read.
-fn menu_check(ids: Option<&MsaaIds>, view: &View<'_>, facts: Option<&CandidateFacts>) -> Validity {
+/// The rows for the menu check's read, `facts` as for [`msaa`].
+fn menu_check<M>(
+    ids: Option<&MsaaIds>,
+    view: &View<'_>,
+    facts: Result<&CandidateFacts, M>,
+) -> Result<Settled, (Need, M)> {
     if let Some(ids) = ids {
         if msaa_duplicate(view.last(), ids) {
-            return Validity::Duplicate;
+            return Ok(Settled::Duplicate);
         }
         if msaa_refused_repeat(view.last(), ids) {
-            return Validity::Refused(Reason::RepeatedItem);
+            return Ok(Settled::Refused(Reason::RepeatedItem));
         }
     }
-    let Some(facts) = facts else {
-        return Validity::NeedsRead(Need::FocusedState);
+    let facts = match facts {
+        Ok(facts) => facts,
+        Err(missing) => return Err((Need::FocusedState, missing)),
     };
-    refused_by(facts).unwrap_or(Validity::Valid(How::Read))
+    Ok(refused_by(facts).unwrap_or(Settled::Valid(How::Read)))
 }
 
 /// The recovered read's one row: a UI Automation answer whose runtime id
 /// equals the readers' last focus's is a duplicate, its keyboard focus
 /// taken as true because the read is of the keyboard focus. Any other is
 /// valid, and goes on to the re-take's same-reading comparison.
-fn recovered(view: &View<'_>, read: &FocusRead) -> Validity {
+fn recovered(view: &View<'_>, read: &FocusRead) -> Settled {
     match (
         view.last().map(|last| &last.read_by),
         &read.msaa,
         &read.focus.runtime_id,
     ) {
         (Some(ReadBy::Uia { runtime_id, .. }), None, Some(answered)) if runtime_id == answered => {
-            Validity::Duplicate
+            Settled::Duplicate
         }
-        _ => Validity::Valid(How::Read),
+        _ => Settled::Valid(How::Read),
     }
 }
 
 /// The refusal the facts an outpost read give, if any.
-fn refused_by(facts: &CandidateFacts) -> Option<Validity> {
+fn refused_by(facts: &CandidateFacts) -> Option<Settled> {
     match facts {
-        CandidateFacts::Skipped => Some(Validity::Refused(Reason::Skipped)),
-        CandidateFacts::NotThere => Some(Validity::Refused(Reason::NotThere)),
+        CandidateFacts::Skipped => Some(Settled::Refused(Reason::Skipped)),
+        CandidateFacts::NotThere => Some(Settled::Refused(Reason::NotThere)),
         CandidateFacts::Found {
             focused: Some(false),
             ..
-        } => Some(Validity::Refused(Reason::NotFocused)),
+        } => Some(Settled::Refused(Reason::NotFocused)),
         CandidateFacts::Found { .. } => None,
     }
 }

@@ -239,19 +239,15 @@ async fn afresh(
     known: Known,
     due_us: u64,
 ) {
-    let request = CurrentFocusRead {
+    let request = CurrentFocusRead::<super::msaa_run::Full> {
         window,
         known: known.sent.clone(),
         details: crate::details::focus_details(&cx.facts()),
         set: crate::details::node_set(&cx.facts(), FOCUS_SET),
-        depth: verbatim_model::request::Depth::Full,
+        depth: std::marker::PhantomData,
     };
-    let Outcome::Result(answered) = cx.ask(request, due_us).await else {
+    let Outcome::Result(read) = cx.ask(request, due_us).await else {
         cx.facts_mut().focus_read_failed();
-        return;
-    };
-    let Some(read) = answered.read else {
-        // A current-focus answer with no full read: the outpost's fault.
         return;
     };
     let Some(read_by) = read_by(&read) else {
@@ -265,7 +261,11 @@ async fn afresh(
 /// A UI Automation focus read tried at its own turn and answered refused or
 /// not there ends the redirect guard (Dickson, 2026-11-18).
 fn refused_or_not_there<T>(cx: &mut Cx<Entries>, outcome: &Outcome<T>) {
-    if matches!(outcome, Outcome::Refused(_) | Outcome::NotThere) {
+    // A malformed answer is no try (`Refused::Undecodable`).
+    if matches!(
+        outcome,
+        Outcome::Refused(crate::event_queue::Refused::Reader(_)) | Outcome::NotThere
+    ) {
         cx.facts_mut().versions.tried_and_refused();
     }
 }

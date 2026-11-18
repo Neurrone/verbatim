@@ -12,7 +12,9 @@
 
 use serde::{Deserialize, Serialize};
 use verbatim_model::property::PropertyId;
-use verbatim_model::request::{CandidateAnswer, FocusRead, KnownAncestor, Reply, Request as Wire};
+use verbatim_model::request::{
+    CandidateAnswer, FocusDepth, FocusRead, KnownAncestor, Reply, Request as Wire,
+};
 use verbatim_model::{TextDetails, TraceId};
 
 use super::FOCUS_SET;
@@ -50,10 +52,42 @@ pub(crate) struct CurrentFocus {
     pub(crate) fence: crate::keys::entry::Fence,
 }
 
+/// How far a read of the current focus goes, as its request's type, with
+/// how its answer is parsed at its decode.
+pub(crate) trait FocusReadDepth: std::fmt::Debug + Unpin + 'static {
+    /// The depth.
+    const DEPTH: FocusDepth;
+    /// The answer, parsed.
+    type Parsed: std::fmt::Debug + 'static;
+    /// `answer` parsed, `None` for one that breaks the depth's rule.
+    fn parse(answer: CandidateAnswer) -> Option<Self::Parsed>;
+}
+
+impl FocusReadDepth for super::msaa_run::FullIfFocused {
+    const DEPTH: FocusDepth = FocusDepth::FullIfFocused;
+    type Parsed = super::validity::Answered;
+    fn parse(answer: CandidateAnswer) -> Option<Self::Parsed> {
+        super::validity::Answered::parse(answer, Self::DEPTH.into())
+    }
+}
+
+/// A read in full answers the focus read, nothing else: the outpost answers
+/// "not there" for a focus it cannot read.
+impl FocusReadDepth for super::msaa_run::Full {
+    const DEPTH: FocusDepth = FocusDepth::Full;
+    type Parsed = Box<FocusRead>;
+    fn parse(answer: CandidateAnswer) -> Option<Self::Parsed> {
+        match super::validity::Answered::parse(answer, Self::DEPTH.into())? {
+            super::validity::Answered::Read { read, .. } => Some(read),
+            super::validity::Answered::Unread(_) => None,
+        }
+    }
+}
+
 /// The request for an application's current focus, of the outpost of the
-/// window's application.
+/// window's application, read to `D`.
 #[derive(Debug)]
-pub(crate) struct CurrentFocusRead {
+pub(crate) struct CurrentFocusRead<D: FocusReadDepth> {
     /// The window it names.
     pub(crate) window: RequestWindow,
     /// The ancestors Core already knows.
@@ -65,11 +99,11 @@ pub(crate) struct CurrentFocusRead {
     pub(crate) set: Vec<PropertyId>,
     /// How far the read goes: in full, or, for the check after a menu end,
     /// NVDA's fake focus, in full only when focused.
-    pub(crate) depth: verbatim_model::request::Depth,
+    pub(crate) depth: std::marker::PhantomData<D>,
 }
 
-impl Request for CurrentFocusRead {
-    type Reply = CandidateAnswer;
+impl<D: FocusReadDepth> Request for CurrentFocusRead<D> {
+    type Reply = D::Parsed;
 
     fn reader(&self) -> Reader {
         Reader::Outpost(self.window.process)
@@ -84,13 +118,13 @@ impl Request for CurrentFocusRead {
             set: self.set.clone(),
             known: self.known.clone(),
             details: self.details,
-            depth: self.depth,
+            depth: D::DEPTH,
         }
     }
 
     fn decode(reply: Reply) -> Option<Self::Reply> {
         match reply {
-            Reply::Candidate(answer) => Some(answer),
+            Reply::Candidate(answer) => D::parse(answer),
             _ => None,
         }
     }
@@ -194,15 +228,15 @@ pub(crate) fn reader_ended(
 /// caret baseline.
 pub(crate) async fn run(mut cx: Cx<Entries>, entry: CurrentFocus) {
     let due_us = cx.due_in(FOCUS_DUE_US);
-    let request = CurrentFocusRead {
+    let request = CurrentFocusRead::<super::msaa_run::Full> {
         window: entry.window,
         known: Vec::new(),
         details: crate::details::focus_details(&cx.facts()),
         set: crate::details::node_set(&cx.facts(), FOCUS_SET),
-        depth: verbatim_model::request::Depth::Full,
+        depth: std::marker::PhantomData,
     };
     let read = match cx.ask(request, due_us).await {
-        Outcome::Result(answered) => answered.read,
+        Outcome::Result(read) => read,
         outcome => {
             // A re-take answered not there, or whose reader ended, tried
             // the focus and found it gone: the redirect guard ends.
@@ -212,10 +246,6 @@ pub(crate) async fn run(mut cx: Cx<Entries>, entry: CurrentFocus) {
             cx.facts_mut().focus_read_failed();
             return;
         }
-    };
-    let Some(read) = read else {
-        // A current-focus answer with no full read: the outpost's fault.
-        return;
     };
     let Some(read_by) = read_by(&read) else {
         return;

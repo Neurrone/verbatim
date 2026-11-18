@@ -664,7 +664,7 @@ and the inherited pipe handles.
   NVDA's child-0-on-a-list redirect and the `accFocus` redirect
   (`focus_candidate`). The outpost reports facts and judges none: a focus
   event's focused state over the object and its ancestors, read live; a
-  menu start's role; its window's class; and the redirect that reached
+  menu start's role; and the redirect that reached
   it, by its branch (`FocusCandidate::redirect`), never judged by the
   address its node is kept at, which can differ with no redirect. It then
   reads it in full unless the depth is `Facts`, or `FullIfFocused` with

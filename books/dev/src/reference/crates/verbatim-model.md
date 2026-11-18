@@ -276,10 +276,11 @@ them yet.
   `CandidateKind`, a focus, a foreground or a menu start, read to the
   `Depth` Core asks, `Facts`, `FullIfFocused` or `Full`, with a `spare`
   node and anchor Core keeps held while it is out) and the current focus
-  (`CurrentFocus`, with its depth), both answered with a
+  (`CurrentFocus`, with its `FocusDepth`, which has no depth stopping at
+  the facts), both answered with a
   `CandidateAnswer`: the `CandidateFacts` the outpost found (skipped, not
   there, or found, with its focused state when asked, a menu start's
-  role, its window's class and the `Redirect` that reached it, NVDA's list
+  role and the `Redirect` that reached it, NVDA's list
   redirect or the wider one, with the child's ids), and the full read when
   the depth asked for one. The completion and a candidate's full read are
   a `FocusRead`, which carries what Core keeps with the

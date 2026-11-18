@@ -72,7 +72,7 @@ fn a_first_worker_that_cannot_start_answers_its_program_and_starts_with_the_next
             set: common::outpost::focus_set(),
             known: Vec::new(),
             details: verbatim_model::TextDetails::NONE,
-            depth: verbatim_model::request::Depth::Full,
+            depth: verbatim_model::request::FocusDepth::Full,
         },
     );
     assert_eq!(

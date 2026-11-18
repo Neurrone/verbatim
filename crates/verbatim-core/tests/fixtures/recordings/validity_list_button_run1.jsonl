@@ -1,0 +1,4 @@
+{"source": "verbatim-event-record, validity-list-button (2026-11-18), run 1: a click on Apply, then back on the list, its own focus then its item"}
+{"t_us": 4315976, "kind": "msaa_focus", "window": "0x720450", "class": "Button", "object": -4, "child": 0, "pass": 12}
+{"t_us": 5817869, "kind": "msaa_focus", "window": "0x6D038A", "class": "SysListView32", "object": -4, "child": 0, "pass": 19}
+{"t_us": 5818135, "kind": "msaa_focus", "window": "0x6D038A", "class": "SysListView32", "object": -4, "child": 1, "pass": 20}

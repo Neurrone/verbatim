@@ -93,7 +93,6 @@ pub(crate) struct Candidate {
     /// Its speech fence, set when it joins the queue.
     pub(crate) fence: Fence,
     /// Whether a caret key's confirmation read its facts while it waited.
-    #[serde(default)]
     pub(crate) confirmation: crate::focus::validity::Confirmation,
 }
 
@@ -717,7 +716,10 @@ impl Logic for Entries {
 
     fn dropped_at_arrival(
         facts: &SrState,
-        ahead: &[&Entry],
+        ahead: (
+            Option<&Entry>,
+            &std::collections::VecDeque<crate::event_queue::Item<Entry>>,
+        ),
         arriving: &Entry,
         backend: &BackendCache,
         now: (u64, Option<Foreground>),

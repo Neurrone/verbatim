@@ -267,13 +267,13 @@ pub enum Request {
         /// What the focus's caret read fetches beyond the text, as the
         /// settings report it: its line's formatting ([`FocusCaret`]).
         details: TextDetails,
-        /// How far the read goes: [`Depth::Full`] for a read Core makes
-        /// itself, [`Depth::FullIfFocused`] for the check after a menu end,
+        /// How far the read goes: [`FocusDepth::Full`] for a read Core makes
+        /// itself, [`FocusDepth::FullIfFocused`] for the check after a menu end,
         /// NVDA's fake focus, whose MSAA focus is read in full only when it
         /// or an ancestor, up to the desktop, has the focused state
         /// (`shouldAllowIAccessibleFocusEvent`). The answer carries the
         /// focused state as a fact, and Core judges it.
-        depth: Depth,
+        depth: FocusDepth,
     },
     /// A read or move in a node's text.
     Text {
@@ -546,6 +546,25 @@ pub enum Depth {
     Full,
 }
 
+/// How far a read of the application's current focus goes: always at
+/// least as far as the focus, so it has no depth that stops at its facts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum FocusDepth {
+    /// The focused state as a fact, and the full read only when focused.
+    FullIfFocused,
+    /// The full read.
+    Full,
+}
+
+impl From<FocusDepth> for Depth {
+    fn from(depth: FocusDepth) -> Self {
+        match depth {
+            FocusDepth::FullIfFocused => Self::FullIfFocused,
+            FocusDepth::Full => Self::Full,
+        }
+    }
+}
+
 /// Which redirect took a focus event's object to the child `accFocus`
 /// names.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -594,8 +613,6 @@ pub enum CandidateFacts {
         focused: Option<bool>,
         /// Its role, read for a menu start; `None` otherwise.
         role: Option<crate::Role>,
-        /// Its window's class.
-        window_class: String,
         /// The redirect that reached it, with the ids of the child it
         /// reached, when one did.
         redirect: Option<(Redirect, MsaaIds)>,
@@ -622,7 +639,6 @@ impl CandidateAnswer {
             facts: CandidateFacts::Found {
                 focused: Some(true),
                 role: None,
-                window_class: String::new(),
                 redirect: None,
             },
             read: Some(Box::new(read)),

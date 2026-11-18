@@ -1,0 +1,4 @@
+{"source": "verbatim-event-record, rec settings_dialog_keys (2026-11-17), passes 309 to 313: the settings dialog opening, its list raising its own focus twice"}
+{"t_us": 2797075, "kind": "msaa_foreground", "window": "0x1CC029A", "class": "#32770", "object": 0, "child": 0, "pass": 309}
+{"t_us": 2798517, "kind": "msaa_focus", "window": "0x12301DE", "class": "SysListView32", "object": -4, "child": 0, "pass": 311}
+{"t_us": 2800006, "kind": "msaa_focus", "window": "0x12301DE", "class": "SysListView32", "object": -4, "child": 0, "pass": 313}

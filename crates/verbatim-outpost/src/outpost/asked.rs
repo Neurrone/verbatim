@@ -34,9 +34,9 @@ use verbatim_model::property::{
 };
 use verbatim_model::request::{
     Answer, Ask, CandidateAnswer, CandidateFacts, CandidateKind, Depth, FindScope, FocusAncestor,
-    FocusCaret, FocusNode, FocusRead, HeldIds, KnownAncestor, MsaaIds, MsaaRun, NodeRead,
-    NodeWindow, ObjectClass, ObjectRead, ObjectRef, Outcome, Probe, Purpose, ReadObject, Refusal,
-    RelationFound, RelationQuery, Reply, Request, RouteEnd, RunCandidate, WindowVerdict,
+    FocusCaret, FocusDepth, FocusNode, FocusRead, HeldIds, KnownAncestor, MsaaIds, MsaaRun,
+    NodeRead, NodeWindow, ObjectClass, ObjectRead, ObjectRef, Outcome, Probe, Purpose, ReadObject,
+    Refusal, RelationFound, RelationQuery, Reply, Request, RouteEnd, RunCandidate, WindowVerdict,
 };
 use verbatim_model::{
     Backend, NodeDetails, NodeId, NodeSnapshot, Pid, QueryKind, Role, State, StateSet, TextDetails,
@@ -1246,7 +1246,6 @@ fn try_candidate(
     let facts = CandidateFacts::Found {
         focused,
         role,
-        window_class: verbatim_win32::window::window_class_name(hwnd),
         redirect,
     };
     let full = match run.depth {
@@ -1315,7 +1314,7 @@ fn try_candidate(
 /// when its timer fires (`NVDAObjects/window/__init__.py` 165 to 173), and
 /// a probe of a window whose thread is busy, Verbatim's hidden frame as its
 /// settings dialog opens, would let the focus move on before it is taken.
-/// With [`Depth::FullIfFocused`], an MSAA focus's focused state is read
+/// With [`FocusDepth::FullIfFocused`], an MSAA focus's focused state is read
 /// over it and every ancestor up to the desktop, as NVDA tests its fake
 /// focus (`NVDAObjects/IAccessible/__init__.py` 874 to 892), and the
 /// answer carries it as a fact, with the full read only when focused;
@@ -1325,7 +1324,7 @@ fn current_focus(
     client: &mut Client,
     (ask, probes): (&Ask, &mut Vec<Probe>),
     set: &[PropertyId],
-    (known, details, depth): (&[KnownAncestor], TextDetails, Depth),
+    (known, details, depth): (&[KnownAncestor], TextDetails, FocusDepth),
 ) -> Outcome {
     let window = read::checked_focus_window(context);
     let _ = verdict(context, hwnd_of(ask.window), ask.verdict, probes);
@@ -1339,12 +1338,11 @@ fn current_focus(
     });
     let (control_window, mut control, focused) = match read {
         Ok(read::Focused::Read(window, control, focused)) => (window, *control, focused),
-        Ok(read::Focused::Unfocused(window)) => {
+        Ok(read::Focused::Unfocused) => {
             return Outcome::Result(Reply::Candidate(CandidateAnswer {
                 facts: CandidateFacts::Found {
                     focused: Some(false),
                     role: None,
-                    window_class: verbatim_win32::window::window_class_name(window),
                     redirect: None,
                 },
                 read: None,
@@ -1399,7 +1397,6 @@ fn current_focus(
         facts: CandidateFacts::Found {
             focused,
             role: None,
-            window_class: verbatim_win32::window::window_class_name(control_window),
             redirect: None,
         },
         read: Some(Box::new(read)),

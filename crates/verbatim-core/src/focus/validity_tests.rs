@@ -182,7 +182,6 @@ fn found(focused: Option<bool>) -> CandidateFacts {
     CandidateFacts::Found {
         focused,
         role: None,
-        window_class: "Button".to_owned(),
         redirect: None,
     }
 }
@@ -565,7 +564,6 @@ fn the_guard_ends_a_lists_own_focus_redirected_by_the_list_rule_to_the_guarded_c
     let redirected = |redirect| CandidateFacts::Found {
         focused: Some(true),
         role: None,
-        window_class: "SysListView32".to_owned(),
         redirect: Some((redirect, reached)),
     };
     let mut guarded = last_msaa(-4, 2);
@@ -695,7 +693,6 @@ fn a_menu_start_needs_its_role_and_only_a_menu_popup_is_valid() {
     let role = |role| CandidateFacts::Found {
         focused: None,
         role: Some(role),
-        window_class: "#32768".to_owned(),
         redirect: None,
     };
     for purpose in [Purpose::Turn, Purpose::Pending] {
@@ -863,19 +860,21 @@ fn run_of(candidates: Vec<Candidate>) -> VecDeque<Item<Entry>> {
     )])
 }
 
+/// The turn's walk over `candidates`, oldest first, as the run's turn
+/// takes its first step (`super::super::msaa_run::run` walks with the same
+/// [`judge_run`]).
 fn walked(candidates: &[Candidate], versions: &Versions) -> Option<(Validity, TraceId)> {
     let cache = BackendCache::default();
-    judge_run(
-        candidates.iter().rev(),
-        &view(versions, &cache),
-        Purpose::Turn,
-    )
-    .map(|(answer, candidate)| (answer, candidate.tell.trace_id))
+    let newest_first: Vec<Candidate> = candidates.iter().rev().cloned().collect();
+    judge_run(&newest_first, &view(versions, &cache), Purpose::Turn)
+        .found
+        .map(|found| (found.answer, found.candidate.tell.trace_id))
 }
 
 fn behind(candidates: Vec<Candidate>, versions: &Versions, bound_us: Option<u64>) -> Pending {
     let cache = BackendCache::default();
-    pending_behind(&run_of(candidates), &view(versions, &cache), bound_us)
+    let within = bound_us.map_or(Within::ALL, Within::key);
+    pending_behind(&run_of(candidates), &view(versions, &cache), within)
 }
 
 /// A run whose newest candidate is a duplicate, behind an unconfirmed one:
@@ -969,7 +968,7 @@ fn over_the_queue_a_counting_item_wins_and_otherwise_the_newest_unconfirmed() {
         one(candidate(EventKind::MsaaFocus, (-5, 0), 1_100, 2)),
     ]);
     assert_eq!(
-        pending_behind(&queue, &at, None),
+        pending_behind(&queue, &at, Within::ALL),
         Pending::Unconfirmed(TraceId::from_raw(2))
     );
     let mut queue = queue;
@@ -978,5 +977,5 @@ fn over_the_queue_a_counting_item_wins_and_otherwise_the_newest_unconfirmed() {
         "UiaHost",
         focused(Read::Answered(true)),
     ))))));
-    assert_eq!(pending_behind(&queue, &at, None), Pending::Counts);
+    assert_eq!(pending_behind(&queue, &at, Within::ALL), Pending::Counts);
 }

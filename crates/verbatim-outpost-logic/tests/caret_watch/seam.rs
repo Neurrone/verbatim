@@ -615,6 +615,18 @@ impl Seam {
             }
             Wire::Follow(_) => Reply::Followed,
             Wire::CompleteUia(_) => Reply::Focus(Box::new(button_read(self.kind))),
+            // At the depth that stops at the facts the outpost reads no more
+            // than the focused state, which the button, really focused, has.
+            Wire::MsaaRun(run) if run.depth == verbatim_model::request::Depth::Facts => {
+                Reply::Candidate(CandidateAnswer {
+                    facts: verbatim_model::request::CandidateFacts::Found {
+                        focused: Some(true),
+                        role: None,
+                        redirect: None,
+                    },
+                    read: None,
+                })
+            }
             Wire::MsaaRun(_) => Reply::Candidate(CandidateAnswer::focused(button_read(self.kind))),
             Wire::Text {
                 op: TextOp::StartingRead(read),

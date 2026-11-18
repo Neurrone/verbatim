@@ -382,19 +382,10 @@ impl<L: Logic> Core<L> {
             if let Some(probe) = L::probe(&entry) {
                 state.queue.backend.record(&probe);
             }
-            let ahead = state
-                .queue
-                .front
-                .iter()
-                .map(|front| &front.entry)
-                .chain(state.queue.waiting.iter().flat_map(|item| match item {
-                    Item::One(entry) | Item::Menu { entry, .. } => std::slice::from_ref(entry),
-                    Item::Run(candidates) => candidates.as_slice(),
-                }))
-                .collect::<Vec<_>>();
+            let front = state.queue.front.as_ref().map(|front| &front.entry);
             let dropped = L::dropped_at_arrival(
                 &state.facts,
-                &ahead,
+                (front, &state.queue.waiting),
                 &entry,
                 &state.queue.backend,
                 (state.queue.now_us, state.queue.foreground),

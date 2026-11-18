@@ -3,19 +3,17 @@
 //! gaps of real recordings, replayed by `cargo xtask replay` and here, and
 //! checked against their exact speech.
 //!
-//! Each fixture's order comes from a recording, named on its session:
-//! Verbatim's settings dialog raising its list's own focus twice (rec
-//! `settings_dialog_keys`, passes 311 and 313); mockapp's list on a mouse
-//! return (`validity-list-button`, run 1); five Tabs in a Properties sheet
-//! (NVDA capture C7, run 1); a UI Automation focus raised while Windows
-//! still names the old window (change B, the order of requirements fact
-//! 4); Notepad's Open dialog, its folder tree's stale MSAA focus behind a
-//! Left Arrow in the empty "File name" field (survey `np_open`); and the
-//! Save As dialog, the tree's stale focus before Shift+Right's caret event
-//! (`validity-saveas-control`, run 1). Where a recording cannot place an
-//! event, such as a key inside a 100 ms watch, the placement is code-level
-//! and said so on the session. The readers' answers are written by hand.
-//! [`regenerate`] writes the fixtures from the sessions.
+//! The sessions load their events' order and gaps from committed
+//! recording excerpts (`tests/fixtures/recordings/`, each naming its
+//! source on its first line): Verbatim's settings dialog raising its
+//! list's own focus twice; mockapp's list on a mouse return; five Tabs in
+//! a Properties sheet, from NVDA's log of capture C7; Notepad's Open
+//! dialog, its folder tree's stale MSAA focus; and the Save As dialog's
+//! events. What no recording gives is code-level and said so on its
+//! session: a key placed inside a 100 ms watch, the Save As tree's focus
+//! placed behind the caret event, the order of change B, and every
+//! reader's answer, written by hand. [`regenerate`] writes the fixtures
+//! from the sessions.
 
 #![expect(
     clippy::disallowed_types,
@@ -195,7 +193,6 @@ fn found(focused: bool) -> CandidateFacts {
     CandidateFacts::Found {
         focused: Some(focused),
         role: None,
-        window_class: String::new(),
         redirect: None,
     }
 }
@@ -207,7 +204,6 @@ fn listed(read: FocusRead, child: MsaaIds) -> CandidateAnswer {
         facts: CandidateFacts::Found {
             focused: Some(true),
             role: None,
-            window_class: "SysListView32".to_owned(),
             redirect: Some((Redirect::List, child)),
         },
         read: Some(Box::new(read)),
@@ -233,29 +229,123 @@ fn tell_at(desk: &mut Desk, at_us: u64, tell: Event) {
     );
 }
 
-/// The settings dialog's list, rec `settings_dialog_keys` passes 309 to
-/// 313: the dialog's foreground (refused with no read, no report of it in
-/// front yet), the list's own focus at 2 798.517 ms, read alone with Core
-/// idle and redirected to "Speech", and its second own focus 1.489 ms
-/// later, arriving while that read is out, redirected to the same item:
-/// "Speech 1 of 3" once.
+/// One event of a committed recording excerpt
+/// (`tests/fixtures/recordings/`): `verbatim-event-record`'s lines, or the
+/// MSAA events NVDA's debug log emitted, cut to what the session feeds.
+#[derive(Clone, Debug)]
+struct Recorded {
+    /// When it was raised, in microseconds on the recording's clock.
+    t_us: u64,
+    /// Its kind.
+    kind: EventKind,
+    /// Its window, as the recording names it.
+    window: String,
+    /// Its object id.
+    object: i32,
+    /// Its child id.
+    child: i32,
+}
+
+/// The recording excerpt `name`, in its order; its first line, naming its
+/// source, left out.
+fn recording(name: &str) -> Vec<Recorded> {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/recordings")
+        .join(format!("{name}.jsonl"));
+    let text = fs::read_to_string(path).expect("the recording excerpt");
+    text.lines()
+        .skip(1)
+        .map(|line| {
+            let event: serde_json::Value = serde_json::from_str(line).expect("a recorded event");
+            let number = |key: &str| event[key].as_i64().expect("a recorded number");
+            Recorded {
+                t_us: u64::try_from(number("t_us")).expect("a time"),
+                kind: match event["kind"].as_str().expect("a kind") {
+                    "msaa_focus" => EventKind::MsaaFocus,
+                    "msaa_foreground" => EventKind::Foreground,
+                    "msaa_state" => EventKind::StateChange,
+                    "msaa_location" => EventKind::SystemCaret,
+                    other => panic!("a kind the sessions do not feed: {other}"),
+                },
+                window: event["window"].as_str().expect("a window").to_owned(),
+                object: i32::try_from(number("object")).expect("an object id"),
+                child: i32::try_from(number("child")).expect("a child id"),
+            }
+        })
+        .collect()
+}
+
+/// The recording's windows as `app`'s: its first window that `top` names
+/// as the top-level window, every other window in the order first seen
+/// after it.
+struct Windows {
+    app: App,
+    seen: Vec<String>,
+    top: Option<String>,
+}
+
+impl Windows {
+    fn new(app: App, top: Option<&str>) -> Self {
+        Self {
+            app,
+            seen: Vec::new(),
+            top: top.map(str::to_owned),
+        }
+    }
+
+    /// The desk's handle of the recording's window `window`.
+    fn handle(&mut self, window: &str) -> u64 {
+        if self.top.as_deref() == Some(window) {
+            return self.app.top;
+        }
+        let place = if let Some(place) = self.seen.iter().position(|seen| seen == window) {
+            place
+        } else {
+            self.seen.push(window.to_owned());
+            self.seen.len() - 1
+        };
+        self.app.top + 1 + u64::try_from(place).expect("a few windows")
+    }
+
+    /// The listener's tell of `event`, at `at_us`.
+    fn tell(&mut self, event: &Recorded, at_us: u64) -> Event {
+        let handle = self.handle(&event.window);
+        msaa_tell(
+            self.app,
+            event.kind,
+            (handle, event.object, event.child),
+            at_us,
+        )
+    }
+}
+
+/// Plays `events` from `at_us`, each at its recorded gap from the first,
+/// one that shares its time with the one before 10 µs after it, the log's
+/// order kept.
+fn play(desk: &mut Desk, windows: &mut Windows, events: &[Recorded], at_us: u64) {
+    let Some(first) = events.first() else {
+        return;
+    };
+    let mut last = 0;
+    for event in events {
+        let at = (at_us + event.t_us - first.t_us).max(last + 10);
+        last = at;
+        let tell = windows.tell(event, at);
+        tell_at(desk, at, tell);
+    }
+}
+
+/// The settings dialog's list (`settings_dialog_keys_309_313`): the
+/// dialog's foreground, refused with no read with no report of it in front
+/// yet; the list's own focus, read alone with Core idle; and its second
+/// own focus 1.489 ms later. Code-level: the first read's answer comes
+/// after the second focus, both redirected to "Speech": "Speech 1 of 3"
+/// once.
 fn settings_list(desk: &mut Desk) {
-    let list = ONE.top + 1;
-    tell_at(
-        desk,
-        2_797_075,
-        msaa_tell(ONE, EventKind::Foreground, (ONE.top, 0, 0), 2_797_075),
-    );
-    tell_at(
-        desk,
-        2_798_517,
-        msaa_tell(ONE, EventKind::MsaaFocus, (list, -4, 0), 2_798_517),
-    );
-    tell_at(
-        desk,
-        2_800_006,
-        msaa_tell(ONE, EventKind::MsaaFocus, (list, -4, 0), 2_800_006),
-    );
+    let events = recording("settings_dialog_keys_309_313");
+    let mut windows = Windows::new(ONE, Some(&events[0].window));
+    play(desk, &mut windows, &events, 2_797_075);
+    let list = windows.handle(&events[1].window);
     let speech = item(msaa_node(ONE, 11, Role::ListItem, Some("Speech")), 1, 3);
     let categories = msaa_node(ONE, 10, Role::List, Some("Categories:"));
     let child = ids(list, -4, 1);
@@ -264,31 +354,20 @@ fn settings_list(desk: &mut Desk) {
     answer_run(desk, 2_800_700, listed(read, child));
 }
 
-/// mockapp's list on a mouse return (`validity-list-button`, run 1): a
-/// click on the Apply button, its focus at 30 ms; the click back on the
-/// list, its own focus at 1 532 ms, then its item's 0.1 ms later, NVDA
-/// saying "list", "Alpha 1 of 3": the item said once.
+/// mockapp's list on a mouse return (`validity_list_button_run1`): the
+/// Apply button's focus, read and spoken; then the list's own focus and
+/// its item's 0.266 ms later, NVDA saying "list", "Alpha 1 of 3": the item
+/// said once.
 fn mouse_return(desk: &mut Desk) {
-    let button = ONE.top + 2;
-    let list = ONE.top + 1;
-    tell_at(
-        desk,
-        30_000,
-        msaa_tell(ONE, EventKind::MsaaFocus, (button, -4, 0), 30_000),
-    );
+    let events = recording("validity_list_button_run1");
+    let mut windows = Windows::new(ONE, None);
+    play(desk, &mut windows, &events[..1], 30_000);
+    let button = windows.handle(&events[0].window);
     let apply = msaa_node(ONE, 20, Role::Button, Some("Apply"));
     let read = by_ids(focus_read_of(ONE, &apply, &[]), ids(button, -4, 0));
     answer_run(desk, 31_000, CandidateAnswer::focused(read));
-    tell_at(
-        desk,
-        1_532_000,
-        msaa_tell(ONE, EventKind::MsaaFocus, (list, -4, 0), 1_532_000),
-    );
-    tell_at(
-        desk,
-        1_532_100,
-        msaa_tell(ONE, EventKind::MsaaFocus, (list, -4, 1), 1_532_100),
-    );
+    play(desk, &mut windows, &events[1..], 1_532_000);
+    let list = windows.handle(&events[1].window);
     let alpha = item(msaa_node(ONE, 31, Role::ListItem, Some("Alpha")), 1, 3);
     let child = ids(list, -4, 1);
     let read = by_ids(
@@ -298,36 +377,20 @@ fn mouse_return(desk: &mut Desk) {
     answer_run(desk, 1_533_000, listed(read, child));
 }
 
-/// Five Tabs in a Properties sheet (capture C7, run 1): the flush 23 ms
-/// after the last Tab, a Button, then a second Button, the tab control's
-/// own focus and its item's. The first Button, split off by a state change
-/// between the two, is read alone and found without the focused state;
-/// the rest wait as one run, its newest, the tab item, read and spoken:
-/// "tab control", "General tab selected". The Tab keys themselves are not
-/// in the fixture: they reach Core from the hook, apart from the listener.
+/// Five Tabs in a Properties sheet (`c7_held_tab_run1`, the MSAA events
+/// NVDA's log emitted in one flush): a Button's focus and a state change,
+/// a second Button, the tab control's own focus and its item's, then two
+/// state changes. The first Button is read alone and found without the
+/// focused state; the focuses behind it wait as one run, its newest, the
+/// tab item, read and spoken: "tab control", "General tab selected". The
+/// Tab keys are not in the fixture: they reach Core from the hook, apart
+/// from the listener.
 fn five_tabs(desk: &mut Desk) {
-    let tab = ONE.top + 13;
-    tell_at(
-        desk,
-        23_000,
-        msaa_tell(ONE, EventKind::MsaaFocus, (ONE.top + 11, -4, 0), 23_000),
-    );
-    tell_at(
-        desk,
-        23_010,
-        msaa_tell(ONE, EventKind::MsaaFocus, (ONE.top + 12, -4, 0), 23_010),
-    );
-    tell_at(
-        desk,
-        23_020,
-        msaa_tell(ONE, EventKind::MsaaFocus, (tab, -4, 0), 23_020),
-    );
-    tell_at(
-        desk,
-        23_030,
-        msaa_tell(ONE, EventKind::MsaaFocus, (tab, -4, 1), 23_030),
-    );
+    let events = recording("c7_held_tab_run1");
+    let mut windows = Windows::new(ONE, None);
+    play(desk, &mut windows, &events, 23_000);
     answer_run(desk, 31_000, unfocused());
+    let tab = windows.handle(&events[3].window);
     let mut general = msaa_node(ONE, 41, Role::Tab, Some("General"));
     general.states = StateSet::new().with(verbatim_model::State::Selected);
     let control = msaa_node(ONE, 40, Role::TabControl, None);
@@ -335,7 +398,7 @@ fn five_tabs(desk: &mut Desk) {
     answer_run(desk, 42_000, CandidateAnswer::focused(read));
 }
 
-/// Change B's order: a second application's UI Automation focus raised
+/// Change B's order, code-level, as no recording gives it: a second application's UI Automation focus raised
 /// while Windows still names the first's window, sent at once past the
 /// listener's hold, reaching Core before the report of the new window in
 /// front and its foreground tell. It is refused as unrelated; the title
@@ -396,25 +459,6 @@ fn uia_past_the_hold(desk: &mut Desk) {
     settings.details.window = Some(TWO.top_level());
     let read = by_ids(focus_read_of(TWO, &settings, &[]), ids(TWO.top, 0, 0));
     answer_run(desk, at + 52_000, CandidateAnswer::focused(read));
-}
-
-/// The "File name" edit of the Open dialog committed through MSAA, its
-/// caret at the start of its empty text.
-fn file_name(desk: &mut Desk) {
-    let edit = ONE.top + 1;
-    tell_at(
-        desk,
-        75_000,
-        msaa_tell(ONE, EventKind::MsaaFocus, (edit, -4, 0), 75_000),
-    );
-    let field = msaa_node(ONE, 2, Role::EditableText, Some("File name:"));
-    let mut read = by_ids(focus_read_of(ONE, &field, &[]), ids(edit, -4, 0));
-    read.caret = FocusCaret::Read(Box::new(FocusCaretRead {
-        caret: caret_on(empty_line(), None),
-        selected_text: None,
-        baseline: TextAnchor(70),
-    }));
-    answer_run(desk, 76_000, CandidateAnswer::focused(read));
 }
 
 fn empty_line() -> TextChunk {
@@ -489,32 +533,45 @@ fn started(desk: &mut Desk, at_us: u64) {
     );
 }
 
-/// The folder tree's stale MSAA focus, child 16 of its tree view, at
-/// `at_us`.
-fn stale_tree(desk: &mut Desk, at_us: u64) {
-    tell_at(
-        desk,
-        at_us,
-        msaa_tell(ONE, EventKind::MsaaFocus, (ONE.top + 5, -4, 16), at_us),
-    );
+/// The "File name" edit of the Open dialog committed through MSAA by its
+/// recorded focus `event`, its caret at the start of `text`: the windows
+/// of the dialog and its field.
+fn file_name(desk: &mut Desk, event: &Recorded, text: &str) -> Windows {
+    let mut windows = Windows::new(ONE, None);
+    play(desk, &mut windows, std::slice::from_ref(event), 75_000);
+    let edit = windows.handle(&event.window);
+    let field = msaa_node(ONE, 2, Role::EditableText, Some("File name:"));
+    let mut line = empty_line();
+    text.clone_into(&mut line.text);
+    let mut read = by_ids(focus_read_of(ONE, &field, &[]), ids(edit, -4, 0));
+    read.caret = FocusCaret::Read(Box::new(FocusCaretRead {
+        caret: caret_on(line, None),
+        selected_text: None,
+        baseline: TextAnchor(70),
+    }));
+    answer_run(desk, 76_000, CandidateAnswer::focused(read));
+    windows
 }
 
-/// The Open dialog (survey `np_open`): "File name:" committed at 75 ms
-/// after Control+O; the tree's stale focus 200 ms after the edit's, within
-/// the recorded 124 to 432 ms. Left Arrow in the empty field is placed
-/// code-level, its watch out when the tree's focus arrives. The tree's
-/// confirmation answered `focused`: not focused, the watch runs out its
-/// bound and the arrow says "blank", as NVDA in all 18 captured runs;
-/// focused, the arrow is silent and the tree is read at its turn.
+/// The Open dialog (`np_open_run1`): "File name:" committed by its focus;
+/// the folder tree's stale focus 432 ms after the edit's, as recorded.
+/// Code-level: Left Arrow in the empty field placed 15 ms before the
+/// tree's focus, so its watch is out when the focus arrives, which a real
+/// dialog cannot place on demand. The tree's confirmation answered
+/// `focused`: not focused, the watch runs out its bound and the arrow says
+/// "blank", as NVDA in all 18 captured runs; focused, the arrow is silent
+/// and the tree is read at its turn.
 fn open_dialog(desk: &mut Desk, focused: bool) {
-    file_name(desk);
-    left_arrow(desk, 260_000);
-    started(desk, 262_000);
-    stale_tree(desk, 275_000);
+    let events = recording("np_open_run1");
+    let mut windows = file_name(desk, &events[0], "");
+    let tree_at = 75_000 + events[1].t_us - events[0].t_us;
+    left_arrow(desk, tree_at - 15_000);
+    started(desk, tree_at - 13_000);
+    play(desk, &mut windows, &events[1..], tree_at);
     let (number, _) = run_sent(desk);
     answer_at(
         desk,
-        277_000,
+        tree_at + 2_000,
         ONE,
         number,
         Reply::Candidate(CandidateAnswer {
@@ -522,21 +579,30 @@ fn open_dialog(desk: &mut Desk, focused: bool) {
             read: None,
         }),
     );
+    let tree = windows.handle(&events[1].window);
     if focused {
         let tree_item = msaa_node(ONE, 60, Role::TreeItem, Some("This PC"));
         let read = by_ids(
             focus_read_of(ONE, &tree_item, &[msaa_node(ONE, 59, Role::Tree, None)]),
-            ids(ONE.top + 5, -4, 16),
+            ids(tree, -4, 16),
         );
-        answer_run(desk, 280_000, CandidateAnswer::focused(read));
+        answer_run(desk, tree_at + 5_000, CandidateAnswer::focused(read));
         return;
     }
+    // The bound: the watch's last check, the caret still at the start.
+    blank_at_bound(desk, tree_at - 13_000 + 100_000);
+    // At its turn the tree's stored refusal asks nothing.
+}
+
+/// The key's watch answered at its bound, at `at_us`: the caret at the
+/// start of the empty text.
+fn blank_at_bound(desk: &mut Desk, at_us: u64) {
     let watch = sent_of(desk, "Text");
     let mut unit = empty_line();
     unit.unit = TextUnit::Character;
     answer_at(
         desk,
-        desk.at_us + 1_000 + 100_000,
+        at_us,
         ONE,
         watch,
         Reply::Text(TextReply::Watched(Box::new(Watched::Bound(WatchedRead {
@@ -544,46 +610,44 @@ fn open_dialog(desk: &mut Desk, focused: bool) {
             unit,
         })))),
     );
-    // At its turn the tree's stored refusal asks nothing.
 }
 
-/// The same, a second Left Arrow arriving while the tree's confirmation
-/// is out: the confirmation is withdrawn and the first arrow is silent.
+/// The same, a second Left Arrow arriving while the tree's confirmation is
+/// out (code-level): the confirmation is withdrawn and the first arrow is
+/// silent; the tree, ahead of the second arrow, is read at its turn and
+/// found without the focused state; then the second arrow reads, watches
+/// to its bound and says "blank".
 fn open_dialog_second_arrow(desk: &mut Desk) {
-    file_name(desk);
-    left_arrow(desk, 260_000);
-    started(desk, 262_000);
-    stale_tree(desk, 275_000);
-    left_arrow(desk, 276_000);
+    let events = recording("np_open_run1");
+    let mut windows = file_name(desk, &events[0], "");
+    let tree_at = 75_000 + events[1].t_us - events[0].t_us;
+    left_arrow(desk, tree_at - 15_000);
+    started(desk, tree_at - 13_000);
+    play(desk, &mut windows, &events[1..], tree_at);
+    left_arrow(desk, tree_at + 1_000);
+    answer_run(desk, tree_at + 3_000, unfocused());
+    started(desk, tree_at + 5_000);
+    blank_at_bound(desk, tree_at + 5_000 + 100_000);
 }
 
-/// The Save As dialog (`validity-saveas-control`, run 1): "File name:"
-/// holding "np.txt" committed at 255 ms, the tree's stale focus at 389 ms,
-/// read at its turn and found without the focused state, and Shift+Right
-/// at 2 002 ms, its caret event at 2 004 ms: "n selected", as NVDA said.
+/// The Save As dialog's decided question (`validity_saveas_control_run1`
+/// gives the events' identities): "File name:" holding "np.txt" committed
+/// by its recorded focus; Shift+Right's caret event, then the folder
+/// tree's stale MSAA focus arriving behind it while the caret event's read
+/// is out. Code-level: in all 19 recorded runs the tree's focus came 159
+/// to 355 ms before the caret event, so no recording gives this order. The
+/// unconfirmed focus behind the caret tell does not count and is not read
+/// (Dickson, 2026-11-18): the selection says "n selected", as NVDA, and
+/// only then is the tree read at its turn and refused.
 fn save_as(desk: &mut Desk) {
-    let edit = ONE.top + 1;
-    tell_at(
-        desk,
-        255_000,
-        msaa_tell(ONE, EventKind::MsaaFocus, (edit, -4, 0), 255_000),
-    );
-    let field = msaa_node(ONE, 2, Role::EditableText, Some("File name:"));
+    let events = recording("validity_saveas_control_run1");
+    let mut windows = file_name(desk, &events[0], "np.txt");
+    let caret_at = 2_004_000;
+    play(desk, &mut windows, &events[2..], caret_at);
+    let number = sent_of(desk, "Text");
+    play(desk, &mut windows, &events[1..2], caret_at + 2_000);
     let mut line = empty_line();
     "np.txt".clone_into(&mut line.text);
-    let mut read = by_ids(focus_read_of(ONE, &field, &[]), ids(edit, -4, 0));
-    read.caret = FocusCaret::Read(Box::new(FocusCaretRead {
-        caret: caret_on(line.clone(), None),
-        selected_text: None,
-        baseline: TextAnchor(70),
-    }));
-    answer_run(desk, 256_000, CandidateAnswer::focused(read));
-    stale_tree(desk, 389_000);
-    answer_run(desk, 390_000, unfocused());
-    let mut caret = msaa_tell(ONE, EventKind::SystemCaret, (edit, -8, 0), 2_004_000);
-    caret.kind = EventKind::SystemCaret;
-    tell_at(desk, 2_004_000, caret);
-    let number = sent_of(desk, "Text");
     let selected = SelectionChange {
         selected: true,
         text: "n".to_owned(),
@@ -591,7 +655,7 @@ fn save_as(desk: &mut Desk) {
     };
     answer_at(
         desk,
-        2_005_000,
+        caret_at + 3_000,
         ONE,
         number,
         Reply::Text(TextReply::SelectionRead(Box::new(SelectionReadReply {
@@ -618,6 +682,7 @@ fn save_as(desk: &mut Desk) {
             edit_selection: None,
         }))),
     );
+    answer_run(desk, caret_at + 5_000, unfocused());
 }
 
 /// Every fixture: its name and its session.
@@ -773,6 +838,8 @@ fn a_second_arrow_while_the_tree_is_confirmed_leaves_the_first_silent() {
         replayed("validity_open_dialog_second_arrow"),
         said(&[
             &["Label(\"File name:\")", "Role(EditableText)"],
+            &["Message(Blank)"],
+            // The second arrow's; the first said nothing.
             &["Message(Blank)"],
         ])
     );
