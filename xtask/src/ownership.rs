@@ -754,13 +754,14 @@ const DETERMINISM_ENTRIES: [&str; 122] = [
 /// `clippy::disallowed_methods`, with a reason, and no other file of a
 /// covered crate may (`books/dev/src/reference/testing.md`, "The crates on a reducer's path"): the
 /// two cost measurements, which time with `Instant`;
-/// the replay fixture's test, which reads its file; the mint's own test;
+/// the replay fixtures' tests, which read their files; the mint's own test;
 /// the conformance corpus's reader and its test; and each generated test's
 /// exploration test, which reads its seed and case count.
-const EXPECT_EXCEPTIONS: [&str; 9] = [
+const EXPECT_EXCEPTIONS: [&str; 10] = [
     "crates/verbatim-text/tests/terminal_cost.rs",
     "crates/verbatim-core/tests/terminal_cost.rs",
     "crates/verbatim-core/tests/replay_fixture.rs",
+    "crates/verbatim-core/tests/replay_validity.rs",
     "crates/verbatim-model/src/lib.rs",
     "crates/verbatim-term-sim/src/conformance.rs",
     "crates/verbatim-term-sim/tests/conformance.rs",
@@ -771,10 +772,11 @@ const EXPECT_EXCEPTIONS: [&str; 9] = [
 
 /// The files the rule of whole modules excepts: the exceptions above but
 /// the mint's test, which names no module.
-const MODULE_EXCEPTIONS: [&str; 8] = [
+const MODULE_EXCEPTIONS: [&str; 9] = [
     "crates/verbatim-text/tests/terminal_cost.rs",
     "crates/verbatim-core/tests/terminal_cost.rs",
     "crates/verbatim-core/tests/replay_fixture.rs",
+    "crates/verbatim-core/tests/replay_validity.rs",
     "crates/verbatim-term-sim/src/conformance.rs",
     "crates/verbatim-term-sim/tests/conformance.rs",
     "crates/verbatim-reader-rules/src/in_flight/tests/explore.rs",
