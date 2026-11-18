@@ -433,13 +433,16 @@ non-zero window becomes the desktop window for a menu end, a popup menu
 end and a switch end, any other event with one being dropped; and
 `MSNHiddenWindowClass` is dropped. Core's acceptance then accepts the
 desktop window by rule 8. A focus candidate on the desktop window itself
-is then refused with no read, a limit: no reader reads it, since Core
+is refused with no read, with the reason that no reader reads it: Core
 starts no outpost for the desktop window's process (csrss.exe, whose
-launch fails), and the listener mints no node. NVDA would speak the
-desktop object if it or an ancestor had the focused state
+launch fails), and the listener mints no node. NVDA reads the desktop
+object and refuses its focus as not focused: the object's state is
+focusable and never focused, and neither has its parent, the window
+object, whose own parent is none, so the focused-state test fails
 (`IAccessibleHandler/__init__.py` 692 to 760;
-`NVDAObjects/IAccessible/__init__.py` 874 to 892); no recording shows
-one focused. Core's
+`NVDAObjects/IAccessible/__init__.py` 874 to 892; probed 2026-11-18,
+the client's and the window object's states focusable only). The speech
+is the same, nothing. Core's
 `a_focus_on_the_desktop_window_starts_no_outpost_and_asks_nothing`.
 Program Manager's and the taskbar's foreground events are not
 queued as foreground events, as NVDA drops them, but they update Core's

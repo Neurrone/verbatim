@@ -80,7 +80,9 @@ pub(crate) enum Reason {
     /// The acceptance test refused its window.
     Acceptance,
     /// An event of the desktop window, which no reader reads: Core starts
-    /// no outpost for its process (a limit; `docs/parity/focus-events.md`).
+    /// no outpost for its process. NVDA reads the object and refuses it as
+    /// not focused, its state never focused, so the speech is the same
+    /// (`docs/parity/focus-events.md`).
     NoReader,
     /// Its element lost the keyboard focus by the check thread's answer.
     KeyboardFocusLost,
