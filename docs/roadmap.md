@@ -1269,20 +1269,19 @@ names the terminal's case, with no catch-all, so a new one fails to
 compile until decided; reading never waits on speech, nor speech on
 reading.
 
-Kept by Dickson's ruling (2026-11-19): keys owning the changes they
-cause, lists and colours (fzf, tig, Microsoft Edit), since many terminal
-programs need them; the review cursor over the terminal's text and
-moving by command; holding reads while speech waits during a flood; an
-unfinished word held; volatile rows. Each that rests on today's finding
-of every row again by its text across reads is redesigned in this phase
-to be simpler. Open, with the study's recommendation: the flood groups
-(keep), exact skip counts (drop), memory across focus changes (drop),
-typing echoed only as shown (keep), a rewritten line from its first
-changed word (keep), the status bar's footer (keep), a new screen
-speaking only its screen (keep), what is read (the last two screens),
-and two edge differences from NVDA (a read begun before a key and
-answered after it is spoken; a read out when the focus moves is
-dropped). Before the build: a recording confirming the screen ends at
+Every existing terminal feature is kept unless Dickson authorizes its
+removal (Dickson, 2026-11-19); among them, by name: keys owning the
+changes they cause, lists and colours (fzf, tig, Microsoft Edit), since
+many terminal programs need them; the review cursor over the terminal's
+text and moving by command; holding reads while speech waits during a
+flood; an unfinished word held; volatile rows. Each that rests on
+today's finding of every row again by its text across reads is
+redesigned in this phase to be simpler, keeping what it says. The
+study's proposals to remove (exact skip counts, memory across focus
+changes), to read only the last two screens, and its two edge
+differences from NVDA (a read begun before a key and answered after it
+is spoken; a read out when the focus moves is dropped) are questions
+for Dickson, not decisions. Before the build: a recording confirming the screen ends at
 the document's end in both terminals, NVDA captures for every
 expectation that moves to NVDA's speech, one adversarial review and
 Dickson's approval.

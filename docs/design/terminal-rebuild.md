@@ -5,8 +5,8 @@ Written against main 23264d4b, NVDA pinned at 732d1ce2f. A study for the rebuild
 ## Rulings so far (Dickson, 2026-11-19)
 
 - The rebuild is a phase of its own, M6.4, not built now.
-- Kept: F2 (holding reads while speech waits), F5 (an unfinished word held), F7 (volatile rows), F8 (keys owning changes, lists and colours: many terminal programs need it), F11 and F12 (review over the terminal's text and moving by command). Each kept feature that today rests on finding rows again by their text (F3's rows) is to be redesigned simpler in the phase: F8 by comparing the visible screen before and after a key row by row at the same places, F11 by reading live text with the position counted from the document's end and found again by its line's text only when a review command runs, F12 by a live search at the command; these are directions, each checked against recordings in the phase.
-- Open, with the recommendations below: the core design and what is read (questions 1 and 2), F1, F3, F4, F6, F9, F13, F14, and the two edge differences (question 9).
+- Every existing terminal feature is kept unless Dickson authorizes its removal. Named as kept: F2 (holding reads while speech waits), F5 (an unfinished word held), F7 (volatile rows), F8 (keys owning changes, lists and colours: many terminal programs need it), F11 and F12 (review over the terminal's text and moving by command). Each kept feature that today rests on finding rows again by their text (F3's rows) is to be redesigned simpler in the phase, keeping what it says: F8 by comparing the visible screen before and after a key row by row at the same places, F11 by reading live text with the position counted from the document's end and found again by its line's text only when a review command runs, F12 by a live search at the command; these are directions, each checked against recordings in the phase.
+- The study's recommendations below to drop a feature (F3, F4) or change what is said (questions 2 and 9) are proposals awaiting Dickson's authorization; until he gives it, the feature stays.
 
 ## Decisions it changes, and the fact that changed
 
