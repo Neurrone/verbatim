@@ -929,8 +929,8 @@ impl Listener {
     /// thread, every other read to its reading thread ([`ask`]).
     fn request(&self, ask: Box<Ask>) {
         if let Request::AwaitShown { window } = ask.request {
-            let token = shown::ShownToken::new(ask.number, &self.outgoing);
-            self.shown.request((window, token), || self.nudge_shown());
+            self.shown
+                .request((ask.number, window), &self.outgoing, || self.nudge_shown());
             return;
         }
         self::ask((&self.readers, &self.kept), ask);
@@ -4678,11 +4678,43 @@ mod tests {
         };
         assert!(!shown.cancel(cancel(7), nudge));
         let (writer, _reader) = outgoing();
-        let waiter = shown::ShownToken::new(RequestNumber(8), &Arc::new(writer));
-        shown.request((WindowHandle(5), waiter), nudge);
+        let writer = Arc::new(writer);
+        shown.request((RequestNumber(8), WindowHandle(5)), &writer, nudge);
         assert!(shown.cancel(cancel(8), nudge));
         assert!(!shown.cancel(cancel(8), nudge));
         assert_eq!(nudged.get(), 2, "the request's nudge and its cancel's");
         assert_eq!(taken.try_iter().count(), 2);
+    }
+
+    /// The record of the requests out on the `WinEvent` thread holds exactly
+    /// those not yet answered, with no limit on their count: a request
+    /// answered leaves it, so its cancel nudges nothing, and every other's
+    /// cancel, however many are out, reaches its waiter.
+    #[test]
+    fn the_record_of_shows_requests_out_holds_exactly_those_unanswered() {
+        let (inputs, taken) = std::sync::mpsc::channel();
+        let shown = shown::ToEventThread::new(inputs);
+        let (writer, _reader) = outgoing();
+        let writer = Arc::new(writer);
+        for number in 1..=40 {
+            shown.request((RequestNumber(number), WindowHandle(5)), &writer, || true);
+        }
+        let mut handed: Vec<shown::ShownInput> = taken.try_iter().collect();
+        assert_eq!(shown.out_for_tests(), 40);
+        // The WinEvent thread answers request 1.
+        let shown::ShownInput::Request { token, .. } = handed.remove(0) else {
+            unreachable!("a request")
+        };
+        token.answer(verbatim_listener_logic::shown::Shown::Shown);
+        assert_eq!(shown.out_for_tests(), 39);
+        let cancel = |number| verbatim_model::request::Cancel {
+            number: RequestNumber(number),
+            reason: verbatim_model::request::CancelReason::Withdrawn,
+        };
+        assert!(!shown.cancel(cancel(1), || panic!("no nudge for an answered request")));
+        assert!(shown.cancel(cancel(2), || true));
+        assert!(shown.cancel(cancel(40), || true));
+        assert_eq!(shown.out_for_tests(), 37);
+        drop(handed);
     }
 }

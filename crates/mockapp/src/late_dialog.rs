@@ -8,7 +8,8 @@
 //! `open-dialog-shown-late` makes a dialog of the system's dialog class
 //! (`#32770`) from a template without `WS_VISIBLE`, owned by mockapp's
 //! window, on a UI thread of its own so the host's thread goes on serving
-//! its provider; brings it to the foreground and focuses its "File name:"
+//! its provider, and answering the messages the owned dialog sends it
+//! while it waits for the dialog's handle; brings it to the foreground and focuses its "File name:"
 //! Edit while it is hidden, as Import raises its foreground and then its
 //! field's focus; then, after `<ms>`, shows it. `owned-box` raises a message
 //! box the dialog owns after the field's focus and before the show, the
@@ -104,10 +105,23 @@ fn spawn(name: &str, run: impl FnOnce(&Sender<Result<isize, String>>) + Send + '
     if let Err(error) = spawned {
         return format!("rejected: {error}");
     }
-    match made.recv() {
-        Ok(Ok(dialog)) => format!("{name} {dialog}"),
-        Ok(Err(error)) => format!("rejected: {error}"),
-        Err(_) => format!("rejected: the {name} thread ended first"),
+    // The host's window thread answers its messages while it waits: a
+    // dialog it owns sends it messages as it is made and activated, which a
+    // thread blocked in the wait would never answer.
+    loop {
+        match made.try_recv() {
+            Ok(Ok(dialog)) => return format!("{name} {dialog}"),
+            Ok(Err(error)) => return format!("rejected: {error}"),
+            Err(mpsc::TryRecvError::Disconnected) => {
+                return format!("rejected: the {name} thread ended first");
+            }
+            Err(mpsc::TryRecvError::Empty) => {
+                let until = std::time::Instant::now() + Duration::from_millis(1);
+                if let Err(error) = crate::window::wait_pumping(until) {
+                    return format!("rejected: {error}");
+                }
+            }
+        }
     }
 }
 

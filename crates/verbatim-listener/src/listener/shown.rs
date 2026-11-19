@@ -41,18 +41,28 @@ pub(super) enum ShownInput {
 }
 
 /// The one answer path of a request for a window's show: answered once
-/// ([`Self::answer`]), or cancelled when dropped unanswered.
+/// ([`Self::answer`]), or cancelled when dropped unanswered. Its answer
+/// also tells the pipe thread the request is no longer out, over a plain
+/// channel, so that the pipe thread's record of what is out holds exactly
+/// the requests not yet answered ([`ToEventThread`]).
 pub(super) struct ShownToken {
     number: RequestNumber,
     outgoing: Option<Arc<Outgoing>>,
+    answered: Sender<RequestNumber>,
 }
 
 impl ShownToken {
-    /// The token of request `number`, answering through `outgoing`.
-    pub(super) fn new(number: RequestNumber, outgoing: &Arc<Outgoing>) -> Self {
+    /// The token of request `number`, answering through `outgoing` and
+    /// telling the pipe thread on `answered`.
+    fn new(
+        number: RequestNumber,
+        outgoing: &Arc<Outgoing>,
+        answered: Sender<RequestNumber>,
+    ) -> Self {
         Self {
             number,
             outgoing: Some(Arc::clone(outgoing)),
+            answered,
         }
     }
 
@@ -81,6 +91,8 @@ impl ShownToken {
             probes: Vec::new(),
             detail: detail.to_owned(),
         });
+        // A pipe thread that has ended keeps no record to clear.
+        let _ = self.answered.send(self.number);
     }
 }
 
@@ -163,62 +175,76 @@ impl OnEventThread {
     }
 }
 
-/// How many of the requests handed to the `WinEvent` thread the pipe thread
-/// remembers, newest kept, so that only their cancels go there.
-const HANDED_KEPT: usize = 16;
-
 /// The pipe thread's end: hands an input to the `WinEvent` thread and
-/// nudges it. It remembers the numbers of the requests it handed, so that a
+/// nudges it. It records the requests out on that thread, each from its
+/// handing to its token's answer, which the token sends back, so that a
 /// cancel of any other request, a reading thread's, wakes no `WinEvent`
-/// thread. The numbers are its own record of what it sent, judged by
-/// nothing: a cancel of a request the thread has answered costs one nudge
-/// that finds nothing, and one forgotten past [`HANDED_KEPT`] is answered
-/// by the show, the destruction or the shutdown.
+/// thread, and every cancel of a request out reaches its waiter. The
+/// record is of what it handed and what was answered, judged by nothing;
+/// an answer and a cancel crossing cost one nudge that finds nothing.
 pub(super) struct ToEventThread {
     inputs: Sender<ShownInput>,
-    /// The numbers of the requests handed, newest last; the pipe thread's
-    /// alone.
-    handed: std::cell::RefCell<std::collections::VecDeque<RequestNumber>>,
+    /// Where each token tells its answer.
+    answering: Sender<RequestNumber>,
+    /// The tokens' answers not yet taken off the record.
+    answered: Receiver<RequestNumber>,
+    /// The requests out on the `WinEvent` thread; the pipe thread's alone.
+    out: std::cell::RefCell<std::collections::BTreeSet<RequestNumber>>,
 }
 
 impl ToEventThread {
     /// The end sending on `inputs`.
     pub(super) fn new(inputs: Sender<ShownInput>) -> Self {
+        let (answering, answered) = std::sync::mpsc::channel();
         Self {
             inputs,
-            handed: std::cell::RefCell::default(),
+            answering,
+            answered,
+            out: std::cell::RefCell::default(),
         }
     }
 
-    /// Hands Core's request for `window`'s show, answered by `token`, on,
-    /// then nudges the thread with `nudge`. A thread that has ended dropped
-    /// its end of the channel, and every input with it, so a request it
-    /// never takes is answered cancelled as its token is dropped.
+    /// Takes the requests the tokens answered off the record.
+    fn take_answered(&self) {
+        let mut out = self.out.borrow_mut();
+        for number in self.answered.try_iter() {
+            out.remove(&number);
+        }
+    }
+
+    /// Hands Core's request `number` for `window`'s show on, its token
+    /// answering through `outgoing`, then nudges the thread with `nudge`. A
+    /// thread that has ended dropped its end of the channel, and every
+    /// input with it, so a request it never takes is answered cancelled as
+    /// its token is dropped.
     pub(super) fn request(
         &self,
-        (window, token): (WindowHandle, ShownToken),
+        (number, window): (RequestNumber, WindowHandle),
+        outgoing: &Arc<Outgoing>,
         nudge: impl FnOnce() -> bool,
     ) {
-        let mut handed = self.handed.borrow_mut();
-        if handed.len() == HANDED_KEPT {
-            handed.pop_front();
-        }
-        handed.push_back(token.number());
-        drop(handed);
+        self.take_answered();
+        self.out.borrow_mut().insert(number);
+        let token = ShownToken::new(number, outgoing, self.answering.clone());
         self.hand(ShownInput::Request { window, token }, nudge);
     }
 
     /// Hands Core's `cancel` on, nudging the thread with `nudge`, only when
-    /// it names a request handed to the thread; whether it did.
+    /// it names a request out on the thread; whether it did.
     pub(super) fn cancel(&self, cancel: Cancel, nudge: impl FnOnce() -> bool) -> bool {
-        let mut handed = self.handed.borrow_mut();
-        let Some(at) = handed.iter().position(|number| *number == cancel.number) else {
+        self.take_answered();
+        if !self.out.borrow_mut().remove(&cancel.number) {
             return false;
-        };
-        handed.remove(at);
-        drop(handed);
+        }
         self.hand(ShownInput::Cancel(cancel), nudge);
         true
+    }
+
+    /// How many requests the record holds out.
+    #[cfg(test)]
+    pub(super) fn out_for_tests(&self) -> usize {
+        self.take_answered();
+        self.out.borrow().len()
     }
 
     fn hand(&self, input: ShownInput, nudge: impl FnOnce() -> bool) {
