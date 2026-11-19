@@ -1237,9 +1237,61 @@ silence.
   for is made exact with the mixer's tests driven pass by pass (Dickson,
   2026-11-03).
 
-## M6.4 — Terminal residuals
+## M6.4 — Terminal reading rebuild and residuals
 
-What remains of the terminal redesign (Dickson, 2026-10-29).
+### The rebuild (Dickson, 2026-11-19)
+
+The terminal reading is rebuilt on NVDA's loop, as a phase of its own,
+not before (Dickson, 2026-11-19). Since build 3's implementation review
+it has had five defects (6a9e55dc, 75b5fb5c, 33b0523c, and two found by
+the group 3 design: a terminal silent after its reading is dropped
+during a flood, until a key, and terminal speech stamped with the front
+entry's key fence, so typing echoed during a read can be dropped), and
+the third-fix rule stopped it; the last two stay until this phase. It
+is about 11,970 lines of product code and 17,000 of tests, against
+NVDA's loop of about 800 (`nvda/source/NVDAObjects/behaviors.py`,
+lines 372 to 636, with `nvda/source/diffHandler.py` and
+`nvda/source/NVDAObjects/UIA/winConsoleUIA.py`): wait for a change, read,
+compare with the one previous text, queue the inserted lines' speech.
+
+The design study's core: Core keeps the one previous text, at most one
+read out and whether a change was told since it began; the outpost reads
+the last two screens from the document's end at Core's request and keeps
+nothing; the inserted lines join the event queue as an entry with the
+queue's own fence; about 1,270 product lines with five reading states.
+Its structural rules, so that a change to the event queue, the key
+fences or reader replacement cannot add a state the terminal never
+listed: the reading lives in the committed focus's record, whose one
+constructor every commit runs, so no second reset path exists; the
+terminal stores no fence, cut time, spoken flag or follow token, and
+asks the queue at its entry's turn; every answer and every queue policy
+names the terminal's case, with no catch-all, so a new one fails to
+compile until decided; reading never waits on speech, nor speech on
+reading.
+
+Kept by Dickson's ruling (2026-11-19): keys owning the changes they
+cause, lists and colours (fzf, tig, Microsoft Edit), since many terminal
+programs need them; the review cursor over the terminal's text and
+moving by command. Each is redesigned in this phase to be simpler than
+today's, which rests on finding every row again by its text across
+reads. Open, with the study's recommendation: the flood groups (keep),
+exact skip counts (drop), holding reads while speech waits (drop unless
+a measurement misses the wake-up budget), an unfinished word held
+(drop), volatile rows (drop), memory across focus changes (drop),
+typing echoed only as shown (keep), a rewritten line from its first
+changed word (keep), the status bar's footer (keep), a new screen
+speaking only its screen (keep), what is read (the last two screens),
+and two edge differences from NVDA (a read begun before a key and
+answered after it is spoken; a read out when the focus moves is
+dropped). Before the build: a recording confirming the screen ends at
+the document's end in both terminals, NVDA captures for every
+expectation that moves to NVDA's speech, one adversarial review and
+Dickson's approval.
+
+### Residuals
+
+What remains of the terminal redesign (Dickson, 2026-10-29); the
+rebuild above decides which of these still apply.
 
 Built from [the terminal model](../books/dev/src/explanation/design/terminal-model.md) (accepted by
 Dickson on 2026-10-25), which states what is read, the rules and the

@@ -18,7 +18,7 @@ Scenarios: the `windows_terminal_` scenarios generally, for example `windows_ter
 - Scenarios: the `*_up_typing` (since merged into `*_line_key_flood`), `*_typing` and `*_commands` Windows Terminal scenarios.
 - How: the launch focus sometimes speaks "... terminal" without "... window", and the desktop's announcement is sometimes cancelled.
 - Cause: not found; possibly the first entry's.
-- Fix: [M6.4 terminal residuals](roadmap.md#m64--terminal-residuals).
+- Fix: [M6.4 terminal reading rebuild and residuals](roadmap.md#m64--terminal-reading-rebuild-and-residuals).
 
 ## Windows Terminal's second terminal identity repeats the terminal at launch
 
@@ -70,7 +70,7 @@ Recorded by Claude, 2026-11-04, pending Dickson's acceptance.
 - `windows_terminal_control_flood`'s command marks steps (run 41697089785, when they were `windows_terminal_command_marks`)
   - How: 2.0 s after the second Verbatim+Alt+Up (the previous command mark), Verbatim played its "application not responding" sound where the mark's line "ready> .\long.ps1" was expected.
   - Cause: the mark lay above the rows Core keeps, so Core asked the outpost to search the terminal (`TerminalFind`); the search, a remote operation in Windows Terminal (`crates/verbatim-uia-rops/src/terminal_find.rs`), took 3.2 s, past the outpost's 2 s text deadline (`TEXT_DEADLINE`), so the worker was abandoned, and `finish` (`crates/verbatim-app/src/main.rs`) plays the sound for any abandoned query, without asking whether Windows judges the window hung. Windows Terminal was answering throughout. NVDA has no such sound.
-  - Fix: built with the slow applications build (2026-11-07): the 2 s text deadline is gone, a query waits up to the 11 s handling deadline, and the sound plays only when Windows judges the window hung and its application holds attention (Dickson, 2026-11-06). Ten local runs passed, none slow; the entry is deleted once a run's log shows a search past 2 s answered and spoken. Seen again in run 42487419395 (2026-11-08): after the step's Verbatim+Alt+Up, outpost 4 reported Windows Terminal (pid 6224) not responding as Windows judged its window hung, so the sound played as the rule says, where the mark's line was expected; the slow search remains the cause. The search's cost in a real Windows Terminal, never measured, is to be measured and fixed with [M6.4 terminal residuals](roadmap.md#m64--terminal-residuals)' measurements.
+  - Fix: built with the slow applications build (2026-11-07): the 2 s text deadline is gone, a query waits up to the 11 s handling deadline, and the sound plays only when Windows judges the window hung and its application holds attention (Dickson, 2026-11-06). Ten local runs passed, none slow; the entry is deleted once a run's log shows a search past 2 s answered and spoken. Seen again in run 42487419395 (2026-11-08): after the step's Verbatim+Alt+Up, outpost 4 reported Windows Terminal (pid 6224) not responding as Windows judged its window hung, so the sound played as the rule says, where the mark's line was expected; the slow search remains the cause. The search's cost in a real Windows Terminal, never measured, is to be measured and fixed with [M6.4 terminal reading rebuild and residuals](roadmap.md#m64--terminal-reading-rebuild-and-residuals)' measurements.
 
 ## Windows Terminal busy opening its tab switcher
 
@@ -79,7 +79,7 @@ Recorded by Claude, 2026-11-04, pending Dickson's acceptance.
 - `windows_terminal_tabs` (run 41859263092)
   - How: at Control+Shift+Tab, "sound: app-not-responding" was heard where "Tab switcher grouping", "list" and the first tab were expected.
   - Cause: the key, a caret key in the terminal, opened a caret watch; Windows Terminal did not answer the watch's read for 2 s while it opened its tab switcher, so the outpost abandoned its worker ("a call passed its deadline", 15:43:34.285), and Core plays the sound for any abandoned query, without asking whether Windows judges the window hung.
-  - Fix: whether Control+Shift+Tab opens a caret watch in a terminal at all is settled with [M6.4 terminal residuals](roadmap.md#m64--terminal-residuals) (Dickson, 2026-11-04); the watch now waits the 11 s handling deadline and the sound plays only for a window Windows judges hung, built with the slow applications build (2026-11-07). Ten local runs passed, none slow; the entry is deleted once a run's log shows the slow watch answered.
+  - Fix: whether Control+Shift+Tab opens a caret watch in a terminal at all is settled with [M6.4 terminal reading rebuild and residuals](roadmap.md#m64--terminal-reading-rebuild-and-residuals) (Dickson, 2026-11-04); the watch now waits the 11 s handling deadline and the sound plays only for a window Windows judges hung, built with the slow applications build (2026-11-07). Ten local runs passed, none slow; the entry is deleted once a run's log shows the slow watch answered.
 
 ## The caret watch's baseline anchor released while it waits
 
@@ -95,14 +95,14 @@ Recorded by Claude, 2026-11-04.
 - Scenarios: the Windows Terminal typing scenarios.
 - How: the typed character is not echoed, only caret moves are raised. About 5 percent of runs.
 - Cause: not known whether Windows Terminal or UIA loses the event; settling it takes about 60 runs and a second, independent UIA client.
-- Fix: [M6.4 terminal residuals](roadmap.md#m64--terminal-residuals), with the outpost and Core step.
+- Fix: [M6.4 terminal reading rebuild and residuals](roadmap.md#m64--terminal-reading-rebuild-and-residuals), with the outpost and Core step.
 
 ## Console host scenarios
 
 - `conhost_leave_flood`
   - How: fails at "brings the first window back": on 2026-10-31 the harness could not bring the first console window back to the foreground, because its window did not process the restore for 5 s after its flood. 10 of 10 locally. Earlier, it once heard no "blank" for an empty new console window, its first read giving nothing within 15 seconds.
   - Cause: on the development VM, which renders the desktop in software (WARP), the Desktop Window Manager works through a flooded console's repaints for about 40 seconds after the flood, using up to two cores, and a minimize waits for it in `win32kfull!DwmSyncNotifyMinimizing` while the console's window thread is idle. It happens with no Verbatim running and a restart does not clear it, so it is not Verbatim's to fix. Whether this covers the 2026-10-31 failures on the development machine, and the cause of the empty-console read, are not found.
-  - Fix: no fix planned for the manager's backlog (Dickson decided to leave it unaddressed); the unsettled read is under [M6.4 terminal residuals](roadmap.md#m64--terminal-residuals).
+  - Fix: no fix planned for the manager's backlog (Dickson decided to leave it unaddressed); the unsettled read is under [M6.4 terminal reading rebuild and residuals](roadmap.md#m64--terminal-reading-rebuild-and-residuals).
   - How (2026-11-19, 2 of 13 runs locally): the second window is said as "... window unavailable" when UI Automation focuses the console window itself before its text area.
   - Cause: the outpost's remote states read (`focus_states_remote`, `crates/verbatim-uia-rops/src/focus_states.rs`) fills the cache in the provider's process, where a property the provider does not supply is stored as its default; `IsEnabled` is read as a plain flag (`crates/verbatim-uia/src/shape/shapes.rs`), so its default of false becomes Disabled. Ordinary reads of the same window in the same 10 ms say enabled. NVDA reads `IsEnabled` ignoring the default and treats a missing value as enabled (`NVDAObjects/UIA/__init__.py` 2022).
   - Fix: fixed in "Read a console window's missing IsEnabled as enabled, as NVDA does": the console host's own provider for its window supplies no `IsEnabled` (verbatim-outpost `a_console_window_reads_enabled_remotely_and_classically`), so the remote program leaves it out of the cache when unsupported, and a missing `IsEnabled` reads as enabled.
@@ -121,7 +121,7 @@ Recorded by Claude, 2026-11-04.
 - `conhost_typing`
   - How: missed a typed "o" in 2 of 6 runs on the base build.
   - Cause: not found.
-  - Fix: [M6.4 terminal residuals](roadmap.md#m64--terminal-residuals).
+  - Fix: [M6.4 terminal reading rebuild and residuals](roadmap.md#m64--terminal-reading-rebuild-and-residuals).
 
 ## File Explorer
 
@@ -140,7 +140,7 @@ Recorded by Claude, 2026-11-04.
 - `conhost_long_lines` (run 41333390347)
   - How: after Enter, "r" is heard where "part1 part2 ... part10" is expected; the snapshot then has the caret on an empty line and "ready>" on the screen's first row.
   - Cause: not found; the typed-character rules (`crates/verbatim-core/src/terminal_model.rs`) are suspected, not shown. Once in 32 runs.
-  - Fix: [M6.4 terminal residuals](roadmap.md#m64--terminal-residuals).
+  - Fix: [M6.4 terminal reading rebuild and residuals](roadmap.md#m64--terminal-reading-rebuild-and-residuals).
 
 ## A new console host not responding at its outpost's first call
 
