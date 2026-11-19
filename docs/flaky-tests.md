@@ -62,6 +62,7 @@ Scenarios: the `windows_terminal_` scenarios generally, for example `windows_ter
 - `settings_system_page` on GitHub's runner (run 42861051487, 2026-11-10), the same failure
 - `settings_system_page` on GitHub's runner (run 43556583340, 2026-11-14), the same failure
 - `settings_system_page` on GitHub's runner (run 44391277251, 2026-11-19), the same failure
+- `settings_system_page` on GitHub's runner (run 44495098916, 2026-11-19), the same failure: the listener's log has the frame's UI Automation focus and none for the page
 - `settings_system_page` on GitHub's runner (run 44465917467, 2026-11-19), the same failure: the frame's UI Automation focus was spoken, the page's window (hwnd 328488) raised only MSAA focus events, rightly left to UI Automation, and no UI Automation focus for the page arrived
   - How: "Settings" was said for the frame, then nothing for 75 s; "Settings window" was never queued.
   - Cause: the page's `Windows.UI.Core.CoreWindow` (hwnd 328450, `SystemSettings.exe`) raised two MSAA focus events, which the outpost dropped because UI Automation owns the window, as NVDA drops them; UI Automation delivered no focus event for the page to the listener, whose handler had delivered the frame's focus two seconds before. A focus UI Automation never delivers is lost, as in NVDA ([ADR 0001](../books/dev/src/reference/adr/0001-focus.md), its limits).
@@ -97,6 +98,7 @@ Recorded by Claude, 2026-11-04.
   - How: at Control+V on the start of "alpha beta gamma", nothing was said within 15 s where "mangoalpha beta gamma" was expected; the outpost's answer to the key's watch had no `same_line`, so Core, judging a key by where the caret landed, spoke nothing.
   - Cause: the watch's baseline is the newest caret the outpost reported before the key (`baseline`, `crates/verbatim-outpost/src/text/mod.rs`), here a caret event's anchor that no request names. The paste moved the caret while the watch read it, so the watch waited for the caret event, and the shell released the anchors no live request names, that one among them; when the event came the baseline no longer resolved. A run whose first read is not overtaken answers before the release and passes.
   - Fix: [the caret and selection rework](roadmap.md#the-caret-and-selection-rework), whose one baseline per text node lives as long as the focus Core holds (Dickson, 2026-11-04).
+  - Again on GitHub's runner (run 44514942878, 2026-11-19), at the Down Arrow after Control+V: "delta epsilon" was never queued; the outpost released anchors 273 and 274 and Core's answers 151 and 152 were not there.
 
 ## Windows Terminal raises no TextChanged for a typed character
 
@@ -114,7 +116,7 @@ Recorded by Claude, 2026-11-04.
   - How (2026-11-19, 2 of 13 runs locally): the second window is said as "... window unavailable" when UI Automation focuses the console window itself before its text area.
   - Cause: the outpost's remote states read (`focus_states_remote`, `crates/verbatim-uia-rops/src/focus_states.rs`) fills the cache in the provider's process, where a property the provider does not supply is stored as its default; `IsEnabled` is read as a plain flag (`crates/verbatim-uia/src/shape/shapes.rs`), so its default of false becomes Disabled. Ordinary reads of the same window in the same 10 ms say enabled. NVDA reads `IsEnabled` ignoring the default and treats a missing value as enabled (`NVDAObjects/UIA/__init__.py` 2022).
   - Fix: fixed in "Read a console window's missing IsEnabled as enabled, as NVDA does": the console host's own provider for its window supplies no `IsEnabled` (verbatim-outpost `a_console_window_reads_enabled_remotely_and_classically`), so the remote program leaves it out of the cache when unsupported, and a missing `IsEnabled` reads as enabled.
-- `conhost_editing` on GitHub's runner (run 44399039765, 2026-11-19)
+- `conhost_editing` on GitHub's runner (run 44399039765, 2026-11-19), and `conhost_commands` (run for 5313bd45, 2026-11-19), the same failure
   - How: the setup failed with "the shell shows its first prompt": the shell's `prompt-ready` file was not written within 30 s.
   - Cause: the console's shell (PowerShell) did not reach its first prompt; Verbatim's outpost in the console answered every request within a few milliseconds and then sat idle (the report's flight recorder, lines 41 to 67), so nothing of Verbatim's held the console. Why the shell was slow is not found.
   - Fix: none planned.
@@ -163,7 +165,7 @@ Scenarios: `measure_keys_conhost` and `measure_keys_conhost_unmoved` (release bu
 
 - Scenarios: `windows_terminal_two_windows` on GitHub's runner, most recently run 44073013757 (2026-11-17), after the title handshake of 4f5770c4.
 - How: the first step hears "Administrator: verbatim-e2e-two-a-... window" where "verbatim-e2e-two-a-... window" is expected, then the terminal and "blank" as expected; the step fails on the window's title alone.
-- How often: run 44073013757 since 4f5770c4; 3 of 7 code runs before it, at the same step.
+- How often: runs 44514942878 and the run for 5313bd45 (2026-11-19); run 44073013757 since 4f5770c4; 3 of 7 code runs before it, at the same step.
 - Cause: the harness saw the window titled exactly with its title, after the shell's "settling" title, before it brought the minimized window forward; Verbatim then read the window's name with the prefix, and the recording's first frame of the restored window shows the tab titled "Administrator: verbatim-e2e-...", the next frame the title without it. The prefix is the console host's, which runs elevated with Windows Terminal on GitHub's runner, so a title the shell sets cannot keep it away: it reaches Windows Terminal's window after the harness's last look at the title. Which of the console host's titles, its first or a later one, the restored window shows is not established.
 - Fix: none yet. Waiting for the title before bringing the window forward cannot hold, since the prefixed title is seen only after the window is restored. Launching it with the desktop shell's token failed every Windows Terminal scenario on the runner (run 44229970650), whose shell is itself elevated and so has no unelevated token; the remaining route is a token restricted to a standard user's rights, not yet tried.
 

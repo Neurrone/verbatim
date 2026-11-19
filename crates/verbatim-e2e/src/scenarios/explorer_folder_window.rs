@@ -53,14 +53,15 @@
 //! the placeholder before each piece of context or before the item, an
 //! explicit exception to the one-outcome rule (Dickson, 2026-10-21). The
 //! optional places would also accept the placeholder said at several, so
-//! each step asserts that it was said at most once. The item is still required: a run where the
+//! each step asserts that it was said at most twice (Dickson,
+//! 2026-11-19). The item is still required: a run where the
 //! placeholder keeps the focus fails.
 
 use std::io;
 
 use crate::registry::ScenarioState;
 use crate::scenario::Scenario;
-use crate::speech::{heard, optional};
+use crate::speech::{heard, optional_up_to};
 
 pub(crate) use super::no_teardown as teardown;
 
@@ -98,8 +99,9 @@ pub(crate) fn body(scenario: &mut Scenario, state: &mut ScenarioState) {
 
 /// The speech of a folder load: `context`, the window's title on the
 /// opening and "Items View list", then `item`, with File Explorer's
-/// placeholder optional before each of `context` and before the item, and
-/// said at most twice in all: File Explorer may raise two focus events on
+/// placeholder optional, up to twice, before each of `context` and before
+/// the item, and said at most twice in all (twice in a row before "Items
+/// View list" in GitHub run 44523277003): File Explorer may raise two focus events on
 /// it a moment apart, and when the second's keyboard focus read fails, as
 /// the placeholder is already gone, the duplicate test lets it through, as
 /// NVDA's does (`docs/parity/focus-events.md`, "A focus whose keyboard
@@ -110,7 +112,7 @@ fn expect_after_load(scenario: &mut Scenario, context: &[&str], item: &str) {
     let before = scenario.speech().optional_outcomes().len();
     let mut expected = Vec::new();
     for part in context.iter().copied().chain([item]) {
-        expected.extend([optional(placeholder), heard(part)]);
+        expected.extend([optional_up_to(placeholder, 2), heard(part)]);
     }
     scenario.speech().expect_sequence(&expected);
     let said: usize = scenario.speech().optional_outcomes()[before..]
