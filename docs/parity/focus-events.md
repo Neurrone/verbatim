@@ -1216,7 +1216,9 @@ the node.
   so it is matched only as the same COM object.
 - `IAccessible2` unique ids are not read yet, and location and name are
   not compared when matching a sighting.
-- A window's MSAA nodes are dropped when the window is destroyed; UIA
+- A window's MSAA nodes are dropped when the window is destroyed, when
+  the destroy's raising thread can be opened so that Core names the
+  window to its outpost; otherwise when Core lets them go; UIA
   nodes are not, since a runtime id has no documented structure naming
   its window, so a UIA node Core still holds after its window closed
   (the navigator left there) matches a new element given the same

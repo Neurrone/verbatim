@@ -309,11 +309,13 @@ pub enum State {
     /// Linked to other objects (MSAA `STATE_SYSTEM_LINKED`).
     Linked,
     /// Not visible: MSAA `STATE_SYSTEM_INVISIBLE` on an object read
-    /// through MSAA; a window read from Windows' own state never carries
-    /// it. Never spoken; an invisible ancestor is not
-    /// presented as an entered container (`docs/parity/focus-context.md`,
-    /// "Focus-ancestry context"). UI Automation's `IsOffscreen` is
-    /// [`State::Offscreen`], not this.
+    /// through MSAA, and the plain window of a ghost destroyed while it
+    /// was the focus; a window that exists, read from Windows' own state,
+    /// never carries it. Spoken only for a query (Insert+Tab, report
+    /// navigator object); an invisible ancestor is not presented as an
+    /// entered container (`docs/parity/focus-context.md`, "Focus-ancestry
+    /// context"). UI Automation's `IsOffscreen` is [`State::Offscreen`],
+    /// not this.
     Invisible,
 }
 

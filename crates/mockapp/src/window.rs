@@ -418,9 +418,17 @@ unsafe extern "system" fn wnd_proc(
             }
             return LRESULT(0);
         }
+        // The host window's destruction ends mockapp; a child window of
+        // its class (`child-window`) going ends nothing.
         WM_DESTROY => {
-            // SAFETY: posting a plain quit message.
-            unsafe { PostQuitMessage(0) };
+            // SAFETY: reads `hwnd`'s style; always sound.
+            let style = unsafe {
+                GetWindowLongPtrW(hwnd, windows::Win32::UI::WindowsAndMessaging::GWL_STYLE)
+            };
+            if isize::try_from(WS_CHILD.0).is_ok_and(|child| style & child == 0) {
+                // SAFETY: posting a plain quit message.
+                unsafe { PostQuitMessage(0) };
+            }
             return LRESULT(0);
         }
         _ => {}
@@ -675,14 +683,11 @@ fn apply(hwnd: HWND, context: &'static WindowContext, command: Command) -> bool 
         acknowledge(&crate::menu::command(&command));
         return true;
     }
-    if let Command::ChildWindow = command {
-        match child_window(hwnd, context) {
-            Ok(()) => acknowledge("applied"),
-            Err(error) => acknowledge(&format!("rejected: {error}")),
-        }
-        return true;
-    }
-    let applied = apply_to_tree(hwnd, context, command);
+    let applied = match command {
+        Command::ChildWindow => child_window(hwnd, context).map_err(|error| error.to_string()),
+        Command::DestroyChildWindow => destroy_child_window(hwnd),
+        command => apply_to_tree(hwnd, context, command),
+    };
     // Acknowledged once it has taken effect, events raised, so a test
     // that waits for the line knows; a command that cannot be applied,
     // such as one naming a node the fixture lacks, says why instead.
@@ -750,6 +755,25 @@ fn child_window(hwnd: HWND, context: &'static WindowContext) -> windows::core::R
         SetWindowLongPtrW(child, GWLP_USERDATA, std::ptr::from_ref(context) as isize);
     }
     Ok(())
+}
+
+/// `destroy-child-window`: destroys the child window of `hwnd`'s class that
+/// `child-window` made, on this thread, which owns it.
+fn destroy_child_window(hwnd: HWND) -> Result<(), String> {
+    use windows::Win32::UI::WindowsAndMessaging::FindWindowExW;
+    let mut class = [0u16; 256];
+    // SAFETY: `hwnd` is this thread's live window; the buffer outlives the
+    // call, which writes at most its length.
+    let length = unsafe { GetClassNameW(hwnd, &mut class) };
+    if length == 0 {
+        return Err(windows::core::Error::from_thread().to_string());
+    }
+    // SAFETY: a local search of `hwnd`'s children by the class name the
+    // call above wrote, NUL-ended.
+    let child = unsafe { FindWindowExW(Some(hwnd), None, PCWSTR(class.as_ptr()), PCWSTR::null()) }
+        .map_err(|_| "there is no child window".to_owned())?;
+    // SAFETY: `child` was made on this thread, as a child of `hwnd`.
+    unsafe { DestroyWindow(child) }.map_err(|error| format!("destroying the child window: {error}"))
 }
 
 /// `thread-window`: a hidden top-level window of the system's `STATIC`

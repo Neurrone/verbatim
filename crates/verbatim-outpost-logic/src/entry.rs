@@ -7,9 +7,10 @@ use verbatim_model::TraceId;
 use verbatim_model::protocol::{EventTiming, UiaSnapshotFact};
 /// The `WinEvent` kinds an outpost still takes in
 /// (`docs/design/readers-tell-core-asks-build1.md`, "The outpost in this
-/// build"): a console host's console events, which its own hook delivers,
-/// and a window Core names destroyed. The mailbox turns a hooked event into
-/// one of these at its arrival.
+/// build"): a console host's console events, which its own hook delivers.
+/// The mailbox turns a hooked event into one of these at its arrival. A
+/// window Core names destroyed is no entry: the reducer owes it a forget
+/// ([`crate::Work::Forget`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum WinKind {
     /// `EVENT_CONSOLE_UPDATE_REGION`, `EVENT_CONSOLE_UPDATE_SIMPLE`,
@@ -18,8 +19,6 @@ pub enum WinKind {
     ConsoleUpdate,
     /// `EVENT_CONSOLE_CARET`: the console's cursor moved.
     ConsoleCaret,
-    /// `EVENT_OBJECT_DESTROY` of a window, which Core names.
-    Destroy,
 }
 
 /// The UIA property ids the reducer tells apart, as `UIAutomationClient.h`

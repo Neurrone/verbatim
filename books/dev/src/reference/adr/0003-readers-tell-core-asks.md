@@ -140,11 +140,11 @@ The listener's limiter makes no guess about the focus: it merges only waiting ev
 
 ### Messages that remain (Dickson, 2026-11-13)
 
-- Reader to Core (12): the tell, the listener's foreground change, the listener's progress fact, the answer, and eight lifecycle messages (ready, pong, fault, target exited, spare ready, idle answer, exit handled, shutdown done).
+- Reader to Core (13): the tell, the listener's window destroyed, sent with the raising thread's process or none, apart from the tells so that none is dropped for its process (2026-11-19), the listener's foreground change, the listener's progress fact, the answer, and eight lifecycle messages (ready, pong, fault, target exited, spare ready, idle answer, exit handled, shutdown done).
 - Core to the listener (7): a request (read this focus event with the ancestors Core already knows, answering a snapshot and the element's route; read this menu opening; read this toast's or alert's text; read the desktop's name), cancel, ping, shut down, application exited, idle query, and the told elements Core holds (Dickson, 2026-11-19).
 - Core to an outpost (8): a request from the shared list (properties of an object, navigation, find a descendant by property, text and caret reads, actions, focus reads including the completion of a UI Automation focus read, the caret watch, terminal reads, follow these objects), cancel, the objects Core holds, window destroyed, ping, shut down, assign, idle query.
 
-That is 26 kinds where there are 42. What goes, about 40 names: the routed facts, the marker and its companions, the hand-over, the live re-read, the key's note, the terminal's hold, cancel, shape and colours messages, the bar watch, the not-responding message, the settings pushed to outposts, and the forwarding of WinEvents to outposts.
+That is 27 kinds where there are 42. What goes, about 40 names: the routed facts, the marker and its companions, the hand-over, the live re-read, the key's note, the terminal's hold, cancel, shape and colours messages, the bar watch, the not-responding message, the settings pushed to outposts, and the forwarding of WinEvents to outposts.
 
 ## What this decision adds and removes
 

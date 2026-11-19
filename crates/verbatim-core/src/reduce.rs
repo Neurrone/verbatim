@@ -2231,7 +2231,7 @@ impl From<Reason> for StateReason {
 }
 
 /// The order states are spoken in, positive or negated alike.
-const STATE_ORDER: [State; 18] = [
+const STATE_ORDER: [State; 19] = [
     State::Disabled,
     State::Focused,
     State::Selected,
@@ -2243,6 +2243,7 @@ const STATE_ORDER: [State; 18] = [
     State::Multiline,
     State::Expanded,
     State::Collapsed,
+    State::Invisible,
     State::Visited,
     State::Linked,
     State::HasPopup,
@@ -2281,6 +2282,9 @@ fn spoken_states(role: Role, states: StateSet, reason: StateReason) -> StateSet 
         spoken.remove(State::Linked);
     }
     spoken.remove(State::Offscreen);
+    // Invisible is said only for a query (`docs/parity/focus-context.md`,
+    // "Focus-ancestry context").
+    spoken.remove(State::Invisible);
     // Selection is the expected state of a focused item.
     if reason != StateReason::Change
         && matches!(

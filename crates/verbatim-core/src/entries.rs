@@ -746,9 +746,31 @@ impl Logic for Entries {
         !facts.ignored.contains(&process)
     }
 
-    fn window_destroyed(facts: &mut SrState, window: WindowHandle) {
-        facts.follows.window_destroyed(window);
+    fn window_destroyed(
+        facts: &mut SrState,
+        window: WindowHandle,
+        ready: &std::collections::BTreeMap<crate::event_queue::Reader, Instance>,
+    ) -> Vec<crate::event_queue::CoreRequest> {
         facts.plain.window_destroyed(window);
+        // The `Follow` naming nothing goes only to the generation named,
+        // when it is ready, so it never starts an outpost; its answer goes
+        // to Core alone, which no terminal rule reads.
+        facts
+            .follows
+            .window_destroyed(window, |process, generation| {
+                ready
+                    .get(&crate::event_queue::Reader::Outpost(process))
+                    .is_some_and(|instance| instance.generation == generation.0)
+            })
+            .into_iter()
+            .map(|follow| crate::event_queue::CoreRequest {
+                token: None,
+                reader: crate::event_queue::Reader::Outpost(follow.process),
+                window: follow.window,
+                request: Wire::Follow(follow.follow),
+                due_after_us: OTHER_DUE_US,
+            })
+            .collect()
     }
 
     fn plain_answer(facts: &SrState, request: &Wire) -> Option<verbatim_model::request::Outcome> {
@@ -1079,7 +1101,9 @@ pub(crate) fn route(
         }
         // Every frame of an instance that is not its reader's current one
         // is dropped (design, "The outpost generation record").
-        QueueInput::Tell { from, .. } if !state.queue.admits(*from) => {
+        QueueInput::Tell { from, .. } | QueueInput::WindowDestroyed { from, .. }
+            if !state.queue.admits(*from) =>
+        {
             return Routed::Said(vec![Said::Queue(QueueEffect::StaleFrame(*from))]);
         }
         // A terminal's change is handled at once in the inbox
@@ -1123,7 +1147,9 @@ pub(crate) fn route(
         }),
         QueueInput::ReaderReady(instance) => Input::ReaderReady(*instance),
         QueueInput::ReaderEnded(instance) => Input::ReaderEnded(*instance),
-        QueueInput::WindowDestroyed { window, process } => Input::WindowDestroyed {
+        QueueInput::WindowDestroyed {
+            window, process, ..
+        } => Input::WindowDestroyed {
             window: *window,
             process: *process,
         },
@@ -1337,3 +1363,7 @@ fn run_input(
 #[cfg(test)]
 #[path = "entries_tests.rs"]
 pub(crate) mod tests;
+
+#[cfg(test)]
+#[path = "window_destroyed_tests.rs"]
+mod window_destroyed_tests;

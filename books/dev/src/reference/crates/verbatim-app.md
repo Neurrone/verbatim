@@ -400,7 +400,8 @@ knowing for review:
   frame into the message it carries, on the reducer's thread whatever its
   size, in the order the frames arrive. Core's event queue
   (`Input::Queue`) takes, in arrival order, the readers' tells and answers
-  (an outpost's, and the listener's `OutpostMessage::Listener`), which Core
+  (an outpost's, and the listener's `OutpostMessage::Listener`, whose
+  window destroyed becomes `QueueInput::WindowDestroyed`), which Core
   judges by generation, dropping a frame of an instance not current; the
   owner thread's process facts (`Started` and `Running` as
   `ProcessFact::OutpostStarted`, an outpost's `Ready` and

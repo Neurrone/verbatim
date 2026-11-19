@@ -244,6 +244,7 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
             );
         }
         Command::ChildWindow
+        | Command::DestroyChildWindow
         | Command::ThreadWindow
         | Command::WindowFocus
         | Command::PopupMenu

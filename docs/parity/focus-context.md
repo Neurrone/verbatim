@@ -122,10 +122,17 @@ nothing: the focus stays on the combo box, so no chain is compared.
 
 An invisible ancestor, MSAA's `STATE_SYSTEM_INVISIBLE` on an object read
 through MSAA, is not presented, as NVDA counts an invisible object
-unavailable (`_get_presentationType`); the state is never spoken. A
-window read from Windows' own state carries no invisible state from its
-style (Fable, 2026-10-30), so a window not yet shown keeps its title, as
-NVDA, reading the window through its own API, says it. UI Automation's
+unavailable (`_get_presentationType`). The state is spoken for a query
+alone, Insert+Tab and report navigator object, on every object that
+carries it, and for no other reason, as NVDA's `processAndLabelStates`
+keeps it only for a query (`controlTypes/processAndLabelStates.py` 62 to
+68; Dickson, 2026-11-19). A window that exists, read from Windows' own
+state, carries no invisible state from its style (Fable, 2026-10-30), so a
+window not yet shown keeps its title, as NVDA, reading the window through
+its own API, says it. The plain window of a ghost destroyed while it is
+the focus does carry it, as NVDA's plain `Window` of the dead handle, its
+style 0, does (`NVDAObjects/window/__init__.py` 299 to 306), so Insert+Tab
+then says "window invisible" (Dickson, 2026-11-19). UI Automation's
 `IsOffscreen` is NVDA's offscreen state, not invisible, and does not
 hide an ancestor. **partial**: reducer tests,
 mockapp's `an_msaa_ancestor_reached_with_no_identity_string_is_its_windows_client`

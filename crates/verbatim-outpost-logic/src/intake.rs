@@ -162,11 +162,7 @@ fn key_of(item: &Item) -> Option<Key> {
         // caret event the cell its cursor is in; only that the window's
         // text changed, or its cursor moved, matters, as both are read, so
         // each kind merges into one per window while they wait.
-        Item::Msaa {
-            kind: kind @ (WinKind::ConsoleUpdate | WinKind::ConsoleCaret),
-            hwnd,
-            ..
-        } => Some(Key::Console(*kind, *hwnd)),
+        Item::Msaa { kind, hwnd, .. } => Some(Key::Console(*kind, *hwnd)),
         Item::Uia(event) => {
             let runtime_id = event.parts.runtime_id.clone();
             Some(match &event.kind {
@@ -177,7 +173,7 @@ fn key_of(item: &Item) -> Option<Key> {
         }
         // Only the newest list of held nodes matters.
         Item::NodesHeld { .. } => Some(Key::NodesHeld),
-        Item::Msaa { .. } | Item::Barrier { .. } => None,
+        Item::Barrier { .. } => None,
     }
 }
 

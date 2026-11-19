@@ -61,6 +61,10 @@ fn dispatched(effects: &[Effect]) -> Vec<(Request, String)> {
                 match &program.work {
                     Work::Ask(ask) => format!("ask {}", ask.number.0),
                     Work::Entry { .. } => "entry".to_owned(),
+                    Work::Forget(windows) => format!(
+                        "forget {:?}",
+                        windows.iter().map(|window| window.0).collect::<Vec<_>>()
+                    ),
                     _ => "other".to_owned(),
                 },
             )),
@@ -233,19 +237,154 @@ fn a_newer_follow_answers_the_queued_one_ended() {
     );
 }
 
-/// A window destroyed answers Core's requests queued on it "not there",
-/// at once, and leaves the one running (Table 14).
+/// Core's request `number` asked on `window`, of `request`.
+fn asked_on(number: u64, window: u64, request: CoreRequest) -> Input {
+    Input::Ask(Box::new(Ask {
+        number: RequestNumber(number),
+        window: WindowHandle(window),
+        verdict: WindowVerdict::Msaa,
+        request,
+    }))
+}
+
+/// A read of the application's current focus, as the re-take and the
+/// recovery read ask it.
+fn current_focus() -> CoreRequest {
+    CoreRequest::CurrentFocus {
+        set: Vec::new(),
+        known: Vec::new(),
+        details: verbatim_model::TextDetails::NONE,
+        depth: verbatim_model::request::FocusDepth::Full,
+    }
+}
+
+/// A read of `object`.
+fn read_object(object: verbatim_model::request::ObjectRef) -> CoreRequest {
+    CoreRequest::ReadObject(verbatim_model::request::ReadObject {
+        object,
+        set: Vec::new(),
+        relation: None,
+        descendants: false,
+        walk: None,
+        purpose: verbatim_model::request::Purpose::Other,
+    })
+}
+
+/// A run's candidate at MSAA ids in `window`.
+fn run_in(window: u64) -> CoreRequest {
+    CoreRequest::MsaaRun(verbatim_model::request::MsaaRun {
+        candidate: verbatim_model::request::RunCandidate {
+            ids: verbatim_model::request::MsaaIds {
+                window: WindowHandle(window),
+                object: -4,
+                child: 0,
+            },
+            kind: verbatim_model::request::CandidateKind::Focus,
+            verdict: WindowVerdict::Msaa,
+        },
+        depth: verbatim_model::request::Depth::Full,
+        spare: None,
+        set: Vec::new(),
+        known: Vec::new(),
+        details: verbatim_model::TextDetails::NONE,
+    })
+}
+
+/// The one program `effects` dispatched ended.
+fn ended_program(effects: &[Effect]) -> Input {
+    let [(request, _)] = dispatched(effects)[..] else {
+        panic!("one program dispatched: {effects:?}");
+    };
+    finished(request)
+}
+
+/// A window destroyed while a program runs (Table 14, 2026-11-19): the
+/// queued reads its MSAA ids name, a read by ids and a run's candidate,
+/// are answered "not there" at once; a re-take's and a recovery read's
+/// current focus, a `Follow` and a read of a node, all asked on the
+/// window, stay queued; when the program ends, the window's forget runs
+/// first, then they run in order, and a request Core sent after the
+/// destroy runs after the forget.
 #[test]
-fn a_destroyed_window_answers_the_requests_queued_on_it() {
+fn a_destroyed_window_answers_the_reads_its_ids_name_and_forgets_it_before_the_rest() {
     let mut reducer = Reducer::new();
-    let _ = reducer.input(follow(1, 7), now(0));
-    let _ = reducer.input(follow(2, 7), now(1));
+    let running = reducer.input(ask(1), now(0));
+    assert_eq!(dispatched(&running)[0].1, "ask 1");
+    let node = verbatim_model::NodeId::new(4);
+    for (number, request) in [
+        (2, current_focus()),
+        (3, current_focus()),
+        (
+            4,
+            CoreRequest::Follow(verbatim_model::request::Follow { node: None }),
+        ),
+        (
+            5,
+            read_object(verbatim_model::request::ObjectRef::Node(node)),
+        ),
+        (
+            6,
+            read_object(verbatim_model::request::ObjectRef::Msaa {
+                window: WindowHandle(7),
+                object: -4,
+                child: 0,
+            }),
+        ),
+        (7, run_in(7)),
+    ] {
+        assert_eq!(reducer.input(asked_on(number, 7, request), now(1)).len(), 0);
+    }
     let effects = reducer.input(Input::WindowDestroyed(WindowHandle(7)), now(2));
     assert_eq!(
         answers(&effects)
             .into_iter()
             .map(|answer| (answer.number.0, answer.outcome))
             .collect::<Vec<_>>(),
-        [(2, Outcome::NotThere)]
+        [(6, Outcome::NotThere), (7, Outcome::NotThere)]
+    );
+    assert_eq!(dispatched(&effects), []);
+    assert_eq!(dispatched(&reducer.input(ask(8), now(3))), []);
+    let mut order = Vec::new();
+    let mut effects = reducer.input(ended_program(&running), now(4));
+    for at in 5..11 {
+        let [(_, work)] = &dispatched(&effects)[..] else {
+            break;
+        };
+        order.push(work.clone());
+        effects = reducer.input(ended_program(&effects), now(at));
+    }
+    assert_eq!(
+        order,
+        ["forget [7]", "ask 2", "ask 3", "ask 4", "ask 5", "ask 8"]
+    );
+}
+
+/// The destroys the shell drains together, twenty in one feed, are
+/// forgotten by one program, dispatched at the shell's tick after the
+/// drain, the windows in the order named, a window named twice once.
+#[test]
+fn a_burst_of_destroys_is_forgotten_by_one_program() {
+    let mut reducer = Reducer::new();
+    for window in 1..=20 {
+        assert_eq!(
+            dispatched(&reducer.input(Input::WindowDestroyed(WindowHandle(window)), now(0))),
+            []
+        );
+    }
+    assert_eq!(
+        dispatched(&reducer.input(Input::WindowDestroyed(WindowHandle(3)), now(0))),
+        []
+    );
+    let effects = reducer.tick(now(1));
+    assert_eq!(
+        dispatched(&effects)
+            .into_iter()
+            .map(|(_, work)| work)
+            .collect::<Vec<_>>(),
+        [format!("forget {:?}", (1..=20).collect::<Vec<u64>>())]
+    );
+    assert_eq!(
+        dispatched(&reducer.input(ended_program(&effects), now(2))),
+        []
     );
 }

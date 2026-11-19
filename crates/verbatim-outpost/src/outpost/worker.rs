@@ -31,7 +31,7 @@ use super::lock::Lock;
 use std::thread;
 use std::time::Instant;
 
-use verbatim_ia2::{CHILDID_SELF, WinEventKind};
+use verbatim_ia2::WinEventKind;
 use verbatim_model::property::{
     NodeDetailSet, PropertyAnswer, PropertyId, PropertyValue, PropertyValues, RuntimeId,
 };
@@ -41,7 +41,6 @@ use windows::Win32::UI::Accessibility::{
     UIA_ControllerForPropertyId, UIA_HelpTextPropertyId, UIA_NamePropertyId,
     UIA_RangeValueValuePropertyId, UIA_ValueValuePropertyId,
 };
-use windows::Win32::UI::WindowsAndMessaging::OBJID_WINDOW;
 
 use verbatim_model::protocol::{OutpostToCore, UiaSnapshotFact};
 
@@ -201,7 +200,24 @@ fn node_details_of(work: &Work) -> NodeDetailSet {
             Item::NodesHeld { .. } | Item::Barrier { .. } => NodeDetailSet::NONE,
         },
         Work::Ask(ask) => super::asked::node_details(&ask.request),
-        Work::Drop | Work::Watch(_) => NodeDetailSet::NONE,
+        Work::Drop | Work::Watch(_) | Work::Forget(_) => NodeDetailSet::NONE,
+    }
+}
+
+/// Forgets each window of `windows`, which Core named destroyed: its kept
+/// verdicts and classic-read mark, and its MSAA nodes with their text
+/// facts, so a reused window handle never inherits them. The nodes'
+/// objects are released once the store's lock is let go, and their text
+/// facts are forgotten with the program's commit. Nothing reads the
+/// application.
+fn forget(context: &RequestContext<'_>, windows: &[verbatim_model::WindowHandle]) {
+    for &window in windows {
+        let hwnd = super::window::hwnd_of(window);
+        context.record(VerdictChange::Forget(hwnd));
+        context.forget_window(hwnd);
+        let (removed, gone) = context.store.forget_window(hwnd);
+        drop(removed);
+        text_reads::forget_nodes(context, &gone);
     }
 }
 
@@ -255,6 +271,7 @@ fn run_job(context: &Arc<Context>, client: &mut Client, job: Job, charge: &Arc<C
             });
         }
         Work::Watch(watch) => run_watch(context, &mut request_context, request, &watch),
+        Work::Forget(windows) => forget(&request_context, &windows),
     });
     // Text writes no commit after them carried: a program's text calls
     // write nothing but through a commit.
@@ -331,6 +348,7 @@ fn describe(work: &Work) -> String {
         Work::Drop => "drop".to_owned(),
         Work::Ask(ask) => format!("{}", ask.number),
         Work::Watch(watch) => format!("the watch {}'s {:?}", watch.number, watch.work),
+        Work::Forget(windows) => format!("forget {} windows destroyed", windows.len()),
     }
 }
 
@@ -423,13 +441,7 @@ impl Worker<'_> {
             ..
         } = entry;
         match item {
-            Item::Msaa {
-                kind,
-                hwnd,
-                id_object,
-                id_child,
-                ..
-            } => self.msaa_event(kind, (hwnd, id_object, id_child), trace, observed_at_us),
+            Item::Msaa { kind, hwnd, .. } => self.msaa_event(kind, hwnd, trace, observed_at_us),
             Item::Uia(event) => self.uia_event(&event, trace, observed_at_us),
             // The reducer's own: never a program's.
             Item::NodesHeld { .. } | Item::Barrier { .. } => {}
@@ -492,13 +504,7 @@ impl Worker<'_> {
     }
 
     /// An MSAA event from this outpost's own hooks.
-    fn msaa_event(
-        &self,
-        kind: WinKind,
-        (hwnd, id_object, id_child): (isize, i32, i32),
-        trace: TraceId,
-        observed_at_us: u64,
-    ) {
+    fn msaa_event(&self, kind: WinKind, hwnd: isize, trace: TraceId, observed_at_us: u64) {
         match kind {
             // The console host's text changed or its cursor moved: the
             // change signals of the console terminal `Follow` names, whose
@@ -508,20 +514,6 @@ impl Worker<'_> {
             WinKind::ConsoleUpdate | WinKind::ConsoleCaret => {
                 if let Some(node_id) = self.followed_console_terminal(hwnd) {
                     self.terminal_tell(node_id, hwnd, (trace, observed_at_us));
-                }
-            }
-            WinKind::Destroy => {
-                if id_object == OBJID_WINDOW.0 && id_child == CHILDID_SELF {
-                    self.context.record(VerdictChange::Forget(hwnd));
-                    self.context.forget_window(hwnd);
-                    // A reused window handle must never inherit these nodes;
-                    // their objects are released once the store's lock is
-                    // let go, and their text facts are forgotten with the
-                    // program's commit.
-                    let (removed, gone) = self.context.store.forget_window(hwnd);
-                    drop(removed);
-                    text_reads::forget_nodes(self.context, &gone);
-                    super::followed::window_destroyed(self.context, hwnd, &gone);
                 }
             }
         }

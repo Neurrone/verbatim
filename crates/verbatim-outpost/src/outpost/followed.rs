@@ -169,26 +169,6 @@ fn log_move(by: &str, moved: Option<(NodeId, Group)>, started: Instant) {
     );
 }
 
-/// Window `hwnd` was destroyed: when the node `Follow` names is in it, its
-/// registration is dropped with the window's nodes, and nothing is named
-/// (Table 10, column E).
-pub(super) fn window_destroyed(context: &Context, hwnd: isize, gone: &[NodeId]) {
-    let named = context.named.lock().clone();
-    let Some(named) = named else {
-        return;
-    };
-    let in_window = gone.contains(&named.node)
-        || context.store.nearest_window_of(named.node) == Some(hwnd)
-        || matches!(context.store.runtime_id_of(named.node).as_deref(), Some([42, own]) if isize::try_from(*own).ok() == Some(hwnd));
-    if !in_window {
-        return;
-    }
-    *context.named.lock() = None;
-    if let Some(registration) = context.focus_events.get() {
-        registration.retarget(Scope::Nothing);
-    }
-}
-
 /// The terminal `Follow` names, with whether its window is a console's.
 pub(super) fn terminal(context: &Context) -> Option<(NodeId, bool)> {
     context

@@ -1114,6 +1114,7 @@ pub fn state_name(state: verbatim_model::State) -> Option<String> {
         State::Multiline => i18n_embed_fl::fl!(loader, "state-multi-line"),
         State::Expanded => i18n_embed_fl::fl!(loader, "state-expanded"),
         State::Collapsed => i18n_embed_fl::fl!(loader, "state-collapsed"),
+        State::Invisible => i18n_embed_fl::fl!(loader, "state-invisible"),
         State::Pressed => i18n_embed_fl::fl!(loader, "state-pressed"),
         State::HasPopup => i18n_embed_fl::fl!(loader, "state-has-popup"),
         State::Busy => i18n_embed_fl::fl!(loader, "state-busy"),

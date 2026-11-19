@@ -266,6 +266,29 @@ fn focus_related_states_are_never_announced_but_unselected_is() {
     );
 }
 
+/// An MSAA object's invisible state is not spoken for a focus, as NVDA
+/// drops it for every reason but a query
+/// (`docs/parity/focus-context.md`, "Focus-ancestry context").
+#[test]
+fn the_invisible_state_is_not_announced_on_focus() {
+    let button = node(
+        ONE,
+        6,
+        Role::Button,
+        Some("OK"),
+        None,
+        states(&[State::Invisible, State::Disabled]),
+    );
+    assert_eq!(
+        focus_segments(&button),
+        vec![
+            UtteranceSegment::label("OK"),
+            role(Role::Button),
+            state(State::Disabled),
+        ]
+    );
+}
+
 #[test]
 fn selected_items_do_not_announce_positive_selected_on_focus() {
     let item = node(

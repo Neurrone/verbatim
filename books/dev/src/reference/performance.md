@@ -1262,6 +1262,33 @@ application is made for Core's request
   are released the same way, an outpost keeping those minted since Core's
   last list.
 
+### A window's destruction
+
+Every destroy of a window object anywhere on the desktop reaches Core
+(`ListenerToCore::Destroyed`), with no process when its raising thread
+cannot be opened, and goes on to the raising process's outpost when one
+runs.
+
+- Paid before the destroy reached Core: the listener's hook wake and its
+  local calls (`OpenThread`, `GetProcessIdOfThread`), one pipe message to
+  verbatim.exe and one wake of Core for a destroy whose thread could be
+  opened; one whose thread could not now costs the same message and wake.
+- Added in Core: removals from its maps (the recovery set, the probe
+  verdicts, the followed node, the plain object), and one `Follow`
+  naming nothing only when the followed node's window is destroyed.
+- Added per destroy, only when the raising process has a running outpost:
+  one effect, one pipe write and the outpost's reader wake.
+- Added per burst the outpost's reducer drains together: one reducer pass
+  and one forget program on its worker, with no call into the
+  application; its releases are the ones the held-node list makes, made
+  earlier.
+- A File Explorer folder window's close is about 50 destroys in a burst,
+  all into Explorer's outpost but 0 to 2 of exited helper threads
+  (recorded 2026-11-19). Not yet measured: the outpost's wake-ups and
+  processor time for that burst and the destroys a second of dialogs and
+  a browser. If the pipe shows, the effects of one input are batched into
+  one message to the outpost.
+
 ### The task switcher's frame
 
 Core refuses the UI Automation focus of the task switcher's frame in File

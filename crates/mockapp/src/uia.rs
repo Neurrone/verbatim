@@ -320,6 +320,7 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
             return Err("acc-focus-window is not supported on the uia backend".into());
         }
         Command::ChildWindow
+        | Command::DestroyChildWindow
         | Command::ThreadWindow
         | Command::WindowFocus
         | Command::PopupMenu

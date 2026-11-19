@@ -302,6 +302,9 @@ parses them.
   can name a node at its object id in a window of its own inside the
   host's, as a control's window is inside a dialog's; a test finds it with
   `FindWindowExW` under the host.
+- `destroy-child-window` destroys the child window `child-window` made, as
+  an application closes a control's window, for a test of what the
+  outpost forgets when Core names a window destroyed.
 - `child-client-identity` (MSAA only) makes the client area of the child
   window `child-window` made answer as `client-identity` makes the host's,
   so its parent is its own window object, whose parent Windows answers

@@ -194,6 +194,35 @@ Tests: the queue's unit tests (`crates/verbatim-core/src/event_queue/tests.rs`),
 each rule of Table 2 and every ending, a late answer dropped by number and
 an answer from an instance the request did not go to dropped.
 
+### A window's destruction
+
+The listener's destroy arrives as `QueueInput::WindowDestroyed`, with the
+process of the thread that raised it or none, and `route` drops it from a
+listener that is not the current one. The inbox handles it at once, ahead
+of the waiting entries, whose reads in the window answer "not there" at
+their turn: it takes the window out of the recovery set and clears its
+probe verdicts, and `Logic::window_destroyed` marks a plain ghost at the
+window destroyed (`PlainReader::window_destroyed`, below) and ends a
+followed node in it (`Follows::window_destroyed`), returning the `Follow`
+naming nothing for its generation when that generation is the ready
+instance (`readers`), so the request never starts an outpost; a generation
+not ready is sent nothing. The inbox sends `Effect::WindowDestroyed` to
+the ready outpost of the raising process, if any, then begins the
+`Follow` as Core's own request (`Owner::Core`, whose answer no rule
+reads), so it runs after the outpost's forget. A destroy with no process
+clears the same records and sends nothing to an outpost. Cost per
+destroy: one pipe message from the listener and one wake of Core, which
+a destroy with a process already paid when it was a tell, and removals
+from maps; with the raising process's outpost running, one effect and one
+pipe write to it; per burst the outpost drains together, one reducer pass
+and one forget program; one `Follow` only when the followed node's window
+is destroyed; no call into any application (`books/dev/src/reference/performance.md`,
+"A window's destruction").
+
+Tests: `src/window_destroyed_tests.rs`, fed as the listener sends, the
+recovery set's and the probe verdicts' in the queue's unit tests, and the
+recorded settings dialog's three destroys in `tests/replay_validity.rs`.
+
 ## The outpost generation record
 
 (`docs/design/readers-tell-core-asks-build1.md`, "The outpost generation
@@ -803,7 +832,7 @@ attention.
 
 The plain object is an ordinary object in Core's model: its node is
 issued by Core's plain reader (`SrState::plain`, one `PlainObject` at a
-time, each commit a new generation, ended by its ghost's destruction),
+time, each commit a new generation, held until the next plain commit),
 its `Kept` reads `ReadBy::Plain` and names the application of the hung
 window the ghost stands for, never the ghost's own nor, for another
 application's ghost in front, the asked one, and its place names the ghost as top-level
@@ -816,9 +845,13 @@ left. The plain reader answers every request on its node at once with
 what NVDA's plain `Window` gives (`focus::plain::answer`): its
 properties (name, the role window, the unavailable state from its
 style), no children, an edge for every move, no text, "No action" for
-activate; a node of an older generation, or after the ghost's
-destruction, is not there. Every command therefore reads it through its
-own path. A plain focus is never a duplicate and nothing is a duplicate
+activate; a node of an older generation is not there. When the ghost's
+window is destroyed the object stays held and becomes
+`PlainKind::Destroyed`, NVDA's plain `Window` of the dead handle: no
+name, the role window and the invisible state alone, so Insert+Tab and
+report navigator object, queries, say "window invisible" (Dickson,
+2026-11-19); the desktop's plain object is never destroyed. Every command
+therefore reads it through its own path. A plain focus is never a duplicate and nothing is a duplicate
 of it; the listener's end re-takes nothing under it.
 
 ### One definition of a candidate's validity

@@ -538,6 +538,42 @@ fn an_alert_from_a_native_uia_toast_window_says_nothing() {
     app.quit();
 }
 
+/// A window of mockapp's destroyed, its destroy told as the listener sends
+/// it: Core passes it to mockapp's outpost, whose store then holds no MSAA
+/// node of the window, the focus Core still holds among them, so a reused
+/// handle inherits none (Table 14). The focus is "Save" in a child window
+/// of the "Save As" dialog (`child-window`), which mockapp then destroys
+/// (`destroy-child-window`).
+fn a_destroyed_windows_msaa_nodes_leave_the_outposts_store() {
+    common::init_com();
+    let title = common::unique_title("mockapp-msaa-destroyed-window");
+    let mut app = common::spawn("save_as.json", "msaa", &title);
+    let hwnd = common::find_window(&title);
+    app.send("child-window");
+    // SAFETY: a local search of the dialog's children.
+    let child = unsafe {
+        windows::Win32::UI::WindowsAndMessaging::FindWindowExW(Some(hwnd), None, None, None)
+    }
+    .expect("mockapp made the child window");
+    let mut core = CoreDriver::new(&app, OutpostUnderTest::new(&app));
+    let _ = core.msaa_focus(child, 1);
+    let (_, focus) = core.state().focused().expect("Core committed the focus");
+    let node = focus.id;
+    assert_eq!(focus.name.as_deref(), Some("Save"));
+    assert!(
+        core.outpost.outpost.holds(node),
+        "the outpost holds the focus"
+    );
+    app.send("destroy-child-window");
+    assert_eq!(core.destroyed(child).spoken(), NOTHING);
+    assert!(
+        !core.outpost.outpost.holds(node),
+        "the outpost forgot the destroyed window's node"
+    );
+    drop(core);
+    app.quit();
+}
+
 /// A foreground event whose window is not the foreground window says
 /// nothing and is not kept for a focus inside the window: once the window
 /// is in front, its focus is spoken alone, as NVDA, having dropped the
@@ -865,6 +901,10 @@ fn main() {
         (
             "a_top_level_client_reached_from_a_windowless_object_is_said_by_its_title",
             a_top_level_client_reached_from_a_windowless_object_is_said_by_its_title,
+        ),
+        (
+            "a_destroyed_windows_msaa_nodes_leave_the_outposts_store",
+            a_destroyed_windows_msaa_nodes_leave_the_outposts_store,
         ),
     ]);
 }

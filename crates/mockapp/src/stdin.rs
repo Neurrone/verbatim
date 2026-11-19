@@ -25,7 +25,8 @@
 //! `focus-child <container> <child>`, `client-name <text>`,
 //! `client-identity`, `disable-client`, `acc-focus-window <hwnd>`,
 //! `acc-focus-stepwise`,
-//! `child-window`, `child-client-identity`, `form-client`, `window-focus`,
+//! `child-window`, `destroy-child-window`, `child-client-identity`,
+//! `form-client`, `window-focus`,
 //! `fail-window-element`, `hold`,
 //! `release`, `await-advised <event id> <count>`,
 //! `await-advised-at-least <event id> <count>`, and `quit`.
@@ -421,6 +422,10 @@ pub(crate) enum Command {
     /// objects are the node's own in that window, and `accParent` names
     /// the node's parent in it.
     ChildWindow,
+    /// `destroy-child-window`: destroys the child window `child-window`
+    /// made, as an application closes a control's window, acknowledged
+    /// once it is destroyed; rejected when there is none.
+    DestroyChildWindow,
     /// `thread-window`: makes a hidden top-level window on a UI thread of
     /// its own, which runs its message loop for as long as mockapp runs,
     /// and answers `thread-window <hwnd>`, the window's decimal handle: a
@@ -750,6 +755,7 @@ pub(crate) fn parse_command(line: &str) -> Option<Command> {
         "acc-focus-window" => Some(Command::AccFocusWindow(rest.trim().parse().ok()?)),
         "acc-focus-stepwise" => Some(Command::AccFocusStepwise),
         "child-window" => Some(Command::ChildWindow),
+        "destroy-child-window" => Some(Command::DestroyChildWindow),
         "thread-window" => Some(Command::ThreadWindow),
         "popup-menu" => Some(Command::PopupMenu),
         "menu-select" => rest.trim().parse().ok().map(Command::MenuSelect),

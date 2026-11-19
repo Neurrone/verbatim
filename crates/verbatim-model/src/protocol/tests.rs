@@ -144,7 +144,12 @@ fn next_listener_to_core(previous: Option<&ListenerToCore>) -> Option<ListenerTo
             window: crate::tell::TellWindow::NoWindow,
             checked: None,
         })),
-        ListenerToCore::Tell(_) => ListenerToCore::Answer(crate::request::Answer {
+        ListenerToCore::Tell(_) => ListenerToCore::Destroyed {
+            window: crate::WindowHandle(1),
+            process: None,
+            at_us: 1,
+        },
+        ListenerToCore::Destroyed { .. } => ListenerToCore::Answer(crate::request::Answer {
             number: crate::request::RequestNumber(1),
             outcome: crate::request::Outcome::NotThere,
             probes: Vec::new(),
@@ -240,6 +245,7 @@ fn every_variant_has_its_reviewed_kind() {
             "Progress: Report",
             "Foreground: Report",
             "Tell: Report",
+            "Destroyed: Report",
             "Answer: Answer",
             "Pong: Lifecycle",
             "Fault: Report",
@@ -313,6 +319,7 @@ fn only_a_tell_naming_a_kept_element_carries_a_token() {
             ("Progress".to_owned(), false),
             ("Foreground".to_owned(), false),
             ("Tell".to_owned(), false),
+            ("Destroyed".to_owned(), false),
             ("Answer".to_owned(), false),
             ("Pong".to_owned(), false),
             ("Fault".to_owned(), false),

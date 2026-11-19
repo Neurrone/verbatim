@@ -145,12 +145,34 @@ fn an_unexecuted_completion_names_what_core_names_there() {
     assert_eq!(follows.unexecuted(OTHER, kept(10).window), nothing(OTHER));
 }
 
+/// The named node's window destroyed (column E): it is named no more, and
+/// its outpost is sent a `Follow` naming nothing when the generation named,
+/// 7, is the one ready; another window's destruction changes nothing.
 #[test]
-fn the_named_nodes_window_destroyed_names_nothing() {
+fn the_named_nodes_window_destroyed_names_nothing_and_sends_nothing_named() {
     let mut follows = named();
-    follows.window_destroyed(WindowHandle(99));
+    assert_eq!(follows.window_destroyed(WindowHandle(99), |_, _| true), []);
     assert!(follows.named(APP).is_some());
-    follows.window_destroyed(uia(APP).place.window);
+    assert_eq!(
+        follows.window_destroyed(uia(APP).place.window, |process, generation| {
+            process == APP && generation == OutpostId(7)
+        }),
+        [nothing(APP)]
+    );
+    assert_eq!(follows.named(APP), None);
+}
+
+/// A named generation that is not ready, ended or not yet answering, is
+/// sent nothing at its node's window's destruction, and is named nothing.
+#[test]
+fn the_named_nodes_window_destroyed_with_its_generation_not_ready_sends_nothing() {
+    let mut follows = named();
+    assert_eq!(
+        follows.window_destroyed(uia(APP).place.window, |process, generation| {
+            process == APP && generation == OutpostId(8)
+        }),
+        []
+    );
     assert_eq!(follows.named(APP), None);
 }
 

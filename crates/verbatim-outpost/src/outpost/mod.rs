@@ -1056,6 +1056,13 @@ impl Outpost {
         );
     }
 
+    /// Whether the outpost's store holds `node`, stamped or not: for a
+    /// test of what a window's destruction forgets.
+    #[must_use]
+    pub fn holds(&self, node: verbatim_model::NodeId) -> bool {
+        self.context.store.holds(node.unstamped())
+    }
+
     /// The failed cached reads the outpost has made so far: its worker's,
     /// and its focus-following subscription's callbacks' on UIA's threads
     /// (`verbatim_uia::calls`). A read of a property or pattern its
@@ -1168,22 +1175,12 @@ impl Outpost {
                 context.mailbox.post(Posted::Ask(unstamped_ask(ask)));
             }
             CoreToOutpost::Cancel(cancel) => context.mailbox.post(Posted::CancelAsk(*cancel)),
+            // The reducer answers the queued reads its MSAA ids name "not
+            // there" at once, and forgets the window, with every other
+            // window destroyed in the same drain, by one program ahead of
+            // any later work (Table 14).
             CoreToOutpost::WindowDestroyed(window) => {
-                // Its queued requests answered "not there" at once, then
-                // its nodes, text facts and followed registration
-                // forgotten by a program, as an object destroyed always
-                // was.
                 context.mailbox.post(Posted::WindowDestroyed(*window));
-                context.push(
-                    Item::Msaa {
-                        kind: reducer::WinKind::Destroy,
-                        hwnd: window::hwnd_of(*window),
-                        id_object: windows::Win32::UI::WindowsAndMessaging::OBJID_WINDOW.0,
-                        id_child: verbatim_ia2::CHILDID_SELF,
-                        raiser: 0,
-                    },
-                    (TraceId::mint(), now_us(), EventTiming::default()),
-                );
             }
             CoreToOutpost::Ping { .. } => {
                 context.outbound.urgent(context.pong());

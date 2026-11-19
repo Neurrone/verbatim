@@ -24,8 +24,12 @@
 //! holds it, one at a time, and answers every request on it at once from
 //! its facts, exactly as NVDA's plain `Window` does, so every command,
 //! today's and any later one, treats it as any object (Dickson,
-//! 2026-11-19). Its facts are read once, at the decision, and its record
-//! ends with the ghost's destruction.
+//! 2026-11-19). Its facts are read once, at the decision. The ghost's
+//! destruction leaves the record held and marks it dead
+//! ([`PlainKind::Destroyed`]): NVDA's focus stays on its plain `Window`,
+//! whose dead handle has no text and the style 0, so Insert+Tab says
+//! "window invisible" (Dickson, 2026-11-19). The record ends only when the
+//! next plain commit replaces it.
 
 use serde::{Deserialize, Serialize};
 use verbatim_model::property::{PropertyAnswer, PropertyId, PropertyValue, PropertyValues};
@@ -61,6 +65,13 @@ pub(crate) enum PlainKind {
         /// Whether it is disabled.
         unavailable: bool,
     },
+    /// A ghost whose window was destroyed while it was held: NVDA's plain
+    /// `Window` of a dead handle, whose name is its empty window text and
+    /// whose only state is invisible, from its style of 0
+    /// (`NVDAObjects/window/__init__.py` 190 to 194, 299 to 306;
+    /// `controlTypes/processAndLabelStates.py` 62 to 63 keeps it for a
+    /// query). Same node and generation as the ghost it was.
+    Destroyed,
     /// The desktop window, found in front when no window is: NVDA's
     /// `Desktop`, a plain window named "Desktop" (`NVDAObjects/window/
     /// __init__.py` 409 to 413), which Core names itself as it names every
@@ -73,8 +84,8 @@ pub(crate) enum PlainKind {
 pub(crate) struct PlainObject {
     /// Its generation: its node's issuer, never reused.
     pub(crate) generation: u64,
-    /// Its window, the ghost or the desktop window, which owns the record:
-    /// its destruction ends it.
+    /// Its window, the ghost or the desktop window: a ghost's destruction
+    /// marks the record [`PlainKind::Destroyed`].
     pub(crate) window: WindowHandle,
     /// Which plain window it is.
     pub(crate) kind: PlainKind,
@@ -107,16 +118,24 @@ impl PlainObject {
     }
 
     /// Its properties of `set`, each once: a ghost's name, the role window,
-    /// the unavailable state when disabled, its own window; nothing else
+    /// the unavailable state when disabled, the invisible state alone for a
+    /// destroyed ghost, its own window; nothing else
     /// (`NVDAObjects/window/__init__.py` 299 to 306; `winUser.py` 652 to
     /// 655). The desktop window's name is Core's, as every desktop
     /// window's is.
     fn values(&self, set: &[PropertyId]) -> PropertyValues {
-        let (name, unavailable) = match &self.kind {
+        let (name, states) = match &self.kind {
             PlainKind::Ghost {
                 name, unavailable, ..
-            } => (name.as_str(), *unavailable),
-            PlainKind::Desktop => ("", false),
+            } => {
+                let mut states = StateSet::default();
+                if *unavailable {
+                    states.insert(State::Disabled);
+                }
+                (name.as_str(), states)
+            }
+            PlainKind::Destroyed => ("", StateSet::from_iter([State::Invisible])),
+            PlainKind::Desktop => ("", StateSet::default()),
         };
         PropertyValues(
             set.iter()
@@ -127,13 +146,7 @@ impl PlainObject {
                             (!name.is_empty()).then(|| PropertyValue::Text(name.to_owned()))
                         }
                         PropertyId::Role => Some(PropertyValue::Role(Role::Window)),
-                        PropertyId::States => {
-                            let mut states = StateSet::default();
-                            if unavailable {
-                                states.insert(State::Disabled);
-                            }
-                            Some(PropertyValue::States(states))
-                        }
+                        PropertyId::States => Some(PropertyValue::States(states)),
                         PropertyId::NativeWindow => Some(PropertyValue::Window(self.window)),
                         _ => None,
                     },
@@ -200,8 +213,7 @@ impl PlainObject {
 pub(crate) struct PlainReader {
     /// The last generation given; each plain commit takes the next.
     generations: u64,
-    /// The plain object held, `None` before the first plain commit and
-    /// after its ghost's destruction.
+    /// The plain object held, `None` before the first plain commit.
     pub(crate) object: Option<PlainObject>,
 }
 
@@ -225,14 +237,16 @@ impl PlainReader {
         })
     }
 
-    /// `window` was destroyed: the record ends when it is its window.
+    /// `window` was destroyed: a ghost held at it becomes
+    /// [`PlainKind::Destroyed`], keeping its node, as NVDA's focus stays on
+    /// the plain `Window` of the dead handle (Dickson, 2026-11-19). The
+    /// desktop's plain object is never destroyed.
     pub(crate) fn window_destroyed(&mut self, window: WindowHandle) {
-        if self
-            .object
-            .as_ref()
-            .is_some_and(|object| object.window == window)
+        if let Some(object) = self.object.as_mut()
+            && object.window == window
+            && matches!(object.kind, PlainKind::Ghost { .. })
         {
-            self.object = None;
+            object.kind = PlainKind::Destroyed;
         }
     }
 }

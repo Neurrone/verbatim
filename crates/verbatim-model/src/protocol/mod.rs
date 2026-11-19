@@ -242,9 +242,11 @@ pub enum CoreToOutpost {
     Cancel(crate::request::Cancel),
     /// A window of the outpost's application was destroyed, as the
     /// listener told Core (`docs/design/readers-tell-core-asks-build1.md`,
-    /// "Changes on objects"): the outpost forgets its MSAA nodes and text
-    /// facts, drops the registration of a followed node in it, and answers
-    /// its queued requests on it "not there".
+    /// "Changes on objects"): the outpost answers "not there" the queued
+    /// reads whose MSAA ids name it and the watches waiting on it, and
+    /// forgets its MSAA nodes, text facts, kept verdicts and classic-read
+    /// mark before any later work. A followed node's registration is
+    /// Core's to end, with a `Follow` naming nothing.
     WindowDestroyed(crate::WindowHandle),
 }
 
@@ -537,6 +539,25 @@ pub enum ListenerToCore {
     /// foreground hold. Today's routed facts are sent beside it until the
     /// build removes them.
     Tell(Box<crate::tell::Event>),
+    /// A window was destroyed: every `EVENT_OBJECT_DESTROY` of a window
+    /// object the listener hears, held in the order of its tells through
+    /// the foreground hold and never merged, so Core clears what it keeps
+    /// of the window and its outpost forgets it, as NVDA handles a
+    /// destroy in its hook's callback
+    /// (`IAccessibleHandler/internalWinEventHandler.py` 101 to 103). A
+    /// destroy is never dropped for its process.
+    Destroyed {
+        /// The window.
+        window: crate::WindowHandle,
+        /// The process of the thread that raised it, the outpost that
+        /// forgets the window; `None` when that thread cannot be opened,
+        /// as a ghost's (the desktop window manager's) or an exited
+        /// thread's cannot.
+        process: Option<Pid>,
+        /// When the listener's callback observed it, in microseconds on
+        /// the run's shared clock.
+        at_us: u64,
+    },
     /// The answer to a [`CoreToListener::Request`], one per request.
     Answer(crate::request::Answer),
     /// Answer to [`CoreToListener::Ping`].
@@ -770,6 +791,7 @@ impl ListenerToCore {
             | ListenerToCore::Fault { .. }
             | ListenerToCore::Progress { .. }
             | ListenerToCore::Foreground { .. }
+            | ListenerToCore::Destroyed { .. }
             | ListenerToCore::Answer(_)
             | ListenerToCore::IdleAnswer { .. }
             | ListenerToCore::ExitHandled { .. } => None,
@@ -791,6 +813,7 @@ impl ListenerToCore {
             ListenerToCore::Fault { .. }
             | ListenerToCore::Progress { .. }
             | ListenerToCore::Foreground { .. }
+            | ListenerToCore::Destroyed { .. }
             | ListenerToCore::Tell(_) => Kind::Report,
             ListenerToCore::Ready { .. }
             | ListenerToCore::Pong { .. }
@@ -811,6 +834,7 @@ impl ListenerToCore {
             ListenerToCore::Ready { .. }
             | ListenerToCore::ExitHandled { .. }
             | ListenerToCore::Foreground { .. }
+            | ListenerToCore::Destroyed { .. }
             | ListenerToCore::Tell(_)
             | ListenerToCore::Answer(_)
             | ListenerToCore::Fault { .. }

@@ -20,13 +20,39 @@
 //! A `Follow` replaces one still queued, which is answered "ended or
 //! stopped" (Table 10): the newest `Follow` wins, and since it names the
 //! whole registration, skipping the older one changes nothing that runs
-//! between them. A window destroyed answers every request queued on it
-//! "not there" (Table 14).
+//! between them. A window destroyed answers "not there" every queued read
+//! whose MSAA ids name it (Table 14).
 
 use std::collections::VecDeque;
 
 use verbatim_model::WindowHandle;
-use verbatim_model::request::{Answer, Ask, Cancel, Outcome, Request, RequestNumber};
+use verbatim_model::request::{Answer, Ask, Cancel, ObjectRef, Outcome, Request, RequestNumber};
+
+/// The window of the MSAA ids `request`'s subject is named by, for the
+/// kinds that name one: a read of an object by its ids and a run's
+/// candidate. Every kind is classed, so a new one is classed where it is
+/// added.
+fn ids_window(request: &Request) -> Option<WindowHandle> {
+    match request {
+        Request::ReadObject(read) => match read.object {
+            ObjectRef::Msaa { window, .. } => Some(window),
+            ObjectRef::Kept { .. } | ObjectRef::Node(_) => None,
+        },
+        Request::MsaaRun(run) => Some(run.candidate.ids.window),
+        Request::Properties { .. }
+        | Request::Navigate { .. }
+        | Request::Find { .. }
+        | Request::Children { .. }
+        | Request::Text { .. }
+        | Request::Activate { .. }
+        | Request::Follow(_)
+        | Request::CompleteUia(_)
+        | Request::CurrentFocus { .. }
+        | Request::DumpTree { .. }
+        | Request::ShellItems { .. }
+        | Request::ShellItemPosition { .. } => None,
+    }
+}
 
 /// What a cancel does.
 #[derive(Debug, PartialEq, Eq)]
@@ -77,13 +103,18 @@ impl Asks {
         replaced
     }
 
-    /// Window `window` was destroyed: every request queued on it is
-    /// removed, and their answers, "not there", are returned. The running
-    /// one answers what it found.
+    /// Window `window` was destroyed: every queued request whose subject's
+    /// own MSAA ids name it, a read of an object by its ids or a run's
+    /// candidate, is removed, and their answers, "not there", are
+    /// returned. A request is never matched by the window it was asked on
+    /// ([`Ask::window`]): a node's request, a current-focus read, which
+    /// reads the application's focus window, and every other stay queued
+    /// and run after the window's forget. The running one answers what it
+    /// found.
     pub fn destroyed(&mut self, window: WindowHandle) -> Vec<Answer> {
         let mut gone = Vec::new();
         self.queued.retain(|queued| {
-            let on = queued.window == window;
+            let on = ids_window(&queued.request) == Some(window);
             if on {
                 gone.push(Answer {
                     number: queued.number,
@@ -253,15 +284,39 @@ mod tests {
         assert_eq!(asks.running(), Some(RequestNumber(1)));
     }
 
-    /// A window destroyed answers every request queued on it "not there",
-    /// leaves the others and the running one.
+    /// A read of an object by MSAA ids in `window`.
+    fn by_ids(number: u64, window: u64) -> Box<Ask> {
+        Box::new(Ask {
+            number: RequestNumber(number),
+            window: WindowHandle(1),
+            verdict: WindowVerdict::Msaa,
+            request: Request::ReadObject(verbatim_model::request::ReadObject {
+                object: ObjectRef::Msaa {
+                    window: WindowHandle(window),
+                    object: -4,
+                    child: 0,
+                },
+                set: Vec::new(),
+                relation: None,
+                descendants: false,
+                walk: None,
+                purpose: verbatim_model::request::Purpose::Other,
+            }),
+        })
+    }
+
+    /// A window destroyed answers "not there" every queued read whose MSAA
+    /// ids name it, and leaves a request merely asked on it, the others
+    /// and the running one.
     #[test]
-    fn a_destroyed_window_answers_its_queued_requests_not_there() {
+    fn a_destroyed_window_answers_the_queued_reads_its_ids_name_not_there() {
         let mut asks = Asks::default();
-        let _ = asks.push(follow(1, 7));
+        let _ = asks.push(by_ids(1, 7));
         let _ = asks.take_next();
         let _ = asks.push(ask(2));
-        let _ = asks.push(follow(3, 7));
+        let _ = asks.push(by_ids(3, 7));
+        let _ = asks.push(follow(4, 7));
+        let _ = asks.push(by_ids(5, 8));
         let gone = asks.destroyed(WindowHandle(7));
         assert_eq!(
             gone.iter()
@@ -269,7 +324,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             [(3, Outcome::NotThere)]
         );
-        assert_eq!(numbers(&asks), [2]);
+        assert_eq!(numbers(&asks), [2, 4, 5]);
         assert_eq!(asks.running(), Some(RequestNumber(1)));
     }
 

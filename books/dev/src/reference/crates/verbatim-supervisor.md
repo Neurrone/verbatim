@@ -62,7 +62,8 @@ The message layer, the launch arguments and the held processes are
 
 The app hears through `OutpostMessage`: `ListenerStarted` (before the
 listener's launch, so Core keeps its first tells), `ListenerReady`,
-`ListenerEnded`, `Listener` (the current listener's tells and answers,
+`ListenerEnded`, `Listener` (the current listener's tells, window
+destructions and answers,
 which Core's event queue judges), `Pong` (each child's answer to a ping,
 for Core's liveness), `SpareReady`, `IdleQueried`, `Foreground`,
 `Progress` (a progress bar's change from the listener), `Running`,
@@ -116,7 +117,8 @@ How it works:
   child's pipe (`transport::PortReader`) and handles each frame in the
   pass that read it: a listener's frame decodes as a `ListenerToCore`,
   matched exhaustively, every frame of a listener other than the current
-  one dropped, and its tells and answers handed on; an outpost's frame is
+  one dropped, and its tells, window destructions and answers handed on;
+  an outpost's frame is
   read only for its kind (`verbatim_process::message::peek`), a pong and
   `TargetExited` handled, `Ready` handled and passed on, anything else
   handed on whole (a copy of its lent parts, `transport::Parts::into_owned`).

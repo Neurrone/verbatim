@@ -1086,9 +1086,18 @@ impl ReducerThread<'_> {
                     ListenerToCore::Answer(answer) => {
                         self.queue(QueueInput::Answer { from, answer });
                     }
+                    ListenerToCore::Destroyed {
+                        window, process, ..
+                    } => {
+                        self.queue(QueueInput::WindowDestroyed {
+                            from,
+                            window,
+                            process,
+                        });
+                    }
                     other => tracing::error!(
                         ?other,
-                        "the supervisor handed on a listener message that is no tell or answer, a logic bug"
+                        "the supervisor handed on a listener message that is no tell, destroy or answer, a logic bug"
                     ),
                 }
             }

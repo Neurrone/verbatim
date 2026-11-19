@@ -113,7 +113,7 @@ what changed.
 
 States are spoken in one fixed order, whatever order the object
 reported them in: unavailable, focused, selected, busy, pressed, checked,
-half checked, read only, expanded, collapsed, submenu (has popup),
+half checked, read only, expanded, collapsed, invisible, submenu (has popup),
 protected, required, invalid entry, off screen. A negated state ("not selected", "not checked",
 "not pressed") takes the same place in that order as its positive form,
 so an unchecked, unavailable check box is "check box unavailable not
@@ -128,8 +128,9 @@ that opens a submenu.
 A query, such as reporting the current object, speaks every remaining
 state. Any other reason leaves out a few more:
 
-- focused and offscreen, which describe where the object is rather than
-  what it is;
+- focused, offscreen and invisible, which describe where the object is
+  rather than what it is (`controlTypes/processAndLabelStates.py` 62 to
+  68);
 - selected, on a list item, tree view item, menu item, table row, or
   check box that can be selected: selection is the expected state of a
   focused item, so only its absence is worth hearing;

@@ -176,9 +176,15 @@ section 6.3).
   (`verbatim_listener_logic::tell`): the window of 0 or an invalid one
   mapped or dropped, a destruction of anything but a window, Windows Live
   Messenger's hidden window, a show of neither a client nor a custom
-  object, and a hung or ghosted window. A tell carries the event's object,
-  its raising thread, the process that serves the window (a console
-  window's and a destroyed window's the process of that thread), that
+  object, and a hung or ghosted window. A window's destruction is no tell:
+  it goes as `ListenerToCore::Destroyed` with the window, the process of
+  the raising thread, or none when that thread cannot be opened (a
+  ghost's, raised on the desktop window manager's thread, or an exited
+  thread's), and the time, so none is dropped for its process; it is
+  placed in the tells' order through the foreground hold (`Held::Destroyed`)
+  and waits on the lane that keeps order and never merges. A tell carries
+  the event's object, its raising thread, the process that serves the
+  window (a console window's the process of that thread), that
   process's executable name, read once per process held open
   (`Applications`), the input desktop's openness for a switch, and
   acceptance's window facts, the window's own read as the event arrives

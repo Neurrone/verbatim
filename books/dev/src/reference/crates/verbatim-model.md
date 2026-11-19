@@ -66,7 +66,8 @@ recorder unchanged. What the reducer does with each type is in
   every role both backends' NVDA tables map that Verbatim speaks
   (`Role::ALL` lists them; `Role::Terminal` is NVDA's terminal role), the
   states (no "default", which NVDA does not have; `Invisible`, an MSAA
-  object's, never spoken, makes an ancestor unpresentable), and a bitmask
+  object's or a destroyed ghost's plain window's, spoken only for a query,
+  makes an ancestor unpresentable), and a bitmask
   state set
   with `contains`, `insert`, `remove`, `with`, and ordered `iter`. Both
   enums are non-exhaustive and ordered.
@@ -329,7 +330,11 @@ them yet.
   as `QueueInput::Process`, a `ProcessFact`, and carries out
   `QueueEffect::StartOutpost` and `QueueEffect::EndOutpost`;
   `QueueEffect::StaleFrame` logs a frame of an instance that is not its
-  reader's current one.
+  reader's current one. A listener's window destroyed arrives as
+  `QueueInput::WindowDestroyed { from, window, process }`, its process
+  `None` when the listener could not open the raising thread, and Core
+  passes it on in `QueueEffect::WindowDestroyed` to the outpost of that
+  process when one is ready.
   The `stroke` module holds `Stroke`, `HeldStroke` with its `Modifier`s,
   and `SentTransition`.
 - A caret key's text requests (`TextOp`): `StartingRead`, answered
@@ -400,9 +405,10 @@ that carries them on the pipes is
     `Assign`, `Request` (an `Ask` of the shared list, its node ids
     stamped with the outpost generation, which the outpost clears with
     `Ask::unstamp`), `Cancel` (a request's `Cancel` with its reason) and
-    `WindowDestroyed` (a window of the outpost's application destroyed,
-    whose MSAA nodes, text facts and followed registration the outpost
-    forgets, and whose queued requests it answers "not there").
+    `WindowDestroyed` (a window of the outpost's application destroyed:
+    the outpost answers "not there" the queued reads whose MSAA ids name
+    it and the watches waiting on it, and forgets its MSAA nodes, text
+    facts, kept verdicts and classic-read mark before any later work).
   - `CoreToListener`: `ApplicationExited` (answered by `ExitHandled`),
     `Ping`, `IdleQuery`, `Shutdown`, `Request`, `Cancel` and
     `ElementsHeld { generation, tokens, acknowledged }`, the told elements
@@ -420,7 +426,9 @@ that carries them on the pipes is
     counts toward `NodesHeld`'s positions when it carries a result).
   - `ListenerToCore`: `Ready`, `ExitHandled`, `Progress`, `Foreground`,
     `Tell` (a tell, `tell::Event`, which the supervisor hands to Core),
-    `Answer`, `Pong`, `Fault` and `IdleAnswer`.
+    `Destroyed { window, process, at_us }` (a window destroyed, with the
+    raising thread's process or none, which the supervisor hands to Core
+    too), `Answer`, `Pong`, `Fault` and `IdleAnswer`.
 - Every variant has a `Kind` (`kind()`, an exhaustive match): `Ask`,
   `Answer`, `Report`, `Release` or `Lifecycle`. The module denies
   wildcard matches over its enums, and a test holds the reviewed list of

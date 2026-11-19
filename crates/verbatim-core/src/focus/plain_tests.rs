@@ -593,13 +593,12 @@ fn the_plain_reader_answers_the_generic_read_as_a_plain_window() {
     );
 }
 
-/// A request on an older plain object's node, or on the plain object after
-/// its ghost was destroyed, finds it not there. A popup end with no focus
-/// in its run checks again first: the same ghost is spoken again, as a new
-/// generation, since a plain focus is never a duplicate
-/// (`IAccessibleHandler/__init__.py` 772 to 778).
+/// A request on an older plain object's node finds it not there. A popup
+/// end with no focus in its run checks again first: the same ghost is
+/// spoken again, as a new generation, since a plain focus is never a
+/// duplicate (`IAccessibleHandler/__init__.py` 772 to 778).
 #[test]
-fn a_request_on_an_older_plain_node_or_after_the_ghost_is_destroyed_is_not_there() {
+fn a_request_on_an_older_plain_node_is_not_there() {
     let mut state = plain_committed();
     assert_eq!(
         effects(&mut state, 100_000, end(EventKind::PopupEnd)),
@@ -624,20 +623,131 @@ fn a_request_on_an_older_plain_node_or_after_the_ghost_is_destroyed_is_not_there
         super::answer(&state.state.plain, &older),
         Some(WireOutcome::NotThere)
     );
-    let _ = effects(
-        &mut state,
-        160_000,
-        Input::WindowDestroyed {
-            window: GHOST,
-            process: Pid(6),
+}
+
+/// The listener's destroy of `window`, raised on a thread it could not
+/// open, as the desktop window manager's thread destroys a ghost.
+fn destroyed(window: WindowHandle) -> QueueInput {
+    QueueInput::WindowDestroyed {
+        from: LISTENER,
+        window,
+        process: None,
+    }
+}
+
+/// The plain object's answer to [`asked_set`] once its ghost is
+/// destroyed: no name, the role window and the invisible state alone, as
+/// NVDA's plain `Window` of the dead handle answers
+/// (`NVDAObjects/window/__init__.py` 190 to 194, 299 to 306).
+fn destroyed_values() -> PropertyValues {
+    PropertyValues(vec![
+        PropertyAnswer {
+            id: PropertyId::Name,
+            value: None,
         },
-    );
-    let current = Wire::Activate {
-        node: plain_node(2),
-    };
+        PropertyAnswer {
+            id: PropertyId::Role,
+            value: Some(PropertyValue::Role(Role::Window)),
+        },
+        PropertyAnswer {
+            id: PropertyId::States,
+            value: Some(PropertyValue::States(StateSet::from_iter([
+                State::Invisible,
+            ]))),
+        },
+        PropertyAnswer {
+            id: PropertyId::Value,
+            value: None,
+        },
+    ])
+}
+
+/// The ghost committed as the plain focus is destroyed by the desktop
+/// window manager's thread, which the listener cannot open: the destroy
+/// arrives with no process, sends nothing, and the plain object stays the
+/// focus, now NVDA's plain `Window` of a dead handle. Its node answers no
+/// name, the role window and the invisible state, and Insert+Tab, a
+/// query, says "window invisible", as NVDA's `processAndLabelStates` keeps
+/// the invisible state for a query (`controlTypes/processAndLabelStates.py`
+/// 62 to 68; Dickson, 2026-11-19).
+#[test]
+fn the_ghost_destroyed_under_the_plain_focus_says_window_invisible() {
+    let mut state = plain_committed();
+    // hungwin stays watched: only the ghost's own window was destroyed.
     assert_eq!(
-        super::answer(&state.state.plain, &current),
+        route(&mut state, 160_000, &destroyed(GHOST)),
+        [Said::Queue(QueueEffect::WakeAt(Some(551_000)))]
+    );
+    assert_eq!(
+        super::answer(
+            &state.state.plain,
+            &Wire::Properties {
+                node: plain_node(1),
+                set: asked_set(),
+            }
+        ),
+        Some(WireOutcome::Result(Reply::Properties(destroyed_values())))
+    );
+    assert_eq!(
+        effects(&mut state, 200_000, press(1, ReviewCommand::ReportFocus, 0)),
+        ["Role(Window) State(Invisible)"]
+    );
+    assert_eq!(
+        effects(
+            &mut state,
+            201_000,
+            press(2, ReviewCommand::ReportObject, 0)
+        ),
+        ["Role(Window) State(Invisible)"]
+    );
+}
+
+/// Another window's destruction leaves the plain ghost as it was, and the
+/// next plain commit replaces the destroyed one with a new generation.
+#[test]
+fn another_windows_destroy_leaves_the_ghost_and_the_next_commit_replaces_the_dead_one() {
+    let mut state = plain_committed();
+    assert_eq!(
+        route(&mut state, 60_000, &destroyed(WindowHandle(91))),
+        [Said::Queue(QueueEffect::WakeAt(Some(551_000)))]
+    );
+    assert_eq!(
+        effects(&mut state, 61_000, press(1, ReviewCommand::ReportFocus, 0)),
+        [PLAIN_SPOKEN]
+    );
+    assert_eq!(
+        route(&mut state, 62_000, &destroyed(GHOST)),
+        [Said::Queue(QueueEffect::WakeAt(Some(551_000)))]
+    );
+    assert_eq!(
+        effects(&mut state, 100_000, end(EventKind::PopupEnd)),
+        Vec::<String>::new()
+    );
+    assert_eq!(
+        effects(&mut state, 150_000, Input::Tick),
+        ["send Outpost(Pid(40)) CurrentFocus with the focused state as a fact"]
+    );
+    // Request 3 was report focus's, answered by the plain reader.
+    assert_eq!(
+        effects(
+            &mut state,
+            151_000,
+            hung_focus(4, ghost("hungwin (Not Responding)"))
+        ),
+        [PLAIN_SPOKEN]
+    );
+    assert_eq!(
+        super::answer(
+            &state.state.plain,
+            &Wire::Activate {
+                node: plain_node(1),
+            }
+        ),
         Some(WireOutcome::NotThere)
+    );
+    assert_eq!(
+        effects(&mut state, 152_000, press(2, ReviewCommand::ReportFocus, 0)),
+        [PLAIN_SPOKEN]
     );
 }
 

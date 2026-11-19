@@ -738,7 +738,7 @@ impl Owner {
                     message: Box::new(ListenerToCore::Tell(tell)),
                 });
             }
-            message @ ListenerToCore::Answer(_) => {
+            message @ (ListenerToCore::Answer(_) | ListenerToCore::Destroyed { .. }) => {
                 self.outbox.send(OutpostMessage::Listener {
                     listener: outpost,
                     message: Box::new(message),

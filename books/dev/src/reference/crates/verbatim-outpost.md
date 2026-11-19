@@ -1019,10 +1019,17 @@ window before it is handled.
   (`UiaKind::Property`), so Core plays the suggestions-closed sound for
   an element that is no longer the focus only when it is a suggestions
   field, with no call added.
-- `WindowDestroyed`: the requests queued on the window are answered not
-  there at once (`Asks::destroyed`), and a program forgets the window's
-  MSAA nodes and text facts, and the registration of a followed node in
-  it.
+- `WindowDestroyed`: the queued reads whose MSAA ids name the window, a
+  read by ids and a run's candidate, are answered not there at once
+  (`Asks::destroyed`), with the watches waiting on it; every other request
+  stays queued, whatever window it was asked on. The reducer owes the
+  window a forget, and the windows destroyed in one drain of the mailbox
+  are forgotten by one program (`Work::Forget`, `worker::forget`) ahead of
+  every later program: each window's kept verdicts and classic-read mark,
+  and its MSAA nodes with their text facts, so a reused handle inherits
+  none. A followed node's registration is Core's to end, with a `Follow`
+  naming nothing, which runs after the forget. `Outpost::holds` says
+  whether the store holds a node, for the harness's test of the forget.
 
 ### Requests from outside the event queue
 

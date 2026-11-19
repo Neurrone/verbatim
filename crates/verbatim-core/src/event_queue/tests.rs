@@ -1178,23 +1178,22 @@ fn a_watched_window_stays_when_another_request_to_it_is_found_hung() {
     );
 }
 
+/// A destroy with no process, as the listener sends one whose raising
+/// thread it cannot open, still takes the window out of the recovery set,
+/// and sends nothing to an outpost.
 #[test]
 fn a_watched_window_leaves_the_set_when_it_is_destroyed() {
     let mut core = core_watching();
-    // The destruction is passed to the raising thread's process's outpost.
     assert_eq!(
         feed(
             &mut core,
             2_000,
             Input::WindowDestroyed {
                 window: WINDOW.handle,
-                process: APP,
+                process: None,
             }
         ),
-        [Effect::WindowDestroyed {
-            to: OUTPOST,
-            window: WINDOW.handle,
-        }]
+        []
     );
     assert_eq!(core.next_due(), None);
 }
@@ -1757,7 +1756,7 @@ fn a_destroyed_windows_probe_verdict_is_cleared() {
             2_100,
             Input::WindowDestroyed {
                 window: PROBED.handle,
-                process: Pid(77),
+                process: None,
             }
         ),
         []

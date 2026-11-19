@@ -1244,13 +1244,18 @@ pub enum QueueInput {
     ReaderReady(Instance),
     /// A reader's instance ended.
     ReaderEnded(Instance),
-    /// A window was destroyed.
+    /// The listener of `from` heard a window destroyed
+    /// ([`crate::protocol::ListenerToCore::Destroyed`]).
     WindowDestroyed {
+        /// The listener's instance, whose frames Core admits only while it
+        /// is the current one.
+        from: Instance,
         /// The window.
         window: WindowHandle,
         /// The process of the thread that raised its destruction, whose
-        /// outpost forgets what it holds of it.
-        process: Pid,
+        /// outpost forgets what it holds of it; `None` when the listener
+        /// could not open that thread.
+        process: Option<Pid>,
     },
     /// The time Core last asked to be woken at came.
     Due,
@@ -1552,9 +1557,10 @@ pub enum QueueEffect {
     /// At exit, release each of these keys that Windows still has down, in
     /// order, and send nothing else.
     ReleaseAtExit(Vec<crate::stroke::Stroke>),
-    /// Tell the instance a window was destroyed: it forgets that window's
-    /// MSAA nodes and text facts, and answers its queued requests on it
-    /// "not there".
+    /// Tell the instance a window was destroyed: it answers "not there"
+    /// the queued reads whose MSAA ids name the window and the watches
+    /// waiting on it, and forgets the window's MSAA nodes, text facts,
+    /// kept verdicts and classic-read mark before any later work.
     WindowDestroyed {
         /// The outpost instance of the process that raised it.
         to: Instance,

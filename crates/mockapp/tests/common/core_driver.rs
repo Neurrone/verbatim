@@ -361,6 +361,18 @@ impl CoreDriver {
         }
     }
 
+    /// The listener tells Core that `window` of mockapp's was destroyed,
+    /// raised by a thread of mockapp's process, as it sends a destroy:
+    /// what Core said once the outpost handled everything it was handed.
+    pub fn destroyed(&mut self, window: HWND) -> Step {
+        self.feed(QueueInput::WindowDestroyed {
+            from: LISTENER,
+            window: handle(window.0 as isize),
+            process: Some(self.app),
+        });
+        self.take()
+    }
+
     /// The listener tells Core of a UI Automation focus on `element`, which
     /// mockapp raised; what Core said once every answer came, and the
     /// calls of its reads.
@@ -1044,10 +1056,16 @@ impl CoreDriver {
                 );
                 inputs.push_back(self.queued(QueueInput::ReaderReady(self.outpost_instance())));
             }
+            // As Core's shell sends it, ahead of any request after it.
+            QueueEffect::WindowDestroyed { to, window } => {
+                assert_eq!(to, self.outpost_instance(), "a destroy for another outpost");
+                self.outpost.outpost.handle_command(
+                    &verbatim_model::protocol::CoreToOutpost::WindowDestroyed(window),
+                );
+            }
             QueueEffect::Answered { .. }
             | QueueEffect::SendStrokes(_)
             | QueueEffect::ReleaseAtExit(_)
-            | QueueEffect::WindowDestroyed { .. }
             | QueueEffect::AnswerDropped { .. }
             | QueueEffect::EndOutpost(_)
             | QueueEffect::StaleFrame(_) => {}

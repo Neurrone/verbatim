@@ -10,7 +10,9 @@
 //!
 //! Core keeps only the node it last named per outpost. A `Follow`'s
 //! ending changes nothing in Core: its answer serves the test harness's
-//! idle, and a newer `Follow` replaces it.
+//! idle, and a newer `Follow` replaces it. When the named node's window is
+//! destroyed, Core sends that outpost a `Follow` naming nothing as its own
+//! request (column E).
 
 use std::collections::BTreeMap;
 
@@ -183,11 +185,34 @@ impl Follows {
         }
     }
 
-    /// `window` was destroyed (column E): a node named in it is named no
-    /// more, the outpost having dropped its registration with the window's
-    /// nodes.
-    pub(crate) fn window_destroyed(&mut self, window: WindowHandle) {
-        self.named.retain(|_, named| named.node_window != window);
+    /// `window` was destroyed (column E, 2026-11-19): a node named in it
+    /// is named no more, and its outpost is sent a `Follow` naming
+    /// nothing, which removes the registration, when the generation named
+    /// is the one `ready` says can take requests (`ready(process,
+    /// generation)`); a generation not ready is dropped with nothing sent,
+    /// since nothing is named in a dead generation and no request may
+    /// start an outpost. Core is the one judge of what is followed: the
+    /// outpost judges nothing at a destroy.
+    pub(crate) fn window_destroyed(
+        &mut self,
+        window: WindowHandle,
+        ready: impl Fn(Pid, OutpostId) -> bool,
+    ) -> Vec<FollowRequest> {
+        let mut requests = Vec::new();
+        self.named.retain(|&process, named| {
+            if named.node_window != window {
+                return true;
+            }
+            if ready(process, named.generation) {
+                requests.push(FollowRequest {
+                    process,
+                    window: named.window,
+                    follow: Follow { node: None },
+                });
+            }
+            false
+        });
+        requests
     }
 
     /// The outpost generation `generation` of `process` ended (column F):

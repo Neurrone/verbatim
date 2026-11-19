@@ -397,6 +397,7 @@ state-read-only = read only
 state-multi-line = multi line
 state-expanded = expanded
 state-collapsed = collapsed
+state-invisible = invisible
 state-pressed = pressed
 state-not-pressed = not pressed
 state-has-popup = submenu

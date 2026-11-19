@@ -107,11 +107,24 @@ impl Pending {
     }
 }
 
-/// What the listener's order of tells carries: a tell, or the idle
-/// barrier's answer, which waits behind every tell placed before it.
+/// What the listener's order of tells carries: a tell, a window's
+/// destruction, or the idle barrier's answer, which waits behind every
+/// tell placed before it.
 pub(super) enum Held {
     /// A tell.
     Tell(Box<Pending>),
+    /// A window's destruction, sent on the lane that keeps order and never
+    /// merges, so that no tell placed before it moves behind it and no
+    /// later one replaces it ([`ListenerToCore::Destroyed`]).
+    Destroyed {
+        /// The window.
+        window: WindowHandle,
+        /// The process of the thread that raised it, `None` when that
+        /// thread cannot be opened.
+        process: Option<Pid>,
+        /// When the callback observed it.
+        at_us: u64,
+    },
     /// The idle barrier's answer for a round.
     IdleAnswer(u64),
 }
@@ -223,6 +236,15 @@ impl Tells {
                     let (key, message) = tell.finish(reads);
                     sent(&self.sender.send(Sent::Tell(key, message)));
                 }
+                Held::Destroyed {
+                    window,
+                    process,
+                    at_us,
+                } => sent(&self.sender.send(Sent::Report(ListenerToCore::Destroyed {
+                    window,
+                    process,
+                    at_us,
+                }))),
                 Held::IdleAnswer(round) => sent(&self.sender.send(Sent::IdleAnswer(round))),
             }
         }
@@ -318,7 +340,12 @@ fn handle(window: isize) -> WindowHandle {
 /// Tells Core of `event`, received at `at_us`, unless a local drop takes
 /// it, placing its tell in the listener's order through `tells`; a
 /// foreground event's window is awaited by the foreground hold whether or
-/// not its tell is dropped after the window is known. The local drops, in
+/// not its tell is dropped after the window is known. A window's
+/// destruction is placed at once after the window's mapping, with the
+/// process of the thread that raised it when that thread can be opened and
+/// none when it cannot, so it is never dropped for its process: NVDA
+/// handles a destroy before any other drop
+/// (`IAccessibleHandler/internalWinEventHandler.py` 101 to 103). The local drops, in
 /// NVDA's order (design, "Readers' local drops"): the window's mapping
 /// ([`tell_window`]), the process that serves the window, which must be
 /// known (a console window's is its console host, the process of the
@@ -351,6 +378,14 @@ pub(super) fn tell_win_event(
             return;
         }
     };
+    if kind == EventKind::Destroy {
+        let destroyed = Held::Destroyed {
+            window: handle(window),
+            process: windows.process_of_thread(event.thread).map(Pid),
+            at_us,
+        };
+        return tells.place_seen(destroyed, front, windows.live());
+    }
     let awaited = (event.kind == WinEventKind::Foreground).then_some(window);
     let dropped = |reason: &'static str| {
         tracing::trace!(?kind, window, reason, "a WinEvent is not told");
@@ -361,9 +396,9 @@ pub(super) fn tell_win_event(
     let class = reads.class(window);
     let console = class == CONSOLE_WINDOW_CLASS;
     let owner = reads.owner(window).1;
-    // A console window's events, and a destroyed window's, are served by
-    // the process of the thread that raised them.
-    let process = if console || kind == EventKind::Destroy || owner == 0 {
+    // A console window's events are served by the process of the thread
+    // that raised them.
+    let process = if console || owner == 0 {
         windows.process_of_thread(event.thread)
     } else {
         Some(owner)
@@ -597,7 +632,7 @@ mod tests {
     }
 
     #[test]
-    fn a_windows_destruction_is_told_for_the_process_of_its_thread() {
+    fn a_windows_destruction_is_sent_with_the_process_of_its_thread() {
         let gone = OwnWindow::new().0;
         let (tells, sender, mut reader) = tells();
         let destroy = event(WinEventKind::Destroy, EVENT_OBJECT_DESTROY, gone, 0);
@@ -607,17 +642,98 @@ mod tests {
             destroy,
             (1, foreground()),
         );
-        let sent = sent_all(&sender, &mut reader);
-        let tell = only_tell(&sent);
-        assert_eq!(tell.kind, EventKind::Destroy);
-        assert_eq!(tell.process, Pid(std::process::id()));
         assert_eq!(
-            tell.object,
-            EventObject::Msaa {
+            sent_all(&sender, &mut reader),
+            [ListenerToCore::Destroyed {
                 window: handle(gone),
-                object: 0,
-                child: 0,
-            }
+                process: Some(Pid(std::process::id())),
+                at_us: 1,
+            }]
+        );
+    }
+
+    /// A destroy raised on a thread the listener cannot open, as the
+    /// desktop window manager's thread that destroys a ghost, or a thread
+    /// that has exited, is sent with no process, never dropped. Thread 0
+    /// is one no `OpenThread` opens.
+    #[test]
+    fn a_destruction_on_a_thread_that_cannot_be_opened_is_sent_with_no_process() {
+        let gone = OwnWindow::new().0;
+        let (tells, sender, mut reader) = tells();
+        let destroy = WinEvent {
+            thread: 0,
+            ..event(WinEventKind::Destroy, EVENT_OBJECT_DESTROY, gone, 0)
+        };
+        tell(
+            &tells,
+            &mut Applications::default(),
+            destroy,
+            (2, foreground()),
+        );
+        assert_eq!(
+            sent_all(&sender, &mut reader),
+            [ListenerToCore::Destroyed {
+                window: handle(gone),
+                process: None,
+                at_us: 2,
+            }]
+        );
+    }
+
+    /// A destroy placed while a foreground hold keeps tells leaves after
+    /// the tells held before it and ahead of those placed after it.
+    #[test]
+    fn a_destruction_keeps_its_place_among_the_held_tells() {
+        let window = OwnWindow::new();
+        let other = OwnWindow::new();
+        let gone = OwnWindow::new().0;
+        let (tells, sender, mut reader) = tells();
+        let mut applications = Applications::default();
+        let foreground_event = event(
+            WinEventKind::Foreground,
+            EVENT_SYSTEM_FOREGROUND,
+            window.0,
+            OBJID_CLIENT.0,
+        );
+        tell(
+            &tells,
+            &mut applications,
+            foreground_event,
+            (1, foreground()),
+        );
+        let name_change = event(
+            WinEventKind::NameChange,
+            EVENT_OBJECT_NAMECHANGE,
+            window.0,
+            OBJID_CLIENT.0,
+        );
+        tell(&tells, &mut applications, name_change, (2, foreground()));
+        let destroy = event(WinEventKind::Destroy, EVENT_OBJECT_DESTROY, gone, 0);
+        tell(&tells, &mut applications, destroy, (3, foreground()));
+        let other_change = event(
+            WinEventKind::NameChange,
+            EVENT_OBJECT_NAMECHANGE,
+            other.0,
+            OBJID_CLIENT.0,
+        );
+        tell(&tells, &mut applications, other_change, (4, foreground()));
+        tells.foreground(foreground(), None, foreground(), &SystemReads);
+        let order: Vec<String> = sent_all(&sender, &mut reader)
+            .into_iter()
+            .map(|message| match message {
+                ListenerToCore::Tell(tell) => format!("{:?} {}", tell.kind, tell.at_us),
+                ListenerToCore::Destroyed { at_us, .. } => format!("Destroyed {at_us}"),
+                other => format!("{other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            order,
+            [
+                "Foreground 1",
+                "NameChange 2",
+                "Destroyed 3",
+                "NameChange 4"
+            ]
         );
     }
 
@@ -745,5 +861,45 @@ mod tests {
             })
             .collect();
         assert_eq!(order, ["2", "3", "4"]);
+    }
+
+    /// A window's destruction waits on the lane that keeps order and never
+    /// merges: two destroys of one window both stay, in the order they
+    /// were sent, among the tells.
+    #[test]
+    fn destructions_wait_in_order_and_are_never_merged() {
+        let destroyed = |at_us: u64| ListenerToCore::Destroyed {
+            window: WindowHandle(5),
+            process: None,
+            at_us,
+        };
+        let key = TellKey {
+            kind: EventKind::NameChange,
+            object: EventObject::Msaa {
+                window: WindowHandle(5),
+                object: -4,
+                child: 0,
+            },
+            thread: 9,
+        };
+        let mut waiting = Waiting::default();
+        let _ = waiting.push(Sent::Report(destroyed(1)));
+        let _ = waiting.push(Sent::Tell(
+            key,
+            ListenerToCore::Fault {
+                detail: "2".to_owned(),
+            },
+        ));
+        let _ = waiting.push(Sent::Report(destroyed(3)));
+        let order: Vec<String> = std::iter::from_fn(|| waiting.pop())
+            .map(|sent| match sent {
+                Sent::Message(ListenerToCore::Destroyed { at_us, .. }) => {
+                    format!("Destroyed {at_us}")
+                }
+                Sent::Message(ListenerToCore::Fault { detail }) => detail,
+                _ => "another".to_owned(),
+            })
+            .collect();
+        assert_eq!(order, ["Destroyed 1", "2", "Destroyed 3"]);
     }
 }

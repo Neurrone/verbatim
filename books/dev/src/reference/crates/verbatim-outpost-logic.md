@@ -57,8 +57,13 @@ Public API:
   no call of any kind.
 - `Input`: an entry from a producer, Core's request (`Ask`), its cancel
   (`CancelAsk`) and a program's answer to it (`Answered`), a window Core
-  named destroyed, a verdict, a commit, a program finished, a release's
-  answer, and the shell's close. `Effect`: dispatch a `Program`, send a
+  named destroyed (`WindowDestroyed`: the queued reads its MSAA ids name,
+  a read by ids and a run's candidate, never a request merely asked on
+  the window, and the watches waiting on it are answered "not there", and
+  the window is owed a forget; this input alone does not dispatch, so the
+  windows destroyed in one drain are forgotten together at the tick), a
+  verdict, a commit, a program finished, a release's answer, and the
+  shell's close. `Effect`: dispatch a `Program`, send a
   message, release, let go of parked elements (`Unpark`), forget text
   ranges (`ForgetRanges`), abandon a worker generation (`Abandon`, with
   the dead generation and its replacement; the shell alone counts the
@@ -74,7 +79,9 @@ Public API:
   runs because the foreground moved away; the reducer then emits
   `Abandon` and answers that request.
 - `Program` and `Work` (an intake `Entry`, a drop of released objects,
-  Core's `Ask`, or a watch's program): what the worker generation in
+  Core's `Ask`, a watch's program, or `Forget`, the windows owed a
+  forget, dispatched first of all, so every request Core sent after a
+  window's destruction runs after its forget): what the worker generation in
   charge runs, with its copies of the facts (`Facts`: the verdicts and
   each node's text facts), whose commits come back as `Change`s (the
   program's tell and its text changes) and are applied while their
@@ -113,7 +120,7 @@ test `tests/caret_watch.rs`.
 
 The intake (`src/intake.rs`) queues what the outpost still hears, its
 `Follow` subscription's UI Automation events and a console host's console
-events, a window Core named destroyed, and Core's lists of held nodes and
+events, and Core's lists of held nodes and
 idle queries, in arrival order: one waiting entry per object and kind, a
 console's events merged per window and kind, a newer list of held nodes
 replacing a waiting one, and a batch ending at an idle query. Core's

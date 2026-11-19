@@ -122,6 +122,10 @@ pub enum Work {
     /// A caret key's watch's check or final read ([`watch`]), answered
     /// with [`Input::Answered`] when it ends the watch.
     Watch(Box<WatchProgram>),
+    /// Forgets the windows Core named destroyed, in the order named: each
+    /// one's MSAA nodes, text facts, kept verdicts and classic-read mark,
+    /// so a reused handle inherits none of them.
+    Forget(Vec<verbatim_model::WindowHandle>),
 }
 
 /// A program for the worker in charge: its request, its copies, and its
@@ -249,8 +253,10 @@ pub enum Input {
     Ask(Box<verbatim_model::request::Ask>),
     /// Core cancels a request ([`waiting`]).
     CancelAsk(verbatim_model::request::Cancel),
-    /// A window was destroyed: Core's requests queued on it are answered
-    /// "not there" ([`waiting`]).
+    /// Core named a window destroyed: the queued reads its MSAA ids name
+    /// and the watches waiting on it are answered "not there" at once
+    /// ([`waiting`], [`watch`]), and the window is owed a forget, run
+    /// before any later work.
     WindowDestroyed(verbatim_model::WindowHandle),
     /// The answer of program `request` to the Core request it runs: sent
     /// while the program is in flight, of the generation in charge.
@@ -275,7 +281,11 @@ struct Current {
 #[cfg_attr(test, derive(Clone, Debug))]
 #[derive(Default)]
 pub struct Reducer {
-    /// Core's requests, run ahead of everything else.
+    /// The windows Core named destroyed and not yet forgotten, each once,
+    /// in the order named, forgotten together by one program ahead of
+    /// everything else.
+    forgets: Vec<verbatim_model::WindowHandle>,
+    /// Core's requests, run ahead of everything but the forgets.
     asks: Asks,
     /// The watches waiting, whose checks and final reads run ahead of
     /// Core's other requests.
@@ -372,14 +382,20 @@ impl Reducer {
                 anchors,
                 objects,
             } => self.released(&nodes, &anchors, objects, &mut effects),
-            Input::Ask(_)
-            | Input::CancelAsk(_)
-            | Input::Answered { .. }
-            | Input::WindowDestroyed(_) => {
+            // Not pumped here: the shell ticks the reducer once it has
+            // drained its mailbox, so the destroys drained together are
+            // forgotten by one program.
+            Input::WindowDestroyed(window) => {
+                self.destroyed(window, &mut effects);
+                self.answer_idle(&mut effects);
+                return effects;
+            }
+            Input::Ask(_) | Input::CancelAsk(_) | Input::Answered { .. } => {
                 self.asked(input, now, &mut effects);
             }
             Input::Close => {
                 self.stopping = true;
+                self.forgets.clear();
                 self.asks.close();
                 self.watches.close();
                 let unparked = self.intake.close();
@@ -422,13 +438,6 @@ impl Reducer {
                     effects.push(Effect::Send(Box::new(OutpostToCore::Answer(replaced))));
                 }
             }
-            Input::WindowDestroyed(window) => {
-                let mut gone = self.watches.destroyed(window);
-                gone.extend(self.asks.destroyed(window));
-                for gone in gone {
-                    effects.push(Effect::Send(Box::new(OutpostToCore::Answer(gone))));
-                }
-            }
             Input::CancelAsk(cancel) => self.cancel_ask(cancel, effects),
             Input::Answered { request, answer } => {
                 if !self.accepts(request) {
@@ -444,6 +453,24 @@ impl Reducer {
                 }
             }
             _ => {}
+        }
+    }
+
+    /// Core named `window` destroyed (Table 14): the queued reads its MSAA
+    /// ids name and the watches waiting on it are answered "not there";
+    /// every other request stays queued and runs after the forget, which
+    /// the window is now owed. A running request answers what it found.
+    fn destroyed(&mut self, window: verbatim_model::WindowHandle, effects: &mut Vec<Effect>) {
+        if self.stopping {
+            return;
+        }
+        let mut gone = self.watches.destroyed(window);
+        gone.extend(self.asks.destroyed(window));
+        for gone in gone {
+            effects.push(Effect::Send(Box::new(OutpostToCore::Answer(gone))));
+        }
+        if !self.forgets.contains(&window) {
+            self.forgets.push(window);
         }
     }
 
@@ -594,12 +621,18 @@ impl Reducer {
         }
     }
 
-    /// Starts the next program, if none is in flight: owed work first, then
-    /// what a program left to run after it, then a release's drop, then
-    /// the intake's next entry; entries the reducer handles itself are
-    /// handled on the way.
+    /// Starts the next program, if none is in flight: the forgets owed
+    /// first, as one program, so every request Core sent after a window's
+    /// destruction runs after its forget; then a watch's work due, Core's
+    /// requests, a release's drop, then the intake's next entry; entries
+    /// the reducer handles itself are handled on the way.
     fn pump(&mut self, now: Now, effects: &mut Vec<Effect>) {
         while !self.busy() && !self.stopping && !self.releasing {
+            if !self.forgets.is_empty() {
+                let windows = std::mem::take(&mut self.forgets);
+                self.dispatch(Work::Forget(windows), effects);
+                continue;
+            }
             if let Some(program) = self.watches.due(now.wall_us) {
                 let program = Box::new(program);
                 let request = self.dispatch(Work::Watch(program.clone()), effects);

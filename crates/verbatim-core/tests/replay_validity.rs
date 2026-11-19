@@ -860,6 +860,91 @@ fn the_recorded_settings_dialog_says_its_item_once() {
     );
 }
 
+/// The three windows the recorded settings dialog run destroys, as the
+/// listener's destroys name them, each raised by a thread of Verbatim's
+/// own process, 7832: the context menu's window, then two of the list's
+/// edit windows.
+const DESTROYED: [u64; 3] = [14_483_604, 19_268_216, 21_299_250];
+
+/// The handles of the windows whose probe verdicts `state` keeps.
+fn probed(state: &SrState) -> Vec<u64> {
+    let state = serde_json::to_value(state).expect("the state serializes");
+    state["queue"]["backend"]["probed"]
+        .as_array()
+        .expect("the probe verdicts")
+        .iter()
+        .map(|entry| entry[0]["handle"].as_u64().expect("a window handle"))
+        .collect()
+}
+
+/// The recorded settings dialog run's three destroys, converted from the
+/// tells the listener sent before it sent destroys of their own, with
+/// their recorded process: each is passed to Verbatim's own outpost,
+/// generation 2, which is ready, and Core clears what it keeps of the
+/// window, the context menu's probe verdict the one it held, with nothing
+/// recovering and nothing followed or plain left of any of them.
+#[test]
+fn the_recorded_settings_dialogs_destroys_reach_its_outpost_and_clear_cores_records() {
+    let file = fs::File::open(fixture_path("settings_dialog_keys_run02")).expect("fixture file");
+    let contents = dump::read_dump(&mut BufReader::new(file)).expect("fixture parses");
+    let mut state = contents.base.clone();
+    let mut runtime = verbatim_core::Runtime::default();
+    let mut destroyed = Vec::new();
+    for recorded in &contents.inputs {
+        let window = match &recorded.input {
+            verbatim_model::Input::Queue {
+                input: QueueInput::WindowDestroyed { window, .. },
+                ..
+            } => Some(*window),
+            _ => None,
+        };
+        let before = probed(&state);
+        let effects = verbatim_core::reduce(&mut state, &mut runtime, &recorded.input);
+        let Some(window) = window else {
+            continue;
+        };
+        let serialized = serde_json::to_value(&state).expect("the state serializes");
+        destroyed.push((
+            window.0,
+            before.contains(&window.0),
+            probed(&state).contains(&window.0),
+            serialized["queue"]["table"]["recovery"].clone(),
+            serialized["follows"]["named"].clone(),
+            serialized["plain"]["object"].clone(),
+            effects,
+        ));
+    }
+    let to = verbatim_model::request::Instance {
+        reader: verbatim_model::request::Reader::Outpost(verbatim_model::Pid(7832)),
+        generation: 2,
+    };
+    let wake = Effect::Queue(verbatim_model::request::QueueEffect::WakeAt(Some(
+        1_795_005_484_235_323,
+    )));
+    assert_eq!(
+        destroyed,
+        DESTROYED
+            .iter()
+            .enumerate()
+            .map(|(place, &window)| (
+                window,
+                place == 0,
+                false,
+                serde_json::json!({}),
+                serde_json::json!([]),
+                serde_json::Value::Null,
+                vec![
+                    Effect::Queue(verbatim_model::request::QueueEffect::WindowDestroyed {
+                        to,
+                        window: WindowHandle(window),
+                    }),
+                    wake.clone(),
+                ],
+            ))
+            .collect::<Vec<_>>()
+    );
+}
+
 /// The desktop's next item is read and spoken after Delete, as Dickson
 /// ruled (2026-11-18), where NVDA says nothing.
 #[test]

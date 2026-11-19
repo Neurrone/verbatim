@@ -344,13 +344,14 @@ pub enum OutpostMessage {
         /// Only the supervisor sends it.
         sealed: Sealed,
     },
-    /// A tell or an answer the listener of generation `listener` sent, for
-    /// Core's event queue, which judges whether it is the current one's.
+    /// A tell, a window's destruction or an answer the listener of
+    /// generation `listener` sent, for Core's event queue, which judges
+    /// whether it is the current one's.
     Listener {
         /// The listener's generation.
         listener: OutpostId,
-        /// The message: a [`ListenerToCore::Tell`] or a
-        /// [`ListenerToCore::Answer`].
+        /// The message: a [`ListenerToCore::Tell`], a
+        /// [`ListenerToCore::Destroyed`] or a [`ListenerToCore::Answer`].
         message: Box<ListenerToCore>,
     },
     /// A child answered a ping: an outpost of `target_pid`, or the

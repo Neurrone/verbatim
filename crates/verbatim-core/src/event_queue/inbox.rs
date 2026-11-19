@@ -60,12 +60,12 @@ pub(crate) enum Input<E> {
     /// record (Table 5).
     Process(ProcessFact),
     /// A window was destroyed, its destruction raised by a thread of
-    /// `process`.
+    /// `process`, `None` when the listener could not open that thread.
     WindowDestroyed {
         /// The window.
         window: WindowHandle,
         /// The raising thread's process.
-        process: Pid,
+        process: Option<Pid>,
     },
     /// A request from outside the event queue: Verbatim's dialogs, the
     /// control plane, the tree dump. It holds no key, and Core does not
@@ -219,22 +219,30 @@ impl<L: Logic> Core<L> {
             Input::ReaderEnded(instance) => self.instance_ended(instance),
             Input::Process(fact) => self.process_fact(fact),
             Input::WindowDestroyed { window, process } => {
+                // Handled at once, ahead of the waiting entries, whose
+                // reads in the window answer "not there" at their turn,
+                // as NVDA handles a destroy in its hook's callback
+                // (`IAccessibleHandler/internalWinEventHandler.py` 101 to
+                // 103). What Core keeps by window is cleared whether or
+                // not the raising process is known.
                 let mut shared = self.shared.borrow_mut();
-                shared.state.queue.table.unwatch(window);
-                shared.state.queue.backend.destroyed(window);
-                L::window_destroyed(&mut shared.state.facts, window);
+                let state = &mut shared.state;
+                state.queue.table.unwatch(window);
+                state.queue.backend.destroyed(window);
+                let follows = L::window_destroyed(&mut state.facts, window, &state.queue.readers);
                 // Routed by the raising thread's process, since a destroyed
                 // window can no longer be read for its owner; an outpost
-                // not running holds nothing of it.
-                let to = shared
-                    .state
-                    .queue
-                    .readers
-                    .get(&Reader::Outpost(process))
+                // not running holds nothing of it, and with no process
+                // known nothing is sent.
+                let to = process
+                    .and_then(|process| state.queue.readers.get(&Reader::Outpost(process)))
                     .copied();
                 if let Some(to) = to {
                     shared.effects.push(Effect::WindowDestroyed { to, window });
                 }
+                // Behind the effect on the same pipe, so each runs after
+                // the outpost's forget.
+                Self::begin_core(&mut shared, follows);
             }
             Input::AskOutside {
                 asker,
