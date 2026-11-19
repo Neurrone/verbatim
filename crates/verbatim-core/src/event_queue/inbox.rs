@@ -229,7 +229,7 @@ impl<L: Logic> Core<L> {
                 let state = &mut shared.state;
                 state.queue.table.unwatch(window);
                 state.queue.backend.destroyed(window);
-                let follows = L::window_destroyed(&mut state.facts, window, &state.queue.readers);
+                let follows = L::window_destroyed(&mut state.facts, window);
                 // Routed by the raising thread's process, since a destroyed
                 // window can no longer be read for its owner; an outpost
                 // not running holds nothing of it, and with no process

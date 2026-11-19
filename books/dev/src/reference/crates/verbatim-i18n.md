@@ -18,7 +18,7 @@ Public API:
   setting-descriptor label keys.
 - `role_name(role)`, `state_name(state)`, `negated_state_name(state)` — the
   localized spoken words for utterance tokens; states that are never spoken
-  (focused, focusable, selectable, offscreen) return `None`.
+  (focusable, selectable, checkable) return `None`.
 - `position_in_set(position, set_size)`, `level(n)`, `cell_row(n)` and
   `cell_column(n)` — the localized "2 of 5", "level 3", "row 3" and
   "column 2" phrases for the corresponding utterance spans.

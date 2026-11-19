@@ -186,30 +186,24 @@ impl Follows {
     }
 
     /// `window` was destroyed (column E, 2026-11-19): a node named in it
-    /// is named no more, and its outpost is sent a `Follow` naming
-    /// nothing, which removes the registration, when the generation named
-    /// is the one `ready` says can take requests (`ready(process,
-    /// generation)`); a generation not ready is dropped with nothing sent,
-    /// since nothing is named in a dead generation and no request may
-    /// start an outpost. Core is the one judge of what is followed: the
-    /// outpost judges nothing at a destroy.
-    pub(crate) fn window_destroyed(
-        &mut self,
-        window: WindowHandle,
-        ready: impl Fn(Pid, OutpostId) -> bool,
-    ) -> Vec<FollowRequest> {
+    /// is named no more, and its outpost is sent a `Follow` naming nothing,
+    /// which removes the registration. Core is the one judge of what is
+    /// followed: the outpost judges nothing at a destroy. The generation
+    /// named is always its process's ready one, since only a ready
+    /// generation's answer is committed and its end names nothing
+    /// ([`outpost_ended`](Self::outpost_ended)), so the request never
+    /// starts an outpost.
+    pub(crate) fn window_destroyed(&mut self, window: WindowHandle) -> Vec<FollowRequest> {
         let mut requests = Vec::new();
         self.named.retain(|&process, named| {
             if named.node_window != window {
                 return true;
             }
-            if ready(process, named.generation) {
-                requests.push(FollowRequest {
-                    process,
-                    window: named.window,
-                    follow: Follow { node: None },
-                });
-            }
+            requests.push(FollowRequest {
+                process,
+                window: named.window,
+                follow: Follow { node: None },
+            });
             false
         });
         requests

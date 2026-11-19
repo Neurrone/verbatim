@@ -204,9 +204,9 @@ their turn: it takes the window out of the recovery set and clears its
 probe verdicts, and `Logic::window_destroyed` marks a plain ghost at the
 window destroyed (`PlainReader::window_destroyed`, below) and ends a
 followed node in it (`Follows::window_destroyed`), returning the `Follow`
-naming nothing for its generation when that generation is the ready
-instance (`readers`), so the request never starts an outpost; a generation
-not ready is sent nothing. The inbox sends `Effect::WindowDestroyed` to
+naming nothing for its generation, which is always the ready one, since
+only a ready generation's answer is committed and its end names nothing,
+so the request never starts an outpost. The inbox sends `Effect::WindowDestroyed` to
 the ready outpost of the raising process, if any, then begins the
 `Follow` as Core's own request (`Owner::Core`, whose answer no rule
 reads), so it runs after the outpost's forget. A destroy with no process
@@ -214,8 +214,8 @@ clears the same records and sends nothing to an outpost. Cost per
 destroy: one pipe message from the listener and one wake of Core, which
 a destroy with a process already paid when it was a tell, and removals
 from maps; with the raising process's outpost running, one effect and one
-pipe write to it; per burst the outpost drains together, one reducer pass
-and one forget program; one `Follow` only when the followed node's window
+pipe write to it; one forget program per drain of the outpost's mailbox
+that holds destroys; one `Follow` only when the followed node's window
 is destroyed; no call into any application (`books/dev/src/reference/performance.md`,
 "A window's destruction").
 

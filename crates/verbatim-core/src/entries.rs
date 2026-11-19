@@ -749,19 +749,12 @@ impl Logic for Entries {
     fn window_destroyed(
         facts: &mut SrState,
         window: WindowHandle,
-        ready: &std::collections::BTreeMap<crate::event_queue::Reader, Instance>,
     ) -> Vec<crate::event_queue::CoreRequest> {
         facts.plain.window_destroyed(window);
-        // The `Follow` naming nothing goes only to the generation named,
-        // when it is ready, so it never starts an outpost; its answer goes
-        // to Core alone, which no terminal rule reads.
+        // Its answer goes to Core alone, which no terminal rule reads.
         facts
             .follows
-            .window_destroyed(window, |process, generation| {
-                ready
-                    .get(&crate::event_queue::Reader::Outpost(process))
-                    .is_some_and(|instance| instance.generation == generation.0)
-            })
+            .window_destroyed(window)
             .into_iter()
             .map(|follow| crate::event_queue::CoreRequest {
                 token: None,

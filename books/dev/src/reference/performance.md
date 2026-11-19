@@ -1278,10 +1278,11 @@ runs.
   naming nothing only when the followed node's window is destroyed.
 - Added per destroy, only when the raising process has a running outpost:
   one effect, one pipe write and the outpost's reader wake.
-- Added per burst the outpost's reducer drains together: one reducer pass
-  and one forget program on its worker, with no call into the
+- Added per drain of the outpost's mailbox that holds destroys: one
+  forget program on its worker for all of them, with no call into the
   application; its releases are the ones the held-node list makes, made
-  earlier.
+  earlier. A burst whose destroys arrive across several drains takes one
+  forget program per drain, not one per burst.
 - A File Explorer folder window's close is about 50 destroys in a burst,
   all into Explorer's outpost but 0 to 2 of exited helper threads
   (recorded 2026-11-19). Not yet measured: the outpost's wake-ups and

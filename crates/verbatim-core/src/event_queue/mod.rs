@@ -39,7 +39,6 @@ mod table;
 #[cfg(test)]
 mod tests;
 
-use std::collections::BTreeMap;
 use std::fmt::Debug;
 use std::future::Future;
 use std::pin::Pin;
@@ -417,14 +416,9 @@ pub(crate) trait Logic: Sized + 'static {
 
     /// `window` was destroyed: what Core's facts keep of it change, and
     /// the requests Core sends as its own for it, each to a reader
-    /// `ready`, the instances that can take requests, names, so that none
-    /// starts an outpost.
-    fn window_destroyed(
-        facts: &mut Self::Facts,
-        window: WindowHandle,
-        ready: &BTreeMap<Reader, Instance>,
-    ) -> Vec<CoreRequest> {
-        let _ = (facts, window, ready);
+    /// instance that is ready.
+    fn window_destroyed(facts: &mut Self::Facts, window: WindowHandle) -> Vec<CoreRequest> {
+        let _ = (facts, window);
         Vec::new()
     }
 

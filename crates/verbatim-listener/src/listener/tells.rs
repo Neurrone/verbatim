@@ -344,8 +344,9 @@ fn handle(window: isize) -> WindowHandle {
 /// destruction is placed at once after the window's mapping, with the
 /// process of the thread that raised it when that thread can be opened and
 /// none when it cannot, so it is never dropped for its process: NVDA
-/// handles a destroy before any other drop
-/// (`IAccessibleHandler/internalWinEventHandler.py` 101 to 103). The local drops, in
+/// handles a destroy before any drop that applies to a window's
+/// destruction (`IAccessibleHandler/internalWinEventHandler.py` 101 to
+/// 103). The local drops, in
 /// NVDA's order (design, "Readers' local drops"): the window's mapping
 /// ([`tell_window`]), the process that serves the window, which must be
 /// known (a console window's is its console host, the process of the

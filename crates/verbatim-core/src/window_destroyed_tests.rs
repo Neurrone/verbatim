@@ -3,8 +3,8 @@
 //! `QueueInput::WindowDestroyed`): routed by its listener's generation,
 //! passed to the outpost of the raising thread's process when one is
 //! ready, and Core's own records of the window cleared whatever the
-//! process; the followed node's window destroyed sends its ready
-//! generation a `Follow` naming nothing (Table 10, column E,
+//! process; the followed node's window destroyed sends its generation a
+//! `Follow` naming nothing (Table 10, column E,
 //! 2026-11-19).
 
 use verbatim_model::request::{
@@ -18,7 +18,7 @@ use verbatim_model::{
 use crate::entries::tests::{
     APP, GENERATION, Held, LISTENER, NOTHING, OUTPOST, answer_outcome, feed_at, ready,
 };
-use crate::event_queue::{Input, Instance, Reader};
+use crate::event_queue::{Input, Instance};
 use crate::focus::versions::Kept;
 
 /// The window the followed node is in.
@@ -174,23 +174,24 @@ fn a_destroy_with_no_process_clears_cores_records_and_sends_no_destroy() {
     assert_eq!(state.state.follows.named(APP), None);
 }
 
-/// A destroy from a listener generation that is not the current one is
-/// dropped as a stale frame, and clears nothing.
+/// The listener replaced, its replacement started, a late destroy from
+/// the replaced one is dropped as a stale frame, and clears nothing.
 #[test]
 fn a_destroy_from_a_replaced_listener_is_dropped() {
     let mut state = ready();
     let _ = followed(&mut state, Role::Button);
-    let replaced = Instance {
-        reader: Reader::Listener,
-        generation: 2,
-    };
+    let _ = shell_feeds(
+        &mut state,
+        500,
+        QueueInput::Process(verbatim_model::request::ProcessFact::ListenerStarted(2)),
+    );
     assert_eq!(
         shell_feeds(
             &mut state,
             1_000,
-            destroyed(replaced, NODE_WINDOW, Some(APP))
+            destroyed(LISTENER, NODE_WINDOW, Some(APP))
         ),
-        [Said::Queue(QueueEffect::StaleFrame(replaced))]
+        [Said::Queue(QueueEffect::StaleFrame(LISTENER))]
     );
     assert!(state.state.follows.named(APP).is_some());
 }
@@ -222,8 +223,8 @@ fn the_followed_nodes_window_destroyed_sends_one_follow_naming_nothing_after_the
     );
 }
 
-/// The named generation ended before its node's window is destroyed: no
-/// `Follow` is sent, and no outpost is started for it.
+/// The named generation ended before its node's window is destroyed: its
+/// end named nothing, so no `Follow` is sent and no outpost is started.
 #[test]
 fn the_followed_nodes_window_destroyed_after_its_generation_ended_sends_nothing() {
     let mut state = ready();

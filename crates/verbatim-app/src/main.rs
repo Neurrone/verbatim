@@ -1078,24 +1078,12 @@ impl ReducerThread<'_> {
                 if let Some(token) = message.carried_token() {
                     self.listener_view.handled(listener.0, token);
                 }
-                match *message {
-                    ListenerToCore::Tell(tell) => {
-                        self.tell_received(&tell);
-                        self.queue(QueueInput::Tell { from, tell });
-                    }
-                    ListenerToCore::Answer(answer) => {
-                        self.queue(QueueInput::Answer { from, answer });
-                    }
-                    ListenerToCore::Destroyed {
-                        window, process, ..
-                    } => {
-                        self.queue(QueueInput::WindowDestroyed {
-                            from,
-                            window,
-                            process,
-                        });
-                    }
-                    other => tracing::error!(
+                if let ListenerToCore::Tell(tell) = &*message {
+                    self.tell_received(tell);
+                }
+                match listener_input(from, *message) {
+                    Ok(input) => self.queue(input),
+                    Err(other) => tracing::error!(
                         ?other,
                         "the supervisor handed on a listener message that is no tell, destroy or answer, a logic bug"
                     ),
@@ -1964,6 +1952,28 @@ fn elements_held(view: verbatim_core::View) -> CoreToListener {
 }
 
 /// The instance of the listener of generation `listener`.
+/// The input Core's event queue takes for `message`, a message the
+/// listener instance `from` sent that the supervisor hands on: a tell, a
+/// window destroyed, or an answer; any other message back, which the
+/// supervisor never hands on.
+fn listener_input(
+    from: Instance,
+    message: ListenerToCore,
+) -> Result<QueueInput, Box<ListenerToCore>> {
+    match message {
+        ListenerToCore::Tell(tell) => Ok(QueueInput::Tell { from, tell }),
+        ListenerToCore::Answer(answer) => Ok(QueueInput::Answer { from, answer }),
+        ListenerToCore::Destroyed {
+            window, process, ..
+        } => Ok(QueueInput::WindowDestroyed {
+            from,
+            window,
+            process,
+        }),
+        other => Err(Box::new(other)),
+    }
+}
+
 fn listener_instance(listener: OutpostId) -> Instance {
     Instance {
         reader: Reader::Listener,
@@ -2330,6 +2340,31 @@ fn request_dump_tree(command_tx: &Commands, locations: bool) -> DumpTreeResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The listener's window destroyed, as the supervisor hands it on,
+    /// becomes Core's `WindowDestroyed` input from that listener, with or
+    /// without a process.
+    #[test]
+    fn a_listeners_window_destroyed_is_queued_for_core() {
+        let from = listener_instance(OutpostId(3));
+        for process in [Some(Pid(9)), None] {
+            assert_eq!(
+                listener_input(
+                    from,
+                    ListenerToCore::Destroyed {
+                        window: WindowHandle(7),
+                        process,
+                        at_us: 1,
+                    }
+                ),
+                Ok(QueueInput::WindowDestroyed {
+                    from,
+                    window: WindowHandle(7),
+                    process,
+                })
+            );
+        }
+    }
 
     /// A wait for a deadline that runs out with no command wakes the
     /// reducer thread to check its deadlines rather than ending it, however
