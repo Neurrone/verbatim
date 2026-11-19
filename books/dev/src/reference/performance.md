@@ -1285,10 +1285,16 @@ runs.
   forget program per drain, not one per burst.
 - A File Explorer folder window's close is about 50 destroys in a burst,
   all into Explorer's outpost but 0 to 2 of exited helper threads
-  (recorded 2026-11-19). Not yet measured: the outpost's wake-ups and
-  processor time for that burst and the destroys a second of dialogs and
-  a browser. If the pipe shows, the effects of one input are batched into
-  one message to the outpost.
+  (recorded 2026-11-19). Measured on `explorer_folder_window` (release,
+  9-second windows, the build before routing destroys and the build
+  after, traced alternately, 2026-11-19; the 7 of 10 traces whose
+  scenario passed, about 58 destroys each, 23 forget programs in one
+  recorded run): the outpost woke 1,341 to 1,559 times before and 1,193
+  to 1,625 after, for 123 to 149 ms and 111 to 123 ms of processor time;
+  Core 2,584 to 2,654 and 2,225 to 2,451 times; every process together
+  538 to 598 ms and 499 to 532 ms. The destroys' cost does not show above
+  the spread between runs, so their effects are not batched. Not
+  measured: a browser's or a dialog-heavy application's destroy rate.
 
 ### The task switcher's frame
 
