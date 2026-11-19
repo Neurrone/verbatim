@@ -424,11 +424,15 @@ knowing for review:
   the outpost generation Core names, unless Windows reports its window
   hung, when it is answered unsent: a read of an application's current
   focus with the window in front, read live by `hang_check::front`
-  (`QueueInput::HungFocus`: the foreground window, else its thread's
-  focus window, as a ghost with its text, the window it stands for with
-  that window's application and thread, and its disabled style, hung, responsive or nothing, each a read of Windows'
-  own over a trait its unit tests stand in for), any other "not
-  responding" (`QueueInput::RefusedHung`); one that cannot be
+  (`QueueInput::InFront`: the foreground window, or the desktop window
+  with none, then its thread's focus window, as the desktop window with
+  its owner, a ghost with its text, the window it stands for with that
+  window's application and thread, and its disabled style, hung,
+  responsive or gone, each a read of Windows' own over a trait its unit
+  tests stand in for), any other "not responding"
+  (`QueueInput::RefusedHung`). The check after a menu, popup or switcher
+  end (`FocusDepth::FullIfFocused`) finding no window in front
+  (`hang_check::nothing_in_front`) is answered unsent the same way; one that cannot be
   written is answered "reader ended"; a cancel goes with its reason; a
   hang check is answered with `IsHungAppWindow`. The `hang_check` module
   makes both checks: a ghost window is first mapped to the hung window it

@@ -438,13 +438,15 @@ that carries them on the pipes is
   which an outpost records as carried by it; `written` stamps the write.
   `Urgent` is what an outpost sends ahead of its queue (`Pong`, `Ready`,
   `TargetExited`, `SpareReady`), none of which carries a node.
-- `Front` and `GhostFront`: what the shell read in front when it refused
-  a read of an application's current focus because its window was hung,
-  as `QueueInput::HungFocus { number, front }`: a ghost window with its
-  text, the hung window it stands for with that window's application and
-  thread, and its disabled style; a hung
-  window with no ghost; a responsive one; or nothing. Every other request
-  the shell refuses so is `QueueInput::RefusedHung`.
+- `Front`, `GhostFront` and `DesktopFront`: what the shell read in front
+  when it answered a read of an application's current focus unsent, as
+  `QueueInput::InFront { number, front }`, its window hung or, for the
+  check after a menu, popup or switcher end, no window in front: the
+  desktop window with its owner; a ghost window with its text, the hung
+  window it stands for with that window's application and thread, and
+  its disabled style; a hung window with no ghost; a responsive one; or
+  one gone. Every other request the shell refuses as hung is
+  `QueueInput::RefusedHung`.
 - `OutpostToCore::NotResponding { window }`: a window of the outpost's
   application began a hang, sent once per hang of the application, in
   order with its answers and tells; Core plays the "not responding" sound

@@ -234,7 +234,7 @@ async fn afresh(
     };
     let read = match cx.ask(request, due_us).await {
         Outcome::Result(Focused::Read(read)) => read,
-        Outcome::Result(Focused::Hung(front)) => {
+        Outcome::Result(Focused::InFront(front)) => {
             let trace = (focus.tell.trace_id, focus.fence);
             super::plain::decide(
                 &mut cx,

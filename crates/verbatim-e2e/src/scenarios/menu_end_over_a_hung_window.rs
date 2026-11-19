@@ -24,6 +24,13 @@
 //! application answers again, its window is spoken as NVDA speaks it,
 //! "<title> window".
 //!
+//! Then the menu is closed over the hung window with no ghost: nothing calls
+//! into it this time, so Windows makes no ghost and activates no window
+//! when the menu closes. NVDA's fake focus then finds no window in front
+//! and focuses its `Desktop`, "Desktop  window" (1 of 18 Escapes in the
+//! captures), and so does Verbatim (Dickson, 2026-11-19); the window
+//! answering again says "<title> window".
+//!
 //! Then the start: the application stalls again with its window in front,
 //! its ghost takes the foreground, and a second Verbatim replaces the
 //! first; its read of the focus at startup finds the ghost and says the
@@ -55,7 +62,11 @@ const HUNG: &str = "hung-window";
 /// the window hung, the Escape and four commands, with room to spare.
 const FIRST_STALL_MS: u64 = 40_000;
 
-/// How long the second stall lasts: the six seconds before the window is
+/// How long the stall with no ghost lasts: the six seconds before the
+/// window is judged hung, and the Escape.
+const NO_GHOST_STALL_MS: u64 = 20_000;
+
+/// How long the start's stall lasts: the six seconds before the window is
 /// judged hung, its ghost, and the replacement of Verbatim.
 const SECOND_STALL_MS: u64 = 40_000;
 
@@ -214,6 +225,15 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
         .expect("sends say-all");
 
     stall_ended(scenario, pid, &events, FIRST_STALL_MS);
+    scenario.speech().expect(&[&window]);
+
+    // The menu closed over the hung window with no ghost: no window is in
+    // front, and the desktop is focused.
+    super::open_verbatim_menu(scenario);
+    stall(scenario, pid, &events, NO_GHOST_STALL_MS);
+    scenario.send_keys(&["escape"]).expect("sends escape");
+    scenario.speech().expect(&["Desktop window"]);
+    stall_ended(scenario, pid, &events, NO_GHOST_STALL_MS);
     scenario.speech().expect(&[&window]);
 
     // The start over the ghost: the window stalls in front, its ghost

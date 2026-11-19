@@ -738,7 +738,9 @@ under `src/scenarios/` documents exactly what it asserts.
   Escape speaks it as NVDA's plain window, "<title> (Not
   Responding) window", report focus and report the navigator object say
   the same, review the current line its name, say-all nothing, and the
-  window answering again says "<title> window"; then the window stalls
+  window answering again says "<title> window"; then the menu closed over
+  the hung window with no ghost provoked says "Desktop window", and the
+  window answering again "<title> window"; then the window stalls
   in front, its ghost takes the foreground, a second Verbatim replaces
   the first and its startup says the plain window, then the window once
   it answers; each stall waited on by mockapp's `stall` line events),

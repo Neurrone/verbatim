@@ -629,7 +629,7 @@ fn a_menu_end_from_a_hung_window_holding_attention_plays_the_sound() {
         panic!("one check asked: {:?}", desk.sent);
     };
     assert_eq!(
-        desk.step(QueueInput::HungFocus {
+        desk.step(QueueInput::InFront {
             number: RequestNumber(check),
             front: verbatim_model::request::Front::Hung,
         }),

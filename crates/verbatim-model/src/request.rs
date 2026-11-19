@@ -1123,24 +1123,41 @@ pub struct Cancel {
     pub reason: CancelReason,
 }
 
-/// What the shell read in front when it refused a read of an
-/// application's current focus because the request's window was hung: the
-/// window in front read live, as NVDA's fake focus and its other reads of
-/// the focus take it (`kwargsFromSuper`, `NVDAObjects/window/__init__.py`
-/// 162 to 181): `GetForegroundWindow`, then that window's thread's focus
-/// window if it has one, else the foreground window itself. Every fact is
-/// a read of Windows' own, with no message to any application.
+/// What the shell read in front when it answered a read of an
+/// application's current focus unsent ([`QueueInput::InFront`]): the window
+/// in front read live, as NVDA's fake focus and its other reads of the
+/// focus take it (`kwargsFromSuper`, `NVDAObjects/window/__init__.py` 162
+/// to 181): `GetForegroundWindow`, the desktop window when there is none,
+/// then that window's thread's focus window if it has one, else that
+/// window itself. Every fact is a read of Windows' own, with no message to
+/// any application.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Front {
     /// The window in front is a ghost window, which Windows shows in
     /// place of a hung top-level window.
     Ghost(GhostFront),
+    /// No window is in front, and the desktop window's thread has no focus
+    /// window: the desktop window, which NVDA makes its plain `Desktop`
+    /// window object of (`NVDAObjects/window/__init__.py` 83 to 87, 123 to
+    /// 127, 409 to 413).
+    Desktop(DesktopFront),
     /// The window in front is hung and no ghost stands in front of it.
     Hung,
     /// The window in front responds.
     Responsive,
-    /// No window is in front, or it is gone.
-    Nothing,
+    /// The window in front is gone.
+    Gone,
+}
+
+/// The desktop window, in front when no window is, with its owner.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DesktopFront {
+    /// The desktop window (`GetDesktopWindow`).
+    pub desktop: WindowHandle,
+    /// The process that owns it.
+    pub process: crate::Pid,
+    /// The thread that owns it.
+    pub thread: u32,
 }
 
 /// A ghost window in front, with the facts NVDA's plain window object of
@@ -1202,11 +1219,13 @@ pub enum QueueInput {
     /// The shell found the request's window hung before sending it, and
     /// answers it "not responding" unsent.
     RefusedHung(RequestNumber),
-    /// The shell found the window of a read of an application's current
-    /// focus hung before sending it, and answers it unsent with what it
-    /// read in front ([`Front`]); every other request it refuses so is
-    /// [`QueueInput::RefusedHung`].
-    HungFocus {
+    /// The shell answers a read of an application's current focus unsent
+    /// with what it read in front ([`Front`]): when the read's window is
+    /// hung, where every other request is [`QueueInput::RefusedHung`]; and
+    /// when the check after a menu, popup or switcher end
+    /// ([`FocusDepth::FullIfFocused`]) finds no foreground window, as
+    /// NVDA's fake focus then reads the desktop.
+    InFront {
         /// The request.
         number: RequestNumber,
         /// What is in front.

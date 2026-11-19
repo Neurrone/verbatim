@@ -85,15 +85,15 @@ impl FocusReadDepth for super::msaa_run::Full {
 }
 
 /// An application's current focus as its read answers it: read to its
-/// depth, or, when the shell refused the read because its window was hung,
-/// what the shell read in front, which the read's entry judges
-/// (`super::plain::decide`).
+/// depth, or, when the shell answered the read unsent, its window hung or
+/// no window in front, what the shell read in front, which the read's
+/// entry judges (`super::plain::decide`).
 #[derive(Debug)]
 pub(crate) enum Focused<P> {
     /// The read, parsed to its depth.
     Read(P),
-    /// The window was hung; this is in front.
-    Hung(Front),
+    /// This is in front.
+    InFront(Front),
 }
 
 /// The request for an application's current focus, of the outpost of the
@@ -141,8 +141,8 @@ impl<D: FocusReadDepth> Request for CurrentFocusRead<D> {
         }
     }
 
-    fn decode_hung(front: Front) -> Option<Self::Reply> {
-        Some(Focused::Hung(front))
+    fn decode_in_front(front: Front) -> Option<Self::Reply> {
+        Some(Focused::InFront(front))
     }
 }
 
@@ -258,7 +258,7 @@ pub(crate) async fn run(mut cx: Cx<Entries>, entry: CurrentFocus) {
     };
     let read = match cx.ask(request, due_us).await {
         Outcome::Result(Focused::Read(read)) => read,
-        Outcome::Result(Focused::Hung(front)) => {
+        Outcome::Result(Focused::InFront(front)) => {
             let read = match entry.why {
                 Why::Startup => super::plain::HungRead::Startup,
                 Why::Retake => super::plain::HungRead::Retake,

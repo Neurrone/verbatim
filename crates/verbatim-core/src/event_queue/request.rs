@@ -31,7 +31,7 @@ pub(crate) trait Request: Debug + Unpin + 'static {
     /// refused because the window was hung, what it read in front,
     /// decoded: only that read's reply holds it, so for any other request
     /// it is `None`, a defect, logged as an undecodable answer.
-    fn decode_hung(front: Front) -> Option<Self::Reply> {
+    fn decode_in_front(front: Front) -> Option<Self::Reply> {
         let _ = front;
         None
     }

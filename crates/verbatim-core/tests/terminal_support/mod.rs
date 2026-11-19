@@ -747,7 +747,7 @@ impl Session {
     fn answer(&mut self, ask: Ask) {
         if self.hung {
             let refused = match &ask.request {
-                Wire::CurrentFocus { .. } => QueueInput::HungFocus {
+                Wire::CurrentFocus { .. } => QueueInput::InFront {
                     number: ask.number,
                     front: verbatim_model::request::Front::Hung,
                 },

@@ -91,7 +91,7 @@ fn effects(held: &mut Held, at_us: u64, input: Input<Entry>) -> Vec<String> {
 /// The shell refused request `number`, a read of the current focus, as
 /// hung, with `front` in front.
 fn hung_focus(number: u64, front: Front) -> Input<Entry> {
-    Input::HungFocus {
+    Input::InFront {
         number: verbatim_model::request::RequestNumber(number),
         front,
     }
@@ -219,7 +219,7 @@ fn a_menu_end_over_a_hung_window_with_no_ghost_plays_the_sound_and_watches() {
 /// tells speak it.
 #[test]
 fn a_menu_end_over_a_responsive_window_or_nothing_says_nothing_and_watches_nothing() {
-    for front in [Front::Responsive, Front::Nothing] {
+    for front in [Front::Responsive, Front::Gone] {
         let mut state = checked(EventKind::MenuEnd);
         assert_eq!(
             effects(&mut state, 52_000, hung_focus(2, front)),
@@ -423,8 +423,12 @@ fn the_recovery_read_over_a_ghost_or_a_hung_window_plays_the_sound_and_watches()
 /// The plain object, disabled, as the plain reader holds it.
 fn disabled_plain() -> Held {
     let mut state = plain_committed();
-    if let Some(object) = state.state.plain.object.as_mut() {
-        object.unavailable = true;
+    if let Some(super::PlainObject {
+        kind: super::PlainKind::Ghost { unavailable, .. },
+        ..
+    }) = state.state.plain.object.as_mut()
+    {
+        *unavailable = true;
     }
     state
 }
@@ -964,4 +968,64 @@ fn a_uia_focus_read_afresh_over_a_ghost_or_a_hung_window_plays_the_sound_and_wat
             ["check [WindowHandle(5)]"]
         );
     }
+}
+
+/// The desktop window, in front when no window is.
+fn desktop() -> Front {
+    Front::Desktop(verbatim_model::request::DesktopFront {
+        desktop: WindowHandle(65_552),
+        process: Pid(600),
+        thread: 601,
+    })
+}
+
+/// What the plain desktop says when its focus is executed: NVDA's
+/// `Desktop`, "Desktop  window".
+const DESKTOP_SPOKEN: &str = "Message(Desktop) Role(Window)";
+
+/// A menu, popup or switcher end whose check finds no window in front
+/// focuses the desktop, as NVDA's fake focus does
+/// (`IAccessibleHandler/__init__.py` 989 to 1002; `NVDAObjects/window/
+/// __init__.py` 162 to 170, 123 to 127, 409 to 413; Dickson, 2026-11-19),
+/// with no sound and nothing watched.
+#[test]
+fn an_end_whose_check_finds_no_window_in_front_focuses_the_desktop() {
+    for kind in [
+        EventKind::MenuEnd,
+        EventKind::PopupEnd,
+        EventKind::SwitchEnd,
+    ] {
+        let mut state = checked(kind);
+        assert_eq!(
+            effects(&mut state, 52_000, hung_focus(2, desktop())),
+            ["stop", DESKTOP_SPOKEN]
+        );
+        let Committed::Read(kept) = &state.versions.committed else {
+            panic!("the plain desktop is committed");
+        };
+        assert_eq!(kept.read_by, ReadBy::Plain);
+        assert_eq!(kept.place.top_level, WindowHandle(65_552));
+        assert!(!watched(&mut state));
+    }
+}
+
+/// The desktop in front answering a read NVDA does not make itself, the
+/// re-take, plays the sound and watches the read's window, as before.
+#[test]
+fn the_retake_with_no_window_in_front_plays_the_sound_and_watches() {
+    let mut state = in_front();
+    let _ = effects(&mut state, 1_000, Input::ReaderEnded(OUTPOST));
+    let next = Instance {
+        reader: Reader::Outpost(APP),
+        generation: 4,
+    };
+    assert_eq!(
+        crate::entries::tests::ready_at(&mut state, 2_000, next),
+        ["send Outpost(Pid(40)) CurrentFocus"]
+    );
+    assert_eq!(
+        effects(&mut state, 3_000, hung_focus(2, desktop())),
+        ["sound"]
+    );
+    assert!(watched(&mut state));
 }

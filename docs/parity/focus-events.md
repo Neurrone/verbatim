@@ -945,15 +945,32 @@ answers again it says "hungwin  window".
 
 Verbatim: **matched** (Dickson, 2026-11-19; ADR 0003, "A frozen window"
 and "The two versions of the focus"). The shell answers such a read,
-refused as hung, with the window in front read live: a ghost with its
-text, the window it stands for and its disabled style; hung; responsive;
-or none. A ghost is committed as the focus through the ordinary commit,
+refused as hung, with the window in front read live: the desktop window
+when no window is in front; a ghost with its text, the window it stands
+for and its disabled style; hung; responsive; or gone. A ghost is committed as the focus through the ordinary commit,
 an object of Core's plain reader, which answers every request on it at
 once with what NVDA's plain `Window` gives, so report focus, report the
 navigator object and review say what NVDA's source says, with no
 command of their own for it; hungwin is watched, with no sound. A
-responsive window or none in front says nothing, the window's own tells
-speaking it; a hung window with no ghost plays the sound, as before.
+responsive window in front, or one gone, says nothing, the window's own
+tells speaking it; a hung window with no ghost plays the sound, as
+before.
+
+A menu, popup or switcher end whose check finds no window in front,
+Windows having activated nothing as the menu closed over a hung window
+with no ghost, is **matched** too (Dickson, 2026-11-19). NVDA's fake
+focus takes the desktop window when `GetForegroundWindow` names none
+(`NVDAObjects/window/__init__.py` 162 to 170), then that window's
+thread's focus window if it has one, and makes the desktop window, of
+class `#32769`, a plain `Desktop` named "Desktop" (83 to 87, 123 to 127,
+409 to 413), so it says "Desktop  window" (captured in 1 of 18 Escapes).
+Verbatim's shell answers such a check unsent with the desktop window
+read live, and Core commits the plain desktop and says "Desktop window",
+with no call into any application, no sound and nothing watched. Core's
+`an_end_whose_check_finds_no_window_in_front_focuses_the_desktop` and
+`the_menu_closed_with_no_window_in_front_speaks_the_desktop`, in the
+order of `menu_end_over_a_hung_window`'s recorded run; that scenario's
+step with no ghost provoked.
 Core's `focus::plain` tests and `hung_menu_end`, in the order of
 Verbatim's own log; the scenario `menu_end_over_a_hung_window`.
 

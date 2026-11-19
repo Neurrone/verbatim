@@ -203,7 +203,7 @@ pub(crate) async fn check(mut cx: Cx<Entries>, check: MenuCheck) {
     };
     let answered = match cx.ask(request, due_us).await {
         Outcome::Result(Focused::Read(answered)) => answered,
-        Outcome::Result(Focused::Hung(front)) => {
+        Outcome::Result(Focused::InFront(front)) => {
             let read = match check.end {
                 CheckedEnd::MenuOrPopup => HungRead::MenuCheck,
                 CheckedEnd::Switch => HungRead::SwitchCheck,

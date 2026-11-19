@@ -816,7 +816,7 @@ pub(super) fn widen<T>(outcome: Outcome<Infallible>) -> Outcome<T> {
 pub(super) fn outcome_of(ending: Ending) -> Result<Reply, Outcome<Infallible>> {
     match ending {
         // Decoded only by a current-focus read's own reply.
-        Ending::Hung(_) => Err(Outcome::Refused(Refused::Undecodable)),
+        Ending::InFront(_) => Err(Outcome::Refused(Refused::Undecodable)),
         Ending::Answered(WireOutcome::Result(reply)) => Ok(reply),
         Ending::Answered(WireOutcome::Refused(refusal)) => {
             Err(Outcome::Refused(Refused::Reader(refusal)))
@@ -831,7 +831,7 @@ pub(super) fn outcome_of(ending: Ending) -> Result<Reply, Outcome<Infallible>> {
 impl<R: Request> Slot for Typed<R> {
     fn deliver(&self, ending: Ending) -> (Shown, bool) {
         let (outcome, undecodable) = match ending {
-            Ending::Hung(front) => match R::decode_hung(front) {
+            Ending::InFront(front) => match R::decode_in_front(front) {
                 Some(reply) => (Outcome::Result(reply), false),
                 None => (Outcome::Refused(Refused::Undecodable), true),
             },

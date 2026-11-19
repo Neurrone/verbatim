@@ -1716,12 +1716,29 @@ impl ReducerThread<'_> {
     /// effects are being carried out, so no reducer step re-enters itself.
     fn send_request(&mut self, to: Instance, ask: verbatim_model::request::Ask) {
         let number = ask.number;
+        // The check after a menu, popup or switcher end finding no window
+        // in front is answered with the desktop, as NVDA's fake focus
+        // reads it (Dickson, 2026-11-19).
+        if matches!(
+            ask.request,
+            verbatim_model::request::Request::CurrentFocus {
+                depth: verbatim_model::request::FocusDepth::FullIfFocused,
+                ..
+            }
+        ) && hang_check::nothing_in_front()
+        {
+            self.follow_ups.push(queued(QueueInput::InFront {
+                number,
+                front: hang_check::front(),
+            }));
+            return;
+        }
         if hang_check::hung(ask.window) {
             // A read of an application's current focus is answered with
             // what is in front, which Core judges; every other request is
             // answered "not responding".
             let refused = match ask.request {
-                verbatim_model::request::Request::CurrentFocus { .. } => QueueInput::HungFocus {
+                verbatim_model::request::Request::CurrentFocus { .. } => QueueInput::InFront {
                     number,
                     front: hang_check::front(),
                 },

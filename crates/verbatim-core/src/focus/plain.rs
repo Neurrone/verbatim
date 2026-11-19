@@ -30,9 +30,9 @@
 use serde::{Deserialize, Serialize};
 use verbatim_model::property::{PropertyAnswer, PropertyId, PropertyValue, PropertyValues};
 use verbatim_model::request::{
-    FocusCaret, FocusNode, FocusRead, Front, GhostFront, NodeRead, NodeWindow, ObjectClass,
-    ObjectRead, ObjectRef, Outcome as WireOutcome, Refusal, RelationFound, RelationQuery, Reply,
-    Request as Wire,
+    DesktopFront, FocusCaret, FocusNode, FocusRead, Front, GhostFront, NodeRead, NodeWindow,
+    ObjectClass, ObjectRead, ObjectRef, Outcome as WireOutcome, Refusal, RelationFound,
+    RelationQuery, Reply, Request as Wire,
 };
 use verbatim_model::{
     Issuer, NodeId, Pid, Role, State, StateSet, TextReply, WindowFacts, WindowHandle,
@@ -48,25 +48,42 @@ use crate::state::SrState;
 /// The number of the plain object's node within its generation.
 const WINDOW_NUMBER: u64 = 1;
 
-/// A plain window Core's plain reader holds: a ghost window found in
-/// front, with the facts the shell read of it at the decision.
+/// Which plain window Core's plain reader holds.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) enum PlainKind {
+    /// A ghost window found in front, with the facts the shell read of it
+    /// at the decision.
+    Ghost {
+        /// The hung window it stands for.
+        stands_for: WindowHandle,
+        /// Its window text.
+        name: String,
+        /// Whether it is disabled.
+        unavailable: bool,
+    },
+    /// The desktop window, found in front when no window is: NVDA's
+    /// `Desktop`, a plain window named "Desktop" (`NVDAObjects/window/
+    /// __init__.py` 409 to 413), which Core names itself as it names every
+    /// desktop window (`docs/parity/review.md`, "Dead objects").
+    Desktop,
+}
+
+/// A plain window Core's plain reader holds.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct PlainObject {
     /// Its generation: its node's issuer, never reused.
     pub(crate) generation: u64,
-    /// The ghost window, which owns the record: its destruction ends it.
-    pub(crate) ghost: WindowHandle,
-    /// The hung window it stands for.
-    pub(crate) stands_for: WindowHandle,
-    /// Its window text.
-    pub(crate) name: String,
-    /// Whether it is disabled.
-    pub(crate) unavailable: bool,
-    /// The application of the hung window it stands for, never the
-    /// ghost's own (the desktop window manager's), so that no rule naming
-    /// the process starts an outpost for the ghost's.
+    /// Its window, the ghost or the desktop window, which owns the record:
+    /// its destruction ends it.
+    pub(crate) window: WindowHandle,
+    /// Which plain window it is.
+    pub(crate) kind: PlainKind,
+    /// For a ghost, the application of the hung window it stands for, never
+    /// the ghost's own (the desktop window manager's); for the desktop
+    /// window, its owner. No rule naming the process starts an outpost for
+    /// it, since every request on its node is the plain reader's.
     pub(crate) process: Pid,
-    /// The hung window's thread.
+    /// The thread of that window.
     pub(crate) thread: u32,
 }
 
@@ -76,42 +93,48 @@ impl PlainObject {
         NodeId::plain(self.generation, WINDOW_NUMBER)
     }
 
-    /// Its window as an answer names a node's nearest window: the ghost,
-    /// a top-level window of its own, named by the hung application's
-    /// process.
+    /// Its window as an answer names a node's nearest window: a top-level
+    /// window of its own, marked as the desktop's for the desktop window.
     fn node_window(&self) -> NodeWindow {
         NodeWindow {
-            handle: self.ghost,
-            top_level: self.ghost,
-            root_owner: self.ghost,
+            handle: self.window,
+            top_level: self.window,
+            root_owner: self.window,
             process: self.process,
             thread: self.thread,
-            desktop: false,
+            desktop: self.kind == PlainKind::Desktop,
         }
     }
 
-    /// Its properties of `set`, each once: its name, the role window, the
-    /// unavailable state when disabled, its own window; nothing else
+    /// Its properties of `set`, each once: a ghost's name, the role window,
+    /// the unavailable state when disabled, its own window; nothing else
     /// (`NVDAObjects/window/__init__.py` 299 to 306; `winUser.py` 652 to
-    /// 655).
+    /// 655). The desktop window's name is Core's, as every desktop
+    /// window's is.
     fn values(&self, set: &[PropertyId]) -> PropertyValues {
+        let (name, unavailable) = match &self.kind {
+            PlainKind::Ghost {
+                name, unavailable, ..
+            } => (name.as_str(), *unavailable),
+            PlainKind::Desktop => ("", false),
+        };
         PropertyValues(
             set.iter()
                 .map(|&id| PropertyAnswer {
                     id,
                     value: match id {
                         PropertyId::Name => {
-                            (!self.name.is_empty()).then(|| PropertyValue::Text(self.name.clone()))
+                            (!name.is_empty()).then(|| PropertyValue::Text(name.to_owned()))
                         }
                         PropertyId::Role => Some(PropertyValue::Role(Role::Window)),
                         PropertyId::States => {
                             let mut states = StateSet::default();
-                            if self.unavailable {
+                            if unavailable {
                                 states.insert(State::Disabled);
                             }
                             Some(PropertyValue::States(states))
                         }
-                        PropertyId::NativeWindow => Some(PropertyValue::Window(self.ghost)),
+                        PropertyId::NativeWindow => Some(PropertyValue::Window(self.window)),
                         _ => None,
                     },
                 })
@@ -183,28 +206,31 @@ pub(crate) struct PlainReader {
 }
 
 impl PlainReader {
-    /// Holds a new plain object of `ghost`, named by the application of the
-    /// hung window it stands for, replacing the one held: a new generation,
-    /// so a request on an older one's node is answered "not there".
-    fn hold(&mut self, ghost: &GhostFront) -> &PlainObject {
+    /// Holds a new plain object of `window`, owned by `process` and
+    /// `thread`, replacing the one held: a new generation, so a request on
+    /// an older one's node is answered "not there".
+    fn hold(
+        &mut self,
+        window: WindowHandle,
+        kind: PlainKind,
+        (process, thread): (Pid, u32),
+    ) -> &PlainObject {
         self.generations = self.generations.saturating_add(1);
         self.object.insert(PlainObject {
             generation: self.generations,
-            ghost: ghost.ghost,
-            stands_for: ghost.stands_for,
-            name: ghost.name.clone(),
-            unavailable: ghost.unavailable,
-            process: ghost.process,
-            thread: ghost.thread,
+            window,
+            kind,
+            process,
+            thread,
         })
     }
 
-    /// `window` was destroyed: the record ends when it is the ghost's.
+    /// `window` was destroyed: the record ends when it is its window.
     pub(crate) fn window_destroyed(&mut self, window: WindowHandle) {
         if self
             .object
             .as_ref()
-            .is_some_and(|object| object.ghost == window)
+            .is_some_and(|object| object.window == window)
         {
             self.object = None;
         }
@@ -284,8 +310,8 @@ pub(crate) fn answer(reader: &PlainReader, request: &Wire) -> Option<WireOutcome
     })
 }
 
-/// Which read of the focus Core made itself was answered hung: the rows
-/// of the design's decision table.
+/// Which read of the focus Core made itself the shell answered with what
+/// is in front: the rows of the design's decision table.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum HungRead {
     /// The check after a menu or popup end, NVDA's fake focus.
@@ -308,23 +334,36 @@ pub(crate) enum HungRead {
 }
 
 impl HungRead {
-    /// Whether NVDA reads the focus here itself, and so makes a plain
-    /// window of a ghost in front. The switcher's end is left as it was
-    /// (a recorded difference), and NVDA has no re-take or recovery read.
+    /// Whether NVDA reads the focus here itself, through `objectWithFocus`,
+    /// and so makes a plain window of a ghost in front. The switcher's end
+    /// is left as it was over a ghost (a recorded difference), and NVDA has
+    /// no re-take or recovery read.
     const fn reads_like_nvda(self) -> bool {
         matches!(self, Self::MenuCheck | Self::Startup | Self::Returned)
     }
+
+    /// Whether NVDA reads the focus here itself and, with no window in
+    /// front, focuses the desktop: every read of `reads_like_nvda`, and the
+    /// switcher's end, whose fake focus is the menu end's
+    /// (`IAccessibleHandler/__init__.py` 989 to 1002; Dickson,
+    /// 2026-11-19).
+    const fn reads_the_desktop(self) -> bool {
+        self.reads_like_nvda() || matches!(self, Self::SwitchCheck)
+    }
 }
 
-/// The read `read` of the focus, naming the hung application's window
-/// `window`, was answered with what is in front, `front`: its entry
-/// decides (the design's decision table). A ghost, for a read NVDA makes
-/// itself, is committed as the plain object, spoken, its hung window
-/// watched with no sound; with nothing hung in front such a read says
-/// nothing and watches nothing, the window in front's own tells speaking
-/// it. Every other answer, and every other read, plays the not-responding
-/// sound and watches the window, while its application holds attention,
-/// and clears Core's caret baseline as a failed read does.
+/// The read `read` of the focus, naming the window `window`, was answered
+/// with what is in front, `front`: its entry decides (the design's decision
+/// table). The desktop window, for a read NVDA makes itself, the
+/// switcher's check among them, is committed as the plain desktop, spoken,
+/// with nothing watched and no sound. A ghost, for a read NVDA makes itself
+/// but the switcher's check, is committed as the plain object, spoken, its
+/// hung window watched with no sound; with nothing hung in front such a
+/// read says nothing and watches nothing, the window in front's own tells
+/// speaking it. Every other answer, and every other read, plays the
+/// not-responding sound and watches the window, while its application
+/// holds attention, and clears Core's caret baseline as a failed read
+/// does.
 pub(crate) fn decide(
     cx: &mut Cx<Entries>,
     read: HungRead,
@@ -332,15 +371,20 @@ pub(crate) fn decide(
     front: &Front,
     (trace_id, fence): (verbatim_model::TraceId, Fence),
 ) {
-    match (front, read.reads_like_nvda()) {
-        (Front::Ghost(ghost), true) => {
-            let executed = commit(&mut cx.facts_mut(), ghost, (trace_id, fence));
+    match (front, read.reads_like_nvda(), read.reads_the_desktop()) {
+        (Front::Desktop(desktop), _, true) => {
+            let executed = commit_desktop(&mut cx.facts_mut(), desktop, (trace_id, fence));
+            executed.deliver(cx);
+        }
+        (Front::Ghost(ghost), true, _) => {
+            let executed = commit_ghost(&mut cx.facts_mut(), ghost, (trace_id, fence));
             cx.watch_if_attended(&stood_for(ghost, window));
             executed.deliver(cx);
         }
-        (Front::Responsive | Front::Nothing, true) => cx.facts_mut().focus_read_failed(),
-        (Front::Ghost(_) | Front::Hung | Front::Responsive | Front::Nothing, false)
-        | (Front::Hung, true) => {
+        (Front::Responsive | Front::Gone, true, _) => cx.facts_mut().focus_read_failed(),
+        (Front::Desktop(_), _, false)
+        | (Front::Ghost(_) | Front::Hung | Front::Responsive | Front::Gone, false, _)
+        | (Front::Hung, true, _) => {
             cx.sound_if_attended(&window);
             cx.watch_if_attended(&window);
             cx.facts_mut().focus_read_failed();
@@ -368,17 +412,51 @@ fn stood_for(ghost: &GhostFront, asked: RequestWindow) -> RequestWindow {
 }
 
 /// Commits the plain object of `ghost` as the focus, named by the
-/// application of the hung window it stands for: a new plain object is
-/// held, and executed through the same commit as any focus. Its read is
-/// one node, whose window facts name the ghost as its top-level window
-/// and root owner, with no ancestors below the desktop, no text, and
-/// itself as the foreground object.
-fn commit(
+/// application of the hung window it stands for.
+fn commit_ghost(
     state: &mut SrState,
     ghost: &GhostFront,
+    trace: (verbatim_model::TraceId, Fence),
+) -> Executed {
+    let kind = PlainKind::Ghost {
+        stands_for: ghost.stands_for,
+        name: ghost.name.clone(),
+        unavailable: ghost.unavailable,
+    };
+    let object = state
+        .plain
+        .hold(ghost.ghost, kind, (ghost.process, ghost.thread))
+        .clone();
+    commit(state, &object, trace)
+}
+
+/// Commits the plain desktop of `desktop` as the focus, as NVDA's fake
+/// focus focuses its `Desktop` with no window in front.
+fn commit_desktop(
+    state: &mut SrState,
+    desktop: &DesktopFront,
+    trace: (verbatim_model::TraceId, Fence),
+) -> Executed {
+    let object = state
+        .plain
+        .hold(
+            desktop.desktop,
+            PlainKind::Desktop,
+            (desktop.process, desktop.thread),
+        )
+        .clone();
+    commit(state, &object, trace)
+}
+
+/// Commits `object`, just held, as the focus, executed through the same
+/// commit as any focus. Its read is one node, whose window facts name its
+/// window as its top-level window and root owner, with no ancestors below
+/// the desktop, no text, and itself as the foreground object.
+fn commit(
+    state: &mut SrState,
+    object: &PlainObject,
     (trace_id, fence): (verbatim_model::TraceId, Fence),
 ) -> Executed {
-    let object = state.plain.hold(ghost).clone();
     let focus = FocusNode {
         read: NodeRead {
             node: Some(object.node()),
@@ -403,22 +481,22 @@ fn commit(
         runtime_id_reused: false,
         caret: FocusCaret::NoText,
     };
-    let ghost_window = RequestWindow {
-        handle: object.ghost,
-        top_level: object.ghost,
-        root_owner: object.ghost,
+    let own_window = RequestWindow {
+        handle: object.window,
+        top_level: object.window,
+        root_owner: object.window,
         process: object.process,
         thread: object.thread,
         by_class: None,
     };
-    let mut origin = Origin::of_read(trace_id, ghost_window, fence);
+    let mut origin = Origin::of_read(trace_id, own_window, fence);
     origin.window = Some(WindowFacts {
-        top_level: object.ghost,
-        root_owner: object.ghost,
+        top_level: object.window,
+        root_owner: object.window,
         topmost: false,
         under_active_window: None,
         in_foreground: true,
-        foreground_window: object.ghost,
+        foreground_window: object.window,
         class: String::new(),
         application: String::new(),
         alt_held: false,

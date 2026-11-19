@@ -114,11 +114,10 @@ pub(crate) enum Ending {
     /// when the shell refused to send it to a hung window, "ended" when
     /// its reader ended, and Core's plain reader's answer.
     Answered(WireOutcome),
-    /// The shell refused to send a read of an application's current focus
-    /// because its window was hung, and answered with what it read in
-    /// front ([`Front`]), which only that request's reply decodes
-    /// ([`super::Request::decode_hung`]).
-    Hung(Front),
+    /// The shell answered a read of an application's current focus unsent
+    /// with what it read in front ([`Front`]), which only that request's
+    /// reply decodes ([`super::Request::decode_in_front`]).
+    InFront(Front),
     /// Core no longer awaits it.
     NoLongerAwaited(CancelReason),
 }
@@ -316,11 +315,11 @@ impl Table {
         )
     }
 
-    /// The shell refused to send `number`, a read of an application's
-    /// current focus, because its window was hung, and read `front` in
-    /// front: it ends with that answer, which its entry judges. Nothing is
+    /// The shell answered `number`, a read of an application's current
+    /// focus, unsent, its window hung or no window in front, with `front`
+    /// in front: it ends with that answer, which its entry judges. Nothing is
     /// watched and no sound plays here.
-    pub(crate) fn hung_focus(&mut self, number: RequestNumber, front: Front) -> Option<Ended> {
+    pub(crate) fn in_front(&mut self, number: RequestNumber, front: Front) -> Option<Ended> {
         let out = self
             .live
             .get(&number)
@@ -328,7 +327,7 @@ impl Table {
         if !out {
             return None;
         }
-        self.end(number, Ending::Hung(front), &mut Vec::new())
+        self.end(number, Ending::InFront(front), &mut Vec::new())
     }
 
     /// Stops waiting for `number` for `reason`, cancelling it if it is out.

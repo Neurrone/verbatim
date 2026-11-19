@@ -31,11 +31,11 @@ pub(crate) enum Input<E> {
     /// The shell found the request's window hung before sending it, and
     /// answers it "not responding" unsent.
     RefusedHung(RequestNumber),
-    /// The shell found the window of a read of an application's current
-    /// focus hung before sending it, and answers it unsent with what it
-    /// read in front, which the read's entry judges: no sound plays and
-    /// nothing is watched here.
-    HungFocus {
+    /// The shell answers a read of an application's current focus unsent
+    /// with what it read in front, its window hung or, for the check after
+    /// a menu, popup or switcher end, no window in front; the read's entry
+    /// judges it: no sound plays and nothing is watched here.
+    InFront {
         /// The request.
         number: RequestNumber,
         /// What is in front.
@@ -201,7 +201,7 @@ impl<L: Logic> Core<L> {
                     self.deliver(ended);
                 }
             }
-            Input::HungFocus { number, front } => self.hung_focus(number, front),
+            Input::InFront { number, front } => self.in_front(number, front),
             Input::HangCheck { window, hung } => self.hang_check(window, hung),
             Input::Foreground(foreground) => self.foreground(foreground),
             Input::ReaderReady(instance) if self.admit_ready(instance) => {
@@ -276,19 +276,19 @@ impl<L: Logic> Core<L> {
         self.finish_step()
     }
 
-    /// The shell refused `number`, a read of an application's current
-    /// focus, as hung, with `front` in front: it ends with that answer,
+    /// The shell answered `number`, a read of an application's current
+    /// focus, unsent, with `front` in front: it ends with that answer,
     /// which its entry judges. Only a read of the current focus asked by an
     /// entry decodes it; one asked from outside the queue is a defect,
     /// logged as an undecodable answer.
-    fn hung_focus(&mut self, number: RequestNumber, front: verbatim_model::request::Front) {
+    fn in_front(&mut self, number: RequestNumber, front: verbatim_model::request::Front) {
         let ended = self
             .shared
             .borrow_mut()
             .state
             .queue
             .table
-            .hung_focus(number, front);
+            .in_front(number, front);
         if let Some(ended) = ended {
             if ended.owner != Owner::Queue {
                 self.shared

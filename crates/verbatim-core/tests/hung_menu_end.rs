@@ -174,7 +174,7 @@ fn closed_over_the_ghost(report_after_us: u64) -> Vec<Heard> {
     };
     desk.step_at(
         151_000,
-        QueueInput::HungFocus {
+        QueueInput::InFront {
             number: RequestNumber(number),
             front: ghost(),
         },
@@ -240,4 +240,76 @@ fn the_ghosts_report_after_the_check_says_nothing() {
         []
     );
     assert_eq!(ghost_in_front(&mut desk, 160_000), []);
+}
+
+/// The menu's window `kind` event on its own window object, as the
+/// listener tells a destroy or a hide.
+fn window_event(kind: EventKind, at_us: u64) -> QueueInput {
+    let QueueInput::Tell { from, mut tell } = end(kind, at_us) else {
+        unreachable!("end makes a tell");
+    };
+    tell.object = EventObject::Msaa {
+        window: VERBATIM.window(),
+        object: 0,
+        child: 0,
+    };
+    QueueInput::Tell { from, tell }
+}
+
+/// Escape closes the menu over the hung window with no ghost, in the order
+/// of `menu_end_over_a_hung_window`'s first run (its flight recorder's
+/// lines 60 to 68): the popup end, the menu window's destroy, the menu end
+/// and its hide, then the check 60 ms later, with no foreground report,
+/// since Windows activated nothing. The check names Verbatim's window, the
+/// one still in the record, and the shell, finding no window in front,
+/// answers it with the desktop: NVDA's fake focus then focuses its
+/// `Desktop`, "Desktop  window" (1 of 18 Escapes in the captures; Dickson,
+/// 2026-11-19).
+#[test]
+fn the_menu_closed_with_no_window_in_front_speaks_the_desktop() {
+    let mut desk = menu_open();
+    assert_eq!(desk.step_at(100_000, end(EventKind::PopupEnd, 100_000)), []);
+    assert_eq!(
+        desk.step_at(100_400, window_event(EventKind::Destroy, 100_400)),
+        []
+    );
+    assert_eq!(desk.step_at(100_900, end(EventKind::MenuEnd, 100_900)), []);
+    assert_eq!(
+        desk.step_at(101_100, window_event(EventKind::Hide, 101_100)),
+        []
+    );
+    assert_eq!(
+        desk.step_at(161_000, QueueInput::Due),
+        [Heard::Sent(Reader::Outpost(VERBATIM.pid), "CurrentFocus")]
+    );
+    let [(number, _, _)] = desk.sent[..] else {
+        panic!("one check asked: {:?}", desk.sent);
+    };
+    assert_eq!(
+        desk.step_at(
+            161_100,
+            QueueInput::InFront {
+                number: RequestNumber(number),
+                front: Front::Desktop(verbatim_model::request::DesktopFront {
+                    desktop: WindowHandle(65_552),
+                    process: Pid(600),
+                    thread: 601,
+                }),
+            },
+        ),
+        [
+            Heard::Expire(verbatim_model::FocusNow {
+                focus: verbatim_model::ObjectKey::of_id(verbatim_model::NodeId::plain(1, 1)),
+                ancestors: Vec::new(),
+                foreground: None,
+                menu_item_of_focus: None,
+            }),
+            Heard::Stop,
+            queued(vec![
+                UtteranceSegment::new(SegmentContent::Message(verbatim_model::Message::Desktop)),
+                UtteranceSegment::new(SegmentContent::Role(Role::Window)),
+            ]),
+            Heard::Sent(Reader::Outpost(VERBATIM.pid), "Follow"),
+        ]
+    );
 }

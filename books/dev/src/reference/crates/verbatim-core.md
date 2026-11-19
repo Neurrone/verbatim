@@ -170,8 +170,8 @@ a token (a terminal's output reads and baseline).
   only from the instance it went to, or the plain reader's; "not
   responding" when the shell refused to send it to a hung window; for a
   read of an application's current focus so refused, what the shell read
-  in front (`Ending::Hung`), which only that read's reply decodes
-  (`Request::decode_hung`) and its entry judges, the inbox playing no
+  in front (`Ending::InFront`), which only that read's reply decodes
+  (`Request::decode_in_front`) and its entry judges, the inbox playing no
   sound and watching nothing for it; "ended" when its reader ended; or
   no longer awaited, at its due time, when the shell's live check finds
   its window hung, at a foreground change that leaves its window behind,
@@ -783,14 +783,18 @@ The check notes which end made it (`menus::CheckedEnd`), the first end's
 for ends that share it.
 
 A read of the focus Core makes itself (`retake::CurrentFocusRead`) that
-the shell refused as hung is answered with what is in front
-(`retake::Focused::Hung`), and its entry decides by `focus::plain::decide`
+the shell answered unsent, its window hung or, for the check after an
+end, no window in front, is answered with what is in front
+(`retake::Focused::InFront`), and its entry decides by `focus::plain::decide`
 (Dickson, 2026-11-19). For the reads NVDA makes itself, the menu or
 popup end's check, the read at startup and the read after the return
 from another input desktop, a ghost in front is committed as the plain
-object and spoken, its hung window watched with no sound; a responsive
-window or none says nothing and watches nothing; a hung window with no
-ghost plays the sound and is watched. Every other such read, the
+object and spoken, its hung window watched with no sound; the desktop
+window, with no window in front, is committed as the plain desktop
+(`PlainKind::Desktop`) and says "Desktop window", for the switcher's
+check too, with nothing watched and no sound; a responsive window or one
+gone says nothing and watches nothing; a hung window with no ghost plays
+the sound and is watched. Every other such read, the
 switcher's check, the re-take, the recovery read and a UI Automation
 focus's read afresh, plays the sound and watches the window whatever is
 in front. Watching and the sound are the entry's (`Cx::watch_if_attended`,

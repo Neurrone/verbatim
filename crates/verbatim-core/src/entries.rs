@@ -1104,7 +1104,7 @@ pub(crate) fn route(
             answer: answer.clone(),
         },
         QueueInput::RefusedHung(number) => Input::RefusedHung(*number),
-        QueueInput::HungFocus { number, front } => Input::HungFocus {
+        QueueInput::InFront { number, front } => Input::InFront {
             number: *number,
             front: front.clone(),
         },

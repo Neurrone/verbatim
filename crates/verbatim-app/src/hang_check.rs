@@ -11,7 +11,7 @@
 //! Windows; none reaches the application.
 
 use verbatim_model::WindowHandle;
-use verbatim_model::request::{Front, GhostFront};
+use verbatim_model::request::{DesktopFront, Front, GhostFront};
 
 /// The window Windows judges for `window`: the hung window a ghost
 /// window stands in for (`HungWindowFromGhostWindow`), else `window`
@@ -45,6 +45,8 @@ fn window_handle(handle: isize) -> WindowHandle {
 trait FrontReads {
     /// `GetForegroundWindow`, 0 for none.
     fn foreground(&self) -> isize;
+    /// `GetDesktopWindow`.
+    fn desktop(&self) -> isize;
     /// The thread that owns `window` (`GetWindowThreadProcessId`).
     fn thread_of(&self, window: isize) -> u32;
     /// `thread`'s focus window (`GetGUIThreadInfo`'s `hwndFocus`).
@@ -72,6 +74,10 @@ struct Windows;
 impl FrontReads for Windows {
     fn foreground(&self) -> isize {
         verbatim_win32::window::foreground_window_handle()
+    }
+
+    fn desktop(&self) -> isize {
+        verbatim_win32::window::desktop_window()
     }
 
     fn thread_of(&self, window: isize) -> u32 {
@@ -109,28 +115,44 @@ impl FrontReads for Windows {
     }
 }
 
-/// What is in front, read live when a read of an application's current
-/// focus is refused as hung (`docs/design/readers-tell-core-asks-build1.md`,
-/// "Requests in Core"): the foreground window F, then W, F's thread's focus
-/// window or F itself, as NVDA's reads of the focus take it
-/// (`NVDAObjects/window/__init__.py` 162 to 181). W is a ghost with its
-/// facts, hung with no ghost, responsive, or nothing when no window is in
-/// front or W is gone. The shell decides nothing: Core does.
+/// What is in front, read live when the shell answers a read of an
+/// application's current focus unsent
+/// (`docs/design/readers-tell-core-asks-build1.md`, "Requests in Core"):
+/// F, the foreground window, or the desktop window when there is none,
+/// then W, F's thread's focus window or F itself, as NVDA's reads of the
+/// focus take it (`NVDAObjects/window/__init__.py` 162 to 181). W is the
+/// desktop window with its owner, a ghost with its facts, hung with no
+/// ghost, responsive, or gone. The shell decides nothing: Core does.
 pub(crate) fn front() -> Front {
     front_of(&Windows)
 }
 
+/// Whether no window is in front (`GetForegroundWindow` names none): the
+/// check after a menu, popup or switcher end is then answered with what
+/// is in front, as NVDA's fake focus reads the desktop.
+pub(crate) fn nothing_in_front() -> bool {
+    Windows.foreground() == 0
+}
+
 /// [`front`] over `reads`.
 fn front_of(reads: &impl FrontReads) -> Front {
-    let foreground = reads.foreground();
-    if foreground == 0 {
-        return Front::Nothing;
-    }
+    let foreground = match reads.foreground() {
+        0 => reads.desktop(),
+        foreground => foreground,
+    };
     let window = reads
         .thread_focus(reads.thread_of(foreground))
         .unwrap_or(foreground);
     if !reads.exists(window) {
-        return Front::Nothing;
+        return Front::Gone;
+    }
+    if window == reads.desktop() {
+        let (thread, process) = reads.owner(window);
+        return Front::Desktop(DesktopFront {
+            desktop: window_handle(window),
+            process: verbatim_model::Pid(process),
+            thread,
+        });
     }
     if let Some(stands_for) = reads.ghost_of(window) {
         let (thread, process) = reads.owner(stands_for);
@@ -171,6 +193,9 @@ mod tests {
         assert!(!hung(WindowHandle(0)));
     }
 
+    /// The desktop window, as a test sets it.
+    const DESKTOP: isize = 3;
+
     /// The windows as a test sets them.
     #[derive(Default)]
     struct Reads {
@@ -189,6 +214,10 @@ mod tests {
     impl FrontReads for Reads {
         fn foreground(&self) -> isize {
             self.foreground
+        }
+
+        fn desktop(&self) -> isize {
+            DESKTOP
         }
 
         fn thread_of(&self, window: isize) -> u32 {
@@ -286,16 +315,40 @@ mod tests {
         assert_eq!(front_of(&responsive), Front::Responsive);
     }
 
-    /// No window in front, or one that is gone, is nothing.
+    /// No window in front reads the desktop window, with its owner, as
+    /// NVDA's `kwargsFromSuper` takes it; its thread's focus window would be
+    /// read in its place.
     #[test]
-    fn no_window_in_front_or_a_gone_one_is_nothing() {
-        assert_eq!(front_of(&Reads::default()), Front::Nothing);
+    fn no_window_in_front_is_the_desktop_window() {
+        let nothing = Reads {
+            existing: vec![DESKTOP],
+            ..Reads::default()
+        };
+        assert_eq!(
+            front_of(&nothing),
+            Front::Desktop(DesktopFront {
+                desktop: WindowHandle(3),
+                process: verbatim_model::Pid(1_003),
+                thread: 103,
+            })
+        );
+        let focused = Reads {
+            focus: Some(8),
+            existing: vec![DESKTOP, 8],
+            ..Reads::default()
+        };
+        assert_eq!(front_of(&focused), Front::Responsive);
+    }
+
+    /// A focus window that is gone is gone.
+    #[test]
+    fn a_gone_window_in_front_is_gone() {
         let gone = Reads {
             foreground: 7,
             focus: Some(8),
             existing: vec![7],
             ..Reads::default()
         };
-        assert_eq!(front_of(&gone), Front::Nothing);
+        assert_eq!(front_of(&gone), Front::Gone);
     }
 }
