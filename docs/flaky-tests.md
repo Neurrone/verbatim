@@ -27,6 +27,13 @@ Scenarios: the `windows_terminal_` scenarios generally, for example `windows_ter
 - Cause: Windows Terminal raises focus from a second runtime identity ([UIA faults](../books/dev/src/reference/uia-bugs.md), "Windows Terminal raises focus from a second runtime identity"); Verbatim's rule dropping those repeats is not built, and the scenario accepts one repeat of the terminal.
 - Fix: [M5](roadmap.md#m5--extensions-v1), the Terminal built-in's rule for the second terminal identity.
 
+## A common file dialog's text not found
+
+- Scenarios: `quit_inside_a_file_dialog` (local), 3 of 3 runs on 2026-11-19, its first run.
+- How: Enter on the Theme page's "Import... button" opens the common file dialog "Import a Theme"; Verbatim says "Import a Theme dialog" where NVDA, captured 5 of 5 at the pin, says "Import a Theme  dialog  File name:", the dialog's own text as its description, then the File name field.
+- Cause: the outpost's MSAA dialog-text gathering (`crates/verbatim-outpost/src/dialog_text.rs` over `crates/verbatim-ia2/src/dialog.rs`) found no text in all three runs; which of its rules dropped "File name:" is not yet shown (reading the dialog about 200 ms after Enter while it lays out, where NVDA read it about 1 s after; reading native UI Automation child windows through MSAA; or the label-skipping rule). The File name field's focus was being read when the run quit. Not a regression of the day's builds: the gathering is unchanged since October, and no earlier scenario opened a real file dialog.
+- Fix: the next build reads the open dialog's MSAA children live with `verbatim-inspect`, at once and once settled, compares them with NVDA's `getDialogText`, and fixes the reader at fault.
+
 ## Settings' suggestions list replaced as it opens
 
 - Scenarios: `settings_search_suggestions` (local only), 2 of 13 runs on 2026-11-09.
