@@ -103,15 +103,16 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     scenario.speech().expect_sequence(&[heard(&said(first, 1))]);
 
     // Down Arrow, which moves no caret in the one-line box, moves the
-    // selection; NVDA queues the box's line for the key and cuts it off
-    // with the suggestion, which Verbatim says alone.
+    // selection; the key says the box's line at its bound and the
+    // suggestion cuts it off, as NVDA's capture does (commit 10ddf7b8).
     for (key, said) in [
         ("downarrow", said(second, 2)),
         ("downarrow", said(third, 3)),
         ("uparrow", said(second, 2)),
     ] {
         scenario.send_keys(&[key]).expect("sends the key");
-        scenario.deviates_from_nvda("docs/parity/text.md", "TextInfo-equivalent layer");
-        scenario.speech().expect(&[&said]);
+        scenario
+            .speech()
+            .expect_sequence(&[cut_off("sound"), heard(&said)]);
     }
 }
