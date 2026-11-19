@@ -580,9 +580,7 @@ pub struct SrState {
     /// (`crate::focus::follow`, Table 10).
     pub(crate) follows: crate::focus::follow::Follows,
     /// Core's plain reader and the plain object it holds
-    /// (`crate::focus::plain`); absent from a committed replay fixture
-    /// recorded before it, which held none.
-    #[serde(default)]
+    /// (`crate::focus::plain`).
     pub(crate) plain: crate::focus::plain::PlainReader,
     /// The processes whose focus is dropped at its answer: the end-to-end
     /// harness's own, none for real users (`crate::focus::execute`).

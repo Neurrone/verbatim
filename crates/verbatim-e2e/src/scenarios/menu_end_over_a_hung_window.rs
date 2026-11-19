@@ -51,7 +51,8 @@ fn line_events() -> String {
 }
 
 /// Opens the mockapp window, titled with [`harness_marker`] of [`HUNG`],
-/// an MSAA window holding one focused button "OK", its standard input a
+/// an MSAA window holding one button "OK", whose focus it raises on its
+/// own client, its standard input a
 /// pipe and its lines setting the events of `events`, and waits for it to
 /// take the foreground. Returns its process id.
 fn open(scenario: &mut Scenario, events: &str) -> io::Result<u32> {
@@ -135,7 +136,9 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     let window = format!("{title} window");
     let ghost = format!("{title} (Not Responding)");
     let plain = format!("{ghost} window");
-    scenario.speech().expect(&[&window, "OK button"]);
+    // mockapp's MSAA window raises its focus on its own client as it
+    // opens, never on its button, as in `msaa_flood_then_focus`.
+    scenario.speech().expect(&[&window]);
 
     // The menu over the window, which stalls; Windows shows its ghost
     // behind the menu once it has called the window hung.
