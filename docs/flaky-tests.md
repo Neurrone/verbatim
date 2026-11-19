@@ -48,6 +48,7 @@ Scenarios: the `windows_terminal_` scenarios generally, for example `windows_ter
 - `settings_system_page` on GitHub's runner (run 42861051487, 2026-11-10), the same failure
 - `settings_system_page` on GitHub's runner (run 43556583340, 2026-11-14), the same failure
 - `settings_system_page` on GitHub's runner (run 44391277251, 2026-11-19), the same failure
+- `settings_system_page` on GitHub's runner (run 44571401780, 2026-11-20), the same failure: only the frame's UI Automation focus reached the listener
 - `settings_system_page` on GitHub's runner (run 44495098916, 2026-11-19), the same failure: the listener's log has the frame's UI Automation focus and none for the page
 - `settings_system_page` on GitHub's runner (run 44465917467, 2026-11-19), the same failure: the frame's UI Automation focus was spoken, the page's window (hwnd 328488) raised only MSAA focus events, rightly left to UI Automation, and no UI Automation focus for the page arrived
   - How: "Settings" was said for the frame, then nothing for 75 s; "Settings window" was never queued.
