@@ -49,7 +49,8 @@ Public API:
   `root_owner_of` (the top of the owner chain, `GA_ROOTOWNER`),
   `window_owner` (thread and process), `foreground_window_handle`,
   `focus_window` (the window with the keyboard focus, else the active
-  window). `window_classes(hwnd)` reads the
+  window), `thread_focus_window(thread)` (a thread's focus window alone,
+  as NVDA's reads of the focus take it). `window_classes(hwnd)` reads the
   `WindowClasses` the class verdict judges
   ([verbatim-reader-rules](verbatim-reader-rules.md)).
   `window_is_hidden_frame` and `window_belongs_to_hidden_frame` recognize

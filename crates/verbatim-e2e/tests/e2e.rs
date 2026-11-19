@@ -69,6 +69,7 @@ const LIVE: &[&str] = scenario_tests! {
     table_cells
     alt_tab_switcher
     return_from_a_held_application
+    menu_end_over_a_hung_window
     owned_dialog_across_processes
     lock_key_announcements
     quick_link_menu

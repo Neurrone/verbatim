@@ -613,10 +613,10 @@ const SETTINGS: App = App {
 /// tells it, as NVDA tests no menu end for a hang
 /// (`verbatim_listener_logic::tell::hang_tested`), and Core's check of the
 /// focus 50 ms later is refused by the shell's live hang check, which
-/// plays the not-responding sound, as Dickson decided (2026-11-19). A
-/// recorded difference awaiting his review: NVDA's fake focus finds the
-/// window hung and announces it as a plain window
-/// (`NVDAObjects/window/__init__.py` 91 to 98).
+/// finds the hung window itself in front, with no ghost: the
+/// not-responding sound plays (Dickson, 2026-11-19). A ghost in front is
+/// spoken as NVDA's plain window instead (`focus::plain`; the
+/// `hung_menu_end` tests).
 #[test]
 fn a_menu_end_from_a_hung_window_holding_attention_plays_the_sound() {
     let mut desk = Desk::new();
@@ -629,7 +629,10 @@ fn a_menu_end_from_a_hung_window_holding_attention_plays_the_sound() {
         panic!("one check asked: {:?}", desk.sent);
     };
     assert_eq!(
-        desk.step(QueueInput::RefusedHung(RequestNumber(check))),
+        desk.step(QueueInput::HungFocus {
+            number: RequestNumber(check),
+            front: verbatim_model::request::Front::Hung,
+        }),
         [Heard::Earcon(Earcon::AppNotResponding)]
     );
 }

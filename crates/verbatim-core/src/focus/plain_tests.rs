@@ -1,0 +1,895 @@
+//! Core's plain reader, and the reads of the focus Core makes itself
+//! answered hung: the decision table of each entry, the plain object's
+//! commit through the ordinary path, the plain reader's answers, and the
+//! commands on the plain object through their own entries.
+
+use verbatim_model::event_kind::EventKind;
+use verbatim_model::property::{PropertyAnswer, PropertyId, PropertyValue, PropertyValues};
+use verbatim_model::request::{
+    CandidateAnswer, FindScope, FocusNode, FocusRead, Follow, FollowGroup, Followed, Front,
+    GhostFront, NodeRead, NodeWindow, ObjectRead, ObjectRef, Outcome as WireOutcome, Press,
+    PressAction, Purpose, QueueEffect, QueueInput, ReadObject, Refusal, RelationFound,
+    RelationQuery, Reply, Request as Wire,
+};
+use verbatim_model::{
+    Effect as Said, KeySeq, NodeId, OutpostId, Pid, QueryKind, ReviewCommand, Role, SegmentContent,
+    State, StateSet, TraceId, WindowHandle,
+};
+
+use crate::entries::tests::{
+    APP, Held, LISTENER, OUTPOST, SPOKEN, answer, entry, focus_read, held, msaa_tell, ready,
+};
+use crate::entries::{Entry, feed};
+use crate::event_queue::{Asker, Effect, Foreground, Input, Instance, Outcome, Reader, Timed};
+use crate::focus::versions::{Committed, ReadBy};
+use crate::keys::entry::PressEntry;
+
+/// hungwin's window, which the shell's foreground report names in place
+/// of the ghost in front of it.
+const HUNGWIN: WindowHandle = WindowHandle(4);
+
+/// The ghost window in front of hungwin.
+const GHOST: WindowHandle = WindowHandle(90);
+
+/// The foreground record: hungwin, as the shell maps the ghost's report.
+const IN_FRONT: Foreground = Foreground {
+    window: HUNGWIN,
+    root_owner: HUNGWIN,
+    process: APP,
+    thread: 41,
+    by_class: None,
+    shell: false,
+};
+
+/// The ghost as the shell reads it in front.
+fn ghost(name: &str) -> Front {
+    Front::Ghost(GhostFront {
+        ghost: GHOST,
+        stands_for: HUNGWIN,
+        name: name.to_owned(),
+        unavailable: false,
+    })
+}
+
+/// What the plain object of the ghost "hungwin (Not Responding)" says
+/// when its focus is executed.
+const PLAIN_SPOKEN: &str = "Label(\"hungwin (Not Responding)\") Role(Window)";
+
+/// Every effect of `input` fed at `at_us`, as a test reads it: each
+/// request sent by its reader and kind, each utterance by its segments,
+/// the sound, a stop of speech, and the hang check by its windows.
+fn effects(held: &mut Held, at_us: u64, input: Input<Entry>) -> Vec<String> {
+    feed(&mut held.state, &mut held.runtime, Timed { at_us, input })
+        .unwrap()
+        .into_iter()
+        .filter_map(|effect| match effect {
+            Effect::Send { to, ask } => Some(format!(
+                "send {:?} {}",
+                to.reader,
+                crate::entries::tests::kind(&ask)
+            )),
+            Effect::Said(Said::Speak(utterance, _)) => Some(
+                utterance
+                    .segments
+                    .iter()
+                    .filter(|segment| !matches!(segment.content, SegmentContent::Mark(_)))
+                    .map(|segment| format!("{:?}", segment.content))
+                    .collect::<Vec<_>>()
+                    .join(" "),
+            ),
+            Effect::NotRespondingSound => Some("sound".to_owned()),
+            Effect::Said(Said::StopSpeech) => Some("stop".to_owned()),
+            Effect::Undecodable(number) => Some(format!("undecodable {}", number.0)),
+            Effect::CheckHung(windows) => Some(format!("check {windows:?}")),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The shell refused request `number`, a read of the current focus, as
+/// hung, with `front` in front.
+fn hung_focus(number: u64, front: Front) -> Input<Entry> {
+    Input::HungFocus {
+        number: verbatim_model::request::RequestNumber(number),
+        front,
+    }
+}
+
+/// hungwin in front, its startup read answered with its MSAA button "OK"
+/// in the frame "Editor", so the next request is 2.
+fn in_front() -> Held {
+    let mut state = ready();
+    assert_eq!(
+        effects(&mut state, 100, Input::Foreground(IN_FRONT)),
+        ["send Outpost(Pid(40)) CurrentFocus"]
+    );
+    assert_eq!(
+        effects(
+            &mut state,
+            200,
+            answer(
+                OUTPOST,
+                1,
+                Reply::Candidate(CandidateAnswer::focused(focus_read(Some(held(-4)))))
+            )
+        ),
+        SPOKEN
+    );
+    state
+}
+
+/// An end of `kind` told at `at_us`.
+fn end(kind: EventKind) -> Input<Entry> {
+    let mut tell = msaa_tell(-4);
+    tell.kind = kind;
+    entry(tell)
+}
+
+/// The check after an end of `kind` at 1 ms, asked at 51 ms as request 2.
+fn checked(kind: EventKind) -> Held {
+    let mut state = in_front();
+    assert_eq!(effects(&mut state, 1_000, end(kind)), Vec::<String>::new());
+    assert_eq!(
+        effects(&mut state, 51_000, Input::Tick),
+        ["send Outpost(Pid(40)) CurrentFocus with the focused state as a fact"]
+    );
+    state
+}
+
+/// The menu end's check answered with the ghost "hungwin (Not
+/// Responding)" in front, at 52 ms.
+fn plain_committed() -> Held {
+    let mut state = checked(EventKind::MenuEnd);
+    assert_eq!(
+        effects(
+            &mut state,
+            52_000,
+            hung_focus(2, ghost("hungwin (Not Responding)"))
+        ),
+        ["stop", PLAIN_SPOKEN]
+    );
+    state
+}
+
+/// Whether hungwin is watched: the half-second round, once due, checks
+/// it.
+fn watched(state: &mut Held) -> bool {
+    let now = state.queue.now_us();
+    effects(state, now + 600_000, Input::Tick) == [format!("check [{HUNGWIN:?}]")]
+}
+
+/// The plain object's node of `generation`.
+fn plain_node(generation: u64) -> NodeId {
+    NodeId::plain(generation, 1)
+}
+
+#[test]
+fn a_menu_end_over_a_ghost_speaks_the_plain_window_with_no_sound_and_watches_hungwin() {
+    let mut state = plain_committed();
+    let Committed::Read(kept) = &state.versions.committed else {
+        panic!("the plain object is committed");
+    };
+    assert_eq!(kept.node, plain_node(1));
+    assert_eq!(kept.read_by, ReadBy::Plain);
+    // It names hungwin's process, never the ghost's own.
+    assert_eq!(kept.source, APP);
+    assert_eq!(kept.window.process, APP);
+    assert_eq!(kept.place.top_level, GHOST);
+    assert_eq!(kept.place.root_owner, GHOST);
+    assert_eq!(
+        state.versions.last.as_ref().map(|last| &last.read_by),
+        Some(&ReadBy::Plain)
+    );
+    assert_eq!(
+        state.focus.object().map(|focus| focus.snapshot.id),
+        Some(plain_node(1))
+    );
+    assert_eq!(
+        state
+            .navigator
+            .as_ref()
+            .map(|navigator| navigator.object.id),
+        Some(plain_node(1))
+    );
+    assert_eq!(
+        state.foreground.object().map(|object| object.id),
+        Some(plain_node(1))
+    );
+    assert_eq!(state.foreground.entered(), Some(GHOST));
+    assert_eq!(state.follows.named(APP), None);
+    assert!(watched(&mut state));
+}
+
+/// The menu or popup end's check answered hung with no ghost: the sound
+/// plays and hungwin is watched, as before.
+#[test]
+fn a_menu_end_over_a_hung_window_with_no_ghost_plays_the_sound_and_watches() {
+    let mut state = checked(EventKind::MenuEnd);
+    assert_eq!(
+        effects(&mut state, 52_000, hung_focus(2, Front::Hung)),
+        ["sound"]
+    );
+    assert!(watched(&mut state));
+}
+
+/// The menu end's check answered with a responsive window, or nothing, in
+/// front: nothing is said and nothing watched; the window in front's own
+/// tells speak it.
+#[test]
+fn a_menu_end_over_a_responsive_window_or_nothing_says_nothing_and_watches_nothing() {
+    for front in [Front::Responsive, Front::Nothing] {
+        let mut state = checked(EventKind::MenuEnd);
+        assert_eq!(
+            effects(&mut state, 52_000, hung_focus(2, front)),
+            Vec::<String>::new()
+        );
+        assert!(!watched(&mut state));
+    }
+}
+
+/// The popup end's check is NVDA's fake focus as the menu end's is.
+#[test]
+fn a_popup_end_over_a_ghost_speaks_the_plain_window() {
+    let mut state = checked(EventKind::PopupEnd);
+    assert_eq!(
+        effects(
+            &mut state,
+            52_000,
+            hung_focus(2, ghost("hungwin (Not Responding)"))
+        ),
+        ["stop", PLAIN_SPOKEN]
+    );
+    assert!(watched(&mut state));
+}
+
+/// The task switcher's check over a ghost is left as it was: the sound
+/// plays and hungwin is watched, ghost or not (a recorded difference).
+#[test]
+fn the_switcher_check_over_a_ghost_or_a_hung_window_plays_the_sound_and_watches() {
+    for front in [ghost("hungwin (Not Responding)"), Front::Hung] {
+        let mut state = checked(EventKind::SwitchEnd);
+        assert_eq!(effects(&mut state, 52_000, hung_focus(2, front)), ["sound"]);
+        assert!(watched(&mut state));
+        assert!(state.state.plain.object.is_none());
+    }
+}
+
+/// The startup read answered with the ghost in front speaks the plain
+/// window and watches hungwin; answered hung with no ghost, the sound.
+#[test]
+fn the_startup_read_over_a_ghost_speaks_the_plain_window_and_over_a_hung_window_plays_the_sound() {
+    let mut state = ready();
+    assert_eq!(
+        effects(&mut state, 100, Input::Foreground(IN_FRONT)),
+        ["send Outpost(Pid(40)) CurrentFocus"]
+    );
+    assert_eq!(
+        effects(
+            &mut state,
+            200,
+            hung_focus(1, ghost("hungwin (Not Responding)"))
+        ),
+        [PLAIN_SPOKEN]
+    );
+    assert!(watched(&mut state));
+
+    let mut state = ready();
+    let _ = effects(&mut state, 100, Input::Foreground(IN_FRONT));
+    assert_eq!(
+        effects(&mut state, 200, hung_focus(1, Front::Hung)),
+        ["sound"]
+    );
+    assert!(watched(&mut state));
+}
+
+/// The listener's tell of a switch of the input desktop, `open` when the
+/// new one can be opened.
+fn switch(open: bool) -> QueueInput {
+    QueueInput::Tell {
+        from: LISTENER,
+        tell: Box::new(verbatim_model::tell::Event {
+            trace_id: TraceId::from_raw(8),
+            kind: EventKind::DesktopSwitch,
+            process: APP,
+            application: "app".to_owned(),
+            thread: 41,
+            at_us: 1_000,
+            object: verbatim_model::tell::EventObject::Msaa {
+                window: WindowHandle(0),
+                object: 0,
+                child: 0,
+            },
+            cached: PropertyValues::default(),
+            payload: verbatim_model::tell::Payload::DesktopSwitch {
+                input_desktop_open: open,
+            },
+            window: verbatim_model::tell::TellWindow::NoWindow,
+            checked: None,
+        }),
+    }
+}
+
+/// Routes `input` from the shell at `at_us`: the shell's effects.
+fn route(state: &mut Held, at_us: u64, input: &QueueInput) -> Vec<Said> {
+    crate::entries::route(
+        &mut state.state,
+        &mut state.runtime,
+        (TraceId::from_raw(1), at_us),
+        input,
+    )
+    .said()
+}
+
+/// The secure desktop up and back, the read after the return asked as
+/// request 2, 200 ms after the return.
+fn returned() -> Held {
+    let mut state = in_front();
+    let _ = route(&mut state, 1_000, &switch(false));
+    let _ = route(&mut state, 10_000, &switch(true));
+    let asked: Vec<String> = route(
+        &mut state,
+        10_000 + crate::input_desktop::RETURN_DELAY_US,
+        &QueueInput::Due,
+    )
+    .into_iter()
+    .filter_map(|said| match said {
+        Said::Queue(QueueEffect::Send { to, ask }) => Some(format!(
+            "send {:?} {}",
+            to.reader,
+            crate::entries::tests::kind(&ask)
+        )),
+        _ => None,
+    })
+    .collect();
+    assert_eq!(asked, ["send Outpost(Pid(40)) CurrentFocus"]);
+    state
+}
+
+/// The read after the return from the secure desktop answered with the
+/// ghost in front speaks the plain window, as NVDA's `gainFocus` of the
+/// window in front does (`IAccessibleHandler/__init__.py` 809 to 813;
+/// Dickson, 2026-11-19), and watches hungwin; hung with no ghost, the
+/// sound.
+#[test]
+fn the_return_from_the_secure_desktop_over_a_ghost_speaks_the_plain_window() {
+    let mut state = returned();
+    assert_eq!(
+        effects(
+            &mut state,
+            300_000,
+            hung_focus(2, ghost("hungwin (Not Responding)"))
+        ),
+        [PLAIN_SPOKEN]
+    );
+    assert!(watched(&mut state));
+
+    let mut state = returned();
+    assert_eq!(
+        effects(&mut state, 300_000, hung_focus(2, Front::Hung)),
+        ["sound"]
+    );
+    assert!(watched(&mut state));
+}
+
+/// The re-take after the focus's outpost is replaced, answered with a
+/// ghost or a hung window in front: NVDA has no such read, so the sound
+/// plays and hungwin is watched, as before.
+#[test]
+fn the_retake_over_a_ghost_or_a_hung_window_plays_the_sound_and_watches() {
+    for front in [ghost("hungwin (Not Responding)"), Front::Hung] {
+        let mut state = in_front();
+        let _ = effects(&mut state, 1_000, Input::ReaderEnded(OUTPOST));
+        let next = Instance {
+            reader: Reader::Outpost(APP),
+            generation: 4,
+        };
+        assert_eq!(
+            crate::entries::tests::ready_at(&mut state, 2_000, next),
+            ["send Outpost(Pid(40)) CurrentFocus"]
+        );
+        assert_eq!(effects(&mut state, 3_000, hung_focus(2, front)), ["sound"]);
+        assert!(watched(&mut state));
+    }
+}
+
+/// The read after hungwin answers again, answered with a ghost or a hung
+/// window in front once more: the sound plays and it is watched again.
+#[test]
+fn the_recovery_read_over_a_ghost_or_a_hung_window_plays_the_sound_and_watches() {
+    for front in [ghost("hungwin (Not Responding)"), Front::Hung] {
+        let mut state = checked(EventKind::MenuEnd);
+        assert_eq!(
+            effects(&mut state, 52_000, hung_focus(2, Front::Hung)),
+            ["sound"]
+        );
+        assert_eq!(
+            effects(
+                &mut state,
+                60_000,
+                Input::HangCheck {
+                    window: HUNGWIN,
+                    hung: false
+                }
+            ),
+            ["send Outpost(Pid(40)) CurrentFocus"]
+        );
+        assert_eq!(effects(&mut state, 61_000, hung_focus(3, front)), ["sound"]);
+        assert!(watched(&mut state));
+    }
+}
+
+/// The plain object, disabled, as the plain reader holds it.
+fn disabled_plain() -> Held {
+    let mut state = plain_committed();
+    if let Some(object) = state.state.plain.object.as_mut() {
+        object.unavailable = true;
+    }
+    state
+}
+
+/// The properties the tests ask.
+fn asked_set() -> Vec<PropertyId> {
+    vec![
+        PropertyId::Name,
+        PropertyId::Role,
+        PropertyId::States,
+        PropertyId::Value,
+    ]
+}
+
+/// The disabled plain object's answer to [`asked_set`]: its name, the role
+/// window, the unavailable state, and no value.
+fn disabled_values() -> PropertyValues {
+    let mut disabled = StateSet::default();
+    disabled.insert(State::Disabled);
+    PropertyValues(vec![
+        PropertyAnswer {
+            id: PropertyId::Name,
+            value: Some(PropertyValue::Text("hungwin (Not Responding)".to_owned())),
+        },
+        PropertyAnswer {
+            id: PropertyId::Role,
+            value: Some(PropertyValue::Role(Role::Window)),
+        },
+        PropertyAnswer {
+            id: PropertyId::States,
+            value: Some(PropertyValue::States(disabled)),
+        },
+        PropertyAnswer {
+            id: PropertyId::Value,
+            value: None,
+        },
+    ])
+}
+
+/// The plain reader's answer to each kind of request on the plain node
+/// but the generic read: what NVDA's plain `Window` gives. A node of an
+/// outpost, and a request that names no node, are not the plain reader's.
+#[test]
+fn the_plain_reader_answers_each_kind_as_a_plain_window() {
+    let state = disabled_plain();
+    let answer = |request: Wire| super::answer(&state.state.plain, &request);
+    let node = plain_node(1);
+    assert_eq!(
+        answer(Wire::Properties {
+            node,
+            set: asked_set()
+        }),
+        Some(WireOutcome::Result(Reply::Properties(disabled_values())))
+    );
+    for direction in [
+        QueryKind::Parent,
+        QueryKind::NextSibling,
+        QueryKind::PreviousSibling,
+        QueryKind::FirstChild,
+    ] {
+        assert_eq!(
+            answer(Wire::Navigate {
+                node,
+                direction,
+                set: asked_set()
+            }),
+            Some(WireOutcome::Result(Reply::Navigated(None)))
+        );
+    }
+    assert_eq!(
+        answer(Wire::Find {
+            node,
+            scope: FindScope::Descendants,
+            property: PropertyId::Role,
+            value: PropertyValue::Role(Role::Button),
+            set: asked_set(),
+        }),
+        Some(WireOutcome::Result(Reply::Found(None)))
+    );
+    assert_eq!(
+        answer(Wire::Children {
+            node,
+            set: asked_set()
+        }),
+        Some(WireOutcome::Result(Reply::Children(Vec::new())))
+    );
+    assert_eq!(
+        answer(Wire::Text {
+            node,
+            op: verbatim_model::TextOp::ReadSelection(verbatim_model::SelectionRead {
+                provider: verbatim_model::TextProvider::EditMessages,
+                baseline: None,
+                adopt: None,
+            }),
+        }),
+        Some(WireOutcome::Result(Reply::Text(
+            verbatim_model::TextReply::NoText
+        )))
+    );
+    assert_eq!(
+        answer(Wire::Activate { node }),
+        Some(WireOutcome::Refused(Refusal::Unsupported))
+    );
+    assert_eq!(
+        answer(Wire::Follow(Follow {
+            node: Some(Followed {
+                node,
+                group: FollowGroup::Base,
+                extra: None,
+            }),
+        })),
+        Some(WireOutcome::Result(Reply::Followed))
+    );
+    assert_eq!(
+        answer(Wire::Activate {
+            node: NodeId::in_outpost(OutpostId(3), 1)
+        }),
+        None
+    );
+    assert_eq!(answer(Wire::DumpTree { locations: false }), None);
+}
+
+/// The plain reader's answer to the generic read of the plain node: its
+/// properties in its ghost's window, one of the nodes a relation names
+/// when it is among them, and no descendants or ancestors.
+#[test]
+fn the_plain_reader_answers_the_generic_read_as_a_plain_window() {
+    let state = disabled_plain();
+    let node = plain_node(1);
+    let read = Wire::ReadObject(ReadObject {
+        object: ObjectRef::Node(node),
+        set: asked_set(),
+        relation: Some(RelationQuery::OneOf(vec![
+            NodeId::in_outpost(OutpostId(3), 1),
+            node,
+        ])),
+        descendants: true,
+        walk: Some(Vec::new()),
+        purpose: Purpose::Other,
+    });
+    assert_eq!(
+        super::answer(&state.state.plain, &read),
+        Some(WireOutcome::Result(Reply::Object(Box::new(ObjectRead {
+            object: NodeRead {
+                node: Some(node),
+                window: NodeWindow {
+                    handle: GHOST,
+                    top_level: GHOST,
+                    root_owner: GHOST,
+                    process: APP,
+                    thread: 41,
+                    desktop: false,
+                },
+                values: disabled_values(),
+            },
+            relation: Some(RelationFound::Is(1)),
+            descendants: Vec::new(),
+            ancestors: Vec::new(),
+            met: None,
+            route: None,
+        }))))
+    );
+}
+
+/// A request on an older plain object's node, or on the plain object after
+/// its ghost was destroyed, finds it not there. A popup end with no focus
+/// in its run checks again first: the same ghost is spoken again, as a new
+/// generation, since a plain focus is never a duplicate
+/// (`IAccessibleHandler/__init__.py` 772 to 778).
+#[test]
+fn a_request_on_an_older_plain_node_or_after_the_ghost_is_destroyed_is_not_there() {
+    let mut state = plain_committed();
+    assert_eq!(
+        effects(&mut state, 100_000, end(EventKind::PopupEnd)),
+        Vec::<String>::new()
+    );
+    assert_eq!(
+        effects(&mut state, 150_000, Input::Tick),
+        ["send Outpost(Pid(40)) CurrentFocus with the focused state as a fact"]
+    );
+    assert_eq!(
+        effects(
+            &mut state,
+            151_000,
+            hung_focus(3, ghost("hungwin (Not Responding)"))
+        ),
+        [PLAIN_SPOKEN]
+    );
+    let older = Wire::Activate {
+        node: plain_node(1),
+    };
+    assert_eq!(
+        super::answer(&state.state.plain, &older),
+        Some(WireOutcome::NotThere)
+    );
+    let _ = effects(
+        &mut state,
+        160_000,
+        Input::WindowDestroyed {
+            window: GHOST,
+            process: Pid(6),
+        },
+    );
+    let current = Wire::Activate {
+        node: plain_node(2),
+    };
+    assert_eq!(
+        super::answer(&state.state.plain, &current),
+        Some(WireOutcome::NotThere)
+    );
+}
+
+/// `command` pressed as key `key`, `repeat` extra times.
+fn press(key: u64, command: ReviewCommand, repeat: u8) -> Input<Entry> {
+    Input::Entry(Entry::Press(Box::new(PressEntry::new(
+        TraceId::from_raw(70 + key),
+        Press {
+            key_seq: KeySeq::new(key),
+            pressed_at_us: 0,
+            action: PressAction::Command { command, repeat },
+        },
+    ))))
+}
+
+/// Report focus on the plain object speaks it, read from the plain reader
+/// with nothing sent; pressed twice it spells its name (`globalCommands.py`
+/// 2956 to 2979).
+#[test]
+fn report_focus_on_the_plain_window_speaks_it_and_spells_it_when_pressed_twice() {
+    let mut state = plain_committed();
+    assert_eq!(
+        effects(&mut state, 200_000, press(1, ReviewCommand::ReportFocus, 0)),
+        [PLAIN_SPOKEN]
+    );
+    assert_eq!(
+        effects(&mut state, 201_000, press(2, ReviewCommand::ReportFocus, 1)),
+        [concat!(
+            "Text(\"h\") Text(\"u\") Text(\"n\") Text(\"g\") Text(\"w\") Text(\"i\") ",
+            "Text(\"n\") Message(Space) Character(\"(\") SpelledCapital(\"N\") Text(\"o\") ",
+            "Text(\"t\") Message(Space) SpelledCapital(\"R\") Text(\"e\") Text(\"s\") ",
+            "Text(\"p\") Text(\"o\") Text(\"n\") Text(\"d\") Text(\"i\") Text(\"n\") ",
+            "Text(\"g\") Character(\")\")"
+        )]
+    );
+}
+
+/// Report the navigator object on the plain object speaks it, with nothing
+/// sent (`globalCommands.py` 1515 onward).
+#[test]
+fn report_navigator_object_on_the_plain_window_speaks_it() {
+    let mut state = plain_committed();
+    assert_eq!(
+        effects(
+            &mut state,
+            200_000,
+            press(1, ReviewCommand::ReportObject, 0)
+        ),
+        [PLAIN_SPOKEN]
+    );
+}
+
+/// Review the current line on the plain object reads its flat text, its
+/// name, as NVDA's `NVDAObjectTextInfo` reads `basicText`
+/// (`globalCommands.py` 1450 to 1463).
+#[test]
+fn review_current_line_on_the_plain_window_reads_its_name() {
+    let mut state = plain_committed();
+    assert_eq!(
+        effects(
+            &mut state,
+            200_000,
+            press(1, ReviewCommand::ReviewCurrentLine, 0)
+        ),
+        ["Text(\"hungwin (Not Responding)\")"]
+    );
+}
+
+/// Say-all on the plain object says nothing, as NVDA's, which can make no
+/// caret position there (`speech/sayAll.py` 419 to 423, 137 to 139).
+#[test]
+fn say_all_on_the_plain_window_says_nothing() {
+    let mut state = plain_committed();
+    assert_eq!(
+        effects(
+            &mut state,
+            200_000,
+            press(1, ReviewCommand::SayAllFromCaret, 0)
+        ),
+        Vec::<String>::new()
+    );
+    assert!(state.say_all.is_none());
+}
+
+/// A move to the first child, or the parent, of the plain object meets the
+/// edge, with nothing sent (the parent's a recorded limit: NVDA reaches the
+/// desktop).
+#[test]
+fn the_first_child_and_the_parent_of_the_plain_window_are_the_edge() {
+    let mut state = plain_committed();
+    assert_eq!(
+        effects(&mut state, 200_000, press(1, ReviewCommand::FirstChild, 0)),
+        ["Message(NoObjectsInside)"]
+    );
+    assert_eq!(
+        effects(&mut state, 201_000, press(2, ReviewCommand::Parent, 0)),
+        ["Message(NoContainingObject)"]
+    );
+}
+
+/// Activate on the plain object says "No action", as NVDA's script does
+/// where `doAction` raises (`globalCommands.py` 1862 to 1903).
+#[test]
+fn activate_on_the_plain_window_says_no_action() {
+    let mut state = plain_committed();
+    assert_eq!(
+        effects(&mut state, 200_000, press(1, ReviewCommand::Activate, 0)),
+        ["Message(NoAction)"]
+    );
+}
+
+/// A request on the plain node from outside the event queue is answered
+/// by the plain reader at once, with nothing sent to any reader.
+#[test]
+fn a_request_from_outside_the_queue_on_the_plain_node_is_answered_with_nothing_sent() {
+    let mut state = plain_committed();
+    let window = state.versions.committed_kept().unwrap().window;
+    let effects = feed(
+        &mut state.state,
+        &mut state.runtime,
+        Timed {
+            at_us: 200_000,
+            input: Input::AskOutside {
+                asker: Asker(5),
+                reader: Reader::Outpost(APP),
+                window,
+                request: Wire::Properties {
+                    node: plain_node(1),
+                    set: vec![PropertyId::Role],
+                },
+                due_after_us: 11_000_000,
+            },
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        effects,
+        [Effect::Answered {
+            asker: Asker(5),
+            outcome: Outcome::Result(Reply::Properties(PropertyValues(vec![PropertyAnswer {
+                id: PropertyId::Role,
+                value: Some(PropertyValue::Role(Role::Window)),
+            }]))),
+        }]
+    );
+}
+
+/// The listener ending while the plain object is committed asks nothing
+/// again: the plain object has no reader that ended, and hungwin would only
+/// be found hung once more.
+#[test]
+fn the_listener_ending_under_the_plain_window_retakes_nothing() {
+    let mut state = plain_committed();
+    assert_eq!(
+        effects(&mut state, 200_000, Input::ReaderEnded(LISTENER)),
+        Vec::<String>::new()
+    );
+}
+
+/// A UI Automation menu opening while the plain object is committed is no
+/// opening on it, which has no runtime id: it is judged and read as a new
+/// focus.
+#[test]
+fn a_uia_menu_opening_under_the_plain_window_is_read_as_a_new_focus() {
+    let mut state = plain_committed();
+    let mut opening = crate::entries::tests::uia_tell(1, Vec::new());
+    opening.kind = EventKind::UiaMenuOpened;
+    assert_eq!(
+        effects(&mut state, 200_000, entry(opening)),
+        ["send Listener ReadObject"]
+    );
+}
+
+/// An MSAA focus on the object the button "OK" was read by, after the
+/// plain object: nothing is a duplicate of the plain object, so it is read
+/// and spoken, as a second menu's items are.
+#[test]
+fn a_focus_after_the_plain_window_is_no_duplicate_of_it() {
+    let mut state = plain_committed();
+    assert_eq!(
+        effects(&mut state, 200_000, entry(msaa_tell(-4))),
+        ["send Outpost(Pid(40)) MsaaRun"]
+    );
+}
+
+/// hungwin answers again: the recovery read is spoken, the window it
+/// reads, and mockapp's own focus tell of that window that follows is its
+/// duplicate, unspoken.
+#[test]
+fn after_recovery_the_recovered_read_is_spoken_once() {
+    let mut state = plain_committed();
+    assert_eq!(
+        effects(
+            &mut state,
+            500_000,
+            Input::HangCheck {
+                window: HUNGWIN,
+                hung: false
+            }
+        ),
+        ["send Outpost(Pid(40)) CurrentFocus"]
+    );
+    let window = FocusRead {
+        focus: FocusNode {
+            read: NodeRead {
+                node: Some(crate::entries::tests::node(1)),
+                window: crate::entries::tests::win(4),
+                values: crate::entries::tests::values("hungwin", Role::Window),
+            },
+            runtime_id: None,
+        },
+        ancestors: Vec::new(),
+        msaa: Some(held(-4)),
+        ..focus_read(None)
+    };
+    assert_eq!(
+        effects(
+            &mut state,
+            501_000,
+            answer(
+                OUTPOST,
+                3,
+                Reply::Candidate(CandidateAnswer::focused(window))
+            )
+        ),
+        ["stop", "Label(\"hungwin\") Role(Window)"]
+    );
+    assert_eq!(
+        effects(&mut state, 502_000, entry(msaa_tell(-4))),
+        Vec::<String>::new()
+    );
+}
+
+/// The shell's hung answer for a request that is no read of the current
+/// focus does not decode: it is logged, and nothing is said.
+#[test]
+fn a_hung_focus_answer_to_a_properties_request_does_not_decode() {
+    let mut state = in_front();
+    assert_eq!(
+        effects(&mut state, 1_000, press(1, ReviewCommand::ReportObject, 0)),
+        ["send Outpost(Pid(40)) other"]
+    );
+    assert_eq!(
+        effects(
+            &mut state,
+            2_000,
+            hung_focus(2, ghost("hungwin (Not Responding)"))
+        ),
+        ["undecodable 2"]
+    );
+}
+
+/// A ghost with no window text is spoken by its role alone.
+#[test]
+fn a_ghost_with_no_name_says_window() {
+    let mut state = checked(EventKind::MenuEnd);
+    assert_eq!(
+        effects(&mut state, 52_000, hung_focus(2, ghost(""))),
+        ["stop", "Role(Window)"]
+    );
+}

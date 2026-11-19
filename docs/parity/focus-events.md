@@ -871,20 +871,15 @@ window's destruction, the end of a menu, a popup menu or the task
 switcher (the fake focus, lines 1082 to 1084), the system caret's
 location change and show (636 to 667) and the desktop switch (1076 to
 1077) are told from a hung window. Their requests meet the shell's check
-below, so a caret event or a menu's end in a hung window holding
-attention plays the sound (Dickson, 2026-11-19). For the caret this
-matches NVDA, whose caret handling blocks on the hung application until
-its watchdog cancels the call (`watchdog.py`, from line 151). For a
-menu's end it is **different**, a recorded difference awaiting Dickson's
-review: NVDA's fake focus 50 ms later (989 to 1002) finds the focus
-window hung, makes a plain window object of it named by
-`InternalGetWindowText`, with no call into the application
-(`NVDAObjects/window/__init__.py` 91 to 98), and queues its focus, so by
-its source NVDA announces the window as a plain window; no capture has
-been taken. Core's shell asks
-Windows whether a request's window is hung before sending it, a ghost
-mapped to its hung window, and answers a request to a hung window "not
-responding" without sending it; while any request is out it asks again
+below, so a caret event in a hung window holding attention plays the
+sound (Dickson, 2026-11-19), which matches NVDA, whose caret handling
+blocks on the hung application until its watchdog cancels the call
+(`watchdog.py`, from line 151). A menu's end is **matched** (Dickson,
+2026-11-19; "Reads of the focus NVDA makes itself" below). Core's shell
+asks Windows whether a request's window is hung before sending it, a
+ghost mapped to its hung window, and answers a request to a hung window
+without sending it: a read of an application's current focus with what
+it reads in front, any other "not responding"; while any request is out it asks again
 every half second for each, and stops waiting for one whose window is
 hung, telling its reader to cancel and leaving the reader's thread
 inside the call. The readers make no hang check of their own before a
@@ -894,9 +889,10 @@ whose element is gone before its read").
 
 The "not responding" sound plays once for each request Core refuses, or
 stops waiting for, because its window is hung, while its application
-holds attention, so a hang met in the background is never sounded. A
-window Core refused or stopped waiting on as hung joins its recovery
-set: while its application holds attention and the window lives, the
+holds attention, so a hang met in the background is never sounded; a
+read of the focus NVDA makes itself that finds a ghost in front plays
+none (below). A window Core refused or stopped waiting on as hung, or
+whose ghost it spoke, joins its recovery set: while its application holds attention and the window lives, the
 half-second check goes on with it, and when Windows no longer reports
 it hung, Core asks that application's outpost for its current focus and
 judges the answer as the re-take after a reader's replacement ("Recovery
@@ -926,6 +922,57 @@ and
   "Verbatim+Tab").
 - An application slow past the due time but never judged hung is
   silent, with no sound, as NVDA cancels at its watchdog's limit.
+
+#### Reads of the focus NVDA makes itself
+
+NVDA reads the focus itself, through `objectWithFocus()`, at the fake
+focus 50 ms after a menu or popup end that no valid focus followed
+(`IAccessibleHandler/__init__.py` 976 to 1002, 1082 to 1103), at the
+return from the secure desktop (809 to 813) and at its start (`core.py`
+422 to 435). Each takes the foreground window, then that window's
+thread's focus window if it has one (`NVDAObjects/window/__init__.py`
+162 to 181). When that window is the ghost Windows shows for a hung
+window, NVDA finds no API class for it (83 to 98) and no overlay for
+the class `Ghost` (100 to 140), so it makes a plain `Window`: its window
+text as its name, the role window, only the unavailable state from its
+style (299 to 306), no children and no caret, all with no call into the
+application. Being no IAccessible object it is queued with no duplicate
+test (`IAccessibleHandler/__init__.py` 772 to 782). Captured (NVDA
+alpha-58022, the pin): Escape from a menu over a ghost says "hungwin
+(Not Responding)  window" in 20 of 20 runs, with no sound; at its start
+over a ghost NVDA's log speaks the same in 5 of 5; when the application
+answers again it says "hungwin  window".
+
+Verbatim: **matched** (Dickson, 2026-11-19; ADR 0003, "A frozen window"
+and "The two versions of the focus"). The shell answers such a read,
+refused as hung, with the window in front read live: a ghost with its
+text, the window it stands for and its disabled style; hung; responsive;
+or none. A ghost is committed as the focus through the ordinary commit,
+an object of Core's plain reader, which answers every request on it at
+once with what NVDA's plain `Window` gives, so report focus, report the
+navigator object and review say what NVDA's source says, with no
+command of their own for it; hungwin is watched, with no sound. A
+responsive window or none in front says nothing, the window's own tells
+speaking it; a hung window with no ghost plays the sound, as before.
+Core's `focus::plain` tests and `hung_menu_end`, in the order of
+Verbatim's own log; the scenario `menu_end_over_a_hung_window`.
+
+- Different: a move to the plain window's parent or siblings meets the
+  edge, "No containing object" or the sibling's edge, where NVDA reaches
+  the desktop and the neighbouring top-level windows, which Core does not
+  read (Dickson, 2026-11-19).
+- Different: the plain window's facts are read once, at the decision,
+  where NVDA reads its window text again on each command; the ghost's
+  text does not change, and its record ends with the ghost.
+- Different: the task switcher's end over a ghost plays the sound, where
+  NVDA is silent, and the application's answering again then says its
+  window, where NVDA said nothing (Capture 3, case 4); the switcher's end
+  is left as it was.
+- Not captured: the commands on the plain window, since injected keys do
+  not reach NVDA while the ghost is in front; their speech is NVDA's by
+  its source (Dickson, 2026-11-19). The return from the secure desktop
+  over a ghost, and a hung window in front with ghosting off, are not
+  captured either.
 
 ### Recovery after an outpost is replaced
 

@@ -87,15 +87,15 @@ pub fn tell_window(
 /// 1077). Every other kind is tested, a menu start, a popup start and a
 /// caret hide, which is no system caret event, among them. Core asks of an
 /// untested kind's hung window as of any other, and its shell's live hang
-/// check refuses the request, the not-responding sound playing while the
-/// window holds attention (Dickson, 2026-11-19). For a caret event this
+/// check refuses the request (Dickson, 2026-11-19). For a caret event the
+/// not-responding sound plays while the window holds attention, which
 /// matches NVDA, whose caret handling blocks on the hung application. For
-/// a menu's end it is a recorded difference awaiting Dickson's review:
-/// NVDA's fake focus 50 ms later reads the focus window and, finding it
-/// hung, makes a plain window object of it with no call into the
-/// application (`NVDAObjects/window/__init__.py` 91 to 98) and queues its
-/// focus (`IAccessibleHandler/__init__.py` 989 to 1002), so NVDA, by its
-/// source, announces that window where Verbatim plays the sound.
+/// a menu's end the check 50 ms later is refused with the window in front,
+/// and a ghost there is spoken as NVDA's fake focus speaks the plain
+/// window object it makes of it, with no call into the application
+/// (`NVDAObjects/window/__init__.py` 83 to 98;
+/// `IAccessibleHandler/__init__.py` 976 to 1002), with no sound (Dickson,
+/// 2026-11-19).
 #[must_use]
 pub fn hang_tested(kind: EventKind) -> bool {
     !matches!(

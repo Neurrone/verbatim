@@ -32,12 +32,13 @@ pub(crate) struct SelectionFacts {
     pub(crate) text_changed: bool,
 }
 
-/// How the outpost reads the text of `kept`, the provider Core names in
-/// each of its text requests.
+/// How the reader reads the text of `kept`, the provider Core names in
+/// each of its text requests: a plain window's reader, Core's own, reads
+/// no text and takes none, so it is named as an MSAA window's is.
 pub(crate) fn provider(kept: &Kept) -> TextProvider {
     match kept.read_by {
         ReadBy::Uia { .. } => TextProvider::Uia,
-        ReadBy::Msaa { .. } => TextProvider::EditMessages,
+        ReadBy::Msaa { .. } | ReadBy::Plain => TextProvider::EditMessages,
     }
 }
 
@@ -95,7 +96,7 @@ pub(crate) fn value_changed(kept: &mut Kept) {
 /// The committed focus's outpost generation `outpost` ended (column H):
 /// its baseline's anchor ended with it; the flag is the focus's and stays.
 pub(crate) fn outpost_ended(kept: &mut Kept, outpost: OutpostId) {
-    if kept.outpost == outpost {
+    if kept.node.outpost() == Some(outpost) {
         kept.selection.baseline = None;
     }
 }

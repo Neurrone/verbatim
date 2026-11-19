@@ -197,16 +197,31 @@ impl fmt::Display for OutpostId {
     }
 }
 
-/// Identity of one node: the outpost generation that issued it plus a number
-/// unique within that generation.
+/// Who issued a node id: an outpost generation, or Core's plain reader,
+/// which answers for a plain window (NVDA's `NVDAObjects.window.Window`) a
+/// read NVDA makes itself found in front, with no call into any
+/// application. A plain node id can never compare equal to an outpost's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Issuer {
+    /// An outpost generation, [`OutpostId::UNASSIGNED`] in an id as its
+    /// outpost mints it.
+    Outpost(OutpostId),
+    /// Core's plain reader, by the generation of the plain object it holds.
+    Plain(u64),
+}
+
+/// Identity of one node: who issued it, an outpost generation or Core's
+/// plain reader, plus a number unique within that issuer.
 ///
 /// Backend runtime identifiers (UIA runtime IDs, MSAA object and child IDs)
 /// are mapped to numbers by the owning outpost; the reducer and everything
 /// above it never see backend identifiers. Node ids are comparable only within
-/// one outpost: the same window seen by two outposts has two different ids.
+/// one issuer: the same window seen by two outposts has two different ids.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct NodeId {
-    outpost: OutpostId,
+    #[serde(flatten)]
+    issuer: Issuer,
     number: u64,
 }
 
@@ -216,7 +231,7 @@ impl NodeId {
     #[must_use]
     pub const fn new(number: u64) -> Self {
         Self {
-            outpost: OutpostId::UNASSIGNED,
+            issuer: Issuer::Outpost(OutpostId::UNASSIGNED),
             number,
         }
     }
@@ -224,27 +239,50 @@ impl NodeId {
     /// A node id issued by `outpost`.
     #[must_use]
     pub const fn in_outpost(outpost: OutpostId, number: u64) -> Self {
-        Self { outpost, number }
+        Self {
+            issuer: Issuer::Outpost(outpost),
+            number,
+        }
     }
 
-    /// The outpost generation that issued this id.
+    /// A node id Core's plain reader issued for its plain object of
+    /// `generation`.
     #[must_use]
-    pub const fn outpost(self) -> OutpostId {
-        self.outpost
+    pub const fn plain(generation: u64, number: u64) -> Self {
+        Self {
+            issuer: Issuer::Plain(generation),
+            number,
+        }
     }
 
-    /// The number the issuing outpost gave the node.
+    /// Who issued this id.
+    #[must_use]
+    pub const fn issuer(self) -> Issuer {
+        self.issuer
+    }
+
+    /// The outpost generation that issued this id, `None` for a plain
+    /// node.
+    #[must_use]
+    pub const fn outpost(self) -> Option<OutpostId> {
+        match self.issuer {
+            Issuer::Outpost(outpost) => Some(outpost),
+            Issuer::Plain(_) => None,
+        }
+    }
+
+    /// The number the issuer gave the node.
     #[must_use]
     pub const fn number(self) -> u64 {
         self.number
     }
 
-    /// This id with its outpost replaced by `outpost`, the stamp Core applies
+    /// This id with its issuer replaced by `outpost`, the stamp Core applies
     /// to everything arriving on that outpost's pipe.
     #[must_use]
     pub const fn with_outpost(self, outpost: OutpostId) -> Self {
         Self {
-            outpost,
+            issuer: Issuer::Outpost(outpost),
             number: self.number,
         }
     }
@@ -285,5 +323,32 @@ mod tests {
         assert_ne!(old, new);
         assert_eq!(old.unstamped(), new.unstamped());
         assert_eq!(NodeId::new(7).with_outpost(OutpostId(2)), new);
+    }
+
+    /// A plain node never compares equal to an outpost's node of the same
+    /// numbers, and each issuer's id keeps its message form.
+    #[test]
+    fn a_plain_node_is_never_an_outposts_node() {
+        let plain = NodeId::plain(2, 7);
+        let outpost = NodeId::in_outpost(OutpostId(2), 7);
+        assert_ne!(plain, outpost);
+        assert_eq!(plain.outpost(), None);
+        assert_eq!(outpost.outpost(), Some(OutpostId(2)));
+        assert_eq!(
+            serde_json::to_string(&outpost).unwrap(),
+            r#"{"outpost":2,"number":7}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&plain).unwrap(),
+            r#"{"plain":2,"number":7}"#
+        );
+        assert_eq!(
+            serde_json::from_str::<NodeId>(r#"{"plain":2,"number":7}"#).unwrap(),
+            plain
+        );
+        assert_eq!(
+            serde_json::from_str::<NodeId>(r#"{"outpost":2,"number":7}"#).unwrap(),
+            outpost
+        );
     }
 }

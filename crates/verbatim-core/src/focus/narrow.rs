@@ -26,7 +26,7 @@ pub(crate) fn judge_ahead(cx: &mut Cx<Entries>, read: &FocusRead) {
         .map(|kept| &kept.read_by)
     {
         Some(ReadBy::Uia { runtime_id, .. }) => runtime_id.clone(),
-        Some(ReadBy::Msaa { .. }) | None => return,
+        Some(ReadBy::Msaa { .. } | ReadBy::Plain) | None => return,
     };
     let under = read
         .ancestors

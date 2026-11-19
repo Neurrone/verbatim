@@ -315,7 +315,7 @@ fn held(facts: &SrState, generation: Option<OutpostId>) -> Option<Kept> {
     facts
         .versions
         .committed_read()
-        .filter(|kept| Some(kept.outpost) == generation)
+        .filter(|kept| generation.is_some_and(|generation| kept.node.outpost() == Some(generation)))
         .cloned()
 }
 

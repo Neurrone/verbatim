@@ -1708,15 +1708,26 @@ impl ReducerThread<'_> {
     }
 
     /// Sends Core's request `ask` to the instance `to`, unless Windows
-    /// reports its window hung, when it is answered "not responding"
-    /// unsent; one that cannot be written is answered "reader ended". Each
+    /// reports its window hung, when it is answered unsent: a read of an
+    /// application's current focus with the window in front, read live
+    /// ([`hang_check::front`]), any other "not responding"; one that
+    /// cannot be written is answered "reader ended". Each
     /// answer the shell gives enters Core's inbox after the input whose
     /// effects are being carried out, so no reducer step re-enters itself.
     fn send_request(&mut self, to: Instance, ask: verbatim_model::request::Ask) {
         let number = ask.number;
         if hang_check::hung(ask.window) {
-            self.follow_ups
-                .push(queued(QueueInput::RefusedHung(number)));
+            // A read of an application's current focus is answered with
+            // what is in front, which Core judges; every other request is
+            // answered "not responding".
+            let refused = match ask.request {
+                verbatim_model::request::Request::CurrentFocus { .. } => QueueInput::HungFocus {
+                    number,
+                    front: hang_check::front(),
+                },
+                _ => QueueInput::RefusedHung(number),
+            };
+            self.follow_ups.push(queued(refused));
             return;
         }
         let sent = match to.reader {

@@ -31,7 +31,7 @@ pub(super) fn msaa_duplicate(last: Option<&LastFocus>, ids: &MsaaIds) -> bool {
         } => match last.class {
             ObjectClass::Plain => earlier == ids && *held_child <= 0,
         },
-        ReadBy::Msaa { event: None, .. } | ReadBy::Uia { .. } => false,
+        ReadBy::Msaa { event: None, .. } | ReadBy::Uia { .. } | ReadBy::Plain => false,
     }
 }
 

@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use verbatim_model::property::RuntimeId;
 use verbatim_model::request::{KnownAncestor, MsaaIds, ObjectClass};
 use verbatim_model::tell::ElementToken;
-use verbatim_model::{NodeId, OutpostId, Pid, Role, WindowHandle};
+use verbatim_model::{Issuer, NodeId, OutpostId, Pid, Role, WindowHandle};
 
 use crate::keys::entry::Fence;
 
@@ -43,14 +43,22 @@ pub(crate) enum ReadBy {
         /// The child id the outpost holds it by.
         held_child: i32,
     },
+    /// A plain window Core's plain reader holds: a ghost window found in
+    /// front by a read NVDA makes itself, which NVDA makes a plain window
+    /// object of, with no ids an event can name (`crate::focus::plain`).
+    /// NVDA's duplicate test applies only to `IAccessible` objects
+    /// (`IAccessibleHandler/__init__.py` 772 to 778), so a plain focus is
+    /// never a duplicate, and nothing is a duplicate of it.
+    Plain,
 }
 
 impl ReadBy {
-    /// The backend that read it.
+    /// The backend that read it: a plain window is read as a window, by
+    /// Windows' own calls, which Core names as MSAA's window object.
     pub(crate) fn backend(&self) -> verbatim_model::Backend {
         match self {
             Self::Uia { .. } => verbatim_model::Backend::Uia,
-            Self::Msaa { .. } => verbatim_model::Backend::Msaa,
+            Self::Msaa { .. } | Self::Plain => verbatim_model::Backend::Msaa,
         }
     }
 }
@@ -123,9 +131,8 @@ impl LastFocus {
 pub(crate) struct Kept {
     /// The application it belongs to.
     pub(crate) source: Pid,
-    /// The outpost generation that holds its node.
-    pub(crate) outpost: OutpostId,
-    /// Its node.
+    /// Its node, whose issuer, an outpost generation or Core's plain
+    /// reader, holds it.
     pub(crate) node: NodeId,
     /// How it was read.
     pub(crate) read_by: ReadBy,
@@ -190,7 +197,7 @@ impl Kept {
             node: self.node,
             runtime_id: match &self.read_by {
                 ReadBy::Uia { runtime_id, .. } => Some(runtime_id.clone()),
-                ReadBy::Msaa { .. } => None,
+                ReadBy::Msaa { .. } | ReadBy::Plain => None,
             },
             window: self.own_window,
             simple_child: matches!(self.read_by, ReadBy::Msaa { held_child, .. } if held_child != 0),
@@ -302,7 +309,9 @@ impl Versions {
     /// `outpost`, ended (column F).
     pub(crate) fn outpost_ended(&mut self, outpost: OutpostId) -> ReaderEnd {
         match std::mem::take(&mut self.committed) {
-            Committed::Read(mut kept) | Committed::Ended(mut kept) if kept.outpost == outpost => {
+            Committed::Read(mut kept) | Committed::Ended(mut kept)
+                if kept.node.issuer() == Issuer::Outpost(outpost) =>
+            {
                 crate::text_facts::outpost_ended(&mut kept, outpost);
                 self.committed = Committed::Ended(kept);
                 ReaderEnd::Retake
@@ -372,7 +381,7 @@ impl Versions {
         // generation ended, only what another generation minted is met.
         let (kept, itself, ended) = match &self.committed {
             Committed::Read(kept) => (kept, true, None),
-            Committed::Ended(kept) => (kept, true, Some(kept.outpost)),
+            Committed::Ended(kept) => (kept, true, Some(kept.node.issuer())),
             Committed::Own {
                 source: Some(source),
             } => (source, false, None),
@@ -384,11 +393,11 @@ impl Versions {
         let focus = kept.as_ancestor(None);
         let line = std::iter::once(&focus).chain(kept.ancestors.iter());
         for (place, ancestor) in line.enumerate().skip(usize::from(!itself)) {
-            let minted_by = ancestor.node.outpost();
+            let minted_by = ancestor.node.issuer();
             if Some(minted_by) == ended {
                 continue;
             }
-            if asked == Some(minted_by) {
+            if asked.map(Issuer::Outpost) == Some(minted_by) {
                 known.push((place, KnownAncestor::Node(ancestor.node)));
             }
             if let Some(runtime_id) = &ancestor.runtime_id {

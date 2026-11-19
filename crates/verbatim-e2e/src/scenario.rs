@@ -1549,6 +1549,19 @@ impl Scenario {
         self.require_in_front(title, launch, opened)
     }
 
+    /// Waits, on window events, for a visible top-level window titled
+    /// exactly `title`, such as the ghost window Windows shows for a hung
+    /// window behind the one in front.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error, with the foreground report, if none is within
+    /// [`WINDOW_TIMEOUT`].
+    pub fn wait_for_window_titled(&mut self, title: &str) -> io::Result<()> {
+        self.begin_action(&format!("wait for a window titled {title:?}"));
+        self.await_titled_exactly(title)
+    }
+
     /// Waits for a window titled exactly `title`.
     fn await_titled_exactly(&mut self, title: &str) -> io::Result<()> {
         let (titled, desktop) = self.agent.wait_for_window(

@@ -159,9 +159,20 @@ a token (a terminal's output reads and baseline).
 - A request is waiting for its reader, out to one instance of it, or no
   longer awaited. An answered request leaves the table, so a later answer
   naming it finds nothing and is dropped.
+- Every request begins in one place (`Shared::begin`), whether an entry,
+  an asker outside the queue or Core itself asks it: a request on a plain
+  node (`Issuer::Plain`) is routed to Core's plain reader (`Route::Plain`,
+  `Logic::plain_answer`), which answers it at once from Core's facts with
+  nothing sent; its ending is delivered once the asking function has
+  paused in its ask, or as the step settles, and a function rebuilt from
+  its checkpoint takes it from the checkpoint's record.
 - One ending each, handed back with its owner: its reader's answer, taken
-  only from the instance it went to; "not responding" when the shell
-  refused to send it to a hung window; "ended" when its reader ended; or
+  only from the instance it went to, or the plain reader's; "not
+  responding" when the shell refused to send it to a hung window; for a
+  read of an application's current focus so refused, what the shell read
+  in front (`Ending::Hung`), which only that read's reply decodes
+  (`Request::decode_hung`) and its entry judges, the inbox playing no
+  sound and watching nothing for it; "ended" when its reader ended; or
   no longer awaited, at its due time, when the shell's live check finds
   its window hung, at a foreground change that leaves its window behind,
   or when a later entry withdraws it. A request no
@@ -768,6 +779,42 @@ desktop as a fact; the answer is judged by the one definition's
 menu-check rows, the focused state and the duplicate test for an MSAA
 answer, as NVDA's `processFocusNVDAEvent` tests IAccessible objects
 only, so a UI Automation answer of the focus Core holds is spoken again.
+The check notes which end made it (`menus::CheckedEnd`), the first end's
+for ends that share it.
+
+A read of the focus Core makes itself (`retake::CurrentFocusRead`) that
+the shell refused as hung is answered with what is in front
+(`retake::Focused::Hung`), and its entry decides by `focus::plain::decide`
+(Dickson, 2026-11-19). For the reads NVDA makes itself, the menu or
+popup end's check, the read at startup and the read after the return
+from another input desktop, a ghost in front is committed as the plain
+object and spoken, its hung window watched with no sound; a responsive
+window or none says nothing and watches nothing; a hung window with no
+ghost plays the sound and is watched. Every other such read, the
+switcher's check, the re-take, the recovery read and a UI Automation
+focus's read afresh, plays the sound and watches the window whatever is
+in front. Watching and the sound are the entry's (`Cx::watch_if_attended`,
+`Cx::sound_if_attended`), each only while the window's application holds
+attention.
+
+The plain object is an ordinary object in Core's model: its node is
+issued by Core's plain reader (`SrState::plain`, one `PlainObject` at a
+time, each commit a new generation, ended by its ghost's destruction),
+its `Kept` reads `ReadBy::Plain` and names the hung application's
+process, never the ghost's, and its place names the ghost as top-level
+window and root owner. It is committed by the ordinary `execute`, a read
+of one node with no ancestors below the desktop, no text, and itself as
+the foreground object, so the committed focus, the readers' last focus,
+the focus line, the navigator, the foreground object and the entered
+window all follow, the old `Follow`s stop and a focused terminal is
+left. The plain reader answers every request on its node at once with
+what NVDA's plain `Window` gives (`focus::plain::answer`): its
+properties (name, the role window, the unavailable state from its
+style), no children, an edge for every move, no text, "No action" for
+activate; a node of an older generation, or after the ghost's
+destruction, is not there. Every command therefore reads it through its
+own path. A plain focus is never a duplicate and nothing is a duplicate
+of it; the listener's end re-takes nothing under it.
 
 ### One definition of a candidate's validity
 
@@ -1233,6 +1280,9 @@ sentence rules, and a terminal always reads by line.
   caret) or leaves the review cursor there; reaching an opening mark hands
   on the next utterance. Blank pieces are not spoken, and the display is
   kept on (`Effect::KeepDisplayOn`, by the setting).
+- From the caret on a focus with no text, by its role or a caret Core
+  holds, it says nothing and starts nothing, as NVDA's says nothing where
+  it can make no caret position (Dickson, 2026-11-19).
 - It ends after the last piece and stops on any command, caret key, typed
   text, `Input::SpeechCancelled`, `Input::UtteranceCancelled`, a focus
   change, or its outpost's end. `Input::UtteranceFailed` counts as heard

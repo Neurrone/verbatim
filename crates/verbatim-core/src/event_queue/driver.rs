@@ -35,7 +35,7 @@ use super::inbox::{Effect, Timed};
 use super::limiter::{self, Item};
 use super::request::{Outcome, Refused, Request};
 use super::table::{Ending, Live, Order, Owner, Stage, Table};
-use super::{Foreground, Function, Instance, Logic, Reader};
+use super::{Foreground, Function, Instance, Logic, Reader, RequestWindow, Route};
 use crate::focus::backend::BackendCache;
 
 /// Core: the front entry's paused function and what it shares with the
@@ -66,6 +66,92 @@ pub(crate) struct Shared<L: Logic> {
     /// Asks dropped after their request was made and before their outcome
     /// was taken; zero whenever an entry ends.
     unanswered: u32,
+    /// The requests Core's plain reader answered as they began, each with
+    /// its answer, delivered as soon as the step lets them: after the
+    /// front's function pauses in its ask, or as the step settles.
+    at_once: Vec<(RequestNumber, WireOutcome)>,
+    /// Whether the paused function is being rebuilt from its checkpoint,
+    /// when every ending, the plain reader's included, comes from the
+    /// checkpoint's record and nothing is delivered at once.
+    rebuilding: bool,
+}
+
+/// A request about to begin: who asks it, what it names and when Core
+/// stops waiting for it.
+pub(super) struct Beginning {
+    /// The reader its kind names, by the window's process.
+    pub(super) reader: Reader,
+    /// The window it names.
+    pub(super) window: RequestWindow,
+    /// When Core stops waiting for it.
+    pub(super) due_us: u64,
+    /// The request.
+    pub(super) request: Wire,
+    /// Who gets its ending.
+    pub(super) owner: Owner,
+}
+
+impl<L: Logic> Shared<L> {
+    /// Begins `beginning`, the one place every request begins: a request
+    /// on a node Core's plain reader holds is answered by it, at once and
+    /// unsent; any other goes to its reader's running instance, or waits
+    /// for one.
+    pub(super) fn begin(&mut self, beginning: Beginning) -> RequestNumber {
+        let plain = L::plain_answer(&self.state.facts, &beginning.request);
+        let reader = match plain {
+            Some(_) => Route::Plain,
+            None => Route::Reader(beginning.reader),
+        };
+        let ready = self.state.queue.readers.get(&beginning.reader).copied();
+        let now_us = self.state.queue.now_us;
+        let mut orders = Vec::new();
+        let state = &mut self.state;
+        let number = state.queue.table.begin(
+            Live {
+                reader,
+                window: beginning.window,
+                due_us: beginning.due_us,
+                request: beginning.request,
+                owner: beginning.owner,
+                stage: Stage::Waiting,
+                probing: None,
+            },
+            ready,
+            &state.queue.backend,
+            now_us,
+            &mut orders,
+        );
+        Core::<L>::order(self, orders);
+        if let Some(outcome) = plain {
+            self.at_once.push((number, outcome));
+        }
+        number
+    }
+
+    /// Whether `window`'s application holds attention.
+    fn attended(&self, window: &RequestWindow) -> bool {
+        self.state
+            .queue
+            .foreground
+            .is_some_and(|foreground| foreground.attends(window))
+    }
+
+    /// The not-responding sound plays for `window`, hung, while its
+    /// application holds attention.
+    pub(super) fn sound_if_attended(&mut self, window: &RequestWindow) {
+        if self.attended(window) {
+            self.effects.push(Effect::NotRespondingSound);
+        }
+    }
+
+    /// `window`, hung, joins the recovery set while its application holds
+    /// attention, watched every half second until it answers again.
+    pub(super) fn watch_if_attended(&mut self, window: &RequestWindow) {
+        if self.attended(window) {
+            let now_us = self.state.queue.now_us;
+            self.state.queue.table.watch(*window, now_us);
+        }
+    }
 }
 
 /// Core's state: its facts and its queue. Plain data, which a dump shows
@@ -366,6 +452,8 @@ impl<L: Logic> Core<L> {
                 slot: None,
                 parked: false,
                 unanswered: 0,
+                at_once: Vec::new(),
+                rebuilding: false,
             })),
             task: None,
             #[cfg(test)]
@@ -443,6 +531,7 @@ impl<L: Logic> Core<L> {
             });
         };
         let mut fresh = Self::from_state(checkpoint.base.clone());
+        fresh.shared.borrow_mut().rebuilding = true;
         fresh.shared.borrow_mut().state.queue.checkpoint = Some(Box::new(Checkpoint {
             base: State::default(),
             asked: Vec::new(),
@@ -478,6 +567,8 @@ impl<L: Logic> Core<L> {
         {
             let mut shared = fresh.shared.borrow_mut();
             shared.effects.clear();
+            shared.at_once.clear();
+            shared.rebuilding = false;
             shared.state = State::default();
         }
         Ok(fresh)
@@ -588,6 +679,26 @@ impl<L: Logic> Core<L> {
         self.poll();
     }
 
+    /// Delivers the endings Core's plain reader gave at once, unless the
+    /// function is being rebuilt; returns whether any was delivered.
+    pub(super) fn answer_at_once(&mut self) -> bool {
+        let mut delivered = false;
+        loop {
+            let ended = {
+                let mut shared = self.shared.borrow_mut();
+                if shared.rebuilding || shared.at_once.is_empty() {
+                    return delivered;
+                }
+                let (number, outcome) = shared.at_once.remove(0);
+                shared.state.queue.table.answered_at_once(number, outcome)
+            };
+            if let Some(ended) = ended {
+                delivered = true;
+                self.deliver(ended);
+            }
+        }
+    }
+
     /// Delivers the front's request's ending to its function, recorded in
     /// the checkpoint, and resumes it.
     pub(super) fn resume(&mut self, ending: Ending) {
@@ -628,6 +739,10 @@ impl<L: Logic> Core<L> {
                     shared.parked,
                     "an entry's function waited on something other than an ask"
                 );
+                // A request the plain reader answered as it began ends now
+                // that its ask has paused.
+                drop(shared);
+                self.answer_at_once();
             }
             Poll::Ready(()) => {
                 let front = shared.state.queue.front.take();
@@ -700,6 +815,8 @@ pub(super) fn widen<T>(outcome: Outcome<Infallible>) -> Outcome<T> {
 /// `ending` as Core's outcome, a result left as it arrived.
 pub(super) fn outcome_of(ending: Ending) -> Result<Reply, Outcome<Infallible>> {
     match ending {
+        // Decoded only by a current-focus read's own reply.
+        Ending::Hung(_) => Err(Outcome::Refused(Refused::Undecodable)),
         Ending::Answered(WireOutcome::Result(reply)) => Ok(reply),
         Ending::Answered(WireOutcome::Refused(refusal)) => {
             Err(Outcome::Refused(Refused::Reader(refusal)))
@@ -713,12 +830,18 @@ pub(super) fn outcome_of(ending: Ending) -> Result<Reply, Outcome<Infallible>> {
 
 impl<R: Request> Slot for Typed<R> {
     fn deliver(&self, ending: Ending) -> (Shown, bool) {
-        let (outcome, undecodable) = match outcome_of(ending) {
-            Ok(reply) => match Self::decode(reply) {
-                Ok(reply) => (Outcome::Result(reply), false),
-                Err(Undecodable) => (Outcome::Refused(Refused::Undecodable), true),
+        let (outcome, undecodable) = match ending {
+            Ending::Hung(front) => match R::decode_hung(front) {
+                Some(reply) => (Outcome::Result(reply), false),
+                None => (Outcome::Refused(Refused::Undecodable), true),
             },
-            Err(outcome) => (widen(outcome), false),
+            ending => match outcome_of(ending) {
+                Ok(reply) => match Self::decode(reply) {
+                    Ok(reply) => (Outcome::Result(reply), false),
+                    Err(Undecodable) => (Outcome::Refused(Refused::Undecodable), true),
+                },
+                Err(outcome) => (widen(outcome), false),
+            },
         };
         let shown = Shown(format!("{outcome:?}"));
         let earlier = self.outcome.replace(Some(outcome));
@@ -906,28 +1029,27 @@ impl<L: Logic> Cx<L> {
     /// its ending changes nothing in Core. A rebuilt function's sends are
     /// not made again, since its state is let go.
     pub(crate) fn send<R: Request>(&mut self, request: &R, due_us: u64) {
-        let mut shared = self.shared.borrow_mut();
-        let reader = request.reader();
-        let ready = shared.state.queue.readers.get(&reader).copied();
-        let now_us = shared.state.queue.now_us;
-        let mut orders = Vec::new();
-        let state = &mut shared.state;
-        state.queue.table.begin(
-            Live {
-                reader,
-                window: request.window(),
-                due_us,
-                request: request.wire(),
-                owner: Owner::Core,
-                stage: Stage::Waiting,
-                probing: None,
-            },
-            ready,
-            &state.queue.backend,
-            now_us,
-            &mut orders,
-        );
-        Core::<L>::order(&mut shared, orders);
+        self.shared.borrow_mut().begin(Beginning {
+            reader: request.reader(),
+            window: request.window(),
+            due_us,
+            request: request.wire(),
+            owner: Owner::Core,
+        });
+    }
+
+    /// A read of an application's current focus on `window` was answered
+    /// hung and its entry plays the not-responding sound for it, while
+    /// the window's application holds attention.
+    pub(crate) fn sound_if_attended(&mut self, window: &RequestWindow) {
+        self.shared.borrow_mut().sound_if_attended(window);
+    }
+
+    /// A read of an application's current focus on `window` was answered
+    /// hung and its entry watches the window until it answers again,
+    /// while its application holds attention.
+    pub(crate) fn watch_if_attended(&mut self, window: &RequestWindow) {
+        self.shared.borrow_mut().watch_if_attended(window);
     }
 
     /// Sends at once the requests Core's facts want ([`Logic::wanted`]),
@@ -974,31 +1096,17 @@ impl<L: Logic, R: Request> Future for Asking<'_, L, R> {
                     outcome: Cell::new(None),
                 });
                 let owner: Rc<dyn Slot> = slot.clone();
-                let reader = request.reader();
-                let ready = shared.state.queue.readers.get(&reader).copied();
-                let now_us = shared.state.queue.now_us;
                 let wire = request.wire();
-                let mut orders = Vec::new();
-                let state = &mut shared.state;
-                if let Some(checkpoint) = state.queue.checkpoint.as_mut() {
+                if let Some(checkpoint) = shared.state.queue.checkpoint.as_mut() {
                     checkpoint.asked.push(wire.clone());
                 }
-                let number = state.queue.table.begin(
-                    Live {
-                        reader,
-                        window: request.window(),
-                        due_us,
-                        request: wire,
-                        owner: Owner::Queue,
-                        stage: Stage::Waiting,
-                        probing: None,
-                    },
-                    ready,
-                    &state.queue.backend,
-                    now_us,
-                    &mut orders,
-                );
-                Core::<L>::order(&mut shared, orders);
+                let number = shared.begin(Beginning {
+                    reader: request.reader(),
+                    window: request.window(),
+                    due_us,
+                    request: wire,
+                    owner: Owner::Queue,
+                });
                 let front = shared.state.queue.front.as_mut();
                 assert!(
                     front.as_ref().is_some_and(|front| front.asked.is_none()),

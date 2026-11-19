@@ -664,11 +664,14 @@ fn say_all_from_the_caret_with_no_focus_says_no_caret() {
     assert_eq!(effects, ["Message(NoCaret)"]);
 }
 
+/// Say-all on a focus that cannot have text, a button, says nothing and
+/// starts nothing, as NVDA's says nothing where no caret position can be
+/// made (`speech/sayAll.py` 419 to 423, 137 to 139; Dickson, 2026-11-19).
 #[test]
-fn say_all_from_the_caret_on_a_focus_without_text_says_not_supported() {
+fn say_all_from_the_caret_on_a_focus_without_text_says_nothing() {
     let mut state = committed("OK", Role::Button);
     let effects = feed_at(&mut state, 1_000, press(1, ReviewCommand::SayAllFromCaret));
-    assert_eq!(effects, ["Message(NotSupported)"]);
+    assert_eq!(effects, Vec::<String>::new());
     assert!(state.say_all.is_none());
 }
 

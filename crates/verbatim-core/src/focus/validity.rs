@@ -923,7 +923,7 @@ fn last_event_ids(last: &LastFocus) -> Option<&MsaaIds> {
             event: Some(earlier),
             ..
         } => Some(earlier),
-        ReadBy::Msaa { event: None, .. } | ReadBy::Uia { .. } => None,
+        ReadBy::Msaa { event: None, .. } | ReadBy::Uia { .. } | ReadBy::Plain => None,
     }
 }
 

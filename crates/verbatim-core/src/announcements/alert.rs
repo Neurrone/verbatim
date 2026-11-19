@@ -50,7 +50,7 @@ pub(crate) async fn run(mut cx: Cx<Entries>, announcement: Announcement) {
         .facts()
         .versions
         .committed_read()
-        .filter(|kept| Some(kept.outpost) == generation)
+        .filter(|kept| generation.is_some_and(|generation| kept.node.outpost() == Some(generation)))
         .map(|kept| {
             std::iter::once(kept.node)
                 .chain(kept.ancestors.iter().map(|ancestor| ancestor.node))

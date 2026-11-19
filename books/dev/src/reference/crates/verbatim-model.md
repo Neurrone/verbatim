@@ -16,13 +16,19 @@ recorder unchanged. What the reducer does with each type is in
   outpost never collide in the latency ledger. Only the processes that
   observe events mint; a reducer takes every trace id with the input that
   caused the work. `from_raw(u64)` gives a fixed id, for tests and samples.
-- `OutpostId`, `NodeId`, `Pid`: small identity types. An
+- `OutpostId`, `NodeId`, `Issuer`, `Pid`: small identity types. An
   `OutpostId` names one outpost process generation and is never reused. A
-  `NodeId` is an outpost id plus a number that outpost issued: outposts
-  mint ids with `NodeId::new(number)`, leaving the outpost `UNASSIGNED`,
-  and Core stamps the real generation on everything arriving on that
-  outpost's pipe (`assign_outpost` on answers and tells), so an id from a
-  replaced outpost never names a node in its successor.
+  `NodeId` is its issuer plus a number that issuer gave: the issuer is an
+  outpost generation (`Issuer::Outpost`) or Core's plain reader
+  (`Issuer::Plain`, by the generation of the plain window it holds), so a
+  plain node never compares equal to an outpost's. Outposts mint ids with
+  `NodeId::new(number)`, leaving the outpost `UNASSIGNED`, and Core stamps
+  the real generation on everything arriving on that outpost's pipe
+  (`assign_outpost` on answers and tells), so an id from a replaced
+  outpost never names a node in its successor. `NodeId::outpost` is
+  `None` for a plain node; in a message an outpost's id is
+  `{"outpost": n, "number": m}` and a plain one `{"plain": n, "number":
+  m}`.
 - `HIDDEN_FRAME_WINDOW_PROP`: the window property
   [verbatim-gui](verbatim-gui.md) stamps on Core's hidden main frame
   (decision D9), which a reader reads into a window's facts
@@ -431,6 +437,12 @@ that carries them on the pipes is
   which an outpost records as carried by it; `written` stamps the write.
   `Urgent` is what an outpost sends ahead of its queue (`Pong`, `Ready`,
   `TargetExited`, `SpareReady`), none of which carries a node.
+- `Front` and `GhostFront`: what the shell read in front when it refused
+  a read of an application's current focus because its window was hung,
+  as `QueueInput::HungFocus { number, front }`: a ghost window with its
+  text, the hung window it stands for and its disabled style; a hung
+  window with no ghost; a responsive one; or nothing. Every other request
+  the shell refuses so is `QueueInput::RefusedHung`.
 - `OutpostToCore::NotResponding { window }`: a window of the outpost's
   application began a hang, sent once per hang of the application, in
   order with its answers and tells; Core plays the "not responding" sound

@@ -19,7 +19,7 @@ use verbatim_model::{
 
 use crate::entries::Entries;
 use crate::event_queue::{Cx, OTHER_DUE_US, Outcome, Reader, Request, RequestWindow};
-use crate::focus::versions::{Committed, ReadBy};
+use crate::focus::versions::Committed;
 use crate::{editing, review_text, text};
 
 /// The properties a node's announcement speaks, which a read of a node
@@ -110,10 +110,7 @@ pub(crate) async fn run(mut cx: Cx<Entries>, trace_id: TraceId, repeat: u8) {
                     node: kept.node,
                     set: report_set(&facts),
                 },
-                match kept.read_by {
-                    ReadBy::Uia { .. } => Backend::Uia,
-                    ReadBy::Msaa { .. } => Backend::Msaa,
-                },
+                kept.read_by.backend(),
             ),
             Committed::Ended(_) | Committed::Own { .. } => Target::Unread,
         }

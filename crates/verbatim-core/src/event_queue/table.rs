@@ -15,10 +15,10 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use verbatim_model::WindowHandle;
 use verbatim_model::request::{
-    Ask, CancelReason, Outcome as WireOutcome, Request as Wire, RequestNumber, WindowVerdict,
+    Ask, CancelReason, Front, Outcome as WireOutcome, Request as Wire, RequestNumber, WindowVerdict,
 };
 
-use super::{Instance, Reader, RequestWindow};
+use super::{Instance, Reader, RequestWindow, Route};
 use crate::focus::backend::BackendCache;
 
 /// Who asked a request outside the event queue, by the token the shell
@@ -57,8 +57,9 @@ pub(crate) enum Stage {
 /// A request waiting or out.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Live {
-    /// The reader it goes to.
-    pub(crate) reader: Reader,
+    /// Who answers it: a reader process, or Core's plain reader, which
+    /// answers it in the step it begins, so it never waits or goes out.
+    pub(crate) reader: Route,
     /// The window it names.
     pub(crate) window: RequestWindow,
     /// When Core stops waiting for it.
@@ -111,8 +112,13 @@ impl Live {
 pub(crate) enum Ending {
     /// Its reader answered, or Core answered for it: "not responding"
     /// when the shell refused to send it to a hung window, "ended" when
-    /// its reader ended.
+    /// its reader ended, and Core's plain reader's answer.
     Answered(WireOutcome),
+    /// The shell refused to send a read of an application's current focus
+    /// because its window was hung, and answered with what it read in
+    /// front ([`Front`]), which only that request's reply decodes
+    /// ([`super::Request::decode_hung`]).
+    Hung(Front),
     /// Core no longer awaits it.
     NoLongerAwaited(CancelReason),
 }
@@ -189,12 +195,29 @@ impl Table {
         self.last = self.last.saturating_add(1);
         let number = RequestNumber(self.last);
         let mut live = live;
-        if let Some(instance) = ready {
+        if let (Some(instance), Route::Reader(_)) = (ready, live.reader) {
             orders.push(live.send(number, instance, backend, now_us));
             self.arm_round(now_us);
         }
         self.live.insert(number, live);
         number
+    }
+
+    /// Core's plain reader answered `number`, a request it routes, at
+    /// once: it ends with that answer.
+    pub(crate) fn answered_at_once(
+        &mut self,
+        number: RequestNumber,
+        outcome: WireOutcome,
+    ) -> Option<Ended> {
+        let plain = self
+            .live
+            .get(&number)
+            .is_some_and(|live| live.reader == Route::Plain);
+        if !plain {
+            return None;
+        }
+        self.end(number, Ending::Answered(outcome), &mut Vec::new())
     }
 
     /// The live request `number`.
@@ -213,7 +236,7 @@ impl Table {
     ) {
         let mut sent = false;
         for (number, live) in &mut self.live {
-            if live.reader == instance.reader && live.stage == Stage::Waiting {
+            if live.reader == Route::Reader(instance.reader) && live.stage == Stage::Waiting {
                 orders.push(live.send(*number, instance, backend, now_us));
                 sent = true;
             }
@@ -293,6 +316,21 @@ impl Table {
         )
     }
 
+    /// The shell refused to send `number`, a read of an application's
+    /// current focus, because its window was hung, and read `front` in
+    /// front: it ends with that answer, which its entry judges. Nothing is
+    /// watched and no sound plays here.
+    pub(crate) fn hung_focus(&mut self, number: RequestNumber, front: Front) -> Option<Ended> {
+        let out = self
+            .live
+            .get(&number)
+            .is_some_and(|live| matches!(live.stage, Stage::Out(_)));
+        if !out {
+            return None;
+        }
+        self.end(number, Ending::Hung(front), &mut Vec::new())
+    }
+
     /// Stops waiting for `number` for `reason`, cancelling it if it is out.
     pub(crate) fn stop(
         &mut self,
@@ -360,7 +398,7 @@ impl Table {
         let numbers: Vec<RequestNumber> = self
             .live
             .iter()
-            .filter(|(_, live)| live.reader == reader)
+            .filter(|(_, live)| live.reader == Route::Reader(reader))
             .map(|(number, _)| *number)
             .collect();
         numbers
@@ -375,7 +413,7 @@ impl Table {
     pub(crate) fn waiting_for(&self, reader: Reader) -> bool {
         self.live
             .values()
-            .any(|live| live.reader == reader && live.stage == Stage::Waiting)
+            .any(|live| live.reader == Route::Reader(reader) && live.stage == Stage::Waiting)
     }
 
     /// Whether no request waits or is out and no window is watched for
@@ -390,7 +428,10 @@ impl Table {
             .live
             .values()
             .filter(|live| live.stage == Stage::Waiting)
-            .map(|live| live.reader)
+            .filter_map(|live| match live.reader {
+                Route::Reader(reader) => Some(reader),
+                Route::Plain => None,
+            })
             .collect();
         readers.sort();
         readers.dedup();

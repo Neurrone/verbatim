@@ -193,7 +193,11 @@ pub(crate) fn start_in_queue(
 /// Say-all from the caret, pressed under `trace_id` with the speech fence
 /// `fence`, at its turn in the event queue: from the committed focus's
 /// caret as the outpost finds it; "no caret" with no focus a reader holds,
-/// "not supported" on a focus that cannot have text.
+/// and nothing on a focus that cannot have text, as NVDA's say-all says
+/// nothing where no caret position can be made (`speech/sayAll.py` 419 to
+/// 423, 137 to 139; Dickson, 2026-11-19). Verbatim judges "cannot have
+/// text" by role, NVDA by whether a caret position can be made: where they
+/// differ is recorded in `docs/parity/review.md`.
 pub(crate) fn from_caret(cx: &mut Cx<Entries>, trace_id: TraceId, fence: Fence) {
     let target = CaretTarget::of(&cx.facts());
     let effects = match target {
@@ -201,10 +205,7 @@ pub(crate) fn from_caret(cx: &mut Cx<Entries>, trace_id: TraceId, fence: Fence) 
             trace_id,
             crate::review_text::message(Message::NoCaret),
         )],
-        CaretTarget::NoText => vec![crate::editing::speak(
-            trace_id,
-            crate::review_text::message(Message::NotSupported),
-        )],
+        CaretTarget::NoText => Vec::new(),
         CaretTarget::Text(text) => start_in_queue(
             &mut cx.facts_mut(),
             (text.node, text.window),
@@ -669,7 +670,7 @@ pub(crate) fn outpost_ended(
     if state
         .say_all
         .as_ref()
-        .is_some_and(|say_all| say_all.node.outpost() == outpost)
+        .is_some_and(|say_all| say_all.node.outpost() == Some(outpost))
     {
         stop(state)
     } else {

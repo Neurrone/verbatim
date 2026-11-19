@@ -92,10 +92,7 @@ pub(crate) fn binding(state: &SrState) -> Option<CaretBinding> {
         node: kept.node,
         window: kept.window.node_window(),
         role: kept.role,
-        provider: match kept.read_by {
-            crate::focus::versions::ReadBy::Uia { .. } => TextProvider::Uia,
-            crate::focus::versions::ReadBy::Msaa { .. } => TextProvider::EditMessages,
-        },
+        provider: crate::text_facts::provider(kept),
         record,
         formatting,
     })
@@ -1018,7 +1015,7 @@ fn counts_behind(cx: &Cx<Entries>) -> bool {
 /// the one running.
 fn held_node(cx: &Cx<Entries>, binding: &CaretBinding) -> bool {
     cx.instance(Reader::Outpost(binding.window.process))
-        .is_some_and(|instance| OutpostId(instance.generation) == binding.node.outpost())
+        .is_some_and(|instance| Some(OutpostId(instance.generation)) == binding.node.outpost())
 }
 
 /// Whether `node` is the committed focus, whose `Follow` registers its

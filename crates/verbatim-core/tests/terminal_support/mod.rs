@@ -741,11 +741,19 @@ impl Session {
     }
 
     /// The outpost's answer to `ask`, or, for a hung window, the shell's
-    /// refusal of it unsent.
+    /// refusal of it unsent: a read of the current focus with the hung
+    /// terminal's own window in front, no ghost before it, as the shell
+    /// answers one; any other "not responding".
     fn answer(&mut self, ask: Ask) {
         if self.hung {
-            let input =
-                self.queued_input(TraceId::from_raw(2), QueueInput::RefusedHung(ask.number));
+            let refused = match &ask.request {
+                Wire::CurrentFocus { .. } => QueueInput::HungFocus {
+                    number: ask.number,
+                    front: verbatim_model::request::Front::Hung,
+                },
+                _ => QueueInput::RefusedHung(ask.number),
+            };
+            let input = self.queued_input(TraceId::from_raw(2), refused);
             let effects = self.step(input);
             self.take(effects, None);
             return;

@@ -722,7 +722,7 @@ impl Logic for Entries {
             if facts
                 .navigator
                 .as_ref()
-                .is_some_and(|navigator| navigator.object.id.outpost() == outpost)
+                .is_some_and(|navigator| navigator.object.id.outpost() == Some(outpost))
             {
                 facts.navigator = None;
             }
@@ -730,7 +730,7 @@ impl Logic for Entries {
             // that minted them (design, "Held anchors").
             if facts
                 .start_marker
-                .is_some_and(|marker| marker.node().outpost() == outpost)
+                .is_some_and(|marker| marker.node().outpost() == Some(outpost))
             {
                 facts.start_marker = None;
             }
@@ -748,6 +748,11 @@ impl Logic for Entries {
 
     fn window_destroyed(facts: &mut SrState, window: WindowHandle) {
         facts.follows.window_destroyed(window);
+        facts.plain.window_destroyed(window);
+    }
+
+    fn plain_answer(facts: &SrState, request: &Wire) -> Option<verbatim_model::request::Outcome> {
+        crate::focus::plain::answer(&facts.plain, request)
     }
 
     fn dropped_at_arrival(
@@ -1099,6 +1104,10 @@ pub(crate) fn route(
             answer: answer.clone(),
         },
         QueueInput::RefusedHung(number) => Input::RefusedHung(*number),
+        QueueInput::HungFocus { number, front } => Input::HungFocus {
+            number: *number,
+            front: front.clone(),
+        },
         QueueInput::HangCheck { window, hung } => Input::HangCheck {
             window: *window,
             hung: *hung,

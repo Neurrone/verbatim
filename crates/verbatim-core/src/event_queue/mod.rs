@@ -68,6 +68,19 @@ const _: () = assert!(verbatim_model::HANDLING_DEADLINE.as_micros() == 11_000_00
 
 pub(crate) use verbatim_model::request::{Instance, Reader};
 
+/// Who answers a request: a reader process, or Core's plain reader, which
+/// answers a request on a plain node at once, from Core's own facts, with
+/// no call into any application (`crate::focus::plain`). Chosen where
+/// every request begins, from the node the request names, so a request
+/// from inside the event queue and one from outside it are routed alike.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) enum Route {
+    /// A reader process.
+    Reader(Reader),
+    /// Core's plain reader.
+    Plain,
+}
+
 /// The window a request names, with what the foreground test and the
 /// hang sound read of it: its top-level window and root owner, and the
 /// application it belongs to.
@@ -280,6 +293,17 @@ pub(crate) trait Logic: Sized + 'static {
         entry: &Self::Entry,
         foreground: &Foreground,
     ) -> bool;
+
+    /// The answer Core's plain reader gives `request` when it names a plain
+    /// node, given at once with no call into any application; `None` for a
+    /// request a reader process answers (`crate::focus::plain`).
+    fn plain_answer(
+        facts: &Self::Facts,
+        request: &verbatim_model::request::Request,
+    ) -> Option<verbatim_model::request::Outcome> {
+        let _ = (facts, request);
+        None
+    }
 
     /// The probe the tell of `entry` carries, recorded in the backend cache
     /// when it arrives, so that a merge of the entry cannot lose it.

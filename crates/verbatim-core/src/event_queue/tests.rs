@@ -93,6 +93,9 @@ enum Entry {
     Recovered(WindowHandle),
     /// Waits on something other than an ask.
     Stray,
+    /// Asks a read of the plain node, which Core's plain reader answers at
+    /// once, then a read of the outpost's node, saying each outcome.
+    PlainThenRead,
 }
 
 /// The tests' read.
@@ -119,6 +122,41 @@ impl Request for ReadName {
             Reply::Properties(values) => Some(values),
             _ => None,
         }
+    }
+}
+
+/// A read of the plain node, which the tests' plain reader answers.
+#[derive(Debug)]
+struct ReadPlain;
+
+impl Request for ReadPlain {
+    type Reply = PropertyValues;
+
+    fn reader(&self) -> Reader {
+        OUTPOST.reader
+    }
+
+    fn window(&self) -> RequestWindow {
+        WINDOW
+    }
+
+    fn wire(&self) -> Wire {
+        plain_wire()
+    }
+
+    fn decode(reply: Reply) -> Option<PropertyValues> {
+        match reply {
+            Reply::Properties(values) => Some(values),
+            _ => None,
+        }
+    }
+}
+
+/// The read of the plain node as it begins.
+fn plain_wire() -> Wire {
+    Wire::Properties {
+        node: NodeId::plain(1, 1),
+        set: vec![PropertyId::Name],
     }
 }
 
@@ -169,6 +207,13 @@ impl Logic for Test {
                 }
                 Entry::Recovered(window) => cx.emit(format!("recovered {}", window.0)),
                 Entry::Stray => std::future::pending::<()>().await,
+                Entry::PlainThenRead => {
+                    let due_us = cx.due_in(OTHER_DUE_US);
+                    let plain = cx.ask(ReadPlain, due_us).await;
+                    cx.emit(format!("plain {plain:?}"));
+                    let read = cx.ask(ReadName, due_us).await;
+                    cx.emit(format!("{read:?}"));
+                }
             }
         })
     }
@@ -189,6 +234,11 @@ impl Logic for Test {
 
     fn recovered(_: &mut u32, window: &RequestWindow) -> Option<Entry> {
         Some(Entry::Recovered(window.handle))
+    }
+
+    /// The plain node's read is answered with a result.
+    fn plain_answer(_: &u32, request: &Wire) -> Option<WireOutcome> {
+        (*request == plain_wire()).then(result)
     }
 
     fn place(_: &u32, _: &Entry) -> Place {
@@ -1370,11 +1420,11 @@ fn a_dump_shows_the_front_entry_its_answers_and_its_request_out() {
             "front: Some(Front { entry: Read { reads: 2, exempt: false }, ",
             "answers: [Result(PropertyValues([]))], asked: Some(RequestNumber(3)) }), ",
             "waiting: [One(Read { reads: 1, exempt: false })], timers: [], ",
-            "table: Table { last: 3, live: {RequestNumber(3): Live { reader: Outpost(Pid(1)), ",
+            "table: Table { last: 3, live: {RequestNumber(3): Live { reader: Reader(Outpost(Pid(1))), ",
             "window: RequestWindow { handle: WindowHandle(11), top_level: WindowHandle(10), ",
             "root_owner: WindowHandle(10), process: Pid(1), thread: 3, by_class: Some(Msaa) }, ",
             "due_us: 11002000, ",
-            "request: Properties { node: NodeId { outpost: OutpostId(0), number: 1 }, set: [Name] }, ",
+            "request: Properties { node: NodeId { issuer: Outpost(OutpostId(0)), number: 1 }, set: [Name] }, ",
             "owner: Queue, stage: Out(Instance { reader: Outpost(Pid(1)), generation: 1 }), ",
             "probing: None }}, ",
             "late: {RequestNumber(1): Instance { reader: Outpost(Pid(1)), generation: 1 }}, ",
@@ -1716,4 +1766,51 @@ fn a_destroyed_windows_probe_verdict_is_cleared() {
         feed_probing(&mut core, 3_000, Input::Entry(false)),
         [send_probed(2, WindowVerdict::ProbeFirst)]
     );
+}
+
+/// A request on a plain node is answered by Core's plain reader as it
+/// begins, with nothing sent, the function going on to its next ask in the
+/// same step; a checkpoint taken after it rebuilds the function from the
+/// recorded answer and goes on alike.
+#[test]
+fn a_plain_read_is_answered_at_once_and_a_checkpoint_after_it_rebuilds() {
+    let mut core = core_with(IN_FRONT);
+    assert_eq!(
+        feed(&mut core, 1_000, Input::Entry(Entry::PlainThenRead)),
+        [said("plain Result(PropertyValues([]))"), send(2)]
+    );
+    let mut resumed = core.checkpoint().unwrap();
+    assert_eq!(resumed.dump(), core.dump());
+    let answered = feed(&mut core, 2_000, answer(OUTPOST, 2, result()));
+    assert_eq!(answered, [said_result()]);
+    assert_eq!(
+        feed(&mut resumed, 2_000, answer(OUTPOST, 2, result())),
+        answered
+    );
+    assert_eq!(resumed.dump(), core.dump());
+}
+
+/// A request from outside the queue on a plain node is answered at once,
+/// with nothing sent and no outpost started.
+#[test]
+fn a_plain_read_from_outside_the_queue_is_answered_at_once() {
+    let mut core = core_with(IN_FRONT);
+    assert_eq!(
+        feed(
+            &mut core,
+            1_000,
+            Input::AskOutside {
+                asker: ASKER,
+                reader: Reader::Outpost(Pid(9)),
+                window: WINDOW,
+                request: plain_wire(),
+                due_after_us: OTHER_DUE_US,
+            }
+        ),
+        [Effect::Answered {
+            asker: ASKER,
+            outcome: Outcome::Result(Reply::Properties(PropertyValues::default())),
+        }]
+    );
+    assert!(core.shared.borrow().state.queue.idle());
 }

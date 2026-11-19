@@ -442,7 +442,9 @@ input methods above:
   events Core receives, for evidence no speech shows: a caret report, a
   focus, the end of an outpost (`Frame::OutpostEnded`).
 - `wait_for_agent_file` waits, on folder change notifications, for a file
-  a script writes; `wait_for_window_in_front` waits on window events;
+  a script writes; `wait_for_window_in_front` and
+  `wait_for_window_titled` (a window titled exactly so, in front or not,
+  such as a hung window's ghost) wait on window events;
   `wait_for_event` waits for a launched process to set a named event
   `create_event` made, such as the events `mockapp` sets as it prints a
   line (`--line-events`).
@@ -725,7 +727,16 @@ under `src/scenarios/` documents exactly what it asserts.
   mockapp UIA window, read once, entered again while mockapp holds the
   first call into it: its title said about a second later, and the return
   to the text box announced as without the stall, before mockapp's
-  `release`), `owned_dialog_across_processes` (a mockapp UIA window and a
+  `release`), `menu_end_over_a_hung_window` (a mockapp MSAA window
+  stalls under Verbatim's menu, its ghost waited for by its title;
+  Escape speaks the ghost as NVDA's plain window, "<title> (Not
+  Responding) window", report focus and report the navigator object say
+  the same, review the current line its name, say-all nothing, and the
+  window answering again says "<title> window"; then the window stalls
+  in front, its ghost takes the foreground, a second Verbatim replaces
+  the first and its startup says the plain window, then the window once
+  it answers; each stall waited on by mockapp's `stall` line events),
+  `owned_dialog_across_processes` (a mockapp UIA window and a
   UIA dialog a second mockapp process opens over it, owned by it: the
   dialog entered with no owner title, its two buttons by Tab and
   Shift+Tab, and Space closing it, the owner saying only its focus),

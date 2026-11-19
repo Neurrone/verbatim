@@ -76,6 +76,9 @@
 //!   ([`alt_tab_switcher`](crate::scenarios::alt_tab_switcher)),
 //!   an application left while its reads are held and returned to
 //!   ([`return_from_a_held_application`](crate::scenarios::return_from_a_held_application)),
+//!   Verbatim's menu closed over an application that has stopped
+//!   responding, and Verbatim started over its ghost window
+//!   ([`menu_end_over_a_hung_window`](crate::scenarios::menu_end_over_a_hung_window)),
 //!   a dialog one application opens over another's window and closes
 //!   ([`owned_dialog_across_processes`](crate::scenarios::owned_dialog_across_processes)),
 //!   the Windows+X menu opened and closed
@@ -174,12 +177,12 @@ use crate::scenarios::{
     crash_recovery, demo_notepad_editing, demo_review_cursor, demo_say_all,
     demo_settings_dialog_keys, demo_terminal_session, document_keys, editing, event_recorder,
     explorer_folder_window, foreground_progress_bar, lock_key_announcements, measure,
-    menu_and_settings_dialog, msaa_flood_then_focus, notepad_say_all, notepad_spelling_errors,
-    object_navigation_in_settings, object_navigation_over_uia, owned_dialog_across_processes,
-    password, quick_link_menu, quit_inside_a_modal_dialog, rapid_tabbing_in_settings,
-    read_only_field_typing, return_from_a_held_application, review_cursor, review_dead_object,
-    review_words, second_application_and_verbatim_menu, selection_keys,
-    settings_combo_box_expanded, settings_dialog_keys, settings_search_suggestions,
+    menu_and_settings_dialog, menu_end_over_a_hung_window, msaa_flood_then_focus, notepad_say_all,
+    notepad_spelling_errors, object_navigation_in_settings, object_navigation_over_uia,
+    owned_dialog_across_processes, password, quick_link_menu, quit_inside_a_modal_dialog,
+    rapid_tabbing_in_settings, read_only_field_typing, return_from_a_held_application,
+    review_cursor, review_dead_object, review_words, second_application_and_verbatim_menu,
+    selection_keys, settings_combo_box_expanded, settings_dialog_keys, settings_search_suggestions,
     settings_search_suggestions_reentered, settings_system_page, speak_time_and_date,
     spelling_errors, stale_focus_behind_a_caret_key, switch_to_onecore, system_information_tree,
     table_cells, terminal_commands, terminal_editing, terminal_flood, terminal_key_timing,
@@ -643,6 +646,19 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         setup: return_from_a_held_application::setup,
         body: return_from_a_held_application::body,
         teardown: return_from_a_held_application::teardown,
+    },
+    ScenarioDef {
+        name: "menu_end_over_a_hung_window",
+        group: Group::Shell,
+        settings: None,
+        local_only: false,
+        document: None,
+        comparable: Comparable::No(
+            "it opens Verbatim's own menu and replaces Verbatim, and injected keys do not reach NVDA while the ghost window is in front",
+        ),
+        setup: menu_end_over_a_hung_window::setup,
+        body: menu_end_over_a_hung_window::body,
+        teardown: menu_end_over_a_hung_window::teardown,
     },
     ScenarioDef {
         name: "owned_dialog_across_processes",

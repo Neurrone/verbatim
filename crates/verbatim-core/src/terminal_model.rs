@@ -854,7 +854,7 @@ pub(crate) fn sync_settings(state: &mut SrState) {
 
 /// An outpost ended: the terminals it read are forgotten.
 pub(crate) fn outpost_ended(state: &mut SrState, outpost: OutpostId) {
-    state.drop_models(|model| model.node.outpost() == outpost);
+    state.drop_models(|model| model.node.outpost() == Some(outpost));
 }
 
 #[cfg(test)]

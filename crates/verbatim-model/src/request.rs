@@ -1123,6 +1123,42 @@ pub struct Cancel {
     pub reason: CancelReason,
 }
 
+/// What the shell read in front when it refused a read of an
+/// application's current focus because the request's window was hung: the
+/// window in front read live, as NVDA's fake focus and its other reads of
+/// the focus take it (`kwargsFromSuper`, `NVDAObjects/window/__init__.py`
+/// 162 to 181): `GetForegroundWindow`, then that window's thread's focus
+/// window if it has one, else the foreground window itself. Every fact is
+/// a read of Windows' own, with no message to any application.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Front {
+    /// The window in front is a ghost window, which Windows shows in
+    /// place of a hung top-level window.
+    Ghost(GhostFront),
+    /// The window in front is hung and no ghost stands in front of it.
+    Hung,
+    /// The window in front responds.
+    Responsive,
+    /// No window is in front, or it is gone.
+    Nothing,
+}
+
+/// A ghost window in front, with the facts NVDA's plain window object of
+/// it reads (`NVDAObjects/window/__init__.py` 83 to 98, 299 to 306;
+/// `winUser.py` 652 to 655).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GhostFront {
+    /// The ghost window.
+    pub ghost: WindowHandle,
+    /// The hung window it stands for (`HungWindowFromGhostWindow`).
+    pub stands_for: WindowHandle,
+    /// Its window text (`InternalGetWindowText`), empty when it has none.
+    pub name: String,
+    /// Whether it is disabled (`WS_DISABLED`), the one state NVDA's plain
+    /// window gives from its style.
+    pub unavailable: bool,
+}
+
 /// The foreground record as the listener reports it to the event queue:
 /// the window `GetForegroundWindow` names, once it names it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1161,6 +1197,16 @@ pub enum QueueInput {
     /// The shell found the request's window hung before sending it, and
     /// answers it "not responding" unsent.
     RefusedHung(RequestNumber),
+    /// The shell found the window of a read of an application's current
+    /// focus hung before sending it, and answers it unsent with what it
+    /// read in front ([`Front`]); every other request it refuses so is
+    /// [`QueueInput::RefusedHung`].
+    HungFocus {
+        /// The request.
+        number: RequestNumber,
+        /// What is in front.
+        front: Front,
+    },
     /// The shell's half-second check of a window.
     HangCheck {
         /// The window.

@@ -477,6 +477,22 @@ pub fn focus_window() -> Option<isize> {
     }
 }
 
+/// The window with the keyboard focus on thread `thread`
+/// (`GetGUIThreadInfo`'s `hwndFocus`), `None` when it has none or the
+/// thread cannot be read. A local call.
+#[must_use]
+pub fn thread_focus_window(thread: u32) -> Option<isize> {
+    // SAFETY: `info` has cbSize set before the call; the call fails safely.
+    unsafe {
+        let mut info = GUITHREADINFO {
+            cbSize: u32::try_from(size_of::<GUITHREADINFO>()).unwrap_or(0),
+            ..Default::default()
+        };
+        GetGUIThreadInfo(thread, &raw mut info).ok()?;
+        (!info.hwndFocus.0.is_null()).then_some(info.hwndFocus.0 as isize)
+    }
+}
+
 /// Whether the window in front belongs to the same application as `handle`
 /// but another UI thread: the user has moved on from `handle` to a window
 /// that could answer reads a slow `handle` is holding up, in its outpost's

@@ -13,7 +13,6 @@ const OUTPOST: OutpostId = OutpostId(7);
 pub(crate) fn kept(top_level: u64) -> Kept {
     Kept {
         source: Pid(40),
-        outpost: OUTPOST,
         node: NodeId::new(1).with_outpost(OUTPOST),
         read_by: ReadBy::Uia {
             runtime_id: RuntimeId(vec![42, 1]),

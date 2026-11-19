@@ -426,7 +426,7 @@ fn a_uia_focus_is_read_in_two_requests_and_executed() {
         panic!("a reader's focus is committed");
     };
     assert_eq!(kept.node, node(2));
-    assert_eq!(kept.outpost, OutpostId(GENERATION));
+    assert_eq!(kept.node.outpost(), Some(OutpostId(GENERATION)));
     assert_eq!(
         state.versions.last.as_ref().map(|last| &last.read_by),
         Some(&ReadBy::Uia {

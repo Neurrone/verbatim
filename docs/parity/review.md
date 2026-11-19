@@ -379,6 +379,27 @@ the text, and Core cannot tell that two positions from different reads
 are the same place, so such a press asks the control to select nothing,
 and its second press copies nothing.
 
+### Say-all from the caret where there is no text
+
+NVDA's say-all from the caret makes a caret position in the focus object
+and says nothing when it cannot (`speech/sayAll.py` 419 to 423, 137 to
+139): on a button, a list item and the like, whose `NVDAObjectTextInfo`
+raises (`textInfos/offsets.py` 377 to 378), and on a plain window, such
+as the ghost of a hung window. Verbatim: **matched** (Dickson,
+2026-11-19): where it finds no text, by the focus's role (editable text,
+a document or a terminal) or a caret Core holds, say-all says nothing
+(Core's `say_all_from_the_caret_on_a_focus_without_text_says_nothing`
+and `say_all_on_the_plain_window_says_nothing`; the scenario
+`menu_end_over_a_hung_window`).
+
+- Different: Verbatim decides "no text" by role, NVDA by whether a caret
+  position can be made, so where NVDA has a caret on an object the role
+  rule leaves out NVDA reads and Verbatim says nothing: a window with a
+  blinking system caret, which NVDA reads as display-model text
+  (`NVDAObjects/window/__init__.py` 128 to 137), and a UI Automation
+  element with a text pattern whose role is none of those; browse mode
+  will be another.
+
 ### Document review and screen review modes
 
 Verbatim: **not yet

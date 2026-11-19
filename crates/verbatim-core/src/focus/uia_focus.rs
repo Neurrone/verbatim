@@ -15,7 +15,7 @@ use verbatim_model::request::{
 
 use super::FOCUS_SET;
 use super::execute::{Known, Origin, again, execute};
-use super::retake::{CurrentFocusRead, read_by};
+use super::retake::{CurrentFocusRead, Focused, read_by};
 use super::validity::{self, How, Subject, Validity};
 use super::versions::ReadBy;
 use crate::entries::{Entries, UiaFocus, request_window};
@@ -233,7 +233,18 @@ async fn afresh(
         depth: std::marker::PhantomData,
     };
     let read = match cx.ask(request, due_us).await {
-        Outcome::Result(read) => read,
+        Outcome::Result(Focused::Read(read)) => read,
+        Outcome::Result(Focused::Hung(front)) => {
+            let trace = (focus.tell.trace_id, focus.fence);
+            super::plain::decide(
+                &mut cx,
+                super::plain::HungRead::Afresh,
+                window,
+                &front,
+                trace,
+            );
+            return;
+        }
         outcome => {
             refused_or_not_there(&mut cx, &outcome);
             if matches!(outcome, Outcome::ReaderEnded) {

@@ -10,10 +10,10 @@ use verbatim_model::request::{
 };
 use verbatim_model::{Pid, WindowHandle};
 
-use super::driver::{Core, State, outcome_of, widen};
+use super::driver::{Beginning, Core, State, outcome_of, widen};
 use super::limiter::{self, Item};
 use super::request::Outcome;
-use super::table::{Asker, Dropped, Ended, Ending, Live, Owner, Stage};
+use super::table::{Asker, Dropped, Ended, Ending, Owner};
 use super::{Foreground, Instance, Logic, Reader, RequestWindow};
 
 /// An input to Core, in the inbox's arrival order.
@@ -31,6 +31,16 @@ pub(crate) enum Input<E> {
     /// The shell found the request's window hung before sending it, and
     /// answers it "not responding" unsent.
     RefusedHung(RequestNumber),
+    /// The shell found the window of a read of an application's current
+    /// focus hung before sending it, and answers it unsent with what it
+    /// read in front, which the read's entry judges: no sound plays and
+    /// nothing is watched here.
+    HungFocus {
+        /// The request.
+        number: RequestNumber,
+        /// What is in front.
+        front: verbatim_model::request::Front,
+    },
     /// The shell's half-second check of a window.
     HangCheck {
         /// The window.
@@ -191,6 +201,7 @@ impl<L: Logic> Core<L> {
                     self.deliver(ended);
                 }
             }
+            Input::HungFocus { number, front } => self.hung_focus(number, front),
             Input::HangCheck { window, hung } => self.hang_check(window, hung),
             Input::Foreground(foreground) => self.foreground(foreground),
             Input::ReaderReady(instance) if self.admit_ready(instance) => {
@@ -233,26 +244,14 @@ impl<L: Logic> Core<L> {
                 due_after_us,
             } => {
                 let mut shared = self.shared.borrow_mut();
-                let ready = shared.state.queue.readers.get(&reader).copied();
-                let now_us = shared.state.queue.now_us;
-                let mut orders = Vec::new();
-                let state = &mut shared.state;
-                state.queue.table.begin(
-                    Live {
-                        reader,
-                        window,
-                        due_us: now_us.saturating_add(due_after_us),
-                        request,
-                        owner: Owner::Outside(asker),
-                        stage: Stage::Waiting,
-                        probing: None,
-                    },
-                    ready,
-                    &state.queue.backend,
-                    now_us,
-                    &mut orders,
-                );
-                Self::order(&mut shared, orders);
+                let due_us = shared.state.queue.now_us.saturating_add(due_after_us);
+                shared.begin(Beginning {
+                    reader,
+                    window,
+                    due_us,
+                    request,
+                    owner: Owner::Outside(asker),
+                });
             }
             Input::Send(requests) => self.send_core(requests),
             Input::WithdrawOutside(asker) => {
@@ -268,11 +267,37 @@ impl<L: Logic> Core<L> {
         }
         loop {
             self.take_next();
-            if !self.want_outposts() {
+            let answered = self.answer_at_once();
+            let wanted = self.want_outposts();
+            if !answered && !wanted {
                 break;
             }
         }
         self.finish_step()
+    }
+
+    /// The shell refused `number`, a read of an application's current
+    /// focus, as hung, with `front` in front: it ends with that answer,
+    /// which its entry judges. Only a read of the current focus asked by an
+    /// entry decodes it; one asked from outside the queue is a defect,
+    /// logged as an undecodable answer.
+    fn hung_focus(&mut self, number: RequestNumber, front: verbatim_model::request::Front) {
+        let ended = self
+            .shared
+            .borrow_mut()
+            .state
+            .queue
+            .table
+            .hung_focus(number, front);
+        if let Some(ended) = ended {
+            if ended.owner != Owner::Queue {
+                self.shared
+                    .borrow_mut()
+                    .effects
+                    .push(Effect::Undecodable(number));
+            }
+            self.deliver(ended);
+        }
     }
 
     /// Sends `requests` as Core's own, outside the queue, each awaiting no
@@ -285,27 +310,15 @@ impl<L: Logic> Core<L> {
     /// Begins `requests` as Core's own, outside the queue, in order.
     pub(super) fn begin_core(shared: &mut super::driver::Shared<L>, requests: Vec<CoreRequest>) {
         let now_us = shared.state.queue.now_us;
-        let mut orders = Vec::new();
         for sent in requests {
-            let ready = shared.state.queue.readers.get(&sent.reader).copied();
-            let state = &mut shared.state;
-            state.queue.table.begin(
-                Live {
-                    reader: sent.reader,
-                    window: sent.window,
-                    due_us: now_us.saturating_add(sent.due_after_us),
-                    request: sent.request,
-                    owner: sent.token.map_or(Owner::Core, Owner::Facts),
-                    stage: Stage::Waiting,
-                    probing: None,
-                },
-                ready,
-                &state.queue.backend,
-                now_us,
-                &mut orders,
-            );
+            shared.begin(Beginning {
+                reader: sent.reader,
+                window: sent.window,
+                due_us: now_us.saturating_add(sent.due_after_us),
+                request: sent.request,
+                owner: sent.token.map_or(Owner::Core, Owner::Facts),
+            });
         }
-        Self::order(shared, orders);
     }
 
     /// A reader's answer: the request it names ends with it, and the
@@ -444,16 +457,8 @@ impl<L: Logic> Core<L> {
     /// the window joins the recovery set.
     fn hung(&mut self, window: &RequestWindow) {
         let mut shared = self.shared.borrow_mut();
-        let attended = shared
-            .state
-            .queue
-            .foreground
-            .is_some_and(|foreground| foreground.attends(window));
-        if attended {
-            shared.effects.push(Effect::NotRespondingSound);
-            let now_us = shared.state.queue.now_us;
-            shared.state.queue.table.watch(*window, now_us);
-        }
+        shared.sound_if_attended(window);
+        shared.watch_if_attended(window);
     }
 
     /// Delivers a request's ending to its owner, its probe unanswered.

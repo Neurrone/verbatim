@@ -579,6 +579,11 @@ pub struct SrState {
     /// The node Core last named in `Follow` per outpost
     /// (`crate::focus::follow`, Table 10).
     pub(crate) follows: crate::focus::follow::Follows,
+    /// Core's plain reader and the plain object it holds
+    /// (`crate::focus::plain`); absent from a committed replay fixture
+    /// recorded before it, which held none.
+    #[serde(default)]
+    pub(crate) plain: crate::focus::plain::PlainReader,
     /// The processes whose focus is dropped at its answer: the end-to-end
     /// harness's own, none for real users (`crate::focus::execute`).
     pub(crate) ignored: Vec<verbatim_model::Pid>,
@@ -934,8 +939,11 @@ impl SrState {
     #[must_use]
     pub fn held_nodes(&self) -> BTreeMap<OutpostId, BTreeSet<NodeId>> {
         let mut held: BTreeMap<OutpostId, BTreeSet<NodeId>> = BTreeMap::new();
+        // A plain node is Core's own, held by no outpost.
         let mut insert = |id: NodeId| {
-            held.entry(id.outpost()).or_default().insert(id);
+            if let Some(outpost) = id.outpost() {
+                held.entry(outpost).or_default().insert(id);
+            }
         };
         if let Some(focus) = self.live_focus() {
             insert(focus.snapshot.id);
@@ -1008,9 +1016,9 @@ impl SrState {
     pub fn held_anchors(&self) -> HeldAnchors {
         let mut held = HeldAnchors::new();
         let mut insert = |node: NodeId, position: TextPosition| {
-            held.entry(node.outpost())
-                .or_default()
-                .insert(position.anchor);
+            if let Some(outpost) = node.outpost() {
+                held.entry(outpost).or_default().insert(position.anchor);
+            }
         };
         if let Some(focus) = self.focus.object()
             && let Some(caret) = &focus.caret

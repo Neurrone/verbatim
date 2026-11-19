@@ -166,7 +166,7 @@ fn target(cx: &Cx<Entries>, tell: &CaretTell) -> Option<Kept> {
     }?;
     let live = cx
         .instance(Reader::Outpost(kept.window.process))
-        .is_some_and(|instance| OutpostId(instance.generation) == kept.outpost);
+        .is_some_and(|instance| Some(OutpostId(instance.generation)) == kept.node.outpost());
     live.then_some(kept)
 }
 

@@ -1129,7 +1129,7 @@ pub(crate) fn recovered(state: &mut SrState, window: &RequestWindow, now_us: u64
 /// The outpost generation that holds the focused terminal's node ended
 /// (Table 1, column I): its state goes, with every model of its terminals.
 pub(crate) fn outpost_ended(state: &mut SrState, outpost: verbatim_model::OutpostId) {
-    if focused(state).is_some_and(|terminal| terminal.node.outpost() == outpost) {
+    if focused(state).is_some_and(|terminal| terminal.node.outpost() == Some(outpost)) {
         state.terminal_focus.focused = FocusedTerminal::None;
         state.terminal_focus.entry_read = false;
     }

@@ -190,7 +190,7 @@ pub(crate) enum QueueEvent {
     /// Pause speech, or resume it when paused.
     TogglePause,
     /// The focus moved: drop focus speech that no longer holds.
-    DropExpired(FocusNow),
+    DropExpired(Box<FocusNow>),
     /// The mixer ended an utterance it had been handed, as `ending` says.
     Ended(UtteranceId, UtteranceEnding),
     /// Run this once every event sent before it has been handled.
@@ -257,7 +257,7 @@ impl SpeechControl {
     /// focus has moved on is stopped, and waiting focus speech is judged
     /// against this when its turn comes.
     pub fn drop_expired(&self, now: FocusNow) {
-        let _ = inbox::post(&*self.inbox, QueueEvent::DropExpired(now));
+        let _ = inbox::post(&*self.inbox, QueueEvent::DropExpired(Box::new(now)));
     }
 }
 
@@ -1003,7 +1003,7 @@ impl QueueThread {
                     self.paused_flag.store(self.paused, Ordering::Release);
                     self.report_pause();
                 }
-                QueueEvent::DropExpired(now) => self.drop_expired(now),
+                QueueEvent::DropExpired(now) => self.drop_expired(*now),
                 QueueEvent::Ended(id, ending) => {
                     self.handed_on.retain(|(handed, _)| *handed != id);
                     if let Some((trace_id, marks)) = self.marked.remove(&id) {

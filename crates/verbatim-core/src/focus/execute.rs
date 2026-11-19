@@ -330,10 +330,7 @@ fn ready(
     known: &Known,
     read_by: ReadBy,
 ) -> Option<Ready> {
-    let backend = match read_by {
-        ReadBy::Uia { .. } => Backend::Uia,
-        ReadBy::Msaa { .. } => Backend::Msaa,
-    };
+    let backend = read_by.backend();
     let mut node = snapshot(&read.focus, backend)?;
     node.details
         .parent_automation_id
@@ -413,7 +410,6 @@ fn ready(
     };
     let kept = Kept {
         source: origin.source,
-        outpost: node.id.outpost(),
         node: node.id,
         read_by,
         place,

@@ -5,7 +5,7 @@
 
 use std::fmt::Debug;
 
-use verbatim_model::request::{CancelReason, Refusal, Reply, Request as Wire};
+use verbatim_model::request::{CancelReason, Front, Refusal, Reply, Request as Wire};
 
 use super::{Reader, RequestWindow};
 
@@ -26,6 +26,15 @@ pub(crate) trait Request: Debug + Unpin + 'static {
     /// `None` is only for a malformed answer: a result of another
     /// request's kind.
     fn decode(reply: Reply) -> Option<Self::Reply>;
+
+    /// The shell's answer to a read of an application's current focus it
+    /// refused because the window was hung, what it read in front,
+    /// decoded: only that read's reply holds it, so for any other request
+    /// it is `None`, a defect, logged as an undecodable answer.
+    fn decode_hung(front: Front) -> Option<Self::Reply> {
+        let _ = front;
+        None
+    }
 }
 
 /// Why a request was refused, as the function that asked it learns.

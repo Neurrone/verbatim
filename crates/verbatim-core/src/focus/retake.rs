@@ -13,7 +13,7 @@
 use serde::{Deserialize, Serialize};
 use verbatim_model::property::PropertyId;
 use verbatim_model::request::{
-    CandidateAnswer, FocusDepth, FocusRead, KnownAncestor, Reply, Request as Wire,
+    CandidateAnswer, FocusDepth, FocusRead, Front, KnownAncestor, Reply, Request as Wire,
 };
 use verbatim_model::{TextDetails, TraceId};
 
@@ -84,6 +84,18 @@ impl FocusReadDepth for super::msaa_run::Full {
     }
 }
 
+/// An application's current focus as its read answers it: read to its
+/// depth, or, when the shell refused the read because its window was hung,
+/// what the shell read in front, which the read's entry judges
+/// (`super::plain::decide`).
+#[derive(Debug)]
+pub(crate) enum Focused<P> {
+    /// The read, parsed to its depth.
+    Read(P),
+    /// The window was hung; this is in front.
+    Hung(Front),
+}
+
 /// The request for an application's current focus, of the outpost of the
 /// window's application, read to `D`.
 #[derive(Debug)]
@@ -103,7 +115,7 @@ pub(crate) struct CurrentFocusRead<D: FocusReadDepth> {
 }
 
 impl<D: FocusReadDepth> Request for CurrentFocusRead<D> {
-    type Reply = D::Parsed;
+    type Reply = Focused<D::Parsed>;
 
     fn reader(&self) -> Reader {
         Reader::Outpost(self.window.process)
@@ -124,9 +136,13 @@ impl<D: FocusReadDepth> Request for CurrentFocusRead<D> {
 
     fn decode(reply: Reply) -> Option<Self::Reply> {
         match reply {
-            Reply::Candidate(answer) => D::parse(answer),
+            Reply::Candidate(answer) => D::parse(answer).map(Focused::Read),
             _ => None,
         }
+    }
+
+    fn decode_hung(front: Front) -> Option<Self::Reply> {
+        Some(Focused::Hung(front))
     }
 }
 
@@ -200,6 +216,11 @@ pub(crate) fn reader_ended(
                 *token = None;
             }
             match &state.versions.committed {
+                // A plain focus has no reader that ended; asking hungwin
+                // again would only find it hung once more.
+                Committed::Read(kept) | Committed::Ended(kept) if kept.read_by == ReadBy::Plain => {
+                    return None;
+                }
                 Committed::Read(_) | Committed::Ended(_) => foreground?.window(),
                 Committed::Nothing | Committed::Own { .. } => return None,
             }
@@ -236,7 +257,23 @@ pub(crate) async fn run(mut cx: Cx<Entries>, entry: CurrentFocus) {
         depth: std::marker::PhantomData,
     };
     let read = match cx.ask(request, due_us).await {
-        Outcome::Result(read) => read,
+        Outcome::Result(Focused::Read(read)) => read,
+        Outcome::Result(Focused::Hung(front)) => {
+            let read = match entry.why {
+                Why::Startup => super::plain::HungRead::Startup,
+                Why::Retake => super::plain::HungRead::Retake,
+                Why::Recovered => super::plain::HungRead::Recovered,
+                Why::Returned => super::plain::HungRead::Returned,
+            };
+            super::plain::decide(
+                &mut cx,
+                read,
+                entry.window,
+                &front,
+                (entry.trace_id, entry.fence),
+            );
+            return;
+        }
         outcome => {
             // A re-take answered not there, or whose reader ended, tried
             // the focus and found it gone: the readers' last focus's fence

@@ -28,7 +28,8 @@ use super::FOCUS_SET;
 use super::backend::BackendCache;
 use super::execute::{Origin, execute};
 use super::msaa_run::{FullIfFocused, known_for, read_full};
-use super::retake::{CurrentFocusRead, read_by};
+use super::plain::HungRead;
+use super::retake::{CurrentFocusRead, Focused, read_by};
 use super::validity::{self, Answered, Pending, Settled, Subject, Validity, View, Within};
 use super::versions::{Committed, ReadBy};
 use crate::entries::{Candidate, Entries, Entry};
@@ -40,11 +41,25 @@ use std::collections::VecDeque;
 /// 50 ms (`IAccessibleHandler/__init__.py` 976 to 991).
 pub(crate) const CHECK_AFTER_US: u64 = 50_000;
 
+/// Which end made a check: NVDA's fake focus after a menu or popup end,
+/// which makes a plain window of a ghost in front, or the task switcher's
+/// end, which is left as it was (`super::plain`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) enum CheckedEnd {
+    /// A menu end or a popup end.
+    MenuOrPopup,
+    /// The task switcher's end.
+    Switch,
+}
+
 /// The check entry: the committed focus as the end noted it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct MenuCheck {
     /// The committed focus when the end reached the front.
     pub(crate) committed: Committed,
+    /// The end that made it; ends of one pump that share a check keep the
+    /// first one's.
+    pub(crate) end: CheckedEnd,
     /// The trace of the end's tell.
     pub(crate) trace_id: TraceId,
     /// Its speech fence, set when it joins the queue.
@@ -90,8 +105,13 @@ pub(crate) async fn slot(mut cx: Cx<Entries>, candidate: Candidate, run_executed
     ) {
         return;
     }
+    let end = match candidate.tell.kind {
+        EventKind::SwitchEnd => CheckedEnd::Switch,
+        _ => CheckedEnd::MenuOrPopup,
+    };
     let check = MenuCheck {
         committed,
+        end,
         trace_id: candidate.tell.trace_id,
         fence: crate::keys::entry::Fence::default(),
     };
@@ -182,7 +202,15 @@ pub(crate) async fn check(mut cx: Cx<Entries>, check: MenuCheck) {
         depth: std::marker::PhantomData,
     };
     let answered = match cx.ask(request, due_us).await {
-        Outcome::Result(answered) => answered,
+        Outcome::Result(Focused::Read(answered)) => answered,
+        Outcome::Result(Focused::Hung(front)) => {
+            let read = match check.end {
+                CheckedEnd::MenuOrPopup => HungRead::MenuCheck,
+                CheckedEnd::Switch => HungRead::SwitchCheck,
+            };
+            super::plain::decide(&mut cx, read, window, &front, (check.trace_id, check.fence));
+            return;
+        }
         outcome => {
             // A check answered not there, or whose reader ended, tried the
             // focus and found it gone: the readers' last focus's fence ends.
