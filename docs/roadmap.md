@@ -1481,9 +1481,9 @@ Location commands (Dickson, 2026-11-19):
   Report review cursor location falls back to the navigator object's
   location the same way (1584 to 1585). The wording is taken from an
   NVDA capture on a button and on a field with no caret before any
-  expectation is written. Whether NVDA's two object location commands
-  (the navigator object's and the focus object's, 1595 and 1622) come
-  with it, reusing the message, is Dickson's to decide.
+  expectation is written. NVDA's two object location commands, the
+  navigator object's and the focus object's (1595 and 1622), come with
+  it, reusing the message, with NVDA's gestures (Dickson, 2026-11-19).
 
 Typing and keys:
 
