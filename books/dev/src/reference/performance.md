@@ -589,6 +589,32 @@ hung applications").
   leaves its window ([ADR 0003](adr/0003-readers-tell-core-asks.md),
   "Limits accepted").
 
+### A focus read in a dialog not yet shown
+
+A focus read is answered with its dialog's window when the dialog is
+hidden, and read again once it is shown ([How focus works](../explanation/design/focus.md),
+"A dialog read once it is shown").
+
+- Every focus read Core asks to check first takes its window's
+  top-level window and whether it is visible, two local calls with no
+  message to the application. Only a hidden top-level window adds its
+  client object's acquisition and role, two MSAA calls (pinned by
+  verbatim-outpost's `the_check_costs_nothing_for_a_shown_root_and_two_calls_for_a_hidden_one`).
+- The added silence is the time left until the dialog's show, plus one
+  round trip to the listener, measured from the foreground to the show
+  in the recordings of 2026-11-19: Notepad's Save As 15 to 32 ms,
+  Verbatim's Import a Theme 93 to 221 ms, a message box 16 ms and the
+  Run dialog 17 to 22 ms when hidden, File Explorer's Properties 14 to
+  30 ms; a dialog shown at its foreground waits for nothing. NVDA's
+  first speech for Import came 716 to 1021 ms after Enter.
+- The listener hears every window object's show already: each costs one
+  comparison of its ids, and a look in the waiters only while one is
+  kept. No message to Core and no new wake-up, but the request and its
+  answer.
+- Bound: a dialog never shown, with no key and no other ending, holds
+  the queue for the 13-second due time ([ADR 0003](adr/0003-readers-tell-core-asks.md),
+  "Limits accepted").
+
 ### Focus changes measured across the pipeline
 
 Debug builds, 2026-11-08.

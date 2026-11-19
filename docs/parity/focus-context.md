@@ -141,6 +141,39 @@ and `a_uia_window_in_a_win32_window_has_the_windows_client_as_context`
 asserts the Enter and Backspace cases. The scenarios do not yet show the
 Windows Forms dialogs' speech.
 
+### A dialog's text
+
+A dialog entered as the focus's ancestor is said with its text, NVDA's
+`Dialog.getDialogText` (`NVDAObjects/behaviors.py` 93 to 194), gathered
+from its visible static children. NVDA never waits for a dialog to be
+shown: it stopped ignoring focus events on invisible windows (b80983743,
+2009: "a window gets focus before it is made visible", the NVDA exit
+dialog and the Run dialog) and foreground events on an invisible window
+(e01bee3c5, 2008). It reads a dialog focused while hidden when its pass
+reaches the events, and its text depends on whether that read comes
+after the show: for Verbatim's Import a Theme dialog, NVDA's busy pass
+read it about 1 s after Enter and said "Import a Theme  dialog  File
+name:", "File name:  combo box  collapsed" (5 of 5 captures at the pin).
+
+Verbatim: a dialog's text is read only once it is shown (Dickson,
+2026-11-19). A focus read whose top-level window is a hidden dialog is
+answered with that window, Core waits for its show and reads the focus
+again, so the dialog is said with its text, then its field, as NVDA's
+capture says them. No focus or foreground event is ignored, so both NVDA
+commits above hold; only the read is postponed, by the time left until
+the show. Covered by the 2026-11-19 ruling, as differences from NVDA:
+
+- the user elsewhere before the show (the foreground, a menu or a focus
+  outside the dialog) says nothing for the hidden dialog, where NVDA
+  says it without its text;
+- a key pressed before the show reads the dialog at once, without its
+  text, as NVDA would read it then;
+- a dialog never shown, with no key and no other ending, holds the queue
+  for the 13 s due time and ends unspoken, where NVDA speaks its focus.
+
+Save As and Run are not yet captured with NVDA, so whether NVDA says
+their text is not known; their expectations wait for those captures.
+
 ### Top-level windows in the ancestry
 
 NVDA presents an entered window like any other container when it has a

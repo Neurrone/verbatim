@@ -194,6 +194,40 @@ Tests: the queue's unit tests (`crates/verbatim-core/src/event_queue/tests.rs`),
 each rule of Table 2 and every ending, a late answer dropped by number and
 an answer from an instance the request did not go to dropped.
 
+### A dialog read once it is shown
+
+A focus read whose window's top-level window is a hidden dialog is
+answered with that window (`Reply::HiddenDialog`), parsed into
+`focus::shown::Hidden` by the read's own reply type. Every focus read
+that may meet one goes through `focus::shown::read_shown`: an MSAA
+candidate at its turn (`msaa_run::read_in_full`), the current focus
+(`retake::run`, the menu check, a UI Automation focus read afresh) and a
+UI Automation focus's completion. On a hidden dialog the front asks the
+listener `AwaitShown` under the read's own due time, and, shown, reads it
+again from its start. The ending condition (`shown::ending`) is a pure
+function of the dialog's window, the foreground record and the entries
+waiting behind the front: the user is elsewhere when the record names
+another window, a menu or popup start outside the dialog from the
+application holding attention waits, or a focus outside it that the one
+definition's rows needing no read accept waits; otherwise a key waiting
+ends it as a key. The queue judges it as the request begins, ending one
+that holds already unsent (`Shared::stopped_at_once`), and after every
+entry that joins and every foreground report while it waits
+(`Logic::stops`); the foreground's tree-and-owner stop does not apply to
+it (`Logic::own_foreground_rule`). The outcome alone tells the function
+which ending held, so a function rebuilt from its checkpoint decides
+alike: elsewhere (`LeftHiddenDialog`), the read ends, nothing said, and
+the oldest such focus waiting carries the dialog (`ended_wait`, kept
+through a merge by `Logic::merged`); a key (withdrawn), it is read again
+at once with `HiddenRoot::ReadAnyway`. The application's exit ends the wait not
+there and cancels it to the listener (`Table::answer_cancelling`). A run
+or UI Automation focus carrying `ended_wait` that executes nothing while
+the record still names the dialog joins a re-take of the foreground
+window's current focus (`shown::after_ended_wait`, by `Cx::join`). Tests:
+`focus::shown::tests`, one per cell of the design's table, with the
+message box, the dialog closed by hiding and the tray menu each fed in
+both orders.
+
 ### A window's destruction
 
 The listener's destroy arrives as `QueueInput::WindowDestroyed`, with the

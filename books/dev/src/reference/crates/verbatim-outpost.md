@@ -931,6 +931,19 @@ no comparison Core did not ask for.
 
 ### Core's requests
 
+A focus read Core asks with `HiddenRoot::Check` (an MSAA candidate's,
+the current focus's, a completion's) first takes its window's top-level
+window and whether it is visible, two local calls; only for a hidden one
+does it read its client object's role, two counted calls
+(`verbatim_ia2::acquire::client_role`), and a dialog's role, a dialog,
+an alert or a property page, answers `Reply::HiddenDialog` with that
+window's facts and nothing more (`asked::hidden_root`, Dickson,
+2026-11-19). A hidden root of any other role is read as it is; a role
+read that fails answers "not there". The outpost judges nothing of it:
+Core decides to wait for the show, and asks `ReadAnyway` for a read that
+must not check. Tests: `outpost::hidden_root_tests`, the check's cost
+pinned at no call for a shown root and two for a hidden one.
+
 Each `CoreToOutpost::Request` is one program on the worker
 (`outpost/asked.rs`), answered once with one of the five outcomes, each
 node read with its nearest window's facts (`NodeWindow`, read from

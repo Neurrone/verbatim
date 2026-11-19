@@ -109,6 +109,28 @@ this shape are in `books/dev/src/explanation/architecture.md`, section 1
   each call before it makes it (`CallObserver`), so the test can change
   the application's windows between two of them.
 
+## A window's show
+
+Core asks the listener to tell it when a hidden dialog is shown
+(`Request::AwaitShown`, Dickson, 2026-11-19), after a focus read in it
+was answered with the dialog's window. The pipe thread hands the request,
+and every cancel, to the WinEvent thread over a plain channel and a nudge
+(`listener::shown`), so the thread that hears every show reads the
+window's visibility and keeps the waiter in order, with no lock on the
+hook path: visible, it answers shown at once; no window, not there;
+hidden, it keeps a waiter (`verbatim_listener_logic::shown`). The hook's
+second output for every window object's show (`EventHandlers::
+window_shown`) answers the waiters for that window shown, whatever its
+class, and the destruction of its window object answers them not there;
+a show costs one comparison of its ids and, while a waiter is kept, a
+look in the table, and sends Core nothing else. Each waiter's token is
+its one answer path: Core's cancel answers it "ended" with the detail
+"cancelled", and a token dropped unanswered, as the table is at the
+shutdown, answers the same. Tests: the listener's real-window tests, the
+show before the request and after it, a show hidden again, a
+destruction, a cancel and the shutdown, each ordered by the WinEvent
+thread's sync.
+
 ## Progress bars
 
 The listener is the one owner of every progress bar's changes,
