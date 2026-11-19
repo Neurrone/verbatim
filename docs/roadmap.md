@@ -1614,6 +1614,16 @@ are.
   2026-11-03).
 - Bound keys are still swallowed while Core's reducer stalls, where
   NVDA's watchdog lets keys through (input audit, 2026-11-03).
+- A dead key typed behind a held key is not composed in the echo
+  (Dickson, 2026-11-19): a key deferred behind a held caret key or a held
+  Enter is translated at its press, before the application has
+  translated a dead key deferred ahead of it, so on a US-International
+  keyboard "fin", Enter, then at once the accent key and "e" echoes "e"
+  where the application types "é". Holding Enter (2026-11-19) makes it
+  common. First a study of composing it in the hook from the keyboard
+  layout's own dead-key table, with no call into the application; if
+  that cannot work, it moves after M7 and uses the injection helper to
+  see the characters the application receives, as NVDA does.
 
 ## M8.2 — Speech configurability
 
