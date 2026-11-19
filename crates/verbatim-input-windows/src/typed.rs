@@ -215,8 +215,8 @@ pub(crate) enum Typed {
     /// Text, a tab and a carriage return (Enter) included.
     Text(String),
     /// A control character other than a tab, a carriage return,
-    /// Backspace's (U+0008) and Control+Backspace's (U+007F): Escape's,
-    /// Control+C's or Control+Enter's, which ends the word being typed and
+    /// Backspace's (U+0008), Control+Backspace's (U+007F) and Escape's
+    /// (U+001B): Control+C's or Control+Enter's, which ends the word being typed and
     /// is never spelled, as NVDA's typed-character rule takes it
     /// (`nvda/source/speech/speech.py` 1449 to 1472).
     Control,
@@ -241,14 +241,18 @@ pub(crate) fn typed(units: &[u16]) -> Option<Typed> {
 }
 
 /// Whether a key's UTF-16 output is control characters alone, none of them
-/// Backspace's or Control+Backspace's: NVDA ends the word on any other
-/// control character (`nvda/source/speech/speech.py` 1457 to 1463).
+/// Backspace's, Control+Backspace's or Escape's: NVDA ends the word on any
+/// other control character the application receives
+/// (`nvda/source/speech/speech.py` 1457 to 1463). Escape never ends it
+/// (Dickson, 2026-11-19): a dialog's manager takes Escape before the field
+/// receives its character, so NVDA's word goes on there, and the hook
+/// cannot tell a dialog from a field that receives it.
 fn ends_word(units: &[u16]) -> bool {
     String::from_utf16(units).is_ok_and(|text| {
         !text.is_empty()
-            && text
-                .chars()
-                .all(|character| character.is_control() && !matches!(character, '\u{8}' | '\u{7f}'))
+            && text.chars().all(|character| {
+                character.is_control() && !matches!(character, '\u{8}' | '\u{7f}' | '\u{1b}')
+            })
     })
 }
 
@@ -422,7 +426,7 @@ mod tests {
     /// nothing type nothing.
     #[test]
     fn control_characters_end_the_word_but_backspaces_and_nothing_are_not_typed() {
-        assert_eq!(typed(&units("\u{1b}")), Some(Typed::Control), "Escape");
+        assert_eq!(typed(&units("\u{1b}")), None, "Escape");
         assert_eq!(typed(&units("\u{3}")), Some(Typed::Control), "Control+C");
         assert_eq!(typed(&units("\n")), Some(Typed::Control), "Control+Enter");
         assert_eq!(typed(&units("\u{8}")), None, "Backspace");

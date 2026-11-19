@@ -970,7 +970,7 @@ pub(crate) fn character_typed(state: &mut SrState, trace_id: TraceId, typed: &st
 
 /// Handles a control character typed into the focused application, one
 /// other than a tab, a carriage return, Backspace's and
-/// Control+Backspace's (Escape, Control+C, Control+Enter): the word being
+/// Control+Backspace's (Control+C, Control+Enter; never Escape): the word being
 /// typed ends, spoken when word echo applies, and nothing is spelled, as
 /// NVDA's typed-character rule takes any such character
 /// (`docs/parity/input.md`, "Typed-character echo"). In a terminal, whose

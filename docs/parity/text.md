@@ -271,18 +271,24 @@ composes in the window, where NVDA's focus is the composition, which has
 no new-line script (`nvda/source/NVDAHelper/__init__.py` 419 to 427)
 (Dickson, 2026-11-19;
 [holding caret keys](../../books/dev/src/explanation/design/key-holding.md)),
-and says what the script says from its watch's final read; at its end
-its carriage return ends the word typed, as in "Typed-character echo"
-([Input](input.md)). In a terminal it is typed text, never held.
+and says what the script says from its watch's final read; when the
+watch saw the caret move, its carriage return then ends the word typed
+and speaks it, as in "Typed-character echo" ([Input](input.md));
+otherwise the word is kept and the focus change that follows forgets it
+(Dickson, 2026-11-19), since a dialog's manager takes Enter before the
+field receives a character and NVDA's word then goes on. In a terminal
+it is typed text, never held.
 NVDA's captures of 2026-11-19, Notepad (six runs) and the Windows Forms
 text box (five), with word echo in edit controls: "hello", Enter at the
 line's end says "hello", the word the carriage return ends; Enter
 mid-line before "beta" says nothing. In a dialog's single-line field
 whose default button opens a message box, "hello", Enter says no
 "hello", only the message box (four runs of five; in the fifth NVDA
-queued "hello" and cut it off 7 ms later, a race inside NVDA): the focus
-taken during Enter's watch forgets the word, as NVDA's focus change
-does. An application that inserts text on the new line, a numbered
+queued "hello" and cut it off 7 ms later, a race inside NVDA); with the
+message box coming 350 ms after Enter, past its watch, NVDA said no
+"hello" in five runs of six (in the sixth, "hello" before the message
+box). Verbatim says no word in both: the caret never moved, and the
+focus change forgets the word. An application that inserts text on the new line, a numbered
 list's "2. ", has it said, where the script speaks it; no such
 application was captured.
 

@@ -111,13 +111,24 @@ key and a key outside the caret table keep it. The characters keys type
 change it as NVDA's `speakTypedCharacters` does
 (`nvda/source/speech/speech.py` 1449 to 1472): Backspace's U+0008 drops
 its last character, at the held Backspace's end; Control+Backspace's
-U+007F is ignored; and any other control character ends the word and
-speaks it, spelling nothing: Escape's U+001B, Control+C's U+0003,
-Control+Enter's line feed, Enter's carriage return. So "hel", Control+C,
-"lo" and a space says "hel" at Control+C and "lo" at the space, and so
-do Escape and Control+Enter in place of Control+C (NVDA's captures of
-2026-11-19, five runs each: Control+C in Notepad and the Windows Forms
-text box, Escape and Control+Enter in Notepad; `notepad_typed_words`); "cat", Backspace, "s", a space says "t" at
+U+007F is ignored; and any other control character the application
+receives ends the word and speaks it, spelling nothing: Control+C's
+U+0003, Control+Enter's line feed, and Enter's carriage return where
+Enter's watch saw the caret move (`docs/parity/text.md`, "Enter in a
+text field"). So "hel", Control+C, "lo" and a space says "hel" at
+Control+C and "lo" at the space, and so does Control+Enter in place of
+Control+C (NVDA's captures of 2026-11-19, five runs each: Control+C in
+Notepad and the Windows Forms text box, Control+Enter in Notepad;
+`notepad_typed_words`); so does Control+S taken by a Windows Forms menu
+shortcut, which still reached NVDA as U+0013 (captured the same day).
+Different (Dickson, 2026-11-19): Escape never ends the word, so "hel",
+Escape, "lo" and a space says "hello" at the space. NVDA ends it only
+when the application receives Escape's character: in a dialog, whose
+manager takes Escape first, NVDA says "hello" too (captured the same
+day, five runs), but in Notepad, which receives it, NVDA says "hel" at
+Escape (five runs). The hook cannot tell the two apart; matching NVDA
+exactly needs the character as the application receives it, which M7's
+injection helper brings. "cat", Backspace, "s", a space says "t" at
 Backspace, which forgets the word, then "s"; "cat", Backspace, "r", a
 space in one batch says "car", Backspace marked by the "r" saying
 nothing and dropping the "t" (captured the same day); "hel",

@@ -981,8 +981,9 @@ what they deleted from the starting read. Whether a key is marked is read
 from `SrState::arrivals`, never stored. At its end a key that was not
 dropped at a desktop switch applies the character it typed to the word
 being typed (`typed_at_end`): Backspace's drops the word's last
-character, and Enter's carriage return ends the word and speaks it, or,
-with a focus that counts waiting behind the key, forgets it unspoken.
+character. Enter's carriage return ends the word and speaks it only when
+the watch saw the caret move (`new_line_typed`); otherwise the word is
+kept for a focus change to forget.
 Enter held for a terminal, by a hook view behind the focus, is passed
 with no read, the carriage return the terminal's model takes.
 
@@ -1170,10 +1171,10 @@ protected field echoes only "star". In a terminal, unless terminal
 passwords are spoken, typing is held until its
 `NormalizedEvent::TextChanged` arrives, and Enter drops what was held.
 The word is forgotten when a caret key's script speaks (not Enter's, whose
-carriage return ends it after), and when the focus changes; a held
+carriage return ends it after when the caret moved), and when the focus changes; a held
 Backspace drops its last character at its end; `Input::ControlTyped`, a
-control character the hook reports (Escape, Control+C, Control+Enter),
-ends it and speaks it, spelling nothing (`editing::control_typed`).
+control character the hook reports (Control+C, Control+Enter; never
+Escape), ends it and speaks it, spelling nothing (`editing::control_typed`).
 Interrupting speech for typing is the hook's
 ([verbatim-input](verbatim-input.md)).
 

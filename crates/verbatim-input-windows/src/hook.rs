@@ -694,11 +694,8 @@ mod tests {
             pressed: true,
         };
         assert_eq!(decide(&mut state, escape, 0x01, 0), KeyDecision::Pass);
-        // Escape types U+001B, which ends the word being typed.
-        assert_eq!(
-            described(&reports.lock().unwrap()),
-            ["observed kb:escape", "control"]
-        );
+        // Escape's U+001B ends no word (Dickson, 2026-11-19).
+        assert_eq!(described(&reports.lock().unwrap()), ["observed kb:escape"]);
     }
 
     /// Enter, held only: in a text field it is held and reported as its
@@ -1087,7 +1084,6 @@ mod tests {
                 "typed x",
                 "deferred 0x58 down #2",
                 "observed kb:escape",
-                "control",
                 "passed",
                 "gesture kb:scrolllock",
             ]

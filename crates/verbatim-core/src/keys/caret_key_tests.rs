@@ -1565,10 +1565,12 @@ fn enter_onto_an_empty_cut_says_only_the_formatting_at_the_caret() {
     assert_eq!(ended.said, [vec!["Format(Bold)".to_owned()]]);
 }
 
-/// Enter whose caret never moves, as in Notepad's find field: nothing for
-/// the key, then the word the carriage return ends.
+/// Enter whose caret never moves, as where a dialog's manager takes it
+/// for the default button (NVDA's capture of 2026-11-19, five runs of six):
+/// nothing for the key, and the word typed is kept, for the focus change
+/// that follows to forget (Dickson, 2026-11-19).
 #[test]
-fn enter_that_moves_nothing_says_only_the_word_it_ends() {
+fn enter_that_moves_nothing_says_nothing_and_keeps_the_word() {
     let mut held = watching(
         CaretMotion::NewLine,
         line("zz", 7, 2),
@@ -1583,14 +1585,16 @@ fn enter_that_moves_nothing_says_only_the_word_it_ends() {
             Watched::Bound(read(line("zz", 9, 2), unit(TextUnit::Line, "zz", 9))),
         ),
     );
-    assert_eq!(ended.said, [spoken("zz")]);
+    assert_eq!(ended.said, NO_WORDS);
+    assert_eq!(held.state.typed_word, "zz");
 }
 
 /// "hello", then Enter in a dialog's field pressing its default button,
 /// whose message box takes the focus during Enter's watch (NVDA's capture
-/// C2b, 2026-11-19, four runs of five): the word is forgotten unspoken.
+/// C2b, 2026-11-19, four runs of five): no word is spoken, and the word,
+/// kept by the key, is the focus change's to forget.
 #[test]
-fn enter_with_a_focus_pending_forgets_the_word_unspoken() {
+fn enter_with_a_focus_pending_says_no_word() {
     let mut held = watching(
         CaretMotion::NewLine,
         line("hello", 7, 5),
@@ -1601,14 +1605,13 @@ fn enter_with_a_focus_pending_forgets_the_word_unspoken() {
     assert_eq!(focus.cancelled, [(4, CancelReason::Withdrawn)]);
     assert_eq!(focus.said, NO_WORDS);
     assert_eq!(focus.other, ["ReadObject"]);
-    assert_eq!(held.state.typed_word, "");
+    assert_eq!(held.state.typed_word, "hello");
 }
 
-/// Enter marked by a key behind it is sent with no read and says nothing
-/// for itself, and its carriage return still ends the word, as NVDA's
-/// typed-character event runs after its script returns.
+/// Enter marked by a key behind it is sent with no read and says nothing,
+/// and with no move seen keeps the word typed.
 #[test]
-fn enter_marked_by_a_later_key_says_only_the_word_it_ends() {
+fn enter_marked_by_a_later_key_says_nothing_and_keeps_the_word() {
     let mut held = editing();
     word_typed(&mut held, "hello");
     let binding = bound(&held);
@@ -1628,7 +1631,8 @@ fn enter_marked_by_a_later_key_says_only_the_word_it_ends() {
         started(3, line("hello", 7, 5), unit(TextUnit::Character, "", 8)),
     );
     assert_eq!(answered.strokes, [vec![1]]);
-    assert_eq!(answered.said, [spoken("hello")]);
+    assert_eq!(answered.said, NO_WORDS);
+    assert_eq!(held.state.typed_word, "hello");
     assert_eq!(
         answered.text,
         [(
@@ -1669,14 +1673,13 @@ fn enter_bound_to_a_terminal_is_sent_with_no_read() {
 }
 
 /// A key released by its 150 ms timer before its turn runs no script: a
-/// movement key keeps the word typed, Enter's carriage return still ends
-/// it and speaks it, and Backspace's U+0008 still drops its last
-/// character.
+/// movement key and Enter, which saw no move, keep the word typed, and
+/// Backspace's U+0008 still drops its last character.
 #[test]
 fn a_key_released_by_its_timer_keeps_the_word_and_applies_its_character() {
     for (motion, said, kept) in [
         (CaretMotion::NextCharacter, NO_WORDS.to_vec(), "cat"),
-        (CaretMotion::NewLine, vec![spoken("cat")], ""),
+        (CaretMotion::NewLine, NO_WORDS.to_vec(), "cat"),
         (CaretMotion::Backspace, NO_WORDS.to_vec(), "ca"),
     ] {
         let mut held = editing();
@@ -1839,9 +1842,9 @@ fn a_batch_of_backspace_then_typing_says_the_word_with_its_last_character_droppe
     assert_eq!(answered.said, [spoken("car")]);
 }
 
-/// Control+C, Escape and Control+Enter after "hel", in the order the hook
-/// reports each (its other reports, then the control character it types):
-/// "hel", as NVDA's captures of 2026-11-19 in Notepad and the text box.
+/// Control+C and Control+Enter after "hel", in the order the hook reports
+/// each (its other reports, then the control character it types): "hel",
+/// as NVDA's captures of 2026-11-19 in Notepad and the text box.
 #[test]
 fn a_control_character_typed_ends_the_word_after_the_keys_other_reports() {
     let other = PressAction::CaretKey {
@@ -1853,14 +1856,6 @@ fn a_control_character_typed_ends_the_word_after_the_keys_other_reports() {
         (
             "Control+C",
             vec![PressAction::Clearing, other.clone(), PressAction::Control],
-        ),
-        (
-            "Escape",
-            vec![
-                PressAction::Clearing,
-                PressAction::EditingChord,
-                PressAction::Control,
-            ],
         ),
         ("Control+Enter", vec![other.clone(), PressAction::Control]),
     ] {
@@ -1877,6 +1872,21 @@ fn a_control_character_typed_ends_the_word_after_the_keys_other_reports() {
         assert_eq!(said, [spoken("hel")], "{name}");
         assert_eq!(held.state.typed_word, "", "{name}");
     }
+}
+
+/// Escape after "hel", as the hook reports it (a clearing key and an
+/// editing chord, no control character): the word is kept, and "lo" and
+/// a space say "hello" (Dickson, 2026-11-19).
+#[test]
+fn escape_keeps_the_typed_word() {
+    let mut held = editing();
+    word_typed(&mut held, "hel");
+    let mut said = Vec::new();
+    for action in [PressAction::Clearing, PressAction::EditingChord] {
+        said.extend(step(&mut held, 1_000, pressed(1, 1_000, action)).said);
+    }
+    assert_eq!(said, NO_WORDS);
+    assert_eq!(held.state.typed_word, "hel");
 }
 
 #[path = "caret_confirm_tests.rs"]

@@ -245,11 +245,12 @@ does):
   other than control characters, a tab and the carriage return of Enter
   excepted, reported `KeyReport::Typed`.
 - Control characters. A key that types control characters alone, none of
-  them Backspace's U+0008 or Control+Backspace's U+007F, is reported
+  them Backspace's U+0008, Control+Backspace's U+007F or Escape's U+001B
+  (Escape never ends the word, Dickson, 2026-11-19), is reported
   `KeyReport::Control`, after the key's other reports, a key completing
-  no observed gesture being also reported `Passed`: Escape's U+001B, and
-  under Control without Alt or the Windows key, where a key types nothing
-  else, Control+C's U+0003, Control+Enter's line feed, Control+M's
+  no observed gesture being also reported `Passed`: under Control without
+  Alt or the Windows key, where a key types nothing else, Control+C's
+  U+0003, Control+Enter's line feed, Control+M's
   carriage return. Core ends the word being typed on it, as NVDA's
   typed-character rule does (`docs/parity/input.md`, "Typed-character
   echo"). Backspace's character is not reported: Core drops the word's

@@ -535,6 +535,7 @@ async fn run_key(cx: &mut Cx<Entries>, press: &CaretPress) -> Reached {
             // the carriage return it types there, with no read, as where
             // the view is current.
             terminal_pass(cx, press);
+            new_line_typed(cx, press);
         } else {
             terminal_key(cx, press, &binding).await;
         }
@@ -571,31 +572,30 @@ async fn run_key(cx: &mut Cx<Entries>, press: &CaretPress) -> Reached {
     Reached::Sent
 }
 
-/// What the character the key typed does to the word being typed, at the
-/// key's end, after its own speech, as NVDA's typed-character event runs
-/// after the key's script (`docs/parity/input.md`, "Typed-character
-/// echo"): Backspace's U+0008 drops the word's last character, one code
-/// point; Enter's carriage return ends the word and speaks it, unless a
-/// focus that counts waits behind the key, whose taking forgets the word
-/// unspoken, as NVDA's focus change forgets it (`docs/parity/text.md`,
-/// "Enter in a text field"). In a terminal Enter's carriage return is
-/// typed text, as where the hook did not hold it.
+/// What Backspace's U+0008 does to the word being typed, at the key's
+/// end, after its own speech, as NVDA's typed-character event runs after
+/// the key's script (`docs/parity/input.md`, "Typed-character echo"): it
+/// drops the word's last character, one code point. Enter's carriage
+/// return is applied only where its watch saw the caret move
+/// ([`new_line_typed`]).
 fn typed_at_end(cx: &mut Cx<Entries>, press: &CaretPress) {
-    match press.key.motion {
-        CaretMotion::Backspace => {
-            cx.facts_mut().typed_word.pop();
-        }
-        CaretMotion::NewLine => {
-            if counts_behind(cx) {
-                cx.facts_mut().typed_word.clear();
-                return;
-            }
-            let effects = editing::character_typed(&mut cx.facts_mut(), press.trace_id, "\r");
-            for effect in effects {
-                cx.emit(effect);
-            }
-        }
-        _ => {}
+    if press.key.motion == CaretMotion::Backspace {
+        cx.facts_mut().typed_word.pop();
+    }
+}
+
+/// Enter's carriage return reached the application, typed text: the word
+/// being typed ends and is spoken by the settings, or in a terminal is
+/// forgotten. Only an Enter whose watch saw the caret move, or one held
+/// for a terminal, is taken for one: a dialog's manager takes Enter
+/// before the field receives a character, so a word an Enter that moved
+/// nothing keeps is forgotten by the focus change that follows, as NVDA's
+/// is (Dickson, 2026-11-19; `docs/parity/text.md`, "Enter in a text
+/// field").
+fn new_line_typed(cx: &mut Cx<Entries>, press: &CaretPress) {
+    let effects = editing::character_typed(&mut cx.facts_mut(), press.trace_id, "\r");
+    for effect in effects {
+        cx.emit(effect);
     }
 }
 
@@ -856,6 +856,9 @@ async fn watching(
         Outcome::Result(Ok(Watched::Effect(read))) => {
             let words = effect_words(&mut cx.facts_mut(), binding, press.key, (started, &read));
             finish(cx, press, binding, read, words);
+            if press.key.motion == CaretMotion::NewLine {
+                new_line_typed(cx, press);
+            }
         }
         Outcome::Result(Ok(Watched::Bound(read))) => {
             let words = bound_words(&mut cx.facts_mut(), binding, press.key, &read);
@@ -940,7 +943,7 @@ async fn sentence(
 /// typed word is forgotten and the caret read becomes Core's, the review
 /// cursor following it; a key with nothing to say leaves both to its caret
 /// tell. Enter's script forgets no word: the carriage return it types ends
-/// the word after it ([`typed_at_end`]).
+/// the word after it ([`new_line_typed`]).
 fn finish(
     cx: &mut Cx<Entries>,
     press: &CaretPress,

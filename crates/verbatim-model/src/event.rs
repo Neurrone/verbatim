@@ -720,7 +720,7 @@ pub enum Input {
     },
     /// A key typed a control character into the focused application, one
     /// other than a tab, a carriage return, Backspace's and
-    /// Control+Backspace's (Escape, Control+C, Control+Enter): the word
+    /// Control+Backspace's (Control+C, Control+Enter; never Escape): the word
     /// being typed ends and is spoken by the typing echo settings, and
     /// nothing is spelled (`docs/parity/input.md`, "Typed-character
     /// echo"). It follows the key's other inputs.
