@@ -355,6 +355,15 @@ judged. That is 22 calls to Windows for a value change on a custom
 object of a top-level window in the background and 19 for a tooltip's
 show, the hook's class read included and a hang test counted as its
 calls (`a_flood_events_window_facts_are_read_once` counts them by read);
+measured on `msaa_flood_then_focus` (release, 13-second windows over
+its three floods of 4,000 events, five traces of each build
+alternately, 2026-11-19), reading each fact once took the WinEvent
+thread from 35,100 to 55,800 wakes to 28,400 to 47,400, and its
+processor time from 1.00 to 1.67 s to 0.92 to 1.37 s, about 14 percent
+less in traces of like workload (the outpost woke about 12,000 times
+in some traces of both builds and about 700 in others, and the
+listener's figures follow it); the reading thread from 16,300 to
+19,100 wakes to 15,400 to 17,300;
 a bar then adds one wake of a reading
 thread and three window messages, or about four MSAA calls when it is
 known only by its role. Any other value change is judged on the
