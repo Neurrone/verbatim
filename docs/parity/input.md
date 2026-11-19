@@ -127,10 +127,10 @@ Shift+Left Arrow, "lo" typed over the "l" selected, and a space says
 `target/e2e-evidence/m42-text-captures-2026-10-23/`). Different,
 deliberately: the zero-width non-joiner and joiner also continue a word,
 which NVDA's rule does not, since Persian and Indic words are typed with
-them. Limitation: Backspace drops one code point where NVDA drops one
-UTF-16 unit; the two differ only for a character outside the Basic
-Multilingual Plane, half of which NVDA keeps and Verbatim's text cannot
-hold. Different, and not yet decided: NVDA forgets the word when a terminal shows new
+them. Different, deliberately (Dickson, 2026-11-19): Backspace drops
+one whole character where NVDA drops one UTF-16 unit; the two differ
+only for a character outside the Basic Multilingual Plane, such as most
+emoji, half of which NVDA keeps in the word. Different, and not yet decided: NVDA forgets the word when a terminal shows new
 lines of output (`nvda/source/NVDAObjects/behaviors.py` 568), and
 Verbatim does not. A protected field echoes only the protected character
 ("star") and no words; typing into a terminal waits until the
