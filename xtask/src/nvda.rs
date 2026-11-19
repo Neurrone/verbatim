@@ -10,6 +10,10 @@
 //! with line endings normalized to LF, so the same source gives the same
 //! bytes on every machine and checkout.
 //!
+//! `capture` and `compare` build, start and end their own agent
+//! (`crate::agent`) unless `--agent` names one, and refuse an NVDA that is
+//! not the build the `nvda` submodule pins.
+//!
 //! `capture` drives the NVDA running in the agent's session: it runs each
 //! step through the agent (a key pressed through real OS input, a program
 //! launched, or a window brought to the foreground), waits for NVDA's
@@ -40,6 +44,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde_json::{Value, json};
 use verbatim_agent::protocol::{WindowCondition, WindowInfo};
+
+use crate::agent::{self, Agent};
 use verbatim_control::client::Client as ControlClient;
 use verbatim_control::protocol::{Frame, Request};
 use verbatim_e2e::agent_client::AgentClient;
@@ -69,7 +75,7 @@ pub fn run(args: &[String]) -> ExitCode {
             eprintln!("verbs:");
             eprintln!("  build    write {PACKAGE} from {SOURCE_DIR}");
             eprintln!(
-                "  capture  [--agent <address>] [--quiet-ms <ms>] [--timeout-ms <ms>] [--verbatim] \
+                "  capture  [--agent <address>, or one it starts] [--quiet-ms <ms>] [--timeout-ms <ms>] [--verbatim] \
                  [--json] <step>...: run each step through the agent and print what NVDA (or, \
                  with --verbatim, the local Verbatim) speaks after it, as JSON lines with \
                  --json; a step is a key, --launch <program> [--arg <arg>]... (or \
@@ -82,7 +88,7 @@ pub fn run(args: &[String]) -> ExitCode {
                  Verbatim's menu, as a click on its tray icon does)"
             );
             eprintln!(
-                "  compare  [--agent <address>] [--quiet-ms <ms>] <scenario>: run an end-to-end \
+                "  compare  [--agent <address>, or one it starts] [--quiet-ms <ms>] <scenario>: run an end-to-end \
                  scenario against the NVDA running in the agent's session, asserting nothing, and \
                  print what the scenario expects Verbatim to say beside what NVDA said, step by \
                  step"
@@ -304,7 +310,8 @@ impl Step {
 }
 
 struct CaptureOptions {
-    agent: String,
+    /// The agent to run through, or none for one the command starts.
+    agent: Option<String>,
     /// Record the local Verbatim's speech rather than NVDA's.
     verbatim: bool,
     /// Print one JSON object per step and per entry, rather than lines for
@@ -317,7 +324,7 @@ struct CaptureOptions {
 
 fn parse_capture_args(args: &[String]) -> io::Result<CaptureOptions> {
     let mut options = CaptureOptions {
-        agent: format!("127.0.0.1:{}", verbatim_agent::protocol::DEFAULT_PORT),
+        agent: None,
         verbatim: false,
         json: false,
         quiet: Duration::from_secs(1),
@@ -336,7 +343,7 @@ fn parse_capture_args(args: &[String]) -> io::Result<CaptureOptions> {
                 .map_err(|_| io::Error::other(format!("not a number of milliseconds: {text}")))
         };
         match arg.as_str() {
-            "--agent" => options.agent.clone_from(value()?),
+            "--agent" => options.agent = Some(value()?.clone()),
             "--verbatim" => options.verbatim = true,
             "--json" => options.json = true,
             "--quiet-ms" => options.quiet = millis(value()?)?,
@@ -413,13 +420,11 @@ impl Source {
         let session_id = agent.session_info()?.session_id;
         let (transcript, hello) = Transcript::connect(session_port(session_id)?)?;
         let started = Instant::now();
-        println!(
-            "NVDA {} in session {}",
-            hello["nvda_version"]
-                .as_str()
-                .unwrap_or("(unknown version)"),
-            hello["session_id"]
-        );
+        let version = hello["nvda_version"]
+            .as_str()
+            .unwrap_or("(unknown version)");
+        println!("NVDA {version} in session {}", hello["session_id"]);
+        require_pinned_nvda(version)?;
         Ok(Self::Nvda {
             transcript,
             last_seq: 0,
@@ -540,13 +545,14 @@ fn millis_of(ms: u128) -> i64 {
 /// What `compare` runs: the scenario, the agent, and the quiet period
 /// when one is given.
 struct CompareOptions {
-    agent: String,
+    /// The agent to run through, or none for one the command starts.
+    agent: Option<String>,
     quiet_ms: Option<u64>,
     scenario: String,
 }
 
 fn parse_compare_args(args: &[String]) -> io::Result<CompareOptions> {
-    let mut agent = format!("127.0.0.1:{}", verbatim_agent::protocol::DEFAULT_PORT);
+    let mut agent = None;
     let mut quiet_ms = None;
     let mut scenario = None;
     let mut args = args.iter();
@@ -556,7 +562,7 @@ fn parse_compare_args(args: &[String]) -> io::Result<CompareOptions> {
                 .ok_or_else(|| io::Error::other(format!("{arg} needs a value")))
         };
         match arg.as_str() {
-            "--agent" => agent.clone_from(value()?),
+            "--agent" => agent = Some(value()?.clone()),
             "--quiet-ms" => {
                 let text = value()?;
                 quiet_ms = Some(text.parse::<u64>().map_err(|_| {
@@ -592,8 +598,9 @@ fn compare(args: &[String]) -> io::Result<()> {
         )));
     }
     // The agent presses the keys and finds NVDA's session, as for a
-    // capture.
-    AgentClient::connect(options.agent.as_str())?;
+    // capture, and the NVDA there must be the pinned build.
+    let (address, _agent) = agent_for(options.agent.as_deref())?;
+    Source::nvda(&mut AgentClient::connect(address.as_str())?)?;
     let report = artifacts::scenario_dir(&artifacts::artifacts_root(), def.name)
         .join(compare_mode::REPORT_FILE_NAME);
     remove_earlier_report(&report)?;
@@ -611,7 +618,7 @@ fn compare(args: &[String]) -> io::Result<()> {
             def.name,
             "--test-threads=1",
         ])
-        .env(verbatim_e2e::ENDPOINT_ENV, &options.agent)
+        .env(verbatim_e2e::ENDPOINT_ENV, &address)
         .env(compare_mode::ENV, def.name)
         .current_dir(workspace_root());
     if let Some(quiet_ms) = options.quiet_ms {
@@ -635,6 +642,56 @@ fn compare(args: &[String]) -> io::Result<()> {
     }
 }
 
+/// The agent a capture or comparison runs through: the one at `given`,
+/// or, with none given, one this command builds and starts, ended when the
+/// returned [`Agent`] is dropped.
+fn agent_for(given: Option<&str>) -> io::Result<(String, Option<Agent>)> {
+    if let Some(address) = given {
+        return Ok((address.to_owned(), None));
+    }
+    let root = workspace_root();
+    agent::build(&root).map_err(io::Error::other)?;
+    let logs = root.join(
+        r"target
+vda-agent",
+    );
+    fs::create_dir_all(&logs)?;
+    let started = Agent::start(&root, &logs).map_err(io::Error::other)?;
+    Ok((agent::ENDPOINT.to_owned(), Some(started)))
+}
+
+/// Fails unless the running NVDA, whose build is `version`, is the build
+/// the `nvda` submodule pins, since expectations come from captures and
+/// ported code from the pinned source, and both must describe one NVDA.
+fn require_pinned_nvda(version: &str) -> io::Result<()> {
+    let output = Command::new("git")
+        .args(["-C", "nvda", "rev-parse", "HEAD"])
+        .current_dir(workspace_root())
+        .output()?;
+    if !output.status.success() {
+        return Err(io::Error::other(
+            "could not read the nvda submodule's commit",
+        ));
+    }
+    let pinned = String::from_utf8_lossy(&output.stdout);
+    if runs_pinned_build(version, pinned.trim()) {
+        Ok(())
+    } else {
+        Err(io::Error::other(format!(
+            "the running NVDA is {version}, not the pinned build {}; install the pinned build first",
+            pinned.trim()
+        )))
+    }
+}
+
+/// Whether an NVDA build named `version`, such as `alpha-58022,732d1ce2`,
+/// was built from `pinned`, the submodule's full commit.
+fn runs_pinned_build(version: &str, pinned: &str) -> bool {
+    version
+        .rsplit_once(',')
+        .is_some_and(|(_, commit)| commit.len() >= 7 && pinned.starts_with(commit))
+}
+
 /// Deletes `report`, a comparison's report an earlier run left, if there
 /// is one, so it is never printed as this run's.
 fn remove_earlier_report(report: &Path) -> io::Result<()> {
@@ -650,7 +707,8 @@ fn remove_earlier_report(report: &Path) -> io::Result<()> {
 
 fn capture(args: &[String]) -> io::Result<()> {
     let options = parse_capture_args(args)?;
-    let mut agent = AgentClient::connect(options.agent.as_str())?;
+    let (address, _agent) = agent_for(options.agent.as_deref())?;
+    let mut agent = AgentClient::connect(address.as_str())?;
     let mut source = if options.verbatim {
         Source::verbatim()?
     } else {
@@ -1054,6 +1112,15 @@ mod tests {
                 Step::WaitFile(r"C:\run\pid".to_owned()),
             ]
         );
+    }
+
+    #[test]
+    fn only_a_build_of_the_pinned_commit_counts_as_pinned() {
+        let pinned = "732d1ce2f0f051da3ef1e6a6247c64cf04596337";
+        assert!(runs_pinned_build("alpha-58022,732d1ce2", pinned));
+        assert!(!runs_pinned_build("alpha-58023,8c41e0a1", pinned));
+        assert!(!runs_pinned_build("2025.3.1", pinned));
+        assert!(!runs_pinned_build("alpha-1,", pinned));
     }
 
     #[test]

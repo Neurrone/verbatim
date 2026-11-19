@@ -111,6 +111,8 @@ mod waits;
 // functions inside it, so a Windows module never keeps a branch for
 // another host compiling.
 #[cfg(windows)]
+mod agent;
+#[cfg(windows)]
 mod conformance;
 #[cfg(windows)]
 mod contain;

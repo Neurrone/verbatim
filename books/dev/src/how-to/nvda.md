@@ -50,12 +50,18 @@ Capturing presses real keys, so it takes over the desktop like a local
 end-to-end run (see [the end-to-end guide](e2e.md)). Run it only when the
 person at the machine is away or has agreed.
 
-1. Start the agent in the same session as the NVDA you want to record:
-   `target\debug\verbatim-agent.exe --bind-address 127.0.0.1 --port 44001`.
-   The capture asks the agent for its session id to find NVDA's port.
-2. Put the application under test in the state the scenario starts from.
-3. Run `cargo xtask nvda capture` followed by the steps to take, for
-   example `cargo xtask nvda capture tab tab insert+t`.
+1. Put the application under test in the state the scenario starts from.
+2. Run `cargo xtask nvda capture` followed by the steps to take, for
+   example `cargo xtask nvda capture tab tab insert+t`, in the session of
+   the NVDA you want to record.
+
+The command builds and starts its own agent, and ends it when it ends,
+as `cargo xtask e2e` does, unless `--agent` names one; it asks the agent
+for its session id to find NVDA's port. It refuses to run when the NVDA
+there is not the build the `nvda` submodule pins (the build it prints
+first, such as `alpha-58022,732d1ce2`, must name the submodule's
+commit), since expectations come from captures and ported code from the
+pinned source.
 
 A step is a key to press, or one of these:
 
@@ -143,8 +149,8 @@ screen-reader modifiers `insert`, `numpadinsert`, and `capslock`.
 
 The options are:
 
-- `--agent <address>`, the agent to press keys through, by default
-  `127.0.0.1:44001`.
+- `--agent <address>`, an agent already running to press keys through,
+  in place of the one the command starts.
 - `--quiet-ms <ms>`, how long NVDA must stay quiet before a key counts as
   settled, by default 1000.
 - `--timeout-ms <ms>`, the longest wait after any one key, by default
@@ -216,13 +222,13 @@ To run it:
 
 1. Start NVDA, with the add-on installed, in the session you will run in,
    and close Verbatim.
-2. Start the agent in the same session:
-   `target\debug\verbatim-agent.exe --bind-address 127.0.0.1 --port 44001`.
-3. Run `cargo xtask nvda compare text_box_review_cursor`, for example.
-   `--agent <address>` names another agent, and `--quiet-ms <ms>` sets
-   the quiet period, by default 1000 and never less than 500.
+2. Run `cargo xtask nvda compare text_box_review_cursor`, for example.
+   `--agent <address>` names an agent already running in place of the
+   one the command starts, and `--quiet-ms <ms>` sets the quiet period,
+   by default 1000 and never less than 500.
 
-The command checks the agent is reachable, deletes the report an earlier
+The command starts its own agent as a capture does, checks that the
+NVDA running is the pinned build, deletes the report an earlier
 run left, then runs `cargo test -p verbatim-e2e --test e2e -- --ignored
 --exact <scenario> --test-threads=1` with `VERBATIM_E2E_ENDPOINT` set to
 the agent, `VERBATIM_E2E_COMPARE` set to the scenario's name, and
