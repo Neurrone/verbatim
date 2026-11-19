@@ -58,7 +58,7 @@
 //!   [`quit_inside_the_remove_theme_confirmation`](crate::scenarios::quit_inside_the_remove_theme_confirmation),
 //!   Verbatim quit with the Theme page's Remove Theme confirmation open, and
 //!   [`quit_inside_a_file_dialog`](crate::scenarios::quit_inside_a_file_dialog),
-//!   Verbatim quit with the Theme page's Export file dialog open, and
+//!   Verbatim quit with the Theme page's Import file dialog open, and
 //!   [`speak_time_and_date`](crate::scenarios::speak_time_and_date), the
 //!   time and the date said, and
 //!   [`switch_to_onecore`](crate::scenarios::switch_to_onecore), switching

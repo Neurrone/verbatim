@@ -701,7 +701,7 @@ under `src/scenarios/` documents exactly what it asserts.
   code 0 inside the menu's loop), `quit_inside_the_remove_theme_confirmation`
   (the Theme page walk up to the Remove Theme confirmation, left open, and
   the run's quit ending Verbatim with code 0 inside the task dialog's
-  loop), `quit_inside_a_file_dialog` (the Theme page's Export file dialog
+  loop), `quit_inside_a_file_dialog` (the Theme page's Import file dialog
   left open, and the run's quit ending Verbatim with code 0 inside its
   loop), `speak_time_and_date` (Verbatim+F12 pressed
   twice in one burst, the time cut off by the date, the time and date read by the agent first, waiting
