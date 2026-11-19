@@ -27,6 +27,9 @@ pub struct GestureMap {
     bound: BTreeSet<GestureId>,
     observed: BTreeSet<GestureId>,
     held: BTreeSet<GestureId>,
+    /// The held gestures observed only when held: Enter, which passed is
+    /// typed text, reported as the text it types.
+    held_only: BTreeSet<GestureId>,
 }
 
 impl GestureMap {
@@ -37,6 +40,7 @@ impl GestureMap {
             bound: gestures.into_iter().collect(),
             observed: BTreeSet::new(),
             held: BTreeSet::new(),
+            held_only: BTreeSet::new(),
         }
     }
 
@@ -59,11 +63,31 @@ impl GestureMap {
         self
     }
 
-    /// Whether the given gesture is held: observed, and its key held back
-    /// while Core's view lets keys be held.
+    /// This map, also holding `gestures` while Core's view lets them be
+    /// held, and neither observing nor reporting them as gestures when it
+    /// does not: Enter, which then passes as typed text
+    /// (`books/dev/src/explanation/design/key-holding.md`).
+    #[must_use]
+    pub fn with_held_only(mut self, gestures: impl IntoIterator<Item = GestureId>) -> Self {
+        for gesture in gestures {
+            self.held.insert(gesture.clone());
+            self.held_only.insert(gesture);
+        }
+        self
+    }
+
+    /// Whether the given gesture is held: observed, or held only, and its
+    /// key held back while Core's view lets keys be held.
     #[must_use]
     pub fn holds(&self, gesture: &GestureId) -> bool {
         self.held.contains(gesture)
+    }
+
+    /// Whether the given gesture is observed only when held
+    /// ([`GestureMap::with_held_only`]).
+    #[must_use]
+    pub fn holds_only(&self, gesture: &GestureId) -> bool {
+        self.held_only.contains(gesture)
     }
 
     /// Whether the given gesture is bound.

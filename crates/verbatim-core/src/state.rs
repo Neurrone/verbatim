@@ -656,6 +656,26 @@ impl SrState {
         crate::editing::text_focus(self).is_some()
     }
 
+    /// What text the focus has, as the keyboard hook holds keys for it:
+    /// none while [`holds_caret_keys`](Self::holds_caret_keys) does not
+    /// hold, a terminal's for a terminal, whose Enter is typed text and not
+    /// held, and a field's otherwise, whose Enter is held as NVDA's new-line
+    /// script holds it (`docs/parity/text.md`, "Enter in a text field").
+    #[must_use]
+    pub fn focus_text_kind(&self) -> verbatim_model::FocusTextKind {
+        let Some(focus) = crate::editing::text_focus(self) else {
+            return verbatim_model::FocusTextKind::None;
+        };
+        let terminal = self.live_focus().is_some_and(|live| {
+            live.snapshot.id == focus && crate::editing::is_grid(live.snapshot.role)
+        });
+        if terminal {
+            verbatim_model::FocusTextKind::Terminal
+        } else {
+            verbatim_model::FocusTextKind::Field
+        }
+    }
+
     /// The committed focus's record a caret key pressed now is bound to,
     /// as the hook's view publishes it
     /// (`docs/design/readers-tell-core-asks-build1.md`, "A caret key at its
@@ -702,8 +722,9 @@ impl SrState {
     /// no higher than Verbatim's, since Windows drops a key Verbatim sends
     /// again to a window of higher integrity, and a key lost costs more
     /// than a key judged without its caret (`books/dev/src/explanation/design/key-holding.md`,
-    /// "Elevated windows"). Caret keys are held while the focus has text
-    /// ([`holds_caret_keys`](Self::holds_caret_keys)). A console host
+    /// "Elevated windows"). Caret keys are held while the focus has text,
+    /// and Enter while it is a field's other than a terminal's
+    /// ([`focus_text_kind`](Self::focus_text_kind)). A console host
     /// window's keys are translated with the keyboard layout of the console
     /// host's own thread, named by its event, since Windows names the
     /// console's first attached process as the window's owner
@@ -718,7 +739,7 @@ impl SrState {
                 (foreground.integrity, foreground.own_integrity),
                 (Some(window), Some(own)) if window <= own
             ),
-            focus_has_text: self.holds_caret_keys(),
+            focus_text: self.focus_text_kind(),
             keyboard_thread: (foreground.console && foreground.thread != 0)
                 .then_some(foreground.thread),
             desktop_switches: self.desktop.switches_away,

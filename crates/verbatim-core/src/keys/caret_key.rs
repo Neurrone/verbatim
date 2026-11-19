@@ -470,8 +470,27 @@ async fn starting_read(
     }
 }
 
-/// The caret key's function at its turn (Table 7).
+/// The caret key's function at its turn (Table 7), then what the
+/// character it types does to the word being typed ([`typed_at_end`]),
+/// unless it was dropped and never reached the application.
 pub(crate) async fn run(mut cx: Cx<Entries>, press: CaretPress) {
+    if run_key(&mut cx, &press).await == Reached::Dropped {
+        return;
+    }
+    typed_at_end(&mut cx, &press);
+}
+
+/// Whether a key's stroke reached the application.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Reached {
+    /// Sent, at its pass or by its 150 ms release.
+    Sent,
+    /// Dropped at a switch away from the user's desktop.
+    Dropped,
+}
+
+/// The caret key at its turn, to its end (Table 7).
+async fn run_key(cx: &mut Cx<Entries>, press: &CaretPress) -> Reached {
     let status = if press.held {
         cx.facts().strokes.status(press.key_seq)
     } else {
@@ -480,13 +499,15 @@ pub(crate) async fn run(mut cx: Cx<Entries>, press: CaretPress) {
     match status {
         StrokeStatus::Dropped => {
             cx.facts_mut().strokes.forget_dropped(press.key_seq);
-            return;
+            return Reached::Dropped;
         }
         StrokeStatus::Sent => {
             // S2: released by its 150 ms timer, or never held. Its selection
             // words, if any, come from its caret tell. A held key bound to
             // the focused terminal passed at its release, which its model
-            // takes now.
+            // takes now. Its script never ran, so the word typed is kept,
+            // as NVDA forgets it only when a caret script speaks
+            // (`docs/parity/input.md`, "Typed-character echo").
             if press.held && press.terminal_bound(&cx.facts()) {
                 let released_at_us = press
                     .pressed_at_us
@@ -499,60 +520,83 @@ pub(crate) async fn run(mut cx: Cx<Entries>, press: CaretPress) {
                     press.trace_id,
                 );
             }
-            stop_say_all(&mut cx);
-            if !editing::selects(press.key) {
-                cx.facts_mut().typed_word.clear();
-            }
-            return;
+            stop_say_all(cx);
+            return Reached::Sent;
         }
         StrokeStatus::Unsent => {}
     }
-    let Some(binding) = press
-        .bound
-        .clone()
-        .filter(|binding| held_node(&cx, binding))
-    else {
-        pass(&mut cx, &press);
-        return;
+    let Some(binding) = press.bound.clone().filter(|binding| held_node(cx, binding)) else {
+        pass(cx, press);
+        return Reached::Sent;
     };
     if editing::is_grid(binding.role) {
-        terminal_key(&mut cx, &press, &binding).await;
-        return;
+        if press.key.motion == CaretMotion::NewLine {
+            // Enter held for a terminal, by a hook view behind the focus:
+            // the carriage return it types there, with no read, as where
+            // the view is current.
+            terminal_pass(cx, press);
+        } else {
+            terminal_key(cx, press, &binding).await;
+        }
+        return Reached::Sent;
     }
-    if marked(&cx, &press) {
-        pass(&mut cx, &press);
-        return;
+    if marked(cx, press) {
+        pass(cx, press);
+        return Reached::Sent;
     }
     // Before the starting read, only a focus that counts stops the key;
     // an unconfirmed one waits behind it, judged at the pass.
-    if !press.key.motion.deletes_back() && counts_behind(&cx) {
-        pass(&mut cx, &press);
-        return;
+    if !press.key.motion.deletes_back() && counts_behind(cx) {
+        pass(cx, press);
+        return Reached::Sent;
     }
     let due_us = cx.due_in(OTHER_DUE_US);
     let starting = StartingRead {
         provider: binding.provider,
-        details: key_details(&cx, &press),
+        details: key_details(cx, press),
         unit: StartingUnit::for_motion(press.key.motion),
     };
     let request = StartingReadRequest(OnNode::of(&binding, TextOp::StartingRead(starting)));
-    let Some(started) = starting_read(&mut cx, request, due_us).await else {
-        pass(&mut cx, &press);
-        return;
+    let Some(started) = starting_read(cx, request, due_us).await else {
+        pass(cx, press);
+        return Reached::Sent;
     };
     let passed_at_us = cx.now_us();
-    pass(&mut cx, &press);
-    if marked(&cx, &press) {
-        marked_end(&mut cx, &press, (&binding, &started), due_us).await;
-        return;
+    pass(cx, press);
+    if marked(cx, press) {
+        marked_end(cx, press, (&binding, &started), due_us).await;
+        return Reached::Sent;
     }
-    after_pass(
-        &mut cx,
-        &press,
-        (&binding, &started),
-        (passed_at_us, due_us),
-    )
-    .await;
+    after_pass(cx, press, (&binding, &started), (passed_at_us, due_us)).await;
+    Reached::Sent
+}
+
+/// What the character the key typed does to the word being typed, at the
+/// key's end, after its own speech, as NVDA's typed-character event runs
+/// after the key's script (`docs/parity/input.md`, "Typed-character
+/// echo"): Backspace's U+0008 drops the word's last character, one code
+/// point; Enter's carriage return ends the word and speaks it, unless a
+/// focus that counts waits behind the key, whose taking forgets the word
+/// unspoken, as NVDA's focus change forgets it (`docs/parity/text.md`,
+/// "Enter in a text field"). In a terminal Enter's carriage return is
+/// typed text, as where the hook did not hold it.
+fn typed_at_end(cx: &mut Cx<Entries>, press: &CaretPress) {
+    match press.key.motion {
+        CaretMotion::Backspace => {
+            cx.facts_mut().typed_word.pop();
+        }
+        CaretMotion::NewLine => {
+            if counts_behind(cx) {
+                cx.facts_mut().typed_word.clear();
+                return;
+            }
+            let effects = editing::character_typed(&mut cx.facts_mut(), press.trace_id, "\r");
+            for effect in effects {
+                cx.emit(effect);
+            }
+        }
+        _ => {}
+    }
 }
 
 /// After the pass: the key judges what waits behind it by the one
@@ -895,7 +939,8 @@ async fn sentence(
 /// The key's words and end, from its final read: the key speaks, so the
 /// typed word is forgotten and the caret read becomes Core's, the review
 /// cursor following it; a key with nothing to say leaves both to its caret
-/// tell.
+/// tell. Enter's script forgets no word: the carriage return it types ends
+/// the word after it ([`typed_at_end`]).
 fn finish(
     cx: &mut Cx<Entries>,
     press: &CaretPress,
@@ -908,7 +953,9 @@ fn finish(
     }
     {
         let mut facts = cx.facts_mut();
-        facts.typed_word.clear();
+        if press.key.motion != CaretMotion::NewLine {
+            facts.typed_word.clear();
+        }
         editing::take_caret(&mut facts, binding.node, read.caret);
     }
     say(cx, press, words);
@@ -1014,8 +1061,9 @@ fn deleted(
 }
 
 /// The words of a key whose effect was seen: Backspace and
-/// Control+Backspace what they deleted, from the starting read; any other
-/// key its unit at the caret (a sentence key's is the line).
+/// Control+Backspace what they deleted, from the starting read; Enter the
+/// new line's text up to the caret; any other key its unit at the caret (a
+/// sentence key's is the line).
 fn effect_words(
     state: &mut SrState,
     binding: &CaretBinding,
@@ -1027,6 +1075,12 @@ fn effect_words(
     }
     if key.motion.deletes_back() {
         return deleted(state, binding, key, started);
+    }
+    if key.motion == CaretMotion::NewLine {
+        let mut reported = binding.formatting.clone();
+        let words = editing::new_line_segments(&read.caret.line, &mut reported);
+        editing::formatting_back(state, (binding.node, binding.record), reported);
+        return words;
     }
     unit_remembered(state, binding, key, read)
 }
@@ -1053,14 +1107,18 @@ fn unit_remembered(
 }
 
 /// The words of a key at its bound: a movement key's or Delete's unit at
-/// the caret; nothing for Backspace and Control+Backspace.
+/// the caret; nothing for Backspace, Control+Backspace and Enter, whose
+/// scripts speak only a move.
 fn bound_words(
     state: &mut SrState,
     binding: &CaretBinding,
     key: CaretKey,
     read: &WatchedRead,
 ) -> Vec<UtteranceSegment> {
-    if editing::selects(key) || key.motion.deletes_back() || key.motion == CaretMotion::Other {
+    if editing::selects(key)
+        || key.motion.deletes_back()
+        || matches!(key.motion, CaretMotion::Other | CaretMotion::NewLine)
+    {
         return Vec::new();
     }
     unit_remembered(state, binding, key, read)

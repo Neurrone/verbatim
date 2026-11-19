@@ -125,7 +125,11 @@ impl Typing {
         Some((profile.dwProfileType, profile.langid))
     }
 
-    /// The text a key-down passed to the application types, or `None`.
+    /// What a key-down passed to the application types, or `None`: text,
+    /// or a control character that ends the word being typed
+    /// ([`Typed::Control`]). With Control down and neither Alt nor the
+    /// Windows key, a key types no text, only a control character, as
+    /// Control+C types U+0003 into an application that translates it.
     /// `deferred` are the key transitions held back behind a held key and
     /// not yet passed on, in order, which the key follows: the modifiers
     /// among them are taken as made, since the key reaches the application
@@ -138,13 +142,14 @@ impl Typing {
         (vk, scan_code): (u16, u32),
         deferred: &[(u16, bool)],
         (front, view): (impl FnOnce() -> HWND, Option<HookForeground>),
-    ) -> Option<String> {
+    ) -> Option<Typed> {
         if vk == VK_PACKET.0 {
             return self.packet(u16::try_from(scan_code).ok()?);
         }
         self.high_surrogate = None;
         let modifiers = Modifiers::now().after(deferred);
-        if !modifiers.allow_typing() {
+        let control_only = modifiers.types_control_only();
+        if !modifiers.allow_typing() && !control_only {
             return None;
         }
         let layout = foreground_layout(front(), view);
@@ -169,11 +174,17 @@ impl Typing {
         };
         // Negative for a dead key, which types nothing yet.
         let length = usize::try_from(length).ok()?;
-        typed_text(&buffer[..length.min(buffer.len())])
+        let units = &buffer[..length.min(buffer.len())];
+        if control_only {
+            // A shortcut types no text: only a control character counts,
+            // Control+M's carriage return and Control+I's tab among them.
+            return ends_word(units).then_some(Typed::Control);
+        }
+        typed(units)
     }
 
-    /// The text of one `VK_PACKET` key's UTF-16 unit.
-    fn packet(&mut self, unit: u16) -> Option<String> {
+    /// What one `VK_PACKET` key's UTF-16 unit types.
+    fn packet(&mut self, unit: u16) -> Option<Typed> {
         if (0xD800..0xDC00).contains(&unit) {
             self.high_surrogate = Some(unit);
             return None;
@@ -184,20 +195,51 @@ impl Typing {
             .into_iter()
             .chain([unit])
             .collect();
-        typed_text(&units)
+        typed(&units)
     }
 }
 
-/// The text a key's UTF-16 output types: `None` for nothing, an unpaired
-/// surrogate, or a control character other than a tab or a carriage return
-/// (Enter), which edit text rather than type it.
-pub(crate) fn typed_text(units: &[u16]) -> Option<String> {
+/// What a key passed to the application types.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Typed {
+    /// Text, a tab and a carriage return (Enter) included.
+    Text(String),
+    /// A control character other than a tab, a carriage return,
+    /// Backspace's (U+0008) and Control+Backspace's (U+007F): Escape's,
+    /// Control+C's or Control+Enter's, which ends the word being typed and
+    /// is never spelled, as NVDA's typed-character rule takes it
+    /// (`nvda/source/speech/speech.py` 1449 to 1472).
+    Control,
+}
+
+/// What a key's UTF-16 output types: text, alone or with a tab or a
+/// carriage return; control characters that end a word ([`ends_word`]);
+/// `None` for nothing, an unpaired surrogate, Backspace's or
+/// Control+Backspace's character, whose effect on the word Core takes at
+/// the key's end, or control characters mixed with text.
+pub(crate) fn typed(units: &[u16]) -> Option<Typed> {
     let text = String::from_utf16(units).ok()?;
-    let typed = !text.is_empty()
+    let is_text = !text.is_empty()
         && text
             .chars()
             .all(|character| !character.is_control() || matches!(character, '\t' | '\r'));
-    typed.then_some(text)
+    if is_text {
+        Some(Typed::Text(text))
+    } else {
+        ends_word(units).then_some(Typed::Control)
+    }
+}
+
+/// Whether a key's UTF-16 output is control characters alone, none of them
+/// Backspace's or Control+Backspace's: NVDA ends the word on any other
+/// control character (`nvda/source/speech/speech.py` 1457 to 1463).
+fn ends_word(units: &[u16]) -> bool {
+    String::from_utf16(units).is_ok_and(|text| {
+        !text.is_empty()
+            && text
+                .chars()
+                .all(|character| character.is_control() && !matches!(character, '\u{8}' | '\u{7f}'))
+    })
 }
 
 /// The modifier keys held as a key goes down.
@@ -256,6 +298,13 @@ impl Modifiers {
     /// both together it is `AltGr`, which types.
     pub(crate) fn allow_typing(self) -> bool {
         !self.windows && self.control == self.alt
+    }
+
+    /// Whether a key pressed with these modifiers types only a control
+    /// character, if anything: Control without Alt or the Windows key, as
+    /// Control+C types U+0003.
+    pub(crate) fn types_control_only(self) -> bool {
+        !self.windows && self.control && !self.alt
     }
 
     /// The key state array `ToUnicodeEx` reads the modifiers from.
@@ -341,26 +390,44 @@ mod tests {
         text.encode_utf16().collect()
     }
 
+    fn text(text: &str) -> Typed {
+        Typed::Text(text.to_owned())
+    }
+
     #[test]
     fn printable_text_a_tab_and_enter_are_typed() {
-        assert_eq!(typed_text(&units("a")).as_deref(), Some("a"));
-        assert_eq!(typed_text(&units("é")).as_deref(), Some("é"));
-        assert_eq!(typed_text(&units("\t")).as_deref(), Some("\t"));
-        assert_eq!(typed_text(&units("\r")).as_deref(), Some("\r"));
+        assert_eq!(typed(&units("a")), Some(text("a")));
+        assert_eq!(typed(&units("é")), Some(text("é")));
+        assert_eq!(typed(&units("\t")), Some(text("\t")));
+        assert_eq!(typed(&units("\r")), Some(text("\r")));
         assert_eq!(
-            typed_text(&units("´x")).as_deref(),
-            Some("´x"),
+            typed(&units("´x")),
+            Some(text("´x")),
             "a dead key that does not compose types both"
         );
     }
 
+    /// A control character other than a tab, a carriage return,
+    /// Backspace's and Control+Backspace's ends the word; those two and
+    /// nothing type nothing.
     #[test]
-    fn control_characters_and_nothing_are_not_typed() {
-        assert_eq!(typed_text(&units("\u{8}")), None, "Backspace");
-        assert_eq!(typed_text(&units("\u{1b}")), None, "Escape");
-        assert_eq!(typed_text(&units("\u{1}")), None, "Control+A");
-        assert_eq!(typed_text(&[]), None);
-        assert_eq!(typed_text(&[0xD800]), None, "an unpaired surrogate");
+    fn control_characters_end_the_word_but_backspaces_and_nothing_are_not_typed() {
+        assert_eq!(typed(&units("\u{1b}")), Some(Typed::Control), "Escape");
+        assert_eq!(typed(&units("\u{3}")), Some(Typed::Control), "Control+C");
+        assert_eq!(typed(&units("\n")), Some(Typed::Control), "Control+Enter");
+        assert_eq!(typed(&units("\u{8}")), None, "Backspace");
+        assert_eq!(typed(&units("\u{7f}")), None, "Control+Backspace");
+        assert_eq!(
+            typed(&units("a\u{3}")),
+            None,
+            "text and a control character"
+        );
+        assert_eq!(typed(&[]), None);
+        assert_eq!(typed(&[0xD800]), None, "an unpaired surrogate");
+        // Under Control alone a carriage return or a tab ends the word too.
+        assert!(ends_word(&units("\r")), "Control+M");
+        assert!(ends_word(&units("\t")), "Control+I");
+        assert!(!ends_word(&units("\u{8}")), "Control+H");
     }
 
     #[test]
@@ -400,8 +467,8 @@ mod tests {
         let mut typing = Typing::default();
         let pair = units("😀");
         assert_eq!(typing.packet(pair[0]), None);
-        assert_eq!(typing.packet(pair[1]).as_deref(), Some("😀"));
-        assert_eq!(typing.packet(u16::from(b'a')).as_deref(), Some("a"));
+        assert_eq!(typing.packet(pair[1]), Some(text("😀")));
+        assert_eq!(typing.packet(u16::from(b'a')), Some(text("a")));
     }
 
     #[test]
@@ -423,6 +490,25 @@ mod tests {
             .allow_typing()
         );
         assert!(!Modifiers { alt: true, ..plain }.allow_typing());
+        // Control alone, with Shift or not, types only a control character.
+        assert!(
+            Modifiers {
+                control: true,
+                shift: true,
+                ..plain
+            }
+            .types_control_only()
+        );
+        assert!(!plain.types_control_only());
+        assert!(
+            !Modifiers {
+                control: true,
+                alt: true,
+                ..plain
+            }
+            .types_control_only(),
+            "AltGr"
+        );
         assert!(
             Modifiers {
                 control: true,
@@ -446,7 +532,7 @@ mod tests {
         let console = HookForeground {
             window: WindowHandle(10),
             holds_keys: true,
-            focus_has_text: false,
+            focus_text: verbatim_model::FocusTextKind::None,
             keyboard_thread: Some(100),
             desktop_switches: 0,
         };

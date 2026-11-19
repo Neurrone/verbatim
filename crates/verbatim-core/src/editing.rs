@@ -290,6 +290,36 @@ pub(crate) fn formatting_back(
     }
 }
 
+/// The speech for Enter's new line, the caret's `line` after the key, as
+/// NVDA's new-line script speaks it (`docs/parity/text.md`, "Enter in a
+/// text field"): the line's text from its start up to the caret, with its
+/// formatting as it changes from `reported`; where that text is blank,
+/// nothing of it, NVDA suppressing blanks, but the formatting at its start,
+/// or where it is empty, at the caret's character, NVDA's opening fields.
+/// `reported` becomes the formatting last spoken.
+pub(crate) fn new_line_segments(
+    line: &TextChunk,
+    reported: &mut TextAttributes,
+) -> Vec<UtteranceSegment> {
+    let content = text::line_content(&line.text, false);
+    let offset = text::boundary(content, text::byte_offset(line.offset));
+    // A boundary, so never past a character's start.
+    let before = content.get(..offset).unwrap_or_default();
+    if text::is_blank(before) {
+        let at = if before.is_empty() { offset } else { 0 };
+        return text::opening_format(line, at, reported);
+    }
+    let language = line.language_at(0);
+    text::formatted_segments(
+        line,
+        (0..offset, 0..offset),
+        text::Spoken::Text,
+        reported,
+        language,
+    )
+    .unwrap_or_else(|| text::text_segments(before, language))
+}
+
 /// The speech for a sentence moved to, in `line`: "blank" where there is
 /// none, as NVDA reads the empty text at the caret.
 pub(crate) fn sentence_words(line: &TextChunk, sentence: &str) -> Vec<UtteranceSegment> {
@@ -938,12 +968,31 @@ pub(crate) fn character_typed(state: &mut SrState, trace_id: TraceId, typed: &st
     effects
 }
 
-/// Echoes typed text by the settings: a finished word first, when word echo
-/// is on and the text ends one, then the characters.
-pub(crate) fn echo(state: &mut SrState, trace_id: TraceId, typed: &str) -> Vec<Effect> {
+/// Handles a control character typed into the focused application, one
+/// other than a tab, a carriage return, Backspace's and
+/// Control+Backspace's (Escape, Control+C, Control+Enter): the word being
+/// typed ends, spoken when word echo applies, and nothing is spelled, as
+/// NVDA's typed-character rule takes any such character
+/// (`docs/parity/input.md`, "Typed-character echo"). In a terminal, whose
+/// typing is echoed once it shows, only while its passwords are spoken, as
+/// [`character_typed`] echoes there.
+pub(crate) fn control_typed(state: &mut SrState, trace_id: TraceId) -> Vec<Effect> {
+    let mut effects = crate::say_all::stop(state);
     let Some(focus) = state.live_focus() else {
-        return Vec::new();
+        return effects;
     };
+    if focus.snapshot.role == Role::Terminal && !state.settings.speak_terminal_passwords {
+        return effects;
+    }
+    let echo_words = echoes(state).is_some_and(|(_, words)| words);
+    effects.extend(end_word(state, trace_id, echo_words));
+    effects
+}
+
+/// Whether the focus echoes typed characters and typed words, by the
+/// settings; `None` with no live focus.
+fn echoes(state: &SrState) -> Option<(bool, bool)> {
+    let focus = state.live_focus()?;
     let editable = is_editable(&focus.snapshot);
     let protected = focus.snapshot.states.contains(State::Protected);
     let applies = |mode: TypingEcho| match mode {
@@ -951,8 +1000,28 @@ pub(crate) fn echo(state: &mut SrState, trace_id: TraceId, typed: &str) -> Vec<E
         TypingEcho::EditControls => editable,
         TypingEcho::Always => true,
     };
-    let echo_characters = applies(state.settings.speak_typed_characters);
-    let echo_words = applies(state.settings.speak_typed_words) && !protected;
+    Some((
+        applies(state.settings.speak_typed_characters),
+        applies(state.settings.speak_typed_words) && !protected,
+    ))
+}
+
+/// Ends the word being typed: it is forgotten, and spoken when
+/// `echo_words` and there is one.
+fn end_word(state: &mut SrState, trace_id: TraceId, echo_words: bool) -> Option<Effect> {
+    let word = std::mem::take(&mut state.typed_word);
+    (echo_words && !word.is_empty()).then(|| speak(trace_id, vec![UtteranceSegment::text(word)]))
+}
+
+/// Echoes typed text by the settings: a finished word first, when word echo
+/// is on and the text ends one, then the characters.
+pub(crate) fn echo(state: &mut SrState, trace_id: TraceId, typed: &str) -> Vec<Effect> {
+    let Some((echo_characters, echo_words)) = echoes(state) else {
+        return Vec::new();
+    };
+    let protected = state
+        .live_focus()
+        .is_some_and(|focus| focus.snapshot.states.contains(State::Protected));
     let mut effects = Vec::new();
     for character in verbatim_text::graphemes(typed)
         .into_iter()
@@ -969,10 +1038,7 @@ pub(crate) fn echo(state: &mut SrState, trace_id: TraceId, typed: &str) -> Vec<E
                 state.typed_word.push_str(character);
             }
         } else {
-            let word = std::mem::take(&mut state.typed_word);
-            if echo_words && !word.is_empty() {
-                effects.push(speak(trace_id, vec![UtteranceSegment::text(word)]));
-            }
+            effects.extend(end_word(state, trace_id, echo_words));
         }
         // A control character, Tab, Enter, or Backspace among them, ends a
         // word but is never spelled, as in NVDA (docs/nvda/input.md, "Typed

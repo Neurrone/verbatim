@@ -49,9 +49,10 @@ recorder unchanged. What the reducer does with each type is in
   attention and its foreground record, and what Core decides from it for
   the keyboard hook, with its desktop part (`desktop_switches`, the
   switches away from the user's input desktop Core has handled): whether
-  keys may be held back for that window and
-  which thread's keyboard layout translates its keys (architecture
-  section 5).
+  keys may be held back for that window, what text its focus has
+  (`FocusTextKind`: none, a field's, whose Enter is held too, or a
+  terminal's), and which thread's keyboard layout translates its keys
+  (architecture section 5).
 - `Backend`: `Uia` or `Msaa`, which client stack sourced a node or event;
   diagnostics only above the outpost.
 - `Role`, `State`, `StateSet`: the role vocabulary, with a counterpart for
@@ -309,7 +310,9 @@ them yet.
   key or command arrives as a `Press`, its action chosen at the press; a
   caret key's `PressAction::CaretKey` carries the `HeldStroke` the hook
   held, if it held one, and the `CaretBinding` it was bound to: the
-  committed focus's node, window, role and `TextProvider`. A transition
+  committed focus's node, window, role and `TextProvider`;
+  `PressAction::Control` is a control character a key typed, after the
+  key's other actions. A transition
   the hook deferred arrives as `QueueInput::Deferred`; Core names what to
   send in `QueueEffect::SendStrokes` (each a `SentTransition`) and, at
   `QueueInput::Exit`, the keys to release in `QueueEffect::ReleaseAtExit`.
@@ -623,8 +626,9 @@ beside the op's own reply, so no answer of them fails to decode.
   hook passed to the application, with its key number and when it saw
   it, in Unix milliseconds (0 when unknown). A `CaretKey` is a `CaretMotion` (character, word,
   line, paragraph, sentence, or page; the line's start or end; top or
-  bottom; Backspace and Delete, alone or with Control; Control+A; or
-  `Other`, any other key that types no text) and whether Shift extends
+  bottom; Backspace and Delete, alone or with Control; Control+A; Enter
+  in a text field, `NewLine`; or `Other`, any other key that types no
+  text) and whether Shift extends
   the selection; `CaretMotion::unit` is the unit spoken after it.
   [verbatim-input](verbatim-input.md)'s `caret_bindings` maps gestures to
   these.
@@ -635,6 +639,10 @@ beside the op's own reply, so no answer of them fails to decode.
 - `Input::CharacterTyped { trace_id, key_seq, text, at_ms }`: text typed into the
   focused application, one character or an input method's committed
   composition, a tab as a tab and Enter as a carriage return.
+- `Input::ControlTyped { trace_id, key_seq, at_ms }`: a control character
+  other than a tab, a carriage return, Backspace's and Control+Backspace's
+  typed into the focused application (Escape, Control+C, Control+Enter),
+  which ends the word being typed.
 - `Input::ClearingKey { trace_id, key_seq, at_ms }`: Escape, Control+C, Control+D,
   or Control+Break passed to the focused application.
 - `Input::MarkReached { mark }`, `Input::UtteranceCancelled { marks,

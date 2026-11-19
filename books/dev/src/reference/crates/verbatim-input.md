@@ -37,7 +37,8 @@ Public API:
   from a user typing numbers; the `source`, `User` or `Own` (the keys
   Verbatim injects for itself); and the `permit` Core's view of the window
   in front gives, `None`, `Defer` or `HoldAndDefer`, the last when the
-  focus also has text; and `may_mask`, whether that view lets keys be
+  focus also has text (for Enter, a field's other than a terminal's, which
+  the hook judges); and `may_mask`, whether that view lets keys be
   held in the window it names, read without checking the window is still
   in front. A `Decision` carries the `verdict` (`Pass`,
   `Swallow`, `Hold(place)` or `Defer(place)`), the gesture raised if any
@@ -68,6 +69,9 @@ Public API:
   what the application did with it. A gesture both bound and observed is
   bound. `with_held(gestures)` adds observed gestures that are also held,
   the caret keys, and `holds(gesture)` says whether one is.
+  `with_held_only(gestures)` adds gestures held like them but observed
+  only when held, Enter's: not held, the key is reported as an unobserved
+  key, the text it types (`holds_only(gesture)`).
 - `scripts` — the M3 script vocabulary. `KeyboardLayout` (`Desktop` or
   `Laptop`, redeclared here decoupled from `verbatim_config::KeyboardLayout`
   like `DecisionConfig` already is from `VerbatimKeys`) and `ScriptAction`
@@ -129,9 +133,12 @@ Public API:
   End, Page Up, Page Down, and Control with Home and End; Backspace,
   Delete and the numpad's Delete, each alone and with Control or Shift
   (Shift deletes as the key alone does, and Shift+Delete cuts a
-  selection); and Alt with Up and Down Arrow, NVDA's sentence keys. They
-  are observed and held, never bound: the shell adds them to the hook's
-  map with `with_held` and turns each reported gesture into
+  selection); Alt with Up and Down Arrow, NVDA's sentence keys; and Enter
+  and the numpad's Enter, NVDA's new-line script's keys
+  (`CaretMotion::NewLine`), which have no Shift form among the selection
+  keys. They are observed and held, never bound: the shell adds them to
+  the hook's map with `with_held`, Enter's with `with_held_only`, and
+  turns each reported gesture into
   `Input::CaretKey`, or, while the focus has text, the machine holds them
   back until the caret has been read and the shell turns each into
   `Input::HeldKey` (`books/dev/src/explanation/design/key-holding.md`).

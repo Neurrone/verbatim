@@ -245,6 +245,9 @@ pub(crate) fn caret_key_kind(key: CaretKey) -> TerminalKeyKind {
         | CaretMotion::Top
         | CaretMotion::Bottom => TerminalKeyKind::Caret(TerminalUnit::Line),
         CaretMotion::Delete => TerminalKeyKind::Delete,
+        // Enter held for a terminal, by a hook view behind the focus, is
+        // the carriage return it types there.
+        CaretMotion::NewLine => TerminalKeyKind::Enter,
         _ => TerminalKeyKind::Other,
     }
 }

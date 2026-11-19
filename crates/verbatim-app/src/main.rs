@@ -2063,8 +2063,9 @@ fn next_of(received: Received<ShellCommand>) -> Next {
 /// gestures, so they are not listed separately. The caret keys are observed
 /// and held, not bound: they reach the application, held back while the
 /// focus has text until its caret is read, and the hook reports them for
-/// the reducer to speak what they did (milestone M4). The selection keys
-/// are observed and never held: they pass at once.
+/// the reducer to speak what they did (milestone M4); Enter is held only,
+/// in a text field other than a terminal, and otherwise typed text. The
+/// selection keys are observed and never held: they pass at once.
 fn bound_gestures(layout: KeyboardLayout) -> GestureMap {
     let mut gestures = vec![GestureId::parse(SHOW_MENU_GESTURE).expect("valid binding")];
     gestures.extend(
@@ -2083,6 +2084,13 @@ fn bound_gestures(layout: KeyboardLayout) -> GestureMap {
         .with_held(
             verbatim_input::caret_bindings()
                 .into_iter()
+                .filter(|(_gesture, key)| key.motion != verbatim_model::CaretMotion::NewLine)
+                .map(|(gesture, _key)| gesture),
+        )
+        .with_held_only(
+            verbatim_input::caret_bindings()
+                .into_iter()
+                .filter(|(_gesture, key)| key.motion == verbatim_model::CaretMotion::NewLine)
                 .map(|(gesture, _key)| gesture),
         )
 }

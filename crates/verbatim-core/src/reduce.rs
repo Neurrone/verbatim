@@ -102,9 +102,10 @@ pub fn reduce(state: &mut SrState, runtime: &mut crate::Runtime, input: &Input) 
 fn reduce_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
     match input {
         Input::Command { .. } | Input::Script { .. } => command_arrived(state, input),
-        Input::CharacterTyped { .. } | Input::ClearingKey { .. } | Input::EditingChord { .. } => {
-            key_arrived(state, input)
-        }
+        Input::CharacterTyped { .. }
+        | Input::ControlTyped { .. }
+        | Input::ClearingKey { .. }
+        | Input::EditingChord { .. } => key_arrived(state, input),
         Input::TerminalTimer { trace_id, at_ms } => terminal_model::timer(state, *trace_id, *at_ms),
         Input::Settings(settings) => {
             let effects =
@@ -157,6 +158,7 @@ pub(crate) fn key_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
         Input::CharacterTyped { trace_id, text, .. } => {
             editing::character_typed(state, *trace_id, text)
         }
+        Input::ControlTyped { trace_id, .. } => editing::control_typed(state, *trace_id),
         Input::ClearingKey { .. } => {
             editing::clearing_key(state);
             Vec::new()
@@ -182,6 +184,7 @@ pub(crate) fn key_trace(input: &Input) -> Option<TraceId> {
     match input {
         Input::CaretKey { trace_id, .. }
         | Input::CharacterTyped { trace_id, .. }
+        | Input::ControlTyped { trace_id, .. }
         | Input::ClearingKey { trace_id, .. }
         | Input::EditingChord { trace_id, .. }
         | Input::HeldKey { trace_id, .. } => Some(*trace_id),
@@ -254,9 +257,10 @@ pub(crate) fn waited_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
         Input::Command { .. } | Input::Script { .. } => {
             under_key(input.trace_id(), command_arrived(state, input))
         }
-        Input::CharacterTyped { .. } | Input::ClearingKey { .. } | Input::EditingChord { .. } => {
-            under_key(key_trace(input), key_arrived(state, input))
-        }
+        Input::CharacterTyped { .. }
+        | Input::ControlTyped { .. }
+        | Input::ClearingKey { .. }
+        | Input::EditingChord { .. } => under_key(key_trace(input), key_arrived(state, input)),
         _ => shell::reduce(state, input),
     }
 }

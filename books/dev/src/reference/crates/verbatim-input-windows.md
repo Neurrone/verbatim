@@ -139,7 +139,8 @@ The machine decides which keys are held and deferred
 [verbatim-input](verbatim-input.md)); the hook gathers the permit and
 carries out the verdicts. The held keys are the gesture map's
 (`GestureMap::with_held`, the caret table without the selection keys,
-`verbatim_input::caret_bindings`). A `Hold(place)` is swallowed and
+`verbatim_input::caret_bindings`, and `GestureMap::with_held_only`,
+Enter and the numpad's Enter, observed only when held). A `Hold(place)` is swallowed and
 reported as `KeyReport::Held`, with its press time and the stroke it came
 from (`HeldStroke`: virtual key, scan code, extended flag, place), after
 its effect on speech as before. A `Defer(place)` is swallowed and
@@ -148,7 +149,11 @@ after the reports it makes as before (a typed character is still
 reported `Typed`, translated with the deferred modifiers ahead of it,
 read from the machine's line, taken as made), so the app sends it on
 after the held key, in the order pressed. The clearing keys, typed
-characters, Enter and any other key are never held for a read.
+characters and any other key are never held for a read. Enter is held
+only in a text field other than a terminal, as NVDA's new-line script is
+bound only there (Dickson, 2026-11-19): with the focus in a terminal its
+permit is `Defer`, so it passes, or waits behind a held key, as typed
+text, the carriage return its translation gives.
 
 A gesture's mask (the menu guard, `docs/parity/input.md`, "A modifier
 released after a command") is reported after the gesture as two
@@ -175,9 +180,10 @@ instead and is held like a typed one.
 The permit: the app publishes Core's view after every input in
 `foreground`, a `ForegroundView` (a lock-free `ArcSwapOption` of
 `verbatim_model::HookForeground`), which says whether keys may be held
-for the window in front (`holds_keys`) and whether the focus has text
-(`focus_has_text`, from `SrState::holds_caret_keys`, true while the focus
-has text or may have, as for the caret keys whose evidence is watched).
+for the window in front (`holds_keys`) and what text the focus has
+(`focus_text`, a `FocusTextKind` from `SrState::focus_text_kind`: `None`,
+or `Field` or `Terminal` while the focus has text or may have, as for
+the caret keys whose evidence is watched).
 The hook makes one load of it per key, so it never waits. When the
 view's desktop part (`desktop_switches`) differs from the one it last
 read, a switch away from the user's input desktop came between, whose
@@ -185,9 +191,10 @@ releases never reach the hook: the machine forgets every key down and
 its line (`DecisionMachine::desktop_switched`). It reads the
 window in front (`GetForegroundWindow`, a local read) only when the view
 lets keys be held and either the focus has text or a key waits in the
-machine's line, and the permit is `HoldAndDefer` or `Defer` only while
-that window is the one the view names; otherwise it is `None`, with no
-call. The same read serves the translation of typed text.
+machine's line, and the permit is `HoldAndDefer` (the focus has text,
+and for Enter is a field's) or `Defer` only while that window is the one
+the view names; otherwise it is `None`, with no call. The same read
+serves the translation of typed text.
 
 Elevated windows: while the foreground window's process has higher
 integrity than Verbatim's, or its integrity cannot be read, the permit is
@@ -230,10 +237,20 @@ does):
   console's events until that console names its thread, then unhooks
   them (`verbatim-listener-logic`, the `foreground` module). A console window
   whose thread is not known yet, or a view Core has not brought up to
-  date, falls back to the answer Windows gives. Control or Alt alone, or the Windows key,
+  date, falls back to the answer Windows gives. Alt alone, or the Windows key,
   make a shortcut, which types nothing. The result counts when it is text
   other than control characters, a tab and the carriage return of Enter
-  excepted.
+  excepted, reported `KeyReport::Typed`.
+- Control characters. A key that types control characters alone, none of
+  them Backspace's U+0008 or Control+Backspace's U+007F, is reported
+  `KeyReport::Control`, after the key's other reports, a key completing
+  no observed gesture being also reported `Passed`: Escape's U+001B, and
+  under Control without Alt or the Windows key, where a key types nothing
+  else, Control+C's U+0003, Control+Enter's line feed, Control+M's
+  carriage return. Core ends the word being typed on it, as NVDA's
+  typed-character rule does (`docs/parity/input.md`, "Typed-character
+  echo"). Backspace's character is not reported: Core drops the word's
+  last character at the held Backspace's end.
 - Dead keys. Windows keeps a pending dead key (the accent of a
   US-International key, waiting for the letter it modifies) in state every
   translation with that layout shares: one process

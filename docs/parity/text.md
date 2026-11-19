@@ -34,7 +34,7 @@ The layer's cases are the entries that follow, from "Caret keys and
 what each speaks" to "Not yet built". The end-to-end steps that declare
 a difference from NVDA against this entry show the differences recorded
 in "A caret key that moves nothing", "What counts as a caret key's
-evidence", "Holding caret keys", "Keys outside the caret table",
+evidence", "Holding caret keys", "Enter in a text field", "Keys outside the caret table",
 "Selecting with Shift" and "NVDA's delayed character description at the
 caret".
 
@@ -251,6 +251,38 @@ that detects its own selection changes. The differences:
 - While a window of higher integrity than Verbatim's is in front,
   nothing is held.
 
+### Enter in a text field
+
+NVDA binds Enter and the numpad's Enter to its new-line script in every
+editable text that announces a new line, outside its own process
+(`nvda/source/NVDAObjects/behaviors.py` 246 to 253), which terminals do
+not (`behaviors.py` 385 and 511; `NVDAObjects/UIA/winConsoleUIA.py`
+491). The script reads the caret, sends the key and waits as a caret
+script does; when the caret moved with no focus pending, it speaks the
+new line from its start up to the caret, blanks suppressed, and where
+that is empty only the opening fields of the character at the caret
+(`nvda/source/editableText.py` 208 to 238; `speech/speech.py` 176 to
+186 and 1934 to 1937). It forgets no typed word: the carriage return the
+application receives then ends the word and speaks it.
+
+Verbatim: **matched**: Enter is a caret key held in a text field other
+than a terminal (Dickson, 2026-11-19;
+[holding caret keys](../../books/dev/src/explanation/design/key-holding.md)),
+and says what the script says from its watch's final read; at its end
+its carriage return ends the word typed, as in "Typed-character echo"
+([Input](input.md)). In a terminal it is typed text, never held.
+NVDA's captures of 2026-11-19, Notepad (six runs) and the Windows Forms
+text box (five), with word echo in edit controls: "hello", Enter at the
+line's end says "hello", the word the carriage return ends; Enter
+mid-line before "beta" says nothing. In a dialog's single-line field
+whose default button opens a message box, "hello", Enter says no
+"hello", only the message box (four runs of five; in the fifth NVDA
+queued "hello" and cut it off 7 ms later, a race inside NVDA): the focus
+taken during Enter's watch forgets the word, as NVDA's focus change
+does. An application that inserts text on the new line, a numbered
+list's "2. ", has it said, where the script speaks it; no such
+application was captured.
+
 ### What Backspace and Delete say
 
 NVDA's Backspace and Delete scripts speak what they expect the key to
@@ -288,12 +320,17 @@ Control+Delete say the unit now at the caret.
 ### Keys outside the caret table
 
 NVDA says nothing for a key outside its caret keys that types no text.
-Verbatim: **different** (Dickson, 2026-10-08): such a key (bash's
-Control+A, Control+E, Alt+B, Alt+F, Control+W, Control+K, and in a
-terminal the editing chords, Escape clearing a line among them) is spoken
-by its evidence: text it removed at the caret, the new line when the
-caret left its line, and otherwise by where the caret landed (the
-character, the word, or the word then the character).
+Verbatim: in a text field other than a terminal **matched**: such a key
+(a field's binding of Control+W, say) says nothing, the ruling of
+2026-10-08 below kept for terminals only (Dickson, 2026-11-19), since no
+field outside terminals was found that binds such keys and holding them
+to judge their effect would make every other key in a field wait for a
+read. In a terminal **different** (Dickson, 2026-10-08): such a key
+(bash's Control+A, Control+E, Alt+B, Alt+F, Control+W, Control+K, and
+the editing chords, Escape clearing a line among them) is spoken by its
+evidence: text it removed at the caret, the new line when the caret left
+its line, and otherwise by where the caret landed (the character, the
+word, or the word then the character).
 
 - Escape after `echo hi` in a terminal is silent in NVDA and "echo hi"
   in Verbatim.
@@ -473,8 +510,9 @@ caret ("beta"); each then "selection removed" (the line breaks from
 selection echoes the character, then "selection removed"; Control+X,
 Control+V and Enter say only "selection removed", over a word and over
 Shift+End's rest of a line; Control+C says nothing. For Enter neither
-says anything more: Verbatim has no read of the new line, since Enter
-reaches it as typed text, "\r". The `text_box_selection_keys` and
+says anything more: the new line's text before the caret, which its
+held key reads as NVDA's Enter script does, is empty ("Enter in a text
+field"). The `text_box_selection_keys` and
 `text_box_editing` scenarios; mockapp's
 `an_edit_controls_delete_over_a_selection_says_its_unit_then_the_selection_removed`,
 `an_edit_controls_caret_tell_before_its_value_change_is_said_in_general_terms`

@@ -61,6 +61,9 @@ fn user_key(input: &Input) -> Option<(TraceId, KeySeq)> {
         | Input::CharacterTyped {
             trace_id, key_seq, ..
         }
+        | Input::ControlTyped {
+            trace_id, key_seq, ..
+        }
         | Input::ClearingKey {
             trace_id, key_seq, ..
         }

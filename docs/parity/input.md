@@ -103,24 +103,34 @@ and later). A word is spoken when a character that is not a letter,
 mark, or number by its general category
 ends it, before that character, so a virama or
 a Thai tone mark continues the word, as in NVDA. The word typed so far
-is forgotten when a key of the caret table that does not select is
-pressed, whether or not it then moves the caret or deletes anything,
-and when the focus moves, but not after a key that selects or a key
-outside the caret table: "hel", Control+C, "lo" and a space says
-"hello"; so does "hel", Shift+Left Arrow, "lo" typed over the "l"
-selected, and a space; "hel", Left Arrow, Shift+Right Arrow, "lo" and a
-space says "lo" (`notepad_typed_words`, from NVDA's captures
-`05a-*` to `05c-*` in
+follows NVDA's typed-word rule (Dickson, 2026-11-19): it is forgotten
+when a caret key's script speaks, Enter's excepted, and when the focus
+moves; a caret key that says nothing (Backspace at its bound, a key
+marked by a key behind it or released by its 150 ms timer), a selection
+key and a key outside the caret table keep it. The characters keys type
+change it as NVDA's `speakTypedCharacters` does
+(`nvda/source/speech/speech.py` 1449 to 1472): Backspace's U+0008 drops
+its last character, at the held Backspace's end; Control+Backspace's
+U+007F is ignored; and any other control character ends the word and
+speaks it, spelling nothing: Escape's U+001B, Control+C's U+0003,
+Control+Enter's line feed, Enter's carriage return. So "hel", Control+C,
+"lo" and a space says "hel" at Control+C and "lo" at the space, and so
+do Escape and Control+Enter in place of Control+C (NVDA's captures of
+2026-11-19, five runs each: Control+C in Notepad and the Windows Forms
+text box, Escape and Control+Enter in Notepad; `notepad_typed_words`); "cat", Backspace, "s", a space says "t" at
+Backspace, which forgets the word, then "s"; "cat", Backspace, "r", a
+space in one batch says "car", Backspace marked by the "r" saying
+nothing and dropping the "t" (captured the same day); "hel",
+Shift+Left Arrow, "lo" typed over the "l" selected, and a space says
+"hello"; "hel", Left Arrow, Shift+Right Arrow, "lo" and a space says
+"lo" (`notepad_typed_words`, from NVDA's captures `05b-*` and `05c-*` in
 `target/e2e-evidence/m42-text-captures-2026-10-23/`). Different,
 deliberately: the zero-width non-joiner and joiner also continue a word,
-which NVDA's rule does not, since Persian and Indic words are typed
-with them. Different (Dickson, 2026-10-26):
-NVDA also forgets the word for a movement key that moves nothing and for
-Delete and Control+Delete, but not for a Backspace or Control+Backspace
-that moves nothing, whose script returns before forgetting it when the
-caret has not moved (`_backspaceScriptHelper`,
-`nvda/source/editableText.py`); Verbatim forgets it for those too.
-Different, and not yet decided: NVDA forgets the word when a terminal shows new
+which NVDA's rule does not, since Persian and Indic words are typed with
+them. Limitation: Backspace drops one code point where NVDA drops one
+UTF-16 unit; the two differ only for a character outside the Basic
+Multilingual Plane, half of which NVDA keeps and Verbatim's text cannot
+hold. Different, and not yet decided: NVDA forgets the word when a terminal shows new
 lines of output (`nvda/source/NVDAObjects/behaviors.py` 568), and
 Verbatim does not. A protected field echoes only the protected character
 ("star") and no words; typing into a terminal waits until the

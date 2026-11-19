@@ -315,6 +315,11 @@ fn today(trace_id: TraceId, press: &Press) -> Option<Input> {
             key_seq,
             pressed_at_ms,
         },
+        PressAction::Control => Input::ControlTyped {
+            trace_id,
+            key_seq,
+            at_ms: pressed_at_ms,
+        },
         PressAction::Passed => return None,
     })
 }

@@ -1391,6 +1391,13 @@ pub enum PressAction {
     EditingChord,
     /// Any other key passed to the application, which types no text.
     Passed,
+    /// A key passed to the application that types a control character
+    /// other than Tab, a carriage return, Backspace's and Control+Backspace's
+    /// (Escape, Control+C, Control+Enter and the like), which ends the word
+    /// being typed and is never spelled, as NVDA's typed-character rule
+    /// takes it (`docs/parity/input.md`, "Typed-character echo"). It comes
+    /// after the key's other report, if any.
+    Control,
 }
 
 /// The committed focus's record a caret key is bound to at its press, as

@@ -67,7 +67,7 @@ mod tree;
 
 pub use calls::{CallCounts, CallKind};
 pub use event::{
-    ActionName, AlertOrigin, BarChange, Earcon, EarlierElement, Effect, FocusGroup,
+    ActionName, AlertOrigin, BarChange, Earcon, EarlierElement, Effect, FocusGroup, FocusTextKind,
     ForegroundWindow, GuiRequest, HookForeground, Input, LockKey, NormalizedEvent, Notification,
     NotificationKind, NotificationProcessing, Observed, Percent, Pid, PropertyChange, QueryKind,
     ReviewCommand, Script, ToastId, WindowFacts, WindowHandle,

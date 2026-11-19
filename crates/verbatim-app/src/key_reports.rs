@@ -198,6 +198,7 @@ fn key_of(report: &KeyReport) -> Option<KeySeq> {
         | KeyReport::Held { key_seq, .. }
         | KeyReport::Passed { key_seq, .. }
         | KeyReport::Typed { key_seq, .. }
+        | KeyReport::Control { key_seq, .. }
         | KeyReport::Gesture { key_seq, .. } => Some(*key_seq),
         KeyReport::Deferred { .. } | KeyReport::Handled(_) | KeyReport::Alt { .. } => None,
     }
@@ -310,7 +311,8 @@ fn commands_for(report: KeyReport, tables: &Tables, mut post: impl FnMut(ShellCo
             pressed_at_us,
         } => observed_commands(&gesture, key_seq, pressed_at_us, tables, &mut post),
         // A held key joins Core's stroke line, which sends it on; the hook
-        // holds only caret keys, so it is one, any other passed at its turn.
+        // holds only caret keys, Enter among them, so it is one, any other
+        // passed at its turn.
         KeyReport::Held {
             gesture,
             key_seq,
@@ -358,6 +360,16 @@ fn commands_for(report: KeyReport, tables: &Tables, mut post: impl FnMut(ShellCo
             key_seq,
             pressed_at_us,
             PressAction::Typed { text },
+        )),
+        KeyReport::Control {
+            trace_id,
+            key_seq,
+            pressed_at_us,
+        } => post(press(
+            trace_id,
+            key_seq,
+            pressed_at_us,
+            PressAction::Control,
         )),
         KeyReport::Gesture {
             gesture,
@@ -550,6 +562,14 @@ mod tests {
             [caret(CaretMotion::Other)]
         );
         assert_eq!(mapped(KeyReport::Handled(3)), ["handled 3"]);
+        assert_eq!(
+            mapped(KeyReport::Control {
+                trace_id,
+                key_seq,
+                pressed_at_us: PRESSED_AT_US
+            }),
+            [pressed(PressAction::Control)]
+        );
         assert_eq!(
             mapped(KeyReport::Typed {
                 trace_id,
@@ -809,6 +829,39 @@ mod tests {
             "the kept cancel first, then the toggle"
         );
         drop(refusal);
+    }
+
+    /// Enter, held in a text field, is the new-line caret key, as the
+    /// numpad's Enter is.
+    #[test]
+    fn a_held_enter_maps_to_the_new_line_key() {
+        for (name, extended) in [("kb:enter", false), ("kb:numpadenter", true)] {
+            let stroke = HeldStroke {
+                vk: 0x0D,
+                scan_code: 0x1C,
+                extended,
+                sequence: 1,
+            };
+            assert_eq!(
+                mapped(KeyReport::Held {
+                    gesture: emitted(TraceId::mint(), name, 0),
+                    key_seq: KeySeq::new(4),
+                    pressed_at_us: PRESSED_AT_US,
+                    stroke,
+                }),
+                [pressed(caret_key(
+                    CaretKey {
+                        motion: CaretMotion::NewLine,
+                        select: false
+                    },
+                    Some(crate::strokes::held_of(
+                        &GestureId::parse(name).expect("valid id"),
+                        stroke
+                    ))
+                ))],
+                "{name}"
+            );
+        }
     }
 
     #[test]

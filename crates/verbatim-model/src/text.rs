@@ -755,6 +755,8 @@ impl StartingUnit {
         match motion {
             CaretMotion::Delete | CaretMotion::DeleteWord => Self::AtWithWord(motion.unit()),
             CaretMotion::Backspace | CaretMotion::BackspaceWord => Self::BeforeCaret(motion.unit()),
+            // Enter's script reads only where the caret is before the key.
+            CaretMotion::NewLine => Self::At(TextUnit::Character),
             _ => Self::At(motion.unit()),
         }
     }
@@ -1355,6 +1357,11 @@ pub enum CaretMotion {
     DeleteWord,
     /// Control+A: selects everything.
     SelectAll,
+    /// Enter in a text field other than a terminal: the application
+    /// breaks the line, and the new line's text before the caret is spoken,
+    /// as NVDA's new-line script speaks it (`docs/parity/text.md`, "Enter
+    /// in a text field").
+    NewLine,
     /// Any other key passed to the application that types no text (bash's
     /// Control+A and Control+E, Alt+B and Alt+F, Control+W): what it did is
     /// judged by its evidence, text removed at the caret or where the caret
@@ -1416,7 +1423,8 @@ impl CaretMotion {
             | Self::NextPage
             | Self::Top
             | Self::Bottom
-            | Self::SelectAll => TextUnit::Line,
+            | Self::SelectAll
+            | Self::NewLine => TextUnit::Line,
         }
     }
 }

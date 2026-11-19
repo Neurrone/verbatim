@@ -23,8 +23,9 @@ use verbatim_input::state::{
     DecisionMachine, HoldPermit, KeyInput, KeySource, PressReport, VK_MASK, Verdict,
 };
 use verbatim_input::{KeyDecision, KeyEvent};
-use verbatim_model::{HookForeground, KeySeq, TraceId};
+use verbatim_model::{FocusTextKind, HookForeground, KeySeq, TraceId};
 
+use crate::typed::Typed;
 use crate::{
     Effects, ForegroundView, HeldStroke, KeyReport, KeyReportFn, OWN_INPUT_TAG, SpeechEffectFn,
     passed_on_sequence, typed,
@@ -169,34 +170,44 @@ pub(crate) unsafe extern "system" fn keyboard_hook(
     unsafe { CallNextHookEx(None, code, wparam, lparam) }
 }
 
-/// What Core's `view` lets the machine do with a key, and the window in
-/// front when it was read for that. The window is read only when the view
-/// lets keys be held and either the focus has text or a key waits in the
-/// machine's line (`outstanding`); otherwise the permit is
-/// [`HoldPermit::None`] with no call. The view applies only while the
-/// window it names is still in front: until Core catches up with a
-/// change, no key is held or deferred. A window whose process has higher
-/// integrity than Verbatim's is one where keys may not be held, since
-/// Windows would drop a key sent again to it ([`ForegroundView`]).
+/// What Core's `view` lets the machine do with a key, of virtual-key code
+/// `vk`, and the window in front when it was read for that. The
+/// window is read only when the view lets keys be held and either the
+/// focus has text or a key waits in the machine's line (`outstanding`);
+/// otherwise the permit is [`HoldPermit::None`] with no call. The view
+/// applies only while the window it names is still in front: until Core
+/// catches up with a change, no key is held or deferred. A window whose
+/// process has higher integrity than Verbatim's is one where keys may not
+/// be held, since Windows would drop a key sent again to it
+/// ([`ForegroundView`]). Enter is held only in a text field other than a
+/// terminal, as NVDA binds its new-line script only where a new line is
+/// announced, never in a terminal (`docs/parity/text.md`, "Enter in a
+/// text field"): in a terminal it may only be deferred.
 fn permit(
     view: Option<HookForeground>,
-    outstanding: bool,
+    (outstanding, vk): (bool, u16),
     front: fn() -> HWND,
 ) -> (HoldPermit, Option<HWND>) {
-    let Some(view) = view.filter(|view| view.holds_keys && (view.focus_has_text || outstanding))
+    let Some(view) =
+        view.filter(|view| view.holds_keys && (view.focus_text.has_text() || outstanding))
     else {
         return (HoldPermit::None, None);
     };
     let window = front();
-    let permit = if typed::window_handle(window) != view.window {
-        HoldPermit::None
-    } else if view.focus_has_text {
-        HoldPermit::HoldAndDefer
+    let permit = if typed::window_handle(window) == view.window {
+        match view.focus_text {
+            FocusTextKind::Field => HoldPermit::HoldAndDefer,
+            FocusTextKind::Terminal if vk != VK_ENTER => HoldPermit::HoldAndDefer,
+            FocusTextKind::Terminal | FocusTextKind::None => HoldPermit::Defer,
+        }
     } else {
-        HoldPermit::Defer
+        HoldPermit::None
     };
     (permit, Some(window))
 }
+
+/// Enter's virtual-key code, the main keyboard's and the numpad's.
+const VK_ENTER: u16 = 0x0D;
 
 /// Reports what a key press that reaches the application, now or once
 /// deferred, did: the text it types, or, for a key that types nothing and
@@ -214,25 +225,34 @@ fn report_passed(
     let trace_id = TraceId::mint();
     let deferred: Vec<(u16, bool)> = state.machine.deferred_transitions().collect();
     let front = state.front;
-    match state.typing.translate(
+    let typed = state.typing.translate(
         (vk, scan_code),
         &deferred,
         (|| window.unwrap_or_else(front), view),
-    ) {
-        Some(text) => (state.reports)(KeyReport::Typed {
+    );
+    if let Some(Typed::Text(text)) = typed {
+        (state.reports)(KeyReport::Typed {
             trace_id,
             key_seq,
             text,
             pressed_at_us,
-        }),
-        None if typing == PressReport::TranslatedOrPassed => {
-            (state.reports)(KeyReport::Passed {
-                trace_id,
-                key_seq,
-                pressed_at_us,
-            });
-        }
-        None => {}
+        });
+        return;
+    }
+    if typing == PressReport::TranslatedOrPassed {
+        (state.reports)(KeyReport::Passed {
+            trace_id,
+            key_seq,
+            pressed_at_us,
+        });
+    }
+    // A control character ends the word after what else the key did.
+    if typed == Some(Typed::Control) {
+        (state.reports)(KeyReport::Control {
+            trace_id: TraceId::mint(),
+            key_seq,
+            pressed_at_us,
+        });
     }
 }
 
@@ -301,6 +321,14 @@ fn read_view(state: &mut HookState) -> Option<HookForeground> {
     view
 }
 
+/// Whether Num Lock is on, which decides what the numpad's operator keys
+/// are: the keyboard's own state, read locally before each key.
+fn num_lock_on() -> bool {
+    // SAFETY: GetKeyState takes any virtual-key code.
+    let state = unsafe { GetKeyState(i32::from(VK_NUMLOCK.0)) };
+    state & 1 != 0
+}
+
 /// Gathers one key transition's inputs, has the machine decide it, carries
 /// out its effect on speech, and reports what it caused, each report
 /// carrying the key's number; `scan_code` and `extra_info` are the key
@@ -320,19 +348,19 @@ pub(crate) fn decide(
     }
     report_alt(state, event);
     let source = source_of(extra_info);
-    // Num Lock decides what the numpad's operator keys are: the
-    // keyboard's own state, read locally before each key.
-    // SAFETY: GetKeyState takes any virtual-key code.
-    let num_lock = unsafe { GetKeyState(i32::from(VK_NUMLOCK.0)) } & 1 != 0;
     // The key's time, which the machine decides by. Only a passed key's
     // report reuses it; the other reports read the time again.
     let now_us = unix_us();
     let view = read_view(state);
-    let (permit, window) = permit(view, state.machine.has_outstanding(), state.front);
+    let (permit, window) = permit(
+        view,
+        (state.machine.has_outstanding(), event.vk),
+        state.front,
+    );
     let decision = state.machine.on_key(KeyInput {
         event,
         now: now_us,
-        num_lock,
+        num_lock: num_lock_on(),
         source,
         permit,
         // From the view alone, reading no window: a mask decided for a
@@ -517,7 +545,7 @@ mod tests {
         view.set(Some(HookForeground {
             window: WindowHandle(1),
             holds_keys: false,
-            focus_has_text: false,
+            focus_text: FocusTextKind::None,
             keyboard_thread: None,
             desktop_switches: 1,
         }));
@@ -561,7 +589,7 @@ mod tests {
     const IN_FRONT: HookForeground = HookForeground {
         window: WindowHandle(7),
         holds_keys: true,
-        focus_has_text: true,
+        focus_text: FocusTextKind::Field,
         keyboard_thread: None,
         desktop_switches: 0,
     };
@@ -594,6 +622,7 @@ mod tests {
                 KeyReport::Observed { gesture, .. } => format!("observed {}", gesture.gesture),
                 KeyReport::Passed { .. } => "passed".to_owned(),
                 KeyReport::Typed { text, .. } => format!("typed {text}"),
+                KeyReport::Control { .. } => "control".to_owned(),
                 KeyReport::Gesture { gesture, .. } => format!("gesture {}", gesture.gesture),
                 KeyReport::Handled(number) => format!("handled {number}"),
                 KeyReport::Alt { down } => format!("alt {}", if *down { "down" } else { "up" }),
@@ -647,7 +676,64 @@ mod tests {
             pressed: true,
         };
         assert_eq!(decide(&mut state, escape, 0x01, 0), KeyDecision::Pass);
-        assert_eq!(described(&reports.lock().unwrap()), ["observed kb:escape"]);
+        // Escape types U+001B, which ends the word being typed.
+        assert_eq!(
+            described(&reports.lock().unwrap()),
+            ["observed kb:escape", "control"]
+        );
+    }
+
+    /// Enter, held only: in a text field it is held and reported as its
+    /// gesture; in a terminal, or with no text, it passes, reported as the
+    /// carriage return it types and as no gesture.
+    #[test]
+    fn enter_is_held_in_a_field_and_typed_in_a_terminal() {
+        let reports = Arc::new(Mutex::new(Vec::new()));
+        let enter_id = GestureId::parse("kb:enter").expect("valid id");
+        let sink = Arc::clone(&reports);
+        let foreground = Arc::new(ForegroundView::new());
+        foreground.set(Some(IN_FRONT));
+        let mut state = HookState::new(
+            DecisionMachine::new(
+                DecisionConfig::default(),
+                GestureMap::new([]).with_held_only([enter_id]),
+            ),
+            (
+                Box::new(|_, _| {}),
+                Box::new(move |report| sink.lock().unwrap().push(report)),
+                foreground,
+            ),
+            typed::Typing::default(),
+        );
+        state.front = window_in_front;
+        let enter = |pressed| KeyEvent {
+            vk: 0x0D,
+            scan_code: 0x1C,
+            extended: false,
+            injected: false,
+            pressed,
+        };
+        assert_eq!(
+            decide(&mut state, enter(true), 0x1C, 0),
+            KeyDecision::Swallow
+        );
+        assert_eq!(
+            decide(&mut state, enter(false), 0x1C, 0),
+            KeyDecision::Swallow
+        );
+        state.machine.passed_on(1);
+        for focus_text in [FocusTextKind::Terminal, FocusTextKind::None] {
+            state.foreground.set(Some(HookForeground {
+                focus_text,
+                ..IN_FRONT
+            }));
+            assert_eq!(decide(&mut state, enter(true), 0x1C, 0), KeyDecision::Pass);
+            assert_eq!(decide(&mut state, enter(false), 0x1C, 0), KeyDecision::Pass);
+        }
+        assert_eq!(
+            described(&reports.lock().unwrap()),
+            ["held kb:enter #1", "typed \r", "typed \r"]
+        );
     }
 
     /// While Core's view of the window in front says keys may not be held
@@ -713,7 +799,7 @@ mod tests {
             KeyDecision::Pass
         );
         state.foreground.set(Some(HookForeground {
-            focus_has_text: false,
+            focus_text: FocusTextKind::None,
             ..IN_FRONT
         }));
         assert_eq!(
@@ -796,7 +882,7 @@ mod tests {
         let sink = Arc::clone(&reports);
         let foreground = Arc::new(ForegroundView::new());
         foreground.set(Some(HookForeground {
-            focus_has_text: false,
+            focus_text: FocusTextKind::None,
             ..IN_FRONT
         }));
         let map = GestureMap::new([GestureId::parse("kb:verbatim+alt+home").expect("valid id")]);
@@ -932,6 +1018,7 @@ mod tests {
                 "typed x",
                 "deferred 0x58 down #2",
                 "observed kb:escape",
+                "control",
                 "passed",
                 "gesture kb:scrolllock",
             ]

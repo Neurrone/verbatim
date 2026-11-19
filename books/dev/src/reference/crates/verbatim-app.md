@@ -187,7 +187,8 @@ Milestone M4's text protocol is wired here (`books/dev/src/reference/crates/verb
   synthesizer host that has stopped answering can hold a commit past the
   bound, and that loss is logged.
 - The hook's gesture map holds the caret keys
-  (`GestureMap::with_held` over `caret_bindings()`) and observes the
+  (`GestureMap::with_held` over `caret_bindings()` but Enter's, and
+  `with_held_only` over Enter's, `CaretMotion::NewLine`) and observes the
   selection keys (`with_observed` over `selection_bindings()`): they reach the
   application, and each one the hook reports becomes `Input::CaretKey`
   through the same table, with the time the hook stamped it. It observes
@@ -198,7 +199,9 @@ Milestone M4's text protocol is wired here (`books/dev/src/reference/crates/verb
   `Input::EditingChord`, Escape after its `Input::ClearingKey`.
   Each text a key types becomes
   `Input::CharacterTyped` (the hook's translation,
-  [verbatim-input-windows](verbatim-input-windows.md)), and each key that
+  [verbatim-input-windows](verbatim-input-windows.md)), each control
+  character a key types, after the key's other reports, a press of
+  `PressAction::Control`, which Core turns into `Input::ControlTyped`, and each key that
   cancels speech also sends `QueueInput::SpeechCut`, as does a gesture
   injected through the control plane, so say-all stops. All of these go
   straight from the hook thread to the reducer thread's port, each one

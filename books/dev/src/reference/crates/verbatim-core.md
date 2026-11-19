@@ -978,7 +978,13 @@ its `spare` keeping the key's starting point held, its answer stored on
 the waiting candidate and judged again; with neither, the watch runs for
 the rest of the bound. Silent, Backspace and Control+Backspace still say
 what they deleted from the starting read. Whether a key is marked is read
-from `SrState::arrivals`, never stored.
+from `SrState::arrivals`, never stored. At its end a key that was not
+dropped at a desktop switch applies the character it typed to the word
+being typed (`typed_at_end`): Backspace's drops the word's last
+character, and Enter's carriage return ends the word and speaks it, or,
+with a focus that counts waiting behind the key, forgets it unspoken.
+Enter held for a terminal, by a hook view behind the focus, is passed
+with no read, the carriage return the terminal's model takes.
 
 `keys/strokes.rs` is Core's stroke line (`SrState::strokes`): each held
 stroke, from the press's arrival, and each deferred transition
@@ -1114,12 +1120,15 @@ The answer updates the caret and speaks, queued:
   scripts speak it; at a line's start the line break, of the kind last
   seen; over a selection, then the selection's change.
 - Delete and Control+Delete: the character or word now at the caret.
+- Enter in a text field other than a terminal (`CaretMotion::NewLine`):
+  when the caret moved, the new line's text from its start up to the
+  caret, nothing where it is blank, and where it is empty only the
+  formatting at the caret's character (`editing::new_line_segments`), as
+  NVDA's new-line script; nothing at the bound.
 - Any other passed key that types nothing (`CaretMotion::Other`, from the
-  hook's `KeyReport::Passed`, and the clearing keys): text it removed, a
-  new line, or by where the caret landed on
-  an unchanged line. A key
-  that removed a selection says only the selection's change
-  (`editing::removes_selection`).
+  hook's `KeyReport::Passed`, and the clearing keys): nothing in a text
+  field, as NVDA; in a terminal its model judges it by its evidence
+  (`docs/parity/text.md`, "Keys outside the caret table").
 - With Shift, and Control+A: every part that became selected, then every
   part that became unselected, as NVDA orders them
   (`editing::selection_segments`), 512 characters or more as their count;
@@ -1159,9 +1168,14 @@ role; the model has no editable state, which NVDA also counts, until the
 IAccessible2, MSHTML and Java Access Bridge backends bring it. A
 protected field echoes only "star". In a terminal, unless terminal
 passwords are spoken, typing is held until its
-`NormalizedEvent::TextChanged` arrives, and Enter drops what was held. A
-caret key without Shift, or a focus change, ends the word. Interrupting
-speech for typing is the hook's ([verbatim-input](verbatim-input.md)).
+`NormalizedEvent::TextChanged` arrives, and Enter drops what was held.
+The word is forgotten when a caret key's script speaks (not Enter's, whose
+carriage return ends it after), and when the focus changes; a held
+Backspace drops its last character at its end; `Input::ControlTyped`, a
+control character the hook reports (Escape, Control+C, Control+Enter),
+ends it and speaks it, spelling nothing (`editing::control_typed`).
+Interrupting speech for typing is the hook's
+([verbatim-input](verbatim-input.md)).
 
 ### The review cursor over text
 

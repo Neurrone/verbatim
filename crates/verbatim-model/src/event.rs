@@ -180,10 +180,11 @@ pub struct HookForeground {
     /// read, since Windows drops a key Verbatim sends again to such a
     /// window (`books/dev/src/explanation/design/key-holding.md`, "Elevated windows").
     pub holds_keys: bool,
-    /// Whether the focus has text whose caret Verbatim reads, so that the
-    /// hook holds its caret keys back while `holds_keys` lets it
+    /// Whether the focus has text whose caret Verbatim reads, and whether
+    /// that is a terminal's, so that the hook holds its caret keys back
+    /// while `holds_keys` lets it, and Enter outside a terminal
     /// (`books/dev/src/explanation/design/key-holding.md`).
-    pub focus_has_text: bool,
+    pub focus_text: FocusTextKind,
     /// The thread whose keyboard layout translates the keys typed into
     /// this window, when it is not the thread Windows names as the
     /// window's owner: a console host window's own thread
@@ -197,6 +198,29 @@ pub struct HookForeground {
     /// "The secure desktop and the lock state").
     #[serde(default)]
     pub desktop_switches: u32,
+}
+
+/// What text the focus has, as the keyboard hook holds keys for it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FocusTextKind {
+    /// None whose caret Verbatim reads: no key is held.
+    #[default]
+    None,
+    /// A text field other than a terminal: the caret keys and Enter are
+    /// held.
+    Field,
+    /// A terminal: the caret keys are held, and Enter, which a terminal
+    /// takes as typed text, is not (NVDA's terminals announce no new
+    /// line).
+    Terminal,
+}
+
+impl FocusTextKind {
+    /// Whether the focus has text whose caret Verbatim reads.
+    #[must_use]
+    pub fn has_text(self) -> bool {
+        self != Self::None
+    }
 }
 
 /// A property change carried by [`NormalizedEvent::PropertyChanged`].
@@ -694,6 +718,20 @@ pub enum Input {
         #[serde(default)]
         at_ms: u64,
     },
+    /// A key typed a control character into the focused application, one
+    /// other than a tab, a carriage return, Backspace's and
+    /// Control+Backspace's (Escape, Control+C, Control+Enter): the word
+    /// being typed ends and is spoken by the typing echo settings, and
+    /// nothing is spelled (`docs/parity/input.md`, "Typed-character
+    /// echo"). It follows the key's other inputs.
+    ControlTyped {
+        /// Trace ID minted when the key was observed.
+        trace_id: TraceId,
+        /// The key's number, which its speech carries.
+        key_seq: KeySeq,
+        /// As [`Input::CharacterTyped`]'s.
+        at_ms: u64,
+    },
     /// A key that ends or clears the command line being typed, Escape,
     /// Control+C, Control+D, or Control+Break, was passed to the focused
     /// application. A terminal forgets the typing it holds, which it never
@@ -1017,6 +1055,7 @@ impl Input {
             | Self::CaretKey { trace_id, .. }
             | Self::HeldKey { trace_id, .. }
             | Self::CharacterTyped { trace_id, .. }
+            | Self::ControlTyped { trace_id, .. }
             | Self::ClearingKey { trace_id, .. }
             | Self::EditingChord { trace_id, .. }
             | Self::LockKeyToggled { trace_id, .. }

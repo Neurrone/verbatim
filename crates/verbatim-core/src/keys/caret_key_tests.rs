@@ -180,6 +180,8 @@ fn read_effect(step: &mut Step, effect: Effect<Said>) {
                 })
                 .collect(),
         ),
+        // Typed text's speech, carried under its key's trace.
+        Effect::Said(Said::ForKey(_, said)) => read_effect(step, Effect::Said(*said)),
         Effect::AnswerDropped { .. }
         | Effect::StartOutpost(_)
         | Effect::Said(Said::DropExpiredSpeech(_)) => {}
@@ -758,8 +760,10 @@ fn a_held_key_is_released_150_ms_after_its_press_its_read_withdrawn_and_it_says_
     assert_eq!(held.state.queue.waiting_for_tests(), 0);
 }
 
+/// A key the hook did not hold runs no script, so it keeps the word typed,
+/// as NVDA forgets it only when a caret script speaks.
 #[test]
-fn an_unheld_key_says_nothing_asks_nothing_and_forgets_the_typed_word() {
+fn an_unheld_key_says_nothing_asks_nothing_and_keeps_the_typed_word() {
     let mut held = editing();
     let binding = bound(&held);
     held.state.typed_word = "wor".to_owned();
@@ -777,7 +781,7 @@ fn an_unheld_key_says_nothing_asks_nothing_and_forgets_the_typed_word() {
         ),
     );
     assert_eq!(unheld, Step::default());
-    assert_eq!(held.state.typed_word, "");
+    assert_eq!(held.state.typed_word, "wor");
 }
 
 #[test]
@@ -1456,6 +1460,384 @@ fn a_sentence_move_answered_with_a_failure_says_nothing() {
         );
         assert_eq!(failed, Step::default(), "{failure:?}");
         assert_eq!(crate::text_facts::held(&held.state), before, "{failure:?}");
+    }
+}
+
+/// Typed-word echo on, only in edit controls, with `word` typed so far.
+fn word_typed(held: &mut Held, word: &str) {
+    held.state.settings.speak_typed_words = verbatim_model::TypingEcho::EditControls;
+    held.state.typed_word = word.to_owned();
+}
+
+/// Enter in a field, "hello" typed, its new line "2. " inserted with the
+/// caret after it (an application that numbers lines): the new line's
+/// text up to the caret, then the word the carriage return ends, as
+/// NVDA's new-line script speaks and its typed-character event after it.
+#[test]
+fn enter_says_the_new_lines_text_before_the_caret_then_the_word_it_ends() {
+    let mut held = watching(
+        CaretMotion::NewLine,
+        line("hello", 7, 5),
+        unit(TextUnit::Character, "", 8),
+    );
+    word_typed(&mut held, "hello");
+    let ended = step(
+        &mut held,
+        20_000,
+        watched(
+            4,
+            Watched::Effect(read(line("2. ", 9, 3), unit(TextUnit::Line, "2. ", 9))),
+        ),
+    );
+    assert_eq!(ended.said, [spoken("2. "), spoken("hello")]);
+    assert_eq!(held.state.typed_word, "");
+}
+
+/// Enter at the end of "hello", and mid-line before "beta", in Notepad and
+/// the text box (NVDA's capture of 2026-11-19): at the line's end only the
+/// word the carriage return ends; mid-line nothing, the text after the
+/// caret never spoken and no word typed.
+#[test]
+fn enter_at_a_lines_end_says_the_word_it_ends_and_mid_line_nothing() {
+    let mut held = watching(
+        CaretMotion::NewLine,
+        line("hello", 7, 5),
+        unit(TextUnit::Character, "", 8),
+    );
+    word_typed(&mut held, "hello");
+    let ended = step(
+        &mut held,
+        20_000,
+        watched(
+            4,
+            Watched::Effect(read(line("", 9, 0), unit(TextUnit::Line, "", 9))),
+        ),
+    );
+    assert_eq!(ended.said, [spoken("hello")]);
+
+    let mut held = watching(
+        CaretMotion::NewLine,
+        line("alpha beta", 7, 6),
+        unit(TextUnit::Character, "b", 8),
+    );
+    word_typed(&mut held, "");
+    let ended = step(
+        &mut held,
+        20_000,
+        watched(
+            4,
+            Watched::Effect(read(line("beta", 9, 0), unit(TextUnit::Line, "beta", 9))),
+        ),
+    );
+    assert_eq!(ended.said, NO_WORDS);
+}
+
+/// An empty new line says the formatting at the caret's character, NVDA's
+/// opening fields, and no text: here a bold run starting there.
+#[test]
+fn enter_onto_an_empty_cut_says_only_the_formatting_at_the_caret() {
+    let mut held = watching(
+        CaretMotion::NewLine,
+        line("x", 7, 1),
+        unit(TextUnit::Character, "", 8),
+    );
+    word_typed(&mut held, "");
+    let bold = verbatim_model::TextAttributes {
+        bold: Some(true),
+        ..verbatim_model::TextAttributes::default()
+    };
+    let new_line = TextChunk {
+        formats: vec![verbatim_model::FormatRun {
+            start: 0,
+            end: 4,
+            attributes: bold,
+        }],
+        ..line("bold", 9, 0)
+    };
+    let ended = step(
+        &mut held,
+        20_000,
+        watched(
+            4,
+            Watched::Effect(read(new_line, unit(TextUnit::Line, "bold", 9))),
+        ),
+    );
+    assert_eq!(ended.said, [vec!["Format(Bold)".to_owned()]]);
+}
+
+/// Enter whose caret never moves, as in Notepad's find field: nothing for
+/// the key, then the word the carriage return ends.
+#[test]
+fn enter_that_moves_nothing_says_only_the_word_it_ends() {
+    let mut held = watching(
+        CaretMotion::NewLine,
+        line("zz", 7, 2),
+        unit(TextUnit::Character, "", 8),
+    );
+    word_typed(&mut held, "zz");
+    let ended = step(
+        &mut held,
+        105_000,
+        watched(
+            4,
+            Watched::Bound(read(line("zz", 9, 2), unit(TextUnit::Line, "zz", 9))),
+        ),
+    );
+    assert_eq!(ended.said, [spoken("zz")]);
+}
+
+/// "hello", then Enter in a dialog's field pressing its default button,
+/// whose message box takes the focus during Enter's watch (NVDA's capture
+/// C2b, 2026-11-19, four runs of five): the word is forgotten unspoken.
+#[test]
+fn enter_with_a_focus_pending_forgets_the_word_unspoken() {
+    let mut held = watching(
+        CaretMotion::NewLine,
+        line("hello", 7, 5),
+        unit(TextUnit::Character, "", 8),
+    );
+    word_typed(&mut held, "hello");
+    let focus = step(&mut held, 40_000, entry(uia_tell(7, Vec::new())));
+    assert_eq!(focus.cancelled, [(4, CancelReason::Withdrawn)]);
+    assert_eq!(focus.said, NO_WORDS);
+    assert_eq!(focus.other, ["ReadObject"]);
+    assert_eq!(held.state.typed_word, "");
+}
+
+/// Enter marked by a key behind it is sent with no read and says nothing
+/// for itself, and its carriage return still ends the word, as NVDA's
+/// typed-character event runs after its script returns.
+#[test]
+fn enter_marked_by_a_later_key_says_only_the_word_it_ends() {
+    let mut held = editing();
+    word_typed(&mut held, "hello");
+    let binding = bound(&held);
+    let _ = step(
+        &mut held,
+        1_000,
+        held_key(1, CaretMotion::NewLine, 1_000, &binding),
+    );
+    let _ = step(
+        &mut held,
+        2_000,
+        held_key(2, CaretMotion::NextCharacter, 2_000, &binding),
+    );
+    let answered = step(
+        &mut held,
+        5_000,
+        started(3, line("hello", 7, 5), unit(TextUnit::Character, "", 8)),
+    );
+    assert_eq!(answered.strokes, [vec![1]]);
+    assert_eq!(answered.said, [spoken("hello")]);
+    assert_eq!(
+        answered.text,
+        [(
+            4,
+            2,
+            starting_read(CaretMotion::NextCharacter, TextProvider::Uia)
+        )],
+        "the next key's starting read"
+    );
+}
+
+/// Enter held for a terminal, by a hook view behind the focus, is sent at
+/// once with no read, as the carriage return it types there.
+#[test]
+fn enter_bound_to_a_terminal_is_sent_with_no_read() {
+    let mut held = editing();
+    let terminal = CaretBinding {
+        role: Role::Terminal,
+        ..bound(&held)
+    };
+    let sent = step(
+        &mut held,
+        1_000,
+        held_key(1, CaretMotion::NewLine, 1_000, &terminal),
+    );
+    assert_eq!(sent.strokes, [vec![1]]);
+    assert_eq!(sent.text, NO_REQUESTS);
+}
+
+/// The listener's tell of a switch away from the user's input desktop.
+fn switched_away() -> verbatim_model::request::QueueInput {
+    use verbatim_model::tell::{Event, EventObject, Payload, TellWindow};
+    verbatim_model::request::QueueInput::Tell {
+        from: crate::entries::tests::LISTENER,
+        tell: Box::new(Event {
+            trace_id: TraceId::from_raw(8),
+            kind: verbatim_model::event_kind::EventKind::DesktopSwitch,
+            process: APP,
+            application: "app".to_owned(),
+            thread: 41,
+            at_us: 3_000,
+            object: EventObject::Msaa {
+                window: WindowHandle(0),
+                object: 0,
+                child: 0,
+            },
+            cached: verbatim_model::property::PropertyValues::default(),
+            payload: Payload::DesktopSwitch {
+                input_desktop_open: false,
+            },
+            window: TellWindow::NoWindow,
+            checked: None,
+        }),
+    }
+}
+
+/// Enter held behind Right Arrow when the desktop switches away: its
+/// stroke is dropped, never reaching the application, so its carriage
+/// return ends no word.
+#[test]
+fn enter_dropped_at_a_desktop_switch_applies_nothing() {
+    let mut held = editing();
+    word_typed(&mut held, "hello");
+    let binding = bound(&held);
+    let _ = step(
+        &mut held,
+        1_000,
+        held_key(1, CaretMotion::NextCharacter, 1_000, &binding),
+    );
+    let _ = step(
+        &mut held,
+        2_000,
+        held_key(2, CaretMotion::NewLine, 2_000, &binding),
+    );
+    let said = crate::entries::route(
+        &mut held.state,
+        &mut held.runtime,
+        (TraceId::from_raw(1), 3_000),
+        &switched_away(),
+    )
+    .said();
+    assert!(
+        !said.iter().any(|effect| matches!(effect, Said::Speak(..))),
+        "{said:?}"
+    );
+    assert_eq!(held.state.typed_word, "hello");
+    assert_eq!(held.state.queue.waiting_for_tests(), 0);
+    assert_eq!(
+        held.state.oldest_key_entry(),
+        None,
+        "both keys ended, Enter asking no starting read"
+    );
+}
+
+/// Backspace with no effect seen by its bound says nothing, and its
+/// U+0008 drops the word's last character ("cat", Backspace, "s" says
+/// "cas"); with its effect it says what it deleted, which forgets the word.
+#[test]
+fn backspace_drops_the_words_last_character_and_forgets_it_only_when_it_speaks() {
+    let mut held = watching(
+        CaretMotion::Backspace,
+        line("cat", 7, 3),
+        unit(TextUnit::Character, "t", 8),
+    );
+    word_typed(&mut held, "cat");
+    let ended = step(
+        &mut held,
+        105_000,
+        watched(
+            4,
+            Watched::Bound(read(line("cat", 9, 3), unit(TextUnit::Character, "", 10))),
+        ),
+    );
+    assert_eq!(ended.said, NO_WORDS);
+    assert_eq!(held.state.typed_word, "ca");
+
+    let mut held = watching(
+        CaretMotion::Backspace,
+        line("cat", 7, 3),
+        unit(TextUnit::Character, "t", 8),
+    );
+    word_typed(&mut held, "cat");
+    let ended = step(
+        &mut held,
+        20_000,
+        watched(
+            4,
+            Watched::Effect(read(line("ca", 9, 2), unit(TextUnit::Character, "", 10))),
+        ),
+    );
+    assert_eq!(ended.said, [character("t")]);
+    assert_eq!(held.state.typed_word, "");
+}
+
+/// "cat", Backspace, "r", space in one batch, in the order the hook
+/// reports them: Backspace held, then "r" and the space typed behind it,
+/// which mark it. Backspace is sent with no read and says nothing; its
+/// U+0008 drops the "t", and the space says "car", as NVDA's capture of
+/// 2026-11-19 in Notepad and the text box.
+#[test]
+fn a_batch_of_backspace_then_typing_says_the_word_with_its_last_character_dropped() {
+    let mut held = editing();
+    word_typed(&mut held, "cat");
+    held.state.settings.speak_typed_characters = verbatim_model::TypingEcho::Off;
+    let binding = bound(&held);
+    let _ = step(
+        &mut held,
+        1_000,
+        held_key(1, CaretMotion::Backspace, 1_000, &binding),
+    );
+    for (key, text) in [(2, "r"), (3, " ")] {
+        let _ = step(
+            &mut held,
+            1_000 + key * 100,
+            pressed(
+                key,
+                1_000 + key * 100,
+                PressAction::Typed {
+                    text: text.to_owned(),
+                },
+            ),
+        );
+    }
+    let answered = step(
+        &mut held,
+        5_000,
+        started(3, line("cat", 7, 3), unit(TextUnit::Character, "t", 8)),
+    );
+    assert_eq!(answered.strokes, [vec![1]]);
+    assert_eq!(answered.said, [spoken("car")]);
+}
+
+/// Control+C, Escape and Control+Enter after "hel", in the order the hook
+/// reports each (its other reports, then the control character it types):
+/// "hel", as NVDA's captures of 2026-11-19 in Notepad and the text box.
+#[test]
+fn a_control_character_typed_ends_the_word_after_the_keys_other_reports() {
+    let other = PressAction::CaretKey {
+        key: caret(CaretMotion::Other),
+        held: None,
+        bound: None,
+    };
+    for (name, reports) in [
+        (
+            "Control+C",
+            vec![PressAction::Clearing, other.clone(), PressAction::Control],
+        ),
+        (
+            "Escape",
+            vec![
+                PressAction::Clearing,
+                PressAction::EditingChord,
+                PressAction::Control,
+            ],
+        ),
+        ("Control+Enter", vec![other.clone(), PressAction::Control]),
+    ] {
+        let mut held = editing();
+        word_typed(&mut held, "hel");
+        let mut said = Vec::new();
+        for action in reports {
+            let mut binding_bound = action;
+            if let PressAction::CaretKey { bound, .. } = &mut binding_bound {
+                *bound = Some(Box::new(caret_key::binding(&held.state).expect("a field")));
+            }
+            said.extend(step(&mut held, 1_000, pressed(1, 1_000, binding_bound)).said);
+        }
+        assert_eq!(said, [spoken("hel")], "{name}");
+        assert_eq!(held.state.typed_word, "", "{name}");
     }
 }
 

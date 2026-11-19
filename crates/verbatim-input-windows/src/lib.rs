@@ -245,6 +245,21 @@ pub enum KeyReport {
         /// clock.
         pressed_at_us: u64,
     },
+    /// The key types a control character other than a tab, a carriage
+    /// return, Backspace's and Control+Backspace's (Escape, Control+C,
+    /// Control+Enter and the like), which ends the word being typed, as
+    /// NVDA's typed-character rule takes it (`docs/parity/input.md`,
+    /// "Typed-character echo"). It comes after the key's other reports: a
+    /// key that completes no observed gesture is also reported
+    /// [`KeyReport::Passed`].
+    Control {
+        /// Minted when the key was observed.
+        trace_id: TraceId,
+        /// The key's number.
+        key_seq: KeySeq,
+        /// As [`KeyReport::Typed`]'s.
+        pressed_at_us: u64,
+    },
     /// A bound gesture fired, or a lock key reached the operating system
     /// (its `kb:` gesture), for the reducer to run or announce.
     Gesture {

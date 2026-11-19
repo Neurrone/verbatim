@@ -355,14 +355,17 @@ pub fn bindings_for(layout: KeyboardLayout) -> Vec<(GestureId, ScriptAction)> {
 /// The caret keys of NVDA's editable-text commands that the hook holds,
 /// every layout alike: moving by character, word, line, paragraph, page,
 /// to the line's ends and the document's, plus Backspace and Delete (the
-/// numpad's too) with their Control and Shift forms, and Alt with Up or
-/// Down Arrow. They are observed and held, never bound: the hook holds
-/// each while Core's view lets keys be held, and reports it so the reducer
-/// can read the caret, send it and speak the result
-/// (`docs/nvda/editable-text-and-terminals.md`). Build the hook's map with
-/// [`GestureMap::with_held`] over these gestures; the shell turns a
-/// reported gesture into `Input::CaretKey` through the same table. The
-/// selection keys are [`selection_bindings`].
+/// numpad's too) with their Control and Shift forms, Alt with Up or
+/// Down Arrow, and Enter (the numpad's too). They are observed and held,
+/// never bound: the hook holds each while Core's view lets keys be held,
+/// and reports it so the reducer can read the caret, send it and speak the
+/// result (`docs/nvda/editable-text-and-terminals.md`). Build the hook's
+/// map with [`GestureMap::with_held`] over these gestures but Enter, and
+/// [`GestureMap::with_held_only`] over Enter's
+/// ([`CaretMotion::NewLine`]), which is held only in a text field other
+/// than a terminal and is otherwise typed text; the shell turns a reported
+/// gesture into `Input::CaretKey` through the same table. The selection
+/// keys are [`selection_bindings`].
 ///
 /// # Panics
 ///
@@ -373,6 +376,7 @@ pub fn caret_bindings() -> Vec<(GestureId, CaretKey)> {
     MOVES
         .iter()
         .chain(EDITS)
+        .chain(NEW_LINES)
         .map(|&(keys, motion)| {
             (
                 caret_gesture(&format!("kb:{keys}")),
@@ -466,6 +470,15 @@ const EDITS: &[(&str, CaretMotion)] = &[
     ("control+numpaddelete", CaretMotion::DeleteWord),
     ("alt+uparrow", CaretMotion::PreviousSentence),
     ("alt+downarrow", CaretMotion::NextSentence),
+];
+
+/// Enter and the numpad's Enter, NVDA's new-line script's keys
+/// (`docs/parity/text.md`, "Enter in a text field"): held only in a text
+/// field other than a terminal, and with no Shift form, so never a
+/// selection key ([`selection_bindings`] takes only [`MOVES`]).
+const NEW_LINES: &[(&str, CaretMotion)] = &[
+    ("enter", CaretMotion::NewLine),
+    ("numpadenter", CaretMotion::NewLine),
 ];
 
 /// The keys that end or clear the command line being typed: Escape,
@@ -805,9 +818,9 @@ mod tests {
     #[test]
     fn caret_keys_are_distinct_and_never_bound() {
         let held = caret_bindings();
-        // 14 motions, 9 deletions and the 2 sentence keys held; the 14
-        // motions with Shift and Control+A observed.
-        assert_eq!(held.len(), 25);
+        // 14 motions, 9 deletions, the 2 sentence keys and the 2 Enter
+        // keys held; the 14 motions with Shift and Control+A observed.
+        assert_eq!(held.len(), 27);
         assert!(held.iter().all(|(_, key)| !key.select));
         let selection = selection_bindings();
         assert_eq!(selection.len(), 15);

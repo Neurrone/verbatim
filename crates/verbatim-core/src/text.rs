@@ -439,6 +439,30 @@ pub(crate) enum Spoken {
     Character,
 }
 
+/// The formatting at the byte offset `at` of `chunk`, spoken as it changes
+/// from `reported`, with no text: NVDA's opening fields of a unit spoken
+/// with only its initial fields. Nothing where the chunk carries no
+/// formatting there; otherwise `reported` becomes it.
+pub(crate) fn opening_format(
+    chunk: &TextChunk,
+    at: usize,
+    reported: &mut TextAttributes,
+) -> Vec<UtteranceSegment> {
+    let Some(run) = chunk
+        .formats
+        .iter()
+        .find(|run| byte_offset(run.start) <= at && at <= byte_offset(run.end))
+    else {
+        return Vec::new();
+    };
+    let changes = format_changes(reported, &run.attributes, false);
+    *reported = run.attributes.clone();
+    changes
+        .into_iter()
+        .map(|change| UtteranceSegment::new(SegmentContent::Format(change)))
+        .collect()
+}
+
 /// The stretches of `formats` within the byte range `span`, cut to it, in
 /// order.
 fn runs_within(formats: &[FormatRun], span: &Range<usize>) -> Vec<(Range<usize>, TextAttributes)> {

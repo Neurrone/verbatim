@@ -600,6 +600,16 @@ impl DecisionMachine {
             self.on_release(event, now)
         };
         decision.verdict = self.place(event, source, permit, &decision);
+        // A gesture observed only when held (Enter) and not held passes as
+        // the text it types, reported as any unobserved key.
+        if !matches!(decision.verdict, Verdict::Hold(_))
+            && decision
+                .observed
+                .as_ref()
+                .is_some_and(|observed| self.map.holds_only(&observed.gesture))
+        {
+            decision.observed = None;
+        }
         report(event, source, &mut decision);
         if decision.emitted.is_some()
             && source == KeySource::User
@@ -860,7 +870,7 @@ impl DecisionMachine {
             return Decision::pass_shared_modifier();
         }
         if let Some(gesture) = gesture
-            && self.map.observes(&gesture)
+            && (self.map.observes(&gesture) || self.map.holds_only(&gesture))
         {
             return Decision::pass_observed(gesture);
         }
@@ -1865,6 +1875,50 @@ mod tests {
         assert_eq!(passed.verdict, Verdict::Pass);
         assert!(passed.observed.is_some());
         assert_eq!(verdict(&mut m, defer, up(RIGHT, true), t), Verdict::Pass);
+    }
+
+    /// Enter, held only: while Core's view lets keys be held and the focus
+    /// has text, it is held and reported observed, as a caret key; with
+    /// keys not held, it passes, reported as the text it types and as no
+    /// gesture; behind a held key it is held in its own turn.
+    #[test]
+    fn a_gesture_held_only_is_observed_only_when_held() {
+        const ENTER: u16 = 0x0D;
+        let id = |raw| GestureId::parse(raw).expect("valid id");
+        let mut m = DecisionMachine::new(
+            DecisionConfig::default(),
+            GestureMap::new([])
+                .with_held([id("kb:rightarrow")])
+                .with_held_only([id("kb:enter")]),
+        );
+        let t = START;
+        let held = m.on_key(with(HOLD, down(ENTER, false), t));
+        assert_eq!(held.verdict, Verdict::Hold(1));
+        assert_eq!(
+            held.observed.map(|observed| observed.gesture),
+            Some(id("kb:enter"))
+        );
+        assert_eq!(held.typing, PressReport::Nothing);
+        assert_eq!(verdict(&mut m, HOLD, up(ENTER, false), t), Verdict::Swallow);
+        m.passed_on(1);
+        for permit in [HoldPermit::Defer, HoldPermit::None] {
+            let passed = m.on_key(with(permit, down(ENTER, false), t));
+            assert_eq!(passed.verdict, Verdict::Pass, "{permit:?}");
+            assert_eq!(passed.observed, None, "{permit:?}");
+            assert_eq!(passed.typing, PressReport::TranslatedOrPassed, "{permit:?}");
+            assert_eq!(
+                verdict(&mut m, permit, up(ENTER, false), t),
+                Verdict::Pass,
+                "{permit:?}"
+            );
+        }
+        assert_eq!(
+            verdict(&mut m, HOLD, down(RIGHT, true), t),
+            Verdict::Hold(2)
+        );
+        let behind = m.on_key(with(HOLD, down(ENTER, false), t));
+        assert_eq!(behind.verdict, Verdict::Hold(3));
+        assert!(behind.observed.is_some());
     }
 
     #[test]
