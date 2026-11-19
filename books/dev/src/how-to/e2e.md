@@ -66,7 +66,11 @@ cargo xtask e2e <scenario>... --runs <n>
 It builds the agent and the test binary, starts the agent, waits until it
 listens, runs each scenario once per round, each in its own `cargo test`
 with its log in `target/e2e-runs/<scenario>-<run>.log`, prints a line per
-run, and ends the agent. Every xtask command runs in a job that ends
+run with how long it took, and ends the agent. The suite writes a
+scenario's artifacts to one folder that its next run replaces, so a failed
+run's folder is moved to `target/e2e-runs/<scenario>-<run>`; the command
+empties `target/e2e-runs` as it starts, so everything there is from its
+own runs. Every xtask command runs in a job that ends
 everything in it when the command exits (`xtask/src/contain.rs`), and the
 agent's launches are in jobs that end with the agent, so stopping the
 command by any means, Ctrl+C or ending its process, ends the agent,
