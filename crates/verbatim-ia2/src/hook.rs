@@ -320,9 +320,11 @@ pub struct WinEvent {
     pub raised_ms_ago: u32,
 }
 
-/// Called on the installing thread for each in-scope event. It must not
-/// block: its job is to enqueue the event for handling elsewhere.
-pub type WinEventCallback = Box<dyn Fn(WinEvent)>;
+/// Called on the installing thread for each in-scope event, with the class
+/// of its window, `hwnd`, when the hook's filter read it for the event, so
+/// that the event's handling reads it no more. It must not block: its job
+/// is to enqueue the event for handling elsewhere.
+pub type WinEventCallback = Box<dyn Fn(WinEvent, Option<&str>)>;
 
 /// The `WinEvent` id of a sync marker ([`SyncMarker`]): an arbitrary id in
 /// the range Windows sets aside for events defined outside it, by the
@@ -852,11 +854,13 @@ const _: () = {
 /// The [`WinEventKind`] the raw event `event` on (`hwnd`, `id_object`,
 /// `id_child`) has among `kinds`, if [`is_wanted`] keeps it, `None` for
 /// events we do not want. A window's class is read from Windows with
-/// `class_of`, at most once for the event and only when a filter asks it.
+/// `class_of`, at most once for the event and only when a filter asks it,
+/// and left in `read` when it was.
 fn wanted_kind(
     (event, hwnd, id_object, id_child): (u32, isize, i32, i32),
     kinds: &[WinEventKind],
     class_of: impl Fn(isize) -> String,
+    read: &mut Option<String>,
 ) -> Option<WinEventKind> {
     // The system caret's show is a caret event, as NVDA handles it, not a
     // tooltip's show.
@@ -866,7 +870,6 @@ fn wanted_kind(
             .then_some(WinEventKind::Caret);
     }
     // Read at most once for the event.
-    let mut read: Option<String> = None;
     let mut class = || read.get_or_insert_with(|| class_of(hwnd)).clone();
     // Program Manager's or the taskbar's coming to the front, for an install
     // that asks for it, as its own kind.
@@ -985,6 +988,8 @@ unsafe extern "system" fn win_event_proc(
     let raised_ms_ago = event_clock().wrapping_sub(time);
     // The csrss-scoped hook's name changes are the desktop window's alone.
     let desktop_name_hook = DESKTOP_NAME_HOOK.with(std::cell::Cell::get);
+    // The window's class, when a filter read it.
+    let mut class: Option<String> = None;
     let wanted = if desktop_name_hook != 0 && hook.0 as isize == desktop_name_hook {
         // SAFETY: `GetDesktopWindow` has no preconditions.
         let desktop = unsafe { GetDesktopWindow() };
@@ -995,6 +1000,7 @@ unsafe extern "system" fn win_event_proc(
                 (event, hwnd.0 as isize, id_object, id_child),
                 &kinds.borrow(),
                 crate::window::window_class_name,
+                &mut class,
             )
         })
     };
@@ -1040,7 +1046,7 @@ unsafe extern "system" fn win_event_proc(
         };
         CALLBACK.with(|slot| {
             if let Some(callback) = slot.borrow().as_ref() {
-                callback(delivered);
+                callback(delivered, class.as_deref());
             }
         });
     }
@@ -1070,6 +1076,7 @@ mod tests {
             (event, 42, id_object, CHILDID_SELF),
             APP_SUBSCRIPTIONS,
             class_of,
+            &mut None,
         )
         .into_iter()
         .collect()
@@ -1088,9 +1095,57 @@ mod tests {
                 reads.set(reads.get() + 1);
                 "Notepad".to_owned()
             },
+            &mut None,
         );
         assert_eq!(kind, Some(WinEventKind::Foreground));
         assert_eq!(reads.get(), 1);
+    }
+
+    /// The class the filter read for a value change on a custom object and
+    /// for a show is read once and handed on with the event, so that its
+    /// handling reads it no more; a value change on a client area reads
+    /// none.
+    #[test]
+    fn the_class_the_filter_read_is_handed_on_with_the_event() {
+        let reads = Cell::new(0);
+        let class_of = |_| {
+            reads.set(reads.get() + 1);
+            TOOLTIP_CLASS.to_owned()
+        };
+        for (event, id_object, kind, class) in [
+            (
+                EVENT_OBJECT_VALUECHANGE,
+                1000,
+                WinEventKind::ValueChange,
+                Some(TOOLTIP_CLASS),
+            ),
+            (
+                EVENT_OBJECT_SHOW,
+                1000,
+                WinEventKind::Show,
+                Some(TOOLTIP_CLASS),
+            ),
+            (
+                EVENT_OBJECT_VALUECHANGE,
+                OBJID_CLIENT.0,
+                WinEventKind::ValueChange,
+                None,
+            ),
+        ] {
+            reads.set(0);
+            let mut read = None;
+            assert_eq!(
+                wanted_kind(
+                    (event, 42, id_object, CHILDID_SELF),
+                    LISTENER_SUBSCRIPTIONS,
+                    class_of,
+                    &mut read,
+                ),
+                Some(kind)
+            );
+            assert_eq!(read.as_deref(), class, "{event:#x} on {id_object}");
+            assert_eq!(reads.get(), u32::from(class.is_some()));
+        }
     }
 
     #[test]
@@ -1146,6 +1201,7 @@ mod tests {
                 (EVENT_OBJECT_SHOW, 42, OBJID_CARET.0, CHILDID_SELF),
                 LISTENER_SUBSCRIPTIONS,
                 |_| "Edit".to_owned(),
+                &mut None,
             ),
             Some(WinEventKind::Caret)
         );
@@ -1161,6 +1217,7 @@ mod tests {
                 (EVENT_OBJECT_SHOW, 42, object, CHILDID_SELF),
                 kinds,
                 move |_| class.to_owned(),
+                &mut None,
             )
         };
         let client = OBJID_CLIENT.0;
@@ -1364,6 +1421,7 @@ mod tests {
                 (event, 42, OBJID_CLIENT.0, CHILDID_SELF),
                 LISTENER_SUBSCRIPTIONS,
                 move |_| class.to_owned(),
+                &mut None,
             )
         };
         let ime = "Microsoft.IME.UIManager.CandidateWindow.Host";
@@ -1379,6 +1437,7 @@ mod tests {
                 (EVENT_SYSTEM_MENUSTART, 42, OBJID_CLIENT.0, CHILDID_SELF),
                 APP_SUBSCRIPTIONS,
                 |_| "Notepad".to_owned(),
+                &mut None,
             ),
             None
         );
@@ -1395,6 +1454,7 @@ mod tests {
                 (EVENT_SYSTEM_FOREGROUND, 42, OBJID_WINDOW.0, CHILDID_SELF),
                 kinds,
                 move |_| class.to_owned(),
+                &mut None,
             )
         };
         for class in ["Progman", "Shell_TrayWnd"] {

@@ -419,7 +419,7 @@ mod tests {
             let events = events.clone();
             let changes = changes.clone();
             EventHandlers {
-                win_event: Box::new(move |event| {
+                win_event: Box::new(move |event, _class| {
                     if event.thread == test_thread {
                         let _ = events.send(event.kind);
                     }

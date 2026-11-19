@@ -213,7 +213,13 @@ section 6.3).
   so the report that a window came to the foreground reaches Core before
   the tells it decides, the foreground event's own and those the hold
   releases with it; the watch and the hold judge the event on one read
-  of the window in front (`Tells::front`). The console's events stay unhooked (`verbatim_ia2::suspend_kinds`) unless
+  of the window in front (`Tells::front`). The facts of the event's
+  windows are read once for the event (`EventWindows`, over
+  `verbatim_win32::window_facts::ReadOnce`), its window's class not at
+  all when the hook's filter read it, and shared by the watch, the tell
+  and the progress path, its readability among them by the listener's
+  one judge; the foreground's part of a tell's facts is still read under
+  the tells' lock as the tell is placed. The console's events stay unhooked (`verbatim_ia2::suspend_kinds`) unless
   it starts with a console window in front, until one of that window's
   events names its thread.
 - It handles `Ping`, `ApplicationExited` (which ends the application's

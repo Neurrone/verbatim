@@ -873,7 +873,7 @@ impl Outpost {
         let make_handlers: MakeHandlers = Arc::new(move || {
             let context = Arc::clone(&hook_context);
             EventHandlers {
-                win_event: Box::new(move |event: WinEvent| {
+                win_event: Box::new(move |event: WinEvent, _class: Option<&str>| {
                     take_in_hooked(
                         event,
                         &mut (),

@@ -25,11 +25,11 @@ use verbatim_model::{Pid, TraceId, WindowHandle};
 use verbatim_process::clock::now_us;
 use verbatim_process::held::Target;
 use verbatim_reader_rules::CONSOLE_WINDOW_CLASS;
-use verbatim_win32::window::window_class_name;
 pub(super) use verbatim_win32::window_facts::SystemReads;
 use verbatim_win32::window_facts::{WindowPart, WindowReads};
 
-use super::{Sent, Timed, TimerHandle, Waiting, process_of_thread, sent, window_pid};
+use super::event_windows::{EventReads, EventWindows};
+use super::{Sent, Timed, TimerHandle, Waiting, process_of_thread, sent};
 use verbatim_process::transport::Sender;
 
 /// A tell's key in the listener's merge: its object, kind and raising
@@ -171,16 +171,17 @@ impl Tells {
     /// Places `held` in the order of tells: sent now, or kept behind a
     /// pending foreground, whose window is looked for in front now.
     pub(super) fn place(&self, held: Held) {
-        self.place_seen(held, self.front());
+        self.place_seen(held, self.front(), &SystemReads);
     }
 
     /// [`place`](Self::place), `front` the window in front as the
     /// `WinEvent` callback read it for the foreground's watch, so that the
-    /// hold and the watch judge the event on one read.
-    pub(super) fn place_seen(&self, held: Held, front: isize) {
+    /// hold and the watch judge the event on one read, and the foreground
+    /// facts of what is sent read through `reads`.
+    pub(super) fn place_seen(&self, held: Held, front: isize, reads: &impl WindowReads) {
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         let placed = state.hold.place(held, front, now_us());
-        self.apply(&state, placed);
+        self.apply(&state, placed, reads);
     }
 
     /// Sends a UI Automation tell `held` at once, past any pending
@@ -189,27 +190,37 @@ impl Tells {
     pub(super) fn pass_hold(&self, held: Held) {
         let state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         let placed = state.hold.passing(held);
-        self.apply(&state, placed);
+        self.apply(&state, placed, &SystemReads);
     }
 
     /// Places a foreground event's tell for `window`, `None` for one a
     /// local drop took, which still awaits its window, `front` the window
-    /// in front as the callback read it.
-    pub(super) fn foreground(&self, window: isize, tell: Option<Pending>, front: isize) {
+    /// in front as the callback read it, and the foreground facts of what
+    /// is sent read through `reads`.
+    pub(super) fn foreground(
+        &self,
+        window: isize,
+        tell: Option<Pending>,
+        front: isize,
+        reads: &impl WindowReads,
+    ) {
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         let held = tell.map(|tell| Held::Tell(Box::new(tell)));
         let placed = state.hold.foreground(window, held, front, now_us());
-        self.apply(&state, placed);
+        self.apply(&state, placed, reads);
     }
 
     /// Sends what a step of the hold released, in order, each tell's
-    /// foreground facts read as it goes, and sets the timer as it says,
-    /// under the lock.
-    fn apply(&self, state: &HoldState, placed: Placed<Held>) {
+    /// foreground facts read through `reads` as it goes, and sets the
+    /// timer as it says, under the lock. The foreground window, the active
+    /// window and whether one window is inside another are read here, under
+    /// the lock, whatever `reads` has read before
+    /// ([`ReadOnce`](verbatim_win32::window_facts::ReadOnce)).
+    fn apply(&self, state: &HoldState, placed: Placed<Held>, reads: &impl WindowReads) {
         for held in placed.send {
             match held {
                 Held::Tell(tell) => {
-                    let (key, message) = tell.finish(&SystemReads);
+                    let (key, message) = tell.finish(reads);
                     sent(&self.sender.send(Sent::Tell(key, message)));
                 }
                 Held::IdleAnswer(round) => sent(&self.sender.send(Sent::IdleAnswer(round))),
@@ -237,7 +248,7 @@ impl Timed for Tells {
     fn fired(&self) {
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         let placed = state.hold.fired(self.front(), now_us());
-        self.apply(&state, placed);
+        self.apply(&state, placed, &SystemReads);
     }
 
     fn closing(&self) {
@@ -315,21 +326,23 @@ fn handle(window: isize) -> WindowHandle {
 /// window's class and the shown object ([`dropped_by_class`]), and a hung
 /// or ghosted window, read live, for the kinds NVDA tests
 /// ([`hang_tested`]). `front` is the window in front as the
-/// callback read it, which the foreground hold judges the event on.
+/// callback read it, which the foreground hold judges the event on, and
+/// `windows` the facts of the event's windows, each read once for it.
 pub(super) fn tell_win_event(
     tells: &Tells,
     applications: &mut Applications,
     event: WinEvent,
     (at_us, front): (u64, isize),
+    windows: &EventWindows<'_, impl EventReads>,
 ) {
     let Some(kind) = verbatim_ia2::tell_kind(&event) else {
         return;
     };
-    let reads = SystemReads;
+    let reads = windows.facts();
     let window = match tell_window(
         kind,
         (event.hwnd, event.id_object, event.id_child),
-        verbatim_win32::window::window_exists,
+        |window| windows.exists(window),
         reads.desktop(),
     ) {
         Ok(window) => window,
@@ -342,12 +355,12 @@ pub(super) fn tell_win_event(
     let dropped = |reason: &'static str| {
         tracing::trace!(?kind, window, reason, "a WinEvent is not told");
         if let Some(window) = awaited {
-            tells.foreground(window, None, front);
+            tells.foreground(window, None, front, reads);
         }
     };
-    let class = window_class_name(window);
+    let class = reads.class(window);
     let console = class == CONSOLE_WINDOW_CLASS;
-    let owner = window_pid(window);
+    let owner = reads.owner(window).1;
     // A console window's events, and a destroyed window's, are served by
     // the process of the thread that raised them.
     let process = if console || kind == EventKind::Destroy || owner == 0 {
@@ -361,7 +374,7 @@ pub(super) fn tell_win_event(
     if let Some(reason) = dropped_by_class(kind, &class, event.id_object) {
         return dropped(reason);
     }
-    if hang_tested(kind) && verbatim_win32::window::readability(window).is_hung() {
+    if hang_tested(kind) && windows.readability(window).is_hung() {
         return dropped("its window is hung");
     }
     let payload = if kind == EventKind::DesktopSwitch {
@@ -386,15 +399,15 @@ pub(super) fn tell_win_event(
         cached: PropertyValues(Vec::new()),
         payload,
         window: PendingWindow::Found(WindowPart::read(
-            &reads,
+            reads,
             window,
             console.then_some((event.thread, process.0)),
         )),
         checked: None,
     };
     match awaited {
-        Some(window) => tells.foreground(window, Some(tell), front),
-        None => tells.place_seen(Held::Tell(Box::new(tell)), front),
+        Some(window) => tells.foreground(window, Some(tell), front, reads),
+        None => tells.place_seen(Held::Tell(Box::new(tell)), front, reads),
     }
 }
 
@@ -489,6 +502,13 @@ mod tests {
         }
     }
 
+    /// [`tell_win_event`] with the system's reads and readability, the
+    /// hook having read no class.
+    fn tell(tells: &Tells, applications: &mut Applications, event: WinEvent, at: (u64, isize)) {
+        let windows = EventWindows::new(&SystemReads, &verbatim_win32::window::readability, None);
+        tell_win_event(tells, applications, event, at, &windows);
+    }
+
     /// This test process's executable name, as the listener reads it.
     fn own_name() -> String {
         std::env::current_exe()
@@ -517,7 +537,7 @@ mod tests {
             window.0,
             OBJID_CLIENT.0,
         );
-        tell_win_event(
+        tell(
             &tells,
             &mut Applications::default(),
             name_change,
@@ -571,7 +591,7 @@ mod tests {
                 OBJID_CLIENT.0,
             ),
         ] {
-            tell_win_event(&tells, &mut applications, told, (1, foreground()));
+            tell(&tells, &mut applications, told, (1, foreground()));
         }
         assert_eq!(sent_all(&sender, &mut reader), Vec::<ListenerToCore>::new());
     }
@@ -581,7 +601,7 @@ mod tests {
         let gone = OwnWindow::new().0;
         let (tells, sender, mut reader) = tells();
         let destroy = event(WinEventKind::Destroy, EVENT_OBJECT_DESTROY, gone, 0);
-        tell_win_event(
+        tell(
             &tells,
             &mut Applications::default(),
             destroy,
@@ -615,7 +635,7 @@ mod tests {
             window.0,
             OBJID_CLIENT.0,
         );
-        tell_win_event(
+        tell(
             &tells,
             &mut applications,
             foreground_event,
@@ -627,11 +647,11 @@ mod tests {
             window.0,
             OBJID_CLIENT.0,
         );
-        tell_win_event(&tells, &mut applications, name_change, (2, foreground()));
+        tell(&tells, &mut applications, name_change, (2, foreground()));
         tells.place(Held::IdleAnswer(7));
         // A foreground event for the window in front, or for none when
         // nothing is, ends the hold; dropped itself, it is not told.
-        tells.foreground(foreground(), None, foreground());
+        tells.foreground(foreground(), None, foreground(), &SystemReads);
         let order: Vec<String> = sent_all(&sender, &mut reader)
             .into_iter()
             .map(|message| match message {
@@ -675,7 +695,7 @@ mod tests {
                 2,
             ),
         ] {
-            tell_win_event(&tells, &mut applications, told, (at_us, foreground()));
+            tell(&tells, &mut applications, told, (at_us, foreground()));
         }
         let sent = sent_all(&sender, &mut reader);
         let tell = only_tell(&sent);

@@ -95,6 +95,7 @@ use crate::reading::Readers;
 
 pub(crate) mod asked;
 mod checking;
+mod event_windows;
 mod tells;
 
 pub use asked::uia_bar_place;
@@ -102,7 +103,8 @@ use asked::{UiaJob, UiaReading};
 use checking::{CheckEvent, Checks, Kept};
 
 use crate::value_change::{Found, Judgement, ValueChange, ValueChangeKnowledge, probed_of};
-use tells::{Held, TellKey, Tells, tell_win_event};
+use event_windows::{EventReads, EventWindows};
+use tells::{Held, SystemReads, TellKey, Tells, tell_win_event};
 use verbatim_ia2::event_thread::{EventHandlers, EventThread, MakeHandlers, Nudger};
 use verbatim_listener_logic::focus::{
     BarObject, BarRaiser, BarVerdict, ClassicBarRead, WindowAnswer, classic_value_change,
@@ -121,6 +123,7 @@ use verbatim_reader_rules::CONSOLE_WINDOW_CLASS;
 use verbatim_reader_rules::class::{ClassVerdict, class_verdict, listener_provider};
 use verbatim_reader_rules::verdicts::Probe;
 use verbatim_win32::window::{WindowReadabilityReader, window_class_name};
+use verbatim_win32::window_facts::WindowReads;
 
 /// The priority of the listener's main thread, its I/O thread, which reads
 /// Core's pipe, handles each command, and finishes the writes to Core that
@@ -728,14 +731,15 @@ impl Listener {
             // event, for its tells, on this thread alone.
             let applications = RefCell::new(tells::Applications::default());
             EventHandlers {
-                win_event: Box::new(move |event: WinEvent| {
+                win_event: Box::new(move |event: WinEvent, class: Option<&str>| {
                     on_win_event(
                         &outgoing,
                         &mut applications.borrow_mut(),
                         &event_readers,
                         &knowledge,
                         &watch,
-                        event,
+                        (event, class),
+                        &SystemReads,
                     );
                 }),
                 // The idle barrier's query, its round in the first word:
@@ -965,20 +969,35 @@ fn ask((readers, kept): (&Readers<UiaReading>, &Kept), ask: Box<Ask>) {
 /// read once ([`Tells::front`](tells::Tells::front)), and the watch and
 /// the foreground hold both judge the event on that read, so that the hold
 /// releases a foreground tell on an event only when the watch has reported
-/// its window.
+/// its window. Each fact of the event's windows is read once for the event
+/// ([`EventWindows`]), through `reads`, and the class of its window not at
+/// all when the hook's filter read it, `class`.
 fn on_win_event(
     outgoing: &Arc<Outgoing>,
     applications: &mut tells::Applications,
     readers: &Arc<Readers<UiaReading>>,
     knowledge: &RefCell<ValueChangeKnowledge>,
     watch: &RefCell<ForegroundWatch>,
-    event: WinEvent,
+    (event, class): (WinEvent, Option<&str>),
+    reads: &impl EventReads,
 ) {
     let arrived_us = outgoing.now();
     let front = outgoing.tells.front();
-    watch_win_event(outgoing, watch, event, (arrived_us, front));
-    tell_win_event(&outgoing.tells, applications, event, (arrived_us, front));
-    route_win_event(outgoing, readers, knowledge, event);
+    let readability = &readers.reading().readability;
+    let windows = EventWindows::new(
+        reads,
+        &**readability,
+        class.map(|class| (event.hwnd, class)),
+    );
+    watch_win_event(outgoing, watch, event, (arrived_us, front), &windows);
+    tell_win_event(
+        &outgoing.tells,
+        applications,
+        event,
+        (arrived_us, front),
+        &windows,
+    );
+    route_win_event(outgoing, readers, knowledge, event, &windows);
 }
 
 /// What the foreground's watch takes from a `WinEvent` observed at
@@ -991,6 +1010,7 @@ fn watch_win_event(
     watch: &RefCell<ForegroundWatch>,
     event: WinEvent,
     (observed_at_us, front): (u64, isize),
+    windows: &EventWindows<'_, impl EventReads>,
 ) {
     let in_front = |window: isize| front == window;
     let step = match event.kind {
@@ -1009,7 +1029,8 @@ fn watch_win_event(
             let front = Front {
                 window: event.hwnd,
                 thread: event.thread,
-                console: event.hwnd != 0 && window_class_name(event.hwnd) == CONSOLE_WINDOW_CLASS,
+                console: event.hwnd != 0
+                    && windows.facts().class(event.hwnd) == CONSOLE_WINDOW_CLASS,
                 observed_at_us,
             };
             watch.borrow_mut().foreground(front, in_front(event.hwnd))
@@ -1461,12 +1482,15 @@ fn report_bar(outgoing: &Arc<Outgoing>, timing: EventTiming) -> Responder<BarCha
 /// an ignored process, a hidden window of a listed class, and what
 /// `knowledge` says is dropped are dropped here with no lock; the rest
 /// queued on the window's application's reading thread, behind Core's
-/// requests, one held per object, a newer change replacing it.
+/// requests, one held per object, a newer change replacing it. The
+/// window's owner, class and readability are those read for the event's
+/// tell, `windows`.
 fn value_change_event(
     outgoing: &Arc<Outgoing>,
     readers: &Arc<Readers<UiaReading>>,
     knowledge: &mut ValueChangeKnowledge,
     event: WinEvent,
+    windows: &EventWindows<'_, impl EventReads>,
 ) {
     knowledge.drain();
     let WinEvent {
@@ -1479,18 +1503,18 @@ fn value_change_event(
     if hwnd == 0 {
         return;
     }
-    let (owner_thread, owner) = verbatim_win32::window::window_owner(hwnd);
+    let (owner_thread, owner) = windows.facts().owner(hwnd);
     if owner == 0 {
         return;
     }
-    let class = window_class_name(hwnd);
+    let class = windows.facts().class(hwnd);
     let Some(pid) = routed_process(&class, owner, || process_of_thread(thread)).map(Pid) else {
         return;
     };
     if outgoing.ignored.contains(pid) || outgoing.ignored.contains(Pid(owner)) {
         return;
     }
-    if window_hung(&readers.reading().readability, hwnd) {
+    if windows.readability(hwnd).is_hung() {
         tracing::debug!(%pid, hwnd, "a value change dropped: its window is hung");
         return;
     }
@@ -1740,6 +1764,7 @@ fn route_win_event(
     readers: &Arc<Readers<UiaReading>>,
     knowledge: &RefCell<ValueChangeKnowledge>,
     event: WinEvent,
+    windows: &EventWindows<'_, impl EventReads>,
 ) {
     match event.kind {
         WinEventKind::Focus => knowledge.borrow_mut().focus_moved(BarObject {
@@ -1748,7 +1773,13 @@ fn route_win_event(
             child: event.id_child,
         }),
         WinEventKind::ValueChange => {
-            value_change_event(outgoing, readers, &mut knowledge.borrow_mut(), event);
+            value_change_event(
+                outgoing,
+                readers,
+                &mut knowledge.borrow_mut(),
+                event,
+                windows,
+            );
         }
         _ => {}
     }
@@ -1914,7 +1945,7 @@ pub fn run_listener(
 mod tests {
     use std::fs::File;
     use std::io::BufReader;
-    use std::sync::atomic::{AtomicBool, AtomicIsize};
+    use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU32};
     use std::sync::mpsc;
     use std::sync::{Mutex, PoisonError};
 
@@ -2064,6 +2095,7 @@ mod tests {
             &parts.readers,
             &mut ValueChangeKnowledge::new(),
             value_change(hwnd),
+            &EventWindows::new(&SystemReads, &*parts.readers.reading().readability, None),
         );
         assert_eq!(
             asked
@@ -2114,6 +2146,7 @@ mod tests {
             &readers,
             &mut ValueChangeKnowledge::new(),
             value_change(hwnd),
+            &EventWindows::new(&SystemReads, &*readers.reading().readability, None),
         );
         assert!(nothing_queued(&readers), "no read was queued");
         readers.stop();
@@ -3096,11 +3129,15 @@ mod tests {
             &readers,
             &RefCell::new(ValueChangeKnowledge::new()),
             &watch,
-            client_event(
-                WinEventKind::Foreground,
-                windows::Win32::UI::WindowsAndMessaging::EVENT_SYSTEM_FOREGROUND,
-                window.0,
+            (
+                client_event(
+                    WinEventKind::Foreground,
+                    windows::Win32::UI::WindowsAndMessaging::EVENT_SYSTEM_FOREGROUND,
+                    window.0,
+                ),
+                None,
             ),
+            &SystemReads,
         );
         readers.stop();
         assert_eq!(
@@ -3128,11 +3165,15 @@ mod tests {
             &readers,
             &knowledge,
             &watch,
-            client_event(
-                WinEventKind::Foreground,
-                windows::Win32::UI::WindowsAndMessaging::EVENT_SYSTEM_FOREGROUND,
-                window.0,
+            (
+                client_event(
+                    WinEventKind::Foreground,
+                    windows::Win32::UI::WindowsAndMessaging::EVENT_SYSTEM_FOREGROUND,
+                    window.0,
+                ),
+                None,
             ),
+            &SystemReads,
         );
         FRONT.store(window.0, Ordering::SeqCst);
         on_win_event(
@@ -3141,11 +3182,15 @@ mod tests {
             &readers,
             &knowledge,
             &watch,
-            client_event(
-                WinEventKind::Focus,
-                windows::Win32::UI::WindowsAndMessaging::EVENT_OBJECT_FOCUS,
-                window.0,
+            (
+                client_event(
+                    WinEventKind::Focus,
+                    windows::Win32::UI::WindowsAndMessaging::EVENT_OBJECT_FOCUS,
+                    window.0,
+                ),
+                None,
             ),
+            &SystemReads,
         );
         readers.stop();
         assert_eq!(
@@ -3178,11 +3223,15 @@ mod tests {
             &readers,
             &knowledge,
             &watch,
-            client_event(
-                WinEventKind::Foreground,
-                windows::Win32::UI::WindowsAndMessaging::EVENT_SYSTEM_FOREGROUND,
-                window.0,
+            (
+                client_event(
+                    WinEventKind::Foreground,
+                    windows::Win32::UI::WindowsAndMessaging::EVENT_SYSTEM_FOREGROUND,
+                    window.0,
+                ),
+                None,
             ),
+            &SystemReads,
         );
         FRONT.store(window.0, Ordering::SeqCst);
         on_win_event(
@@ -3191,11 +3240,15 @@ mod tests {
             &readers,
             &knowledge,
             &watch,
-            client_event(
-                WinEventKind::NameChange,
-                windows::Win32::UI::WindowsAndMessaging::EVENT_OBJECT_NAMECHANGE,
-                window.0,
+            (
+                client_event(
+                    WinEventKind::NameChange,
+                    windows::Win32::UI::WindowsAndMessaging::EVENT_OBJECT_NAMECHANGE,
+                    window.0,
+                ),
+                None,
             ),
+            &SystemReads,
         );
         readers.stop();
         assert_eq!(
@@ -3204,6 +3257,263 @@ mod tests {
                 format!("report {}", window.0),
                 "tell Foreground".to_owned(),
                 "tell NameChange".to_owned(),
+            ]
+        );
+    }
+
+    /// A made-up desktop's handles: the desktop, the flood's top-level
+    /// window, a tooltip and the window in front, none a real window, so
+    /// that no read can reach a real one.
+    const FLOOD_DESKTOP: isize = 0x7FFF_0001;
+    const FLOOD_WINDOW: isize = 0x7FFF_0010;
+    const FLOOD_TOOLTIP: isize = 0x7FFF_0030;
+    const FLOOD_FRONT: isize = 0x7FFF_0020;
+
+    /// The flood's desktop as the listener reads it, every read counted by
+    /// its name: the flood's window and its tooltip are top-level windows
+    /// of this process, behind the window in front, which is active.
+    #[derive(Default)]
+    struct FloodDesk {
+        counts: RefCell<std::collections::BTreeMap<&'static str, u32>>,
+    }
+
+    impl FloodDesk {
+        fn count<T>(&self, name: &'static str, value: T) -> T {
+            *self.counts.borrow_mut().entry(name).or_default() += 1;
+            value
+        }
+    }
+
+    impl WindowReads for FloodDesk {
+        fn class(&self, window: isize) -> String {
+            let class = match window {
+                FLOOD_DESKTOP => "#32769",
+                FLOOD_TOOLTIP => "tooltips_class32",
+                FLOOD_FRONT => "Front",
+                _ => "MockAppWindow",
+            };
+            self.count("class", class.to_owned())
+        }
+        fn owner(&self, _window: isize) -> (u32, u32) {
+            self.count("owner", (1, std::process::id()))
+        }
+        fn console_host(&self, _window: isize) -> Option<u32> {
+            self.count("console_host", None)
+        }
+        fn parent(&self, _window: isize) -> isize {
+            self.count("parent", FLOOD_DESKTOP)
+        }
+        fn root(&self, window: isize) -> isize {
+            self.count("root", window)
+        }
+        fn root_owner(&self, window: isize) -> isize {
+            self.count("root_owner", window)
+        }
+        fn is_child(&self, _parent: isize, _child: isize) -> bool {
+            self.count("is_child", false)
+        }
+        fn topmost(&self, _window: isize) -> bool {
+            self.count("topmost", false)
+        }
+        fn desktop(&self) -> isize {
+            self.count("desktop", FLOOD_DESKTOP)
+        }
+        fn foreground(&self) -> isize {
+            self.count("foreground", FLOOD_FRONT)
+        }
+        fn active_window(&self) -> isize {
+            self.count("active_window", FLOOD_FRONT)
+        }
+        fn hidden_frame(&self, _window: isize) -> bool {
+            self.count("hidden_frame", false)
+        }
+    }
+
+    impl EventReads for FloodDesk {
+        fn exists(&self, _window: isize) -> bool {
+            self.count("exists", true)
+        }
+    }
+
+    /// How many times the window in front was read for the hold.
+    static FLOOD_FRONT_READS: AtomicU32 = AtomicU32::new(0);
+
+    /// The listener's sending side and readers for the flood, judging
+    /// readability with `readability` and reading the window in front for
+    /// the hold as the flood's, each read counted; what it sends, read on
+    /// a thread of its own.
+    fn flood_listening(
+        readability: WindowReadabilityReader,
+    ) -> (
+        Arc<Outgoing>,
+        Arc<Readers<UiaReading>>,
+        mpsc::Receiver<ListenerToCore>,
+    ) {
+        let (sender_end, theirs) =
+            pipe(Flow::Outbound, EVENT_PIPE_BUFFER, End::Synchronous).expect("a pipe");
+        let (sender, _finishing) =
+            Sender::start(sender_end, Waiting::default(), "flood-test", || {}).expect("a sender");
+        let tells = Arc::new(tells::Tells::with_front(sender.clone(), || {
+            FLOOD_FRONT_READS.fetch_add(1, Ordering::SeqCst);
+            FLOOD_FRONT
+        }));
+        let outgoing = Arc::new(Outgoing::with_tells(
+            sender,
+            IgnoredProcesses::default(),
+            tells,
+            None,
+        ));
+        let sent = drain(BufReader::new(File::from(theirs)));
+        let kept = Arc::new(Kept::new(1));
+        let readers = Arc::new(Readers::new(UiaReading {
+            outgoing: Arc::clone(&outgoing),
+            kept,
+            readability,
+            name_at_event: |_, _, _| None,
+        }));
+        (outgoing, readers, sent)
+    }
+
+    /// The object of the flood's window known to be no bar.
+    const FLOOD_NOT_A_BAR: i32 = 1001;
+
+    /// The flood's three kinds of event, each named, with the class of its
+    /// window the hook read: a value change on a new object, one on an
+    /// object known to be no bar ([`FLOOD_NOT_A_BAR`]), and a tooltip's
+    /// show.
+    fn flood_events() -> [(&'static str, WinEvent, &'static str); 3] {
+        use windows::Win32::UI::WindowsAndMessaging::{
+            EVENT_OBJECT_SHOW, EVENT_OBJECT_VALUECHANGE,
+        };
+        let flood_event = |kind, raw, hwnd, id_object| WinEvent {
+            kind,
+            event: raw,
+            hwnd,
+            id_object,
+            id_child: 0,
+            thread: 1,
+            time: 0,
+            raised_ms_ago: 0,
+        };
+        [
+            (
+                "a value change on a new object",
+                flood_event(
+                    WinEventKind::ValueChange,
+                    EVENT_OBJECT_VALUECHANGE,
+                    FLOOD_WINDOW,
+                    1000,
+                ),
+                "MockAppWindow",
+            ),
+            (
+                "a value change on an object known to be no bar",
+                flood_event(
+                    WinEventKind::ValueChange,
+                    EVENT_OBJECT_VALUECHANGE,
+                    FLOOD_WINDOW,
+                    FLOOD_NOT_A_BAR,
+                ),
+                "MockAppWindow",
+            ),
+            (
+                "a tooltip's show",
+                flood_event(WinEventKind::Show, EVENT_OBJECT_SHOW, FLOOD_TOOLTIP, 1000),
+                "tooltips_class32",
+            ),
+        ]
+    }
+
+    /// The calls to Windows the event thread makes for each `WinEvent` of
+    /// `msaa_flood_then_focus`'s three floods, behind the one class read of
+    /// the hook's filter, which it hands on (`verbatim_ia2`'s
+    /// `the_class_the_filter_read_is_handed_on_with_the_event`): a value
+    /// change on a new object of a window in the background, one on an
+    /// object known to be no bar, and a tooltip's show. Each window fact
+    /// is read once for the event; the window in front is read for the
+    /// hold and again under the tells' lock, with the active window and
+    /// the windows' relations to them, as the tell is placed.
+    #[test]
+    fn a_flood_events_window_facts_are_read_once() {
+        let readability_reads = Arc::new(AtomicU32::new(0));
+        let counted = Arc::clone(&readability_reads);
+        let readability: WindowReadabilityReader = Arc::new(move |_| {
+            counted.fetch_add(1, Ordering::SeqCst);
+            Readability::Readable
+        });
+        let (outgoing, readers, sent) = flood_listening(readability);
+        let watch = RefCell::new(ForegroundWatch::default());
+        let _ = watch.borrow_mut().start(None);
+        let knowledge = RefCell::new(ValueChangeKnowledge::new());
+        let mut applications = tells::Applications::default();
+        let _ = knowledge.borrow().sender().send(Found::Object {
+            pid: Pid(std::process::id()),
+            object: BarObject {
+                window: FLOOD_WINDOW,
+                object: FLOOD_NOT_A_BAR,
+                child: 0,
+            },
+            owner: 1,
+            verdict: BarVerdict::NotABar,
+        });
+        let events = flood_events();
+        let mut counts = Vec::new();
+        for (name, event, class) in events {
+            let desk = FloodDesk::default();
+            FLOOD_FRONT_READS.store(0, Ordering::SeqCst);
+            readability_reads.store(0, Ordering::SeqCst);
+            on_win_event(
+                &outgoing,
+                &mut applications,
+                &readers,
+                &knowledge,
+                &watch,
+                (event, Some(class)),
+                &desk,
+            );
+            let mut read = desk.counts.into_inner();
+            read.insert(
+                "front for the hold",
+                FLOOD_FRONT_READS.load(Ordering::SeqCst),
+            );
+            read.insert("readability", readability_reads.load(Ordering::SeqCst));
+            counts.push((name, read));
+        }
+        readers.stop();
+        outgoing.close();
+        let tells: Vec<String> = sent
+            .iter()
+            .filter_map(|message| match message {
+                ListenerToCore::Tell(tell) => Some(format!("{:?}", tell.kind)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(tells, ["ValueChange", "ValueChange", "Show"]);
+        let per_event = std::collections::BTreeMap::from([
+            ("active_window", 1),
+            ("class", 1),
+            ("desktop", 1),
+            ("exists", 1),
+            ("foreground", 1),
+            ("front for the hold", 1),
+            ("hidden_frame", 1),
+            ("is_child", 3),
+            ("owner", 1),
+            ("parent", 1),
+            ("readability", 1),
+            ("root", 1),
+            ("root_owner", 2),
+            ("topmost", 1),
+        ]);
+        assert_eq!(
+            counts,
+            [
+                ("a value change on a new object", per_event.clone()),
+                (
+                    "a value change on an object known to be no bar",
+                    per_event.clone()
+                ),
+                ("a tooltip's show", per_event),
             ]
         );
     }

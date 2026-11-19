@@ -51,7 +51,7 @@ fn a_focus_read_that_waits_on_a_busy_application_is_still_reported() {
     let _hook = WinEventHook::install(
         pid,
         &[WinEventKind::Focus],
-        Box::new(move |event: WinEvent| {
+        Box::new(move |event: WinEvent, _class: Option<&str>| {
             *seen.lock().unwrap_or_else(PoisonError::into_inner) =
                 Some((event.hwnd, event.id_object, event.id_child));
         }),

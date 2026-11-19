@@ -95,7 +95,9 @@ Public API:
   `WindowReads`, the reads (class, owner, console host, parent, root, root
   owner, `IsChild`, topmost, the desktop, the foreground, the foreground
   thread's active window and the hidden frame), with `SystemReads` making
-  them; `WindowPart`, the window's own part read as the event arrives,
+  them, and `ReadOnce`, made for one event, reading each of a window's
+  own facts at most once and the foreground, the active window and
+  `IsChild` each time they are asked; `WindowPart`, the window's own part read as the event arrives,
   completed by the foreground's part (`WindowPart::with_foreground`) into
   `AcceptanceFacts`, a console window's process the console host the
   event's thread names; and `node_window`, the `NodeWindow` a node read

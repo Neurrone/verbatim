@@ -68,7 +68,9 @@ Public API:
   callback receives a `WinEvent`: the event's kind, its MSAA address, the
   thread that raised it, which is a console window's real thread in the
   console host where `GetWindowThreadProcessId` names the client's, the
-  time Windows raised it (`dwmsEventTime`), and how long ago that was.
+  time Windows raised it (`dwmsEventTime`), and how long ago that was;
+  and beside it the class of its window when the hook's filter read it
+  for the event, so the handling reads it no more.
   Every hook that receives one event is given the same kind, address,
   thread, and time, which is how an outpost tells the listener's copy of
   an event from its own hook's. `event_clock()` reads the clock that time

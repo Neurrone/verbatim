@@ -4,7 +4,11 @@
 //! Windows only and none into an application, for both readers: the
 //! listener's tells and the outpost's tells of its followed nodes' changes.
 //! The gathering is pure over [`WindowReads`], so every case is a test
-//! here; [`SystemReads`] makes the reads.
+//! here; [`SystemReads`] makes the reads, and [`ReadOnce`] makes each of
+//! a window's own reads at most once while one event is handled.
+
+use std::cell::{Cell, RefCell};
+use std::collections::BTreeMap;
 
 use verbatim_model::request::NodeWindow;
 use verbatim_model::tell::{AcceptanceFacts, Relation, WindowFacet};
@@ -197,6 +201,158 @@ impl WindowPart {
             hidden_frame: self.hidden_frame,
             hidden_frame_owned: self.hidden_frame_owned,
         }
+    }
+}
+
+/// [`WindowReads`] over `R` that reads each fact of a window at most once:
+/// for the handling of one event, so that every rule that asks a window's
+/// class, owner, ancestors, style or hidden-frame mark sees the one answer
+/// read for the event, as NVDA's `WinEvent` callback reads a window's class
+/// once (`winEventCallback`,
+/// `nvda/source/IAccessibleHandler/internalWinEventHandler.py`). The facts of
+/// the moment, the foreground window, the active window and whether one
+/// window is inside another, are read each time they are asked, as is a
+/// console window's host, since a
+/// rule that asks them judges the moment it is applied. It is made for one
+/// event and dropped with it: nothing about a window is kept from one
+/// event to the next.
+pub struct ReadOnce<'r, R> {
+    reads: &'r R,
+    desktop: Cell<Option<isize>>,
+    windows: RefCell<BTreeMap<isize, Known>>,
+}
+
+/// What has been read of one window while an event is handled.
+#[derive(Default)]
+struct Known {
+    class: Option<String>,
+    owner: Option<(u32, u32)>,
+    parent: Option<isize>,
+    root: Option<isize>,
+    root_owner: Option<isize>,
+    topmost: Option<bool>,
+    hidden_frame: Option<bool>,
+}
+
+impl<'r, R: WindowReads> ReadOnce<'r, R> {
+    /// Nothing read yet, each fact to be read from `reads`.
+    #[must_use]
+    pub fn new(reads: &'r R) -> Self {
+        Self {
+            reads,
+            desktop: Cell::new(None),
+            windows: RefCell::new(BTreeMap::new()),
+        }
+    }
+
+    /// `window`'s class already read for this event, `class`, as the hook's
+    /// filter read it before the event was delivered.
+    #[must_use]
+    pub fn with_class(self, window: isize, class: String) -> Self {
+        self.windows.borrow_mut().entry(window).or_default().class = Some(class);
+        self
+    }
+
+    /// The fact `field` of `window`, read with `read` the first time it is
+    /// asked.
+    fn known<T: Clone>(
+        &self,
+        window: isize,
+        field: fn(&mut Known) -> &mut Option<T>,
+        read: impl FnOnce(&R) -> T,
+    ) -> T {
+        if let Some(value) = self
+            .windows
+            .borrow_mut()
+            .get_mut(&window)
+            .and_then(|known| field(known).clone())
+        {
+            return value;
+        }
+        let value = read(self.reads);
+        *field(self.windows.borrow_mut().entry(window).or_default()) = Some(value.clone());
+        value
+    }
+}
+
+impl<R: WindowReads> WindowReads for ReadOnce<'_, R> {
+    fn class(&self, window: isize) -> String {
+        self.known(
+            window,
+            |known| &mut known.class,
+            |reads| reads.class(window),
+        )
+    }
+
+    fn owner(&self, window: isize) -> (u32, u32) {
+        self.known(
+            window,
+            |known| &mut known.owner,
+            |reads| reads.owner(window),
+        )
+    }
+
+    fn console_host(&self, window: isize) -> Option<u32> {
+        // Read each time it is asked: only for a console window whose event
+        // named no host, which the listener's never is.
+        self.reads.console_host(window)
+    }
+
+    fn parent(&self, window: isize) -> isize {
+        self.known(
+            window,
+            |known| &mut known.parent,
+            |reads| reads.parent(window),
+        )
+    }
+
+    fn root(&self, window: isize) -> isize {
+        self.known(window, |known| &mut known.root, |reads| reads.root(window))
+    }
+
+    fn root_owner(&self, window: isize) -> isize {
+        self.known(
+            window,
+            |known| &mut known.root_owner,
+            |reads| reads.root_owner(window),
+        )
+    }
+
+    fn is_child(&self, parent: isize, child: isize) -> bool {
+        self.reads.is_child(parent, child)
+    }
+
+    fn topmost(&self, window: isize) -> bool {
+        self.known(
+            window,
+            |known| &mut known.topmost,
+            |reads| reads.topmost(window),
+        )
+    }
+
+    fn desktop(&self) -> isize {
+        if let Some(desktop) = self.desktop.get() {
+            return desktop;
+        }
+        let desktop = self.reads.desktop();
+        self.desktop.set(Some(desktop));
+        desktop
+    }
+
+    fn foreground(&self) -> isize {
+        self.reads.foreground()
+    }
+
+    fn active_window(&self) -> isize {
+        self.reads.active_window()
+    }
+
+    fn hidden_frame(&self, window: isize) -> bool {
+        self.known(
+            window,
+            |known| &mut known.hidden_frame,
+            |reads| reads.hidden_frame(window),
+        )
     }
 }
 
@@ -478,6 +634,101 @@ mod tests {
         );
         assert_eq!(node_window(&desk, 5).root_owner, WindowHandle(1));
         assert!(node_window(&desk, DESKTOP).desktop);
+    }
+
+    /// [`WindowReads`] over a [`Desk`] that counts each read by its name.
+    struct Counting<'d> {
+        desk: &'d Desk,
+        counts: RefCell<BTreeMap<&'static str, u32>>,
+    }
+
+    impl Counting<'_> {
+        fn count<T>(&self, name: &'static str, value: T) -> T {
+            *self.counts.borrow_mut().entry(name).or_default() += 1;
+            value
+        }
+    }
+
+    impl WindowReads for Counting<'_> {
+        fn class(&self, window: isize) -> String {
+            self.count("class", self.desk.class(window))
+        }
+        fn owner(&self, window: isize) -> (u32, u32) {
+            self.count("owner", self.desk.owner(window))
+        }
+        fn console_host(&self, window: isize) -> Option<u32> {
+            self.count("console_host", self.desk.console_host(window))
+        }
+        fn parent(&self, window: isize) -> isize {
+            self.count("parent", self.desk.parent(window))
+        }
+        fn root(&self, window: isize) -> isize {
+            self.count("root", self.desk.root(window))
+        }
+        fn root_owner(&self, window: isize) -> isize {
+            self.count("root_owner", self.desk.root_owner(window))
+        }
+        fn is_child(&self, parent: isize, child: isize) -> bool {
+            self.count("is_child", self.desk.is_child(parent, child))
+        }
+        fn topmost(&self, window: isize) -> bool {
+            self.count("topmost", self.desk.topmost(window))
+        }
+        fn desktop(&self) -> isize {
+            self.count("desktop", self.desk.desktop())
+        }
+        fn foreground(&self) -> isize {
+            self.count("foreground", self.desk.foreground())
+        }
+        fn active_window(&self) -> isize {
+            self.count("active_window", self.desk.active_window())
+        }
+        fn hidden_frame(&self, window: isize) -> bool {
+            self.count("hidden_frame", self.desk.hidden_frame(window))
+        }
+    }
+
+    /// A top-level window's facts read through [`ReadOnce`], its class
+    /// given as the hook read it: each of the window's facts is read once,
+    /// though the window is its own root and root owner, and the facts of
+    /// the moment each time they are asked; the facts are those read
+    /// without it.
+    #[test]
+    fn read_once_reads_each_fact_of_a_window_once_and_the_moment_each_time() {
+        let mut desk = Desk::default();
+        desk.add(DESKTOP, "#32769", 0, 0);
+        desk.add(1, "MockApp", DESKTOP, 0);
+        desk.add(3, "Other", DESKTOP, 0);
+        desk.foreground = 3;
+        desk.active = 3;
+        let counting = Counting {
+            desk: &desk,
+            counts: RefCell::new(BTreeMap::new()),
+        };
+        let once = ReadOnce::new(&counting).with_class(1, "MockApp".to_owned());
+        let facts = WindowPart::read(&once, 1, None).with_foreground(&once);
+        assert_eq!(once.class(1), "MockApp");
+        assert_eq!(once.owner(1), (100, 200));
+        assert_eq!(
+            facts,
+            WindowPart::read(&desk, 1, None).with_foreground(&desk)
+        );
+        assert_eq!(
+            counting.counts.into_inner(),
+            BTreeMap::from([
+                ("active_window", 1),
+                ("class", 1),
+                ("desktop", 1),
+                ("foreground", 1),
+                ("hidden_frame", 1),
+                ("is_child", 3),
+                ("owner", 1),
+                ("parent", 1),
+                ("root", 1),
+                ("root_owner", 2),
+                ("topmost", 1),
+            ])
+        );
     }
 
     #[test]

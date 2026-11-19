@@ -641,7 +641,7 @@ fn hook(pid: u32) -> (WinEventHook, Receiver<SeenWinEvent>) {
     let hook = WinEventHook::install(
         pid,
         APP_SUBSCRIPTIONS,
-        Box::new(move |event: WinEvent| {
+        Box::new(move |event: WinEvent, _class: Option<&str>| {
             let _ = sender.send((event.kind, event.hwnd, event.id_object, event.id_child));
         }),
     )

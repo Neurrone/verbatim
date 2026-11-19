@@ -1341,7 +1341,7 @@ pub fn win_events(
     let hook = WinEventHook::install(
         pid,
         kinds,
-        Box::new(move |event: WinEvent| {
+        Box::new(move |event: WinEvent, _class: Option<&str>| {
             sink.lock()
                 .unwrap_or_else(PoisonError::into_inner)
                 .push(event);
