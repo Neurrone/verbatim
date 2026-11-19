@@ -442,9 +442,7 @@ input methods above:
   events Core receives, for evidence no speech shows: a caret report, a
   focus, the end of an outpost (`Frame::OutpostEnded`).
 - `wait_for_agent_file` waits, on folder change notifications, for a file
-  a script writes; `wait_for_window_in_front` and
-  `wait_for_window_titled` (a window titled exactly so, in front or not,
-  such as a hung window's ghost) wait on window events;
+  a script writes; `wait_for_window_in_front` waits on window events;
   `wait_for_event` waits for a launched process to set a named event
   `create_event` made, such as the events `mockapp` sets as it prints a
   line (`--line-events`).
@@ -728,8 +726,9 @@ under `src/scenarios/` documents exactly what it asserts.
   first call into it: its title said about a second later, and the return
   to the text box announced as without the stall, before mockapp's
   `release`), `menu_end_over_a_hung_window` (a mockapp MSAA window
-  stalls under Verbatim's menu, its ghost waited for by its title;
-  Escape speaks the ghost as NVDA's plain window, "<title> (Not
+  stalls under Verbatim's menu till Windows judges it hung, shown by
+  mockapp's acknowledgement of a command it takes six seconds into the
+  stall; Escape brings its ghost in front and speaks it as NVDA's plain window, "<title> (Not
   Responding) window", report focus and report the navigator object say
   the same, review the current line its name, say-all nothing, and the
   window answering again says "<title> window"; then the window stalls

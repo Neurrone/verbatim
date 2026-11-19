@@ -1,9 +1,13 @@
 //! Verbatim's menu closed over an application that has stopped responding
 //! (`docs/parity/focus-events.md`, "A window that stops responding"): a
 //! `mockapp` MSAA window stalls (mockapp's `stall`) while Verbatim's menu
-//! is in front, and Windows shows its ghost window, titled with " (Not
-//! Responding)", behind the menu. Escape closes the menu, and the check
-//! 50 ms later, NVDA's fake focus, finds the ghost in front: Verbatim
+//! is in front, until Windows judges it hung. Windows shows no ghost
+//! behind the menu while nothing calls into the window (Verbatim alone
+//! made none in 30 s, 3 of 3 runs on 2026-11-19; the captures' ghost
+//! behind the menu came with NVDA or event recorders reading the window);
+//! Escape brings the hung window forward, and Windows puts its ghost,
+//! titled with " (Not Responding)", in front. The check 50 ms later,
+//! NVDA's fake focus, finds the ghost in front: Verbatim
 //! speaks it as NVDA's plain window object of it, "<title> (Not
 //! Responding) window", with no sound (NVDA alpha-58022, 20 of 20 runs;
 //! Dickson, 2026-11-19). Report focus, report the navigator object and
@@ -21,8 +25,11 @@
 //! application's window when it answers again.
 //!
 //! Every wait is on evidence: mockapp's named events for its `stall
-//! started` and `stall ended` lines (`--line-events`), and the window
-//! events that show the ghost.
+//! started` and `stall ended` lines (`--line-events`); its `applied` line
+//! for a command it takes six seconds into the stall, while still taking
+//! no message, past the five seconds after which Windows judges a window
+//! that takes none hung (`IsHungAppWindow`); and the window events that
+//! show the ghost in front.
 
 use std::io;
 use std::time::Duration;
@@ -40,8 +47,8 @@ const HUNG: &str = "hung-window";
 /// the window hung, the Escape and four commands, with room to spare.
 const FIRST_STALL_MS: u64 = 40_000;
 
-/// How long the second stall lasts: the five seconds before the ghost,
-/// and the replacement of Verbatim.
+/// How long the second stall lasts: the six seconds before the window is
+/// judged hung, its ghost, and the replacement of Verbatim.
 const SECOND_STALL_MS: u64 = 40_000;
 
 /// The prefix of the named events the mockapp window sets as it prints
@@ -93,6 +100,12 @@ fn open(scenario: &mut Scenario, events: &str) -> io::Result<u32> {
     Ok(window.pid)
 }
 
+/// How far into a stall mockapp takes the command whose acknowledgement
+/// is the evidence that Windows judges the window hung: past the five
+/// seconds with no message taken after which `IsHungAppWindow` answers
+/// true.
+const HUNG_AFTER_MS: u64 = 6_000;
+
 /// The event mockapp sets as it prints a `stall` line, its start or its
 /// end.
 fn stall_line(events: &str) -> String {
@@ -100,14 +113,21 @@ fn stall_line(events: &str) -> String {
 }
 
 /// Stalls mockapp `pid` for `ms` and waits for its `stall started` line,
-/// then makes ready the wait for its `stall ended` line.
+/// then for the acknowledgement of a command that changes nothing it sees
+/// (`refuse-text off`, the default), taken [`HUNG_AFTER_MS`] into the stall
+/// while still taking no message, so Windows judges the window hung; then
+/// makes ready the wait for its `stall ended` line.
 fn stall(scenario: &mut Scenario, pid: u32, events: &str, ms: u64) {
     let line = stall_line(events);
+    let applied = format!("{events}applied");
     scenario
         .create_event(&line)
         .expect("creates the event for the stall's start");
     scenario
-        .write_stdin(pid, &format!("stall {ms}"))
+        .create_event(&applied)
+        .expect("creates the event for the command inside the stall");
+    scenario
+        .write_stdin(pid, &format!("stall {ms} {HUNG_AFTER_MS} refuse-text off"))
         .expect("writes stall");
     scenario
         .wait_for_event(&line, pid, WINDOW_TIMEOUT)
@@ -115,6 +135,9 @@ fn stall(scenario: &mut Scenario, pid: u32, events: &str, ms: u64) {
     scenario
         .create_event(&line)
         .expect("creates the event for the stall's end");
+    scenario
+        .wait_for_event(&applied, pid, WINDOW_TIMEOUT)
+        .expect("mockapp has taken no message for six seconds, so Windows judges it hung");
 }
 
 /// Waits for mockapp `pid`'s `stall ended` line, which comes up to `ms`
@@ -140,13 +163,10 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     // opens, never on its button, as in `msaa_flood_then_focus`.
     scenario.speech().expect(&[&window]);
 
-    // The menu over the window, which stalls; Windows shows its ghost
-    // behind the menu once it has called the window hung.
+    // The menu over the window, which stalls until Windows judges it hung;
+    // Escape brings it forward, and its ghost comes in front.
     super::open_verbatim_menu(scenario);
     stall(scenario, pid, &events, FIRST_STALL_MS);
-    scenario
-        .wait_for_window_titled(&ghost)
-        .expect("Windows shows the hung window's ghost");
 
     scenario.send_keys(&["escape"]).expect("sends escape");
     scenario.speech().expect(&[&plain]);
