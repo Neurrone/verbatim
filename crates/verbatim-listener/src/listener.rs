@@ -3504,14 +3504,20 @@ mod tests {
     }
 
     /// The body of the function `name` in `source`, to its closing brace
-    /// at the start of a line.
+    /// at the start of a line, whichever line ending the checkout has
+    /// (GitHub's Windows runners check out with `\r\n`).
     fn body<'s>(source: &'s str, name: &str) -> &'s str {
         let start = source
             .find(&format!("\nfn {name}("))
             .or_else(|| source.find(&format!("\npub(super) fn {name}(")))
             .unwrap_or_else(|| panic!("no fn {name}"));
         let rest = &source[start + 1..];
-        &rest[..rest.find("\n}\n").expect("its end")]
+        let end = rest
+            .match_indices("\n}")
+            .map(|(at, _)| at)
+            .find(|&at| matches!(rest.as_bytes().get(at + 2), Some(b'\n' | b'\r')))
+            .expect("its end");
+        &rest[..end]
     }
 
     /// The event path reads Windows' state only through the event's
