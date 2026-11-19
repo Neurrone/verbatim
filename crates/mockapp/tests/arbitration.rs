@@ -111,6 +111,7 @@ fn a_probe_that_timed_out_is_made_once_in_its_request() {
     let number = outpost.request(
         window,
         Request::MsaaRun(MsaaRun {
+            hidden: verbatim_model::request::HiddenRoot::Check,
             candidate: RunCandidate {
                 ids: MsaaIds {
                     window: WindowHandle(window.0 as u64),

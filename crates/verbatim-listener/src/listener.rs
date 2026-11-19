@@ -98,6 +98,7 @@ pub(crate) mod asked;
 mod checking;
 mod configuration;
 mod event_windows;
+mod shown;
 mod tells;
 
 pub use asked::uia_bar_place;
@@ -652,6 +653,9 @@ struct Listener {
     /// What nudges the `WinEvent` thread: the idle barrier's query goes
     /// through it, behind every event delivered to it before.
     nudger: Nudger,
+    /// Core's requests for a window's show, and its cancels, handed to the
+    /// `WinEvent` thread, which keeps the waiters ([`shown`]).
+    shown: shown::ToEventThread,
     _event_thread: EventThread,
 }
 
@@ -726,7 +730,20 @@ impl Listener {
         let idle_checks = Arc::clone(&checks);
         let msaa_outgoing = Arc::clone(&outgoing);
         let idle_readers = Arc::clone(&readers);
+        let (shown_inputs, shown_taken) = std::sync::mpsc::channel();
+        // Taken once, by the handlers the event thread makes: the channel's
+        // end is the thread's alone from then on.
+        let shown_taken = Mutex::new(Some(shown_taken));
         let make_handlers: MakeHandlers = Arc::new(move || {
+            let shown_inputs = shown_taken
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .take();
+            // The waiters for a window's show, on this thread alone, which
+            // hears every show and destruction.
+            let waiters = shown::OnEventThread::default();
+            let destroyed = waiters.clone();
+            let shown_on_thread = waiters.clone();
             let outgoing = Arc::clone(&msaa_outgoing);
             let idle_outgoing = Arc::clone(&msaa_outgoing);
             let readers = Arc::clone(&idle_readers);
@@ -743,7 +760,15 @@ impl Listener {
             // event, for its tells, on this thread alone.
             let applications = RefCell::new(tells::Applications::default());
             EventHandlers {
+                window_shown: Some(Box::new(move |window| shown_on_thread.shown(window))),
                 win_event: Box::new(move |event: WinEvent, class: Option<&str>| {
+                    if event.kind == WinEventKind::Destroy
+                        && event.id_object
+                            == windows::Win32::UI::WindowsAndMessaging::OBJID_WINDOW.0
+                        && event.id_child == verbatim_ia2::CHILDID_SELF
+                    {
+                        destroyed.destroyed(event.hwnd);
+                    }
                     on_win_event(
                         &outgoing,
                         &mut applications.borrow_mut(),
@@ -758,8 +783,13 @@ impl Listener {
                 // every event delivered before it has been handled, so the
                 // reading threads are waited for next. Or, once, the start
                 // of the foreground's watch, once the hooks are in.
+                // Or Core's requests for a window's show and its cancels.
                 nudge: Some(Box::new(move |round, kind| {
-                    if kind == NUDGE_FOREGROUND_START {
+                    if kind == shown::NUDGE_SHOWN {
+                        if let Some(inputs) = &shown_inputs {
+                            waiters.take(inputs, shown::visibility);
+                        }
+                    } else if kind == NUDGE_FOREGROUND_START {
                         let step = start_watch
                             .borrow_mut()
                             .start(front_now(idle_outgoing.now()));
@@ -787,6 +817,9 @@ impl Listener {
             checks,
             registering,
             nudger,
+            shown: shown::ToEventThread {
+                inputs: shown_inputs,
+            },
             _event_thread: event_thread,
         })
     }
@@ -808,6 +841,7 @@ impl Listener {
             checks,
             registering,
             nudger: _,
+            shown: _,
             _event_thread: event_thread,
         } = self;
         drop(event_thread);
@@ -865,6 +899,10 @@ impl Listener {
             CoreToListener::Cancel(cancel) => {
                 let abandons = cancel.reason.abandons_call();
                 let number = cancel.number;
+                // A request for a window's show is the WinEvent thread's,
+                // which answers the cancel of its own and leaves the rest.
+                self.shown
+                    .hand(shown::ShownInput::Cancel(cancel), || self.nudge_shown());
                 self.readers.cancel(cancel);
                 // A read abandoned for the foreground lets its kept
                 // reference go; its thread releases its own as its call
@@ -887,9 +925,24 @@ impl Listener {
         }
     }
 
-    /// Core's request `ask` ([`ask`]).
+    /// Core's request `ask`: a window's show handed to the `WinEvent`
+    /// thread, every other read to its reading thread ([`ask`]).
     fn request(&self, ask: Box<Ask>) {
+        if let Request::AwaitShown { window } = ask.request {
+            let token = shown::ShownToken::new(ask.number, &self.outgoing);
+            self.shown
+                .hand(shown::ShownInput::Request { window, token }, || {
+                    self.nudge_shown()
+                });
+            return;
+        }
         self::ask((&self.readers, &self.kept), ask);
+    }
+
+    /// Nudges the `WinEvent` thread to take what waits on its channel of
+    /// shows; whether it took the nudge.
+    fn nudge_shown(&self) -> bool {
+        self.nudger.nudge((0, shown::NUDGE_SHOWN))
     }
 
     /// The idle barrier's query for `round` (`docs/design/communication.md`,
@@ -4375,5 +4428,224 @@ mod tests {
                 (Some(not_reported), 0)
             ]
         );
+    }
+
+    /// A listener started for the tests of a window's show, its UIA
+    /// installation making no registration, and what it sends, read on a
+    /// thread of its own.
+    fn shows_listener() -> (Listener, mpsc::Receiver<ListenerToCore>) {
+        let (ours, theirs) =
+            pipe(Flow::Outbound, EVENT_PIPE_BUFFER, End::Synchronous).expect("a pipe");
+        let (sender, _finishing) =
+            Sender::start(ours, Waiting::default(), "listener-test", || {}).expect("a sender");
+        let listener = Listener::start(
+            sender,
+            (1, IgnoredProcesses::default(), BackgroundBars::Reported),
+            Box::new(|_, _, _| None),
+        )
+        .expect("the listener starts");
+        (listener, drain(BufReader::new(File::from(theirs))))
+    }
+
+    /// A popup of this thread's with no size, which never takes the
+    /// foreground, hidden until a test shows it; the caller destroys it.
+    fn popup() -> windows::Win32::Foundation::HWND {
+        use windows::Win32::UI::WindowsAndMessaging::{
+            CreateWindowExW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP,
+        };
+        // SAFETY: a window with no parent, made on this thread.
+        unsafe {
+            CreateWindowExW(
+                WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW,
+                windows::core::w!("STATIC"),
+                windows::core::w!(""),
+                WS_POPUP,
+                0,
+                0,
+                0,
+                0,
+                None,
+                None,
+                None,
+                None,
+            )
+        }
+        .expect("a window to show")
+    }
+
+    /// Shows `window` without activating it, or hides it.
+    fn set_shown(window: windows::Win32::Foundation::HWND, shown: bool) {
+        use windows::Win32::UI::WindowsAndMessaging::{SW_HIDE, SW_SHOWNA, ShowWindow};
+        let command = if shown { SW_SHOWNA } else { SW_HIDE };
+        // SAFETY: a live window of this thread's.
+        let _ = unsafe { ShowWindow(window, command) };
+    }
+
+    /// Destroys `window`, made on this thread.
+    fn destroy(window: windows::Win32::Foundation::HWND) {
+        // SAFETY: a window this thread made, destroyed once.
+        unsafe { windows::Win32::UI::WindowsAndMessaging::DestroyWindow(window) }
+            .expect("the window destroyed");
+    }
+
+    fn handle_of(window: windows::Win32::Foundation::HWND) -> WindowHandle {
+        asked::handle(window.0 as isize)
+    }
+
+    /// Core's request `number` to be told when `window` is shown, handled
+    /// as the pipe thread handles it, then the `WinEvent` thread caught up.
+    fn await_shown(listener: &Listener, number: u64, window: WindowHandle) {
+        listener.handle_command(
+            CoreToListener::Request(Box::new(Ask {
+                number: RequestNumber(number),
+                window,
+                verdict: verbatim_model::request::WindowVerdict::Msaa,
+                request: Request::AwaitShown { window },
+            })),
+            0,
+        );
+        listener.nudger.sync();
+    }
+
+    /// The answers among what `sent` brings within `wait`, by number, with
+    /// their detail: every other message is left out.
+    fn answers_within(
+        sent: &mpsc::Receiver<ListenerToCore>,
+        wait: Duration,
+    ) -> Vec<(u64, Outcome, String)> {
+        let deadline = Instant::now() + wait;
+        let mut answers = Vec::new();
+        while let Some(left) = deadline.checked_duration_since(Instant::now()) {
+            match sent.recv_timeout(left) {
+                Ok(ListenerToCore::Answer(answer)) => {
+                    answers.push((answer.number.0, answer.outcome, answer.detail));
+                }
+                Ok(_) => {}
+                Err(_) => break,
+            }
+        }
+        answers
+    }
+
+    /// How long a test reads what the listener wrote: every answer it
+    /// expects was handed to the writer before its sync returned, so the
+    /// bound only gives the writer's thread time to write them.
+    const WRITTEN: Duration = Duration::from_millis(300);
+
+    fn shown(number: u64) -> (u64, Outcome, String) {
+        (number, Outcome::Result(Reply::Shown), String::new())
+    }
+
+    fn cancelled(number: u64) -> (u64, Outcome, String) {
+        (number, Outcome::Ended, "cancelled".to_owned())
+    }
+
+    /// The request comes before the show: its waiter is kept, and the
+    /// window object's show, heard behind it on the same thread, answers
+    /// it shown.
+    #[test]
+    fn a_waiter_kept_before_the_show_is_answered_at_the_show() {
+        let (listener, sent) = shows_listener();
+        let window = popup();
+        await_shown(&listener, 1, handle_of(window));
+        assert_eq!(answers_within(&sent, WRITTEN), []);
+        set_shown(window, true);
+        listener.nudger.sync();
+        assert_eq!(answers_within(&sent, WRITTEN), [shown(1)]);
+        stop_with_no_registration(listener);
+        destroy(window);
+    }
+
+    /// The show comes before the request: the window is visible as the
+    /// request is taken, which answers it shown at once.
+    #[test]
+    fn a_window_shown_before_the_request_is_answered_at_once() {
+        let (listener, sent) = shows_listener();
+        let window = popup();
+        set_shown(window, true);
+        listener.nudger.sync();
+        await_shown(&listener, 1, handle_of(window));
+        assert_eq!(answers_within(&sent, WRITTEN), [shown(1)]);
+        stop_with_no_registration(listener);
+        destroy(window);
+    }
+
+    /// A stale show: shown, then hidden again before the request, the
+    /// earlier show answers nothing and the request waits. Shown then
+    /// hidden while it waits, the show answers it, and Core's next read,
+    /// finding the window hidden, asks again, which waits again.
+    #[test]
+    fn a_show_hidden_again_answers_the_waiter_and_the_next_request_waits() {
+        let (listener, sent) = shows_listener();
+        let window = popup();
+        set_shown(window, true);
+        set_shown(window, false);
+        listener.nudger.sync();
+        await_shown(&listener, 1, handle_of(window));
+        assert_eq!(answers_within(&sent, WRITTEN), []);
+        set_shown(window, true);
+        set_shown(window, false);
+        listener.nudger.sync();
+        assert_eq!(answers_within(&sent, WRITTEN), [shown(1)]);
+        await_shown(&listener, 2, handle_of(window));
+        assert_eq!(answers_within(&sent, WRITTEN), []);
+        stop_with_no_registration(listener);
+        destroy(window);
+    }
+
+    /// The awaited window destroyed answers its waiter not there; a request
+    /// for a window that is no longer one is answered not there at once.
+    #[test]
+    fn a_destroyed_window_answers_its_waiter_not_there() {
+        let (listener, sent) = shows_listener();
+        let window = popup();
+        let handle = handle_of(window);
+        await_shown(&listener, 1, handle);
+        destroy(window);
+        listener.nudger.sync();
+        await_shown(&listener, 2, handle);
+        assert_eq!(
+            answers_within(&sent, WRITTEN),
+            [
+                (1, Outcome::NotThere, String::new()),
+                (2, Outcome::NotThere, String::new())
+            ]
+        );
+        stop_with_no_registration(listener);
+    }
+
+    /// Core's cancel answers its waiter cancelled; the waiter left at the
+    /// shutdown is answered cancelled as its table is dropped with the
+    /// `WinEvent` thread.
+    #[test]
+    fn a_cancel_and_the_shutdown_answer_their_waiters_cancelled() {
+        let (listener, sent) = shows_listener();
+        let window = popup();
+        await_shown(&listener, 1, handle_of(window));
+        await_shown(&listener, 2, handle_of(window));
+        listener.handle_command(
+            CoreToListener::Cancel(verbatim_model::request::Cancel {
+                number: RequestNumber(1),
+                reason: verbatim_model::request::CancelReason::LeftHiddenDialog,
+            }),
+            0,
+        );
+        listener.nudger.sync();
+        assert_eq!(answers_within(&sent, WRITTEN), [cancelled(1)]);
+        let Listener {
+            outgoing,
+            readers,
+            checks,
+            registering,
+            _event_thread: event_thread,
+            ..
+        } = listener;
+        drop(event_thread);
+        assert!(registering.join().expect("the installation ends").is_none());
+        checks.stop();
+        readers.stop();
+        assert_eq!(answers_within(&sent, WRITTEN), [cancelled(2)]);
+        outgoing.close();
+        destroy(window);
     }
 }

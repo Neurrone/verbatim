@@ -145,6 +145,7 @@ fn core_ask(number: u64) -> Input {
         window: verbatim_model::WindowHandle(9),
         verdict: verbatim_model::request::WindowVerdict::Msaa,
         request: verbatim_model::request::Request::CurrentFocus {
+            hidden: verbatim_model::request::HiddenRoot::Check,
             set: Vec::new(),
             known: Vec::new(),
             details: verbatim_model::TextDetails::NONE,

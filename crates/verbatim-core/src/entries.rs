@@ -76,6 +76,9 @@ pub(crate) struct UiaFocus {
     pub(crate) alt_down: bool,
     /// Its speech fence, set when it joins the queue.
     pub(crate) fence: Fence,
+    /// The hidden dialog whose wait for its show it ended, if any
+    /// (`crate::focus::shown`): kept through a merge, dropped with it.
+    pub(crate) ended_wait: Option<WindowHandle>,
 }
 
 /// An MSAA focus or foreground tell, parsed: a run candidate, with the ids
@@ -94,6 +97,9 @@ pub(crate) struct Candidate {
     pub(crate) fence: Fence,
     /// Whether a caret key's confirmation read its facts while it waited.
     pub(crate) confirmation: crate::focus::validity::Confirmation,
+    /// The hidden dialog whose wait for its show it ended, if any
+    /// (`crate::focus::shown`): kept through a merge, dropped with it.
+    pub(crate) ended_wait: Option<WindowHandle>,
 }
 
 impl Candidate {
@@ -268,6 +274,7 @@ impl Entry {
                     listener: from.generation,
                     alt_down: false,
                     fence: Fence::default(),
+                    ended_wait: None,
                 })))
             }
             (
@@ -296,6 +303,7 @@ impl Entry {
                     window,
                     fence: Fence::default(),
                     confirmation: crate::focus::validity::Confirmation::default(),
+                    ended_wait: None,
                 });
                 Some(match kind {
                     EventKind::MsaaFocus | EventKind::Foreground => Self::Candidate(candidate),
@@ -542,6 +550,24 @@ impl Logic for Entries {
                 .tell()
                 .is_some_and(|tell| accepted_apart_from_foreground(facts, tell)),
         }
+    }
+
+    fn own_foreground_rule(request: &Wire) -> bool {
+        crate::focus::shown::waits(request)
+    }
+
+    fn stops(
+        facts: &SrState,
+        (_, request): (&Entry, &Wire),
+        waiting: &std::collections::VecDeque<crate::event_queue::Item<Entry>>,
+        backend: &BackendCache,
+        (now_us, foreground): (u64, Option<Foreground>),
+    ) -> Option<verbatim_model::request::CancelReason> {
+        crate::focus::shown::stops(facts, request, waiting, backend, (now_us, foreground))
+    }
+
+    fn merged(removed: &Entry, into: &mut Entry) {
+        crate::focus::shown::merged(removed, into);
     }
 
     fn arrival(facts: &mut SrState, front: Option<(&Entry, Option<&Wire>)>, entry: &mut Entry) {

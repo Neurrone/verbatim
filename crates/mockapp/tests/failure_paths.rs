@@ -73,6 +73,7 @@ fn a_first_worker_that_cannot_start_answers_its_program_and_starts_with_the_next
             known: Vec::new(),
             details: verbatim_model::TextDetails::NONE,
             depth: verbatim_model::request::FocusDepth::Full,
+            hidden: verbatim_model::request::HiddenRoot::Check,
         },
     );
     assert_eq!(

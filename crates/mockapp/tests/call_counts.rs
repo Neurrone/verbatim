@@ -220,7 +220,7 @@ fn measure_msaa_focus(
 fn msaa_focus_changes_cost_exactly() {
     common::init_com();
     let title = common::unique_title("mockapp-counts-msaa-focus");
-    let mut app = common::spawn("counts.json", "msaa", &title);
+    let mut app = common::spawn_visible("counts.json", "msaa", &title);
     let hwnd = common::find_window(&title);
     let mut core = CoreDriver::new(&app, OutpostUnderTest::on_frozen_time(&app));
     let mut ratchet = Ratchet::default();
@@ -500,7 +500,7 @@ fn msaa_focus_changes_cost_exactly() {
 fn msaa_state_change_costs_exactly() {
     common::init_com();
     let title = common::unique_title("mockapp-counts-msaa-state-change");
-    let mut app = common::spawn("counts.json", "msaa", &title);
+    let mut app = common::spawn_visible("counts.json", "msaa", &title);
     let hwnd = common::find_window(&title);
     let mut core = CoreDriver::new(&app, OutpostUnderTest::on_frozen_time(&app));
     let mut ratchet = Ratchet::default();
@@ -648,7 +648,7 @@ fn msaa_state_change_costs_exactly() {
 fn msaa_dialog_text_costs_exactly() {
     common::init_com();
     let title = common::unique_title("mockapp-counts-msaa-dialog");
-    let mut app = common::spawn("dialog.json", "msaa", &title);
+    let mut app = common::spawn_visible("dialog.json", "msaa", &title);
     let hwnd = common::find_window(&title);
     let mut core = CoreDriver::new(&app, OutpostUnderTest::on_frozen_time(&app));
     let mut ratchet = Ratchet::default();
@@ -717,7 +717,7 @@ fn msaa_form_focus_costs_exactly() {
     use windows::Win32::UI::WindowsAndMessaging::FindWindowExW;
     common::init_com();
     let title = common::unique_title("mockapp-counts-msaa-form");
-    let mut app = common::spawn("form.json", "msaa", &title);
+    let mut app = common::spawn_visible("form.json", "msaa", &title);
     let hwnd = common::find_window(&title);
     common::apply(&mut app, hwnd, "child-window");
     common::apply(&mut app, hwnd, "child-client-identity");
@@ -766,7 +766,7 @@ const FORM_CANCEL: usize = 2;
 fn msaa_tree_view_costs_exactly() {
     common::init_com();
     let title = common::unique_title("mockapp-counts-msaa-tree-view");
-    let app = common::spawn("tree_view.json", "msaa", &title);
+    let app = common::spawn_visible("tree_view.json", "msaa", &title);
     let tree = common::tree_view::tree_view(common::find_window(&title));
     let mut core = CoreDriver::new(&app, OutpostUnderTest::on_frozen_time(&app));
     let mut ratchet = Ratchet::default();
@@ -845,7 +845,7 @@ fn msaa_list_view_costs_exactly() {
     use windows::core::w;
     common::init_com();
     let title = common::unique_title("mockapp-counts-msaa-list-view");
-    let app = common::spawn("list_view.json", "msaa", &title);
+    let app = common::spawn_visible("list_view.json", "msaa", &title);
     let host = common::find_window(&title);
     // SAFETY: a local search of the host window's children.
     let list = unsafe {
@@ -931,7 +931,7 @@ fn msaa_identity_check_costs_exactly() {
     use verbatim_model::request::{Depth, MsaaIds, Reply};
     common::init_com();
     let title = common::unique_title("mockapp-counts-msaa-identity");
-    let mut app = common::spawn("counts.json", "msaa", &title);
+    let mut app = common::spawn_visible("counts.json", "msaa", &title);
     let hwnd = common::find_window(&title);
     common::apply(&mut app, hwnd, "set-focus first");
     let outpost = OutpostUnderTest::on_frozen_time(&app);
@@ -1119,7 +1119,7 @@ fn msaa_list_view_identity_check_costs_exactly() {
     use windows::core::w;
     common::init_com();
     let title = common::unique_title("mockapp-counts-msaa-list-view-identity");
-    let mut app = common::spawn("list_view_one_column.json", "msaa", &title);
+    let mut app = common::spawn_visible("list_view_one_column.json", "msaa", &title);
     let host = common::find_window(&title);
     // SAFETY: a local search of the host window's children.
     let list = unsafe {
@@ -1201,7 +1201,7 @@ fn msaa_list_view_identity_check_costs_exactly() {
 /// gathering.
 fn uia_dialog_text_costs_exactly() {
     let title = common::unique_title("mockapp-counts-uia-dialog");
-    let app = common::spawn("dialog.json", "uia", &title);
+    let app = common::spawn_visible("dialog.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let under_test = UiaUnderTest::new(hwnd);
     let mut ratchet = Ratchet::default();
@@ -1253,7 +1253,7 @@ fn uia_dialog_text_costs_exactly() {
 /// off the screen, so mockapp takes no such request.
 fn uia_dialog_window_text_reads_nothing_of_its_title_bar() {
     let title = common::unique_title("mockapp-counts-uia-dialog-window");
-    let app = common::spawn("dialog_window.json", "uia", &title);
+    let app = common::spawn_visible("dialog_window.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let under_test = UiaUnderTest::new(hwnd);
     let mut ratchet = Ratchet::default();
@@ -1290,7 +1290,7 @@ fn uia_dialog_window_text_reads_nothing_of_its_title_bar() {
 fn msaa_navigation_steps_cost_exactly() {
     common::init_com();
     let title = common::unique_title("mockapp-counts-msaa-navigation");
-    let mut app = common::spawn("counts.json", "msaa", &title);
+    let mut app = common::spawn_visible("counts.json", "msaa", &title);
     let hwnd = common::find_window(&title);
     let mut core = CoreDriver::new(&app, OutpostUnderTest::on_frozen_time(&app));
     let mut ratchet = Ratchet::default();
@@ -1539,7 +1539,7 @@ struct FocusCosts<'a> {
 fn uia_focus_changes(remote: bool, expected: &FocusCosts<'_>) {
     let path = if remote { "remote" } else { "classic" };
     let title = common::unique_title(&format!("mockapp-counts-uia-focus-{path}"));
-    let mut app = common::spawn("counts.json", "uia", &title);
+    let mut app = common::spawn_visible("counts.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let under_test = UiaUnderTest::new(hwnd);
     let mut core = CoreDriver::new(
@@ -1816,7 +1816,7 @@ fn uia_focus_changes_cost_exactly_classic() {
 /// step up to its known parent), for Core to compare.
 fn uia_repeated_focus_costs_exactly() {
     let title = common::unique_title("mockapp-counts-uia-repeated-focus");
-    let mut app = common::spawn("counts.json", "uia", &title);
+    let mut app = common::spawn_visible("counts.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let under_test = UiaUnderTest::new(hwnd);
     let mut core = CoreDriver::new(&app, OutpostUnderTest::on_frozen_time(&app));
@@ -1857,7 +1857,7 @@ fn uia_repeated_focus_costs_exactly() {
 /// listener's `mark_window` once did, the count is 1 and the test fails.
 fn the_listener_makes_no_connection() {
     let title = common::unique_title("mockapp-counts-listener-no-connection");
-    let mut app = common::spawn("counts.json", "uia", &title);
+    let mut app = common::spawn_visible("counts.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let under_test = UiaUnderTest::new(hwnd);
     let outpost = OutpostUnderTest::on_frozen_time(&app);
@@ -1941,7 +1941,7 @@ fn uia_focus_chains_stop_below_the_process_boundary() {
         let label = path.replace(", ", "-");
         let (parent_app, parent) = spawn_parent(&label, owned);
         let title = common::unique_title(&format!("mockapp-boundary-child-{label}"));
-        let mut app = common::spawn("counts.json", "uia", &title);
+        let mut app = common::spawn_visible("counts.json", "uia", &title);
         let hwnd = common::find_window(&title);
         let under_test = UiaUnderTest::new(hwnd);
         // Made while the child is still a top-level window, which it finds
@@ -2203,10 +2203,10 @@ fn uia_focus_chains_name_a_parent_with_a_provider_as_a_plain_window() {
     for remote in [true, false] {
         let path = if remote { "remote" } else { "classic" };
         let parent_title = common::unique_title(&format!("mockapp-boundary-uia-parent-{path}"));
-        let parent_app = common::spawn("small.json", "uia", &parent_title);
+        let parent_app = common::spawn_visible("small.json", "uia", &parent_title);
         let parent = common::find_window(&parent_title);
         let title = common::unique_title(&format!("mockapp-boundary-uia-child-{path}"));
-        let mut app = common::spawn("counts.json", "uia", &title);
+        let mut app = common::spawn_visible("counts.json", "uia", &title);
         let hwnd = common::find_window(&title);
         let under_test = UiaUnderTest::new(hwnd);
         let outpost = OutpostUnderTest::on_frozen_time_with_options(
@@ -2354,7 +2354,7 @@ fn get_objects(
 /// its second request carries it and costs nothing.
 fn an_outposts_probe_that_finds_a_provider_makes_no_connection() {
     let title = common::unique_title("mockapp-counts-probe-alone");
-    let app = common::spawn("counts.json", "uia", &title);
+    let app = common::spawn_visible("counts.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let outpost = OutpostUnderTest::on_frozen_time(&app);
     let mut ratchet = Ratchet::default();
@@ -2440,7 +2440,7 @@ fn a_window_above_the_process_boundary_is_a_plain_window_with_no_call() {
     let stall = std::time::Duration::from_secs(4);
     let (mut parent_app, parent) = spawn_parent("stalled", false);
     let title = common::unique_title("mockapp-boundary-stalled-child");
-    let mut app = common::spawn("counts.json", "uia", &title);
+    let mut app = common::spawn_visible("counts.json", "uia", &title);
     let hwnd = common::find_window(&title);
     parent_app.send("child-window");
     // SAFETY: a local search of the parent window's children.
@@ -2554,7 +2554,7 @@ fn the_focused_state_walk_makes_no_call_above_the_process_boundary() {
     let stall = std::time::Duration::from_secs(4);
     let (mut parent_app, parent) = spawn_parent("focused-state", false);
     let title = common::unique_title("mockapp-boundary-focused-state-child");
-    let mut app = common::spawn("save_as.json", "msaa", &title);
+    let mut app = common::spawn_visible("save_as.json", "msaa", &title);
     let hwnd = common::find_window(&title);
     app.send("client-identity");
     app.send("set-states save focusable");
@@ -2619,7 +2619,7 @@ fn a_parent_step_into_another_process_is_not_read_further() {
     use windows::Win32::UI::WindowsAndMessaging::SetParent;
     let (parent_app, parent) = spawn_parent("walk-race", false);
     let title = common::unique_title("mockapp-boundary-walk-race");
-    let mut app = common::spawn("counts.json", "uia", &title);
+    let mut app = common::spawn_visible("counts.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let under_test = UiaUnderTest::new(hwnd);
     let outpost = OutpostUnderTest::new(&app);
@@ -2689,10 +2689,10 @@ fn a_parent_step_into_another_process_is_not_read_further() {
 /// second window's client area is read and answered as the focus.
 fn an_acc_focus_served_by_another_process_answers_no_focused_control() {
     let other_title = common::unique_title("mockapp-acc-focus-other");
-    let other_app = common::spawn("small.json", "msaa", &other_title);
+    let other_app = common::spawn_visible("small.json", "msaa", &other_title);
     let other = common::find_window(&other_title);
     let title = common::unique_title("mockapp-acc-focus");
-    let mut app = common::spawn("small.json", "msaa", &title);
+    let mut app = common::spawn_visible("small.json", "msaa", &title);
     app.send(&format!("acc-focus-window {}", other.0 as isize));
     let outpost = OutpostUnderTest::new(&app);
     common::reset_hits(other);
@@ -2719,7 +2719,7 @@ fn an_acc_focus_served_by_another_process_answers_no_focused_control() {
 fn spawn_parent(label: &str, owner: bool) -> (common::MockApp, HWND) {
     use windows::Win32::UI::WindowsAndMessaging::{SW_SHOWNOACTIVATE, ShowWindow};
     let title = common::unique_title(&format!("mockapp-boundary-parent-{label}"));
-    let app = common::spawn("small.json", "msaa", &title);
+    let app = common::spawn_visible("small.json", "msaa", &title);
     let parent = common::find_window(&title);
     if owner {
         // SAFETY: a live window of another process; the answer is only
@@ -2764,7 +2764,7 @@ fn place_below(hwnd: HWND, parent: HWND, owned: bool) {
 fn uia_navigation_steps(remote: bool) -> [(Vec<Utterance>, Cost); 2] {
     let path = if remote { "remote" } else { "classic" };
     let title = common::unique_title(&format!("mockapp-counts-uia-navigation-{path}"));
-    let mut app = common::spawn("counts.json", "uia", &title);
+    let mut app = common::spawn_visible("counts.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let under_test = UiaUnderTest::new(hwnd);
     let mut core = CoreDriver::new(
@@ -2916,7 +2916,7 @@ fn uia_navigation_steps_cost_exactly() {
 /// (`globalCommands.py` 1880 to 1901), which finds the node gone again.
 fn a_node_whose_route_does_not_lead_to_it_is_gone_by_its_route_alone() {
     let title = common::unique_title("mockapp-counts-uia-gone");
-    let mut app = common::spawn("counts.json", "uia", &title);
+    let mut app = common::spawn_visible("counts.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let under_test = UiaUnderTest::new(hwnd);
     let outpost = OutpostUnderTest::on_frozen_time(&app);
@@ -3129,7 +3129,7 @@ fn warm_runtime_id(element: &IUIAutomationElement) {
 )]
 fn uia_selected_children_cost_exactly() {
     let title = common::unique_title("mockapp-counts-uia-selection");
-    let mut app = common::spawn("combo_box.json", "uia", &title);
+    let mut app = common::spawn_visible("combo_box.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let under_test = UiaUnderTest::new(hwnd);
     let nodes = under_test
@@ -3311,7 +3311,7 @@ fn uia_selected_children_cost_exactly() {
 /// with how busy the machine is, while a cache request's calls do not.
 fn uia_event_caches_cost_exactly() {
     let title = common::unique_title("mockapp-counts-uia-event-caches");
-    let app = common::spawn("text.json", "uia", &title);
+    let app = common::spawn_visible("text.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let under_test = UiaUnderTest::new(hwnd);
     let mut ratchet = Ratchet::default();
@@ -3425,7 +3425,7 @@ fn uia_event_caches_cost_exactly() {
 /// reads nothing, the same with remote operations on or off.
 fn uia_active_text_position_costs_exactly() {
     let title = common::unique_title("mockapp-counts-uia-active-position");
-    let mut app = common::spawn("text.json", "uia", &title);
+    let mut app = common::spawn_visible("text.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let under_test = UiaUnderTest::new(hwnd);
     let mut ratchet = Ratchet::default();
@@ -3533,7 +3533,7 @@ fn measure_text(
 fn check_uia_text_costs(ratchet: &mut Ratchet, remote: bool) {
     let way = if remote { "remotely" } else { "classically" };
     let title = common::unique_title("mockapp-counts-uia-text");
-    let mut app = common::spawn("text.json", "uia", &title);
+    let mut app = common::spawn_visible("text.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let mut source = uia_notes(hwnd).remote(remote);
     let mut store = Anchors::new(Arc::default());
@@ -3962,7 +3962,7 @@ fn uia_text_requests_cost_exactly() {
 fn check_uia_say_all_batch_costs(ratchet: &mut Ratchet, remote: bool) {
     let way = if remote { "remotely" } else { "classically" };
     let title = common::unique_title("mockapp-counts-uia-say-all");
-    let mut app = common::spawn("text.json", "uia", &title);
+    let mut app = common::spawn_visible("text.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let lines: Vec<String> = (1..=45).map(|line| format!("line {line}\n")).collect();
     common::apply(
@@ -4111,7 +4111,7 @@ fn check_uia_say_all_batch_costs(ratchet: &mut Ratchet, remote: bool) {
 fn check_uia_say_all_language_costs(ratchet: &mut Ratchet, remote: bool) {
     let way = if remote { "remotely" } else { "classically" };
     let title = common::unique_title("mockapp-counts-uia-languages");
-    let mut app = common::spawn("languages.json", "uia", &title);
+    let mut app = common::spawn_visible("languages.json", "uia", &title);
     let hwnd = common::find_window(&title);
     common::apply(&mut app, hwnd, "caret doc 0");
     let mut source = uia_notes(hwnd).remote(remote);
@@ -4213,7 +4213,7 @@ fn uia_say_all_batches_cost_exactly() {
 fn caret_tell_read(remote: bool) -> (Vec<Utterance>, CallCounts) {
     let path = if remote { "remote" } else { "classic" };
     let title = common::unique_title(&format!("mockapp-counts-caret-tell-{path}"));
-    let mut app = common::spawn("caret_watch.json", "uia", &title);
+    let mut app = common::spawn_visible("caret_watch.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let mut core = CoreDriver::new(
         &app,
@@ -4242,7 +4242,7 @@ fn caret_tell_read(remote: bool) -> (Vec<Utterance>, CallCounts) {
 /// at the text's start. The instructions its one program executed.
 fn caret_tell_program(caret: &str) -> u32 {
     let title = common::unique_title("mockapp-counts-caret-tell-program");
-    let mut app = common::spawn("caret_watch.json", "uia", &title);
+    let mut app = common::spawn_visible("caret_watch.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let mut source = uia_notes(hwnd);
     let mut store = Anchors::new(Arc::default());
@@ -4369,7 +4369,7 @@ fn starting_reads_cost_exactly() {
         ),
     ] {
         let title = common::unique_title("mockapp-counts-starting-read");
-        let mut app = common::spawn("text.json", "uia", &title);
+        let mut app = common::spawn_visible("text.json", "uia", &title);
         let hwnd = common::find_window(&title);
         let mut source = uia_notes(hwnd).remote(remote);
         let measured = starting_read_calls(
@@ -4382,7 +4382,7 @@ fn starting_reads_cost_exactly() {
         ratchet.check_calls(operation, measured, expected);
     }
     let title = common::unique_title("mockapp-counts-starting-read-edit");
-    let mut app = common::spawn("text.json", "msaa", &title);
+    let mut app = common::spawn_visible("text.json", "msaa", &title);
     let hwnd = common::find_window(&title);
     // SAFETY: a local search of mockapp's window's children by class.
     let edit = unsafe {
@@ -4488,7 +4488,7 @@ fn watch_checks_cost_exactly() {
         ),
     ] {
         let title = common::unique_title("mockapp-counts-watch-check");
-        let mut app = common::spawn("text.json", "uia", &title);
+        let mut app = common::spawn_visible("text.json", "uia", &title);
         let hwnd = common::find_window(&title);
         let mut source = uia_notes(hwnd).remote(remote).details(details);
         let mut store = Anchors::new(Arc::default());
@@ -4536,7 +4536,7 @@ fn edit_control_select_and_location_cost_exactly() {
     common::init_com();
     let mut ratchet = Ratchet::default();
     let title = common::unique_title("mockapp-counts-edit-caret");
-    let mut app = common::spawn("text.json", "msaa", &title);
+    let mut app = common::spawn_visible("text.json", "msaa", &title);
     let hwnd = common::find_window(&title);
     // SAFETY: a local search of mockapp's window's children by class.
     let edit = unsafe {
@@ -4658,7 +4658,7 @@ fn uia_notes(hwnd: HWND) -> UiaText {
 fn uia_combo_box_costs(remote: bool, expected: [(CallCounts, &[(&str, u32)]); 2]) {
     let path = if remote { "remote" } else { "classic" };
     let title = common::unique_title(&format!("mockapp-counts-combo-box-{path}"));
-    let mut app = common::spawn("combo_box.json", "uia", &title);
+    let mut app = common::spawn_visible("combo_box.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let under_test = UiaUnderTest::without_elements();
     let mut core = CoreDriver::new(
@@ -4910,7 +4910,7 @@ fn uia_text_focus_reporting(
     setup: &[&str],
 ) -> (Vec<Utterance>, CallCounts) {
     let title = common::unique_title("mockapp-counts-text-focus");
-    let mut app = common::spawn(fixture, "uia", &title);
+    let mut app = common::spawn_visible(fixture, "uia", &title);
     let hwnd = common::find_window(&title);
     let mut core = CoreDriver::new(
         &app,
@@ -5131,7 +5131,7 @@ fn text_field_focuses_cost_exactly() {
     );
 
     let title = common::unique_title("mockapp-counts-edit-focus");
-    let mut app = common::spawn("text.json", "msaa", &title);
+    let mut app = common::spawn_visible("text.json", "msaa", &title);
     let hwnd = common::find_window(&title);
     // The keyboard focus cannot be given to the control on a desktop of
     // its own, so its host has the focused state, which an MSAA focus
@@ -5208,7 +5208,7 @@ fn text_field_focus_now_costs(ratchet: &mut Ratchet) {
         ),
     ] {
         let title = common::unique_title("mockapp-counts-text-focus-now");
-        let mut app = common::spawn("text.json", "uia", &title);
+        let mut app = common::spawn_visible("text.json", "uia", &title);
         let hwnd = common::find_window(&title);
         let outpost = OutpostUnderTest::on_frozen_time_with_options(
             &app,
@@ -5260,7 +5260,7 @@ fn a_focus_now_walk_stops_at_an_ancestor_core_knows() {
         ("classically", false, (calls(2, 0, 0), 42)),
     ] {
         let title = common::unique_title("mockapp-counts-focus-now-known");
-        let mut app = common::spawn("ancestry.json", "uia", &title);
+        let mut app = common::spawn_visible("ancestry.json", "uia", &title);
         let hwnd = common::find_window(&title);
         let uia = Uia::new().expect("a UIA client");
         let outpost = OutpostUnderTest::with_options(
@@ -5394,7 +5394,7 @@ impl verbatim_win32::window_facts::WindowReads for GateDesk {
 fn uia_windowless_bar_reads_its_window_before_its_place() {
     use verbatim_listener::listener::BackgroundBars;
     let title = common::unique_title("mockapp-counts-windowless-bar");
-    let app = common::spawn("windowless_bars.json", "uia", &title);
+    let app = common::spawn_visible("windowless_bars.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let under_test = UiaUnderTest::new(hwnd);
     let request = under_test
@@ -5620,7 +5620,7 @@ fn main() {
 )]
 fn a_cells_table_costs_exactly() {
     let title = common::unique_title("mockapp-counts-grid");
-    let mut app = common::spawn("grid.json", "uia", &title);
+    let mut app = common::spawn_visible("grid.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let under_test = UiaUnderTest::new(hwnd);
     let nodes = under_test

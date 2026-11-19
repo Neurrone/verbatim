@@ -13,12 +13,14 @@
 use serde::{Deserialize, Serialize};
 use verbatim_model::property::PropertyId;
 use verbatim_model::request::{
-    CandidateAnswer, FocusDepth, FocusRead, Front, KnownAncestor, Reply, Request as Wire,
+    CandidateAnswer, FocusDepth, FocusRead, Front, HiddenRoot, KnownAncestor, Reply,
+    Request as Wire,
 };
 use verbatim_model::{TextDetails, TraceId};
 
 use super::FOCUS_SET;
 use super::execute::{Executed, Known, Origin, execute, retake};
+use super::shown::Hidden;
 use super::versions::{Committed, ReadBy};
 use crate::entries::Entries;
 use crate::event_queue::{
@@ -112,10 +114,13 @@ pub(crate) struct CurrentFocusRead<D: FocusReadDepth> {
     /// How far the read goes: in full, or, for the check after a menu end,
     /// NVDA's fake focus, in full only when focused.
     pub(crate) depth: std::marker::PhantomData<D>,
+    /// Whether the outpost checks for a hidden dialog first, or reads as
+    /// it is after a key ended the wait for its show (`super::shown`).
+    pub(crate) hidden: HiddenRoot,
 }
 
 impl<D: FocusReadDepth> Request for CurrentFocusRead<D> {
-    type Reply = Focused<D::Parsed>;
+    type Reply = Hidden<Focused<D::Parsed>>;
 
     fn reader(&self) -> Reader {
         Reader::Outpost(self.window.process)
@@ -127,6 +132,7 @@ impl<D: FocusReadDepth> Request for CurrentFocusRead<D> {
 
     fn wire(&self) -> Wire {
         Wire::CurrentFocus {
+            hidden: self.hidden,
             set: self.set.clone(),
             known: self.known.clone(),
             details: self.details,
@@ -135,14 +141,14 @@ impl<D: FocusReadDepth> Request for CurrentFocusRead<D> {
     }
 
     fn decode(reply: Reply) -> Option<Self::Reply> {
-        match reply {
+        Hidden::parse(reply, |reply| match reply {
             Reply::Candidate(answer) => D::parse(answer).map(Focused::Read),
             _ => None,
-        }
+        })
     }
 
     fn decode_in_front(front: Front) -> Option<Self::Reply> {
-        Some(Focused::InFront(front))
+        Some(Hidden::Read(Focused::InFront(front)))
     }
 }
 
@@ -249,16 +255,21 @@ pub(crate) fn reader_ended(
 /// caret baseline.
 pub(crate) async fn run(mut cx: Cx<Entries>, entry: CurrentFocus) {
     let due_us = cx.due_in(FOCUS_DUE_US);
-    let request = CurrentFocusRead::<super::msaa_run::Full> {
-        window: entry.window,
-        known: Vec::new(),
-        details: crate::details::focus_details(&cx.facts()),
-        set: crate::details::focus_set(&cx.facts(), FOCUS_SET),
-        depth: std::marker::PhantomData,
-    };
-    let read = match cx.ask(request, due_us).await {
-        Outcome::Result(Focused::Read(read)) => read,
-        Outcome::Result(Focused::InFront(front)) => {
+    let outcome = super::shown::read_shown(&mut cx, due_us, |cx, hidden| {
+        let request = CurrentFocusRead::<super::msaa_run::Full> {
+            window: entry.window,
+            known: Vec::new(),
+            details: crate::details::focus_details(&cx.facts()),
+            set: crate::details::focus_set(&cx.facts(), FOCUS_SET),
+            depth: std::marker::PhantomData,
+            hidden,
+        };
+        (request, ())
+    })
+    .await;
+    let read = match outcome {
+        Outcome::Result((Focused::Read(read), ())) => read,
+        Outcome::Result((Focused::InFront(front), ())) => {
             let read = match entry.why {
                 Why::Startup => super::plain::HungRead::Startup,
                 Why::Retake => super::plain::HungRead::Retake,

@@ -1091,6 +1091,7 @@ impl OutpostUnderTest {
             window,
             WindowVerdict::Uia,
             Request::CompleteUia(Box::new(CompleteUia {
+                hidden: verbatim_model::request::HiddenRoot::Check,
                 route,
                 read: std::iter::once(object.values)
                     .chain(ancestors.into_iter().map(|ancestor| ancestor.values))
@@ -1164,6 +1165,7 @@ impl OutpostUnderTest {
         let number = self.request(
             hwnd(ids.window),
             Request::MsaaRun(MsaaRun {
+                hidden: verbatim_model::request::HiddenRoot::Check,
                 candidate: RunCandidate {
                     ids,
                     kind,
@@ -1203,6 +1205,7 @@ impl OutpostUnderTest {
         let number = self.request(
             hwnd(ids.window),
             Request::MsaaRun(MsaaRun {
+                hidden: verbatim_model::request::HiddenRoot::Check,
                 candidate: RunCandidate {
                     ids,
                     kind: CandidateKind::Focus,
@@ -1254,6 +1257,7 @@ impl OutpostUnderTest {
         let number = self.request(
             HWND(self.foreground() as _),
             Request::CurrentFocus {
+                hidden: verbatim_model::request::HiddenRoot::Check,
                 set: focus_set(),
                 known: sent.clone(),
                 details: verbatim_model::TextDetails::NONE,

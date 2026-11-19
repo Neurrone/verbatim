@@ -222,6 +222,7 @@ async fn selected(
     let complete = ItemCompletion {
         window,
         complete: CompleteUia {
+            hidden: verbatim_model::request::HiddenRoot::ReadAnyway,
             route,
             read: iter::once(object.object.values)
                 .chain(object.ancestors.into_iter().map(|ancestor| ancestor.values))

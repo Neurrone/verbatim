@@ -417,6 +417,33 @@ impl<L: Logic> Core<L> {
         }
         if let Some(number) = withdrawn {
             self.stop(number, CancelReason::Withdrawn);
+        } else {
+            self.stop_if_ended();
+        }
+    }
+
+    /// Stops the front's request when the logic finds its own ending holds
+    /// now, judged with the entries waiting behind it ([`Logic::stops`]):
+    /// after an entry joined the back and after the foreground changed.
+    fn stop_if_ended(&mut self) {
+        let stopped = {
+            let shared = self.shared.borrow();
+            let state = &shared.state;
+            state.queue.front.as_ref().and_then(|front| {
+                let number = front.asked?;
+                let live = state.queue.table.live(number)?;
+                L::stops(
+                    &state.facts,
+                    (&front.entry, &live.request),
+                    &state.queue.waiting,
+                    &state.queue.backend,
+                    (state.queue.now_us, state.queue.foreground),
+                )
+                .map(|reason| (number, reason))
+            })
+        };
+        if let Some((number, reason)) = stopped {
+            self.stop(number, reason);
         }
     }
 
@@ -579,7 +606,8 @@ impl<L: Logic> Core<L> {
             state.queue.front.as_ref().and_then(|front| {
                 let number = front.asked?;
                 let live = state.queue.table.live(number)?;
-                (!L::exempt_from_foreground(&state.facts, &front.entry, &live.window)
+                (!L::own_foreground_rule(&live.request)
+                    && !L::exempt_from_foreground(&state.facts, &front.entry, &live.window)
                     && !foreground.holds(&live.window))
                 .then_some(number)
             })
@@ -618,6 +646,8 @@ impl<L: Logic> Core<L> {
             join::<L>(state, marker);
         }
         shared.effects.extend(said.into_iter().map(Effect::Said));
+        drop(shared);
+        self.stop_if_ended();
     }
 
     /// `instance` ended: its requests out end "reader ended", its late ones
@@ -698,7 +728,7 @@ impl<L: Logic> Core<L> {
 
 /// `entry` joins the back of the queue: the logic sees it arrive, then the
 /// limiter places it.
-fn join<L: Logic>(state: &mut State<L::Entry, L::Facts>, mut entry: L::Entry) {
+pub(super) fn join<L: Logic>(state: &mut State<L::Entry, L::Facts>, mut entry: L::Entry) {
     let queue = &state.queue;
     let front = queue.front.as_ref().map(|front| {
         let request = front

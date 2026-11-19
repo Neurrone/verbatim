@@ -50,6 +50,8 @@ use crate::focus::backend::{Backend, BackendCache, JudgedWindow, WindowKey};
 
 pub(crate) use driver::{Core, Cx, Queue, ReplayMismatch, State};
 pub(crate) use inbox::{CoreRequest, Effect, Input, Timed};
+#[cfg(test)]
+pub(crate) use limiter::arrive;
 pub(crate) use limiter::{Item, MsaaClass, MsaaKey, PUMP_WINDOW_US, Place};
 pub(crate) use request::{Outcome, Refused, Request};
 pub(crate) use table::Asker;
@@ -231,6 +233,35 @@ pub(crate) trait Logic: Sized + 'static {
         entry: &Self::Entry,
         window: &RequestWindow,
     ) -> bool;
+
+    /// Whether `request`, the front's request out, has a foreground rule of
+    /// its own ([`Logic::stops`]), in place of the stop when the foreground
+    /// moves outside its window's tree and owner chain.
+    fn own_foreground_rule(request: &verbatim_model::request::Request) -> bool {
+        let _ = request;
+        false
+    }
+
+    /// Why `request`, the request out of the front entry `front`, stops
+    /// now, judged with the entries waiting behind it, `waiting`, after an
+    /// entry joined the back or the foreground changed, at `now_us` with
+    /// the foreground record; `None` while it is still awaited.
+    fn stops(
+        facts: &Self::Facts,
+        front: (&Self::Entry, &verbatim_model::request::Request),
+        waiting: &std::collections::VecDeque<Item<Self::Entry>>,
+        backend: &BackendCache,
+        now_us: (u64, Option<Foreground>),
+    ) -> Option<verbatim_model::request::CancelReason> {
+        let _ = (facts, front, waiting, backend, now_us);
+        None
+    }
+
+    /// `removed`, a waiting entry merged into `into`, the newer entry
+    /// that takes its place: what `into` keeps of it.
+    fn merged(removed: &Self::Entry, into: &mut Self::Entry) {
+        let _ = (removed, into);
+    }
 
     /// Whether `arriving`, joining the back, withdraws `request`, the
     /// request out of the front entry `front`, judged with the backend

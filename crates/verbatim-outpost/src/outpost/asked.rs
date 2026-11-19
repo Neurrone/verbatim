@@ -34,9 +34,10 @@ use verbatim_model::property::{
 };
 use verbatim_model::request::{
     Answer, Ask, CandidateAnswer, CandidateFacts, CandidateKind, Depth, FindScope, FocusAncestor,
-    FocusCaret, FocusDepth, FocusNode, FocusRead, HeldIds, KnownAncestor, MsaaIds, MsaaRun,
-    NodeRead, NodeWindow, ObjectClass, ObjectRead, ObjectRef, Outcome, Probe, Purpose, ReadObject,
-    Refusal, RelationFound, RelationQuery, Reply, Request, RouteEnd, RunCandidate, WindowVerdict,
+    FocusCaret, FocusDepth, FocusNode, FocusRead, HeldIds, HiddenRoot, KnownAncestor, MsaaIds,
+    MsaaRun, NodeRead, NodeWindow, ObjectClass, ObjectRead, ObjectRef, Outcome, Probe, Purpose,
+    ReadObject, Refusal, RelationFound, RelationQuery, Reply, Request, RouteEnd, RunCandidate,
+    WindowVerdict,
 };
 use verbatim_model::{
     Backend, NodeDetails, NodeId, NodeSnapshot, Pid, QueryKind, Role, State, StateSet, TextDetails,
@@ -129,12 +130,13 @@ pub(super) fn answer(context: &RequestContext<'_>, client: &mut Client, ask: &As
             known,
             details,
             depth,
+            hidden,
         } => current_focus(
             context,
             client,
             (ask, &mut probes),
             set,
-            (known, *details, *depth),
+            (known, *details, *depth, *hidden),
         ),
         Request::CompleteUia(complete) => {
             match verdict(
@@ -143,11 +145,24 @@ pub(super) fn answer(context: &RequestContext<'_>, client: &mut Client, ask: &As
                 ask.verdict,
                 &mut probes,
             ) {
-                Some(true) => super::completion::complete(context, client, complete),
+                Some(true) => {
+                    let checked = complete.hidden == HiddenRoot::Check;
+                    match checked.then(|| hidden_root(hwnd_of(complete.route.window))) {
+                        Some(Root::HiddenDialog(window)) => {
+                            Outcome::Result(Reply::HiddenDialog(window))
+                        }
+                        Some(Root::NotThere) => Outcome::NotThere,
+                        Some(Root::Read) | None => {
+                            super::completion::complete(context, client, complete)
+                        }
+                    }
+                }
                 Some(false) => Outcome::Refused(Refusal::ReadThroughMsaa),
                 None => Outcome::NotThere,
             }
         }
+        // The listener's alone: an outpost holds no hook that hears a show.
+        Request::AwaitShown { .. } => Outcome::Refused(Refusal::Unsupported),
         Request::Follow(follow) => super::followed::follow(context, client, follow),
         Request::DumpTree { locations } => match read::dump_tree(context, client, *locations) {
             Ok(dumped) => Outcome::Result(Reply::Tree(Box::new(dumped))),
@@ -193,7 +208,8 @@ pub(super) fn node_details(request: &Request) -> NodeDetailSet {
         | Request::Activate { .. }
         | Request::Follow(_)
         | Request::ShellItems { .. }
-        | Request::ShellItemPosition { .. } => NodeDetailSet::NONE,
+        | Request::ShellItemPosition { .. }
+        | Request::AwaitShown { .. } => NodeDetailSet::NONE,
     }
 }
 
@@ -1120,6 +1136,45 @@ fn held_ids(context: &RequestContext<'_>, node: &NodeSnapshot) -> Option<HeldIds
     })
 }
 
+/// What the hidden-dialog check found of a focus read's window's top-level
+/// window ([`hidden_root`]).
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum Root {
+    /// Shown, or hidden but no dialog: the read goes on as it is.
+    Read,
+    /// A hidden dialog, with its window's facts: nothing more is read.
+    HiddenDialog(NodeWindow),
+    /// Hidden, and its client object's role could not be read: answered
+    /// not there, as a failed acquire is.
+    NotThere,
+}
+
+/// The hidden-dialog check of a focus read in window `hwnd` (Dickson,
+/// 2026-11-19: a dialog's text is read only once it is shown): its
+/// top-level window (`GetAncestor` with `GA_ROOT`) and whether that is
+/// visible (`IsWindowVisible`), two local calls that send the application
+/// nothing; and, only for a hidden one, its client object's role, two
+/// counted calls ([`verbatim_ia2::acquire::client_role`]). A role that is
+/// a dialog's ([`crate::dialog_text::is_dialog`]) answers the window's
+/// facts. The outpost judges nothing: Core asks the check, and decides what
+/// a hidden dialog means.
+pub(super) fn hidden_root(hwnd: isize) -> Root {
+    hidden_root_read(hwnd, verbatim_ia2::acquire::client_role)
+}
+
+/// [`hidden_root`], the client object's role read by `client_role`.
+pub(super) fn hidden_root_read(hwnd: isize, client_role: impl Fn(isize) -> Option<Role>) -> Root {
+    let root = verbatim_win32::window::top_level_of(hwnd);
+    if root == 0 || verbatim_win32::window::window_is_visible(root) {
+        return Root::Read;
+    }
+    match client_role(root) {
+        Some(role) if crate::dialog_text::is_dialog(role) => Root::HiddenDialog(node_window(root)),
+        Some(_) => Root::Read,
+        None => Root::NotThere,
+    }
+}
+
 /// One MSAA candidate Core asks about, its window's verdict consulted
 /// first.
 fn msaa_run(
@@ -1168,6 +1223,17 @@ fn try_candidate(
     });
     let ids = asked.ids;
     let hwnd = hwnd_of(ids.window);
+    // A read Core asks to check, in a hidden dialog, is answered with the
+    // dialog's window before the object is acquired or its focused state
+    // read: no recording shows a hidden window's focused state, so the
+    // answer never depends on it.
+    if run.hidden == HiddenRoot::Check {
+        match hidden_root(hwnd) {
+            Root::HiddenDialog(window) => return Reply::HiddenDialog(window),
+            Root::NotThere => return not_there,
+            Root::Read => {}
+        }
+    }
     // A menu start's object is its event's own, with no redirect, as
     // NVDA's (`IAccessibleHandler/__init__.py` 942 to 973).
     let acquired = if asked.kind == CandidateKind::MenuStart {
@@ -1281,10 +1347,19 @@ fn current_focus(
     client: &mut Client,
     (ask, probes): (&Ask, &mut Vec<Probe>),
     set: &[PropertyId],
-    (known, details, depth): (&[KnownAncestor], TextDetails, FocusDepth),
+    (known, details, depth, hidden): (&[KnownAncestor], TextDetails, FocusDepth, HiddenRoot),
 ) -> Outcome {
     let window = read::checked_focus_window(context);
     let _ = verdict(context, hwnd_of(ask.window), ask.verdict, probes);
+    if hidden == HiddenRoot::Check
+        && let Ok(hwnd) = window
+    {
+        match hidden_root(hwnd) {
+            Root::HiddenDialog(window) => return Outcome::Result(Reply::HiddenDialog(window)),
+            Root::NotThere => return Outcome::NotThere,
+            Root::Read => {}
+        }
+    }
     let read = window.and_then(|hwnd| {
         read::focused_control_in(
             context,

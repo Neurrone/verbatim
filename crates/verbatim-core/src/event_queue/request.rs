@@ -66,3 +66,17 @@ pub(crate) enum Outcome<T> {
     /// Core no longer awaits it.
     NoLongerAwaited(CancelReason),
 }
+
+impl<T> Outcome<T> {
+    /// The result made into `U` by `result`, any other outcome left as it is.
+    pub(crate) fn map<U>(self, result: impl FnOnce(T) -> U) -> Outcome<U> {
+        match self {
+            Self::Result(answer) => Outcome::Result(result(answer)),
+            Self::Refused(refused) => Outcome::Refused(refused),
+            Self::NotThere => Outcome::NotThere,
+            Self::NotResponding => Outcome::NotResponding,
+            Self::ReaderEnded => Outcome::ReaderEnded,
+            Self::NoLongerAwaited(reason) => Outcome::NoLongerAwaited(reason),
+        }
+    }
+}

@@ -192,18 +192,23 @@ pub(crate) async fn check(mut cx: Cx<Entries>, check: MenuCheck) {
         return;
     };
     let window = foreground.window();
-    let known = known_for(&cx, window.process);
     let due_us = cx.due_in(FOCUS_DUE_US);
-    let request = CurrentFocusRead::<FullIfFocused> {
-        window,
-        known: known.sent.clone(),
-        details: crate::details::focus_details(&cx.facts()),
-        set: crate::details::focus_set(&cx.facts(), FOCUS_SET),
-        depth: std::marker::PhantomData,
-    };
-    let answered = match cx.ask(request, due_us).await {
-        Outcome::Result(Focused::Read(answered)) => answered,
-        Outcome::Result(Focused::InFront(front)) => {
+    let outcome = super::shown::read_shown(&mut cx, due_us, |cx, hidden| {
+        let known = known_for(cx, window.process);
+        let request = CurrentFocusRead::<FullIfFocused> {
+            window,
+            known: known.sent.clone(),
+            details: crate::details::focus_details(&cx.facts()),
+            set: crate::details::focus_set(&cx.facts(), FOCUS_SET),
+            depth: std::marker::PhantomData,
+            hidden,
+        };
+        (request, known)
+    })
+    .await;
+    let (answered, known) = match outcome {
+        Outcome::Result((Focused::Read(answered), known)) => (answered, known),
+        Outcome::Result((Focused::InFront(front), _)) => {
             let read = match check.end {
                 CheckedEnd::MenuOrPopup => HungRead::MenuCheck,
                 CheckedEnd::Switch => HungRead::SwitchCheck,

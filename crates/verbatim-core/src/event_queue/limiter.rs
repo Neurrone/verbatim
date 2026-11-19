@@ -177,8 +177,12 @@ pub(crate) fn arrive<L: Logic>(
 ) {
     match L::place(facts, &entry) {
         Place::Other { merges, .. } => {
-            if merges {
-                merge_away::<L>(facts, waiting, |waiting| L::merges(facts, waiting, &entry));
+            let mut entry = entry;
+            if merges
+                && let Some(removed) =
+                    merge_away::<L>(facts, waiting, |waiting| L::merges(facts, waiting, &entry))
+            {
+                L::merged(&removed, &mut entry);
             }
             waiting.push_back(Item::One(entry));
         }
@@ -210,9 +214,12 @@ pub(crate) fn arrive<L: Logic>(
                             Item::Run(_) | Item::Menu { .. } => true,
                         });
                     }
-                    merge_away::<L>(facts, waiting, |waiting| {
+                    let mut entry = entry;
+                    if let Some(removed) = merge_away::<L>(facts, waiting, |waiting| {
                         msaa::<L>(facts, waiting).is_some_and(|(other, _, _)| other == key)
-                    });
+                    }) {
+                        L::merged(&removed, &mut entry);
+                    }
                     waiting.push_back(Item::One(entry));
                 }
             }
@@ -224,12 +231,12 @@ pub(crate) fn arrive<L: Logic>(
 /// Removes the newest waiting single entry that `same` finds, searching
 /// from the back and stopping at a focus-kind item, which is itself
 /// reached: a focus tell merges a waiting one of its element, but nothing
-/// merges past one.
+/// merges past one. The entry removed, if any.
 fn merge_away<L: Logic>(
     facts: &L::Facts,
     waiting: &mut VecDeque<Item<L::Entry>>,
     same: impl Fn(&L::Entry) -> bool,
-) {
+) -> Option<L::Entry> {
     let mut found = None;
     for (place, item) in waiting.iter().enumerate().rev() {
         if let Item::One(entry) = item
@@ -242,8 +249,9 @@ fn merge_away<L: Logic>(
             break;
         }
     }
-    if let Some(place) = found {
-        waiting.remove(place);
+    match found.and_then(|place| waiting.remove(place)) {
+        Some(Item::One(entry)) => Some(entry),
+        Some(Item::Run(_) | Item::Menu { .. }) | None => None,
     }
 }
 
@@ -258,16 +266,23 @@ fn join_run<L: Logic>(
     class: MsaaClass,
     entry: L::Entry,
 ) {
+    let mut entry = entry;
     for item in waiting.iter_mut() {
         if let Item::Run(candidates) = item {
-            candidates.retain(|candidate| {
-                !msaa::<L>(facts, candidate).is_some_and(|(other, other_class, _)| {
-                    other == key
-                        || (class == MsaaClass::Foreground
-                            && other_class == MsaaClass::Focus
-                            && other.same_object(&key))
-                })
-            });
+            let (removed, kept): (Vec<_>, Vec<_>) = std::mem::take(candidates)
+                .into_iter()
+                .partition(|candidate| {
+                    msaa::<L>(facts, candidate).is_some_and(|(other, other_class, _)| {
+                        other == key
+                            || (class == MsaaClass::Foreground
+                                && other_class == MsaaClass::Focus
+                                && other.same_object(&key))
+                    })
+                });
+            *candidates = kept;
+            for removed in &removed {
+                L::merged(removed, &mut entry);
+            }
         }
     }
     waiting.retain(|item| !matches!(item, Item::Run(candidates) if candidates.is_empty()));

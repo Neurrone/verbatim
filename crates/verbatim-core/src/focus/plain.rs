@@ -305,7 +305,8 @@ fn subject(request: &Wire) -> Option<(NodeId, Asked<'_>)> {
         | Wire::CurrentFocus { .. }
         | Wire::DumpTree { .. }
         | Wire::ShellItems { .. }
-        | Wire::ShellItemPosition { .. } => None,
+        | Wire::ShellItemPosition { .. }
+        | Wire::AwaitShown { .. } => None,
     }
 }
 

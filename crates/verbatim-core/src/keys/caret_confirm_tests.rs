@@ -136,6 +136,7 @@ fn the_stage_is_derived_from_the_request_out() {
     };
     let run = |depth| {
         Wire::MsaaRun(MsaaRun {
+            hidden: verbatim_model::request::HiddenRoot::Check,
             candidate: RunCandidate {
                 ids: MsaaIds {
                     window: WindowHandle(5),

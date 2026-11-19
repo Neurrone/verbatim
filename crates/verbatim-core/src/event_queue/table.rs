@@ -176,6 +176,12 @@ impl Table {
             .collect()
     }
 
+    /// The number of the newest request begun.
+    #[cfg(test)]
+    pub(crate) fn last_for_tests(&self) -> u64 {
+        self.last
+    }
+
     /// The requests waiting or out, as sent.
     pub(crate) fn requests(&self) -> impl Iterator<Item = &Wire> {
         self.live.values().map(|live| &live.request)
@@ -404,6 +410,44 @@ impl Table {
             .into_iter()
             .filter_map(|number| {
                 self.end(number, Ending::Answered(outcome.clone()), &mut Vec::new())
+            })
+            .collect()
+    }
+
+    /// Every live request `pick` chooses ends answered `outcome`, its
+    /// instance told to cancel it for `reason` when it is out, and its late
+    /// answer dropped by number: an application's exit ends the listener's
+    /// wait for its window's show, which the listener has no exit to end.
+    pub(crate) fn answer_cancelling(
+        &mut self,
+        pick: impl Fn(&Live) -> bool,
+        outcome: &WireOutcome,
+        reason: CancelReason,
+        orders: &mut Vec<Order>,
+    ) -> Vec<Ended> {
+        let numbers: Vec<RequestNumber> = self
+            .live
+            .iter()
+            .filter(|(_, live)| pick(live))
+            .map(|(number, _)| *number)
+            .collect();
+        numbers
+            .into_iter()
+            .filter_map(|number| {
+                let live = self.live.remove(&number)?;
+                if let Stage::Out(instance) = live.stage {
+                    orders.push(Order::Cancel(
+                        instance,
+                        verbatim_model::request::Cancel { number, reason },
+                    ));
+                    self.late.insert(number, instance);
+                }
+                Some(Ended {
+                    owner: live.owner,
+                    ending: Ending::Answered(outcome.clone()),
+                    window: live.window,
+                    probing: live.probing,
+                })
             })
             .collect()
     }

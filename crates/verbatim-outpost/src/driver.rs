@@ -90,6 +90,7 @@ impl<'a> Driver<'a> {
             window,
             WindowVerdict::ProbeFirst,
             Request::CurrentFocus {
+                hidden: verbatim_model::request::HiddenRoot::Check,
                 set: every_property(),
                 known: Vec::new(),
                 details: verbatim_model::TextDetails::ALL,

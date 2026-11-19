@@ -46,6 +46,7 @@ fn next_core_to_outpost(previous: Option<&CoreToOutpost>) -> Option<CoreToOutpos
             window: crate::WindowHandle(8),
             verdict: crate::request::WindowVerdict::Msaa,
             request: crate::request::Request::CurrentFocus {
+                hidden: crate::request::HiddenRoot::Check,
                 set: vec![crate::property::PropertyId::Name],
                 known: Vec::new(),
                 details: crate::TextDetails::NONE,

@@ -326,6 +326,13 @@ pub struct WinEvent {
 /// is to enqueue the event for handling elsewhere.
 pub type WinEventCallback = Box<dyn Fn(WinEvent, Option<&str>)>;
 
+/// Called on the installing thread with the window of every
+/// `EVENT_OBJECT_SHOW` on (`OBJID_WINDOW`, `CHILDID_SELF`) the hook set
+/// hears, whatever the window's class, before and apart from the
+/// [`WinEventCallback`]'s filters, which keep only NVDA's show classes
+/// ([`set_window_shown`]). It must not block.
+pub type WindowShownCallback = Box<dyn Fn(isize)>;
+
 /// The `WinEvent` id of a sync marker ([`SyncMarker`]): an arbitrary id in
 /// the range Windows sets aside for events defined outside it, by the
 /// Accessibility Interoperability Alliance (`EVENT_AIA_START` to
@@ -398,6 +405,9 @@ pub fn event_clock() -> u32 {
 
 thread_local! {
     static CALLBACK: RefCell<Option<WinEventCallback>> = const { RefCell::new(None) };
+    /// This thread's output for every window object's show, while its hook
+    /// set lives and its owner asked for it ([`set_window_shown`]).
+    static WINDOW_SHOWN: RefCell<Option<WindowShownCallback>> = const { RefCell::new(None) };
     /// The window this thread's sync markers are raised on, and the
     /// callback they are handed to, while its hook set hears them.
     static MARKER_CALLBACK: RefCell<Option<(isize, SyncMarkerCallback)>> =
@@ -728,9 +738,47 @@ impl Drop for WinEventHook {
         }
         DESKTOP_NAME_HOOK.with(|slot| slot.set(0));
         CALLBACK.with(|slot| *slot.borrow_mut() = None);
+        WINDOW_SHOWN.with(|slot| *slot.borrow_mut() = None);
         MARKER_CALLBACK.with(|slot| *slot.borrow_mut() = None);
         KINDS.with(|slot| slot.borrow_mut().clear());
     }
+}
+
+/// Gives the calling thread's hook set a second output, `shown`, called
+/// with the window of every `EVENT_OBJECT_SHOW` on (`OBJID_WINDOW`,
+/// `CHILDID_SELF`) its hooks hear, decided by integer tests with no class
+/// read, before and apart from the event's own filters, which still tell
+/// a show of NVDA's classes as they did. The focus listener alone asks for
+/// it, to answer Core's "tell me when this window is shown" from the hook
+/// it already has (Dickson, 2026-11-19). Dropping the set removes it.
+///
+/// # Errors
+///
+/// Returns an error string if the thread has no set of hooks, or its set
+/// does not hear `EVENT_OBJECT_SHOW`.
+pub fn set_window_shown(shown: WindowShownCallback) -> Result<(), String> {
+    let hears_shows = HOOKS.with(|slot| {
+        slot.borrow().as_ref().map(|set| {
+            set.hooked
+                .iter()
+                .any(|(event, _)| *event == EVENT_OBJECT_SHOW)
+        })
+    });
+    match hears_shows {
+        None => Err("this thread has no set of WinEvent hooks".to_owned()),
+        Some(false) => Err("this thread's hooks do not hear a show".to_owned()),
+        Some(true) => {
+            WINDOW_SHOWN.with(|slot| *slot.borrow_mut() = Some(shown));
+            Ok(())
+        }
+    }
+}
+
+/// The window an event shows, when it is a window object's show:
+/// `EVENT_OBJECT_SHOW` on (`OBJID_WINDOW`, `CHILDID_SELF`).
+fn shown_window(event: u32, hwnd: isize, id_object: i32, id_child: i32) -> Option<isize> {
+    (event == EVENT_OBJECT_SHOW && id_object == OBJID_WINDOW.0 && id_child == CHILDID_SELF)
+        .then_some(hwnd)
 }
 
 /// Narrows the calling thread's set of hooks while it runs: every raw
@@ -983,6 +1031,15 @@ unsafe extern "system" fn win_event_proc(
             }
         });
         return;
+    }
+    // A window object's show goes to the second output first, whatever
+    // its class, and the event's own filters judge it after as before.
+    if let Some(window) = shown_window(event, hwnd.0 as isize, id_object, id_child) {
+        WINDOW_SHOWN.with(|slot| {
+            if let Some(shown) = slot.borrow().as_ref() {
+                shown(window);
+            }
+        });
     }
     // `time` is on the event clock.
     let raised_ms_ago = event_clock().wrapping_sub(time);

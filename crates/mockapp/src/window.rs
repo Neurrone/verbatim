@@ -586,6 +586,18 @@ fn drain_commands(hwnd: HWND, context: &'static WindowContext) {
     }
 }
 
+/// The answer to `command` when it is one applied on a thread of its own:
+/// the menu's, or the late dialog's.
+fn threaded(hwnd: HWND, command: &Command) -> Option<String> {
+    crate::late_dialog::command(hwnd, command).or_else(|| {
+        matches!(
+            command,
+            Command::PopupMenu | Command::MenuSelect(_) | Command::MenuClose
+        )
+        .then(|| crate::menu::command(command))
+    })
+}
+
 /// Applies one command on the window thread and acknowledges it; false
 /// once the command closed the window.
 fn apply(hwnd: HWND, context: &'static WindowContext, command: Command) -> bool {
@@ -679,8 +691,9 @@ fn apply(hwnd: HWND, context: &'static WindowContext, command: Command) -> bool 
         }
         return true;
     }
-    if let Command::PopupMenu | Command::MenuSelect(_) | Command::MenuClose = command {
-        acknowledge(&crate::menu::command(&command));
+    let answered = threaded(hwnd, &command);
+    if let Some(answer) = answered {
+        acknowledge(&answer);
         return true;
     }
     let applied = match command {

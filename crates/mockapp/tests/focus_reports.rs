@@ -142,7 +142,7 @@ impl Client {
 fn reused_runtime_id(remote: bool) {
     let path = if remote { "remote" } else { "classic" };
     let title = common::unique_title(&format!("mockapp-reuse-{path}"));
-    let mut app = common::spawn("reuse.json", "uia", &title);
+    let mut app = common::spawn_visible("reuse.json", "uia", &title);
     let client = Client::new(common::find_window(&title));
     let outpost = OutpostUnderTest::with_options(
         &app,
@@ -237,7 +237,7 @@ fn classic_outpost(app: &common::MockApp) -> OutpostUnderTest {
 fn a_text_focus_under_a_reused_runtime_id_reads_its_own_line(alive: bool) {
     let (reuse, _) = reuse_of_first(alive);
     let title = common::unique_title("mockapp-reuse-text");
-    let mut app = common::spawn("reuse_text.json", "uia", &title);
+    let mut app = common::spawn_visible("reuse_text.json", "uia", &title);
     let client = Client::new(common::find_window(&title));
     let outpost = classic_outpost(&app);
 
@@ -290,7 +290,7 @@ fn a_text_focus_under_the_runtime_id_of_a_field_gone_reads_its_own_line() {
 /// first field's line.
 fn a_text_focus_whose_element_is_not_found_under_a_reused_runtime_id_is_not_read() {
     let title = common::unique_title("mockapp-reuse-text-unfound");
-    let mut app = common::spawn("reuse_text.json", "uia", &title);
+    let mut app = common::spawn_visible("reuse_text.json", "uia", &title);
     let client = Client::new(common::find_window(&title));
     let outpost = classic_outpost(&app);
 
@@ -319,7 +319,7 @@ fn a_text_focus_whose_element_is_not_found_under_a_reused_runtime_id_is_not_read
 /// reused, so that Core forgets what it kept of the first's text.
 fn a_terminal_under_the_runtime_id_of_one_that_lost_the_focus_is_read_afresh() {
     let title = common::unique_title("mockapp-reuse-terminal");
-    let mut app = common::spawn("reuse_terminal.json", "uia", &title);
+    let mut app = common::spawn_visible("reuse_terminal.json", "uia", &title);
     let client = Client::new(common::find_window(&title));
     let outpost = OutpostUnderTest::new(&app);
 
@@ -349,7 +349,7 @@ fn a_terminal_under_the_runtime_id_of_one_that_lost_the_focus_is_read_afresh() {
 /// afresh after the focus's registration, and Core says them.
 fn a_focus_reports_the_states_read_when_it_is_handled() {
     let title = common::unique_title("mockapp-live-states");
-    let mut app = common::spawn("reuse.json", "uia", &title);
+    let mut app = common::spawn_visible("reuse.json", "uia", &title);
     let client = Client::new(common::find_window(&title));
     let outpost = OutpostUnderTest::new(&app);
 
@@ -399,7 +399,7 @@ fn a_focus_reports_the_states_read_when_it_is_handled() {
 /// own event with.
 fn a_controls_own_focus_reports_its_focused_child() {
     let title = common::unique_title("mockapp-focus-child");
-    let mut app = common::spawn("focus_child.json", "msaa", &title);
+    let mut app = common::spawn_visible("focus_child.json", "msaa", &title);
     let hwnd = common::find_window(&title);
     // The tree is node 1, after the root, so its object id is 2; General
     // is its first child.
@@ -475,7 +475,7 @@ fn identity_of(read: &verbatim_model::request::FocusRead) -> verbatim_model::req
 fn a_candidate_is_read_unless_it_is_the_object_named() {
     use verbatim_model::request::{CandidateAnswer, CandidateFacts, Depth, Reply};
     let title = common::unique_title("mockapp-candidate-unless-same");
-    let mut app = common::spawn("counts.json", "msaa", &title);
+    let mut app = common::spawn_visible("counts.json", "msaa", &title);
     let hwnd = common::find_window(&title);
     common::apply(&mut app, hwnd, "set-focus first");
     let outpost = OutpostUnderTest::new(&app);
@@ -627,7 +627,7 @@ fn the_twin_deletion_stand_in_matches_the_desktop_lists_recording() {
 fn a_menu_start_on_a_popup_with_a_focused_item_reads_the_popup() {
     use verbatim_model::request::{CandidateFacts, CandidateKind, Depth};
     let title = common::unique_title("mockapp-menu-start-popup");
-    let mut app = common::spawn("popup_focused_item.json", "msaa", &title);
+    let mut app = common::spawn_visible("popup_focused_item.json", "msaa", &title);
     let hwnd = common::find_window(&title);
     common::apply(&mut app, hwnd, "focus-child context copy");
     let outpost = OutpostUnderTest::new(&app);
@@ -668,7 +668,7 @@ fn a_menu_start_on_a_popup_with_a_focused_item_reads_the_popup() {
 fn a_candidate_is_read_to_the_depth_core_asks() {
     use verbatim_model::request::{CandidateFacts, CandidateKind, Depth};
     let title = common::unique_title("mockapp-candidate-depth");
-    let mut app = common::spawn("counts.json", "msaa", &title);
+    let mut app = common::spawn_visible("counts.json", "msaa", &title);
     let hwnd = common::find_window(&title);
     common::apply(&mut app, hwnd, "set-focus root");
     let outpost = OutpostUnderTest::new(&app);
@@ -731,7 +731,7 @@ fn the_stale_tree_focus_stand_in_matches_the_open_dialogs_recording() {
     use windows::core::w;
 
     let title = common::unique_title("mockapp-stale-tree");
-    let mut app = common::spawn("stale_tree.json", "msaa", &title);
+    let mut app = common::spawn_visible("stale_tree.json", "msaa", &title);
     let hwnd = common::find_window(&title);
     common::apply(&mut app, hwnd, "stale-focus-on-left");
     // SAFETY: local searches of mockapp's window's children by class.
@@ -852,7 +852,7 @@ fn the_read_only_field_stand_in_matches_the_location_fields_recording() {
     use windows::core::w;
 
     let title = common::unique_title("mockapp-read-only-field");
-    let mut app = common::spawn("read_only_field.json", "msaa", &title);
+    let mut app = common::spawn_visible("read_only_field.json", "msaa", &title);
     let hwnd = common::find_window(&title);
     // SAFETY: a local search of mockapp's window's children by class.
     let edit = unsafe { FindWindowExW(Some(hwnd), None, w!("EDIT"), None) }.expect("the edit");
@@ -933,7 +933,7 @@ fn the_read_only_field_stand_in_matches_the_location_fields_recording() {
 /// 759).
 fn a_focus_that_was_not_redirected_carries_its_own_ids() {
     let title = common::unique_title("mockapp-no-redirect");
-    let mut app = common::spawn("counts.json", "msaa", &title);
+    let mut app = common::spawn_visible("counts.json", "msaa", &title);
     let hwnd = common::find_window(&title);
     common::apply(&mut app, hwnd, "set-focus root");
     let outpost = OutpostUnderTest::new(&app);
@@ -959,7 +959,7 @@ fn a_focus_that_was_not_redirected_carries_its_own_ids() {
 /// (`books/dev/src/explanation/design/ownership.md`).
 fn a_repeated_msaa_focus_is_read_in_full() {
     let title = common::unique_title("mockapp-msaa-duplicate");
-    let mut app = common::spawn("small.json", "msaa", &title);
+    let mut app = common::spawn_visible("small.json", "msaa", &title);
     let hwnd = common::find_window(&title);
     // The button is node 1, after the root, so its object id is 2.
     let button = MsaaIds {
@@ -981,7 +981,7 @@ fn a_repeated_msaa_focus_is_read_in_full() {
     app.quit();
 
     let title = common::unique_title("mockapp-msaa-child-repeat");
-    let mut app = common::spawn("focus_child.json", "msaa", &title);
+    let mut app = common::spawn_visible("focus_child.json", "msaa", &title);
     let hwnd = common::find_window(&title);
     // The tree is node 1, so its object id is 2; General is child 1.
     let general = MsaaIds {
@@ -1008,7 +1008,7 @@ fn a_repeated_msaa_focus_is_read_in_full() {
 /// nothing; the newer focus is spoken from its own event.
 fn a_focus_whose_element_lost_the_keyboard_focus_before_it_was_read_is_dropped() {
     let title = common::unique_title("mockapp-lost-focus");
-    let mut app = common::spawn("small.json", "uia", &title);
+    let mut app = common::spawn_visible("small.json", "uia", &title);
     let client = Client::new(common::find_window(&title));
     let mut core = CoreDriver::new(&app, OutpostUnderTest::new(&app));
 
@@ -1050,7 +1050,7 @@ fn a_focus_whose_element_lost_the_keyboard_focus_before_it_was_read_is_dropped()
 /// "The Alt+Tab switcher's pane"); a focus of another class carries none.
 fn a_focus_carries_its_parents_automation_id() {
     let title = common::unique_title("mockapp-parent-automation-id");
-    let mut app = common::spawn("switcher.json", "uia", &title);
+    let mut app = common::spawn_visible("switcher.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let client = Client::new(hwnd);
     let mut core = CoreDriver::new(&app, OutpostUnderTest::new(&app));
@@ -1093,7 +1093,7 @@ fn a_focus_carries_its_parents_automation_id() {
 /// confirm or correct the expectation.
 fn a_focus_read_while_it_had_the_keyboard_focus_is_reported_though_the_focus_moved_on() {
     let title = common::unique_title("mockapp-left-selection");
-    let mut app = common::spawn("small.json", "uia", &title);
+    let mut app = common::spawn_visible("small.json", "uia", &title);
     let client = Client::new(common::find_window(&title));
     let mut core = CoreDriver::new(&app, OutpostUnderTest::new(&app));
 
@@ -1181,7 +1181,7 @@ fn assert_followed(
 /// and follows the element's changes from then on.
 fn a_focus_is_found_by_its_path_and_followed() {
     let title = common::unique_title("mockapp-focus-path");
-    let mut app = common::spawn("small.json", "uia", &title);
+    let mut app = common::spawn_visible("small.json", "uia", &title);
     let client = Client::new(common::find_window(&title));
     let outpost = OutpostUnderTest::new(&app);
 
@@ -1206,7 +1206,7 @@ fn a_focus_is_found_by_its_path_and_followed() {
 /// window's parent, as a walk whose first step failed sends it.
 fn a_windowless_focus_with_a_failed_walk_is_found_from_its_nearest_window() {
     let title = common::unique_title("mockapp-failed-walk-path");
-    let mut app = common::spawn("small.json", "uia", &title);
+    let mut app = common::spawn_visible("small.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let client = Client::new(hwnd);
     let outpost = OutpostUnderTest::new(&app);
@@ -1232,7 +1232,7 @@ fn a_windowless_focus_with_a_failed_walk_is_found_from_its_nearest_window() {
 /// answered under its node, and its changes are followed from then on.
 fn a_focus_without_a_path_is_followed_from_its_next_focus_event() {
     let title = common::unique_title("mockapp-focus-not-found");
-    let mut app = common::spawn("small.json", "uia", &title);
+    let mut app = common::spawn_visible("small.json", "uia", &title);
     let client = Client::new(common::find_window(&title));
     let outpost = OutpostUnderTest::new(&app);
 
@@ -1267,7 +1267,7 @@ fn a_focus_without_a_path_is_followed_from_its_next_focus_event() {
 fn focus_below_an_ancestor_a_current_focus_read_minted(remote: bool) {
     let path = if remote { "remote" } else { "classic" };
     let title = common::unique_title(&format!("mockapp-focus-now-route-{path}"));
-    let mut app = common::spawn("ancestry.json", "uia", &title);
+    let mut app = common::spawn_visible("ancestry.json", "uia", &title);
     let client = Client::new(common::find_window(&title));
     let outpost = OutpostUnderTest::with_options(
         &app,
@@ -1314,7 +1314,7 @@ fn focus_below_an_ancestor_a_current_focus_read_minted(remote: bool) {
 /// group and reads no foreground window at all.
 fn a_focus_now_reads_the_foreground_only_for_a_focus_entering_a_new_window() {
     let title = common::unique_title("mockapp-focus-now-foreground");
-    let mut app = common::spawn("ancestry.json", "uia", &title);
+    let mut app = common::spawn_visible("ancestry.json", "uia", &title);
     let client = Client::new(common::find_window(&title));
     let outpost = OutpostUnderTest::new(&app);
 
@@ -1363,7 +1363,7 @@ fn a_focus_now_reads_the_foreground_only_for_a_focus_entering_a_new_window() {
 fn routes_below_a_met_ancestor(remote: bool) {
     let path = if remote { "remote" } else { "classic" };
     let title = common::unique_title(&format!("mockapp-focus-now-met-route-{path}"));
-    let mut app = common::spawn("ancestry.json", "uia", &title);
+    let mut app = common::spawn_visible("ancestry.json", "uia", &title);
     let client = Client::new(common::find_window(&title));
     let outpost = OutpostUnderTest::with_options(
         &app,
@@ -1426,7 +1426,7 @@ fn a_focus_below_an_ancestor_a_current_focus_read_minted_is_found_and_followed_c
 /// is answered as none, `NoText`; not found, it would be `NotRead`.
 fn a_windowless_text_focus_whose_walk_failed_is_found_as_the_focused_element() {
     let title = common::unique_title("mockapp-cut-walk");
-    let mut app = common::spawn("ancestry.json", "uia", &title);
+    let mut app = common::spawn_visible("ancestry.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let client = Client::new(hwnd);
     let outpost = OutpostUnderTest::new(&app);
@@ -1520,7 +1520,7 @@ fn assert_notes_reported(
 /// judged by Core's verdict, which the request carries, with no probe.
 fn a_cut_walks_focused_element_with_another_runtime_id_is_not_taken() {
     let title = common::unique_title("mockapp-cut-walk-other-id");
-    let mut app = common::spawn("ancestry.json", "uia", &title);
+    let mut app = common::spawn_visible("ancestry.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let client = Client::new(hwnd);
     let outpost = OutpostUnderTest::new(&app);
@@ -1558,10 +1558,10 @@ fn a_cut_walks_focused_element_with_another_runtime_id_is_not_taken() {
 /// carries, with no probe.
 fn a_cut_walks_focused_element_of_another_process_is_not_taken() {
     let title = common::unique_title("mockapp-cut-walk-own");
-    let app = common::spawn("ancestry.json", "uia", &title);
+    let app = common::spawn_visible("ancestry.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let other_title = common::unique_title("mockapp-cut-walk-other");
-    let mut other = common::spawn("ancestry.json", "uia", &other_title);
+    let mut other = common::spawn_visible("ancestry.json", "uia", &other_title);
     let other_hwnd = common::find_window(&other_title);
     let other_client = Client::new(other_hwnd);
     let outpost = OutpostUnderTest::new(&app);
@@ -1605,7 +1605,7 @@ fn a_cut_walks_focused_element_of_another_process_is_not_taken() {
 /// calls in all, with no connection.
 fn a_focus_no_route_finds_is_read_as_the_focused_element() {
     let title = common::unique_title("mockapp-uncut-walk");
-    let mut app = common::spawn("ancestry.json", "uia", &title);
+    let mut app = common::spawn_visible("ancestry.json", "uia", &title);
     let client = Client::new(common::find_window(&title));
     let outpost = OutpostUnderTest::new(&app);
 
@@ -1644,7 +1644,7 @@ fn a_focus_no_route_finds_is_read_as_the_focused_element() {
 /// 2026-11-17): its changes are followed from this focus on.
 fn a_button_no_route_finds_is_read_as_the_focused_element_and_followed() {
     let title = common::unique_title("mockapp-no-route-button");
-    let mut app = common::spawn("small.json", "uia", &title);
+    let mut app = common::spawn_visible("small.json", "uia", &title);
     let client = Client::new(common::find_window(&title));
     let outpost = OutpostUnderTest::new(&app);
 
@@ -1666,7 +1666,7 @@ fn a_button_no_route_finds_is_read_as_the_focused_element_and_followed() {
 /// the classic one.
 fn a_route_walk_that_finds_its_element_gone_answers_gone() {
     let title = common::unique_title("mockapp-route-gone");
-    let mut app = common::spawn("ancestry.json", "uia", &title);
+    let mut app = common::spawn_visible("ancestry.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let client = Client::new(hwnd);
     let outpost = OutpostUnderTest::with_options(
@@ -1727,7 +1727,7 @@ fn focus_in_caret_fixture(
 /// event the document raises is heard and told for its element.
 fn a_caret_event_after_the_focus_returns_to_a_document_is_heard() {
     let title = common::unique_title("mockapp-focus-returns");
-    let mut app = common::spawn("caret_watch.json", "uia", &title);
+    let mut app = common::spawn_visible("caret_watch.json", "uia", &title);
     let client = Client::new(common::find_window(&title));
     let outpost = OutpostUnderTest::new(&app);
 
@@ -1774,7 +1774,7 @@ fn a_caret_event_after_the_focus_returns_to_a_document_is_heard() {
 /// spoken.
 fn a_focus_dropped_before_its_window_is_in_front_is_reported_once_it_is() {
     let title = common::unique_title("mockapp-focus-in-front");
-    let mut app = common::spawn("small.json", "uia", &title);
+    let mut app = common::spawn_visible("small.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let client = Client::new(hwnd);
     let mut core = CoreDriver::new(&app, OutpostUnderTest::new(&app));
@@ -1802,7 +1802,7 @@ fn a_focus_dropped_before_its_window_is_in_front_is_reported_once_it_is() {
 /// the window that follows is spoken alone, the window first.
 fn a_foreground_event_for_a_window_read_through_uia_is_dropped() {
     let title = common::unique_title("mockapp-uia-foreground");
-    let mut app = common::spawn("small.json", "uia", &title);
+    let mut app = common::spawn_visible("small.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let client = Client::new(hwnd);
     let mut core = CoreDriver::new(&app, OutpostUnderTest::new(&app));
@@ -1830,7 +1830,7 @@ fn a_foreground_event_for_a_window_read_through_uia_is_dropped() {
 /// up to the desktop alone. With the focused state, the same answer is spoken.
 fn a_fake_focus_on_an_msaa_object_without_the_focused_state_answers_nothing() {
     let title = common::unique_title("mockapp-fake-focus-unfocused");
-    let mut app = common::spawn("counts.json", "msaa", &title);
+    let mut app = common::spawn_visible("counts.json", "msaa", &title);
     let hwnd = common::find_window(&title);
     let mut core = CoreDriver::new(&app, OutpostUnderTest::new(&app));
     let client = (windows::Win32::UI::WindowsAndMessaging::OBJID_CLIENT.0, 0);
@@ -1886,7 +1886,7 @@ fn a_fake_focus_on_an_msaa_object_without_the_focused_state_answers_nothing() {
 /// refused and nothing was said.
 fn a_fake_focus_whose_focused_ancestor_core_knows_is_spoken() {
     let title = common::unique_title("mockapp-fake-focus-known-ancestor");
-    let mut app = common::spawn("counts.json", "msaa", &title);
+    let mut app = common::spawn_visible("counts.json", "msaa", &title);
     let hwnd = common::find_window(&title);
     let mut core = CoreDriver::new(&app, OutpostUnderTest::new(&app));
 
@@ -1928,7 +1928,7 @@ fn a_fake_focus_whose_focused_ancestor_core_knows_is_spoken() {
 /// not serve, and nothing would be answered.
 fn a_focus_now_takes_the_focus_window_before_its_probe() {
     let title = common::unique_title("mockapp-focus-now-window-first");
-    let mut app = common::spawn("counts.json", "msaa", &title);
+    let mut app = common::spawn_visible("counts.json", "msaa", &title);
     let hwnd = common::find_window(&title);
     let outpost = OutpostUnderTest::new(&app);
     common::apply(&mut app, hwnd, "set-focus first");
@@ -1937,6 +1937,7 @@ fn a_focus_now_takes_the_focus_window_before_its_probe() {
     let number = outpost.request(
         hwnd,
         verbatim_model::request::Request::CurrentFocus {
+            hidden: verbatim_model::request::HiddenRoot::Check,
             set: common::outpost::focus_set(),
             known: Vec::new(),
             details: verbatim_model::TextDetails::NONE,
@@ -1968,7 +1969,7 @@ fn a_focus_now_takes_the_focus_window_before_its_probe() {
 /// first child, the unnamed pane.
 fn an_msaa_focus_now_follows_acc_focus_down_to_the_focus() {
     let title = common::unique_title("mockapp-acc-focus-stepwise");
-    let mut app = common::spawn("ancestry.json", "msaa", &title);
+    let mut app = common::spawn_visible("ancestry.json", "msaa", &title);
     app.send("set-focus deep");
     app.send("acc-focus-stepwise");
     let outpost = OutpostUnderTest::new(&app);
@@ -1993,9 +1994,9 @@ fn an_msaa_focus_now_follows_acc_focus_down_to_the_focus() {
 /// mockapp's focused element, its cache filled by the outpost's request.
 fn a_focused_element_of_another_process_is_not_read_further() {
     let title = common::unique_title("mockapp-focused-here");
-    let app = common::spawn("small.json", "uia", &title);
+    let app = common::spawn_visible("small.json", "uia", &title);
     let other_title = common::unique_title("mockapp-focused-elsewhere");
-    let mut other = common::spawn("small.json", "uia", &other_title);
+    let mut other = common::spawn_visible("small.json", "uia", &other_title);
     let other_hwnd = common::find_window(&other_title);
     let other_client = Client::new(other_hwnd);
     let outpost = OutpostUnderTest::new(&app);
@@ -2036,9 +2037,9 @@ fn a_focused_element_of_another_process_is_not_read_further() {
 /// and nothing is said, the other application's outpost not starting here.
 fn a_focus_event_naming_another_applications_window_is_not_read() {
     let title = common::unique_title("mockapp-event-here");
-    let app = common::spawn("small.json", "uia", &title);
+    let app = common::spawn_visible("small.json", "uia", &title);
     let other_title = common::unique_title("mockapp-event-elsewhere");
-    let other = common::spawn("small.json", "uia", &other_title);
+    let other = common::spawn_visible("small.json", "uia", &other_title);
     let other_hwnd = common::find_window(&other_title);
     let mut core = CoreDriver::new(&app, OutpostUnderTest::new(&app));
     core.outpost.set_foreground(other_hwnd);
@@ -2065,7 +2066,7 @@ fn a_focus_event_naming_another_applications_window_is_not_read() {
 /// NVDA judges acceptance.
 fn the_listener_skips_a_focus_in_a_class_listed_window() {
     let title = common::unique_title("mockapp-class-listed");
-    let mut app = common::spawn("msaa_class_window.json", "uia", &title);
+    let mut app = common::spawn_visible("msaa_class_window.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let client = Client::new(hwnd);
     let mut core = CoreDriver::new(&app, OutpostUnderTest::new(&app));
@@ -2111,7 +2112,7 @@ fn the_listener_skips_a_focus_in_a_class_listed_window() {
 /// focused, and Core ends the repeat with no read and nothing said.
 fn a_repeated_focus_on_the_still_focused_element_is_a_duplicate() {
     let title = common::unique_title("mockapp-repeated-focus");
-    let mut app = common::spawn("small.json", "uia", &title);
+    let mut app = common::spawn_visible("small.json", "uia", &title);
     let client = Client::new(common::find_window(&title));
     let mut core = CoreDriver::new(&app, OutpostUnderTest::new(&app));
 
@@ -2137,7 +2138,7 @@ fn a_repeated_focus_on_the_still_focused_element_is_a_duplicate() {
 /// (`docs/parity/focus-events.md`).
 fn a_focus_that_leaves_between_the_two_keyboard_focus_reads_is_announced_once() {
     let title = common::unique_title("mockapp-focus-leaves-between");
-    let mut app = common::spawn("small.json", "uia", &title);
+    let mut app = common::spawn_visible("small.json", "uia", &title);
     let hwnd = common::find_window(&title).0 as isize;
     let client = Client::new(common::find_window(&title));
     let mut core = CoreDriver::new(&app, OutpostUnderTest::new(&app));
@@ -2209,7 +2210,7 @@ fn a_focus_that_leaves_between_the_two_keyboard_focus_reads_is_announced_once() 
 /// dropped, as NVDA's `shouldAllowUIAFocusEvent` drops it, asking nothing.
 fn a_menu_opening_is_judged_as_a_focus_on_the_menu() {
     let title = common::unique_title("mockapp-menu-opening");
-    let mut app = common::spawn("small.json", "uia", &title);
+    let mut app = common::spawn_visible("small.json", "uia", &title);
     let client = Client::new(common::find_window(&title));
     let mut core = CoreDriver::new(&app, OutpostUnderTest::new(&app));
 
@@ -2239,7 +2240,7 @@ fn a_menu_opening_is_judged_as_a_focus_on_the_menu() {
 /// again and reads nothing for it.
 fn a_menu_opening_on_the_current_focus_is_judged_as_that_focus() {
     let title = common::unique_title("mockapp-menu-opening-focus");
-    let mut app = common::spawn("small.json", "uia", &title);
+    let mut app = common::spawn_visible("small.json", "uia", &title);
     let client = Client::new(common::find_window(&title));
     let mut core = CoreDriver::new(&app, OutpostUnderTest::new(&app));
 
@@ -2267,7 +2268,7 @@ fn a_menu_opening_on_the_current_focus_is_judged_as_that_focus() {
 /// nearest window, and spoken as a focus.
 fn a_menu_opening_on_another_element_is_judged_by_its_own_window() {
     let title = common::unique_title("mockapp-menu-opening-other");
-    let mut app = common::spawn("small.json", "uia", &title);
+    let mut app = common::spawn_visible("small.json", "uia", &title);
     let client = Client::new(common::find_window(&title));
     let mut core = CoreDriver::new(&app, OutpostUnderTest::new(&app));
 
@@ -2379,7 +2380,7 @@ fn checked_held(
 /// check's first provider call after its walk.
 fn a_focus_whose_keyboard_focus_read_times_out_is_reported() {
     let title = common::unique_title("mockapp-focus-read-timed-out");
-    let mut app = common::spawn("small.json", "uia", &title);
+    let mut app = common::spawn_visible("small.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let client = Client::new(hwnd);
     let mut core = CoreDriver::new(&app, OutpostUnderTest::new(&app));
@@ -2427,7 +2428,7 @@ fn a_focus_whose_keyboard_focus_read_times_out_is_reported() {
 /// focus read begins.
 fn a_focus_whose_keyboard_focus_read_fails_is_walked() {
     let title = common::unique_title("mockapp-focus-read-gone");
-    let mut app = common::spawn("small.json", "uia", &title);
+    let mut app = common::spawn_visible("small.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let client = Client::new(hwnd);
     let mut core = CoreDriver::new(&app, OutpostUnderTest::new(&app));
@@ -2471,7 +2472,7 @@ fn a_focus_whose_keyboard_focus_read_fails_is_walked() {
 /// check's end.
 fn a_focus_whose_earlier_elements_read_times_out_is_read_as_a_new_element() {
     let title = common::unique_title("mockapp-earlier-read-timed-out");
-    let mut app = common::spawn("small.json", "uia", &title);
+    let mut app = common::spawn_visible("small.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let client = Client::new(hwnd);
     let mut core = CoreDriver::new(&app, OutpostUnderTest::new(&app));
@@ -2506,7 +2507,7 @@ fn a_focus_whose_earlier_elements_read_times_out_is_read_as_a_new_element() {
 /// focus before had), and the state.
 fn a_menu_items_legacy_state_is_read_with_its_focus() {
     let title = common::unique_title("mockapp-menu-item-focus");
-    let mut app = common::spawn("modal_owner.json", "uia", &title);
+    let mut app = common::spawn_visible("modal_owner.json", "uia", &title);
     let client = Client::new(common::find_window(&title));
     let outpost = OutpostUnderTest::new(&app);
 
@@ -2537,7 +2538,7 @@ fn a_menu_items_legacy_state_is_read_with_its_focus() {
 /// legacy state does, and raises a state change.
 fn a_menu_items_state_change_carries_its_legacy_checked_state() {
     let title = common::unique_title("mockapp-menu-item-legacy-change");
-    let mut app = common::spawn("modal_owner.json", "uia", &title);
+    let mut app = common::spawn_visible("modal_owner.json", "uia", &title);
     let client = Client::new(common::find_window(&title));
     let outpost = OutpostUnderTest::new(&app);
 
@@ -2578,7 +2579,7 @@ fn a_menu_items_state_change_carries_its_legacy_checked_state() {
 /// it reports the keyboard focus, asking nothing and saying nothing.
 fn a_console_windows_own_focus_is_never_reported() {
     let title = common::unique_title("mockapp-console-window");
-    let mut app = common::spawn("console_window.json", "uia", &title);
+    let mut app = common::spawn_visible("console_window.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let client = Client::new(hwnd);
     let mut core = CoreDriver::new(&app, OutpostUnderTest::new(&app));
@@ -2608,7 +2609,7 @@ fn a_console_windows_own_focus_is_never_reported() {
 /// focus says as NVDA's announcement of a focused terminal does.
 fn a_console_text_areas_focus_is_checked_from_the_text_area() {
     let title = common::unique_title("mockapp-console-text-area");
-    let mut app = common::spawn("console_window.json", "uia", &title);
+    let mut app = common::spawn_visible("console_window.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let client = Client::new(hwnd);
     let outpost = OutpostUnderTest::new(&app);
@@ -2651,7 +2652,7 @@ fn a_console_text_areas_focus_is_checked_from_the_text_area() {
 /// View Class Window Fixture window", "Letters list", "beta".
 fn a_list_views_provider_counts_only_from_windows_forms() {
     let title = common::unique_title("mockapp-list-view-class");
-    let mut app = common::spawn("list_view_class_window.json", "uia", &title);
+    let mut app = common::spawn_visible("list_view_class_window.json", "uia", &title);
     let client = Client::new(common::find_window(&title));
     // Nothing is in front as Core starts, so Core's first verdict for the
     // window is the one the focus's tell carries.
@@ -2684,7 +2685,7 @@ fn a_list_views_provider_counts_only_from_windows_forms() {
 /// said twice.
 fn a_second_focus_checked_before_the_first_is_handled_is_said_once() {
     let title = common::unique_title("mockapp-second-focus");
-    let mut app = common::spawn("small.json", "uia", &title);
+    let mut app = common::spawn_visible("small.json", "uia", &title);
     let client = Client::new(common::find_window(&title));
     let mut core = CoreDriver::new(&app, OutpostUnderTest::new(&app));
 
@@ -2711,7 +2712,7 @@ fn a_second_focus_checked_before_the_first_is_handled_is_said_once() {
 /// element each time, 0 rising to 19.
 fn refused_focuses_are_let_go_so_each_check_reads_its_own_focus_alone() {
     let title = common::unique_title("mockapp-refused-focuses");
-    let mut app = common::spawn("small.json", "msaa", &title);
+    let mut app = common::spawn_visible("small.json", "msaa", &title);
     let hwnd = common::find_window(&title);
     let client = Client::new(hwnd);
     let mut core = CoreDriver::new(&app, OutpostUnderTest::new(&app));
@@ -2759,7 +2760,7 @@ fn refused_focuses_are_let_go_so_each_check_reads_its_own_focus_alone() {
 /// `get_accState` through the proxy.
 fn a_focus_in_a_window_with_no_uia_provider_is_dropped_by_its_probe() {
     let title = common::unique_title("mockapp-msaa-window-focus");
-    let mut app = common::spawn("small.json", "msaa", &title);
+    let mut app = common::spawn_visible("small.json", "msaa", &title);
     let hwnd = common::find_window(&title);
     let client = Client::new(hwnd);
     let mut core = CoreDriver::new(&app, OutpostUnderTest::new(&app));
@@ -2797,7 +2798,7 @@ fn a_focus_in_a_window_with_no_uia_provider_is_dropped_by_its_probe() {
 /// in one call, the refresh of the box that reads the relation live.
 fn a_focus_s_help_text_and_suggestions_are_followed() {
     let title = common::unique_title("mockapp-suggestions");
-    let mut app = common::spawn("controller.json", "uia", &title);
+    let mut app = common::spawn_visible("controller.json", "uia", &title);
     let client = Client::new(common::find_window(&title));
     let mut core = CoreDriver::new(&app, OutpostUnderTest::new(&app));
 
@@ -2843,7 +2844,7 @@ fn a_focus_s_help_text_and_suggestions_are_followed() {
 /// spoken.
 fn a_followed_change_while_another_window_is_in_front_is_refused() {
     let title = common::unique_title("mockapp-followed-background");
-    let mut app = common::spawn("controller.json", "uia", &title);
+    let mut app = common::spawn_visible("controller.json", "uia", &title);
     let client = Client::new(common::find_window(&title));
     let mut core = CoreDriver::new(&app, OutpostUnderTest::new(&app));
     let window = core.outpost.app_window();
@@ -2876,7 +2877,7 @@ fn a_followed_change_while_another_window_is_in_front_is_refused() {
 /// tests.
 fn a_windowless_selection_is_given_its_nearest_window() {
     let title = common::unique_title("mockapp-nearest-window");
-    let mut app = common::spawn("small.json", "uia", &title);
+    let mut app = common::spawn_visible("small.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let client = Client::new(hwnd);
     let mut core = CoreDriver::new(&app, OutpostUnderTest::new(&app));
@@ -2909,7 +2910,7 @@ fn a_windowless_selection_is_given_its_nearest_window() {
 /// without the description.
 fn an_unnamed_grouping_with_a_description_is_focus_context_with_descriptions_off() {
     let title = common::unique_title("mockapp-described-group");
-    let mut app = common::spawn("described_group.json", "uia", &title);
+    let mut app = common::spawn_visible("described_group.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let client = Client::new(hwnd);
     let outpost = OutpostUnderTest::new(&app);
@@ -2954,7 +2955,7 @@ fn an_unnamed_grouping_with_a_description_is_focus_context_with_descriptions_off
 /// (`docs/parity/focus-announcement.md`, "Text on focus").
 fn a_protected_fields_focus_comes_with_its_caret_and_selected_text() {
     let title = common::unique_title("mockapp-protected-focus");
-    let mut app = common::spawn("text.json", "uia", &title);
+    let mut app = common::spawn_visible("text.json", "uia", &title);
     let client = Client::new(common::find_window(&title));
     let outpost = OutpostUnderTest::new(&app);
 
@@ -2990,7 +2991,7 @@ fn a_protected_fields_focus_comes_with_its_caret_and_selected_text() {
 fn save_as_dialog(label: &str) -> (common::MockApp, HWND, HWND) {
     use windows::Win32::UI::WindowsAndMessaging::FindWindowExW;
     let title = common::unique_title(label);
-    let mut app = common::spawn("save_as.json", "msaa", &title);
+    let mut app = common::spawn_visible("save_as.json", "msaa", &title);
     let host = common::find_window(&title);
     app.send("child-window");
     // SAFETY: a local search of the host window's children.
@@ -3089,7 +3090,7 @@ fn handle(hwnd: HWND) -> WindowHandle {
 /// has only a nearest window, carries none.
 fn a_uia_window_element_carries_its_window_and_its_content_none() {
     let title = common::unique_title("mockapp-uia-window-handle");
-    let mut app = common::spawn("small.json", "uia", &title);
+    let mut app = common::spawn_visible("small.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let client = Client::new(hwnd);
     let outpost = OutpostUnderTest::new(&app);
@@ -3116,7 +3117,7 @@ fn a_uia_window_element_carries_its_window_and_its_content_none() {
 /// when `identity` is given (`client-identity`).
 fn save_as_chain_windows(identity: bool) -> (Vec<Option<WindowHandle>>, Option<WindowHandle>) {
     let title = common::unique_title("mockapp-msaa-window-handle");
-    let mut app = common::spawn("save_as.json", "msaa", &title);
+    let mut app = common::spawn_visible("save_as.json", "msaa", &title);
     let hwnd = common::find_window(&title);
     if identity {
         app.send("client-identity");
@@ -3166,7 +3167,7 @@ fn an_msaa_client_area_reached_by_a_walk_carries_its_window_and_its_content_none
 /// "Focus-ancestry context").
 fn an_msaa_ancestor_reached_with_no_identity_string_is_its_windows_client() {
     let title = common::unique_title("mockapp-msaa-window-client");
-    let mut app = common::spawn("save_as.json", "msaa", &title);
+    let mut app = common::spawn_visible("save_as.json", "msaa", &title);
     let hwnd = common::find_window(&title);
     app.send("child-window");
     app.send("child-client-identity");
@@ -3311,7 +3312,7 @@ fn thread_focus_window(hwnd: HWND) -> Option<HWND> {
 /// the outermost group read is the chain's top.
 fn a_depth_limited_chain_starts_at_its_unread_nearest_window() {
     let title = common::unique_title("mockapp-depth-limit");
-    let app = common::spawn("nested.json", "uia", &title);
+    let app = common::spawn_visible("nested.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let client = Client::new(hwnd);
     let outpost = OutpostUnderTest::new(&app);
@@ -3391,7 +3392,7 @@ fn a_hung_ancestor_window_is_named_by_its_text_with_no_call() {
 fn uia_island(label: &str) -> (common::MockApp, HWND, HWND) {
     use windows::Win32::UI::WindowsAndMessaging::FindWindowExW;
     let title = common::unique_title(label);
-    let app = common::spawn("uia_island.json", "uia", &title);
+    let app = common::spawn_visible("uia_island.json", "uia", &title);
     let host = common::find_window(&title);
     // SAFETY: a local search of the host window's children.
     let island = unsafe {
@@ -3757,7 +3758,7 @@ fn a_uia_window_whose_element_cannot_be_read_loses_the_focus() {
 fn a_dialog_the_listener_read_has_its_text_on_its_first_report() {
     const QUESTION: &str = "Remove the theme Mine? This cannot be undone. Its sounds go with it.";
     let title = common::unique_title("mockapp-dialog-first-report");
-    let mut app = common::spawn("dialog_class_window.json", "uia", &title);
+    let mut app = common::spawn_visible("dialog_class_window.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let uia = Uia::new().expect("a UIA client");
     let outpost = OutpostUnderTest::new(&app);
@@ -3800,7 +3801,7 @@ fn toast_element(client: &Client) -> Cached<ListenerEvent> {
 /// toast speaks it (`docs/parity/focus-events.md`).
 fn a_toast_without_a_window_of_its_own_is_passed_on_with_its_nearest() {
     let title = common::unique_title("mockapp-toast-element");
-    let app = common::spawn("toast_element.json", "uia", &title);
+    let app = common::spawn_visible("toast_element.json", "uia", &title);
     let client = Client::new(common::find_window(&title));
     let mut core = CoreDriver::new(&app, OutpostUnderTest::new(&app));
 
@@ -3826,7 +3827,7 @@ fn a_toast_without_a_window_of_its_own_is_passed_on_with_its_nearest() {
 /// by Core, which asks nothing for it.
 fn a_toast_candidate_under_another_window_class_is_dropped() {
     let title = common::unique_title("mockapp-toast-other-class");
-    let app = common::spawn("toast_element_other_class.json", "uia", &title);
+    let app = common::spawn_visible("toast_element_other_class.json", "uia", &title);
     let client = Client::new(common::find_window(&title));
     let mut core = CoreDriver::new(&app, OutpostUnderTest::new(&app));
 

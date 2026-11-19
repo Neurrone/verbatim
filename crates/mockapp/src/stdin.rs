@@ -27,6 +27,8 @@
 //! `acc-focus-stepwise`,
 //! `child-window`, `destroy-child-window`, `child-client-identity`,
 //! `form-client`, `window-focus`,
+//! `open-dialog-shown-late <ms> [owned-box|hide-close]`,
+//! `tray-menu-over-hidden-dialog`,
 //! `fail-window-element`, `hold`,
 //! `release`, `await-advised <event id> <count>`,
 //! `await-advised-at-least <event id> <count>`, and `quit`.
@@ -442,6 +444,14 @@ pub(crate) enum Command {
     MenuSelect(usize),
     /// `menu-close`: ends the open menu, answered once it has closed.
     MenuClose,
+    /// `open-dialog-shown-late <ms> [owned-box|hide-close]`: a dialog
+    /// focused while hidden and shown `<ms>` later (`crate::late_dialog`),
+    /// answered `open-dialog-shown-late <hwnd>`.
+    OpenDialogShownLate(u64, crate::late_dialog::BeforeShow),
+    /// `tray-menu-over-hidden-dialog`: a popup menu over a hidden dialog
+    /// in front (`crate::late_dialog`), answered
+    /// `tray-menu-over-hidden-dialog <hwnd>`.
+    TrayMenuOverHiddenDialog,
     /// `child-client-identity`: the client area of the child window
     /// `child-window` made answers as `client-identity` makes the host's
     /// answer, `IAccIdentity` with its address and `accParent` with the
@@ -758,6 +768,9 @@ pub(crate) fn parse_command(line: &str) -> Option<Command> {
         "destroy-child-window" => Some(Command::DestroyChildWindow),
         "thread-window" => Some(Command::ThreadWindow),
         "popup-menu" => Some(Command::PopupMenu),
+        "open-dialog-shown-late" => crate::late_dialog::parse(rest)
+            .map(|(ms, before)| Command::OpenDialogShownLate(ms, before)),
+        "tray-menu-over-hidden-dialog" => Some(Command::TrayMenuOverHiddenDialog),
         "menu-select" => rest.trim().parse().ok().map(Command::MenuSelect),
         "menu-close" => Some(Command::MenuClose),
         "child-client-identity" => Some(Command::ChildClientIdentity),

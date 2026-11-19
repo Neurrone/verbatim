@@ -1726,6 +1726,18 @@ pub fn name_at_event(hwnd: isize, id_object: i32, id_child: i32) -> Option<Strin
     Accessible::from_event(hwnd, id_object, id_child)?.name()
 }
 
+/// The role of the client object of window `hwnd`
+/// (`AccessibleObjectFromWindow` with `OBJID_CLIENT`, then `accRole`):
+/// two counted calls into its application. `OBJID_WINDOW`'s role is always
+/// a window's, so only the client says whether it is a dialog. `None` when
+/// the object cannot be acquired or its role read. Blocking; an outpost's
+/// worker only.
+#[must_use]
+pub fn client_role(hwnd: isize) -> Option<Role> {
+    let role = Accessible::client_of_window(hwnd)?.role()?;
+    Some(role_from_msaa(role.cast_unsigned()))
+}
+
 /// The focused object [`focused_object`] acquired, not yet read.
 pub struct FocusedObject {
     /// The object, as a focus event's candidate is kept, so the

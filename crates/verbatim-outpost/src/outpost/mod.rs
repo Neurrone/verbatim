@@ -107,6 +107,10 @@ use shell::{Mailbox, Posted, Shell};
 use worker::Charge;
 
 #[cfg(test)]
+#[path = "hidden_root_tests.rs"]
+mod hidden_root_tests;
+
+#[cfg(test)]
 mod application_names_tests {
     use std::process::{Command, Stdio};
 
@@ -873,6 +877,7 @@ impl Outpost {
         let make_handlers: MakeHandlers = Arc::new(move || {
             let context = Arc::clone(&hook_context);
             EventHandlers {
+                window_shown: None,
                 win_event: Box::new(move |event: WinEvent, _class: Option<&str>| {
                     take_in_hooked(
                         event,

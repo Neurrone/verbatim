@@ -15,13 +15,14 @@ use std::marker::PhantomData;
 
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::request::{
-    CandidateAnswer, CandidateFacts, CandidateKind, Depth, FocusRead, Identity, MsaaIds, MsaaRun,
-    Reply, Request as Wire, RunCandidate,
+    CandidateAnswer, CandidateFacts, CandidateKind, Depth, FocusRead, HiddenRoot, Identity,
+    MsaaIds, MsaaRun, Reply, Request as Wire, RunCandidate,
 };
 use verbatim_model::{NodeId, OutpostId, Pid, TextAnchor};
 
 use super::FOCUS_SET;
 use super::execute::{Known, Origin, execute};
+use super::shown::{self, Hidden};
 use super::validity::{self, Answered, Reason, Settled, Subject, Validity};
 use super::versions::ReadBy;
 use crate::entries::{Candidate, Entries};
@@ -34,6 +35,9 @@ pub(crate) trait ReadDepth: std::fmt::Debug + Unpin + 'static {
     type Parsed: std::fmt::Debug + 'static;
     /// The depth, as it is sent.
     fn depth(&self) -> Depth;
+    /// Whether the outpost checks for a hidden dialog before the read
+    /// (`super::shown`): a read Core waits on a show for answers it.
+    const HIDDEN: HiddenRoot;
     /// `reply` parsed, `None` for one that breaks the depth's rule.
     fn parse(reply: Reply) -> Option<Self::Parsed>;
 }
@@ -46,9 +50,14 @@ pub(crate) struct FactsOnly;
 #[derive(Debug)]
 pub(crate) struct FullIfFocused;
 
-/// The facts and the full read: a foreground's or a menu start's.
+/// The facts and the full read: a foreground's.
 #[derive(Debug)]
 pub(crate) struct Full;
+
+/// The facts and the full read, with no check for a hidden dialog: a menu
+/// start's, whose popup is its own top-level window.
+#[derive(Debug)]
+pub(crate) struct MenuFull;
 
 /// As [`FullIfFocused`], unless the object reached is at the readers' last
 /// focus's ids, `ids`, and reads as it does, `identity`: the identity check
@@ -92,6 +101,7 @@ fn candidate_answer(reply: Reply) -> Option<CandidateAnswer> {
 
 impl ReadDepth for FactsOnly {
     type Parsed = CandidateFacts;
+    const HIDDEN: HiddenRoot = HiddenRoot::ReadAnyway;
     fn depth(&self) -> Depth {
         Depth::Facts
     }
@@ -101,17 +111,34 @@ impl ReadDepth for FactsOnly {
 }
 
 impl ReadDepth for FullIfFocused {
-    type Parsed = Answered;
+    type Parsed = Hidden<Answered>;
+    const HIDDEN: HiddenRoot = HiddenRoot::Check;
     fn depth(&self) -> Depth {
         Depth::FullIfFocused
     }
-    fn parse(reply: Reply) -> Option<Answered> {
-        Answered::parse(candidate_answer(reply)?, &Depth::FullIfFocused)
+    fn parse(reply: Reply) -> Option<Hidden<Answered>> {
+        Hidden::parse(reply, |reply| {
+            Answered::parse(candidate_answer(reply)?, &Depth::FullIfFocused)
+        })
     }
 }
 
 impl ReadDepth for Full {
+    type Parsed = Hidden<Answered>;
+    const HIDDEN: HiddenRoot = HiddenRoot::Check;
+    fn depth(&self) -> Depth {
+        Depth::Full
+    }
+    fn parse(reply: Reply) -> Option<Hidden<Answered>> {
+        Hidden::parse(reply, |reply| {
+            Answered::parse(candidate_answer(reply)?, &Depth::Full)
+        })
+    }
+}
+
+impl ReadDepth for MenuFull {
     type Parsed = Answered;
+    const HIDDEN: HiddenRoot = HiddenRoot::ReadAnyway;
     fn depth(&self) -> Depth {
         Depth::Full
     }
@@ -121,19 +148,20 @@ impl ReadDepth for Full {
 }
 
 impl ReadDepth for UnlessSame {
-    type Parsed = UnlessSameAnswer;
+    type Parsed = Hidden<UnlessSameAnswer>;
+    const HIDDEN: HiddenRoot = HiddenRoot::Check;
     fn depth(&self) -> Depth {
         Depth::FullUnlessSame {
             ids: self.ids,
             identity: Box::new(self.identity.clone()),
         }
     }
-    fn parse(reply: Reply) -> Option<UnlessSameAnswer> {
-        match reply {
+    fn parse(reply: Reply) -> Option<Hidden<UnlessSameAnswer>> {
+        Hidden::parse(reply, |reply| match reply {
             Reply::CandidateSame => Some(UnlessSameAnswer::Same),
             reply => Answered::parse(candidate_answer(reply)?, &Depth::FullIfFocused)
                 .map(UnlessSameAnswer::Answered),
-        }
+        })
     }
 }
 
@@ -190,6 +218,7 @@ impl<D: ReadDepth> RunRequest<D> {
             window: candidate.window,
             process: candidate.tell.process,
             run: MsaaRun {
+                hidden: D::HIDDEN,
                 candidate: RunCandidate {
                     ids: candidate.ids,
                     kind,
@@ -203,6 +232,15 @@ impl<D: ReadDepth> RunRequest<D> {
             },
             depth: PhantomData,
         }
+    }
+
+    /// The request reading as it is, hidden or not, when `hidden` says so:
+    /// a key ended the wait for its dialog's show.
+    pub(crate) fn hidden(mut self, hidden: HiddenRoot) -> Self {
+        if hidden == HiddenRoot::ReadAnyway {
+            self.run.hidden = hidden;
+        }
+        self
     }
 }
 
@@ -226,42 +264,58 @@ pub(crate) enum TurnDepth {
     UnlessSame(UnlessSame),
 }
 
-/// Reads `candidate` at its turn, to `depth`: its answer parsed, or `None`
-/// for the outcome that ended it ([`answer_of`]).
+/// Reads `candidate` at its turn, to `depth`, read again once its hidden
+/// dialog is shown (`super::shown`): its answer parsed, with the ancestors
+/// Core knew as its last read was sent, or `None` for the outcome that
+/// ended it ([`answer_of`]).
 pub(crate) async fn read_in_full(
     cx: &mut Cx<Entries>,
     candidate: &Candidate,
     depth: TurnDepth,
-    (known, due_us): (&Known, u64),
-) -> Option<TurnAnswer> {
-    match depth {
-        TurnDepth::FullIfFocused => {
-            let request = RunRequest::of(cx, (candidate, &FullIfFocused), None, known);
-            let outcome = cx.ask(request, due_us).await;
-            answer_of(cx, outcome).map(TurnAnswer::Answered)
-        }
-        TurnDepth::Full => read_full(cx, candidate, (known, due_us))
-            .await
-            .map(TurnAnswer::Answered),
-        TurnDepth::UnlessSame(named) => {
-            let request = RunRequest::of(cx, (candidate, &named), None, known);
-            let outcome = cx.ask(request, due_us).await;
-            answer_of(cx, outcome).map(|answer| match answer {
+    due_us: u64,
+) -> Option<(TurnAnswer, Known)> {
+    let process = candidate.tell.process;
+    let outcome = match depth {
+        TurnDepth::FullIfFocused => shown::read_shown(cx, due_us, |cx, hidden| {
+            let known = known_for(cx, process);
+            let request =
+                RunRequest::of(cx, (candidate, &FullIfFocused), None, &known).hidden(hidden);
+            (request, known)
+        })
+        .await
+        .map(|(answered, known)| (TurnAnswer::Answered(answered), known)),
+        TurnDepth::Full => shown::read_shown(cx, due_us, |cx, hidden| {
+            let known = known_for(cx, process);
+            let request = RunRequest::of(cx, (candidate, &Full), None, &known).hidden(hidden);
+            (request, known)
+        })
+        .await
+        .map(|(answered, known)| (TurnAnswer::Answered(answered), known)),
+        TurnDepth::UnlessSame(named) => shown::read_shown(cx, due_us, |cx, hidden| {
+            let known = known_for(cx, process);
+            let request = RunRequest::of(cx, (candidate, &named), None, &known).hidden(hidden);
+            (request, known)
+        })
+        .await
+        .map(|(answer, known)| {
+            let answer = match answer {
                 UnlessSameAnswer::Answered(answered) => TurnAnswer::Answered(answered),
                 UnlessSameAnswer::Same => TurnAnswer::SameAsNamed,
-            })
-        }
-    }
+            };
+            (answer, known)
+        }),
+    };
+    answer_of(cx, outcome)
 }
 
-/// Reads `candidate` in full, as a menu start is: its answer parsed, or
-/// `None` for the outcome that ended it ([`answer_of`]).
+/// Reads the menu start `candidate` in full: its answer parsed, or `None`
+/// for the outcome that ended it ([`answer_of`]).
 pub(crate) async fn read_full(
     cx: &mut Cx<Entries>,
     candidate: &Candidate,
     (known, due_us): (&Known, u64),
 ) -> Option<Answered> {
-    let request = RunRequest::of(cx, (candidate, &Full), None, known);
+    let request = RunRequest::of(cx, (candidate, &MenuFull), None, known);
     let outcome = cx.ask(request, due_us).await;
     answer_of(cx, outcome)
 }
@@ -296,13 +350,24 @@ fn refused(cx: &mut Cx<Entries>, reason: Reason) {
 /// other than a result ends the run: after an abandoned try the older
 /// candidates are not tried (a limit).
 pub(crate) async fn run(mut cx: Cx<Entries>, candidates: Vec<Candidate>) {
+    let ended_wait = candidates.iter().find_map(|candidate| candidate.ended_wait);
+    walk(&mut cx, candidates).await;
+    if let Some(dialog) = ended_wait {
+        let executed = cx.facts().run_executed;
+        shown::after_ended_wait(&mut cx, dialog, executed);
+    }
+}
+
+/// The run's walk, newest first, until a candidate executes or none is
+/// left.
+async fn walk(cx: &mut Cx<Entries>, candidates: Vec<Candidate>) {
     let due_us = cx.due_in(FOCUS_DUE_US);
     let newest_first: Vec<Candidate> = candidates.into_iter().rev().collect();
     let mut rest = newest_first.as_slice();
     loop {
-        let walk = validity::with_view(&cx, false, |view| validity::judge_run(rest, view));
+        let walk = validity::with_view(cx, false, |view| validity::judge_run(rest, view));
         for reason in walk.refused {
-            refused(&mut cx, reason);
+            refused(cx, reason);
         }
         let Some(found) = walk.found else {
             return;
@@ -314,23 +379,21 @@ pub(crate) async fn run(mut cx: Cx<Entries>, candidates: Vec<Candidate>) {
             cx.facts_mut().run_executed = true;
             return;
         }
-        let depth = validity::with_view(&cx, false, |view| {
+        let depth = validity::with_view(cx, false, |view| {
             let facts = cx.facts();
             let committed = facts.focus.object().map(|focus| &focus.snapshot);
             validity::depth(Subject::Msaa(candidate), view, committed)
         });
-        let known = known_for(&cx, candidate.tell.process);
-        let Some(answer) = read_in_full(&mut cx, candidate, depth, (&known, due_us)).await else {
+        let Some((answer, known)) = read_in_full(cx, candidate, depth, due_us).await else {
             return;
         };
         let (facts, read) = match answer {
             TurnAnswer::SameAsNamed => {
-                match validity::with_view(&cx, false, |view| validity::judge_same(candidate, view))
-                {
+                match validity::with_view(cx, false, |view| validity::judge_same(candidate, view)) {
                     // The object named, which a duplicate ends the run as.
                     None => cx.facts_mut().run_executed = true,
                     Some(reason) => {
-                        refused(&mut cx, reason);
+                        refused(cx, reason);
                         rest = found.older;
                         continue;
                     }
@@ -338,15 +401,15 @@ pub(crate) async fn run(mut cx: Cx<Entries>, candidates: Vec<Candidate>) {
                 return;
             }
             TurnAnswer::Answered(Answered::Unread(unread)) => {
-                refused(&mut cx, unread.reason());
+                refused(cx, unread.reason());
                 rest = found.older;
                 continue;
             }
             TurnAnswer::Answered(Answered::Read { facts, read }) => (facts, read),
         };
-        match validity::read_at(&cx, Subject::Msaa(candidate), &facts, false) {
+        match validity::read_at(cx, Subject::Msaa(candidate), &facts, false) {
             Settled::Refused(reason) => {
-                refused(&mut cx, reason);
+                refused(cx, reason);
                 rest = found.older;
             }
             Settled::Duplicate => {
@@ -354,7 +417,7 @@ pub(crate) async fn run(mut cx: Cx<Entries>, candidates: Vec<Candidate>) {
                 return;
             }
             Settled::Valid(_) => {
-                executed(&mut cx, candidate, &read, &known);
+                executed(cx, candidate, &read, &known);
                 return;
             }
         }

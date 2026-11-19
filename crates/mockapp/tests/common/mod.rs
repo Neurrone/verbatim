@@ -376,6 +376,17 @@ pub fn spawn(fixture: &str, backend: &str, title: &str) -> MockApp {
     spawn_with(fixture, backend, title, &[])
 }
 
+/// [`spawn`], the window shown (`--show`), on the test's own desktop
+/// (`harness::run_isolated`), as an application's windows are when they
+/// are read: a focus read in a hidden top-level window costs the check
+/// for a hidden dialog, and one in a hidden dialog is read once it is
+/// shown (Dickson, 2026-11-19). The tests that read focuses and count
+/// their calls show it; a test of a hidden window's own reading does not.
+#[must_use]
+pub fn spawn_visible(fixture: &str, backend: &str, title: &str) -> MockApp {
+    spawn_with(fixture, backend, title, &["--show"])
+}
+
 /// [`spawn`], counting the client registrations for events on mockapp's
 /// UIA root (`--count-registrations`), which [`advised`] reads. It changes
 /// the provider calls UIA makes as clients register, so only the tests

@@ -23,6 +23,7 @@ pub(crate) mod narrow;
 pub(crate) mod object;
 pub(crate) mod plain;
 pub(crate) mod retake;
+pub(crate) mod shown;
 pub(crate) mod uia_focus;
 pub(crate) mod validity;
 pub(crate) mod versions;

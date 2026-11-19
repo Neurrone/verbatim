@@ -84,6 +84,7 @@ fn uia(tell: Event) -> UiaFocus {
         listener: 1,
         alt_down: false,
         fence: Fence::default(),
+        ended_wait: None,
     }
 }
 
@@ -134,6 +135,7 @@ fn candidate(kind: EventKind, (object, child): (i32, i32), at_us: u64, trace: u6
         window,
         fence: Fence::default(),
         confirmation: Confirmation::Unread,
+        ended_wait: None,
     }
 }
 

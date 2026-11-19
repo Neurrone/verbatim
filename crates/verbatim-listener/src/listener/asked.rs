@@ -330,7 +330,7 @@ pub(super) fn hwnd_of(window: WindowHandle) -> isize {
 }
 
 /// `window` as the model names a window.
-fn handle(window: isize) -> WindowHandle {
+pub(super) fn handle(window: isize) -> WindowHandle {
     WindowHandle(i64::try_from(window).unwrap_or(0).cast_unsigned())
 }
 

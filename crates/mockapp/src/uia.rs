@@ -325,7 +325,9 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
         | Command::WindowFocus
         | Command::PopupMenu
         | Command::MenuSelect(_)
-        | Command::MenuClose => {
+        | Command::MenuClose
+        | Command::OpenDialogShownLate(..)
+        | Command::TrayMenuOverHiddenDialog => {
             return Err("applied by the window".into());
         }
         Command::TakeRuntimeId(id, from) => tree

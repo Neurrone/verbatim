@@ -170,7 +170,7 @@ fn a_slow_path_walk_answers_its_node() {
 fn a_slow_dialog_text_is_reported_with_the_focus() {
     common::init_com();
     let title = common::unique_title("mockapp-slow-dialog");
-    let mut app = common::spawn("dialog_class_window.json", "uia", &title);
+    let mut app = common::spawn_visible("dialog_class_window.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let uia = Uia::new().expect("a UIA client");
     let outpost = OutpostUnderTest::new(&app);

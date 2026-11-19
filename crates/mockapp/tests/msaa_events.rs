@@ -49,7 +49,7 @@ const NOTHING: [Vec<SegmentContent>; 0] = [];
 fn started(fixture: &str, prefix: &str) -> (common::MockApp, HWND, CoreDriver) {
     common::init_com();
     let title = common::unique_title(prefix);
-    let app = common::spawn(fixture, "msaa", &title);
+    let app = common::spawn_visible(fixture, "msaa", &title);
     let hwnd = common::find_window(&title);
     let core = CoreDriver::new(&app, OutpostUnderTest::new(&app));
     (app, hwnd, core)
@@ -60,7 +60,7 @@ fn started(fixture: &str, prefix: &str) -> (common::MockApp, HWND, CoreDriver) {
 fn switched_to(fixture: &str, prefix: &str) -> (common::MockApp, HWND, CoreDriver) {
     common::init_com();
     let title = common::unique_title(prefix);
-    let app = common::spawn(fixture, "msaa", &title);
+    let app = common::spawn_visible(fixture, "msaa", &title);
     let hwnd = common::find_window(&title);
     let core = CoreDriver::switched_to(&app, OutpostUnderTest::new(&app));
     (app, hwnd, core)
@@ -74,7 +74,7 @@ fn switched_to(fixture: &str, prefix: &str) -> (common::MockApp, HWND, CoreDrive
 fn started_in_the_background(fixture: &str, prefix: &str) -> (common::MockApp, HWND, CoreDriver) {
     common::init_com();
     let title = common::unique_title(prefix);
-    let mut app = common::spawn(fixture, "msaa", &title);
+    let mut app = common::spawn_visible(fixture, "msaa", &title);
     let hwnd = common::find_window(&title);
     common::make_topmost(hwnd);
     let front = app.thread_window();
@@ -506,7 +506,7 @@ fn toast_child(app: &mut common::MockApp, title: &str) -> HWND {
 fn an_alert_from_a_toast_window_is_reported() {
     common::init_com();
     let title = common::unique_title("mockapp-msaa-toast");
-    let mut app = common::spawn("toast_host.json", "msaa", &title);
+    let mut app = common::spawn_visible("toast_host.json", "msaa", &title);
     let mut core = CoreDriver::new(&app, OutpostUnderTest::new(&app));
     let child = toast_child(&mut app, &title);
     assert_eq!(
@@ -526,7 +526,7 @@ fn an_alert_from_a_toast_window_is_reported() {
 fn an_alert_from_a_native_uia_toast_window_says_nothing() {
     common::init_com();
     let title = common::unique_title("mockapp-uia-toast");
-    let mut app = common::spawn("toast_host.json", "uia", &title);
+    let mut app = common::spawn_visible("toast_host.json", "uia", &title);
     let mut core = CoreDriver::new(&app, OutpostUnderTest::new(&app));
     let child = toast_child(&mut app, &title);
     assert_eq!(
@@ -547,7 +547,7 @@ fn an_alert_from_a_native_uia_toast_window_says_nothing() {
 fn a_destroyed_windows_msaa_nodes_leave_the_outposts_store() {
     common::init_com();
     let title = common::unique_title("mockapp-msaa-destroyed-window");
-    let mut app = common::spawn("save_as.json", "msaa", &title);
+    let mut app = common::spawn_visible("save_as.json", "msaa", &title);
     let hwnd = common::find_window(&title);
     app.send("child-window");
     // SAFETY: a local search of the dialog's children.
@@ -610,10 +610,14 @@ fn a_foreground_event_before_its_window_is_in_front_is_dropped() {
 
 /// A foreground event whose window is in front is spoken at once, as a
 /// focus on the window, though the window has not been shown: NVDA tests
-/// only that the window is the foreground window. mockapp's window is never
-/// shown in these tests.
+/// only that the window is the foreground window. The window is no
+/// dialog, so it is read hidden: only a hidden dialog is read once shown.
 fn a_foreground_event_for_a_window_in_front_not_yet_shown_is_reported() {
-    let (app, hwnd, mut core) = switched_to("counts.json", "mockapp-msaa-hidden-foreground");
+    common::init_com();
+    let title = common::unique_title("mockapp-msaa-hidden-foreground");
+    let app = common::spawn("counts.json", "msaa", &title);
+    let hwnd = common::find_window(&title);
+    let mut core = CoreDriver::switched_to(&app, OutpostUnderTest::new(&app));
     // SAFETY: IsWindowVisible tolerates any handle.
     let shown = unsafe { windows::Win32::UI::WindowsAndMessaging::IsWindowVisible(hwnd) };
     assert!(!shown.as_bool(), "mockapp's window is hidden");

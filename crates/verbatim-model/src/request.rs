@@ -278,6 +278,9 @@ pub enum Request {
         /// (`shouldAllowIAccessibleFocusEvent`). The answer carries the
         /// focused state as a fact, and Core judges it.
         depth: FocusDepth,
+        /// Whether the read first checks for a hidden dialog
+        /// ([`HiddenRoot`]).
+        hidden: HiddenRoot,
     },
     /// A read or move in a node's text.
     Text {
@@ -320,6 +323,15 @@ pub enum Request {
         kind: crate::ShellItemKind,
         /// The item chosen.
         item: crate::ShellItem,
+    },
+    /// The listener answers [`Reply::Shown`] once the top-level window
+    /// `window` is visible: at once when it is, else at its window
+    /// object's show; "not there" when it is no window or is destroyed
+    /// first. Core asks it after a focus read answered
+    /// [`Reply::HiddenDialog`], so that the dialog is read once shown.
+    AwaitShown {
+        /// The hidden dialog's top-level window.
+        window: WindowHandle,
     },
 }
 
@@ -509,6 +521,9 @@ pub struct CompleteUia {
     /// What the focus's caret read fetches beyond the text, as the
     /// settings report it: its line's formatting ([`FocusCaret`]).
     pub details: TextDetails,
+    /// Whether the completion first checks for a hidden dialog
+    /// ([`HiddenRoot`]).
+    pub hidden: HiddenRoot,
 }
 
 /// One MSAA focus, foreground or menu start candidate, by the ids its
@@ -618,6 +633,22 @@ pub struct MsaaRun {
     /// What the focus's caret read fetches beyond the text, as the
     /// settings report it: its line's formatting ([`FocusCaret`]).
     pub details: TextDetails,
+    /// Whether the read first checks for a hidden dialog ([`HiddenRoot`]).
+    pub hidden: HiddenRoot,
+}
+
+/// Whether a focus read first checks whether its window's top-level
+/// window is a hidden dialog, answering [`Reply::HiddenDialog`] in place
+/// of the read when it is: a dialog's text is read only once it is shown
+/// (Dickson, 2026-11-19). Core decides; the outpost obeys.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum HiddenRoot {
+    /// The outpost checks, and answers a hidden dialog unread.
+    Check,
+    /// The outpost reads as it is, hidden or not: a read Core waits for no
+    /// show on (a caret key's confirmation, a menu start, a selection's
+    /// item), or one a key ended Core's wait for.
+    ReadAnyway,
 }
 
 /// What an outpost found of a candidate, which Core judges.
@@ -827,6 +858,13 @@ pub enum Reply {
     /// The answer to [`Request::ShellItemPosition`]: the buttons that may
     /// be the item.
     ShellItemPosition(crate::ShellCandidates),
+    /// The answer to [`Request::MsaaRun`], [`Request::CurrentFocus`] and a
+    /// focus's [`Request::CompleteUia`] asked with [`HiddenRoot::Check`],
+    /// when the window's top-level window is hidden and its client object's
+    /// role is a dialog's: that window's facts, and nothing read.
+    HiddenDialog(NodeWindow),
+    /// The answer to [`Request::AwaitShown`]: the window is shown.
+    Shown,
 }
 
 /// Why a reader refused a request.
@@ -931,7 +969,8 @@ impl Ask {
             }
             Request::DumpTree { .. }
             | Request::ShellItems { .. }
-            | Request::ShellItemPosition { .. } => {}
+            | Request::ShellItemPosition { .. }
+            | Request::AwaitShown { .. } => {}
         }
     }
 }
@@ -1005,7 +1044,9 @@ impl Answer {
                 | Reply::CandidateSame
                 | Reply::Tree(_)
                 | Reply::ShellItems(_)
-                | Reply::ShellItemPosition(_) => {}
+                | Reply::ShellItemPosition(_)
+                | Reply::HiddenDialog(_)
+                | Reply::Shown => {}
             }
         }
         (nodes, anchors)
@@ -1068,7 +1109,9 @@ impl Answer {
             | Reply::Followed
             | Reply::CandidateSame
             | Reply::ShellItems(_)
-            | Reply::ShellItemPosition(_) => {}
+            | Reply::ShellItemPosition(_)
+            | Reply::HiddenDialog(_)
+            | Reply::Shown => {}
         }
     }
 }
@@ -1100,6 +1143,9 @@ pub enum CancelReason {
     DueTime,
     /// Its entry no longer needs it.
     Withdrawn,
+    /// A wait for a hidden dialog's show ended because the user is
+    /// elsewhere: the foreground, a menu or a focus outside the dialog.
+    LeftHiddenDialog,
 }
 
 impl CancelReason {

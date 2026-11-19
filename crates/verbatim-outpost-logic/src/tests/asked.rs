@@ -17,6 +17,7 @@ fn ask(number: u64) -> Input {
         window: WindowHandle(1),
         verdict: WindowVerdict::Msaa,
         request: CoreRequest::CurrentFocus {
+            hidden: verbatim_model::request::HiddenRoot::Check,
             set: Vec::new(),
             known: Vec::new(),
             details: verbatim_model::TextDetails::NONE,
@@ -251,6 +252,7 @@ fn asked_on(number: u64, window: u64, request: CoreRequest) -> Input {
 /// recovery read ask it.
 fn current_focus() -> CoreRequest {
     CoreRequest::CurrentFocus {
+        hidden: verbatim_model::request::HiddenRoot::Check,
         set: Vec::new(),
         known: Vec::new(),
         details: verbatim_model::TextDetails::NONE,
@@ -273,6 +275,7 @@ fn read_object(object: verbatim_model::request::ObjectRef) -> CoreRequest {
 /// A run's candidate at MSAA ids in `window`.
 fn run_in(window: u64) -> CoreRequest {
     CoreRequest::MsaaRun(verbatim_model::request::MsaaRun {
+        hidden: verbatim_model::request::HiddenRoot::Check,
         candidate: verbatim_model::request::RunCandidate {
             ids: verbatim_model::request::MsaaIds {
                 window: WindowHandle(window),

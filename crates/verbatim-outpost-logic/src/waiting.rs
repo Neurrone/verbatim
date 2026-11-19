@@ -50,7 +50,8 @@ fn ids_window(request: &Request) -> Option<WindowHandle> {
         | Request::CurrentFocus { .. }
         | Request::DumpTree { .. }
         | Request::ShellItems { .. }
-        | Request::ShellItemPosition { .. } => None,
+        | Request::ShellItemPosition { .. }
+        | Request::AwaitShown { .. } => None,
     }
 }
 
@@ -219,6 +220,7 @@ mod tests {
             window: WindowHandle(1),
             verdict: WindowVerdict::Msaa,
             request: Request::CurrentFocus {
+                hidden: verbatim_model::request::HiddenRoot::Check,
                 set: Vec::new(),
                 known: Vec::new(),
                 details: verbatim_model::TextDetails::NONE,
