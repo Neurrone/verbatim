@@ -597,8 +597,9 @@ fn known_runtime_ids(walk: &[KnownAncestor]) -> (Vec<Vec<i32>>, Vec<u32>) {
 /// `nearest`, as `read` asks, with `uia`, a window `readability` finds
 /// hung or ghosted read as a plain window: the element afresh, its name
 /// and class as its event's cache had them, as NVDA's object for the event
-/// reads them; for a walk, its ancestors up to one Core already knows, the
-/// desktop root or the process boundary, and its route. A walk whose own
+/// reads them, a selection's item with the name read afresh; for a walk,
+/// its ancestors up to one Core already knows, the desktop root or the
+/// process boundary, and its route. A walk whose own
 /// read fails is answered with what it read, the event's cache giving the
 /// rest, and the chain going on from the parent window of the outermost
 /// element's nearest window, as NVDA's failed parent read goes on by
@@ -616,7 +617,6 @@ pub(crate) fn read_element(
     let fields = sender.read();
     let hwnd = fields.role.hwnd;
     let nearest = if hwnd == 0 { nearest } else { hwnd };
-    let focus = matches!(read.purpose, Purpose::Focus);
     let (known, places) = known_runtime_ids(read.walk.as_deref().unwrap_or_default());
     let (ended, mut walked) = walk(
         (uia, readability),
@@ -625,7 +625,7 @@ pub(crate) fn read_element(
         (read.walk.is_some(), &known),
         calls,
     );
-    let mut element = element_read(&fields, sender, &mut walked, focus);
+    let mut element = element_read(&fields, sender, &mut walked, read.purpose);
     if read.set.contains(&PropertyId::States)
         && wants_legacy_checked_state(element.parts.role, element.parts.states)
     {
@@ -836,16 +836,18 @@ fn walk(
     (ended, walked.into_inner())
 }
 
-/// The element as a read answers it: its name and class from its event's
-/// cache, as NVDA's object for the event reads them; its role, value,
-/// states and details as read afresh, or from the event's cache when they
-/// were not; a value taken from its first selected item's name when that
-/// is its value; and, for a focus read, the focused state.
+/// The element as a read for `purpose` answers it: its class from its
+/// event's cache, and its name too, as NVDA's object for the event reads
+/// them, except for a selection's item, whose name is the one read afresh
+/// (Dickson, 2026-10-20, [`Purpose::Selection`]); its role, value, states
+/// and details as read afresh, or from the event's cache when they were
+/// not; a value taken from its first selected item's name when that is
+/// its value; and, for a focus read, the focused state.
 fn element_read(
     fields: &ListenerEvent,
     sender: &Cached<ListenerEvent>,
     walked: &mut Walked,
-    focus: bool,
+    purpose: Purpose,
 ) -> Read {
     let event = fields.parts(sender.runtime_id());
     let (mut read, from_selection) = walked.fresh.take().unwrap_or_else(|| {
@@ -862,7 +864,12 @@ fn element_read(
             false,
         )
     });
-    read.parts.name.clone_from(&event.name);
+    // The fresh read's name came in the same cache request as its role and
+    // position, so a selection's costs no call; with no fresh read, the
+    // parts are the event's, its name included.
+    if purpose != Purpose::Selection {
+        read.parts.name.clone_from(&event.name);
+    }
     read.parts
         .details
         .class_name
@@ -874,7 +881,7 @@ fn element_read(
         read.parts.value = walked.selected_name.take();
     }
     read.value_from_selection = Some(from_selection);
-    if focus {
+    if purpose == Purpose::Focus {
         read.parts.states = read.parts.states.with(State::Focused);
     }
     read

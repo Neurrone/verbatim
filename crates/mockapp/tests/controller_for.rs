@@ -18,7 +18,9 @@
 //! whose cache holds less than a focus read's, with no failed cached read.
 //! A selection raised for an item the list has since replaced (mockapp's
 //! `replace-items`) is no controlled selection, and an ordinary selection
-//! of the new item is one. A selection of the focus itself is reported as
+//! of the new item is one. A selection whose event carried no name, as
+//! Settings' first suggestion's does, is said with the name read when Core
+//! reads the item. A selection of the focus itself is reported as
 //! an ordinary selection change, never as the list's. A
 //! search box holding text is reported with the line at its caret in the
 //! focus's own message, ahead of a controlled selection that arrived after
@@ -381,6 +383,42 @@ fn a_stale_selection_after_a_replacement_reports_nothing_and_an_ordinary_one_the
     app.quit();
 }
 
+/// The first suggestion Settings selects as its list opens, in the order
+/// the flight recorders of `settings_search_suggestions` and
+/// `settings_search_suggestions_reentered` (2026-11-19) show: the item's
+/// element selected event carries no name in its cache, since Settings
+/// has not set it yet, the listener's check runs then, and Settings has
+/// set the name by the time Core's read of the item runs. The item is
+/// spoken with the name read then, "Sound settings 1 of 2", not the
+/// event's (Dickson, 2026-10-20, `docs/parity/changes-and-selection.md`,
+/// "Selection in a list the focus controls").
+fn a_selection_whose_event_carried_no_name_is_said_with_the_name_read() {
+    let (mut app, hwnd, mut core, _) = search_box_focused(
+        "replaced_suggestions.json",
+        "mockapp-controller-unnamed",
+        OutpostOptions::default(),
+    );
+    let (_registration, events) = selections(hwnd.0 as isize);
+
+    app.send("set-name sound");
+    app.send("select sound");
+    let (agile, cached_name, states) = events
+        .recv_timeout(common::WAIT_TIMEOUT)
+        .expect("an element selected event for the unnamed item");
+    assert_eq!(cached_name, None, "the event's cache carries no name");
+    let element: Cached<ListenerEvent> = agile.resolve().expect("the event's element").narrow();
+    let selection = core.uia_tell(
+        EventKind::UiaElementSelected,
+        &element,
+        Some(states),
+        Payload::None,
+    );
+    app.send("set-name sound Sound settings");
+    assert_eq!(core.tell(selection).spoken(), sound_settings(Some(2)));
+    drop(core);
+    app.quit();
+}
+
 /// A selection of the focus itself, while the list it controls has a
 /// selection, is the focus's own state change, judged on the states its
 /// event's cache holds, which are those already spoken: nothing is said,
@@ -511,6 +549,10 @@ fn main() {
         (
             "a_stale_selection_after_a_replacement_reports_nothing_and_an_ordinary_one_the_new_item",
             a_stale_selection_after_a_replacement_reports_nothing_and_an_ordinary_one_the_new_item,
+        ),
+        (
+            "a_selection_whose_event_carried_no_name_is_said_with_the_name_read",
+            a_selection_whose_event_carried_no_name_is_said_with_the_name_read,
         ),
         (
             "a_selection_of_the_focus_itself_is_reported_as_its_own",

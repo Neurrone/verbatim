@@ -183,6 +183,13 @@ pub enum Purpose {
     /// no further, and one that is reads the set's properties alone, as
     /// NVDA reads only the property its event names.
     Change,
+    /// A selection's item, read to be spoken: its name is the one read
+    /// afresh, where every other read takes it from its event's cache, so
+    /// that the first suggestion Settings selects as its list opens is
+    /// said by the name Settings has set by then, not the "list item" its
+    /// event carried (`docs/parity/changes-and-selection.md`, "Selection in
+    /// a list the focus controls", Dickson, 2026-10-20).
+    Selection,
     /// Any other read.
     Other,
 }

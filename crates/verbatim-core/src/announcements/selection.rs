@@ -199,7 +199,7 @@ async fn selected(
             relation: None,
             descendants: false,
             walk: Some(Known::of(&cx.facts(), None).sent),
-            purpose: Purpose::Other,
+            purpose: Purpose::Selection,
         },
     };
     let Outcome::Result(object) = cx.ask(read, due_us).await else {

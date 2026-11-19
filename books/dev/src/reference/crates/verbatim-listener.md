@@ -66,7 +66,12 @@ this shape are in `books/dev/src/explanation/architecture.md`, section 1
   other request, a relation, or descendants are refused unsupported, and a
   node is none of the listener's. A kept element is read on its
   application's reading thread: the element afresh, its name and class
-  from its event's cache, as NVDA's object for the event reads them, the
+  from its event's cache, as NVDA's object for the event reads them,
+  except a selection's item (`Purpose::Selection`), whose name is the one
+  read afresh in the same cache request, by Dickson's ruling of
+  2026-10-20 ([changes and
+  selection](https://github.com/Neurrone/verbatim/blob/main/docs/parity/changes-and-selection.md),
+  "Selection in a list the focus controls"), the
   focused state added for a focus read, a menu item's legacy checked
   state; for a read that walks, its ancestors by the classic walk up to
   the first Core already knows (a window by its own element's runtime

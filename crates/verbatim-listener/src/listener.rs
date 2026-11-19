@@ -1001,7 +1001,7 @@ fn ask((readers, kept): (&Readers<UiaReading>, &Kept), ask: Box<Ask>) {
     };
     let focus = match read.purpose {
         Purpose::Focus => true,
-        Purpose::Change | Purpose::Other => false,
+        Purpose::Change | Purpose::Selection | Purpose::Other => false,
     };
     let pid = match &read.object {
         ObjectRef::Kept { listener, token } => {
