@@ -18,12 +18,11 @@ use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, ExitCode, Stdio};
+use std::process::{Child, Command, ExitCode};
 use std::thread;
-use std::time::Duration;
 
-/// The agent's address for a local run.
-const ENDPOINT: &str = "127.0.0.1:44001";
+use crate::agent::{Agent, ENDPOINT};
+use std::time::Duration;
 
 /// The measure set's scenarios a silent run takes; `measure_speech_real`
 /// needs a real device and an audible run, so it is asked for by name.
@@ -75,38 +74,6 @@ fn output_folder(label: &str) -> Result<PathBuf, String> {
     fs::create_dir_all(&folder)
         .map_err(|error| format!("could not create {}: {error}", folder.display()))?;
     Ok(folder)
-}
-
-/// The agent, started for the run and ended when dropped.
-struct Agent(Child);
-
-impl Agent {
-    fn start(folder: &Path) -> Result<Self, String> {
-        let exe = workspace().join(r"target\debug\verbatim-agent.exe");
-        if !exe.exists() {
-            return Err(format!(
-                "{} is missing: cargo build -p verbatim-agent",
-                exe.display()
-            ));
-        }
-        let log = |name: &str| {
-            fs::File::create(folder.join(name)).map_or_else(|_| Stdio::null(), Stdio::from)
-        };
-        let child = Command::new(exe)
-            .args(["--bind-address", "127.0.0.1", "--port", "44001"])
-            .stdout(log("agent.out.log"))
-            .stderr(log("agent.err.log"))
-            .spawn()
-            .map_err(|error| format!("could not start the agent: {error}"))?;
-        Ok(Self(child))
-    }
-}
-
-impl Drop for Agent {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
 }
 
 /// How a scenario is run: which build is staged, and whether it is heard.
@@ -241,7 +208,7 @@ fn run_measure(args: &[String]) -> Result<(), String> {
     let label = value(args, "--label")
         .unwrap_or_else(|| format!("measure-{}-{}", build_name(&options), now_label()));
     let folder = output_folder(&label)?;
-    let agent = Agent::start(&folder)?;
+    let agent = Agent::start(&workspace(), &folder)?;
     let mut results = String::new();
     for name in &names {
         let mut test = scenario(name, &options, &folder)?;
@@ -467,7 +434,7 @@ fn run_trace_scenario(args: &[String]) -> Result<(), String> {
     let folder = output_folder(&label)?;
     let reader = build_reader()?;
 
-    let agent = Agent::start(&folder)?;
+    let agent = Agent::start(&workspace(), &folder)?;
     let mut test = scenario(name, &options, &folder)?;
     // The window is time inside the scenario, chosen by the caller: a
     // trace that covers a scenario's start or end can leave File Explorer

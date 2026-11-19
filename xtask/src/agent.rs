@@ -1,5 +1,6 @@
 //! The end-to-end agent a command starts for itself and ends when it
-//! ends: `cargo xtask e2e` and `cargo xtask nvda` run their scenarios and
+//! ends: `cargo xtask e2e`, `cargo xtask nvda`, `cargo xtask measure` and
+//! `cargo xtask trace scenario` run their scenarios and
 //! captures through one, so no agent started by hand or by a script is
 //! left listening (`books/dev/src/how-to/e2e.md`, "Running scenarios
 //! locally"). The agent is the command's child, inside its job
