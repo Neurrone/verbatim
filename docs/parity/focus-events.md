@@ -969,10 +969,12 @@ read live, and Core commits the plain desktop and says "Desktop window",
 with no call into any application, no sound and nothing watched. Core's
 `an_end_whose_check_finds_no_window_in_front_focuses_the_desktop` and
 `the_menu_closed_with_no_window_in_front_speaks_the_desktop`, in the
-order of `menu_end_over_a_hung_window`'s recorded run; that scenario's
-step with no ghost provoked.
+order of `menu_end_over_a_hung_window`'s recorded run; that scenario.
 Core's `focus::plain` tests and `hung_menu_end`, in the order of
-Verbatim's own log; the scenario `menu_end_over_a_hung_window`.
+Verbatim's own log. No end-to-end step: Windows made no ghost in any
+run of `menu_end_over_a_hung_window`, with Verbatim alone or with one
+`WM_GETOBJECT` from the harness; the captures' ghost came while NVDA or
+the event recorders were reading the window.
 
 - Matched: a move to the plain window's first child says "No objects
   inside", as NVDA's, which finds no child window of a ghost

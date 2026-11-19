@@ -442,11 +442,7 @@ input methods above:
   events Core receives, for evidence no speech shows: a caret report, a
   focus, the end of an outpost (`Frame::OutpostEnded`).
 - `wait_for_agent_file` waits, on folder change notifications, for a file
-  a script writes; `wait_for_window_in_front` and
-  `wait_for_window_titled` (a window titled exactly so, in front or not,
-  such as a hung window's ghost) wait on window events;
-  `call_into_window` makes one call into a window, the first question UI
-  Automation asks it, as a screen reader's read does;
+  a script writes; `wait_for_window_in_front` waits on window events;
   `wait_for_event` waits for a launched process to set a named event
   `create_event` made, such as the events `mockapp` sets as it prints a
   line (`--line-events`).
@@ -732,18 +728,9 @@ under `src/scenarios/` documents exactly what it asserts.
   `release`), `menu_end_over_a_hung_window` (a mockapp MSAA window
   stalls under Verbatim's menu till Windows judges it hung, shown by
   mockapp's acknowledgement of a command it takes six seconds into the
-  stall; the harness makes one call into it, as NVDA's reads do, since
-  Windows makes a ghost only for a hung window something calls into and
-  Verbatim makes no such call, and waits for the ghost by its title;
-  Escape speaks it as NVDA's plain window, "<title> (Not
-  Responding) window", report focus and report the navigator object say
-  the same, review the current line its name, say-all nothing, and the
-  window answering again says "<title> window"; then the menu closed over
-  the hung window with no ghost provoked says "Desktop window", and the
-  window answering again "<title> window"; then the window stalls
-  in front, its ghost takes the foreground, a second Verbatim replaces
-  the first and its startup says the plain window, then the window once
-  it answers; each stall waited on by mockapp's `stall` line events),
+  stall; Escape leaves no window in front and says "Desktop window", and
+  the window answering again "<title> window"; the ghost case has no
+  step, since no run made a ghost, and is covered by Core's tests),
   `owned_dialog_across_processes` (a mockapp UIA window and a
   UIA dialog a second mockapp process opens over it, owned by it: the
   dialog entered with no owner title, its two buttons by Tab and
