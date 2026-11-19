@@ -1488,6 +1488,7 @@ Location commands (Dickson, 2026-11-19):
 Typing and keys:
 
 - Verbatim echoes a typed character from its keyboard hook, before the application handles the key, where NVDA echoes from the application's typed-character event; a letter typed within about 40 ms of Tab is not echoed (Dickson, 2026-10-10, for a later milestone).
+- The caret-move timeout setting, as NVDA's (Dickson, 2026-11-19): a `[reader]` key `caret_move_timeout_ms` (default 100, clamped to 0 to 2000; NVDA's `caretMoveTimeoutMs`, `nvda/source/config/configSpec.py` 364) with a spin control in the settings dialog as NVDA's Advanced panel has (`nvda/source/gui/settingsDialogs.py` 4720 to 4727), three times the bound in Windows Terminal (`nvda/source/NVDAObjects/UIA/winConsoleUIA.py` 486). It replaces the constants `BOUND_US` and `TERMINAL_BOUND_US` (`crates/verbatim-core/src/keys/caret_key.rs`); a file without the key loads with 100. A new settings-file key is a public contract, approved here.
 - Key holding's gaps: no test or scenario of a word read in a rich edit control; `Modifiers::after` keeps one flag for left and right Shift, Control and Alt; a key whose release is never seen stays in the decision machine's record of the keys down; and `call_counts.rs` pins the read before a held key by copying the production code's arguments rather than calling it.
 
 Exit: each entry is matched (verified) by a scenario or a test, with a
