@@ -2,7 +2,9 @@
 //! owner launches every listener generation with the value Core last
 //! configured, since it relaunches the listener without Core, and writes a
 //! command that arrives while a generation launches after that launch, so
-//! the value a generation judges under is always Core's last.
+//! the value a generation judges under is always Core's last. The launch
+//! is held at a fault point to send a command while it is at work, so only
+//! `cargo xtask faults` builds this test.
 //!
 //! This test binary runs itself as a stand-in for the focus listener,
 //! which says it is ready, reports the value its command line carries and
@@ -18,6 +20,7 @@ use std::io::BufReader;
 use std::time::Duration;
 
 use crossbeam_channel::unbounded;
+use verbatim_faults::Fault;
 use verbatim_model::protocol::{CoreToListener, CoreToOutpost, ListenerToCore, OutpostToCore};
 use verbatim_model::{OutpostId, Pid, WindowHandle};
 use verbatim_process::arguments::OutpostOptions;
@@ -140,33 +143,24 @@ fn stand_in(args: &[String]) -> ! {
 }
 
 /// The next of the listener's reports, by its generation, within
-/// [`WAIT`], calling `on_end` as the app hears a listener end; every other
-/// message is passed by.
-fn next_report(events: &Delivered, on_end: &mut dyn FnMut(OutpostId)) -> (OutpostId, u64) {
+/// [`WAIT`]; every other message is passed by.
+fn next_report(events: &Delivered) -> (OutpostId, u64) {
     loop {
-        match events
+        if let OutpostMessage::Listener { listener, message } = events
             .recv_timeout(WAIT)
             .unwrap_or_else(|error| panic!("the supervisor said nothing: {error}"))
         {
-            OutpostMessage::Listener { listener, message } => match *message {
+            match *message {
                 ListenerToCore::Destroyed { window, .. } => return (listener, window.0),
                 other => panic!("the stand-in sent {other:?}"),
-            },
-            OutpostMessage::ListenerEnded { listener, .. } => on_end(listener),
-            _ => {}
+            }
         }
     }
 }
 
-/// Launched with background bars not reported, the first listener says
-/// so; configured on, it reads the command and exits; its replacement is
-/// launched with the last value, on, and the command Core sends as it
-/// hears the first end, off, is written to the replacement after its
-/// launch: the owner relaunches as it takes the first's end, so the
-/// command reaches it while the replacement launches or once it runs, and
-/// either way the replacement reads its launch value first, and nothing
-/// more is reported.
-fn a_relaunch_carries_the_last_configuration_and_a_command_waits_for_the_launch() {
+/// A supervisor of this binary's stand-ins, its first listener launched
+/// with background progress bars not reported, and what it delivers.
+fn supervisor() -> (Supervisor, Delivered) {
     let (events_tx, events) = unbounded();
     let exe = std::env::current_exe().expect("this test binary's path");
     let supervisor = Supervisor::with_executables(
@@ -179,30 +173,12 @@ fn a_relaunch_carries_the_last_configuration_and_a_command_waits_for_the_launch(
     )
     .expect("the supervisor starts");
     let events = Delivered::new(events, &supervisor);
-    let mut ended = Vec::new();
-    let mut on_end = |listener: OutpostId| {
-        ended.push(listener);
-        supervisor.configure_listener(false);
-    };
-    let first = next_report(&events, &mut on_end);
-    supervisor.configure_listener(true);
-    let reports = [
-        first,
-        next_report(&events, &mut on_end),
-        next_report(&events, &mut on_end),
-        next_report(&events, &mut on_end),
-    ];
-    let replacement = OutpostId(2);
-    assert_eq!(
-        reports,
-        [
-            (OutpostId(1), 100),
-            (OutpostId(1), 201),
-            (replacement, 101),
-            (replacement, 200),
-        ]
-    );
-    assert_eq!(ended, [OutpostId(1)]);
+    (supervisor, events)
+}
+
+/// Shuts `supervisor` down and checks that the listener reported nothing
+/// more.
+fn finish(supervisor: &Supervisor, events: &Delivered) {
     let _ = supervisor.shutdown();
     let more: Vec<OutpostMessage> = events
         .try_iter()
@@ -211,18 +187,92 @@ fn a_relaunch_carries_the_last_configuration_and_a_command_waits_for_the_launch(
     assert!(more.is_empty(), "nothing more was reported: {more:?}");
 }
 
+/// Launched with background bars not reported, the first listener says
+/// so; configured on, it reads the command and exits; its replacement is
+/// launched with the last value, on, and a command sent once it has
+/// reported its launch, off, is written to it as it runs.
+fn a_relaunch_carries_the_last_configuration() {
+    let (supervisor, events) = supervisor();
+    let first = next_report(&events);
+    supervisor.configure_listener(true);
+    let before = [first, next_report(&events), next_report(&events)];
+    supervisor.configure_listener(false);
+    let replacement = OutpostId(2);
+    assert_eq!(
+        [before[0], before[1], before[2], next_report(&events)],
+        [
+            (OutpostId(1), 100),
+            (OutpostId(1), 201),
+            (replacement, 101),
+            (replacement, 200),
+        ]
+    );
+    finish(&supervisor, &events);
+}
+
+/// A command sent while the listener launches is held and written after
+/// the launch: the replacement's launch is held at the point where its
+/// helper reports it ([`Fault::ListenerLaunchReported`]), the command is
+/// sent there, ahead of the launch's report in the owner's mailbox, so the
+/// owner takes it while the listener is still launching; released, the
+/// replacement reads its launch value, on, then the held command, off.
+fn a_command_sent_while_the_listener_launches_is_written_after_the_launch() {
+    let (supervisor, events) = supervisor();
+    let replacement = OutpostId(2);
+    let held = verbatim_faults::arm(
+        Fault::ListenerLaunchReported,
+        move |generation: &u64| *generation == replacement.0,
+        1,
+    );
+    let first = next_report(&events);
+    supervisor.configure_listener(true);
+    let configured = next_report(&events);
+    assert!(held.wait_fired(WAIT), "the replacement's launch is held");
+    supervisor.configure_listener(false);
+    drop(held);
+    assert_eq!(
+        [
+            first,
+            configured,
+            next_report(&events),
+            next_report(&events)
+        ],
+        [
+            (OutpostId(1), 100),
+            (OutpostId(1), 201),
+            (replacement, 101),
+            (replacement, 200),
+        ]
+    );
+    finish(&supervisor, &events);
+}
+
 fn main() -> std::process::ExitCode {
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|arg| arg == "--pipe-in") {
         stand_in(&args);
     }
-    let arguments = libtest_mimic::Arguments::from_args();
-    let trials = vec![libtest_mimic::Trial::test(
-        "a_relaunch_carries_the_last_configuration_and_a_command_waits_for_the_launch",
-        || {
-            a_relaunch_carries_the_last_configuration_and_a_command_waits_for_the_launch();
-            Ok(())
-        },
-    )];
+    // One test at a time: the held point is process-wide.
+    let mut arguments = libtest_mimic::Arguments::from_args();
+    arguments.test_threads = Some(1);
+    let tests: [(&str, fn()); 2] = [
+        (
+            "a_relaunch_carries_the_last_configuration",
+            a_relaunch_carries_the_last_configuration,
+        ),
+        (
+            "a_command_sent_while_the_listener_launches_is_written_after_the_launch",
+            a_command_sent_while_the_listener_launches_is_written_after_the_launch,
+        ),
+    ];
+    let trials = tests
+        .into_iter()
+        .map(|(name, test)| {
+            libtest_mimic::Trial::test(name, move || {
+                test();
+                Ok(())
+            })
+        })
+        .collect();
     libtest_mimic::run(&arguments, trials).exit_code()
 }

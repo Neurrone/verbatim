@@ -1006,9 +1006,11 @@ fn a_uia_bar_with_no_rectangle_is_placed_at_the_origin_of_its_window() {
         verbatim_listener::listener::uia_bar_place(
             &uia,
             &mut std::collections::VecDeque::new(),
-            &bar,
-            0,
-            |_| true
+            (&bar, 0),
+            (
+                verbatim_listener::listener::BackgroundBars::Reported,
+                &verbatim_win32::window_facts::SystemReads
+            )
         ),
         Some(((0, 0), hwnd.0 as isize))
     );

@@ -427,7 +427,11 @@ impl Entry {
 /// relation, with background progress bars reported as `facts` says: its
 /// request is not stopped when the foreground changes. A value change
 /// accepted only because background progress bars are reported is among
-/// them, as NVDA stops nothing at a foreground change.
+/// them, as NVDA stops nothing at a foreground change. The setting is
+/// judged as it stands at the foreground change, not as it stood when the
+/// event was accepted: turned off between the two, an event it alone
+/// accepted is stopped, which differs from NVDA only for a value change of
+/// a focus that is no bar, since NVDA's bar reads the setting as it speaks.
 fn accepted_apart_from_foreground(facts: &SrState, tell: &Event) -> bool {
     let background = facts.settings.report_background_progress_bars;
     match acceptance::accept(tell.kind, window_facts(tell), background) {

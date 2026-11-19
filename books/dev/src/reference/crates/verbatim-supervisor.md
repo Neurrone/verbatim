@@ -58,7 +58,9 @@ The message layer, the launch arguments and the held processes are
   running listener behind every command before, or holds it in the
   launching listener's pending commands, written after the launch. Only
   Core's commands set the value, in Core's order, so a launch and a later
-  change cannot cross (`tests/listener_configuration.rs`).
+  change cannot cross (`tests/listener_configuration.rs`, a fault test
+  that holds a relaunch at `Fault::ListenerLaunchReported` to send a
+  command while it is at work).
 - `send_to_outpost(outpost, command)` queues a command without waiting,
   failing at once with a `QueueError` when the generation ended or its
   queue is full.

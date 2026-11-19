@@ -5301,18 +5301,98 @@ fn a_focus_now_walk_stops_at_an_ancestor_core_knows() {
     }
 }
 
+/// A desktop for the acceptance gate of a windowless bar in `window`: the
+/// window in front is `window` itself when `admit`, else another, so
+/// acceptance takes or refuses it; it reads nothing of the real desktop,
+/// mockapp's window on the test's own desktop being in front or not as
+/// that desktop has it. The first read it is asked takes the UIA calls made
+/// before it, which pins the gate's place among them.
+struct GateDesk {
+    window: isize,
+    admit: bool,
+    before: std::cell::Cell<Option<CallCounts>>,
+}
+
+impl GateDesk {
+    fn new(window: isize, admit: bool) -> Self {
+        Self {
+            window,
+            admit,
+            before: std::cell::Cell::new(None),
+        }
+    }
+
+    /// `value`, the UIA calls before the gate taken at its first read.
+    fn seen<T>(&self, value: T) -> T {
+        if self.before.get().is_none() {
+            self.before.set(Some(verbatim_uia::calls::take()));
+        }
+        value
+    }
+
+    fn front(&self) -> isize {
+        if self.admit {
+            self.window
+        } else {
+            self.window + 1
+        }
+    }
+}
+
+impl verbatim_win32::window_facts::WindowReads for GateDesk {
+    fn class(&self, _window: isize) -> String {
+        self.seen("MockAppWindow".to_owned())
+    }
+    fn owner(&self, _window: isize) -> (u32, u32) {
+        self.seen((1, 2))
+    }
+    fn console_host(&self, _window: isize) -> Option<u32> {
+        self.seen(None)
+    }
+    fn parent(&self, _window: isize) -> isize {
+        self.seen(0)
+    }
+    fn root(&self, window: isize) -> isize {
+        self.seen(window)
+    }
+    fn root_owner(&self, window: isize) -> isize {
+        self.seen(window)
+    }
+    fn is_child(&self, _parent: isize, _child: isize) -> bool {
+        self.seen(false)
+    }
+    fn topmost(&self, _window: isize) -> bool {
+        self.seen(false)
+    }
+    fn desktop(&self) -> isize {
+        self.seen(1)
+    }
+    fn foreground(&self) -> isize {
+        self.seen(self.front())
+    }
+    fn active_window(&self) -> isize {
+        self.seen(self.front())
+    }
+    fn hidden_frame(&self, _window: isize) -> bool {
+        self.seen(false)
+    }
+}
+
 /// The listener's reading thread's read of a windowless UIA progress bar's
-/// change (`verbatim_listener::listener::uia_bar_place`): its nearest
-/// window first, by one lookup, then the acceptance gate, and only then
-/// its `Place`, NVDA's order of nearest window, acceptance, object
-/// (Dickson, 2026-11-19). Refused, as a background bar is while background
-/// progress bars are not reported: the lookup alone, then on its next
-/// change nothing, its window remembered. Admitted, in either state: the
-/// lookup, then the `Place`. An off-screen bar: the lookup and its
-/// `Place`, and nothing reported. A bar with no window found, its
-/// application gone: dropped before the gate, in either state. Each step's calls are taken as the gate
-/// runs, so the order is pinned as well as the count.
+/// change (`verbatim_listener::listener::uia_bar_place`), under the
+/// configuration its job carries: its nearest window first, by one lookup,
+/// then, while background progress bars are not reported, the acceptance
+/// gate, and only then its `Place`, NVDA's order of nearest window,
+/// acceptance, object (Dickson, 2026-11-19). Refused, not reported: the
+/// lookup alone, then on its next change nothing, its window remembered.
+/// Admitted: the lookup, then the `Place`. Reported, the window that was
+/// refused: no window fact read, and the lookup and `Place`. An off-screen
+/// bar: the lookup and its `Place`, and nothing reported. A bar with no
+/// window found, its application gone: dropped before the gate. The calls
+/// before the gate are taken at its first read, so the order is pinned as
+/// well as the count.
 fn uia_windowless_bar_reads_its_window_before_its_place() {
+    use verbatim_listener::listener::BackgroundBars;
     let title = common::unique_title("mockapp-counts-windowless-bar");
     let app = common::spawn("windowless_bars.json", "uia", &title);
     let hwnd = common::find_window(&title);
@@ -5329,46 +5409,48 @@ fn uia_windowless_bar_reads_its_window_before_its_place() {
     let copying = bar("Copying");
     let hidden = bar("Hidden copy");
     let window = hwnd.0 as isize;
-    // One change read: what it reported, the calls before the gate, whether
-    // the gate ran, and the calls after it.
+    // One change read: what it reported, the calls before the gate's first
+    // read, if it read anything, and the calls after it.
     let read = |windows: &mut std::collections::VecDeque<(Vec<i32>, isize)>,
                 sender: &Cached<verbatim_uia::ListenerProgress>,
-                admit: bool| {
+                (bars, admit): (BackgroundBars, bool)| {
         let _ = verbatim_uia::calls::take();
-        let mut before = None;
+        let desk = GateDesk::new(window, admit);
         let placed = verbatim_listener::listener::uia_bar_place(
             &under_test.uia,
             windows,
-            sender,
-            0,
-            |found| {
-                assert_eq!(found, window, "the bar's nearest window");
-                before = Some(verbatim_uia::calls::take());
-                admit
-            },
+            (sender, 0),
+            (bars, &desk),
         );
-        (placed, before, verbatim_uia::calls::take())
+        (placed, desk.before.get(), verbatim_uia::calls::take())
     };
+    let not_reported = BackgroundBars::NotReported;
     let mut refused = std::collections::VecDeque::new();
     assert_eq!(
-        read(&mut refused, &copying, false),
+        read(&mut refused, &copying, (not_reported, false)),
         (None, Some(calls(1, 0, 0)), calls(0, 0, 0)),
         "refused: the lookup, and no Place"
     );
     assert_eq!(
-        read(&mut refused, &copying, false),
+        read(&mut refused, &copying, (not_reported, false)),
         (None, Some(calls(0, 0, 0)), calls(0, 0, 0)),
         "refused again: the remembered window, and no Place"
     );
     let mut admitted = std::collections::VecDeque::new();
     assert_eq!(
-        read(&mut admitted, &copying, true),
+        read(&mut admitted, &copying, (not_reported, true)),
         (Some(((0, 0), window)), Some(calls(1, 0, 0)), calls(1, 0, 0)),
         "admitted: the lookup, then the Place"
     );
+    let mut reported = std::collections::VecDeque::new();
+    assert_eq!(
+        read(&mut reported, &copying, (BackgroundBars::Reported, false)),
+        (Some(((0, 0), window)), None, calls(2, 0, 0)),
+        "reported: no window fact, the lookup and the Place"
+    );
     let mut off_screen = std::collections::VecDeque::new();
     assert_eq!(
-        read(&mut off_screen, &hidden, true),
+        read(&mut off_screen, &hidden, (not_reported, true)),
         (None, Some(calls(1, 0, 0)), calls(1, 0, 0)),
         "off screen: the lookup, then the Place, and nothing reported"
     );
@@ -5376,7 +5458,7 @@ fn uia_windowless_bar_reads_its_window_before_its_place() {
     // Its application gone, a bar whose window is not remembered has none
     // found: dropped before the gate, so in either state.
     let mut gone = std::collections::VecDeque::new();
-    let (placed, gated, _) = read(&mut gone, &copying, true);
+    let (placed, gated, _) = read(&mut gone, &copying, (not_reported, true));
     assert_eq!((placed, gated), (None, None), "no window found: dropped");
 }
 

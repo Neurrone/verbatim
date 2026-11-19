@@ -1256,9 +1256,10 @@ pub enum Effect {
     /// shell saves the new settings.
     SettingsChanged(ReaderSettings),
     /// The listener's configuration: what it judges its own reads under,
-    /// sent at every [`Input::Settings`] whatever its value, and at any
-    /// change the reducer makes itself, carrying the value as it stands, so
-    /// the last to arrive is current. Whether background progress bars are
+    /// sent at every [`Input::Settings`] whatever its value, carrying the
+    /// value as it stands, so the last to arrive is current. No toggle key
+    /// changes the setting it carries; one that did would have to emit it
+    /// too. Whether background progress bars are
     /// reported, by which the listener skips the read of a value change
     /// whose window the acceptance test refuses (Dickson, 2026-11-19).
     ListenerConfiguration {

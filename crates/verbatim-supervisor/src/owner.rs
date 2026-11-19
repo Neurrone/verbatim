@@ -1256,6 +1256,16 @@ impl Owner {
                     (outpost, role),
                     (&writers, &commands),
                 );
+                // Where a test holds a listener's launch, so a command it
+                // sends meanwhile is held in the listener's pending
+                // commands.
+                #[cfg(any(test, feature = "faults"))]
+                if matches!(role, Role::Listener) {
+                    verbatim_faults::hold(
+                        verbatim_faults::Fault::ListenerLaunchReported,
+                        &outpost.0,
+                    );
+                }
                 let _ = own_tx.send(OwnerEvent::Launched { outpost, result });
             });
         if let Err(error) = spawned {

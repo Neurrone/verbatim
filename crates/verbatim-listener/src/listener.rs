@@ -103,7 +103,8 @@ mod tells;
 pub use asked::uia_bar_place;
 use asked::{UiaJob, UiaReading};
 use checking::{CheckEvent, Checks, Kept};
-use configuration::{BackgroundBars, ListenerConfiguration, Told, admits_bar, reads_value_change};
+pub use configuration::BackgroundBars;
+use configuration::{ListenerConfiguration, Told, admits_bar, reads_value_change};
 
 use crate::value_change::{Found, Judgement, ValueChange, ValueChangeKnowledge, probed_of};
 use event_windows::{EventReads, EventWindows};
@@ -1437,31 +1438,50 @@ fn progress_subscription(
                 tracing::debug!(%pid, hwnd, "a progress bar's change dropped: its window is hung");
                 return;
             }
-            if hwnd != 0
-                && !admits_bar(outgoing.configuration.background_bars(), &SystemReads, hwnd)
-            {
-                tracing::trace!(%pid, hwnd, "a progress bar's change dropped: its window is refused");
-                return;
-            }
-            let timing = outgoing.observed();
-            match sender.agile() {
-                Ok(element) => readers.push(
-                    pid,
-                    JobKind::UiaBar {
-                        key: sender.runtime_id(),
-                    },
-                    UiaJob::UiaBar {
+            uia_bar_changed(
+                (&outgoing, &readers),
+                &SystemReads,
+                (pid, hwnd, sender.runtime_id()),
+                |bars, timing| match sender.agile() {
+                    Ok(element) => Some(UiaJob::UiaBar {
                         element,
                         hwnd,
                         percent,
+                        bars,
                         report: report_bar(&outgoing, timing),
-                    },
-                ),
-                Err(error) => {
-                    tracing::warn!(%error, "a progress bar's element could not be kept");
-                }
-            }
+                    }),
+                    Err(error) => {
+                        tracing::warn!(%error, "a progress bar's element could not be kept");
+                        None
+                    }
+                },
+            );
         }),
+    }
+}
+
+/// A UI Automation bar's change, its element `pid`'s, in window `hwnd`, 0
+/// for a windowless bar, keyed by its runtime id `key`, once the callback
+/// has kept it: judged under the configuration read now, once for the
+/// change, and, for a bar with its own window while background progress
+/// bars are not reported, dropped when acceptance refuses that window, its
+/// facts read through `reads` ([`admits_bar`]); otherwise the job `job`
+/// makes, given the configuration and the change's timing, is queued for
+/// the application's reading thread, which judges a windowless bar under
+/// the same configuration once it finds its window.
+fn uia_bar_changed(
+    (outgoing, readers): (&Arc<Outgoing>, &Readers<UiaReading>),
+    reads: &impl WindowReads,
+    (pid, hwnd, key): (Pid, isize, Vec<i32>),
+    job: impl FnOnce(BackgroundBars, EventTiming) -> Option<UiaJob>,
+) {
+    let bars = outgoing.configuration.background_bars();
+    if hwnd != 0 && !admits_bar(bars, reads, hwnd) {
+        tracing::trace!(%pid, hwnd, "a progress bar's change dropped: its window is refused");
+        return;
+    }
+    if let Some(job) = job(bars, outgoing.observed()) {
+        readers.push(pid, JobKind::UiaBar { key }, job);
     }
 }
 
@@ -4209,9 +4229,10 @@ mod tests {
 
     /// A value change of a background window, raised with `NotifyWinEvent`
     /// to a listener launched with `bars` that was then sent `command`, in
-    /// the listener's own order: the command handled as the I/O thread
-    /// handles it, then the idle barrier's query, its answer awaited as
-    /// evidence that the command came first, then the event, its tell
+    /// the listener's own order: the command handled by the I/O thread's
+    /// handler, called directly on this thread, not read off a pipe, then
+    /// the idle barrier's query, its answer awaited as evidence that the
+    /// `WinEvent` thread's hooks are in, then the event, its tell
     /// awaited as evidence that the `WinEvent` thread has it, then a second
     /// query, whose answer comes once the event is handled and its read,
     /// if any, done. Whether the change's tell came first, then the second
@@ -4267,10 +4288,11 @@ mod tests {
         (told, getobjects)
     }
 
-    /// Across the I/O thread and the `WinEvent` thread, in the listener's
-    /// order: Core's command that background progress bars are not
-    /// reported, then a background window's value change, which is told
-    /// and not read.
+    /// In the listener's order, with Core's command handled directly by the
+    /// I/O thread's handler, not read off a pipe: the command that
+    /// background progress bars are not reported, then a background
+    /// window's real `WinEvent` on the `WinEvent` thread, which is told and
+    /// not read.
     #[test]
     fn a_background_value_change_after_the_command_off_is_told_and_not_read() {
         assert_eq!(
@@ -4299,6 +4321,53 @@ mod tests {
         assert_eq!(
             background_value_change(BackgroundBars::NotReported, None),
             (true, 0)
+        );
+    }
+    /// The UI Automation callback's handling of a kept bar's change
+    /// ([`uia_bar_changed`]), as it is wired: a job is made, and so queued,
+    /// for a bar with its own window in front in both states, and in the
+    /// background only while background progress bars are reported, then
+    /// with no window fact read, and otherwise with the gate's local reads
+    /// of the window (11 in front, 15 behind); a windowless bar's job is
+    /// always made, with no window fact read, its window judged on the
+    /// reading thread under the configuration the job carries.
+    #[test]
+    fn a_uia_bar_with_its_own_window_is_queued_by_its_windows_acceptance() {
+        let queued = |bars, hwnd| {
+            let (outgoing, readers, _sent) =
+                flood_listening_front(Arc::new(|_| Readability::Readable), bars, || FLOOD_FRONT);
+            let desk = FloodDesk::default();
+            let mut made = None;
+            uia_bar_changed(
+                (&outgoing, &readers),
+                &desk,
+                (Pid(std::process::id()), hwnd, vec![42, 1]),
+                |bars, _| {
+                    made = Some(bars);
+                    None
+                },
+            );
+            readers.stop();
+            outgoing.close();
+            (made, desk.counts.into_inner().values().sum::<u32>())
+        };
+        let reported = BackgroundBars::Reported;
+        let not_reported = BackgroundBars::NotReported;
+        assert_eq!(
+            [FLOOD_FRONT, FLOOD_WINDOW, 0].map(|hwnd| queued(reported, hwnd)),
+            [
+                (Some(reported), 0),
+                (Some(reported), 0),
+                (Some(reported), 0)
+            ]
+        );
+        assert_eq!(
+            [FLOOD_FRONT, FLOOD_WINDOW, 0].map(|hwnd| queued(not_reported, hwnd)),
+            [
+                (Some(not_reported), 11),
+                (None, 15),
+                (Some(not_reported), 0)
+            ]
         );
     }
 }

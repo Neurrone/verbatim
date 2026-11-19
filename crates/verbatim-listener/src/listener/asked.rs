@@ -41,9 +41,11 @@ use windows::Win32::UI::Accessibility::UIA_LegacyIAccessibleStatePropertyId;
 
 use super::Outgoing;
 use super::checking::Kept;
+use super::configuration::BackgroundBars;
 use super::tells::SystemReads;
 use crate::call_log::{CallLog, MAX_ANCESTORS};
 use crate::reading::Reading;
+use verbatim_win32::window_facts::WindowReads;
 
 /// One job of a reading thread.
 pub(crate) enum UiaJob {
@@ -61,12 +63,14 @@ pub(crate) enum UiaJob {
         window: Responder<WindowAnswer>,
     },
     /// A UIA progress bar's range value changed: `percent` from its event's
-    /// cache; its place and window are read here, and its change sent
-    /// through `report`.
+    /// cache; its place and window are read here, a windowless bar judged
+    /// under `bars`, the configuration the callback read for the change,
+    /// and its change sent through `report`.
     UiaBar {
         element: Agile<ListenerProgress>,
         hwnd: isize,
         percent: Percent,
+        bars: BackgroundBars,
         report: Responder<BarChange>,
     },
     /// The elements kept for tells and let go, released here, on their
@@ -252,13 +256,16 @@ impl Reading for UiaReading {
                 element,
                 hwnd,
                 percent,
+                bars,
                 report,
             } => {
-                let bars = self.outgoing.configuration.background_bars();
-                let admitted = |window| super::admits_bar(bars, &SystemReads, window);
                 if let (Some(uia), Ok(sender)) = (thread.uia.as_ref(), element.resolve())
-                    && let Some((place, window)) =
-                        uia_bar_place(uia, &mut thread.bar_windows, &sender, hwnd, admitted)
+                    && let Some((place, window)) = uia_bar_place(
+                        uia,
+                        &mut thread.bar_windows,
+                        (&sender, hwnd),
+                        (bars, &SystemReads),
+                    )
                 {
                     report.answer(BarChange {
                         percent,
@@ -330,10 +337,11 @@ fn handle(window: isize) -> WindowHandle {
 /// Where the UIA progress bar `sender` is, by one read of its [`Place`],
 /// and its nearest window: its own, `hwnd`, when it has one, or else by
 /// UIA's lookup, remembered by runtime id in `bar_windows`. A windowless
-/// bar's window is found first, then judged by `admitted`, and only an
-/// admitted bar's [`Place`] is read, NVDA's order of nearest window,
-/// acceptance, object (Dickson, 2026-11-19); a bar with its own window was
-/// judged in the UI Automation callback, before it was queued. A bar that
+/// bar's window is found first, then judged by acceptance under `bars`,
+/// its facts read through `reads` ([`super::configuration::admits_bar`]),
+/// and only an admitted bar's [`Place`] is read, NVDA's order of nearest
+/// window, acceptance, object (Dickson, 2026-11-19); a bar with its own
+/// window was judged in the UI Automation callback, before it was queued. A bar that
 /// reports no rectangle is placed at (0, 0), as NVDA places a bar whose
 /// location it cannot read (`nvda/source/NVDAObjects/behaviors.py` 62 to
 /// 67) and as the classic path does. `None` when it has no window above
@@ -343,13 +351,12 @@ fn handle(window: isize) -> WindowHandle {
 pub fn uia_bar_place(
     uia: &Uia,
     bar_windows: &mut VecDeque<(Vec<i32>, isize)>,
-    sender: &Cached<ListenerProgress>,
-    hwnd: isize,
-    admitted: impl FnOnce(isize) -> bool,
+    (sender, hwnd): (&Cached<ListenerProgress>, isize),
+    (bars, reads): (BackgroundBars, &impl WindowReads),
 ) -> Option<((i32, i32), isize)> {
     let window = if hwnd == 0 {
         let window = bar_window(bar_windows, sender)?;
-        if !admitted(window) {
+        if !super::configuration::admits_bar(bars, reads, window) {
             return None;
         }
         window

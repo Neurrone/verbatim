@@ -360,7 +360,15 @@ they are not, the default, a value change whose tell's window acceptance
 refuses costs the show's 19 and nothing more: its read is skipped on the
 tell's facts, with no lock, job or reading-thread wake
 (`a_flood_events_background_value_changes_are_not_read`; Dickson,
-2026-11-19);
+2026-11-19). Measured on `msaa_flood_then_focus` (release, 13-second
+windows, the build before the skip, da47552b, and the build with it,
+ccdb2a7a, traced alternately five times each, 2026-11-19): the
+listener's reading thread went from 14,465 to 16,078 wakes and 495 to
+570 ms to 59 to 185 wakes and 9 to 12 ms; its WinEvent thread from 26,600
+to 28,000 wakes to 6,500 to 9,800 in the traces with little outpost
+activity, and from 41,800 to 44,700 to 20,700 to 22,400 in those with the
+outpost's 9,000 to 13,000 wakes; and the whole listener's processor time
+from 1.50 to 2.11 s to 0.57 to 1.20 s. Before the skip,
 measured on `msaa_flood_then_focus` (release, 13-second windows over
 its three floods of 4,000 events, five traces of each build
 alternately, 2026-11-19), reading each fact once took the WinEvent
@@ -388,7 +396,8 @@ not reported, the default, a bar with its own window is judged by
 acceptance on the UIA callback thread before it is queued, on local
 Windows reads of its window and none into the application: 11 calls for a
 window in front, 15 for one in the background and 19 for one under a
-topmost root (`the_callbacks_gate_admits_a_bar_by_its_windows_acceptance`),
+topmost root (`the_gate_admits_a_bar_by_its_windows_acceptance`,
+`a_uia_bar_with_its_own_window_is_queued_by_its_windows_acceptance`),
 paid by every change of such a bar, accepted or refused; a refused one
 then costs no reading-thread wake and no cross-process `Place` read. If
 UI Automation delivers this subscription on the thread that delivers the
@@ -398,7 +407,12 @@ is found before its place, in both states, so a refused one costs its
 window lookup once, memoised, and no `Place` read, and an off-screen one's
 first change costs a lookup it did not before
 (`uia_windowless_bar_reads_its_window_before_its_place`). While the
-setting is reported, the gate reads only the setting. The wake-up and processor time
+setting is reported, the gate reads only the setting. Reading it takes
+the configuration's lock, once per value change on the WinEvent thread and
+once per bar change on the UI Automation callback thread; its one writer
+is the I/O thread, at a settings change, so the lock is uncontended, and
+it is never held across a call. A UI Automation bar's job carries the
+value read for its change, so the reading thread takes no lock for it. The wake-up and processor time
 figures are from the design's first step, still to be measured.
 
 ### The listener's reads in a window the outpost judges MSAA

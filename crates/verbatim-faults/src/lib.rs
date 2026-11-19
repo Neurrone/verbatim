@@ -65,6 +65,12 @@ pub enum Fault {
     /// in milliseconds, `None` for none, and the address in the target's
     /// memory of the buffer it carries, `None` for none.
     WindowMessageSent,
+    /// A hold point ([`hold`]): the supervisor's launch helper has launched
+    /// a listener generation and is about to report its launch to the owner
+    /// thread, which holds the commands sent meanwhile until then
+    /// (`verbatim-supervisor`'s `Owner::launch`). Subject: the generation,
+    /// a `u64`.
+    ListenerLaunchReported,
 }
 
 /// Whether a subject is the one a test names: false for a subject of
@@ -164,6 +170,36 @@ pub fn reach<S: Any>(fault: Fault, subject: &S) {
     }
 }
 
+/// A hold point: where the code waits while a test holds it, with nothing
+/// failing. It counts as a firing of each armed point whose selector picks
+/// the subject, as [`reach`] does, so a test waits with
+/// [`Guard::wait_fired`] for the evidence that the code is held there; it
+/// then waits until each of those points is disarmed, its guard dropped,
+/// which is how the test releases it once it has done what it does while
+/// the code is held.
+pub fn hold<S: Any>(fault: Fault, subject: &S) {
+    let mut table = table();
+    let mut held = Vec::new();
+    for armed in table
+        .armed
+        .iter_mut()
+        .filter(|armed| armed.fault == fault && (armed.selects)(subject))
+    {
+        armed.left = armed.left.saturating_sub(1);
+        armed.fired += 1;
+        held.push(armed.id);
+    }
+    if held.is_empty() {
+        return;
+    }
+    FIRED.notify_all();
+    let _released = FIRED
+        .wait_while(table, |table| {
+            table.armed.iter().any(|armed| held.contains(&armed.id))
+        })
+        .unwrap_or_else(PoisonError::into_inner);
+}
+
 /// [`hit`] with a subject built by `subject` only while `fault` is armed,
 /// for a subject whose making is itself a call the build without fault
 /// points does not make.
@@ -224,6 +260,8 @@ impl Drop for Guard {
             let at = table.armed.iter().position(|armed| armed.id == self.id);
             at.map_or(0, |at| table.armed.swap_remove(at).fired)
         };
+        // A hold point waiting on this one is released.
+        FIRED.notify_all();
         if !std::thread::panicking() {
             assert_eq!(
                 fired, self.times,
@@ -273,6 +311,34 @@ mod tests {
         reach(Fault::WindowMessageSent, &SENT);
         reach(Fault::WindowMessageSent, &SENT);
         assert_eq!(guard.fired(), 2);
+    }
+
+    #[test]
+    fn a_hold_point_waits_until_its_guard_is_dropped() {
+        let guard = arm(
+            Fault::ListenerLaunchReported,
+            |subject: &u64| *subject == 2,
+            1,
+        );
+        let (done, held_done) = std::sync::mpsc::channel();
+        let held = std::thread::spawn(move || {
+            hold(Fault::ListenerLaunchReported, &1_u64);
+            done.send("another subject passes").expect("the test waits");
+            hold(Fault::ListenerLaunchReported, &2_u64);
+            done.send("released").expect("the test waits");
+        });
+        assert_eq!(
+            held_done.recv().expect("the first hold"),
+            "another subject passes"
+        );
+        assert!(guard.wait_fired(Duration::from_secs(20)), "held");
+        assert!(
+            held_done.try_recv().is_err(),
+            "still held while the guard is armed"
+        );
+        drop(guard);
+        assert_eq!(held_done.recv().expect("released"), "released");
+        held.join().expect("the held thread ends");
     }
 
     #[test]

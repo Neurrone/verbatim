@@ -20,9 +20,11 @@ use verbatim_model::event_kind::EventKind;
 use verbatim_model::tell::AcceptanceFacts;
 use verbatim_win32::window_facts::{ReadOnce, WindowPart, WindowReads};
 
-/// Whether background progress bars are reported.
+/// Whether background progress bars are reported. Public so that
+/// mockapp's tests read a bar under either value as the reading thread
+/// does ([`crate::listener::uia_bar_place`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum BackgroundBars {
+pub enum BackgroundBars {
     /// Reported: every value change is read, and Core judges the bar.
     Reported,
     /// Not reported: a value change whose window acceptance refuses is not
@@ -59,8 +61,9 @@ pub(crate) enum Told {
 /// The listener's configuration, a monitor: one setter, from the I/O
 /// thread's handling of Core's command alone, and one getter, which returns
 /// a copy. Neither runs a caller's code, so no guard crosses a call; the
-/// `WinEvent` thread, the UI Automation callback and the reading threads
-/// read it as they judge.
+/// `WinEvent` thread reads it once per value change and the UI Automation
+/// callback once per bar change, as they judge; a UI Automation bar's job
+/// carries the value read for its change to its reading thread.
 pub(crate) struct ListenerConfiguration {
     background_bars: Mutex<BackgroundBars>,
 }
@@ -114,7 +117,7 @@ pub(crate) fn reads_value_change(bars: BackgroundBars, told: &Told) -> bool {
 /// facts read now through `reads`, each once, with no call into the
 /// application, as NVDA judges acceptance once the nearest window is known
 /// and before it makes the object (Dickson, 2026-11-19).
-pub(crate) fn admits_bar(bars: BackgroundBars, reads: &impl WindowReads, window: isize) -> bool {
+pub fn admits_bar(bars: BackgroundBars, reads: &impl WindowReads, window: isize) -> bool {
     match bars {
         BackgroundBars::Reported => true,
         BackgroundBars::NotReported => {
@@ -212,14 +215,15 @@ mod tests {
         }
     }
 
-    /// The UI Automation callback's gate for a bar with its own window,
-    /// whose job is pushed exactly when it admits the change: the window
-    /// in front, and one under a topmost root, are admitted in both
-    /// states; a background window only while background bars are
-    /// reported. While they are, no window fact is read; while they are
-    /// not, the gate's reads are the cost the performance ledger records.
+    /// The UI Automation gate on a bar's window: the window in front, and
+    /// one under a topmost root, are admitted in both states; a background
+    /// window only while background bars are reported. While they are, no
+    /// window fact is read; while they are not, the gate's reads are the
+    /// cost the performance ledger records. Its wiring is tested where it
+    /// is called (`a_uia_bar_with_its_own_window_is_queued_by_its_windows_acceptance`,
+    /// and mockapp's `uia_windowless_bar_reads_its_window_before_its_place`).
     #[test]
-    fn the_callbacks_gate_admits_a_bar_by_its_windows_acceptance() {
+    fn the_gate_admits_a_bar_by_its_windows_acceptance() {
         let judged = |bars, window| {
             let desk = Desk::default();
             let admitted = admits_bar(bars, &desk, window);

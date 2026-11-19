@@ -134,8 +134,9 @@ configuration (`listener::configuration`): `BackgroundBars`, reported or
 not, from its launch argument (`--background-bars`), then replaced by
 each `CoreToListener::Configuration` the I/O thread handles, held by a
 monitor in `Outgoing` with one setter and one getter, neither running a
-caller's code; the `WinEvent` thread, the UI Automation callback and the
-reading threads read it as they judge. A classic value change is judged
+caller's code; the `WinEvent` thread reads it once per value change and
+the UI Automation callback once per bar change, and a UI Automation bar's
+job carries the value read for its change to the reading thread. A classic value change is judged
 on the `WinEvent` thread right after `knowledge.drain()`, before any lock,
 job or call, on the facts of its own tell as it was sent in this event's
 step (`Told`, which `tell_win_event` returns: `Tells::place_seen` and
@@ -149,8 +150,9 @@ either way, so Core's acceptance, its limiter's count and the caret's
 count of a waiting value change are unchanged. A UIA bar with its own
 window is judged in the callback, after the hang check and before it is
 queued, on its window's facts read then with local calls and none into
-the application (`admits_bar`); a windowless bar is judged on the reading
-thread once its nearest window is found, before its place is read
+the application (`uia_bar_changed`, over `admits_bar`); a windowless bar
+is judged on the reading thread, under the value its job carries, once
+its nearest window is found and before its place is read
 (`uia_bar_place`). While the setting is reported, neither path reads a
 window fact for the gate. Limits: a change judged before Core's command
 reaches the I/O thread is judged under the value one message old, so
@@ -280,6 +282,7 @@ section 6.3).
 - `listener::capture` and `listener::capture_selection` are what the
   notification and element-selected callbacks capture of their event's
   element, and `listener::bar_percent`, `listener::uia_bar_place` (with
-  the gate for a windowless bar's window as its last argument) and
+  the configuration a windowless bar is judged under, `BackgroundBars`,
+  and the window reads its gate makes, as its last argument) and
   `listener::read_classic_bar` what the progress path reads, public so mockapp's tests make them as the
   listener does.
