@@ -254,9 +254,11 @@ reviewable surface.
   such a dialog, never shown, in front. mockapp's window thread answers
   its messages while it waits for the dialog's handle, since the dialog it
   owns sends it messages as it is made. Checked against the recording of
-  Import a Theme (2026-11-19, msaa_events
-  `the_dialog_shown_late_raises_its_foreground_and_focus_hidden_then_its_show`):
-  the foreground, then the focus, while hidden, then the show, as Import.
+  Import a Theme (2026-11-19): the foreground, then the focus, while
+  hidden, then the show, as Import; msaa_events
+  `the_dialog_shown_late_answers_and_shows_its_hidden_dialog` asserts the
+  answer and the show alone, since no mockapp test may need the
+  foreground.
   Deliberately unlike it: a focus on the dialog's own window, then the
   Edit, where Import focuses its `ComboBoxEx32`, `ComboBox` and Edit in
   turn, twice, around its shell view's build; three windows, against

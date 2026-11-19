@@ -816,50 +816,34 @@ fn a_top_level_client_reached_from_a_windowless_object_is_said_by_its_title() {
     app.quit();
 }
 
-/// mockapp's stand-in for a dialog shown after its focus, as Import's is,
-/// raises Import's order: the dialog's foreground, then its field's focus,
-/// all while the dialog is hidden, then the dialog's show. Recorded as
-/// deliberate against Import's recording of 2026-11-19: a focus on the
-/// dialog's own window, then on the Edit, where Import focuses its
-/// `ComboBoxEx32`, `ComboBox` and Edit in turn, twice, around its shell view's
-/// build; and no shell view.
-fn the_dialog_shown_late_raises_its_foreground_and_focus_hidden_then_its_show() {
+/// mockapp's stand-in for a dialog shown after its focus answers its
+/// command, which its owner's window thread once never did, waiting for the
+/// dialog's handle while the dialog it owns sent it messages, and shows the
+/// dialog, hidden until then, after its delay: its window object's show is
+/// heard. The foreground and the field's focus it raises while hidden are
+/// not asserted here: no mockapp test may need the foreground, which
+/// Windows need not grant on the test's own desktop (`common/harness.rs`).
+/// Their order was checked against the recording of Import a Theme
+/// (2026-11-19), and its differences recorded as deliberate in mockapp's
+/// guide.
+fn the_dialog_shown_late_answers_and_shows_its_hidden_dialog() {
     common::init_com();
     let title = common::unique_title("mockapp-msaa-shown-late");
     let mut app = common::spawn_visible("counts.json", "msaa", &title);
     let _ = common::find_window(&title);
-    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-    let sink = std::sync::Arc::clone(&seen);
-    let shown_sink = std::sync::Arc::clone(&seen);
+    let shown = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink = std::sync::Arc::clone(&shown);
     let hook = verbatim_ia2::WinEventHook::install(
         app.pid(),
-        &[
-            WinEventKind::Foreground,
-            WinEventKind::Focus,
-            WinEventKind::Show,
-        ],
-        Box::new(move |event: verbatim_ia2::WinEvent, _class: Option<&str>| {
-            if event.kind == WinEventKind::Show {
-                return;
-            }
-            let root = verbatim_win32::window::top_level_of(event.hwnd);
-            let visible = verbatim_win32::window::window_is_visible(root);
-            let class = verbatim_win32::window::window_class_name(event.hwnd);
-            sink.lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .push((format!("{:?}", event.kind), class, visible, root));
-        }),
+        &[WinEventKind::Show],
+        Box::new(|_: verbatim_ia2::WinEvent, _: Option<&str>| {}),
     )
-    .expect("a hook of mockapp's events");
-    // The dialog's own window object's show, whatever its class.
+    .expect("a hook of mockapp's shows");
+    // Every window object's show, whatever its class.
     verbatim_ia2::set_window_shown(Box::new(move |window| {
-        let class = verbatim_win32::window::window_class_name(window);
-        if class == "#32770" {
-            shown_sink
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .push(("Shown".to_owned(), class, true, window));
-        }
+        sink.lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(window);
     }))
     .expect("the hook hears shows");
     let answer = app.send_answered("open-dialog-shown-late 50");
@@ -867,32 +851,28 @@ fn the_dialog_shown_late_raises_its_foreground_and_focus_hidden_then_its_show() 
         .strip_prefix("open-dialog-shown-late ")
         .and_then(|handle| handle.parse().ok())
         .unwrap_or_else(|| panic!("mockapp said {answer:?}, not its dialog"));
-    let events = common::pump_until(|| {
-        let seen = seen
+    assert_eq!(
+        verbatim_win32::window::window_class_name(dialog),
+        "#32770",
+        "a dialog of the system's class"
+    );
+    common::pump_until(|| {
+        shown
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        (seen.len() >= 4).then(|| seen.clone())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .contains(&dialog)
+            .then_some(())
     });
     drop(hook);
-    let event =
-        |kind: &str, class: &str, visible| (kind.to_owned(), class.to_owned(), visible, dialog);
-    assert_eq!(
-        events,
-        [
-            event("Foreground", "#32770", false),
-            event("Focus", "#32770", false),
-            event("Focus", "Edit", false),
-            event("Shown", "#32770", true),
-        ]
-    );
+    assert!(verbatim_win32::window::window_is_visible(dialog));
     app.quit();
 }
 
 fn main() {
     harness::run_isolated(&[
         (
-            "the_dialog_shown_late_raises_its_foreground_and_focus_hidden_then_its_show",
-            the_dialog_shown_late_raises_its_foreground_and_focus_hidden_then_its_show,
+            "the_dialog_shown_late_answers_and_shows_its_hidden_dialog",
+            the_dialog_shown_late_answers_and_shows_its_hidden_dialog,
         ),
         (
             "a_description_change_on_the_focus_is_spoken",
