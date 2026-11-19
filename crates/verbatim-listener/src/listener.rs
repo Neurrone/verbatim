@@ -1483,8 +1483,9 @@ fn report_bar(outgoing: &Arc<Outgoing>, timing: EventTiming) -> Responder<BarCha
 /// `knowledge` says is dropped are dropped here with no lock; the rest
 /// queued on the window's application's reading thread, behind Core's
 /// requests, one held per object, a newer change replacing it. The
-/// window's owner, class and readability are those read for the event's
-/// tell, `windows`.
+/// window's owner, class and its thread's process are those read for the
+/// event's tell, `windows`; whether it is hung is judged again now, after
+/// the tell is sent, as the listener's one judge answers it.
 fn value_change_event(
     outgoing: &Arc<Outgoing>,
     readers: &Arc<Readers<UiaReading>>,
@@ -1508,13 +1509,14 @@ fn value_change_event(
         return;
     }
     let class = windows.facts().class(hwnd);
-    let Some(pid) = routed_process(&class, owner, || process_of_thread(thread)).map(Pid) else {
+    let Some(pid) = routed_process(&class, owner, || windows.process_of_thread(thread)).map(Pid)
+    else {
         return;
     };
     if outgoing.ignored.contains(pid) || outgoing.ignored.contains(Pid(owner)) {
         return;
     }
-    if windows.readability(hwnd).is_hung() {
+    if windows.readability_now(hwnd).is_hung() {
         tracing::debug!(%pid, hwnd, "a value change dropped: its window is hung");
         return;
     }
@@ -1528,7 +1530,7 @@ fn value_change_event(
         &verbatim_reader_rules::class::normalize_class_name(&class),
     );
     let (read, window) = if listed {
-        let visible = verbatim_win32::window::window_is_visible(hwnd);
+        let visible = windows.visible(hwnd);
         let Some(read) = classic_value_change(true, visible, None) else {
             return;
         };
@@ -3271,13 +3273,28 @@ mod tests {
 
     /// The flood's desktop as the listener reads it, every read counted by
     /// its name: the flood's window and its tooltip are top-level windows
-    /// of this process, behind the window in front, which is active.
+    /// of this process, behind the window in front, which is active. A
+    /// desk made [`owned_in_front`](Self::owned_in_front) has the flood's
+    /// window in front instead, and gives it an owner after its root owner
+    /// is first read.
     #[derive(Default)]
     struct FloodDesk {
         counts: RefCell<std::collections::BTreeMap<&'static str, u32>>,
+        owned_in_front: bool,
     }
 
+    /// The owner the flood's window is given in an
+    /// [`owned_in_front`](FloodDesk::owned_in_front) desk.
+    const FLOOD_OWNER: isize = 0x7FFF_0040;
+
     impl FloodDesk {
+        fn owned_in_front() -> Self {
+            Self {
+                owned_in_front: true,
+                ..Self::default()
+            }
+        }
+
         fn count<T>(&self, name: &'static str, value: T) -> T {
             *self.counts.borrow_mut().entry(name).or_default() += 1;
             value
@@ -3307,7 +3324,13 @@ mod tests {
             self.count("root", window)
         }
         fn root_owner(&self, window: isize) -> isize {
-            self.count("root_owner", window)
+            let earlier = self.counts.borrow().get("root_owner").copied();
+            let owner = if self.owned_in_front && window == FLOOD_WINDOW && earlier.is_some() {
+                FLOOD_OWNER
+            } else {
+                window
+            };
+            self.count("root_owner", owner)
         }
         fn is_child(&self, _parent: isize, _child: isize) -> bool {
             self.count("is_child", false)
@@ -3319,10 +3342,20 @@ mod tests {
             self.count("desktop", FLOOD_DESKTOP)
         }
         fn foreground(&self) -> isize {
-            self.count("foreground", FLOOD_FRONT)
+            let front = if self.owned_in_front {
+                FLOOD_WINDOW
+            } else {
+                FLOOD_FRONT
+            };
+            self.count("foreground", front)
         }
         fn active_window(&self) -> isize {
-            self.count("active_window", FLOOD_FRONT)
+            let active = if self.owned_in_front {
+                FLOOD_WINDOW
+            } else {
+                FLOOD_FRONT
+            };
+            self.count("active_window", active)
         }
         fn hidden_frame(&self, _window: isize) -> bool {
             self.count("hidden_frame", false)
@@ -3333,6 +3366,122 @@ mod tests {
         fn exists(&self, _window: isize) -> bool {
             self.count("exists", true)
         }
+        fn visible(&self, _window: isize) -> bool {
+            self.count("visible", true)
+        }
+        fn hang_state(&self, _window: isize) -> Readability {
+            self.count("hang_state", Readability::Readable)
+        }
+        fn process_of_thread(&self, _thread: u32) -> Option<u32> {
+            self.count("process_of_thread", Some(std::process::id()))
+        }
+        fn input_desktop_opens(&self) -> bool {
+            self.count("input_desktop_opens", true)
+        }
+    }
+
+    /// A tell's foreground facts are read under the tells' lock, not taken
+    /// from what the event read before it: a name change in the window in
+    /// front, which is given an owner between the read of its own facts
+    /// and the tell's placing, is told with that owner as the foreground's
+    /// root owner, and its own root owner as read before.
+    #[test]
+    fn a_tells_foreground_facts_are_read_as_it_is_placed() {
+        use windows::Win32::UI::WindowsAndMessaging::{EVENT_OBJECT_NAMECHANGE, OBJID_CLIENT};
+        let (outgoing, readers, sent) = flood_listening(Arc::new(|_| Readability::Readable));
+        let watch = RefCell::new(ForegroundWatch::default());
+        let _ = watch.borrow_mut().start(None);
+        let desk = FloodDesk::owned_in_front();
+        on_win_event(
+            &outgoing,
+            &mut tells::Applications::default(),
+            &readers,
+            &RefCell::new(ValueChangeKnowledge::new()),
+            &watch,
+            (
+                WinEvent {
+                    kind: WinEventKind::NameChange,
+                    event: EVENT_OBJECT_NAMECHANGE,
+                    hwnd: FLOOD_WINDOW,
+                    id_object: OBJID_CLIENT.0,
+                    id_child: 0,
+                    thread: 1,
+                    time: 0,
+                    raised_ms_ago: 0,
+                },
+                Some("MockAppWindow"),
+            ),
+            &desk,
+        );
+        readers.stop();
+        outgoing.close();
+        let facts: Vec<(WindowHandle, WindowHandle, bool)> = sent
+            .iter()
+            .filter_map(|message| match message {
+                ListenerToCore::Tell(tell) => match &tell.window {
+                    TellWindow::Found(facts) => Some((
+                        facts.root_owner.handle,
+                        facts.foreground_root_owner,
+                        facts.root_owner_is_foregrounds,
+                    )),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect();
+        let handle = |window: isize| WindowHandle(window.cast_unsigned() as u64);
+        assert_eq!(facts, [(handle(FLOOD_WINDOW), handle(FLOOD_OWNER), false)]);
+    }
+
+    /// The body of the function `name` in `source`, to its closing brace
+    /// at the start of a line.
+    fn body<'s>(source: &'s str, name: &str) -> &'s str {
+        let start = source
+            .find(&format!("\nfn {name}("))
+            .or_else(|| source.find(&format!("\npub(super) fn {name}(")))
+            .unwrap_or_else(|| panic!("no fn {name}"));
+        let rest = &source[start + 1..];
+        &rest[..rest.find("\n}\n").expect("its end")]
+    }
+
+    /// The event path reads Windows' state only through the event's
+    /// [`EventWindows`], so that its call-count test,
+    /// `a_flood_events_window_facts_are_read_once`, counts every read: no
+    /// function of the path, after `on_win_event` makes the event's
+    /// windows, names a read of its own.
+    #[test]
+    fn the_event_path_reads_windows_only_through_its_event_windows() {
+        let listener = include_str!("listener.rs");
+        let tells = include_str!("listener/tells.rs");
+        let bodies = [
+            ("watch_win_event", body(listener, "watch_win_event")),
+            ("route_win_event", body(listener, "route_win_event")),
+            ("value_change_event", body(listener, "value_change_event")),
+            ("tell_win_event", body(tells, "tell_win_event")),
+        ];
+        let direct = [
+            "verbatim_win32::",
+            "verbatim_ia2::window",
+            "window_class_name(",
+            "window_pid(",
+            "window_hung(",
+            "front_window(",
+            "in_foreground(",
+            "readers.reading()",
+            "SystemReads",
+            " process_of_thread(",
+            "(process_of_thread(",
+        ];
+        let found: Vec<(&str, &str)> = bodies
+            .iter()
+            .flat_map(|(name, body)| {
+                direct
+                    .iter()
+                    .filter(|read| body.contains(*read))
+                    .map(move |read| (*name, *read))
+            })
+            .collect();
+        assert_eq!(found, Vec::<(&str, &str)>::new());
     }
 
     /// How many times the window in front was read for the hold.
@@ -3489,31 +3638,32 @@ mod tests {
             })
             .collect();
         assert_eq!(tells, ["ValueChange", "ValueChange", "Show"]);
-        let per_event = std::collections::BTreeMap::from([
+        let shown = std::collections::BTreeMap::from([
             ("active_window", 1),
             ("class", 1),
             ("desktop", 1),
             ("exists", 1),
             ("foreground", 1),
             ("front for the hold", 1),
+            ("hang_state", 1),
             ("hidden_frame", 1),
             ("is_child", 3),
             ("owner", 1),
             ("parent", 1),
-            ("readability", 1),
+            ("readability", 0),
             ("root", 1),
             ("root_owner", 2),
             ("topmost", 1),
         ]);
+        // A value change's hang is judged again after its tell is sent.
+        let mut changed = shown.clone();
+        changed.insert("readability", 1);
         assert_eq!(
             counts,
             [
-                ("a value change on a new object", per_event.clone()),
-                (
-                    "a value change on an object known to be no bar",
-                    per_event.clone()
-                ),
-                ("a tooltip's show", per_event),
+                ("a value change on a new object", changed.clone()),
+                ("a value change on an object known to be no bar", changed),
+                ("a tooltip's show", shown),
             ]
         );
     }

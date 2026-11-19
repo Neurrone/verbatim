@@ -29,7 +29,7 @@ pub(super) use verbatim_win32::window_facts::SystemReads;
 use verbatim_win32::window_facts::{WindowPart, WindowReads};
 
 use super::event_windows::{EventReads, EventWindows};
-use super::{Sent, Timed, TimerHandle, Waiting, process_of_thread, sent};
+use super::{Sent, Timed, TimerHandle, Waiting, sent};
 use verbatim_process::transport::Sender;
 
 /// A tell's key in the listener's merge: its object, kind and raising
@@ -355,7 +355,7 @@ pub(super) fn tell_win_event(
     let dropped = |reason: &'static str| {
         tracing::trace!(?kind, window, reason, "a WinEvent is not told");
         if let Some(window) = awaited {
-            tells.foreground(window, None, front, reads);
+            tells.foreground(window, None, front, windows.live());
         }
     };
     let class = reads.class(window);
@@ -364,7 +364,7 @@ pub(super) fn tell_win_event(
     // A console window's events, and a destroyed window's, are served by
     // the process of the thread that raised them.
     let process = if console || kind == EventKind::Destroy || owner == 0 {
-        process_of_thread(event.thread)
+        windows.process_of_thread(event.thread)
     } else {
         Some(owner)
     };
@@ -379,7 +379,7 @@ pub(super) fn tell_win_event(
     }
     let payload = if kind == EventKind::DesktopSwitch {
         Payload::DesktopSwitch {
-            input_desktop_open: verbatim_win32::window::input_desktop_opens(),
+            input_desktop_open: windows.input_desktop_opens(),
         }
     } else {
         Payload::None
@@ -406,8 +406,8 @@ pub(super) fn tell_win_event(
         checked: None,
     };
     match awaited {
-        Some(window) => tells.foreground(window, Some(tell), front, reads),
-        None => tells.place_seen(Held::Tell(Box::new(tell)), front, reads),
+        Some(window) => tells.foreground(window, Some(tell), front, windows.live()),
+        None => tells.place_seen(Held::Tell(Box::new(tell)), front, windows.live()),
     }
 }
 

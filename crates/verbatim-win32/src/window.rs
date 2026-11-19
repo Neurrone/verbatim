@@ -357,6 +357,15 @@ pub fn readability(handle: isize) -> Readability {
     if handle == 0 || !unsafe { IsWindow(Some(hwnd(handle))) }.as_bool() {
         return Readability::Gone;
     }
+    hang_state(handle)
+}
+
+/// [`readability`] of `handle`, a window just found to exist: whether a
+/// ghost window stands in for it, then whether the system reports its
+/// application hung, as [`readability`] tests them after `IsWindow`, for a
+/// caller that has just read `IsWindow` itself. Local calls.
+#[must_use]
+pub fn hang_state(handle: isize) -> Readability {
     if ghost_window_from_hung_window().is_some_and(|ghost| {
         // SAFETY: the function takes any window handle and returns null
         // when no ghost window stands in for it.

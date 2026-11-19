@@ -217,9 +217,10 @@ section 6.3).
   windows are read once for the event (`EventWindows`, over
   `verbatim_win32::window_facts::ReadOnce`), its window's class not at
   all when the hook's filter read it, and shared by the watch, the tell
-  and the progress path, its readability among them by the listener's
-  one judge; the foreground's part of a tell's facts is still read under
-  the tells' lock as the tell is placed. The console's events stay unhooked (`verbatim_ia2::suspend_kinds`) unless
+  and the progress path; every read of the path goes through it
+  (`EventReads`). The foreground's part of a tell's facts is read live
+  under the tells' lock as the tell is placed, and a value change's hang
+  judged again by the listener's one judge after its tell is sent. The console's events stay unhooked (`verbatim_ia2::suspend_kinds`) unless
   it starts with a console window in front, until one of that window's
   events names its thread.
 - It handles `Ping`, `ApplicationExited` (which ends the application's
