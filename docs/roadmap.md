@@ -1465,6 +1465,26 @@ Text and selection:
 - The remote caret program could leave out its two comparisons of the old and new selections' ends when the old selection is known at build time to hold nothing (`previous_collapsed`, `crates/verbatim-uia-rops/src/caret.rs`), since that case is a whole change already.
 - The caret read made with a focus chooses remote or classic reading by the previous focus's window, since the outpost's window tracking is updated after the focus is published; only the read's cost differs.
 
+Location commands (Dickson, 2026-11-19):
+
+- Report caret location falls back as NVDA's does
+  (`nvda/source/globalCommands.py` 1608 to 1612, 2743 to 2765, 1566 to
+  1572): with no caret, the location of the text's start; with no text
+  location, the focus object's own, "Object edges positioned 20.0 percent
+  from left edge of screen, 10.0 percent from top edge of screen, width
+  is 40.0 percent of screen, height is 50.0 percent of screen"
+  (`nvda/source/NVDAObjects/__init__.py` 650 to 672), from its bounding
+  rectangle (the existing rectangle property, one call at the press) and
+  the screen's size; with neither, "No location information". Verbatim
+  says "Not supported" for an object with no text and "No caret" for
+  text with no caret (`crates/verbatim-core/src/caret_location.rs`).
+  Report review cursor location falls back to the navigator object's
+  location the same way (1584 to 1585). The wording is taken from an
+  NVDA capture on a button and on a field with no caret before any
+  expectation is written. Whether NVDA's two object location commands
+  (the navigator object's and the focus object's, 1595 and 1622) come
+  with it, reusing the message, is Dickson's to decide.
+
 Typing and keys:
 
 - Verbatim echoes a typed character from its keyboard hook, before the application handles the key, where NVDA echoes from the application's typed-character event; a letter typed within about 40 ms of Tab is not echoed (Dickson, 2026-10-10, for a later milestone).
