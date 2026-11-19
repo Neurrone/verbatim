@@ -39,10 +39,14 @@
 //! In some launches Settings replaces the list's items as it opens, when
 //! the first suggestion is the list's current selection rather than the
 //! item its event named (`docs/parity/changes-and-selection.md`,
-//! "Selection in a list the focus controls"). The order of the first
-//! suggestion before the suggestions-opened sound holds by a margin of about 50 ms: the
-//! selection must reach the outpost before Settings' second change of the
-//! search box's relation.
+//! "Selection in a list the focus controls").
+//!
+//! As the list opens Settings changes the search box's relation twice,
+//! and the suggestions-opened sound is played for each, as NVDA plays it;
+//! the first comes before "Suggestions available", a limit of the order
+//! between the listener's and the outpost's tells (Dickson, 2026-11-19;
+//! `docs/parity/changes-and-selection.md`, "Suggestions appearing and
+//! going away").
 
 use std::io;
 
@@ -65,8 +69,10 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
         "blank",
     ]);
     // Each character's echo is cut off by the next key, the last heard in
-    // full; then the application's notification that suggestions are
-    // available, cut off by its selection of the first one.
+    // full; then the suggestions-opened sound for the search box's first
+    // change of its relation, the application's notification that
+    // suggestions are available, cut off by its selection of the first one,
+    // and the sound again for the relation's second change.
     scenario.type_text("sound").expect("types the query");
     // NVDA says the first suggestion as "list item", the name its event's
     // cache holds, which Settings has not set yet; Verbatim reads its name.
@@ -80,7 +86,9 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
         cut_off("u"),
         cut_off("n"),
         heard("d"),
+        heard("sound: suggestions-opened"),
         cut_off("Suggestions available"),
+        heard("sound: suggestions-opened"),
     ]);
     // Verbatim's utterance for the first suggestion shows that Settings
     // has filled the list; it is asserted below, from the agent's read.
@@ -92,11 +100,7 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
         panic!("the agent read {names:?}, not three suggestions");
     };
     let said = |name: &str, position: u32| format!("{name} {position} of {count}");
-    // The search box's suggestions relation plays the suggestions-opened
-    // indication after the first suggestion is said.
-    scenario
-        .speech()
-        .expect_sequence(&[heard(&said(first, 1)), heard("sound: suggestions-opened")]);
+    scenario.speech().expect_sequence(&[heard(&said(first, 1))]);
 
     // Down Arrow, which moves no caret in the one-line box, moves the
     // selection; NVDA queues the box's line for the key and cuts it off

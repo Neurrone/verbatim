@@ -57,13 +57,20 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
         "docs/parity/changes-and-selection.md",
         "Selection in a list the focus controls",
     );
+    // The suggestions-opened sound for each of the search box's two
+    // changes of its relation, the first before the notification, which
+    // the first suggestion cuts off, as in `settings_search_suggestions`
+    // (`docs/parity/changes-and-selection.md`, "Suggestions appearing and
+    // going away").
     scenario.speech().expect_sequence(&[
         cut_off("s"),
         cut_off("o"),
         cut_off("u"),
         cut_off("n"),
         heard("d"),
+        heard("sound: suggestions-opened"),
         cut_off("Suggestions available"),
+        heard("sound: suggestions-opened"),
     ]);
     // Verbatim's utterance for the first suggestion shows that Settings
     // has filled the list; it is asserted below, from the agent's read.
@@ -75,9 +82,7 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
         panic!("the agent read {names:?}, not one suggestion");
     };
     let suggestion = format!("{first} 1 of {count}");
-    scenario
-        .speech()
-        .expect_sequence(&[heard(&suggestion), heard("sound: suggestions-opened")]);
+    scenario.speech().expect_sequence(&[heard(&suggestion)]);
 
     scenario.send_keys(&["escape"]).expect("sends Escape");
     scenario

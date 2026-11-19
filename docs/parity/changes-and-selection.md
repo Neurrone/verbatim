@@ -295,6 +295,14 @@ list opens, is spoken by NVDA with the name its event's element carried,
 which Settings has not set yet ("list item 1 of 22"), and by Verbatim
 with the name read when the selection is handled ("Sound settings 1 of
 22"), since NVDA's word tells the user nothing (Dickson, 2026-10-20).
+Core asks the listener's read of a selection's item for that name
+(`Purpose::Selection`), which the read's fresh cache request already
+carries, so it costs no call; every other read keeps its event's cached
+name. mockapp's
+`a_selection_whose_event_carried_no_name_is_said_with_the_name_read`
+(`crates/mockapp/tests/controller_for.rs`) pins it in the recorded order:
+the event's cache without a name, the listener's check, the name set,
+then Core's read.
 
 ### Suggestions appearing and going away
 
@@ -316,7 +324,33 @@ automation ids, and nothing otherwise. NVDA's editable-text condition also asks
 for navigable text or a text selection; Verbatim takes the text pattern
 alone. Help text changes on the focus are followed too, and spoken as
 NVDA speaks a description change. The item status is not followed:
-NVDA's own handling of it is in app modules only. Settings' search box
+NVDA's own handling of it is in app modules only.
+
+As its suggestions open, Settings' search box raised its ControllerFor
+change twice, 45 to 60 ms apart, in both runs of
+`settings_search_suggestions` and `settings_search_suggestions_reentered`
+on 2026-11-19 (their flight recorders: two Suggestions changes, each
+read open), and Verbatim plays the suggestions-opened indication for
+each, as NVDA does: `event_controllerForChange` plays it whenever the
+field is the focus and `controllerFor` names elements
+(`NVDAObjects/behaviors.py` 231 to 236), `controllerFor` is read live,
+not from the base cache (`NVDAObjects/UIA/__init__.py` 2465 to 2467),
+and `eventHandler.queueEvent` queues each change with no check for a
+repeat (`eventHandler.py` 48 to 67). The scenarios expect
+both sounds. **matched**.
+
+A limit (Dickson, 2026-11-19): the first suggestions-opened sound comes
+before Settings' "Suggestions available" notification, which NVDA's
+capture says first. The notification reaches Core from the listener,
+after its check walks to the window in Settings, about 70 ms after it
+was raised; the ControllerFor change comes from the outpost at once,
+and Core's live read of the relation answers open before the
+notification arrives. Tells from two processes have no order between
+them (ADR 0003's limit on the order between the listener's and an
+outpost's events). The scenarios expect the sound, the notification cut
+off by the first suggestion, the second sound, then the suggestion.
+
+Settings' search box
 sometimes raises its ControllerFor change twice, about 5 ms apart, as
 its suggestions close, and both readers play the suggestions-closed
 sound for each change they receive: NVDA plays it whenever the field is

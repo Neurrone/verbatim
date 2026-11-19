@@ -34,13 +34,6 @@ Scenarios: the `windows_terminal_` scenarios generally, for example `windows_ter
 - Cause: Settings replaces the list's items as it opens, after raising the selection, so the selected element is in none of the elements the focus controls, and nothing is said, as `docs/parity/changes-and-selection.md` records.
 - Fix: none in Verbatim.
 
-## Settings' suggestions-opened sound before its notification
-
-- Scenarios: `settings_search_suggestions` and `settings_search_suggestions_reentered` (local only), every run on 2026-11-19 (6 of 6 on b43b3c2d, 3 of 3 on 8b8fba48 and on 17e50fce).
-- How: the suggestions-opened sound plays before "Suggestions available", where the scenario expects the notification first, cut off by the first suggestion.
-- Cause: the notification reaches Core through the listener, after its application's check thread walks to the window in Settings (`crates/verbatim-listener-logic/src/check.rs`), about 70 ms after it was raised; the suggestions change comes from the outpost at once, and Core's live read of the relation answers "open" before the notification arrives. Tells from the two processes have no order between them (ADR 0003's cross-pipe limit); the order changed with ab84a635 and e2f213c7.
-- Fix: a question for Dickson (what users hear), since NVDA's capture says the notification first.
-
 ## A combo box's "expanded" raised after its item's focus
 
 - Scenarios: `settings_combo_box_expanded` (local only), 1 of 2 runs on 2026-11-14.
