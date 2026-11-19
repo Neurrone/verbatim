@@ -55,6 +55,7 @@ const LIVE: &[&str] = scenario_tests! {
     crash_recovery
     verbatim_lifecycle
     quit_inside_a_modal_dialog
+    quit_inside_the_verbatim_menu
     speak_time_and_date
     toast
     foreground_progress_bar

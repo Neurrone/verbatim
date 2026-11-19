@@ -24,9 +24,11 @@ Public API:
   frame and tray exist, `on_ready` hands out the `GuiHandle`. It returns
   when the loop ends: after `Shutdown`, or when a replacing instance posts
   `WM_QUIT` to the hidden frame's thread. A `Shutdown` that arrives inside
-  a nested loop, a modal dialog's or a menu's, ends Verbatim's own modal
-  dialog and schedules the main loop's exit, which follows once the nested
-  loop returns; a native message or file box holds it until it is closed. It runs once per process; a
+  a nested loop ends that loop: Verbatim's own modal dialog with
+  `EndModal`, the popped menu with Win32 `EndMenu`, and a system message or
+  file dialog on the GUI thread (window class `#32770`) with a posted
+  `WM_CLOSE`, which it takes as Cancel; it then schedules the main loop's
+  exit, which follows once the nested loops return. It runs once per process; a
   second call fails, since wxWidgets cannot start again after it ends.
 - `shell_items` — the system tray and taskbar items the systrayList
   replica lists. `ShellItemsHost` (trait) is how the GUI gets them: its
@@ -76,9 +78,13 @@ Public API:
 The private modules:
 
 - `bridge` — the cxx bridge. Rust calls C++ to run the event loop
-  (`run_event_loop`), wake it from any thread (`wake_event_loop`, a
-  `CallAfter` guarded by a mutex and an application pointer that is
-  cleared when the loop ends), centre, show, and hide the frame, pop the
+  (`run_event_loop`), wake it from any thread (`wake_event_loop`, a window
+  message posted to the hidden frame, whose window procedure drains the
+  channel, guarded by a mutex and the frame's handle, which is cleared at
+  shutdown and when the loop ends; a window message because every modal
+  loop on the thread dispatches it, a popped menu's and a message box's
+  included, whereas wxWidgets' `CallAfter` wakes only through an event
+  object its own loop waits on), centre, show, and hide the frame, pop the
   menu, open, raise, and focus a dialog, read a window's native handle,
   and shut down. C++ calls methods of the opaque `GuiCore` when the user
   acts: a menu choice, a tray click, a setting change, commit, revert, the

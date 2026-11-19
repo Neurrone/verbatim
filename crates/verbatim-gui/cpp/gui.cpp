@@ -6,10 +6,14 @@
 // GuiCore when the user acts.
 //
 // Threading: everything here runs on the GUI thread, except
-// wake_event_loop, which any thread may call. It queues a call to
-// GuiCore::drain with CallAfter, guarded by a mutex and the application
-// pointer that OnExit clears, so a wake after the loop has ended does
-// nothing.
+// wake_event_loop, which any thread may call. It posts kWakeMessage to the
+// hidden frame, whose window procedure calls GuiCore::drain, guarded by a
+// mutex and the frame's handle, which shut_down and OnExit clear, so a wake
+// after the loop has ended does nothing. A posted window message, not
+// wxApp::CallAfter: every modal loop on the thread dispatches it, the
+// native ones too (a tracked menu, a message or file box), whereas
+// CallAfter only sets an event object that wxWidgets' own loop waits on, so
+// inside a native loop its call waited for some other message to arrive.
 //
 // Reentrancy: popping the menu and showing the Select Synthesizer dialog
 // run nested event loops, inside which Rust may be called again (a menu
@@ -28,10 +32,12 @@
 #include <wx/taskbar.h>
 #include <wx/textdlg.h>
 #include <wx/treectrl.h>
+#include <wx/msw/wrapwin.h>
 
 #include <cstddef>
 #include <cstdlib>
 #include <cstdint>
+#include <cwchar>
 #include <exception>
 #include <map>
 #include <mutex>
@@ -61,6 +67,10 @@ rust::Str Str(const std::string& utf8) {
 // Menu item ids, above wxWidgets' own range so they never collide with it.
 constexpr int kMenuSettings = wxID_HIGHEST + 1001;
 constexpr int kMenuExit = wxID_HIGHEST + 1002;
+
+// The message wake_event_loop posts to the hidden frame. WM_APP's range is
+// the application's own, and wxWidgets posts nothing in it to a frame.
+constexpr UINT kWakeMessage = WM_APP + 1;
 
 class TrayIcon;
 class SettingsDialogWindow;
@@ -99,9 +109,53 @@ struct Shell {
 // GUI thread only. Set for the duration of run_event_loop.
 Shell* g_shell = nullptr;
 
-// Guards g_wake_app, which wake_event_loop reads from any thread.
+// Guards g_wake_window, which wake_event_loop reads from any thread.
 std::mutex g_wake_mutex;
-wxApp* g_wake_app = nullptr;
+// The hidden frame's window while drained commands are wanted: set once the
+// frame exists, cleared before it is destroyed, so a wake never reaches a
+// destroyed window or one that reused its handle.
+HWND g_wake_window = nullptr;
+
+void SetWakeWindow(HWND window) {
+    std::lock_guard<std::mutex> lock(g_wake_mutex);
+    g_wake_window = window;
+}
+
+// The hidden frame: drains Rust's channel on every wake, whichever loop
+// dispatched it.
+class HiddenFrame : public wxFrame {
+public:
+    using wxFrame::wxFrame;
+
+    WXLRESULT MSWWindowProc(WXUINT message, WXWPARAM wParam, WXLPARAM lParam) override {
+        if (message == kWakeMessage) {
+            if (g_shell != nullptr) {
+                g_shell->core.drain();
+            }
+            return 0;
+        }
+        return wxFrame::MSWWindowProc(message, wParam, lParam);
+    }
+};
+
+// Ends the native modal loops on the GUI thread, which EndModal cannot: the
+// tracked menu, with EndMenu, and every system dialog (a message box, which
+// wxWidgets shows as a task dialog, or the file dialog), with WM_CLOSE,
+// which each takes as Cancel. wxWidgets' own dialogs have their own window
+// classes, so none of them is a system dialog.
+void EndNativeModalLoops() {
+    ::EndMenu();
+    ::EnumThreadWindows(
+        ::GetCurrentThreadId(),
+        [](HWND window, LPARAM) -> BOOL {
+            wchar_t name[16];
+            if (::GetClassNameW(window, name, 16) > 0 && std::wcscmp(name, L"#32770") == 0) {
+                ::PostMessageW(window, WM_CLOSE, 0, 0);
+            }
+            return TRUE;
+        },
+        0);
+}
 
 // The Verbatim menu: Settings, a separator, Exit.
 wxMenu* BuildMenu() {
@@ -1270,8 +1324,8 @@ public:
         // the frame must not end it.
         SetExitOnFrameDelete(false);
 
-        shell_.frame = new wxFrame(nullptr, wxID_ANY, shell_.title, wxDefaultPosition,
-                                   wxSize(1, 1), wxDEFAULT_FRAME_STYLE | wxFRAME_NO_TASKBAR);
+        shell_.frame = new HiddenFrame(nullptr, wxID_ANY, shell_.title, wxDefaultPosition,
+                                     wxSize(1, 1), wxDEFAULT_FRAME_STYLE | wxFRAME_NO_TASKBAR);
         shell_.frame->Bind(wxEVT_CLOSE_WINDOW, [](wxCloseEvent& event) {
             // Closing the hidden frame hides it; only shutdown lets the
             // default handling destroy it.
@@ -1297,19 +1351,15 @@ public:
         shell_.tray->Bind(wxEVT_TASKBAR_LEFT_DOWN,
                           [](wxTaskBarIconEvent&) { g_shell->core.tray_clicked(); });
 
-        {
-            std::lock_guard<std::mutex> lock(g_wake_mutex);
-            g_wake_app = this;
-        }
+        SetWakeWindow(shell_.frame->GetHWND());
         shell_.core.ready();
         return true;
     }
 
     int OnExit() override {
-        {
-            std::lock_guard<std::mutex> lock(g_wake_mutex);
-            g_wake_app = nullptr;
-        }
+        // The loop can end without shut_down, on a replacing instance's
+        // WM_QUIT; the frame is destroyed after this.
+        SetWakeWindow(nullptr);
         if (shell_.tray != nullptr) {
             shell_.tray->RemoveIcon();
             delete shell_.tray;
@@ -1360,12 +1410,8 @@ std::int32_t run_event_loop(const GuiCore& core, const ShellText& text) {
 
 void wake_event_loop() {
     std::lock_guard<std::mutex> lock(g_wake_mutex);
-    if (g_wake_app != nullptr) {
-        g_wake_app->CallAfter([] {
-            if (g_shell != nullptr) {
-                g_shell->core.drain();
-            }
-        });
+    if (g_wake_window != nullptr) {
+        ::PostMessageW(g_wake_window, kWakeMessage, 0, 0);
     }
 }
 
@@ -1477,6 +1523,8 @@ void shut_down() {
         return;
     }
     g_shell->shutting_down = true;
+    SetWakeWindow(nullptr);
+    EndNativeModalLoops();
     if (g_shell->modal != nullptr) {
         g_shell->modal->EndModal(wxID_CANCEL);
     }
@@ -1496,10 +1544,9 @@ void shut_down() {
         g_shell->frame = nullptr;
     }
     // Shutdown can arrive inside a nested loop, a modal dialog's or a
-    // menu's, where ExitMainLoop does nothing because the main loop is not
-    // the one running; ScheduleExit ends the main loop once the nested one
-    // has returned. A native message or file box, which EndModal cannot
-    // end, holds the exit until it is closed.
+    // native one's, where ExitMainLoop does nothing because the main loop
+    // is not the one running; each nested loop was ended above, and
+    // ScheduleExit ends the main loop once they have returned.
     // Shutdown arrives only from the running event loop, so the main loop
     // exists; anything else is a logic bug, which must not leave Verbatim
     // running.
