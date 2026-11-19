@@ -27,7 +27,7 @@ use crate::event_queue::Cx;
 /// ([`Arrivals`]). Every utterance its function speaks carries it, so a
 /// key pressed after the entry arrived, whose press cut speech, fences
 /// that speech off.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub(crate) struct Fence(KeySeq);
 
 impl Fence {

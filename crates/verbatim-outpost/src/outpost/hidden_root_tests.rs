@@ -153,3 +153,36 @@ fn the_check_costs_nothing_for_a_shown_root_and_two_calls_for_a_hidden_one() {
     );
     destroy(dialog);
 }
+
+/// Verbatim's own hidden tray frame, wxWidgets' `wxWindowNR`, in front at
+/// every tray menu's opening as recorded: no dialog, so read as it is.
+#[test]
+fn verbatims_hidden_tray_frame_is_read_as_it_is() {
+    use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
+    use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+    use windows::Win32::UI::WindowsAndMessaging::{DefWindowProcW, RegisterClassW, WNDCLASSW};
+
+    unsafe extern "system" fn procedure(
+        window: HWND,
+        message: u32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+    ) -> LRESULT {
+        // SAFETY: the default handling of this class's messages.
+        unsafe { DefWindowProcW(window, message, wparam, lparam) }
+    }
+    // SAFETY: this process's own module handle.
+    let instance = unsafe { GetModuleHandleW(None) }.expect("the module");
+    let class = WNDCLASSW {
+        lpfnWndProc: Some(procedure),
+        hInstance: instance.into(),
+        lpszClassName: w!("wxWindowNR"),
+        ..Default::default()
+    };
+    // SAFETY: a class of static data and a procedure of this module,
+    // registered again harmlessly by a rerun in the same process.
+    let _ = unsafe { RegisterClassW(&raw const class) };
+    let frame = top_level(w!("wxWindowNR"));
+    assert_eq!(hidden_root(raw(frame)), Root::Read);
+    destroy(frame);
+}

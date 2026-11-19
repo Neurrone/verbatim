@@ -302,6 +302,52 @@ fn spoken(said: &Said) -> Option<String> {
     }
 }
 
+/// What answering the read out with `reply` at `at_us` said, each
+/// utterance with the key number its speech is fenced by, which the key's
+/// cut compares: speech carrying a lower number than the key's is cut.
+fn keyed(held: &mut Held, at_us: u64, reply: Reply) -> Vec<(String, Option<u64>)> {
+    fn of(said: &Said) -> Option<(String, Option<u64>)> {
+        match said {
+            Said::Speak(utterance, key) => Some((
+                utterance
+                    .segments
+                    .iter()
+                    .filter(|segment| !matches!(segment.content, SegmentContent::Mark(_)))
+                    .map(|segment| format!("{:?}", segment.content))
+                    .collect::<Vec<_>>()
+                    .join(" "),
+                key.map(KeySeq::get),
+            )),
+            Said::ForKey(_, said) => of(said),
+            _ => None,
+        }
+    }
+    let number = out(held);
+    feed(
+        &mut held.state,
+        &mut held.runtime,
+        Timed {
+            at_us,
+            input: answer(OUTPOST, number, reply),
+        },
+    )
+    .unwrap()
+    .iter()
+    .filter_map(|effect| match effect {
+        Effect::Said(said) => of(said),
+        _ => None,
+    })
+    .collect()
+}
+
+/// The dialog and its field read at a key's press, fenced below the key, so
+/// its cut silences them, then the key's echo, past its cut.
+const KEYED_SPOKEN: [(&str, Option<u64>); 3] = [
+    ("Label(\"Import a Theme\") Role(Dialog)", None),
+    ("Label(\"File name:\") Role(EditableText)", None),
+    ("Character(\"a\")", Some(1)),
+];
+
 /// A request as these tests name it.
 fn sent(request: &Wire) -> String {
     match request {
@@ -309,6 +355,7 @@ fn sent(request: &Wire) -> String {
         Wire::CurrentFocus { hidden, .. } => format!("CurrentFocus {hidden:?}"),
         Wire::AwaitShown { window } => format!("AwaitShown {}", window.0),
         Wire::CompleteUia(complete) => format!("CompleteUia {:?}", complete.hidden),
+        Wire::ReadObject(_) => "ReadObject".to_owned(),
         Wire::Follow(_) => "Follow".to_owned(),
         other => format!("{other:?}"),
     }
@@ -693,8 +740,10 @@ fn a_background_menu_start_leaves_the_wait() {
         NOTHING
     );
     assert_eq!(shown(&mut held, 1_200), [ASK_DIALOG]);
-    let said = answer_out(&mut held, 1_250, field_read(Some("File name:")));
-    assert_eq!(said[..2], DIALOG_SPOKEN);
+    assert_eq!(
+        answer_out(&mut held, 1_250, field_read(Some("File name:"))),
+        DIALOG_SPOKEN
+    );
 }
 
 /// A background application's focus, refused by acceptance, joins the
@@ -820,9 +869,10 @@ fn a_key_during_the_wait_reads_the_dialog_at_once_then_is_handled() {
         step(&mut held, 1_150, press(1, 1_150, typed("a"))),
         [CANCEL_KEY, ASK_DIALOG_ANYWAY]
     );
-    let said = answer_out(&mut held, 1_200, field_read(None));
-    assert_eq!(said[..2], DIALOG_SPOKEN_HIDDEN);
-    assert_eq!(said[2..], ["Character(\"a\")"]);
+    assert_eq!(
+        keyed(&mut held, 1_200, field_read(None)),
+        KEYED_SPOKEN.map(|(said, key)| (said.to_owned(), key))
+    );
 }
 
 /// The same, the key pressed while the dialog's first read is out: no
@@ -835,9 +885,10 @@ fn a_key_before_the_wait_reads_the_dialog_at_once_then_is_handled() {
         answer_out(&mut held, 1_100, hidden_dialog()),
         [ASK_DIALOG_ANYWAY]
     );
-    let said = answer_out(&mut held, 1_200, field_read(None));
-    assert_eq!(said[..2], DIALOG_SPOKEN_HIDDEN);
-    assert_eq!(said[2..], ["Character(\"a\")"]);
+    assert_eq!(
+        keyed(&mut held, 1_200, field_read(None)),
+        KEYED_SPOKEN.map(|(said, key)| (said.to_owned(), key))
+    );
 }
 
 /// Tab pressed while the dialog waits: the dialog and its field are
@@ -867,8 +918,9 @@ fn a_key_with_the_user_elsewhere_says_nothing_for_the_dialog() {
     let mut held = dialog_asked();
     assert_eq!(step(&mut held, 1_050, press(1, 1_050, typed("a"))), NOTHING);
     assert_eq!(step(&mut held, 1_060, in_front(OWNER, OWNER, APP)), NOTHING);
-    let said = answer_out(&mut held, 1_100, hidden_dialog());
-    assert!(!said.iter().any(|said| said.contains("Import a Theme")));
+    // Nothing for the dialog, and the key typed on the owner's button,
+    // which echoes nothing.
+    assert_eq!(answer_out(&mut held, 1_100, hidden_dialog()), NOTHING);
 }
 
 /// The dialog destroyed while it waits: answered not there, its run ends
@@ -1074,4 +1126,122 @@ fn a_wait_ended_by_a_key_before_it_began_rebuilds_alike() {
     let said = answer_out(&mut rebuilt, 1_200, field_read(None));
     assert_eq!(said[..2], DIALOG_SPOKEN_HIDDEN);
     assert_eq!(said[2..], ["Character(\"a\")"]);
+}
+
+/// The foreground moving to an unrelated application while the dialog
+/// waits ends the wait by the dialog's own rule, as the user elsewhere,
+/// not by the foreground's tree-and-owner stop, which the wait is exempt
+/// from.
+#[test]
+fn the_foreground_moving_to_another_application_ends_the_wait_as_elsewhere() {
+    let mut held = waiting();
+    assert_eq!(
+        step(&mut held, 1_150, in_front(70, 70, OTHER_APP)),
+        [CANCEL_LEFT]
+    );
+    assert!(held.state.queue.front_for_tests().is_none());
+}
+
+/// A UI Automation menu opened outside the dialog by the attended
+/// application ends the wait as a focus does, NVDA taking a menu opening
+/// for a focus (`UIAHandler/__init__.py` 261), and the menu is read. The
+/// dialog waits here in a re-take, since an opening behind a focus or
+/// foreground candidate still pending is dropped at its arrival, as NVDA
+/// drops it.
+#[test]
+fn a_uia_menu_opened_outside_the_dialog_ends_the_wait() {
+    let mut held = waiting();
+    assert_eq!(
+        step(&mut held, 1_150, owner_control_focus(6, DIALOG, 1_150)),
+        [CANCEL_LEFT, "send Outpost(Pid(40)) MsaaRun 6 Check"]
+    );
+    assert_eq!(
+        answer_out(&mut held, 1_200, unfocused()),
+        ["send Outpost(Pid(40)) CurrentFocus Check"]
+    );
+    assert_eq!(answer_out(&mut held, 1_250, hidden_dialog()), [AWAIT]);
+    let mut opened = crate::entries::tests::uia_tell(9, Vec::new());
+    opened.kind = EventKind::UiaMenuOpened;
+    opened.at_us = 1_300;
+    assert_eq!(
+        step(&mut held, 1_300, crate::entries::tests::entry(opened)),
+        [CANCEL_LEFT, "send Listener ReadObject"]
+    );
+}
+
+/// A modifier pressed alone, which joins no queue entry, ends the wait
+/// exactly as it cuts speech, by the one rule of the speech fence: the
+/// dialog is read at once, hidden.
+#[test]
+fn a_modifier_alone_ends_the_wait_as_its_press_cuts_speech() {
+    let mut held = waiting();
+    let effects = crate::entries::route(
+        &mut held.state,
+        &mut held.runtime,
+        (TraceId::from_raw(1_150), 1_150),
+        &verbatim_model::request::QueueInput::SpeechCut {
+            key: KeySeq::new(1),
+        },
+    )
+    .said();
+    let asked: Vec<String> = effects
+        .iter()
+        .filter_map(|effect| match effect {
+            Said::Queue(verbatim_model::request::QueueEffect::Cancel { to, cancel }) => {
+                Some(format!("cancel {:?} {:?}", to.reader, cancel.reason))
+            }
+            Said::Queue(verbatim_model::request::QueueEffect::Send { to, ask }) => {
+                Some(format!("send {:?} {}", to.reader, sent(&ask.request)))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(asked, [CANCEL_KEY, ASK_DIALOG_ANYWAY]);
+}
+
+/// The ending focus capped by the limiter, four newer focuses of its
+/// application arriving within one pump window, hands the dialog to the
+/// newest candidate of its run, as a merge keeps it.
+#[test]
+fn an_ending_focus_capped_by_the_limiter_hands_the_dialog_on() {
+    let held = on_the_owner();
+    let candidate = |window, at_us| {
+        let Input::Entry(entry) = owner_control_focus(window, DIALOG, at_us) else {
+            unreachable!("an entry")
+        };
+        entry
+    };
+    let mut ending = candidate(6, 1_000);
+    if let Entry::Candidate(focus) = &mut ending {
+        focus.ended_wait = Some(WindowHandle(DIALOG));
+    }
+    let mut waiting = std::collections::VecDeque::new();
+    crate::event_queue::arrive::<crate::entries::Entries>(&held.state, &mut waiting, ending);
+    for (window, at_us) in [(7, 1_001), (8, 1_002), (9, 1_003), (10, 1_004)] {
+        crate::event_queue::arrive::<crate::entries::Entries>(
+            &held.state,
+            &mut waiting,
+            candidate(window, at_us),
+        );
+    }
+    let kept: Vec<(u64, Option<WindowHandle>)> = waiting
+        .iter()
+        .flat_map(|item| match item {
+            crate::event_queue::Item::Run(entries) => entries.clone(),
+            _ => Vec::new(),
+        })
+        .filter_map(|entry| match entry {
+            Entry::Candidate(focus) => Some((focus.ids.window.0, focus.ended_wait)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        kept,
+        [
+            (7, None),
+            (8, None),
+            (9, None),
+            (10, Some(WindowHandle(DIALOG)))
+        ]
+    );
 }

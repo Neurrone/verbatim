@@ -817,9 +817,7 @@ impl Listener {
             checks,
             registering,
             nudger,
-            shown: shown::ToEventThread {
-                inputs: shown_inputs,
-            },
+            shown: shown::ToEventThread::new(shown_inputs),
             _event_thread: event_thread,
         })
     }
@@ -900,9 +898,11 @@ impl Listener {
                 let abandons = cancel.reason.abandons_call();
                 let number = cancel.number;
                 // A request for a window's show is the WinEvent thread's,
-                // which answers the cancel of its own and leaves the rest.
-                self.shown
-                    .hand(shown::ShownInput::Cancel(cancel), || self.nudge_shown());
+                // which answers its cancel; any other's is the readers',
+                // and wakes no WinEvent thread.
+                if self.shown.cancel(cancel, || self.nudge_shown()) {
+                    return;
+                }
                 self.readers.cancel(cancel);
                 // A read abandoned for the foreground lets its kept
                 // reference go; its thread releases its own as its call
@@ -930,10 +930,7 @@ impl Listener {
     fn request(&self, ask: Box<Ask>) {
         if let Request::AwaitShown { window } = ask.request {
             let token = shown::ShownToken::new(ask.number, &self.outgoing);
-            self.shown
-                .hand(shown::ShownInput::Request { window, token }, || {
-                    self.nudge_shown()
-                });
+            self.shown.request((window, token), || self.nudge_shown());
             return;
         }
         self::ask((&self.readers, &self.kept), ask);
@@ -4507,30 +4504,44 @@ mod tests {
         listener.nudger.sync();
     }
 
-    /// The answers among what `sent` brings within `wait`, by number, with
-    /// their detail: every other message is left out.
-    fn answers_within(
+    /// The answers `sent` brings before the answer to the fence `fence`,
+    /// by number, with their detail, every other message left out: the
+    /// fence is a request for the desktop window's show, which the
+    /// `WinEvent` thread answers at once, in order behind every answer it
+    /// made before, so each answer before it is there and none after.
+    fn answered(
+        listener: &Listener,
         sent: &mpsc::Receiver<ListenerToCore>,
-        wait: Duration,
+        fence: u64,
     ) -> Vec<(u64, Outcome, String)> {
-        let deadline = Instant::now() + wait;
+        let desktop = asked::handle(verbatim_win32::window::desktop_window());
+        await_shown(listener, fence, desktop);
         let mut answers = Vec::new();
-        while let Some(left) = deadline.checked_duration_since(Instant::now()) {
-            match sent.recv_timeout(left) {
+        loop {
+            match sent.recv_timeout(Duration::from_secs(10)) {
+                Ok(ListenerToCore::Answer(answer)) if answer.number.0 == fence => {
+                    return answers;
+                }
                 Ok(ListenerToCore::Answer(answer)) => {
                     answers.push((answer.number.0, answer.outcome, answer.detail));
                 }
                 Ok(_) => {}
-                Err(_) => break,
+                Err(error) => panic!("the fence's answer, not {error:?}"),
             }
         }
-        answers
     }
 
-    /// How long a test reads what the listener wrote: every answer it
-    /// expects was handed to the writer before its sync returned, so the
-    /// bound only gives the writer's thread time to write them.
-    const WRITTEN: Duration = Duration::from_millis(300);
+    /// Every answer `sent` brings until the listener's pipe closes.
+    fn answered_to_the_end(sent: &mpsc::Receiver<ListenerToCore>) -> Vec<(u64, Outcome, String)> {
+        sent.iter()
+            .filter_map(|message| match message {
+                ListenerToCore::Answer(answer) => {
+                    Some((answer.number.0, answer.outcome, answer.detail))
+                }
+                _ => None,
+            })
+            .collect()
+    }
 
     fn shown(number: u64) -> (u64, Outcome, String) {
         (number, Outcome::Result(Reply::Shown), String::new())
@@ -4548,10 +4559,10 @@ mod tests {
         let (listener, sent) = shows_listener();
         let window = popup();
         await_shown(&listener, 1, handle_of(window));
-        assert_eq!(answers_within(&sent, WRITTEN), []);
+        assert_eq!(answered(&listener, &sent, 101), []);
         set_shown(window, true);
         listener.nudger.sync();
-        assert_eq!(answers_within(&sent, WRITTEN), [shown(1)]);
+        assert_eq!(answered(&listener, &sent, 102), [shown(1)]);
         stop_with_no_registration(listener);
         destroy(window);
     }
@@ -4565,7 +4576,7 @@ mod tests {
         set_shown(window, true);
         listener.nudger.sync();
         await_shown(&listener, 1, handle_of(window));
-        assert_eq!(answers_within(&sent, WRITTEN), [shown(1)]);
+        assert_eq!(answered(&listener, &sent, 103), [shown(1)]);
         stop_with_no_registration(listener);
         destroy(window);
     }
@@ -4582,13 +4593,13 @@ mod tests {
         set_shown(window, false);
         listener.nudger.sync();
         await_shown(&listener, 1, handle_of(window));
-        assert_eq!(answers_within(&sent, WRITTEN), []);
+        assert_eq!(answered(&listener, &sent, 104), []);
         set_shown(window, true);
         set_shown(window, false);
         listener.nudger.sync();
-        assert_eq!(answers_within(&sent, WRITTEN), [shown(1)]);
+        assert_eq!(answered(&listener, &sent, 105), [shown(1)]);
         await_shown(&listener, 2, handle_of(window));
-        assert_eq!(answers_within(&sent, WRITTEN), []);
+        assert_eq!(answered(&listener, &sent, 106), []);
         stop_with_no_registration(listener);
         destroy(window);
     }
@@ -4605,7 +4616,7 @@ mod tests {
         listener.nudger.sync();
         await_shown(&listener, 2, handle);
         assert_eq!(
-            answers_within(&sent, WRITTEN),
+            answered(&listener, &sent, 107),
             [
                 (1, Outcome::NotThere, String::new()),
                 (2, Outcome::NotThere, String::new())
@@ -4631,7 +4642,7 @@ mod tests {
             0,
         );
         listener.nudger.sync();
-        assert_eq!(answers_within(&sent, WRITTEN), [cancelled(1)]);
+        assert_eq!(answered(&listener, &sent, 108), [cancelled(1)]);
         let Listener {
             outgoing,
             readers,
@@ -4644,8 +4655,34 @@ mod tests {
         assert!(registering.join().expect("the installation ends").is_none());
         checks.stop();
         readers.stop();
-        assert_eq!(answers_within(&sent, WRITTEN), [cancelled(2)]);
         outgoing.close();
+        assert_eq!(answered_to_the_end(&sent), [cancelled(2)]);
         destroy(window);
+    }
+
+    /// A cancel of a request the `WinEvent` thread was never handed, a
+    /// reading thread's, goes to the readers and nudges no `WinEvent` thread;
+    /// one of a request it was handed goes to it, once.
+    #[test]
+    fn only_the_cancel_of_a_shows_request_reaches_the_winevent_thread() {
+        let (inputs, taken) = std::sync::mpsc::channel();
+        let shown = shown::ToEventThread::new(inputs);
+        let cancel = |number| verbatim_model::request::Cancel {
+            number: RequestNumber(number),
+            reason: verbatim_model::request::CancelReason::Withdrawn,
+        };
+        let nudged = std::cell::Cell::new(0);
+        let nudge = || {
+            nudged.set(nudged.get() + 1);
+            true
+        };
+        assert!(!shown.cancel(cancel(7), nudge));
+        let (writer, _reader) = outgoing();
+        let waiter = shown::ShownToken::new(RequestNumber(8), &Arc::new(writer));
+        shown.request((WindowHandle(5), waiter), nudge);
+        assert!(shown.cancel(cancel(8), nudge));
+        assert!(!shown.cancel(cancel(8), nudge));
+        assert_eq!(nudged.get(), 2, "the request's nudge and its cancel's");
+        assert_eq!(taken.try_iter().count(), 2);
     }
 }

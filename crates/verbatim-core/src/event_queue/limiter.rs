@@ -307,7 +307,8 @@ fn join_run<L: Logic>(
 type Counted = (usize, Option<usize>, MsaaKey, MsaaClass);
 
 /// NVDA's caps on the waiting MSAA entries of one pump window: the newest
-/// four run candidates kept; the newest ten other MSAA entries of each
+/// four run candidates kept, what a capped one carries handed to the
+/// newest kept in its run ([`Logic::merged`]); the newest ten other MSAA entries of each
 /// raising thread kept, foreground tells counted among them, entries on
 /// the logic's exempt ids kept but counted. A foreground tell is dropped
 /// only when neither cap keeps it, as NVDA keeps a copy in each cache. The
@@ -405,7 +406,12 @@ fn limit<L: Logic>(facts: &L::Facts, waiting: &mut VecDeque<Item<L::Entry>>) {
                 if let Some(Item::Run(run)) = waiting.get_mut(place)
                     && inner < run.len()
                 {
-                    run.remove(inner);
+                    // What a capped candidate carries goes to the newest
+                    // kept in its run, as a merge keeps it.
+                    let removed = run.remove(inner);
+                    if let Some(newest) = run.last_mut() {
+                        L::merged(&removed, newest);
+                    }
                 }
             }
             None => {

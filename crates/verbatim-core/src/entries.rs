@@ -558,12 +558,18 @@ impl Logic for Entries {
 
     fn stops(
         facts: &SrState,
-        (_, request): (&Entry, &Wire),
+        (front, request): (&Entry, &Wire),
         waiting: &std::collections::VecDeque<crate::event_queue::Item<Entry>>,
         backend: &BackendCache,
         (now_us, foreground): (u64, Option<Foreground>),
     ) -> Option<verbatim_model::request::CancelReason> {
-        crate::focus::shown::stops(facts, request, waiting, backend, (now_us, foreground))
+        crate::focus::shown::stops(
+            facts,
+            (request, front.fence()),
+            waiting,
+            backend,
+            (now_us, foreground),
+        )
     }
 
     fn merged(removed: &Entry, into: &mut Entry) {

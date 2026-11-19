@@ -106,23 +106,28 @@ pub(crate) enum Ending {
 
 /// The ending condition for the hidden dialog `dialog`, a pure function of
 /// the foreground record `foreground`, the entries waiting behind the
-/// front, `waiting`, and Core's facts `view` (Dickson, 2026-11-19, his
-/// option C and the keypress). It is the user being elsewhere when any of
-/// these holds:
+/// front, `waiting`, Core's facts `view`, and whether a key was pressed
+/// since the front joined, `keyed` (Dickson, 2026-11-19, his option C and
+/// the keypress). It is the user being elsewhere when any of these holds:
 ///
 /// - the foreground record names a window other than `dialog` (a
 ///   top-level window's root is itself), owner and owned windows included;
 /// - a menu or popup start waits for a window whose top-level window is not
 ///   `dialog`, accepted, from the application holding attention;
-/// - an MSAA or UI Automation focus waits for a window whose top-level
-///   window is not `dialog`, that the one definition's rows needing no read
-///   accept: valid, or needing only its read ([`focus_ends`]).
+/// - an MSAA or UI Automation focus, a UI Automation menu opening among
+///   them as NVDA takes one for a focus (`UIAHandler/__init__.py` 261),
+///   waits for a window whose top-level window is not `dialog`, that the
+///   one definition's rows needing no read accept: valid, or needing only
+///   its read ([`focus_ends`]).
 ///
-/// Otherwise a key waiting, any key, ends it as [`Ending::Key`].
+/// Otherwise any key pressed since the front joined, a modifier alone
+/// among them, ends it as [`Ending::Key`]: exactly the keys whose press
+/// fences speech off, by the one rule of the speech fence
+/// (`crate::keys::entry::Arrivals`).
 pub(crate) fn ending(
     dialog: WindowHandle,
     waiting: &VecDeque<Item<Entry>>,
-    view: &View<'_>,
+    (view, keyed): (&View<'_>, bool),
     foreground: Option<&Foreground>,
 ) -> Option<Ending> {
     let elsewhere = foreground.is_some_and(|foreground| foreground.window != dialog)
@@ -131,9 +136,7 @@ pub(crate) fn ending(
     if elsewhere {
         return Some(Ending::Left);
     }
-    entries(waiting)
-        .any(|entry| matches!(entry, Entry::Press(_)))
-        .then_some(Ending::Key)
+    keyed.then_some(Ending::Key)
 }
 
 /// Every entry of `waiting`, in arrival order, a run's candidates and the
@@ -178,7 +181,7 @@ fn focus_ends(entry: &Entry, dialog: WindowHandle, view: &View<'_>) -> bool {
                 candidate.confirmation.facts(),
             )
         }
-        Entry::UiaFocus(focus) if focus.tell.kind == EventKind::UiaFocus => {
+        Entry::UiaFocus(focus) => {
             if request_window(&focus.tell).is_none_or(|window| window.top_level == dialog) {
                 return false;
             }
@@ -192,10 +195,12 @@ fn focus_ends(entry: &Entry, dialog: WindowHandle, view: &View<'_>) -> bool {
 /// The front's request `request` stops now when it is a wait for a window's
 /// show whose ending condition holds ([`ending`]), judged as it begins and
 /// after every input while it waits: for the user being elsewhere, and
-/// withdrawn for a key, whose read follows at once.
+/// withdrawn for a key, whose read follows at once. `front_fence` is the
+/// front entry's speech fence: a key fenced above it was pressed since it
+/// joined.
 pub(crate) fn stops(
     facts: &SrState,
-    request: &Wire,
+    (request, front_fence): (&Wire, crate::keys::entry::Fence),
     waiting: &VecDeque<Item<Entry>>,
     backend: &BackendCache,
     (now_us, foreground): (u64, Option<Foreground>),
@@ -210,7 +215,8 @@ pub(crate) fn stops(
         now_us,
         run_before_valid: false,
     };
-    match ending(*window, waiting, &view, foreground.as_ref())? {
+    let keyed = facts.arrivals.fence() > front_fence;
+    match ending(*window, waiting, (&view, keyed), foreground.as_ref())? {
         Ending::Left => Some(CancelReason::LeftHiddenDialog),
         Ending::Key => Some(CancelReason::Withdrawn),
     }

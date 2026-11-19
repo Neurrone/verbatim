@@ -269,9 +269,11 @@ impl<L: Logic> Core<L> {
                 }
             }
             Input::Tick => self.tick(),
-            // Settled by the step's end, as every input is; a `Ready` not
-            // admitted was logged by `admit_ready`.
-            Input::Settle | Input::ReaderReady(_) => {}
+            // Settled by the step's end, as every input is. Core's facts changed outside the queue, a key's cut of
+            // speech among them, which may end the front's wait.
+            Input::Settle => self.stop_if_ended(),
+            // A `Ready` not admitted was logged by `admit_ready`.
+            Input::ReaderReady(_) => {}
         }
         loop {
             self.take_next();

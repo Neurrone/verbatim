@@ -163,18 +163,65 @@ impl OnEventThread {
     }
 }
 
+/// How many of the requests handed to the `WinEvent` thread the pipe thread
+/// remembers, newest kept, so that only their cancels go there.
+const HANDED_KEPT: usize = 16;
+
 /// The pipe thread's end: hands an input to the `WinEvent` thread and
-/// nudges it.
+/// nudges it. It remembers the numbers of the requests it handed, so that a
+/// cancel of any other request, a reading thread's, wakes no `WinEvent`
+/// thread. The numbers are its own record of what it sent, judged by
+/// nothing: a cancel of a request the thread has answered costs one nudge
+/// that finds nothing, and one forgotten past [`HANDED_KEPT`] is answered
+/// by the show, the destruction or the shutdown.
 pub(super) struct ToEventThread {
-    pub(super) inputs: Sender<ShownInput>,
+    inputs: Sender<ShownInput>,
+    /// The numbers of the requests handed, newest last; the pipe thread's
+    /// alone.
+    handed: std::cell::RefCell<std::collections::VecDeque<RequestNumber>>,
 }
 
 impl ToEventThread {
-    /// Hands `input` on, then nudges the thread with `nudge`. A thread
-    /// that has ended dropped its end of the channel, and every input with
-    /// it, so a request it never takes is answered cancelled as its token
-    /// is dropped.
-    pub(super) fn hand(&self, input: ShownInput, nudge: impl FnOnce() -> bool) {
+    /// The end sending on `inputs`.
+    pub(super) fn new(inputs: Sender<ShownInput>) -> Self {
+        Self {
+            inputs,
+            handed: std::cell::RefCell::default(),
+        }
+    }
+
+    /// Hands Core's request for `window`'s show, answered by `token`, on,
+    /// then nudges the thread with `nudge`. A thread that has ended dropped
+    /// its end of the channel, and every input with it, so a request it
+    /// never takes is answered cancelled as its token is dropped.
+    pub(super) fn request(
+        &self,
+        (window, token): (WindowHandle, ShownToken),
+        nudge: impl FnOnce() -> bool,
+    ) {
+        let mut handed = self.handed.borrow_mut();
+        if handed.len() == HANDED_KEPT {
+            handed.pop_front();
+        }
+        handed.push_back(token.number());
+        drop(handed);
+        self.hand(ShownInput::Request { window, token }, nudge);
+    }
+
+    /// Hands Core's `cancel` on, nudging the thread with `nudge`, only when
+    /// it names a request handed to the thread; whether it did.
+    pub(super) fn cancel(&self, cancel: Cancel, nudge: impl FnOnce() -> bool) -> bool {
+        let mut handed = self.handed.borrow_mut();
+        let Some(at) = handed.iter().position(|number| *number == cancel.number) else {
+            return false;
+        };
+        handed.remove(at);
+        drop(handed);
+        self.hand(ShownInput::Cancel(cancel), nudge);
+        true
+    }
+
+    fn hand(&self, input: ShownInput, nudge: impl FnOnce() -> bool) {
         if self.inputs.send(input).is_ok() {
             let _ = nudge();
         }
