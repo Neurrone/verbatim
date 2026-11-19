@@ -610,7 +610,11 @@ hidden, and read again once it is shown ([How focus works](../explanation/design
 - The listener hears every window object's show already: each costs one
   comparison of its ids, and a look in the waiters only while one is
   kept. No message to Core and no new wake-up, but the request and its
-  answer.
+  answer: the request wakes the WinEvent thread once, by its nudge, and
+  so does its cancel. The pipe thread hands the WinEvent thread only the
+  cancels of the requests it handed it, so a cancel of any other request,
+  a reading thread's, wakes it not at all (verbatim-listener's
+  `only_the_cancel_of_a_shows_request_reaches_the_winevent_thread`).
 - Bound: a dialog never shown, with no key and no other ending, holds
   the queue for the 13-second due time ([ADR 0003](adr/0003-readers-tell-core-asks.md),
   "Limits accepted").

@@ -164,8 +164,12 @@ commits above hold; only the read is postponed, by the time left until
 the show. Covered by the 2026-11-19 ruling, as differences from NVDA:
 
 - the user elsewhere before the show (the foreground, a menu or a focus
-  outside the dialog) says nothing for the hidden dialog, where NVDA
-  says it without its text;
+  outside the dialog) says nothing for the hidden dialog. Derived from
+  the source, not captured: NVDA reads the newest valid focus or
+  foreground of each pass (`IAccessibleHandler/__init__.py` 1061 to
+  1092), so it says the dialog without its text when its pass reads the
+  dialog before the ending event arrives, and nothing for it when both
+  fall in one pass;
 - a key pressed before the show reads the dialog at once, without its
   text, as NVDA would read it then;
 - a dialog never shown, with no key and no other ending, holds the queue

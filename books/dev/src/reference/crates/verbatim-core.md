@@ -208,9 +208,12 @@ again from its start. The ending condition (`shown::ending`) is a pure
 function of the dialog's window, the foreground record and the entries
 waiting behind the front: the user is elsewhere when the record names
 another window, a menu or popup start outside the dialog from the
-application holding attention waits, or a focus outside it that the one
-definition's rows needing no read accept waits; otherwise a key waiting
-ends it as a key. The queue judges it as the request begins, ending one
+application holding attention waits, or a focus outside it, a UI
+Automation menu opening among them, that the one definition's rows
+needing no read accept waits; otherwise a key pressed since the front
+joined ends it as a key, by the speech fence's one rule
+(`Arrivals::fence` above the front's fence), a modifier alone included,
+whose cut settles the queue. The queue judges it as the request begins, ending one
 that holds already unsent (`Shared::stopped_at_once`), and after every
 entry that joins and every foreground report while it waits
 (`Logic::stops`); the foreground's tree-and-owner stop does not apply to
@@ -218,7 +221,7 @@ it (`Logic::own_foreground_rule`). The outcome alone tells the function
 which ending held, so a function rebuilt from its checkpoint decides
 alike: elsewhere (`LeftHiddenDialog`), the read ends, nothing said, and
 the oldest such focus waiting carries the dialog (`ended_wait`, kept
-through a merge by `Logic::merged`); a key (withdrawn), it is read again
+through a merge or the limiter's cap by `Logic::merged`); a key (withdrawn), it is read again
 at once with `HiddenRoot::ReadAnyway`. The application's exit ends the wait not
 there and cancels it to the listener (`Table::answer_cancelling`). A run
 or UI Automation focus carrying `ended_wait` that executes nothing while
