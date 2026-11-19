@@ -99,7 +99,12 @@ pub(crate) fn body(scenario: &mut Scenario, state: &mut ScenarioState) {
 /// The speech of a folder load: `context`, the window's title on the
 /// opening and "Items View list", then `item`, with File Explorer's
 /// placeholder optional before each of `context` and before the item, and
-/// said at most once in all.
+/// said at most twice in all: File Explorer may raise two focus events on
+/// it a moment apart, and when the second's keyboard focus read fails, as
+/// the placeholder is already gone, the duplicate test lets it through, as
+/// NVDA's does (`docs/parity/focus-events.md`, "A focus whose keyboard
+/// focus read fails"; GitHub runs 44409298708 and 44419853799; Dickson,
+/// 2026-11-19).
 fn expect_after_load(scenario: &mut Scenario, context: &[&str], item: &str) {
     let placeholder = "Working on it...";
     let before = scenario.speech().optional_outcomes().len();
@@ -113,7 +118,7 @@ fn expect_after_load(scenario: &mut Scenario, context: &[&str], item: &str) {
         .map(|outcome| outcome.endings.len())
         .sum();
     assert!(
-        said <= 1,
-        "{placeholder:?} was said {said} times in the folder load ending in {item:?}, where at most once is accepted"
+        said <= 2,
+        "{placeholder:?} was said {said} times in the folder load ending in {item:?}, where at most twice is accepted"
     );
 }

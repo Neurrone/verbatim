@@ -709,9 +709,12 @@ pub(crate) fn expect_prompt_read(
 /// repeat is Core's duplicate, or, when the focus is being lost as it is
 /// read, dropped, the earlier element's keyboard focus read before the
 /// sender's (`books/dev/src/reference/adr/0001-focus.md`, "The listener's checks, ported from
-/// NVDA's focus handler"). In the runs kept, opening a window,
-/// it was said twice at most, in 10 runs of 9 scenarios.
-pub(crate) const LAUNCH_REPEATS: usize = 1;
+/// NVDA's focus handler"). Windows Terminal may also move the focus to
+/// another element and back as it opens, each move a new focus by NVDA's
+/// duplicate test, so NVDA says the terminal again too: said three times
+/// on GitHub's runner in run 44409298708 (Dickson accepted the return,
+/// 2026-11-19).
+pub(crate) const LAUNCH_REPEATS: usize = 2;
 
 /// How many times more a second window opened in the running Windows
 /// Terminal ([`open_windows_terminal_window`]) may have its terminal
