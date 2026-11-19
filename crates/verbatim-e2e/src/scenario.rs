@@ -1549,6 +1549,32 @@ impl Scenario {
         self.require_in_front(title, launch, opened)
     }
 
+    /// Waits, on window events, for a visible top-level window titled
+    /// exactly `title`, such as the ghost window Windows shows for a hung
+    /// window.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error, with the foreground report, if none is within
+    /// [`WINDOW_TIMEOUT`].
+    pub fn wait_for_window_titled(&mut self, title: &str) -> io::Result<()> {
+        self.begin_action(&format!("wait for a window titled {title:?}"));
+        self.await_titled_exactly(title)
+    }
+
+    /// Sends `window` the first question UI Automation asks a window,
+    /// `WM_GETOBJECT` for its root, and waits up to `limit` for its answer
+    /// (`Request::WaitForUiaAnswer`): one call into the window's thread that
+    /// changes nothing in it, as a screen reader's read is.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails.
+    pub fn call_into_window(&mut self, window: u64, limit: Duration) -> io::Result<UiaRootAnswer> {
+        self.begin_action(&format!("call into window {window}"));
+        self.agent.wait_for_uia_answer(window, limit)
+    }
+
     /// Waits for a window titled exactly `title`.
     fn await_titled_exactly(&mut self, title: &str) -> io::Result<()> {
         let (titled, desktop) = self.agent.wait_for_window(

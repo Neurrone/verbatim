@@ -1,13 +1,19 @@
 //! Verbatim's menu closed over an application that has stopped responding
 //! (`docs/parity/focus-events.md`, "A window that stops responding"): a
 //! `mockapp` MSAA window stalls (mockapp's `stall`) while Verbatim's menu
-//! is in front, until Windows judges it hung. Windows shows no ghost
-//! behind the menu while nothing calls into the window (Verbatim alone
-//! made none in 30 s, 3 of 3 runs on 2026-11-19; the captures' ghost
-//! behind the menu came with NVDA or event recorders reading the window);
-//! Escape brings the hung window forward, and Windows puts its ghost,
-//! titled with " (Not Responding)", in front. The check 50 ms later,
-//! NVDA's fake focus, finds the ghost in front: Verbatim
+//! is in front, until Windows judges it hung. Windows makes a ghost for a
+//! hung window only when something calls into it, and Verbatim
+//! deliberately makes no call into a window it knows is hung, so with
+//! Verbatim alone no ghost appears (none in 30 s, 3 of 3 runs on
+//! 2026-11-19). The captures' ghost behind the menu came from NVDA's own
+//! reads of the window, which NVDA makes whatever its state, and from the
+//! event recorders. So the harness makes one call into the hung window
+//! itself, the first question UI Automation asks a window
+//! (`Scenario::call_into_window`), which changes nothing in mockapp, and
+//! waits for Windows to show the ghost, titled with " (Not Responding)",
+//! behind the menu. Escape closes the menu with the ghost in front of the
+//! hung window, and the check 50 ms later, NVDA's fake focus, finds the
+//! ghost in front: Verbatim
 //! speaks it as NVDA's plain window object of it, "<title> (Not
 //! Responding) window", with no sound (NVDA alpha-58022, 20 of 20 runs;
 //! Dickson, 2026-11-19). Report focus, report the navigator object and
@@ -29,10 +35,12 @@
 //! for a command it takes six seconds into the stall, while still taking
 //! no message, past the five seconds after which Windows judges a window
 //! that takes none hung (`IsHungAppWindow`); and the window events that
-//! show the ghost in front.
+//! show the ghost.
 
 use std::io;
 use std::time::Duration;
+
+use verbatim_agent::protocol::UiaRootAnswer;
 
 use crate::registry::{ScenarioState, startup_speech};
 use crate::scenario::{Scenario, WINDOW_TIMEOUT, harness_marker};
@@ -61,8 +69,8 @@ fn line_events() -> String {
 /// an MSAA window holding one button "OK", whose focus it raises on its
 /// own client, its standard input a
 /// pipe and its lines setting the events of `events`, and waits for it to
-/// take the foreground. Returns its process id.
-fn open(scenario: &mut Scenario, events: &str) -> io::Result<u32> {
+/// take the foreground. Returns its process id and window.
+fn open(scenario: &mut Scenario, events: &str) -> io::Result<(u32, u64)> {
     let directory = scenario.run_directory().to_owned();
     let title = harness_marker(HUNG);
     let fixture = scenario.harness_file(HUNG, "json");
@@ -97,8 +105,12 @@ fn open(scenario: &mut Scenario, events: &str) -> io::Result<u32> {
         &title,
         &output,
     )?;
-    Ok(window.pid)
+    Ok((window.pid, window.window))
 }
+
+/// How long the harness's call into the hung window waits for an answer
+/// that does not come.
+const CALL_LIMIT: Duration = Duration::from_secs(2);
 
 /// How far into a stall mockapp takes the command whose acknowledgement
 /// is the evidence that Windows judges the window hung: past the five
@@ -154,7 +166,7 @@ fn stall_ended(scenario: &mut Scenario, pid: u32, events: &str, ms: u64) {
 
 pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     let events = line_events();
-    let pid = open(scenario, &events).expect("opens the mockapp window");
+    let (pid, hung_window) = open(scenario, &events).expect("opens the mockapp window");
     let title = harness_marker(HUNG);
     let window = format!("{title} window");
     let ghost = format!("{title} (Not Responding)");
@@ -164,9 +176,22 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     scenario.speech().expect(&[&window]);
 
     // The menu over the window, which stalls until Windows judges it hung;
-    // Escape brings it forward, and its ghost comes in front.
+    // one call into it, as NVDA's reads make, and Windows shows its ghost
+    // behind the menu.
     super::open_verbatim_menu(scenario);
     stall(scenario, pid, &events, FIRST_STALL_MS);
+    assert_eq!(
+        scenario
+            .call_into_window(hung_window, CALL_LIMIT)
+            .expect("calls into the hung window"),
+        UiaRootAnswer::TimedOut {
+            limit_ms: u64::try_from(CALL_LIMIT.as_millis()).expect("fits")
+        },
+        "the hung window answers nothing"
+    );
+    scenario
+        .wait_for_window_titled(&ghost)
+        .expect("Windows shows the hung window's ghost");
 
     scenario.send_keys(&["escape"]).expect("sends escape");
     scenario.speech().expect(&[&plain]);
