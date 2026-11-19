@@ -182,11 +182,15 @@ pub(crate) unsafe extern "system" fn keyboard_hook(
 /// ([`ForegroundView`]). Enter is held only in a text field other than a
 /// terminal, as NVDA binds its new-line script only where a new line is
 /// announced, never in a terminal (`docs/parity/text.md`, "Enter in a
-/// text field"): in a terminal it may only be deferred.
+/// text field"), and not while an input method or a keyboard text service
+/// composes typing in the window in front (`composes`), where NVDA's
+/// focus is the composition, which has no new-line script
+/// (`NVDAHelper/__init__.py` 419 to 427): there it may only be deferred.
 fn permit(
     view: Option<HookForeground>,
     (outstanding, vk): (bool, u16),
     front: fn() -> HWND,
+    composes: impl Fn(HWND) -> bool,
 ) -> (HoldPermit, Option<HWND>) {
     let Some(view) =
         view.filter(|view| view.holds_keys && (view.focus_text.has_text() || outstanding))
@@ -196,14 +200,32 @@ fn permit(
     let window = front();
     let permit = if typed::window_handle(window) == view.window {
         match view.focus_text {
-            FocusTextKind::Field => HoldPermit::HoldAndDefer,
+            FocusTextKind::Field if vk != VK_ENTER || !composes(window) => HoldPermit::HoldAndDefer,
             FocusTextKind::Terminal if vk != VK_ENTER => HoldPermit::HoldAndDefer,
-            FocusTextKind::Terminal | FocusTextKind::None => HoldPermit::Defer,
+            FocusTextKind::Field | FocusTextKind::Terminal | FocusTextKind::None => {
+                HoldPermit::Defer
+            }
         }
     } else {
         HoldPermit::None
     };
     (permit, Some(window))
+}
+
+/// [`permit`] for the key of virtual-key code `vk`, from Core's `view`,
+/// the machine's line and the hook's translator, which knows whether an
+/// input method composes in the window in front.
+fn key_permit(
+    state: &HookState,
+    view: Option<HookForeground>,
+    vk: u16,
+) -> (HoldPermit, Option<HWND>) {
+    permit(
+        view,
+        (state.machine.has_outstanding(), vk),
+        state.front,
+        |window| state.typing.composes(window, view),
+    )
 }
 
 /// Enter's virtual-key code, the main keyboard's and the numpad's.
@@ -352,11 +374,7 @@ pub(crate) fn decide(
     // report reuses it; the other reports read the time again.
     let now_us = unix_us();
     let view = read_view(state);
-    let (permit, window) = permit(
-        view,
-        (state.machine.has_outstanding(), event.vk),
-        state.front,
-    );
+    let (permit, window) = key_permit(state, view, event.vk);
     let decision = state.machine.on_key(KeyInput {
         event,
         now: now_us,
@@ -689,14 +707,14 @@ mod tests {
     #[test]
     fn enter_is_held_in_a_field_and_typed_in_a_terminal() {
         let reports = Arc::new(Mutex::new(Vec::new()));
-        let enter_id = GestureId::parse("kb:enter").expect("valid id");
+        let id = |raw| GestureId::parse(raw).expect("valid id");
         let sink = Arc::clone(&reports);
         let foreground = Arc::new(ForegroundView::new());
         foreground.set(Some(IN_FRONT));
         let mut state = HookState::new(
             DecisionMachine::new(
                 DecisionConfig::default(),
-                GestureMap::new([]).with_held_only([enter_id]),
+                GestureMap::new([]).with_held_only([id("kb:enter"), id("kb:numpadenter")]),
             ),
             (
                 Box::new(|_, _| {}),
@@ -706,34 +724,85 @@ mod tests {
             typed::Typing::default(),
         );
         state.front = window_in_front;
-        let enter = |pressed| KeyEvent {
-            vk: 0x0D,
+        let key = |vk, extended, pressed| KeyEvent {
+            vk,
             scan_code: 0x1C,
-            extended: false,
+            extended,
             injected: false,
             pressed,
         };
-        assert_eq!(
-            decide(&mut state, enter(true), 0x1C, 0),
-            KeyDecision::Swallow
-        );
-        assert_eq!(
-            decide(&mut state, enter(false), 0x1C, 0),
-            KeyDecision::Swallow
-        );
+        let press = |state: &mut HookState, vk, extended| {
+            [true, false].map(|pressed| decide(state, key(vk, extended, pressed), 0x1C, 0))
+        };
+        let (swallow, pass) = (KeyDecision::Swallow, KeyDecision::Pass);
+        // Enter and the numpad's Enter, each held in the field.
+        assert_eq!(press(&mut state, 0x0D, false), [swallow, swallow]);
         state.machine.passed_on(1);
+        assert_eq!(press(&mut state, 0x0D, true), [swallow, swallow]);
+        state.machine.passed_on(2);
+        // Shift+Enter, no caret key, passes as the carriage return it types.
+        assert_eq!(decide(&mut state, key(0xA0, false, true), 0, 0), pass);
+        assert_eq!(press(&mut state, 0x0D, false), [pass, pass]);
+        assert_eq!(decide(&mut state, key(0xA0, false, false), 0, 0), pass);
+        // In a terminal, or with no text, Enter passes as typed text.
         for focus_text in [FocusTextKind::Terminal, FocusTextKind::None] {
             state.foreground.set(Some(HookForeground {
                 focus_text,
                 ..IN_FRONT
             }));
-            assert_eq!(decide(&mut state, enter(true), 0x1C, 0), KeyDecision::Pass);
-            assert_eq!(decide(&mut state, enter(false), 0x1C, 0), KeyDecision::Pass);
+            assert_eq!(press(&mut state, 0x0D, false), [pass, pass]);
         }
         assert_eq!(
             described(&reports.lock().unwrap()),
-            ["held kb:enter #1", "typed \r", "typed \r"]
+            [
+                "held kb:enter #1",
+                "held kb:numpadenter #2",
+                "typed \r",
+                "typed \r",
+                "typed \r"
+            ]
         );
+        // Control+Enter in the field passes, never held; what it types is
+        // read from the keyboard's own modifiers, which the test does not
+        // press (`typed`'s tests state its line feed ends the word).
+        state.foreground.set(Some(IN_FRONT));
+        let before = reports.lock().unwrap().len();
+        assert_eq!(decide(&mut state, key(0xA2, false, true), 0, 0), pass);
+        assert_eq!(press(&mut state, 0x0D, false), [pass, pass]);
+        assert_eq!(decide(&mut state, key(0xA2, false, false), 0, 0), pass);
+        assert!(
+            !reports.lock().unwrap()[before..]
+                .iter()
+                .any(|report| matches!(report, KeyReport::Held { .. })),
+            "Control+Enter is not held"
+        );
+    }
+
+    /// Enter in a field is held unless an input method or text service
+    /// composes in the window in front, where it may only be deferred; a
+    /// caret key is held there all the same; in a terminal Enter is never
+    /// held.
+    #[test]
+    fn enter_is_not_held_while_an_input_method_composes() {
+        const RIGHT: u16 = 0x27;
+        let composing = |_| true;
+        let not = |_| false;
+        let field = Some(IN_FRONT);
+        let terminal = Some(HookForeground {
+            focus_text: FocusTextKind::Terminal,
+            ..IN_FRONT
+        });
+        let permit_of = |view, vk, composes: &dyn Fn(HWND) -> bool| {
+            permit(view, (false, vk), window_in_front, composes).0
+        };
+        assert_eq!(permit_of(field, VK_ENTER, &not), HoldPermit::HoldAndDefer);
+        assert_eq!(permit_of(field, VK_ENTER, &composing), HoldPermit::Defer);
+        assert_eq!(
+            permit_of(field, RIGHT, &composing),
+            HoldPermit::HoldAndDefer
+        );
+        assert_eq!(permit_of(terminal, VK_ENTER, &not), HoldPermit::Defer);
+        assert_eq!(permit_of(terminal, RIGHT, &not), HoldPermit::HoldAndDefer);
     }
 
     /// While Core's view of the window in front says keys may not be held

@@ -478,6 +478,15 @@ pub(crate) fn key(state: &mut SrState, kind: TerminalKeyKind, at_ms: u64, trace:
     model.pending.push_back(PendingKey { kind, at_ms, trace });
 }
 
+/// The kinds of the keys `node`'s model holds pending, oldest first, for
+/// tests of the keys it takes.
+#[cfg(test)]
+pub(crate) fn pending_kinds_for_tests(state: &SrState, node: NodeId) -> Vec<TerminalKeyKind> {
+    model_of(state, node)
+        .map(|model| model.pending.iter().map(|key| key.kind.clone()).collect())
+        .unwrap_or_default()
+}
+
 /// The reading rules' key for `kind`, reaching the program at `at_ms`.
 fn rules_key(kind: &TerminalKeyKind, at_ms: u64) -> Key {
     Key {

@@ -151,8 +151,11 @@ read from the machine's line, taken as made), so the app sends it on
 after the held key, in the order pressed. The clearing keys, typed
 characters and any other key are never held for a read. Enter is held
 only in a text field other than a terminal, as NVDA's new-line script is
-bound only there (Dickson, 2026-11-19): with the focus in a terminal its
-permit is `Defer`, so it passes, or waits behind a held key, as typed
+bound only there (Dickson, 2026-11-19), and not when an input method's
+layout or a keyboard text service composes in the window in front
+(`Typing::composes`, the test that also stops translation), as NVDA's
+focus is then the composition: with the focus in a terminal, or a
+composition possible, its permit is `Defer`, so it passes, or waits behind a held key, as typed
 text, the carriage return its translation gives.
 
 A gesture's mask (the menu guard, `docs/parity/input.md`, "A modifier

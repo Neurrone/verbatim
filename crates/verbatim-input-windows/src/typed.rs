@@ -152,10 +152,11 @@ impl Typing {
         if !modifiers.allow_typing() && !control_only {
             return None;
         }
-        let layout = foreground_layout(front(), view);
-        if is_input_method(layout) || is_text_service(self.active_keyboard_profile(), layout) {
+        let window = front();
+        if self.composes(window, view) {
             return None;
         }
+        let layout = foreground_layout(window, view);
         let state = modifiers.key_state();
         let mut buffer = [0u16; 8];
         // SAFETY: the key state and the output buffer are locals of the
@@ -181,6 +182,15 @@ impl Typing {
             return ends_word(units).then_some(Typed::Control);
         }
         typed(units)
+    }
+
+    /// Whether an input method's layout, or a keyboard text service for its
+    /// language, composes the keys typed into the foreground window
+    /// `window` (Core's `view` naming a console host's own thread): the
+    /// hook then translates nothing and holds no Enter.
+    pub(crate) fn composes(&self, window: HWND, view: Option<HookForeground>) -> bool {
+        let layout = foreground_layout(window, view);
+        is_input_method(layout) || is_text_service(self.active_keyboard_profile(), layout)
     }
 
     /// What one `VK_PACKET` key's UTF-16 unit types.

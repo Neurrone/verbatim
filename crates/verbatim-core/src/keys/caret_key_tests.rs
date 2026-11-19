@@ -1641,7 +1641,8 @@ fn enter_marked_by_a_later_key_says_only_the_word_it_ends() {
 }
 
 /// Enter held for a terminal, by a hook view behind the focus, is sent at
-/// once with no read, as the carriage return it types there.
+/// once with no read, and the terminal's model takes it as Enter, the
+/// carriage return it types there.
 #[test]
 fn enter_bound_to_a_terminal_is_sent_with_no_read() {
     let mut held = editing();
@@ -1649,6 +1650,11 @@ fn enter_bound_to_a_terminal_is_sent_with_no_read() {
         role: Role::Terminal,
         ..bound(&held)
     };
+    crate::terminal::reading::modelled_for_tests(
+        &mut held.state,
+        terminal.node,
+        crate::event_queue::RequestWindow::of_node(&terminal.window),
+    );
     let sent = step(
         &mut held,
         1_000,
@@ -1656,6 +1662,38 @@ fn enter_bound_to_a_terminal_is_sent_with_no_read() {
     );
     assert_eq!(sent.strokes, [vec![1]]);
     assert_eq!(sent.text, NO_REQUESTS);
+    assert_eq!(
+        crate::terminal_model::pending_kinds_for_tests(&held.state, terminal.node),
+        [crate::terminal::TerminalKeyKind::Enter]
+    );
+}
+
+/// A key released by its 150 ms timer before its turn runs no script: a
+/// movement key keeps the word typed, Enter's carriage return still ends
+/// it and speaks it, and Backspace's U+0008 still drops its last
+/// character.
+#[test]
+fn a_key_released_by_its_timer_keeps_the_word_and_applies_its_character() {
+    for (motion, said, kept) in [
+        (CaretMotion::NextCharacter, NO_WORDS.to_vec(), "cat"),
+        (CaretMotion::NewLine, vec![spoken("cat")], ""),
+        (CaretMotion::Backspace, NO_WORDS.to_vec(), "ca"),
+    ] {
+        let mut held = editing();
+        word_typed(&mut held, "cat");
+        let binding = bound(&held);
+        let _ = step(
+            &mut held,
+            1_000,
+            held_key(1, CaretMotion::NextCharacter, 1_000, &binding),
+        );
+        let _ = step(&mut held, 2_000, held_key(2, motion, 2_000, &binding));
+        let released = step(&mut held, 152_000, Input::Tick);
+        assert_eq!(released.strokes, [vec![1, 2]], "{motion:?}");
+        assert_eq!(released.text, NO_REQUESTS, "{motion:?}");
+        assert_eq!(released.said, said, "{motion:?}");
+        assert_eq!(held.state.typed_word, kept, "{motion:?}");
+    }
 }
 
 /// The listener's tell of a switch away from the user's input desktop.

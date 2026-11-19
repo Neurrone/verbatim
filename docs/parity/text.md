@@ -266,7 +266,10 @@ that is empty only the opening fields of the character at the caret
 application receives then ends the word and speaks it.
 
 Verbatim: **matched**: Enter is a caret key held in a text field other
-than a terminal (Dickson, 2026-11-19;
+than a terminal, unless an input method or keyboard text service
+composes in the window, where NVDA's focus is the composition, which has
+no new-line script (`nvda/source/NVDAHelper/__init__.py` 419 to 427)
+(Dickson, 2026-11-19;
 [holding caret keys](../../books/dev/src/explanation/design/key-holding.md)),
 and says what the script says from its watch's final read; at its end
 its carriage return ends the word typed, as in "Typed-character echo"
