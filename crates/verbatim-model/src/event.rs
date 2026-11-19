@@ -1255,6 +1255,16 @@ pub enum Effect {
     /// The reducer changed a reader setting itself, by a toggle key; the
     /// shell saves the new settings.
     SettingsChanged(ReaderSettings),
+    /// The listener's configuration: what it judges its own reads under,
+    /// sent at every [`Input::Settings`] whatever its value, and at any
+    /// change the reducer makes itself, carrying the value as it stands, so
+    /// the last to arrive is current. Whether background progress bars are
+    /// reported, by which the listener skips the read of a value change
+    /// whose window the acceptance test refuses (Dickson, 2026-11-19).
+    ListenerConfiguration {
+        /// [`ReaderSettings::report_background_progress_bars`].
+        report_background_progress_bars: bool,
+    },
     /// The effect on behalf of the key with this trace ID, whatever input
     /// caused it: a key that waited behind a held key is handled while the
     /// reducer handles the held key's read (the read before a held key, or

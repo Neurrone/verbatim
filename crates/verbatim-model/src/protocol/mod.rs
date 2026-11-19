@@ -338,6 +338,15 @@ pub enum CoreToListener {
         /// The position of the last message carrying tokens Core handled.
         acknowledged: u64,
     },
+    /// What the listener judges its own reads under, set by Core alone: at
+    /// its launch through its arguments, then on every change. While
+    /// `report_background_progress_bars` is false, the listener skips the
+    /// read of a value change whose window the acceptance test refuses,
+    /// as NVDA's acceptance drops it (Dickson, 2026-11-19).
+    Configuration {
+        /// Whether background progress bars are reported.
+        report_background_progress_bars: bool,
+    },
 }
 
 impl CoreToListener {
@@ -351,7 +360,8 @@ impl CoreToListener {
             | CoreToListener::Shutdown
             | CoreToListener::Request(_)
             | CoreToListener::Cancel(_)
-            | CoreToListener::ElementsHeld { .. } => {}
+            | CoreToListener::ElementsHeld { .. }
+            | CoreToListener::Configuration { .. } => {}
         }
     }
 
@@ -366,7 +376,8 @@ impl CoreToListener {
             | CoreToListener::Shutdown
             | CoreToListener::Request(_)
             | CoreToListener::Cancel(_)
-            | CoreToListener::ElementsHeld { .. } => 0,
+            | CoreToListener::ElementsHeld { .. }
+            | CoreToListener::Configuration { .. } => 0,
         }
     }
 
@@ -381,6 +392,7 @@ impl CoreToListener {
             | CoreToListener::Ping { .. }
             | CoreToListener::Shutdown => Kind::Lifecycle,
             CoreToListener::ElementsHeld { .. } => Kind::Release,
+            CoreToListener::Configuration { .. } => Kind::Configuration,
         }
     }
 }
@@ -862,6 +874,11 @@ pub enum Kind {
     /// end, each from one ordered path per generation, the owner thread's
     /// writer or the child's own pipe.
     Lifecycle,
+    /// What the receiver judges its own reads under, set by Core alone: a
+    /// user setting a reader needs before a call, sent at its launch and on
+    /// every change (`books/dev/src/explanation/design/ownership.md`, "No
+    /// back-channel").
+    Configuration,
 }
 
 /// A message an outpost sends ahead of everything waiting in its outbound

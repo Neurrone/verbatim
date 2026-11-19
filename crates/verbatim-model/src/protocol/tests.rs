@@ -95,7 +95,10 @@ fn next_core_to_listener(previous: Option<&CoreToListener>) -> Option<CoreToList
             tokens: vec![crate::tell::ElementToken(2)],
             acknowledged: 4,
         },
-        CoreToListener::ElementsHeld { .. } => return None,
+        CoreToListener::ElementsHeld { .. } => CoreToListener::Configuration {
+            report_background_progress_bars: true,
+        },
+        CoreToListener::Configuration { .. } => return None,
     })
 }
 
@@ -211,6 +214,7 @@ fn every_variant_has_its_reviewed_kind() {
             "Request: Ask",
             "Cancel: Ask",
             "ElementsHeld: Release",
+            "Configuration: Configuration",
         ]
     );
     assert_eq!(

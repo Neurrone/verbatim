@@ -48,7 +48,8 @@
 //! one at its answer (a test-harness rule).
 //!
 //! Run as `verbatim-listener.exe --listener --pipe-in <handle> --pipe-out
-//! <handle> [--ignore-pids <pid,pid>]` — its own executable, with no
+//! <handle> --generation <n> --background-bars on|off [--ignore-pids
+//! <pid,pid>]` — its own executable, with no
 //! target pid, supervised by the same machinery as the outposts.
 
 use std::cell::RefCell;
@@ -95,12 +96,14 @@ use crate::reading::Readers;
 
 pub(crate) mod asked;
 mod checking;
+mod configuration;
 mod event_windows;
 mod tells;
 
 pub use asked::uia_bar_place;
 use asked::{UiaJob, UiaReading};
 use checking::{CheckEvent, Checks, Kept};
+use configuration::{BackgroundBars, ListenerConfiguration, Told, admits_bar, reads_value_change};
 
 use crate::value_change::{Found, Judgement, ValueChange, ValueChangeKnowledge, probed_of};
 use event_windows::{EventReads, EventWindows};
@@ -139,6 +142,8 @@ struct Outgoing {
     sender: Sender<Waiting>,
     /// The processes whose progress bars are not read.
     ignored: IgnoredProcesses,
+    /// What the listener judges its own reads under, as Core last set it.
+    configuration: ListenerConfiguration,
     /// Whether the desktop-wide UIA subscriptions have been installed, or
     /// their installation has failed: until then every UIA event is dropped
     /// ([`Self::uia_event_process`]).
@@ -426,34 +431,40 @@ unsafe extern "system" fn fired<T: Timed>(
 
 impl Outgoing {
     /// Sends through `sender`, reading no progress bar of the processes
-    /// `ignored` names.
+    /// `ignored` names, judging its reads under `bars` until Core's next
+    /// configuration command.
     ///
     /// # Errors
     ///
     /// Returns the error of creating the foreground hold's timer.
-    fn new(sender: Sender<Waiting>, ignored: IgnoredProcesses) -> io::Result<Self> {
+    fn new(
+        sender: Sender<Waiting>,
+        ignored: IgnoredProcesses,
+        bars: BackgroundBars,
+    ) -> io::Result<Self> {
         let tells = Arc::new(Tells::new(sender.clone()));
         let hold = PoolTimer::new(&tells)?;
-        Ok(Self::with_tells(sender, ignored, tells, Some(hold)))
+        Ok(Self::with_tells(sender, (ignored, bars), tells, Some(hold)))
     }
 
     /// [`new`](Self::new) with no timer, for a test, whose hold ends only
     /// by the foreground or a later tell.
     #[cfg(test)]
-    fn untimed(sender: Sender<Waiting>, ignored: IgnoredProcesses) -> Self {
+    fn untimed(sender: Sender<Waiting>, ignored: IgnoredProcesses, bars: BackgroundBars) -> Self {
         let tells = Arc::new(Tells::new(sender.clone()));
-        Self::with_tells(sender, ignored, tells, None)
+        Self::with_tells(sender, (ignored, bars), tells, None)
     }
 
     fn with_tells(
         sender: Sender<Waiting>,
-        ignored: IgnoredProcesses,
+        (ignored, bars): (IgnoredProcesses, BackgroundBars),
         tells: Arc<Tells>,
         hold_timer: Option<PoolTimer<Tells>>,
     ) -> Self {
         Self {
             sender,
             ignored,
+            configuration: ListenerConfiguration::new(bars),
             uia_installed: AtomicBool::new(false),
             readiness: Mutex::new(Readiness::Starting(Vec::new())),
             clock: Clock::default(),
@@ -654,11 +665,11 @@ impl Listener {
     fn new(
         sender: Sender<Waiting>,
         generation: u64,
-        ignored: IgnoredProcesses,
+        (ignored, bars): (IgnoredProcesses, BackgroundBars),
     ) -> io::Result<Self> {
         Self::start(
             sender,
-            (generation, ignored),
+            (generation, ignored, bars),
             Box::new(|outgoing, readers, checks| {
                 install_desktop_subscriptions(
                     (outgoing, readers, checks),
@@ -690,10 +701,10 @@ impl Listener {
     /// starting the thread that installs the UIA subscriptions.
     fn start(
         sender: Sender<Waiting>,
-        (generation, ignored): (u64, IgnoredProcesses),
+        (generation, ignored, bars): (u64, IgnoredProcesses, BackgroundBars),
         install: InstallSubscriptions,
     ) -> io::Result<Self> {
-        let outgoing = Arc::new(Outgoing::new(sender, ignored)?);
+        let outgoing = Arc::new(Outgoing::new(sender, ignored, bars)?);
         Self::with_outgoing(outgoing, generation, install)
     }
 
@@ -842,6 +853,13 @@ impl Listener {
                 self.outgoing.urgent(ListenerToCore::ExitHandled { pid });
             }
             CoreToListener::IdleQuery { round } => self.idle_query(round),
+            // Judged under from now on, by every thread that reads it.
+            CoreToListener::Configuration {
+                report_background_progress_bars,
+            } => self
+                .outgoing
+                .configuration
+                .set(BackgroundBars::of(report_background_progress_bars)),
             CoreToListener::Request(ask) => self.request(ask),
             CoreToListener::Cancel(cancel) => {
                 let abandons = cancel.reason.abandons_call();
@@ -990,14 +1008,14 @@ fn on_win_event(
         class.map(|class| (event.hwnd, class)),
     );
     watch_win_event(outgoing, watch, event, (arrived_us, front), &windows);
-    tell_win_event(
+    let told = tell_win_event(
         &outgoing.tells,
         applications,
         event,
         (arrived_us, front),
         &windows,
     );
-    route_win_event(outgoing, readers, knowledge, event, &windows);
+    route_win_event(outgoing, readers, knowledge, (event, told), &windows);
 }
 
 /// What the foreground's watch takes from a `WinEvent` observed at
@@ -1389,9 +1407,15 @@ fn toast_subscription(
 /// makes no cross-process call: an element whose cached control type is not
 /// a progress bar, whose window's provider is not native (UIA's proxy for a
 /// classic window, heard by the hook instead), or whose window is hung is
-/// dropped, and a range value that is not a number too, parsed once here;
-/// the bar is then queued for its application's reading thread, behind
-/// Core's requests, which reads where it is and sends it on, unasked.
+/// dropped, and a range value that is not a number too, parsed once here.
+/// A bar with its own window is then judged by acceptance while background
+/// progress bars are not reported, with local reads of that window and no
+/// call into the application, and dropped when refused ([`admits_bar`]),
+/// as NVDA judges acceptance once the nearest window is known and before
+/// it makes the object (Dickson, 2026-11-19); a windowless bar is judged
+/// on the reading thread once its nearest window is found. The bar is then
+/// queued for its application's reading thread, behind Core's requests,
+/// which reads where it is and sends it on, unasked.
 fn progress_subscription(
     outgoing: &Arc<Outgoing>,
     readers: &Arc<Readers<UiaReading>>,
@@ -1411,6 +1435,12 @@ fn progress_subscription(
             let hwnd = fields.event.role.hwnd;
             if window_hung(&readers.reading().readability, hwnd) {
                 tracing::debug!(%pid, hwnd, "a progress bar's change dropped: its window is hung");
+                return;
+            }
+            if hwnd != 0
+                && !admits_bar(outgoing.configuration.background_bars(), &SystemReads, hwnd)
+            {
+                tracing::trace!(%pid, hwnd, "a progress bar's change dropped: its window is refused");
                 return;
             }
             let timing = outgoing.observed();
@@ -1485,15 +1515,23 @@ fn report_bar(outgoing: &Arc<Outgoing>, timing: EventTiming) -> Responder<BarCha
 /// requests, one held per object, a newer change replacing it. The
 /// window's owner, class and its thread's process are those read for the
 /// event's tell, `windows`; whether it is hung is judged again now, after
-/// the tell is sent, as the listener's one judge answers it.
+/// the tell is sent, as the listener's one judge answers it. First, once
+/// what the reading threads learned is taken in, the change is skipped,
+/// with no lock, job or call, when its tell went as `told` says it is not
+/// read under the configuration in force ([`reads_value_change`]): one not
+/// told, and, while background progress bars are not reported, one whose
+/// tell's window acceptance refuses (Dickson, 2026-11-19).
 fn value_change_event(
     outgoing: &Arc<Outgoing>,
     readers: &Arc<Readers<UiaReading>>,
     knowledge: &mut ValueChangeKnowledge,
-    event: WinEvent,
+    (event, told): (WinEvent, &Told),
     windows: &EventWindows<'_, impl EventReads>,
 ) {
     knowledge.drain();
+    if !reads_value_change(outgoing.configuration.background_bars(), told) {
+        return;
+    }
     let WinEvent {
         hwnd,
         id_object,
@@ -1758,14 +1796,14 @@ fn in_foreground(window: isize) -> bool {
     front != 0 && (window == front || verbatim_win32::window::is_child(front, window))
 }
 
-/// What the listener does with a `WinEvent` after its tell: a value change
-/// goes the progress path's way, and an MSAA focus is noted for the value
-/// changes' limits.
+/// What the listener does with a `WinEvent` after its tell, which went as
+/// `told`: a value change goes the progress path's way, and an MSAA focus
+/// is noted for the value changes' limits.
 fn route_win_event(
     outgoing: &Arc<Outgoing>,
     readers: &Arc<Readers<UiaReading>>,
     knowledge: &RefCell<ValueChangeKnowledge>,
-    event: WinEvent,
+    (event, told): (WinEvent, Told),
     windows: &EventWindows<'_, impl EventReads>,
 ) {
     match event.kind {
@@ -1779,7 +1817,7 @@ fn route_win_event(
                 outgoing,
                 readers,
                 &mut knowledge.borrow_mut(),
-                event,
+                (event, &told),
                 windows,
             );
         }
@@ -1899,7 +1937,10 @@ fn process_of_thread(thread: u32) -> Option<u32> {
 /// it to shut down or its command pipe ends, after a clean shutdown that
 /// waits for every write in flight. Both ends must be overlapped.
 /// `generation` is the listener's, which Core's views and requests name,
-/// and `ignored` names the processes none of whose events is told.
+/// `ignored` names the processes none of whose events is told, and
+/// `report_background_progress_bars` is the configuration it judges its
+/// reads under until Core's first command, given before any value change
+/// is handled.
 ///
 /// # Errors
 ///
@@ -1909,10 +1950,11 @@ pub fn run_listener(
     pipe_in: OwnedHandle,
     pipe_out: OwnedHandle,
     generation: u64,
-    ignored: IgnoredProcesses,
+    (ignored, report_background_progress_bars): (IgnoredProcesses, bool),
 ) -> io::Result<()> {
     let (mut io, sender) = ChildIo::new(pipe_in, pipe_out, Waiting::default())?;
-    let listener = Listener::new(sender.clone(), generation, ignored)?;
+    let bars = BackgroundBars::of(report_background_progress_bars);
+    let listener = Listener::new(sender.clone(), generation, (ignored, bars))?;
     // This thread is the listener's I/O thread from here on.
     prioritize_role("listener I/O", IO_PRIORITY);
     let served = io.serve(&sender, |body| {
@@ -1971,7 +2013,7 @@ mod tests {
         let (sender, _finishing) =
             Sender::start(ours, Waiting::default(), "listener-test", || {}).expect("a sender");
         (
-            Outgoing::untimed(sender, ignored),
+            Outgoing::untimed(sender, ignored, BackgroundBars::Reported),
             BufReader::new(File::from(theirs)),
         )
     }
@@ -2096,7 +2138,7 @@ mod tests {
             &parts.outgoing,
             &parts.readers,
             &mut ValueChangeKnowledge::new(),
-            value_change(hwnd),
+            (value_change(hwnd), &Told::Held),
             &EventWindows::new(&SystemReads, &*parts.readers.reading().readability, None),
         );
         assert_eq!(
@@ -2147,7 +2189,7 @@ mod tests {
             &outgoing,
             &readers,
             &mut ValueChangeKnowledge::new(),
-            value_change(hwnd),
+            (value_change(hwnd), &Told::Held),
             &EventWindows::new(&SystemReads, &*readers.reading().readability, None),
         );
         assert!(nothing_queued(&readers), "no read was queued");
@@ -2810,8 +2852,12 @@ mod tests {
             let _ = released.recv_timeout(Duration::from_secs(10));
             None
         });
-        let listener = Listener::start(sender, (1, IgnoredProcesses::default()), install)
-            .expect("the listener starts");
+        let listener = Listener::start(
+            sender,
+            (1, IgnoredProcesses::default(), BackgroundBars::Reported),
+            install,
+        )
+        .expect("the listener starts");
 
         // A hidden window of this thread's, with no parent, to raise an
         // alert from while the installation waits.
@@ -3103,7 +3149,7 @@ mod tests {
         let tells = Arc::new(tells::Tells::with_front(sender.clone(), front));
         let outgoing = Arc::new(Outgoing::with_tells(
             sender,
-            IgnoredProcesses::default(),
+            (IgnoredProcesses::default(), BackgroundBars::Reported),
             tells,
             None,
         ));
@@ -3388,7 +3434,11 @@ mod tests {
     #[test]
     fn a_tells_foreground_facts_are_read_as_it_is_placed() {
         use windows::Win32::UI::WindowsAndMessaging::{EVENT_OBJECT_NAMECHANGE, OBJID_CLIENT};
-        let (outgoing, readers, sent) = flood_listening(Arc::new(|_| Readability::Readable));
+        let (outgoing, readers, sent) = flood_listening_front(
+            Arc::new(|_| Readability::Readable),
+            BackgroundBars::Reported,
+            || FLOOD_FRONT,
+        );
         let watch = RefCell::new(ForegroundWatch::default());
         let _ = watch.borrow_mut().start(None);
         let desk = FloodDesk::owned_in_front();
@@ -3484,15 +3534,37 @@ mod tests {
         assert_eq!(found, Vec::<(&str, &str)>::new());
     }
 
-    /// How many times the window in front was read for the hold.
+    /// How many times the window in front was read for the hold, by the
+    /// one test at a time that holds [`FLOOD_COUNTING`].
     static FLOOD_FRONT_READS: AtomicU32 = AtomicU32::new(0);
 
+    /// Held by a test while it counts [`FLOOD_FRONT_READS`].
+    static FLOOD_COUNTING: Mutex<()> = Mutex::new(());
+
     /// The listener's sending side and readers for the flood, judging
-    /// readability with `readability` and reading the window in front for
-    /// the hold as the flood's, each read counted; what it sends, read on
-    /// a thread of its own.
+    /// readability with `readability`, its reads under `bars`, and reading
+    /// the window in front for the hold as the flood's, each read counted;
+    /// what it sends, read on a thread of its own.
     fn flood_listening(
         readability: WindowReadabilityReader,
+        bars: BackgroundBars,
+    ) -> (
+        Arc<Outgoing>,
+        Arc<Readers<UiaReading>>,
+        mpsc::Receiver<ListenerToCore>,
+    ) {
+        flood_listening_front(readability, bars, || {
+            FLOOD_FRONT_READS.fetch_add(1, Ordering::SeqCst);
+            FLOOD_FRONT
+        })
+    }
+
+    /// [`flood_listening`], reading the window in front for the hold with
+    /// `front`.
+    fn flood_listening_front(
+        readability: WindowReadabilityReader,
+        bars: BackgroundBars,
+        front: fn() -> isize,
     ) -> (
         Arc<Outgoing>,
         Arc<Readers<UiaReading>>,
@@ -3502,13 +3574,10 @@ mod tests {
             pipe(Flow::Outbound, EVENT_PIPE_BUFFER, End::Synchronous).expect("a pipe");
         let (sender, _finishing) =
             Sender::start(sender_end, Waiting::default(), "flood-test", || {}).expect("a sender");
-        let tells = Arc::new(tells::Tells::with_front(sender.clone(), || {
-            FLOOD_FRONT_READS.fetch_add(1, Ordering::SeqCst);
-            FLOOD_FRONT
-        }));
+        let tells = Arc::new(tells::Tells::with_front(sender.clone(), front));
         let outgoing = Arc::new(Outgoing::with_tells(
             sender,
-            IgnoredProcesses::default(),
+            (IgnoredProcesses::default(), bars),
             tells,
             None,
         ));
@@ -3573,24 +3642,33 @@ mod tests {
         ]
     }
 
-    /// The calls to Windows the event thread makes for each `WinEvent` of
-    /// `msaa_flood_then_focus`'s three floods, behind the one class read of
-    /// the hook's filter, which it hands on (`verbatim_ia2`'s
-    /// `the_class_the_filter_read_is_handed_on_with_the_event`): a value
-    /// change on a new object of a window in the background, one on an
-    /// object known to be no bar, and a tooltip's show. Each window fact
-    /// is read once for the event; the window in front is read for the
-    /// hold and again under the tells' lock, with the active window and
-    /// the windows' relations to them, as the tell is placed.
-    #[test]
-    fn a_flood_events_window_facts_are_read_once() {
+    /// What [`flood_reads`] found.
+    type FloodReads = (
+        Vec<String>,
+        Vec<(&'static str, ReadCounts)>,
+        bool,
+        Judgement,
+    );
+
+    /// Each call to Windows an event made, by name.
+    type ReadCounts = std::collections::BTreeMap<&'static str, u32>;
+
+    /// What the flood's three events read under `bars`: the kinds told, each
+    /// event's calls to Windows by name, whether the readers hold no job
+    /// once the events are handled, and what the event thread's record
+    /// judges of the new object's next change, which an object asked about
+    /// already drops.
+    fn flood_reads(bars: BackgroundBars) -> FloodReads {
+        let _counting = FLOOD_COUNTING
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         let readability_reads = Arc::new(AtomicU32::new(0));
         let counted = Arc::clone(&readability_reads);
         let readability: WindowReadabilityReader = Arc::new(move |_| {
             counted.fetch_add(1, Ordering::SeqCst);
             Readability::Readable
         });
-        let (outgoing, readers, sent) = flood_listening(readability);
+        let (outgoing, readers, sent) = flood_listening(readability, bars);
         let watch = RefCell::new(ForegroundWatch::default());
         let _ = watch.borrow_mut().start(None);
         let knowledge = RefCell::new(ValueChangeKnowledge::new());
@@ -3628,6 +3706,17 @@ mod tests {
             read.insert("readability", readability_reads.load(Ordering::SeqCst));
             counts.push((name, read));
         }
+        let idle = nothing_queued(&readers);
+        let next = knowledge.borrow_mut().judge(&ValueChange {
+            pid: Pid(std::process::id()),
+            object: BarObject {
+                window: FLOOD_WINDOW,
+                object: 1000,
+                child: 0,
+            },
+            owner: 1,
+            at_us: 0,
+        });
         readers.stop();
         outgoing.close();
         let tells: Vec<String> = sent
@@ -3637,8 +3726,12 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert_eq!(tells, ["ValueChange", "ValueChange", "Show"]);
-        let shown = std::collections::BTreeMap::from([
+        (tells, counts, idle, next)
+    }
+
+    /// The calls to Windows a tooltip's show makes on the event thread.
+    fn shown_reads() -> ReadCounts {
+        std::collections::BTreeMap::from([
             ("active_window", 1),
             ("class", 1),
             ("desktop", 1),
@@ -3654,8 +3747,26 @@ mod tests {
             ("root", 1),
             ("root_owner", 2),
             ("topmost", 1),
-        ]);
-        // A value change's hang is judged again after its tell is sent.
+        ])
+    }
+
+    /// The calls to Windows the event thread makes for each `WinEvent` of
+    /// `msaa_flood_then_focus`'s three floods, behind the one class read of
+    /// the hook's filter, which it hands on (`verbatim_ia2`'s
+    /// `the_class_the_filter_read_is_handed_on_with_the_event`), with
+    /// background progress bars reported: a value change on a new object
+    /// of a window in the background, one on an object known to be no bar,
+    /// and a tooltip's show. Each window fact is read once for the event;
+    /// the window in front is read for the hold and again under the tells'
+    /// lock, with the active window and the windows' relations to them, as
+    /// the tell is placed. A value change's hang is judged again after its
+    /// tell is sent, and the new object is asked about on its reading
+    /// thread, so its next change is dropped while the job is out.
+    #[test]
+    fn a_flood_events_window_facts_are_read_once() {
+        let (tells, counts, _, next) = flood_reads(BackgroundBars::Reported);
+        assert_eq!(tells, ["ValueChange", "ValueChange", "Show"]);
+        let shown = shown_reads();
         let mut changed = shown.clone();
         changed.insert("readability", 1);
         assert_eq!(
@@ -3665,6 +3776,529 @@ mod tests {
                 ("a value change on an object known to be no bar", changed),
                 ("a tooltip's show", shown),
             ]
+        );
+        assert_eq!(next, Judgement::Dropped, "the new object's job is out");
+    }
+
+    /// [`a_flood_events_window_facts_are_read_once`] with background
+    /// progress bars not reported: the flood's window is behind, so each
+    /// value change is told and its read skipped once its tell's facts
+    /// are judged, making no call beyond what the show makes, no job, and
+    /// leaving the new object unasked.
+    #[test]
+    fn a_flood_events_background_value_changes_are_not_read() {
+        let (tells, counts, idle, next) = flood_reads(BackgroundBars::NotReported);
+        assert_eq!(tells, ["ValueChange", "ValueChange", "Show"]);
+        let shown = shown_reads();
+        assert_eq!(
+            counts,
+            [
+                ("a value change on a new object", shown.clone()),
+                (
+                    "a value change on an object known to be no bar",
+                    shown.clone()
+                ),
+                ("a tooltip's show", shown),
+            ]
+        );
+        assert!(idle, "the readers hold no job");
+        assert_eq!(next, Judgement::Ask(1), "the new object was never asked");
+    }
+
+    /// The window in front for the hold in
+    /// [`a_value_change_is_judged_on_its_own_tells_facts`].
+    static OWN_FACTS_FRONT: AtomicIsize = AtomicIsize::new(0);
+
+    /// The window of Windows Live Messenger's hidden class that comes to
+    /// the foreground in [`a_value_change_is_judged_on_its_own_tells_facts`],
+    /// whose foreground event's tell a local drop takes.
+    const HIDDEN_FRONT: isize = 0x7FFF_0050;
+
+    /// The desktop of [`a_value_change_is_judged_on_its_own_tells_facts`]:
+    /// [`HIDDEN_FRONT`] in front, the flood's window behind it, unrelated,
+    /// and [`FLOOD_FRONT`] topmost, so that acceptance takes it.
+    struct OwnFactsDesk;
+
+    impl WindowReads for OwnFactsDesk {
+        fn class(&self, window: isize) -> String {
+            match window {
+                HIDDEN_FRONT => verbatim_listener_logic::tell::MSN_HIDDEN_CLASS,
+                FLOOD_FRONT => "Front",
+                _ => "MockAppWindow",
+            }
+            .to_owned()
+        }
+        fn owner(&self, _window: isize) -> (u32, u32) {
+            (1, std::process::id())
+        }
+        fn console_host(&self, _window: isize) -> Option<u32> {
+            None
+        }
+        fn parent(&self, _window: isize) -> isize {
+            FLOOD_DESKTOP
+        }
+        fn root(&self, window: isize) -> isize {
+            window
+        }
+        fn root_owner(&self, window: isize) -> isize {
+            window
+        }
+        fn is_child(&self, _parent: isize, _child: isize) -> bool {
+            false
+        }
+        fn topmost(&self, window: isize) -> bool {
+            window == FLOOD_FRONT
+        }
+        fn desktop(&self) -> isize {
+            FLOOD_DESKTOP
+        }
+        fn foreground(&self) -> isize {
+            HIDDEN_FRONT
+        }
+        fn active_window(&self) -> isize {
+            HIDDEN_FRONT
+        }
+        fn hidden_frame(&self, _window: isize) -> bool {
+            false
+        }
+    }
+
+    impl EventReads for OwnFactsDesk {
+        fn exists(&self, _window: isize) -> bool {
+            true
+        }
+        fn visible(&self, _window: isize) -> bool {
+            true
+        }
+        fn hang_state(&self, _window: isize) -> Readability {
+            Readability::Readable
+        }
+        fn process_of_thread(&self, _thread: u32) -> Option<u32> {
+            Some(std::process::id())
+        }
+        fn input_desktop_opens(&self) -> bool {
+            true
+        }
+    }
+
+    /// A value change is judged on the facts of its own tell, whatever
+    /// else the step that sends it releases first. With background
+    /// progress bars not reported: a foreground event for a window of
+    /// Windows Live Messenger's hidden class, H, is dropped locally, its
+    /// window awaited, H not yet in front for the hold; a value change in
+    /// the background window W is held behind it, and so read, its facts
+    /// not yet read; then a value change in the topmost window T finds H
+    /// in front, and its step sends W's change, refused, then T's own,
+    /// accepted, which is read. Judged on the first tell the step sent,
+    /// T's change would be skipped.
+    #[test]
+    fn a_value_change_is_judged_on_its_own_tells_facts() {
+        use windows::Win32::UI::WindowsAndMessaging::{
+            EVENT_OBJECT_VALUECHANGE, EVENT_SYSTEM_FOREGROUND, OBJID_CLIENT,
+        };
+        let readability_reads = Arc::new(AtomicU32::new(0));
+        let counted = Arc::clone(&readability_reads);
+        let readability: WindowReadabilityReader = Arc::new(move |_| {
+            counted.fetch_add(1, Ordering::SeqCst);
+            Readability::Readable
+        });
+        OWN_FACTS_FRONT.store(FLOOD_DESKTOP, Ordering::SeqCst);
+        let (outgoing, readers, sent) =
+            flood_listening_front(readability, BackgroundBars::NotReported, || {
+                OWN_FACTS_FRONT.load(Ordering::SeqCst)
+            });
+        let watch = RefCell::new(ForegroundWatch::default());
+        let _ = watch.borrow_mut().start(None);
+        let knowledge = RefCell::new(ValueChangeKnowledge::new());
+        let mut applications = tells::Applications::default();
+        let event = |kind, raw, hwnd| WinEvent {
+            kind,
+            event: raw,
+            hwnd,
+            id_object: OBJID_CLIENT.0,
+            id_child: 0,
+            thread: 1,
+            time: 0,
+            raised_ms_ago: 0,
+        };
+        let mut reads = Vec::new();
+        for (event, front) in [
+            (
+                event(
+                    WinEventKind::Foreground,
+                    EVENT_SYSTEM_FOREGROUND,
+                    HIDDEN_FRONT,
+                ),
+                FLOOD_DESKTOP,
+            ),
+            (
+                event(
+                    WinEventKind::ValueChange,
+                    EVENT_OBJECT_VALUECHANGE,
+                    FLOOD_WINDOW,
+                ),
+                FLOOD_DESKTOP,
+            ),
+            (
+                event(
+                    WinEventKind::ValueChange,
+                    EVENT_OBJECT_VALUECHANGE,
+                    FLOOD_FRONT,
+                ),
+                HIDDEN_FRONT,
+            ),
+        ] {
+            OWN_FACTS_FRONT.store(front, Ordering::SeqCst);
+            readability_reads.store(0, Ordering::SeqCst);
+            on_win_event(
+                &outgoing,
+                &mut applications,
+                &readers,
+                &knowledge,
+                &watch,
+                (event, None),
+                &OwnFactsDesk,
+            );
+            reads.push(readability_reads.load(Ordering::SeqCst));
+        }
+        readers.stop();
+        outgoing.close();
+        let told: Vec<(String, isize, bool)> = sent
+            .iter()
+            .filter_map(|message| match message {
+                ListenerToCore::Tell(tell) => match (&tell.object, &tell.window) {
+                    (EventObject::Msaa { window, .. }, TellWindow::Found(facts)) => Some((
+                        format!("{:?}", tell.kind),
+                        asked::hwnd_of(*window),
+                        verbatim_core::accepts(EventKind::ValueChange, Some(facts), false),
+                    )),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            told,
+            [
+                ("ValueChange".to_owned(), FLOOD_WINDOW, false),
+                ("ValueChange".to_owned(), FLOOD_FRONT, true),
+            ]
+        );
+        // Each value change read went on to judge its window's hang: the
+        // held one, and the topmost window's, by its own tell's facts.
+        assert_eq!(reads, [0, 1, 1]);
+    }
+    /// How many value changes, of `events` handled in turn on `desk` under
+    /// `bars`, the event thread went on to read: each that passes the gate
+    /// judges its window's hang next.
+    fn value_reads(
+        bars: BackgroundBars,
+        events: &[(WinEvent, Option<&str>)],
+        desk: &impl EventReads,
+    ) -> Vec<u32> {
+        let readability_reads = Arc::new(AtomicU32::new(0));
+        let counted = Arc::clone(&readability_reads);
+        let readability: WindowReadabilityReader = Arc::new(move |_| {
+            counted.fetch_add(1, Ordering::SeqCst);
+            Readability::Readable
+        });
+        let (outgoing, readers, _sent) = flood_listening_front(readability, bars, || FLOOD_FRONT);
+        let watch = RefCell::new(ForegroundWatch::default());
+        let _ = watch.borrow_mut().start(None);
+        let knowledge = RefCell::new(ValueChangeKnowledge::new());
+        let mut applications = tells::Applications::default();
+        let mut reads = Vec::new();
+        for (event, class) in events {
+            readability_reads.store(0, Ordering::SeqCst);
+            on_win_event(
+                &outgoing,
+                &mut applications,
+                &readers,
+                &knowledge,
+                &watch,
+                (*event, *class),
+                desk,
+            );
+            reads.push(readability_reads.load(Ordering::SeqCst));
+        }
+        readers.stop();
+        outgoing.close();
+        reads
+    }
+
+    /// A value change at the client of `hwnd`, raised by thread 1.
+    fn value_change_on(hwnd: isize) -> WinEvent {
+        WinEvent {
+            thread: 1,
+            ..value_change(hwnd)
+        }
+    }
+
+    /// A value change in a window of Windows Live Messenger's hidden class
+    /// is not told, and not read in either state, as NVDA drops every
+    /// event of that class before anything sends the window a message.
+    #[test]
+    fn a_messenger_hidden_windows_value_change_is_not_read() {
+        let events = [(value_change_on(HIDDEN_FRONT), None)];
+        assert_eq!(
+            [BackgroundBars::Reported, BackgroundBars::NotReported].map(|bars| value_reads(
+                bars,
+                &events,
+                &OwnFactsDesk
+            )),
+            [vec![0], vec![0]]
+        );
+    }
+
+    /// A listed progress bar's value change in a background window is read
+    /// while background progress bars are reported, and skipped, with no
+    /// job, while they are not: the gate comes before the listed path.
+    #[test]
+    fn a_background_listed_bars_value_change_is_read_only_while_reported() {
+        let events = [(value_change_on(FLOOD_WINDOW), Some("msctls_progress32"))];
+        assert_eq!(
+            [BackgroundBars::Reported, BackgroundBars::NotReported].map(|bars| value_reads(
+                bars,
+                &events,
+                &FloodDesk::default()
+            )),
+            [vec![1], vec![0]]
+        );
+    }
+    /// The window of each `WM_GETOBJECT` message a [`BackgroundWindow`]
+    /// has been sent, in order, the windows of the tests that run at once
+    /// kept apart by their handles.
+    static BACKGROUND_GETOBJECTS: Mutex<Vec<isize>> = Mutex::new(Vec::new());
+
+    /// How many `WM_GETOBJECT` messages `window` has been sent since it
+    /// was last counted, its count started again.
+    fn getobjects_of(window: isize) -> u32 {
+        let mut sent = BACKGROUND_GETOBJECTS
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let before = sent.len();
+        sent.retain(|of| *of != window);
+        u32::try_from(before - sent.len()).expect("a count")
+    }
+
+    /// The window procedure of [`BackgroundWindow`]: counts every
+    /// `WM_GETOBJECT`, and answers everything as the default does.
+    unsafe extern "system" fn counting_procedure(
+        window: windows::Win32::Foundation::HWND,
+        message: u32,
+        wparam: windows::Win32::Foundation::WPARAM,
+        lparam: windows::Win32::Foundation::LPARAM,
+    ) -> windows::Win32::Foundation::LRESULT {
+        if message == windows::Win32::UI::WindowsAndMessaging::WM_GETOBJECT {
+            BACKGROUND_GETOBJECTS
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push(window.0 as isize);
+        }
+        // SAFETY: the arguments Windows passed this window procedure.
+        unsafe {
+            windows::Win32::UI::WindowsAndMessaging::DefWindowProcW(window, message, wparam, lparam)
+        }
+    }
+
+    /// A hidden top-level window of a class of this test's, owned by a
+    /// thread of its own that answers its messages, counting each
+    /// `WM_GETOBJECT` it is sent, the message any read of it sends: never
+    /// in front, not topmost and owned by no other window, so acceptance
+    /// refuses its events. Destroyed with its thread when dropped.
+    struct BackgroundWindow {
+        window: isize,
+        thread: u32,
+        pumping: Option<std::thread::JoinHandle<()>>,
+    }
+
+    impl BackgroundWindow {
+        fn new() -> Self {
+            use windows::Win32::System::Threading::GetCurrentThreadId;
+            use windows::Win32::UI::WindowsAndMessaging::{
+                CreateWindowExW, DestroyWindow, DispatchMessageW, GetMessageW, MSG, RegisterClassW,
+                WINDOW_EX_STYLE, WNDCLASSW, WS_OVERLAPPED,
+            };
+            use windows::core::w;
+            let (made, window) = mpsc::channel();
+            let pumping = std::thread::spawn(move || {
+                let class = WNDCLASSW {
+                    lpfnWndProc: Some(counting_procedure),
+                    lpszClassName: w!("VerbatimListenerBackgroundBar"),
+                    ..WNDCLASSW::default()
+                };
+                // SAFETY: a class with a valid window procedure and a
+                // static name, registered once per test process.
+                let _ = unsafe { RegisterClassW(&raw const class) };
+                // SAFETY: a window of the class above, with no parent,
+                // made on this thread.
+                let window = unsafe {
+                    CreateWindowExW(
+                        WINDOW_EX_STYLE::default(),
+                        w!("VerbatimListenerBackgroundBar"),
+                        w!(""),
+                        WS_OVERLAPPED,
+                        0,
+                        0,
+                        0,
+                        0,
+                        None,
+                        None,
+                        None,
+                        None,
+                    )
+                }
+                .expect("a background window");
+                // SAFETY: no preconditions.
+                let thread = unsafe { GetCurrentThreadId() };
+                made.send((window.0 as isize, thread))
+                    .expect("the test waits");
+                let mut message = MSG::default();
+                // SAFETY: this thread's own queue, until `WM_QUIT`.
+                while unsafe { GetMessageW(&raw mut message, None, 0, 0) }.as_bool() {
+                    // SAFETY: a message this thread's queue gave.
+                    unsafe { DispatchMessageW(&raw const message) };
+                }
+                // SAFETY: the window made above, on this thread.
+                unsafe { DestroyWindow(window) }.expect("the window destroyed");
+            });
+            let (window, thread) = window.recv().expect("the window is made");
+            Self {
+                window,
+                thread,
+                pumping: Some(pumping),
+            }
+        }
+    }
+
+    impl Drop for BackgroundWindow {
+        fn drop(&mut self) {
+            use windows::Win32::Foundation::{LPARAM, WPARAM};
+            use windows::Win32::UI::WindowsAndMessaging::{PostThreadMessageW, WM_QUIT};
+            // SAFETY: the window's thread, which runs until `WM_QUIT`.
+            unsafe { PostThreadMessageW(self.thread, WM_QUIT, WPARAM(0), LPARAM(0)) }
+                .expect("the window's thread is told to end");
+            if let Some(pumping) = self.pumping.take() {
+                pumping.join().expect("the window's thread ends");
+            }
+        }
+    }
+
+    /// What the listener sends next of interest here, within 20 seconds:
+    /// the idle barrier's answer, or a value change told of `window`; the
+    /// rest of the desktop's tells are passed by.
+    fn next_of(messages: &mpsc::Receiver<ListenerToCore>, window: isize) -> ListenerToCore {
+        loop {
+            let message = messages
+                .recv_timeout(Duration::from_secs(20))
+                .expect("a message");
+            let of_interest = match &message {
+                ListenerToCore::IdleAnswer { .. } => true,
+                ListenerToCore::Tell(tell) => {
+                    tell.kind == EventKind::ValueChange
+                        && matches!(tell.object, EventObject::Msaa { window: told_of, .. }
+                            if asked::hwnd_of(told_of) == window)
+                }
+                _ => false,
+            };
+            if of_interest {
+                return message;
+            }
+        }
+    }
+
+    /// A value change of a background window, raised with `NotifyWinEvent`
+    /// to a listener launched with `bars` that was then sent `command`, in
+    /// the listener's own order: the command handled as the I/O thread
+    /// handles it, then the idle barrier's query, its answer awaited as
+    /// evidence that the command came first, then the event, its tell
+    /// awaited as evidence that the `WinEvent` thread has it, then a second
+    /// query, whose answer comes once the event is handled and its read,
+    /// if any, done. Whether the change's tell came first, then the second
+    /// answer with nothing between, and how many `WM_GETOBJECT` messages
+    /// the window was sent.
+    fn background_value_change(bars: BackgroundBars, command: Option<bool>) -> (bool, u32) {
+        use windows::Win32::UI::Accessibility::NotifyWinEvent;
+        use windows::Win32::UI::WindowsAndMessaging::{
+            CHILDID_SELF, EVENT_OBJECT_VALUECHANGE, OBJID_CLIENT,
+        };
+        let window = BackgroundWindow::new();
+        let (ours, theirs) =
+            pipe(Flow::Outbound, EVENT_PIPE_BUFFER, End::Synchronous).expect("a pipe");
+        let (sender, _finishing) =
+            Sender::start(ours, Waiting::default(), "listener-test", || {}).expect("a sender");
+        let messages = drain(BufReader::new(File::from(theirs)));
+        let listener = Listener::start(
+            sender,
+            (1, IgnoredProcesses::default(), bars),
+            Box::new(|_, _, _| None),
+        )
+        .expect("the listener starts");
+        if let Some(report_background_progress_bars) = command {
+            listener.handle_command(
+                CoreToListener::Configuration {
+                    report_background_progress_bars,
+                },
+                0,
+            );
+        }
+        listener.idle_query(1);
+        assert_eq!(
+            next_of(&messages, window.window),
+            ListenerToCore::IdleAnswer { round: 1 }
+        );
+        let _ = getobjects_of(window.window);
+        // SAFETY: raising an event for a live window of this process.
+        unsafe {
+            NotifyWinEvent(
+                EVENT_OBJECT_VALUECHANGE,
+                windows::Win32::Foundation::HWND(window.window as _),
+                OBJID_CLIENT.0,
+                CHILDID_SELF.cast_signed(),
+            );
+        };
+        let told = matches!(next_of(&messages, window.window), ListenerToCore::Tell(_));
+        listener.idle_query(2);
+        let told =
+            told && next_of(&messages, window.window) == ListenerToCore::IdleAnswer { round: 2 };
+        let getobjects = getobjects_of(window.window);
+        stop_with_no_registration(listener);
+        drop(window);
+        (told, getobjects)
+    }
+
+    /// Across the I/O thread and the `WinEvent` thread, in the listener's
+    /// order: Core's command that background progress bars are not
+    /// reported, then a background window's value change, which is told
+    /// and not read.
+    #[test]
+    fn a_background_value_change_after_the_command_off_is_told_and_not_read() {
+        assert_eq!(
+            background_value_change(BackgroundBars::Reported, Some(false)),
+            (true, 0)
+        );
+    }
+
+    /// [`a_background_value_change_after_the_command_off_is_told_and_not_read`]
+    /// with the command that they are reported: told and read, the read
+    /// sending the window `WM_GETOBJECT` three times, for its probe and its
+    /// object.
+    #[test]
+    fn a_background_value_change_after_the_command_on_is_told_and_read() {
+        assert_eq!(
+            background_value_change(BackgroundBars::NotReported, Some(true)),
+            (true, 3)
+        );
+    }
+
+    /// A listener launched with background progress bars not reported,
+    /// and sent no command, judges its first value change under that:
+    /// told, not read.
+    #[test]
+    fn a_listener_launched_with_background_bars_off_does_not_read_a_background_value_change() {
+        assert_eq!(
+            background_value_change(BackgroundBars::NotReported, None),
+            (true, 0)
         );
     }
 }

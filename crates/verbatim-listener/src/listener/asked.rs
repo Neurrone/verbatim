@@ -254,9 +254,11 @@ impl Reading for UiaReading {
                 percent,
                 report,
             } => {
+                let bars = self.outgoing.configuration.background_bars();
+                let admitted = |window| super::admits_bar(bars, &SystemReads, window);
                 if let (Some(uia), Ok(sender)) = (thread.uia.as_ref(), element.resolve())
                     && let Some((place, window)) =
-                        uia_bar_place(uia, &mut thread.bar_windows, &sender, hwnd)
+                        uia_bar_place(uia, &mut thread.bar_windows, &sender, hwnd, admitted)
                 {
                     report.answer(BarChange {
                         percent,
@@ -327,18 +329,33 @@ fn handle(window: isize) -> WindowHandle {
 
 /// Where the UIA progress bar `sender` is, by one read of its [`Place`],
 /// and its nearest window: its own, `hwnd`, when it has one, or else by
-/// UIA's lookup, remembered by runtime id in `bar_windows`. A bar that
+/// UIA's lookup, remembered by runtime id in `bar_windows`. A windowless
+/// bar's window is found first, then judged by `admitted`, and only an
+/// admitted bar's [`Place`] is read, NVDA's order of nearest window,
+/// acceptance, object (Dickson, 2026-11-19); a bar with its own window was
+/// judged in the UI Automation callback, before it was queued. A bar that
 /// reports no rectangle is placed at (0, 0), as NVDA places a bar whose
 /// location it cannot read (`nvda/source/NVDAObjects/behaviors.py` 62 to
-/// 67) and as the classic path does. `None` when it cannot be read, is off
-/// screen, or has no window above it. Public so that mockapp's tests place
-/// mockapp's own bars as the listener's reading thread does.
+/// 67) and as the classic path does. `None` when it has no window above
+/// it, is not admitted, cannot be read, or is off screen. Public so that
+/// mockapp's tests place mockapp's own bars as the listener's reading
+/// thread does.
 pub fn uia_bar_place(
     uia: &Uia,
     bar_windows: &mut VecDeque<(Vec<i32>, isize)>,
     sender: &Cached<ListenerProgress>,
     hwnd: isize,
+    admitted: impl FnOnce(isize) -> bool,
 ) -> Option<((i32, i32), isize)> {
+    let window = if hwnd == 0 {
+        let window = bar_window(bar_windows, sender)?;
+        if !admitted(window) {
+            return None;
+        }
+        window
+    } else {
+        hwnd
+    };
     let request = uia.request_fixed::<Place>().ok()?;
     let place = sender.live().refresh(&request).ok()?.read();
     if place.offscreen {
@@ -350,19 +367,26 @@ pub fn uia_bar_place(
             rect.top.saturating_add(rect.height / 2),
         )
     });
-    if hwnd != 0 {
-        return Some((centre, hwnd));
-    }
+    Some((centre, window))
+}
+
+/// The nearest window of the windowless bar `sender`: remembered by its
+/// runtime id in `bar_windows`, or found by UIA's lookup and remembered;
+/// `None` when it has none.
+fn bar_window(
+    bar_windows: &mut VecDeque<(Vec<i32>, isize)>,
+    sender: &Cached<ListenerProgress>,
+) -> Option<isize> {
     let runtime_id = sender.runtime_id();
     if let Some(&(_, window)) = bar_windows.iter().find(|(id, _)| *id == runtime_id) {
-        return Some((centre, window));
+        return Some(window);
     }
     let window = verbatim_uia::nearest_window_handle(sender.live().element())?;
     bar_windows.push_back((runtime_id, window));
     if bar_windows.len() > BAR_WINDOWS_KEPT {
         bar_windows.pop_front();
     }
-    Some((centre, window))
+    Some(window)
 }
 
 /// The read of an MSAA object at an event's address: the listener reads

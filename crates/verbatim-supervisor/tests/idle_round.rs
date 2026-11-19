@@ -159,7 +159,8 @@ fn listener_stand_in(
             CoreToListener::ApplicationExited { .. }
             | CoreToListener::Request(_)
             | CoreToListener::Cancel(_)
-            | CoreToListener::ElementsHeld { .. } => {}
+            | CoreToListener::ElementsHeld { .. }
+            | CoreToListener::Configuration { .. } => {}
         }
     }
 }
@@ -288,6 +289,7 @@ fn a_round_asks_the_listener_then_every_outpost_behind_the_commands_before_it() 
         Executables::both(exe),
         LIMIT,
         std::sync::Arc::default(),
+        false,
     )
     .expect("the supervisor starts");
     let events = Delivered::new(events, &supervisor);

@@ -1049,3 +1049,76 @@ fn a_state_change_told_while_the_focus_completion_is_out_is_spoken_after_the_foc
         ]
     );
 }
+
+/// A followed value change on the focus, of a window acceptance refuses,
+/// is a value change to acceptance, which takes it from any window while
+/// background progress bars are reported, as NVDA maps a UI Automation
+/// value change to its value change event: spoken with the setting on, as
+/// when the taskbar comes to the front and the focus stays in a media
+/// player's window, and silent with it off; a name change of the same
+/// window stays silent with the setting on, the setting being for value
+/// changes alone.
+#[test]
+fn a_followed_value_change_of_a_refused_window_is_spoken_only_with_background_bars_reported() {
+    let said = |property, value: &str, background: bool| {
+        let mut state = committed();
+        state.settings.report_background_progress_bars = background;
+        let mut tell = followed_change(property, Some(PropertyValue::Text(value.to_owned())));
+        tell.window = TellWindow::Found(Box::new(background_facts()));
+        feed_at(
+            &mut state,
+            4_000,
+            Input::Entry(crate::entries::Entry::of_tell(OUTPOST, tell).unwrap()),
+        )
+    };
+    assert_eq!(
+        said(PropertyId::Value, "1:23", true),
+        ["Value(\"1:23\")"],
+        "a value change, the setting on"
+    );
+    assert_eq!(
+        said(PropertyId::Value, "1:23", false),
+        NOTHING,
+        "a value change, the setting off"
+    );
+    assert_eq!(
+        said(PropertyId::Name, "Saved", true),
+        NOTHING,
+        "a name change, the setting on"
+    );
+}
+
+/// An MSAA value change in a window unrelated to the foreground, accepted
+/// only because background progress bars are reported, is accepted apart
+/// from the foreground: with the setting on, a foreground change in
+/// another window neither stops its request out nor ends it waiting, as
+/// NVDA stops nothing at a foreground change; with the setting off it is
+/// stopped and ended, as one accepted by the foreground relation is.
+#[test]
+fn a_value_change_accepted_by_background_bars_reported_goes_on_past_a_foreground_change() {
+    use crate::event_queue::{Foreground, Logic};
+    let mut tell = msaa_change(EventKind::ValueChange, 5);
+    tell.window = TellWindow::Found(Box::new(background_facts()));
+    let entry = crate::entries::Entry::of_tell(LISTENER, tell).unwrap();
+    let crate::entries::Entry::MsaaChange(change) = &entry else {
+        panic!("an MSAA change: {entry:?}");
+    };
+    let elsewhere = Foreground {
+        window: WindowHandle(70),
+        root_owner: WindowHandle(70),
+        process: verbatim_model::Pid(41),
+        thread: 0,
+        by_class: None,
+        shell: false,
+    };
+    let judged = |background: bool| {
+        let mut state = crate::state::SrState::new();
+        state.settings.report_background_progress_bars = background;
+        (
+            crate::entries::Entries::exempt_from_foreground(&state, &entry, &change.window),
+            crate::entries::Entries::ends_at_foreground(&state, &entry, &elsewhere),
+        )
+    };
+    assert_eq!(judged(true), (true, false), "the setting on: goes on");
+    assert_eq!(judged(false), (false, true), "the setting off: stopped");
+}

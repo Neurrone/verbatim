@@ -155,7 +155,7 @@ impl Logic for Limited {
         })
     }
 
-    fn exempt_from_foreground(_: &Entry, _: &RequestWindow) -> bool {
+    fn exempt_from_foreground(_: &Option<i32>, _: &Entry, _: &RequestWindow) -> bool {
         false
     }
 

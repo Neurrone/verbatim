@@ -94,6 +94,7 @@ pub use dump::{
 };
 pub use entries::Runtime;
 pub use flight_recorder::{FlightRecorder, FlightSnapshot};
+pub use focus::acceptance::accepts;
 pub use focus_rules::is_selection_container;
 pub use held_tokens::{GenerationMismatch, HeldTokens, ListenerView, View, ViewSend};
 pub use recorder::{RecordedInput, ReducerRecorder, replay};

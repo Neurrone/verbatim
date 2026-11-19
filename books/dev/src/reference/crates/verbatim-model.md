@@ -151,7 +151,10 @@ recorder unchanged. What the reducer does with each type is in
     `CopyToClipboard` (routed through the shell's clipboard helper, its
     result back as `Input::ClipboardCopied`); `KeepDisplayOn` (while
     say-all reads); `SettingsChanged` (a toggle key changed a reader
-    setting, which the shell saves); `ForKey` (an effect on behalf of
+    setting, which the shell saves); `ListenerConfiguration {
+    report_background_progress_bars }` (at every `Input::Settings`,
+    whatever its value, which the shell passes to the supervisor for the
+    listener); `ForKey` (an effect on behalf of
     another key's trace); `ReadClock { repeat }` (read the time and date
     into `Input::ClockRead`); `Show(GuiRequest)` (the menu, or the list of
     a `ShellItemKind`'s items); and `Observed` (an event Core took, with
@@ -413,7 +416,8 @@ that carries them on the pipes is
     `Ping`, `IdleQuery`, `Shutdown`, `Request`, `Cancel` and
     `ElementsHeld { generation, tokens, acknowledged }`, the told elements
     Core holds, with the position of the last message carrying tokens it
-    handled; a request names a kept element by
+    handled, and `Configuration { report_background_progress_bars }`, what
+    the listener judges its own reads under, set by Core alone; a request names a kept element by
     `ObjectRef::Kept { listener, token }`, the listener's generation
     beside its token, since each listener mints its tokens from 1.
   - `OutpostToCore`: `Ready`, `Pong` (with `parked_count`, the abandoned
@@ -430,7 +434,10 @@ that carries them on the pipes is
     raising thread's process or none, which the supervisor hands to Core
     too), `Answer`, `Pong`, `Fault` and `IdleAnswer`.
 - Every variant has a `Kind` (`kind()`, an exhaustive match): `Ask`,
-  `Answer`, `Report`, `Release` or `Lifecycle`. The module denies
+  `Answer`, `Report`, `Release`, `Lifecycle` or `Configuration` (a user
+  setting a reader needs before a call, sent at its launch and on every
+  change; `books/dev/src/explanation/design/ownership.md`, "No
+  back-channel"). The module denies
   wildcard matches over its enums, and a test holds the reviewed list of
   every variant's kind, built from a chain of samples (`samples`) whose
   matches name every variant; verbatim.exe sends no report.
@@ -698,6 +705,10 @@ beside the op's own reply, so no answer of them fails to decode.
   every true is followed by a false.
 - `Effect::SettingsChanged(ReaderSettings)`: a toggle key changed a
   setting; save it.
+- `Effect::ListenerConfiguration { report_background_progress_bars }`:
+  configure the listener with the setting as it stands; emitted at every
+  `Input::Settings`, the first included, so the last the listener gets is
+  current.
 
 ## Themes
 

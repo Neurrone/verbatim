@@ -1007,7 +1007,8 @@ fn a_uia_bar_with_no_rectangle_is_placed_at_the_origin_of_its_window() {
             &uia,
             &mut std::collections::VecDeque::new(),
             &bar,
-            0
+            0,
+            |_| true
         ),
         Some(((0, 0), hwnd.0 as isize))
     );

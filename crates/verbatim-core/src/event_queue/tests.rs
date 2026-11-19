@@ -218,7 +218,7 @@ impl Logic for Test {
         })
     }
 
-    fn exempt_from_foreground(entry: &Entry, _: &RequestWindow) -> bool {
+    fn exempt_from_foreground(_: &u32, entry: &Entry, _: &RequestWindow) -> bool {
         matches!(entry, Entry::Read { exempt: true, .. })
     }
 
@@ -1487,7 +1487,7 @@ impl Logic for Probing {
         })
     }
 
-    fn exempt_from_foreground(_: &Withdraws, _: &RequestWindow) -> bool {
+    fn exempt_from_foreground((): &(), _: &Withdraws, _: &RequestWindow) -> bool {
         false
     }
 

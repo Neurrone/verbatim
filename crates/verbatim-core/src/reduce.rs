@@ -108,13 +108,20 @@ fn reduce_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
         | Input::EditingChord { .. } => key_arrived(state, input),
         Input::TerminalTimer { trace_id, at_ms } => terminal_model::timer(state, *trace_id, *at_ms),
         Input::Settings(settings) => {
-            let effects =
+            let mut effects =
                 if state.settings.report_terminal_output && !settings.report_terminal_output {
                     crate::terminal::drop_waiting(state)
                 } else {
                     Vec::new()
                 };
             state.settings = *settings;
+            // The listener's configuration, at every `Input::Settings`
+            // whatever its value, the first included, so the supervisor's
+            // launch copy is corrected from Core's first input even if the
+            // two loads ever differed (Dickson, 2026-11-19).
+            effects.push(Effect::ListenerConfiguration {
+                report_background_progress_bars: settings.report_background_progress_bars,
+            });
             effects
         }
         Input::Reported(reported) => {

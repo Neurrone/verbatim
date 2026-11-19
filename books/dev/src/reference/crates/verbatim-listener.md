@@ -117,11 +117,46 @@ foreground and background, classic and UI Automation
 A UIA bar's range value change arrives in the desktop-wide group with its
 range cached; `bar_percent` drops anything but a progress bar, with no
 call, as it does UIA's proxy for a classic window, and the reading thread
-of the bar's application reads its place and its nearest window, once per
-change and memoised by runtime id, and sends a `BarChange`; a bar that
-reports no rectangle is placed at (0, 0), as NVDA places one whose location
-it cannot read, and only an off-screen bar is dropped. A classic
-window's `EVENT_OBJECT_VALUECHANGE` reaches the global hook. A window of
+of the bar's application finds its nearest window, memoised by runtime
+id, then reads its place, once per change, and sends a `BarChange`; a bar
+that reports no rectangle is placed at (0, 0), as NVDA places one whose
+location it cannot read, and only an off-screen bar is dropped. A classic
+window's `EVENT_OBJECT_VALUECHANGE` reaches the global hook.
+
+While background progress bars are not reported, the listener skips the
+read of a value change whose window the acceptance test refuses, as NVDA's
+acceptance drops a background value change before it makes the object
+(Dickson, 2026-11-19), judged by Core's own function
+(`verbatim_core::accepts`, with background bars not reported), so the
+rule is written once; Core still judges every tell and every
+`BarChange` against its own setting. The setting is the listener's
+configuration (`listener::configuration`): `BackgroundBars`, reported or
+not, from its launch argument (`--background-bars`), then replaced by
+each `CoreToListener::Configuration` the I/O thread handles, held by a
+monitor in `Outgoing` with one setter and one getter, neither running a
+caller's code; the `WinEvent` thread, the UI Automation callback and the
+reading threads read it as they judge. A classic value change is judged
+on the `WinEvent` thread right after `knowledge.drain()`, before any lock,
+job or call, on the facts of its own tell as it was sent in this event's
+step (`Told`, which `tell_win_event` returns: `Tells::place_seen` and
+`Tells::foreground` give the facts of the tell whose trace id is the
+event's, whatever else the step releases): one sent is read while
+background bars are reported, and otherwise only when acceptance takes
+its window; one the foreground hold keeps is read, its facts not yet
+read; one not told is never read, so Windows Live Messenger's hidden
+window is sent no `WM_GETOBJECT` (`reads_value_change`). The tell is kept
+either way, so Core's acceptance, its limiter's count and the caret's
+count of a waiting value change are unchanged. A UIA bar with its own
+window is judged in the callback, after the hang check and before it is
+queued, on its window's facts read then with local calls and none into
+the application (`admits_bar`); a windowless bar is judged on the reading
+thread once its nearest window is found, before its place is read
+(`uia_bar_place`). While the setting is reported, neither path reads a
+window fact for the gate. Limits: a change judged before Core's command
+reaches the I/O thread is judged under the value one message old, so
+right after the setting is turned on one change of each background bar
+may go unread (accepted by Dickson, 2026-11-19); and an off-screen
+windowless bar's first change costs its window lookup, in both states. A window of
 a class NVDA names as a bar, visible, is read by its window messages. Any
 other is judged on the event thread by `value_change.rs`, the one record of
 what each application's windows and objects were found to be, which
@@ -231,8 +266,10 @@ section 6.3).
   events names its thread.
 - It handles `Ping`, `ApplicationExited` (which ends the application's
   check thread and moves its reading record to the exited generations,
-  then answers `ExitHandled`), `IdleQuery`, `Request`, `Cancel` and
-  `Shutdown`. It makes no remote operation, so takes no `--classic-uia`.
+  then answers `ExitHandled`), `IdleQuery`, `Request`, `Cancel`,
+  `Configuration` (the listener's configuration, above) and `Shutdown`.
+  `run_listener` takes the launch's `report_background_progress_bars`
+  with the ignored processes, set before any value change is handled. It makes no remote operation, so takes no `--classic-uia`.
 - The idle barrier's answer goes behind every event delivered to the
   `WinEvent` thread before it, every job queued for the reading threads,
   every event handed to the check threads, and every tell placed before
@@ -242,6 +279,7 @@ section 6.3).
   subscriptions are installed.
 - `listener::capture` and `listener::capture_selection` are what the
   notification and element-selected callbacks capture of their event's
-  element, and `listener::bar_percent`, `listener::uia_bar_place` and
+  element, and `listener::bar_percent`, `listener::uia_bar_place` (with
+  the gate for a windowless bar's window as its last argument) and
   `listener::read_classic_bar` what the progress path reads, public so mockapp's tests make them as the
   listener does.

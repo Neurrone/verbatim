@@ -424,9 +424,13 @@ impl Entry {
 }
 
 /// Whether `tell` was accepted by something other than the foreground
-/// relation: its request is not stopped when the foreground changes.
-fn accepted_apart_from_foreground(tell: &Event) -> bool {
-    match acceptance::accept(tell.kind, window_facts(tell), false) {
+/// relation, with background progress bars reported as `facts` says: its
+/// request is not stopped when the foreground changes. A value change
+/// accepted only because background progress bars are reported is among
+/// them, as NVDA stops nothing at a foreground change.
+fn accepted_apart_from_foreground(facts: &SrState, tell: &Event) -> bool {
+    let background = facts.settings.report_background_progress_bars;
+    match acceptance::accept(tell.kind, window_facts(tell), background) {
         Ok(
             Accepted::NoWindow
             | Accepted::BackgroundProgress
@@ -522,15 +526,17 @@ impl Logic for Entries {
         matches!(entry, Entry::TerminalSpeech(_))
     }
 
-    fn exempt_from_foreground(entry: &Entry, window: &RequestWindow) -> bool {
+    fn exempt_from_foreground(facts: &SrState, entry: &Entry, window: &RequestWindow) -> bool {
         match entry {
             Entry::Run(candidates) => candidates
                 .iter()
                 .rev()
                 .find(|candidate| candidate.window == *window)
-                .is_some_and(|candidate| accepted_apart_from_foreground(&candidate.tell)),
+                .is_some_and(|candidate| accepted_apart_from_foreground(facts, &candidate.tell)),
             Entry::Announcement(announcement) => announcement.exempt_from_foreground(),
-            other => other.tell().is_some_and(accepted_apart_from_foreground),
+            other => other
+                .tell()
+                .is_some_and(|tell| accepted_apart_from_foreground(facts, tell)),
         }
     }
 
@@ -962,7 +968,10 @@ impl Logic for Entries {
             | Entry::TerminalSpeech(_) => None,
         };
         window.is_some_and(|window| {
-            !foreground.holds(&window) && !entry.tell().is_some_and(accepted_apart_from_foreground)
+            !foreground.holds(&window)
+                && !entry
+                    .tell()
+                    .is_some_and(|tell| accepted_apart_from_foreground(facts, tell))
         })
     }
 

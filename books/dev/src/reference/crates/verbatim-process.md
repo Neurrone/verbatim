@@ -311,8 +311,10 @@ Public API:
   `remote_operations` is off. `ListenerArguments` is the focus listener's,
   `--listener` first (`LISTENER_ARG`), then the pipes, its generation
   (`--generation`, required: the launch's id, which Core's views and
-  requests name), and the ignored pids (`--ignore-pids`,
-  `IGNORE_PIDS_ARG`).
+  requests name), whether background progress bars are reported
+  (`--background-bars on|off`, required: the configuration the listener
+  judges its reads under until Core's first command), and the ignored
+  pids (`--ignore-pids`, `IGNORE_PIDS_ARG`).
   Each executable's `main` parses its own and refuses the other's: an
   outpost refuses `--listener`, and the listener refuses an outpost's
   options.

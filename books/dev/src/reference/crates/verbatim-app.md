@@ -154,7 +154,11 @@ Milestone M4's text protocol is wired here (`books/dev/src/reference/crates/verb
 - The reader settings (`settings.toml`'s `[reader]` section) are the
   reducer's first input, `Input::Settings`. The reducer thread owns the
   section: it changes by the reducer's own toggle keys, whose
-  `Effect::SettingsChanged` is handed to the saver, and by the settings
+  `Effect::SettingsChanged` is handed to the saver (and every
+  `Input::Settings` emits `Effect::ListenerConfiguration`, which the shell
+  passes to `Supervisor::configure_listener`; the supervisor is made with
+  the loaded `report_background_progress_bars` for the listener's first
+  launch), and by the settings
   dialog's Terminal page: `terminal_settings::AppTerminalHost` is the
   GUI's `TerminalHost`, reading the settings from the view the reducer
   thread publishes (`ReaderView`, a copy under a lock never held across a

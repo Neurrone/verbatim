@@ -499,8 +499,10 @@ impl Supervisor {
     /// the current executable ([`Executables::beside_current`]).
     /// Every outpost is launched with `options`. The processes `ignored`
     /// holds are ignored entirely: the listener drops their facts, and no
-    /// outpost is ever started for them. Every period and limit is
-    /// [`Timings::default`].
+    /// outpost is ever started for them. The first listener is launched
+    /// with `report_background_progress_bars`, the setting loaded before
+    /// Core's first configuration command ([`Self::configure_listener`]).
+    /// Every period and limit is [`Timings::default`].
     ///
     /// # Errors
     ///
@@ -510,6 +512,7 @@ impl Supervisor {
         events: impl Into<EventSink>,
         options: verbatim_process::arguments::OutpostOptions,
         ignored: Arc<IgnoredProcesses>,
+        report_background_progress_bars: bool,
     ) -> io::Result<Self> {
         let executables = Executables::beside_current()?;
         Self::start(
@@ -518,15 +521,16 @@ impl Supervisor {
             executables,
             retire::SHUTDOWN_LIMIT,
             Timings::default(),
-            ignored,
+            (ignored, report_background_progress_bars),
         )
     }
 
     /// [`Supervisor::new`], launching each role from its executable in
     /// `executables` and giving
     /// each `shutdown_limit` to exit after the shutdown message before it is
-    /// killed, running by [`Timings::default`], and ignoring the processes
-    /// `ignored` holds. For tests that launch stand-ins for the outpost and listener
+    /// killed, running by [`Timings::default`], ignoring the processes
+    /// `ignored` holds, and launching the first listener with
+    /// `report_background_progress_bars`. For tests that launch stand-ins for the outpost and listener
     /// binaries ([`Executables::both`]); Verbatim uses
     /// [`Supervisor::new`].
     ///
@@ -540,6 +544,7 @@ impl Supervisor {
         executables: Executables,
         shutdown_limit: Duration,
         ignored: Arc<IgnoredProcesses>,
+        report_background_progress_bars: bool,
     ) -> io::Result<Self> {
         Self::start(
             events,
@@ -547,7 +552,7 @@ impl Supervisor {
             executables,
             shutdown_limit,
             Timings::default(),
-            ignored,
+            (ignored, report_background_progress_bars),
         )
     }
 
@@ -559,7 +564,7 @@ impl Supervisor {
         executables: Executables,
         shutdown_limit: Duration,
         timings: Timings,
-        ignored: Arc<IgnoredProcesses>,
+        (ignored, report_background_progress_bars): (Arc<IgnoredProcesses>, bool),
     ) -> io::Result<Self> {
         // The launch's log directory was prepared by the app at startup,
         // before any child (the synthesizer host first) began writing to it.
@@ -578,6 +583,7 @@ impl Supervisor {
             events: owner_rx,
             relay,
             ignored: Arc::clone(&ignored),
+            report_background_progress_bars,
         })?;
         Ok(Self {
             owner: owner_tx,
@@ -730,6 +736,16 @@ impl Supervisor {
     /// answered its requests.
     pub fn send_to_listener(&self, command: CoreToListener) {
         let _ = self.owner.send(owner::OwnerEvent::ToListener(command));
+    }
+
+    /// Carries out Core's effect "configure the listener"
+    /// ([`CoreToListener::Configuration`]): kept for every later launch of
+    /// the listener, and sent to it behind every command sent before, or
+    /// held, in order, while it launches. With none, only kept.
+    pub fn configure_listener(&self, report_background_progress_bars: bool) {
+        let _ = self.owner.send(owner::OwnerEvent::ConfigureListener {
+            report_background_progress_bars,
+        });
     }
 
     /// Writes Core's held view of the listener's told elements

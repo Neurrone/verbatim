@@ -92,8 +92,10 @@ pub struct ReaderSettings {
     pub terminal_last_lines: u16,
     /// Indicate a progress bar in a background window as well as one in the
     /// foreground (NVDA's `reportBackgroundProgressBars`, default off;
-    /// `docs/parity/changes-and-selection.md`, "Progress bars"). Read by
-    /// Core alone.
+    /// `docs/parity/changes-and-selection.md`, "Progress bars"). Core decides
+    /// speech with it; the listener is also configured with it, to skip
+    /// the read of a value change whose window acceptance refuses
+    /// (`protocol::CoreToListener::Configuration`, Dickson, 2026-11-19).
     pub report_background_progress_bars: bool,
 }
 

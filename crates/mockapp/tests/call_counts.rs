@@ -5301,11 +5301,94 @@ fn a_focus_now_walk_stops_at_an_ancestor_core_knows() {
     }
 }
 
+/// The listener's reading thread's read of a windowless UIA progress bar's
+/// change (`verbatim_listener::listener::uia_bar_place`): its nearest
+/// window first, by one lookup, then the acceptance gate, and only then
+/// its `Place`, NVDA's order of nearest window, acceptance, object
+/// (Dickson, 2026-11-19). Refused, as a background bar is while background
+/// progress bars are not reported: the lookup alone, then on its next
+/// change nothing, its window remembered. Admitted, in either state: the
+/// lookup, then the `Place`. An off-screen bar: the lookup and its
+/// `Place`, and nothing reported. A bar with no window found, its
+/// application gone: dropped before the gate, in either state. Each step's calls are taken as the gate
+/// runs, so the order is pinned as well as the count.
+fn uia_windowless_bar_reads_its_window_before_its_place() {
+    let title = common::unique_title("mockapp-counts-windowless-bar");
+    let app = common::spawn("windowless_bars.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let under_test = UiaUnderTest::new(hwnd);
+    let request = under_test
+        .uia
+        .request_fixed::<verbatim_uia::ListenerProgress>()
+        .expect("the listener's progress cache request");
+    let bar = |name: &str| {
+        Live::new(under_test.element(name).clone())
+            .refresh(&request)
+            .expect("the bar as the listener's subscription delivers it")
+    };
+    let copying = bar("Copying");
+    let hidden = bar("Hidden copy");
+    let window = hwnd.0 as isize;
+    // One change read: what it reported, the calls before the gate, whether
+    // the gate ran, and the calls after it.
+    let read = |windows: &mut std::collections::VecDeque<(Vec<i32>, isize)>,
+                sender: &Cached<verbatim_uia::ListenerProgress>,
+                admit: bool| {
+        let _ = verbatim_uia::calls::take();
+        let mut before = None;
+        let placed = verbatim_listener::listener::uia_bar_place(
+            &under_test.uia,
+            windows,
+            sender,
+            0,
+            |found| {
+                assert_eq!(found, window, "the bar's nearest window");
+                before = Some(verbatim_uia::calls::take());
+                admit
+            },
+        );
+        (placed, before, verbatim_uia::calls::take())
+    };
+    let mut refused = std::collections::VecDeque::new();
+    assert_eq!(
+        read(&mut refused, &copying, false),
+        (None, Some(calls(1, 0, 0)), calls(0, 0, 0)),
+        "refused: the lookup, and no Place"
+    );
+    assert_eq!(
+        read(&mut refused, &copying, false),
+        (None, Some(calls(0, 0, 0)), calls(0, 0, 0)),
+        "refused again: the remembered window, and no Place"
+    );
+    let mut admitted = std::collections::VecDeque::new();
+    assert_eq!(
+        read(&mut admitted, &copying, true),
+        (Some(((0, 0), window)), Some(calls(1, 0, 0)), calls(1, 0, 0)),
+        "admitted: the lookup, then the Place"
+    );
+    let mut off_screen = std::collections::VecDeque::new();
+    assert_eq!(
+        read(&mut off_screen, &hidden, true),
+        (None, Some(calls(1, 0, 0)), calls(1, 0, 0)),
+        "off screen: the lookup, then the Place, and nothing reported"
+    );
+    app.quit();
+    // Its application gone, a bar whose window is not remembered has none
+    // found: dropped before the gate, so in either state.
+    let mut gone = std::collections::VecDeque::new();
+    let (placed, gated, _) = read(&mut gone, &copying, true);
+    assert_eq!((placed, gated), (None, None), "no window found: dropped");
+}
+
 /// Runs this file's tests through the UIA test runner, which explains why
 /// these binaries do not exit normally (`common/harness.rs`).
 #[expect(clippy::too_many_lines, reason = "one entry per test")]
 fn main() {
     harness::run_isolated(&[
+        (
+            "uia_windowless_bar_reads_its_window_before_its_place",
+            uia_windowless_bar_reads_its_window_before_its_place,
+        ),
         (
             "a_window_above_the_process_boundary_is_a_plain_window_with_no_call",
             a_window_above_the_process_boundary_is_a_plain_window_with_no_call,

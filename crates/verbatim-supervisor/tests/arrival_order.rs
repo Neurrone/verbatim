@@ -345,6 +345,7 @@ impl Reducer {
             Executables::both(exe),
             LIMIT,
             std::sync::Arc::default(),
+            false,
         )
         .expect("the supervisor starts");
         let frames = supervisor.frames();

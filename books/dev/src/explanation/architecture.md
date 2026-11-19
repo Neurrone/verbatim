@@ -134,7 +134,9 @@ screen reader in both rendered and source form.
   defined once and judged in Core, the acceptance test included; a
   reader judges nothing but NVDA's local drops, which cannot hang, and
   the listener's drops on an event's own cached class and automation
-  id, which make no call; Core
+  id, which make no call, and, under a user setting Core sends it, the
+  listener's skip of a value change's read whose window the acceptance
+  test refuses (Dickson, 2026-11-19); Core
   orders events, keys and commands by arrival in its one event queue;
   and facts Core carries in a request are used only inside that
   request's answer ([ADR 0003](../reference/adr/0003-readers-tell-core-asks.md); section 2). Why: a foreground gate failed broker-hosted
@@ -673,7 +675,14 @@ listener's drops on an event's own cached class and automation id, which
 make no call; every other rule, the acceptance test included, is judged
 in Core on the facts the tells carry and the answers return. No state of
 Core is sent for a reader to judge against: facts Core carries in a
-request are used only inside that request's answer.
+request are used only inside that request's answer. The one exception is
+a user setting that a reader needs before a call, which changes only by
+the user's hand. Core sends it at the reader's launch and on every
+change, and a reader judges under the value one message old, the
+one-message window stated in the design that uses it; the first is
+whether background progress bars are reported, which the listener
+applies to skip reading a value change whose window the acceptance test
+refuses (Dickson, 2026-11-19).
 
 Events from every reader join Core's one event queue in the order they
 arrive, with every key and command, and Core judges them in that order,

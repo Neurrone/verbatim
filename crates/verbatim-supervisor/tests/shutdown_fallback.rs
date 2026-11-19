@@ -76,6 +76,7 @@ fn a_child_that_does_not_exit_in_time_is_killed_and_the_kill_is_reported() {
         Executables::both(exe),
         LIMIT,
         std::sync::Arc::default(),
+        false,
     )
     .expect("the supervisor starts");
     // The listener's start, which Core's generation record takes, comes

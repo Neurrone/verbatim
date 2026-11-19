@@ -3648,3 +3648,34 @@ fn an_item_selected_as_the_focus_moves_inside_it_says_the_new_focus_then_selecte
         heard
     );
 }
+
+/// Every settings input configures the listener with the value it
+/// carries, the first included and whatever the value, changed or not, so
+/// the supervisor's launch copy is corrected from Core's first input and
+/// the last command the listener gets is current.
+#[test]
+fn every_settings_input_configures_the_listener() {
+    let settings = |report_background_progress_bars| {
+        Input::Settings(verbatim_model::ReaderSettings {
+            report_background_progress_bars,
+            ..verbatim_model::ReaderSettings::default()
+        })
+    };
+    let configured = |report_background_progress_bars| {
+        vec![Effect::ListenerConfiguration {
+            report_background_progress_bars,
+        }]
+    };
+    let (state, effects) = reduce(&SrState::new(), &settings(false));
+    assert_eq!(effects, configured(false), "the first, off");
+    let (state, effects) = reduce(&state, &settings(false));
+    assert_eq!(effects, configured(false), "off again, unchanged");
+    let (state, effects) = reduce(&state, &settings(true));
+    assert_eq!(effects, configured(true), "turned on");
+    let (state, effects) = reduce(&state, &settings(true));
+    assert_eq!(effects, configured(true), "on again, unchanged");
+    let (_, effects) = reduce(&state, &settings(false));
+    assert_eq!(effects, configured(false), "turned off");
+    let (_, effects) = reduce(&SrState::new(), &settings(true));
+    assert_eq!(effects, configured(true), "the first, on");
+}

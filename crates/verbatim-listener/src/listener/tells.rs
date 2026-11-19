@@ -28,6 +28,7 @@ use verbatim_reader_rules::CONSOLE_WINDOW_CLASS;
 pub(super) use verbatim_win32::window_facts::SystemReads;
 use verbatim_win32::window_facts::{WindowPart, WindowReads};
 
+use super::configuration::Told;
 use super::event_windows::{EventReads, EventWindows};
 use super::{Sent, Timed, TimerHandle, Waiting, sent};
 use verbatim_process::transport::Sender;
@@ -78,7 +79,7 @@ pub(super) enum PendingWindow {
 impl Pending {
     /// The tell, its window facts completed with the foreground's part
     /// read now, and its key.
-    fn finish(self, reads: &impl WindowReads) -> (TellKey, ListenerToCore) {
+    fn finish(self, reads: &impl WindowReads) -> (TellKey, Event) {
         let key = TellKey {
             kind: self.kind,
             object: self.object.clone(),
@@ -103,7 +104,7 @@ impl Pending {
             window,
             checked: self.checked,
         };
-        (key, ListenerToCore::Tell(Box::new(tell)))
+        (key, tell)
     }
 }
 
@@ -184,17 +185,20 @@ impl Tells {
     /// Places `held` in the order of tells: sent now, or kept behind a
     /// pending foreground, whose window is looked for in front now.
     pub(super) fn place(&self, held: Held) {
-        self.place_seen(held, self.front(), &SystemReads);
+        let _ = self.place_seen(held, self.front(), &SystemReads);
     }
 
     /// [`place`](Self::place), `front` the window in front as the
     /// `WinEvent` callback read it for the foreground's watch, so that the
     /// hold and the watch judge the event on one read, and the foreground
-    /// facts of what is sent read through `reads`.
-    pub(super) fn place_seen(&self, held: Held, front: isize, reads: &impl WindowReads) {
+    /// facts of what is sent read through `reads`. What became of `held`
+    /// when it is a tell: sent in this step, with the window facts it
+    /// carries, its own whatever else the step released, or held.
+    pub(super) fn place_seen(&self, held: Held, front: isize, reads: &impl WindowReads) -> Told {
+        let watched = watched(&held);
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         let placed = state.hold.place(held, front, now_us());
-        self.apply(&state, placed, reads);
+        self.apply(&state, placed, reads, watched)
     }
 
     /// Sends a UI Automation tell `held` at once, past any pending
@@ -203,7 +207,7 @@ impl Tells {
     pub(super) fn pass_hold(&self, held: Held) {
         let state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         let placed = state.hold.passing(held);
-        self.apply(&state, placed, &SystemReads);
+        let _ = self.apply(&state, placed, &SystemReads, None);
     }
 
     /// Places a foreground event's tell for `window`, `None` for one a
@@ -216,11 +220,12 @@ impl Tells {
         tell: Option<Pending>,
         front: isize,
         reads: &impl WindowReads,
-    ) {
+    ) -> Told {
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         let held = tell.map(|tell| Held::Tell(Box::new(tell)));
+        let watched = held.as_ref().and_then(watched);
         let placed = state.hold.foreground(window, held, front, now_us());
-        self.apply(&state, placed, reads);
+        self.apply(&state, placed, reads, watched)
     }
 
     /// Sends what a step of the hold released, in order, each tell's
@@ -228,12 +233,32 @@ impl Tells {
     /// timer as it says, under the lock. The foreground window, the active
     /// window and whether one window is inside another are read here, under
     /// the lock, whatever `reads` has read before
-    /// ([`ReadOnce`](verbatim_win32::window_facts::ReadOnce)).
-    fn apply(&self, state: &HoldState, placed: Placed<Held>, reads: &impl WindowReads) {
+    /// ([`ReadOnce`](verbatim_win32::window_facts::ReadOnce)). What became
+    /// of the tell whose trace id is `watched`: sent, with the window facts
+    /// it carries, when this step sent it, else held; `Dropped` when
+    /// nothing is watched.
+    fn apply(
+        &self,
+        state: &HoldState,
+        placed: Placed<Held>,
+        reads: &impl WindowReads,
+        watched: Option<TraceId>,
+    ) -> Told {
+        let mut told = if watched.is_some() {
+            Told::Held
+        } else {
+            Told::Dropped
+        };
         for held in placed.send {
             match held {
                 Held::Tell(tell) => {
-                    let (key, message) = tell.finish(reads);
+                    let (key, event) = tell.finish(reads);
+                    if Some(event.trace_id) == watched
+                        && let TellWindow::Found(facts) = &event.window
+                    {
+                        told = Told::Sent(facts.clone());
+                    }
+                    let message = ListenerToCore::Tell(Box::new(event));
                     sent(&self.sender.send(Sent::Tell(key, message)));
                 }
                 Held::Destroyed {
@@ -249,13 +274,22 @@ impl Tells {
             }
         }
         let after = match placed.timer {
-            TimerChange::Keep => return,
+            TimerChange::Keep => return told,
             TimerChange::Arm(after) if !state.closed => Some(Duration::from_micros(after)),
             TimerChange::Arm(_) | TimerChange::Disarm => None,
         };
         if let Some(timer) = self.timer.get() {
             timer(after);
         }
+        told
+    }
+}
+
+/// The trace id of `held` when it is a tell, whose fate a step reports.
+fn watched(held: &Held) -> Option<TraceId> {
+    match held {
+        Held::Tell(tell) => Some(tell.trace_id),
+        Held::Destroyed { .. } | Held::IdleAnswer(_) => None,
     }
 }
 
@@ -270,7 +304,7 @@ impl Timed for Tells {
     fn fired(&self) {
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         let placed = state.hold.fired(self.front(), now_us());
-        self.apply(&state, placed, &SystemReads);
+        let _ = self.apply(&state, placed, &SystemReads, None);
     }
 
     fn closing(&self) {
@@ -356,15 +390,17 @@ fn handle(window: isize) -> WindowHandle {
 /// ([`hang_tested`]). `front` is the window in front as the
 /// callback read it, which the foreground hold judges the event on, and
 /// `windows` the facts of the event's windows, each read once for it.
+/// What became of the event's tell, for the value path: a window's
+/// destruction is no tell.
 pub(super) fn tell_win_event(
     tells: &Tells,
     applications: &mut Applications,
     event: WinEvent,
     (at_us, front): (u64, isize),
     windows: &EventWindows<'_, impl EventReads>,
-) {
+) -> Told {
     let Some(kind) = verbatim_ia2::tell_kind(&event) else {
-        return;
+        return Told::Dropped;
     };
     let reads = windows.facts();
     let window = match tell_window(
@@ -376,7 +412,7 @@ pub(super) fn tell_win_event(
         Ok(window) => window,
         Err(reason) => {
             tracing::trace!(?kind, hwnd = event.hwnd, reason, "a WinEvent is not told");
-            return;
+            return Told::Dropped;
         }
     };
     if kind == EventKind::Destroy {
@@ -385,14 +421,16 @@ pub(super) fn tell_win_event(
             process: windows.process_of_thread(event.thread).map(Pid),
             at_us,
         };
-        return tells.place_seen(destroyed, front, windows.live());
+        let _ = tells.place_seen(destroyed, front, windows.live());
+        return Told::Dropped;
     }
     let awaited = (event.kind == WinEventKind::Foreground).then_some(window);
     let dropped = |reason: &'static str| {
         tracing::trace!(?kind, window, reason, "a WinEvent is not told");
         if let Some(window) = awaited {
-            tells.foreground(window, None, front, windows.live());
+            let _ = tells.foreground(window, None, front, windows.live());
         }
+        Told::Dropped
     };
     let class = reads.class(window);
     let console = class == CONSOLE_WINDOW_CLASS;

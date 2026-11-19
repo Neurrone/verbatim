@@ -39,6 +39,11 @@ const GENERATION_ARG: &str = "--generation";
 /// processes Verbatim ignores ([`crate::held::IgnoredProcesses`]).
 pub const IGNORE_PIDS_ARG: &str = "--ignore-pids";
 
+/// The flag of whether background progress bars are reported, `on` or
+/// `off`: the listener's configuration in force at its launch
+/// (`verbatim_model::protocol::CoreToListener::Configuration`).
+const BACKGROUND_BARS_ARG: &str = "--background-bars";
+
 /// The values of the two pipe ends a child inherits, passed on its command
 /// line as decimal: the one it reads commands from, then the one it writes
 /// messages to.
@@ -134,8 +139,8 @@ impl OutpostArguments {
 }
 
 /// The focus listener's launch arguments: `--listener --pipe-in <handle>
-/// --pipe-out <handle>`, then `--ignore-pids <pids>` when any process is
-/// ignored.
+/// --pipe-out <handle> --generation <n> --background-bars on|off`, then
+/// `--ignore-pids <pids>` when any process is ignored.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ListenerArguments {
     /// The listener's generation, its launch's id: Core's views and
@@ -144,6 +149,11 @@ pub struct ListenerArguments {
     /// The processes Verbatim ignores entirely, whose facts the listener
     /// drops.
     pub ignored: Vec<Pid>,
+    /// Whether background progress bars are reported, as Core's last
+    /// configuration command said, or the settings loaded at startup before
+    /// Core's first: the listener judges every value change under it until
+    /// Core's next command (Dickson, 2026-11-19).
+    pub report_background_progress_bars: bool,
 }
 
 impl ListenerArguments {
@@ -158,15 +168,20 @@ impl ListenerArguments {
             format!(" {IGNORE_PIDS_ARG} {}", pids.join(","))
         };
         let generation = self.generation;
+        let bars = if self.report_background_progress_bars {
+            "on"
+        } else {
+            "off"
+        };
         format!(
-            "{LISTENER_ARG} --pipe-in {pipe_in} --pipe-out {pipe_out} {GENERATION_ARG} {generation}{ignore}"
+            "{LISTENER_ARG} --pipe-in {pipe_in} --pipe-out {pipe_out} {GENERATION_ARG} {generation} {BACKGROUND_BARS_ARG} {bars}{ignore}"
         )
     }
 
     /// The arguments in `args`, the command line after the program's name;
     /// `None` when they do not begin with [`LISTENER_ARG`], are incomplete
-    /// (the pipes and the generation are required), or carry an outpost's
-    /// options.
+    /// (the pipes, the generation and whether background bars are reported
+    /// are required), or carry an outpost's options.
     #[must_use]
     pub fn parse(args: &[String]) -> Option<(Pipes, Self)> {
         if args.first().map(String::as_str) != Some(LISTENER_ARG) {
@@ -175,6 +190,7 @@ impl ListenerArguments {
         let mut pipe_in = None;
         let mut pipe_out = None;
         let mut generation = None;
+        let mut bars = None;
         let mut arguments = Self::default();
         let mut index = 1;
         while index < args.len() {
@@ -184,12 +200,20 @@ impl ListenerArguments {
                 "--pipe-out" => pipe_out = value.parse().ok(),
                 GENERATION_ARG => generation = value.parse().ok(),
                 IGNORE_PIDS_ARG => arguments.ignored = crate::held::parse_pids(value),
+                BACKGROUND_BARS_ARG => {
+                    bars = match value {
+                        "on" => Some(true),
+                        "off" => Some(false),
+                        _ => return None,
+                    };
+                }
                 "--target-pid" | "--spare" | "--classic-uia" | "--attach" => return None,
                 _ => {}
             }
             index += 2;
         }
         arguments.generation = generation?;
+        arguments.report_background_progress_bars = bars?;
         Some((
             Pipes {
                 pipe_in: pipe_in?,
@@ -249,15 +273,17 @@ mod tests {
                 ListenerArguments {
                     generation: 1,
                     ignored: Vec::new(),
+                    report_background_progress_bars: false,
                 },
-                "--listener --pipe-in 412 --pipe-out 416 --generation 1",
+                "--listener --pipe-in 412 --pipe-out 416 --generation 1 --background-bars off",
             ),
             (
                 ListenerArguments {
                     generation: 7,
                     ignored: vec![Pid(30), Pid(31)],
+                    report_background_progress_bars: true,
                 },
-                "--listener --pipe-in 412 --pipe-out 416 --generation 7 --ignore-pids 30,31",
+                "--listener --pipe-in 412 --pipe-out 416 --generation 7 --background-bars on --ignore-pids 30,31",
             ),
         ] {
             assert_eq!(arguments.command_line(PIPES), line);
@@ -280,14 +306,30 @@ mod tests {
         assert_eq!(ListenerArguments::parse(&split(&outpost)), None);
         assert_eq!(
             ListenerArguments::parse(&split(
-                "--listener --pipe-in 412 --pipe-out 416 --generation 1 --spare 7"
+                "--listener --pipe-in 412 --pipe-out 416 --generation 1 --background-bars off --spare 7"
             )),
             None
         );
         assert_eq!(
-            ListenerArguments::parse(&split("--listener --pipe-in 412 --pipe-out 416")),
+            ListenerArguments::parse(&split(
+                "--listener --pipe-in 412 --pipe-out 416 --background-bars off"
+            )),
             None,
             "a listener's generation is required"
+        );
+        assert_eq!(
+            ListenerArguments::parse(&split(
+                "--listener --pipe-in 412 --pipe-out 416 --generation 1"
+            )),
+            None,
+            "whether background bars are reported is required"
+        );
+        assert_eq!(
+            ListenerArguments::parse(&split(
+                "--listener --pipe-in 412 --pipe-out 416 --generation 1 --background-bars yes"
+            )),
+            None,
+            "on or off"
         );
     }
 }

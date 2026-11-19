@@ -304,9 +304,10 @@ impl Playback {
                 }
                 Effect::StopSpeech => self.queued.clear(),
                 Effect::ForKey(_, effect) => self.take(state, vec![*effect]),
-                // The event queue's own effects as it settles: the
-                // outpost's start and the next wake.
-                Effect::Queue(_) => {}
+                // The event queue's own effects as it settles, the
+                // outpost's start and the next wake, and the listener's
+                // configuration, at every settings input.
+                Effect::Queue(_) | Effect::ListenerConfiguration { .. } => {}
                 other => panic!("unexpected effect: {other:?}"),
             }
         }

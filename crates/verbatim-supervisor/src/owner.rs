@@ -86,6 +86,13 @@ pub(super) enum OwnerEvent {
     /// From the app: a command for the listener, a request or cancel of
     /// Core's.
     ToListener(CoreToListener),
+    /// From the app, Core's effect: the listener's configuration, kept for
+    /// every later launch and written to the listener running or held
+    /// while one launches.
+    ConfigureListener {
+        /// Whether background progress bars are reported.
+        report_background_progress_bars: bool,
+    },
     /// From the app: Core's held view for the listener
     /// ([`CoreToListener::ElementsHeld`]), written now when `now`, else
     /// left for the next command written to it.
@@ -143,6 +150,10 @@ pub(super) struct Setup {
     pub(super) relay: Relay,
     /// The processes ignored entirely.
     pub(super) ignored: std::sync::Arc<IgnoredProcesses>,
+    /// Whether background progress bars are reported, from the settings
+    /// loaded before the supervisor was made, until Core's first
+    /// configuration command.
+    pub(super) report_background_progress_bars: bool,
 }
 
 /// A child's process from its launch: still being launched, or running.
@@ -377,6 +388,14 @@ struct Owner {
     /// The processes ignored entirely: no outpost is started for them, and
     /// the listener, told of them, drops their events.
     ignored: std::sync::Arc<IgnoredProcesses>,
+    /// Whether background progress bars are reported, as Core's last
+    /// configuration command said, or the settings loaded at startup
+    /// before Core's first: every listener generation is launched with it,
+    /// since the owner relaunches the listener without Core. Only Core's
+    /// commands set it, in Core's order, so a launch and a later change
+    /// cannot cross: a command that arrives while the listener launches is
+    /// held in its `pending` and written after the launch.
+    report_background_progress_bars: bool,
     /// The idle barrier's round under way in the relay, until the
     /// outposts are asked.
     idle: Option<IdleStage>,
@@ -413,6 +432,7 @@ pub(super) fn start(setup: Setup) -> io::Result<()> {
         events,
         relay,
         ignored,
+        report_background_progress_bars,
     } = setup;
     let mut owner = Owner {
         backoff_clock: Arc::new(now_us),
@@ -434,6 +454,7 @@ pub(super) fn start(setup: Setup) -> io::Result<()> {
         apps: BTreeMap::new(),
         own_pid: Pid(std::process::id()),
         ignored,
+        report_background_progress_bars,
         idle: None,
         spares: Spares::default(),
         spare_children: BTreeMap::new(),
@@ -769,6 +790,14 @@ impl Owner {
             }
             OwnerEvent::IdleRound(round) => self.idle_round(round),
             OwnerEvent::ToListener(command) => self.tell_listener(command),
+            OwnerEvent::ConfigureListener {
+                report_background_progress_bars,
+            } => {
+                self.report_background_progress_bars = report_background_progress_bars;
+                self.tell_listener(CoreToListener::Configuration {
+                    report_background_progress_bars,
+                });
+            }
             OwnerEvent::ListenerHeld { view, now } => self.listener_held(view, now),
             OwnerEvent::EndOutpost(outpost) => {
                 if let Some(pid) = self.pid_of(outpost) {
@@ -1209,6 +1238,7 @@ impl Owner {
             Role::Listener => ListenerArguments {
                 generation: outpost.0,
                 ignored: self.ignored.pids(),
+                report_background_progress_bars: self.report_background_progress_bars,
             },
             Role::Outpost(_) | Role::Spare(_) => ListenerArguments::default(),
         };

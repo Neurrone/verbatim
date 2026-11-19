@@ -157,6 +157,7 @@ fn an_outpost_that_ends_after_its_application_exited_ends_as_the_exit_and_none_s
         Executables::both(exe.clone()),
         LIMIT,
         std::sync::Arc::default(),
+        false,
     )
     .expect("the supervisor starts");
     let events = Delivered::new(events, &supervisor);
@@ -293,6 +294,7 @@ fn an_end_the_app_refuses_for_now_still_comes_before_its_replacement() {
         Executables::both(exe.clone()),
         LIMIT,
         std::sync::Arc::default(),
+        false,
     )
     .expect("the supervisor starts");
     let events = Delivered::new(events, &supervisor);
@@ -399,6 +401,7 @@ fn an_application_held_with_no_outpost_running_is_reported_exited() {
         Executables::both(exe.clone()),
         LIMIT,
         std::sync::Arc::default(),
+        false,
     )
     .expect("the supervisor starts");
     let events = Delivered::new(events, &supervisor);

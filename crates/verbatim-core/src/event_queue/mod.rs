@@ -224,9 +224,13 @@ pub(crate) trait Logic: Sized + 'static {
     }
 
     /// Whether `entry`, whose request out names `window`, was accepted by
-    /// something other than the foreground relation, which exempts that
-    /// request from the foreground stop.
-    fn exempt_from_foreground(entry: &Self::Entry, window: &RequestWindow) -> bool;
+    /// something other than the foreground relation, judged with `facts`,
+    /// which exempts that request from the foreground stop.
+    fn exempt_from_foreground(
+        facts: &Self::Facts,
+        entry: &Self::Entry,
+        window: &RequestWindow,
+    ) -> bool;
 
     /// Whether `arriving`, joining the back, withdraws `request`, the
     /// request out of the front entry `front`, judged with the backend

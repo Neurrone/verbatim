@@ -1089,7 +1089,22 @@ takes it at its arrival (`UiaFocus::alt_down`), and its execution judges
 File Explorer's switcher rule (`applications::drops_ancestry`) with it and
 the parent's automation id its tell carries. A UI Automation property
 change, the listener's or a followed node's, passes acceptance on its
-tell's facts before Core judges it (`changes::uia`, `changes::uia_entry`).
+tell's facts before Core judges it (`changes::uia`, `changes::uia_entry`);
+a value change is judged as a value change, which background progress
+bars reported accepts from any window, as NVDA maps a UI Automation value
+or range value change to its value change event, so the focus's value is
+spoken while the taskbar is in front with the setting on, and every other
+property as a property change. An event accepted only because background
+progress bars are reported is accepted apart from the foreground, so a
+foreground change neither stops its request out nor ends it waiting
+(`accepted_apart_from_foreground`, judged with Core's facts, which
+`Logic::exempt_from_foreground` now takes). `verbatim_core::accepts` is
+the acceptance test's answer alone, public so that the listener judges
+with Core's own function whether to read a value change while background
+progress bars are not reported (Dickson, 2026-11-19). Every
+`Input::Settings`, the first included and whatever its value, emits
+`Effect::ListenerConfiguration`, so the listener's configuration and the
+supervisor's launch copy follow Core's setting.
 
 ### Caret tells and Core's text facts
 

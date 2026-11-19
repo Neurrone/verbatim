@@ -352,9 +352,15 @@ hook does, for local calls only: each fact of the event's windows read
 once for the event, and the window in front, the active window, the
 relations to them and whether the window is hung read when each is
 judged. That is 22 calls to Windows for a value change on a custom
-object of a top-level window in the background and 19 for a tooltip's
-show, the hook's class read included and a hang test counted as its
-calls (`a_flood_events_window_facts_are_read_once` counts them by read);
+object of a top-level window in the background while background progress
+bars are reported, and 19 for a tooltip's show, the hook's class read
+included and a hang test counted as its calls
+(`a_flood_events_window_facts_are_read_once` counts them by read); while
+they are not, the default, a value change whose tell's window acceptance
+refuses costs the show's 19 and nothing more: its read is skipped on the
+tell's facts, with no lock, job or reading-thread wake
+(`a_flood_events_background_value_changes_are_not_read`; Dickson,
+2026-11-19);
 measured on `msaa_flood_then_focus` (release, 13-second windows over
 its three floods of 4,000 events, five traces of each build
 alternately, 2026-11-19), reading each fact once took the WinEvent
@@ -377,7 +383,22 @@ and the record kept across an idle process. An application's waiting
 classic value changes are at most 10 per raising thread and 64 in all, so
 a flood of new objects does not grow the queue. Each UIA range value
 change anywhere wakes the listener's UIA thread, and a progress bar's adds
-a reading thread and its place's read. The wake-up and processor time
+a reading thread and its place's read. While background progress bars are
+not reported, the default, a bar with its own window is judged by
+acceptance on the UIA callback thread before it is queued, on local
+Windows reads of its window and none into the application: 11 calls for a
+window in front, 15 for one in the background and 19 for one under a
+topmost root (`the_callbacks_gate_admits_a_bar_by_its_windows_acceptance`),
+paid by every change of such a bar, accepted or refused; a refused one
+then costs no reading-thread wake and no cross-process `Place` read. If
+UI Automation delivers this subscription on the thread that delivers the
+focus, a foreground bar changing quickly delays those events by these
+calls; that is inferred, not measured. A windowless bar's nearest window
+is found before its place, in both states, so a refused one costs its
+window lookup once, memoised, and no `Place` read, and an off-screen one's
+first change costs a lookup it did not before
+(`uia_windowless_bar_reads_its_window_before_its_place`). While the
+setting is reported, the gate reads only the setting. The wake-up and processor time
 figures are from the design's first step, still to be measured.
 
 ### The listener's reads in a window the outpost judges MSAA

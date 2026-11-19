@@ -1,0 +1,9 @@
+{
+  "id": "root",
+  "role": "window",
+  "name": "Mockapp Windowless Bars Fixture",
+  "children": [
+    { "id": "bar", "role": "progress_bar", "name": "Copying", "value": "10" },
+    { "id": "hidden", "role": "progress_bar", "name": "Hidden copy", "value": "20", "states": ["offscreen"] }
+  ]
+}

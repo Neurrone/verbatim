@@ -579,7 +579,7 @@ impl<L: Logic> Core<L> {
             state.queue.front.as_ref().and_then(|front| {
                 let number = front.asked?;
                 let live = state.queue.table.live(number)?;
-                (!L::exempt_from_foreground(&front.entry, &live.window)
+                (!L::exempt_from_foreground(&state.facts, &front.entry, &live.window)
                     && !foreground.holds(&live.window))
                 .then_some(number)
             })

@@ -143,6 +143,7 @@ fn the_listeners_window_destroyed_is_handed_on_to_the_app() {
         Executables::both(exe),
         LIMIT,
         std::sync::Arc::default(),
+        false,
     )
     .expect("the supervisor starts");
     let events = Delivered::new(events, &supervisor);

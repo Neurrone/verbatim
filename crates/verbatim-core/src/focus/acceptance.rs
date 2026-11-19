@@ -70,6 +70,22 @@ pub(crate) type Acceptance = Result<Accepted, Refused>;
 
 /// Whether an event of `kind`, whose tell window has `facts` (`None` when
 /// it has no window), is accepted, with background progress bars reported
+/// or not: [`accept`]'s answer alone. The listener judges with it whether
+/// to read a value change while background progress bars are not reported,
+/// on the facts it gathered for the change's tell, or for a UI Automation
+/// bar's nearest window, so that the rule is written once (Dickson,
+/// 2026-11-19).
+#[must_use]
+pub fn accepts(
+    kind: EventKind,
+    facts: Option<&AcceptanceFacts>,
+    background_progress: bool,
+) -> bool {
+    accept(kind, facts, background_progress).is_ok()
+}
+
+/// Whether an event of `kind`, whose tell window has `facts` (`None` when
+/// it has no window), is accepted, with background progress bars reported
 /// or not.
 pub(crate) fn accept(
     kind: EventKind,
