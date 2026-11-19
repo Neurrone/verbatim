@@ -251,8 +251,16 @@ reviewable surface.
   [owned-box|hide-close]`, answered with its handle): `owned-box` raises
   a message box it owns before the show, `hide-close` closes it by hiding
   before the show. `tray-menu-over-hidden-dialog` opens a popup menu over
-  such a dialog, never shown, in front. Deliberately unlike Import a
-  Theme: no `ComboBoxEx32` around the field and no shell view.
+  such a dialog, never shown, in front. mockapp's window thread answers
+  its messages while it waits for the dialog's handle, since the dialog it
+  owns sends it messages as it is made. Checked against the recording of
+  Import a Theme (2026-11-19, msaa_events
+  `the_dialog_shown_late_raises_its_foreground_and_focus_hidden_then_its_show`):
+  the foreground, then the focus, while hidden, then the show, as Import.
+  Deliberately unlike it: a focus on the dialog's own window, then the
+  Edit, where Import focuses its `ComboBoxEx32`, `ComboBox` and Edit in
+  turn, twice, around its shell view's build; three windows, against
+  Import's tens; and no shell view.
 - `menu`: the Win32 popup menu the `popup-menu` command shows, the
   system's own `#32768` window, served by MSAA's menu proxy: two items,
   "First" and "Second", tracked by `TrackPopupMenuEx` on a thread of its

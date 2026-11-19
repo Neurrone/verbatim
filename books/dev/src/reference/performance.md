@@ -607,6 +607,20 @@ hidden, and read again once it is shown ([How focus works](../explanation/design
   Run dialog 17 to 22 ms when hidden, File Explorer's Properties 14 to
   30 ms; a dialog shown at its foreground waits for nothing. NVDA's
   first speech for Import came 716 to 1021 ms after Enter.
+- After the show, the read made again is the dialog's own, from its
+  foreground, and it is where the time goes. In the build's five
+  recordings of Import (2026-11-19, `dsb-import`), Enter to the first
+  speech was 325 to 484 ms, 219 to 276 ms after the show. The read began
+  at the show's answer, with no wait in Core's queue; inside it, 57 to
+  89 ms acquired and walked the dialog while its application's own thread
+  was building its shell view, then 134 to 175 ms gathered its text, 340
+  MSAA calls in all: the state and role of every child, going into each
+  pane and window, the walk NVDA's `getDialogText` makes
+  (`NVDAObjects/behaviors.py` 93 to 194); speech followed 1 to 3 ms after
+  the answer. The field's read after it took 25 ms and speaks behind the
+  dialog. Not avoidable work: the walk is NVDA's, and each call waits on
+  the dialog's busy thread; Verbatim's first speech still comes 230 to
+  540 ms before NVDA's.
 - The listener hears every window object's show already: each costs one
   comparison of its ids, and a look in the waiters only while one is
   kept. No message to Core and no new wake-up, but the request and its

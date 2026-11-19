@@ -124,8 +124,11 @@ window_shown`) answers the waiters for that window shown, whatever its
 class, and the destruction of its window object answers them not there;
 a show costs one comparison of its ids and, while a waiter is kept, a
 look in the table, and sends Core nothing else. The pipe thread hands the
-WinEvent thread only the cancels of the requests it handed it, by their
-numbers (the newest 16 kept), so a reading thread's cancel wakes it not.
+WinEvent thread only the cancels of the requests out on it: it records
+each request from its handing until its token's answer, which the token
+sends back over a plain channel, with no limit on their count, so every
+cancel of a request out reaches its waiter and a reading thread's cancel
+wakes the WinEvent thread not.
 Each waiter's token is
 its one answer path: Core's cancel answers it "ended" with the detail
 "cancelled", and a token dropped unanswered, as the table is at the
