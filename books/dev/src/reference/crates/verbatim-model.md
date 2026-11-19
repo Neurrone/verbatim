@@ -26,9 +26,10 @@ recorder unchanged. What the reducer does with each type is in
   the real generation on everything arriving on that outpost's pipe
   (`assign_outpost` on answers and tells), so an id from a replaced
   outpost never names a node in its successor. `NodeId::outpost` is
-  `None` for a plain node; in a message an outpost's id is
-  `{"outpost": n, "number": m}` and a plain one `{"plain": n, "number":
-  m}`.
+  `None` for a plain node, and the stamp `with_outpost` keeps a plain id
+  plain; in a message an outpost's id is `{"outpost": n, "number": m}`
+  and a plain one `{"plain": n, "number": m}`, written and read by hand
+  with no buffering.
 - `HIDDEN_FRAME_WINDOW_PROP`: the window property
   [verbatim-gui](verbatim-gui.md) stamps on Core's hidden main frame
   (decision D9), which a reader reads into a window's facts
@@ -440,7 +441,8 @@ that carries them on the pipes is
 - `Front` and `GhostFront`: what the shell read in front when it refused
   a read of an application's current focus because its window was hung,
   as `QueueInput::HungFocus { number, front }`: a ghost window with its
-  text, the hung window it stands for and its disabled style; a hung
+  text, the hung window it stands for with that window's application and
+  thread, and its disabled style; a hung
   window with no ghost; a responsive one; or nothing. Every other request
   the shell refuses so is `QueueInput::RefusedHung`.
 - `OutpostToCore::NotResponding { window }`: a window of the outpost's

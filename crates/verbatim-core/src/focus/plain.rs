@@ -62,9 +62,9 @@ pub(crate) struct PlainObject {
     pub(crate) name: String,
     /// Whether it is disabled.
     pub(crate) unavailable: bool,
-    /// The hung application's process, never the ghost's own (the desktop
-    /// window manager's), so that no rule naming the process starts an
-    /// outpost for the ghost's.
+    /// The application of the hung window it stands for, never the
+    /// ghost's own (the desktop window manager's), so that no rule naming
+    /// the process starts an outpost for the ghost's.
     pub(crate) process: Pid,
     /// The hung window's thread.
     pub(crate) thread: u32,
@@ -183,10 +183,10 @@ pub(crate) struct PlainReader {
 }
 
 impl PlainReader {
-    /// Holds a new plain object of `ghost`, for the hung application's
-    /// window `asked`, replacing the one held: a new generation, so a
-    /// request on an older one's node is answered "not there".
-    fn hold(&mut self, ghost: &GhostFront, asked: &RequestWindow) -> &PlainObject {
+    /// Holds a new plain object of `ghost`, named by the application of the
+    /// hung window it stands for, replacing the one held: a new generation,
+    /// so a request on an older one's node is answered "not there".
+    fn hold(&mut self, ghost: &GhostFront) -> &PlainObject {
         self.generations = self.generations.saturating_add(1);
         self.object.insert(PlainObject {
             generation: self.generations,
@@ -194,8 +194,8 @@ impl PlainReader {
             stands_for: ghost.stands_for,
             name: ghost.name.clone(),
             unavailable: ghost.unavailable,
-            process: asked.process,
-            thread: asked.thread,
+            process: ghost.process,
+            thread: ghost.thread,
         })
     }
 
@@ -334,8 +334,8 @@ pub(crate) fn decide(
 ) {
     match (front, read.reads_like_nvda()) {
         (Front::Ghost(ghost), true) => {
-            let executed = commit(&mut cx.facts_mut(), ghost, window, (trace_id, fence));
-            cx.watch_if_attended(&window);
+            let executed = commit(&mut cx.facts_mut(), ghost, (trace_id, fence));
+            cx.watch_if_attended(&stood_for(ghost, window));
             executed.deliver(cx);
         }
         (Front::Responsive | Front::Nothing, true) => cx.facts_mut().focus_read_failed(),
@@ -348,8 +348,27 @@ pub(crate) fn decide(
     }
 }
 
-/// Commits the plain object of `ghost` as the focus, for the read that
-/// named the hung application's window `asked`: a new plain object is
+/// The hung window `ghost` stands for, which is watched: `asked`, the window
+/// the read named, when it is that window; otherwise the window of another
+/// application whose ghost came in front, as a click can bring it, named
+/// by its own application and thread, so it, not the asked application,
+/// is watched and read again when it answers.
+fn stood_for(ghost: &GhostFront, asked: RequestWindow) -> RequestWindow {
+    if ghost.stands_for == asked.handle {
+        return asked;
+    }
+    RequestWindow {
+        handle: ghost.stands_for,
+        top_level: ghost.stands_for,
+        root_owner: ghost.stands_for,
+        process: ghost.process,
+        thread: ghost.thread,
+        by_class: None,
+    }
+}
+
+/// Commits the plain object of `ghost` as the focus, named by the
+/// application of the hung window it stands for: a new plain object is
 /// held, and executed through the same commit as any focus. Its read is
 /// one node, whose window facts name the ghost as its top-level window
 /// and root owner, with no ancestors below the desktop, no text, and
@@ -357,10 +376,9 @@ pub(crate) fn decide(
 fn commit(
     state: &mut SrState,
     ghost: &GhostFront,
-    asked: RequestWindow,
     (trace_id, fence): (verbatim_model::TraceId, Fence),
 ) -> Executed {
-    let object = state.plain.hold(ghost, &asked).clone();
+    let object = state.plain.hold(ghost).clone();
     let focus = FocusNode {
         read: NodeRead {
             node: Some(object.node()),

@@ -150,6 +150,8 @@ fn ghost() -> Front {
     Front::Ghost(GhostFront {
         ghost: GHOST,
         stands_for: HUNGWIN.top_level(),
+        process: HUNGWIN.pid,
+        thread: 41,
         name: "hungwin (Not Responding)".to_owned(),
         unavailable: false,
     })

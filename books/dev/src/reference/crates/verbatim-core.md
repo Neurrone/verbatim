@@ -800,8 +800,9 @@ attention.
 The plain object is an ordinary object in Core's model: its node is
 issued by Core's plain reader (`SrState::plain`, one `PlainObject` at a
 time, each commit a new generation, ended by its ghost's destruction),
-its `Kept` reads `ReadBy::Plain` and names the hung application's
-process, never the ghost's, and its place names the ghost as top-level
+its `Kept` reads `ReadBy::Plain` and names the application of the hung
+window the ghost stands for, never the ghost's own nor, for another
+application's ghost in front, the asked one, and its place names the ghost as top-level
 window and root owner. It is committed by the ordinary `execute`, a read
 of one node with no ancestors below the desktop, no text, and itself as
 the foreground object, so the committed focus, the readers' last focus,

@@ -1152,6 +1152,11 @@ pub struct GhostFront {
     pub ghost: WindowHandle,
     /// The hung window it stands for (`HungWindowFromGhostWindow`).
     pub stands_for: WindowHandle,
+    /// The application of the hung window it stands for, never the
+    /// ghost's own (the desktop window manager's).
+    pub process: crate::Pid,
+    /// The thread that owns the hung window it stands for.
+    pub thread: u32,
     /// Its window text (`InternalGetWindowText`), empty when it has none.
     pub name: String,
     /// Whether it is disabled (`WS_DISABLED`), the one state NVDA's plain

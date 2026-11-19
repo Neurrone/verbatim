@@ -61,6 +61,9 @@ trait FrontReads {
     fn text(&self, window: isize) -> String;
     /// Whether `window` has the `WS_DISABLED` style.
     fn disabled(&self, window: isize) -> bool;
+    /// The thread and process that own `window`
+    /// (`GetWindowThreadProcessId`).
+    fn owner(&self, window: isize) -> (u32, u32);
 }
 
 /// The reads of the running system.
@@ -100,6 +103,10 @@ impl FrontReads for Windows {
         const DISABLED: isize = 0x0800_0000;
         verbatim_win32::window::style(window) & DISABLED != 0
     }
+
+    fn owner(&self, window: isize) -> (u32, u32) {
+        verbatim_win32::window::window_owner(window)
+    }
 }
 
 /// What is in front, read live when a read of an application's current
@@ -126,9 +133,12 @@ fn front_of(reads: &impl FrontReads) -> Front {
         return Front::Nothing;
     }
     if let Some(stands_for) = reads.ghost_of(window) {
+        let (thread, process) = reads.owner(stands_for);
         return Front::Ghost(GhostFront {
             ghost: window_handle(window),
             stands_for: window_handle(stands_for),
+            process: verbatim_model::Pid(process),
+            thread,
             name: reads.text(window),
             unavailable: reads.disabled(window),
         });
@@ -210,11 +220,16 @@ mod tests {
         fn disabled(&self, _: isize) -> bool {
             self.disabled
         }
+
+        fn owner(&self, window: isize) -> (u32, u32) {
+            let window = u32::try_from(window).unwrap();
+            (window + 100, window + 1_000)
+        }
     }
 
     /// A ghost in front, whose thread has no focus window, is the ghost
-    /// itself, with its text, the window it stands for and its disabled
-    /// style.
+    /// itself, with its text, the window it stands for, that window's
+    /// application and thread, and its disabled style.
     #[test]
     fn a_ghost_in_front_is_read_with_its_facts() {
         let reads = Reads {
@@ -230,6 +245,8 @@ mod tests {
             Front::Ghost(GhostFront {
                 ghost: WindowHandle(7),
                 stands_for: WindowHandle(9),
+                process: verbatim_model::Pid(1_009),
+                thread: 109,
                 name: "window 7".to_owned(),
                 unavailable: true,
             })

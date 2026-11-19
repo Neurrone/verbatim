@@ -425,8 +425,8 @@ knowing for review:
   hung, when it is answered unsent: a read of an application's current
   focus with the window in front, read live by `hang_check::front`
   (`QueueInput::HungFocus`: the foreground window, else its thread's
-  focus window, as a ghost with its text, the window it stands for and
-  its disabled style, hung, responsive or nothing, each a read of Windows'
+  focus window, as a ghost with its text, the window it stands for with
+  that window's application and thread, and its disabled style, hung, responsive or nothing, each a read of Windows'
   own over a trait its unit tests stand in for), any other "not
   responding" (`QueueInput::RefusedHung`); one that cannot be
   written is answered "reader ended"; a cancel goes with its reason; a

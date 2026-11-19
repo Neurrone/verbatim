@@ -957,10 +957,15 @@ speaking it; a hung window with no ghost plays the sound, as before.
 Core's `focus::plain` tests and `hung_menu_end`, in the order of
 Verbatim's own log; the scenario `menu_end_over_a_hung_window`.
 
+- Matched: a move to the plain window's first child says "No objects
+  inside", as NVDA's, which finds no child window of a ghost
+  (`NVDAObjects/window/__init__.py` 269 to 273; `globalCommands.py`
+  1840).
 - Different: a move to the plain window's parent or siblings meets the
-  edge, "No containing object" or the sibling's edge, where NVDA reaches
-  the desktop and the neighbouring top-level windows, which Core does not
-  read (Dickson, 2026-11-19).
+  edge, "No containing object", "No next" or "No previous", where NVDA
+  reaches the desktop and the neighbouring top-level windows (287 to 293,
+  255 to 267), which Core does not read; Dickson accepted this difference
+  on 2026-11-19.
 - Different: the plain window's facts are read once, at the decision,
   where NVDA reads its window text again on each command; the ghost's
   text does not change, and its record ends with the ghost.

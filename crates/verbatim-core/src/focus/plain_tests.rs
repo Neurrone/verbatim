@@ -46,6 +46,8 @@ fn ghost(name: &str) -> Front {
     Front::Ghost(GhostFront {
         ghost: GHOST,
         stands_for: HUNGWIN,
+        process: APP,
+        thread: 41,
         name: name.to_owned(),
         unavailable: false,
     })
@@ -892,4 +894,74 @@ fn a_ghost_with_no_name_says_window() {
         effects(&mut state, 52_000, hung_focus(2, ghost(""))),
         ["stop", "Role(Window)"]
     );
+}
+
+/// The ghost of another hung application in front when the check of the
+/// asked one is refused, as a click can bring it before its foreground
+/// report reaches Core: NVDA speaks the ghost in front, and so does
+/// Verbatim, naming the plain object by the application of the window the
+/// ghost stands for, never the asked one, which is not watched for it.
+#[test]
+fn another_applications_ghost_in_front_is_named_by_its_own_application() {
+    let mut state = checked(EventKind::MenuEnd);
+    let other = Front::Ghost(GhostFront {
+        ghost: GHOST,
+        stands_for: WindowHandle(50),
+        process: Pid(60),
+        thread: 61,
+        name: "otherwin (Not Responding)".to_owned(),
+        unavailable: false,
+    });
+    assert_eq!(
+        effects(&mut state, 52_000, hung_focus(2, other)),
+        ["stop", "Label(\"otherwin (Not Responding)\") Role(Window)"]
+    );
+    let Committed::Read(kept) = &state.versions.committed else {
+        panic!("the plain object is committed");
+    };
+    assert_eq!(kept.source, Pid(60));
+    assert_eq!(kept.window.process, Pid(60));
+    assert_eq!(kept.window.thread, 61);
+    assert!(!watched(&mut state));
+}
+
+/// A UI Automation focus's read afresh, of its application's current
+/// focus, answered with a ghost or a hung window in front: NVDA reads the
+/// event's own element there, never the window in front
+/// (`UIAHandler/__init__.py` 874 onward), so the sound plays and the
+/// window is watched, as before.
+#[test]
+fn a_uia_focus_read_afresh_over_a_ghost_or_a_hung_window_plays_the_sound_and_watches() {
+    use verbatim_model::property::RuntimeId;
+    use verbatim_model::request::{KnownAncestor, RouteEnd};
+    for front in [ghost("hungwin (Not Responding)"), Front::Hung] {
+        let mut state = in_front();
+        assert_eq!(
+            effects(
+                &mut state,
+                1_000,
+                entry(crate::entries::tests::uia_tell(1, Vec::new()))
+            ),
+            ["send Listener ReadObject"]
+        );
+        let mut object = crate::entries::tests::listener_answer();
+        if let Some(route) = object.route.as_mut() {
+            route.end = RouteEnd::Known(KnownAncestor::Uia(RuntimeId(vec![42, 4])));
+        }
+        assert_eq!(
+            effects(
+                &mut state,
+                2_000,
+                answer(LISTENER, 2, Reply::Object(Box::new(object)))
+            ),
+            ["send Outpost(Pid(40)) CurrentFocus"]
+        );
+        assert_eq!(effects(&mut state, 3_000, hung_focus(3, front)), ["sound"]);
+        assert!(state.state.plain.object.is_none());
+        let now = state.queue.now_us();
+        assert_eq!(
+            effects(&mut state, now + 600_000, Input::Tick),
+            ["check [WindowHandle(5)]"]
+        );
+    }
 }

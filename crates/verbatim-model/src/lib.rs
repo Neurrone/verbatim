@@ -218,11 +218,81 @@ pub enum Issuer {
 /// are mapped to numbers by the owning outpost; the reducer and everything
 /// above it never see backend identifiers. Node ids are comparable only within
 /// one issuer: the same window seen by two outposts has two different ids.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+///
+/// In a message an outpost's id is `{"outpost": n, "number": m}` and a
+/// plain one `{"plain": n, "number": m}`, written and read by hand, with no
+/// buffering of the map.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct NodeId {
-    #[serde(flatten)]
     issuer: Issuer,
     number: u64,
+}
+
+impl Serialize for NodeId {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let mut node = serializer.serialize_struct("NodeId", 2)?;
+        match self.issuer {
+            Issuer::Outpost(outpost) => node.serialize_field("outpost", &outpost)?,
+            Issuer::Plain(generation) => node.serialize_field("plain", &generation)?,
+        }
+        node.serialize_field("number", &self.number)?;
+        node.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for NodeId {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        /// The map of a node id, its issuer's key and `number`.
+        struct Visitor;
+
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = NodeId;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("a node id: \"outpost\" or \"plain\", and \"number\"")
+            }
+
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                mut map: A,
+            ) -> Result<NodeId, A::Error> {
+                use serde::de::Error;
+                let mut issuer = None;
+                let mut number = None;
+                while let Some(key) = map.next_key::<NodeIdKey>()? {
+                    match key {
+                        NodeIdKey::Outpost | NodeIdKey::Plain if issuer.is_some() => {
+                            return Err(A::Error::custom("a node id names one issuer"));
+                        }
+                        NodeIdKey::Outpost => {
+                            issuer = Some(Issuer::Outpost(map.next_value()?));
+                        }
+                        NodeIdKey::Plain => issuer = Some(Issuer::Plain(map.next_value()?)),
+                        NodeIdKey::Number if number.is_some() => {
+                            return Err(A::Error::duplicate_field("number"));
+                        }
+                        NodeIdKey::Number => number = Some(map.next_value()?),
+                    }
+                }
+                Ok(NodeId {
+                    issuer: issuer.ok_or_else(|| A::Error::missing_field("outpost"))?,
+                    number: number.ok_or_else(|| A::Error::missing_field("number"))?,
+                })
+            }
+        }
+
+        deserializer.deserialize_struct("NodeId", &["outpost", "plain", "number"], Visitor)
+    }
+}
+
+/// A key of a node id's map.
+#[derive(Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum NodeIdKey {
+    Outpost,
+    Plain,
+    Number,
 }
 
 impl NodeId {
@@ -277,13 +347,18 @@ impl NodeId {
         self.number
     }
 
-    /// This id with its issuer replaced by `outpost`, the stamp Core applies
-    /// to everything arriving on that outpost's pipe.
+    /// This id stamped with `outpost`, the stamp Core applies to everything
+    /// arriving on that outpost's pipe: an outpost's id takes the
+    /// generation, and a plain id is kept as it is, so no stamp can make a
+    /// plain node an outpost's, whatever an outpost echoed back.
     #[must_use]
     pub const fn with_outpost(self, outpost: OutpostId) -> Self {
-        Self {
-            issuer: Issuer::Outpost(outpost),
-            number: self.number,
+        match self.issuer {
+            Issuer::Outpost(_) => Self {
+                issuer: Issuer::Outpost(outpost),
+                number: self.number,
+            },
+            Issuer::Plain(_) => self,
         }
     }
 
@@ -349,6 +424,23 @@ mod tests {
         assert_eq!(
             serde_json::from_str::<NodeId>(r#"{"outpost":2,"number":7}"#).unwrap(),
             outpost
+        );
+        assert_eq!(
+            serde_json::from_str::<NodeId>(r#"{"number":7,"plain":2}"#).unwrap(),
+            plain
+        );
+        assert!(serde_json::from_str::<NodeId>(r#"{"number":7}"#).is_err());
+        assert!(serde_json::from_str::<NodeId>(r#"{"outpost":2,"plain":2,"number":7}"#).is_err());
+    }
+
+    /// The stamp on an outpost's pipe never makes a plain id an outpost's.
+    #[test]
+    fn the_outposts_stamp_keeps_a_plain_id_plain() {
+        let plain = NodeId::plain(2, 7);
+        assert_eq!(plain.with_outpost(OutpostId(9)), plain);
+        assert_eq!(
+            NodeId::new(7).with_outpost(OutpostId(9)),
+            NodeId::in_outpost(OutpostId(9), 7)
         );
     }
 }
