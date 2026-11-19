@@ -90,11 +90,27 @@ fn press(scenario: &mut Scenario, keys: &[&str], heard: &[&str]) {
     scenario.speech().expect(heard);
 }
 
+pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
+    to_the_remove_confirmation(scenario);
+    press(
+        scenario,
+        &["y"],
+        &[
+            "Verbatim Settings: Theme dialog",
+            "Theme: combo box Default collapsed Alt+t",
+        ],
+    );
+    super::close_settings_to_desktop(scenario);
+}
+
+/// The walk up to the Remove Theme confirmation, which is left open, its
+/// question and focused button asserted: from opening the settings dialog
+/// to pressing Remove on the theme the walk made.
 #[expect(
     clippy::too_many_lines,
     reason = "one walk of the page, in order, so a failure's line says which step"
 )]
-pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
+pub(crate) fn to_the_remove_confirmation(scenario: &mut Scenario) {
     super::open_speech_settings(scenario);
 
     // The Theme category, after Speech, and its controls.
@@ -244,15 +260,6 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
             "No button Alt+N",
         ],
     );
-    press(
-        scenario,
-        &["y"],
-        &[
-            "Verbatim Settings: Theme dialog",
-            "Theme: combo box Default collapsed Alt+t",
-        ],
-    );
-    super::close_settings_to_desktop(scenario);
 }
 
 /// Deletes every theme folder that was not there when the scenario began,

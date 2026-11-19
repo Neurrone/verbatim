@@ -25,9 +25,12 @@ Public API:
   when the loop ends: after `Shutdown`, or when a replacing instance posts
   `WM_QUIT` to the hidden frame's thread. A `Shutdown` that arrives inside
   a nested loop ends that loop: Verbatim's own modal dialog with
-  `EndModal`, the popped menu with Win32 `EndMenu`, and a system message or
-  file dialog on the GUI thread (window class `#32770`) with a posted
-  `WM_CLOSE`, which it takes as Cancel; it then schedules the main loop's
+  `EndModal`, the popped menu with Win32 `EndMenu`, and each system dialog
+  on the GUI thread (a `#32770` window wxWidgets does not own) by a means it
+  honours: the Remove Theme confirmation, a task dialog with Yes and No and
+  no Cancel, which ignores `WM_CLOSE`, by clicking No with
+  `TDM_CLICK_BUTTON`, and an OK-only message box or a file dialog with a
+  posted `WM_CLOSE`, which it takes as Cancel; it then schedules the main loop's
   exit, which follows once the nested loops return. It runs once per process; a
   second call fails, since wxWidgets cannot start again after it ends.
 - `shell_items` — the system tray and taskbar items the systrayList

@@ -55,6 +55,10 @@
 //!   Verbatim quit with its Select Synthesizer dialog open, and
 //!   [`quit_inside_the_verbatim_menu`](crate::scenarios::quit_inside_the_verbatim_menu),
 //!   Verbatim quit with its menu open, and
+//!   [`quit_inside_the_remove_theme_confirmation`](crate::scenarios::quit_inside_the_remove_theme_confirmation),
+//!   Verbatim quit with the Theme page's Remove Theme confirmation open, and
+//!   [`quit_inside_a_file_dialog`](crate::scenarios::quit_inside_a_file_dialog),
+//!   Verbatim quit with the Theme page's Export file dialog open, and
 //!   [`speak_time_and_date`](crate::scenarios::speak_time_and_date), the
 //!   time and the date said, and
 //!   [`switch_to_onecore`](crate::scenarios::switch_to_onecore), switching
@@ -181,7 +185,8 @@ use crate::scenarios::{
     explorer_folder_window, foreground_progress_bar, lock_key_announcements, measure,
     menu_and_settings_dialog, menu_end_over_a_hung_window, msaa_flood_then_focus, notepad_say_all,
     notepad_spelling_errors, object_navigation_in_settings, object_navigation_over_uia,
-    owned_dialog_across_processes, password, quick_link_menu, quit_inside_a_modal_dialog,
+    owned_dialog_across_processes, password, quick_link_menu, quit_inside_a_file_dialog,
+    quit_inside_a_modal_dialog, quit_inside_the_remove_theme_confirmation,
     quit_inside_the_verbatim_menu, rapid_tabbing_in_settings, read_only_field_typing,
     return_from_a_held_application, review_cursor, review_dead_object, review_words,
     second_application_and_verbatim_menu, selection_keys, settings_combo_box_expanded,
@@ -498,6 +503,28 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         setup: quit_inside_the_verbatim_menu::setup,
         body: quit_inside_the_verbatim_menu::body,
         teardown: quit_inside_the_verbatim_menu::teardown,
+    },
+    ScenarioDef {
+        name: "quit_inside_the_remove_theme_confirmation",
+        group: Group::Speech,
+        settings: None,
+        local_only: false,
+        document: None,
+        comparable: Comparable::No("it quits Verbatim inside Verbatim's own confirmation"),
+        setup: quit_inside_the_remove_theme_confirmation::setup,
+        body: quit_inside_the_remove_theme_confirmation::body,
+        teardown: quit_inside_the_remove_theme_confirmation::teardown,
+    },
+    ScenarioDef {
+        name: "quit_inside_a_file_dialog",
+        group: Group::Speech,
+        settings: None,
+        local_only: false,
+        document: None,
+        comparable: Comparable::No("it quits Verbatim inside a file dialog Verbatim opened"),
+        setup: quit_inside_a_file_dialog::setup,
+        body: quit_inside_a_file_dialog::body,
+        teardown: quit_inside_a_file_dialog::teardown,
     },
     ScenarioDef {
         name: "speak_time_and_date",

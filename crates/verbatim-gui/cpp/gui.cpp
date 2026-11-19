@@ -32,7 +32,8 @@
 #include <wx/taskbar.h>
 #include <wx/textdlg.h>
 #include <wx/treectrl.h>
-#include <wx/msw/wrapwin.h>
+#include <wx/msw/private.h>
+#include <wx/msw/wrapcctl.h>
 
 #include <cstddef>
 #include <cstdlib>
@@ -72,6 +73,13 @@ constexpr int kMenuExit = wxID_HIGHEST + 1002;
 // the application's own, and wxWidgets posts nothing in it to a frame.
 constexpr UINT kWakeMessage = WM_APP + 1;
 
+// A Yes/No question in a native message box, while it is shown: the
+// window it is owned by and its title, by which shutdown finds it.
+struct NativeQuestion {
+    HWND owner;
+    wxString title;
+};
+
 class TrayIcon;
 class SettingsDialogWindow;
 class ListDialogWindow;
@@ -103,6 +111,8 @@ struct Shell {
     // The Select Synthesizer dialog's line saying a switch is under way,
     // while that dialog is open.
     wxStaticText* picker_status = nullptr;
+    // The Remove Theme confirmation while it is shown.
+    const NativeQuestion* question = nullptr;
     bool shutting_down = false;
 };
 
@@ -139,17 +149,32 @@ public:
 };
 
 // Ends the native modal loops on the GUI thread, which EndModal cannot: the
-// tracked menu, with EndMenu, and every system dialog (a message box, which
-// wxWidgets shows as a task dialog, or the file dialog), with WM_CLOSE,
-// which each takes as Cancel. wxWidgets' own dialogs have their own window
-// classes, so none of them is a system dialog.
+// tracked menu, with EndMenu, and every system dialog, a top-level window
+// of class #32770 that wxWidgets does not own (every wxDialog is a #32770
+// too, and is left to EndModal and Destroy). A system dialog is ended by a
+// means it honours:
+// - the Remove Theme confirmation, a task dialog with Yes and No buttons
+//   and no Cancel, which ignores WM_CLOSE (TASKDIALOGCONFIG's
+//   TDF_ALLOW_DIALOG_CANCELLATION, which wxWidgets 3.3.3 never sets), by
+//   clicking No with TDM_CLICK_BUTTON;
+// - the rest, by WM_CLOSE, which each takes as Cancel: an OK-only message
+//   box, a task dialog that wxWidgets gives a Cancel button labelled OK for
+//   that reason (msgdlg.cpp, MSWCommonTaskDialogInit), and the file dialog.
 void EndNativeModalLoops() {
     ::EndMenu();
     ::EnumThreadWindows(
         ::GetCurrentThreadId(),
         [](HWND window, LPARAM) -> BOOL {
             wchar_t name[16];
-            if (::GetClassNameW(window, name, 16) > 0 && std::wcscmp(name, L"#32770") == 0) {
+            if (::GetClassNameW(window, name, 16) == 0 || std::wcscmp(name, L"#32770") != 0 ||
+                wxFindWinFromHandle(window) != nullptr) {
+                return TRUE;
+            }
+            const NativeQuestion* question = g_shell->question;
+            if (question != nullptr && ::GetWindow(window, GW_OWNER) == question->owner &&
+                wxGetWindowText(window) == question->title) {
+                ::PostMessageW(window, TDM_CLICK_BUTTON, IDNO, 0);
+            } else {
                 ::PostMessageW(window, WM_CLOSE, 0, 0);
             }
             return TRUE;
@@ -648,12 +673,20 @@ private:
             }
         });
         remove_->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
-            // A native message box, which shutdown cannot end early: it
-            // only checks for shutdown once the box has closed.
+            // A native message box, which shutdown ends by clicking No
+            // (EndNativeModalLoops); it checks for shutdown once the box has
+            // closed.
             wxMessageDialog confirm(dialog_, Text(page_.prompts.remove_question),
                                     Text(page_.prompts.remove_title),
                                     wxYES_NO | wxNO_DEFAULT | wxICON_QUESTION);
+            // Its owner as wxWidgets gives it to the task dialog
+            // (msgdlg.cpp, MSWCommonTaskDialogInit).
+            wxWindow* const owner = confirm.GetParentForModalDialog();
+            const NativeQuestion question{owner != nullptr ? GetHwndOf(owner) : nullptr,
+                                          confirm.GetCaption()};
+            g_shell->question = &question;
             const int answer = confirm.ShowModal();
+            g_shell->question = nullptr;
             if (g_shell->shutting_down) {
                 return;
             }

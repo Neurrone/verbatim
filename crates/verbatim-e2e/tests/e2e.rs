@@ -56,6 +56,8 @@ const LIVE: &[&str] = scenario_tests! {
     verbatim_lifecycle
     quit_inside_a_modal_dialog
     quit_inside_the_verbatim_menu
+    quit_inside_the_remove_theme_confirmation
+    quit_inside_a_file_dialog
     speak_time_and_date
     toast
     foreground_progress_bar

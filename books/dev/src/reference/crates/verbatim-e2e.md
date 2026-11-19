@@ -698,7 +698,12 @@ under `src/scenarios/` documents exactly what it asserts.
   (the Select Synthesizer dialog left open, and the run's quit ending
   Verbatim with code 0 inside its modal loop), `quit_inside_the_verbatim_menu`
   (the Verbatim menu left open, and the run's quit ending Verbatim with
-  code 0 inside the menu's loop), `speak_time_and_date` (Verbatim+F12 pressed
+  code 0 inside the menu's loop), `quit_inside_the_remove_theme_confirmation`
+  (the Theme page walk up to the Remove Theme confirmation, left open, and
+  the run's quit ending Verbatim with code 0 inside the task dialog's
+  loop), `quit_inside_a_file_dialog` (the Theme page's Export file dialog
+  left open, and the run's quit ending Verbatim with code 0 inside its
+  loop), `speak_time_and_date` (Verbatim+F12 pressed
   twice in one burst, the time cut off by the date, the time and date read by the agent first, waiting
   for the minute to turn when it is within two seconds),
   `lock_key_announcements` (Scroll Lock, and Caps Lock by a double tap of
