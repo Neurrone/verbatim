@@ -1254,7 +1254,7 @@ lines 372 to 636, with `nvda/source/diffHandler.py` and
 `nvda/source/NVDAObjects/UIA/winConsoleUIA.py`): wait for a change, read,
 compare with the one previous text, queue the inserted lines' speech.
 
-The design study's core: Core keeps the one previous text, at most one
+The design study, [Terminal rebuild](design/terminal-rebuild.md), gives the inventory, the state tables, the five defects replayed and each feature's cost. Its core: Core keeps the one previous text, at most one
 read out and whether a change was told since it began; the outpost reads
 the last two screens from the document's end at Core's request and keeps
 nothing; the inserted lines join the event queue as an entry with the
@@ -1272,12 +1272,11 @@ reading.
 Kept by Dickson's ruling (2026-11-19): keys owning the changes they
 cause, lists and colours (fzf, tig, Microsoft Edit), since many terminal
 programs need them; the review cursor over the terminal's text and
-moving by command. Each is redesigned in this phase to be simpler than
-today's, which rests on finding every row again by its text across
-reads. Open, with the study's recommendation: the flood groups (keep),
-exact skip counts (drop), holding reads while speech waits (drop unless
-a measurement misses the wake-up budget), an unfinished word held
-(drop), volatile rows (drop), memory across focus changes (drop),
+moving by command; holding reads while speech waits during a flood; an
+unfinished word held; volatile rows. Each that rests on today's finding
+of every row again by its text across reads is redesigned in this phase
+to be simpler. Open, with the study's recommendation: the flood groups
+(keep), exact skip counts (drop), memory across focus changes (drop),
 typing echoed only as shown (keep), a rewritten line from its first
 changed word (keep), the status bar's footer (keep), a new screen
 speaking only its screen (keep), what is read (the last two screens),

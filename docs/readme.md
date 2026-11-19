@@ -85,6 +85,10 @@ harness, NVDA captures and troubleshooting.
     — the approved designs of its three builds: the event queue, focus
     and announcements, with keys and text; Core naming the text provider
     and the details, with the formatting memory; and terminals.
+  - [terminal-rebuild.md](design/terminal-rebuild.md) — the study for
+    M6.4's rebuild of the terminal reading on NVDA's loop: the inventory,
+    state tables, the defects replayed, and each Verbatim-only feature's
+    cost, with Dickson's rulings so far.
   - [communication.md](design/communication.md) — every pipe and thread
     from an event or a key to sound; published once its audio step is
     built.
