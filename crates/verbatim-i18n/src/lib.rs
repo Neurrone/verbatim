@@ -226,46 +226,35 @@ impl I18nAssets for LocaleDirAssets {
     }
 }
 
-/// The startup announcement — Verbatim's first user-visible string, here to
-/// prove the localization pipeline end-to-end from M0.
-#[must_use]
-pub fn startup_message() -> String {
-    i18n_embed_fl::fl!(loader(), "startup-message")
+/// The message `id` from the shared [`loader`], with Fluent arguments after
+/// it (`t!("tray-list-gone", name = name)`). It expands to `fl!`, which
+/// checks at compile time that the message exists with those arguments,
+/// against the `i18n.toml` of the crate it is used in; each crate that uses
+/// it has one naming this crate's `i18n` folder and the `verbatim` domain.
+#[macro_export]
+macro_rules! t {
+    ($($message:tt)*) => {
+        $crate::fl!($crate::loader(), $($message)*)
+    };
 }
+
+#[doc(hidden)]
+pub use i18n_embed_fl::fl;
 
 /// Resolves a message by runtime id — the path for ids that arrive as data,
-/// such as setting-descriptor label keys. Statically known ids should use
-/// the typed functions in [`messages`] instead, which are compile-time
-/// checked.
+/// such as setting-descriptor label keys — or `None` when no message has
+/// that id. Statically known ids use [`t!`], which is compile-time checked.
 #[must_use]
-pub fn message(id: &str) -> String {
-    loader().get(id)
+pub fn message(id: &str) -> Option<String> {
+    let loader = loader();
+    loader.has(id).then(|| loader.get(id))
 }
 
-/// Typed accessors for the M1 user-visible strings. Each goes through the
-/// compile-time-checked `fl!` macro, so a missing message id fails the
-/// build.
+/// The user-visible strings made with some logic, each through the
+/// compile-time-checked `fl!` macro.
 pub mod messages {
     use super::loader;
     use i18n_embed_fl::fl;
-
-    /// Tooltip of the system tray icon.
-    #[must_use]
-    pub fn tray_tooltip() -> String {
-        fl!(loader(), "tray-tooltip")
-    }
-
-    /// The Settings item of the Verbatim menu.
-    #[must_use]
-    pub fn menu_settings() -> String {
-        fl!(loader(), "menu-settings")
-    }
-
-    /// The Exit item of the Verbatim menu.
-    #[must_use]
-    pub fn menu_exit() -> String {
-        fl!(loader(), "menu-exit")
-    }
 
     /// Spoken confirmation that `text` was copied to the clipboard, as NVDA
     /// words it: the text itself, or its length when it is 1024 characters
@@ -281,194 +270,20 @@ pub mod messages {
         fl!(loader(), "clipboard-copied", text = spoken)
     }
 
-    /// A lock key's new state ("caps lock on"): `key` is
-    /// `"toggle-caps-lock"`, `"toggle-num-lock"`, or `"toggle-scroll-lock"`.
+    /// A lock key's new state ("caps lock on").
     #[must_use]
-    pub fn toggle_key_state(key: &str, on: bool) -> String {
+    pub fn toggle_key_state(key: verbatim_model::LockKey, on: bool) -> String {
         let loader = loader();
         let key = match key {
-            "toggle-num-lock" => fl!(loader, "toggle-num-lock"),
-            "toggle-scroll-lock" => fl!(loader, "toggle-scroll-lock"),
-            _ => fl!(loader, "toggle-caps-lock"),
+            verbatim_model::LockKey::CapsLock => fl!(loader, "toggle-caps-lock"),
+            verbatim_model::LockKey::NumLock => fl!(loader, "toggle-num-lock"),
+            verbatim_model::LockKey::ScrollLock => fl!(loader, "toggle-scroll-lock"),
         };
         if on {
             fl!(loader, "toggle-state-on", key = key)
         } else {
             fl!(loader, "toggle-state-off", key = key)
         }
-    }
-
-    /// Said when a running Verbatim could not be ended and this one does
-    /// not start, in NVDA's words.
-    #[must_use]
-    pub fn replace_failed() -> String {
-        fl!(loader(), "replace-failed")
-    }
-
-    /// Title of the message box that says a running Verbatim could not be
-    /// ended.
-    #[must_use]
-    pub fn replace_failed_title() -> String {
-        fl!(loader(), "replace-failed-title")
-    }
-
-    /// Spoken notice that a clipboard copy failed.
-    #[must_use]
-    pub fn clipboard_copy_failed() -> String {
-        fl!(loader(), "clipboard-copy-failed")
-    }
-
-    /// Base title of the settings dialog.
-    #[must_use]
-    pub fn settings_title() -> String {
-        fl!(loader(), "settings-title")
-    }
-
-    /// Settings dialog title carrying the active category name.
-    #[must_use]
-    pub fn settings_title_with_category(category: &str) -> String {
-        fl!(
-            loader(),
-            "settings-title-with-category",
-            category = category
-        )
-    }
-
-    /// Label of the category list in the settings dialog.
-    #[must_use]
-    pub fn settings_categories_label() -> String {
-        fl!(loader(), "settings-categories-label")
-    }
-
-    /// Name of the Speech settings category.
-    #[must_use]
-    pub fn settings_category_speech() -> String {
-        fl!(loader(), "settings-category-speech")
-    }
-
-    /// The OK button.
-    #[must_use]
-    pub fn button_ok() -> String {
-        fl!(loader(), "button-ok")
-    }
-
-    /// The Cancel button.
-    #[must_use]
-    pub fn button_cancel() -> String {
-        fl!(loader(), "button-cancel")
-    }
-
-    /// The Apply button.
-    #[must_use]
-    pub fn button_apply() -> String {
-        fl!(loader(), "button-apply")
-    }
-
-    /// Label of the synthesizer group on the Speech page.
-    #[must_use]
-    pub fn speech_synthesizer_group() -> String {
-        fl!(loader(), "speech-synthesizer-group")
-    }
-
-    /// The button opening the Select Synthesizer dialog.
-    #[must_use]
-    pub fn speech_change_synth() -> String {
-        fl!(loader(), "speech-change-synth")
-    }
-
-    /// Title of the system tray items list dialog.
-    #[must_use]
-    pub fn tray_list_title() -> String {
-        fl!(loader(), "tray-list-title")
-    }
-
-    /// Label above the list in the system tray items dialog.
-    #[must_use]
-    pub fn tray_list_label() -> String {
-        fl!(loader(), "tray-list-label")
-    }
-
-    /// Title of the taskbar items list dialog.
-    #[must_use]
-    pub fn taskbar_list_title() -> String {
-        fl!(loader(), "taskbar-list-title")
-    }
-
-    /// Label above the list in the taskbar items dialog.
-    #[must_use]
-    pub fn taskbar_list_label() -> String {
-        fl!(loader(), "taskbar-list-label")
-    }
-
-    /// The Left Click button of the tray and taskbar list dialogs.
-    #[must_use]
-    pub fn tray_list_left_click() -> String {
-        fl!(loader(), "tray-list-left-click")
-    }
-
-    /// The Left Double Click button of the tray and taskbar list dialogs.
-    #[must_use]
-    pub fn tray_list_left_double_click() -> String {
-        fl!(loader(), "tray-list-left-double-click")
-    }
-
-    /// The Right Click button of the tray and taskbar list dialogs.
-    #[must_use]
-    pub fn tray_list_right_click() -> String {
-        fl!(loader(), "tray-list-right-click")
-    }
-
-    /// Spoken when the tray icon or taskbar button `name`, chosen in the
-    /// list dialog, is no longer there to click, or has gone off the
-    /// screen since the list was made (Dickson, 2026-10-26).
-    #[must_use]
-    pub fn tray_list_gone(name: &str) -> String {
-        fl!(loader(), "tray-list-gone", name = name)
-    }
-
-    /// Spoken when the tray icon or taskbar button `name`, chosen in the
-    /// list dialog, is there but has no rectangle or an empty one, so it
-    /// has no point to click (Dickson, 2026-10-25).
-    #[must_use]
-    pub fn tray_list_unclickable(name: &str) -> String {
-        fl!(loader(), "tray-list-unclickable", name = name)
-    }
-
-    /// Title of the Select Synthesizer dialog.
-    #[must_use]
-    pub fn select_synth_title() -> String {
-        fl!(loader(), "select-synth-title")
-    }
-
-    /// Label of the synthesizer choice in the Select Synthesizer dialog.
-    #[must_use]
-    pub fn select_synth_label() -> String {
-        fl!(loader(), "select-synth-label")
-    }
-
-    /// Shown in the Select Synthesizer dialog while the chosen synthesizer
-    /// starts.
-    #[must_use]
-    pub fn select_synth_switching() -> String {
-        fl!(loader(), "select-synth-switching")
-    }
-
-    /// Said when the synthesizer `name` could not start, in NVDA's words.
-    #[must_use]
-    pub fn synth_error(name: &str) -> String {
-        fl!(loader(), "synth-error", name = name)
-    }
-
-    /// Title of the message box that says a synthesizer could not start.
-    #[must_use]
-    pub fn synth_error_title() -> String {
-        fl!(loader(), "synth-error-title")
-    }
-
-    /// Name of the Theme settings category.
-    #[must_use]
-    pub fn settings_category_theme() -> String {
-        fl!(loader(), "settings-category-theme")
     }
 
     /// The fixed labels of the Theme page, in the order of
@@ -578,12 +393,6 @@ pub mod messages {
         pub error_title: String,
     }
 
-    /// Name of the Terminal settings category.
-    #[must_use]
-    pub fn settings_category_terminal() -> String {
-        fl!(loader(), "settings-category-terminal")
-    }
-
     /// The labels of the Terminal page's controls.
     #[must_use]
     pub fn terminal_labels() -> TerminalLabels {
@@ -609,29 +418,6 @@ pub mod messages {
         pub speak_passwords: String,
     }
 
-    /// A tone in the sound choice: "tone, 220 hertz, 150 milliseconds".
-    #[must_use]
-    pub fn theme_sound_tone(frequency: u32, duration: u32) -> String {
-        fl!(
-            loader(),
-            "theme-sound-tone",
-            frequency = frequency,
-            duration = duration
-        )
-    }
-
-    /// How an indication is reported, with its sound: "sound
-    /// (textError.wav)".
-    #[must_use]
-    pub fn theme_setting_with_sound(presentation: &str, sound: &str) -> String {
-        fl!(
-            loader(),
-            "theme-setting-with-sound",
-            presentation = presentation,
-            sound = sound
-        )
-    }
-
     /// An indication in the tree: "link: speech and sound", and ", changed"
     /// after it when it differs from the default theme.
     #[must_use]
@@ -650,12 +436,6 @@ pub mod messages {
         }
     }
 
-    /// The description field's line naming the theme's author.
-    #[must_use]
-    pub fn theme_author(author: &str) -> String {
-        fl!(loader(), "theme-author", author = author)
-    }
-
     /// The words of a preview: the sample name, a sample description, a
     /// font, a size, and a color, in that order.
     #[must_use]
@@ -668,49 +448,6 @@ pub mod messages {
             fl!(loader, "theme-preview-font-size"),
             fl!(loader, "theme-preview-color"),
         ]
-    }
-
-    /// The New Theme prompt, for a theme based on `name`.
-    #[must_use]
-    pub fn theme_new_prompt(name: &str) -> String {
-        fl!(loader(), "theme-new-prompt", name = name)
-    }
-
-    /// The prompt asking for a new theme when a change is made to the
-    /// built-in theme `name`.
-    #[must_use]
-    pub fn theme_copy_prompt(name: &str) -> String {
-        fl!(loader(), "theme-copy-prompt", name = name)
-    }
-
-    /// The name suggested for a new theme based on `name`.
-    #[must_use]
-    pub fn theme_copy_name(name: &str) -> String {
-        fl!(loader(), "theme-copy-name", name = name)
-    }
-
-    /// The Rename prompt for the theme `name`.
-    #[must_use]
-    pub fn theme_rename_prompt(name: &str) -> String {
-        fl!(loader(), "theme-rename-prompt", name = name)
-    }
-
-    /// The Export file dialog's title for the theme `name`.
-    #[must_use]
-    pub fn theme_export_title(name: &str) -> String {
-        fl!(loader(), "theme-export-title", name = name)
-    }
-
-    /// The Remove confirmation for the theme `name`.
-    #[must_use]
-    pub fn theme_remove_question(name: &str) -> String {
-        fl!(loader(), "theme-remove-question", name = name)
-    }
-
-    /// Why the theme `name` cannot be removed: the configuration uses it.
-    #[must_use]
-    pub fn theme_in_use(name: &str) -> String {
-        fl!(loader(), "theme-in-use", name = name)
     }
 }
 
@@ -891,17 +628,10 @@ pub fn phrase_text(phrase: &verbatim_model::Phrase) -> String {
         Phrase::Items(count) => {
             i18n_embed_fl::fl!(loader, "phrase-items", count = count.to_string())
         }
-        Phrase::LockKeyState { key, on } => messages::toggle_key_state(
-            match key {
-                verbatim_model::LockKey::CapsLock => "toggle-caps-lock",
-                verbatim_model::LockKey::NumLock => "toggle-num-lock",
-                verbatim_model::LockKey::ScrollLock => "toggle-scroll-lock",
-            },
-            *on,
-        ),
+        Phrase::LockKeyState { key, on } => messages::toggle_key_state(*key, *on),
         Phrase::CopiedToClipboard(text) => messages::clipboard_copied(text),
-        Phrase::ShellItemGone(name) => messages::tray_list_gone(name),
-        Phrase::ShellItemUnclickable(name) => messages::tray_list_unclickable(name),
+        Phrase::ShellItemGone(name) => crate::t!("tray-list-gone", name = name),
+        Phrase::ShellItemUnclickable(name) => crate::t!("tray-list-unclickable", name = name),
     }
 }
 
@@ -1445,11 +1175,6 @@ pub fn theme_problem_text(problem: &verbatim_model::ThemeProblem) -> String {
 mod tests {
     use super::*;
 
-    #[test]
-    fn embedded_english_resolves() {
-        assert_eq!(startup_message(), "Verbatim is starting.");
-    }
-
     /// A locale folder of one test's own under the system temp folder,
     /// named for the test and this process, so no two tests or runs share
     /// one. It is created empty, failing if it already exists, and removed
@@ -1580,13 +1305,19 @@ mod tests {
     }
 
     #[test]
+    fn an_unknown_id_is_none() {
+        assert_eq!(message("setting-voice").as_deref(), Some("&Voice"));
+        assert_eq!(message("setting-no-such-thing"), None);
+    }
+
+    #[test]
     fn a_lock_keys_state_is_worded_as_nvda_words_it() {
         assert_eq!(
-            messages::toggle_key_state("toggle-caps-lock", true),
+            messages::toggle_key_state(verbatim_model::LockKey::CapsLock, true),
             "caps lock on"
         );
         assert_eq!(
-            messages::toggle_key_state("toggle-num-lock", false),
+            messages::toggle_key_state(verbatim_model::LockKey::NumLock, false),
             "num lock off"
         );
     }
@@ -1601,16 +1332,7 @@ mod tests {
             messages::clipboard_copied(&"x".repeat(1500)),
             "Copied to clipboard: 1500 characters"
         );
-        assert_eq!(messages::clipboard_copy_failed(), "Unable to copy");
-    }
-
-    #[test]
-    fn the_failed_replacement_box_is_nvdas() {
-        assert_eq!(
-            messages::replace_failed(),
-            "Couldn't end the running Verbatim, abandoning start."
-        );
-        assert_eq!(messages::replace_failed_title(), "Error");
+        assert_eq!(crate::t!("clipboard-copy-failed"), "Unable to copy");
     }
 
     #[test]
@@ -1644,7 +1366,7 @@ mod tests {
             Some("focused")
         );
         assert_eq!(
-            messages::settings_title_with_category("Speech"),
+            crate::t!("settings-title-with-category", category = "Speech"),
             "Verbatim Settings: Speech",
             "no bidi isolation marks: the loader disables Fluent's argument \
              isolation because this output is primarily spoken (see new_loader)"
@@ -1966,28 +1688,6 @@ mod tests {
                 file: "x.wav".to_owned()
             }),
             "spelling error: the sound x.wav is missing"
-        );
-    }
-
-    #[test]
-    fn tray_list_messages_resolve() {
-        assert_eq!(messages::tray_list_title(), "System Tray Icons");
-        assert_eq!(messages::tray_list_label(), "&Icons");
-        assert_eq!(messages::taskbar_list_title(), "Taskbar Buttons");
-        assert_eq!(messages::taskbar_list_label(), "&Buttons");
-        assert_eq!(messages::tray_list_left_click(), "&Left Click");
-        assert_eq!(
-            messages::tray_list_left_double_click(),
-            "Left &Double Click"
-        );
-        assert_eq!(messages::tray_list_right_click(), "&Right Click");
-        assert_eq!(
-            messages::tray_list_gone("Volume"),
-            "Volume is no longer there"
-        );
-        assert_eq!(
-            messages::tray_list_unclickable("Volume"),
-            "Volume cannot be clicked"
         );
     }
 

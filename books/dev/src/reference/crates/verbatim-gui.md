@@ -61,7 +61,7 @@ Public API:
   the notification area's subtree excluded) and `ShellItem` is a name and
   a UIA runtime id, with no position, both re-exported from
   `verbatim-model`; `center_of` is the click target.
-- `ControlPlan` — re-exported from the pure `plan` module described below.
+
 - `ThemeHost` (trait) — what the Theme page needs from the app: the themes
   and sounds folders, the theme the configuration names with its options
   (`configured`), `activate` (make a theme the one speech presents with,
@@ -126,7 +126,11 @@ The private modules:
 - `settings` — the settings dialog's model, pure apart from reading the
   host: the categories (Speech, Theme, then Terminal), the Speech page
   generated
-  from the host's descriptors through `plan`, `SpeechControls`, which turns
+  from the host's descriptors, each control built from its
+  `SettingDescriptor` and the driver's value (a value that does not fit
+  its setting is logged as the driver's error and the control shown
+  empty; a label key with no message is logged and the setting's id
+  shown), `SpeechControls`, which turns
   a change reported by control index into a setting value (changes from a
   replaced set of controls, identified by a generation number, are
   ignored), the Select Synthesizer choice, which switches only to a
@@ -152,9 +156,7 @@ The private modules:
   click on a list item triggers the default button; activation only ever
   runs against a selected item. The systrayList replica presents through
   it and M7's elements list will present through the same one.
-- `plan` — `plan_for(descriptor, value)` maps a `SettingDescriptor` to a
-  `ControlPlan` (slider, choice, or check box with clamped initial value),
-  `accessible_name` strips ampersand mnemonics for accessible names (a
+- `plan` — `accessible_name` strips ampersand mnemonics for accessible names (a
   check box otherwise announces as a bare "check"), `cycle_index`
   implements category wraparound, and `initial_list_selection` picks the
   list dialog's starting selection.
@@ -173,8 +175,10 @@ lock file serializes concurrent builds. CI caches the directory, keyed on
 `build/wx.rs`. `build.rs` then compiles the bridge and `cpp/gui.cpp` with
 `cxx_build` and links the libraries.
 
-Implementation notes: the hidden one-by-one frame titled "Verbatim" is the
-single-instance rendezvous and dialog parent. It is stamped, once the GUI
+Implementation notes: the hidden one-by-one frame titled
+`verbatim_model::HIDDEN_FRAME_TITLE` ("Verbatim", never localized), which
+the single-instance check also reads, is the single-instance rendezvous
+and dialog parent. It is stamped, once the GUI
 is up, with the `verbatim_model::HIDDEN_FRAME_WINDOW_PROP` window property
 (`hidden_frame::mark`, `SetPropW`) and unstamped at shutdown
 (`hidden_frame::unmark`, `RemovePropW`) — the marker every outpost checks
@@ -285,9 +289,9 @@ which would take the focus from the find field as the user types. Enter
 on any button activates that button (`KeyAction::ActivateFocused`).
 Every label is created just before its control, so each control is named
 by it; the check boxes carry their names. The dialog title names the
-category, not a profile, since profiles are not activated until M8.3. A
+category. A
 failed file operation is reported in a message box with
-`verbatim-config`'s error text, which is English.
+the error worded through Fluent, one message for each `ThemeError` variant.
 
 The Terminal page (milestone M4; `docs/parity/system.md`, "The terminal
 settings"). From top to bottom, which is also the tab

@@ -46,11 +46,6 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::core::{HSTRING, PCWSTR, PWSTR, w};
 
-/// The title of the hidden main frame, the rendezvous point a replacing
-/// instance finds. Deliberately not localized: it must be stable across
-/// locales for `FindWindowW` to work between differently configured builds.
-const WINDOW_TITLE: &str = "Verbatim";
-
 /// The named mutex serializing startup.
 const MUTEX_NAME: PCWSTR = w!(r"Local\Verbatim");
 
@@ -147,8 +142,8 @@ fn tell_being_replaced(pid: u32) {
 /// start, as NVDA does (`nvda.pyw` lines 157 to 166), and returns once the
 /// box is dismissed.
 fn show_not_ended() {
-    let text = HSTRING::from(verbatim_i18n::messages::replace_failed());
-    let title = HSTRING::from(verbatim_i18n::messages::replace_failed_title());
+    let text = HSTRING::from(verbatim_i18n::t!("replace-failed"));
+    let title = HSTRING::from(verbatim_i18n::t!("replace-failed-title"));
     // SAFETY: a modal message box with no owner and borrowed strings that
     // outlive the call.
     unsafe { MessageBoxW(None, &text, &title, MB_OK) };
@@ -217,7 +212,7 @@ enum Replacement {
 /// So every top-level window with the title is considered, and only one
 /// whose process runs an executable of this one's file name is acted on.
 fn replace_running_instance() -> Replacement {
-    let title = HSTRING::from(WINDOW_TITLE);
+    let title = HSTRING::from(verbatim_model::HIDDEN_FRAME_TITLE);
     let own_name = std::env::current_exe()
         .ok()
         .and_then(|path| path.file_name().map(std::ffi::OsStr::to_os_string));

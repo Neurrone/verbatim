@@ -1,0 +1,7 @@
+# Configuration read by i18n-embed's fl! macro, which verbatim_i18n::t! expands
+# to: the messages are verbatim-i18n's.
+fallback_language = "en"
+
+[fluent]
+assets_dir = "../verbatim-i18n/i18n"
+domain = "verbatim"

@@ -173,6 +173,11 @@ impl fmt::Display for TraceId {
 /// another application from hiding its own windows by setting the property.
 pub const HIDDEN_FRAME_WINDOW_PROP: &str = "VerbatimHiddenFrame";
 
+/// The title of `verbatim-gui`'s hidden main frame, the window a new
+/// instance finds to replace a running one. Not localized, so a Verbatim
+/// in any language finds one in any other.
+pub const HIDDEN_FRAME_TITLE: &str = "Verbatim";
+
 /// The log target of a message that states a defect of Verbatim's own, in
 /// any of its processes: an end-to-end scenario whose logs hold a line of
 /// it fails (`books/dev/src/reference/testing.md`, "Failures are never

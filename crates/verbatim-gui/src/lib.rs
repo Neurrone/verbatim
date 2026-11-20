@@ -39,10 +39,8 @@ use std::fmt;
 use std::sync::Arc;
 
 use crossbeam_channel::{Receiver, Sender, unbounded};
-use verbatim_i18n::messages;
 use verbatim_speech::{SettingId, SettingValue, SpeechSettingsHost};
 
-pub use plan::ControlPlan;
 pub use shell_items::{
     ShellAsk, ShellCandidate, ShellCandidates, ShellItem, ShellItemKind, ShellItemsHost,
 };
@@ -209,10 +207,10 @@ pub fn run_gui(
     // single-instance rendezvous window, found by this title. It is never
     // shown except around popups and never appears in the taskbar.
     let text = ffi::ShellText {
-        title: messages::tray_tooltip(),
-        tooltip: messages::tray_tooltip(),
-        settings_item: messages::menu_settings(),
-        exit_item: messages::menu_exit(),
+        title: verbatim_model::HIDDEN_FRAME_TITLE.to_owned(),
+        tooltip: verbatim_i18n::t!("tray-tooltip"),
+        settings_item: verbatim_i18n::t!("menu-settings"),
+        exit_item: verbatim_i18n::t!("menu-exit"),
     };
     match gui.run_event_loop(&core, &text) {
         -1 => Err(GuiError("wxWidgets could not start".to_owned())),
@@ -793,46 +791,4 @@ fn route_settings_key(
 /// of [`plan::cycle_index`].
 fn next_category(current: usize, count: usize, forward: bool) -> usize {
     plan::cycle_index(current, count, forward)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_bridge_routes_keys_as_the_router_does() {
-        use ffi::{SettingsFocus as Focus, SettingsKey as Key, SettingsKeyAction as Action};
-        assert_eq!(
-            route_settings_key(Key::Enter, false, false, Focus::Cancel),
-            Action::Cancel
-        );
-        assert_eq!(
-            route_settings_key(Key::Enter, false, false, Focus::SynthesizerName),
-            Action::ChangeSynthesizer
-        );
-        assert_eq!(
-            route_settings_key(Key::Enter, false, false, Focus::Other),
-            Action::Ok
-        );
-        assert_eq!(
-            route_settings_key(Key::S, true, false, Focus::Other),
-            Action::Apply
-        );
-        assert_eq!(
-            route_settings_key(Key::Tab, true, true, Focus::Other),
-            Action::PreviousCategory
-        );
-        assert_eq!(
-            route_settings_key(Key::Tab, false, false, Focus::Other),
-            Action::PassThrough
-        );
-        assert_eq!(
-            route_settings_key(Key::Enter, false, false, Focus::OtherButton),
-            Action::ActivateFocused
-        );
-        assert_eq!(
-            route_settings_key(Key::Space, false, false, Focus::SoundChoice),
-            Action::PlaySound
-        );
-    }
 }

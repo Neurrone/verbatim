@@ -647,13 +647,13 @@ fn build_speech_manager(
     // this executable (decision D18).
     // eSpeak NG is the default, so it is listed first.
     let host_exe = exe_dir().join(SYNTH_HOST_EXE);
-    for (id, name_key) in [
-        (synth_ids::ESPEAK, "synth-name-espeak"),
-        (synth_ids::ONECORE, "synth-name-onecore"),
+    for (id, name) in [
+        (synth_ids::ESPEAK, verbatim_i18n::t!("synth-name-espeak")),
+        (synth_ids::ONECORE, verbatim_i18n::t!("synth-name-onecore")),
     ] {
         registry.register(
             SynthId::new(id),
-            verbatim_i18n::message(name_key),
+            name,
             verbatim_synth_hosted::factory(host_exe.clone(), SynthId::new(id)),
         );
     }

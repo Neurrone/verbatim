@@ -6,13 +6,13 @@
 //! builds widgets from these models and reports changes back by control
 //! index, which [`SpeechControls`] turns into setting values.
 
-use verbatim_i18n::messages;
 use verbatim_speech::{
-    SettingId, SettingValue, SettingsAnswer, SpeechSettingsHost, SynthChoice, SynthId,
+    SettingDescriptor, SettingId, SettingValue, SettingsAnswer, SpeechSettingsHost, SynthChoice,
+    SynthId,
 };
 
 use crate::bridge::ffi;
-use crate::plan::{ControlPlan, accessible_name, plan_for};
+use crate::plan::accessible_name;
 
 /// The settings dialog's categories and buttons: Speech, Theme, and
 /// Terminal. The
@@ -20,29 +20,29 @@ use crate::plan::{ControlPlan, accessible_name, plan_for};
 /// adding it here and a page for its kind in C++.
 pub(crate) fn dialog() -> ffi::SettingsDialog {
     let category = |name: String, kind| ffi::Category {
-        title: messages::settings_title_with_category(&name),
+        title: verbatim_i18n::t!("settings-title-with-category", category = name.as_str()),
         name,
         kind,
     };
     ffi::SettingsDialog {
         categories: vec![
             category(
-                messages::settings_category_speech(),
+                verbatim_i18n::t!("settings-category-speech"),
                 ffi::CategoryKind::Speech,
             ),
             category(
-                messages::settings_category_theme(),
+                verbatim_i18n::t!("settings-category-theme"),
                 ffi::CategoryKind::Theme,
             ),
             category(
-                messages::settings_category_terminal(),
+                verbatim_i18n::t!("settings-category-terminal"),
                 ffi::CategoryKind::Terminal,
             ),
         ],
-        categories_label: messages::settings_categories_label(),
-        ok: messages::button_ok(),
-        cancel: messages::button_cancel(),
-        apply: messages::button_apply(),
+        categories_label: verbatim_i18n::t!("settings-categories-label"),
+        ok: verbatim_i18n::t!("button-ok"),
+        cancel: verbatim_i18n::t!("button-cancel"),
+        apply: verbatim_i18n::t!("button-apply"),
     }
 }
 
@@ -57,14 +57,14 @@ pub(crate) enum ControlChange {
     Toggle(bool),
 }
 
-/// The Speech page's current controls: the plans they were built from, so
+/// The Speech page's current controls: the descriptors they were built from, so
 /// a change reported by index becomes a setting value, and each change
 /// sent and not yet answered by the synth thread
 /// (`books/dev/src/explanation/design/ownership.md`).
 #[derive(Debug, Default)]
 pub(crate) struct SpeechControls {
     generation: u32,
-    plans: Vec<ControlPlan>,
+    descriptors: Vec<SettingDescriptor>,
     /// The number of the last change sent.
     last_change: u64,
     /// Each setting changed and not yet answered: its latest change's
@@ -91,19 +91,19 @@ impl SpeechControls {
     pub(crate) fn rebuild(&mut self, host: &dyn SpeechSettingsHost) -> ffi::SpeechPage {
         self.generation = self.generation.wrapping_add(1);
         self.outstanding.clear();
-        self.plans = host
-            .setting_descriptors()
-            .iter()
-            .map(|descriptor| plan_for(descriptor, host.setting(descriptor.id())))
-            .collect();
-        let group = messages::speech_synthesizer_group();
+        self.descriptors = host.setting_descriptors();
+        let group = verbatim_i18n::t!("speech-synthesizer-group");
         ffi::SpeechPage {
             generation: self.generation,
             synthesizer_field_name: accessible_name(&group),
             synthesizer_group: group,
             synthesizer_name: host.active_synthesizer().display_name,
-            change: messages::speech_change_synth(),
-            controls: self.plans.iter().map(control).collect(),
+            change: verbatim_i18n::t!("speech-change-synth"),
+            controls: self
+                .descriptors
+                .iter()
+                .map(|descriptor| control(descriptor, host.setting(descriptor.id()).as_ref()))
+                .collect(),
         }
     }
 
@@ -118,20 +118,20 @@ impl SpeechControls {
         if generation != self.generation {
             return None;
         }
-        let plan = self.plans.get(index)?;
-        let value = match (plan, change) {
-            (ControlPlan::Slider { .. }, ControlChange::Number(value)) => {
+        let descriptor = self.descriptors.get(index)?;
+        let value = match (descriptor, change) {
+            (SettingDescriptor::Numeric { .. }, ControlChange::Number(value)) => {
                 SettingValue::Number(value)
             }
-            (ControlPlan::Choice { options, .. }, ControlChange::Option(option)) => {
+            (SettingDescriptor::Choice { options, .. }, ControlChange::Option(option)) => {
                 SettingValue::Choice(options.get(option)?.0.clone())
             }
-            (ControlPlan::Toggle { .. }, ControlChange::Toggle(checked)) => {
+            (SettingDescriptor::Toggle { .. }, ControlChange::Toggle(checked)) => {
                 SettingValue::Toggle(checked)
             }
             _ => return None,
         };
-        Some((plan.id().clone(), value))
+        Some((descriptor.id().clone(), value))
     }
 
     /// Numbers a change of `id` to `value` about to be sent, and keeps it
@@ -170,10 +170,14 @@ impl SpeechControls {
             if *value == sent {
                 continue;
             }
-            let Some(control) = self.plans.iter().position(|plan| *plan.id() == id) else {
+            let Some(control) = self
+                .descriptors
+                .iter()
+                .position(|descriptor| *descriptor.id() == id)
+            else {
                 continue;
             };
-            if let Some(value) = control_value(&self.plans[control], value) {
+            if let Some(value) = control_value(&self.descriptors[control], value) {
                 snaps.push(Snap {
                     generation: self.generation,
                     control,
@@ -185,23 +189,44 @@ impl SpeechControls {
     }
 }
 
-/// `value` as the control `plan` built shows it: a slider's value, a
-/// choice's option index, or a check box's state as 1 or 0.
-fn control_value(plan: &ControlPlan, value: &SettingValue) -> Option<i32> {
-    match (plan, value) {
-        (ControlPlan::Slider { .. }, SettingValue::Number(number)) => Some(*number),
-        (ControlPlan::Choice { options, .. }, SettingValue::Choice(choice)) => options
+/// `value` as the control built from `descriptor` shows it: a slider's
+/// value, a choice's option index, or a check box's state as 1 or 0;
+/// `None` for a value of another shape, or a choice that is no option.
+fn control_value(descriptor: &SettingDescriptor, value: &SettingValue) -> Option<i32> {
+    match (descriptor, value) {
+        (SettingDescriptor::Numeric { .. }, SettingValue::Number(number)) => Some(*number),
+        (SettingDescriptor::Choice { options, .. }, SettingValue::Choice(choice)) => options
             .iter()
             .position(|(option, _)| option == choice)
             .and_then(|index| i32::try_from(index).ok()),
-        (ControlPlan::Toggle { .. }, SettingValue::Toggle(checked)) => Some(i32::from(*checked)),
+        (SettingDescriptor::Toggle { .. }, SettingValue::Toggle(checked)) => {
+            Some(i32::from(*checked))
+        }
         _ => None,
     }
 }
 
-/// The widget description for one planned control, its label resolved.
-fn control(plan: &ControlPlan) -> ffi::SettingControl {
-    let label = verbatim_i18n::message(plan.label_key());
+/// The widget description for `descriptor`, showing the driver's `value`.
+/// A value that does not fit the descriptor is the driver's error: it is
+/// logged and the control shown empty (a slider at its minimum, no option
+/// chosen, unchecked). A label key with no message is logged and the
+/// setting's id shown in its place.
+fn control(descriptor: &SettingDescriptor, value: Option<&SettingValue>) -> ffi::SettingControl {
+    let shown = value
+        .as_ref()
+        .and_then(|value| control_value(descriptor, value));
+    if shown.is_none() && value.is_some() {
+        tracing::error!(
+            target: "verbatim::gui",
+            setting = %descriptor.id(),
+            ?value,
+            "the synthesizer's value does not fit its setting"
+        );
+    }
+    let label = verbatim_i18n::message(descriptor.label_key()).unwrap_or_else(|| {
+        tracing::error!(target: "verbatim::gui", key = descriptor.label_key(), "a setting's label has no message");
+        descriptor.id().to_string()
+    });
     let mut control = ffi::SettingControl {
         kind: ffi::ControlKind::Slider,
         name: String::new(),
@@ -215,37 +240,32 @@ fn control(plan: &ControlPlan) -> ffi::SettingControl {
         selection: -1,
         checked: false,
     };
-    match plan {
-        ControlPlan::Slider {
+    match descriptor {
+        SettingDescriptor::Numeric {
             min,
             max,
             small_step,
             large_step,
-            initial,
             ..
         } => {
             control.min = *min;
             control.max = *max;
-            control.value = *initial;
+            control.value = shown.unwrap_or(*min).clamp(*min, *max);
             control.line_size = *small_step;
             control.page_size = *large_step;
         }
-        ControlPlan::Choice {
-            options, selected, ..
-        } => {
+        SettingDescriptor::Choice { options, .. } => {
             control.kind = ffi::ControlKind::Choice;
             control.options = options.iter().map(|(_, shown)| shown.clone()).collect();
-            control.selection = selected
-                .and_then(|index| i32::try_from(index).ok())
-                .unwrap_or(-1);
+            control.selection = shown.unwrap_or(-1);
         }
-        ControlPlan::Toggle { initial, .. } => {
+        SettingDescriptor::Toggle { .. } => {
             // A check box carries its own label, so it has no separate
             // label to borrow a name from; without one it is announced by
             // wxWidgets' default window name, "check".
             control.kind = ffi::ControlKind::Toggle;
             control.name = accessible_name(&control.label);
-            control.checked = *initial;
+            control.checked = shown == Some(1);
         }
     }
     control
@@ -256,10 +276,10 @@ pub(crate) fn synthesizer_picker(host: &dyn SpeechSettingsHost) -> ffi::Synthesi
     let synthesizers = host.synthesizers();
     let active = host.active_synthesizer();
     ffi::SynthesizerPicker {
-        title: messages::select_synth_title(),
-        label: messages::select_synth_label(),
-        ok: messages::button_ok(),
-        cancel: messages::button_cancel(),
+        title: verbatim_i18n::t!("select-synth-title"),
+        label: verbatim_i18n::t!("select-synth-label"),
+        ok: verbatim_i18n::t!("button-ok"),
+        cancel: verbatim_i18n::t!("button-cancel"),
         active: synthesizers
             .iter()
             .position(|synthesizer| synthesizer.id == active.id)
@@ -268,7 +288,7 @@ pub(crate) fn synthesizer_picker(host: &dyn SpeechSettingsHost) -> ffi::Synthesi
             .into_iter()
             .map(|synthesizer| synthesizer.display_name)
             .collect(),
-        switching: messages::select_synth_switching(),
+        switching: verbatim_i18n::t!("select-synth-switching"),
     }
 }
 
@@ -287,8 +307,8 @@ pub(crate) fn switch_outcome(
         },
         Err(_) => ffi::SynthesizerSwitch {
             switched: false,
-            error: messages::synth_error(name),
-            error_title: messages::synth_error_title(),
+            error: verbatim_i18n::t!("synth-error", name = name),
+            error_title: verbatim_i18n::t!("synth-error-title"),
         },
     }
 }
@@ -479,6 +499,29 @@ mod tests {
             "a check box gets a clean accessible name: {:?}",
             boost.name
         );
+    }
+
+    /// A slider's value is clamped into its range; a value the host lacks
+    /// or that does not fit its setting leaves the control empty; a choice
+    /// that is no option selects nothing.
+    #[test]
+    fn a_control_shows_only_a_value_that_fits_it() {
+        let rate = SettingDescriptor::standard_numeric("rate", "setting-rate");
+        let voice = SettingDescriptor::Choice {
+            id: SettingId::new("voice"),
+            label_key: "setting-voice".into(),
+            options: vec![("hazel".into(), "Microsoft Hazel".into())],
+        };
+        let boost = SettingDescriptor::Toggle {
+            id: SettingId::new("rate-boost"),
+            label_key: "setting-rate-boost".into(),
+        };
+        assert_eq!(control(&rate, Some(&SettingValue::Number(150))).value, 100);
+        assert_eq!(control(&rate, None).value, 0);
+        assert_eq!(control(&rate, Some(&SettingValue::Toggle(true))).value, 0);
+        let gone = SettingValue::Choice("david".into());
+        assert_eq!(control(&voice, Some(&gone)).selection, -1);
+        assert!(!control(&boost, Some(&SettingValue::Number(1))).checked);
     }
 
     #[test]

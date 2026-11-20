@@ -81,6 +81,16 @@ theme-sound-file-filter = Sound files (*.wav)|*.wav
 theme-remove-title = Remove Theme
 theme-remove-question = Remove the theme { $name }? This cannot be undone.
 theme-error-title = Theme
+# A theme file operation's failure, shown under the error title.
+theme-error-io = theme I/O error at { $path }: { $error }
+theme-error-parse = theme parse error in { $path }: { $error }
+theme-error-serialize = theme serialize error: { $error }
+theme-error-invalid-id = `{ $id }` is not a valid theme id
+theme-error-builtin = the built-in default theme cannot be changed
+theme-error-already-exists = a theme with the id `{ $id }` is installed
+theme-error-not-found = no theme with the id `{ $id }` is installed
+theme-error-not-a-wav = { $path } is not a WAV file
+theme-error-package = theme package { $path }: { $error }
 theme-in-use = The configuration uses { $name }, so it cannot be removed.
 
 ## The Terminal settings page (books/dev/src/reference/crates/verbatim-gui.md). The dialog's own

@@ -36,7 +36,6 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 };
 use windows::Win32::UI::WindowsAndMessaging::SetCursorPos;
 
-use verbatim_i18n::messages;
 use verbatim_model::Rect;
 
 use crate::list_dialog::{ButtonVerdict, ListDialogButton, ListDialogSpec};
@@ -87,10 +86,13 @@ pub(crate) fn shell_list_dialog(
     missed: &OnMissed,
 ) -> ListDialogSpec {
     let (title, label) = match kind {
-        ShellItemKind::SystemTray => (messages::tray_list_title(), messages::tray_list_label()),
+        ShellItemKind::SystemTray => (
+            verbatim_i18n::t!("tray-list-title"),
+            verbatim_i18n::t!("tray-list-label"),
+        ),
         ShellItemKind::Taskbar => (
-            messages::taskbar_list_title(),
-            messages::taskbar_list_label(),
+            verbatim_i18n::t!("taskbar-list-title"),
+            verbatim_i18n::t!("taskbar-list-label"),
         ),
     };
     let names = items.iter().map(|item| item.name.clone()).collect();
@@ -121,12 +123,15 @@ pub(crate) fn shell_list_dialog(
         label,
         items: names,
         buttons: vec![
-            action_button(messages::tray_list_left_click(), ClickAction::Left),
+            action_button(verbatim_i18n::t!("tray-list-left-click"), ClickAction::Left),
             action_button(
-                messages::tray_list_left_double_click(),
+                verbatim_i18n::t!("tray-list-left-double-click"),
                 ClickAction::DoubleLeft,
             ),
-            action_button(messages::tray_list_right_click(), ClickAction::Right),
+            action_button(
+                verbatim_i18n::t!("tray-list-right-click"),
+                ClickAction::Right,
+            ),
         ],
         default_button: 0,
     }

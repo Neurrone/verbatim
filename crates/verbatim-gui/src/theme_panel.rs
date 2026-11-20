@@ -27,7 +27,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use verbatim_audio::Sound;
-use verbatim_config::themes::{self, LoadedTheme};
+use verbatim_config::themes::{self, LoadedTheme, ThemeError};
 use verbatim_i18n::messages::{self, ThemeLabels};
 use verbatim_model::{
     BulletStyle, Earcon, Indication, IndicationCategory, IndicationSetting, LineStyle, Message,
@@ -223,18 +223,18 @@ impl ThemePanel {
             can_remove: !builtin && current.theme.id != self.committed.0,
             prompts: ffi::ThemePrompts {
                 new_title: labels.new_title.clone(),
-                new_prompt: messages::theme_new_prompt(&name),
-                new_name: messages::theme_copy_name(&name),
+                new_prompt: verbatim_i18n::t!("theme-new-prompt", name = name.as_str()),
+                new_name: verbatim_i18n::t!("theme-copy-name", name = name.as_str()),
                 rename_title: labels.rename_title.clone(),
-                rename_prompt: messages::theme_rename_prompt(&name),
+                rename_prompt: verbatim_i18n::t!("theme-rename-prompt", name = name.as_str()),
                 import_title: labels.import_title.clone(),
-                export_title: messages::theme_export_title(&name),
+                export_title: verbatim_i18n::t!("theme-export-title", name = name.as_str()),
                 export_file: format!("{}.zip", current.theme.id),
                 package_filter: labels.package_filter.clone(),
                 sound_title: labels.sound_file_title.clone(),
                 sound_filter: labels.sound_file_filter.clone(),
                 remove_title: labels.remove_title.clone(),
-                remove_question: messages::theme_remove_question(&name),
+                remove_question: verbatim_i18n::t!("theme-remove-question", name = name.as_str()),
                 error_title: labels.error_title.clone(),
                 name,
             },
@@ -251,7 +251,10 @@ impl ThemePanel {
             lines.push(current.theme.description.clone());
         }
         if !current.theme.author.is_empty() {
-            lines.push(messages::theme_author(&current.theme.author));
+            lines.push(verbatim_i18n::t!(
+                "theme-author",
+                author = current.theme.author.as_str()
+            ));
         }
         if current.problems.is_empty() {
             lines.push(self.labels.no_problems.clone());
@@ -301,7 +304,11 @@ impl ThemePanel {
         let presentation = verbatim_i18n::presentation_name(setting.report);
         let described = match (&setting.sound, setting.report.sounds()) {
             (Some(sound), true) => {
-                messages::theme_setting_with_sound(&presentation, &Self::sound_name(sound))
+                verbatim_i18n::t!(
+                    "theme-setting-with-sound",
+                    presentation = presentation.as_str(),
+                    sound = Self::sound_name(sound)
+                )
             }
             _ => presentation,
         };
@@ -317,7 +324,11 @@ impl ThemePanel {
         match sound {
             SoundSource::File(file) => file.clone(),
             SoundSource::Tone(tone) => {
-                messages::theme_sound_tone(tone.frequency_hz, tone.duration_ms)
+                verbatim_i18n::t!(
+                    "theme-sound-tone",
+                    frequency = tone.frequency_hz,
+                    duration = tone.duration_ms
+                )
             }
         }
     }
@@ -460,8 +471,8 @@ impl ThemePanel {
             return ffi::ThemeEdit {
                 needs_name: true,
                 prompt_title: self.labels.new_title.clone(),
-                prompt: messages::theme_copy_prompt(&name),
-                suggested_name: messages::theme_copy_name(&name),
+                prompt: verbatim_i18n::t!("theme-copy-prompt", name = name.as_str()),
+                suggested_name: verbatim_i18n::t!("theme-copy-name", name = name.as_str()),
                 error: String::new(),
             };
         }
@@ -478,7 +489,7 @@ impl ThemePanel {
                         setting.sound = Some(SoundSource::File(file));
                         (indication, setting)
                     }
-                    Err(error) => return edit_failed(&error.to_string()),
+                    Err(error) => return edit_failed(&theme_error_text(&error)),
                 }
             }
         };
@@ -676,7 +687,7 @@ impl ThemePanel {
                 self.activate();
                 String::new()
             }
-            Err(error) => error.to_string(),
+            Err(error) => theme_error_text(&error),
         }
     }
 
@@ -695,7 +706,7 @@ impl ThemePanel {
                 self.reload(&id);
                 String::new()
             }
-            Err(error) => error.to_string(),
+            Err(error) => theme_error_text(&error),
         }
     }
 
@@ -708,7 +719,7 @@ impl ThemePanel {
                 self.activate();
                 String::new()
             }
-            Err(error) => error.to_string(),
+            Err(error) => theme_error_text(&error),
         }
     }
 
@@ -717,7 +728,7 @@ impl ThemePanel {
     pub(crate) fn export(&self, path: &Path) -> String {
         match themes::export_theme(&self.themes[self.selected], path) {
             Ok(()) => String::new(),
-            Err(error) => error.to_string(),
+            Err(error) => theme_error_text(&error),
         }
     }
 
@@ -727,7 +738,7 @@ impl ThemePanel {
     pub(crate) fn remove(&mut self) -> String {
         let current = self.current().theme;
         if current.id == self.committed.0 {
-            return messages::theme_in_use(&Self::display_name(&current));
+            return verbatim_i18n::t!("theme-in-use", name = Self::display_name(&current));
         }
         match themes::remove_theme(&self.host.themes_dir(), &current.id) {
             Ok(()) => {
@@ -736,7 +747,7 @@ impl ThemePanel {
                 self.activate();
                 String::new()
             }
-            Err(error) => error.to_string(),
+            Err(error) => theme_error_text(&error),
         }
     }
 
@@ -747,7 +758,7 @@ impl ThemePanel {
         let mut failures = Vec::new();
         for theme in self.edited.values() {
             if let Err(error) = themes::save_theme(&themes_dir, theme) {
-                failures.push(error.to_string());
+                failures.push(theme_error_text(&error));
             }
         }
         self.edited.clear();
@@ -940,8 +951,58 @@ fn earcon_of(indication: Indication) -> Option<Earcon> {
     })
 }
 
+/// A theme file operation's failure in the user's language.
+fn theme_error_text(error: &ThemeError) -> String {
+    let shown = |path: &Path| path.display().to_string();
+    match error {
+        ThemeError::Io(path, error) => verbatim_i18n::t!(
+            "theme-error-io",
+            path = shown(path),
+            error = error.to_string()
+        ),
+        ThemeError::Parse(path, error) => verbatim_i18n::t!(
+            "theme-error-parse",
+            path = shown(path),
+            error = error.to_string()
+        ),
+        ThemeError::Serialize(error) => {
+            verbatim_i18n::t!("theme-error-serialize", error = error.to_string())
+        }
+        ThemeError::InvalidId(id) => verbatim_i18n::t!("theme-error-invalid-id", id = id.as_str()),
+        ThemeError::Builtin => verbatim_i18n::t!("theme-error-builtin"),
+        ThemeError::AlreadyExists(id) => {
+            verbatim_i18n::t!("theme-error-already-exists", id = id.as_str())
+        }
+        ThemeError::NotFound(id) => verbatim_i18n::t!("theme-error-not-found", id = id.as_str()),
+        ThemeError::NotAWav(path) => verbatim_i18n::t!("theme-error-not-a-wav", path = shown(path)),
+        ThemeError::Package(path, error) => verbatim_i18n::t!(
+            "theme-error-package",
+            path = shown(path),
+            error = error.as_str()
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    /// Each theme error with no parser's error in it is worded through
+    /// Fluent in the English its diagnostic text has.
+    #[test]
+    fn theme_error_text_is_worded_for_every_variant() {
+        let path = std::path::PathBuf::from("t.wav");
+        for error in [
+            ThemeError::Io(path.clone(), std::io::Error::other("refused")),
+            ThemeError::InvalidId("A".into()),
+            ThemeError::Builtin,
+            ThemeError::AlreadyExists("a".into()),
+            ThemeError::NotFound("a".into()),
+            ThemeError::NotAWav(path.clone()),
+            ThemeError::Package(path, "bad".into()),
+        ] {
+            assert_eq!(theme_error_text(&error), error.to_string());
+        }
+    }
+
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicU32, Ordering};
 

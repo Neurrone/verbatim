@@ -16,8 +16,6 @@
 
 use std::rc::Rc;
 
-use verbatim_i18n::messages;
-
 use crate::bridge::ffi;
 use crate::plan::{accessible_name, initial_list_selection};
 
@@ -99,7 +97,7 @@ impl ListDialogSpec {
                 .iter()
                 .map(|button| button.label.clone())
                 .collect(),
-            cancel: messages::button_cancel(),
+            cancel: verbatim_i18n::t!("button-cancel"),
             default_button: self
                 .default_button
                 .min(self.buttons.len().saturating_sub(1)),

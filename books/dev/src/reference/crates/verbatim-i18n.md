@@ -10,12 +10,18 @@ Public API:
   builds an isolated one for tests.
 - `load_locale_dir(dir, requested)` — negotiates and loads locale-folder
   languages over the embedded fallback.
-- `messages` — one typed accessor per statically known UI string
-  (`menu_settings()`, `settings_title_with_category(category)`, and so on),
-  each compile-time checked by the `fl!` macro, so a message-id typo fails
-  the build.
+- `t!` — a statically known message, `t!("tray-list-gone", name = name)`,
+  expanding to `fl!` over `loader()`, so a message-id typo or a wrong
+  argument fails the build. `fl!` reads the `i18n.toml` of the crate it is
+  compiled in, so `verbatim-gui` and `verbatim-app`, which use `t!`, each
+  have one naming this crate's `i18n` folder and the `verbatim` domain.
+- `messages` — the strings made with some logic: `clipboard_copied`,
+  `toggle_key_state(key, on)` for a `LockKey`, the Theme and Terminal
+  pages' label sets, `theme_indication_summary` and
+  `theme_preview_samples`.
 - `message(id)` — runtime lookup for ids that arrive as data, such as
-  setting-descriptor label keys.
+  setting-descriptor label keys: `None` when no message has the id, which
+  the caller logs.
 - `role_name(role)`, `state_name(state)`, `negated_state_name(state)` — the
   localized spoken words for utterance tokens; states that are never spoken
   (focusable, selectable, checkable) return `None`.
