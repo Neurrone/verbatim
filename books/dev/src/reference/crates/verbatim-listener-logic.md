@@ -50,15 +50,6 @@ Public API:
   waiter runs once every job queued before it is no longer waiting or
   running; abandoned threads do not count. The alarm is set only while a
   bar read runs.
-- `shown` — Core's requests to be told when a window is shown
-  (`Waiters<T>`, Dickson, 2026-11-19), kept on the listener's WinEvent
-  thread from the request to its one answer, each with its answer token:
-  a window visible when the request arrives is answered shown, one that
-  is no window not there, a hidden one kept; a window object's show of it
-  answers every waiter for it shown, its destruction not there, and
-  Core's cancel its own waiter cancelled. The table judges nothing: the
-  thread reads the window's `Visibility` and hands it each show and
-  destruction.
 - `focus` — the progress path's vocabulary (`classic_value_change`,
   `BarObject`, `BarVerdict`, `ClassicBarRead`, `BarRaiser`,
   `WindowAnswer`, `BAR_VERDICTS_KEPT`, the bar limits) and

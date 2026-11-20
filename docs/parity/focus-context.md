@@ -157,24 +157,43 @@ read it about 1 s after Enter and said "Import a Theme  dialog  File
 name:", "File name:  combo box  collapsed" (5 of 5 captures at the pin).
 
 Verbatim: a dialog's text is read only once it is shown (Dickson,
-2026-11-19). A focus read whose top-level window is a hidden dialog is
-answered with that window, Core waits for its show and reads the focus
-again, so the dialog is said with its text, then its field, as NVDA's
-capture says them. No focus or foreground event is ignored, so both NVDA
-commits above hold; only the read is postponed, by the time left until
-the show. Covered by the 2026-11-19 ruling, as differences from NVDA:
+2026-11-19), by postponement (Dickson, 2026-11-20: "For the dialog: ok").
+A focus read whose top-level window is a hidden dialog is answered with
+that window, its entry ends, and Core keeps the dialog as postponed; at
+the dialog's show, which the listener tells while the dialog is in front,
+or at a foreground report naming it, Core reads the focus again, so the
+dialog is said with its text, then its field, as NVDA's capture says
+them. No focus or foreground event is ignored, so both NVDA commits above
+hold; only the read is postponed, by the time left until the show. A
+caret key, a modifier alone, a passed key, a clearing key and an editing
+chord follow NVDA: pressed while the dialog is hidden, they read nothing,
+and the dialog is said with its text and its field at the show ([captures](https://github.com/Neurrone/verbatim/blob/main/crates/verbatim-core/tests/fixtures/hidden_dialog/s7), `import-rightarrow-1`
+to `-3`, `import-control-1` to `-3`). The differences from NVDA:
 
-- the user elsewhere before the show (the foreground, a menu or a focus
-  outside the dialog) says nothing for the hidden dialog. Derived from
-  the source, not captured: NVDA reads the newest valid focus or
-  foreground of each pass (`IAccessibleHandler/__init__.py` 1061 to
-  1092), so it says the dialog without its text when its pass reads the
-  dialog before the ending event arrives, and nothing for it when both
-  fall in one pass;
-- a key pressed before the show reads the dialog at once, without its
-  text, as NVDA would read it then;
-- a dialog never shown, with no key and no other ending, holds the queue
-  for the 13 s due time and ends unspoken, where NVDA speaks its focus.
+- a character typed while Import is hidden is heard alone; NVDA says
+  "Import a Theme  dialog  File name:", "File name:  combo box
+  collapsed", "edit  Alt plus  n  a", then "a" (`import-a-2`, `-3`).
+  Today's tested words, kept by Dickson's build 2 ruling (2026-11-20);
+- Tab while Import is hidden keeps today's race: when Import has moved
+  its focus to "Files of type" before Core's read, that control is
+  committed under the earlier key's fence and its own focus event is its
+  duplicate, so nothing is heard after Tab, where NVDA says "Files of
+  type: combo box Theme packages ( star dot zip) collapsed Alt plus t"
+  (`import-tab-1`, `-2`). Approved by Dickson, 2026-11-20, since
+  following NVDA needs state;
+- a dialog never shown, and a tray menu's hidden dialog left in front
+  after Escape, are not spoken until typed text or a command reads them;
+  NVDA speaks the focus without the dialog's text ([captures](https://github.com/Neurrone/verbatim/blob/main/crates/verbatim-core/tests/fixtures/hidden_dialog/s8),
+  `never-shown`, `tray`; stand-in order, no real application recorded).
+  Approved by Dickson, 2026-11-20, since following NVDA needs a timer;
+- a message box owned by a hidden dialog is spoken, and after OK the
+  owner dialog is said at its show, up to the show's delay later than
+  NVDA, which says it at once (`owned-box`, stand-in order). Approved by
+  Dickson, 2026-11-20;
+- a postponement made before any key in the session carries no key
+  number, so a key's read of it is heard, as before;
+- a dialog is said with its text where NVDA says it without, whenever
+  NVDA's pass runs before the show (the ruling of 2026-11-19).
 
 Save As and Run are not yet captured with NVDA, so whether NVDA says
 their text is not known; their expectations wait for those captures.

@@ -218,9 +218,6 @@ impl Logic for Test {
         })
     }
 
-    /// A key arriving withdraws a read; a foreground outside the read's
-    /// window ends it unless it is exempt; settling withdraws it once the
-    /// facts are [`UNNEEDED`].
     fn ends(
         facts: &u32,
         (front, live): (&Entry, &Live),
@@ -703,10 +700,8 @@ fn a_request_out_ends_reader_ended_when_its_reader_ends() {
 /// The facts of the tests' logic when no read is needed any more.
 const UNNEEDED: u32 = u32::MAX;
 
-/// The one judge, called for each of its causes where it arises: an
-/// entry's arrival, the foreground report, and the queue settling after
-/// the facts changed outside it, the foreground even in the read's own
-/// application.
+/// The one judge ends the front's read for each cause: a key arriving, the
+/// foreground leaving it in its own application, and an unneeded read.
 #[test]
 fn the_one_judge_ends_the_front_for_each_cause() {
     type Of = fn(&mut Core<Test>) -> Input<Entry>;
@@ -714,23 +709,24 @@ fn the_one_judge_ends_the_front_for_each_cause() {
         *core.cx_for_tests().facts_mut() = UNNEEDED;
         Input::Settle
     };
-    let causes: [(Of, CancelReason); 3] = [
-        (|_| Input::Entry(Entry::Key), CancelReason::Withdrawn),
+    let ended = |reason: CancelReason| {
+        let said = said(&format!("NoLongerAwaited({reason:?})"));
+        vec![cancel(1, reason), said]
+    };
+    let mut key = ended(CancelReason::Withdrawn);
+    key.push(said("key after 0 results, 0 waiting"));
+    let causes: [(Of, Vec<Effect<String>>); 3] = [
+        (|_| Input::Entry(Entry::Key), key),
         (
             |_| Input::Foreground(SAME_APP_ELSEWHERE),
-            CancelReason::Foreground,
+            ended(CancelReason::Foreground),
         ),
-        (unneeded, CancelReason::Withdrawn),
+        (unneeded, ended(CancelReason::Withdrawn)),
     ];
-    for (cause, reason) in causes {
+    for (cause, expected) in causes {
         let mut core = core_with_read_out();
         let input = cause(&mut core);
-        let effects = feed(&mut core, 2_000, input);
-        assert_eq!(effects.first(), Some(&cancel(1, reason)), "{effects:?}");
-        assert_eq!(
-            effects.get(1),
-            Some(&said(&format!("NoLongerAwaited({reason:?})")))
-        );
+        assert_eq!(feed(&mut core, 2_000, input), expected);
     }
 }
 

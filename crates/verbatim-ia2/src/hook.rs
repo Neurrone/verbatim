@@ -856,12 +856,11 @@ const _: () = {
 /// `id_child`) has among `kinds`, if [`is_wanted`] keeps it, `None` for
 /// events we do not want. A window's class is read from Windows with
 /// `class_of`, at most once for the event and only when a filter asks it,
-/// and left in `read` when it was; the window in front is read with
-/// `in_front`, only for a window object's show.
+/// and left in `read` when it was.
 fn wanted_kind(
     (event, hwnd, id_object, id_child): (u32, isize, i32, i32),
     kinds: &[WinEventKind],
-    (class_of, in_front): (impl Fn(isize) -> String, impl FnOnce() -> isize),
+    class_of: impl Fn(isize) -> String,
     read: &mut Option<String>,
 ) -> Option<WinEventKind> {
     // The system caret's show is a caret event, as NVDA handles it, not a
@@ -891,22 +890,29 @@ fn wanted_kind(
     {
         return Some(WinEventKind::OtherShow);
     }
-    // A window object's show of the window in front, as a show the
-    // rewrite below makes its client's: a dialog Core postponed is read
-    // at its show (`books/dev/src/explanation/design/focus.md`, "A dialog
-    // read once it is shown"). The window in front is read as the callback
-    // runs, after the event: a guess, which can only delay speech, since a
-    // show dropped wrongly leaves the dialog for its next foreground report
-    // and one told wrongly asks nothing.
-    if event == EVENT_OBJECT_SHOW
+    kind_among(event, kinds).filter(|&kind| is_wanted(kind, id_object, id_child, &mut class))
+}
+
+/// Whether the raw event `event` on (`hwnd`, `id_object`, `id_child`) is a
+/// window object's show of the window in front, which `in_front` reads,
+/// for an install that hears shows: kept as a show, whatever its class,
+/// and delivered on its client object ([`object_of`]), as Core reads a
+/// dialog it postponed at its show
+/// (`books/dev/src/explanation/design/focus.md`, "A dialog read once it is
+/// shown"). The window in front is read as the callback runs, after the
+/// event: a guess, which can only delay speech, since a show dropped
+/// wrongly leaves the dialog for its next foreground report and one told
+/// wrongly asks nothing.
+fn shown_in_front(
+    (event, hwnd, id_object, id_child): (u32, isize, i32, i32),
+    kinds: &[WinEventKind],
+    in_front: impl FnOnce() -> isize,
+) -> bool {
+    event == EVENT_OBJECT_SHOW
         && id_object == OBJID_WINDOW.0
         && id_child == CHILDID_SELF
         && kinds.contains(&WinEventKind::Show)
         && in_front() == hwnd
-    {
-        return Some(WinEventKind::Show);
-    }
-    kind_among(event, kinds).filter(|&kind| is_wanted(kind, id_object, id_child, &mut class))
 }
 
 /// The object an event of `kind` on (`id_object`, `id_child`) is delivered
@@ -1033,13 +1039,16 @@ unsafe extern "system" fn win_event_proc(
         (hwnd == desktop).then_some(WinEventKind::DesktopName)
     } else {
         KINDS.with(|kinds| {
+            let ids = (event, hwnd.0 as isize, id_object, id_child);
+            // SAFETY: `GetForegroundWindow` has no preconditions.
+            let in_front = || unsafe { GetForegroundWindow() }.0 as isize;
+            if shown_in_front(ids, &kinds.borrow(), in_front) {
+                return Some(WinEventKind::Show);
+            }
             wanted_kind(
-                (event, hwnd.0 as isize, id_object, id_child),
+                ids,
                 &kinds.borrow(),
-                (crate::window::window_class_name, || {
-                    // SAFETY: `GetForegroundWindow` has no preconditions.
-                    unsafe { GetForegroundWindow() }.0 as isize
-                }),
+                crate::window::window_class_name,
                 &mut class,
             )
         })
@@ -1100,7 +1109,7 @@ mod tests {
         wanted_kind(
             (event, 42, id_object, CHILDID_SELF),
             APP_SUBSCRIPTIONS,
-            (class_of, || 0),
+            class_of,
             &mut None,
         )
         .into_iter()
@@ -1116,13 +1125,10 @@ mod tests {
         let kind = wanted_kind(
             (EVENT_SYSTEM_FOREGROUND, 42, OBJID_WINDOW.0, CHILDID_SELF),
             LISTENER_SUBSCRIPTIONS,
-            (
-                |_| {
-                    reads.set(reads.get() + 1);
-                    "Notepad".to_owned()
-                },
-                || 0,
-            ),
+            |_| {
+                reads.set(reads.get() + 1);
+                "Notepad".to_owned()
+            },
             &mut None,
         );
         assert_eq!(kind, Some(WinEventKind::Foreground));
@@ -1166,7 +1172,7 @@ mod tests {
                 wanted_kind(
                     (event, 42, id_object, CHILDID_SELF),
                     LISTENER_SUBSCRIPTIONS,
-                    (class_of, || 0),
+                    class_of,
                     &mut read,
                 ),
                 Some(kind)
@@ -1228,38 +1234,28 @@ mod tests {
             wanted_kind(
                 (EVENT_OBJECT_SHOW, 42, OBJID_CARET.0, CHILDID_SELF),
                 LISTENER_SUBSCRIPTIONS,
-                (|_| "Edit".to_owned(), || 0),
+                |_| "Edit".to_owned(),
                 &mut None,
             ),
             Some(WinEventKind::Caret)
         );
     }
 
-    /// A window object's show is kept only while its window is in front,
-    /// whatever its class, and delivered on its client object, as Core
-    /// reads a postponed dialog's show; a tooltip's client show is kept
-    /// whatever is in front.
+    /// A window object's show is kept, delivered on its client object, only
+    /// while its window is in front, and only by an install hearing shows.
     #[test]
     fn a_window_objects_show_is_kept_only_for_the_window_in_front() {
-        let kind = |object: i32, class: &'static str, front: isize| {
-            wanted_kind(
-                (EVENT_OBJECT_SHOW, 42, object, CHILDID_SELF),
-                LISTENER_SUBSCRIPTIONS,
-                (move |_| class.to_owned(), move || front),
-                &mut None,
-            )
+        let shown = |object: i32, kinds: &[WinEventKind], front: isize| {
+            shown_in_front((EVENT_OBJECT_SHOW, 42, object, CHILDID_SELF), kinds, || {
+                front
+            })
         };
-        assert_eq!(kind(OBJID_WINDOW.0, "#32770", 42), Some(WinEventKind::Show));
-        assert_eq!(kind(OBJID_WINDOW.0, "#32770", 7), None);
-        assert_eq!(kind(OBJID_CLIENT.0, "#32770", 42), None);
-        assert_eq!(
-            kind(OBJID_CLIENT.0, TOOLTIP_CLASS, 7),
-            Some(WinEventKind::Show)
-        );
-        assert_eq!(
-            object_of(WinEventKind::Show, OBJID_WINDOW.0, CHILDID_SELF),
-            OBJID_CLIENT.0
-        );
+        assert!(shown(OBJID_WINDOW.0, LISTENER_SUBSCRIPTIONS, 42));
+        assert!(!shown(OBJID_WINDOW.0, LISTENER_SUBSCRIPTIONS, 7));
+        assert!(!shown(OBJID_CLIENT.0, LISTENER_SUBSCRIPTIONS, 42));
+        assert!(!shown(OBJID_WINDOW.0, CONSOLE_SUBSCRIPTIONS, 42));
+        let delivered = object_of(WinEventKind::Show, OBJID_WINDOW.0, CHILDID_SELF);
+        assert_eq!(delivered, OBJID_CLIENT.0);
     }
 
     /// The listener hears the shows of all six of NVDA's show classes, an
@@ -1271,7 +1267,7 @@ mod tests {
             wanted_kind(
                 (EVENT_OBJECT_SHOW, 42, object, CHILDID_SELF),
                 kinds,
-                (move |_| class.to_owned(), || 0),
+                move |_| class.to_owned(),
                 &mut None,
             )
         };
@@ -1475,7 +1471,7 @@ mod tests {
             wanted_kind(
                 (event, 42, OBJID_CLIENT.0, CHILDID_SELF),
                 LISTENER_SUBSCRIPTIONS,
-                (move |_| class.to_owned(), || 0),
+                move |_| class.to_owned(),
                 &mut None,
             )
         };
@@ -1491,7 +1487,7 @@ mod tests {
             wanted_kind(
                 (EVENT_SYSTEM_MENUSTART, 42, OBJID_CLIENT.0, CHILDID_SELF),
                 APP_SUBSCRIPTIONS,
-                (|_| "Notepad".to_owned(), || 0),
+                |_| "Notepad".to_owned(),
                 &mut None,
             ),
             None
@@ -1508,7 +1504,7 @@ mod tests {
             wanted_kind(
                 (EVENT_SYSTEM_FOREGROUND, 42, OBJID_WINDOW.0, CHILDID_SELF),
                 kinds,
-                (move |_| class.to_owned(), || 0),
+                move |_| class.to_owned(),
                 &mut None,
             )
         };

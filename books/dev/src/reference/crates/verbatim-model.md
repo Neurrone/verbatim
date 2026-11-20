@@ -304,10 +304,7 @@ them yet.
   one named. Both, and the completion, carry a `HiddenRoot`: with
   `Check`, a read whose window's top-level window is a hidden dialog is
   answered `Reply::HiddenDialog` with that window's `NodeWindow` and
-  nothing read; with `ReadAnyway` it is read as it is. `AwaitShown` asks
-  the focus listener to answer `Reply::Shown` once a window is shown, or
-  "not there" when it is gone, and `CancelReason::LeftHiddenDialog`
-  cancels it when the user is elsewhere (Dickson, 2026-11-19). The
+  nothing read; with `ReadAnyway` it is read as it is. The
   completion and a candidate's full read are
   a `FocusRead`, which carries what Core keeps with the
   committed focus and its `FocusCaret`: no text, text not read, or the

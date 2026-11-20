@@ -156,7 +156,11 @@ a token (a terminal's output reads and baseline).
   sound and watching nothing for it; "ended" when its reader ended; or
   no longer awaited, at its due time, when the shell's live check finds
   its window hung, at a foreground change that leaves its window behind,
-  or when a later entry withdraws it. A request no
+  or when a later entry withdraws it. One function judges the ending
+  before an answer (`Logic::ends`), for its three causes
+  (`event_queue::Cause`): an entry arriving, judged before the limiter
+  merges it; the foreground report; and the queue settling after Core's
+  facts changed outside it, which `entries::unsettled` asks too. A request no
   longer awaited that went out is kept by its number and instance only so
   that its late answer is dropped, and forgotten when that instance ends.
 - Only the front entry may have a request out; its function is paused at
@@ -177,40 +181,37 @@ an answer from an instance the request did not go to dropped.
 
 ### A dialog read once it is shown
 
-A focus read whose window's top-level window is a hidden dialog is
-answered with that window (`Reply::HiddenDialog`), parsed into
+The behaviour is the focus design's
+(`books/dev/src/explanation/design/focus.md`, "A dialog read once it is
+shown"). A focus read whose window's top-level window is a hidden dialog
+is answered with that window (`Reply::HiddenDialog`), parsed into
 `focus::shown::Hidden` by the read's own reply type. Every focus read
-that may meet one goes through `focus::shown::read_shown`: an MSAA
-candidate at its turn (`msaa_run::read_in_full`), the current focus
-(`retake::run`, the menu check, a UI Automation focus read afresh) and a
-UI Automation focus's completion. On a hidden dialog the front asks the
-listener `AwaitShown` under the read's own due time, and, shown, reads it
-again from its start. The ending condition (`shown::ending`) is a pure
-function of the dialog's window, the foreground record and the entries
-waiting behind the front: the user is elsewhere when the record names
-another window, a menu or popup start outside the dialog from the
-application holding attention waits, or a focus outside it, a UI
-Automation menu opening among them, that the one definition's rows
-needing no read accept waits; otherwise a key pressed since the front
-joined ends it as a key, by the speech fence's one rule
-(`Arrivals::fence` above the front's fence), a modifier alone included,
-whose cut settles the queue. The queue judges it as the request begins, ending one
-that holds already unsent (`Shared::stopped_at_once`), and after every
-entry that joins and every foreground report while it waits
-(`Logic::stops`); the foreground's tree-and-owner stop does not apply to
-it (`Logic::own_foreground_rule`). The outcome alone tells the function
-which ending held, so a function rebuilt from its checkpoint decides
-alike: elsewhere (`LeftHiddenDialog`), the read ends, nothing said, and
-the oldest such focus waiting carries the dialog (`ended_wait`, kept
-through a merge or the limiter's cap by `Logic::merged`); a key (withdrawn), it is read again
-at once with `HiddenRoot::ReadAnyway`. The application's exit ends the wait not
-there and cancels it to the listener (`Table::answer_cancelling`). A run
-or UI Automation focus carrying `ended_wait` that executes nothing while
-the record still names the dialog joins a re-take of the foreground
-window's current focus (`shown::after_ended_wait`, by `Cx::join`). Tests:
-`focus::shown::tests`, one per cell of the design's table, with the
-message box, the dialog closed by hiding and the tray menu each fed in
-both orders.
+asked with `HiddenRoot::Check` (an MSAA candidate at its turn, the
+current focus, the menu check, a UI Automation focus's completion or
+read afresh) asks through `shown::ask`, the one place a hidden answer is
+decided: it sets the one fact, `Versions::postponed`, a
+`shown::Postponed` of the dialog's window and the front entry's speech
+fence (`entries::front_fence`), keeping the older fence for the same
+dialog, and returns `None`, ending the entry. `Versions::execute` and
+`Versions::commit_own` end the fact, and so does the dialog's
+destruction (`Logic::window_destroyed`).
+
+A `Show` tell of a top-level window whose class is none of NVDA's show
+classes becomes a `CurrentFocus` entry of `Why::Shown` (`shown::of_show`),
+and the foreground marker naming the postponed dialog joins one
+(`shown::marker`); at its turn it reads only while the fact names its
+window and the foreground record names it in front (`shown::shown_due`).
+`retake::read_current` is the one place a read of the current focus is
+judged, by its reason: `Startup` and `Returned` execute, `Retake`,
+`Recovered` and `Shown` go through `retake()`; the shell's answer in
+front goes to `plain::decide`, `Shown` as a re-take. A press of typed
+text, a control character, a command or a script calls
+`shown::before_press` at its turn: with the dialog postponed and in
+front, it reads the current focus with `HiddenRoot::ReadAnyway` through
+`read_current`, its speech stamped with the postponed fence, which
+`Executed::deliver` takes for every caller. Tests: `focus::shown::tests`,
+the design's sequences in Import's recorded order, the stand-in's marked;
+`tests/replay_validity.rs` replays Import's flight dump.
 
 ### A window's destruction
 
@@ -902,8 +903,8 @@ spoken while the taskbar is in front with the setting on, and every other
 property as a property change. An event accepted only because background
 progress bars are reported is accepted apart from the foreground, so a
 foreground change neither stops its request out nor ends it waiting
-(`accepted_apart_from_foreground`, judged with Core's facts, which
-`Logic::exempt_from_foreground` now takes). `verbatim_core::accepts` is
+(`accepted_apart_from_foreground`, judged with Core's facts by
+`entries::exempt_from_foreground`). `verbatim_core::accepts` is
 the acceptance test's answer alone, public so that the listener judges
 with Core's own function whether to read a value change while background
 progress bars are not reported (Dickson, 2026-11-19). Every

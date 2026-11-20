@@ -157,19 +157,15 @@ impl Logic for Limited {
 
     fn ends(
         _: &Option<i32>,
-        (_, live): (&Entry, &crate::event_queue::Live),
-        cause: crate::event_queue::Cause<'_, Entry>,
+        _: (&Entry, &crate::event_queue::Live),
+        _: crate::event_queue::Cause<'_, Entry>,
         _: (
             &crate::focus::backend::BackendCache,
             u64,
             Option<crate::event_queue::Foreground>,
         ),
     ) -> Option<verbatim_model::request::CancelReason> {
-        match cause {
-            crate::event_queue::Cause::Foreground(record) => (!record.holds(&live.window))
-                .then_some(verbatim_model::request::CancelReason::Foreground),
-            crate::event_queue::Cause::Arrived(_) | crate::event_queue::Cause::Settled => None,
-        }
+        None
     }
 
     fn recovered(_: &mut Option<i32>, _: &RequestWindow) -> Option<Entry> {

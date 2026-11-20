@@ -463,13 +463,11 @@ by Core on entering the window: one acquisition; `progress`, an
   `Nudger` (`Nudger::hook`), installs its one set when asked, behind every
   nudge sent before and returning once the hooks are in (an outpost asks
   when `Follow` first names a console's terminal). `EventHandlers` are made
-  on the thread: the `WinEvent` callback, an optional nudge handler, and
-  an optional second output for every window object's show
-  (`window_shown`, installed with the hooks by `set_window_shown`), called
-  with the window of each `EVENT_OBJECT_SHOW` on (`OBJID_WINDOW`,
-  `CHILDID_SELF`) by integer tests alone, before and apart from the
-  event's own filters, which still tell NVDA's show classes as before:
-  the focus listener's, which answers Core's waits for a window's show. A
+  on the thread: the `WinEvent` callback and an optional nudge handler.
+  A window object's show of the window in front is kept as a show,
+  whatever its class, for a set that hears shows (`shown_in_front`, one
+  `GetForegroundWindow`), and delivered on its client object, as every
+  window object's event but a destruction is (`object_of`). A
   `Nudger` hands the thread two words between events (`nudge`), which is
   how an outpost unhooks some kinds and hooks them again, and waits for it
   to catch up (`sync`): every nudge sent and, once the hooks are in, every

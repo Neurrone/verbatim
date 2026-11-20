@@ -1,11 +1,7 @@
-//! A dialog read once it is shown, by postponement (Dickson, 2026-11-20):
-//! the sequences of the design's state table, each fed as the listener and
-//! the outpost send it, with its exact speech. Import's order comes from
-//! the recording of the real dialog (`tests/fixtures/hidden_dialog/`); a
-//! key is placed between the hidden answer and the show. The tests marked
-//! "stand-in order" take their application's order only from the
-//! stand-in's recording, with no real application recorded (Dickson,
-//! 2026-11-20).
+//! A dialog read once it is shown, by postponement: the design's sequences
+//! in Import's recorded order (`tests/fixtures/hidden_dialog/`), a key put
+//! between the hidden answer and the show; "stand-in order" marks those
+//! with no real application recorded (Dickson, 2026-11-20).
 
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::{PropertyAnswer, PropertyId, PropertyValue};
@@ -49,6 +45,19 @@ fn facet(handle: u64, class: &str, process: Pid) -> WindowFacet {
     }
 }
 
+/// A tooltip, a top-level window of a show class.
+const TOOLTIP: u64 = 60;
+
+/// The class of `window`, of top-level window `root`: a dialog's when it is
+/// its own top-level window.
+fn class_of(window: u64, root: u64) -> &'static str {
+    match window {
+        TOOLTIP => "tooltips_class32",
+        window if window == root => "#32770",
+        _ => "Edit",
+    }
+}
+
 /// The facts of a tell for `window`, of top-level window `root` owned by
 /// `owner`, as the listener read them with `front` in front: accepted by
 /// the root owner when `related`, else unrelated to the foreground.
@@ -59,7 +68,7 @@ fn tell_facts(
     related: bool,
 ) -> AcceptanceFacts {
     AcceptanceFacts {
-        window: facet(window, "Edit", process),
+        window: facet(window, class_of(window, root), process),
         parent_class: String::new(),
         root: facet(root, "#32770", process),
         root_owner: facet(owner, "#32770", process),
@@ -90,20 +99,10 @@ fn tell_facts(
 /// `owner`, raised at `at_us` with `front` in front.
 fn tell(
     kind: EventKind,
-    windows: (u64, u64, u64),
-    front: (u64, u64),
-    by: (Pid, bool),
-) -> Input<Entry> {
-    Input::Entry(Entry::of_tell(LISTENER, event(kind, windows, front, by)).expect("an entry"))
-}
-
-/// The event [`tell`] tells.
-fn event(
-    kind: EventKind,
     (window, root, owner): (u64, u64, u64),
     (front, at_us): (u64, u64),
     (process, related): (Pid, bool),
-) -> verbatim_model::tell::Event {
+) -> Input<Entry> {
     let mut event = msaa_tell(-4);
     event.kind = kind;
     event.process = process;
@@ -120,22 +119,18 @@ fn event(
         process,
         related,
     )));
-    event
+    Input::Entry(Entry::of_tell(LISTENER, event).expect("an entry"))
 }
 
-/// A show of the top-level `window` of `class`, as the listener tells it:
-/// the hook's rewrite of its window object's show to its client object.
-fn show(window: u64, class: &str, at_us: u64) -> Input<Entry> {
-    let mut event = event(
+/// A show of the top-level `window`, as the listener tells it: the hook's
+/// rewrite of its window object's show to its client object.
+fn show(window: u64, at_us: u64) -> Input<Entry> {
+    tell(
         EventKind::Show,
         (window, window, OWNER),
         (window, at_us),
         (APP, true),
-    );
-    if let TellWindow::Found(facts) = &mut event.window {
-        facts.window.class = class.to_owned();
-    }
-    Input::Entry(Entry::of_tell(LISTENER, event).expect("an entry"))
+    )
 }
 
 /// The dialog's foreground tell, raised at `at_us`.
@@ -386,7 +381,6 @@ fn out(held: &Held) -> u64 {
 }
 
 const ASK_DIALOG: &str = "send Outpost(Pid(40)) MsaaRun 30 Check";
-const ASK_FIELD: &str = "send Outpost(Pid(40)) MsaaRun 31 Check";
 const ASK_CURRENT: &str = "send Outpost(Pid(40)) CurrentFocus Check";
 const ASK_AS_IT_IS: &str = "send Outpost(Pid(40)) CurrentFocus ReadAnyway";
 
@@ -397,19 +391,20 @@ const DIALOG_SPOKEN: [&str; 2] = [
     "Label(\"File name:\") Role(EditableText)",
 ];
 
-/// A ready Core whose committed focus is the owner's button, the owner in
-/// front, the file dialog not yet come.
-fn on_the_owner() -> Held {
+/// What the read at a key says: the dialog hidden, with no text, then its
+/// field, both fenced by Enter, key 1, so key 2's cut silences them.
+const KEYED: [(&str, Option<u64>); 2] = [
+    ("Label(\"Import a Theme\") Role(Dialog)", Some(1)),
+    ("Label(\"File name:\") Role(EditableText)", Some(1)),
+];
+
+/// The owner's button committed, the owner in front, Enter pressed on its
+/// "Import...", key 1, and the dialog come to the foreground hidden, its
+/// first read asked.
+fn dialog_asked() -> Held {
     let mut held = ready();
     step(&mut held, 100, in_front(OWNER, OWNER, APP));
     let _ = step(&mut held, 200, answer(OUTPOST, 1, owner_button_read()));
-    held
-}
-
-/// Enter pressed on the owner's "Import...", key 1, and the dialog come to
-/// the foreground hidden, its first read asked.
-fn dialog_asked() -> Held {
-    let mut held = on_the_owner();
     let _ = step(&mut held, 900, press(1, 900, typed("\r")));
     assert_eq!(
         step(&mut held, 1_000, in_front(DIALOG, OWNER, APP)),
@@ -437,195 +432,31 @@ fn answer_out(held: &mut Held, at_us: u64, reply: Reply) -> Vec<String> {
     step(held, at_us, answer(OUTPOST, number, reply))
 }
 
+fn shown(held: &mut Held, at_us: u64) -> Vec<String> {
+    step(held, at_us, show(DIALOG, at_us))
+}
+
 /// The dialog's show read and answered shown: the dialog with its text,
-/// then its field.
+/// then its field, and the postponement ended.
 fn shown_speaks_the_dialog(held: &mut Held, at_us: u64) {
-    let shown = show(DIALOG, "#32770", at_us);
-    assert_eq!(step(held, at_us, shown), [ASK_CURRENT]);
-    assert_eq!(
-        answer_out(held, at_us + 50, field_read(Some("File name:"))),
-        DIALOG_SPOKEN
-    );
+    assert_eq!(shown(held, at_us), [ASK_CURRENT]);
+    let read = field_read(Some("File name:"));
+    assert_eq!(answer_out(held, at_us + 50, read), DIALOG_SPOKEN);
     assert_eq!(held.state.versions.postponed, None);
 }
 
-/// Import's order: the foreground and the field's focus postpone, and the
-/// show speaks the dialog with its text, then its field, once.
+fn key(action: PressAction) -> Input<Entry> {
+    press(2, 1_150, action)
+}
+
+/// Each input at 1,150 µs while postponed says what is given and leaves the
+/// dialog for its show, which speaks it with its text: Import's field
+/// postponing too; a caret key, a passed key and a focus elsewhere refused
+/// by its read; the listener ending, whose re-take postpones again; the
+/// foreground leaving, a show meanwhile asking nothing, and the report
+/// naming the dialog reading it (a listener's replacement).
 #[test]
-fn a_postponed_dialog_is_read_at_its_show() {
-    let mut held = postponed();
-    assert_eq!(step(&mut held, 1_120, field_focus(1_120)), [ASK_FIELD]);
-    assert_eq!(answer_out(&mut held, 1_130, hidden_dialog()), NOTHING);
-    shown_speaks_the_dialog(&mut held, 1_200);
-}
-
-/// The show told while the dialog's first read is out: judged at its turn,
-/// after the hidden answer postponed the dialog.
-#[test]
-fn a_show_told_before_the_hidden_answer_reads_at_its_turn() {
-    let mut held = dialog_asked();
-    let shown = show(DIALOG, "#32770", 1_050);
-    assert_eq!(step(&mut held, 1_050, shown), NOTHING);
-    assert_eq!(answer_out(&mut held, 1_100, hidden_dialog()), [ASK_CURRENT]);
-    assert_eq!(
-        answer_out(&mut held, 1_150, field_read(Some("File name:"))),
-        DIALOG_SPOKEN
-    );
-}
-
-/// The Settings dialog, shown at its foreground: read shown, and its show
-/// asks nothing.
-#[test]
-fn a_dialog_shown_at_its_foreground_asks_nothing_at_its_show() {
-    let mut held = dialog_asked();
-    assert_eq!(
-        answer_out(&mut held, 1_100, field_read(Some("File name:"))),
-        DIALOG_SPOKEN
-    );
-    let shown = show(DIALOG, "#32770", 1_107);
-    assert_eq!(step(&mut held, 1_107, shown), NOTHING);
-}
-
-/// A top-level window's show is the show's read; a tooltip's, of a show
-/// class, stays an announcement.
-#[test]
-fn a_tooltips_show_stays_an_announcement() {
-    let routed = |class| match show(60, class, 1) {
-        Input::Entry(Entry::CurrentFocus(read)) => format!("{:?}", read.why),
-        Input::Entry(Entry::Announcement(_)) => "announcement".to_owned(),
-        other => format!("{other:?}"),
-    };
-    assert_eq!(routed("#32770"), "Shown");
-    assert_eq!(routed("tooltips_class32"), "announcement");
-}
-
-/// What the read at a key says: the dialog hidden, with no text, then its
-/// field, both fenced by Enter, key 1, so key 2's cut silences them.
-const KEYED: [(&str, Option<u64>); 2] = [
-    ("Label(\"Import a Theme\") Role(Dialog)", Some(1)),
-    ("Label(\"File name:\") Role(EditableText)", Some(1)),
-];
-
-/// "a" typed while Import is hidden reads it first, as it is, under
-/// Enter's fence, and is echoed past its own cut: heard "a" alone. The
-/// show then asks nothing. Fails with the read stamped with no key or
-/// with the key's own.
-#[test]
-fn a_typed_key_reads_the_dialog_first_under_the_older_fence() {
-    let mut held = postponed();
-    let typed_a = press(2, 1_150, typed("a"));
-    assert_eq!(step(&mut held, 1_150, typed_a), [ASK_AS_IT_IS]);
-    let mut expected = KEYED.map(|(said, key)| (said.to_owned(), key)).to_vec();
-    expected.push(("Character(\"a\")".to_owned(), Some(2)));
-    assert_eq!(keyed(&mut held, 1_200, field_read(None)), expected);
-    let shown = show(DIALOG, "#32770", 1_300);
-    assert_eq!(step(&mut held, 1_300, shown), NOTHING);
-}
-
-/// "a", then Escape: the return to Settings, in Import's recorded closing
-/// order, says the dialog and the button, as NVDA's capture does
-/// (s7 `import-a-1` to `-3`).
-#[test]
-fn text_typed_while_hidden_then_escape_says_the_return() {
-    let mut held = postponed();
-    let _ = step(&mut held, 1_150, press(2, 1_150, typed("a")));
-    let _ = answer_out(&mut held, 1_200, field_read(None));
-    let _ = step(&mut held, 2_000, press(3, 2_000, PressAction::EditingChord));
-    let _ = step(&mut held, 2_010, in_front(OWNER, OWNER, APP));
-    let owner = tell(
-        EventKind::Foreground,
-        (OWNER, OWNER, OWNER),
-        (OWNER, 2_011),
-        (APP, true),
-    );
-    assert_eq!(
-        step(&mut held, 2_011, owner),
-        ["send Outpost(Pid(40)) MsaaRun 4 Check"]
-    );
-    assert_eq!(
-        answer_out(&mut held, 2_100, owner_button_read()),
-        [
-            "Label(\"Verbatim Settings: Theme\") Role(Dialog)",
-            "Label(\"Import...\") Role(Button)"
-        ]
-    );
-    let button = owner_control_focus(OWNER_BUTTON, OWNER, 2_180);
-    assert_eq!(step(&mut held, 2_180, button), NOTHING);
-}
-
-/// "a" pressed before Import's second burst of field focuses reaches its
-/// turn: the burst is a duplicate of the field the key committed, so
-/// nothing is said after "a", and the dialog is not postponed again.
-#[test]
-fn the_second_focus_burst_behind_a_typed_key_says_nothing() {
-    let mut held = postponed();
-    let _ = step(&mut held, 1_150, press(2, 1_150, typed("a")));
-    assert_eq!(step(&mut held, 1_160, field_focus(1_160)), NOTHING);
-    let said: Vec<String> = keyed(&mut held, 1_200, field_read(None))
-        .into_iter()
-        .map(|(said, _)| said)
-        .collect();
-    assert_eq!(said.last().map(String::as_str), Some("Character(\"a\")"));
-    assert_eq!(held.state.versions.postponed, None);
-    assert!(held.state.queue.front_for_tests().is_none());
-}
-
-/// The "Files of type" combo box's read, under the dialog.
-fn files_of_type_read() -> Reply {
-    read_of(
-        (22, "Files of type:", Role::ComboBox),
-        window_of(32, DIALOG, OWNER),
-        vec![dialog_ancestor(None)],
-        (32, -4),
-    )
-}
-
-/// The "Files of type" combo box's focus, raised at `at_us`.
-fn files_of_type_focus(at_us: u64) -> Input<Entry> {
-    let windows = (32, DIALOG, OWNER);
-    tell(EventKind::MsaaFocus, windows, (DIALOG, at_us), (APP, true))
-}
-
-/// Tab while hidden, its read finding the field: "Files of type" postpones
-/// again, and is spoken at the show.
-#[test]
-fn tab_whose_read_finds_the_field_says_the_next_control_at_the_show() {
-    let mut held = postponed();
-    let tab = press(2, 1_150, typed("\t"));
-    assert_eq!(step(&mut held, 1_150, tab), [ASK_AS_IT_IS]);
-    let said = answer_out(&mut held, 1_200, field_read(None));
-    assert_eq!(said[..2], KEYED.map(|(said, _)| said));
-    assert_eq!(
-        step(&mut held, 1_250, files_of_type_focus(1_250)),
-        ["send Outpost(Pid(40)) MsaaRun 32 Check"]
-    );
-    assert_eq!(answer_out(&mut held, 1_260, hidden_dialog()), NOTHING);
-    let shown = show(DIALOG, "#32770", 1_300);
-    assert_eq!(step(&mut held, 1_300, shown), [ASK_CURRENT]);
-    assert_eq!(
-        answer_out(&mut held, 1_350, files_of_type_read()),
-        ["Label(\"Files of type:\") Role(ComboBox)"]
-    );
-}
-
-/// Tab while hidden, Import having moved its focus before the read: "Files
-/// of type" is committed under Enter's fence, its own focus event is its
-/// duplicate, and nothing is heard after Tab (a race listed for Dickson).
-#[test]
-fn tab_whose_read_finds_the_next_control_says_nothing_after_tab() {
-    let mut held = postponed();
-    let _ = step(&mut held, 1_150, press(2, 1_150, typed("\t")));
-    let said = keyed(&mut held, 1_200, files_of_type_read());
-    assert!(said.iter().all(|(_, key)| *key == Some(1)), "{said:?}");
-    assert_eq!(step(&mut held, 1_250, files_of_type_focus(1_250)), NOTHING);
-    let shown = show(DIALOG, "#32770", 1_300);
-    assert_eq!(step(&mut held, 1_300, shown), NOTHING);
-}
-
-/// A caret key or a passed key while hidden reads nothing, and the show
-/// says the dialog with its text, as NVDA's captures of Right Arrow do.
-#[test]
-fn a_caret_key_or_a_passed_key_leaves_the_dialog_for_its_show() {
+fn what_leaves_the_dialog_for_its_show() {
     let right = PressAction::CaretKey {
         key: CaretKey {
             motion: CaretMotion::NextCharacter,
@@ -634,10 +465,37 @@ fn a_caret_key_or_a_passed_key_leaves_the_dialog_for_its_show() {
         held: None,
         bound: None,
     };
-    for action in [right, PressAction::Passed] {
+    let hidden = Some(hidden_dialog());
+    let field = Some("send Outpost(Pid(40)) MsaaRun 31 Check");
+    let elsewhere = Some("send Outpost(Pid(40)) MsaaRun 6 Check");
+    let cases = [
+        (field_focus(1_150), field, hidden.clone()),
+        (key(right), None, None),
+        (key(PressAction::Passed), None, None),
+        (
+            owner_control_focus(6, DIALOG, 1_150),
+            elsewhere,
+            Some(unfocused()),
+        ),
+        (Input::ReaderEnded(LISTENER), Some(ASK_CURRENT), hidden),
+        (in_front(70, 70, OTHER_APP), None, None),
+    ];
+    for (input, asked, reply) in cases {
         let mut held = postponed();
-        assert_eq!(step(&mut held, 1_150, press(2, 1_150, action)), NOTHING);
-        shown_speaks_the_dialog(&mut held, 1_200);
+        let asked: Vec<&str> = asked.into_iter().collect();
+        assert_eq!(step(&mut held, 1_150, input), asked);
+        if let Some(reply) = reply {
+            assert_eq!(answer_out(&mut held, 1_160, reply), NOTHING);
+        }
+        if held.state.queue.foreground_process() == Some(OTHER_APP) {
+            assert_eq!(shown(&mut held, 1_170), NOTHING);
+            let back = in_front(DIALOG, OWNER, APP);
+            assert_eq!(step(&mut held, 1_180, back), [ASK_CURRENT]);
+            let read = field_read(Some("File name:"));
+            assert_eq!(answer_out(&mut held, 1_190, read), DIALOG_SPOKEN);
+        } else {
+            shown_speaks_the_dialog(&mut held, 1_200);
+        }
     }
 }
 
@@ -654,49 +512,116 @@ fn a_modifier_alone_leaves_the_dialog_for_its_show() {
     shown_speaks_the_dialog(&mut held, 1_200);
 }
 
-/// A command reads the dialog first, as typed text does, and is judged
-/// against the field.
+/// The show told while the dialog's first read is out is judged at its
+/// turn, after the hidden answer; the Settings dialog, read shown at its
+/// foreground, asks nothing at its show; a tooltip's show stays an
+/// announcement.
 #[test]
-fn a_command_reads_the_dialog_first() {
-    let mut held = postponed();
+fn a_show_is_judged_at_its_turn() {
+    let mut held = dialog_asked();
+    assert_eq!(shown(&mut held, 1_050), NOTHING);
+    assert_eq!(answer_out(&mut held, 1_100, hidden_dialog()), [ASK_CURRENT]);
+    let said = answer_out(&mut held, 1_150, field_read(Some("File name:")));
+    assert_eq!(said, DIALOG_SPOKEN);
+    let mut held = dialog_asked();
+    let said = answer_out(&mut held, 1_100, field_read(Some("File name:")));
+    assert_eq!(said, DIALOG_SPOKEN);
+    assert_eq!(shown(&mut held, 1_107), NOTHING);
+    let Input::Entry(Entry::Announcement(_)) = show(TOOLTIP, 1) else {
+        panic!("a tooltip's show is an announcement");
+    };
+}
+
+/// "a" typed while Import is hidden reads it first, as it is, under
+/// Enter's fence, and is echoed past its own cut: heard "a" alone, and the
+/// show asks nothing. Fails with the read stamped with no key or with the
+/// key's own. "a" before Import's second burst of field focuses: the burst
+/// is a duplicate of the field "a" committed, so nothing more is said. A
+/// command reads the dialog first alike, and is judged against the field.
+#[test]
+fn a_typed_key_or_a_command_reads_the_dialog_first_under_the_older_fence() {
     let command = PressAction::Command {
         command: ReviewCommand::ReportFocus,
         repeat: 0,
     };
-    let pressed = press(2, 1_150, command);
-    assert_eq!(step(&mut held, 1_150, pressed), [ASK_AS_IT_IS]);
+    let echo = Some("Character(\"a\")");
+    for (action, burst, tail) in [
+        (typed("a"), false, echo),
+        (typed("a"), true, echo),
+        (command, false, None),
+    ] {
+        let mut held = postponed();
+        assert_eq!(step(&mut held, 1_150, key(action)), [ASK_AS_IT_IS]);
+        if burst {
+            assert_eq!(step(&mut held, 1_160, field_focus(1_160)), NOTHING);
+        }
+        let mut expected = KEYED.map(|(said, key)| (said.to_owned(), key)).to_vec();
+        expected.extend(tail.map(|echo| (echo.to_owned(), Some(2))));
+        assert_eq!(keyed(&mut held, 1_200, field_read(None)), expected);
+        assert_eq!(held.state.versions.postponed, None);
+        if tail.is_some() {
+            assert!(held.state.queue.front_for_tests().is_none());
+            assert_eq!(shown(&mut held, 1_300), NOTHING);
+        }
+    }
+}
+
+/// "a", then Escape: the return to Settings, in Import's recorded closing
+/// order, says the dialog and the button, as NVDA's capture does
+/// (s7 `import-a-1` to `-3`).
+#[test]
+fn text_typed_while_hidden_then_escape_says_the_return() {
+    let mut held = postponed();
+    let _ = step(&mut held, 1_150, key(typed("a")));
+    let _ = answer_out(&mut held, 1_200, field_read(None));
+    let _ = step(&mut held, 2_000, press(3, 2_000, PressAction::EditingChord));
+    let _ = step(&mut held, 2_010, in_front(OWNER, OWNER, APP));
+    let owner = (OWNER, OWNER, OWNER);
+    let foreground = tell(EventKind::Foreground, owner, (OWNER, 2_011), (APP, true));
+    let asked = step(&mut held, 2_011, foreground);
+    assert_eq!(asked, ["send Outpost(Pid(40)) MsaaRun 4 Check"]);
+    assert_eq!(
+        answer_out(&mut held, 2_100, owner_button_read()),
+        [
+            "Label(\"Verbatim Settings: Theme\") Role(Dialog)",
+            "Label(\"Import...\") Role(Button)"
+        ]
+    );
+    let button = owner_control_focus(OWNER_BUTTON, OWNER, 2_180);
+    assert_eq!(step(&mut held, 2_180, button), NOTHING);
+}
+
+/// Tab while hidden. Its read finding the field: "Files of type"
+/// postpones again, and is spoken at the show. Its read finding "Files of
+/// type", Import having moved its focus first: committed under Enter's
+/// fence, its own focus event its duplicate, nothing heard after Tab (the
+/// race Dickson ruled kept, 2026-11-20).
+#[test]
+fn tab_while_hidden_in_both_orders() {
+    let files = read_of(
+        (22, "Files of type:", Role::ComboBox),
+        window_of(32, DIALOG, OWNER),
+        vec![dialog_ancestor(None)],
+        (32, -4),
+    );
+    let ids = (32, DIALOG, OWNER);
+    let focus = || tell(EventKind::MsaaFocus, ids, (DIALOG, 1_250), (APP, true));
+    let mut held = postponed();
+    assert_eq!(step(&mut held, 1_150, key(typed("\t"))), [ASK_AS_IT_IS]);
     let said = answer_out(&mut held, 1_200, field_read(None));
     assert_eq!(said[..2], KEYED.map(|(said, _)| said));
-    assert_eq!(held.state.versions.postponed, None);
-}
-
-/// The foreground leaving for another application says nothing for the
-/// dialog, a show while it is elsewhere asks nothing, and the foreground
-/// report naming the dialog again reads it, as after a listener's
-/// replacement.
-#[test]
-fn the_foreground_leaving_and_returning_reads_the_dialog_on_its_return() {
+    let asked = step(&mut held, 1_250, focus());
+    assert_eq!(asked, ["send Outpost(Pid(40)) MsaaRun 32 Check"]);
+    assert_eq!(answer_out(&mut held, 1_260, hidden_dialog()), NOTHING);
+    assert_eq!(shown(&mut held, 1_300), [ASK_CURRENT]);
+    let said = answer_out(&mut held, 1_350, files.clone());
+    assert_eq!(said, ["Label(\"Files of type:\") Role(ComboBox)"]);
     let mut held = postponed();
-    assert_eq!(step(&mut held, 1_150, in_front(70, 70, OTHER_APP)), NOTHING);
-    let shown = show(DIALOG, "#32770", 1_200);
-    assert_eq!(step(&mut held, 1_200, shown), NOTHING);
-    let back = in_front(DIALOG, OWNER, APP);
-    assert_eq!(step(&mut held, 1_300, back), [ASK_CURRENT]);
-    assert_eq!(
-        answer_out(&mut held, 1_350, field_read(Some("File name:"))),
-        DIALOG_SPOKEN
-    );
-}
-
-/// The listener ending: its re-take reads the dialog, which postpones it
-/// again; the show then speaks it.
-#[test]
-fn the_listener_ending_postpones_again_and_the_show_speaks() {
-    let mut held = postponed();
-    let ended = Input::ReaderEnded(LISTENER);
-    assert_eq!(step(&mut held, 1_150, ended), [ASK_CURRENT]);
-    assert_eq!(answer_out(&mut held, 1_160, hidden_dialog()), NOTHING);
-    shown_speaks_the_dialog(&mut held, 1_200);
+    let _ = step(&mut held, 1_150, key(typed("\t")));
+    let said = keyed(&mut held, 1_200, files);
+    assert!(said.iter().all(|(_, key)| *key == Some(1)), "{said:?}");
+    assert_eq!(step(&mut held, 1_250, focus()), NOTHING);
+    assert_eq!(shown(&mut held, 1_300), NOTHING);
 }
 
 /// The outpost ending: its re-take waits for the next generation and
@@ -714,17 +639,17 @@ fn the_outpost_ending_postpones_again_and_the_show_speaks() {
     assert_eq!(step(&mut held, 1_160, ready_next), [ASK_CURRENT]);
     let hidden = answer(next, out(&held), hidden_dialog());
     assert_eq!(step(&mut held, 1_170, hidden), NOTHING);
-    let shown = show(DIALOG, "#32770", 1_200);
-    assert_eq!(step(&mut held, 1_200, shown), [ASK_CURRENT]);
+    assert_eq!(shown(&mut held, 1_200), [ASK_CURRENT]);
     let read = answer(next, out(&held), field_read(Some("File name:")));
     assert_eq!(step(&mut held, 1_250, read), DIALOG_SPOKEN);
 }
 
-/// The dialog destroyed ends the postponement at once; a destroy before the
-/// hidden answer leaves a postponement of a window gone, which the next
-/// commit ends.
+/// What ends the postponement, the dialog unsaid: its destruction, at once;
+/// a focus elsewhere that executes, said alone; the dialog closed by
+/// hiding, the owner's focus said; Core's own commit at the secure desktop. A destroy before the hidden answer leaves a postponement
+/// of a window gone, which the next commit ends.
 #[test]
-fn a_destroyed_dialog_is_said_no_more() {
+fn what_ends_the_postponement() {
     let destroyed = Input::WindowDestroyed {
         window: WindowHandle(DIALOG),
         process: Some(APP),
@@ -732,8 +657,21 @@ fn a_destroyed_dialog_is_said_no_more() {
     let mut held = postponed();
     let _ = step(&mut held, 1_150, destroyed.clone());
     assert_eq!(held.state.versions.postponed, None);
-    let shown = show(DIALOG, "#32770", 1_200);
-    assert_eq!(step(&mut held, 1_200, shown), NOTHING);
+    assert_eq!(shown(&mut held, 1_200), NOTHING);
+    let mut held = postponed();
+    let _ = step(&mut held, 1_150, owner_control_focus(7, DIALOG, 1_150));
+    let said = answer_out(&mut held, 1_160, owner_control_read(7, "Rename..."));
+    assert_eq!(said, ["Label(\"Rename...\") Role(Button)"]);
+    assert_eq!(shown(&mut held, 1_200), NOTHING);
+    let mut held = postponed();
+    assert_eq!(step(&mut held, 1_150, in_front(OWNER, OWNER, APP)), NOTHING);
+    let _ = step(&mut held, 1_160, owner_control_focus(6, OWNER, 1_160));
+    let said = answer_out(&mut held, 1_200, owner_control_read(6, "Export..."));
+    assert_eq!(said, ["Label(\"Export...\") Role(Button)"]);
+    assert_eq!(held.state.versions.postponed, None);
+    let mut held = postponed();
+    held.state.versions.commit_own(true);
+    assert_eq!(held.state.versions.postponed, None);
     let mut held = dialog_asked();
     let _ = step(&mut held, 1_050, destroyed);
     let _ = answer_out(&mut held, 1_100, hidden_dialog());
@@ -744,62 +682,26 @@ fn a_destroyed_dialog_is_said_no_more() {
 }
 
 /// A hang while postponed asks nothing, so no sound; a key's read that the
-/// shell answers hung plays it, and the dialog stays postponed.
+/// shell answers hung plays it, and the dialog stays postponed. A dialog
+/// never shown holds nothing: a key 13 seconds later reads it at once.
 #[test]
-fn a_hang_sounds_only_when_a_read_meets_the_dialog() {
+fn a_hang_or_a_dialog_never_shown_holds_nothing() {
     let mut held = postponed();
     let hung = Input::HangCheck {
         window: WindowHandle(DIALOG),
         hung: true,
     };
     assert_eq!(step(&mut held, 1_150, hung), NOTHING);
-    let _ = step(&mut held, 1_200, press(2, 1_200, typed("a")));
+    let _ = step(&mut held, 1_200, key(typed("a")));
     let in_front_hung = Input::InFront {
         number: verbatim_model::request::RequestNumber(out(&held)),
         front: Front::Hung,
     };
     assert_eq!(step(&mut held, 1_250, in_front_hung), ["not responding"]);
     assert!(held.state.versions.postponed.is_some());
-}
-
-/// A dialog never shown holds nothing: a key 13 seconds later is handled
-/// at once, reading the dialog first.
-#[test]
-fn a_dialog_never_shown_holds_nothing() {
     let mut held = postponed();
     let late = press(2, 14_000_000, typed("a"));
     assert_eq!(step(&mut held, 14_000_000, late), [ASK_AS_IT_IS]);
-}
-
-/// The secure desktop's sleeping focus, Core's own commit, ends the
-/// postponement, as every commit does.
-#[test]
-fn an_own_commit_ends_the_postponement() {
-    let mut held = postponed();
-    held.state.versions.commit_own(true);
-    assert_eq!(held.state.versions.postponed, None);
-}
-
-/// A focus elsewhere refused by its read leaves the dialog for its show;
-/// one that executes ends the postponement, said alone.
-#[test]
-fn a_focus_elsewhere_refused_or_executed() {
-    let mut held = postponed();
-    let refused = owner_control_focus(6, DIALOG, 1_150);
-    assert_eq!(
-        step(&mut held, 1_150, refused),
-        ["send Outpost(Pid(40)) MsaaRun 6 Check"]
-    );
-    assert_eq!(answer_out(&mut held, 1_160, unfocused()), NOTHING);
-    shown_speaks_the_dialog(&mut held, 1_200);
-    let mut held = postponed();
-    let _ = step(&mut held, 1_150, owner_control_focus(7, DIALOG, 1_150));
-    assert_eq!(
-        answer_out(&mut held, 1_160, owner_control_read(7, "Rename...")),
-        ["Label(\"Rename...\") Role(Button)"]
-    );
-    let shown = show(DIALOG, "#32770", 1_200);
-    assert_eq!(step(&mut held, 1_200, shown), NOTHING);
 }
 
 /// A UI Automation completion answered hidden postpones its dialog; the
@@ -816,14 +718,15 @@ fn a_uia_completion_postpones_and_the_show_reads_the_current_focus() {
     assert_eq!(step(&mut held, 3_050, in_front(4, 4, APP)), [ASK_CURRENT]);
     assert_eq!(answer_out(&mut held, 3_060, hidden.clone()), [ASK_CURRENT]);
     assert_eq!(answer_out(&mut held, 3_070, hidden), NOTHING);
-    let shown = show(4, "#32770", 3_100);
+    let shown = show(4, 3_100);
     assert_eq!(step(&mut held, 3_100, shown), [ASK_CURRENT]);
 }
 
 /// Stand-in order, no real application recorded: a message box the hidden
 /// dialog owns, in front after the postponement or while the dialog's read
 /// is out, is spoken, its commit ending the postponement; after OK the
-/// dialog postpones again and its show speaks it.
+/// dialog postpones again and its show speaks it (a difference Dickson
+/// approved, 2026-11-20: NVDA says it at once).
 #[test]
 fn an_owned_message_box_in_either_order() {
     for before in [false, true] {
@@ -833,14 +736,10 @@ fn an_owned_message_box_in_either_order() {
         }
         let _ = answer_out(&mut held, 1_100, hidden_dialog());
         let _ = step(&mut held, 1_150, in_front(BOX, OWNER, APP));
-        assert_eq!(
-            step(&mut held, 1_160, box_foreground(1_160)),
-            ["send Outpost(Pid(40)) MsaaRun 40 Check"]
-        );
-        assert_eq!(
-            answer_out(&mut held, 1_200, box_read()),
-            ["Label(\"Replace it?\") Role(Dialog)"]
-        );
+        let asked = step(&mut held, 1_160, box_foreground(1_160));
+        assert_eq!(asked, ["send Outpost(Pid(40)) MsaaRun 40 Check"]);
+        let said = answer_out(&mut held, 1_200, box_read());
+        assert_eq!(said, ["Label(\"Replace it?\") Role(Dialog)"]);
         assert_eq!(held.state.versions.postponed, None);
         let back = in_front(DIALOG, OWNER, APP);
         assert_eq!(step(&mut held, 2_000, back), NOTHING);
@@ -852,24 +751,20 @@ fn an_owned_message_box_in_either_order() {
 }
 
 /// Stand-in order, no real application recorded: a tray menu over a hidden
-/// dialog-based main window is spoken alone; after Escape, the check
-/// after the menu postpones the dialog and nothing is said.
+/// dialog-based main window is spoken alone; after Escape, the check after
+/// the menu postpones the dialog and nothing is said. The startup read
+/// postpones it first, and the foreground report's marker behind it reads
+/// it again, hidden still.
 #[test]
 fn a_tray_menu_over_a_hidden_dialog_then_escape() {
     let mut held = ready();
     let _ = step(&mut held, 100, in_front(DIALOG, DIALOG, APP));
-    // The startup read postpones it, and the foreground report's marker
-    // behind it reads it again, hidden still.
     assert_eq!(answer_out(&mut held, 200, hidden_dialog()), [ASK_CURRENT]);
     assert_eq!(answer_out(&mut held, 300, hidden_dialog()), NOTHING);
-    assert_eq!(
-        step(&mut held, 1_150, menu_start(APP, 1_150)),
-        ["send Outpost(Pid(40)) MsaaRun 50 ReadAnyway"]
-    );
-    assert_eq!(
-        answer_out(&mut held, 1_200, menu_read()),
-        ["Label(\"Context\") Role(Menu)"]
-    );
+    let asked = step(&mut held, 1_150, menu_start(APP, 1_150));
+    assert_eq!(asked, ["send Outpost(Pid(40)) MsaaRun 50 ReadAnyway"]);
+    let said = answer_out(&mut held, 1_200, menu_read());
+    assert_eq!(said, ["Label(\"Context\") Role(Menu)"]);
     let mut end = msaa_tell(-4);
     end.kind = EventKind::PopupEnd;
     let _ = step(&mut held, 2_000, crate::entries::tests::entry(end));

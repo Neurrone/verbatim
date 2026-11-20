@@ -116,31 +116,14 @@ this shape are in `books/dev/src/explanation/architecture.md`, section 1
 
 ## A window's show
 
-Core asks the listener to tell it when a hidden dialog is shown
-(`Request::AwaitShown`, Dickson, 2026-11-19), after a focus read in it
-was answered with the dialog's window. The pipe thread hands the request,
-and every cancel, to the WinEvent thread over a plain channel and a nudge
-(`listener::shown`), so the thread that hears every show reads the
-window's visibility and keeps the waiter in order, with no lock on the
-hook path: visible, it answers shown at once; no window, not there;
-hidden, it keeps a waiter (`verbatim_listener_logic::shown`). The hook's
-second output for every window object's show (`EventHandlers::
-window_shown`) answers the waiters for that window shown, whatever its
-class, and the destruction of its window object answers them not there;
-a show costs one comparison of its ids and, while a waiter is kept, a
-look in the table, and sends Core nothing else. The pipe thread hands the
-WinEvent thread only the cancels of the requests out on it: it records
-each request from its handing until its token's answer, which the token
-sends back over a plain channel, with no limit on their count, so every
-cancel of a request out reaches its waiter and a reading thread's cancel
-wakes the WinEvent thread not.
-Each waiter's token is
-its one answer path: Core's cancel answers it "ended" with the detail
-"cancelled", and a token dropped unanswered, as the table is at the
-shutdown, answers the same. Tests: the listener's real-window tests, the
-show before the request and after it, a show hidden again, a
-destruction, a cancel and the shutdown, each ordered by the WinEvent
-thread's sync.
+The listener tells Core of a window object's show only while its window
+is the window in front (`GetForegroundWindow` as the hook's callback
+runs), as an ordinary `Show` tell on the window's client object, whatever
+its class: Core reads a dialog it postponed at that show
+(`books/dev/src/explanation/design/focus.md`, "A dialog read once it is
+shown"). The rule is the hook's (`verbatim_ia2`'s `shown_in_front`), one
+local call for each window object's show; the listener keeps no request,
+waiter or record for it.
 
 ## Progress bars
 

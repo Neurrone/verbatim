@@ -598,7 +598,7 @@ hung applications").
 ### A focus read in a dialog not yet shown
 
 A focus read is answered with its dialog's window when the dialog is
-hidden, and read again once it is shown ([How focus works](../explanation/design/focus.md),
+hidden, which Core postpones and reads again at its show ([How focus works](../explanation/design/focus.md),
 "A dialog read once it is shown").
 
 - Every focus read Core asks to check first takes its window's
@@ -607,17 +607,16 @@ hidden, and read again once it is shown ([How focus works](../explanation/design
   client object's acquisition and role, two MSAA calls (pinned by
   verbatim-outpost's `the_check_costs_nothing_for_a_shown_root_and_two_calls_for_a_hidden_one`).
 - The added silence is the time left until the dialog's show, plus one
-  round trip to the listener, measured from the foreground to the show
+  tell, measured from the foreground to the show
   in the recordings of 2026-11-19: Notepad's Save As 15 to 32 ms,
   Verbatim's Import a Theme 93 to 221 ms, a message box 16 ms and the
   Run dialog 17 to 22 ms when hidden, File Explorer's Properties 14 to
   30 ms; a dialog shown at its foreground waits for nothing. NVDA's
   first speech for Import came 716 to 1021 ms after Enter.
-- After the show, the read made again is the dialog's own, from its
-  foreground, and it is where the time goes. In the build's five
-  recordings of Import (2026-11-19, `dsb-import`), Enter to the first
-  speech was 325 to 484 ms, 219 to 276 ms after the show. The read began
-  at the show's answer, with no wait in Core's queue; inside it, 57 to
+- After the show, the read of the dialog is where the time goes. In the
+  five recordings of Import of 2026-11-19 (`dsb-import`, when the read
+  was made again at the listener's answer), Enter to the first speech
+  was 325 to 484 ms, 219 to 276 ms after the show; inside the read, 57 to
   89 ms acquired and walked the dialog while its application's own thread
   was building its shell view, then 134 to 175 ms gathered its text, 340
   MSAA calls in all: the state and role of every child, going into each
@@ -627,17 +626,16 @@ hidden, and read again once it is shown ([How focus works](../explanation/design
   dialog. Not avoidable work: the walk is NVDA's, and each call waits on
   the dialog's busy thread; Verbatim's first speech still comes 230 to
   540 ms before NVDA's.
-- The listener hears every window object's show already: each costs one
-  comparison of its ids, and a look in the waiters only while one is
-  kept. No message to Core and no new wake-up, but the request and its
-  answer: the request wakes the WinEvent thread once, by its nudge, and
-  so does its cancel. The pipe thread hands the WinEvent thread only the
-  cancels of the requests it handed it, so a cancel of any other request,
-  a reading thread's, wakes it not at all (verbatim-listener's
-  `only_the_cancel_of_a_shows_request_reaches_the_winevent_thread`).
-- Bound: a dialog never shown, with no key and no other ending, holds
-  the queue for the 13-second due time ([ADR 0003](adr/0003-readers-tell-core-asks.md),
-  "Limits accepted").
+- The listener's hook reads `GetForegroundWindow` for each window
+  object's show and tells Core only of one in front: none in 120 s idle,
+  and 9 of 128 in 240 s holding about 118 s of five scenarios opening
+  applications and dialogs (measured 2026-11-20), about one tell per 13 s
+  of heavy activity. Each told show is a tell, a wake of Core and a queue
+  entry with its checkpoint, which asks nothing unless a dialog is
+  postponed. A foreground report that reaches its turn after the
+  postponement asks the hidden check once more.
+- A dialog never shown holds nothing; it is read when typed text or a
+  command meets it.
 
 ### Focus changes measured across the pipeline
 

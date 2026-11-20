@@ -1085,15 +1085,10 @@ fn regenerate() {
     }
 }
 
-/// The flight recorder's dump of `quit_inside_a_file_dialog` under
-/// postponement (`fixtures/dialog_shown_import`), Enter on the Theme
-/// page's "Import..." button: the dialog comes to the foreground hidden,
-/// its reads postpone it, and the listener tells its show as a client
-/// object's show of its top-level `#32770` window, the hook's rewrite of
-/// the window object's. Its answers are the real outposts' and the
-/// listener's.
+/// The flight recorder's dump of `quit_inside_a_file_dialog` (2026-11-20,
+/// at 8141d0fa): Import, hidden at its foreground, postponed; its show told
+/// as the hook rewrites it, a client object's show of its `#32770` window.
 #[test]
-#[ignore = "awaits the flight dump of quit_inside_a_file_dialog recorded under postponement"]
 fn the_recorded_import_dialog_is_said_with_its_text_at_its_show() {
     let file = fs::File::open(fixture_path("dialog_shown_import")).expect("fixture file exists");
     let contents = dump::read_dump(&mut BufReader::new(file)).expect("fixture parses");
