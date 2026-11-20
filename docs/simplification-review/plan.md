@@ -95,12 +95,12 @@ The session fills in a row when its build is pushed and its GitHub run is read.
 
 | Build | State | Commits | Product lines against budget | Test lines against budget | Records deleted |
 | --- | --- | --- | --- | --- | --- |
-| 1. Defects and tooling | design written, under adversarial review | | | | |
+| 1. Defects and tooling | pushed 2026-11-20 (a734622e), GitHub run read: passed | 75f7f106, d628370f, f68618f5, dd6bae83, 2faff85c, c60ae1e3 to a734622e | about 4,700 removed against a floor of 3,950; about 535 new added against 450, over by the review's modal-box fix | about 530 new added against 500 | none: every record build 1 cites is cited by a later build |
 | 2. The dialog read once shown | not started | | | | |
 | 3. Core: one owner per fact | not started | | | | |
 | 4. The readers | not started | | | | |
 | 5. Remote operations and text | not started | | | | |
-| 6. The tests and the harness | flaky list triaged (23 entries); its fixes building | | | | |
+| 6. The tests and the harness | flaky list triaged (23 entries) and its fixes pushed (5713c64d and after); the measurements closed four more entries; the test console's cause named and being fixed | | | | |
 | 7. The documents | not started | | | | |
 | 8. The request list closed | not started | | | | |
 | 9. The terminal rebuild | not started | | | | |
