@@ -739,6 +739,8 @@ About 2,500 to 3,700 product lines removed (REPORT's estimate, the upper end wit
 
 ## Build 6. The tests and the harness
 
+Added by Dickson's ruling of 2026-11-20, and done first, beside build 1: every entry of `docs/flaky-tests.md` is triaged once to a named cause and then either fixed (here, or by the build of this plan that reaches its cause, which the entry then names) or taken out of GitHub's runs with its reason recorded. The inventory below removes the registry's empty list of disabled scenarios (scenarios, the `DISABLED` finding); under this ruling that list, or the reason a local-only scenario must give, is what records a scenario taken out of GitHub's runs, so the design decides which of the two stays and removes the other.
+
 ### Purpose
 
 Make the end-to-end suite and the test support keep each list once and run the real code, and give every scenario expectation a capture. It changes no product state and may run beside another build, in its own worktree and target directory.
