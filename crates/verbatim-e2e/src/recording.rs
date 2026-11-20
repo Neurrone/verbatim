@@ -56,7 +56,7 @@ use crate::agent_client::AgentClient;
 pub const RECORD_ENV: &str = "VERBATIM_E2E_RECORD";
 
 /// The ffmpeg executable on the agent's machine; `ffmpeg`, found on its
-/// `PATH`, when unset. `cargo xtask vm test` sets it to the guest's copy.
+/// `PATH`, when unset.
 pub const FFMPEG_ENV: &str = "VERBATIM_E2E_FFMPEG";
 
 /// Set to `demo` for the smoother, sharper video `cargo xtask demo` makes

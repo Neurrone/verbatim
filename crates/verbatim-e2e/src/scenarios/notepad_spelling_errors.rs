@@ -18,8 +18,8 @@
 //! for its speech to be heard in full before the next key, as a listening
 //! user would, and there is no other wait.
 //!
-//! This scenario is local-only ([`ScenarioDef::local_only`]): every local
-//! and VM run includes it, and GitHub's `e2e` job skips it, since its
+//! This scenario is local-only ([`ScenarioDef::local_only`]): every run
+//! but GitHub's includes it, and GitHub's `e2e` job skips it, since its
 //! Windows Server runner has classic Notepad, a Win32 edit control with no
 //! spell checker. [`spelling_errors`](super::spelling_errors) hears the
 //! same speech from `mockapp`'s scripted text, which holds everywhere; this

@@ -25,10 +25,10 @@ i18n-embed = { version = "0.16", features = ["fluent-system"] }
 i18n-embed-fl = "0.10"
 # debug-embed: without it, debug builds do not embed at all — rust-embed
 # reads the files from the source tree's absolute path at runtime, which
-# works on the machine that compiled the binary and nowhere else. Verbatim
-# deploys debug builds into a VM (cargo xtask vm deploy), where that path
-# does not exist; the first in-guest launch panicked in verbatim-i18n's
-# "embedded English must load" assertion for exactly this reason.
+# works on the machine that compiled the binary and nowhere else. A debug
+# build copied to another machine (architecture section 14) has no such
+# path, and verbatim-i18n's "embedded English must load" assertion panicked
+# there for exactly this reason.
 rust-embed = { version = "8", features = ["debug-embed"] }
 # The audio thread's single-producer, single-consumer rings
 # (books/dev/src/explanation/design/ownership.md), pinned because the

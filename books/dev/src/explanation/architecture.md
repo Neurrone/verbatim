@@ -28,13 +28,16 @@ screen reader in both rendered and source form.
   and a page's text changes and live region text cannot be had from
   outside the application. Decided 2026-07-13. Amended 2026-07-15 and
   2026-11-13 (Dickson).
-- **D3, the end-to-end suite runs wherever the harness reaches; CI is
-  hosted runners only.** The suite talks to the in-guest agent at an
-  address, on a hosted runner, a developer's machine or VM, or a local
-  Hyper-V VM (section 14). CI runs it silently on every change, recorded,
-  with no self-hosted runners, no nested virtualization and never NVDA;
-  a snapshot restore is always an explicit request. Why: a suite needing
-  no VM runs in CI and on the development VM alike. Decided 2026-07-13.
+- **D3, the end-to-end suite runs wherever an agent runs; CI is hosted
+  runners only.** The suite talks to the agent at an address: loopback by
+  default, on a hosted runner or a developer's machine, or the address of
+  another machine or VM where the developer started an agent, on an
+  isolated network (section 14). CI runs it silently on every change,
+  recorded, with no self-hosted runners, no nested virtualization and
+  never NVDA. The suite drives no hypervisor itself: Dickson ruled on
+  2026-11-20 that the Hyper-V harness go, since no one used it, and that
+  driving a Verbatim on another machine stay. Why: a suite needing no VM
+  runs in CI and on the development VM alike. Decided 2026-07-13.
   Amended 2026-10-01.
 - **D4, the GUI is wxWidgets through a C++ layer.** The C++ layer,
   compiled by the GUI crate's build script through cxx, is widget glue
@@ -997,7 +1000,7 @@ out, gestures in). Secure-desktop and permission rules apply to remote
 sessions.
 
 Transport notes. The local transport is a *named* pipe deliberately:
-control-plane clients — `verbatim-inspect`, the E2E in-guest agent, later a
+control-plane clients — `verbatim-inspect`, the E2E test agent, later a
 remote-support session — attach to an already-running Verbatim and are not
 its children, so they need a rendezvous point (anonymous pipes can only be
 passed to spawned children by handle inheritance, and additionally lack
@@ -1068,12 +1071,10 @@ Layered so that LLM-driven development gets fast, deterministic feedback:
    apps (Notepad, Explorer, Terminal, Edge, Office), driven via the control
    plane, on a hosted CI runner (whose jobs run in an interactive desktop
    session, as NVDA's own system tests do there), a developer's own
-   machine or VM, or a
-   local Hyper-V VM (D3);
+   machine or another machine (section 14);
    speech asserted on the control plane's speech stream, spoken by
    eSpeak NG through the silent real-time device in a silent run or the
-   real device in an audible one; every `cargo xtask vm test` run is
-   audible, playing its speech through the real `WasapiDevice`.
+   real device in an audible one.
 
 Expected behaviour comes from NVDA, used as a reference rather than as an
 oracle in the tests: a small NVDA add-on captures what NVDA speaks for a
@@ -1083,29 +1084,28 @@ hand, with legitimate divergences decided case by case and recorded in the
 parity ledger. Verbatim's tests never compare against NVDA output, and NVDA
 is never run in CI.
 
-## 14. VM harness (the interactive loop, per D3)
+## 14. Driving a Verbatim on another machine (per D3)
 
-`cargo xtask vm <cmd>` drives a Windows guest behind a `Host` trait that
-covers hypervisor lifecycle only: exists, start, stop, snapshot, restore,
-delete, and the guest's address. `HyperVHost` is the only implementation,
-kept for contributors who test in a local VM; the maintainer runs the suite
-runner-direct on a development VM instead (D3). A fake implementation
-drives the verb logic in unit tests. Everything that
-touches the guest's contents goes over standard transport rather than a
-channel: PowerShell Direct for file copies and remote commands, and the
-in-guest agent over TCP for the three things a remote channel cannot
-do (launching in the interactive session, reporting session facts, and
-tunnelling the control-plane pipe). The guest's provisioning script is
-hypervisor-agnostic: autologon, the agent as an at-logon interactive
-scheduled task, and the runtime prerequisites. Verbs: `create` (Packer builds the base image from an
-unattended install, then the VM is imported and snapshotted as a golden
-image), `start`/`stop`/`restart`/`restore [snapshot]`, `deploy`
-(artifacts copied in over PowerShell Direct and the agent restarted), `test` (deploy,
-then run the E2E suite through the agent, audible by default with real
-eSpeak NG speech and the real WASAPI device, every scenario recorded as an
-mp4 as in every other mode), `logs`, `connect`, `delete`. A restore is only ever
-explicit, through `restore` or an opt-in flag on `test`; nothing is
-installed into the guest by a run, so an ordinary run has nothing to undo.
+The suite drives Verbatim only through the agent, so the agent and
+Verbatim may run on another machine or VM while the suite runs here. That
+machine needs Windows 11 with a signed-in interactive session that does
+not lock or sleep, the Visual C++ runtime, ffmpeg on its `PATH` for
+recording, its network adapter on the Private profile, and an inbound
+firewall rule allowing TCP 44001 on that profile only (for example
+`New-NetFirewallRule -DisplayName "Verbatim Agent" -Direction Inbound
+-Protocol TCP -LocalPort 44001 -Action Allow -Profile Private`, run once as
+an administrator). Copy into one folder there the folder a local
+`cargo xtask e2e` run stages, `target/e2e-stage` (Verbatim's binaries,
+mockapp, eSpeak NG's data, the sounds and Windows Terminal), and
+`verbatim-agent.exe`; start the agent in the signed-in session with
+`--bind-address` set to that machine's address; and run `cargo xtask e2e
+<scenario> --endpoint <address>:44001 --verbatim-dir <that folder>`. The
+agent has no authentication, injects real input and launches programs, so
+whoever reaches it controls that machine: it is given an address other
+than loopback only on an isolated network, such as a VM's private virtual
+switch, an accepted risk (Dickson, 2026-11-20). A run installs nothing
+there and restores nothing; the scenario's settings, logs, dumps and
+recordings travel through the agent.
 
 Audio: recordings take their audio from Verbatim's own rendering (D16), so
 no virtual audio device is provisioned and a run can be heard live over
@@ -1119,8 +1119,8 @@ listening mutually exclusive.
 Interactive-session rule: Verbatim, the agent, and screen capture only
 work in a session with a visible window station. SSH, WinRM, PowerShell
 Direct, and services run in session 0 and cannot see the desktop, which
-is why the agent is started at logon by a scheduled task rather than by
-any remote channel, and why both the agent and `verbatim.exe` check at
+is why the agent is started in the signed-in session rather than by any
+remote channel, and why both the agent and `verbatim.exe` check at
 startup that their window station is interactive and refuse to run
 otherwise.
 
@@ -1177,7 +1177,7 @@ otherwise.
 - `verbatim-app` — `verbatim.exe` composition root.
 - `verbatim-inspect`, `mockapp`, `xtask` — dev tool; UIA/IA2 provider fake;
   automation.
-- `verbatim-agent` and `verbatim-e2e` — the in-guest test doorway and the
+- `verbatim-agent` and `verbatim-e2e` — the test doorway and the
   end-to-end scenario suite that drives it (section 13).
 - `verbatim-trace-waits` — a measurement tool run by `xtask`: a reader of
   WPR traces that reports how long threads waited to run.

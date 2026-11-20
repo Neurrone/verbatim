@@ -5,7 +5,7 @@
 //! One identifier, [`ScenarioDef::name`], is used everywhere a scenario
 //! needs naming: the test in `tests/e2e.rs` wrapping it (so
 //! `cargo test -p verbatim-e2e --test e2e <name> -- --exact` selects exactly one
-//! scenario), `cargo xtask vm test --scenario <name>`'s selector, the
+//! scenario), `cargo xtask e2e <name>`, the
 //! per-scenario artifacts directory ([`crate::artifacts::scenario_dir`]),
 //! and the name of the scenario's video in that directory
 //! ([`crate::recording`]). Keeping every one of those in lockstep off a
@@ -38,113 +38,20 @@
 //! `teardown` are a layer of structure on top of that guarantee, for
 //! scenario-specific state `Scenario` itself does not track.
 //!
-//! Groups (`docs/roadmap-done.md`'s M3 section) are a coarse selector for
-//! `cargo xtask vm test --group`, not a strict taxonomy:
+//! Groups say which runs include a scenario:
 //!
-//! - [`Group::Speech`]: Verbatim's own menu and Speech settings dialog, and
-//!   the latency reporting built into walking them —
-//!   [`menu_and_settings_dialog`](crate::scenarios::menu_and_settings_dialog),
-//!   and
-//!   [`rapid_tabbing_in_settings`](crate::scenarios::rapid_tabbing_in_settings),
-//!   a burst of focus changes in the settings dialog that must leave focus
-//!   where it really is, and
-//!   [`verbatim_lifecycle`](crate::scenarios::verbatim_lifecycle),
-//!   Verbatim started, replaced by a second start and quit, with Windows'
-//!   screen reader flag set and cleared, and
-//!   [`quit_inside_a_modal_dialog`](crate::scenarios::quit_inside_a_modal_dialog),
-//!   Verbatim quit with its Select Synthesizer dialog open, and
-//!   [`quit_inside_the_verbatim_menu`](crate::scenarios::quit_inside_the_verbatim_menu),
-//!   Verbatim quit with its menu open, and
-//!   [`quit_inside_the_remove_theme_confirmation`](crate::scenarios::quit_inside_the_remove_theme_confirmation),
-//!   Verbatim quit with the Theme page's Remove Theme confirmation open, and
-//!   [`quit_inside_a_file_dialog`](crate::scenarios::quit_inside_a_file_dialog),
-//!   Verbatim quit with the Theme page's Import file dialog open, and
-//!   [`speak_time_and_date`](crate::scenarios::speak_time_and_date), the
-//!   time and the date said, and
-//!   [`switch_to_onecore`](crate::scenarios::switch_to_onecore), switching
-//!   to Windows `OneCore` voices and back, and
-//!   [`lock_key_announcements`](crate::scenarios::lock_key_announcements),
-//!   a lock key's new state spoken, and
-//!   [`theme_panel`](crate::scenarios::theme_panel), the settings dialog's
-//!   Theme page, where a role changed to a sound is then heard as that
-//!   sound, and
-//!   [`terminal_settings_page`](crate::scenarios::terminal_settings_page),
-//!   its Terminal page, whose applied change Verbatim+5 then finds in
-//!   Core.
-//! - [`Group::Shell`]: the Windows shell — switching foreground between
-//!   applications (the "task switching" item `docs/roadmap-done.md`'s M3 E2E
-//!   list names,
-//!   [`second_application_and_verbatim_menu`](crate::scenarios::second_application_and_verbatim_menu)),
-//!   the synthesizer host, an outpost and the focus listener each
-//!   replaced after it dies
-//!   ([`crash_recovery`](crate::scenarios::crash_recovery)),
-//!   the Alt+Tab switcher's item said with Alt held
-//!   ([`alt_tab_switcher`](crate::scenarios::alt_tab_switcher)),
-//!   an application left while its reads are held and returned to
-//!   ([`return_from_a_held_application`](crate::scenarios::return_from_a_held_application)),
-//!   Verbatim's menu closed over an application that has stopped
-//!   responding, and Verbatim started over its ghost window
-//!   ([`menu_end_over_a_hung_window`](crate::scenarios::menu_end_over_a_hung_window)),
-//!   a dialog one application opens over another's window and closes
-//!   ([`owned_dialog_across_processes`](crate::scenarios::owned_dialog_across_processes)),
-//!   the Windows+X menu opened and closed
-//!   ([`quick_link_menu`](crate::scenarios::quick_link_menu)),
-//!   a File Explorer window
-//!   ([`explorer_folder_window`](crate::scenarios::explorer_folder_window)),
-//!   the Settings app's System page
-//!   ([`settings_system_page`](crate::scenarios::settings_system_page)),
-//!   a combo box on its Date and time page opened and closed
-//!   ([`settings_combo_box_expanded`](crate::scenarios::settings_combo_box_expanded)),
-//!   and its search suggestions
-//!   ([`settings_search_suggestions`](crate::scenarios::settings_search_suggestions),
-//!   and [`settings_search_suggestions_reentered`](crate::scenarios::settings_search_suggestions_reentered)
-//!   for the box entered again holding text).
-//! - [`Group::Navigation`]: the M3 object-navigation and review-cursor
-//!   commands (`docs/roadmap-done.md`'s M3 section) —
-//!   [`object_navigation_in_settings`](crate::scenarios::object_navigation_in_settings)
-//!   against Verbatim's own settings dialog,
-//!   [`object_navigation_over_uia`](crate::scenarios::object_navigation_over_uia)
-//!   against `mockapp`'s UIA provider, and
-//!   [`system_information_tree`](crate::scenarios::system_information_tree)
-//!   against msinfo32's real Win32 tree view over MSAA, which is also the
-//!   suite's MSAA-only legacy application (the M3 exit item).
-//! - [`Group::Text`]: milestone M4's text — editing, keys over a
-//!   selection, the caret table's other keys
-//!   ([`caret_keys`](crate::scenarios::caret_keys)) and the keys whose
-//!   words depend on the whole document
-//!   ([`document_keys`](crate::scenarios::document_keys)), word selection,
-//!   typed word echo, and the review cursor, each in the Windows Forms text box
-//!   (`text_box_`) and in Windows 11 Notepad (`notepad_`, local-only,
-//!   below); say-all in each
-//!   ([`text_box_say_all`](crate::scenarios::text_box_say_all) and
-//!   `notepad_say_all`); spelling errors in `mockapp`'s scripted text and
-//!   in Windows 11 Notepad
-//!   ([`notepad_spelling_errors`](crate::scenarios::notepad_spelling_errors));
-//!   and the terminal scenarios, each in Windows Terminal
-//!   (`windows_terminal_`) and in the console host (`conhost_`):
-//!   commands, flood
-//!   ([`terminal_commands`](crate::scenarios::terminal_commands),
-//!   [`terminal_flood`](crate::scenarios::terminal_flood)), editing
-//!   ([`terminal_editing`](crate::scenarios::terminal_editing)), the review
-//!   cursor down a table, while output is written and along a short row
-//!   ([`terminal_review_grid`](crate::scenarios::terminal_review_grid)),
-//!   progress ([`terminal_progress`](crate::scenarios::terminal_progress)),
-//!   typing the terminal does not show plainly ([`terminal_typing`](crate::scenarios::terminal_typing)),
-//!   and two windows of each terminal and two tabs of Windows Terminal
-//!   ([`terminal_windows`](crate::scenarios::terminal_windows)).
+//! - [`Group::Suite`]: the end-to-end suite, which CI's `e2e` job and
+//!   `cargo test -p verbatim-e2e` run.
 //! - [`Group::Demo`]: demonstrations, recorded as videos for
-//!   `videos/demos` by `cargo xtask demo` and never part of the suite: a
-//!   selection with no `--scenario` or `--group` leaves them out
-//!   ([`select`]), `cargo xtask vm test` refuses them, and their tests are
-//!   ignored, so a plain `cargo test -p verbatim-e2e`, as
+//!   `videos/demos` by `cargo xtask demo` and never part of the suite:
+//!   their tests are ignored, so a plain `cargo test -p verbatim-e2e`, as
 //!   CI's `e2e` job runs it, skips them. Each still asserts what it shows,
 //!   so a broken feature fails rather than recording a misleading video.
 //! - [`Group::Measure`]: the measure set, workloads that make Verbatim's
 //!   latency ledger log the figures `docs/design/communication.md`
 //!   section 11 compares at every migration step. They are measurement,
-//!   not tests, and are left out like the demonstrations: a selection
-//!   with no `--scenario` or `--group` leaves them out ([`select`]), and
-//!   their tests are ignored and named `measure_`, so the
+//!   not tests, and are left out like the demonstrations: their tests are
+//!   ignored and named `measure_`, so the
 //!   suite's runs deselect them with `--skip measure_`. Their speech is
 //!   collected without being asserted ([`SpeechCollector::collect_only`](crate::speech::SpeechCollector::collect_only));
 //!   `books/dev/src/how-to/e2e.md` says how to run them.
@@ -152,7 +59,7 @@
 //! A scenario marked [`ScenarioDef::local_only`] cannot hold on GitHub's
 //! Windows Server runner, for the reason its entry gives beside the flag
 //! with what would let it run there again, such as Windows 11 Notepad, or
-//! a fault of the runner's that Verbatim accepts. Every local and VM run
+//! a fault of the runner's that Verbatim accepts. Every other run
 //! includes it; GitHub's `e2e` job sets
 //! [`SKIP_LOCAL_ONLY_ENV`] and leaves it out of its groups
 //! (`cargo xtask e2e-plan` reads this flag), and [`run_named`] fails a
@@ -233,8 +140,8 @@ pub fn skips(def: &ScenarioDef, setting: Option<&str>) -> Result<bool, String> {
 
 /// The disabled scenarios, each with why and what re-enables it. None has
 /// a test in `tests/e2e.rs`, so no run includes one and none is ever
-/// reported as passing; [`select`] leaves them out, and refuses one asked
-/// for by name, giving its reason; [`run_named`] fails one run anyway. Each
+/// reported as passing; [`run_named`] fails one run anyway, giving its
+/// reason. Each
 /// stays registered and compiled as it is, to be enabled again unchanged.
 pub const DISABLED: &[(&str, &str)] = &[];
 
@@ -247,58 +154,17 @@ pub fn disabled_reason(name: &str) -> Option<&'static str> {
         .map(|(_, reason)| *reason)
 }
 
-/// A coarse selector for `cargo xtask vm test --group` — see this module's
-/// own doc comment for what each group is meant to hold.
+/// Which runs include a scenario; see this module's own doc comment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Group {
-    /// Verbatim's own menu and Speech settings dialog, and latency
-    /// reporting.
-    Speech,
-    /// Switching foreground between applications ("task switching").
-    Shell,
-    /// Object navigation and review-cursor commands.
-    Navigation,
-    /// Text: editing, the review cursor over text, say-all, and terminals
-    /// (milestone M4).
-    Text,
+    /// The end-to-end suite.
+    Suite,
     /// Demonstrations, recorded by `cargo xtask demo` and left out of the
     /// suite.
     Demo,
     /// The measure set: measurement workloads, which assert no speech,
     /// left out of the suite.
     Measure,
-}
-
-impl Group {
-    /// The lowercase name used on the command line and in [`ScenarioDef`]
-    /// listings — `cargo xtask vm test --list`'s own output, and
-    /// [`select`]'s `--group` matching.
-    #[must_use]
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Speech => "speech",
-            Self::Shell => "shell",
-            Self::Navigation => "navigation",
-            Self::Text => "text",
-            Self::Demo => "demo",
-            Self::Measure => "measure",
-        }
-    }
-
-    /// Parses a group name (case-sensitive, matching [`Group::name`]
-    /// exactly), for `--group` argument validation.
-    #[must_use]
-    pub fn parse(name: &str) -> Option<Self> {
-        match name {
-            "speech" => Some(Self::Speech),
-            "shell" => Some(Self::Shell),
-            "navigation" => Some(Self::Navigation),
-            "text" => Some(Self::Text),
-            "demo" => Some(Self::Demo),
-            "measure" => Some(Self::Measure),
-            _ => None,
-        }
-    }
 }
 
 /// Scenario-specific state a [`ScenarioDef::setup`] creates and its matching
@@ -339,10 +205,10 @@ pub enum ScenarioState {
 pub struct ScenarioDef {
     /// Selects this scenario: its `#[test]` function name
     /// (`cargo test -p verbatim-e2e --test e2e <name> -- --exact`), its
-    /// `cargo xtask vm test --scenario <name>` selector, its artifacts
-    /// directory name, and its recording file name prefix.
+    /// name on `cargo xtask e2e`, its artifacts directory name, and its
+    /// recording file name prefix.
     pub name: &'static str,
-    /// The coarse group this scenario belongs to, for `--group` selection.
+    /// Which runs include this scenario.
     pub group: Group,
     /// Changes the fixed settings this scenario's Verbatim is launched
     /// with ([`Scenario::launch_with`]), for a scenario that needs
@@ -351,8 +217,8 @@ pub struct ScenarioDef {
     /// Whether this scenario needs something only a Windows 11 desktop
     /// has, such as Windows 11 Notepad's spell checker, so that it cannot
     /// hold on GitHub's Windows Server runner, or something not shown to
-    /// hold there, with the reason beside its entry. Every local run and every
-    /// VM run includes it; a run with [`SKIP_LOCAL_ONLY_ENV`] set to `1`,
+    /// hold there, with the reason beside its entry. Every other run
+    /// includes it; a run with [`SKIP_LOCAL_ONLY_ENV`] set to `1`,
     /// as GitHub's `e2e` job sets it, skips it ([`skips`]).
     pub local_only: bool,
     /// The document the scenario edits in Windows 11 Notepad, opened
@@ -392,12 +258,11 @@ pub enum Comparable {
     No(&'static str),
 }
 
-/// Every registered scenario, in a fixed, stable order (also the order
-/// [`select`] preserves and `--list` prints in).
+/// Every registered scenario, in a fixed, stable order.
 pub const SCENARIOS: &[ScenarioDef] = &[
     ScenarioDef {
         name: "menu_and_settings_dialog",
-        group: Group::Speech,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         document: None,
@@ -410,7 +275,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "second_application_and_verbatim_menu",
-        group: Group::Shell,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         document: None,
@@ -421,7 +286,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "rapid_tabbing_in_settings",
-        group: Group::Speech,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         document: None,
@@ -434,7 +299,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "object_navigation_in_settings",
-        group: Group::Navigation,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         document: None,
@@ -447,7 +312,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "switch_to_onecore",
-        group: Group::Speech,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         document: None,
@@ -460,7 +325,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "crash_recovery",
-        group: Group::Shell,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         document: None,
@@ -473,7 +338,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "verbatim_lifecycle",
-        group: Group::Speech,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         document: None,
@@ -484,7 +349,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "quit_inside_a_modal_dialog",
-        group: Group::Speech,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         document: None,
@@ -495,7 +360,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "quit_inside_the_verbatim_menu",
-        group: Group::Speech,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         document: None,
@@ -506,7 +371,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "quit_inside_the_remove_theme_confirmation",
-        group: Group::Speech,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         document: None,
@@ -517,7 +382,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "quit_inside_a_file_dialog",
-        group: Group::Speech,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         document: None,
@@ -528,7 +393,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "speak_time_and_date",
-        group: Group::Speech,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         document: None,
@@ -539,7 +404,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "toast",
-        group: Group::Shell,
+        group: Group::Suite,
         settings: None,
         // No reason was recorded when it was added, and it has never run on
         // GitHub's runner; a dispatched run of it there gives one, or lets
@@ -553,7 +418,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "msaa_flood_then_focus",
-        group: Group::Speech,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         document: None,
@@ -566,7 +431,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "stale_focus_behind_a_caret_key",
-        group: Group::Speech,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         document: None,
@@ -577,7 +442,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "read_only_field_typing",
-        group: Group::Speech,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         document: None,
@@ -588,7 +453,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "twin_item_at_a_deleted_items_ids",
-        group: Group::Speech,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         document: None,
@@ -599,7 +464,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "foreground_progress_bar",
-        group: Group::Speech,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         document: None,
@@ -612,7 +477,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "background_progress_bar",
-        group: Group::Speech,
+        group: Group::Suite,
         settings: Some(background_progress_bar::report_background_bars),
         local_only: false,
         document: None,
@@ -625,7 +490,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "background_progress_bar_off",
-        group: Group::Speech,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         document: None,
@@ -638,7 +503,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "controlled_list_selections",
-        group: Group::Speech,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         document: None,
@@ -649,7 +514,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "review_dead_object",
-        group: Group::Speech,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         document: None,
@@ -660,7 +525,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "table_cells",
-        group: Group::Speech,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         document: None,
@@ -671,7 +536,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "alt_tab_switcher",
-        group: Group::Shell,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         document: None,
@@ -682,7 +547,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "return_from_a_held_application",
-        group: Group::Shell,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         document: None,
@@ -693,7 +558,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "menu_end_over_a_hung_window",
-        group: Group::Shell,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         document: None,
@@ -706,7 +571,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "owned_dialog_across_processes",
-        group: Group::Shell,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         document: None,
@@ -717,7 +582,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "lock_key_announcements",
-        group: Group::Speech,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         document: None,
@@ -728,7 +593,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "quick_link_menu",
-        group: Group::Shell,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         document: None,
@@ -739,7 +604,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "explorer_folder_window",
-        group: Group::Shell,
+        group: Group::Suite,
         settings: None,
         // On GitHub's runner its new explorer.exe window sometimes stops
         // responding, with dwm.exe's window thread blocked too (run
@@ -757,7 +622,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "settings_dialog_keys",
-        group: Group::Speech,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         document: None,
@@ -770,7 +635,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "settings_system_page",
-        group: Group::Shell,
+        group: Group::Suite,
         settings: None,
         // GitHub's runner fails to deliver the System page's UI Automation
         // focus to the listener (8 failures, 2026-11-08 to 2026-11-20), a
@@ -786,7 +651,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "settings_combo_box_expanded",
-        group: Group::Shell,
+        group: Group::Suite,
         settings: None,
         // The runner's Date and time page opens with its focus on its
         // location settings link, not the Region button. It runs there
@@ -800,7 +665,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "settings_search_suggestions",
-        group: Group::Shell,
+        group: Group::Suite,
         settings: None,
         // Settings replaced its suggestions list as it opened, after
         // raising the first selection, in 2 of 13 local runs (2026-11-09),
@@ -818,7 +683,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "settings_search_suggestions_reentered",
-        group: Group::Shell,
+        group: Group::Suite,
         settings: None,
         // Settings replaced its suggestions list as it opened, after
         // raising the first selection, in 2 of 13 local runs (2026-11-09),
@@ -836,7 +701,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "notepad_editing",
-        group: Group::Text,
+        group: Group::Suite,
         settings: None,
         local_only: true,
         document: Some(editing::document),
@@ -847,7 +712,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "text_box_editing",
-        group: Group::Text,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         document: None,
@@ -858,7 +723,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "notepad_selection_keys",
-        group: Group::Text,
+        group: Group::Suite,
         settings: None,
         local_only: true,
         document: Some(selection_keys::document),
@@ -869,7 +734,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "notepad_selection_then_control",
-        group: Group::Text,
+        group: Group::Suite,
         settings: None,
         local_only: true,
         document: Some(selection_keys::cut_document),
@@ -880,7 +745,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "text_box_selection_keys",
-        group: Group::Text,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         document: None,
@@ -891,7 +756,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "notepad_caret_keys",
-        group: Group::Text,
+        group: Group::Suite,
         settings: None,
         local_only: true,
         document: Some(caret_keys::document),
@@ -902,7 +767,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "text_box_caret_keys",
-        group: Group::Text,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         document: None,
@@ -913,7 +778,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "notepad_document_keys",
-        group: Group::Text,
+        group: Group::Suite,
         settings: None,
         local_only: true,
         document: Some(document_keys::document),
@@ -924,7 +789,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "text_box_document_keys",
-        group: Group::Text,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         document: None,
@@ -935,7 +800,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "notepad_page_keys",
-        group: Group::Text,
+        group: Group::Suite,
         settings: None,
         local_only: true,
         document: Some(document_keys::pages_document),
@@ -946,7 +811,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "text_box_page_keys",
-        group: Group::Text,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         document: None,
@@ -957,7 +822,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "notepad_paragraph_keys",
-        group: Group::Text,
+        group: Group::Suite,
         settings: None,
         local_only: true,
         document: Some(document_keys::paragraphs_document),
@@ -968,7 +833,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "text_box_paragraph_keys",
-        group: Group::Text,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         document: None,
@@ -979,7 +844,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "notepad_select_all_count",
-        group: Group::Text,
+        group: Group::Suite,
         settings: None,
         local_only: true,
         document: Some(document_keys::count_document),
@@ -990,7 +855,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "text_box_select_all_count",
-        group: Group::Text,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         document: None,
@@ -1001,7 +866,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "text_box_password",
-        group: Group::Text,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         document: None,
@@ -1012,7 +877,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "wpf_password",
-        group: Group::Text,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         document: None,
@@ -1023,7 +888,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "notepad_review_cursor",
-        group: Group::Text,
+        group: Group::Suite,
         settings: None,
         local_only: true,
         document: Some(review_cursor::document),
@@ -1034,7 +899,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "text_box_review_cursor",
-        group: Group::Text,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         document: None,
@@ -1045,7 +910,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "notepad_say_all",
-        group: Group::Text,
+        group: Group::Suite,
         settings: None,
         local_only: true,
         document: Some(notepad_say_all::document),
@@ -1056,7 +921,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "notepad_word_selection",
-        group: Group::Text,
+        group: Group::Suite,
         settings: None,
         local_only: true,
         document: Some(word_selection::document),
@@ -1067,7 +932,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "text_box_word_selection",
-        group: Group::Text,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         document: None,
@@ -1078,7 +943,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "notepad_typed_words",
-        group: Group::Text,
+        group: Group::Suite,
         settings: None,
         local_only: true,
         document: Some(typed_words::document),
@@ -1089,7 +954,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "text_box_typed_words",
-        group: Group::Text,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         document: None,
@@ -1100,7 +965,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "notepad_review_words",
-        group: Group::Text,
+        group: Group::Suite,
         settings: None,
         local_only: true,
         document: Some(review_words::document),
@@ -1111,7 +976,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "text_box_review_words",
-        group: Group::Text,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         document: None,
@@ -1122,7 +987,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "text_box_say_all",
-        group: Group::Text,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         document: None,
@@ -1133,7 +998,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "spelling_errors",
-        group: Group::Text,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         document: None,
@@ -1148,7 +1013,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     // scripted text everywhere.
     ScenarioDef {
         name: "notepad_spelling_errors",
-        group: Group::Text,
+        group: Group::Suite,
         settings: None,
         local_only: true,
         document: Some(notepad_spelling_errors::document),
@@ -1159,7 +1024,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "theme_panel",
-        group: Group::Speech,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         document: None,
@@ -1172,7 +1037,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "terminal_settings_page",
-        group: Group::Speech,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         document: None,
@@ -1185,7 +1050,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "windows_terminal_commands",
-        group: Group::Text,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         document: None,
@@ -1196,7 +1061,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "conhost_commands",
-        group: Group::Text,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         document: None,
@@ -1207,7 +1072,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "windows_terminal_flood",
-        group: Group::Text,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         document: None,
@@ -1218,7 +1083,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "conhost_flood",
-        group: Group::Text,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         document: None,
@@ -1229,7 +1094,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "windows_terminal_control_flood",
-        group: Group::Text,
+        group: Group::Suite,
         settings: Some(terminal_flood::lowered_limits),
         local_only: false,
         document: None,
@@ -1242,7 +1107,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "conhost_control_flood",
-        group: Group::Text,
+        group: Group::Suite,
         settings: Some(terminal_flood::lowered_limits),
         local_only: false,
         document: None,
@@ -1255,7 +1120,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "windows_terminal_line_key_flood",
-        group: Group::Text,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         document: None,
@@ -1266,7 +1131,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "conhost_line_key_flood",
-        group: Group::Text,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         document: None,
@@ -1277,7 +1142,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "windows_terminal_leave_flood",
-        group: Group::Text,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         document: None,
@@ -1288,7 +1153,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "conhost_leave_flood",
-        group: Group::Text,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         document: None,
@@ -1299,7 +1164,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "windows_terminal_close_tab",
-        group: Group::Text,
+        group: Group::Suite,
         settings: None,
         // GitHub's runner once delivered no UI Automation focus for the new
         // terminal to the listener (run 44465917467), a loss Verbatim accepts as
@@ -1315,7 +1180,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "windows_terminal_scrollback_overflow_during_group",
-        group: Group::Text,
+        group: Group::Suite,
         settings: Some(terminal_flood::half_limits),
         local_only: false,
         document: None,
@@ -1328,7 +1193,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "conhost_scrollback_overflow_during_group",
-        group: Group::Text,
+        group: Group::Suite,
         settings: Some(terminal_flood::half_limits),
         local_only: false,
         document: None,
@@ -1341,7 +1206,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "windows_terminal_editing",
-        group: Group::Text,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         document: None,
@@ -1352,7 +1217,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "conhost_editing",
-        group: Group::Text,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         document: None,
@@ -1363,7 +1228,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "windows_terminal_review_grid",
-        group: Group::Text,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         document: None,
@@ -1374,7 +1239,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "conhost_review_grid",
-        group: Group::Text,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         document: None,
@@ -1385,7 +1250,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "windows_terminal_review_stays_on_line",
-        group: Group::Text,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         document: None,
@@ -1396,7 +1261,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "conhost_review_stays_on_line",
-        group: Group::Text,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         document: None,
@@ -1407,7 +1272,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "windows_terminal_progress",
-        group: Group::Text,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         document: None,
@@ -1418,7 +1283,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "conhost_progress",
-        group: Group::Text,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         document: None,
@@ -1429,7 +1294,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "windows_terminal_typing",
-        group: Group::Text,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         document: None,
@@ -1440,7 +1305,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "conhost_typing",
-        group: Group::Text,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         document: None,
@@ -1451,7 +1316,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "windows_terminal_long_lines",
-        group: Group::Text,
+        group: Group::Suite,
         settings: None,
         // GitHub's runner once delivered no UI Automation focus for the new
         // terminal to the listener (run 44414430624), a loss Verbatim accepts as
@@ -1467,7 +1332,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "conhost_long_lines",
-        group: Group::Text,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         document: None,
@@ -1478,7 +1343,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "windows_terminal_full_screen",
-        group: Group::Text,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         document: None,
@@ -1489,7 +1354,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "conhost_full_screen",
-        group: Group::Text,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         document: None,
@@ -1500,7 +1365,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "windows_terminal_marker_list",
-        group: Group::Text,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         document: None,
@@ -1511,7 +1376,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "conhost_marker_list",
-        group: Group::Text,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         document: None,
@@ -1522,7 +1387,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "windows_terminal_pager_history",
-        group: Group::Text,
+        group: Group::Suite,
         settings: Some(terminal_flood::half_limits),
         local_only: false,
         document: None,
@@ -1533,7 +1398,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "conhost_pager_history",
-        group: Group::Text,
+        group: Group::Suite,
         settings: Some(terminal_flood::half_limits),
         local_only: false,
         document: None,
@@ -1544,7 +1409,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "windows_terminal_status_bar",
-        group: Group::Text,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         document: None,
@@ -1555,7 +1420,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "conhost_status_bar",
-        group: Group::Text,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         document: None,
@@ -1566,7 +1431,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "windows_terminal_two_windows",
-        group: Group::Text,
+        group: Group::Suite,
         settings: None,
         // On GitHub's elevated runner the console host's "Administrator: "
         // title reaches Windows Terminal's window after the harness restores
@@ -1584,7 +1449,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "conhost_two_windows",
-        group: Group::Text,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         document: None,
@@ -1595,7 +1460,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "windows_terminal_tabs",
-        group: Group::Text,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         document: None,
@@ -1606,7 +1471,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "event_recorder_records_mockapp",
-        group: Group::Shell,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         document: None,
@@ -1619,7 +1484,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "object_navigation_over_uia",
-        group: Group::Navigation,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         document: None,
@@ -1630,7 +1495,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "system_information_tree",
-        group: Group::Navigation,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         document: None,
@@ -1880,58 +1745,6 @@ pub const SCENARIOS: &[ScenarioDef] = &[
 #[must_use]
 pub fn find(name: &str) -> Option<&'static ScenarioDef> {
     SCENARIOS.iter().find(|def| def.name == name)
-}
-
-/// Resolves `--scenario` and `--group` selections against `scenarios`
-/// (always [`SCENARIOS`] outside tests) into an ordered, deduplicated list
-/// of matching definitions, preserving registry order. Empty `names` and
-/// `groups` selects every scenario but the demonstrations
-/// ([`Group::Demo`]) and the measure set ([`Group::Measure`]) — the default, no-flags behavior of
-/// `cargo xtask vm test`. A disabled scenario ([`DISABLED`]) is never
-/// selected.
-///
-/// # Errors
-///
-/// Returns the first unrecognized scenario name or group name as `Err`, so a
-/// typo is reported before anything is built or restored, not discovered
-/// partway through a run; and a disabled scenario's name, with why it is
-/// disabled.
-pub fn select<'a>(
-    scenarios: &'a [ScenarioDef],
-    names: &[String],
-    groups: &[String],
-) -> Result<Vec<&'a ScenarioDef>, String> {
-    if names.is_empty() && groups.is_empty() {
-        return Ok(scenarios
-            .iter()
-            .filter(|def| {
-                !matches!(def.group, Group::Demo | Group::Measure)
-                    && disabled_reason(def.name).is_none()
-            })
-            .collect());
-    }
-
-    let mut parsed_groups = Vec::with_capacity(groups.len());
-    for group in groups {
-        parsed_groups
-            .push(Group::parse(group).ok_or_else(|| format!("unknown scenario group {group:?}"))?);
-    }
-    for name in names {
-        if !scenarios.iter().any(|def| def.name == name) {
-            return Err(format!("unknown scenario {name:?}"));
-        }
-        if let Some(reason) = disabled_reason(name) {
-            return Err(format!("{name:?} is disabled: {reason}"));
-        }
-    }
-
-    Ok(scenarios
-        .iter()
-        .filter(|def| {
-            disabled_reason(def.name).is_none()
-                && (names.iter().any(|name| name == def.name) || parsed_groups.contains(&def.group))
-        })
-        .collect())
 }
 
 /// The speech every scenario starts with: Verbatim's start sound, heard in
@@ -2558,7 +2371,7 @@ mod tests {
         vec![
             ScenarioDef {
                 name: "alpha",
-                group: Group::Speech,
+                group: Group::Suite,
                 settings: None,
                 local_only: false,
                 document: None,
@@ -2569,7 +2382,7 @@ mod tests {
             },
             ScenarioDef {
                 name: "beta",
-                group: Group::Shell,
+                group: Group::Suite,
                 settings: None,
                 local_only: false,
                 document: None,
@@ -2580,7 +2393,7 @@ mod tests {
             },
             ScenarioDef {
                 name: "gamma",
-                group: Group::Shell,
+                group: Group::Suite,
                 settings: None,
                 local_only: false,
                 document: None,
@@ -2593,109 +2406,10 @@ mod tests {
     }
 
     #[test]
-    fn group_parse_round_trips_every_variant_name() {
-        for group in [
-            Group::Speech,
-            Group::Shell,
-            Group::Navigation,
-            Group::Text,
-            Group::Demo,
-            Group::Measure,
-        ] {
-            assert_eq!(Group::parse(group.name()), Some(group));
-        }
-    }
-
-    #[test]
-    fn group_parse_rejects_unknown_names() {
-        assert_eq!(Group::parse("nonsense"), None);
-        assert_eq!(Group::parse("Speech"), None, "matching is case-sensitive");
-    }
-
-    #[test]
     fn find_locates_a_real_registered_scenario() {
         assert!(find("menu_and_settings_dialog").is_some());
         assert!(find("second_application_and_verbatim_menu").is_some());
         assert!(find("no_such_scenario").is_none());
-    }
-
-    #[test]
-    fn select_with_no_filters_returns_every_scenario_in_order() {
-        let scenarios = fixture();
-        let selected = select(&scenarios, &[], &[]).expect("no filters never errors");
-        let names: Vec<&str> = selected.iter().map(|def| def.name).collect();
-        assert_eq!(names, vec!["alpha", "beta", "gamma"]);
-    }
-
-    #[test]
-    fn select_with_no_filters_leaves_the_demonstrations_out() {
-        let mut scenarios = fixture();
-        scenarios[2].group = Group::Demo;
-        let selected = select(&scenarios, &[], &[]).expect("no filters never errors");
-        let names: Vec<&str> = selected.iter().map(|def| def.name).collect();
-        assert_eq!(names, vec!["alpha", "beta"]);
-        let demos = select(&scenarios, &[], &["demo".to_owned()]).expect("demo is a real group");
-        assert_eq!(demos.len(), 1);
-    }
-
-    #[test]
-    fn select_with_no_filters_leaves_the_measure_set_out() {
-        let mut scenarios = fixture();
-        scenarios[1].group = Group::Measure;
-        let selected = select(&scenarios, &[], &[]).expect("no filters never errors");
-        let names: Vec<&str> = selected.iter().map(|def| def.name).collect();
-        assert_eq!(names, vec!["alpha", "gamma"]);
-        let measure =
-            select(&scenarios, &[], &["measure".to_owned()]).expect("measure is a real group");
-        let names: Vec<&str> = measure.iter().map(|def| def.name).collect();
-        assert_eq!(names, vec!["beta"]);
-    }
-
-    #[test]
-    fn select_by_name_picks_exactly_that_scenario() {
-        let scenarios = fixture();
-        let selected =
-            select(&scenarios, &["beta".to_owned()], &[]).expect("beta is a real scenario");
-        let names: Vec<&str> = selected.iter().map(|def| def.name).collect();
-        assert_eq!(names, vec!["beta"]);
-    }
-
-    #[test]
-    fn select_by_group_picks_every_scenario_in_that_group() {
-        let scenarios = fixture();
-        let selected =
-            select(&scenarios, &[], &["shell".to_owned()]).expect("shell is a real group");
-        let names: Vec<&str> = selected.iter().map(|def| def.name).collect();
-        assert_eq!(names, vec!["beta", "gamma"]);
-    }
-
-    #[test]
-    fn select_unions_names_and_groups_without_duplicating_overlap() {
-        let scenarios = fixture();
-        let selected = select(&scenarios, &["beta".to_owned()], &["shell".to_owned()])
-            .expect("both beta and shell are real");
-        let names: Vec<&str> = selected.iter().map(|def| def.name).collect();
-        assert_eq!(
-            names,
-            vec!["beta", "gamma"],
-            "beta must not appear twice just because it matches both the name and the group filter"
-        );
-    }
-
-    #[test]
-    fn select_rejects_an_unknown_scenario_name() {
-        let scenarios = fixture();
-        let error = select(&scenarios, &["no_such_scenario".to_owned()], &[])
-            .expect_err("unknown scenario name must be rejected");
-        assert!(error.contains("no_such_scenario"));
-    }
-
-    #[test]
-    fn select_rejects_an_unknown_group_name() {
-        let scenarios = fixture();
-        let error = select(&scenarios, &[], &["no_such_group".to_owned()])
-            .expect_err("unknown group name must be rejected");
-        assert!(error.contains("no_such_group"));
     }
 
     #[test]
@@ -2924,20 +2638,5 @@ mod tests {
             untested.is_empty() && unregistered.is_empty(),
             "registered scenarios with no test in tests/e2e.rs: {untested:?}; tests in tests/e2e.rs with no registered scenario, or a disabled one: {unregistered:?}"
         );
-    }
-
-    #[test]
-    fn a_disabled_scenario_is_registered_never_selected_and_refused_by_name() {
-        for (name, _) in DISABLED {
-            assert!(find(name).is_some(), "{name} stays registered");
-            let all = select(SCENARIOS, &[], &[]).expect("the default selection");
-            assert!(
-                all.iter().all(|def| def.name != *name),
-                "{name} is left out of the default selection"
-            );
-            let refused = select(SCENARIOS, &[(*name).to_owned()], &[])
-                .expect_err("a disabled scenario named is refused");
-            assert!(refused.contains("is disabled"), "{refused}");
-        }
     }
 }

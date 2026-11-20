@@ -1,6 +1,6 @@
 [package]
 name = "xtask"
-description = "Workspace automation: cargo xtask ci, cargo xtask vm, cargo xtask park, cargo xtask warm-speech, cargo xtask replay"
+description = "Workspace automation: cargo xtask ci, cargo xtask e2e, cargo xtask park, cargo xtask warm-speech, cargo xtask replay"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
@@ -17,19 +17,11 @@ serde_json.workspace = true
 # `src/main.rs` gates on `cfg(windows)`; on any other host xtask builds only
 # its portable part (`ci`, `docs` and `replay`).
 [target.'cfg(windows)'.dependencies]
-# Kept to workspace crates already compiled for other purposes, so the M2
-# Hyper-V harness (`cargo xtask vm`) stays dependency-light: base64 is
-# already pulled in by verbatim-agent and verbatim-e2e, and
-# verbatim-config lets `xtask vm deploy` stage settings.toml through the
-# same ConfigStore the app itself uses, rather than hand-writing TOML.
-# verbatim-e2e is a direct dependency (M3 Track B): `xtask vm test` reads
-# the scenario registry (names, groups, artifact paths) to implement
-# --scenario, --group, --list, and per-scenario artifact collection, rather
-# than duplicating that catalog here.
-base64.workspace = true
+# verbatim-e2e is a direct dependency so that the commands that run,
+# measure and group scenarios read the scenario registry and its artifact
+# paths rather than a copy of them.
 serde.workspace = true
 verbatim-agent.workspace = true
-verbatim-config.workspace = true
 verbatim-control.workspace = true
 verbatim-e2e.workspace = true
 verbatim-model.workspace = true

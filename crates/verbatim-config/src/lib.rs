@@ -176,26 +176,17 @@ impl Default for UiaConfig {
 
 /// The speech rate the E2E suite runs at, on every synthesizer's shared
 /// `0..=100` numeric scale. Deliberately brisk so a recorded run is quick to
-/// review; applied uniformly by [`Settings::for_e2e`] so the VM (`OneCore`)
-/// and runner-direct (capture synth) paths speak at the same rate.
+/// review; applied by [`Settings::for_e2e`] to every run.
 pub const E2E_RATE: i64 = 80;
 
 impl Settings {
-    /// The fixed configuration shared by the E2E suite's own runner-direct
-    /// staging (`verbatim-e2e`'s `Scenario::launch`) and `cargo xtask vm
-    /// deploy`'s guest staging (`write_synth_settings`): [`Settings::default`]
-    /// with the speech synthesizer overridden to `synth_id` and that
-    /// synthesizer's `rate` set to [`E2E_RATE`].
-    ///
-    /// Both call sites need the same guarantee: a run's configuration is
-    /// always these fixed values, never whatever a previous run or a
-    /// developer's own `settings.toml` happened to leave behind, so neither
-    /// one may load an existing file and mutate it — they build this and
-    /// write it fresh. `xtask` cannot depend on `verbatim-e2e` (and should
-    /// not, to avoid a dev-tooling dependency edge into a test-only crate),
-    /// so this constructor lives here in `verbatim-config`, which both
-    /// already depend on, rather than being duplicated in both places. If
-    /// its shape ever needs to change, keep both call sites in lockstep.
+    /// The fixed configuration the E2E suite launches Verbatim with
+    /// (`verbatim-e2e`'s `Scenario::launch`): [`Settings::default`] with the
+    /// speech synthesizer overridden to `synth_id` and that synthesizer's
+    /// `rate` set to [`E2E_RATE`]. A run's configuration is always these
+    /// fixed values, never whatever a previous run or a developer's own
+    /// `settings.toml` happened to leave behind, so no run loads an existing
+    /// file and changes it: each builds this and writes it fresh.
     #[must_use]
     pub fn for_e2e(synth_id: &str) -> Self {
         let mut settings = Self::default();

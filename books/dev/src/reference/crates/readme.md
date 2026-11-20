@@ -90,7 +90,7 @@ changed crate's own guide leaves those claims stale.
   Verbatim.
 - [verbatim-event-record](verbatim-event-record.md) — records what an
   application raises as JSON Lines, and prints a recording as sentences.
-- [verbatim-agent](verbatim-agent.md) — the in-guest test agent and
+- [verbatim-agent](verbatim-agent.md) — the end-to-end suite's test agent and
   control tunnel.
 - [verbatim-e2e](verbatim-e2e.md) — the end-to-end scenario registry.
 - [verbatim-gui](verbatim-gui.md) — the wxWidgets GUI through a small C++ layer (D4).
@@ -100,7 +100,6 @@ Two crates are stubs: `verbatim-ext` and `verbatim-ext-api`, the Wasm
 extension host and its WIT contract, which land in M5.
 
 `xtask`, the workspace automation, is described in the tooling guides:
-`cargo xtask ci` in [setup](../../how-to/setup.md), `cargo xtask vm` with a
-map of its code in [the VM harness guide](../../how-to/vm.md),
+`cargo xtask ci` in [setup](../../how-to/setup.md), `cargo xtask e2e` and
 `cargo xtask park` in [the end-to-end guide](../../how-to/e2e.md), and
 `cargo xtask nvda` in [the NVDA guide](../../how-to/nvda.md).

@@ -150,8 +150,8 @@ pub fn serve(listener: &TcpListener, pipe_name: &str) {
 /// [`Frame::Error`] naming the failure, correlated to id 0 since the
 /// envelope's own id could not be read. An earlier version closed the
 /// connection silently instead, which a live debugging session experienced
-/// as an empty reply with the only diagnosis in the agent's own log inside
-/// the guest.
+/// as an empty reply with the only diagnosis in the agent's own log on
+/// the agent's machine.
 fn reject_malformed(writer: &mut TcpStream, error: &io::Error) {
     warn!(%error, "malformed agent request; closing connection");
     let _ = write_message(

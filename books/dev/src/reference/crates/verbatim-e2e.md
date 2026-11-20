@@ -3,8 +3,9 @@
 The end-to-end suite, a scenario registry: it drives a real, running
 Verbatim (and target applications such as Notepad) through
 `verbatim-agent` and, tunneled through it, Verbatim's own control plane.
-Dev-only; a library rather than only a test binary because both
-`crates/verbatim-e2e/tests/e2e.rs` and `xtask vm test` drive it. Every
+Dev-only; a library rather than only a test binary because xtask's
+commands that plan and record scenarios read its registry and artifact
+paths beside `crates/verbatim-e2e/tests/e2e.rs`. Every
 scenario meets `books/dev/src/reference/testing.md`. [The end-to-end tooling
 guide](../../how-to/e2e.md) says how to run it, lists the environment
 variables, and says what a run leaves behind and how to read a failure;
@@ -47,7 +48,7 @@ this guide describes the code.
 - Demonstrations (the Demo group, `demo_` names) run only through
   `cargo xtask demo`. The measure set (the Measure group, `measure_`
   names) is measurement, not tests: run only by name or with
-  `--group measure`, and deselected from every suite run with
+  `cargo xtask measure`, and deselected from every suite run with
   `--skip measure_`.
 - A same-process `Mutex` allows one live Verbatim per test process, and
   `--test-threads=1` makes that sufficient; the workspace's run lock,
@@ -63,8 +64,10 @@ scenario, recorded or not, and recording changes nothing else:
    names a build to stage), copies them, eSpeak NG's data, and the default
    theme's sounds into `target/e2e-stage`, and writes
    `Settings::for_e2e`'s fixed settings, with the scenario's own change
-   applied. In a remote run (`REMOTE_ENV`), `cargo xtask vm deploy` has
-   staged the guest, and the settings are written through the agent.
+   applied. In a remote run (`REMOTE_ENV`), nothing is staged: the
+   developer copied the stage to the agent's machine (architecture
+   section 14), and the settings are written through the agent beside the
+   `verbatim.exe` that `VERBATIM_EXE_ENV` names there.
 2. Sweeps what an earlier run left: Windows 11 Notepad's harness tabs are
    closed as tabs first (a Notepad ended by its handle keeps its tabs for
    its next session, without their documents), then every process the
@@ -581,8 +584,7 @@ running total of crashes and scenarios in this test process, so the last
 scenario's line holds the suite's total. Optional utterances are reported
 the same way, one line each, such as `scenario "explorer_folder_window":
 optional utterance "Working on it..." after keys enter: cut off`, and
-recorded in `ScenarioSummary::optional_utterances`, which
-`cargo xtask vm test` prints in its run summary.
+recorded in `ScenarioSummary::optional_utterances`.
 
 ### The user's Windows Terminal
 
@@ -631,8 +633,8 @@ together with the body's own panic.
 
 `artifacts` holds `artifacts_root`, `scenario_dir`
 (`target/e2e-artifacts/<name>`, or under `VERBATIM_E2E_ARTIFACTS_DIR`),
-`ScenarioSummary` (with its `OutpostCrash` list, and `read` for
-`xtask vm test`), `archive_run`, which copies each run into
+`ScenarioSummary` (with its `OutpostCrash` list, and `read`),
+`archive_run`, which copies each run into
 `history/<scenario>/<UTC time>-<pass or fail>`, keeping the newest 100,
 without the video, and `failure_lines`, every line carrying a trace ID in a
 run's collected logs, with the flight recorder's inputs that carry it or
@@ -640,9 +642,9 @@ that Core received in a window, from the `RECORDER_WINDOW_US` (3
 seconds) before the failing step began to the failure, replayed and
 rendered with `verbatim-replay` (`failure_inputs`) as `cargo xtask
 replay` prints them, those of the trace marked `(failing trace)` and
-those with no time of their own `(untimed)`, all in time order. `xtask vm test`
-calls the same functions to find and read what a scenario subprocess
-left, rather than parsing its output. The files a run keeps are listed in
+those with no time of their own `(untimed)`, all in time order. xtask's
+commands that run a scenario as a subprocess call the same functions to
+find what it left. The files a run keeps are listed in
 the tooling guide's "What a run leaves behind"; losing any of them fails
 the run.
 
@@ -671,14 +673,16 @@ Verbatim's run.
 
 ## The registry
 
-`ScenarioDef` is one named, grouped scenario: `name` (its test, `--scenario` selector, artifacts directory, and video name),
+`ScenarioDef` is one named, grouped scenario: `name` (its test, its name on `cargo xtask e2e`, artifacts directory, and video name),
 `group`, `settings` (a change to the fixed settings), `local_only`, `comparable`, `document`, and `setup`, `body` and `teardown`.
 `ScenarioState` is what setup hands the body and teardown: nothing, a
 target's pid, a window title, names, or a `Window` (the launch's pid, the
 window's title, how Verbatim announces the terminal's text area,
 `text_area`, and the folder of its files). `SCENARIOS` lists them in
-order; `find` and `select` look them up. Groups are a coarse selector for
-`cargo xtask vm test --group`, not a strict taxonomy. Each scenario module
+order; `find` looks one up. The group says which runs include a
+scenario: the suite (`Suite`), the demonstrations (`Demo`) or the measure
+set (`Measure`); the suite's scenarios are listed below by topic. Each
+scenario module
 under `src/scenarios/` documents exactly what it asserts.
 
 - Speech: `menu_and_settings_dialog` (the walk through Verbatim's menu
@@ -981,6 +985,5 @@ Each exists in both terminals unless named for one.
   architecture (x64 or ARM64), checking its pinned SHA-256, and unpacking
   it with Windows' `tar.exe` only when the folder's stamp does not name
   that hash. Portable mode keeps settings in `SETTINGS_FOLDER` inside it.
-  Local staging (`scenario::stage_directory`) calls it, as do
-  `cargo xtask windows-terminal`, which CI runs before the suite, and
-  `cargo xtask vm deploy`, which ships the folder to the guest.
+  Local staging (`scenario::stage_directory`) calls it, as does
+  `cargo xtask windows-terminal`, which CI runs before the suite.

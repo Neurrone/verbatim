@@ -1,6 +1,6 @@
-//! `verbatim-agent.exe` — the in-guest test agent for the M2 VM harness
-//! (see the crate root doc for its role: process management plus a
-//! control-plane tunnel, reachable over TCP).
+//! `verbatim-agent.exe` — the end-to-end suite's test agent (see the
+//! crate root doc for its role: process management plus a control-plane
+//! tunnel, reachable over TCP).
 //!
 //! At startup, checks that its own window station is interactive and
 //! exits with a one-line diagnosis if not: a screen reader test driven
@@ -18,22 +18,22 @@ use std::process::ExitCode;
 use clap::Parser;
 use verbatim_agent::protocol::DEFAULT_PORT;
 
-/// In-guest test agent for the M2 VM harness.
+/// The end-to-end suite's test agent.
 #[derive(Parser)]
 #[command(
     name = "verbatim-agent",
-    about = "In-guest test agent for the M2 VM harness: process management and a control-plane tunnel, reachable over TCP"
+    about = "The end-to-end suite's test agent: process management and a control-plane tunnel, reachable over TCP"
 )]
 struct Cli {
     /// TCP port to listen on.
     #[arg(long, default_value_t = DEFAULT_PORT)]
     port: u16,
-    /// Address to bind. Defaults to all interfaces: inside a Hyper-V
-    /// guest, the host reaches this agent only through the Default
-    /// Switch vNIC, whose guest-side address is not known ahead of time;
-    /// on a CI runner, tests connect over loopback, which "all
-    /// interfaces" also covers.
-    #[arg(long, default_value = "0.0.0.0")]
+    /// Address to bind, loopback by default. Another address exposes an
+    /// agent with no authentication, which injects real input and launches
+    /// programs, to that network, so it is given only on a network no one
+    /// else shares (`books/dev/src/explanation/architecture.md`, section
+    /// 14).
+    #[arg(long, default_value = "127.0.0.1")]
     bind_address: String,
     /// Overrides the control-plane pipe name this agent tunnels
     /// `OpenControlTunnel` requests to; tests point this at a pipe name
@@ -95,7 +95,7 @@ fn main() -> ExitCode {
     };
     if !info.interactive_window_station {
         eprintln!(
-            "verbatim-agent: this process's window station is not interactive (session {}): a screen reader test can never work here. This usually means the agent was started from a non-interactive context such as WinRM or PowerShell Direct (the \"session 0\" problem) rather than the guest's interactive logon session.",
+            "verbatim-agent: this process's window station is not interactive (session {}): a screen reader test can never work here. This usually means the agent was started from a non-interactive context such as WinRM or PowerShell Direct (the \"session 0\" problem) rather than the machine's interactive logon session.",
             info.session_id
         );
         return ExitCode::FAILURE;

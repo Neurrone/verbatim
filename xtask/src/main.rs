@@ -45,11 +45,6 @@
 //! command turns a `faults` feature on, so the ordinary steps build and
 //! lint exactly the shipped configuration.
 //!
-//! `vm` drives the milestone M2 Hyper-V E2E harness (`books/dev/src/explanation/architecture.md`
-//! section 14): building and importing the golden VM, deploying builds into
-//! it, and running `crates/verbatim-e2e`'s suite against it. See
-//! `xtask/src/vm/mod.rs` for the verb list.
-//!
 //! `demo` records one end-to-end scenario on this machine as a video for
 //! the repository's `videos` folder: a test scenario's in `videos/tests`,
 //! a demonstration's in `videos/demos`. See `xtask/src/demo.rs`.
@@ -137,8 +132,6 @@ mod perf;
 mod record;
 #[cfg(windows)]
 mod trace;
-#[cfg(windows)]
-mod vm;
 
 /// The crates `ci` lints and tests on a host other than Windows, each
 /// passed to cargo as `-p`: the platform-neutral tier, the logic crates,
@@ -184,8 +177,6 @@ fn main() -> ExitCode {
         Some("replay") => replay::run(&args[1..]),
         Some("e2e-plan") => plan::run(&args[1..]),
         Some("coverage") => coverage::run(&args[1..]),
-        #[cfg(windows)]
-        Some("vm") => vm::run(&args[1..]),
         #[cfg(windows)]
         Some("faults") => faults(),
         #[cfg(windows)]
@@ -249,8 +240,6 @@ fn usage() {
     eprintln!(
         "  faults  clippy with the faults feature, then the fault tests, into target/debug (books/dev/src/reference/testing.md)"
     );
-    #[cfg(windows)]
-    eprintln!("  vm    Hyper-V E2E harness; run `cargo xtask vm` alone for its verbs");
     #[cfg(windows)]
     eprintln!(
         "  demo  record one scenario on this machine as a video in videos/tests, or a demonstration in videos/demos (cargo xtask demo <scenario> [--name <name>])"

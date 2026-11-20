@@ -45,9 +45,9 @@ subcommand name:
 - `--connect tcp:HOST:PORT` connects over TCP instead and sends the
   control-plane `Hello` at once, so it works only against an endpoint that
   speaks the control protocol from the first byte. Verbatim itself never
-  listens on TCP, and the in-guest agent speaks its own protocol first, so
-  this does not reach a Verbatim through the agent: the E2E suite and
-  `cargo xtask vm test` do that in code, sending the agent's `Hello` and
+  listens on TCP, and the test agent speaks its own protocol first, so
+  this does not reach a Verbatim through the agent: the E2E suite does
+  that in code, sending the agent's `Hello` and
   `OpenControlTunnel` and then handing the socket to
   `Client::from_tcp_stream`.
 - Anything else passed to `--connect` is treated as a literal named-pipe

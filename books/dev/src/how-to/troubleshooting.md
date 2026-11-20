@@ -2,18 +2,6 @@
 
 The traps that have cost this project time, each with its symptom, its cause, the rule, and the reason for the rule. The trap above all, the interactive-session rule, is in [the tooling guide](readme.md).
 
-**The agent is unreachable after a checkpoint restore, but healthy inside
-the guest.** Restoring a running checkpoint resumes the guest with the
-DHCP lease it held when the checkpoint was taken, and Hyper-V's Default
-Switch regenerates its NAT subnet on every host reboot, so the guest can
-come back on an unroutable address: the agent listens and PowerShell
-Direct works, but no host-side TCP probe connects. Every restore path
-(`vm restore`, `vm test --restore`) renews the guest's lease over
-PowerShell Direct before waiting for the agent; if an agent wait times
-out anyway, compare the guest's IP (`Get-VMNetworkAdapter`) with the
-host's `vEthernet (Default Switch)` subnet first, because that is the
-usual cause.
-
 **The agent, or what it launches, is tied to a terminal you are using.**
 An agent started from your own Windows Terminal is attached to it, and so
 is everything it starts. Start it from a shell with a hidden console of
@@ -29,17 +17,16 @@ while neither `Get-NetTCPConnection` nor
 it, almost certainly a reservation by security software. So
 `verbatim_agent::protocol::DEFAULT_PORT` is 44001. If 44001 is blocked on
 a machine, override it everywhere consistently: `verbatim-agent.exe
---port <N>`, and the matching endpoint wherever the suite or `xtask vm`
-expects one (`xtask/src/vm/mod.rs`'s `AGENT_PORT` for the VM path),
-because a mismatch looks like an unreachable agent.
+--port <N>`, and the matching endpoint wherever the suite expects one
+(`VERBATIM_E2E_ENDPOINT`, or `--endpoint` on `cargo xtask e2e`), because a
+mismatch looks like an unreachable agent.
 
 **Gestures and status queries succeed, but nothing is heard and focus
 never moves.** A locked screen or an active screensaver makes `SendInput`
 inject nothing, with no error anywhere in the chain; the control plane
-still answers `Ok`, since sending input is fire-and-forget.
-`Initialize-VerbatimHarness.ps1` disables the screensaver and locking by
-machine-wide policy, but a manual Win+L or a plain (not Enhanced Session)
-RDP disconnect locks the workstation again. Check that the console sits
+still answers `Ok`, since sending input is fire-and-forget. Disabling
+the screensaver and locking is not enough: a manual Win+L or a plain RDP
+disconnect locks the workstation again. Check that the console sits
 at an unlocked desktop before looking anywhere else, because nothing
 else reports it.
 
@@ -150,9 +137,7 @@ its dump, followed by the running total for the test process ("in this
 test run so far: 1 in 20 scenario(s)"); a full suite runs in one test
 process, so its last line is the suite's total. Each scenario's
 `summary.txt` keeps an `outpost_crashes` count and one `outpost_crash`
-line each, and `cargo xtask vm test`, which runs each scenario in its own
-process, prints them under each scenario and then the run's total. To
-count across separate runs, such as twenty runs of one scenario with
+line each. To count across separate runs, such as twenty runs of one scenario with
 `--exact`, read the archived summaries under
 `target/e2e-artifacts/history/<scenario>`, because no single process
 sees them all.
@@ -199,8 +184,6 @@ scenario opened that also holds your tabs, as above:
   handle it, then minimizes directly, without activating another window,
   each window still restored, because Minimize All has left a just-opened
   window restored.
-- A stray guest-side process is also cleared by restoring a checkpoint
-  (`cargo xtask vm restore`).
 
 **A gesture pressed just after launch does nothing, though the control
 plane answers `Ok`.** The control server starts before `verbatim-app`'s

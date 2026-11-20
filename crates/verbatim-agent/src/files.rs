@@ -1,6 +1,6 @@
 //! [`crate::protocol::Request::ReadFile`] and
 //! [`crate::protocol::Request::ListFiles`]: pulling small files (logs, crash
-//! dumps) off the guest for a host-side test to inspect. Also the requests
+//! dumps) off the agent's machine for a host-side test to inspect. Also the requests
 //! that lay out a test's own files and folders and remove them again.
 
 use std::io;

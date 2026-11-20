@@ -29,7 +29,7 @@ use crate::protocol::{
 
 /// The two transports a [`Client`] can speak: the local named pipe, or a
 /// TCP socket that carries the control protocol. Verbatim itself never
-/// listens on TCP; the one such socket in this workspace is the in-guest
+/// listens on TCP; the one such socket in this workspace is the test
 /// agent's control tunnel, handed over with [`Client::from_tcp_stream`].
 enum Transport {
     Pipe(File),
@@ -187,7 +187,7 @@ impl Client {
 
     /// Connects to `addr` over TCP and completes the `Hello` handshake at
     /// once, so `addr` must speak the control protocol from the first byte.
-    /// Verbatim never listens on TCP, and the in-guest agent speaks its own
+    /// Verbatim never listens on TCP, and the test agent speaks its own
     /// protocol until a tunnel is opened, so reaching a Verbatim through the
     /// agent goes through [`Client::from_tcp_stream`] instead.
     ///

@@ -67,5 +67,5 @@ developer's machine). What such a test would show is covered
 elsewhere: OneCore's synthesis by the host tests, the speech manager and
 mixer by `verbatim-speech`'s and `verbatim-audio`'s tests, OneCore in the
 whole application by the `switch_to_onecore` end-to-end scenario, and
-the real `WasapiDevice` by every `cargo xtask vm test` run, which is
-always audible.
+the real `WasapiDevice` by an audible end-to-end run
+(`VERBATIM_E2E_AUDIBLE=1`).

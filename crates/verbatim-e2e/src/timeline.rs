@@ -114,7 +114,7 @@ pub struct Timeline {
     /// time, in milliseconds on the run's shared clock,
     /// `verbatim_process::clock`), with the instant it arrived: what a
     /// moment of the harness's is turned into Verbatim's time by
-    /// ([`Self::on_verbatim_clock`]), so a VM guest whose clock differs
+    /// ([`Self::on_verbatim_clock`]), so an agent's machine whose clock differs
     /// from the host's still has its own times compared.
     verbatim_stamp: Arc<Mutex<Option<(u64, Instant)>>>,
 }

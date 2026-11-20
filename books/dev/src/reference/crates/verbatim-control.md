@@ -113,7 +113,7 @@ Public API:
   control protocol from the first byte (Verbatim itself never listens on
   TCP), and `from_tcp_stream(stream)`, which completes the handshake on a
   socket that is already connected: the end-to-end suite reaches a
-  Verbatim through the in-guest agent by sending the agent's `Hello` and
+  Verbatim through the test agent by sending the agent's `Hello` and
   `OpenControlTunnel` on one socket, then handing that socket to
   `from_tcp_stream`. Every constructor completes the `Hello` handshake;
   `request` matches replies by correlation id, discarding every other

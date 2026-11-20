@@ -23,8 +23,10 @@
 //! [`Scenario::launch`] copies Verbatim's executables into
 //! `target/e2e-stage` under the workspace root and writes
 //! [`verbatim_config::Settings::for_e2e`]'s fixed settings there, then
-//! launches that staged copy. In remote mode, `cargo xtask vm deploy`
-//! stages the guest side equivalently.
+//! launches that staged copy. In remote mode the same settings are written
+//! through the agent beside the `verbatim.exe` [`VERBATIM_EXE_ENV`] names
+//! on the agent's machine, where the developer copied the stage
+//! (`books/dev/src/explanation/architecture.md`, section 14).
 //!
 //! The harness waits for evidence, never for time: Verbatim sets an event
 //! the agent created when it is ready for input, windows are waited for on
@@ -162,12 +164,12 @@ const HARNESS_FILE_EXTENSIONS: [&str; 3] = ["txt", "json", "dmp"];
 pub const VERBATIM_EXE_ENV: &str = "VERBATIM_E2E_VERBATIM_EXE";
 
 /// Environment variable marking a *remote* run: the agent, Verbatim, and
-/// its configuration live on another machine (the Hyper-V guest), so
-/// [`VERBATIM_EXE_ENV`] names a path in that machine's filesystem, not this
-/// one's. `cargo xtask vm test` sets it.
+/// its configuration live on another machine, so [`VERBATIM_EXE_ENV`] names
+/// a path in that machine's filesystem, not this one's. `cargo xtask e2e
+/// --endpoint` sets it.
 pub const REMOTE_ENV: &str = "VERBATIM_E2E_REMOTE";
 
-/// Whether this is a remote (in-guest) run; see [`REMOTE_ENV`].
+/// Whether this is a remote run; see [`REMOTE_ENV`].
 fn is_remote() -> bool {
     std::env::var(REMOTE_ENV).is_ok_and(|value| value == "1" || value.eq_ignore_ascii_case("true"))
 }
@@ -474,7 +476,7 @@ impl Scenario {
         }
         if !remote && !verbatim_exe.is_file() {
             return Err(io::Error::other(format!(
-                "verbatim.exe not found at {} (set {VERBATIM_EXE_ENV} to override, or {REMOTE_ENV} if it lives in a guest)",
+                "verbatim.exe not found at {} (set {VERBATIM_EXE_ENV} to override, or {REMOTE_ENV} if it lives on the agent's machine)",
                 verbatim_exe.display()
             )));
         }
@@ -500,7 +502,7 @@ impl Scenario {
             .to_str()
             .ok_or_else(|| io::Error::other("verbatim.exe directory is not valid UTF-8"))?
             .to_owned();
-        let stderr_path = verbatim_stderr_log_path(&launch_dir, remote)?;
+        let stderr_path = verbatim_stderr_log_path(&launch_dir)?;
 
         if remote {
             write_remote_settings(&mut agent, &run_dir, run_settings(configure))?;
@@ -3699,25 +3701,16 @@ fn resolve_verbatim_exe_path(override_path: Option<String>) -> PathBuf {
 }
 
 /// The name of the file a launched Verbatim's stdout and stderr are captured
-/// into, next to its executable; `cargo xtask vm logs` pulls it by this name.
+/// into, next to its executable.
 pub const VERBATIM_STDERR_LOG_NAME: &str = "stderr-e2e.log";
 
 /// The path a launched Verbatim's stdout and stderr are captured into (see
 /// [`crate::agent_client::AgentClient::launch_process`]'s `stderr_to`),
 /// truncated fresh on every launch so each scenario's log is its own and
-/// never a stale mix of a previous run's crash.
-///
-/// In a remote run this is a fixed guest-side path matching what
-/// `cargo xtask vm logs` pulls back out (`xtask/src/vm/logs.rs`); `exe_dir`
-/// is ignored in that case since it names a location on this host, not the
-/// guest. In runner-direct mode it sits next to the staged `verbatim.exe`
-/// copy itself, alongside its `settings.toml`.
-fn verbatim_stderr_log_path(exe_dir: &Path, remote: bool) -> io::Result<String> {
-    if remote {
-        return Ok(format!(
-            r"C:\VerbatimLab\verbatim\{VERBATIM_STDERR_LOG_NAME}"
-        ));
-    }
+/// never a stale mix of a previous run's crash: beside the `verbatim.exe`
+/// launched, alongside its `settings.toml`, on whichever machine the agent
+/// runs.
+fn verbatim_stderr_log_path(exe_dir: &Path) -> io::Result<String> {
     exe_dir
         .join(VERBATIM_STDERR_LOG_NAME)
         .to_str()
@@ -3850,7 +3843,7 @@ fn copy_into_stage(source_dir: &Path, stage_dir: &Path) -> io::Result<()> {
         let source = source_dir.join(name);
         if !source.is_file() {
             return Err(io::Error::other(format!(
-                "{name} not found at {} (set {VERBATIM_EXE_ENV} to override its directory, or {REMOTE_ENV} if it lives in a guest)",
+                "{name} not found at {} (set {VERBATIM_EXE_ENV} to override its directory, or {REMOTE_ENV} if it lives on the agent's machine)",
                 source.display()
             )));
         }
@@ -3974,10 +3967,8 @@ fn write_remote_settings(
 ///
 /// Called only in runner-direct mode, on `dir` being [`stage_binaries`]'s
 /// staging directory (this suite and the staged copy share a filesystem, so
-/// writing directly there is correct); VM deploys handle this differently,
-/// through `xtask vm deploy`'s own `write_synth_settings`, staged and
-/// parameterized the same way but kept in lockstep independently — see
-/// [`Settings::for_e2e`]'s doc comment.
+/// writing directly there is correct); a remote run sends the same file
+/// through the agent ([`write_remote_settings`]).
 fn write_settings(dir: &Path, settings: Settings) -> io::Result<()> {
     let store = ConfigStore::from_settings(dir, settings);
     store.save_settings().map_err(|error| config_error(&error))

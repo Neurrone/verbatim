@@ -1,10 +1,8 @@
 /target
 /iso/
 /artifacts/
-/vm/local.pkrvars.hcl
 /.env
 /dumps/
-/packer_cache/
 /.claude/worktrees/
 /.claude/settings.local.json
 

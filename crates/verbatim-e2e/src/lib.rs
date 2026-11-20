@@ -2,19 +2,17 @@
 //! a scenario registry.
 //!
 //! This crate is dev-only: it drives a real, running Verbatim (and target
-//! applications such as Notepad) through the M2 in-guest agent
+//! applications such as Notepad) through the test agent
 //! (`verbatim-agent`, `verbatim_agent::protocol`) and, once tunneled
 //! through it, Verbatim's own control plane (`verbatim_control`). It is a
-//! library so the suite's one test binary, `tests/e2e.rs`, and `xtask vm
-//! test` can both drive it.
+//! library so the suite's one test binary, `tests/e2e.rs`, and the xtask
+//! commands that plan and record scenarios can read it.
 //!
 //! [`registry`] is the entry point for the restructuring: every live
 //! scenario is a named, grouped [`registry::ScenarioDef`] — setup, body,
 //! teardown — instead of logic living only inside a `#[test]` function.
 //! [`registry::run_named`] is what each scenario's test in
-//! `crates/verbatim-e2e/tests/e2e.rs` calls, and what `cargo xtask vm test`
-//! selects by name or group ([`registry::select`]) and invokes once per
-//! scenario (one `cargo test` subprocess per scenario). [`recording`]
+//! `crates/verbatim-e2e/tests/e2e.rs` calls. [`recording`]
 //! records each scenario's video, with Verbatim's audio. [`artifacts`] is the host-side
 //! artifacts (a summary, the timeline, Verbatim's logs, Core's focus, and
 //! a flight-recorder dump, kept for every run) both sides of that process
@@ -32,8 +30,7 @@
 //! way without [`endpoint`].
 //!
 //! Local verification: build `verbatim-app` and `verbatim-agent` (debug),
-//! start the agent with `--bind-address 127.0.0.1` (loopback avoids a
-//! firewall prompt on a dev machine; the default port,
+//! start the agent, which listens on loopback by default (its default port,
 //! `verbatim_agent::protocol::DEFAULT_PORT`, is deliberately not in the
 //! 47000s — see that constant's doc comment for why), export
 //! `VERBATIM_E2E_ENDPOINT=127.0.0.1:44001`, and run

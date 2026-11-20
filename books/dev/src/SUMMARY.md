@@ -16,7 +16,6 @@
   - [Measuring](how-to/measuring.md)
   - [The end-to-end suite](how-to/e2e.md)
   - [Code coverage](how-to/coverage.md)
-  - [The VM harness](how-to/vm.md)
   - [The NVDA transcript](how-to/nvda.md)
   - [Debugging other processes with cdb](how-to/debugging.md)
   - [Troubleshooting](how-to/troubleshooting.md)

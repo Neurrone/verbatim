@@ -1,19 +1,19 @@
 # verbatim-agent
 
-The in-guest test agent for the M2 VM harness. Runs inside the interactive
-session of a Hyper-V guest, or reachable over loopback on a CI runner, and
-is the only externally reachable doorway into that machine: host-side E2E
+The end-to-end suite's test agent. Runs inside the interactive session of
+the machine Verbatim runs on, reached over loopback on a developer's
+machine or a CI runner, or from another machine (architecture section 14),
+and is the only externally reachable doorway into that machine: host-side E2E
 tests reach it over TCP to manage processes and to tunnel through to
 Verbatim's own control-plane named pipe, which deliberately never listens
 on the network itself (architecture section 10, decision D8).
 
 The agent has no authentication: anyone who can reach its port can launch
 and kill processes, read files, and drive Verbatim as the signed-in user.
-It binds all interfaces by default, because the Hyper-V host reaches the
-guest at an address not known ahead of time. That is acceptable only on an
-isolated lab network or a disposable CI runner. On a development machine,
-run it with `--bind-address 127.0.0.1`, as `books/dev/src/how-to/e2e.md` does, and stop
-it when the suite is done.
+It binds to loopback by default. `--bind-address` with another address
+exposes it to that network, which is given only on a network no one else
+shares, such as a VM's private virtual switch, an accepted risk (Dickson,
+2026-11-20; architecture section 14). Stop it when the suite is done.
 
 Public API:
 

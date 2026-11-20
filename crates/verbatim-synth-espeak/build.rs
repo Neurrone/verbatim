@@ -6,8 +6,8 @@
 //! library, the `espeak-ng` program, and then runs that program to compile
 //! the phoneme and dictionary data. The data is copied next to the
 //! executables in the cargo target directory (`espeak-ng-data`), where the
-//! driver looks for it first, and where the end-to-end staging and the VM
-//! deploy copy it from.
+//! driver looks for it first, and where the end-to-end staging copies it
+//! from.
 //!
 //! Only the C parts are built: mbrola, sonic, pcaudio, the C++ speech
 //! player, and asynchronous output are off, so nothing beyond the C runtime

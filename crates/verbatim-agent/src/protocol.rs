@@ -131,7 +131,7 @@ pub const IGNORE_PIDS_ENV: &str = "VERBATIM_IGNORE_PIDS";
 /// them appear in `netsh interface ipv4/ipv6 show excludedportrange` — an
 /// invisible reservation, almost certainly security software, that
 /// standard tooling cannot see or explain. Since this protocol's whole
-/// purpose is talking to unpredictable Hyper-V guests and CI runners,
+/// purpose is talking to unpredictable machines and CI runners,
 /// picking a default outside that band (44001, empirically clear on the
 /// same machine) is cheaper than debugging invisible port policy on every
 /// machine this ever runs on. Override with `--port` when even this one is
@@ -174,7 +174,7 @@ pub enum Request {
         /// When set, a path the agent creates (truncating any existing
         /// file) and redirects the child's stdout and stderr into, so a
         /// panic message that would otherwise vanish with the process is
-        /// captured for a later `ReadFile` (or `cargo xtask vm logs`) pull.
+        /// captured for a later `ReadFile` pull.
         /// `None` (the default on the wire, via `serde(default)`, so an
         /// older client omitting this field still deserializes) inherits
         /// the agent's own stdio exactly as before.
@@ -1591,7 +1591,7 @@ mod tests {
                 args: vec![],
                 working_dir: None,
                 env: vec![("VERBATIM_TEST_AUDIO".to_owned(), "null".to_owned())],
-                stderr_to: Some(r"C:\VerbatimLab\verbatim\stderr-e2e.log".to_owned()),
+                stderr_to: Some(r"C:\Verbatim\stderr-e2e.log".to_owned()),
                 console_title: Some("A console".to_owned()),
                 minimized: true,
                 withhold_foreground: false,

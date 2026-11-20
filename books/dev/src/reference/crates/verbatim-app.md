@@ -327,8 +327,8 @@ Milestone M4's themes and earcons are wired here too
   window's application holds attention.
 - The build script copies the top-level `sounds` folder next to the
   executables in the cargo target directory, so `target\debug` holds
-  everything a run needs, and the end-to-end staging and the VM deploy
-  copy it from there. It also sets `VERBATIM_COMMIT` to `git rev-parse
+  everything a run needs, and the end-to-end staging copies it from
+  there. It also sets `VERBATIM_COMMIT` to `git rev-parse
   HEAD` and `VERBATIM_UNCOMMITTED_CHANGES` to whether `git status
   --porcelain` printed anything, `unknown` and `false` when git cannot
   answer, which `flight_dump` writes into the dump's header; it reruns when

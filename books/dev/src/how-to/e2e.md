@@ -1,6 +1,6 @@
 # The end-to-end suite
 
-How to run the end-to-end suite on this machine: the test-audio mode its runs use, the agent, `cargo xtask park`, the environment variables, what a run leaves behind, the measure and demo sets, and how a run is heard and recorded. The VM harness has [a guide of its own](vm.md). The suite's code, its scenario registry, `Scenario`, the speech assertions and compare mode, is described in [the verbatim-e2e guide](../reference/crates/verbatim-e2e.md).
+How to run the end-to-end suite on this machine: the test-audio mode its runs use, the agent, `cargo xtask park`, the environment variables, what a run leaves behind, the measure and demo sets, and how a run is heard and recorded, and how to run it against an agent on another machine. The suite's code, its scenario registry, `Scenario`, the speech assertions and compare mode, is described in [the verbatim-e2e guide](../reference/crates/verbatim-e2e.md).
 
 ## Test-audio mode
 
@@ -34,9 +34,6 @@ local run unless `VERBATIM_E2E_AUDIBLE` is set (see below).
 Every run, silent or audible, selects eSpeak NG, so silent and audible
 runs differ only in the device: the same synthesizer produces the same
 speech, played into silence or through the real device.
-`cargo xtask vm deploy` (and `vm test`, and `vm create`'s own bake-in of
-the golden checkpoint) stages a `settings.toml` selecting eSpeak NG too,
-and every VM run is audible (see "Hearing and recording a run" below).
 
 A second variable, `VERBATIM_RECORD_AUDIO=<path to a WAV file>`, has
 Verbatim record everything its mixer plays, as heard, into that file, with
@@ -50,8 +47,9 @@ run" below, and `WavRecorder` in [the verbatim-audio guide](../reference/crates/
 
 A local run, also called runner-direct, is one where the agent and the
 tests it drives share one machine, your development machine or a plain
-GitHub-hosted Windows runner, as opposed to `cargo xtask vm test`, which
-drives a Hyper-V guest. Every live test in
+GitHub-hosted Windows runner, as opposed to a remote run, which drives an
+agent on another machine ("Running against another machine" below). Every
+live test in
 `crates/verbatim-e2e` is `#[ignore]`d, so `cargo test` and `cargo xtask ci`
 list them as ignored, never as passed, and stay green with no agent
 anywhere. A run with `--ignored` runs them, and each fails, rather than
@@ -90,9 +88,8 @@ target\debug\verbatim-agent.exe --bind-address 127.0.0.1 --port 44001
 The suite builds Verbatim itself (see below), so only the agent needs
 building first.
 
-Leave that agent running in its own terminal (loopback avoids a firewall
-prompt that binding all interfaces would trigger on a dev machine), then in
-a second terminal:
+Leave that agent running in its own terminal (it listens on loopback,
+its default, so no firewall prompt appears), then in a second terminal:
 
 ```
 $env:VERBATIM_E2E_ENDPOINT = '127.0.0.1:44001'
@@ -156,9 +153,8 @@ that `cargo xtask park` needs no elevation. It checks that the session
 reached the console, that no lock screen is showing, and that an uncloaked
 window holds the foreground, and fails saying which check did not pass.
 The console must not lock on its own either: turn off the screensaver,
-inactivity locking, and sleep, as `Initialize-VerbatimHarness.ps1` does
-for the Hyper-V guest. While parked, the session is unlocked for anyone
-who opens the VM's console.
+inactivity locking, and sleep. While parked, the session is unlocked for
+anyone who opens the machine's console.
 
 ### The staged copy of Verbatim
 
@@ -179,10 +175,9 @@ destination already matches byte-for-byte, file by file for the
 directories) and writes a fresh `settings.toml` there — `Settings::for_e2e`
 selecting eSpeak NG — before launching that staged copy.
 Your own `target/debug/verbatim.exe` and its `settings.toml` are never read
-or mutated by a test run. Against the VM, `cargo xtask vm deploy` stages the
-guest side the same way, independently (the two crates cannot share code, so
-they are kept in lockstep by hand — see `verbatim_config::Settings::for_e2e`'s
-doc comment, the shared constructor both staging steps build from).
+or mutated by a test run. A remote run stages nothing: the developer copied
+the stage to the other machine, and the fixed `settings.toml` is written
+there through the agent.
 
 ## Environment variables
 
@@ -197,15 +192,15 @@ The harness reads these; set them in the terminal that runs `cargo test`.
   binaries are staged as they are. The staged, fixed configuration is the
   same either way.
 - `VERBATIM_E2E_REMOTE=1`: a remote run, where the agent, Verbatim and its
-  configuration are on another machine (the Hyper-V guest). Set by
-  `cargo xtask vm test`, not by hand. It skips the local staging, since
-  `cargo xtask vm deploy` staged the guest; the fixed `settings.toml` is
-  still written afresh for every scenario, through the agent, so a
-  scenario that changes a setting (`windows_terminal_control_flood`
-  lowers the flood limits) never leaves it changed for the next.
+  configuration are on another machine, and `VERBATIM_E2E_VERBATIM_EXE`
+  names the `verbatim.exe` there. Set by `cargo xtask e2e --endpoint`
+  ("Running against another machine" below). It skips the local staging;
+  the fixed `settings.toml` is still written afresh for every scenario,
+  through the agent, so a scenario that changes a setting
+  (`windows_terminal_control_flood` lowers the flood limits) never leaves
+  it changed for the next.
 - `VERBATIM_E2E_AUDIBLE=1`: an audible run, through the real audio
-  device ("Hearing and recording a run" below). `cargo xtask vm test` sets
-  it always.
+  device ("Hearing and recording a run" below).
 - `VERBATIM_E2E_RECORD=0` (or `false`): no video recording, which is
   otherwise on.
 - `VERBATIM_E2E_RECORD_QUALITY=demo`: the smoother, sharper video
@@ -215,8 +210,7 @@ The harness reads these; set them in the terminal that runs `cargo test`.
   for the processor. Any other value, or none, gives the ordinary
   recording.
 - `VERBATIM_E2E_FFMPEG`: the ffmpeg executable on the agent's machine, by
-  default `ffmpeg` found on that machine's `PATH`. `cargo xtask vm test`
-  sets it to the guest's vendored copy, `C:\VerbatimLab\tools\ffmpeg.exe`.
+  default `ffmpeg` found on that machine's `PATH`.
 - `VERBATIM_E2E_RUST_LOG`: passed to the Verbatim a scenario launches as
   `RUST_LOG`, which its outposts and the focus listener inherit. Unset,
   Verbatim logs with
@@ -270,8 +264,7 @@ own runner, built on `libtest-mimic` and taking libtest's command line,
 with one test per registered scenario named after it, so
 `cargo test -p verbatim-e2e --test e2e -- --ignored --exact <name> --test-threads=1`
 runs exactly that one scenario, the same selection
-`cargo xtask vm test --scenario <name>` makes against the VM
-([the VM harness guide](vm.md)). The scenarios, and what each asserts, are
+`cargo xtask e2e <name>` makes. The scenarios, and what each asserts, are
 listed in [the verbatim-e2e guide](../reference/crates/verbatim-e2e.md), "The
 registry", and at the top of each module in
 `crates/verbatim-e2e/src/scenarios/`. Speech is asserted exactly
@@ -307,8 +300,8 @@ window class and mutex it finds a running instance by with a hash of its
 own executable's path, so the copy never hands its command line to your
 installed Windows Terminal, nor yours to it. A local run
 downloads it the first time anything is staged; `cargo xtask
-windows-terminal` does the same on its own, and `cargo xtask vm deploy`
-ships it to the guest next to Verbatim.
+windows-terminal` does the same on its own, and a remote run uses the
+copy in the stage copied to the other machine.
 
 Each Windows Terminal scenario starts that copy's `WindowsTerminal.exe`
 directly, never `wt.exe` from `PATH`, with `-w new --size 120,30 new-tab
@@ -377,7 +370,7 @@ say the same for each.
 
 The registry's `local_only` flag is the one place this is recorded. A
 local-only scenario is part of the suite: every local run and every
-`cargo xtask vm test` run includes it. CI's `e2e` job leaves them out of
+remote run includes it. CI's `e2e` job leaves them out of
 its groups (`cargo xtask e2e-plan` and `e2e-group` read the flag) and sets
 `VERBATIM_E2E_SKIP_LOCAL_ONLY=1`, so one that ran there anyway would fail
 rather than report a pass. The skip comes from that setting alone, never
@@ -485,9 +478,7 @@ The registry also holds demonstrations, its `demo` group
 written to be recorded as videos for `videos/demos`, showing a feature at
 a viewer's pace, so that each announcement is heard in full before the
 next action, typing included. They are never part of the suite: the
-suite's runs leave them out with `--skip demo_`, `registry::select` leaves
-them out when no `--scenario` or `--group` is given, and
-`cargo xtask vm test` refuses them by name or group. They follow the
+suite's runs leave them out with `--skip demo_`. They follow the
 suite's rules otherwise, so a broken feature fails the recording rather
 than producing a misleading video. `demo_terminal_session` runs in the
 harness's portable Windows Terminal.
@@ -504,12 +495,11 @@ over the desktop.
 
 Every scenario run, pass or fail, keeps its artifacts in
 `target/e2e-artifacts/<scenario name>` (under `VERBATIM_E2E_ARTIFACTS_DIR`
-when set), whether run locally or through `cargo xtask vm test`, and
+when set), whether the agent is on this machine or another, and
 losing any of them fails the run:
 
 - `summary.txt`: one fact per line: name, pass or fail, latency counts,
-  the outpost crashes it saw, and the optional utterances it heard.
-  `cargo xtask vm test` reads it back to build its run summary. The
+  the outpost crashes it saw, and the optional utterances it heard. The
   latency counts and maxima cover every utterance that carries its
   event's time (the startup speech and the desktop's announcement carry
   none): `latency_records` utterances, `latency_reached_audio` of them
@@ -641,7 +631,7 @@ and every input in Core's flight recorder that carries it or that Core
 received from 3 seconds before the failing step began to the failure,
 whatever its trace, merged in time order, each prefixed with its file's
 name. The failure's time is read on Verbatim's clock, from the newest
-speech frame's stamp, so a guest whose clock differs from the host's
+speech frame's stamp, so an agent's machine whose clock differs from this one's
 still shows the right inputs. The flight recorder's inputs are replayed
 and rendered on one line each, as `cargo xtask replay` prints them
 ("Replaying a run"); one of the failing step's trace is marked
@@ -790,8 +780,7 @@ The agent paces the typing and Backspace with a high-resolution waitable
 timer (`SendKeysPaced` and `TypeTextPaced`); the pace is the workload, not
 a wait. Like the demonstrations, the measure set is never part of the
 suite: its `#[test]` wrappers are ignored and named `measure_`, so the
-suite's runs deselect them with `--skip measure_`, and `registry::select`
-leaves them out when no `--scenario` or `--group` is given.
+suite's runs deselect them with `--skip measure_`.
 
 To run one locally, start the agent as for any local run, then, in a
 second terminal:
@@ -806,9 +795,6 @@ cargo test -p verbatim-e2e --test e2e -- --ignored --exact measure_focus_text_bo
 not need and whose encoding adds load. Run the whole set silently with
 `cargo test -p verbatim-e2e --test e2e -- --ignored measure_ --skip measure_speech_real --test-threads=1`,
 and `measure_speech_real` on its own in an audible run.
-Against the VM, `cargo xtask vm test --group measure` runs the set, with
-`measure_speech_real` failing at once in a silent run, and
-`cargo xtask vm test --scenario measure_keys_conhost` one of it, in debug.
 
 `docs/design/communication.md` section 11 compares debug and release, so
 measure both. Debug is what a
@@ -840,48 +826,29 @@ run too.
 
 How a run sounds, and whether it is recorded, are independent:
 
-- `cargo xtask vm test` is always audible: it deploys and runs eSpeak NG,
-  the default synthesizer, through the real `WasapiDevice`, with no
-  `--audible` flag, since a silent VM run has no purpose. A local run is
-  silent unless
-  `VERBATIM_E2E_AUDIBLE=1` is set (see "Test-audio mode" above).
+- A run is silent unless `VERBATIM_E2E_AUDIBLE=1` is set (see
+  "Test-audio mode" above), when it plays eSpeak NG through the real
+  `WasapiDevice`.
 - Every scenario is recorded, in every mode (a local run on a
-  development machine, the CI `e2e` job, and `cargo xtask vm test`),
+  development machine, the CI `e2e` job, and a remote run),
   whenever ffmpeg can be started on the agent's machine. Set
   `VERBATIM_E2E_RECORD=0` to turn recording off. The video, with
   Verbatim's own audio, lands in
   `target/e2e-artifacts/<scenario name>/<scenario name>.mp4` on the
   machine running the tests, pass or fail.
-- `--restore`, orthogonal to both, restores the `golden` checkpoint before
-  deploying. Restoring is never automatic: an ordinary run deploys onto the
-  guest as it is, since deploy only copies files and nothing is installed
-  into the guest. An acceptance run, which must start from a known-clean
-  guest, passes `--restore`.
 
-Listening live and recording work together, over `cargo xtask vm connect`
-or on a local machine, because the recording's audio does not come from
-any audio device: Verbatim records it itself (decision D16 in
+Listening live and recording work together, over Remote Desktop or on a
+local machine, because the recording's audio does not come from any audio
+device: Verbatim records it itself (decision D16 in
 `books/dev/src/explanation/architecture.md`).
 
-**To hear a run live:** `cargo xtask vm connect`, which starts the VM if
-needed, enables Remote Desktop in the guest the first time only (idempotent
-— a second run prints only "already" lines), stores the guest's test
-credentials in this host's own Windows Credential Manager keyed to the
-guest's address, then opens `mstsc.exe` against the guest with audio
-redirected to this computer and no sign-in prompt. Because it signs in as
-the same user the guest's autologon session already runs as, the RDP
-session takes over that session rather than creating a second one — the
-same session the agent and tests run in, so a following test run drives
-exactly what you are watching and listening to. Then, in a second terminal,
-`cargo xtask vm test` (audible by default). Closing the RDP window disconnects rather than logging off,
-leaving the guest running for the test to reuse. Run
-`cargo xtask vm connect --forget` afterward to remove the stored
-credentials again, for example on a shared host; as with any RDP
-disconnect, see [Troubleshooting](troubleshooting.md)'s note on a locked desktop silently
-swallowing `SendInput` if gestures or keys stop landing after a session.
-Without host-side credential storage, open
-`vmconnect.exe localhost verbatim` and turn Enhanced Session on (the
-toolbar or View menu) to get audio redirection.
+**To hear a run on another machine live:** connect to that machine's
+signed-in session by any means that redirects its audio, such as Remote
+Desktop signed in as the same user, which takes over that session rather
+than creating a second one, and run the scenario audibly. As with any RDP
+disconnect, see [Troubleshooting](troubleshooting.md)'s note on a locked
+desktop silently swallowing `SendInput` if gestures or keys stop landing
+after a session.
 
 Every run speaks through eSpeak NG, audible or not, so the speech
 assertions are the same in every mode. `menu_and_settings_dialog`'s
@@ -905,8 +872,8 @@ never has. It duplicates the first output with DXGI Desktop Duplication
 and writes a raw frame to an ffmpeg child every frame interval, the
 newest the compositor presented or the last again when nothing changed,
 which ffmpeg encodes as fragmented MP4 into Verbatim's launch directory on
-the agent's machine (`target/e2e-stage` in a local run,
-`C:\VerbatimLab\verbatim` in the guest), a fragment starting at each
+the agent's machine (`target/e2e-stage` in a local run, the folder
+`--verbatim-dir` names in a remote one), a fragment starting at each
 keyframe, one a second. It does not use ffmpeg's `gdigrab`, whose GDI blit
 of the screen waits while the compositor renders: on a machine without 3D
 graphics that blit waits seconds while the console host draws a
@@ -959,16 +926,12 @@ so recording changes nothing about the run it records.
 
 A local run therefore needs ffmpeg on `PATH` to record
 (for example `winget install ffmpeg`, then a new terminal), or
-`VERBATIM_E2E_FFMPEG` naming it, or `VERBATIM_E2E_RECORD=0`. The CI `e2e` job installs ffmpeg and
-uploads every video in its scenario's artifact. For the VM,
-`cargo xtask vm deploy` copies ffmpeg into `C:\VerbatimLab\tools` over
-PowerShell Direct from the LFS-vendored `vm/vendor/ffmpeg` copy,
-hash-skipping after the first deploy just like Verbatim's own binaries
-(see `vm/vendor/ffmpeg/README.md`), and `cargo xtask vm test` points
-`VERBATIM_E2E_FFMPEG` at it.
+`VERBATIM_E2E_FFMPEG` naming it, or `VERBATIM_E2E_RECORD=0`, and so does
+a remote run on the other machine. The CI `e2e` job installs ffmpeg and
+uploads every video in its scenario's artifact.
 
 The video needs a desktop that is being drawn. An RDP session that is
-connected, or a guest console session no RDP client has touched, both
+connected, or a console session no RDP client has touched, both
 are; a session left behind by a plain RDP disconnect is locked, which
 breaks the run itself before it matters for the video (see
 [Troubleshooting](troubleshooting.md)'s note on a locked desktop).
@@ -984,7 +947,12 @@ it before any other run. [The NVDA transcript
 guide](nvda.md), "Comparing a scenario", says how, and
 which scenarios cannot be compared.
 
-## The VM harness
+## Running against another machine
 
-The `cargo xtask vm` verbs and the golden-image rebuild live in
-[the VM harness guide](vm.md).
+`cargo xtask e2e <scenario>... --endpoint <address>:44001 --verbatim-dir
+<folder>` runs scenarios against an agent already started on another
+machine or VM, launching the Verbatim in that machine's folder: it builds
+the test binary but no agent, starts none, and sets `VERBATIM_E2E_ENDPOINT`,
+`VERBATIM_E2E_REMOTE` and `VERBATIM_E2E_VERBATIM_EXE` for each run. What
+that machine needs, what to copy there, and the network it may be
+reached on are in `books/dev/src/explanation/architecture.md`, section 14.

@@ -32,8 +32,7 @@ local end-to-end run, it takes over the desktop while it runs
 Demonstrations are the registry's `demo` group
 (`crates/verbatim-e2e/src/registry.rs`). They are never part of the
 suite: their tests are ignored, so neither CI nor a local
-`cargo test -p verbatim-e2e` runs them, and `cargo xtask vm test` refuses
-them. They run with the same fixed settings and speech rate as the suite,
+`cargo test -p verbatim-e2e` runs them. They run with the same fixed settings and speech rate as the suite,
 and like the tests, they wait for evidence rather than for a fixed time,
 and assert what they show, so a broken feature fails rather than
 recording a misleading video. Unlike the tests, they let each announcement

@@ -1,6 +1,6 @@
 [package]
 name = "verbatim-e2e"
-description = "Milestone M2 end-to-end suite: drives a real Verbatim and target applications through the in-guest agent and the control plane"
+description = "Milestone M2 end-to-end suite: drives a real Verbatim and target applications through the test agent and the control plane"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true

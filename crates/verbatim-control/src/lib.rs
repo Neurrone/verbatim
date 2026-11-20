@@ -7,7 +7,7 @@
 //! interactive user, is the sole access control; remote SMB clients are
 //! rejected, and the protocol itself carries no authentication. A Verbatim
 //! inside a VM is reached by a client running inside that VM, or through
-//! the in-guest agent's control tunnel. Remote support, with its own
+//! the test agent's control tunnel. Remote support, with its own
 //! transport, is not implemented. The E2E harness and `verbatim-inspect`
 //! are the first clients (D8).
 //!

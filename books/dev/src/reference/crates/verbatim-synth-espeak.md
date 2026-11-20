@@ -67,7 +67,7 @@ replacing any older copy, and bakes that path into the crate as
 `espeak-ng-data` next to the running executable first and falls back to
 the build's copy. Anything that runs Verbatim from another folder must
 copy the directory there too: the end-to-end suite's staging does, and
-so does `cargo xtask vm deploy`. The library's own compiled-in fallback
+so does a developer copying the stage to another machine. The library's own compiled-in fallback
 path is set to a fixed `/espeak-ng` prefix, so it never names the build
 directory; the driver always passes its own path.
 

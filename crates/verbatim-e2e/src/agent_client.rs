@@ -1,4 +1,4 @@
-//! A typed host-side client for the M2 in-guest agent protocol
+//! A typed host-side client for the test agent's protocol
 //! (`verbatim_agent::protocol`).
 //!
 //! Connects over TCP, completes the agent's `Hello` handshake, and exposes
@@ -191,7 +191,7 @@ impl AgentClient {
             .set_read_timeout(Some(timeout))
     }
 
-    /// Spawns `command` on the agent's guest, inheriting its interactive
+    /// Spawns `command` on the agent's machine, inheriting its interactive
     /// session. `env` is added to, not replacing, the agent's own
     /// environment. `stderr_to`, when set, asks the agent to capture the
     /// child's stdout and stderr into that path (truncated first).
@@ -447,7 +447,7 @@ impl AgentClient {
         }
     }
 
-    /// Terminates `pid` on the guest, with everything in its job when the
+    /// Terminates `pid` on the agent's machine, with everything in its job when the
     /// agent launched it.
     ///
     /// # Errors
@@ -1025,7 +1025,7 @@ impl AgentClient {
         }
     }
 
-    /// The guest's foreground window and visible top-level windows.
+    /// The agent's machine's foreground window and visible top-level windows.
     ///
     /// # Errors
     ///
@@ -1169,7 +1169,7 @@ impl AgentClient {
         }
     }
 
-    /// Records every top-level window on the guest as the baseline of the
+    /// Records every top-level window on the agent's machine as the baseline of the
     /// scenario about to start, on this connection, and returns how many
     /// there are.
     ///
@@ -1238,7 +1238,7 @@ impl AgentClient {
         }
     }
 
-    /// Writes a small file on the guest, creating or replacing it.
+    /// Writes a small file on the agent's machine, creating or replacing it.
     ///
     /// # Errors
     ///
@@ -1256,7 +1256,7 @@ impl AgentClient {
         }
     }
 
-    /// Deletes a file on the guest; one already gone is not an error.
+    /// Deletes a file on the agent's machine; one already gone is not an error.
     ///
     /// # Errors
     ///
@@ -1273,7 +1273,7 @@ impl AgentClient {
         }
     }
 
-    /// Injects real OS key strokes on the guest, each a plus-joined
+    /// Injects real OS key strokes on the agent's machine, each a plus-joined
     /// combination such as `shift+tab`, each numbered for the harness's
     /// barrier. Returns the last stroke's number.
     ///
@@ -1293,7 +1293,7 @@ impl AgentClient {
         }
     }
 
-    /// Presses `key`, one key such as `control`, down on the guest and
+    /// Presses `key`, one key such as `control`, down on the agent's machine and
     /// leaves it down until [`AgentClient::release_key`] releases it, or
     /// the connection ends, when the agent releases it. Numbered for the
     /// harness's barrier; returns its number.
@@ -1333,7 +1333,7 @@ impl AgentClient {
         }
     }
 
-    /// Types `text` on the guest as real key presses, each character mapped
+    /// Types `text` on the agent's machine as real key presses, each character mapped
     /// to its key and shift state in the foreground window's keyboard
     /// layout and numbered for the harness's barrier. Returns the last
     /// character's number.
@@ -1455,7 +1455,7 @@ impl AgentClient {
         }
     }
 
-    /// Reads a small file's contents from the guest.
+    /// Reads a small file's contents from the agent's machine.
     ///
     /// # Errors
     ///
@@ -1473,7 +1473,7 @@ impl AgentClient {
         }
     }
 
-    /// Reads a guest file of any size, in chunks, into `to` on this machine;
+    /// Reads a file on the agent's machine of any size, in chunks, into `to` on this machine;
     /// `to` appears only once the whole file has been copied.
     ///
     /// # Errors
@@ -1523,7 +1523,7 @@ impl AgentClient {
         }
     }
 
-    /// Lists the names of the files directly inside a guest directory.
+    /// Lists the names of the files directly inside a directory on the agent's machine.
     ///
     /// # Errors
     ///
@@ -1541,7 +1541,7 @@ impl AgentClient {
         }
     }
 
-    /// Lists the names of the folders directly inside `path` on the guest.
+    /// Lists the names of the folders directly inside `path` on the agent's machine.
     ///
     /// # Errors
     ///
@@ -1558,7 +1558,7 @@ impl AgentClient {
         }
     }
 
-    /// Deletes a folder and everything in it on the guest; one already gone
+    /// Deletes a folder and everything in it on the agent's machine; one already gone
     /// is not an error.
     ///
     /// # Errors

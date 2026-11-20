@@ -8,13 +8,10 @@
 //! it too), and [`crate::registry`] for where [`ScenarioSummary::write`] is
 //! called.
 //!
-//! This module is also the seam `cargo xtask vm test` reads through: it
-//! calls exactly the same [`artifacts_root`] and [`scenario_dir`] functions a
-//! scenario subprocess used to decide where to look, and
-//! [`ScenarioSummary::read`] to parse what that subprocess left behind —
-//! rather than scraping the subprocess's own stdout — so the run summary,
-//! one line per scenario, is built from a small, deliberately-written file
-//! instead of fragile text parsing.
+//! The commands that run scenarios as subprocesses (`cargo xtask e2e`,
+//! `demo` and `nvda`) call the same [`artifacts_root`] and
+//! [`scenario_dir`] functions a scenario subprocess used, so both sides
+//! agree on where a run's artifacts are.
 
 use std::fmt::Write as _;
 use std::fs;
@@ -27,8 +24,8 @@ use crate::speech::LatencyRow;
 
 /// Environment variable overriding [`artifacts_root`]'s default. Read by both
 /// a scenario subprocess (`crates/verbatim-e2e`) and, when set in the same
-/// shell, `cargo xtask vm test` (inherited into the subprocesses it spawns),
-/// so the two always agree on where artifacts land without any explicit
+/// shell, the xtask command that spawned it (inherited into the subprocesses
+/// it spawns), so the two always agree on where artifacts land without any explicit
 /// wiring between the two binaries.
 pub const ARTIFACTS_DIR_ENV: &str = "VERBATIM_E2E_ARTIFACTS_DIR";
 
@@ -62,7 +59,7 @@ fn resolve_artifacts_root(override_path: Option<String>) -> PathBuf {
 
 /// The directory one scenario's artifacts live under: `root` joined with the
 /// scenario's own name, which is also its `#[test]` function name and its
-/// `cargo xtask vm test --scenario` selector — one identifier used
+/// name on `cargo xtask e2e` — one identifier used
 /// everywhere, per [`crate::registry`]'s own doc comment.
 #[must_use]
 pub fn scenario_dir(root: &Path, scenario_name: &str) -> PathBuf {
@@ -70,10 +67,8 @@ pub fn scenario_dir(root: &Path, scenario_name: &str) -> PathBuf {
 }
 
 /// The one-line-per-fact result of running a single scenario: written by
-/// [`ScenarioSummary::write`] at the end of every run (pass or fail) and read
-/// back by `cargo xtask vm test` via [`ScenarioSummary::read`] to build the
-/// final run summary, without needing to parse the scenario subprocess's own
-/// stdout.
+/// [`ScenarioSummary::write`] at the end of every run (pass or fail), and
+/// read back by [`ScenarioSummary::read`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScenarioSummary {
     /// The scenario's name, matching [`crate::registry::ScenarioDef::name`].
@@ -251,8 +246,8 @@ const KEPT_RUNS_PER_SCENARIO: usize = 100;
 /// Copies one finished scenario run's artifacts from `dir` into
 /// `root\history\<scenario>\<UTC time>-<pass or fail>`, and removes all
 /// but the newest [`KEPT_RUNS_PER_SCENARIO`] runs of that scenario. The
-/// scenario's own directory under `root` always holds the latest run, which
-/// `cargo xtask vm test` reads; the history keeps the earlier ones, so an
+/// scenario's own directory under `root` always holds the latest run; the
+/// history keeps the earlier ones, so an
 /// intermittent failure is still there after later runs pass.
 ///
 /// # Errors

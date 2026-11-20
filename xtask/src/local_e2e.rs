@@ -5,6 +5,11 @@
 //! stopping the command, by any means, ends the agent, and the agent's
 //! launches end with it; no agent is left listening for the next run.
 //!
+//! With `--endpoint <host:port> --verbatim-dir <folder>`, the scenarios run
+//! instead against an agent already started on another machine, launching
+//! the Verbatim in that machine's folder (`books/dev/src/explanation/architecture.md`,
+//! section 14); no agent is built or started here.
+//!
 //! Each run is its own `cargo test` of the one scenario, so each has its
 //! own log, `target/e2e-runs/<scenario>-<run>.log`. The suite writes a
 //! scenario's artifacts to one folder that its next run replaces, so a
@@ -21,6 +26,10 @@ use std::time::Instant;
 
 use crate::agent::{Agent, ENDPOINT, PORT};
 
+/// An agent's address on another machine, and the folder there holding the
+/// Verbatim it launches.
+type Remote = (String, String);
+
 fn workspace() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -30,15 +39,17 @@ fn workspace() -> PathBuf {
 
 /// Runs the scenarios.
 pub fn run(args: &[String]) -> ExitCode {
-    let (scenarios, runs) = match parse(args) {
+    let (scenarios, runs, remote) = match parse(args) {
         Ok(parsed) => parsed,
         Err(message) => {
             eprintln!("{message}");
-            eprintln!("usage: cargo xtask e2e <scenario>... [--runs <n>]");
+            eprintln!(
+                "usage: cargo xtask e2e <scenario>... [--runs <n>] [--endpoint <host:port> --verbatim-dir <folder>]"
+            );
             return ExitCode::from(2);
         }
     };
-    match run_all(&scenarios, runs) {
+    match run_all(&scenarios, runs, remote.as_ref()) {
         Ok(true) => ExitCode::SUCCESS,
         Ok(false) => ExitCode::FAILURE,
         Err(message) => {
@@ -48,13 +59,19 @@ pub fn run(args: &[String]) -> ExitCode {
     }
 }
 
-/// The scenarios named, and how many times each runs.
-fn parse(args: &[String]) -> Result<(Vec<String>, u32), String> {
+/// The scenarios named, how many times each runs, and the other machine's
+/// agent and Verbatim folder, if they are named.
+fn parse(args: &[String]) -> Result<(Vec<String>, u32, Option<Remote>), String> {
     let mut scenarios = Vec::new();
     let mut runs = 1;
+    let (mut endpoint, mut verbatim_dir) = (None, None);
     let mut args = args.iter();
     while let Some(arg) = args.next() {
-        if arg == "--runs" {
+        if arg == "--endpoint" {
+            endpoint = Some(args.next().ok_or("--endpoint takes an address")?.clone());
+        } else if arg == "--verbatim-dir" {
+            verbatim_dir = Some(args.next().ok_or("--verbatim-dir takes a folder")?.clone());
+        } else if arg == "--runs" {
             runs = args
                 .next()
                 .and_then(|value| value.parse().ok())
@@ -69,14 +86,21 @@ fn parse(args: &[String]) -> Result<(Vec<String>, u32), String> {
     if scenarios.is_empty() {
         return Err("name at least one scenario".to_owned());
     }
-    Ok((scenarios, runs))
+    let remote = match (endpoint, verbatim_dir) {
+        (Some(endpoint), Some(verbatim_dir)) => Some((endpoint, verbatim_dir)),
+        (None, None) => None,
+        _ => return Err("--endpoint and --verbatim-dir are given together".to_owned()),
+    };
+    Ok((scenarios, runs, remote))
 }
 
-/// Builds, starts the agent, and runs each scenario `runs` times, round
-/// after round; true when every run passed.
-fn run_all(scenarios: &[String], runs: u32) -> Result<bool, String> {
+/// Builds, starts the agent unless `remote` names one, and runs each
+/// scenario `runs` times, round after round; true when every run passed.
+fn run_all(scenarios: &[String], runs: u32, remote: Option<&Remote>) -> Result<bool, String> {
     let root = workspace();
-    crate::agent::build(&root)?;
+    if remote.is_none() {
+        crate::agent::build(&root)?;
+    }
     cargo(
         &root,
         &["test", "-p", "verbatim-e2e", "--test", "e2e", "--no-run"],
@@ -90,13 +114,16 @@ fn run_all(scenarios: &[String], runs: u32) -> Result<bool, String> {
     fs::create_dir_all(&logs)
         .map_err(|error| format!("could not create {}: {error}", logs.display()))?;
     let artifacts = verbatim_e2e::artifacts::artifacts_root();
-    let _agent = Agent::start(&root, &logs, PORT)?;
+    let _agent = remote
+        .is_none()
+        .then(|| Agent::start(&root, &logs, PORT))
+        .transpose()?;
     let mut all_passed = true;
     for run in 1..=runs {
         for scenario in scenarios {
             let log = logs.join(format!("{scenario}-{run}.log"));
             let started = Instant::now();
-            let passed = run_one(&root, scenario, &log)?;
+            let passed = run_one(&root, scenario, &log, remote)?;
             let seconds = started.elapsed().as_secs();
             all_passed &= passed;
             if passed {
@@ -150,14 +177,31 @@ fn cargo(root: &Path, args: &[&str]) -> Result<(), String> {
     }
 }
 
-/// Runs `scenario` once, its output in `log`; true when it passed.
-fn run_one(root: &Path, scenario: &str, log: &Path) -> Result<bool, String> {
+/// Runs `scenario` once, its output in `log`, against the agent `remote`
+/// names or this machine's; true when it passed.
+fn run_one(
+    root: &Path,
+    scenario: &str,
+    log: &Path,
+    remote: Option<&Remote>,
+) -> Result<bool, String> {
     let file = fs::File::create(log)
         .map_err(|error| format!("could not create {}: {error}", log.display()))?;
     let errors = file
         .try_clone()
         .map_err(|error| format!("could not open {}: {error}", log.display()))?;
-    let status = Command::new(env!("CARGO"))
+    let mut command = Command::new(env!("CARGO"));
+    command.env(
+        "VERBATIM_E2E_ENDPOINT",
+        remote.map_or(ENDPOINT, |(endpoint, _)| endpoint.as_str()),
+    );
+    if let Some((_, folder)) = remote {
+        let exe = Path::new(folder).join("verbatim.exe");
+        command
+            .env("VERBATIM_E2E_REMOTE", "1")
+            .env("VERBATIM_E2E_VERBATIM_EXE", exe);
+    }
+    let status = command
         .args([
             "test",
             "-q",
@@ -172,7 +216,6 @@ fn run_one(root: &Path, scenario: &str, log: &Path) -> Result<bool, String> {
             "--test-threads=1",
         ])
         .current_dir(root)
-        .env("VERBATIM_E2E_ENDPOINT", ENDPOINT)
         .stdout(Stdio::from(file))
         .stderr(Stdio::from(errors))
         .status()
@@ -194,8 +237,28 @@ mod tests {
     fn scenarios_and_runs_are_read_in_any_order() {
         assert_eq!(
             parse(&args(&["a", "--runs", "3", "b"])),
-            Ok((args(&["a", "b"]), 3))
+            Ok((args(&["a", "b"]), 3, None))
         );
+    }
+
+    #[test]
+    fn an_endpoint_needs_its_folder() {
+        assert_eq!(
+            parse(&args(&[
+                "a",
+                "--endpoint",
+                "10.0.0.2:44001",
+                "--verbatim-dir",
+                r"C:\Verbatim"
+            ])),
+            Ok((
+                args(&["a"]),
+                1,
+                Some(("10.0.0.2:44001".to_owned(), r"C:\Verbatim".to_owned()))
+            ))
+        );
+        assert!(parse(&args(&["a", "--endpoint", "10.0.0.2:44001"])).is_err());
+        assert!(parse(&args(&["a", "--verbatim-dir", r"C:\Verbatim"])).is_err());
     }
 
     #[test]

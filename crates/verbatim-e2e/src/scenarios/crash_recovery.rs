@@ -28,9 +28,6 @@
 //! the listener's facts, which start its outpost, so the new
 //! application's announcement can have come only from the replacement,
 //! the one listener running once the first has exited.
-//!
-//! The scenario is in the shell group (`Group::Shell`), which covers the
-//! synthesizer host's replacement with the others.
 
 use std::io;
 use std::time::{Duration, Instant};

@@ -5,7 +5,7 @@ short meaning and links the document that defines it properly. Terms
 NVDA also uses (navigator object, review cursor, browse mode) keep
 their NVDA meanings and are documented in [docs/nvda](https://github.com/Neurrone/verbatim/blob/main/docs/nvda/readme.md).
 
-- **Agent** — `verbatim-agent`, the in-guest test doorway: launches
+- **Agent** — `verbatim-agent`, the end-to-end suite's test doorway: launches
   processes and tunnels the control plane over TCP for the E2E suite.
   [verbatim-agent](crates/verbatim-agent.md).
 - **Abandoned scenario** — an E2E scenario whose agent connection ended
@@ -104,8 +104,6 @@ their NVDA meanings and are documented in [docs/nvda](https://github.com/Neurron
   thread per application. [Architecture](../explanation/architecture.md) section 1.
 - **Stop waiting** — Core no longer waits for a request's answer: it records in its own table that it no longer waits for the request and takes the next entry; whether the reader is told to cancel, and what a late answer does, depends on the reason.
   [ADR 0003](adr/0003-readers-tell-core-asks.md).
-- **Golden image** — the Packer-built Windows VM baseline the Hyper-V
-  harness imports, deploys to, and checkpoints. [The VM harness](../how-to/vm.md).
 - **Held object** — something a reader keeps behind an id Core names, such as a node or a position in a text, released when Core releases it.
   [ADR 0003](adr/0003-readers-tell-core-asks.md).
 - **Held nodes** — the node references the reducer holds (the focus,

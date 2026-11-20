@@ -4,9 +4,9 @@ The practical companion to `books/dev/src/explanation/architecture.md` and `docs
 to actually drive this project day to day. Where the architecture doc
 explains why something exists and the roadmap says when it lands, these
 guides say which command to type. The tools are `cargo xtask` (the
-standard check, measurement, traces, NVDA captures, and the VM harness),
-`verbatim-inspect` against a running Verbatim, `mockapp`, and the
-end-to-end suite with its in-guest agent. Read the rule below before
+standard check, measurement, traces, NVDA captures, and the end-to-end
+runs), `verbatim-inspect` against a running Verbatim, `mockapp`, and the
+end-to-end suite with its test agent. Read the rule below before
 running anything that launches Verbatim or injects input.
 
 Like every doc in this repository, these avoid ASCII diagrams, box
@@ -20,19 +20,18 @@ a screen reader.** This is the interactive-session rule, and it is the
 reason `verbatim-agent` exists at all instead of the harness just using
 WinRM or PowerShell Direct directly: both put the launched process in a
 non-interactive session ("session 0"), which has no input desktop a screen
-reader could speak through or inject input into. The agent must run in the
-guest's real autologon session, which is why
-`Initialize-VerbatimHarness.ps1`'s `Register-VerbatimAgentTask` uses
-`LogonType Interactive` with a real `UserId` (not SYSTEM, not "run whether
-user is logged on or not") triggered `AtLogOn`, and why `verbatim-agent`
-itself refuses to even bind a socket at startup — and `SessionInfo` reports
-the same check live — when its own window station is not interactive.
+reader could speak through or inject input into. The agent must run in a
+real signed-in session, started there by hand, by `cargo xtask e2e`, or by
+a scheduled task that runs only when the user is logged on (not as SYSTEM),
+which is why `verbatim-agent` itself refuses to even bind a socket at
+startup — and `SessionInfo` reports the same check live — when its own
+window station is not interactive.
 `verbatim.exe` makes the same check and exits with a diagnosis, so a
 Verbatim launched from WinRM or PowerShell Direct says why it cannot run. If
 `session_info` (the E2E test, or `AgentClient::session_info` by hand) ever
-reports `interactive_window_station: false`, something restarted the agent
-outside that scheduled task; check the task's last run result in the guest
-before debugging anything downstream.
+reports `interactive_window_station: false`, something started the agent
+outside the signed-in session; restart it there before debugging anything
+downstream.
 
 ## The guides
 
@@ -54,8 +53,6 @@ before debugging anything downstream.
   mockapp tests on this machine, the CI workflow's coverage run, which
   adds the end-to-end suite, its reports, and what the end-to-end level
   can and cannot show.
-- [The VM harness](vm.md): every `cargo xtask vm` verb, rebuilding the
-  golden image, and a map of the harness's code.
 - [Recording what NVDA says](nvda.md): the transcript add-on,
   `cargo xtask nvda capture`, and `cargo xtask nvda compare`, which runs a
   scenario against NVDA.

@@ -456,8 +456,8 @@ identity.
 ## 6. The life of an end-to-end run
 
 `cargo test -p verbatim-e2e -- --ignored --skip demo_ --skip measure_ --test-threads=1`
-on this machine, or the same suite on GitHub's runner or against a Hyper-V
-guest ([verbatim-e2e](../reference/crates/verbatim-e2e.md),
+on this machine, or the same suite on GitHub's runner or against an agent
+on another machine ([verbatim-e2e](../reference/crates/verbatim-e2e.md),
 [verbatim-agent](../reference/crates/verbatim-agent.md), [the end-to-end
 guide](../how-to/e2e.md)).
 
@@ -509,10 +509,11 @@ guide](../how-to/e2e.md)).
    demonstrations, the measure set and the local-only ones, split into groups
    that run at once, and uploads one artifact per scenario, its
    directory with the video, for passing and failing runs alike.
-9. **Against a Hyper-V guest.** `cargo xtask vm test` builds, copies
-   changed binaries into the guest, restores the golden checkpoint only
-   with `--restore`, and runs each scenario as its own `cargo test`
-   subprocess with `VERBATIM_E2E_REMOTE=1` ([the VM harness guide](../how-to/vm.md)).
+9. **Against another machine.** `cargo xtask e2e --endpoint
+   --verbatim-dir` starts no agent and stages nothing: it runs each
+   scenario as its own `cargo test` subprocess with
+   `VERBATIM_E2E_REMOTE=1`, against an agent and a copy of the stage the
+   developer put on that machine (architecture section 14).
 
 The scenarios are listed in [verbatim-e2e](../reference/crates/verbatim-e2e.md).
 

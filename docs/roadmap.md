@@ -1548,7 +1548,6 @@ declared deviation where Dickson chose one.
 After M6 (Dickson, 2026-10-31). Developer mode, and the fixes from [the security model](design/security-model.md) that need no milestone of their own; the model's mitigation ids are named in brackets, and each item names the test that proves it. Built as a few large builds with one design and review each.
 
 - Developer mode: said at startup, never reaching secure screens; the control protocol's two endpoints, the developer one only in developer mode (C1, C1a); the extension developer folder and debug-level logging only in developer mode (C7, L3). Test: with developer mode off, every developer method is refused and the developer folder is not watched.
-- The test agent bound to loopback with a deploy-time token, and the VM's firewall rule scoped to the host's switch (C4); it now listens on every interface with no authentication. Test: a connection from another machine, and one without the token, are refused.
 - The control pipe named per session and user, a pipe failure that never stops startup, and clients that check the server they reach (C2's pipe half; its startup mutex and replacement event are M4.8's). Test: Verbatim starts and speaks while another session holds the old pipe name and while a Low-integrity process holds every pipe name it can create, and a client refuses a server that is not Verbatim.
 - Size limits on the control pipe's and configuration's readers, and no fallback to `%TEMP%\verbatim-defaults` or the current directory (C3). Test: an oversized line and an oversized or malformed settings file each give the stated outcome.
 - Keys injected from a lower integrity level never trigger gestures and are never held or re-sent (C5). Test: a gesture injected from Low integrity does nothing, and one injected at the user's level runs.
@@ -2150,9 +2149,7 @@ Tiers, gated by the capabilities each module needs:
   each addition needs a consumer.
 - **Continuous integration** (D3, amended 2026-09-02): GitHub-hosted
   Windows runners run the end-to-end suite runner-direct, silently, with
-  recordings from the audio tee (D16); that is the whole of CI. The VM
-  harness is the interactive loop. `.github/workflows/vm-smoke.yml`, which
-  probed nested virtualization on larger runners, is to be retired.
+  recordings from the audio tee (D16); that is the whole of CI.
 - **Housekeeping**: Cargo warns that `proc-macro-error2` 2.0.1, which
   `i18n-embed-fl` depends on, will be rejected by a future Rust
   (`cargo report future-incompatibilities`: it re-exports the private

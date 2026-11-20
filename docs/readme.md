@@ -56,8 +56,8 @@ Automation gets wrong.
 
 **Running and debugging things.**
 [The tooling guides](../books/dev/src/how-to/readme.md) cover setup,
-`verbatim-inspect`, `mockapp`, measuring, the end-to-end suite, the VM
-harness, NVDA captures and troubleshooting.
+`verbatim-inspect`, `mockapp`, measuring, the end-to-end suite, NVDA
+captures and troubleshooting.
 
 ## The documents here
 

@@ -481,7 +481,7 @@ mod tests {
 pub const SCENARIOS: &[ScenarioDef] = &[
     ScenarioDef {
         name: "kept",
-        group: Group::Text,
+        group: Group::Suite,
         settings: None,
         local_only: false,
         comparable: Comparable::No(
@@ -490,7 +490,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     },
     ScenarioDef {
         name: "only_here",
-        group: Group::Shell,
+        group: Group::Suite,
         local_only: true,
     },
     ScenarioDef {
