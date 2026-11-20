@@ -377,7 +377,11 @@ from detecting the machine, so a local run cannot silently lose a
 scenario. Mark a new scenario local-only only when it needs what the
 runner's Windows Server lacks, such as Windows 11 Notepad, or fails there
 for a cause outside Verbatim, recorded in the known failures, and give the
-reason beside the flag.
+reason in `.local_only`.
+
+`cargo xtask e2e --local-only` runs every local-only scenario of the
+suite, with any others named beside it; it is a selection, for a change
+that touches their paths, and nothing schedules it.
 
 ## How CI runs the suite
 

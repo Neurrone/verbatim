@@ -1,4 +1,4 @@
-//! `cargo xtask e2e <scenario>... [--runs <n>]`: runs end-to-end scenarios
+//! `cargo xtask e2e <scenario>... [--local-only] [--runs <n>]`: runs end-to-end scenarios
 //! against this machine, each `n` times, with an agent this command starts
 //! and ends (`books/dev/src/how-to/e2e.md`, "Running scenarios locally"). The
 //! agent is this command's child, inside its job (`crate::contain`), so
@@ -9,6 +9,10 @@
 //! instead against an agent already started on another machine, launching
 //! the Verbatim in that machine's folder (`books/dev/src/explanation/architecture.md`,
 //! section 14); no agent is built or started here.
+//!
+//! `--local-only` adds every scenario of the suite the registry marks
+//! local-only, those GitHub's runner leaves out
+//! (`books/dev/src/how-to/e2e.md`, "Local-only scenarios").
 //!
 //! Each run is its own `cargo test` of the one scenario, so each has its
 //! own log, `target/e2e-runs/<scenario>-<run>.log`. The suite writes a
@@ -44,7 +48,7 @@ pub fn run(args: &[String]) -> ExitCode {
         Err(message) => {
             eprintln!("{message}");
             eprintln!(
-                "usage: cargo xtask e2e <scenario>... [--runs <n>] [--endpoint <host:port> --verbatim-dir <folder>]"
+                "usage: cargo xtask e2e <scenario>... [--local-only] [--runs <n>] [--endpoint <host:port> --verbatim-dir <folder>]"
             );
             return ExitCode::from(2);
         }
@@ -77,6 +81,16 @@ fn parse(args: &[String]) -> Result<(Vec<String>, u32, Option<Remote>), String> 
                 .and_then(|value| value.parse().ok())
                 .filter(|runs| *runs > 0)
                 .ok_or("--runs takes a count above zero")?;
+        } else if arg == "--local-only" {
+            scenarios.extend(
+                verbatim_e2e::registry::SCENARIOS
+                    .iter()
+                    .filter(|def| {
+                        def.local_only.is_some()
+                            && def.group == verbatim_e2e::registry::Group::Suite
+                    })
+                    .map(|def| def.name.to_owned()),
+            );
         } else if arg.starts_with('-') {
             return Err(format!("unknown option {arg}"));
         } else {
@@ -264,6 +278,15 @@ mod tests {
     #[test]
     fn no_scenario_or_a_zero_count_is_refused() {
         assert!(parse(&args(&["--runs", "2"])).is_err());
+        let (local, _, _) = parse(&args(&["--local-only"])).unwrap();
+        assert!(
+            local.iter().any(|name| name == "notepad_editing"),
+            "{local:?}"
+        );
+        assert!(
+            !local.iter().any(|name| name == "text_box_editing"),
+            "{local:?}"
+        );
         assert!(parse(&args(&["a", "--runs", "0"])).is_err());
     }
 
