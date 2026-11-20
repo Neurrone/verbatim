@@ -112,6 +112,11 @@ pub(crate) trait FrameSource: Send {
 /// compare mode, NVDA's transcript.
 pub(crate) trait RequestSink: Send {
     fn send(&mut self, request: Request) -> io::Result<u64>;
+    /// Compare mode's: the next `AwaitIdle` follows an action that opens a
+    /// window or page, so NVDA's quiet period starts at its first entry.
+    /// Verbatim answers `AwaitIdle` from its own idleness, which needs no
+    /// such start.
+    fn await_first_entry(&mut self) {}
     /// Ends the connection, so a read pending on the reader thread
     /// returns at once with an error.
     fn shutdown(&mut self) -> io::Result<()>;
@@ -1607,6 +1612,12 @@ impl SpeechCollector {
     /// was found quiet and the timeline has had no entry since, which
     /// rules out an input or an action since, as each puts an entry on
     /// the timeline as it starts its step; then the step is recorded.
+    /// In compare mode, makes the next wait for NVDA's speech start its
+    /// quiet period at NVDA's first entry ([`RequestSink::await_first_entry`]).
+    pub(crate) fn await_first_entry(&mut self) {
+        self.sink.await_first_entry();
+    }
+
     pub(crate) fn close_step(&mut self) {
         if std::mem::take(&mut self.steps.unsettled) {
             if self.mode == Mode::Compare {

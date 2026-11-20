@@ -310,7 +310,10 @@ writing the file that lets a terminal's shell show its first prompt, to
 the next. A terminal scenario's start therefore comes as three steps: the
 desktop, the window, and the prompt. Every speech assertion waits until
 NVDA has queued nothing for the quiet period, the capture's settling
-rule, so what the scenario does after it, such as writing a file a shell
+rule (after an action that opens a window or page, a launch, a folder or
+a Settings page, the quiet period starts only at NVDA's first entry,
+still bounded by the step's timeout, since NVDA can take longer than the
+quiet period to speak what opened), so what the scenario does after it, such as writing a file a shell
 waits for, does not run ahead of NVDA. Before each input or action, and
 at the end, the harness waits the same way, unless NVDA was already found
 quiet and nothing has happened since, and takes what NVDA said in the

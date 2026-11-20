@@ -180,11 +180,16 @@ pub enum TranscriptEvent {
 
 /// The settling rule: speech has settled once nothing new has been
 /// queued for the quiet period since the wait began or since the last
-/// entry, whichever is later, and the wait gives up at its timeout.
+/// entry, whichever is later, and the wait gives up at its timeout. After
+/// an action that opens a window or page, the quiet period starts only at
+/// NVDA's first entry ([`QuietWait::from_first_entry`]), since NVDA can
+/// take longer than the quiet period to speak a window as it opens.
 #[derive(Clone, Copy, Debug)]
 pub struct QuietWait {
     quiet: Duration,
-    last_activity: Instant,
+    /// When the quiet period last started: the wait's start or its latest
+    /// entry, or `None` while it waits for its first entry.
+    last_activity: Option<Instant>,
     deadline: Instant,
 }
 
@@ -206,7 +211,18 @@ impl QuietWait {
     pub fn starting_at(now: Instant, quiet: Duration, timeout: Duration) -> Self {
         Self {
             quiet,
-            last_activity: now,
+            last_activity: Some(now),
+            deadline: now + timeout,
+        }
+    }
+
+    /// A wait beginning at `now` whose quiet period starts at its first
+    /// entry, giving up after `timeout` whether or not one arrived.
+    #[must_use]
+    pub fn from_first_entry(now: Instant, quiet: Duration, timeout: Duration) -> Self {
+        Self {
+            quiet,
+            last_activity: None,
             deadline: now + timeout,
         }
     }
@@ -214,13 +230,16 @@ impl QuietWait {
     /// Records that entries arrived at `at`, which restarts the quiet
     /// period.
     pub fn activity(&mut self, at: Instant) {
-        self.last_activity = self.last_activity.max(at);
+        self.last_activity = Some(self.last_activity.map_or(at, |last| last.max(at)));
     }
 
     /// Where the wait stands at `now`.
     #[must_use]
     pub fn settling(&self, now: Instant) -> Settling {
-        if now.saturating_duration_since(self.last_activity) >= self.quiet {
+        if self
+            .last_activity
+            .is_some_and(|last| now.saturating_duration_since(last) >= self.quiet)
+        {
             Settling::Settled
         } else if now >= self.deadline {
             Settling::TimedOut
@@ -405,6 +424,9 @@ struct NvdaRequests {
     shared: Arc<Mutex<Shared>>,
     quiet: Duration,
     next_id: u64,
+    /// Whether the next `AwaitIdle` follows an action that opens a window
+    /// or page, so its quiet period starts at NVDA's first entry.
+    from_first_entry: bool,
     /// Dropped to stop the reader thread.
     stop: Option<mpsc::Sender<()>>,
     reader: Option<JoinHandle<()>>,
@@ -438,11 +460,12 @@ impl RequestSink for NvdaRequests {
                         pending.to
                     )));
                 }
-                shared.idle = Some(PendingIdle {
-                    to,
-                    wait: QuietWait::starting_at(Instant::now(), self.quiet, timeout),
-                    timeout,
-                });
+                let wait = if std::mem::take(&mut self.from_first_entry) {
+                    QuietWait::from_first_entry(Instant::now(), self.quiet, timeout)
+                } else {
+                    QuietWait::starting_at(Instant::now(), self.quiet, timeout)
+                };
+                shared.idle = Some(PendingIdle { to, wait, timeout });
             }
             other => self.answer(Frame::Error {
                 to,
@@ -450,6 +473,10 @@ impl RequestSink for NvdaRequests {
             })?,
         }
         Ok(to)
+    }
+
+    fn await_first_entry(&mut self) {
+        self.from_first_entry = true;
     }
 
     fn shutdown(&mut self) -> io::Result<()> {
@@ -490,6 +517,7 @@ fn parts(
         shared,
         quiet,
         next_id: 0,
+        from_first_entry: false,
         stop: None,
         reader: None,
     };
@@ -829,6 +857,33 @@ mod tests {
         );
         assert_eq!(
             wait.settling(start + Duration::from_secs(3)),
+            Settling::TimedOut
+        );
+    }
+
+    #[test]
+    fn after_a_window_opens_the_quiet_period_starts_at_the_first_entry() {
+        let start = Instant::now();
+        let mut wait =
+            QuietWait::from_first_entry(start, Duration::from_secs(1), Duration::from_secs(5));
+        assert_eq!(
+            wait.settling(start + Duration::from_millis(2_000)),
+            Settling::Waiting,
+            "no entry yet, so not settled however long the silence"
+        );
+        wait.activity(start + Duration::from_millis(2_500));
+        assert_eq!(
+            wait.settling(start + Duration::from_millis(3_400)),
+            Settling::Waiting
+        );
+        assert_eq!(
+            wait.settling(start + Duration::from_millis(3_500)),
+            Settling::Settled
+        );
+        let silent =
+            QuietWait::from_first_entry(start, Duration::from_secs(1), Duration::from_secs(5));
+        assert_eq!(
+            silent.settling(start + Duration::from_secs(5)),
             Settling::TimedOut
         );
     }

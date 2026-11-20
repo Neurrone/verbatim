@@ -833,6 +833,17 @@ impl Scenario {
         self.timeline.push_action(kind, detail);
     }
 
+    /// [`Scenario::begin_action`] for an action that opens a window or
+    /// page, such as a launch: in compare mode, the first wait for NVDA's
+    /// speech after it starts its quiet period at NVDA's first entry, as
+    /// NVDA can take longer than the quiet period to speak what opened.
+    pub(crate) fn begin_opening_action(&mut self, kind: &str, detail: &str) {
+        self.begin_action(kind, detail);
+        if self.is_comparing() {
+            self.speech.await_first_entry();
+        }
+    }
+
     /// Verbatim's process id, or, in compare mode, an error saying there is
     /// no Verbatim to `what`.
     fn pid(&self, what: &str) -> io::Result<u32> {
@@ -1423,7 +1434,7 @@ impl Scenario {
         launch: Launch<'_>,
     ) -> io::Result<WindowInfo> {
         let title = launch.title;
-        self.begin_action("launch a window", &launch_action(command, title));
+        self.begin_opening_action("launch a window", &launch_action(command, title));
         let started = match launch.start {
             Start::Minimized => self.agent.launch_minimized(command, args)?,
             Start::WithStdin { output_to } => self
@@ -1789,7 +1800,7 @@ impl Scenario {
         for file in files {
             self.agent.write_file(&format!(r"{folder}\{file}"), b"")?;
         }
-        self.begin_action(
+        self.begin_opening_action(
             "open a folder in File Explorer, brought forward",
             &format!("{marker:?}"),
         );
@@ -1815,7 +1826,7 @@ impl Scenario {
     /// fails, or the window does not take the foreground.
     pub fn open_settings_page(&mut self, uri: &str) -> io::Result<WindowInfo> {
         self.require_absent(SETTINGS_TITLE)?;
-        self.begin_action(
+        self.begin_opening_action(
             "open a Settings page",
             &launch_action("explorer.exe", SETTINGS_TITLE),
         );
