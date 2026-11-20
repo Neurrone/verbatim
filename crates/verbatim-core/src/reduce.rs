@@ -452,10 +452,9 @@ fn write(state: &mut SrState, commit: Commit, context: FocusContext, line: Arc<[
             };
             state.versions.execute(focus, fence);
         }
-        Commit::InPlace => {
-            if let Some(focus) = state.versions.focus_mut() {
-                focus.context = context;
-            }
+        Commit::InPlace(mut focus) => {
+            focus.context = context;
+            state.versions.respoken(focus);
         }
     }
 }

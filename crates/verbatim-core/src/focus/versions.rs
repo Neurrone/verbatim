@@ -287,6 +287,14 @@ impl Versions {
         self.postponed = None;
     }
 
+    /// The live committed focus spoken again, `focus` with what Core spoke
+    /// of it replaced: it is the committed focus again, a live reader's,
+    /// and the readers' last focus and the postponed dialog are left
+    /// ([`super::execute::Commit::InPlace`]).
+    pub(crate) fn respoken(&mut self, focus: Box<Focus>) {
+        self.committed = Committed::Read(focus);
+    }
+
     /// Core commits its own focus (column C): the committed focus becomes
     /// it; the readers' last focus is unchanged.
     pub(crate) fn commit_own(&mut self) {

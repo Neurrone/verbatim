@@ -452,8 +452,9 @@ code is in `reduce.rs` unless named.
   `reduce::execute_report` and `reduce::take_silently` write the record
   as their `Commit` says: `Commit::New` for an executed focus or a silent
   re-take, through `Versions::execute`, and `Commit::InPlace` for
-  `execute::again`, a UI Automation menu opening on the committed focus,
-  which replaces only what Core spoke of it. Rules read it through
+  `execute::again`, a UI Automation menu opening on the committed focus
+  when its reader lives, which carries that focus and writes it back
+  with only what Core spoke of it replaced (`Versions::respoken`). Rules read it through
   `Versions::focus` (`Read` or `Ended`), `Versions::live` (`Read`),
   `Versions::caret_target` and `Versions::committed_node`; the readers'
   last focus (`LastFocus`) is a separate fact.

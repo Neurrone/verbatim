@@ -60,11 +60,12 @@ pub(crate) enum Commit {
         /// The speech fence of the entry that read it.
         fence: Fence,
     },
-    /// The committed focus spoken again, as a UI Automation menu opening
-    /// on it does: only what Core spoke of it is replaced; its variant,
-    /// what Core keeps of its answer, its line, the readers' last focus
-    /// and the postponed dialog are left as they are.
-    InPlace,
+    /// The committed focus, a live reader's, spoken again, as a UI
+    /// Automation menu opening on it does: it is written back with only
+    /// what Core spoke of it replaced; its variant, what Core keeps of its
+    /// answer, its line, the readers' last focus and the postponed dialog
+    /// are left as they are ([`super::versions::Versions::respoken`]).
+    InPlace(Box<super::versions::Focus>),
 }
 
 /// The ancestors Core already knows, as a focus request sent them: each
@@ -615,10 +616,10 @@ fn commit(
 /// Executes the committed focus again, as a UI Automation menu opening on
 /// it does (design, "Focus and foreground"; NVDA:
 /// `UIAHandler/__init__.py` 856 to 868), under `trace_id`: only what Core
-/// spoke of it is written ([`Commit::InPlace`]). Nothing with nothing
-/// committed.
+/// spoke of it is written ([`Commit::InPlace`]). Nothing unless a live
+/// reader's focus is committed.
 pub(crate) fn again(state: &mut SrState, trace_id: TraceId) -> Vec<Effect> {
-    let Some(focus) = state.versions.focus() else {
+    let Some(focus) = state.versions.live().cloned() else {
         return Vec::new();
     };
     let report = Report {
@@ -633,7 +634,7 @@ pub(crate) fn again(state: &mut SrState, trace_id: TraceId) -> Vec<Effect> {
         earlier: None,
         top_level: Some(focus.kept.place.top_level),
     };
-    crate::reduce::execute_report(state, &report, false, Commit::InPlace)
+    crate::reduce::execute_report(state, &report, false, Commit::InPlace(Box::new(focus)))
 }
 
 /// Judges a re-take's `read` against the focus Core holds: one that reads
