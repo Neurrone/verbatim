@@ -133,6 +133,7 @@ The phase the roadmap places first (Dickson, 2026-11-20). Working material: a re
 
 - [simplification-review/plan.md](simplification-review/plan.md) — where a session starts: why, Dickson's rulings, the rules every build follows, the builds in order and the test of done.
 - [simplification-review/builds.md](simplification-review/builds.md) — each build's inventory by finding, what is captured first, its budget and how it is known to be done.
+- [simplification-review/build8-operations.md](simplification-review/build8-operations.md) — build 8's study, part one: the closed list of operations and the batch, with Dickson's rulings of 2026-11-20 recorded in builds.md.
 - [simplification-review/REPORT.md](simplification-review/REPORT.md) — the review's report: the assessment, the defects confirmed, sizes against NVDA and the questions in full.
 - The verified findings, one record for each area, each with its size table, findings with file and line, test counts and dropped claims:
   - [simplification-review/merged-access-apis.md](simplification-review/merged-access-apis.md)

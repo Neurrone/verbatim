@@ -992,7 +992,7 @@ What each present one-behaviour kind would become, for the study to confirm or c
 | `Navigate`, `Find`, `Children` | operations in the list (ADR 0003's generic kinds); `Find` and `Children` are kept for M5 (model 19) |
 | `Activate` | an operation in the list |
 | `DumpTree` | the control plane's dump as a list of children and property reads, or kept as a tool request outside the list |
-| `ShellItems`, `ShellItemPosition` | stay until M5 makes the tray list a global module, then property and children reads |
+| `ShellItems`, `ShellItemPosition` | converted in this build to `Find` on a window named by its class path (Dickson, 2026-11-20) |
 | `AwaitShown` | gone in build 2 |
 | `StartingRead`, `MoveBySentence`, `ReadSelection`, `ReadAhead` | lists of generic text reads, with the rule for which key reads where in Core |
 | `Select`, `MoveCaret` | operations in the list |
@@ -1012,6 +1012,8 @@ How its lines are counted against NVDA:
 - The stopping rule from REPORT move 5: if the rebuilt behaviour is not within about three times NVDA's lines (about 80 for Control+Backspace), stop and look again before M5, and bring the count to Dickson.
 
 ### Rulings and defaults it rests on
+
+- Dickson's rulings of 2026-11-20 on the list's draft ([build8-operations.md](build8-operations.md)): an operation may carry a test on an earlier result (matches a matcher, was found, or the negation of either; no loops, branches or variables), dropped later only if the round-trip measurement shows guarded reads are rare; M5's extension surface imports the reads the Extensions guide's imports page lists, each one call Core turns into a batch, with batches not exposed to modules and one matcher grammar for Find and the tests; ShellItems and ShellItemPosition are converted in this build to Find on a window named by its class path.
 
 - Dickson's strategy ruling: finish ADR 0003's generic crossing; the second proof is one ordinary behaviour built on it and counted against NVDA.
 - ADR 0003's decision quoted above, which the study carries out rather than changes. Option A (accept a request kind per behaviour) is not taken.
