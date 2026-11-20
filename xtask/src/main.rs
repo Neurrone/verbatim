@@ -70,9 +70,10 @@
 //! local end-to-end run keeps working with no RDP client connected. See
 //! `xtask/src/park.rs`.
 //!
-//! `warm-speech` activates the Windows speech platform once and reports how
-//! long that took, so a CI job pays the platform's cold first activation
-//! before the tests that start synthesizer hosts in parallel.
+//! `warm-speech` activates the Windows speech platform once, synthesizes one
+//! short utterance, and reports how long each took, so a CI job pays the
+//! platform's cold first synthesis before the tests that start synthesizer
+//! hosts in parallel.
 //!
 //! `regenerate-terminal-conformance-expectations` records what the real
 //! console host and Windows Terminal answer to the simulated terminal's
@@ -90,7 +91,7 @@ use std::env;
 use std::process::{Command, ExitCode};
 use std::str;
 #[cfg(windows)]
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 #[cfg(windows)]
 use windows::Media::SpeechSynthesis::SpeechSynthesizer;
@@ -288,25 +289,32 @@ fn usage() {
     );
     #[cfg(windows)]
     eprintln!(
-        "  warm-speech  activate the Windows speech platform once and print how long it took and the default voice"
+        "  warm-speech  activate the Windows speech platform, synthesize one utterance, and print how long each took and the default voice"
     );
 }
 
 /// Activates the Windows speech platform once through the binding
 /// Verbatim's synthesizer in `verbatim-synth-onecore` uses: COM
 /// initialized as MTA as that synthesizer does, one `SpeechSynthesizer`
-/// constructed, its voice's display name read, and the synthesizer
-/// dropped. It prints how long that
-/// took, so a CI job's log shows the platform's cold cost, and fails when
-/// any step fails.
+/// constructed, its voice's display name read, one short SSML utterance
+/// synthesized to its end, and the synthesizer dropped. It prints how long
+/// the activation and the synthesis each took, so a CI job's log shows the
+/// platform's cold cost, and fails when any step fails. The synthesis is
+/// part of the warm-up because hosted synthesizers' first utterances on a
+/// fresh runner, after a warm-up that only constructed a synthesizer, sent
+/// nothing for the host's ten-second hang bound (runs 41267826098 and
+/// 41853488071): `verbatim-synth-onecore` gets no audio until a whole
+/// utterance is synthesized, so the first synthesis carries the cold cost.
 #[cfg(windows)]
 fn warm_speech() -> ExitCode {
     let started = Instant::now();
     match activate_speech() {
-        Ok(voice) => {
+        Ok((voice, activated, bytes)) => {
             println!(
-                "the Windows speech platform activated in {} ms, default voice {voice}",
-                started.elapsed().as_millis()
+                "the Windows speech platform activated in {} ms, default voice {voice}; \
+                 its first utterance synthesized to its end in {} ms, {bytes} bytes",
+                activated.as_millis(),
+                started.elapsed().saturating_sub(activated).as_millis()
             );
             ExitCode::SUCCESS
         }
@@ -320,9 +328,12 @@ fn warm_speech() -> ExitCode {
     }
 }
 
-/// Constructs a speech synthesizer and returns its voice's display name.
+/// Constructs a speech synthesizer and synthesizes one short utterance to
+/// its end; returns the voice's display name, how long the activation took
+/// and the size of the utterance's stream.
 #[cfg(windows)]
-fn activate_speech() -> Result<String, String> {
+fn activate_speech() -> Result<(String, Duration, u64), String> {
+    let started = Instant::now();
     // SAFETY: no reserved parameter; COM stays initialized for the process.
     let hr = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
     if hr.is_err() && hr != RPC_E_CHANGED_MODE {
@@ -333,7 +344,18 @@ fn activate_speech() -> Result<String, String> {
         .Voice()
         .and_then(|voice| voice.DisplayName())
         .map_err(|error| format!("read the voice's name: {error}"))?;
-    Ok(voice.to_string())
+    let activated = started.elapsed();
+    let ssml = windows::core::HSTRING::from(
+        "<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='en-US'>ready</speak>",
+    );
+    let stream = synth
+        .SynthesizeSsmlToStreamAsync(&ssml)
+        .and_then(|operation| operation.join())
+        .map_err(|error| format!("synthesize the first utterance: {error}"))?;
+    let bytes = stream
+        .Size()
+        .map_err(|error| format!("read the first utterance's size: {error}"))?;
+    Ok((voice.to_string(), activated, bytes))
 }
 
 /// Downloads, checks, and unpacks the pinned portable Windows Terminal the

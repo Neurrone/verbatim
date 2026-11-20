@@ -209,7 +209,7 @@ finding:
 - Documents' links and paths (`xtask/src/docs.rs`): the documentation
   check below.
 
-`cargo xtask warm-speech` activates the Windows speech platform once and prints how long that took and the default voice's name, failing if the activation fails; CI's two unit-test jobs run it before `cargo xtask ci`, because a fresh runner's first activation outlasts the synthesizer host's ten-second hang bound.
+`cargo xtask warm-speech` activates the Windows speech platform once and synthesizes one short utterance to its end, prints how long each took and the default voice's name, and fails if either fails; CI's two unit-test jobs run it before `cargo xtask ci`, because a fresh runner's first synthesis outlasts the synthesizer host's ten-second hang bound.
 
 ### The documentation check
 
