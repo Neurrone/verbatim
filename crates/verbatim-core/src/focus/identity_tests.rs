@@ -18,7 +18,7 @@ use verbatim_model::request::{
     CandidateAnswer, CandidateFacts, Depth, FocusRead, HeldIds, Identity, MsaaIds,
     Outcome as WireOutcome, QueueInput, Reply, Request as Wire,
 };
-use verbatim_model::tell::{Event, EventObject, Payload, TellWindow};
+use verbatim_model::tell::{Event, EventObject, Payload, Relation, TellWindow};
 use verbatim_model::{KeySeq, Pid, Role, StateSet, TraceId, WindowHandle};
 
 use verbatim_model::property::RuntimeId;
@@ -375,9 +375,8 @@ fn island(kind: EventKind) -> Event {
     tell
 }
 
-/// "Alpha", 1 of 3, spoken after a key, then a read of `kind` asked with no
-/// key between: the reader asked and the request's number.
-fn asked(kind: Kind) -> (Held, Instance, u64) {
+/// "Alpha", 1 of 3, spoken after a key: the readers' last focus.
+fn alpha() -> Held {
     let mut held = ready();
     held.state.arrivals.key_joined(KeySeq::new(3));
     feed_at(&mut held, 1_000, entry(item_tell(1_000)));
@@ -387,6 +386,13 @@ fn asked(kind: Kind) -> (Held, Instance, u64) {
         answer(OUTPOST, 1, item_answer("Alpha", (1, 3))),
     );
     assert_eq!(said, [TITLE.to_owned(), item_said("Alpha", (1, 3))]);
+    held
+}
+
+/// [`alpha`], then a read of `kind` asked with no key between: the reader
+/// asked and the request's number.
+fn asked(kind: Kind) -> (Held, Instance, u64) {
+    let mut held = alpha();
     let island = island(EventKind::UiaFocus);
     let mut tell = msaa_tell(-9);
     let input = match kind {
@@ -440,8 +446,8 @@ fn returned(held: &mut Held) -> Vec<String> {
 /// sends it (`None`: the shell refused it as hung), against the fence
 /// (Dickson, 2026-11-18, ADR 0004): a read tried and found gone or not
 /// focused, or whose reader ended, ends it, and the mouse return speaks
-/// the item; any other leaves it, and the return is the same item. The
-/// return's words are derived from ADR 0004's ruling and the committed
+/// the item; any other leaves it, and the return is the same item, as a
+/// candidate refused before any read does. The return's words are derived from ADR 0004's ruling and the committed
 /// focus, still the item, so it is said alone: NVDA has no failed read of
 /// a focus it was told of, so capture C2 cannot be made (Dickson's ruling
 /// of 2026-11-20 for captures that cannot be made). The completion refused
@@ -507,6 +513,37 @@ fn each_failed_focus_read_ends_the_fence_by_one_rule() {
             Vec::new()
         };
         assert_eq!(returned(&mut held), said, "{row}");
+    }
+    // A candidate refused before any read was never tried, and leaves the
+    // fence: refused by acceptance, by its window's verdict, or as the
+    // desktop window's, which no reader reads.
+    let refused = |row: &str| {
+        let mut tell = msaa_tell(-9);
+        if let TellWindow::Found(facts) = &mut tell.window {
+            match row {
+                "acceptance" => {
+                    facts.window_to_foreground = Relation::Outside;
+                    facts.root_owner_to_foreground = Relation::Outside;
+                    facts.root_owner_is_foregrounds = false;
+                    facts.window_to_active = Relation::Outside;
+                }
+                "verdict" => facts.window.class = "RAIL_WINDOW".to_owned(),
+                _ => facts.desktop = true,
+            }
+        }
+        tell
+    };
+    for row in ["acceptance", "verdict", "no reader"] {
+        let mut held = alpha();
+        let fence = held.state.arrivals.fence();
+        assert_eq!(
+            feed_at(&mut held, 60_000, entry(refused(row))),
+            NOTHING,
+            "{row}"
+        );
+        assert!(held.state.queue.front_for_tests().is_none(), "{row}");
+        assert_eq!(since(&held), Some(Some(fence)), "{row}");
+        assert_eq!(returned(&mut held), Vec::<String>::new(), "{row}");
     }
 }
 
