@@ -502,6 +502,15 @@ fn each_failed_focus_read_ends_the_fence_by_one_rule() {
         let (mut held, from, number) = asked(kind);
         let fence = held.state.arrivals.fence();
         let row = format!("{kind:?} {outcome:?}");
+        // A completion's outpost answers a result, not there or a refusal,
+        // never ended: the completion ends with its outpost, whose end
+        // also ends the committed item, so the mouse return waits for the
+        // replacement's re-take (`retake_tests.rs`), not for this fence.
+        if let (Completion, Some(Ended)) = (kind, outcome.as_ref()) {
+            feed_at(&mut held, 70_000, Input::ReaderEnded(from));
+            assert_eq!(since(&held), Some(None), "{row}");
+            continue;
+        }
         let input = outcome.map_or(Input::RefusedHung(RequestNumber(number)), |outcome| {
             answer_outcome(from, number, outcome)
         });
