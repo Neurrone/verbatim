@@ -637,7 +637,14 @@ knowing for review:
   wait, erring a microsecond late (`instant_at`), and waits for its next
   command only until the earliest (`recv_timeout`), and without one when
   none is due; only the queue's end (`Received::Closed`) ends it, since a
-  system wait can run out a clock tick before the deadline. The GUI event thread tells the reducer of `GuiEvent::ShellItemGone`
+  system wait can run out a clock tick before the deadline. Each pass of
+  the loop (`pass`) handles the command that ended the wait; then, once
+  the earliest deadline has passed, it handles every command already
+  waiting before it judges the deadlines (`expire`), since each may carry
+  a fact a judgement depends on, such as a pong the relay read while the
+  thread was held. The limit: a port that never empties, a command
+  arriving as fast as each is handled, delays the deadlines' judgement
+  for as long as it lasts. The GUI event thread tells the reducer of `GuiEvent::ShellItemGone`
   (`Input::ShellItemGone`) when the list dialog finds its chosen item
   gone, and of `GuiEvent::ShellItemUnclickable`
   (`Input::ShellItemUnclickable`) when it finds the item with no point to

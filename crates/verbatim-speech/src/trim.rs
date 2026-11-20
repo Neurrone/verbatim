@@ -4,7 +4,7 @@
 //! first word. The trimmer drops quiet frames before an utterance's first
 //! audible frame and passes everything after it, so pauses between words
 //! and the synthesizer's own trailing audio play as it made them, as NVDA
-//! trims only leading silence (`docs/nvda/speech.md`). Index marks are
+//! trims only leading silence (`docs/nvda/audio.md`). Index marks are
 //! passed on as they arrive: one reached in the leading silence is placed
 //! before the first audio.
 

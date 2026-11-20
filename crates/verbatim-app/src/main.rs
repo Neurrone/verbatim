@@ -2552,7 +2552,13 @@ mod tests {
     fn a_bad_settings_file_is_kept_as_its_backup_and_the_first_save_leaves_it() {
         let dir =
             std::env::temp_dir().join(format!("verbatim-app-bad-settings-{}", std::process::id()));
+        // No live process shares this id, so a folder already named with it
+        // was left by an earlier process that was ended before its guard ran.
+        if dir.exists() {
+            std::fs::remove_dir_all(&dir).expect("remove a dead process's folder");
+        }
         std::fs::create_dir(&dir).expect("a folder of the test's own");
+        let scratch = RemovedOnDrop(dir.clone());
         let bad = "[keyboard]\nlayout = \"Laptop\"\n";
         std::fs::write(dir.join("settings.toml"), bad).expect("the bad file");
         std::fs::write(dir.join("settings.toml.corrupted.bak"), "older").expect("an older backup");
@@ -2581,7 +2587,20 @@ mod tests {
                 .reader
                 .follow_caret
         );
-        std::fs::remove_dir_all(&dir).expect("remove the test's folder");
+        drop(scratch);
+    }
+
+    /// A folder removed when the test ends, passing or panicking, so a
+    /// failed run leaves nothing for a later process with the same id to
+    /// meet.
+    struct RemovedOnDrop(std::path::PathBuf);
+
+    impl Drop for RemovedOnDrop {
+        fn drop(&mut self) {
+            // A failure here would hide the test's own panic during
+            // unwinding; the next run with this id removes what is left.
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
     }
 
     /// Records each ending and each failed utterance's marks, in order.
