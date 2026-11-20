@@ -6,7 +6,7 @@ A newly started application, a File Explorer folder window in its own process or
 
 ## What Verbatim relies on
 
-The recovery, not a workaround: the application's outpost waits a second from the `WinEvent` focus copy for its UIA focus and otherwise reads the focus itself (`books/dev/src/explanation/design/listener-without-connections.md`, decision 11).
+Nothing: a `WinEvent` focus in a UIA window with no UIA focus following it is dropped, as NVDA drops it, and nothing is read in its place (`books/dev/src/explanation/design/listener-without-connections.md`, decision 11), so a focus UI Automation delivers late or not at all is lost.
 
 ## Method
 
@@ -14,7 +14,7 @@ The program checks a tree it controls, the provider program, since the end-to-en
 
 - `provider`: the provider program started 11 times, its window brought to the foreground and its focus moved to node 5 with its focus event raised, then ended. The end-to-end runs that met the fault recorded no rate; 11 starts would show one met in 1 start of 4, an assumed rate, with probability 0.95.
 
-For each start it takes the first focus `WinEvent` from the new process, waiting up to 2 s since the program brings the window to the front itself, and waits up to 5 s for a UIA focus whose sender is in that process. The UIA focus is late when it comes more than 1 s after the `WinEvent`, the second Verbatim's outpost waits, and missing when none comes within 5 s. A start with no focus `WinEvent` has nothing to measure from: the case stops there, inconclusive. The fault was never measured as a rate, so the counts are printed as new.
+For each start it takes the first focus `WinEvent` from the new process, waiting up to 2 s since the program brings the window to the front itself, and waits up to 5 s for a UIA focus whose sender is in that process. The UIA focus is late when it comes more than 1 s after the `WinEvent`, and missing when none comes within 5 s. A start with no focus `WinEvent` has nothing to measure from: the case stops there, inconclusive. The fault was never measured as a rate, so the counts are printed as new.
 
 The count of late and missing focus is judged against the first desktop runs' 0 and 0 of 11.
 
