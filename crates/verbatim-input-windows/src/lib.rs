@@ -66,6 +66,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 
 use verbatim_input::map::GestureMap;
 use verbatim_input::state::{DecisionConfig, DecisionMachine, EmittedGesture, KeySpeechEffect};
+use verbatim_model::stroke::Stroke;
 use verbatim_model::{HookForeground, KeySeq, TraceId};
 use verbatim_process::scheduling::{ThreadPriority, prioritize_role};
 
@@ -78,7 +79,7 @@ pub const OWN_INPUT_TAG: usize = 0x5642_544D;
 
 /// The high half of the `dwExtraInfo` Verbatim puts on a key it held back
 /// and now passes on to the application (`books/dev/src/explanation/design/key-holding.md`);
-/// the low half is the key's place in line ([`HeldStroke::sequence`]), or
+/// the low half is the key's place in line ([`Stroke::sequence`]), or
 /// 0 on the modifiers and releases sent around a held key. The hook passes
 /// these keys straight down the hook chain, deciding and reporting
 /// nothing, as NVDA ignores the keys its caret scripts send. Keys injected
@@ -137,23 +138,6 @@ impl ForegroundView {
     }
 }
 
-/// The key a held or deferred key transition came from, for the
-/// application to be sent it again.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct HeldStroke {
-    /// The virtual-key code; `VK_PACKET` for a character typed as Unicode,
-    /// whose UTF-16 unit is the scan code.
-    pub vk: u16,
-    /// The hardware scan code.
-    pub scan_code: u32,
-    /// Whether it is an extended key (the arrows and the navigation block).
-    pub extended: bool,
-    /// Its place in the line of keys held back, counted from 1, which the
-    /// key carries when it is passed on ([`passed_on_info`]) so the hook
-    /// knows it has reached the application.
-    pub sequence: u32,
-}
-
 /// Carries out a key press's effect on speech, given the press's key
 /// number; called on the hook thread, so it must not block, nor make a
 /// call that dispatches sent messages (a cross-apartment COM call,
@@ -196,7 +180,7 @@ pub enum KeyReport {
     },
     /// A caret key the hook held back from the application, because Core's
     /// view lets it be ([`ForegroundView`]): the reducer has the caret read, then
-    /// has the key sent again ([`HeldStroke`], tagged [`PASSED_ON_TAG`]).
+    /// has the key sent again ([`Stroke`], tagged [`PASSED_ON_TAG`]).
     /// Its release is held back too.
     Held {
         /// The gesture.
@@ -208,7 +192,7 @@ pub enum KeyReport {
         /// As [`KeyReport::Observed`]'s.
         pressed_at_us: u64,
         /// The key to send again.
-        stroke: HeldStroke,
+        stroke: Stroke,
     },
     /// A key transition the hook would have passed to the application but
     /// held back, because a held key ahead of it has not reached the
@@ -218,7 +202,7 @@ pub enum KeyReport {
     /// passed at once, by the other reports, which come before this one.
     Deferred {
         /// The transition to send again.
-        stroke: HeldStroke,
+        stroke: Stroke,
         /// Whether it is a press; a release otherwise.
         pressed: bool,
     },

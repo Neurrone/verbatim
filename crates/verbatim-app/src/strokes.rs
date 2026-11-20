@@ -29,21 +29,11 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, SendInput, VIRTUAL_KEY,
 };
 
-/// The stroke the hook held or deferred, as Core's line keeps it.
-pub(crate) fn stroke_of(held: verbatim_input_windows::HeldStroke) -> Stroke {
-    Stroke {
-        vk: held.vk,
-        scan_code: held.scan_code,
-        extended: held.extended,
-        sequence: held.sequence,
-    }
-}
-
-/// The caret key the hook held as `gesture` from `held`, with the
+/// The caret key the hook held as `gesture`, its stroke `stroke`, with the
 /// gesture's modifiers.
-pub(crate) fn held_of(gesture: &GestureId, held: verbatim_input_windows::HeldStroke) -> HeldStroke {
+pub(crate) fn held_of(gesture: &GestureId, stroke: Stroke) -> HeldStroke {
     HeldStroke {
-        stroke: stroke_of(held),
+        stroke,
         modifiers: modifiers_of(gesture),
     }
 }

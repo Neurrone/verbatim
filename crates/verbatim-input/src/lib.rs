@@ -64,7 +64,7 @@ pub mod toggle;
 pub use map::GestureMap;
 pub use scripts::{
     KeyboardLayout, ScriptAction, bindings_for, caret_bindings, clearing_keys, editing_chords,
-    gesture_map_for, selection_bindings,
+    selection_bindings,
 };
 pub use state::{
     Act, Decision, DecisionConfig, DecisionMachine, EmittedGesture, HoldPermit, KeyInput,

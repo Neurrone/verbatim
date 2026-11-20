@@ -23,11 +23,12 @@ use verbatim_input::state::{
     Act, DecisionMachine, HoldPermit, KeyInput, KeySource, PressReport, VK_MASK, Verdict,
 };
 use verbatim_input::{KeyDecision, KeyEvent};
+use verbatim_model::stroke::Stroke;
 use verbatim_model::{FocusTextKind, HookForeground, KeySeq, TraceId};
 
 use crate::typed::Typed;
 use crate::{
-    Effects, ForegroundView, HeldStroke, KeyReport, KeyReportFn, OWN_INPUT_TAG, SpeechEffectFn,
+    Effects, ForegroundView, KeyReport, KeyReportFn, OWN_INPUT_TAG, SpeechEffectFn,
     passed_on_sequence, typed,
 };
 
@@ -287,7 +288,7 @@ fn report_mask(state: &HookState, mask: Option<(u32, u32)>) {
     };
     for (sequence, pressed) in [(press, true), (release, false)] {
         (state.reports)(KeyReport::Deferred {
-            stroke: HeldStroke {
+            stroke: Stroke {
                 vk: VK_MASK,
                 scan_code: 0,
                 extended: false,
@@ -353,7 +354,7 @@ fn num_lock_on() -> bool {
 
 /// Reports a transition deferred behind a held key, as `stroke`, after what
 /// the key did, so that whoever passes it on has been told of it first.
-fn report_deferred(state: &HookState, stroke: Option<HeldStroke>, pressed: bool) {
+fn report_deferred(state: &HookState, stroke: Option<Stroke>, pressed: bool) {
     if let Some(stroke) = stroke {
         (state.reports)(KeyReport::Deferred { stroke, pressed });
     }
@@ -409,7 +410,7 @@ pub(crate) fn decide(
         // front for its own permit, since the line is then not empty.
         may_mask: view.is_some_and(|view| view.holds_keys),
     });
-    let stroke = |sequence| HeldStroke {
+    let stroke = |sequence| Stroke {
         vk: event.vk,
         scan_code,
         extended: event.extended,
@@ -1099,7 +1100,7 @@ mod tests {
         };
         assert_eq!(
             stroke,
-            HeldStroke {
+            Stroke {
                 vk: 0x27,
                 scan_code: 0x4D,
                 extended: true,

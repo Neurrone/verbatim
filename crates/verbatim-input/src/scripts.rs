@@ -19,8 +19,6 @@
 pub use verbatim_model::KeyboardLayout;
 use verbatim_model::{CaretKey, CaretMotion, GestureId, ReviewCommand};
 
-use crate::map::GestureMap;
-
 /// Every M3 command a gesture can bind to, abstractly — the vocabulary
 /// object navigation, review-cursor text reading, the time-and-date command,
 /// and the system tray list script all bind against.
@@ -522,22 +520,6 @@ pub fn editing_chords() -> Vec<GestureId> {
     .collect()
 }
 
-/// Builds the hook's bound-gesture set from a binding table, for the
-/// decision machine to own.
-///
-/// [`GestureMap`] is a plain membership set, not generic over the bound
-/// action, so the action half of each pair lives with the consumer, which
-/// keeps the same `Vec<(GestureId, ScriptAction)>` (or a map built
-/// from it) to resolve an emitted gesture to its action. `verbatim-app`
-/// does not call this: it reads `Settings.keyboard.layout` once at
-/// startup, builds its own map from [`bindings_for`] plus the menu
-/// gesture, and its router builds the lookup. Layouts are not rebound at
-/// runtime; a layout change takes effect on the next start.
-#[must_use]
-pub fn gesture_map_for(bindings: &[(GestureId, ScriptAction)]) -> GestureMap {
-    GestureMap::new(bindings.iter().map(|(gesture, _)| gesture.clone()))
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeSet;
@@ -911,18 +893,6 @@ mod tests {
                     .iter()
                     .all(|(gesture, _)| *gesture != menu)
             );
-        }
-    }
-
-    #[test]
-    fn gesture_map_for_contains_exactly_the_bound_gestures() {
-        for layout in [KeyboardLayout::Desktop, KeyboardLayout::Laptop] {
-            let bindings = bindings_for(layout);
-            let map = gesture_map_for(&bindings);
-            assert_eq!(map.len(), bindings.len());
-            for (gesture, _) in &bindings {
-                assert!(map.contains(gesture));
-            }
         }
     }
 }

@@ -80,14 +80,6 @@ impl ToggleKey {
             LockKey::ScrollLock => Self::ScrollLock,
         }
     }
-
-    /// The toggle key a gesture reports, if it reports one.
-    #[must_use]
-    pub fn of_gesture(gesture: &GestureId) -> Option<Self> {
-        [Self::CapsLock, Self::NumLock, Self::ScrollLock]
-            .into_iter()
-            .find(|key| key.gesture() == *gesture)
-    }
 }
 
 #[cfg(test)]
@@ -95,14 +87,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn each_toggle_key_round_trips_through_its_code_and_gesture() {
+    fn each_toggle_key_round_trips_through_its_code() {
         for key in [
             ToggleKey::CapsLock,
             ToggleKey::NumLock,
             ToggleKey::ScrollLock,
         ] {
             assert_eq!(ToggleKey::from_vk(key.vk()), Some(key));
-            assert_eq!(ToggleKey::of_gesture(&key.gesture()), Some(key));
         }
         assert_eq!(ToggleKey::from_vk(0x41), None);
     }

@@ -295,10 +295,7 @@ fn commands_for(report: KeyReport, tables: &Tables, mut post: impl FnMut(ShellCo
         KeyReport::Deferred { stroke, pressed } => post(queued(
             TraceId::mint(),
             verbatim_process::clock::now_us(),
-            QueueInput::Deferred {
-                stroke: crate::strokes::stroke_of(stroke),
-                pressed,
-            },
+            QueueInput::Deferred { stroke, pressed },
         )),
         KeyReport::Passed {
             trace_id,
@@ -397,7 +394,7 @@ fn gesture_command(
 #[cfg(test)]
 mod tests {
     use verbatim_input::KeyboardLayout;
-    use verbatim_input_windows::HeldStroke;
+    use verbatim_model::stroke::Stroke;
     use verbatim_model::{GestureId, LockKey, ReviewCommand, TraceId};
 
     use super::*;
@@ -811,7 +808,7 @@ mod tests {
     #[test]
     fn a_held_enter_maps_to_the_new_line_key() {
         for (name, extended) in [("kb:enter", false), ("kb:numpadenter", true)] {
-            let stroke = HeldStroke {
+            let stroke = Stroke {
                 vk: 0x0D,
                 scan_code: 0x1C,
                 extended,
@@ -850,7 +847,7 @@ mod tests {
                 key: held_key("kb:downarrow"),
                 key_seq,
                 pressed_at_us: PRESSED_AT_US,
-                stroke: HeldStroke {
+                stroke: Stroke {
                     vk: 0x28,
                     scan_code: 0x50,
                     extended: true,
