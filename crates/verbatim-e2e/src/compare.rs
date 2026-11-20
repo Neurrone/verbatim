@@ -503,7 +503,11 @@ pub fn render_report(header: &ReportHeader, steps: &[CompareStep]) -> String {
 /// `text` with each value of `values`, a label and the value this run
 /// read, replaced by its label in braces, the longest value first, so
 /// that what a run read from the system does not make it differ from its
-/// capture.
+/// capture. A value is found as written and as NVDA speaks it, with white
+/// space inserted inside it: NVDA's speech breaks a word where letters and
+/// digits meet, so it says the token `mwpjps1l` as "mwpjps 1l", and a
+/// value matched only as written was left in a report whenever the run's
+/// token held a digit.
 #[must_use]
 pub fn substituted(text: &str, values: &[(String, String)]) -> String {
     let mut values: Vec<&(String, String)> = values
@@ -514,8 +518,46 @@ pub fn substituted(text: &str, values: &[(String, String)]) -> String {
     values
         .into_iter()
         .fold(text.to_owned(), |text, (label, value)| {
-            text.replace(value.as_str(), &format!("{{{label}}}"))
+            replace_spoken(&text, value, &format!("{{{label}}}"))
         })
+}
+
+/// `text` with every occurrence of `value` replaced by `label`, an
+/// occurrence allowed to have white space between any two of the value's
+/// characters, as NVDA's speech inserts it, but not before its first.
+fn replace_spoken(text: &str, value: &str, label: &str) -> String {
+    let text: Vec<char> = text.chars().collect();
+    let value: Vec<char> = value.chars().collect();
+    let mut out = String::new();
+    let mut at = 0;
+    while at < text.len() {
+        if let Some(length) = spoken_match(&text[at..], &value) {
+            out.push_str(label);
+            at += length;
+        } else {
+            out.push(text[at]);
+            at += 1;
+        }
+    }
+    out
+}
+
+/// The length of `value` at the start of `text`, as NVDA speaks it, with
+/// white space between its characters allowed, or `None`.
+fn spoken_match(text: &[char], value: &[char]) -> Option<usize> {
+    let mut at = 0;
+    for (index, &wanted) in value.iter().enumerate() {
+        if index > 0 && !wanted.is_whitespace() {
+            while text.get(at).is_some_and(|c| *c == ' ') {
+                at += 1;
+            }
+        }
+        if text.get(at) != Some(&wanted) {
+            return None;
+        }
+        at += 1;
+    }
+    Some(at)
 }
 
 /// One step as the check against a capture compares it: its input, an
@@ -1088,5 +1130,18 @@ mod tests {
             check_against_capture(&capture, &[start, action], &values("abc", "Sound settings")),
             Err("the run has 1 compared steps and the capture 2".to_owned())
         );
+    }
+
+    #[test]
+    fn a_value_is_replaced_as_written_and_as_nvda_speaks_it() {
+        let values = [("run".to_owned(), "mwpjps1l".to_owned())];
+        assert_eq!(
+            substituted(
+                "verbatim-e2e-twin-mwpjps1l window / verbatim-e 2e-twin-mwpjps 1l",
+                &values
+            ),
+            "verbatim-e2e-twin-{run} window / verbatim-e 2e-twin-{run}"
+        );
+        assert_eq!(substituted("mwpjps", &values), "mwpjps");
     }
 }
