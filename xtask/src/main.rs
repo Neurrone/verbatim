@@ -498,7 +498,6 @@ fn cargo(cargo_args: &[String]) -> Result<(), String> {
 #[cfg(windows)]
 const FAULT_CRATES: &[&str] = &[
     "verbatim-audio",
-    "verbatim-process",
     "verbatim-uia",
     "verbatim-ia2",
     "verbatim-outpost",
