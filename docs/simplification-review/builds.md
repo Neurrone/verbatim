@@ -638,7 +638,7 @@ About 2,400 product lines removed in the readers (the upper end of REPORT's 1,20
 
 ### Purpose
 
-Give the remote-operation crate one dispatcher with one rule, remove its dead builder methods, duplicate walks and the comparison that never matches, and decide the call-by-call twins from a counted fallback rate. Fix flat review and Backspace at a line's start towards NVDA after their captures, and remove the dead text protocol, reply variants, per-method provider counts and the dead focus query path.
+Give the remote-operation crate one dispatcher with one rule, remove its duplicate walks and the comparison that never matches, keep the builder methods no program emits yet (Dickson, 2026-11-20), and decide the call-by-call twins from a counted fallback rate. Fix flat review and Backspace at a line's start towards NVDA after their captures, and remove the dead text protocol, reply variants, per-method provider counts and the dead focus query path.
 
 ### Before the design: measure, capture or record
 
@@ -657,7 +657,7 @@ Give the remote-operation crate one dispatcher with one rule, remove its dead bu
 | Record and id | Title | Files and lines | Product | Tests | Speech changes |
 | --- | --- | --- | --- | --- | --- |
 | apis F4 and calls F4 | thirteen dispatchers with five rules; ten hand copies of `choose`, three without the timeout guard (one item; the terminal three wait for build 9) | rops `text.rs` 299-313; `caret.rs` 583, 596; `controlled.rs` 74; `navigate.rs` 72; `path.rs` 59; `watch.rs` 124; `focus.rs` 285, 325; `focus_states.rs` 68, 86; `tree.rs` 73, 129, 137 | 90 / 0 | 0 / 40 | no |
-| apis F1 | 31 builder methods no program emits, with their instructions | rops `builder.rs` 411-1299; `instruction.rs` 88-1016 | 620 / 0 | 214 / 0 | no |
+| apis F1 | 31 builder methods no program emits yet, with their instructions: kept, not removed (Dickson, 2026-11-20: "future work like browser UIA support or Word support would need them") | rops `builder.rs` 411-1299; `instruction.rs` 88-1016 | 0 | 0 | no |
 | apis F2 | two classic UIA ancestor walks and two classic navigation steps | uia `client.rs` 676, 790, 822, 945; rops `focus.rs` 996; `navigate.rs` 152 | 190 / 0 | mockapp tests of the deleted walk | no |
 | apis F3 and calls F3 | the previous focus's keyboard-focus read and the program's `refresh` path, reached only from tests (one item) | rops `focus.rs` 48, 296-317, 504-536, 560, 766-778, 1006-1033 | 100 / 0 | 60 / 0 | no |
 | apis F6 | agile-reference equality is reference identity: the comparison never matches (defect) | uia `shape/mod.rs` 521; outpost `completion.rs` 358-363 | 8 / 0 | 0 | no |
@@ -704,7 +704,7 @@ Give the remote-operation crate one dispatcher with one rule, remove its dead bu
 - One exhaustive test of `TextOp::anchors()` replacing `text_facts_tests.rs`'s two (text B5).
 - Flat review's tests rewritten as tests of the one review path (text B9); the 16 flat-review tests in `focus_speech_tests.rs` 1827-2150 move here from the focus file.
 - About ten targeted provider-side checks kept where the hit tuples go (the boundary's `WM_GETOBJECT`s, the title bar, the probe).
-- The removals tied to findings: the 31 byte-table rows; the five and six table-restating tests in `verbatim-uia` and `verbatim-ia2`; `answered.rs`'s refusal test; the `previous` and `refresh` parts of four tests; the fixtures spelling out B2's dead fields and B3's `Selected` (`tests/text.rs` 1737-1744 feeds a reply the outpost never sends); `a_copy_keeps_a_start_marker_set_while_its_read_was_in_flight` (text T5); the agreement halves of the twins' tests if the twins go.
+- The removals tied to findings: the five and six table-restating tests in `verbatim-uia` and `verbatim-ia2`; `answered.rs`'s refusal test; the `previous` and `refresh` parts of four tests; the fixtures spelling out B2's dead fields and B3's `Selected` (`tests/text.rs` 1737-1744 feeds a reply the outpost never sends); `a_copy_keeps_a_start_marker_set_while_its_read_was_in_flight` (text T5); the agreement halves of the twins' tests if the twins go.
 
 ### Rulings and defaults it rests on
 
@@ -731,7 +731,7 @@ About 2,500 to 3,700 product lines removed (REPORT's estimate, the upper end wit
 ### Done when
 
 - One dispatcher: `grep -n "if !remote {"` in `crates/verbatim-uia-rops/src` shows `choose` and the named exceptions only.
-- None of the 31 builder method names appears in `crates`; `Uia::ancestors` and `Uia::neighbor` are gone; `FocusQuery` has no `previous`.
+- `Uia::ancestors` and `Uia::neighbor` are gone; `FocusQuery` has no `previous`.
 - The fallback count is written into the build's report, with the twins' outcome that follows from it.
 - `review_offset` and `StartMarker::Flat` are gone and flat review goes through the text path; Backspace says the provider's unit at every offset; both match their captures.
 - `call_counts.rs` holds no hit tuple and `performance.md` names no hit figure (the ledger wording itself waits for the process revision).
