@@ -32,7 +32,7 @@ Dickson takes the decisions in these areas himself; every other decision is Clau
 - The process and thread layout: which work runs in which process and on which thread (D9, D13).
 - Architecture and high-level design
 - Trust boundaries and accepted risks: which code is trusted, what is sandboxed, what extensions and native add-ons may do and how users approve them, and the posture for UIAccess and secure screens. The mechanisms that enforce them are the session's.
-- What users hear: every deliberate difference from NVDA's speech, and every spoken behaviour NVDA has no answer for. Matching NVDA's captured speech needs no decision.
+- What users hear: every deliberate difference from NVDA's speech, and every spoken behaviour NVDA has no answer for. Matching NVDA's captured speech needs no decision where it is practical: it needs no new state, rule or mechanism and keeps the build within its budget. Where matching would need one or pass the budget, the difference goes to Dickson for approval when it arises, with NVDA's capture, the sequence and what matching would cost, and the build stops on that behaviour alone until he answers, because matching NVDA one sequence at a time in an architecture that is not NVDA's added a mechanism per fix (Dickson, 2026-11-20).
 - Performance budgets: latency, idle wake-ups and processor time, memory, and how long silence is tolerated while an application hangs. How a budget is met is the session's.
 - Public contracts: the extension API, the settings file format, the control and Remote protocols, and anything else people outside the project will depend on.
 - Major dependencies and licensing: adopting or replacing a runtime, toolkit or engine, and the tier rules under NVDA provenance.
