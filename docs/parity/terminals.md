@@ -270,7 +270,12 @@ Verbatim: **matched (verified)**.
   is named for its tab, and "terminal" in the console host, whose text
   area's name both drop (NVDA says the terminal and its line as one
   utterance, Verbatim as two). Returning to a tab or window, Verbatim
-  says the prompt. Typing and its output after a switch are echoed and
+  says the prompt. Different (Dickson, 2026-10-09): closing a tab with
+  Control+Shift+W returns to the tab before it, and Verbatim says its
+  terminal and the prompt, where NVDA, captured live, said the terminal
+  without its line; NVDA says the line in its other captures of the
+  focus returning to a tab, so Verbatim keeps it (`windows_terminal_tabs`).
+  Typing and its output after a switch are echoed and
   spoken as in any terminal. NVDA leaves the window's title out of a
   console's terminal, as Verbatim does.
 - A new terminal window or tab says "blank" for the empty line its caret

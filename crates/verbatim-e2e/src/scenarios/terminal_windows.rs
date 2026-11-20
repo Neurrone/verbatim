@@ -439,6 +439,7 @@ pub(crate) fn body_tabs(scenario: &mut Scenario, state: &mut ScenarioState) {
     scenario
         .send_keys(&["control+shift+w"])
         .expect("closes the second tab");
+    scenario.deviates_from_nvda("docs/parity/terminals.md", "Windows and tabs");
     scenario
         .speech()
         .expect(&[&format!("{first} terminal"), PROMPT]);
