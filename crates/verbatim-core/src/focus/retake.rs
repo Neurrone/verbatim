@@ -62,6 +62,9 @@ pub(crate) struct CurrentFocus {
 pub(crate) trait FocusReadDepth: std::fmt::Debug + Unpin + 'static {
     /// The depth.
     const DEPTH: FocusDepth;
+    /// Whether the outpost checks for a hidden dialog first, or reads as
+    /// it is, at a press while a dialog is postponed (`super::shown`).
+    const HIDDEN: HiddenRoot = HiddenRoot::Check;
     /// The answer, parsed.
     type Parsed: std::fmt::Debug + 'static;
     /// `answer` parsed, `None` for one that breaks the depth's rule.
@@ -86,6 +89,20 @@ impl FocusReadDepth for super::msaa_run::Full {
             super::validity::Answered::Read { read, .. } => Some(read),
             super::validity::Answered::Unread(_) => None,
         }
+    }
+}
+
+/// A read in full made as it is, the read at a press while a dialog is
+/// postponed: a hidden dialog answered to it breaks its rule.
+#[derive(Debug)]
+pub(crate) struct AsItIs;
+
+impl FocusReadDepth for AsItIs {
+    const DEPTH: FocusDepth = FocusDepth::Full;
+    const HIDDEN: HiddenRoot = HiddenRoot::ReadAnyway;
+    type Parsed = Box<FocusRead>;
+    fn parse(answer: CandidateAnswer) -> Option<Self::Parsed> {
+        super::msaa_run::Full::parse(answer)
     }
 }
 
@@ -117,9 +134,6 @@ pub(crate) struct CurrentFocusRead<D: FocusReadDepth> {
     /// How far the read goes: in full, or, for the check after a menu end,
     /// NVDA's fake focus, in full only when focused.
     pub(crate) depth: std::marker::PhantomData<D>,
-    /// Whether the outpost checks for a hidden dialog first, or reads as
-    /// it is at a press while the dialog is postponed (`super::shown`).
-    pub(crate) hidden: HiddenRoot,
 }
 
 impl<D: FocusReadDepth> Request for CurrentFocusRead<D> {
@@ -135,7 +149,7 @@ impl<D: FocusReadDepth> Request for CurrentFocusRead<D> {
 
     fn wire(&self) -> Wire {
         Wire::CurrentFocus {
-            hidden: self.hidden,
+            hidden: D::HIDDEN,
             set: self.set.clone(),
             known: self.known.clone(),
             details: self.details,
@@ -144,6 +158,9 @@ impl<D: FocusReadDepth> Request for CurrentFocusRead<D> {
     }
 
     fn decode(reply: Reply) -> Option<Self::Reply> {
+        if D::HIDDEN == HiddenRoot::ReadAnyway && matches!(reply, Reply::HiddenDialog(_)) {
+            return None;
+        }
         Hidden::parse(reply, |reply| match reply {
             Reply::Candidate(answer) => D::parse(answer).map(Focused::Read),
             _ => None,
@@ -260,24 +277,26 @@ pub(crate) async fn run(mut cx: Cx<Entries>, entry: CurrentFocus) {
     if entry.why == Why::Shown && !super::shown::shown_due(&cx, entry.window.handle) {
         return;
     }
-    read_current(&mut cx, &entry, HiddenRoot::Check).await;
+    read_current::<super::msaa_run::Full>(&mut cx, &entry).await;
 }
 
-/// Reads the current focus `read` names, checking for a hidden dialog or
-/// reading as it is by `hidden`, and judges its answer by its reason: the
-/// one place that decides a current-focus read's outcomes. Its speech
+/// Reads the current focus `read` names, in full, checking for a hidden
+/// dialog or reading as it is by `D`, and judges its answer by its reason:
+/// the one place that decides a current-focus read's outcomes. Its speech
 /// carries `read`'s fence. A failed read clears Core's caret baseline.
-pub(crate) async fn read_current(cx: &mut Cx<Entries>, read: &CurrentFocus, hidden: HiddenRoot) {
+pub(crate) async fn read_current<D: FocusReadDepth<Parsed = Box<FocusRead>>>(
+    cx: &mut Cx<Entries>,
+    read: &CurrentFocus,
+) {
     let due_us = cx.due_in(FOCUS_DUE_US);
-    let request = CurrentFocusRead::<super::msaa_run::Full> {
+    let request = CurrentFocusRead::<D> {
         window: read.window,
         known: Vec::new(),
         details: crate::details::focus_details(&cx.facts()),
         set: crate::details::focus_set(&cx.facts(), FOCUS_SET),
         depth: std::marker::PhantomData,
-        hidden,
     };
-    let Some(outcome) = super::shown::ask(cx, request, (due_us, hidden)).await else {
+    let Some(outcome) = super::shown::ask(cx, request, due_us).await else {
         return;
     };
     let answer = match outcome {

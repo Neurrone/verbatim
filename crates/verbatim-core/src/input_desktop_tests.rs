@@ -49,7 +49,7 @@ fn started() -> Held {
 
 /// The listener's tell of a switch of the input desktop, `open` when the
 /// new one can be opened.
-fn switch(open: bool) -> QueueInput {
+pub(crate) fn switch(open: bool) -> QueueInput {
     QueueInput::Tell {
         from: LISTENER,
         tell: Box::new(Event {

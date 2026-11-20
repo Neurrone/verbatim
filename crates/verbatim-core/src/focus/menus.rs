@@ -23,7 +23,6 @@
 use serde::{Deserialize, Serialize};
 use verbatim_model::TraceId;
 use verbatim_model::event_kind::EventKind;
-use verbatim_model::request::HiddenRoot;
 
 use super::FOCUS_SET;
 use super::backend::BackendCache;
@@ -202,10 +201,8 @@ pub(crate) async fn check(mut cx: Cx<Entries>, check: MenuCheck) {
         details: crate::details::focus_details(&cx.facts()),
         set: crate::details::focus_set(&cx.facts(), FOCUS_SET),
         depth: std::marker::PhantomData,
-        hidden: HiddenRoot::Check,
     };
-    let checked = (due_us, HiddenRoot::Check);
-    let Some(outcome) = super::shown::ask(&mut cx, request, checked).await else {
+    let Some(outcome) = super::shown::ask(&mut cx, request, due_us).await else {
         return;
     };
     let answered = match outcome {

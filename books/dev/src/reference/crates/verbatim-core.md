@@ -204,11 +204,10 @@ window and the foreground record names it in front (`shown::shown_due`).
 `retake::read_current` is the one place a read of the current focus is
 judged, by its reason: `Startup` and `Returned` execute, `Retake`,
 `Recovered` and `Shown` go through `retake()`; the shell's answer in
-front goes to `plain::decide`, `Shown` as a re-take. A press of typed
-text, a control character, a command or a script calls
-`shown::before_press` at its turn: with the dialog postponed and in
-front, it reads the current focus with `HiddenRoot::ReadAnyway` through
-`read_current`, its speech stamped with the postponed fence, which
+front goes to `plain::decide`, `Shown` as a re-take. A press other than
+a caret key calls `shown::before_press` at its turn: with the dialog postponed and in
+front, it reads the current focus as it is through `read_current::<AsItIs>`,
+whose decode refuses a hidden dialog, its speech stamped with the postponed fence, which
 `Executed::deliver` takes for every caller. Tests: `focus::shown::tests`,
 the design's sequences in Import's recorded order, the stand-in's marked;
 `tests/replay_validity.rs` replays Import's flight dump.

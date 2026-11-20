@@ -168,9 +168,9 @@ pub(crate) async fn run(mut cx: Cx<Entries>, focus: UiaFocus) {
         details: crate::details::focus_details(&cx.facts()),
     };
     let request = Completion { window, complete };
-    // A hidden dialog postponed: its show reads the current focus.
-    let Some(outcome) = super::shown::ask(cx, request, (due_us, HiddenRoot::Check)).await else {
-        unexecuted(cx, window);
+    // A hidden dialog postponed, answered before any registration: its
+    // show reads the current focus.
+    let Some(outcome) = super::shown::ask(cx, request, due_us).await else {
         return;
     };
     let read = match outcome {
@@ -239,9 +239,8 @@ async fn afresh(
         details: crate::details::focus_details(&cx.facts()),
         set: crate::details::focus_set(&cx.facts(), FOCUS_SET),
         depth: std::marker::PhantomData,
-        hidden: HiddenRoot::Check,
     };
-    let Some(outcome) = super::shown::ask(cx, request, (due_us, HiddenRoot::Check)).await else {
+    let Some(outcome) = super::shown::ask(cx, request, due_us).await else {
         return;
     };
     let read = match outcome {

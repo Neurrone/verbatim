@@ -627,8 +627,8 @@ impl Logic for Entries {
                 (now_us, foreground),
             )
             .then_some(CancelReason::Withdrawn),
-            Cause::Foreground(record) => (!exempt_from_foreground(facts, front, &live.window)
-                && !record.holds(&live.window))
+            Cause::Foreground => (!exempt_from_foreground(facts, front, &live.window)
+                && foreground.is_some_and(|record| !record.holds(&live.window)))
             .then_some(CancelReason::Foreground),
             Cause::Settled => {
                 unneeded(facts, front, &live.request).then_some(CancelReason::Withdrawn)

@@ -12,12 +12,12 @@
 use serde::{Deserialize, Serialize};
 use verbatim_model::WindowHandle;
 use verbatim_model::event_kind::EventKind;
-use verbatim_model::request::{HiddenRoot, NodeWindow, PressAction, Reply};
+use verbatim_model::request::{NodeWindow, PressAction, Reply};
 use verbatim_model::tell::Event;
 
 use super::retake::{CurrentFocus, Why};
 use crate::entries::{Entries, front_fence, request_window, window_facts};
-use crate::event_queue::{Cx, Outcome, Refused, Request, RequestWindow};
+use crate::event_queue::{Cx, Outcome, Request, RequestWindow};
 use crate::keys::entry::{Fence, PressEntry};
 
 /// A focus read's answer: the read, or the hidden dialog its window's
@@ -52,25 +52,18 @@ pub(crate) struct Postponed {
     pub(crate) fence: Fence,
 }
 
-/// Asks the focus read `request` under `due_us`, with the hidden check
-/// `hidden` it was made with: the one place a hidden dialog's answer is
-/// decided for every focus read. A hidden dialog answered to a read that
-/// checks postpones it, keeping the older fence when the same dialog is
-/// postponed already, and `None` is returned: the caller's entry ends,
-/// nothing said. Answered to a read made as it is, it breaks the request's
-/// rule: undecodable.
-pub(crate) async fn ask<R, T>(
-    cx: &mut Cx<Entries>,
-    request: R,
-    (due_us, hidden): (u64, HiddenRoot),
-) -> Option<Outcome<T>>
+/// Asks the focus read `request` under `due_us`: the one place a hidden
+/// dialog's answer is decided for every focus read. A hidden dialog, which
+/// only a read made to check decodes, postpones it, keeping the older
+/// fence when the same dialog is postponed already, and `None` is
+/// returned: the caller's entry ends, nothing said.
+pub(crate) async fn ask<R, T>(cx: &mut Cx<Entries>, request: R, due_us: u64) -> Option<Outcome<T>>
 where
     R: Request<Reply = Hidden<T>>,
 {
     let dialog = match cx.ask(request, due_us).await {
         Outcome::Result(Hidden::Read(read)) => return Some(Outcome::Result(read)),
-        Outcome::Result(Hidden::Dialog(dialog)) if hidden == HiddenRoot::Check => dialog,
-        Outcome::Result(Hidden::Dialog(_)) => return Some(Outcome::Refused(Refused::Undecodable)),
+        Outcome::Result(Hidden::Dialog(dialog)) => dialog,
         Outcome::Refused(refused) => return Some(Outcome::Refused(refused)),
         Outcome::NotThere => return Some(Outcome::NotThere),
         Outcome::NotResponding => return Some(Outcome::NotResponding),
@@ -140,20 +133,14 @@ pub(crate) fn marker(cx: &mut Cx<Entries>, window: WindowHandle) {
     cx.join(crate::entries::Entry::CurrentFocus(Box::new(read)));
 }
 
-/// A press whose turn judges the committed focus, typed text, a control
-/// character, a command or a script, while the postponed dialog is in
-/// front: the focus is read first, as it is, stamped with the postponing
-/// entry's fence and committed, so that the press is judged against it
-/// and its cut silences what the read says. Any other outcome leaves the
-/// fact as it was.
+/// A press other than a caret key, while the postponed dialog is in front:
+/// the focus is read first, as it is, stamped with the postponing entry's
+/// fence and committed, so that the press is judged against it and its
+/// cut silences what the read says. A caret key, whose action was bound at
+/// its press, reads nothing, and the show says the dialog, as NVDA's
+/// captures of Right Arrow do. Any other outcome leaves the fact as it was.
 pub(crate) async fn before_press(cx: &mut Cx<Entries>, press: &PressEntry) {
-    let judges = matches!(
-        press.press.action,
-        PressAction::Typed { .. }
-            | PressAction::Control
-            | PressAction::Command { .. }
-            | PressAction::Script { .. }
-    );
+    let judges = !matches!(press.press.action, PressAction::CaretKey { .. });
     let Some(postponed) = cx.facts().versions.postponed.filter(|_| judges) else {
         return;
     };
@@ -166,7 +153,7 @@ pub(crate) async fn before_press(cx: &mut Cx<Entries>, press: &PressEntry) {
         trace_id: press.trace_id,
         fence: postponed.fence,
     };
-    super::retake::read_current(cx, &read, HiddenRoot::ReadAnyway).await;
+    super::retake::read_current::<super::retake::AsItIs>(cx, &read).await;
 }
 
 #[cfg(test)]

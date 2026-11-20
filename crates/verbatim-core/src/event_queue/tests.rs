@@ -222,14 +222,14 @@ impl Logic for Test {
         facts: &u32,
         (front, live): (&Entry, &Live),
         cause: Cause<'_, Entry>,
-        _: (&BackendCache, u64, Option<Foreground>),
+        (_, _, record): (&BackendCache, u64, Option<Foreground>),
     ) -> Option<CancelReason> {
         match cause {
             Cause::Arrived(arriving) => (matches!(front, Entry::Read { .. })
                 && *arriving == Entry::Key)
                 .then_some(CancelReason::Withdrawn),
-            Cause::Foreground(record) => (!matches!(front, Entry::Read { exempt: true, .. })
-                && !record.holds(&live.window))
+            Cause::Foreground => (!matches!(front, Entry::Read { exempt: true, .. })
+                && record.is_some_and(|record| !record.holds(&live.window)))
             .then_some(CancelReason::Foreground),
             Cause::Settled => (*facts == UNNEEDED).then_some(CancelReason::Withdrawn),
         }
@@ -1502,13 +1502,13 @@ impl Logic for Probing {
         (): &(),
         (_, live): (&Withdraws, &Live),
         cause: Cause<'_, Withdraws>,
-        _: (&BackendCache, u64, Option<Foreground>),
+        (_, _, record): (&BackendCache, u64, Option<Foreground>),
     ) -> Option<CancelReason> {
         match cause {
             Cause::Arrived(arriving) => arriving.then_some(CancelReason::Withdrawn),
-            Cause::Foreground(record) => {
-                (!record.holds(&live.window)).then_some(CancelReason::Foreground)
-            }
+            Cause::Foreground => record
+                .is_some_and(|record| !record.holds(&live.window))
+                .then_some(CancelReason::Foreground),
             Cause::Settled => None,
         }
     }

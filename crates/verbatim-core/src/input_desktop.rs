@@ -141,4 +141,4 @@ pub(crate) fn tick(
 
 #[cfg(test)]
 #[path = "input_desktop_tests.rs"]
-mod tests;
+pub(crate) mod tests;

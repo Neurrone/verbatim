@@ -564,9 +564,7 @@ impl<L: Logic> Core<L> {
                 .table
                 .unwatch_unless(|window| foreground.attends(window));
             let state = &shared.state;
-            state
-                .queue
-                .front_ends::<L>(&state.facts, Cause::Foreground(&foreground))
+            state.queue.front_ends::<L>(&state.facts, Cause::Foreground)
         };
         if let Some((number, reason)) = stopped {
             self.stop(number, reason);

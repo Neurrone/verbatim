@@ -165,9 +165,9 @@ or at a foreground report naming it, Core reads the focus again, so the
 dialog is said with its text, then its field, as NVDA's capture says
 them. No focus or foreground event is ignored, so both NVDA commits above
 hold; only the read is postponed, by the time left until the show. A
-caret key, a modifier alone, a passed key, a clearing key and an editing
-chord follow NVDA: pressed while the dialog is hidden, they read nothing,
-and the dialog is said with its text and its field at the show ([captures](https://github.com/Neurrone/verbatim/blob/main/crates/verbatim-core/tests/fixtures/hidden_dialog/s7), `import-rightarrow-1`
+caret key and a modifier alone follow NVDA: pressed while the dialog is
+hidden, they read nothing, and the dialog is said with its text and its
+field at the show ([captures](https://github.com/Neurrone/verbatim/blob/main/crates/verbatim-core/tests/fixtures/hidden_dialog/s7), `import-rightarrow-1`
 to `-3`, `import-control-1` to `-3`). The differences from NVDA:
 
 - a character typed while Import is hidden is heard alone; NVDA says
@@ -182,7 +182,8 @@ to `-3`, `import-control-1` to `-3`). The differences from NVDA:
   (`import-tab-1`, `-2`). Approved by Dickson, 2026-11-20, since
   following NVDA needs state;
 - a dialog never shown, and a tray menu's hidden dialog left in front
-  after Escape, are not spoken until typed text or a command reads them;
+  after Escape, are not spoken until a key other than a caret key reads
+  them;
   NVDA speaks the focus without the dialog's text ([captures](https://github.com/Neurrone/verbatim/blob/main/crates/verbatim-core/tests/fixtures/hidden_dialog/s8),
   `never-shown`, `tray`; stand-in order, no real application recorded).
   Approved by Dickson, 2026-11-20, since following NVDA needs a timer;
@@ -191,7 +192,7 @@ to `-3`, `import-control-1` to `-3`). The differences from NVDA:
   NVDA, which says it at once (`owned-box`, stand-in order). Approved by
   Dickson, 2026-11-20;
 - a postponement made before any key in the session carries no key
-  number, so a key's read of it is heard, as before;
+  number, so a key's read of it is heard;
 - a dialog is said with its text where NVDA says it without, whenever
   NVDA's pass runs before the show (the ruling of 2026-11-19).
 

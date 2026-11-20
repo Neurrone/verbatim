@@ -266,23 +266,22 @@ pub(crate) async fn read_in_full(
     due_us: u64,
 ) -> Option<(TurnAnswer, Known)> {
     let known = known_for(cx, candidate.tell.process);
-    let checked = (due_us, HiddenRoot::Check);
     let outcome = match depth {
         TurnDepth::FullIfFocused => {
             let request = RunRequest::of(cx, (candidate, &FullIfFocused), None, &known);
-            shown::ask(cx, request, checked)
+            shown::ask(cx, request, due_us)
                 .await?
                 .map(TurnAnswer::Answered)
         }
         TurnDepth::Full => {
             let request = RunRequest::of(cx, (candidate, &Full), None, &known);
-            shown::ask(cx, request, checked)
+            shown::ask(cx, request, due_us)
                 .await?
                 .map(TurnAnswer::Answered)
         }
         TurnDepth::UnlessSame(named) => {
             let request = RunRequest::of(cx, (candidate, &named), None, &known);
-            shown::ask(cx, request, checked)
+            shown::ask(cx, request, due_us)
                 .await?
                 .map(|answer| match answer {
                     UnlessSameAnswer::Answered(answered) => TurnAnswer::Answered(answered),

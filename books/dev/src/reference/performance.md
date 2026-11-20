@@ -614,9 +614,9 @@ hidden, which Core postpones and reads again at its show ([How focus works](../e
   30 ms; a dialog shown at its foreground waits for nothing. NVDA's
   first speech for Import came 716 to 1021 ms after Enter.
 - After the show, the read of the dialog is where the time goes. In the
-  five recordings of Import of 2026-11-19 (`dsb-import`, when the read
-  was made again at the listener's answer), Enter to the first speech
-  was 325 to 484 ms, 219 to 276 ms after the show; inside the read, 57 to
+  five recordings of Import of 2026-11-19 (`dsb-import`), Enter to the
+  first speech was 325 to 484 ms, 219 to 276 ms after the show; inside
+  the read, 57 to
   89 ms acquired and walked the dialog while its application's own thread
   was building its shell view, then 134 to 175 ms gathered its text, 340
   MSAA calls in all: the state and role of every child, going into each
@@ -634,8 +634,8 @@ hidden, which Core postpones and reads again at its show ([How focus works](../e
   entry with its checkpoint, which asks nothing unless a dialog is
   postponed. A foreground report that reaches its turn after the
   postponement asks the hidden check once more.
-- A dialog never shown holds nothing; it is read when typed text or a
-  command meets it.
+- A dialog never shown holds nothing; it is read when a key other than a
+  caret key meets it.
 
 ### Focus changes measured across the pipeline
 

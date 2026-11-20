@@ -196,8 +196,8 @@ impl Foreground {
 pub(crate) enum Cause<'a, E> {
     /// `entry` arrived at the back, before the limiter places it.
     Arrived(&'a E),
-    /// The foreground record changed to this.
-    Foreground(&'a Foreground),
+    /// The foreground record changed, to the record the judge is given.
+    Foreground,
     /// The queue settled after Core's facts changed outside it.
     Settled,
 }
