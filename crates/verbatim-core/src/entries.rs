@@ -1196,6 +1196,10 @@ pub(crate) fn route(
             // The foreground window is top-level: its own root.
             by_class: by_class(&report.class, &report.class),
             shell: crate::applications::is_shell_foreground_class(&report.class),
+            ghost: report.ghost,
+            console: report.console,
+            integrity: report.integrity,
+            own_integrity: report.own_integrity,
         }),
         QueueInput::ReaderReady(instance) => Input::ReaderReady(*instance),
         QueueInput::ReaderEnded(instance) => Input::ReaderEnded(*instance),

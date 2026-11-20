@@ -23,8 +23,8 @@ use verbatim_model::request::{
 };
 use verbatim_model::tell::{Event, EventObject, Payload, TellWindow};
 use verbatim_model::{
-    ForegroundWindow, Input, NodeDetails, NodeSnapshot, Pid, Role, SegmentContent, StateSet,
-    TraceId, UtteranceSegment, WindowHandle,
+    NodeDetails, NodeSnapshot, Pid, Role, SegmentContent, StateSet, TraceId, UtteranceSegment,
+    WindowHandle,
 };
 
 /// Verbatim, whose menu is open.
@@ -44,9 +44,6 @@ const HUNGWIN: App = App {
 /// The ghost window the desktop window manager shows for hungwin.
 const GHOST: WindowHandle = WindowHandle(7_000);
 
-/// The desktop window manager, the ghost's own process.
-const DWM: Pid = Pid(6732);
-
 /// `app`'s top-level window as the listener reports it in front.
 fn report(app: App) -> QueueInput {
     QueueInput::Foreground(ForegroundReport {
@@ -55,6 +52,10 @@ fn report(app: App) -> QueueInput {
         process: app.pid,
         thread: 41,
         class: "Frame".to_owned(),
+        ghost: None,
+        console: false,
+        integrity: None,
+        own_integrity: None,
     })
 }
 
@@ -117,32 +118,14 @@ fn end(kind: EventKind, at_us: u64) -> QueueInput {
 }
 
 /// The listener's report of the ghost in front at `at_us`, as the shell
-/// feeds it: the reducer takes the ghost itself, then the event queue the
-/// hung window it stands for.
+/// feeds it: the hung window it stands for, with the ghost as the
+/// keyboard hook's window.
 fn ghost_in_front(desk: &mut Desk, at_us: u64) -> Vec<Heard> {
-    let raw = verbatim_core::reduce(
-        &mut desk.state,
-        &mut desk.runtime,
-        &Input::Foreground(ForegroundWindow {
-            window: GHOST,
-            root_owner: GHOST,
-            process: DWM,
-            observed_at_us: at_us,
-            own: false,
-            thread: 77,
-            console: false,
-            integrity: None,
-            own_integrity: None,
-        }),
-    );
-    assert!(
-        raw.iter().all(|effect| !matches!(
-            effect,
-            verbatim_model::Effect::Speak(..) | verbatim_model::Effect::PlayEarcon(_)
-        )),
-        "{raw:?}"
-    );
-    desk.step_at(at_us, report(HUNGWIN))
+    let QueueInput::Foreground(mut hung) = report(HUNGWIN) else {
+        unreachable!("a foreground report")
+    };
+    hung.ghost = Some(GHOST);
+    desk.step_at(at_us, QueueInput::Foreground(hung))
 }
 
 /// The ghost as the shell reads it in front.

@@ -68,10 +68,10 @@ mod tree;
 
 pub use calls::{CallCounts, CallKind};
 pub use event::{
-    ActionName, BarChange, Earcon, EarlierElement, Effect, FocusTextKind, ForegroundWindow,
-    GuiRequest, HookForeground, Input, LockKey, NormalizedEvent, NotificationKind,
-    NotificationProcessing, Observed, Percent, Pid, PropertyChange, QueryKind, ReviewCommand,
-    Script, ToastId, WindowFacts, WindowHandle,
+    ActionName, BarChange, Earcon, EarlierElement, Effect, FocusTextKind, GuiRequest,
+    HookForeground, Input, LockKey, NormalizedEvent, NotificationKind, NotificationProcessing,
+    Observed, Percent, Pid, PropertyChange, QueryKind, ReviewCommand, Script, ToastId, WindowFacts,
+    WindowHandle,
 };
 pub use gesture::{GestureId, GestureParseError};
 pub use key_seq::KeySeq;

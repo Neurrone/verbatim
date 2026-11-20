@@ -857,6 +857,7 @@ fn window_4_in_front() -> Input<Entry> {
         thread: 41,
         by_class: None,
         shell: false,
+        ..Foreground::BLANK
     })
 }
 
@@ -923,6 +924,7 @@ fn a_foreground_marker_empties_the_last_focus_for_an_unrelated_window() {
         thread: 0,
         by_class: None,
         shell: false,
+        ..Foreground::BLANK
     };
     // The first foreground report appends the startup read, of an
     // application whose outpost has not started; the marker waits behind
@@ -1297,6 +1299,7 @@ fn a_focus_moving_in_the_hidden_frames_popup_menu_says_the_frames_title_once() {
         thread: 41,
         by_class: None,
         shell: false,
+        ..Foreground::BLANK
     };
     // The first foreground report's startup read, which finds nothing.
     assert_eq!(
@@ -1625,6 +1628,10 @@ fn a_request_from_outside_the_queue_is_not_stopped_by_a_foreground_change() {
             process: Pid(50),
             thread: 3,
             class: "Notepad".to_owned(),
+            ghost: None,
+            console: false,
+            integrity: None,
+            own_integrity: None,
         }),
     );
     assert!(

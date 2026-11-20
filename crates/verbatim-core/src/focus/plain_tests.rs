@@ -39,6 +39,7 @@ const IN_FRONT: Foreground = Foreground {
     thread: 41,
     by_class: None,
     shell: false,
+    ..Foreground::BLANK
 };
 
 /// The ghost as the shell reads it in front.

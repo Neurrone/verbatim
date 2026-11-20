@@ -455,6 +455,7 @@ fn backspace_whose_confirmation_the_foreground_stops_says_nothing() {
             thread: 0,
             by_class: None,
             shell: false,
+            ..Foreground::BLANK
         }),
     );
     assert_eq!(elsewhere.cancelled, [(5, CancelReason::Foreground)]);
@@ -517,6 +518,7 @@ fn the_foreground_leaving_the_candidates_window_stops_the_confirmation() {
             thread: 0,
             by_class: None,
             shell: false,
+            ..Foreground::BLANK
         }),
     );
     assert_eq!(elsewhere.cancelled, [(5, CancelReason::Foreground)]);

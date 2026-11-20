@@ -51,8 +51,8 @@ use verbatim_model::request::{
     Answer, ForegroundReport, Instance, Outcome, ProcessFact, QueueEffect, QueueInput, Reader,
 };
 use verbatim_model::{
-    Earcon, Effect, ForegroundWindow, GestureId, GuiRequest, Input, LockKey, OutpostId, Pid,
-    ReaderSettings, TraceId, WindowHandle,
+    Earcon, Effect, GestureId, GuiRequest, Input, LockKey, OutpostId, Pid, ReaderSettings, TraceId,
+    WindowHandle,
 };
 use verbatim_process::arguments::OutpostOptions;
 use verbatim_process::clock::now_us;
@@ -1092,12 +1092,27 @@ impl ReducerThread<'_> {
                 if let ListenerToCore::Tell(tell) = &*message {
                     self.tell_received(tell);
                 }
-                match listener_input(from, *message) {
-                    Ok(input) => self.queue(input),
-                    Err(other) => tracing::error!(target: verbatim_model::DEFECT_TARGET,
-                        ?other,
-                        "the supervisor handed on a listener message that is no tell, destroy or answer, a logic bug"
-                    ),
+                match *message {
+                    ListenerToCore::Foreground {
+                        window,
+                        root_owner,
+                        process,
+                        thread,
+                        console,
+                        integrity,
+                        ..
+                    } => self.foreground(window, root_owner, process, thread, console, integrity),
+                    ListenerToCore::Progress { change, .. } => self.apply(Input::Progress {
+                        trace_id: TraceId::mint(),
+                        change,
+                    }),
+                    message => match listener_input(from, message) {
+                        Ok(input) => self.queue(input),
+                        Err(other) => tracing::error!(target: verbatim_model::DEFECT_TARGET,
+                            ?other,
+                            "the supervisor handed on a listener message that is no tell, destroy, answer, foreground report or progress change, a logic bug"
+                        ),
+                    },
                 }
             }
             OutpostMessage::Pong {
@@ -1110,13 +1125,6 @@ impl ReducerThread<'_> {
                     abandoned,
                 }));
             }
-            OutpostMessage::Progress(change) => {
-                self.apply(Input::Progress {
-                    trace_id: TraceId::mint(),
-                    change,
-                });
-            }
-            OutpostMessage::Foreground(report) => self.foreground(&report),
             OutpostMessage::IdleQueried {
                 round, outposts, ..
             } => {
@@ -1153,54 +1161,57 @@ impl ReducerThread<'_> {
         );
     }
 
-    /// The listener's report that `report`'s window came to the foreground:
-    /// Core's event queue takes it, with the window's class, a ghost window
-    /// mapped to the hung window it stands in for, and the hook's view takes
-    /// its integrity and keyboard thread.
-    fn foreground(&mut self, report: &verbatim_supervisor::ForegroundReport) {
+    /// The listener's report that `window` came to the foreground, Core's
+    /// one input of it: with the window's class, a ghost window mapped to
+    /// the hung window it stands in for, and the integrity levels the
+    /// keyboard hook's view reads.
+    fn foreground(
+        &mut self,
+        window: isize,
+        root_owner: isize,
+        process: u32,
+        thread: u32,
+        console: bool,
+        integrity: Option<u32>,
+    ) {
         // At info, with the starts it may decide, to time an outpost's
         // start from what asked for it.
-        tracing::info!(
-            process = report.process,
-            "the listener's foreground report reached Core"
-        );
-        let window = WindowHandle(u64::from_ne_bytes(report.window.to_ne_bytes()));
-        let root_owner = WindowHandle(u64::from_ne_bytes(report.root_owner.to_ne_bytes()));
-        self.apply(Input::Foreground(ForegroundWindow {
-            window,
-            root_owner,
-            process: Pid(report.process),
-            observed_at_us: report.observed_at_us,
-            own: report.process == std::process::id(),
-            thread: report.thread,
-            console: report.console,
-            integrity: report.integrity,
-            own_integrity: verbatim_win32::integrity::own_integrity(),
-        }));
+        tracing::info!(process, "the listener's foreground report reached Core");
+        let in_front = WindowHandle(u64::from_ne_bytes(window.to_ne_bytes()));
+        let own_integrity = verbatim_win32::integrity::own_integrity();
         // A ghost window in front stands in for a hung window of another
         // process: Core's foreground test and attention judge the hung
         // window and its application, so a request to it is stopped as
-        // hung and the hung window, not the ghost, joins the recovery set.
-        let judged = hang_check::judged(window);
-        let report = if judged == window {
+        // hung and the hung window, not the ghost, joins the recovery set;
+        // the keyboard hook's view keeps the ghost, the window in front.
+        let judged = hang_check::judged(in_front);
+        let report = if judged == in_front {
             ForegroundReport {
-                window,
-                root_owner,
-                process: Pid(report.process),
-                thread: report.thread,
-                class: verbatim_win32::window::window_class_name(report.window),
+                window: in_front,
+                ghost: None,
+                root_owner: WindowHandle(u64::from_ne_bytes(root_owner.to_ne_bytes())),
+                process: Pid(process),
+                thread,
+                class: verbatim_win32::window::window_class_name(window),
+                console,
+                integrity,
+                own_integrity,
             }
         } else {
             let handle = window_handle(judged);
             let (thread, process) = verbatim_win32::window::window_owner(handle);
             ForegroundReport {
                 window: judged,
+                ghost: Some(in_front),
                 root_owner: WindowHandle(u64::from_ne_bytes(
                     verbatim_win32::window::root_owner_of(handle).to_ne_bytes(),
                 )),
                 process: Pid(process),
                 thread,
                 class: verbatim_win32::window::window_class_name(handle),
+                console,
+                integrity,
+                own_integrity,
             }
         };
         self.queue(QueueInput::Foreground(report));

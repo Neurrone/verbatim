@@ -20,6 +20,7 @@ const IN_FRONT: Foreground = Foreground {
     thread: 41,
     by_class: None,
     shell: false,
+    ..Foreground::BLANK
 };
 
 /// A state with the foreground record set, its startup read answered

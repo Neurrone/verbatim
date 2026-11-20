@@ -942,6 +942,7 @@ fn bring_forward(
             thread: 41,
             by_class: None,
             shell: false,
+            ..crate::event_queue::Foreground::BLANK
         },
     ));
     let Some(read) = read else {

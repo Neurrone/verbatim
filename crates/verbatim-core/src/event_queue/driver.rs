@@ -227,6 +227,12 @@ impl<E, F> Queue<E, F> {
     pub(crate) fn foreground_process(&self) -> Option<verbatim_model::Pid> {
         self.foreground.map(|foreground| foreground.process)
     }
+
+    /// The window the listener last reported in front, `None` before its
+    /// first report.
+    pub(crate) fn foreground(&self) -> Option<Foreground> {
+        self.foreground
+    }
 }
 
 impl<E, F> Queue<E, F> {

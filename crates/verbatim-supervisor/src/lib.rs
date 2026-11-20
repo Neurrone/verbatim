@@ -212,30 +212,6 @@ pub fn refuse_shutdown_wake() -> verbatim_faults::Guard {
     )
 }
 
-/// A window that came to the foreground, as the focus listener reported it
-/// ([`verbatim_model::protocol::ListenerToCore::Foreground`]).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ForegroundReport {
-    /// The window.
-    pub window: isize,
-    /// The top of its owner chain.
-    pub root_owner: isize,
-    /// The process its facts go to.
-    pub process: u32,
-    /// When the listener observed it, in microseconds on the run's shared
-    /// clock.
-    pub observed_at_us: u64,
-    /// The thread that raised its event, the console host's own for a
-    /// console window; 0 for a console window whose thread no event has
-    /// named yet.
-    pub thread: u32,
-    /// Whether it is a console host window.
-    pub console: bool,
-    /// The integrity level of the process that owns it, or `None` when it
-    /// cannot be read.
-    pub integrity: Option<u32>,
-}
-
 /// The seal on the lifecycle notices of [`OutpostMessage`]: only the
 /// supervisor's owner thread makes one, so no other code can announce a
 /// generation started or ended, or an idle round asked, and the app takes
@@ -326,14 +302,15 @@ pub enum OutpostMessage {
         /// Only the supervisor sends it.
         sealed: Sealed,
     },
-    /// A tell, a window's destruction or an answer the listener of
-    /// generation `listener` sent, for Core's event queue, which judges
-    /// whether it is the current one's.
+    /// A tell, a window's destruction, an answer, a foreground report or a
+    /// progress bar's change the listener of generation `listener` sent,
+    /// for the app to give Core.
     Listener {
         /// The listener's generation.
         listener: OutpostId,
         /// The message: a [`ListenerToCore::Tell`], a
-        /// [`ListenerToCore::Destroyed`] or a [`ListenerToCore::Answer`].
+        /// [`ListenerToCore::Destroyed`], a [`ListenerToCore::Answer`], a
+        /// [`ListenerToCore::Foreground`] or a [`ListenerToCore::Progress`].
         message: Box<ListenerToCore>,
     },
     /// An outpost of `target_pid` answered a ping. Core's generation record
@@ -348,14 +325,6 @@ pub enum OutpostMessage {
         /// the pong's `parked_count`.
         abandoned: usize,
     },
-    /// A progress bar's value changed, as the focus listener read it: the
-    /// app gives it to Core.
-    Progress(verbatim_model::BarChange),
-    /// A window came to the system's foreground, as the focus listener
-    /// learned it: the app gives it to Core, which decides the keyboard
-    /// hook's view of the foreground (architecture section 5), attention
-    /// and its foreground record.
-    Foreground(ForegroundReport),
     /// An outpost generation ended. Its node ids are dead from now on.
     /// What follows is Core's decision.
     Ended {

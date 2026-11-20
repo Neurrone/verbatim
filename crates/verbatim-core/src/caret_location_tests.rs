@@ -22,6 +22,7 @@ const IN_FRONT: Foreground = Foreground {
     thread: 41,
     by_class: None,
     shell: false,
+    ..Foreground::BLANK
 };
 
 /// The startup read answered with the focus `name` of `role` committed,

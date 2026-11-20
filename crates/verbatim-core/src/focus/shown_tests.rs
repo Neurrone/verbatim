@@ -163,6 +163,7 @@ fn in_front(window: u64, owner: u64, process: Pid) -> Input<Entry> {
         thread: 41,
         by_class: None,
         shell: false,
+        ..Foreground::BLANK
     })
 }
 

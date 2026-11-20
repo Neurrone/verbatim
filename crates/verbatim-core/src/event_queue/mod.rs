@@ -149,6 +149,35 @@ pub(crate) struct Foreground {
     /// Whether it is Program Manager's or the taskbar's window, judged once
     /// from its class at the boundary: a focus entering it says no title.
     pub(crate) shell: bool,
+    /// The ghost window in front when one stands in for `window`, which
+    /// is the hung window: the keyboard hook's window.
+    pub(crate) ghost: Option<WindowHandle>,
+    /// Whether the window in front is a console host window, whose keys
+    /// are translated with `thread`'s keyboard layout.
+    pub(crate) console: bool,
+    /// The integrity level of the window's process, `None` when unread.
+    pub(crate) integrity: Option<u32>,
+    /// Verbatim's own integrity level, `None` when unread.
+    pub(crate) own_integrity: Option<u32>,
+}
+
+#[cfg(test)]
+impl Foreground {
+    /// A report's keyboard-hook facts left at their plainest, for a test's
+    /// report to take with `..Foreground::BLANK`: no ghost, no console
+    /// window, integrity unread.
+    pub(crate) const BLANK: Self = Self {
+        window: WindowHandle(0),
+        root_owner: WindowHandle(0),
+        process: Pid(0),
+        thread: 0,
+        by_class: None,
+        shell: false,
+        ghost: None,
+        console: false,
+        integrity: None,
+        own_integrity: None,
+    };
 }
 
 impl Foreground {

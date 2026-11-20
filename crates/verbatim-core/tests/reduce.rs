@@ -97,6 +97,10 @@ fn foreground(desk: &mut Desk, app: App) -> Vec<Heard> {
         process: app.pid,
         thread: 41,
         class: "Frame".to_owned(),
+        ghost: None,
+        console: false,
+        integrity: None,
+        own_integrity: None,
     }))
 }
 
@@ -997,6 +1001,10 @@ fn a_return_to_the_owner_as_the_dialogs_application_exits_says_its_focus() {
         process: TWO.pid,
         thread: 41,
         class: "Frame".to_owned(),
+        ghost: None,
+        console: false,
+        integrity: None,
+        own_integrity: None,
     }));
     // The dialog's focus, its walk meeting the owner's window, which the
     // owner's outpost minted, as the recording's did.

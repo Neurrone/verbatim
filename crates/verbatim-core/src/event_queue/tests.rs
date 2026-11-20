@@ -55,6 +55,7 @@ const IN_FRONT: Foreground = Foreground {
     thread: 0,
     by_class: None,
     shell: false,
+    ..Foreground::BLANK
 };
 /// Another window of the same application in front, outside the request
 /// window's tree.
@@ -65,6 +66,7 @@ const SAME_APP_ELSEWHERE: Foreground = Foreground {
     thread: 0,
     by_class: None,
     shell: false,
+    ..Foreground::BLANK
 };
 /// Another application in front.
 const ELSEWHERE: Foreground = Foreground {
@@ -74,6 +76,7 @@ const ELSEWHERE: Foreground = Foreground {
     thread: 0,
     by_class: None,
     shell: false,
+    ..Foreground::BLANK
 };
 /// An asker outside the queue.
 const ASKER: Asker = Asker(5);
@@ -589,6 +592,7 @@ const CONSOLE_IN_FRONT: Foreground = Foreground {
     thread: 0,
     by_class: None,
     shell: false,
+    ..Foreground::BLANK
 };
 
 /// A request to the console host, out while its client holds attention,
@@ -1441,7 +1445,8 @@ fn a_dump_shows_the_front_entry_its_answers_and_its_request_out() {
             "recovery: {}, round_due_us: Some(502000) }, ",
             "readers: {Outpost(Pid(1)): Instance { reader: Outpost(Pid(1)), generation: 1 }}, ",
             "foreground: Some(Foreground { window: WindowHandle(10), root_owner: WindowHandle(10), ",
-            "process: Pid(1), thread: 0, by_class: None, shell: false }), backend: BackendCache { probed: {} }, facts: 1 }"
+            "process: Pid(1), thread: 0, by_class: None, shell: false, ghost: None, console: false, ",
+            "integrity: None, own_integrity: None }), backend: BackendCache { probed: {} }, facts: 1 }"
         )
     );
 }

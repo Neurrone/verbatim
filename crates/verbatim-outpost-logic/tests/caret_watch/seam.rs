@@ -161,6 +161,10 @@ impl Seam {
                 process: APP,
                 thread: 41,
                 class: "Frame".to_owned(),
+                ghost: None,
+                console: false,
+                integrity: None,
+                own_integrity: None,
             }),
             app,
         ));

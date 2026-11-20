@@ -39,11 +39,6 @@ fn no_window() -> WindowHandle {
     WindowHandle(0)
 }
 
-/// No process, the default of a process a message left out.
-fn no_process() -> Pid {
-    Pid(0)
-}
-
 /// Facts about the window an event concerns, read by its outpost with local
 /// calls when the event is observed. The reducer classifies every event
 /// against its attention record with these (decision D14;
@@ -118,57 +113,9 @@ pub struct WindowFacts {
     pub foreground_is_shell: bool,
 }
 
-/// The window that came to the system's foreground, as the focus listener
-/// learned it from the foreground `WinEvent`, once its window was in front,
-/// or from its own local reads when it starts (architecture section 5): the
-/// only report that a window came to the foreground, from which Core
-/// decides how the keyboard hook treats the keys that go to it
-/// ([`HookForeground`]), where the user's attention is, and its foreground
-/// record (`books/dev/src/reference/adr/0001-focus.md`, "The foreground and the window title").
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ForegroundWindow {
-    /// The window.
-    pub window: WindowHandle,
-    /// The top of the window's owner chain (`GetAncestor` with
-    /// `GA_ROOTOWNER`), by which an owned dialog, a popup or a progress
-    /// window is related to the window it belongs to.
-    #[serde(default = "no_window")]
-    pub root_owner: WindowHandle,
-    /// The process its facts go to: the window's owner, or for a console
-    /// window the console host, once one of its events has named its
-    /// thread.
-    #[serde(default = "no_process")]
-    pub process: Pid,
-    /// When the listener's callback observed the event, in microseconds on
-    /// the run's shared clock, which orders it with every outpost's
-    /// reports; 0 when not known.
-    #[serde(default)]
-    pub observed_at_us: u64,
-    /// Whether the window is Verbatim's own process's, its hidden frame or
-    /// one of its windows, which Core takes for the keyboard hook alone.
-    /// Set by Verbatim's process, as `own_integrity` is.
-    #[serde(default)]
-    pub own: bool,
-    /// The thread that raised the window's event, which for a console host
-    /// window is the console host's own thread; 0 when no event has named
-    /// it yet.
-    pub thread: u32,
-    /// Whether the window is a console host window, whose owner Windows
-    /// reports as the first process attached to the console rather than
-    /// the console host, so that its event's thread is the only way to
-    /// know the console host's thread.
-    pub console: bool,
-    /// The integrity level of the window's process (its mandatory label's
-    /// relative identifier, such as `0x2000` for medium and `0x3000` for
-    /// high), or `None` when it cannot be read.
-    pub integrity: Option<u32>,
-    /// Verbatim's own integrity level, read by Verbatim's process, or
-    /// `None` when it cannot be read.
-    pub own_integrity: Option<u32>,
-}
-
 /// What the keyboard hook needs to know of the foreground window, decided
-/// by Core from the [`ForegroundWindow`] the focus listener reported and
+/// by Core from the foreground report the focus listener sent
+/// ([`crate::request::ForegroundReport`]) and
 /// read by the hook from a lock-free snapshot (architecture section 5). The
 /// hook applies it only while `window` is still the foreground window.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -733,12 +680,6 @@ pub enum Input {
         /// a run shares.
         at_ms: u64,
     },
-    /// A window came to the foreground, as the focus listener tells it
-    /// (architecture section 5), the only report of one: Core decides from
-    /// it what the keyboard hook reads of the foreground
-    /// ([`HookForeground`]), moves attention, and keeps its foreground
-    /// record.
-    Foreground(ForegroundWindow),
     /// A progress bar's value changed, from the focus listener, which is
     /// the one owner of every bar's changes.
     Progress {

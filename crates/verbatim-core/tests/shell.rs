@@ -21,9 +21,9 @@ use verbatim_model::request::{
 };
 use verbatim_model::tell::{Event, EventObject, Payload, TellWindow};
 use verbatim_model::{
-    Backend, Earcon, Effect, ForegroundWindow, HookForeground, Input, KeySeq, LockKey, Message,
-    NodeDetails, NodeSnapshot, Phrase, Pid, Role, SegmentContent, SpeechPriority, State, StateSet,
-    TraceId, Utterance, UtteranceSegment, WindowHandle,
+    Backend, Earcon, Effect, HookForeground, Input, KeySeq, LockKey, Message, NodeDetails,
+    NodeSnapshot, Phrase, Pid, Role, SegmentContent, SpeechPriority, State, StateSet, TraceId,
+    Utterance, UtteranceSegment, WindowHandle,
 };
 
 /// An utterance of `content` alone, with no source node.
@@ -260,31 +260,37 @@ fn the_theme_pages_previews_are_spoken_interrupting_or_played() {
         [Effect::PlayEarcon(Earcon::Exit)]
     );
 }
-/// A foreground report for window 7, raised by thread 40, of a process at
-/// `integrity`, Verbatim being at `own`.
-fn foreground(console: bool, thread: u32, integrity: Option<u32>, own: Option<u32>) -> Input {
-    Input::Foreground(ForegroundWindow {
-        window: WindowHandle(7),
-        root_owner: WindowHandle(7),
-        process: Pid(70),
-        observed_at_us: 1,
-        own: false,
+/// A foreground report for window `window` of `app`, raised by `thread`,
+/// of a process at `integrity`, Verbatim being at `own`.
+fn foreground(
+    app: App,
+    window: u64,
+    (console, thread): (bool, u32),
+    integrity: Option<u32>,
+    own: Option<u32>,
+) -> ForegroundReport {
+    ForegroundReport {
+        window: WindowHandle(window),
+        ghost: None,
+        root_owner: WindowHandle(window),
+        process: app.pid,
         thread,
+        class: "Frame".to_owned(),
         console,
         integrity,
         own_integrity: own,
-    })
+    }
 }
 
-/// The hook's view of the foreground once `input` is reduced, which must
-/// say nothing.
-fn hook_view_after(input: &Input) -> Option<HookForeground> {
-    let mut state = SrState::new();
+/// The hook's view of the foreground once `report`, of [`ONE`], is
+/// reduced, the first report, which says nothing and asks for the focus.
+fn hook_view_after(report: ForegroundReport) -> Option<HookForeground> {
+    let mut desk = Desk::new();
     assert_eq!(
-        reduce(&mut state, &mut verbatim_core::Runtime::default(), input),
-        []
+        desk.step(QueueInput::Foreground(report)),
+        [Heard::Sent(Reader::Outpost(ONE.pid), "CurrentFocus")]
     );
-    state.hook_foreground()
+    desk.state.hook_foreground()
 }
 
 const MEDIUM: u32 = 0x2000;
@@ -297,7 +303,7 @@ const HIGH: u32 = 0x3000;
 fn keys_are_held_only_for_a_window_of_no_higher_integrity() {
     assert_eq!(SrState::new().hook_foreground(), None);
     let view = |integrity, own| {
-        hook_view_after(&foreground(false, 40, integrity, own)).map(|view| view.holds_keys)
+        hook_view_after(foreground(ONE, 7, (false, 40), integrity, own)).map(|view| view.holds_keys)
     };
     assert_eq!(view(Some(MEDIUM), Some(MEDIUM)), Some(true));
     assert_eq!(view(Some(0x1000), Some(MEDIUM)), Some(true));
@@ -314,7 +320,7 @@ fn keys_are_held_only_for_a_window_of_no_higher_integrity() {
 #[test]
 fn a_console_window_takes_the_thread_its_event_named() {
     assert_eq!(
-        hook_view_after(&foreground(true, 40, Some(MEDIUM), Some(MEDIUM))),
+        hook_view_after(foreground(ONE, 7, (true, 40), Some(MEDIUM), Some(MEDIUM))),
         Some(HookForeground {
             window: WindowHandle(7),
             holds_keys: true,
@@ -324,7 +330,7 @@ fn a_console_window_takes_the_thread_its_event_named() {
         })
     );
     assert_eq!(
-        hook_view_after(&foreground(true, 0, Some(MEDIUM), Some(MEDIUM))),
+        hook_view_after(foreground(ONE, 7, (true, 0), Some(MEDIUM), Some(MEDIUM))),
         Some(HookForeground {
             window: WindowHandle(7),
             holds_keys: true,
@@ -335,7 +341,7 @@ fn a_console_window_takes_the_thread_its_event_named() {
         "a console whose thread no event has named yet"
     );
     assert_eq!(
-        hook_view_after(&foreground(false, 40, Some(MEDIUM), Some(MEDIUM))),
+        hook_view_after(foreground(ONE, 7, (false, 40), Some(MEDIUM), Some(MEDIUM))),
         Some(HookForeground {
             window: WindowHandle(7),
             holds_keys: true,
@@ -349,32 +355,21 @@ fn a_console_window_takes_the_thread_its_event_named() {
 /// A later report replaces the earlier.
 #[test]
 fn the_latest_foreground_report_decides() {
-    let mut state = SrState::new();
+    let mut desk = Desk::new();
     assert_eq!(
-        reduce(
-            &mut state,
-            &mut verbatim_core::Runtime::default(),
-            &foreground(true, 40, Some(HIGH), Some(MEDIUM))
-        ),
-        []
+        desk.step(QueueInput::Foreground(foreground(
+            ONE,
+            7,
+            (true, 40),
+            Some(HIGH),
+            Some(MEDIUM)
+        ))),
+        [Heard::Sent(Reader::Outpost(ONE.pid), "CurrentFocus")]
     );
-    let next = Input::Foreground(ForegroundWindow {
-        window: WindowHandle(9),
-        root_owner: WindowHandle(9),
-        process: Pid(90),
-        observed_at_us: 2,
-        own: false,
-        thread: 50,
-        console: false,
-        integrity: Some(MEDIUM),
-        own_integrity: Some(MEDIUM),
-    });
+    let next = foreground(TWO, 9, (false, 50), Some(MEDIUM), Some(MEDIUM));
+    assert_eq!(desk.step(QueueInput::Foreground(next)), []);
     assert_eq!(
-        reduce(&mut state, &mut verbatim_core::Runtime::default(), &next),
-        []
-    );
-    assert_eq!(
-        state.hook_foreground(),
+        desk.state.hook_foreground(),
         Some(HookForeground {
             window: WindowHandle(9),
             holds_keys: true,
@@ -399,6 +394,10 @@ fn bring_forward(desk: &mut Desk, app: App) -> Vec<Heard> {
         process: app.pid,
         thread: 41,
         class: "Frame".to_owned(),
+        ghost: None,
+        console: false,
+        integrity: None,
+        own_integrity: None,
     }))
 }
 

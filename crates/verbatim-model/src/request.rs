@@ -1224,11 +1224,18 @@ pub struct GhostFront {
 }
 
 /// The foreground record as the listener reports it to the event queue:
-/// the window `GetForegroundWindow` names, once it names it.
+/// the window `GetForegroundWindow` names, once it names it, from which
+/// Core decides attention and what the keyboard hook reads of the
+/// foreground ([`crate::HookForeground`]).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ForegroundReport {
-    /// The window.
+    /// The window, or for a ghost window in front, the hung window it
+    /// stands in for, which attention and the foreground test judge.
     pub window: WindowHandle,
+    /// The ghost window in front, when one stands in for `window`: the
+    /// keyboard hook's window is `ghost.unwrap_or(window)`, the window
+    /// `GetForegroundWindow` names.
+    pub ghost: Option<WindowHandle>,
     /// The top of its owner chain.
     pub root_owner: WindowHandle,
     /// The application holding attention: the window's owner, or for a
@@ -1238,6 +1245,16 @@ pub struct ForegroundReport {
     pub thread: u32,
     /// Its class.
     pub class: String,
+    /// Whether the window in front is a console host window, whose
+    /// keyboard layout is its event's thread's: `thread` then names the
+    /// console host's own thread, 0 when no event has named it yet.
+    pub console: bool,
+    /// The integrity level of the process that owns the window in front
+    /// (its mandatory label's relative identifier, such as `0x2000` for
+    /// medium and `0x3000` for high), or `None` when it cannot be read.
+    pub integrity: Option<u32>,
+    /// Verbatim's own integrity level, or `None` when it cannot be read.
+    pub own_integrity: Option<u32>,
 }
 
 /// An input to Core's event queue (ADR 0003, "Core's inbox and the event

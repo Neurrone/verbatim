@@ -406,6 +406,10 @@ fn uia_past_the_hold(desk: &mut Desk) {
             process: ONE.pid,
             thread: 41,
             class: "Frame".to_owned(),
+            ghost: None,
+            console: false,
+            integrity: None,
+            own_integrity: None,
         }),
     );
     let ok = msaa_node(ONE, 1, Role::Button, Some("OK"));
@@ -441,6 +445,10 @@ fn uia_past_the_hold(desk: &mut Desk) {
             process: TWO.pid,
             thread: 41,
             class: "Frame".to_owned(),
+            ghost: None,
+            console: false,
+            integrity: None,
+            own_integrity: None,
         }),
     );
     tell_at(

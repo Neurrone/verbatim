@@ -1108,6 +1108,7 @@ fn a_value_change_accepted_by_background_bars_reported_goes_on_past_a_foreground
         thread: 0,
         by_class: None,
         shell: false,
+        ..Foreground::BLANK
     };
     let judged = |background: bool| {
         let mut state = crate::state::SrState::new();

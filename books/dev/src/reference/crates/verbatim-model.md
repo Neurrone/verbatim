@@ -47,15 +47,9 @@ recorder unchanged. What the reducer does with each type is in
   application module (`explorer`) and whether Alt was held (`alt_held`).
   The reducer classifies events with these
   (`books/dev/src/explanation/architecture.md`, section 2, "Attention and acceptance (D14)").
-- `ForegroundWindow` and `HookForeground`: a window the focus listener
-  reported came to the foreground (its handle, its root owner, the process
-  its facts go to, when the listener observed it, the thread its event
-  named, whether it is a console host window, whether it is Verbatim's
-  own, its process's integrity level and Verbatim's own), carried in
-  `Input::Foreground`, the only report of one, from which Core takes
-  attention and its foreground record, and what Core decides from it for
-  the keyboard hook, with its desktop part (`desktop_switches`, the
-  switches away from the user's input desktop Core has handled): whether
+- `HookForeground`: what Core decides for the keyboard hook from the
+  listener's foreground report (`QueueInput::Foreground`, below), with
+  its desktop part (`desktop_switches`, the switches away from the user's input desktop Core has handled): whether
   keys may be held back for that window, what text its focus has
   (`FocusTextKind`: none, a field's, whose Enter is held too, or a
   terminal's), and which thread's keyboard layout translates its keys
@@ -150,8 +144,7 @@ recorder unchanged. What the reducer does with each type is in
     timer ticks, the key and speech inputs under "The text protocol",
     `Settings` and `Reported` (the reader settings, and the details the
     active theme reports, from which Core chooses each read's details),
-    `Foreground` (a window came to the foreground, as the listener tells
-    it), `Progress` (a bar's change from the listener), and what the
+    `Progress` (a bar's change from the listener), and what the
     shell's threads learn, since only the reducer speaks: `Started`,
     `Exiting { replaced }`, `ErrorLogged`, `LockKeyToggled` (a `LockKey`
     and its state), `ClockRead`, `ClipboardCopied`, `ShellItemGone`,
@@ -347,6 +340,12 @@ them yet.
   the hook deferred arrives as `QueueInput::Deferred`; Core names what to
   send in `QueueEffect::SendStrokes` (each a `SentTransition`) and, at
   `QueueInput::Exit`, the keys to release in `QueueEffect::ReleaseAtExit`.
+  A window that came to the foreground arrives once, as
+  `QueueInput::Foreground`, a `ForegroundReport`: the window attention
+  and the foreground test judge, the ghost window in front when one
+  stands in for that hung window (the keyboard hook's window), its root
+  owner, process, thread and class, whether it is a console host window,
+  and its process's and Verbatim's integrity levels.
   The session's lock state arrives as `QueueInput::Lock`, a
   `SessionLock`: unlocked, locked or unknown. The supervisor's owner
   thread reports its process facts for Core's outpost generation record

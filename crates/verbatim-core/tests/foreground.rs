@@ -420,6 +420,10 @@ fn change(desk: &mut Desk, app: App, (window, root_owner): (u64, u64)) -> Vec<He
         process: app.pid,
         thread: 41,
         class: "Frame".to_owned(),
+        ghost: None,
+        console: false,
+        integrity: None,
+        own_integrity: None,
     }))
 }
 
@@ -1166,6 +1170,10 @@ fn a_focus_in_program_manager_says_no_title() {
         process: EXPLORER.pid,
         thread: 41,
         class: "Progman".to_owned(),
+        ghost: None,
+        console: false,
+        integrity: None,
+        own_integrity: None,
     }));
     let program_manager = quiet_pane(EXPLORER, 700, "Program Manager", EXPLORER.top);
     let list = node(EXPLORER, 710, Role::List, "Desktop");

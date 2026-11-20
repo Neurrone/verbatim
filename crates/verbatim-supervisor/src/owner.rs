@@ -726,27 +726,11 @@ impl Owner {
                     ?change,
                     "a progress bar's change: listener handling, listener queue, listener's pipe to verbatim.exe"
                 );
-                self.outbox.send(OutpostMessage::Progress(change));
+                self.outbox.send(OutpostMessage::Listener {
+                    listener: outpost,
+                    message: Box::new(ListenerToCore::Progress { change, timing }),
+                });
             }
-            ListenerToCore::Foreground {
-                window,
-                root_owner,
-                process,
-                observed_at_us,
-                thread,
-                console,
-                integrity,
-            } => self
-                .outbox
-                .send(OutpostMessage::Foreground(crate::ForegroundReport {
-                    window,
-                    root_owner,
-                    process,
-                    observed_at_us,
-                    thread,
-                    console,
-                    integrity,
-                })),
             ListenerToCore::Ready { .. } => self.on_ready(outpost),
             // Core's event queue judges them.
             ListenerToCore::Tell(tell) => {
@@ -756,7 +740,9 @@ impl Owner {
                     message: Box::new(ListenerToCore::Tell(tell)),
                 });
             }
-            message @ (ListenerToCore::Answer(_) | ListenerToCore::Destroyed { .. }) => {
+            message @ (ListenerToCore::Answer(_)
+            | ListenerToCore::Destroyed { .. }
+            | ListenerToCore::Foreground { .. }) => {
                 self.outbox.send(OutpostMessage::Listener {
                     listener: outpost,
                     message: Box::new(message),

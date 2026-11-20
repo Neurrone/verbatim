@@ -566,6 +566,10 @@ impl Session {
                 "CASCADIA_HOSTING_WINDOW_CLASS"
             }
             .to_owned(),
+            ghost: None,
+            console,
+            integrity: None,
+            own_integrity: None,
         }));
         session.queue(QueueInput::Process(
             verbatim_model::request::ProcessFact::OutpostStarted {

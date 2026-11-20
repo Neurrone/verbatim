@@ -499,9 +499,8 @@ pub struct LastToast {
 pub struct SrState {
     /// Core's focus object (`crate::focus::object`).
     pub(crate) focus: crate::focus::object::FocusState,
-    /// The foreground record: attention, the foreground window and object,
-    /// and the stamps that order focuses, under the keys the state held
-    /// before the record existed.
+    /// The foreground record: the foreground object and the entered
+    /// window, under the keys the state held before the record existed.
     #[serde(flatten)]
     pub(crate) foreground: Foreground,
     /// The virtual desktop's name, kept until the next focus Core takes
@@ -718,7 +717,8 @@ impl SrState {
 
     /// What the keyboard hook reads of the foreground window, decided from
     /// the window the focus listener last reported in front (architecture
-    /// section 5), or `None` before it has reported one. Keys may be held
+    /// section 5), the ghost window when one stands in for a hung window,
+    /// or `None` before it has reported one. Keys may be held
     /// back for the window only when its process's integrity is known and
     /// no higher than Verbatim's, since Windows drops a key Verbatim sends
     /// again to a window of higher integrity, and a key lost costs more
@@ -733,9 +733,9 @@ impl SrState {
     /// window's with its owner's, which the hook reads itself.
     #[must_use]
     pub fn hook_foreground(&self) -> Option<HookForeground> {
-        let foreground = self.foreground.window()?;
+        let foreground = self.queue.foreground()?;
         Some(HookForeground {
-            window: foreground.window,
+            window: foreground.ghost.unwrap_or(foreground.window),
             holds_keys: matches!(
                 (foreground.integrity, foreground.own_integrity),
                 (Some(window), Some(own)) if window <= own

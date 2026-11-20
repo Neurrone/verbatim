@@ -345,6 +345,10 @@ impl CoreDriver {
             process: Pid(process),
             thread,
             class: verbatim_win32::window::window_class_name(window),
+            ghost: None,
+            console: false,
+            integrity: None,
+            own_integrity: None,
         }));
         self.take()
     }

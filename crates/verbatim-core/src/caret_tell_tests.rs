@@ -33,6 +33,7 @@ const IN_FRONT: Foreground = Foreground {
     thread: 41,
     by_class: None,
     shell: false,
+    ..Foreground::BLANK
 };
 
 /// The edit field "Body" committed through UI Automation, node 2 of

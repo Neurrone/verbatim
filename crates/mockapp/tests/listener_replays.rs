@@ -22,9 +22,9 @@
 //!
 //! The fixtures (`tests/fixtures/replays/`):
 //!
-//! - `conhost_editing_44344991044.jsonl`: the first 47 inputs of
-//!   `conhost_editing`'s dump in GitHub run 44344991044, at commit
-//!   6cfc7f4e, where the console raised its terminal's focus again before
+//! - `conhost_editing_44344991044.jsonl`: `conhost_editing`'s dump in
+//!   GitHub run 44344991044 to its 47th input, at commit 6cfc7f4e, each
+//!   of its two foreground reports one input as Core takes them, where the console raised its terminal's focus again before
 //!   Core handled the first, and Verbatim said "terminal" twice.
 //! - `measure_focus_text_box_uia_focuses.jsonl`: the listener's start and
 //!   its 46 UI Automation focus tells of `measure_focus_text_box`'s dump of

@@ -76,10 +76,9 @@ The message layer, the launch arguments and the held processes are
 The app hears through `OutpostMessage`: `ListenerStarted` (before the
 listener's launch, so Core keeps its first tells), `ListenerReady`,
 `ListenerEnded`, `Listener` (the current listener's tells, window
-destructions and answers,
-which Core's event queue judges), `Pong` (an outpost's answer to a ping,
-for Core's liveness; the listener's liveness is the owner's alone), `SpareReady`, `IdleQueried`, `Foreground`,
-`Progress` (a progress bar's change from the listener),
+destructions, answers, foreground reports and progress bars' changes,
+handed on whole for the app to give Core), `Pong` (an outpost's answer to a ping,
+for Core's liveness; the listener's liveness is the owner's alone), `SpareReady`, `IdleQueried`,
 `LaunchFailed` (Core asked for an outpost and none started, saying
 whether the application is gone: exited, not holdable, or ignored),
 `ApplicationExited` (a held process exited, after its outpost's `Ended`

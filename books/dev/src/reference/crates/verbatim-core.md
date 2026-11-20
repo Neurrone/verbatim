@@ -430,9 +430,10 @@ code is in `reduce.rs` unless named.
   one that only lost the focus they meet at it, as UI Automation compares
   two elements by runtime id.
 - The window in front. `SrState::hook_foreground()`
-  (`verbatim_model::HookForeground`) is decided from the window the focus
-  listener last reported (`Input::Foreground`), one of Verbatim's own
-  included, and published by the shell after each input: keys may be held
+  (`verbatim_model::HookForeground`) is decided from the event queue's
+  foreground record, the window the focus listener last reported
+  (`QueueInput::Foreground`), the ghost window when one stands in for a
+  hung window, and published by the shell after each input: keys may be held
   only when the window's process integrity is known and no higher than
   Verbatim's, and a console host's keys are translated with the layout of
   the thread its event named (architecture section 5). Its desktop part
@@ -446,16 +447,16 @@ code is in `reduce.rs` unless named.
   reached with Alt held is taken with no containers
   (`applications::drops_ancestry`; "The Alt+Tab switcher's pane").
   `tests/reduce.rs` checks all three.
-- The foreground change (`Input::Foreground`;
+- The foreground change (`QueueInput::Foreground`;
   [ADR 0001: Focus](../adr/0001-focus.md), "The foreground and the
   window title"): the focus listener's report that a window
   came to the foreground, the only one. The event queue takes it as its
   foreground (`Core::foreground`, `event_queue/inbox.rs`): it stops the
   front entry's request when the new foreground no longer holds the
   request's window, unless the request's own rule exempts it, and ends
-  the waiting entries the change ends (`Logic::ends_at_foreground`). The
-  reducer writes it to the foreground record (`foreground_changed`) for
-  the keyboard hook's view. It speaks nothing and cuts nothing.
+  the waiting entries the change ends (`Logic::ends_at_foreground`), and
+  the keyboard hook's view is read from it. It speaks nothing and cuts
+  nothing. A change into one of Verbatim's own windows is like any other.
 - A report judged left is executed as a focus from another top-level
   window is: no duplicate, a whole-window focus of its window is not
   refused, a replacement outpost's report is not taken silently, its line
@@ -502,15 +503,15 @@ code is in `reduce.rs` unless named.
   already speaks it or it has no name. A whole-window focus taken enters
   its window too, so the focus after it says nothing more; a focus in a
   popup changes nothing. A focus in Program Manager or the taskbar
-  (`WindowFacts::foreground_is_shell`) enters with no title, and a
-  foreground change into one of Verbatim's own windows clears the
-  entered window, so the return from Verbatim's menu says the title.
+  (`WindowFacts::foreground_is_shell`) enters with no title. The return
+  from Verbatim's menu says the title because the foreground marker for
+  Verbatim's window empties the readers' last focus, so the return is
+  judged left.
 - The foreground record (`foreground.rs`): one `Foreground` with private
   fields, written only by `apply` with one `ForegroundFact` per writer
-  (`Changed`, `Object`, `Entered`, `EnteredBy`) and read through
-  accessors. It holds the foreground object, the window the listener last
-  reported in front, which the keyboard hook's view is made from, and the
-  entered window.
+  (`Object`, `Entered`, `EnteredBy`) and read through accessors. It holds
+  the foreground object, as NVDA's foreground object, and the entered
+  window; the window in front is the event queue's alone.
 - Repeats (`docs/parity/focus-events.md`, "Duplicate focus
   suppression"): a focus candidate is judged at its turn against the two
   versions of the focus (`focus/versions.rs`), the committed focus and

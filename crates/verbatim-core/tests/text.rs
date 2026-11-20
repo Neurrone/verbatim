@@ -3933,6 +3933,10 @@ impl Text {
                 process: app.pid,
                 thread: 41,
                 class: "Frame".to_owned(),
+                ghost: None,
+                console: false,
+                integrity: None,
+                own_integrity: None,
             },
         ));
         let tell = Event {
@@ -4056,6 +4060,10 @@ fn a_caret_event_in_a_hung_window_holding_attention_plays_the_sound() {
             process: ONE.pid,
             thread: 41,
             class: "Frame".to_owned(),
+            ghost: None,
+            console: false,
+            integrity: None,
+            own_integrity: None,
         },
     ));
     let [

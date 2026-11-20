@@ -595,11 +595,12 @@ knowing for review:
   listener's first foreground report — no thread of
   Core's hooks the foreground, the keyboard hook's included; the
   listener's report of a window that came to the foreground
-  (`OutpostMessage::Foreground`) reaches the reducer as `Input::Foreground`,
-  with Verbatim's own integrity level read once and whether the window is
-  Verbatim's own process's, from which Core decides the keyboard hook's
-  view of the foreground and attention, and as `QueueInput::Foreground`,
-  with the window's class, for the event queue's foreground record), the
+  (`ListenerToCore::Foreground`, inside `OutpostMessage::Listener`)
+  reaches Core once, as `QueueInput::Foreground`, with the window's
+  class, a ghost window mapped to the hung window it stands in for and
+  kept as `ghost`, and Verbatim's own integrity level, from which Core
+  decides attention, its foreground record and the keyboard hook's
+  view of the foreground), the
   reducer thread
   (`ReducerThread`, described below), the keyboard hook (given
   `key_reports`' callbacks), the control

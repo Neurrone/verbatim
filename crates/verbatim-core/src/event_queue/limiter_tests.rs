@@ -29,6 +29,7 @@ const IN_FRONT: Foreground = Foreground {
     thread: 0,
     by_class: None,
     shell: false,
+    ..Foreground::BLANK
 };
 /// The window whose entries end when the foreground changes.
 const ELSEWHERE: u64 = 99;

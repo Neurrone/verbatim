@@ -14,10 +14,10 @@
 use std::sync::Arc;
 
 use verbatim_model::{
-    ActionName, BarChange, Earcon, EarlierElement, Effect, ForegroundWindow, Input, Message,
-    NodeId, NodeSnapshot, Percent, Phrase, Pid, PropertyChange, QueryKind, ReviewCommand, Role,
-    SegmentContent, SpeechPriority, State, StateSet, TraceId, Utterance, UtteranceSegment,
-    UtteranceSource, WindowFacts,
+    ActionName, BarChange, Earcon, EarlierElement, Effect, Input, Message, NodeId, NodeSnapshot,
+    Percent, Phrase, Pid, PropertyChange, QueryKind, ReviewCommand, Role, SegmentContent,
+    SpeechPriority, State, StateSet, TraceId, Utterance, UtteranceSegment, UtteranceSource,
+    WindowFacts,
 };
 use verbatim_model::{
     Backend, FocusNow, FocusText, FocusValidity, ObjectKey, WindowHandle, WindowIdentity,
@@ -128,7 +128,6 @@ fn reduce_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
             state.reported = *reported;
             Vec::new()
         }
-        Input::Foreground(change) => foreground_changed(state, *change),
         // Playback will reach none of a cut utterance's marks it had not
         // reached: say-all stops, as on any cut, and terminal output drops
         // what waits, as anything that cuts speech off does.
@@ -197,22 +196,6 @@ pub(crate) fn key_trace(input: &Input) -> Option<TraceId> {
         | Input::HeldKey { trace_id, .. } => Some(*trace_id),
         _ => None,
     }
-}
-
-/// The focus listener's report that a window came to the foreground, the
-/// only report of one (`books/dev/src/reference/adr/0001-focus.md`, "The foreground and the window
-/// title"): it gives the keyboard
-/// hook's view of the foreground and, unless the window is one of
-/// Verbatim's own, attention and the record's front, and it applies to the
-/// last queued focus, the left mark's one home (`crate::focus::versions`): the
-/// reports Core judges after it that were observed after it find that focus
-/// left for its window when the window is unrelated to it. It speaks
-/// nothing, cuts nothing, sets no ordering stamp, and changes no node,
-/// focus group or navigator: nothing is heard while the user is in an
-/// application that does not answer.
-fn foreground_changed(state: &mut SrState, change: ForegroundWindow) -> Vec<Effect> {
-    state.foreground.apply(ForegroundFact::Changed(change));
-    Vec::new()
 }
 
 /// Speaks what an activation did: the action's name, NVDA's "Activate" for

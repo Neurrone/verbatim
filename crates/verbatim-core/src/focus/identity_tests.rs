@@ -398,6 +398,7 @@ fn an_unrelated_foreground_empties_the_last_focus_and_its_fence() {
             thread: 42,
             by_class: None,
             shell: false,
+            ..crate::event_queue::Foreground::BLANK
         }),
     );
     // The marker waits behind the startup read the first report appends,
@@ -489,6 +490,7 @@ fn a_desktop_switch_while_the_identity_read_is_out_leaves_its_answer_a_duplicate
         thread: 41,
         by_class: None,
         shell: false,
+        ..crate::event_queue::Foreground::BLANK
     };
     assert_eq!(
         feed_at(
@@ -707,6 +709,7 @@ fn pair_in(order: &[Step]) -> (Vec<String>, usize) {
         thread: 41,
         by_class: None,
         shell: false,
+        ..crate::event_queue::Foreground::BLANK
     };
     feed_at(
         &mut held,

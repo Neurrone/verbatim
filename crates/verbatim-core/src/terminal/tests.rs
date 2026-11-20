@@ -46,6 +46,7 @@ fn terminal() -> SrState {
             thread: 41,
             by_class: None,
             shell: false,
+            ..crate::event_queue::Foreground::BLANK
         }),
     );
     let mut read = focus_read(None);

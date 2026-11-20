@@ -339,6 +339,10 @@ fn a_foreground_report_starts_an_outpost_and_ends_a_backoff() {
         process: APP,
         thread: 41,
         class: "Frame".to_owned(),
+        ghost: None,
+        console: false,
+        integrity: None,
+        own_integrity: None,
     });
     let said = route(&mut held, 1_000, &foreground);
     assert_eq!(said.first().map(String::as_str), Some("start 40"));
