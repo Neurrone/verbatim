@@ -55,6 +55,7 @@ mod inbox;
 mod manager;
 mod registry;
 mod settings;
+pub mod ssml;
 mod theme;
 mod trim;
 

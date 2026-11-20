@@ -80,10 +80,20 @@ enum Case {
     TwoSentences,
     /// The two sentences with a mark after the first one's full stop.
     MarkAfterAFullStop,
+    /// Text with a less-than sign and U+0001 before a V and a voice's
+    /// name, which eSpeak NG would read as a command to switch voice.
+    ControlAV,
+    /// The same text without U+0001.
+    PlainV,
+    /// [`ControlAV`](Self::ControlAV) with a mark before its V, spoken as
+    /// SSML.
+    MarkedControlAV,
+    /// [`PlainV`](Self::PlainV) with the same mark.
+    MarkedPlainV,
 }
 
 impl Case {
-    const ALL: [Self; 11] = [
+    const ALL: [Self; 15] = [
         Self::Sentence,
         Self::SentenceStoppedAtTheFirstPush,
         Self::SentenceAtRate100,
@@ -95,6 +105,10 @@ impl Case {
         Self::SentenceWithMarks,
         Self::TwoSentences,
         Self::MarkAfterAFullStop,
+        Self::ControlAV,
+        Self::PlainV,
+        Self::MarkedControlAV,
+        Self::MarkedPlainV,
     ];
 
     fn name(self) -> String {
@@ -155,8 +169,29 @@ impl Case {
                     SpeechItem::Text(SECOND_SENTENCE.to_owned()),
                 ],
             ),
+            Self::ControlAV => speak(synth, text(&format!("{LESS_THAN}\u{1}{V_WHISPER}"))),
+            Self::PlainV => speak(synth, text(&format!("{LESS_THAN}{V_WHISPER}"))),
+            Self::MarkedControlAV => speak(synth, marked_v(&format!("\u{1}{V_WHISPER}"))),
+            Self::MarkedPlainV => speak(synth, marked_v(V_WHISPER)),
         }
     }
+}
+
+/// Text with a less-than sign, which the SSML path must escape and the
+/// plain path must not.
+const LESS_THAN: &str = "a < b ";
+
+/// A V and a voice's name, which after U+0001 is eSpeak NG's command to
+/// switch to that voice.
+const V_WHISPER: &str = "Vwhisper echo";
+
+/// [`LESS_THAN`], a mark, then `rest`.
+fn marked_v(rest: &str) -> Vec<SpeechItem> {
+    vec![
+        SpeechItem::Text(LESS_THAN.to_owned()),
+        SpeechItem::Mark(IndexMark(5)),
+        SpeechItem::Text(rest.to_owned()),
+    ]
 }
 
 /// Keeps every push of audio and every mark, and stops after `stop_after`
@@ -459,6 +494,29 @@ fn a_mark_after_a_full_stop_is_reported_where_the_next_sentence_starts() {
     );
 }
 
+/// U+0001 in the text is deleted, as NVDA's driver deletes it, so a V
+/// after it is spoken as a letter of the text and switches no voice, on
+/// the plain path and the SSML path alike, and a less-than sign is spoken
+/// as one on both: the text with U+0001 is the text without it, sample
+/// for sample, and the mark between is reported at the same sample.
+fn a_control_a_and_v_switch_no_voice() {
+    assert!(
+        spoken(Case::ControlAV).samples() == spoken(Case::PlainV).samples(),
+        "U+0001 changes nothing that is heard on the plain path"
+    );
+    let marked = spoken(Case::MarkedControlAV);
+    let plain = spoken(Case::MarkedPlainV);
+    assert_eq!(marked.marks, plain.marks);
+    assert_eq!(marked.marks, [(MARK_SAMPLE, IndexMark(5))]);
+    assert!(
+        marked.samples() == plain.samples(),
+        "U+0001 changes nothing that is heard on the SSML path"
+    );
+}
+
+/// Where the mark after "a < b " is reported.
+const MARK_SAMPLE: usize = 4_128;
+
 fn main() -> std::process::ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if let [option, name] = args.as_slice()
@@ -472,7 +530,11 @@ fn main() -> std::process::ExitCode {
         record.write(&mut std::io::stdout().lock());
         return std::process::ExitCode::SUCCESS;
     }
-    let tests: [(&str, fn()); 9] = [
+    let tests: [(&str, fn()); 10] = [
+        (
+            "a_control_a_and_v_switch_no_voice",
+            a_control_a_and_v_switch_no_voice,
+        ),
         (
             "a_process_has_one_driver_which_places_marks_and_changes_pitch",
             a_process_has_one_driver_which_places_marks_and_changes_pitch,

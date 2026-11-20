@@ -113,6 +113,16 @@ Public API:
   on the caller's thread, `Failed`, followed by `marks_failed` with its
   marks when it has any, so say-all reads on past it and a waiter for it
   returns at once; it is never reported queued.
+- `ssml` — the text the drivers that take SSML are given, one writer for
+  all: `strip_embedded(text)` deletes U+0001, which eSpeak NG reads as
+  the start of an embedded command (a V and a voice's name after it
+  switch the voice), as NVDA's eSpeak NG driver deletes it;
+  `escape(text, controls)` deletes it too and escapes the five XML
+  characters, passing the other control characters XML 1.0 forbids or
+  making each a space (`Controls::Keep` or `Controls::Space`); and
+  `ssml(items, controls, pitch_percent)` writes text escaped, each mark a
+  `mark` element named by its number, and each pitch change a `prosody`
+  element whose percentage the driver's own formula gives.
 - `SpeechInbox`, `SpeechInboxTaker` and `QueueItem` — the queue thread's
   inbox (`books/dev/src/explanation/design/ownership.md`):
   every event the queue thread takes, from the manager, `SpeechControl`,

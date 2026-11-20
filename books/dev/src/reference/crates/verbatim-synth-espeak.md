@@ -103,12 +103,18 @@ returns success, as with any driver; an error code from `espeak_Synth`
 is `SynthError::Synthesis`.
 
 Pitch changes. `changes_pitch` is `true`: a sequence with a pitch change
-is given to eSpeak NG as SSML (`espeakSSML`), its text escaped and each
+is given to eSpeak NG as SSML (`espeakSSML`), written by
+`verbatim_speech::ssml`: its text escaped, U+0001 deleted, and each
 change a `prosody` element whose pitch is the new value as a percentage
 of the configured one, as NVDA's driver writes it (50 raised by 30 is
 160%), so a capital is raised within one synthesis. A sequence with
 neither pitch changes nor marks goes as plain text, its text items
-concatenated.
+concatenated with U+0001 deleted (`strip_embedded`) and nothing escaped,
+since eSpeak NG reads entities only under its SSML flag. U+0001 is
+deleted on both paths, as NVDA's driver deletes it, since eSpeak NG reads
+it with the letter after it as an embedded command, a V with a voice's
+name switching the voice (`docs/nvda/synth-drivers.md`, "The text eSpeak
+NG is given").
 
 Index marks. `places_marks` is `true`, so the speech manager gives the
 driver whole sequences, marks included, and a sentence with a mark inside
@@ -184,6 +190,8 @@ unmarked sentence, sample for sample (so it was one synthesis), with the
 marks at samples 0, 16,829, and 37,945; and that a mark after a full stop
 and a space is reported at sample 15,259, where the next sentence starts
 after the sentence pause, in speech that is the unmarked two sentences',
-sample for sample. Unit tests check the SSML (escaped text, marks named
-by number, a raised pitch as a percentage) and where a sequence is
-divided into syntheses.
+sample for sample. It checks that text with U+0001 before a V and a
+voice's name is the text without it, sample for sample, on the plain
+path, and on the SSML path with a mark before the V, reported at sample
+4,128 in both. A unit test checks where a sequence is divided into
+syntheses.

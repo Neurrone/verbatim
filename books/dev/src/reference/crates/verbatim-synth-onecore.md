@@ -39,8 +39,11 @@ commands that have come, on the host's one thread. On a cancel it
 cancels the operation:
 OneCore produces no audio until it has synthesized the whole utterance,
 so there is no earlier push at which a cancel would be seen. The sequence
-is sent as SSML, its text escaped and each index mark a `<mark>` element
-named by the mark's number, in the current voice's language. `speak` then
+is sent as SSML, written by `verbatim_speech::ssml`: its text escaped,
+U+0001 deleted and every other control character XML 1.0 forbids made a
+space, so a window title cannot make the utterance fail to parse, and
+each index mark a `<mark>` element named by the mark's number, in the
+current voice's language. `speak` then
 parses the returned WAV by walking RIFF chunks — the format chunk for the real rate
 and channel count rather than assuming, the data chunk for samples — and
 pushes PCM in roughly 50 ms slices, checking the sink's `ControlFlow`
@@ -50,11 +53,10 @@ the SSML, relative to OneCore's default of 50 as NVDA's OneCore driver
 writes it (50 raised by 30 is "30%"). `places_marks` is `true`: the driver
 reads `SpeechSynthesisStream.Markers()`
 for the time OneCore placed each numbered mark, pushes the audio up to
-that time, reports the mark through `index_reached`, and carries on. The
-display name resolves through `verbatim-i18n`.
+that time, reports the mark through `index_reached`, and carries on.
 
-Tests: the unit tests check the rate curve and its boost, the SSML for
-pitch changes, escaping and marks, and reading a WAV stream. The driver
+Tests: the unit tests check the rate curve and its boost and reading a
+WAV stream; `verbatim-speech`'s own test checks the SSML writer. The driver
 speaking through the real OneCore synthesizer is tested in
 `crates/verbatim-synth-host/tests/hosting.rs`, which runs it in the
 synthesizer host as Verbatim does: audio and marks in order, a raised

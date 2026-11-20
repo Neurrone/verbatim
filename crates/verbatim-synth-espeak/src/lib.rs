@@ -35,6 +35,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use verbatim_audio::PcmFormat;
+use verbatim_speech::ssml::{Controls, ssml, strip_embedded};
 use verbatim_speech::{
     IndexMark, SettingDescriptor, SettingId, SettingValue, SpeechItem, SpeechSequence, SynthDriver,
     SynthError, SynthId, SynthSink,
@@ -710,10 +711,14 @@ impl EspeakSynth {
                 _ => None,
             })
             .collect();
+        // U+0001 is deleted on both paths, so text cannot give eSpeak NG an
+        // embedded command. The plain path is given without eSpeak NG's
+        // SSML flag, under which alone it reads entities, so it is not
+        // escaped.
         let plain: String = items
             .iter()
             .filter_map(|item| match item {
-                SpeechItem::Text(text) => Some(text.as_str()),
+                SpeechItem::Text(text) => Some(strip_embedded(text)),
                 _ => None,
             })
             .collect();
@@ -730,8 +735,15 @@ impl EspeakSynth {
         let markup = items
             .iter()
             .any(|item| matches!(item, SpeechItem::Mark(_) | SpeechItem::Pitch(_)));
+        let pitch = self.pitch;
         let (text, mut flags) = if markup {
-            (ssml(items, self.pitch), ESPEAK_CHARS_UTF8 | ESPEAK_SSML)
+            // The new pitch as a percentage of the configured one (0 to
+            // 100), as NVDA's driver gives it, so 50 raised by 30 is 160%.
+            let percent = |offset: i32| (pitch + offset).clamp(0, 100) * 100 / pitch.max(1);
+            (
+                ssml(items, Controls::Keep, percent),
+                ESPEAK_CHARS_UTF8 | ESPEAK_SSML,
+            )
         } else {
             (plain, ESPEAK_CHARS_UTF8)
         };
@@ -827,72 +839,9 @@ fn syntheses(items: &[SpeechItem]) -> Vec<Vec<SpeechItem>> {
     pieces
 }
 
-/// Items as SSML for eSpeak NG, as NVDA's driver writes it: its text
-/// escaped, each mark a `mark` element named by its number, and each pitch
-/// change a `prosody` element giving the new pitch as a percentage of the
-/// configured `pitch` (0 to 100), so 50 raised by 30 is 160%.
-fn ssml(items: &[SpeechItem], pitch: i32) -> String {
-    use std::fmt::Write as _;
-    let mut ssml = String::new();
-    let mut open = false;
-    for item in items {
-        match item {
-            SpeechItem::Text(text) => ssml.push_str(&escape_xml(text)),
-            SpeechItem::Mark(mark) => {
-                let _ = write!(ssml, "<mark name=\"{}\"/>", mark.0);
-            }
-            SpeechItem::Pitch(offset) => {
-                if open {
-                    ssml.push_str("</prosody>");
-                    open = false;
-                }
-                if *offset != 0 {
-                    let percent = (pitch + offset).clamp(0, 100) * 100 / pitch.max(1);
-                    let _ = write!(ssml, "<prosody pitch=\"{percent}%\">");
-                    open = true;
-                }
-            }
-            SpeechItem::Sound(_) => {}
-        }
-    }
-    if open {
-        ssml.push_str("</prosody>");
-    }
-    ssml
-}
-
-/// Escapes the three characters SSML gives meaning to.
-fn escape_xml(text: &str) -> String {
-    text.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn ssml_escapes_text_names_marks_by_number_and_raises_pitch_relative_to_the_setting() {
-        let sequence = SpeechSequence {
-            utterance: verbatim_model::UtteranceId(1),
-            trace_id: verbatim_model::TraceId::mint(),
-            language: None,
-            items: vec![
-                SpeechItem::Mark(IndexMark(3)),
-                SpeechItem::Text("a & ".to_owned()),
-                SpeechItem::Pitch(30),
-                SpeechItem::Text("B".to_owned()),
-                SpeechItem::Pitch(0),
-                SpeechItem::Mark(IndexMark(4)),
-                SpeechItem::Text(" c".to_owned()),
-            ],
-        };
-        assert_eq!(
-            ssml(&sequence.items, 50),
-            "<mark name=\"3\"/>a &amp; <prosody pitch=\"160%\">B</prosody><mark name=\"4\"/> c"
-        );
-    }
 
     /// A mark within a sentence stays in its synthesis; one after a full
     /// stop and whitespace, even whitespace in a text item of its own,

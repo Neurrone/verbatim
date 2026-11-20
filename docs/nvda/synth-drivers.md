@@ -76,6 +76,18 @@ aligns with *playback* position. SAPI5 is the exception: it can let
 the engine push audio to a SAPI audio object; NVDA wraps this so
 routing and ducking still apply.
 
+## The text eSpeak NG is given
+
+NVDA's eSpeak NG driver (`source/synthDrivers/espeak.py`,
+`_processText`) passes every text with eSpeak NG's SSML flag, and before
+that deletes U+0001, writes `<` and `>` as the entities `&lt;` and
+`&gt;`, and puts a space before each `[`. eSpeak NG reads U+0001
+followed by a letter as an embedded command, U+0001 and V with a voice's
+name as a switch to that voice, so the deletion keeps text such as a
+window title from switching the voice. The space before `[` guards
+eSpeak NG's `[[` phoneme input, which it reads only under its phoneme
+flag, which NVDA passes.
+
 ## The SAPI drivers, concretely
 
 API background for both generations:
