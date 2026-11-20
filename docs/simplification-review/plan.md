@@ -139,5 +139,6 @@ Decided by the session and open to his objection, since the process revision lef
 
 - Progress bars asked outside the event queue, so that no key waits behind a bar, is the session's variant of the ruling; build 4's design checks it against the code and measures its cost before building.
 - The goal of three times NVDA for a behaviour that crosses a boundary is an estimate. The second proof measures it.
+- One description of a read serving both as a remote program and as ordinary calls is an idea, not a finding: nothing in the review shows that one builder can turn a list of generic operations into a program as small and as fast as the ones written by hand, within the limit of 10,000 executed instructions, or that every present read can be said in such a list. Build 8's study settles it before anything is built on it, by converting one read that is hard (the caret read with its formatting, or the focus ancestry) and comparing its instruction count, its calls and its time with today's. If it does not hold, the twins stay written by hand and the study says what else removes their drift.
 - No speech in the review comes from a capture; the records quote the repository's own tests and scenarios, and say "needs a capture" elsewhere.
 - The review confirmed its findings, not the absence of others: each reviewer covered 10,000 to 30,000 lines in minutes.
