@@ -72,6 +72,34 @@ One build that changes state is in flight at a time. The tests and harness build
 10. **The structural parts of later milestones.** The freeze means M6.2, M6.3, M5, M4.3, M6 and M6.1 do not run, so the repairs the review left for them are done here: the outpost generation in one record and the owner thread's copy of it; the speech queue's one record of an utterance and one report of its ending; the command vocabulary written once; the settings pages built from one table of rows; the host protocol's mirrored message type. Its first step is to read each of those roadmap entries and split restructuring, which joins this build, from new function, which waits. `builds.md`, "Findings that belong to an already planned roadmap phase", lists the findings.
 11. **The second pass.** Every area is measured again against NVDA, by the method of the review's size tables. An area above the goal gets its own look, and what it finds is built, before the freeze lifts.
 
+## One session works through the whole phase
+
+Dickson plans one session for all of it (2026-11-20). Its context will be summarized many times, so the state of the phase lives here and not in the session's memory:
+
+- At the start, and again after every summary of its context, the session reads this page and the progress table below, then the section of `builds.md` for the build in hand.
+- Each build runs the same way: what must be captured or measured first; one design with its state tables, NVDA's lines and its budget; one adversarial review; the build by a builder subagent; the scenarios whose path it touches; the push, and its GitHub run read. Then the row below is filled in, the records that no later build cites are deleted, and Dickson gets a report of at most a page: what changed, the lines against the budget, and each default it acted on in his areas.
+- The session stops and goes to Dickson, building nothing more in that mechanism, when a build passes its budget, when its design still has must-fixes after three review rounds, when it would add a kind of request, reply, text operation, waiting request or queue hook, or when a question falls in his areas. It carries on with a build the question cannot change.
+- Captures and recordings need the desktop. Build 2 needs seven NVDA captures and a recording of the Import dialog; build 9 needs recordings of the terminal programs. The session asks before it takes the desktop.
+- The tests and harness build and the documents build may run beside a state-changing build, each in its own worktree.
+
+### Progress
+
+The session fills in a row when its build is pushed and its GitHub run is read.
+
+| Build | State | Commits | Product lines against budget | Test lines against budget | Records deleted |
+| --- | --- | --- | --- | --- | --- |
+| 1. Defects and tooling | not started | | | | |
+| 2. The dialog read once shown | not started | | | | |
+| 3. Core: one owner per fact | not started | | | | |
+| 4. The readers | not started | | | | |
+| 5. Remote operations and text | not started | | | | |
+| 6. The tests and the harness | not started | | | | |
+| 7. The documents | not started | | | | |
+| 8. The request list closed | not started | | | | |
+| 9. The terminal rebuild | not started | | | | |
+| 10. The structural parts of later milestones | not started | | | | |
+| 11. The second pass | not started | | | | |
+
 ## The test of done
 
 The freeze lifts when all of these hold, each checked and reported to Dickson:
@@ -86,14 +114,16 @@ The freeze lifts when all of these hold, each checked and reported to Dickson:
 - both proofs are measured and reported with their lines against NVDA's;
 - the second pass is done, and each area is within the goal or has Dickson's ruling on why it is not.
 
-## What still needs Dickson
+## What Dickson has settled, and the defaults open to his objection
 
-Few, and none blocks build 1. `builds.md`, "Questions that still need Dickson", gives each in full.
+Settled on 2026-11-20, each "per your defaults":
 
-1. Whether about 3,300 product lines, 3.6 times NVDA's loop, is acceptable for the terminal rebuild with every feature kept. The session's default: yes, judged again after the second proof.
-2. Whether the "focus-batch design" that the event recorder numbers its passes for is planned. Default: it is not, and the passes go.
-3. Whether M4.6's second measure and its mutation follow-up are retired. Default: yes.
-4. Whether the evidence kept for a call Verbatim no longer makes is replaced by its commits. Default: yes.
+1. About 3,300 product lines, 3.6 times NVDA's loop, is accepted for the terminal rebuild with every feature kept, judged again after the second proof.
+2. The "focus-batch design" that the event recorder numbers its passes for is not planned, and the passes go (build 1).
+3. M4.6's second measure and its mutation follow-up are retired (build 7).
+4. The evidence kept for a call Verbatim no longer makes is replaced by its commits (build 7).
+
+Nothing now waits for him before build 1.
 
 The session's other defaults in his areas are listed at the end of `builds.md`, and each build's report names the ones it acted on, so that he can object: match NVDA after a capture; the later of two decisions of record governs; dead code, dead protocol and unreachable fallbacks go.
 

@@ -1194,7 +1194,7 @@ Roadmap M6.4 is build 9, so its findings are listed there. Under the freeze the 
 
 ## Questions that still need Dickson
 
-These are few. Each says what is asked and the session's recommendation.
+These are few. Each says what is asked and the session's recommendation. Dickson answered questions 1, 2, 4 and 5 on 2026-11-20 "per your defaults", so each recommendation there is his ruling; question 3 was settled the same day, and question 6 waits for the latency budgets.
 
 1. The terminal rebuild's size. The skip count is ruled; REPORT decision 2 also asked whether about 3,300 lines (3.6 times NVDA) with every feature kept is acceptable, and that is not answered. Recommendation: accept about 3,300 as build 9's target, with about 4,060 as its ceiling, judged again after the second proof's count.
 2. The event recorder's drain passes (tools T23). `verbatim-event-record` numbers each WinEvent's drain pass for "the focus-batch design", which no document or roadmap entry records. Is that design planned? Recommendation: if not, remove `passes.rs`, the pass numbering and file format 2's `pass` field (about 100 product and 51 test lines).
