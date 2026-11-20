@@ -113,12 +113,12 @@ impl Listener {
         }
     }
 
-    /// The tell of `kind` from `pid` naming `token` with `runtime_id`, of
-    /// the listener `generation`, checked at `at_us`: the kept elements its
+    /// The tell of `kind` from `pid` naming `token` with `runtime_id`,
+    /// checked at `at_us`: the kept elements its
     /// check reads, then the element kept and its tell written.
     fn told(
         &mut self,
-        (kind, pid, generation, at_us): (EventKind, Pid, u64, u64),
+        (kind, pid, at_us): (EventKind, Pid, u64),
         (token, runtime_id): (ElementToken, &verbatim_model::property::RuntimeId),
     ) -> Vec<ElementToken> {
         self.reach(at_us);
@@ -134,7 +134,7 @@ impl Listener {
         self.kept.keep((pid, token), ((), runtime_id.clone()), kind);
         self.reported.queued(token);
         self.reported.written(token);
-        self.shell.handled(generation, token);
+        self.shell.handled(token);
         read
     }
 
@@ -181,15 +181,13 @@ fn replay(name: &str) -> Replayed {
         {
             now_us = *at_us;
             match queued {
-                QueueInput::Process(ProcessFact::ListenerStarted(generation)) => {
-                    listener.shell.started(*generation);
+                QueueInput::Process(ProcessFact::ListenerStarted(_)) => {
+                    listener.shell.started();
                 }
                 QueueInput::Tell { from, tell } if from.reader == Reader::Listener => {
                     if let EventObject::Uia { token, runtime_id } = &tell.object {
-                        let read = listener.told(
-                            (tell.kind, tell.process, from.generation, tell.at_us),
-                            (*token, runtime_id),
-                        );
+                        let read = listener
+                            .told((tell.kind, tell.process, tell.at_us), (*token, runtime_id));
                         if focus_kind(tell.kind)
                             && let Some(checked) = tell.checked.as_mut()
                         {
@@ -235,11 +233,7 @@ fn replay(name: &str) -> Replayed {
                 _ => {}
             }
         }
-        match listener
-            .shell
-            .after_pass(state.held_tokens().as_ref())
-            .expect("Core and the shell count one listener generation")
-        {
+        match listener.shell.after_pass(state.held_tokens().as_ref()) {
             ViewSend::Nothing => {}
             ViewSend::Now(view) => {
                 listener.left.superseded();

@@ -1070,7 +1070,7 @@ impl ReducerThread<'_> {
                 self.queue(QueueInput::Process(ProcessFact::SparesReady(waiting)));
             }
             OutpostMessage::ListenerStarted { listener, .. } => {
-                self.listener_view.started(listener.0);
+                self.listener_view.started();
                 self.queue(QueueInput::Process(ProcessFact::ListenerStarted(
                     listener.0,
                 )));
@@ -1087,7 +1087,7 @@ impl ReducerThread<'_> {
                 // Counted as the listener numbered it as it wrote it, so a
                 // view's position names a point in its stream.
                 if let Some(token) = message.carried_token() {
-                    self.listener_view.handled(listener.0, token);
+                    self.listener_view.handled(token);
                 }
                 if let ListenerToCore::Tell(tell) = &*message {
                     self.tell_received(tell);
@@ -1517,17 +1517,13 @@ impl ReducerThread<'_> {
         // next command (`verbatim_core::held_tokens`).
         let held_tokens = self.state.held_tokens();
         match self.listener_view.after_pass(held_tokens.as_ref()) {
-            Ok(verbatim_core::ViewSend::Nothing) => {}
-            Err(mismatch) => tracing::error!(target: verbatim_model::DEFECT_TARGET,
-                ?mismatch,
-                "Core holds tokens of another listener generation than the shell counts, a logic bug: no view is sent"
-            ),
-            Ok(verbatim_core::ViewSend::Now(view)) => {
+            verbatim_core::ViewSend::Nothing => {}
+            verbatim_core::ViewSend::Now(view) => {
                 self.context
                     .supervisor
                     .send_elements_held(elements_held(view));
             }
-            Ok(verbatim_core::ViewSend::Leave(view)) => {
+            verbatim_core::ViewSend::Leave(view) => {
                 self.context
                     .supervisor
                     .leave_elements_held(elements_held(view));

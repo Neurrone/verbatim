@@ -315,7 +315,7 @@ impl CoreDriver {
             check_observer: None,
             send_observer: None,
         };
-        driver.view.started(LISTENER.generation);
+        driver.view.started();
         driver.feed(QueueInput::Process(ProcessFact::ListenerStarted(1)));
         driver.feed(QueueInput::ReaderReady(LISTENER));
         let started = if driver.outpost.foreground() == 0 {
@@ -681,7 +681,7 @@ impl CoreDriver {
         // hands it to Core.
         if let EventObject::Uia { token, .. } = &tell.object {
             self.reported.written(*token);
-            self.view.handled(LISTENER.generation, *token);
+            self.view.handled(*token);
         }
         self.feed(QueueInput::Tell {
             from: LISTENER,
@@ -1085,11 +1085,7 @@ impl CoreDriver {
     /// the stand-in for the listener at once, or left for the next request
     /// to it.
     fn send_views(&mut self) {
-        match self
-            .view
-            .after_pass(self.state.held_tokens().as_ref())
-            .expect("Core and the shell count one listener generation")
-        {
+        match self.view.after_pass(self.state.held_tokens().as_ref()) {
             ViewSend::Nothing => {}
             ViewSend::Now(view) => {
                 self.left.superseded();

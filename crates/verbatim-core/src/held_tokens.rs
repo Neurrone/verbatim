@@ -57,9 +57,8 @@ pub enum ViewSend {
 /// those handled since the last view left or written, and that view.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ListenerView {
-    /// The listener generation counted, `None` before the first.
-    generation: Option<u64>,
-    /// How many messages carrying tokens of that generation were handled.
+    /// How many messages carrying tokens of the running listener were
+    /// handled.
     position: u64,
     /// The tokens handled since the last view left or written.
     handled: BTreeSet<ElementToken>,
@@ -68,22 +67,18 @@ pub struct ListenerView {
 }
 
 impl ListenerView {
-    /// The owner thread reported the listener `generation` started: its
-    /// count begins at 0, and nothing it was sent is known.
-    pub fn started(&mut self, generation: u64) {
-        *self = Self {
-            generation: Some(generation),
-            ..Self::default()
-        };
+    /// The owner thread reported a listener started: its count begins at
+    /// 0, and nothing it was sent is known.
+    pub fn started(&mut self) {
+        *self = Self::default();
     }
 
-    /// A message of the listener `generation` carrying `token` was handed
-    /// to Core: counted, when it is of the generation counted.
-    pub fn handled(&mut self, generation: u64, token: ElementToken) {
-        if self.generation == Some(generation) {
-            self.position = self.position.saturating_add(1);
-            self.handled.insert(token);
-        }
+    /// A message of the running listener carrying `token` was handed to
+    /// Core: counted. The owner thread hands on no frame of a listener it
+    /// replaced, and reports the new one started before its first.
+    pub fn handled(&mut self, token: ElementToken) {
+        self.position = self.position.saturating_add(1);
+        self.handled.insert(token);
     }
 
     /// The position of the last message carrying tokens handled.
@@ -97,25 +92,10 @@ impl ListenerView {
     /// held, is not held now; otherwise a view left for the next command
     /// when the set or the position moved; otherwise nothing, as when no
     /// listener runs (`held` is `None`).
-    ///
-    /// # Errors
-    ///
-    /// A held set of another listener generation than the one counted, a
-    /// logic bug, since both learn of a listener's start from the same
-    /// input: nothing is sent, so no view releases what Core holds.
-    pub fn after_pass(
-        &mut self,
-        held: Option<&HeldTokens>,
-    ) -> Result<ViewSend, GenerationMismatch> {
-        let (Some(generation), Some(held)) = (self.generation, held) else {
-            return Ok(ViewSend::Nothing);
+    pub fn after_pass(&mut self, held: Option<&HeldTokens>) -> ViewSend {
+        let Some(held) = held else {
+            return ViewSend::Nothing;
         };
-        if held.generation != generation {
-            return Err(GenerationMismatch {
-                counted: generation,
-                held: held.generation,
-            });
-        }
         let tokens = &held.tokens;
         let released = self
             .handled
@@ -123,31 +103,21 @@ impl ListenerView {
             .chain(self.last.0.iter())
             .any(|token| !tokens.contains(token));
         if !released && self.last.0 == *tokens && self.last.1 == self.position {
-            return Ok(ViewSend::Nothing);
+            return ViewSend::Nothing;
         }
         self.last = (tokens.clone(), self.position);
         self.handled.clear();
         let view = View {
-            generation,
+            generation: held.generation,
             tokens: tokens.iter().copied().collect(),
             acknowledged: self.position,
         };
-        Ok(if released {
+        if released {
             ViewSend::Now(view)
         } else {
             ViewSend::Leave(view)
-        })
+        }
     }
-}
-
-/// A held set of another listener generation than the one the shell's
-/// record counts ([`ListenerView::after_pass`]).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct GenerationMismatch {
-    /// The generation the record counts.
-    pub counted: u64,
-    /// The generation of the held set.
-    pub held: u64,
 }
 
 #[cfg(test)]
@@ -158,12 +128,6 @@ mod tests {
         HeldTokens {
             generation: 1,
             tokens: tokens.iter().copied().map(ElementToken).collect(),
-        }
-    }
-
-    impl ListenerView {
-        fn after_pass_ok(&mut self, held: Option<&HeldTokens>) -> ViewSend {
-            self.after_pass(held).expect("one generation")
         }
     }
 
@@ -181,13 +145,13 @@ mod tests {
     #[test]
     fn a_tell_refused_in_its_own_pass_writes_a_view() {
         let mut record = ListenerView::default();
-        record.started(1);
-        record.handled(1, ElementToken(1));
+        record.started();
+        record.handled(ElementToken(1));
         assert_eq!(
-            record.after_pass_ok(Some(&held(&[]))),
+            record.after_pass(Some(&held(&[]))),
             ViewSend::Now(view(&[], 1))
         );
-        assert_eq!(record.after_pass_ok(Some(&held(&[]))), ViewSend::Nothing);
+        assert_eq!(record.after_pass(Some(&held(&[]))), ViewSend::Nothing);
     }
 
     /// An addition alone writes nothing: it is left for the next command;
@@ -195,20 +159,20 @@ mod tests {
     #[test]
     fn an_addition_alone_is_left_and_its_leaving_written() {
         let mut record = ListenerView::default();
-        record.started(1);
-        record.handled(1, ElementToken(1));
+        record.started();
+        record.handled(ElementToken(1));
         assert_eq!(
-            record.after_pass_ok(Some(&held(&[1]))),
+            record.after_pass(Some(&held(&[1]))),
             ViewSend::Leave(view(&[1], 1))
         );
-        assert_eq!(record.after_pass_ok(Some(&held(&[1]))), ViewSend::Nothing);
-        record.handled(1, ElementToken(2));
+        assert_eq!(record.after_pass(Some(&held(&[1]))), ViewSend::Nothing);
+        record.handled(ElementToken(2));
         assert_eq!(
-            record.after_pass_ok(Some(&held(&[1, 2]))),
+            record.after_pass(Some(&held(&[1, 2]))),
             ViewSend::Leave(view(&[1, 2], 2))
         );
         assert_eq!(
-            record.after_pass_ok(Some(&held(&[2]))),
+            record.after_pass(Some(&held(&[2]))),
             ViewSend::Now(view(&[2], 2))
         );
     }
@@ -218,46 +182,36 @@ mod tests {
     #[test]
     fn a_held_token_leaving_before_any_view_is_written() {
         let mut record = ListenerView::default();
-        record.started(1);
-        record.handled(1, ElementToken(1));
-        record.handled(1, ElementToken(2));
+        record.started();
+        record.handled(ElementToken(1));
+        record.handled(ElementToken(2));
         assert_eq!(
-            record.after_pass_ok(Some(&held(&[1, 2]))),
+            record.after_pass(Some(&held(&[1, 2]))),
             ViewSend::Leave(view(&[1, 2], 2))
         );
-        record.handled(1, ElementToken(3));
+        record.handled(ElementToken(3));
         assert_eq!(
-            record.after_pass_ok(Some(&held(&[1, 3]))),
+            record.after_pass(Some(&held(&[1, 3]))),
             ViewSend::Now(view(&[1, 3], 3))
         );
     }
 
-    /// A new generation counts from 0 and forgets the last view; a message
-    /// of another generation is not counted, and a held set of another
-    /// generation is an error that sends nothing.
+    /// A new generation counts from 0 and forgets the last view.
     #[test]
     fn a_new_generation_counts_from_zero() {
         let mut record = ListenerView::default();
-        assert_eq!(record.after_pass_ok(None), ViewSend::Nothing);
-        record.started(1);
-        record.handled(1, ElementToken(7));
-        assert_eq!(
-            record.after_pass_ok(Some(&held(&[7]))),
-            ViewSend::Leave(view(&[7], 1))
-        );
-        record.started(2);
-        record.handled(1, ElementToken(8));
-        record.handled(2, ElementToken(1));
-        assert_eq!(record.position(), 1);
+        assert_eq!(record.after_pass(None), ViewSend::Nothing);
+        record.started();
+        record.handled(ElementToken(7));
         assert_eq!(
             record.after_pass(Some(&held(&[7]))),
-            Err(GenerationMismatch {
-                counted: 2,
-                held: 1
-            })
+            ViewSend::Leave(view(&[7], 1))
         );
+        record.started();
+        record.handled(ElementToken(1));
+        assert_eq!(record.position(), 1);
         assert_eq!(
-            record.after_pass_ok(Some(&HeldTokens {
+            record.after_pass(Some(&HeldTokens {
                 generation: 2,
                 tokens: BTreeSet::new(),
             })),
