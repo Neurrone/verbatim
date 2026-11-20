@@ -10,11 +10,12 @@ Terms used below, defined once:
 - Result reference: a later operation naming an earlier operation's result by its place in the batch, so that dependent steps need no second round trip (plan.md 73).
 - Condition: an optional test on an earlier result that decides whether an operation runs (open point 1).
 
-## What Dickson rules (section 6 has each with an example and a recommendation)
+## What Dickson ruled on 2026-11-20 (section 6 has each with its example)
 
-1. Whether an operation may carry a condition on an earlier result, which keeps today's guarded reads (focused state, the identity check, the hidden dialog) in one round trip with no extra calls.
-2. Which operations the extension surface imports in M5, and that one matcher grammar serves both `Find` and conditions.
-3. Whether the notification area's two reads are converted now or kept, with his sign-off, until M5 makes the tray list a global module.
+1. An operation may carry a condition on an earlier result, which keeps today's guarded reads (focused state, the identity check, the hidden dialog) in one round trip with no extra calls; dropped later only if the round-trip measurement shows guarded reads are rare.
+2. The extension surface imports in M5 the reads the Extensions guide's imports page lists, each one call that Core turns into a batch; batches are not exposed to modules, and exposing them later adds to the contract without changing it; one matcher grammar serves `Find` and conditions.
+3. The notification area's two reads are converted in build 8.
+4. The batch's typing, in section 1: built through typed handles in Core and parsed, not validated, where it arrives on each side.
 
 Everything else below is decided by the study with its reason, open to his objection; section 7 lists those decisions.
 
@@ -22,7 +23,7 @@ Everything else below is decided by the study with its reason, open to his objec
 
 ### Shape
 
-A request stays an `Ask` (request.rs 54-67) with its number, its window for the hang check, Core's backend verdict and, replacing `Request`, a batch: an ordered list of at most 32 operations. Two fields move from request kinds onto the `Ask`: whether it is the event queue's or from outside it, today derived from the kind by `outside_the_queue` (request.rs 994-1004, ending in a wildcard, model finding 14), and the nodes and anchors another request holds while this one is out, today `MsaaRun.spare` (request.rs 635).
+A request stays an `Ask` (request.rs 54-67) with its number, its window for the hang check, Core's backend verdict and, replacing `Request`, a batch: an ordered list of operations, capped (section 7). A batch does not save round trips against today: today's purpose-built requests already run many calls in the reader and answer once. What it removes is the kind per behaviour; result references keep a generic list at one round trip where a dependent step would otherwise need a second. Two fields move from request kinds onto the `Ask`: whether it is the event queue's or from outside it, today derived from the kind by `outside_the_queue` (request.rs 994-1004, ending in a wildcard, model finding 14), and the nodes and anchors another request holds while this one is out, today `MsaaRun.spare` (request.rs 635).
 
 The answer keeps ADR 0003's five outcomes for the batch as a whole (ADR 0003 line 30: "the request carries what it needs and gets one answer, with one of five outcomes"). Not responding, the reader ending, Core's stop and the cancel apply to the batch, since the batch is one call sequence on one worker. A result carries one outcome per operation, in order:
 
@@ -39,7 +40,10 @@ So `TextFailure` and `into_failure` (text.rs 1248-1297), the second failure voca
 ### How results are addressed (question 2)
 
 - Each result is addressed by its operation's place in the batch. A subject may be `Result(i)`, the node operation i read, or `Item(i, j)`, the j-th node of a list operation i answered. A text point may be `Of(i, edge)`: the start, the end or the reported point of the chunk or caret operation i answered, beside today's `TextPoint` forms (text.rs 88-105).
-- References point only backwards. Core builds a batch through a typed builder whose methods return typed handles (a node handle, a list handle, a text handle), so a reference of the wrong kind or forwards cannot be written in Core; a reader parses the batch once at its boundary into the same typed form, and a batch that does not parse is refused whole as a logic bug, never defaulted (CLAUDE.md, "Code reaches no fallback that could only be a logic bug").
+- References point only backwards, and three layers make a wrong batch impossible or refused (Dickson agreed the shape on 2026-11-20, "as long as we parse, not validate at the boundary where the data comes in"):
+  - In Core, by construction. A batch is built inside a closure, `Batch::build(|b| ...)`, whose builder methods return typed handles, `Ref<Caret>`, `Ref<Chunks>`, `Ref<Node>`, `Ref<Nodes>`, each branded with the closure's invariant lifetime, so a handle cannot leave its batch. An input that names an earlier result takes a handle of the one kind that result can be (`At::CaretOf` takes only a `Ref<Caret>`), and a handle exists only once its operation has been added, so a reference of the wrong kind, a forward reference and another batch's handle do not compile.
+  - At the reader, by parsing. The batch arrives as data, so the reader parses it once at its boundary into the same typed form: every reference points to a smaller index and to an operation whose result is the kind it needs. A batch that does not parse is refused whole as a protocol error, logged as a bug, and none of it runs; nothing is defaulted (CLAUDE.md, "Code reaches no fallback that could only be a logic bug").
+  - In Core, by parsing the reply. The reply is parsed against the batch that was sent, once, where it arrives: one outcome per operation, each `Done` of the kind its operation produces. A reply that does not parse is the reader's failure. Core then reads each result through the handle, `answer.get(word)` giving `Outcome<&Chunks>`; the accessor's one mismatch arm is unreachable by that parse, written once for every batch. A reply type generated per batch shape, which would remove that arm, is not built: its macro or code generation costs more than the one parse.
 - A failed operation does not end the batch. Every operation that names it, by reference or condition, is Skipped; independent operations still run. Reason: a focus read's foreground read and its caret read do not depend on each other, and "complete or nothing" for a focus read stays Core's judgement over the outcomes (ADR 0003 line 200), not a rule in the reader.
 - Node ids minted inside a batch are minted by the outpost unstamped and stamped by Core from the pipe the answer arrived on, as today (lib.rs 178-181: "Core attaches it to everything an outpost sends according to the pipe the message arrived on, never from the message body"), because a compromised outpost must not name another generation. With every node in a reply inside an operation outcome of one of three result types (node, list, ancestors), the four hand-written walks (`Ask::unstamp` request.rs 926, `Answer::named` 1020 with its clone at 1021, `Answer::visit_nodes` 1063, `Named::text_reply` protocol/mod.rs 721) become one walk each way over the batch.
 - Anchors cross as today: the outpost mints a `TextAnchor` (text.rs 63) per node into each text result and keeps it until Core's held view releases it (ADR 0003 line 47). An anchor minted earlier in the same batch is used by reference, so a caret key's starting point and its first read need not wait for the anchor to reach Core.
@@ -241,7 +245,8 @@ Recommendation: convert in build 8. Plan rule 5 asks every user of the old form 
 - Derived facts (focused state over the ancestors, dialog text, top-level visibility, runtime id reused, value from selection) become properties of the table, so readers report them and Core judges.
 - `Location` and `OffsetLocation` become one result; the six text failures become operation outcomes; `TextFailure` goes.
 - The terminal operations are settled in build 9, from its corrected study.
-- A batch holds at most 32 operations: the largest conversion above, an MSAA focus run in full with its caret, needs about 8.
+- A batch holds a capped number of operations, so a runaway batch is refused as a bug rather than run. The cap is not yet set: the study sets it from the largest batch the conversions actually build (the largest estimated above, an MSAA focus run in full with its caret, is about 8), not from a round number. On UI Automation the program's limit of 10,000 executed instructions binds first.
+- `Find` with no matcher reads as a search, which children are not. The study either keeps `Children` as its own operation or names the merged one for what it does (`Descendants`, with an optional matcher and a depth), so that Core's code says what it reads. Modules see neither name: they call `node.children()`.
 
 ## 8. The measurements the list still depends on
 

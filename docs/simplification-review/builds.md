@@ -1106,6 +1106,7 @@ Two more questions of the record: Q13, each group handed to speech whole, about 
 - Recordings of terminal programs for the features kept "each checked against recordings in the phase": a streamed reply (F5), volatile rows such as "Working... 34s" (F7), keys in fzf, tig and Microsoft Edit with their colours (F8), review while output arrives (F11), marks (F12), Claude Code's Ink erase and redraw (Q7), and a spinner with a new line in the same read (Q6).
 - Captures at the pin: a password prompt with "speak passwords" on (Q2); a console written to while hung (Q3); a spinner glyph with a new line (Q6); Ink's redraw (Q7); a two-character tab completion (Q8); a read sharing nothing with the last (Q10); speech queued behind a whole group (Q13); and a flood of 30, 10 blank and 30 lines to confirm NVDA's diff drops the blanks (Q1).
 - `conhost_typing`'s recorded reads for the wrap defect's test.
+- Claude Code: the committed term-sim recordings (`claude-code`, `claude-code-reply`) were made with Dickson's Claude Code in screen reader mode (`"axScreenReader": true`; each screen starts "[Screen Reader Mode: on via settings]"), so they are not taken as covering the spinner or Ink's redraw. Recordings and captures are made in both modes, the mode turned off for the capture's process alone with `claude --settings '{"axScreenReader":false}'`, and checked by its first screen. Dickson allowed one short, content-free prompt per capture (2026-11-20).
 
 ### Inventory
 
