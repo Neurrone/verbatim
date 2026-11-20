@@ -11,20 +11,15 @@
 //! Nothing is imported, so nothing is left behind. The speech is NVDA's,
 //! captured at the pin on 2026-11-19.
 
+use super::press;
 use crate::registry::ScenarioState;
 use crate::scenario::Scenario;
 
 pub(crate) use super::{no_setup as setup, no_teardown as teardown};
 
-/// Presses `keys` and asserts exactly `heard`.
-fn press(scenario: &mut Scenario, keys: &[&str], heard: &[&str]) {
-    scenario.send_keys(keys).expect("sends the keys");
-    scenario.speech().expect(heard);
-}
-
 pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     super::open_speech_settings(scenario);
-    press(scenario, &["downarrow"], &["Theme 2 of 3"]);
+    press(scenario, "downarrow", &["Theme 2 of 3"]);
     let tabs: [&[&str]; 9] = [
         &["Theme: combo box Default collapsed Alt+t"],
         &[
@@ -40,11 +35,11 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
         &["Import... button"],
     ];
     for heard in tabs {
-        press(scenario, &["tab"], heard);
+        press(scenario, "tab", heard);
     }
     press(
         scenario,
-        &["enter"],
+        "enter",
         &[
             "Import a Theme dialog File name:",
             "File name: combo box collapsed",

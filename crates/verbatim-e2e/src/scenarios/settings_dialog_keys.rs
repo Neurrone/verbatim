@@ -30,6 +30,7 @@
 //! closes, the scenario waits for the desktop, where the focus returns, to
 //! take the foreground and asserts its announcement.
 
+use super::press;
 use crate::registry::ScenarioState;
 use crate::scenario::Scenario;
 
@@ -53,12 +54,6 @@ const AFTER_RATE: [&str; 6] = [
     "Cancel button",
     "Apply button Alt+a",
 ];
-
-/// Presses `keys` and asserts exactly `heard`.
-fn press(scenario: &mut Scenario, keys: &str, heard: &[&str]) {
-    scenario.send_keys(&[keys]).expect("sends the key");
-    scenario.speech().expect(heard);
-}
 
 /// Opens the Speech settings and Tabs to the rate slider, which must say
 /// `rate`.

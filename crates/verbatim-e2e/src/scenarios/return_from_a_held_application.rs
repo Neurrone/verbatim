@@ -16,6 +16,7 @@
 use std::io;
 
 use crate::registry::ScenarioState;
+use crate::scenario::{Launch, Start};
 use crate::scenario::{Scenario, WINDOW_TIMEOUT, harness_marker};
 
 pub(crate) use super::no_teardown as teardown;
@@ -81,11 +82,13 @@ fn open_held_application(scenario: &mut Scenario, events: &str) -> io::Result<u3
         events,
     ]
     .map(str::to_owned);
-    let window = scenario.launch_titled_with_stdin(
+    let window = scenario.launch(
         &format!(r"{directory}\mockapp.exe"),
         &args,
-        &title,
-        &output,
+        Launch {
+            start: Start::WithStdin { output_to: &output },
+            ..Launch::titled(&title)
+        },
     )?;
     Ok(window.pid)
 }

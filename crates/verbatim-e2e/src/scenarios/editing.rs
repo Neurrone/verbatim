@@ -24,6 +24,7 @@
 //! nothing. Notepad's document is saved at
 //! the end, and by cleanup when the body failed part-way.
 
+use super::press;
 use std::io;
 
 use crate::registry::ScenarioState;
@@ -43,12 +44,6 @@ pub(crate) fn document() -> Document {
         name: NAME,
         contents: DOCUMENT.to_owned(),
     }
-}
-
-/// Presses `keys` and asserts exactly `heard`.
-fn press(scenario: &mut Scenario, keys: &str, heard: &[&str]) {
-    scenario.send_keys(&[keys]).expect("sends the key");
-    scenario.speech().expect(heard);
 }
 
 /// Opens the scenario's document in the Windows Forms text box.

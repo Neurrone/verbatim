@@ -17,6 +17,7 @@ use std::time::Instant;
 use verbatim_control::protocol::Frame;
 use verbatim_model::NormalizedEvent;
 
+use crate::scenario::Launch;
 use crate::scenario::{Scenario, WINDOW_TIMEOUT, harness_marker};
 
 /// The text box's accessible name in the editing scenarios.
@@ -50,7 +51,14 @@ pub(crate) fn open(
     let program = format!(r"{}\text_box_form.exe", scenario.run_directory());
     let args = [title.clone(), ready.clone(), box_name.to_owned(), text_path];
     Ok(scenario
-        .launch_titled_once(&program, &args, &title, true, Some(&ready))?
+        .launch(
+            &program,
+            &args,
+            Launch {
+                ready: Some(&ready),
+                ..Launch::titled(&title)
+            },
+        )?
         .pid)
 }
 

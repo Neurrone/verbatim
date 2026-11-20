@@ -322,9 +322,7 @@ shorter (`compare::QuietPeriod`).
   so NVDA's announcement of the desktop is heard; it launches no Verbatim,
   records no video, and refuses a remote run. `is_comparing` says which
   mode a run is in. Each action that changes what is in front
-  (`launch_titled`, `launch_titled_once`, `launch_titled_with_stdin`,
-  `launch_owning_window`,
-  `launch_console`, `bring_window_forward`, `bring_document_forward`,
+  (`launch`, `bring_window_forward`, `bring_document_forward`,
   `open_folder`, `open_settings_page`, `run_handing_off`,
   `close_launched`, `focus_by_automation_id`, and
   `terminal::expect_prompt_read`'s writing of the file that lets the shell
@@ -406,32 +404,34 @@ scenario runs (`books/dev/src/how-to/troubleshooting.md`).
 `Scenario` owns one live run. Besides `speech()`, `status()`, and the
 input methods above:
 
-- `launch_titled(command, args, title, owner_exits)` starts a program
-  whose window carries `title`, its first window minimized and inactive,
+- `launch(command, args, Launch)` starts a program
+  whose window carries the launch's `title`, its first window minimized and inactive,
   then restores that window and sets it as the foreground, as its taskbar
   button does, and waits for it to take the foreground, so the launch does
   not depend on the agent having injected the last input
   (`books/dev/src/how-to/troubleshooting.md`, "Windows' foreground lock keeps
   launched applications behind"); a window that ignores the minimized show
   state, as msinfo32's does, is minimized by the agent before it is
-  restored. `launch_titled_once(command, args, title, owner_exits, ready)`
-  does the same, bringing the window forward only once the agent sees the
-  file `ready`, the program's evidence that it has written what it writes
-  as it starts. `launch_console(command, args, title, ready)` starts a
-  console program with its console window titled from its first frame,
-  opened minimized and inactive, without the agent's foreground right, and
-  brought forward as `launch_titled_once` does.
-  `launch_answering_uia(command, args, title, ready)` waits, after
+  restored. `Launch::titled(title)` gives the defaults, and a caller
+  changes a field with struct update syntax: `owner_exits: false` closes
+  the window by its handle rather than by its process; `ready` brings the
+  window forward only once the agent sees that file, the program's
+  evidence that it has written what it writes as it starts;
+  `start: Start::Console` starts a console program with its console
+  window titled from its first frame, without the agent's foreground
+  right; `answers_uia` waits, after
   `ready`, for the window's thread to answer UI Automation's first
   question with a provider's answer (the agent's `WaitForUiaAnswer`),
   since a WPF window's thread can stay busy for seconds after it has
   rendered and a window that does not answer in time is read through
-  MSAA. `launch_owning_window`
-  does the same for a program that must own the window it opens.
-  `launch_titled_with_stdin(command, args, title, output_to)` does the
-  same with the program's standard input a pipe `write_stdin(pid, line)`
-  writes to and its output captured into `output_to`, for a program driven
-  by its standard input, such as `mockapp`.
+  MSAA; `owns_window` fails unless the launched process owns the window,
+  for a program that could hand its command line to one already running;
+  `settled` lets a shell that titles its tab finish; and
+  `start: Start::WithStdin { output_to }` makes the program's standard
+  input a pipe `write_stdin(pid, line)` writes to and captures its output
+  into `output_to`, for a program driven by its standard input, such as
+  `mockapp`, which the scenarios launch through `scenarios/mockapp.rs`.
+
   `require_absent(title)` fails when a window so titled is already open,
   for a program whose title is not the run's own, such as msinfo32;
   `launched_children` lists what the last launched program started.

@@ -80,6 +80,7 @@ use verbatim_control::protocol::Frame;
 use verbatim_model::NormalizedEvent;
 
 use crate::registry::ScenarioState;
+use crate::scenario::{Launch, Start};
 use crate::scenario::{Scenario, harness_marker};
 use crate::speech::{Expected, OptionalOutcome, heard, optional, optional_up_to};
 use crate::windows_terminal;
@@ -253,19 +254,30 @@ fn open_with(
             let others_before = other_terminal_windows(scenario, None)?;
             let mut args = new_window();
             args.extend(new_tab(&title, &start, shell_titles));
-            let window = scenario.launch_owning_window(
+            let window = scenario.launch(
                 &executable,
                 &args,
-                &title,
-                Some(&started),
-                settled.as_deref(),
+                Launch {
+                    ready: Some(&started),
+                    settled: settled.as_deref(),
+                    owns_window: true,
+                    ..Launch::titled(&title)
+                },
             )?;
             require_no_other_terminal_window(scenario, &others_before, window.pid)?;
             window
         }
         Terminal::ConsoleHost => {
             let args = shell_command(&start, terminal);
-            scenario.launch_console("conhost.exe", &args, &title, Some(&started))?
+            scenario.launch(
+                "conhost.exe",
+                &args,
+                Launch {
+                    start: Start::Console,
+                    ready: Some(&started),
+                    ..Launch::titled(&title)
+                },
+            )?
         }
     };
     match terminal {
@@ -408,7 +420,15 @@ pub(crate) fn open_windows_terminal_window(
     let others_before = other_terminal_windows(scenario, Some(running))?;
     let mut args = new_window();
     args.extend(new_tab(&title, &start, false));
-    let window = scenario.launch_titled_once(&executable, &args, &title, false, Some(&started))?;
+    let window = scenario.launch(
+        &executable,
+        &args,
+        Launch {
+            owner_exits: false,
+            ready: Some(&started),
+            ..Launch::titled(&title)
+        },
+    )?;
     if window.pid != running {
         return Err(io::Error::other(format!(
             "the second window {title:?} belongs to {} pid {}, not to the harness's running Windows Terminal, pid {running}",

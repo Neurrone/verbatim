@@ -31,9 +31,11 @@
 //! next, and there is no other wait but the WPF window's, before it comes
 //! forward, for its thread to answer UI Automation.
 
+use super::press;
 use std::io;
 
 use crate::registry::ScenarioState;
+use crate::scenario::Launch;
 use crate::scenario::{Scenario, harness_marker};
 
 pub(crate) use super::no_teardown as teardown;
@@ -47,12 +49,6 @@ const WPF_NAME: &str = "wpf-password";
 /// The password both forms hold, six characters, which neither scenario
 /// ever hears: each field shows it masked.
 const PASSWORD: &str = "secret";
-
-/// Presses `keys` and asserts exactly `heard`.
-fn press(scenario: &mut Scenario, keys: &str, heard: &[&str]) {
-    scenario.send_keys(&[keys]).expect("sends the key");
-    scenario.speech().expect(heard);
-}
 
 /// Presses `keys`, declared a deliberate difference from NVDA's symbol
 /// processing, which Verbatim does not have yet, and asserts exactly
@@ -86,14 +82,14 @@ const USER: &str = "dickson";
 /// file is written into it); the user name; and [`PASSWORD`]. Each program
 /// is described in its source beside `crates/mockapp/forms_menu.cs`, which
 /// mockapp's build script compiles.
-struct Launch {
+struct FormsProgram {
     program: String,
     title: String,
     args: Vec<String>,
     ready: String,
 }
 
-fn launch(scenario: &mut Scenario, program: &str, name: &str) -> Launch {
+fn launch(scenario: &mut Scenario, program: &str, name: &str) -> FormsProgram {
     let title = harness_marker(name);
     let ready = scenario.harness_file(name, "shown");
     let program = format!(r"{}\{program}.exe", scenario.run_directory());
@@ -103,7 +99,7 @@ fn launch(scenario: &mut Scenario, program: &str, name: &str) -> Launch {
         USER.to_owned(),
         PASSWORD.to_owned(),
     ];
-    Launch {
+    FormsProgram {
         program,
         title,
         args,
@@ -116,12 +112,13 @@ fn launch(scenario: &mut Scenario, program: &str, name: &str) -> Launch {
 /// closes at cleanup, and the program exits then.
 pub(crate) fn text_box_setup(scenario: &mut Scenario) -> io::Result<ScenarioState> {
     let launch = launch(scenario, "forms_password", FORMS_NAME);
-    scenario.launch_titled_once(
+    scenario.launch(
         &launch.program,
         &launch.args,
-        &launch.title,
-        true,
-        Some(&launch.ready),
+        Launch {
+            ready: Some(&launch.ready),
+            ..Launch::titled(&launch.title)
+        },
     )?;
     Ok(ScenarioState::None)
 }
@@ -134,7 +131,15 @@ pub(crate) fn text_box_setup(scenario: &mut Scenario) -> io::Result<ScenarioStat
 /// then. The window closes at cleanup, and the program exits then.
 pub(crate) fn wpf_setup(scenario: &mut Scenario) -> io::Result<ScenarioState> {
     let launch = launch(scenario, "wpf_password", WPF_NAME);
-    scenario.launch_answering_uia(&launch.program, &launch.args, &launch.title, &launch.ready)?;
+    scenario.launch(
+        &launch.program,
+        &launch.args,
+        Launch {
+            ready: Some(&launch.ready),
+            answers_uia: true,
+            ..Launch::titled(&launch.title)
+        },
+    )?;
     Ok(ScenarioState::None)
 }
 

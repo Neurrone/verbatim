@@ -27,6 +27,7 @@
 //!
 //! [`ScenarioDef::local_only`]: crate::registry::ScenarioDef::local_only
 
+use super::press;
 use std::io;
 
 use crate::registry::ScenarioState;
@@ -61,15 +62,9 @@ pub(crate) fn setup(scenario: &mut Scenario) -> io::Result<ScenarioState> {
     Ok(ScenarioState::None)
 }
 
-/// Presses `keys` and asserts exactly `heard`.
-fn press(scenario: &mut Scenario, keys: &str, heard: &str) {
-    scenario.send_keys(&[keys]).expect("sends the key");
-    scenario.speech().expect(&[heard]);
-}
-
 pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     super::expect_notepad_in_front(scenario, NAME, FINE_LINE);
-    press(scenario, "downarrow", ERROR_LINE);
+    press(scenario, "downarrow", &[ERROR_LINE]);
 
     // The line ended out of the error, after its full stop, so the next
     // character, inside the misspelt "Ths", enters it again; the one after
@@ -79,21 +74,29 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     press(
         scenario,
         "rightarrow",
-        "sound: spelling-error spelling error h",
+        &["sound: spelling-error spelling error h"],
     );
-    press(scenario, "rightarrow", "s");
-    press(scenario, "control+rightarrow", "out of spelling error line");
-    press(scenario, "control+rightarrow", "has");
-    press(scenario, "control+rightarrow", "a");
+    press(scenario, "rightarrow", &["s"]);
     press(
         scenario,
         "control+rightarrow",
-        "sound: spelling-error spelling error tset",
+        &["out of spelling error line"],
     );
-    press(scenario, "control+rightarrow", "out of spelling error dot");
+    press(scenario, "control+rightarrow", &["has"]);
+    press(scenario, "control+rightarrow", &["a"]);
+    press(
+        scenario,
+        "control+rightarrow",
+        &["sound: spelling-error spelling error tset"],
+    );
+    press(
+        scenario,
+        "control+rightarrow",
+        &["out of spelling error dot"],
+    );
 
     // The first line has no error, and says nothing about formatting; the
     // second, read again, says its errors again.
-    press(scenario, "uparrow", FINE_LINE);
-    press(scenario, "downarrow", ERROR_LINE);
+    press(scenario, "uparrow", &[FINE_LINE]);
+    press(scenario, "downarrow", &[ERROR_LINE]);
 }

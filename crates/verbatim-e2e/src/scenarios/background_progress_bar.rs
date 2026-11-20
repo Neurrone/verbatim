@@ -13,7 +13,7 @@ use crate::registry::ScenarioState;
 use crate::scenario::{Scenario, harness_marker};
 use crate::speech::heard;
 
-use super::measure::{apply_to_mockapp, open_mockapp_counting, open_msaa_mockapp};
+use super::mockapp::{apply_to_mockapp, open_mockapp_counting, open_msaa_mockapp};
 
 pub(crate) use super::{no_setup as setup, no_teardown as teardown};
 

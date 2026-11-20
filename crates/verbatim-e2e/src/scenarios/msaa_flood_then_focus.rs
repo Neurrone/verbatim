@@ -9,7 +9,7 @@
 use crate::registry::ScenarioState;
 use crate::scenario::{Scenario, harness_marker};
 
-use super::measure::{await_mockapp, open_mockapp, open_msaa_mockapp, send_to_mockapp};
+use super::mockapp::{await_mockapp, open_mockapp, open_msaa_mockapp, send_to_mockapp};
 
 pub(crate) use super::{no_setup as setup, no_teardown as teardown};
 

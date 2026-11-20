@@ -15,6 +15,7 @@
 use std::io;
 
 use crate::registry::ScenarioState;
+use crate::scenario::{Launch, Start};
 use crate::scenario::{Scenario, harness_marker};
 
 pub(crate) use super::{no_setup as setup, no_teardown as teardown};
@@ -33,7 +34,7 @@ fn open(scenario: &mut Scenario, name: &str, root: &str, extra: &[String]) -> io
     let title = harness_marker(name);
     let fixture = scenario.harness_file(name, "json");
     let output = scenario.harness_file(name, "log");
-    scenario.write_agent_file(&fixture, root.replace("{title}", &title).as_bytes())?;
+    scenario.write_agent_file(&fixture, super::mockapp::titled(root, &title).as_bytes())?;
     let mut args = [
         "--fixture",
         &fixture,
@@ -46,11 +47,13 @@ fn open(scenario: &mut Scenario, name: &str, root: &str, extra: &[String]) -> io
     .map(str::to_owned)
     .to_vec();
     args.extend_from_slice(extra);
-    scenario.launch_titled_with_stdin(
+    scenario.launch(
         &format!(r"{directory}\mockapp.exe"),
         &args,
-        &title,
-        &output,
+        Launch {
+            start: Start::WithStdin { output_to: &output },
+            ..Launch::titled(&title)
+        },
     )?;
     Ok(())
 }
@@ -58,30 +61,11 @@ fn open(scenario: &mut Scenario, name: &str, root: &str, extra: &[String]) -> io
 /// The owner: a UIA window whose focused button "Open" has its UIA focus
 /// event raised each time the window is activated, as an application
 /// restores its focus.
-const OWNER_FIXTURE: &str = r#"{
-  "id": "root",
-  "role": "window",
-  "name": "{title}",
-  "focus_on_activate": true,
-  "children": [
-    { "id": "open", "role": "button", "name": "Open", "states": ["focusable", "focused"] }
-  ]
-}
-"#;
+const OWNER_FIXTURE: &str = include_str!("../../../mockapp/tests/fixtures/owner_window.json");
 
 /// The owned dialog: a UIA dialog with the buttons "OK", focused, and
 /// "Cancel", taking a dialog's keys (`dialog_keys`).
-const DIALOG_FIXTURE: &str = r#"{
-  "id": "root",
-  "role": "dialog",
-  "name": "{title}",
-  "dialog_keys": true,
-  "children": [
-    { "id": "ok", "role": "button", "name": "OK", "states": ["focusable", "focused"] },
-    { "id": "cancel", "role": "button", "name": "Cancel", "states": ["focusable"] }
-  ]
-}
-"#;
+const DIALOG_FIXTURE: &str = include_str!("../../../mockapp/tests/fixtures/owned_dialog.json");
 
 pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     open(scenario, OWNER, OWNER_FIXTURE, &[]).expect("opens the owner window");

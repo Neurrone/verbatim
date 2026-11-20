@@ -24,35 +24,13 @@
 use crate::registry::ScenarioState;
 use crate::scenario::{Scenario, harness_marker};
 
-use super::measure::{await_mockapp, open_msaa_mockapp, send_to_mockapp};
+use super::mockapp::{await_mockapp, open_msaa_mockapp, send_to_mockapp};
 
 pub(crate) use super::{no_setup as setup, no_teardown as teardown};
 
 const NAME: &str = "stale-focus-behind-a-caret-key";
 
-const FIXTURE: &str = r#"{
-  "id": "root",
-  "role": "window",
-  "name": "{title}",
-  "children": [
-    {
-      "id": "file",
-      "role": "editable_text",
-      "states": ["focusable"],
-      "text": ""
-    },
-    {
-      "id": "folders",
-      "role": "tree",
-      "native": "tree_view",
-      "children": [
-        { "id": "pc", "role": "tree_item", "name": "This PC", "states": ["selected"] },
-        { "id": "network", "role": "tree_item", "name": "Network" }
-      ]
-    }
-  ]
-}
-"#;
+const FIXTURE: &str = include_str!("../../../mockapp/tests/fixtures/stale_tree.json");
 
 pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     let app = (NAME, open_msaa_mockapp(scenario, NAME, FIXTURE));

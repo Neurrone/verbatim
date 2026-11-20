@@ -53,10 +53,10 @@ on the development machine (`SPI_GETFOREGROUNDLOCKTIMEOUT` reads
 2147483647 ms). The rules:
 
 - The harness never relies on that right for a window it needs in front.
-  `Scenario::launch_titled` (mockapp, the Windows Forms text box, Notepad's
-  documents), `Scenario::launch_console` and
-  `Scenario::launch_owning_window` (Windows Terminal) open the window
-  minimized and inactive (`SW_SHOWMINNOACTIVE`) and then restore it and
+  `Scenario::launch` (mockapp, the Windows Forms text box, the console
+  host, Windows Terminal) opens the window
+  minimized and inactive (`SW_SHOWMINNOACTIVE`) and then restores it and
+
   set it as the foreground, which works whatever input came last.
 - The console host is launched without the right (the launch's
   `withhold_foreground`), because with it the window took the foreground

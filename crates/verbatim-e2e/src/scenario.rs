@@ -99,7 +99,7 @@ pub const DOCUMENT_MARKER: &str = "verbatim-e2e-";
 pub const WINDOW_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// What a window with a UI Automation provider answers `WM_GETOBJECT` for
-/// `UiaRootObjectId` with ([`Scenario::launch_answering_uia`]).
+/// `UiaRootObjectId` with ([`Launch::answers_uia`]).
 const UIA_PROVIDER_ANSWER: i64 = 0x1_0000;
 
 /// How long a window the harness asks to close, or the process that owned
@@ -368,6 +368,75 @@ enum VerbatimState {
     /// Exited by itself at a step's keys ([`Scenario::send_keys_exiting`]):
     /// nothing is left to ask it.
     Exited,
+}
+
+/// How [`Scenario::launch`] launches a program and brings its window
+/// forward. [`Launch::titled`] gives the defaults; a caller changes a field
+/// with struct update syntax.
+#[derive(Clone, Copy, Debug)]
+pub struct Launch<'a> {
+    /// The text the window's title holds.
+    pub title: &'a str,
+    /// How the program is started.
+    pub start: Start<'a>,
+    /// Whether the process that owned the window must exit at cleanup,
+    /// every window of it closed by that process: true when the scenario
+    /// started the program, which had no window open before. Otherwise
+    /// the window is closed by its handle, as one of a process that shares
+    /// it with windows that are not the scenario's, such as a second window
+    /// of a running Windows Terminal.
+    pub owner_exits: bool,
+    /// A file the program writes once it has written what it writes as it
+    /// starts: the window is brought forward only once it exists, so that
+    /// is on screen before the window is announced.
+    pub ready: Option<&'a str>,
+    /// For a shell that titles its tab: the file that lets it, written once
+    /// the window is titled "<title> settling", after which the window
+    /// comes forward titled exactly `title`.
+    pub settled: Option<&'a str>,
+    /// Whether the window is brought forward only once its thread has
+    /// answered UI Automation's first question with a provider: for a UI
+    /// Automation window still starting, such as WPF's.
+    pub answers_uia: bool,
+    /// Whether the window must be the launched process's own: for a
+    /// program that could hand its command line to an instance already
+    /// running, such as Windows Terminal.
+    pub owns_window: bool,
+}
+
+impl<'a> Launch<'a> {
+    /// A program the scenario starts, minimized and inactive, whose window
+    /// is titled with `title` and whose process must exit at cleanup.
+    #[must_use]
+    pub fn titled(title: &'a str) -> Self {
+        Self {
+            title,
+            start: Start::Minimized,
+            owner_exits: true,
+            ready: None,
+            settled: None,
+            answers_uia: false,
+            owns_window: false,
+        }
+    }
+}
+
+/// How [`Scenario::launch`] starts a program.
+#[derive(Clone, Copy, Debug)]
+pub enum Start<'a> {
+    /// Its first window minimized and inactive.
+    Minimized,
+    /// As [`Start::Minimized`], its standard input a pipe
+    /// [`Scenario::write_stdin`] writes to and its standard output and error
+    /// captured into `output_to` on the agent's machine, for a program
+    /// driven by its input, such as `mockapp`.
+    WithStdin {
+        /// Where its output goes.
+        output_to: &'a str,
+    },
+    /// A console program, its console window titled with the title from its
+    /// first frame.
+    Console,
 }
 
 /// The NVDA a compare-mode scenario runs against.
@@ -1290,15 +1359,13 @@ impl Scenario {
         self.agent.read_file(path)
     }
 
-    /// Launches `command`, which opens a window titled with `title`, a
-    /// title of this run's own ([`harness_marker`]) or one no window had
-    /// before ([`Scenario::require_absent`]), its first window minimized
-    /// and inactive, then brings that window forward as clicking its
-    /// taskbar button does, and waits for it to take the foreground.
-    /// At cleanup, when `owner_exits`, every window of the process that
-    /// owned it is closed by that process, which must exit then; otherwise
-    /// the window is closed by its handle. The launched process must have
-    /// exited then too.
+    /// Launches `command` with `args` as `launch` says, its first window,
+    /// titled with `launch.title`, a title of this run's own
+    /// ([`harness_marker`]) or one no window had before
+    /// ([`Scenario::require_absent`]), opened minimized and inactive, then
+    /// brings that window forward as clicking its taskbar button does, and
+    /// waits for it to take the foreground ([`Launch`] says what each of its
+    /// fields adds). The launched process must have exited at cleanup.
     ///
     /// A window opened in front is refused the foreground unless the agent
     /// may allow it, which it may only while it injected the last input
@@ -1312,97 +1379,47 @@ impl Scenario {
     /// # Errors
     ///
     /// Returns an error if the agent cannot start `command`, no window
-    /// titled with `title` opens, or it does not take the foreground.
-    pub fn launch_titled(
+    /// titled with the title opens, a file it waits for is not written in
+    /// time, the window does not answer UI Automation when it must, it does
+    /// not take the foreground, or, when it must be the launched process's
+    /// own, another process owns it.
+    pub fn launch(
         &mut self,
         command: &str,
         args: &[String],
-        title: &str,
-        owner_exits: bool,
+        launch: Launch<'_>,
     ) -> io::Result<WindowInfo> {
-        self.launch_titled_once(command, args, title, owner_exits, None)
-    }
-
-    /// [`Scenario::launch_titled`], bringing the window forward only once
-    /// the file `ready` exists, when given: the evidence that the program
-    /// has written what it writes as it starts, which is then on screen
-    /// before its window is announced and not new to the user.
-    ///
-    /// # Errors
-    ///
-    /// As [`Scenario::launch_titled`], and when `ready` is not written in
-    /// time.
-    pub fn launch_titled_once(
-        &mut self,
-        command: &str,
-        args: &[String],
-        title: &str,
-        owner_exits: bool,
-        ready: Option<&str>,
-    ) -> io::Result<WindowInfo> {
+        let title = launch.title;
         self.begin_action(&launch_action(command, title));
-        let launch = self.agent.launch_minimized(command, args)?;
-        self.bring_forward(launch, title, Closing::launched(owner_exits), ready)
-    }
-
-    /// [`Scenario::launch_titled_once`], bringing the window forward only
-    /// once, after `ready` exists, its thread has also answered UI
-    /// Automation's first question, `WM_GETOBJECT` for `UiaRootObjectId`,
-    /// with a provider's answer: the evidence that a UI Automation window
-    /// still starting, such as WPF's, which can keep its thread busy for
-    /// seconds after it has rendered, answers a screen reader's read of it
-    /// when it comes forward. The process that owned the window must exit
-    /// at cleanup.
-    ///
-    /// # Errors
-    ///
-    /// As [`Scenario::launch_titled_once`], and when the window does not
-    /// answer within [`WINDOW_TIMEOUT`], or answers that it has no
-    /// provider.
-    pub fn launch_answering_uia(
-        &mut self,
-        command: &str,
-        args: &[String],
-        title: &str,
-        ready: &str,
-    ) -> io::Result<WindowInfo> {
-        self.begin_action(&launch_action(command, title));
-        let launch = self.agent.launch_minimized(command, args)?;
-        self.bring_forward_once(
-            launch,
+        let started = match launch.start {
+            Start::Minimized => self.agent.launch_minimized(command, args)?,
+            Start::WithStdin { output_to } => self
+                .agent
+                .launch_minimized_with_stdin(command, args, output_to)?,
+            Start::Console => self.agent.launch_console(command, args, title)?,
+        };
+        let launched = started.pid;
+        let window = self.bring_forward_once(
+            started,
             title,
-            Closing::launched(true),
-            Some(ready),
-            None,
-            true,
-        )
-    }
-
-    /// [`Scenario::launch_titled`], the program's standard input a pipe
-    /// [`Scenario::write_stdin`] writes to and its stdout and stderr
-    /// captured into `output_to` on the agent's machine, for a program
-    /// driven by its standard input, such as `mockapp`. The process that
-    /// owned the window must exit at cleanup.
-    ///
-    /// # Errors
-    ///
-    /// As [`Scenario::launch_titled`].
-    pub fn launch_titled_with_stdin(
-        &mut self,
-        command: &str,
-        args: &[String],
-        title: &str,
-        output_to: &str,
-    ) -> io::Result<WindowInfo> {
-        self.begin_action(&launch_action(command, title));
-        let launch = self
-            .agent
-            .launch_minimized_with_stdin(command, args, output_to)?;
-        self.bring_forward(launch, title, Closing::ByOwner, None)
+            Closing::launched(launch.owner_exits),
+            launch.ready,
+            launch.settled,
+            launch.answers_uia,
+        )?;
+        if launch.owns_window && window.pid != launched {
+            return Err(io::Error::other(format!(
+                "the window titled {title:?} belongs to {} (pid {}), not to the process the harness launched, pid {launched}: {}",
+                window.image,
+                window.pid,
+                self.foreground_report()
+            )));
+        }
+        Ok(window)
     }
 
     /// Writes `line` and a line feed to the standard input of `pid`,
-    /// launched with [`Scenario::launch_titled_with_stdin`].
+    /// launched with [`Start::WithStdin`].
     ///
     /// # Errors
     ///
@@ -1448,8 +1465,8 @@ impl Scenario {
     /// closed as `closing` says, waits for that window,
     /// opened minimized and inactive, to appear, restores it and sets it as
     /// the foreground, injecting nothing, and waits for it to take the
-    /// foreground ([`Scenario::launch_titled`]); with `ready`, only once
-    /// that file exists ([`Scenario::launch_titled_once`]).
+    /// foreground ([`Scenario::launch`]); with `ready`, only once
+    /// that file exists ([`Launch::ready`]).
     fn bring_forward(
         &mut self,
         launch: AgentLaunch,
@@ -1461,7 +1478,7 @@ impl Scenario {
     }
 
     /// [`Scenario::bring_forward`], and with `answers_uia`, only once the
-    /// window has answered UI Automation ([`Scenario::launch_answering_uia`]).
+    /// window has answered UI Automation ([`Launch::answers_uia`]).
     fn bring_forward_once(
         &mut self,
         launch: AgentLaunch,
@@ -1583,45 +1600,6 @@ impl Scenario {
         )))
     }
 
-    /// Launches `command`, which opens a window titled with `title`, a
-    /// title of this run's own ([`harness_marker`]), minimized and inactive,
-    /// brings it forward as [`Scenario::launch_titled`] does, and fails
-    /// unless the process the agent launched owns it: for a program that
-    /// could otherwise hand its command line to an instance already
-    /// running, such as Windows Terminal. Its windows are closed by its
-    /// process at cleanup, and the process must exit then. With `ready`, the window
-    /// is brought forward only once that file exists
-    /// ([`Scenario::launch_titled_once`]).
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the agent cannot start `command`, `ready` is not
-    /// written in time, the window does not take the foreground, or
-    /// another process owns it.
-    pub fn launch_owning_window(
-        &mut self,
-        command: &str,
-        args: &[String],
-        title: &str,
-        ready: Option<&str>,
-        settled: Option<&str>,
-    ) -> io::Result<WindowInfo> {
-        self.begin_action(&launch_action(command, title));
-        let launch = self.agent.launch_minimized(command, args)?;
-        let launched = launch.pid;
-        let window =
-            self.bring_forward_once(launch, title, Closing::ByOwner, ready, settled, false)?;
-        if window.pid != launched {
-            return Err(io::Error::other(format!(
-                "the window titled {title:?} belongs to {} (pid {}), not to the process the harness launched, pid {launched}: {}",
-                window.image,
-                window.pid,
-                self.foreground_report()
-            )));
-        }
-        Ok(window)
-    }
-
     /// Every visible, titled top-level window, owned, minimized, and
     /// cloaked ones included.
     ///
@@ -1630,28 +1608,6 @@ impl Scenario {
     /// Returns an error if the request fails.
     pub fn top_level_windows(&mut self) -> io::Result<Vec<WindowInfo>> {
         Ok(self.agent.foreground_info()?.windows)
-    }
-
-    /// Launches the console program `command` with `args`, its console
-    /// window titled `title` from its first frame and opened minimized and
-    /// inactive, and brings it forward as [`Scenario::launch_titled`]
-    /// does; with `ready`, only once that file exists
-    /// ([`Scenario::launch_titled_once`]).
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the agent cannot start `command`, `ready` is not
-    /// written in time, or the window does not take the foreground.
-    pub fn launch_console(
-        &mut self,
-        command: &str,
-        args: &[String],
-        title: &str,
-        ready: Option<&str>,
-    ) -> io::Result<WindowInfo> {
-        self.begin_action(&launch_action(command, title));
-        let launch = self.agent.launch_console(command, args, title)?;
-        self.bring_forward(launch, title, Closing::ByOwner, ready)
     }
 
     /// Brings the harness document `name`, which Notepad opened before
@@ -1774,7 +1730,7 @@ impl Scenario {
     /// [`DOCUMENT_MARKER`] plus `name` ([`Scenario::harness_folder`]),
     /// opens it without the agent's right to take the foreground, and
     /// brings its window, titled with that name, forward as
-    /// [`Scenario::launch_titled`] does. The desktop's shell, which holds
+    /// [`Scenario::launch`] does. The desktop's shell, which holds
     /// the foreground as every scenario starts, opens the folder window in
     /// front by its own right, raising its foreground event before the
     /// window is shown; when it does not, the window opens restored and
@@ -1809,7 +1765,7 @@ impl Scenario {
 
     /// Opens a page of the Settings app by its `ms-settings:` URI, minimized
     /// and inactive, and brings the Settings window forward as
-    /// [`Scenario::launch_titled`] does, so it takes the foreground
+    /// [`Scenario::launch`] does, so it takes the foreground
     /// whatever input came last. No Settings window
     /// may be open before, so the window is the scenario's own; it is
     /// closed by its title at cleanup ([`Closing::ByTitle`]). The Settings app's process may stay,

@@ -30,6 +30,7 @@
 //! Notepad's documents are saved at the end, and by cleanup when the body
 //! failed part-way.
 
+use super::{press, press_silent};
 use std::io;
 
 use crate::registry::ScenarioState;
@@ -101,17 +102,6 @@ pub(crate) fn count_document() -> Document {
         name: COUNT_NAME,
         contents: format!("{FIRST}\r\n").repeat(40),
     }
-}
-
-/// Presses `keys` and asserts exactly `heard`.
-fn press(scenario: &mut Scenario, keys: &str, heard: &[&str]) {
-    scenario.send_keys(&[keys]).expect("sends the key");
-    scenario.speech().expect(heard);
-}
-
-/// Presses `keys`, which says nothing; the next step's words show it.
-fn press_silent(scenario: &mut Scenario, keys: &str) {
-    scenario.send_keys(&[keys]).expect("sends the key");
 }
 
 /// Presses `keys`, declared a deliberate difference from NVDA, and asserts

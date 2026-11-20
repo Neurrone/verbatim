@@ -15,6 +15,7 @@
 //! Every key is a real key press, and each step waits for its speech to be
 //! heard in full before the next; there is no other wait.
 
+use super::press;
 use std::io;
 
 use crate::registry::ScenarioState;
@@ -37,12 +38,6 @@ pub(crate) fn document() -> Document {
         name: NAME,
         contents: format!("{FIRST}\r\n{SECOND}\r\n"),
     }
-}
-
-/// Presses `keys` and asserts exactly `heard`.
-fn press(scenario: &mut Scenario, keys: &str, heard: &str) {
-    scenario.send_keys(&[keys]).expect("sends the key");
-    scenario.speech().expect(&[heard]);
 }
 
 /// Opens the scenario's document in the Windows Forms text box.
@@ -69,8 +64,8 @@ pub(crate) fn text_box_body(scenario: &mut Scenario, _state: &mut ScenarioState)
 
     // Down to the second line and back up from the top, where the caret
     // starts: Up Arrow speaks the line too.
-    press(scenario, "downarrow", SECOND);
-    press(scenario, "uparrow", FIRST);
+    press(scenario, "downarrow", &[SECOND]);
+    press(scenario, "uparrow", &[FIRST]);
 
     // Two words selected, the second unselected, then the rest of the line
     // selected, from the line's start, where Up Arrow left the caret. A
@@ -78,10 +73,14 @@ pub(crate) fn text_box_body(scenario: &mut Scenario, _state: &mut ScenarioState)
     // space before the state. Unselecting comes before Shift+End because
     // Windows 11 Notepad's Shift+End takes the line break in, which
     // Shift+Control+Left Arrow would then unselect first.
-    press(scenario, "shift+control+rightarrow", "Verbatim  selected");
-    press(scenario, "shift+control+rightarrow", "reads  selected");
-    press(scenario, "shift+control+leftarrow", "reads  unselected");
-    press(scenario, "shift+end", "reads this short note selected");
+    press(
+        scenario,
+        "shift+control+rightarrow",
+        &["Verbatim  selected"],
+    );
+    press(scenario, "shift+control+rightarrow", &["reads  selected"]);
+    press(scenario, "shift+control+leftarrow", &["reads  unselected"]);
+    press(scenario, "shift+end", &["reads this short note selected"]);
 }
 
 /// The scenario in Windows 11 Notepad.
@@ -90,8 +89,8 @@ pub(crate) fn notepad_body(scenario: &mut Scenario, _state: &mut ScenarioState) 
 
     // Down to the second line and back up from the top, where the caret
     // starts: Up Arrow speaks the line too.
-    press(scenario, "downarrow", SECOND);
-    press(scenario, "uparrow", FIRST);
+    press(scenario, "downarrow", &[SECOND]);
+    press(scenario, "uparrow", &[FIRST]);
 
     // Two words selected, the second unselected, then the rest of the line
     // selected, from the line's start, where Up Arrow left the caret. A
@@ -99,8 +98,12 @@ pub(crate) fn notepad_body(scenario: &mut Scenario, _state: &mut ScenarioState) 
     // space before the state. Unselecting comes before Shift+End because
     // Windows 11 Notepad's Shift+End takes the line break in, which
     // Shift+Control+Left Arrow would then unselect first.
-    press(scenario, "shift+control+rightarrow", "Verbatim  selected");
-    press(scenario, "shift+control+rightarrow", "reads  selected");
-    press(scenario, "shift+control+leftarrow", "reads  unselected");
-    press(scenario, "shift+end", "reads this short note  selected");
+    press(
+        scenario,
+        "shift+control+rightarrow",
+        &["Verbatim  selected"],
+    );
+    press(scenario, "shift+control+rightarrow", &["reads  selected"]);
+    press(scenario, "shift+control+leftarrow", &["reads  unselected"]);
+    press(scenario, "shift+end", &["reads this short note  selected"]);
 }

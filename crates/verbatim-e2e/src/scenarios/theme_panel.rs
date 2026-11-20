@@ -24,6 +24,7 @@
 //! passed or failed, deletes any theme folder the scenario left there and
 //! fails if it cannot, so a later run never starts with an extra theme.
 
+use super::press;
 use std::io;
 
 use crate::registry::ScenarioState;
@@ -84,17 +85,11 @@ pub(crate) fn setup(scenario: &mut Scenario) -> io::Result<ScenarioState> {
     Ok(ScenarioState::Names(scenario.list_agent_folders(&folder)?))
 }
 
-/// Presses `keys` and asserts exactly `heard`.
-fn press(scenario: &mut Scenario, keys: &[&str], heard: &[&str]) {
-    scenario.send_keys(keys).expect("sends the keys");
-    scenario.speech().expect(heard);
-}
-
 pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     to_the_remove_confirmation(scenario);
     press(
         scenario,
-        &["y"],
+        "y",
         &[
             "Verbatim Settings: Theme dialog",
             "Theme: combo box Default collapsed Alt+t",
@@ -114,35 +109,35 @@ pub(crate) fn to_the_remove_confirmation(scenario: &mut Scenario) {
     super::open_speech_settings(scenario);
 
     // The Theme category, after Speech, and its controls.
-    press(scenario, &["downarrow"], &["Theme 2 of 3"]);
+    press(scenario, "downarrow", &["Theme 2 of 3"]);
     press(
         scenario,
-        &["tab"],
+        "tab",
         &["Theme: combo box Default collapsed Alt+t"],
     );
     press(
         scenario,
-        &["tab"],
+        "tab",
         &[
             "Description: edit read only multi line Alt+d",
             "Matches NVDA's speech and sounds.",
         ],
     );
-    press(scenario, &["tab"], &["Sound volume: slider 100 Alt+u"]);
+    press(scenario, "tab", &["Sound volume: slider 100 Alt+u"]);
     press(
         scenario,
-        &["tab"],
+        "tab",
         &["Play sounds during say all check box checked Alt+l"],
     );
     press(
         scenario,
-        &["tab"],
+        "tab",
         &["Also speak indications that play a sound check box not checked Alt+s"],
     );
-    press(scenario, &["tab"], &["Find: edit Alt+f", "blank"]);
+    press(scenario, "tab", &["Find: edit Alt+f", "blank"]);
     press(
         scenario,
-        &["tab"],
+        "tab",
         &["Indications: tree view", "level 0 Roles collapsed 1 of 6"],
     );
 
@@ -158,38 +153,38 @@ pub(crate) fn to_the_remove_confirmation(scenario: &mut Scenario) {
     // The speech is NVDA's for one key at a time in a Win32 tree view
     // (captured 2026-11-19).
     for (index, (_, first, expanded, count)) in CATEGORIES.iter().enumerate() {
-        press(scenario, &["rightarrow"], &["expanded", count]);
-        press(scenario, &["downarrow"], &[first]);
+        press(scenario, "rightarrow", &["expanded", count]);
+        press(scenario, "downarrow", &[first]);
         if let Some((next, _, _, _)) = CATEGORIES.get(index + 1) {
-            press(scenario, &["leftarrow"], &[expanded]);
-            press(scenario, &["leftarrow"], &["collapsed"]);
-            press(scenario, &["downarrow"], &[next]);
+            press(scenario, "leftarrow", &[expanded]);
+            press(scenario, "leftarrow", &["collapsed"]);
+            press(scenario, "downarrow", &[next]);
         }
     }
 
     // The find field narrows the tree to the buttons; the first category
     // is selected again, expanded, and its first match is the button role.
-    press(scenario, &["shift+tab"], &["Find: edit Alt+f", "blank"]);
+    press(scenario, "shift+tab", &["Find: edit Alt+f", "blank"]);
     for letter in ["b", "u", "t", "t", "o", "n"] {
-        press(scenario, &[letter], &[letter]);
+        press(scenario, letter, &[letter]);
     }
     press(
         scenario,
-        &["tab"],
+        "tab",
         &["Indications: tree view", "level 0 Roles expanded 1 of 1"],
     );
-    press(scenario, &["downarrow"], &["level 1 button: speech 1 of 9"]);
+    press(scenario, "downarrow", &["level 1 button: speech 1 of 9"]);
 
     // Report as sound: the built-in theme asks for a new theme to make the
     // change in, offering a name, which Enter accepts.
     press(
         scenario,
-        &["tab"],
+        "tab",
         &["Report as: combo box speech collapsed Alt+r"],
     );
     press(
         scenario,
-        &["downarrow"],
+        "downarrow",
         &[
             "New Theme dialog",
             "Default is built in and cannot be changed. Name of the new theme, based on it, to make the change in: edit",
@@ -198,7 +193,7 @@ pub(crate) fn to_the_remove_confirmation(scenario: &mut Scenario) {
     );
     press(
         scenario,
-        &["enter"],
+        "enter",
         &[
             "Verbatim Settings: Theme dialog",
             "Report as: combo box sound collapsed Alt+r",
@@ -208,21 +203,17 @@ pub(crate) fn to_the_remove_confirmation(scenario: &mut Scenario) {
     // A sound for it, played as it is chosen. The buttons are now
     // announced with the sound in place of their role, and Preview's
     // sample plays it too.
-    press(
-        scenario,
-        &["tab"],
-        &["Sound: combo box none collapsed Alt+o"],
-    );
-    press(scenario, &["downarrow"], &["browseMode.wav"]);
-    press(scenario, &["tab"], &["Preview sound: role-button Alt+p"]);
-    press(scenario, &["enter"], &["Sample sound: role-button"]);
-    press(scenario, &["tab"], &["Reset sound: role-button Alt+e"]);
+    press(scenario, "tab", &["Sound: combo box none collapsed Alt+o"]);
+    press(scenario, "downarrow", &["browseMode.wav"]);
+    press(scenario, "tab", &["Preview sound: role-button Alt+p"]);
+    press(scenario, "enter", &["Sample sound: role-button"]);
+    press(scenario, "tab", &["Reset sound: role-button Alt+e"]);
 
     // Reset speaks the role again; the focus moves to the tree, whose item
     // says so.
     press(
         scenario,
-        &["enter"],
+        "enter",
         &["Indications: tree view", "button: speech 1 of 9 level 1"],
     );
 
@@ -238,7 +229,7 @@ pub(crate) fn to_the_remove_confirmation(scenario: &mut Scenario) {
         "Report as: combo box speech collapsed Alt+r",
         "Words: edit Alt+w",
     ] {
-        press(scenario, &["tab"], &[control]);
+        press(scenario, "tab", &[control]);
     }
     scenario.speech().expect(&["blank"]);
     for control in [
@@ -250,11 +241,11 @@ pub(crate) fn to_the_remove_confirmation(scenario: &mut Scenario) {
         "Export... button Alt+x",
         "Remove button",
     ] {
-        press(scenario, &["tab"], &[control]);
+        press(scenario, "tab", &[control]);
     }
     press(
         scenario,
-        &["enter"],
+        "enter",
         &[
             "Remove Theme dialog Remove the theme Default copy? This cannot be undone.",
             "No button Alt+N",

@@ -38,6 +38,7 @@
 //! next, and there is no other wait. Notepad's document is saved at the
 //! end, and by cleanup when the body failed part-way.
 
+use super::{press, press_silent};
 use std::io;
 
 use crate::registry::ScenarioState;
@@ -59,18 +60,6 @@ pub(crate) fn document() -> Document {
         name: NAME,
         contents: format!("{LINE}\r\n").repeat(14),
     }
-}
-
-/// Presses `keys` and asserts exactly `heard`.
-fn press(scenario: &mut Scenario, keys: &str, heard: &[&str]) {
-    scenario.send_keys(&[keys]).expect("sends the key");
-    scenario.speech().expect(heard);
-}
-
-/// Presses `keys`, after which NVDA says nothing: the next step's words,
-/// asserted exactly, show that Verbatim said nothing either.
-fn press_silent(scenario: &mut Scenario, keys: &str) {
-    scenario.send_keys(&[keys]).expect("sends the key");
 }
 
 /// Opens the scenario's document in the Windows Forms text box.

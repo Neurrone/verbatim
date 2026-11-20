@@ -21,6 +21,7 @@
 //! the scenario waits for the desktop, where the focus returns, to take
 //! the foreground and asserts its announcement.
 
+use super::press;
 use crate::registry::ScenarioState;
 use crate::scenario::Scenario;
 
@@ -28,12 +29,6 @@ pub(crate) use super::{no_setup as setup, no_teardown as teardown};
 
 /// "Report new output", checked.
 const REPORT_CHECKED: &str = "Report new output check box checked Alt+n";
-
-/// Presses `keys` and asserts exactly `heard`.
-fn press(scenario: &mut Scenario, keys: &str, heard: &[&str]) {
-    scenario.send_keys(&[keys]).expect("sends the key");
-    scenario.speech().expect(heard);
-}
 
 /// Opens the settings dialog on the Terminal category and Tabs to "Report
 /// new output", which says it is checked.

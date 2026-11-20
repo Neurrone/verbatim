@@ -23,6 +23,7 @@
 //! The errors are there from the start, so every step presses a key and
 //! asserts exactly what it says, heard in full, before the next.
 
+use super::press;
 use std::io;
 
 use crate::registry::ScenarioState;
@@ -46,11 +47,7 @@ const TEXT_AREA: &str = "Text edit";
 const FIRST_LINE: &str = "sound: spelling-error spelling error Ths line has a sound: spelling-error spelling error tset.";
 
 pub(crate) fn setup(scenario: &mut Scenario) -> io::Result<ScenarioState> {
-    let directory = scenario.run_directory().to_owned();
     let title = harness_marker(NAME);
-    // Deleted when the scenario ends, and by the next launch's sweep after
-    // an aborted run.
-    let fixture = scenario.harness_file(NAME, "json");
     let contents = format!(
         r#"{{
   "id": "root",
@@ -69,25 +66,8 @@ pub(crate) fn setup(scenario: &mut Scenario) -> io::Result<ScenarioState> {
 }}
 "#
     );
-    scenario.write_agent_file(&fixture, contents.as_bytes())?;
-    let args = [
-        "--fixture",
-        &fixture,
-        "--backend",
-        "uia",
-        "--title",
-        &title,
-        "--show",
-    ]
-    .map(str::to_owned);
-    scenario.launch_titled(&format!(r"{directory}\mockapp.exe"), &args, &title, true)?;
+    super::mockapp::open_without_input(scenario, NAME, &contents, "uia")?;
     Ok(ScenarioState::None)
-}
-
-/// Presses `keys` and asserts exactly `heard`.
-fn press(scenario: &mut Scenario, keys: &str, heard: &str) {
-    scenario.send_keys(&[keys]).expect("sends the key");
-    scenario.speech().expect(&[heard]);
 }
 
 pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
@@ -104,21 +84,29 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     press(
         scenario,
         "rightarrow",
-        "sound: spelling-error spelling error h",
+        &["sound: spelling-error spelling error h"],
     );
-    press(scenario, "rightarrow", "s");
-    press(scenario, "control+rightarrow", "out of spelling error line");
-    press(scenario, "control+rightarrow", "has");
-    press(scenario, "control+rightarrow", "a");
+    press(scenario, "rightarrow", &["s"]);
     press(
         scenario,
         "control+rightarrow",
-        "sound: spelling-error spelling error tset",
+        &["out of spelling error line"],
     );
-    press(scenario, "control+rightarrow", "out of spelling error dot");
+    press(scenario, "control+rightarrow", &["has"]);
+    press(scenario, "control+rightarrow", &["a"]);
+    press(
+        scenario,
+        "control+rightarrow",
+        &["sound: spelling-error spelling error tset"],
+    );
+    press(
+        scenario,
+        "control+rightarrow",
+        &["out of spelling error dot"],
+    );
 
     // The second line has no error, and says nothing about formatting;
     // the first, read again, says its errors again.
-    press(scenario, "downarrow", "All fine here.");
-    press(scenario, "uparrow", FIRST_LINE);
+    press(scenario, "downarrow", &["All fine here."]);
+    press(scenario, "uparrow", &[FIRST_LINE]);
 }

@@ -32,6 +32,7 @@ use std::fmt::Write as _;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write as _};
 
+use super::mockapp::{apply_to_mockapp, open_mockapp};
 pub(crate) use super::no_setup;
 use super::terminal::{self, PROMPT};
 use super::text_box::{self, BOX_NAME};
@@ -363,101 +364,6 @@ const RETURN_FIXTURE: &str = r#"{
   ]
 }
 "#;
-
-/// The prefix of the named events the mockapp window `name` sets as it
-/// prints its lines (`--line-events`), unique to this run of the test
-/// binary.
-fn line_events(name: &str) -> String {
-    format!(r"Local\verbatim-e2e-{name}-{}-", std::process::id())
-}
-
-/// Opens a mockapp UIA window titled with [`harness_marker`] of `name`,
-/// from `fixture` with `{title}` replaced by that title, its standard input
-/// a pipe and its lines setting the events of [`line_events`], and waits
-/// for it to take the foreground. Returns its process id.
-pub(super) fn open_mockapp(scenario: &mut Scenario, name: &str, fixture: &str) -> u32 {
-    open_mockapp_with(scenario, name, fixture, "uia", &[])
-}
-
-/// [`open_mockapp`], for mockapp's MSAA backend.
-pub(super) fn open_msaa_mockapp(scenario: &mut Scenario, name: &str, fixture: &str) -> u32 {
-    open_mockapp_with(scenario, name, fixture, "msaa", &[])
-}
-
-/// [`open_mockapp`], its root counting UIA's event registrations, for
-/// mockapp's `await-advised`.
-pub(super) fn open_mockapp_counting(scenario: &mut Scenario, name: &str, fixture: &str) -> u32 {
-    open_mockapp_with(scenario, name, fixture, "uia", &["--count-registrations"])
-}
-
-/// [`open_mockapp`] on `backend`, with `extra` on mockapp's command line.
-fn open_mockapp_with(
-    scenario: &mut Scenario,
-    name: &str,
-    fixture: &str,
-    backend: &str,
-    extra: &[&str],
-) -> u32 {
-    let directory = scenario.run_directory().to_owned();
-    let title = harness_marker(name);
-    let path = scenario.harness_file(name, "json");
-    let output = scenario.harness_file(name, "log");
-    scenario
-        .write_agent_file(&path, fixture.replace("{title}", &title).as_bytes())
-        .expect("writes mockapp's fixture");
-    let events = line_events(name);
-    let args: Vec<String> = [
-        "--fixture",
-        &path,
-        "--backend",
-        backend,
-        "--title",
-        &title,
-        "--show",
-        "--line-events",
-        &events,
-    ]
-    .iter()
-    .chain(extra)
-    .map(|arg| (*arg).to_owned())
-    .collect();
-    scenario
-        .launch_titled_with_stdin(&format!(r"{directory}\mockapp.exe"), &args, &title, &output)
-        .expect("opens the mockapp window")
-        .pid
-}
-
-/// Writes `command` to the mockapp window `name`, process `pid`, and waits
-/// for mockapp's acknowledgement that it took effect.
-pub(super) fn apply_to_mockapp(scenario: &mut Scenario, window: (&str, u32), command: &str) {
-    send_to_mockapp(scenario, window, command);
-    await_mockapp(scenario, window);
-}
-
-/// Writes `command` to the mockapp window `name`, process `pid`, leaving
-/// its acknowledgement to [`await_mockapp`], so a scenario acts while the
-/// command runs.
-pub(super) fn send_to_mockapp(scenario: &mut Scenario, (name, pid): (&str, u32), command: &str) {
-    let applied = format!("{}applied", line_events(name));
-    scenario
-        .create_event(&applied)
-        .expect("creates the event for mockapp's acknowledgement");
-    scenario
-        .write_stdin(pid, command)
-        .expect("writes the command to mockapp");
-}
-
-/// Waits for mockapp's acknowledgement of the command [`send_to_mockapp`]
-/// wrote.
-pub(super) fn await_mockapp(scenario: &mut Scenario, (name, pid): (&str, u32)) {
-    scenario
-        .wait_for_event(
-            &format!("{}applied", line_events(name)),
-            pid,
-            WINDOW_TIMEOUT,
-        )
-        .expect("mockapp applies the command");
-}
 
 /// Asserts the entry into [`RETURN_FIXTURE`]'s window titled `title`: the
 /// window, the list and the item, as mockapp's

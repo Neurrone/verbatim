@@ -11,16 +11,11 @@
 //! active with its English (Great Britain) voice; the dialog is then
 //! closed, and the fixed settings are written afresh before the next run.
 
+use super::press;
 use crate::registry::ScenarioState;
 use crate::scenario::Scenario;
 
 pub(crate) use super::{no_setup as setup, no_teardown as teardown};
-
-/// Presses `keys` and asserts exactly `heard`.
-fn press(scenario: &mut Scenario, keys: &str, heard: &[&str]) {
-    scenario.send_keys(&[keys]).expect("sends the key");
-    scenario.speech().expect(heard);
-}
 
 /// Asserts the synthesizer Verbatim's status names as active.
 fn expect_active(scenario: &mut Scenario, synthesizer: &str) {

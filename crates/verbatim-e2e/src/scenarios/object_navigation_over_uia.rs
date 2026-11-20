@@ -26,9 +26,7 @@ pub(crate) use super::no_teardown as teardown;
 const NAME: &str = "object-navigation";
 
 pub(crate) fn setup(scenario: &mut Scenario) -> io::Result<ScenarioState> {
-    let directory = scenario.run_directory().to_owned();
     let title = harness_marker(NAME);
-    let fixture = scenario.harness_file(NAME, "json");
     let contents = format!(
         r#"{{
   "id": "root",
@@ -49,20 +47,8 @@ pub(crate) fn setup(scenario: &mut Scenario) -> io::Result<ScenarioState> {
 }}
 "#
     );
-    scenario.write_agent_file(&fixture, contents.as_bytes())?;
-    let args = [
-        "--fixture",
-        &fixture,
-        "--backend",
-        "uia",
-        "--title",
-        &title,
-        "--show",
-    ]
-    .map(str::to_owned);
-    let window =
-        scenario.launch_titled(&format!(r"{directory}\mockapp.exe"), &args, &title, true)?;
-    Ok(ScenarioState::TargetPid(window.pid))
+    let pid = super::mockapp::open_without_input(scenario, NAME, &contents, "uia")?;
+    Ok(ScenarioState::TargetPid(pid))
 }
 
 /// Sends `gesture` and asserts exactly `heard`.

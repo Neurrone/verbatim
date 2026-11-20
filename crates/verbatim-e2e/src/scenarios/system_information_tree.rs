@@ -23,6 +23,7 @@
 use std::io;
 
 use crate::registry::ScenarioState;
+use crate::scenario::Launch;
 use crate::scenario::Scenario;
 
 pub(crate) use super::no_teardown as teardown;
@@ -32,7 +33,7 @@ const TITLE: &str = "System Information";
 
 pub(crate) fn setup(scenario: &mut Scenario) -> io::Result<ScenarioState> {
     scenario.require_absent(TITLE)?;
-    scenario.launch_titled("msinfo32.exe", &[], TITLE, true)?;
+    scenario.launch("msinfo32.exe", &[], Launch::titled(TITLE))?;
     Ok(ScenarioState::None)
 }
 

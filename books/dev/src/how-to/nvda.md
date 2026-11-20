@@ -80,7 +80,7 @@ A step is a key to press, or one of these:
   `--front` to bring it forward as the harness does.
 - `--launch-minimized <program>`, with its `--arg`s, starts the program
   exactly as the end-to-end harness starts a terminal
-  (`Scenario::launch_owning_window`) and mockapp, through the agent's
+  (`Scenario::launch`) and mockapp, through the agent's
   `launch_minimized_with_stdin`: its first window opens minimized and
   inactive (`SW_SHOWMINNOACTIVE`), the agent's right to the foreground is
   not withheld, and its standard input is a pipe the agent holds, so

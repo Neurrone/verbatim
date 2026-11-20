@@ -9,7 +9,7 @@ use crate::registry::ScenarioState;
 use crate::scenario::{Scenario, harness_marker};
 use crate::speech::heard;
 
-use super::measure::{apply_to_mockapp, open_mockapp_counting};
+use super::mockapp::{apply_to_mockapp, open_mockapp_counting};
 
 pub(crate) use super::{no_setup as setup, no_teardown as teardown};
 

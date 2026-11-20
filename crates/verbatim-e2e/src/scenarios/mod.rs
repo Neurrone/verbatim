@@ -33,6 +33,7 @@ pub(crate) mod lock_key_announcements;
 pub(crate) mod measure;
 pub(crate) mod menu_and_settings_dialog;
 pub(crate) mod menu_end_over_a_hung_window;
+pub(crate) mod mockapp;
 pub(crate) mod msaa_flood_then_focus;
 pub(crate) mod notepad_say_all;
 pub(crate) mod notepad_spelling_errors;
@@ -175,6 +176,17 @@ pub(crate) fn open_verbatim_menu(scenario: &mut Scenario) {
     scenario.speech().expect(&["Verbatim", "Context menu"]);
 }
 
+/// Presses `keys` and asserts exactly `heard`.
+pub(crate) fn press(scenario: &mut Scenario, keys: &str, heard: &[&str]) {
+    scenario.send_keys(&[keys]).expect("sends the key");
+    scenario.speech().expect(heard);
+}
+
+/// Presses `keys`, which says nothing; the next step's words show it.
+pub(crate) fn press_silent(scenario: &mut Scenario, keys: &str) {
+    scenario.send_keys(&[keys]).expect("sends the key");
+}
+
 /// Opens Verbatim's settings dialog from its menu and asserts that focus
 /// settles on the selected category, "Speech".
 pub(crate) fn open_speech_settings(scenario: &mut Scenario) {
@@ -204,9 +216,7 @@ pub(crate) fn open_text_box_app(
     name: &str,
     line: &str,
 ) -> io::Result<u32> {
-    let directory = scenario.run_directory().to_owned();
     let title = harness_marker(name);
-    let fixture = scenario.harness_file(name, "json");
     let contents = format!(
         r#"{{
   "id": "root",
@@ -224,20 +234,7 @@ pub(crate) fn open_text_box_app(
 }}
 "#
     );
-    scenario.write_agent_file(&fixture, contents.as_bytes())?;
-    let args = [
-        "--fixture",
-        &fixture,
-        "--backend",
-        "uia",
-        "--title",
-        &title,
-        "--show",
-    ]
-    .map(str::to_owned);
-    let window =
-        scenario.launch_titled(&format!(r"{directory}\mockapp.exe"), &args, &title, true)?;
-    Ok(window.pid)
+    mockapp::open_without_input(scenario, name, &contents, "uia")
 }
 
 /// What [`open_text_box_app`]'s window says as it comes to the foreground:

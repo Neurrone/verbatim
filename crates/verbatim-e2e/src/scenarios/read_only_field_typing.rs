@@ -16,7 +16,7 @@
 use crate::registry::ScenarioState;
 use crate::scenario::{Scenario, harness_marker};
 
-use super::measure::{apply_to_mockapp, open_msaa_mockapp};
+use super::mockapp::{apply_to_mockapp, open_msaa_mockapp};
 
 pub(crate) use super::{no_setup as setup, no_teardown as teardown};
 
@@ -25,22 +25,7 @@ const NAME: &str = "read-only-field-typing";
 /// The field's text, a folder's path as the Location field holds.
 const PATH: &str = r"C:\Users\Public";
 
-const FIXTURE: &str = r#"{
-  "id": "root",
-  "role": "window",
-  "name": "{title}",
-  "children": [
-    {
-      "id": "location",
-      "role": "editable_text",
-      "name": "Location:",
-      "states": ["focusable", "read_only"],
-      "edit_read_only": true,
-      "text": "C:\\Users\\Public"
-    }
-  ]
-}
-"#;
+const FIXTURE: &str = include_str!("../../../mockapp/tests/fixtures/read_only_field.json");
 
 pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     let app = (NAME, open_msaa_mockapp(scenario, NAME, FIXTURE));

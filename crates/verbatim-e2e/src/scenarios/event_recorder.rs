@@ -9,6 +9,7 @@
 use serde_json::Value;
 
 use crate::registry::ScenarioState;
+use crate::scenario::Launch;
 use crate::scenario::{Scenario, WINDOW_TIMEOUT, harness_marker};
 
 pub(crate) use super::{no_setup as setup, no_teardown as teardown};
@@ -55,7 +56,11 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     ]
     .map(str::to_owned);
     let window = scenario
-        .launch_titled(&format!(r"{directory}\mockapp.exe"), &args, &title, true)
+        .launch(
+            &format!(r"{directory}\mockapp.exe"),
+            &args,
+            Launch::titled(&title),
+        )
         .expect("opens mockapp");
     scenario
         .speech()

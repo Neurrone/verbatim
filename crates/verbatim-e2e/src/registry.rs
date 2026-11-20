@@ -210,13 +210,13 @@ impl Speech {
 /// Scenario-specific state a [`ScenarioDef::setup`] creates and its matching
 /// [`ScenarioDef::teardown`] restores. `None` when a scenario needs nothing
 /// beyond `Scenario::launch` itself; `TargetPid` names the process owning a
-/// window launched via [`Scenario::launch_titled`], which cleanup closes.
+/// window launched via [`Scenario::launch`], which cleanup closes.
 #[derive(Debug)]
 pub enum ScenarioState {
     /// No extra state: `setup` did nothing beyond validating preconditions.
     None,
     /// The pid of the process owning the window of a target application
-    /// `setup` launched via [`Scenario::launch_titled`], for the body;
+    /// `setup` launched via [`Scenario::launch`], for the body;
     /// cleanup closes it ([`Scenario::clean_up`]).
     TargetPid(u32),
     /// Names `setup` recorded for `teardown`, such as the folders that were
@@ -226,7 +226,7 @@ pub enum ScenarioState {
     /// ([`Scenario::open_folder`]), for the body to listen for.
     Title(String),
     /// A window `setup` opened with a title of the run's own
-    /// ([`Scenario::launch_titled`]), such as a terminal's.
+    /// ([`Scenario::launch`]), such as a terminal's.
     Window {
         /// The process that owns it, which cleanup closes it by
         /// ([`Scenario::clean_up`]).
