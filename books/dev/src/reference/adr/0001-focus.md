@@ -120,11 +120,11 @@ Chosen: the formatting last reported is part of the focus object, and each focus
 
 Rejected: keeping the formatting across the silent re-take, which would say less after a replacement than before it; and keeping a separate record with its own clearing rule, a second fact about the focus.
 
-### Report focus (Dickson, 2026-11-07)
+### Report focus (Dickson, 2026-11-15)
 
-Verbatim+Tab asks the application for its focus live, so it reports the real focus even when it moved without an event, and speaks the answer without taking it as Core's focus. The query goes to the process of the foreground thread's focus window, so Settings answers from its content's process rather than its frame's. NVDA+Tab reports NVDA's own focus object with live properties; its history records no reason. Weighed: taking a different answer as Core's focus, silently or as a new focus; rejected, because a real focus event of the same element on its way would then be dropped as a duplicate.
+Verbatim+Tab is one request, at its turn in the event queue, that reads the committed focus node's properties live, its text summary among them, and speaks them, as NVDA's script speaks its focus object (`globalCommands.py` 2956 to 2979). Each press waits its turn, so a press ahead of a focus tell reads the old focus, then the focus is executed. Weighed: asking the application for its focus live, which reports a focus that moved without an event; rejected, because NVDA speaks its own focus object, and reading the committed node keeps the press in the queue's order.
 
-When the query is answered with nothing to report, Verbatim says "No focus", as NVDA+Tab does when it has no focus object; when it is abandoned at its deadline or replaced by a later press, nothing (Claude, 2026-11-08, accepted by Dickson). A waiting press is ended only by a focus observed after it, so a focus already on its way when the key was pressed is spoken and then the answer, as NVDA runs its script after the focus queued before it (Claude, 2026-11-08, accepted by Dickson).
+With nothing committed it says "No focus", asking nothing. Over an ended focus, whose reader has gone, nothing is said: a recorded limitation. Over the sleeping focus, Core's own focus while a secure desktop is in front, nothing is said, since NVDA runs no script while its focus is the sleeping object (`inputCore.py` 566 to 569; Dickson's confirmed default, 2026-11-20).
 
 ### Window messages, shell items and test limits (Claude, 2026-11-07, accepted by Dickson 2026-11-08; the shell items' wait Dickson's, 2026-11-07; amended 2026-11-13)
 
