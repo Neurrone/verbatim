@@ -38,7 +38,9 @@ this status per milestone, and changes with it.
 
 ## Readers tell, Core asks
 
-Next (Dickson, 2026-11-13). Nothing here is built. The phase changes
+Next (Dickson, 2026-11-13). Its three builds are built, from
+fc5dccbe (2026-11-16) to 3f9e68ac (2026-11-17); the clearing up, the
+last item of its list below, is not marked done. The phase changes
 how the readers, Core and the messages between them are arranged, so
 that a feature's logic sits in Core and reads like NVDA's, and a new
 feature needs no protocol or waiting state of its own.
@@ -193,7 +195,8 @@ focus with a read, such dumps report a mismatch where none happened live.
 
 ## Misc fixes
 
-Next (Dickson, 2026-11-10). Nothing here is built. This entry holds
+Next (Dickson, 2026-11-10). Of its order below, the event recorder is
+built; the confirmed defects are not marked done. This entry holds
 what a new session needs to resume: the findings, the order, each
 item's code locations and what waits for Dickson. The findings come
 from a retrospective of the work from 2026-10-10 to 2026-11-10, made by
@@ -316,15 +319,14 @@ NVDA's capture.
 
 Where each starts in the code, as the audits found it at 04268b78:
 
-- Progress bars: `BarWatch` in
-  `crates/verbatim-outpost-logic/src/follow.rs`, the outpost's
-  `ProgressChanged` in `crates/verbatim-outpost/src/outpost/worker.rs`,
-  `CoreToOutpost::Front`, and the listener's own verdicts in
-  `crates/verbatim-listener/src/value_change.rs`.
-- The fake focus: `menu_or_switch_ended` in
-  `crates/verbatim-core/src/shell.rs`, the missing duplicate test in
-  `crates/verbatim-core/src/reduce.rs`, and the query planned behind
-  a marker in `crates/verbatim-outpost-logic/src/intake.rs`.
+- Progress bars: the listener's own verdicts in
+  `crates/verbatim-listener/src/value_change.rs`. The outpost's bar
+  watch, its `ProgressChanged` and `CoreToOutpost::Front` no longer
+  exist (34af17a2).
+- The fake focus: the check after a menu or switcher end in
+  `crates/verbatim-core/src/focus/menus.rs`, judged by the menu-check
+  rows of `crates/verbatim-core/src/focus/validity.rs`, which give a
+  UI Automation answer no duplicate test.
 - Dialog text: `already_entered` in
   `crates/verbatim-outpost/src/outpost/read.rs`.
 - The menu opening: `opening_dropped` in

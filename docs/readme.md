@@ -82,7 +82,7 @@ harness, NVDA captures and troubleshooting.
   - [readers-tell-core-asks-build1.md](design/readers-tell-core-asks-build1.md),
     [readers-tell-core-asks-build2.md](design/readers-tell-core-asks-build2.md)
     and [readers-tell-core-asks-build3.md](design/readers-tell-core-asks-build3.md)
-    — the approved designs of its three builds: the event queue, focus
+    — the approved designs of its three builds, which are built: the event queue, focus
     and announcements, with keys and text; Core naming the text provider
     and the details, with the formatting memory; and terminals.
   - [terminal-rebuild.md](design/terminal-rebuild.md) — the study for
