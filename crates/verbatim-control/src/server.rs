@@ -1073,10 +1073,15 @@ impl ControlServer {
     /// so a caller can skip copying an utterance's text nobody will receive.
     #[must_use]
     pub fn has_speech_subscribers(&self) -> bool {
-        self.history
+        // The history's guard is released before the registry is locked:
+        // `subscribe_speech` and `fan_out` take the registry first, so
+        // holding both here in the other order could deadlock.
+        let history_open = self
+            .history
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .is_some()
+            .is_some();
+        history_open
             || any_subscribed(&self.registry, |entry| {
                 entry.speech_subscribed.load(Ordering::Relaxed)
             })
