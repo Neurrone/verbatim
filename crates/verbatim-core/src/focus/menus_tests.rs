@@ -67,18 +67,33 @@ fn focused(focused: bool) -> Reply {
     })
 }
 
+/// The focus it speaks keeps the check's own fence, the key before the
+/// menu ended, not a key that joined while the check was out.
 #[test]
 fn a_menu_end_checks_the_focus_50_ms_later_and_speaks_a_focused_answer() {
     let mut state = in_front();
+    state
+        .state
+        .arrivals
+        .key_joined(verbatim_model::KeySeq::new(3));
+    let fence = state.state.arrivals.fence();
     assert_eq!(feed_at(&mut state, 1_000, menu_end()), NOTHING);
     assert_eq!(feed_at(&mut state, 1_049, Input::Tick), NOTHING);
     assert_eq!(
         feed_at(&mut state, 51_000, Input::Tick),
         ["send Outpost(Pid(40)) CurrentFocus with the focused state as a fact"]
     );
+    state
+        .state
+        .arrivals
+        .key_joined(verbatim_model::KeySeq::new(4));
     assert_eq!(
         feed_at(&mut state, 52_000, answer(OUTPOST, 2, focused(true))),
         SPOKEN
+    );
+    assert_eq!(
+        state.state.versions.last.as_ref().map(|last| last.since),
+        Some(Some(fence))
     );
 }
 
