@@ -651,10 +651,7 @@ fn agent_for(given: Option<&str>) -> io::Result<(String, Option<Agent>)> {
     }
     let root = workspace_root();
     agent::build(&root).map_err(io::Error::other)?;
-    let logs = root.join(
-        r"target
-vda-agent",
-    );
+    let logs = root.join("target").join("nvda-agent");
     fs::create_dir_all(&logs)?;
     let started = Agent::start(&root, &logs).map_err(io::Error::other)?;
     Ok((agent::ENDPOINT.to_owned(), Some(started)))
