@@ -22,9 +22,10 @@ use crate::entries::tests::{
     values, win,
 };
 use crate::entries::{Entry, feed};
-use crate::event_queue::{Effect, Foreground, Input, Timed};
+use crate::event_queue::{Foreground, Input, Timed};
 use crate::keys::caret_key;
 use crate::keys::entry::PressEntry;
+use verbatim_model::Effect;
 
 /// The application's window 4 in front.
 const IN_FRONT: Foreground = Foreground {
@@ -148,9 +149,9 @@ fn step(held: &mut Held, at_us: u64, input: Input<Entry>) -> Step {
     step
 }
 
-fn read_effect(step: &mut Step, effect: Effect<Said>) {
+fn read_effect(step: &mut Step, effect: Effect) {
     match effect {
-        Effect::Send { ask, to } => match ask.request {
+        Effect::Queue(QueueEffect::Send { ask, to }) => match ask.request {
             Wire::Text { node, op } => step.text.push((ask.number.0, node.number(), op)),
             Wire::MsaaRun(run) => step.runs.push((
                 ask.number.0,
@@ -165,15 +166,17 @@ fn read_effect(step: &mut Step, effect: Effect<Said>) {
                 _ => "other",
             }),
         },
-        Effect::Cancel { cancel, .. } => step.cancelled.push((cancel.number.0, cancel.reason)),
-        Effect::Said(Said::Speak(utterance, _)) => step.said.push(
+        Effect::Queue(QueueEffect::Cancel { cancel, .. }) => {
+            step.cancelled.push((cancel.number.0, cancel.reason));
+        }
+        Said::Speak(utterance, _) => step.said.push(
             utterance
                 .segments
                 .iter()
                 .map(|segment| format!("{:?}", segment.content))
                 .collect(),
         ),
-        Effect::Said(Said::Queue(QueueEffect::SendStrokes(sent))) => step.strokes.push(
+        Said::Queue(QueueEffect::SendStrokes(sent)) => step.strokes.push(
             sent.iter()
                 .map(|transition| match transition {
                     SentTransition::Held(held) => held.stroke.sequence,
@@ -182,10 +185,9 @@ fn read_effect(step: &mut Step, effect: Effect<Said>) {
                 .collect(),
         ),
         // Typed text's speech, carried under its key's trace.
-        Effect::Said(Said::ForKey(_, said)) => read_effect(step, Effect::Said(*said)),
-        Effect::AnswerDropped { .. }
-        | Effect::StartOutpost(_)
-        | Effect::Said(Said::DropExpiredSpeech(_)) => {}
+        Said::ForKey(_, said) => read_effect(step, *said),
+        Effect::Queue(QueueEffect::AnswerDropped { .. } | QueueEffect::StartOutpost(_))
+        | Said::DropExpiredSpeech(_) => {}
         other => panic!("an effect these tests read: {other:?}"),
     }
 }

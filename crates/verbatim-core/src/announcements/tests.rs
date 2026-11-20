@@ -201,7 +201,7 @@ fn said_with_priority(
     .unwrap()
     .into_iter()
     .filter_map(|effect| match effect {
-        crate::event_queue::Effect::Said(verbatim_model::Effect::Speak(utterance, _)) => Some((
+        verbatim_model::Effect::Speak(utterance, _) => Some((
             utterance.priority,
             utterance
                 .segments

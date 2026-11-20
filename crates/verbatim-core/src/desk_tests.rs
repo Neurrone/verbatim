@@ -24,7 +24,9 @@ use verbatim_model::{
 
 use crate::entries::Entry;
 use crate::entries::tests::{Held, LISTENER, answer};
-use crate::event_queue::{Effect, Input, Instance, Reader, Timed};
+use crate::event_queue::{Input, Instance, Reader, Timed};
+use verbatim_model::Effect;
+use verbatim_model::request::QueueEffect;
 
 /// An application: its process and its outpost's generation, which names
 /// its nodes.
@@ -218,19 +220,18 @@ type Sent = Vec<(u64, Reader, Wire)>;
 
 /// `effects` as [`Heard`], with the requests sent, by number, and the
 /// verdict each carried, by number.
-fn heard_of(effects: Vec<Effect<Said>>) -> (Vec<Heard>, Sent, Vec<(u64, WindowVerdict)>) {
+fn heard_of(effects: Vec<Effect>) -> (Vec<Heard>, Sent, Vec<(u64, WindowVerdict)>) {
     let mut heard = Vec::new();
     let mut sent = Vec::new();
     let mut verdicts = Vec::new();
     for effect in effects {
         match effect {
-            Effect::Send { to, ask } => {
+            Effect::Queue(QueueEffect::Send { to, ask }) => {
                 heard.push(Heard::Sent(to.reader, kind(&ask.request)));
                 verdicts.push((ask.number.0, ask.verdict));
                 sent.push((ask.number.0, to.reader, ask.request));
             }
-            Effect::Said(said) => heard.extend(said_heard(said)),
-            _ => {}
+            said => heard.extend(said_heard(said)),
         }
     }
     (heard, sent, verdicts)

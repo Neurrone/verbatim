@@ -23,7 +23,9 @@ use crate::entries::tests::{
     msaa_tell, node, ready, uia_tell, values,
 };
 use crate::entries::{Entry, feed};
-use crate::event_queue::{Effect, Foreground, Input, Timed};
+use crate::event_queue::{Foreground, Input, Timed};
+use verbatim_model::Effect;
+use verbatim_model::request::QueueEffect;
 
 /// The application's window 4 in front.
 const IN_FRONT: Foreground = Foreground {
@@ -103,19 +105,19 @@ fn step(held: &mut Held, at_us: u64, input: Input<Entry>) -> Step {
     let mut step = Step::default();
     for effect in effects {
         match effect {
-            Effect::Send { ask, .. } => match ask.request {
+            Effect::Queue(QueueEffect::Send { ask, .. }) => match ask.request {
                 Wire::Text { op, .. } => step.text.push((ask.number.0, op)),
                 _ => step.other += 1,
             },
-            Effect::Said(Said::Speak(utterance, _)) => step.said.push(
+            Said::Speak(utterance, _) => step.said.push(
                 utterance
                     .segments
                     .iter()
                     .map(|segment| format!("{:?}", segment.content))
                     .collect(),
             ),
-            Effect::Said(Said::Observed(observed)) => step.observed.push(*observed),
-            Effect::Undecodable(number) => step.undecodable.push(number.0),
+            Said::Observed(observed) => step.observed.push(*observed),
+            Effect::Queue(QueueEffect::Undecodable(number)) => step.undecodable.push(number.0),
             _ => {}
         }
     }
@@ -857,7 +859,7 @@ fn named_details(held: &mut Held, object: i32) -> Option<TextDetails> {
     )
     .unwrap();
     effects.into_iter().find_map(|effect| match effect {
-        Effect::Send { ask, .. } => match ask.request {
+        Effect::Queue(QueueEffect::Send { ask, .. }) => match ask.request {
             Wire::MsaaRun(run) => Some(run.details),
             _ => None,
         },

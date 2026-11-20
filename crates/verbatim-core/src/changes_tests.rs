@@ -412,9 +412,7 @@ fn a_followed_controller_for_change_reads_whether_suggestions_are_open() {
         let earcons: Vec<String> = effects
             .into_iter()
             .filter_map(|effect| match effect {
-                crate::event_queue::Effect::Said(verbatim_model::Effect::PlayEarcon(earcon)) => {
-                    Some(format!("Earcon({earcon:?})"))
-                }
+                verbatim_model::Effect::PlayEarcon(earcon) => Some(format!("Earcon({earcon:?})")),
                 _ => None,
             })
             .collect();

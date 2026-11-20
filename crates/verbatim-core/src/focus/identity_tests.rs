@@ -25,8 +25,10 @@ use crate::entries::tests::{
     Held, LISTENER, NOTHING, OUTPOST, answer, answer_outcome, entry, feed_at, focus_read, held,
     listener_answer, msaa_tell, not_focused, ready, ready_at, uia_tell, values,
 };
-use crate::event_queue::{Effect, Instance, Reader, Timed};
+use crate::event_queue::{Instance, Reader, Timed};
 use crate::keys::entry::Fence;
+use verbatim_model::Effect;
+use verbatim_model::request::QueueEffect;
 
 /// The list's item, child 2 of the list's client.
 const ITEM: MsaaIds = MsaaIds {
@@ -642,9 +644,10 @@ fn a_focus_on_the_desktop_window_starts_no_outpost_and_asks_nothing() {
     )
     .unwrap();
     assert!(
-        effects
-            .iter()
-            .all(|effect| !matches!(effect, Effect::StartOutpost(_) | Effect::Send { .. })),
+        effects.iter().all(|effect| !matches!(
+            effect,
+            Effect::Queue(QueueEffect::StartOutpost(_) | QueueEffect::Send { .. })
+        )),
         "{effects:?}"
     );
     assert!(held.state.queue.front_for_tests().is_none());
@@ -755,11 +758,11 @@ fn pair_in(order: &[Step]) -> (Vec<String>, usize) {
                 .unwrap();
         for effect in effects {
             match effect {
-                Effect::Send { ask, .. } => {
+                Effect::Queue(QueueEffect::Send { ask, .. }) => {
                     asked += 1;
                     out.push((ask.number.0, ask.request));
                 }
-                Effect::Said(verbatim_model::Effect::Speak(utterance, _)) => said.push(
+                verbatim_model::Effect::Speak(utterance, _) => said.push(
                     utterance
                         .segments
                         .iter()

@@ -29,9 +29,12 @@ use std::rc::Rc;
 use std::task::{Context, Poll, Waker};
 
 use serde::{Deserialize, Serialize};
-use verbatim_model::request::{Outcome as WireOutcome, Reply, Request as Wire, RequestNumber};
+use verbatim_model::request::{
+    Outcome as WireOutcome, QueueEffect, Reply, Request as Wire, RequestNumber,
+};
+use verbatim_model::{Earcon, Effect};
 
-use super::inbox::{Effect, Timed};
+use super::inbox::Timed;
 use super::limiter::{self, Item};
 use super::request::{Outcome, Refused, Request};
 use super::table::{Ending, Live, Order, Owner, Stage, Table};
@@ -56,7 +59,7 @@ pub(crate) struct Core<L: Logic> {
 pub(crate) struct Shared<L: Logic> {
     pub(super) state: State<L::Entry, L::Facts>,
     /// What was done while a step ran, taken by the step at its end.
-    pub(super) effects: Vec<Effect<L::Said>>,
+    pub(super) effects: Vec<Effect>,
     /// The slot of the front's request, where its ending goes.
     slot: Option<Rc<dyn Slot>>,
     /// Set by an [`Asking`] when it returns pending, cleared before each
@@ -140,7 +143,8 @@ impl<L: Logic> Shared<L> {
     /// application holds attention.
     pub(super) fn sound_if_attended(&mut self, window: &RequestWindow) {
         if self.attended(window) {
-            self.effects.push(Effect::NotRespondingSound);
+            self.effects
+                .push(Effect::PlayEarcon(Earcon::AppNotResponding));
         }
     }
 
@@ -606,7 +610,7 @@ impl<L: Logic> Core<L> {
         paused: &mut Option<Self>,
         state: &mut State<L::Entry, L::Facts>,
         input: Timed<L::Entry>,
-    ) -> Result<Vec<Effect<L::Said>>, ReplayMismatch> {
+    ) -> Result<Vec<Effect>, ReplayMismatch> {
         let mut core = match paused.take() {
             Some(core) => core,
             None => Self::rebuild(state)?,
@@ -620,7 +624,7 @@ impl<L: Logic> Core<L> {
 
     /// Ends the step: the round settles and the step's effects are
     /// returned.
-    pub(super) fn finish_step(&mut self) -> Vec<Effect<L::Said>> {
+    pub(super) fn finish_step(&mut self) -> Vec<Effect> {
         self.check();
         let mut shared = self.shared.borrow_mut();
         shared.state.queue.table.settle_round();
@@ -741,7 +745,9 @@ impl<L: Logic> Core<L> {
                 checkpoint.answers.push((now_us, ending));
             }
             if let (true, Some(number)) = (undecodable, number) {
-                shared.effects.push(Effect::Undecodable(number));
+                shared
+                    .effects
+                    .push(Effect::Queue(QueueEffect::Undecodable(number)));
             }
         }
         self.poll();
@@ -792,8 +798,8 @@ impl<L: Logic> Core<L> {
     pub(super) fn order(shared: &mut Shared<L>, orders: Vec<Order>) {
         for order in orders {
             shared.effects.push(match order {
-                Order::Send(to, ask) => Effect::Send { to, ask },
-                Order::Cancel(to, cancel) => Effect::Cancel { to, cancel },
+                Order::Send(to, ask) => Effect::Queue(QueueEffect::Send { to, ask }),
+                Order::Cancel(to, cancel) => Effect::Queue(QueueEffect::Cancel { to, cancel }),
             });
         }
     }
@@ -1044,17 +1050,17 @@ impl<L: Logic> Cx<L> {
     }
 
     /// Emits `said`, stamped by its entry ([`Logic::stamp`]).
-    pub(crate) fn emit(&mut self, mut said: L::Said) {
+    pub(crate) fn emit(&mut self, mut said: Effect) {
         let mut shared = self.shared.borrow_mut();
         if let Some(front) = &shared.state.queue.front {
             L::stamp(&front.entry, &mut said);
         }
-        shared.effects.push(Effect::Said(said));
+        shared.effects.push(said);
     }
 
     /// Emits `said` as its function stamped it, not by its entry.
-    pub(crate) fn emit_stamped(&mut self, said: L::Said) {
-        self.shared.borrow_mut().effects.push(Effect::Said(said));
+    pub(crate) fn emit_stamped(&mut self, said: Effect) {
+        self.shared.borrow_mut().effects.push(said);
     }
 
     /// Sends `request` outside the event queue under the due time

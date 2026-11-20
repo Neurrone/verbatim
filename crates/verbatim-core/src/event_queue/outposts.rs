@@ -10,11 +10,11 @@
 
 use std::time::Duration;
 
+use verbatim_model::Effect;
 use verbatim_model::Pid;
-use verbatim_model::request::{Outcome as WireOutcome, ProcessFact};
+use verbatim_model::request::{Outcome as WireOutcome, ProcessFact, QueueEffect};
 
 use super::driver::Core;
-use super::inbox::Effect;
 use super::{Instance, Logic, Reader};
 use crate::supervisor::record::{ABANDONED_WORKER_LIMIT, Application, Replaced, Running, Stage};
 
@@ -60,10 +60,14 @@ impl<L: Logic> Core<L> {
                     pong_us: now_us,
                 });
             }
-            Some(_) | None => shared.effects.push(Effect::StaleFrame(Instance {
-                reader: Reader::Outpost(process),
-                generation,
-            })),
+            Some(_) | None => {
+                shared
+                    .effects
+                    .push(Effect::Queue(QueueEffect::StaleFrame(Instance {
+                        reader: Reader::Outpost(process),
+                        generation,
+                    })));
+            }
         }
     }
 
@@ -97,7 +101,9 @@ impl<L: Logic> Core<L> {
         let mut shared = self.shared.borrow_mut();
         let now_us = shared.state.queue.now_us;
         if shared.state.queue.record.failed(process, up, now_us) == Some(Replaced::AtOnce) {
-            shared.effects.push(Effect::StartOutpost(process));
+            shared
+                .effects
+                .push(Effect::Queue(QueueEffect::StartOutpost(process)));
         }
     }
 
@@ -122,7 +128,9 @@ impl<L: Logic> Core<L> {
             },
         };
         if !admitted {
-            shared.effects.push(Effect::StaleFrame(instance));
+            shared
+                .effects
+                .push(Effect::Queue(QueueEffect::StaleFrame(instance)));
         }
         admitted
     }
@@ -172,7 +180,7 @@ impl<L: Logic> Core<L> {
         self.shared
             .borrow_mut()
             .effects
-            .push(Effect::StaleFrame(instance));
+            .push(Effect::Queue(QueueEffect::StaleFrame(instance)));
     }
 
     /// `instance` answered a ping: its liveness is re-armed when it is its
@@ -201,7 +209,7 @@ impl<L: Logic> Core<L> {
             self.shared
                 .borrow_mut()
                 .effects
-                .push(Effect::EndOutpost(instance));
+                .push(Effect::Queue(QueueEffect::EndOutpost(instance)));
             self.instance_ended(instance);
         }
     }
@@ -230,10 +238,10 @@ impl<L: Logic> Core<L> {
                 self.shared
                     .borrow_mut()
                     .effects
-                    .push(Effect::EndOutpost(Instance {
+                    .push(Effect::Queue(QueueEffect::EndOutpost(Instance {
                         reader: Reader::Outpost(process),
                         generation: running.generation,
-                    }));
+                    })));
             }
             Stage::Ready(running) => self.reader_ended(
                 Instance {
@@ -254,7 +262,9 @@ impl<L: Logic> Core<L> {
         record.own = Some(process);
         if !record.applications.contains_key(&process) {
             record.launch(process);
-            shared.effects.push(Effect::StartOutpost(process));
+            shared
+                .effects
+                .push(Effect::Queue(QueueEffect::StartOutpost(process)));
         }
     }
 
@@ -269,13 +279,17 @@ impl<L: Logic> Core<L> {
         let record = &mut shared.state.queue.record;
         let Some(application) = record.applications.get_mut(&process) else {
             record.launch(process);
-            shared.effects.push(Effect::StartOutpost(process));
+            shared
+                .effects
+                .push(Effect::Queue(QueueEffect::StartOutpost(process)));
             return;
         };
         application.backoff.foreground();
         if let Stage::WaitingOut { .. } = application.stage {
             application.stage = Stage::Launching;
-            shared.effects.push(Effect::StartOutpost(process));
+            shared
+                .effects
+                .push(Effect::Queue(QueueEffect::StartOutpost(process)));
         }
     }
 
@@ -307,7 +321,7 @@ impl<L: Logic> Core<L> {
                     self.shared
                         .borrow_mut()
                         .effects
-                        .push(Effect::EndOutpost(instance));
+                        .push(Effect::Queue(QueueEffect::EndOutpost(instance)));
                     self.instance_ended(instance);
                 }
                 Stage::WaitingOut { due_us } if due_us <= now_us => {
@@ -334,7 +348,9 @@ impl<L: Logic> Core<L> {
             if let Some(application) = queue.record.applications.get_mut(&process) {
                 application.stage = Stage::Launching;
             }
-            shared.effects.push(Effect::StartOutpost(process));
+            shared
+                .effects
+                .push(Effect::Queue(QueueEffect::StartOutpost(process)));
         } else {
             queue.record.applications.remove(&process);
         }
@@ -370,7 +386,9 @@ impl<L: Logic> Core<L> {
             if watched {
                 let mut shared = self.shared.borrow_mut();
                 shared.state.queue.record.launch(process);
-                shared.effects.push(Effect::StartOutpost(process));
+                shared
+                    .effects
+                    .push(Effect::Queue(QueueEffect::StartOutpost(process)));
                 continue;
             }
             let ended = self

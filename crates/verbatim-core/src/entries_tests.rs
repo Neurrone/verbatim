@@ -19,6 +19,7 @@ use verbatim_model::{NodeId, OutpostId, Pid, Role, SegmentContent};
 use super::*;
 use crate::event_queue::{Input, Instance, Reader};
 use crate::focus::versions::{Committed, LastFocus};
+use verbatim_model::Effect;
 
 pub(crate) const APP: Pid = Pid(40);
 pub(crate) const GENERATION: u64 = 3;
@@ -243,8 +244,10 @@ pub(crate) fn feed_at(held: &mut Held, at_us: u64, input: Input<Entry>) -> Vec<S
         .unwrap()
         .into_iter()
         .filter_map(|effect| match effect {
-            Effect::Send { to, ask } => Some(format!("send {:?} {}", to.reader, kind(&ask))),
-            Effect::Said(Said::Speak(utterance, _)) => Some(
+            Effect::Queue(QueueEffect::Send { to, ask }) => {
+                Some(format!("send {:?} {}", to.reader, kind(&ask)))
+            }
+            Said::Speak(utterance, _) => Some(
                 utterance
                     .segments
                     .iter()
@@ -264,14 +267,14 @@ pub(crate) fn sent_at(held: &mut Held, at_us: u64, input: Input<Entry>) -> (Vec<
     let numbers = effects
         .iter()
         .filter_map(|effect| match effect {
-            Effect::Send { ask, .. } => Some(ask.number.0),
+            Effect::Queue(QueueEffect::Send { ask, .. }) => Some(ask.number.0),
             _ => None,
         })
         .collect();
     let said = effects
         .into_iter()
         .filter_map(|effect| match effect {
-            Effect::Said(Said::Speak(utterance, _)) => Some(
+            Said::Speak(utterance, _) => Some(
                 utterance
                     .segments
                     .iter()
@@ -492,7 +495,7 @@ fn sent_completion(held: &mut Held, at_us: u64, input: Input<Entry>) -> Option<B
         .unwrap()
         .into_iter()
         .find_map(|effect| match effect {
-            Effect::Send { ask, .. } => match ask.request {
+            Effect::Queue(QueueEffect::Send { ask, .. }) => match ask.request {
                 Wire::CompleteUia(complete) => Some(complete),
                 _ => None,
             },
@@ -1799,7 +1802,7 @@ fn an_executed_focus_is_the_control_planes_focus_change() {
     .unwrap()
     .into_iter()
     .filter_map(|effect| match effect {
-        Effect::Said(verbatim_model::Effect::Observed(observed)) => Some(*observed),
+        verbatim_model::Effect::Observed(observed) => Some(*observed),
         _ => None,
     })
     .collect();

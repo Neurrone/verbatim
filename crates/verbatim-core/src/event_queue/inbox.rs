@@ -6,13 +6,14 @@
 //! here.
 
 use verbatim_model::request::{
-    Answer, Ask, Cancel, CancelReason, Probe, ProcessFact, Reply, Request as Wire, RequestNumber,
+    Answer, CancelReason, OutsideOutcome, Probe, ProcessFact, QueueEffect, Request as Wire,
+    RequestNumber,
 };
-use verbatim_model::{Pid, WindowHandle};
+use verbatim_model::{Effect, Pid, WindowHandle};
 
 use super::driver::{Beginning, Core, State, outcome_of, widen};
 use super::limiter::{self, Item};
-use super::request::Outcome;
+use super::request::{Outcome, Refused};
 use super::table::{Asker, Dropped, Ended, Ending, Owner};
 use super::{Cause, Foreground, Instance, Logic, Reader, RequestWindow};
 
@@ -122,68 +123,9 @@ pub(crate) struct Timed<E> {
     pub(crate) input: Input<E>,
 }
 
-/// What Core does.
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) enum Effect<S> {
-    /// The shell checks the request's window for a hang, then sends it to
-    /// the instance, or answers it "not responding" unsent
-    /// ([`Input::RefusedHung`]).
-    Send {
-        /// The instance.
-        to: Instance,
-        /// The request.
-        ask: Ask,
-    },
-    /// The instance is told to cancel a request.
-    Cancel {
-        /// The instance.
-        to: Instance,
-        /// The cancel.
-        cancel: Cancel,
-    },
-    /// The shell checks these windows for a hang ([`Input::HangCheck`]).
-    CheckHung(Vec<WindowHandle>),
-    /// The not-responding sound.
-    NotRespondingSound,
-    /// The instance, the outpost of the process that raised a window's
-    /// destruction, forgets that window.
-    WindowDestroyed {
-        /// The instance.
-        to: Instance,
-        /// The window.
-        window: WindowHandle,
-    },
-    /// A request outside the queue ended, for its asker.
-    Answered {
-        /// The asker.
-        asker: Asker,
-        /// The outcome, its result as it arrived.
-        outcome: Outcome<Reply>,
-    },
-    /// An answer was dropped: logged.
-    AnswerDropped {
-        /// The request it named.
-        number: RequestNumber,
-        /// Whether it was late or named no request out to its sender.
-        late: bool,
-    },
-    /// A result did not decode as its request's reply: a malformed answer,
-    /// logged, since every answer a correct reader gives decodes.
-    Undecodable(RequestNumber),
-    /// What an entry's function emitted.
-    Said(S),
-    /// The owner thread starts an outpost for this application.
-    StartOutpost(Pid),
-    /// The owner thread ends this outpost generation.
-    EndOutpost(Instance),
-    /// A frame of an instance that is not its reader's current one was
-    /// dropped: logged.
-    StaleFrame(Instance),
-}
-
 impl<L: Logic> Core<L> {
     /// Handles one input and returns what Core did, in order.
-    pub(crate) fn feed(&mut self, timed: Timed<L::Entry>) -> Vec<Effect<L::Said>> {
+    pub(crate) fn feed(&mut self, timed: Timed<L::Entry>) -> Vec<Effect> {
         self.shared.borrow_mut().state.queue.now_us = timed.at_us;
         match timed.input {
             Input::Entry(entry) => self.arrive(entry),
@@ -238,7 +180,9 @@ impl<L: Logic> Core<L> {
                     .and_then(|process| state.queue.readers.get(&Reader::Outpost(process)))
                     .copied();
                 if let Some(to) = to {
-                    shared.effects.push(Effect::WindowDestroyed { to, window });
+                    shared
+                        .effects
+                        .push(Effect::Queue(QueueEffect::WindowDestroyed { to, window }));
                 }
                 // Behind the effect on the same pipe, so each runs after
                 // the outpost's forget.
@@ -303,7 +247,7 @@ impl<L: Logic> Core<L> {
                 self.shared
                     .borrow_mut()
                     .effects
-                    .push(Effect::Undecodable(number));
+                    .push(Effect::Queue(QueueEffect::Undecodable(number)));
             }
             self.deliver(ended);
         }
@@ -368,14 +312,15 @@ impl<L: Logic> Core<L> {
                 };
                 self.deliver_probed(ended, probed);
             }
-            Err(dropped) => self
-                .shared
-                .borrow_mut()
-                .effects
-                .push(Effect::AnswerDropped {
-                    number: answer.number,
-                    late: dropped == Dropped::Late,
-                }),
+            Err(dropped) => {
+                self.shared
+                    .borrow_mut()
+                    .effects
+                    .push(Effect::Queue(QueueEffect::AnswerDropped {
+                        number: answer.number,
+                        late: dropped == Dropped::Late,
+                    }));
+            }
         }
     }
 
@@ -507,17 +452,30 @@ impl<L: Logic> Core<L> {
                 for entry in joining {
                     join::<L>(state, entry);
                 }
-                shared.effects.extend(said.into_iter().map(Effect::Said));
+                shared.effects.extend(said);
             }
             Owner::Outside(asker) => {
                 let outcome = match outcome_of(ended.ending) {
-                    Ok(reply) => Outcome::Result(reply),
-                    Err(outcome) => widen(outcome),
+                    Ok(reply) => OutsideOutcome::Result(reply),
+                    Err(Outcome::Result(never)) => match never {},
+                    Err(Outcome::Refused(Refused::Reader(refusal))) => {
+                        OutsideOutcome::Refused(refusal)
+                    }
+                    Err(Outcome::Refused(Refused::Undecodable)) => OutsideOutcome::Undecodable,
+                    Err(Outcome::NotThere) => OutsideOutcome::NotThere,
+                    Err(Outcome::NotResponding) => OutsideOutcome::NotResponding,
+                    Err(Outcome::ReaderEnded) => OutsideOutcome::ReaderEnded,
+                    Err(Outcome::NoLongerAwaited(reason)) => {
+                        OutsideOutcome::NoLongerAwaited(reason)
+                    }
                 };
                 self.shared
                     .borrow_mut()
                     .effects
-                    .push(Effect::Answered { asker, outcome });
+                    .push(Effect::Queue(QueueEffect::Answered {
+                        asker: asker.0,
+                        outcome,
+                    }));
             }
         }
     }
@@ -599,7 +557,7 @@ impl<L: Logic> Core<L> {
         if let Some(marker) = L::foreground_marker(&foreground) {
             join::<L>(state, marker);
         }
-        shared.effects.extend(said.into_iter().map(Effect::Said));
+        shared.effects.extend(said);
     }
 
     /// `instance` ended: its requests out end "reader ended", its late ones
@@ -640,7 +598,7 @@ impl<L: Logic> Core<L> {
             {
                 join::<L>(state, entry);
             }
-            shared.effects.extend(said.into_iter().map(Effect::Said));
+            shared.effects.extend(said);
         }
         for ended in ended {
             self.deliver(ended);
@@ -658,12 +616,14 @@ impl<L: Logic> Core<L> {
         self.outpost_timers();
         let mut shared = self.shared.borrow_mut();
         if let Some(windows) = shared.state.queue.table.round(now_us) {
-            shared.effects.push(Effect::CheckHung(windows));
+            shared
+                .effects
+                .push(Effect::Queue(QueueEffect::CheckHung(windows)));
         }
         let mut said = Vec::new();
         let foreground = shared.state.queue.foreground;
         let joining = L::tick(&mut shared.state.facts, now_us, foreground, &mut said);
-        shared.effects.extend(said.into_iter().map(Effect::Said));
+        shared.effects.extend(said);
         let state = &mut shared.state;
         for entry in joining {
             join::<L>(state, entry);

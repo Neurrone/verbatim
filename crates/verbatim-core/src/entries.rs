@@ -17,17 +17,17 @@ use serde::{Deserialize, Serialize};
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::RuntimeId;
 use verbatim_model::request::{
-    MsaaIds, OutsideOutcome, PressAction, Probe, QueueEffect, QueueInput, Request as Wire,
+    MsaaIds, PressAction, Probe, QueueEffect, QueueInput, Request as Wire,
 };
 use verbatim_model::tell::{
     AcceptanceFacts, ElementToken, Event, EventObject, Payload, TellWindow,
 };
-use verbatim_model::{Earcon, Effect as Said, SpeechMark, TraceId, WindowHandle};
+use verbatim_model::{Effect as Said, SpeechMark, TraceId, WindowHandle};
 
 use crate::event_queue::Instance;
 use crate::event_queue::{
-    Asker, Cause, Core, Cx, Effect, Foreground, Function, Input, Live, Logic, MsaaClass, MsaaKey,
-    OTHER_DUE_US, Outcome, Place, Reader, Refused, ReplayMismatch, RequestWindow, State, Timed,
+    Asker, Cause, Core, Cx, Foreground, Function, Input, Live, Logic, MsaaClass, MsaaKey,
+    OTHER_DUE_US, Outcome, Place, Reader, ReplayMismatch, RequestWindow, State, Timed,
 };
 use crate::focus::acceptance::{self, Accepted};
 use crate::focus::backend::BackendCache;
@@ -555,7 +555,6 @@ impl Logic for Entries {
 
     type Entry = Entry;
     type Facts = SrState;
-    type Said = Said;
 
     fn run(mut cx: Cx<Self>, entry: Entry) -> Function {
         // The menu slot's entry judges whether the run before it executed
@@ -1085,7 +1084,7 @@ pub(crate) fn feed(
     state: &mut SrState,
     runtime: &mut Runtime,
     input: Timed<Entry>,
-) -> Result<Vec<Effect<Said>>, ReplayMismatch> {
+) -> Result<Vec<Said>, ReplayMismatch> {
     let queue = std::mem::take(&mut state.queue);
     let mut whole = State {
         facts: std::mem::take(state),
@@ -1374,38 +1373,7 @@ fn run_input(
             })];
         }
     };
-    let mut said: Vec<Said> = effects
-        .into_iter()
-        .map(|effect| match effect {
-            Effect::Send { to, ask } => Said::Queue(QueueEffect::Send { to, ask }),
-            Effect::Cancel { to, cancel } => Said::Queue(QueueEffect::Cancel { to, cancel }),
-            Effect::CheckHung(windows) => Said::Queue(QueueEffect::CheckHung(windows)),
-            Effect::NotRespondingSound => Said::PlayEarcon(Earcon::AppNotResponding),
-            Effect::WindowDestroyed { to, window } => {
-                Said::Queue(QueueEffect::WindowDestroyed { to, window })
-            }
-            Effect::AnswerDropped { number, late } => {
-                Said::Queue(QueueEffect::AnswerDropped { number, late })
-            }
-            Effect::Undecodable(number) => Said::Queue(QueueEffect::Undecodable(number)),
-            Effect::StartOutpost(process) => Said::Queue(QueueEffect::StartOutpost(process)),
-            Effect::EndOutpost(instance) => Said::Queue(QueueEffect::EndOutpost(instance)),
-            Effect::StaleFrame(instance) => Said::Queue(QueueEffect::StaleFrame(instance)),
-            Effect::Said(said) => said,
-            Effect::Answered { asker, outcome } => Said::Queue(QueueEffect::Answered {
-                asker: asker.0,
-                outcome: match outcome {
-                    Outcome::Result(reply) => OutsideOutcome::Result(reply),
-                    Outcome::Refused(Refused::Reader(refusal)) => OutsideOutcome::Refused(refusal),
-                    Outcome::Refused(Refused::Undecodable) => OutsideOutcome::Undecodable,
-                    Outcome::NotThere => OutsideOutcome::NotThere,
-                    Outcome::NotResponding => OutsideOutcome::NotResponding,
-                    Outcome::ReaderEnded => OutsideOutcome::ReaderEnded,
-                    Outcome::NoLongerAwaited(reason) => OutsideOutcome::NoLongerAwaited(reason),
-                },
-            }),
-        })
-        .collect();
+    let mut said = effects;
     let wake = state
         .queue
         .next_due()

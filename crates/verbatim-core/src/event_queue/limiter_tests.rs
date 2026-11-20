@@ -9,10 +9,10 @@ use verbatim_model::property::{PropertyId, PropertyValues};
 use verbatim_model::request::{
     Answer, Outcome as WireOutcome, Reply, Request as Wire, RequestNumber,
 };
-use verbatim_model::{NodeId, Pid, WindowHandle};
+use verbatim_model::{Effect, NodeId, Pid, WindowHandle};
 
 use super::driver::{Core, Cx};
-use super::inbox::{Effect, Input, Timed};
+use super::inbox::{Input, Timed};
 use super::limiter::{MsaaClass, MsaaKey, Place};
 use super::request::Request;
 use super::{Foreground, Function, Instance, Logic, OTHER_DUE_US, Reader, RequestWindow};
@@ -131,11 +131,16 @@ fn key_of(tell: &Msaa) -> MsaaKey {
     }
 }
 
+/// What an entry's function emits: its words, carried by a model effect
+/// the queue passes on unread.
+fn emitted(words: String) -> Effect {
+    Effect::CopyToClipboard(words)
+}
+
 impl Logic for Limited {
     type Entry = Entry;
     /// The readers' last focus's object, exempt from the thread cap.
     type Facts = Option<i32>;
-    type Said = String;
 
     fn run(mut cx: Cx<Self>, entry: Entry) -> Function {
         Box::pin(async move {
@@ -143,15 +148,15 @@ impl Logic for Limited {
                 Entry::Hold => {
                     let due_us = cx.due_in(OTHER_DUE_US);
                     let _ = cx.ask(HoldRead, due_us).await;
-                    cx.emit("held".to_owned());
+                    cx.emit(emitted("held".to_owned()));
                 }
-                Entry::Msaa(tell) => cx.emit(tell.name.to_owned()),
-                Entry::Other { name, .. } => cx.emit(name.to_owned()),
+                Entry::Msaa(tell) => cx.emit(emitted(tell.name.to_owned())),
+                Entry::Other { name, .. } => cx.emit(emitted(name.to_owned())),
                 Entry::Run(candidates) => {
                     let names: Vec<&str> = candidates.iter().rev().map(|tell| tell.name).collect();
-                    cx.emit(format!("run {}", names.join(" ")));
+                    cx.emit(emitted(format!("run {}", names.join(" "))));
                 }
-                Entry::Marker => cx.emit("marker".to_owned()),
+                Entry::Marker => cx.emit(emitted("marker".to_owned())),
             }
         })
     }
@@ -289,7 +294,7 @@ fn said_after(exempt: Option<i32>, entries: Vec<Entry>) -> Vec<String> {
     feed(&mut core, answer)
         .into_iter()
         .filter_map(|effect| match effect {
-            Effect::Said(words) => Some(words),
+            Effect::CopyToClipboard(words) => Some(words),
             _ => None,
         })
         .collect()
@@ -666,7 +671,7 @@ fn a_foreground_change_ends_waiting_entries_outside_it_and_a_marker_joins_the_ba
         let _ = feed(&mut core, 2, Input::Entry(entry));
     }
     assert_eq!(feed(&mut core, 3, Input::Foreground(IN_FRONT)), []);
-    let said: Vec<Effect<String>> = feed(
+    let said: Vec<Effect> = feed(
         &mut core,
         4,
         Input::Answer {
@@ -683,7 +688,7 @@ fn a_foreground_change_ends_waiting_entries_outside_it_and_a_marker_joins_the_ba
         said,
         ["held", "run f", "u", "marker"]
             .into_iter()
-            .map(|words| Effect::Said(words.to_owned()))
+            .map(|words| emitted(words.to_owned()))
             .collect::<Vec<_>>()
     );
 }

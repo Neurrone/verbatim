@@ -18,8 +18,10 @@ use crate::entries::tests::{
     APP, Held, OUTPOST, answer, answer_outcome, feed_at, focus_read, node, ready, values,
 };
 use crate::entries::{Entry, feed};
-use crate::event_queue::{Effect, Foreground, Input, Timed};
+use crate::event_queue::{Foreground, Input, Timed};
 use crate::keys::entry::{Fence, PressEntry};
+use verbatim_model::Effect;
+use verbatim_model::request::QueueEffect;
 
 /// The application's window 4 in front.
 const IN_FRONT: Foreground = Foreground {
@@ -141,32 +143,35 @@ fn reduce(held: &mut Held, input: &verbatim_model::Input) -> Step {
     for effect in effects {
         match effect {
             Said::Queue(verbatim_model::request::QueueEffect::Send { ask, .. }) => {
-                read_effect(&mut step, Effect::Send { to: OUTPOST, ask });
+                read_effect(
+                    &mut step,
+                    Effect::Queue(QueueEffect::Send { to: OUTPOST, ask }),
+                );
             }
             Said::Queue(verbatim_model::request::QueueEffect::Cancel { cancel, .. }) => {
                 step.cancelled.push(cancel);
             }
             Said::Queue(verbatim_model::request::QueueEffect::WakeAt(_)) => {}
-            other => read_effect(&mut step, Effect::Said(other)),
+            other => read_effect(&mut step, other),
         }
     }
     step
 }
 
-fn read_effect(step: &mut Step, effect: Effect<Said>) {
+fn read_effect(step: &mut Step, effect: Effect) {
     match effect {
-        Effect::Send { ask, .. } => match ask.request {
+        Effect::Queue(QueueEffect::Send { ask, .. }) => match ask.request {
             Wire::Text { node: asked, op } => {
                 assert_eq!(asked, node(2));
                 step.sent.push((ask.number.0, op));
             }
             other => panic!("a text request: {other:?}"),
         },
-        Effect::Cancel { cancel, .. } => step.cancelled.push(cancel),
-        Effect::AnswerDropped { number, .. } => step.dropped.push(number.0),
-        Effect::StartOutpost(process) => step.started.push(process),
-        Effect::Said(Said::KeepDisplayOn(on)) => step.display.push(on),
-        Effect::Said(Said::Speak(utterance, key)) => {
+        Effect::Queue(QueueEffect::Cancel { cancel, .. }) => step.cancelled.push(cancel),
+        Effect::Queue(QueueEffect::AnswerDropped { number, .. }) => step.dropped.push(number.0),
+        Effect::Queue(QueueEffect::StartOutpost(process)) => step.started.push(process),
+        Said::KeepDisplayOn(on) => step.display.push(on),
+        Said::Speak(utterance, key) => {
             assert!(utterance.say_all, "{utterance:?} is read by say-all");
             let mut marks = Vec::new();
             let mut texts = Vec::new();

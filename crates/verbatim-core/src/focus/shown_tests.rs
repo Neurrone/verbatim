@@ -19,7 +19,9 @@ use crate::entries::tests::{
     APP, GENERATION, Held, LISTENER, NOTHING, OUTPOST, answer, msaa_tell, node, ready,
 };
 use crate::entries::{Entry, feed};
-use crate::event_queue::{Effect, Foreground, Input, Instance, Reader, Timed};
+use crate::event_queue::{Foreground, Input, Instance, Reader, Timed};
+use verbatim_model::Effect;
+use verbatim_model::request::QueueEffect;
 
 /// The settings dialog that owns the file dialog, in front before it.
 const OWNER: u64 = 4;
@@ -293,15 +295,16 @@ fn step(held: &mut Held, at_us: u64, input: Input<Entry>) -> Vec<String> {
         .unwrap()
         .into_iter()
         .filter_map(|effect| match effect {
-            Effect::Send { to, ask } => {
+            Effect::Queue(QueueEffect::Send { to, ask }) => {
                 Some(format!("send {:?} {}", to.reader, sent(&ask.request)))
             }
-            Effect::Cancel { to, cancel } => {
+            Effect::Queue(QueueEffect::Cancel { to, cancel }) => {
                 Some(format!("cancel {:?} {:?}", to.reader, cancel.reason))
             }
-            Effect::NotRespondingSound => Some("not responding".to_owned()),
-            Effect::Said(said) => spoken(&said),
-            _ => None,
+            Effect::PlayEarcon(verbatim_model::Earcon::AppNotResponding) => {
+                Some("not responding".to_owned())
+            }
+            said => spoken(&said),
         })
         .collect()
 }
@@ -354,10 +357,7 @@ fn keyed(held: &mut Held, at_us: u64, reply: Reply) -> Vec<(String, Option<u64>)
     )
     .unwrap()
     .iter()
-    .filter_map(|effect| match effect {
-        Effect::Said(said) => of(said),
-        _ => None,
-    })
+    .filter_map(of)
     .collect()
 }
 

@@ -14,8 +14,9 @@ use crate::entries::tests::{
     APP, Held, OUTPOST, SPOKEN_FOLLOWED, answer, feed_at, focus_read, node, ready,
 };
 use crate::entries::{Entry, feed};
-use crate::event_queue::{Effect, Foreground, Input, Timed};
+use crate::event_queue::{Foreground, Input, Timed};
 use crate::keys::entry::PressEntry;
+use verbatim_model::Effect;
 
 /// The application's window 4 in front.
 const IN_FRONT: Foreground = Foreground {
@@ -186,7 +187,10 @@ fn a_hung_window_plays_the_sound_and_says_nothing() {
         },
     )
     .unwrap();
-    assert_eq!(effects, [Effect::NotRespondingSound]);
+    assert_eq!(
+        effects,
+        [Effect::PlayEarcon(verbatim_model::Earcon::AppNotResponding)]
+    );
 }
 
 #[test]
@@ -226,7 +230,7 @@ fn its_speech_carries_its_own_key_number_not_a_later_keys() {
     let keys: Vec<_> = effects
         .iter()
         .filter_map(|effect| match effect {
-            Effect::Said(Said::Speak(_, key)) => Some(*key),
+            Said::Speak(_, key) => Some(*key),
             _ => None,
         })
         .collect();

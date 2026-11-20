@@ -17,8 +17,10 @@ use crate::entries::tests::{
     APP, Held, OUTPOST, answer, answer_outcome, feed_at, focus_read, node, ready, ready_at, values,
     win,
 };
-use crate::event_queue::{Effect, Foreground, Input, Timed};
+use crate::event_queue::{Foreground, Input, Timed};
 use crate::keys::entry::PressEntry;
+use verbatim_model::Effect;
+use verbatim_model::request::QueueEffect;
 
 /// The application's window 4 in front.
 const IN_FRONT: Foreground = Foreground {
@@ -196,7 +198,7 @@ fn a_request_on_a_navigated_node_outside_the_foreground_is_stopped() {
     assert!(
         effects.iter().any(|effect| matches!(
             effect,
-            Effect::Cancel { cancel, .. }
+            Effect::Queue(QueueEffect::Cancel { cancel, .. })
                 if cancel.reason == verbatim_model::request::CancelReason::Foreground
         )),
         "{effects:?}"
@@ -325,7 +327,7 @@ fn reporting_the_object_reads_it_live_then_announces_spells_and_copies() {
     )
     .unwrap();
     assert!(
-        effects.contains(&Effect::Said(Said::CopyToClipboard("Ok".to_owned()))),
+        effects.contains(&Said::CopyToClipboard("Ok".to_owned())),
         "{effects:?}"
     );
 }
@@ -425,7 +427,7 @@ fn selected(text: &str) -> Reply {
 }
 
 /// Feeds `input` at `at_us`, every effect.
-fn feed_all(state: &mut Held, at_us: u64, input: Input<Entry>) -> Vec<Effect<Said>> {
+fn feed_all(state: &mut Held, at_us: u64, input: Input<Entry>) -> Vec<Effect> {
     crate::entries::feed(&mut state.state, &mut state.runtime, Timed { at_us, input }).unwrap()
 }
 
@@ -623,7 +625,7 @@ fn reporting_an_object_with_a_value_spells_then_copies_its_name_and_value() {
     let _ = feed_at(&mut state, 5_000, press(3, ReviewCommand::ReportObject, 2));
     let effects = feed_all(&mut state, 6_000, answer(OUTPOST, 5, combo()));
     assert!(
-        effects.contains(&Effect::Said(Said::CopyToClipboard("Name Ann".to_owned()))),
+        effects.contains(&Said::CopyToClipboard("Name Ann".to_owned())),
         "{effects:?}"
     );
 }
@@ -909,9 +911,7 @@ fn reporting_an_edit_field_a_third_time_copies_its_name_and_caret_line() {
         answer(OUTPOST, 8, line_read("ab cd\r\n")),
     );
     assert!(
-        effects.contains(&Effect::Said(Said::CopyToClipboard(
-            "Body ab cd".to_owned()
-        ))),
+        effects.contains(&Said::CopyToClipboard("Body ab cd".to_owned())),
         "{effects:?}"
     );
 }
@@ -921,9 +921,7 @@ fn reporting_an_edit_field_with_a_selection_a_third_time_copies_the_selection() 
     let mut state = reporting_body(2);
     let effects = feed_all(&mut state, 5_200, answer(OUTPOST, 7, selected("chosen")));
     assert!(
-        effects.contains(&Effect::Said(Said::CopyToClipboard(
-            "Body chosen".to_owned()
-        ))),
+        effects.contains(&Said::CopyToClipboard("Body chosen".to_owned())),
         "{effects:?}"
     );
 }

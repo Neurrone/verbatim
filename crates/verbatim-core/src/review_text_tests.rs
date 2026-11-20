@@ -14,7 +14,7 @@ use crate::entries::Entry;
 use crate::entries::tests::{
     APP, Held, OUTPOST, answer, answer_outcome, feed_at, focus_read, node, ready, values,
 };
-use crate::event_queue::{Effect, Foreground, Input, Timed};
+use crate::event_queue::{Foreground, Input, Timed};
 use crate::keys::entry::PressEntry;
 
 /// The application's window 4 in front.
@@ -387,7 +387,7 @@ fn a_start_marker_set_then_copied_copies_the_range_read() {
     )
     .unwrap();
     assert!(
-        effects.contains(&Effect::Said(Said::CopyToClipboard("o".to_owned()))),
+        effects.contains(&Said::CopyToClipboard("o".to_owned())),
         "{effects:?}"
     );
     assert_eq!(state.start_marker, None);

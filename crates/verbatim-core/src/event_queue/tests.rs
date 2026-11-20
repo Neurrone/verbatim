@@ -15,7 +15,7 @@ use verbatim_model::request::{
 use verbatim_model::{NodeId, Pid, WindowHandle};
 
 use super::driver::{Core, Cx};
-use super::inbox::{Effect, Input, Timed};
+use super::inbox::{Input, Timed};
 use super::limiter::{MsaaKey, Place};
 use super::request::{Outcome, Request};
 use super::table::Asker;
@@ -25,6 +25,8 @@ use super::{
 };
 use crate::focus::backend::BackendCache;
 use verbatim_model::Backend;
+use verbatim_model::Effect;
+use verbatim_model::request::{OutsideOutcome, QueueEffect};
 
 /// The application of the tests' window.
 const APP: Pid = Pid(1);
@@ -174,7 +176,6 @@ fn wire() -> Wire {
 impl Logic for Test {
     type Entry = Entry;
     type Facts = u32;
-    type Said = String;
 
     /// Only the tests' application's outpost is started; another
     /// application in front is one whose outpost these tests do not
@@ -194,7 +195,7 @@ impl Logic for Test {
                         if result {
                             *cx.facts_mut() += 1;
                         }
-                        cx.emit(format!("{outcome:?}"));
+                        cx.emit(emitted(format!("{outcome:?}")));
                         if !result {
                             break;
                         }
@@ -206,16 +207,16 @@ impl Logic for Test {
                         *cx.facts(),
                         cx.waiting().len()
                     );
-                    cx.emit(words);
+                    cx.emit(emitted(words));
                 }
-                Entry::Recovered(window) => cx.emit(format!("recovered {}", window.0)),
+                Entry::Recovered(window) => cx.emit(emitted(format!("recovered {}", window.0))),
                 Entry::Stray => std::future::pending::<()>().await,
                 Entry::PlainThenRead => {
                     let due_us = cx.due_in(OTHER_DUE_US);
                     let plain = cx.ask(ReadPlain, due_us).await;
-                    cx.emit(format!("plain {plain:?}"));
+                    cx.emit(emitted(format!("plain {plain:?}")));
                     let read = cx.ask(ReadName, due_us).await;
-                    cx.emit(format!("{read:?}"));
+                    cx.emit(emitted(format!("{read:?}")));
                 }
             }
         })
@@ -285,8 +286,8 @@ fn read(reads: u8) -> Input<Entry> {
 }
 
 /// The send of request `number`.
-fn send(number: u64) -> Effect<String> {
-    Effect::Send {
+fn send(number: u64) -> Effect {
+    Effect::Queue(QueueEffect::Send {
         to: OUTPOST,
         ask: Ask {
             number: RequestNumber(number),
@@ -294,18 +295,18 @@ fn send(number: u64) -> Effect<String> {
             verdict: WindowVerdict::Msaa,
             request: wire(),
         },
-    }
+    })
 }
 
 /// The cancel of request `number` for `reason`.
-fn cancel(number: u64, reason: CancelReason) -> Effect<String> {
-    Effect::Cancel {
+fn cancel(number: u64, reason: CancelReason) -> Effect {
+    Effect::Queue(QueueEffect::Cancel {
         to: OUTPOST,
         cancel: Cancel {
             number: RequestNumber(number),
             reason,
         },
-    }
+    })
 }
 
 /// An answer from `from` to request `number`.
@@ -327,13 +328,19 @@ fn result() -> WireOutcome {
 }
 
 /// What the tests' entry says of a result.
-fn said_result() -> Effect<String> {
+fn said_result() -> Effect {
     said("Result(PropertyValues([]))")
 }
 
 /// What an entry said.
-fn said(text: &str) -> Effect<String> {
-    Effect::Said(text.to_owned())
+fn said(text: &str) -> Effect {
+    emitted(text.to_owned())
+}
+
+/// What an entry's function emits: its words, carried by a model effect
+/// the queue passes on unread.
+fn emitted(words: String) -> Effect {
+    Effect::CopyToClipboard(words)
 }
 
 /// A request from outside the queue.
@@ -348,13 +355,13 @@ fn ask_outside() -> Input<Entry> {
 }
 
 /// Feeds `input` at `at_us`.
-fn feed(core: &mut Core<Test>, at_us: u64, input: Input<Entry>) -> Vec<Effect<String>> {
+fn feed(core: &mut Core<Test>, at_us: u64, input: Input<Entry>) -> Vec<Effect> {
     core.feed(Timed { at_us, input })
 }
 
 /// `instance` made ready at `at_us`: its start set up as the owner thread
 /// reports it, then its `Ready`.
-fn ready_at(core: &mut Core<Test>, at_us: u64, instance: Instance) -> Vec<Effect<String>> {
+fn ready_at(core: &mut Core<Test>, at_us: u64, instance: Instance) -> Vec<Effect> {
     core.shared
         .borrow_mut()
         .state
@@ -415,7 +422,7 @@ fn a_waiting_request_is_sent_when_its_reader_can_take_it() {
     let mut core = Core::<Test>::default();
     assert_eq!(
         feed(&mut core, 0, Input::Foreground(IN_FRONT)),
-        [Effect::StartOutpost(APP)]
+        [Effect::Queue(QueueEffect::StartOutpost(APP))]
     );
     assert_eq!(feed(&mut core, 1_000, read(1)), []);
     assert_eq!(ready_at(&mut core, 2_000, OUTPOST), [send(1)]);
@@ -430,7 +437,10 @@ fn a_request_the_shell_finds_hung_is_answered_not_responding_with_the_sound_when
     let mut core = core_with_read_out();
     assert_eq!(
         feed(&mut core, 1_500, Input::RefusedHung(RequestNumber(1))),
-        [Effect::NotRespondingSound, said("NotResponding")]
+        [
+            Effect::PlayEarcon(verbatim_model::Earcon::AppNotResponding),
+            said("NotResponding")
+        ]
     );
     // The window joined the recovery set: the half-second round armed at
     // the send goes on checking it.
@@ -457,7 +467,7 @@ fn a_waiting_request_is_not_checked_for_a_hang() {
     let mut core = Core::<Test>::default();
     assert_eq!(
         feed(&mut core, 0, Input::Foreground(IN_FRONT)),
-        [Effect::StartOutpost(APP)]
+        [Effect::Queue(QueueEffect::StartOutpost(APP))]
     );
     assert_eq!(feed(&mut core, 1_000, read(1)), []);
     assert_eq!(
@@ -479,7 +489,7 @@ fn a_waiting_request_past_its_due_time_ends_silently_and_is_never_sent() {
     let mut core = Core::<Test>::default();
     assert_eq!(
         feed(&mut core, 0, Input::Foreground(IN_FRONT)),
-        [Effect::StartOutpost(APP)]
+        [Effect::Queue(QueueEffect::StartOutpost(APP))]
     );
     assert_eq!(feed(&mut core, 1_000, read(1)), []);
     assert_eq!(
@@ -494,19 +504,19 @@ fn a_waiting_request_waits_on_when_a_starting_reader_fails() {
     let mut core = Core::<Test>::default();
     assert_eq!(
         feed(&mut core, 0, Input::Foreground(IN_FRONT)),
-        [Effect::StartOutpost(APP)]
+        [Effect::Queue(QueueEffect::StartOutpost(APP))]
     );
     assert_eq!(feed(&mut core, 1_000, read(1)), []);
     assert_eq!(feed(&mut core, 1_500, started(OUTPOST)), []);
     // A first failure is replaced at once (Table 5, column E).
     assert_eq!(
         feed(&mut core, 2_000, Input::ReaderEnded(OUTPOST)),
-        [Effect::StartOutpost(APP)]
+        [Effect::Queue(QueueEffect::StartOutpost(APP))]
     );
     assert_eq!(feed(&mut core, 2_500, started(NEXT_OUTPOST)), []);
     assert_eq!(
         feed(&mut core, 3_000, Input::ReaderReady(NEXT_OUTPOST)),
-        [Effect::Send {
+        [Effect::Queue(QueueEffect::Send {
             to: NEXT_OUTPOST,
             ask: Ask {
                 number: RequestNumber(1),
@@ -514,7 +524,7 @@ fn a_waiting_request_waits_on_when_a_starting_reader_fails() {
                 verdict: WindowVerdict::Msaa,
                 request: wire(),
             },
-        }]
+        })]
     );
 }
 
@@ -523,7 +533,7 @@ fn a_waiting_request_ends_unsent_when_the_foreground_leaves_its_window() {
     let mut core = Core::<Test>::default();
     assert_eq!(
         feed(&mut core, 0, Input::Foreground(IN_FRONT)),
-        [Effect::StartOutpost(APP)]
+        [Effect::Queue(QueueEffect::StartOutpost(APP))]
     );
     assert_eq!(feed(&mut core, 1_000, read(1)), []);
     assert_eq!(
@@ -537,7 +547,10 @@ fn a_waiting_request_ends_unsent_when_the_foreground_leaves_its_window() {
 fn a_waiting_request_stays_when_the_foreground_holds_its_window() {
     let mut core = Core::<Test>::default();
     assert_eq!(feed(&mut core, 0, Input::Foreground(ELSEWHERE)), []);
-    assert_eq!(feed(&mut core, 1_000, read(1)), [Effect::StartOutpost(APP)]);
+    assert_eq!(
+        feed(&mut core, 1_000, read(1)),
+        [Effect::Queue(QueueEffect::StartOutpost(APP))]
+    );
     assert_eq!(feed(&mut core, 2_000, Input::Foreground(IN_FRONT)), []);
     assert_eq!(ready_at(&mut core, 3_000, OUTPOST), [send(1)]);
 }
@@ -547,7 +560,7 @@ fn a_waiting_request_withdrawn_by_its_entry_is_dropped_unsent() {
     let mut core = Core::<Test>::default();
     assert_eq!(
         feed(&mut core, 0, Input::Foreground(IN_FRONT)),
-        [Effect::StartOutpost(APP)]
+        [Effect::Queue(QueueEffect::StartOutpost(APP))]
     );
     assert_eq!(feed(&mut core, 1_000, read(1)), []);
     assert_eq!(
@@ -576,7 +589,7 @@ fn a_request_out_whose_window_is_found_hung_stops_with_the_sound_when_attended()
         ),
         [
             cancel(1, CancelReason::Hung),
-            Effect::NotRespondingSound,
+            Effect::PlayEarcon(verbatim_model::Earcon::AppNotResponding),
             said("NoLongerAwaited(Hung)")
         ]
     );
@@ -613,7 +626,7 @@ fn a_console_hosts_request_found_hung_while_its_client_holds_attention_plays_the
         ),
         [
             cancel(1, CancelReason::Hung),
-            Effect::NotRespondingSound,
+            Effect::PlayEarcon(verbatim_model::Earcon::AppNotResponding),
             said("NoLongerAwaited(Hung)")
         ]
     );
@@ -697,7 +710,10 @@ fn a_request_out_ends_reader_ended_when_its_reader_ends() {
     let mut core = core_with_read_out();
     assert_eq!(
         feed(&mut core, 2_000, Input::ReaderEnded(OUTPOST)),
-        [said("ReaderEnded"), Effect::StartOutpost(APP)]
+        [
+            said("ReaderEnded"),
+            Effect::Queue(QueueEffect::StartOutpost(APP))
+        ]
     );
 }
 
@@ -719,7 +735,7 @@ fn the_one_judge_ends_the_front_for_each_cause() {
     };
     let mut key = ended(CancelReason::Withdrawn);
     key.push(said("key after 0 results, 0 waiting"));
-    let causes: [(Of, Vec<Effect<String>>); 3] = [
+    let causes: [(Of, Vec<Effect>); 3] = [
         (|_| Input::Entry(Entry::Key), key),
         (
             |_| Input::Foreground(SAME_APP_ELSEWHERE),
@@ -766,7 +782,7 @@ fn a_request_outside_the_queue_waits_for_its_reader_and_is_sent_when_ready() {
     let mut core = Core::<Test>::default();
     assert_eq!(
         feed(&mut core, 1_000, ask_outside()),
-        [Effect::StartOutpost(APP)]
+        [Effect::Queue(QueueEffect::StartOutpost(APP))]
     );
     assert_eq!(ready_at(&mut core, 2_000, OUTPOST), [send(1)]);
 }
@@ -777,11 +793,11 @@ fn a_request_outside_the_queue_found_hung_by_the_shell_is_answered_not_respondin
     assert_eq!(
         feed(&mut core, 1_500, Input::RefusedHung(RequestNumber(1))),
         [
-            Effect::NotRespondingSound,
-            Effect::Answered {
-                asker: ASKER,
-                outcome: Outcome::NotResponding
-            }
+            Effect::PlayEarcon(verbatim_model::Earcon::AppNotResponding),
+            Effect::Queue(QueueEffect::Answered {
+                asker: ASKER.0,
+                outcome: OutsideOutcome::NotResponding
+            })
         ]
     );
 }
@@ -791,14 +807,14 @@ fn a_waiting_request_outside_the_queue_past_its_due_time_answers_its_asker_unsen
     let mut core = Core::<Test>::default();
     assert_eq!(
         feed(&mut core, 1_000, ask_outside()),
-        [Effect::StartOutpost(APP)]
+        [Effect::Queue(QueueEffect::StartOutpost(APP))]
     );
     assert_eq!(
         feed(&mut core, 1_000 + OTHER_DUE_US, Input::Tick),
-        [Effect::Answered {
-            asker: ASKER,
-            outcome: Outcome::NoLongerAwaited(CancelReason::DueTime)
-        }]
+        [Effect::Queue(QueueEffect::Answered {
+            asker: ASKER.0,
+            outcome: OutsideOutcome::NoLongerAwaited(CancelReason::DueTime)
+        })]
     );
     assert_eq!(ready_at(&mut core, OTHER_DUE_US + 2_000, OUTPOST), []);
 }
@@ -808,17 +824,17 @@ fn a_waiting_request_outside_the_queue_waits_for_the_next_reader_when_one_fails(
     let mut core = Core::<Test>::default();
     assert_eq!(
         feed(&mut core, 1_000, ask_outside()),
-        [Effect::StartOutpost(APP)]
+        [Effect::Queue(QueueEffect::StartOutpost(APP))]
     );
     assert_eq!(feed(&mut core, 1_500, started(OUTPOST)), []);
     assert_eq!(
         feed(&mut core, 2_000, Input::ReaderEnded(OUTPOST)),
-        [Effect::StartOutpost(APP)]
+        [Effect::Queue(QueueEffect::StartOutpost(APP))]
     );
     assert_eq!(feed(&mut core, 2_500, started(NEXT_OUTPOST)), []);
     assert_eq!(
         feed(&mut core, 3_000, Input::ReaderReady(NEXT_OUTPOST)),
-        [Effect::Send {
+        [Effect::Queue(QueueEffect::Send {
             to: NEXT_OUTPOST,
             ask: Ask {
                 number: RequestNumber(1),
@@ -826,7 +842,7 @@ fn a_waiting_request_outside_the_queue_waits_for_the_next_reader_when_one_fails(
                 verdict: WindowVerdict::Msaa,
                 request: wire(),
             },
-        }]
+        })]
     );
 }
 
@@ -835,7 +851,7 @@ fn a_waiting_request_outside_the_queue_is_untouched_by_the_foreground() {
     let mut core = Core::<Test>::default();
     assert_eq!(
         feed(&mut core, 1_000, ask_outside()),
-        [Effect::StartOutpost(APP)]
+        [Effect::Queue(QueueEffect::StartOutpost(APP))]
     );
     assert_eq!(feed(&mut core, 2_000, Input::Foreground(ELSEWHERE)), []);
     assert_eq!(ready_at(&mut core, 3_000, OUTPOST), [send(1)]);
@@ -846,14 +862,14 @@ fn a_waiting_request_outside_the_queue_withdrawn_is_dropped_unsent() {
     let mut core = Core::<Test>::default();
     assert_eq!(
         feed(&mut core, 1_000, ask_outside()),
-        [Effect::StartOutpost(APP)]
+        [Effect::Queue(QueueEffect::StartOutpost(APP))]
     );
     assert_eq!(
         feed(&mut core, 2_000, Input::WithdrawOutside(ASKER)),
-        [Effect::Answered {
-            asker: ASKER,
-            outcome: Outcome::NoLongerAwaited(CancelReason::Withdrawn)
-        }]
+        [Effect::Queue(QueueEffect::Answered {
+            asker: ASKER.0,
+            outcome: OutsideOutcome::NoLongerAwaited(CancelReason::Withdrawn)
+        })]
     );
     assert_eq!(ready_at(&mut core, 3_000, OUTPOST), []);
 }
@@ -872,11 +888,11 @@ fn a_request_outside_the_queue_found_hung_is_cancelled_with_the_sound_and_answer
         ),
         [
             cancel(1, CancelReason::Hung),
-            Effect::NotRespondingSound,
-            Effect::Answered {
-                asker: ASKER,
-                outcome: Outcome::NoLongerAwaited(CancelReason::Hung)
-            }
+            Effect::PlayEarcon(verbatim_model::Earcon::AppNotResponding),
+            Effect::Queue(QueueEffect::Answered {
+                asker: ASKER.0,
+                outcome: OutsideOutcome::NoLongerAwaited(CancelReason::Hung)
+            })
         ]
     );
 }
@@ -888,10 +904,10 @@ fn a_request_outside_the_queue_past_its_due_time_is_cancelled_and_answered() {
         feed(&mut core, 1_000 + OTHER_DUE_US, Input::Tick),
         [
             cancel(1, CancelReason::DueTime),
-            Effect::Answered {
-                asker: ASKER,
-                outcome: Outcome::NoLongerAwaited(CancelReason::DueTime)
-            }
+            Effect::Queue(QueueEffect::Answered {
+                asker: ASKER.0,
+                outcome: OutsideOutcome::NoLongerAwaited(CancelReason::DueTime)
+            })
         ]
     );
 }
@@ -901,10 +917,10 @@ fn a_request_outside_the_queue_passes_its_answer_to_its_asker() {
     let mut core = core_with_outside_out();
     assert_eq!(
         feed(&mut core, 2_000, answer(OUTPOST, 1, result())),
-        [Effect::Answered {
-            asker: ASKER,
-            outcome: Outcome::Result(Reply::Properties(PropertyValues::default()))
-        }]
+        [Effect::Queue(QueueEffect::Answered {
+            asker: ASKER.0,
+            outcome: OutsideOutcome::Result(Reply::Properties(PropertyValues::default()))
+        })]
     );
 }
 
@@ -914,11 +930,11 @@ fn a_request_outside_the_queue_answers_reader_ended_to_its_asker() {
     assert_eq!(
         feed(&mut core, 2_000, Input::ReaderEnded(OUTPOST)),
         [
-            Effect::Answered {
-                asker: ASKER,
-                outcome: Outcome::ReaderEnded
-            },
-            Effect::StartOutpost(APP)
+            Effect::Queue(QueueEffect::Answered {
+                asker: ASKER.0,
+                outcome: OutsideOutcome::ReaderEnded
+            }),
+            Effect::Queue(QueueEffect::StartOutpost(APP))
         ]
     );
 }
@@ -929,10 +945,10 @@ fn a_request_outside_the_queue_out_is_untouched_by_the_foreground() {
     assert_eq!(feed(&mut core, 2_000, Input::Foreground(ELSEWHERE)), []);
     assert_eq!(
         feed(&mut core, 3_000, answer(OUTPOST, 1, result())),
-        [Effect::Answered {
-            asker: ASKER,
-            outcome: Outcome::Result(Reply::Properties(PropertyValues::default()))
-        }]
+        [Effect::Queue(QueueEffect::Answered {
+            asker: ASKER.0,
+            outcome: OutsideOutcome::Result(Reply::Properties(PropertyValues::default()))
+        })]
     );
 }
 
@@ -943,10 +959,10 @@ fn a_request_outside_the_queue_out_withdrawn_is_cancelled() {
         feed(&mut core, 2_000, Input::WithdrawOutside(ASKER)),
         [
             cancel(1, CancelReason::Withdrawn),
-            Effect::Answered {
-                asker: ASKER,
-                outcome: Outcome::NoLongerAwaited(CancelReason::Withdrawn)
-            }
+            Effect::Queue(QueueEffect::Answered {
+                asker: ASKER.0,
+                outcome: OutsideOutcome::NoLongerAwaited(CancelReason::Withdrawn)
+            })
         ]
     );
 }
@@ -992,10 +1008,10 @@ fn a_late_answer_is_dropped_by_number() {
             OTHER_DUE_US + 2_000,
             answer(OUTPOST, 1, result())
         ),
-        [Effect::AnswerDropped {
+        [Effect::Queue(QueueEffect::AnswerDropped {
             number: RequestNumber(1),
             late: true
-        }]
+        })]
     );
 }
 
@@ -1004,7 +1020,7 @@ fn a_request_no_longer_awaited_is_forgotten_when_its_reader_ends() {
     let mut core = core_with_late_request();
     assert_eq!(
         feed(&mut core, OTHER_DUE_US + 2_000, Input::ReaderEnded(OUTPOST)),
-        [Effect::StartOutpost(APP)]
+        [Effect::Queue(QueueEffect::StartOutpost(APP))]
     );
     assert_eq!(
         feed(
@@ -1012,10 +1028,10 @@ fn a_request_no_longer_awaited_is_forgotten_when_its_reader_ends() {
             OTHER_DUE_US + 3_000,
             answer(OUTPOST, 1, result())
         ),
-        [Effect::AnswerDropped {
+        [Effect::Queue(QueueEffect::AnswerDropped {
             number: RequestNumber(1),
             late: false
-        }]
+        })]
     );
 }
 
@@ -1041,10 +1057,10 @@ fn an_answered_request_takes_nothing_more() {
     );
     assert_eq!(
         feed(&mut core, 3_000, answer(OUTPOST, 1, result())),
-        [Effect::AnswerDropped {
+        [Effect::Queue(QueueEffect::AnswerDropped {
             number: RequestNumber(1),
             late: false
-        }]
+        })]
     );
     // The outpost's end starts its replacement, and its `Ready` again is
     // an ended generation's, dropped; neither touches the request.
@@ -1057,11 +1073,14 @@ fn an_answered_request_takes_nothing_more() {
             Vec::new(),
         ),
         (Input::Tick, Vec::new()),
-        (Input::ReaderEnded(OUTPOST), vec![Effect::StartOutpost(APP)]),
+        (
+            Input::ReaderEnded(OUTPOST),
+            vec![Effect::Queue(QueueEffect::StartOutpost(APP))],
+        ),
         (Input::Foreground(ELSEWHERE), Vec::new()),
         (
             Input::ReaderReady(OUTPOST),
-            vec![Effect::StaleFrame(OUTPOST)],
+            vec![Effect::Queue(QueueEffect::StaleFrame(OUTPOST))],
         ),
     ] {
         assert_eq!(feed(&mut core, 4_000 + OTHER_DUE_US, input), effects);
@@ -1073,10 +1092,10 @@ fn an_answer_from_an_instance_the_request_did_not_go_to_is_dropped() {
     let mut core = core_with_read_out();
     assert_eq!(
         feed(&mut core, 2_000, answer(NEXT_OUTPOST, 1, result())),
-        [Effect::AnswerDropped {
+        [Effect::Queue(QueueEffect::AnswerDropped {
             number: RequestNumber(1),
             late: false
-        }]
+        })]
     );
     assert_eq!(
         feed(&mut core, 3_000, answer(OUTPOST, 1, result())),
@@ -1092,7 +1111,7 @@ fn the_round_checks_every_request_outs_window_each_half_second_while_one_is_out(
     assert_eq!(core.next_due(), Some(1_000 + HANG_ROUND_US));
     assert_eq!(
         feed(&mut core, 1_000 + HANG_ROUND_US, Input::Tick),
-        [Effect::CheckHung(vec![WINDOW.handle])]
+        [Effect::Queue(QueueEffect::CheckHung(vec![WINDOW.handle]))]
     );
     assert_eq!(
         feed(
@@ -1132,7 +1151,7 @@ fn core_watching() -> Core<Test> {
         ),
         [
             cancel(1, CancelReason::Hung),
-            Effect::NotRespondingSound,
+            Effect::PlayEarcon(verbatim_model::Earcon::AppNotResponding),
             said("NoLongerAwaited(Hung)")
         ]
     );
@@ -1145,7 +1164,7 @@ fn a_watched_window_that_answers_again_leaves_the_set_and_its_entry_joins_the_qu
     assert_eq!(core.next_due(), Some(1_000 + HANG_ROUND_US));
     assert_eq!(
         feed(&mut core, 1_000 + HANG_ROUND_US, Input::Tick),
-        [Effect::CheckHung(vec![WINDOW.handle])]
+        [Effect::Queue(QueueEffect::CheckHung(vec![WINDOW.handle]))]
     );
     assert_eq!(
         feed(
@@ -1178,7 +1197,10 @@ fn a_watched_window_stays_when_another_request_to_it_is_found_hung() {
     assert_eq!(feed(&mut core, 2_000, read(1)), [send(2)]);
     assert_eq!(
         feed(&mut core, 2_100, Input::RefusedHung(RequestNumber(2))),
-        [Effect::NotRespondingSound, said("NotResponding")]
+        [
+            Effect::PlayEarcon(verbatim_model::Earcon::AppNotResponding),
+            said("NotResponding")
+        ]
     );
     assert_eq!(
         feed(
@@ -1235,7 +1257,7 @@ fn a_watched_window_leaves_the_set_when_its_outpost_ends() {
     let mut core = core_watching();
     assert_eq!(
         feed(&mut core, 2_000, Input::ReaderEnded(OUTPOST)),
-        [Effect::StartOutpost(APP)]
+        [Effect::Queue(QueueEffect::StartOutpost(APP))]
     );
     assert_eq!(core.next_due(), None);
 }
@@ -1291,7 +1313,7 @@ fn a_result_that_does_not_decode_is_refused_undecodable_and_keeps_the_reader() {
             answer(OUTPOST, 1, WireOutcome::Result(Reply::Children(Vec::new())))
         ),
         [
-            Effect::Undecodable(RequestNumber(1)),
+            Effect::Queue(QueueEffect::Undecodable(RequestNumber(1))),
             said("Refused(Undecodable)")
         ]
     );
@@ -1387,7 +1409,7 @@ fn scenario() -> Vec<Timed<Entry>> {
 fn a_checkpoint_taken_at_any_input_replays_to_the_same_state_and_goes_on_alike() {
     let script = scenario();
     let mut straight = Core::<Test>::default();
-    let effects: Vec<Vec<Effect<String>>> = script
+    let effects: Vec<Vec<Effect>> = script
         .iter()
         .map(|input| straight.feed(input.clone()))
         .collect();
@@ -1493,13 +1515,12 @@ type Withdraws = bool;
 impl Logic for Probing {
     type Entry = Withdraws;
     type Facts = ();
-    type Said = String;
 
     fn run(mut cx: Cx<Self>, _: Withdraws) -> Function {
         Box::pin(async move {
             let due_us = cx.due_in(OTHER_DUE_US);
             let outcome = cx.ask(ReadProbed, due_us).await;
-            cx.emit(format!("{outcome:?}"));
+            cx.emit(emitted(format!("{outcome:?}")));
         })
     }
 
@@ -1552,8 +1573,8 @@ impl Logic for Probing {
 }
 
 /// The send of request `number` to the probed window carrying `verdict`.
-fn send_probed(number: u64, verdict: WindowVerdict) -> Effect<String> {
-    Effect::Send {
+fn send_probed(number: u64, verdict: WindowVerdict) -> Effect {
+    Effect::Queue(QueueEffect::Send {
         to: OUTPOST,
         ask: Ask {
             number: RequestNumber(number),
@@ -1561,7 +1582,7 @@ fn send_probed(number: u64, verdict: WindowVerdict) -> Effect<String> {
             verdict,
             request: wire(),
         },
-    }
+    })
 }
 
 /// A probe of the probed window.
@@ -1594,11 +1615,7 @@ fn probing_core() -> Core<Probing> {
 }
 
 /// Feeds `input` to a probe test's core at `at_us`.
-fn feed_probing(
-    core: &mut Core<Probing>,
-    at_us: u64,
-    input: Input<Withdraws>,
-) -> Vec<Effect<String>> {
+fn feed_probing(core: &mut Core<Probing>, at_us: u64, input: Input<Withdraws>) -> Vec<Effect> {
     core.feed(Timed { at_us, input })
 }
 
@@ -1700,13 +1717,13 @@ fn a_probe_first_request_no_longer_awaited_counts_as_a_probe_that_timed_out_from
     assert_eq!(
         feed_probing(&mut core, 2_000, Input::Foreground(SAME_APP_ELSEWHERE)),
         [
-            Effect::Cancel {
+            Effect::Queue(QueueEffect::Cancel {
                 to: OUTPOST,
                 cancel: Cancel {
                     number: RequestNumber(1),
                     reason: CancelReason::Foreground
                 }
-            },
+            }),
             said("NoLongerAwaited(Foreground)")
         ]
     );
@@ -1743,13 +1760,13 @@ fn a_probe_first_request_withdrawn_leaves_its_window_with_no_verdict() {
     assert_eq!(
         feed_probing(&mut core, 2_000, Input::Entry(true)),
         [
-            Effect::Cancel {
+            Effect::Queue(QueueEffect::Cancel {
                 to: OUTPOST,
                 cancel: Cancel {
                     number: RequestNumber(1),
                     reason: CancelReason::Withdrawn
                 }
-            },
+            }),
             said("NoLongerAwaited(Withdrawn)"),
             send_probed(2, WindowVerdict::ProbeFirst)
         ]
@@ -1823,10 +1840,10 @@ fn a_plain_read_from_outside_the_queue_is_answered_at_once() {
                 due_after_us: OTHER_DUE_US,
             }
         ),
-        [Effect::Answered {
-            asker: ASKER,
-            outcome: Outcome::Result(Reply::Properties(PropertyValues::default())),
-        }]
+        [Effect::Queue(QueueEffect::Answered {
+            asker: ASKER.0,
+            outcome: OutsideOutcome::Result(Reply::Properties(PropertyValues::default())),
+        })]
     );
     assert!(core.shared.borrow().state.queue.idle());
 }

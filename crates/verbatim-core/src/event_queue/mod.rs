@@ -36,12 +36,12 @@ use std::future::Future;
 use std::pin::Pin;
 
 use serde::{Deserialize, Serialize};
-use verbatim_model::{Backend, Pid, WindowHandle};
+use verbatim_model::{Backend, Effect, Pid, WindowHandle};
 
 use crate::focus::backend::{BackendCache, JudgedWindow, WindowKey};
 
 pub(crate) use driver::{Core, Cx, Queue, ReplayMismatch, State};
-pub(crate) use inbox::{CoreRequest, Effect, Input, Timed};
+pub(crate) use inbox::{CoreRequest, Input, Timed};
 pub(crate) use limiter::{Item, MsaaClass, MsaaKey, PUMP_WINDOW_US, Place};
 pub(crate) use request::{Outcome, Refused, Request};
 pub(crate) use table::{Asker, Live};
@@ -233,8 +233,6 @@ pub(crate) trait Logic: Sized + 'static {
     type Entry: Clone + Debug + PartialEq;
     /// Core's facts that the functions and the rules below read and write.
     type Facts: Clone + Debug + PartialEq + Default;
-    /// What a function emits, such as speech.
-    type Said: Clone + Debug + PartialEq;
 
     /// The function of `entry`, run when it reaches the front.
     fn run(cx: Cx<Self>, entry: Self::Entry) -> Function;
@@ -289,7 +287,7 @@ pub(crate) trait Logic: Sized + 'static {
         token: u64,
         outcome: Outcome<verbatim_model::request::Reply>,
         (now_us, foreground): (u64, Option<Foreground>),
-        said: &mut Vec<Self::Said>,
+        said: &mut Vec<Effect>,
     ) -> Vec<Self::Entry> {
         let _ = (facts, token, outcome, now_us, foreground, said);
         Vec::new()
@@ -361,7 +359,7 @@ pub(crate) trait Logic: Sized + 'static {
         facts: &mut Self::Facts,
         instance: Instance,
         (foreground, retake): (Option<Foreground>, bool),
-        said: &mut Vec<Self::Said>,
+        said: &mut Vec<Effect>,
     ) -> Vec<Self::Entry> {
         let _ = (facts, instance, foreground, retake, said);
         Vec::new()
@@ -385,11 +383,7 @@ pub(crate) trait Logic: Sized + 'static {
     /// The waiting `entry` ended because the foreground changed
     /// ([`Logic::ends_at_foreground`]): what Core's facts keep of it
     /// change, and what that says goes into `said`.
-    fn ended_at_foreground(
-        facts: &mut Self::Facts,
-        entry: &Self::Entry,
-        said: &mut Vec<Self::Said>,
-    ) {
+    fn ended_at_foreground(facts: &mut Self::Facts, entry: &Self::Entry, said: &mut Vec<Effect>) {
         let _ = (facts, entry, said);
     }
 
@@ -407,7 +401,7 @@ pub(crate) trait Logic: Sized + 'static {
         facts: &mut Self::Facts,
         now_us: u64,
         foreground: Option<Foreground>,
-        said: &mut Vec<Self::Said>,
+        said: &mut Vec<Effect>,
     ) -> Vec<Self::Entry> {
         let _ = (facts, now_us, foreground, said);
         Vec::new()
@@ -453,7 +447,7 @@ pub(crate) trait Logic: Sized + 'static {
 
     /// `said`, emitted by the front entry `entry`'s function, stamped with
     /// what it carries of its entry.
-    fn stamp(entry: &Self::Entry, said: &mut Self::Said) {
+    fn stamp(entry: &Self::Entry, said: &mut Effect) {
         let _ = (entry, said);
     }
 

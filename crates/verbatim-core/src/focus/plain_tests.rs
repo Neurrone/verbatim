@@ -7,9 +7,9 @@ use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::{PropertyAnswer, PropertyId, PropertyValue, PropertyValues};
 use verbatim_model::request::{
     CandidateAnswer, FindScope, FocusNode, FocusRead, Follow, FollowGroup, Followed, Front,
-    GhostFront, NodeRead, NodeWindow, ObjectRead, ObjectRef, Outcome as WireOutcome, Press,
-    PressAction, Purpose, QueueEffect, QueueInput, ReadObject, Refusal, RelationFound,
-    RelationQuery, Reply, Request as Wire,
+    GhostFront, NodeRead, NodeWindow, ObjectRead, ObjectRef, Outcome as WireOutcome,
+    OutsideOutcome, Press, PressAction, Purpose, QueueEffect, QueueInput, ReadObject, Refusal,
+    RelationFound, RelationQuery, Reply, Request as Wire,
 };
 use verbatim_model::{
     Effect as Said, KeySeq, NodeId, OutpostId, Pid, QueryKind, ReviewCommand, Role, SegmentContent,
@@ -20,9 +20,10 @@ use crate::entries::tests::{
     APP, Held, LISTENER, OUTPOST, SPOKEN, answer, entry, focus_read, held, msaa_tell, ready,
 };
 use crate::entries::{Entry, feed};
-use crate::event_queue::{Asker, Effect, Foreground, Input, Instance, Outcome, Reader, Timed};
+use crate::event_queue::{Asker, Foreground, Input, Instance, Reader, Timed};
 use crate::focus::versions::{Committed, ReadBy};
 use crate::keys::entry::PressEntry;
+use verbatim_model::Effect;
 
 /// hungwin's window, which the shell's foreground report names in place
 /// of the ghost in front of it.
@@ -66,12 +67,12 @@ fn effects(held: &mut Held, at_us: u64, input: Input<Entry>) -> Vec<String> {
         .unwrap()
         .into_iter()
         .filter_map(|effect| match effect {
-            Effect::Send { to, ask } => Some(format!(
+            Effect::Queue(QueueEffect::Send { to, ask }) => Some(format!(
                 "send {:?} {}",
                 to.reader,
                 crate::entries::tests::kind(&ask)
             )),
-            Effect::Said(Said::Speak(utterance, _)) => Some(
+            Said::Speak(utterance, _) => Some(
                 utterance
                     .segments
                     .iter()
@@ -80,10 +81,14 @@ fn effects(held: &mut Held, at_us: u64, input: Input<Entry>) -> Vec<String> {
                     .collect::<Vec<_>>()
                     .join(" "),
             ),
-            Effect::NotRespondingSound => Some("sound".to_owned()),
-            Effect::Said(Said::StopSpeech) => Some("stop".to_owned()),
-            Effect::Undecodable(number) => Some(format!("undecodable {}", number.0)),
-            Effect::CheckHung(windows) => Some(format!("check {windows:?}")),
+            Effect::PlayEarcon(verbatim_model::Earcon::AppNotResponding) => {
+                Some("sound".to_owned())
+            }
+            Said::StopSpeech => Some("stop".to_owned()),
+            Effect::Queue(QueueEffect::Undecodable(number)) => {
+                Some(format!("undecodable {}", number.0))
+            }
+            Effect::Queue(QueueEffect::CheckHung(windows)) => Some(format!("check {windows:?}")),
             _ => None,
         })
         .collect()
@@ -886,13 +891,15 @@ fn a_request_from_outside_the_queue_on_the_plain_node_is_answered_with_nothing_s
     .unwrap();
     assert_eq!(
         effects,
-        [Effect::Answered {
-            asker: Asker(5),
-            outcome: Outcome::Result(Reply::Properties(PropertyValues(vec![PropertyAnswer {
-                id: PropertyId::Role,
-                value: Some(PropertyValue::Role(Role::Window)),
-            }]))),
-        }]
+        [Effect::Queue(QueueEffect::Answered {
+            asker: 5,
+            outcome: OutsideOutcome::Result(Reply::Properties(PropertyValues(vec![
+                PropertyAnswer {
+                    id: PropertyId::Role,
+                    value: Some(PropertyValue::Role(Role::Window)),
+                }
+            ]))),
+        })]
     );
 }
 
