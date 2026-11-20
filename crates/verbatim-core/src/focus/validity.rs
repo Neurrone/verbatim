@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::{PropertyId, PropertyValue, PropertyValues};
 use verbatim_model::request::{
-    CandidateAnswer, CandidateFacts, Depth, FocusRead, Identity, MsaaIds,
+    CandidateAnswer, CandidateFacts, Depth, FocusRead, Identity, MsaaIds, Refusal,
 };
 use verbatim_model::tell::{Event, Read, TellWindow};
 use verbatim_model::{NodeSnapshot, Role, TraceId, WindowHandle};
@@ -35,7 +35,8 @@ use super::duplicate::{msaa_duplicate, uia_duplicate};
 use super::msaa_run::{TurnDepth, UnlessSame};
 use super::versions::{LastFocus, ReadBy, Versions};
 use crate::entries::{Candidate, Entries, Entry, UiaFocus};
-use crate::event_queue::{Cx, Item};
+use crate::event_queue::{Cx, Item, Outcome, Refused};
+use crate::state::SrState;
 use verbatim_model::class::by_class;
 
 /// File Explorer, by its executable name.
@@ -113,6 +114,32 @@ impl Reason {
     pub(crate) fn tried(self) -> bool {
         matches!(self, Self::NotThere | Self::NotFocused | Self::NotMenuPopup)
     }
+}
+
+/// A refusal by the rows at a candidate's turn: one that came from a read
+/// of it ([`Reason::tried`]) ends the readers' last focus's fence.
+pub(crate) fn refused(facts: &mut SrState, reason: Reason) {
+    if reason.tried() {
+        facts.versions.tried_and_refused();
+    }
+}
+
+/// A focus read that answered `outcome`, not a result: Core forgets the
+/// focus's caret and selection facts, and the readers' last focus's fence
+/// ends when the read was tried and found the object gone or not focused,
+/// or its reader ended (Dickson, 2026-11-18). A read refused as read
+/// through the other API or as unsupported, a malformed answer, and a read
+/// not answered or no longer awaited were no try, and leave the fence.
+pub(crate) fn failed_read<T>(facts: &mut SrState, outcome: &Outcome<T>) {
+    if matches!(
+        outcome,
+        Outcome::NotThere
+            | Outcome::ReaderEnded
+            | Outcome::Refused(Refused::Reader(Refusal::NotFocused))
+    ) {
+        facts.versions.tried_and_refused();
+    }
+    facts.focus_read_failed();
 }
 
 /// The one answer about a candidate.

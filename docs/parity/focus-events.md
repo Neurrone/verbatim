@@ -159,7 +159,7 @@ duplicate.
   item twice, as NVDA does. Core's identity tests
   (`the_items_own_focus_again_is_read_unless_it_is_the_same`,
   `the_lists_own_focus_reaching_the_same_item_says_nothing`,
-  `a_try_refused_or_gone_clears_the_fence`,
+  `each_failed_focus_read_ends_the_fence_by_one_rule`,
   `every_order_of_the_check_and_the_pair_says_the_item_once`) and the
   replay `the_recorded_settings_dialog_says_its_item_once`.
 

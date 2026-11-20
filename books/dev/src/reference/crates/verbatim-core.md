@@ -814,7 +814,10 @@ entry that executed it (`LastFocus::since`), set by
 `Versions::execute(focus, since)` from `Origin::fence`, which every path
 names explicitly (a run's or menu start's executed candidate's own fence,
 any other entry's own); a candidate tried and refused, not there or whose
-reader ended clears it (`Reason::tried`, `Versions::tried_and_refused`).
+reader ended clears it, by one function per answer: `validity::refused`
+for a refusal by the rows (`Reason::tried`), and `validity::failed_read`
+for every focus read's outcome other than a result, which also forgets
+the caret and selection facts.
 `validity::depth` gives an MSAA focus `TurnDepth::UnlessSame` when its
 fence equals `since`, the last focus is held by a child id above 0, and
 it is the committed focus; the `Identity` is made from the committed

@@ -21,11 +21,15 @@ use verbatim_model::request::{
 use verbatim_model::tell::{Event, EventObject, Payload, TellWindow};
 use verbatim_model::{KeySeq, Pid, Role, StateSet, TraceId, WindowHandle};
 
+use verbatim_model::property::RuntimeId;
+use verbatim_model::request::{KnownAncestor, RequestNumber, RouteEnd};
+
+use crate::entries::Entry;
 use crate::entries::tests::{
     Held, LISTENER, NOTHING, OUTPOST, answer, answer_outcome, entry, feed_at, focus_read, held,
     listener_answer, msaa_tell, not_focused, ready, ready_at, uia_tell, values,
 };
-use crate::event_queue::{Instance, Reader, Timed};
+use crate::event_queue::{Foreground, Input, Instance, Reader, Timed};
 use crate::keys::entry::Fence;
 use verbatim_model::Effect;
 use verbatim_model::request::QueueEffect;
@@ -39,6 +43,17 @@ const ITEM: MsaaIds = MsaaIds {
 
 /// The window's title, spoken with the first focus in it.
 const TITLE: &str = "Label(\"Editor\") Role(Window)";
+
+/// The window in front: the top-level window of the list and of the island.
+const IN_FRONT: Foreground = Foreground {
+    window: WindowHandle(4),
+    root_owner: WindowHandle(4),
+    process: crate::entries::tests::APP,
+    thread: 41,
+    by_class: None,
+    shell: false,
+    ..Foreground::BLANK
+};
 
 /// The list's own focus, on child 0, raised at `at_us`.
 fn list_tell(at_us: u64) -> Event {
@@ -319,70 +334,205 @@ fn a_run_keeps_its_executed_candidates_own_fence() {
     assert_eq!(since(&held), Some(Some(older)));
 }
 
-/// The outcomes of another candidate's read between the pair: what each
-/// leaves of the fence, and the depth the item's own focus then gets.
-#[expect(
-    clippy::option_option,
-    reason = "no last focus, its fence cleared, or its fence"
-)]
-fn between(outcome: WireOutcome) -> (Option<Option<Fence>>, Depth) {
-    let mut held = spoken_copy(3);
-    assert_eq!(
-        feed_at(&mut held, 3_000, entry(msaa_tell(-9))),
-        ["send Outpost(Pid(40)) MsaaRun"]
+/// A kind of focus read Core asks while the item "Alpha" is the readers'
+/// last focus, in one top-level window holding the MSAA list and a UI
+/// Automation island, window 6 (mockapp's `uia_island`), so no foreground
+/// marker comes between.
+#[derive(Clone, Copy, Debug)]
+enum Kind {
+    Run,
+    MenuStart,
+    MenuCheck,
+    Startup,
+    Listener,
+    Completion,
+    Afresh,
+}
+
+/// The one request `input` sent at `at_us`.
+fn one_sent(held: &mut Held, at_us: u64, input: Input<Entry>) -> u64 {
+    let (sent, _) = crate::entries::tests::sent_at(held, at_us, input);
+    let [number] = sent[..] else {
+        panic!("one request: {sent:?}");
+    };
+    number
+}
+
+/// A UI Automation tell of `kind` on the island's element `[42, 1]`.
+fn island(kind: EventKind) -> Event {
+    let mut tell = uia_tell(1, Vec::new());
+    tell.kind = kind;
+    if let TellWindow::Found(facts) = &mut tell.window {
+        facts.window.handle = WindowHandle(6);
+    }
+    if let Some(probe) = tell
+        .checked
+        .as_mut()
+        .and_then(|checked| checked.probe.as_mut())
+    {
+        probe.window = WindowHandle(6);
+    }
+    tell
+}
+
+/// "Alpha", 1 of 3, spoken after a key, then a read of `kind` asked with no
+/// key between: the reader asked and the request's number.
+fn asked(kind: Kind) -> (Held, Instance, u64) {
+    let mut held = ready();
+    held.state.arrivals.key_joined(KeySeq::new(3));
+    feed_at(&mut held, 1_000, entry(item_tell(1_000)));
+    let said = feed_at(
+        &mut held,
+        2_000,
+        answer(OUTPOST, 1, item_answer("Alpha", (1, 3))),
     );
-    feed_at(&mut held, 4_000, answer_outcome(OUTPOST, 2, outcome));
-    let left = since(&held);
-    feed_at(&mut held, 5_000, entry(item_tell(5_000)));
-    (left, depth_out(&held))
+    assert_eq!(said, [TITLE.to_owned(), item_said("Alpha", (1, 3))]);
+    let island = island(EventKind::UiaFocus);
+    let mut tell = msaa_tell(-9);
+    let input = match kind {
+        Kind::Run => entry(tell),
+        Kind::MenuStart => {
+            tell.kind = EventKind::MenuStart;
+            entry(tell)
+        }
+        Kind::MenuCheck => {
+            feed_at(&mut held, 2_100, Input::Foreground(IN_FRONT));
+            feed_at(
+                &mut held,
+                2_200,
+                answer(OUTPOST, 2, item_answer("Alpha", (1, 3))),
+            );
+            tell.kind = EventKind::MenuEnd;
+            feed_at(&mut held, 2_300, entry(tell));
+            Input::Tick
+        }
+        Kind::Startup => Input::Foreground(IN_FRONT),
+        Kind::Listener => {
+            let number = one_sent(&mut held, 3_000, entry(island));
+            return (held, LISTENER, number);
+        }
+        Kind::Completion | Kind::Afresh => {
+            let read = one_sent(&mut held, 3_000, entry(island));
+            let mut object = listener_answer();
+            if let (Kind::Afresh, Some(route)) = (kind, object.route.as_mut()) {
+                route.end = RouteEnd::Known(KnownAncestor::Uia(RuntimeId(vec![42, 4])));
+            }
+            answer(LISTENER, read, Reply::Object(Box::new(object)))
+        }
+    };
+    let number = one_sent(&mut held, 60_000, input);
+    (held, OUTPOST, number)
 }
 
-/// A candidate tried and refused, not there, or whose reader ended clears
-/// the fence (Dickson, 2026-11-18): the item's own focus after it is read
-/// in full, as the mouse return needs.
+/// The mouse return to "Alpha" with no key between: its own focus, asked
+/// unless it is the item while the fence lasts, answered as the outpost
+/// answers; what it said.
+fn returned(held: &mut Held) -> Vec<String> {
+    let number = one_sent(held, 100_000, entry(item_tell(100_000)));
+    let reply = match depth_out(held) {
+        Depth::FullUnlessSame { .. } => Reply::CandidateSame,
+        _ => item_answer("Alpha", (1, 3)),
+    };
+    feed_at(held, 101_000, answer(OUTPOST, number, reply))
+}
+
+/// Each outcome but a result of each kind of focus read, as its reader
+/// sends it (`None`: the shell refused it as hung), against the fence
+/// (Dickson, 2026-11-18, ADR 0004): a read tried and found gone or not
+/// focused, or whose reader ended, ends it, and the mouse return speaks
+/// the item; any other leaves it, and the return is the same item. The
+/// return's words are derived from ADR 0004's ruling and the committed
+/// focus, still the item, so it is said alone: NVDA has no failed read of
+/// a focus it was told of, so capture C2 cannot be made (Dickson's ruling
+/// of 2026-11-20 for captures that cannot be made). The completion refused
+/// as read through MSAA is the second half of a split pair with a UI
+/// Automation focus between (`docs/parity/focus-events.md`, "Duplicate
+/// focus suppression"): derived from NVDA's pinned source, which drops
+/// that focus before queuing, so the item is said once (the same ruling;
+/// no application is known to produce it, so capture C6 cannot be made).
 #[test]
-fn a_try_refused_or_gone_clears_the_fence() {
-    for outcome in [
-        WireOutcome::Result(Reply::Candidate(not_focused())),
-        WireOutcome::Result(Reply::Candidate(CandidateAnswer {
-            facts: CandidateFacts::NotThere,
+fn each_failed_focus_read_ends_the_fence_by_one_rule() {
+    use Kind::{Afresh, Completion, Listener, MenuCheck, MenuStart, Run, Startup};
+    use WireOutcome::{Ended, NotThere, Refused};
+    use verbatim_model::request::Refusal::{NotFocused, ReadThroughMsaa, Unsupported};
+    let found = |facts| {
+        Some(WireOutcome::Result(Reply::Candidate(CandidateAnswer {
+            facts,
             read: None,
-        })),
-        WireOutcome::NotThere,
-        WireOutcome::Ended,
+        })))
+    };
+    let unfocused = Some(WireOutcome::Result(Reply::Candidate(not_focused())));
+    let mut button = item_read("Context", (1, 1));
+    button.focus.read.values = values("Context", Role::Button);
+    let not_popup = Some(WireOutcome::Result(Reply::Candidate(
+        CandidateAnswer::focused(button),
+    )));
+    for (kind, outcome, ends) in [
+        (Run, Some(NotThere), true),
+        (Run, Some(Ended), true),
+        (Run, unfocused.clone(), true),
+        (Run, found(CandidateFacts::NotThere), true),
+        (Run, found(CandidateFacts::Skipped), false),
+        (Run, None, false),
+        (MenuStart, not_popup, true),
+        (MenuStart, Some(Ended), true),
+        (MenuCheck, Some(NotThere), true),
+        (MenuCheck, Some(Ended), true),
+        (MenuCheck, unfocused, true),
+        (Startup, Some(NotThere), true),
+        (Startup, Some(Ended), true),
+        (Listener, Some(Ended), true),
+        (Listener, Some(NotThere), true),
+        (Listener, Some(Refused(NotFocused)), true),
+        (Listener, Some(Refused(Unsupported)), false),
+        (Completion, Some(Ended), true),
+        (Completion, Some(NotThere), true),
+        (Completion, Some(Refused(ReadThroughMsaa)), false),
+        (Completion, Some(Refused(Unsupported)), false),
+        (Completion, None, false),
+        (Afresh, Some(NotThere), true),
+        (Afresh, Some(Ended), true),
     ] {
-        assert_eq!(
-            between(outcome.clone()),
-            (Some(None), Depth::FullIfFocused),
-            "{outcome:?}"
-        );
+        let (mut held, from, number) = asked(kind);
+        let fence = held.state.arrivals.fence();
+        let row = format!("{kind:?} {outcome:?}");
+        let input = outcome.map_or(Input::RefusedHung(RequestNumber(number)), |outcome| {
+            answer_outcome(from, number, outcome)
+        });
+        feed_at(&mut held, 70_000, input);
+        assert_eq!(since(&held), Some((!ends).then_some(fence)), "{row}");
+        let said = if ends {
+            vec![item_said("Alpha", (1, 3))]
+        } else {
+            Vec::new()
+        };
+        assert_eq!(returned(&mut held), said, "{row}");
     }
 }
 
-/// A candidate skipped, or whose read did not answer, was never tried
-/// through MSAA: the fence stays.
+/// `again` after a failed read: a UI Automation menu opening on the
+/// committed focus speaks it again and leaves the fence the failed read
+/// ended, so the next MSAA focus of the same fence is read to its focused
+/// state, not judged by the identity check.
 #[test]
-fn a_skip_or_no_answer_keeps_the_fence() {
-    let fence = Some(Some(spoken_copy(3).state.arrivals.fence()));
-    for outcome in [
-        WireOutcome::Result(Reply::Candidate(CandidateAnswer {
-            facts: CandidateFacts::Skipped,
-            read: None,
-        })),
-        WireOutcome::NotResponding,
-    ] {
-        assert_eq!(
-            between(outcome.clone()),
-            (
-                fence,
-                Depth::FullUnlessSame {
-                    ids: ITEM,
-                    identity: Box::new(copy_identity()),
-                }
-            ),
-            "{outcome:?}"
-        );
-    }
+fn a_menu_opening_after_a_failed_read_leaves_the_fence_ended() {
+    let (mut held, _, completion) = asked(Kind::Completion);
+    let read = Reply::Focus(Box::new(focus_read(None)));
+    feed_at(&mut held, 61_000, answer(OUTPOST, completion, read));
+    let run = one_sent(&mut held, 62_000, entry(msaa_tell(-9)));
+    feed_at(
+        &mut held,
+        63_000,
+        answer_outcome(OUTPOST, run, WireOutcome::NotThere),
+    );
+    let opening = entry(island(EventKind::UiaMenuOpened));
+    assert_eq!(
+        feed_at(&mut held, 64_000, opening),
+        ["Label(\"OK\") Role(Button)"]
+    );
+    assert_eq!(since(&held), Some(None));
+    feed_at(&mut held, 65_000, entry(item_tell(65_000)));
+    assert_eq!(depth_out(&held), Depth::FullIfFocused);
 }
 
 /// A foreground marker of an unrelated top-level window empties the last
@@ -423,32 +573,6 @@ fn a_uia_focus_sets_its_fence() {
     assert_eq!(since(&held), Some(Some(held.state.arrivals.fence())));
 }
 
-/// A UI Automation focus whose element is gone at its completion clears
-/// the fence.
-#[test]
-fn a_uia_focus_gone_at_its_completion_clears_the_fence() {
-    let mut held = spoken_copy(3);
-    let (asked, _) =
-        crate::entries::tests::sent_at(&mut held, 3_000, entry(uia_tell(1, Vec::new())));
-    let [object] = asked[..] else {
-        panic!("one listener read: {asked:?}");
-    };
-    let (asked, _) = crate::entries::tests::sent_at(
-        &mut held,
-        3_001,
-        answer(LISTENER, object, Reply::Object(Box::new(listener_answer()))),
-    );
-    let [completion] = asked[..] else {
-        panic!("one completion: {asked:?}");
-    };
-    feed_at(
-        &mut held,
-        3_002,
-        answer_outcome(OUTPOST, completion, WireOutcome::NotThere),
-    );
-    assert_eq!(since(&held), Some(None));
-}
-
 /// The listener's tell of an input desktop switch, `open` when the new one
 /// can be opened.
 fn switch(open: bool) -> QueueInput {
@@ -485,21 +609,8 @@ fn a_desktop_switch_while_the_identity_read_is_out_leaves_its_answer_a_duplicate
     let mut held = spoken_copy(3);
     // The window in front, its first report's startup read answered with
     // the item.
-    let in_front = crate::event_queue::Foreground {
-        window: WindowHandle(4),
-        root_owner: WindowHandle(4),
-        process: crate::entries::tests::APP,
-        thread: 41,
-        by_class: None,
-        shell: false,
-        ..crate::event_queue::Foreground::BLANK
-    };
     assert_eq!(
-        feed_at(
-            &mut held,
-            2_500,
-            crate::event_queue::Input::Foreground(in_front)
-        ),
+        feed_at(&mut held, 2_500, Input::Foreground(IN_FRONT)),
         ["send Outpost(Pid(40)) CurrentFocus"]
     );
     assert_eq!(
@@ -653,39 +764,6 @@ fn a_focus_on_the_desktop_window_starts_no_outpost_and_asks_nothing() {
     assert!(held.state.queue.front_for_tests().is_none());
 }
 
-/// The read afresh of a UI Automation focus, after its walk met an
-/// ancestor Core no longer knows, keeps the focus entry's fence.
-#[test]
-fn the_read_afresh_keeps_its_entrys_fence() {
-    use verbatim_model::property::RuntimeId;
-    use verbatim_model::request::{KnownAncestor, RouteEnd};
-    let mut held = ready();
-    held.state.arrivals.key_joined(KeySeq::new(8));
-    feed_at(&mut held, 1_000, entry(uia_tell(1, Vec::new())));
-    let mut object = listener_answer();
-    if let Some(route) = object.route.as_mut() {
-        route.end = RouteEnd::Known(KnownAncestor::Uia(RuntimeId(vec![42, 4])));
-    }
-    assert_eq!(
-        feed_at(
-            &mut held,
-            2_000,
-            answer(LISTENER, 1, Reply::Object(Box::new(object)))
-        ),
-        ["send Outpost(Pid(40)) CurrentFocus"]
-    );
-    feed_at(
-        &mut held,
-        3_000,
-        answer(
-            OUTPOST,
-            2,
-            Reply::Candidate(CandidateAnswer::focused(focus_read(None))),
-        ),
-    );
-    assert_eq!(since(&held), Some(Some(held.state.arrivals.fence())));
-}
-
 /// One step of the recording's pair in some order.
 #[derive(Clone, Copy, Debug)]
 enum Step {
@@ -705,20 +783,7 @@ enum Step {
 /// said, and how many requests were asked.
 fn pair_in(order: &[Step]) -> (Vec<String>, usize) {
     let mut held = ready();
-    let in_front = crate::event_queue::Foreground {
-        window: WindowHandle(4),
-        root_owner: WindowHandle(4),
-        process: crate::entries::tests::APP,
-        thread: 41,
-        by_class: None,
-        shell: false,
-        ..crate::event_queue::Foreground::BLANK
-    };
-    feed_at(
-        &mut held,
-        100,
-        crate::event_queue::Input::Foreground(in_front),
-    );
+    feed_at(&mut held, 100, Input::Foreground(IN_FRONT));
     feed_at(
         &mut held,
         200,

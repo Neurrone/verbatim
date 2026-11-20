@@ -316,13 +316,7 @@ pub(crate) async fn read_current<D: FocusReadDepth<Parsed = Box<FocusRead>>>(
             return;
         }
         outcome => {
-            // A re-take answered not there, or whose reader ended, tried
-            // the focus and found it gone: the readers' last focus's fence
-            // ends.
-            if matches!(outcome, Outcome::NotThere | Outcome::ReaderEnded) {
-                cx.facts_mut().versions.tried_and_refused();
-            }
-            cx.facts_mut().focus_read_failed();
+            super::validity::failed_read(&mut cx.facts_mut(), &outcome);
             return;
         }
     };

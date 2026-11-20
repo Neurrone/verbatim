@@ -23,7 +23,7 @@ use verbatim_model::{NodeId, Pid, TextAnchor};
 use super::FOCUS_SET;
 use super::execute::{Known, Origin, execute};
 use super::shown::{self, Hidden};
-use super::validity::{self, Answered, Reason, Settled, Subject, Validity};
+use super::validity::{self, Answered, Settled, Subject, Validity};
 use super::versions::ReadBy;
 use crate::entries::{Candidate, Entries};
 use crate::event_queue::{Cx, FOCUS_DUE_US, Outcome, Reader, Request, RequestWindow};
@@ -305,28 +305,14 @@ pub(crate) async fn read_full(
 }
 
 /// The result of a candidate's read, or `None` for an outcome that ended
-/// it, which clears Core's caret baseline. A read answered not there, or
-/// whose reader ended, tried the focus and found it gone: the readers'
-/// last focus's fence ends ([`super::versions::Versions::tried_and_refused`]).
+/// it, judged by [`validity::failed_read`].
 fn answer_of<T>(cx: &mut Cx<Entries>, outcome: Outcome<T>) -> Option<T> {
-    let tried = match outcome {
-        Outcome::Result(answer) => return Some(answer),
-        Outcome::NotThere | Outcome::ReaderEnded => true,
-        Outcome::Refused(_) | Outcome::NotResponding | Outcome::NoLongerAwaited(_) => false,
-    };
-    let mut facts = cx.facts_mut();
-    if tried {
-        facts.versions.tried_and_refused();
-    }
-    facts.focus_read_failed();
-    None
-}
-
-/// A refusal at a candidate's turn: one that came from a read of it ends
-/// the readers' last focus's fence.
-fn refused(cx: &mut Cx<Entries>, reason: Reason) {
-    if reason.tried() {
-        cx.facts_mut().versions.tried_and_refused();
+    match outcome {
+        Outcome::Result(answer) => Some(answer),
+        outcome => {
+            validity::failed_read(&mut cx.facts_mut(), &outcome);
+            None
+        }
     }
 }
 
@@ -346,7 +332,7 @@ async fn walk(cx: &mut Cx<Entries>, candidates: Vec<Candidate>) {
     loop {
         let walk = validity::with_view(cx, false, |view| validity::judge_run(rest, view));
         for reason in walk.refused {
-            refused(cx, reason);
+            validity::refused(&mut cx.facts_mut(), reason);
         }
         let Some(found) = walk.found else {
             return;
@@ -374,7 +360,7 @@ async fn walk(cx: &mut Cx<Entries>, candidates: Vec<Candidate>) {
                     // The object named, which a duplicate ends the run as.
                     None => cx.facts_mut().run_executed = true,
                     Some(reason) => {
-                        refused(cx, reason);
+                        validity::refused(&mut cx.facts_mut(), reason);
                         rest = found.older;
                         continue;
                     }
@@ -382,7 +368,7 @@ async fn walk(cx: &mut Cx<Entries>, candidates: Vec<Candidate>) {
                 return;
             }
             TurnAnswer::Answered(Answered::Unread(unread)) => {
-                refused(cx, unread.reason());
+                validity::refused(&mut cx.facts_mut(), unread.reason());
                 rest = found.older;
                 continue;
             }
@@ -390,7 +376,7 @@ async fn walk(cx: &mut Cx<Entries>, candidates: Vec<Candidate>) {
         };
         match validity::read_at(cx, Subject::Msaa(candidate), &facts, false) {
             Settled::Refused(reason) => {
-                refused(cx, reason);
+                validity::refused(&mut cx.facts_mut(), reason);
                 rest = found.older;
             }
             Settled::Duplicate => {

@@ -129,8 +129,7 @@ pub(crate) async fn run(mut cx: Cx<Entries>, focus: UiaFocus) {
     let object = match cx.ask(read, due_us).await {
         Outcome::Result(object) => object,
         outcome => {
-            refused_or_not_there(cx, &outcome);
-            cx.facts_mut().focus_read_failed();
+            validity::failed_read(&mut cx.facts_mut(), &outcome);
             return;
         }
     };
@@ -174,19 +173,13 @@ pub(crate) async fn run(mut cx: Cx<Entries>, focus: UiaFocus) {
     };
     let read = match outcome {
         Outcome::Result(read) => read,
-        // The outpost ended: its registrations went with it (Table 10,
-        // column F).
-        Outcome::ReaderEnded => {
-            cx.facts_mut().focus_read_failed();
-            return;
-        }
-        outcome @ (Outcome::Refused(_)
-        | Outcome::NotThere
-        | Outcome::NotResponding
-        | Outcome::NoLongerAwaited(_)) => {
-            refused_or_not_there(cx, &outcome);
-            cx.facts_mut().focus_read_failed();
-            unexecuted(cx, window);
+        outcome => {
+            validity::failed_read(&mut cx.facts_mut(), &outcome);
+            // An outpost that ended took its registrations with it (Table
+            // 10, column F).
+            if !matches!(outcome, Outcome::ReaderEnded) {
+                unexecuted(cx, window);
+            }
             return;
         }
     };
@@ -250,11 +243,7 @@ async fn afresh(
             return;
         }
         outcome => {
-            refused_or_not_there(cx, &outcome);
-            if matches!(outcome, Outcome::ReaderEnded) {
-                cx.facts_mut().versions.tried_and_refused();
-            }
-            cx.facts_mut().focus_read_failed();
+            validity::failed_read(&mut cx.facts_mut(), &outcome);
             return;
         }
     };
@@ -265,18 +254,6 @@ async fn afresh(
     let executed = execute(&mut cx.facts_mut(), &origin, &read, &known, read_by);
     let fence = crate::entries::front_fence(cx);
     executed.deliver(cx, fence);
-}
-
-/// A UI Automation focus read tried at its own turn and answered refused or
-/// not there ends the readers' last focus's fence (Dickson, 2026-11-18).
-fn refused_or_not_there<T>(cx: &mut Cx<Entries>, outcome: &Outcome<T>) {
-    // A malformed answer is no try (`Refused::Undecodable`).
-    if matches!(
-        outcome,
-        Outcome::Refused(crate::event_queue::Refused::Reader(_)) | Outcome::NotThere
-    ) {
-        cx.facts_mut().versions.tried_and_refused();
-    }
 }
 
 /// A completion the outpost of `window`'s application answered, or Core

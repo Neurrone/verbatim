@@ -658,21 +658,6 @@ fn the_object_named_is_a_duplicate_unless_refused_before_the_duplicate_test() {
     );
 }
 
-#[test]
-fn only_a_refusal_a_read_answered_ends_the_fence() {
-    for (reason, tried) in [
-        (Reason::NotThere, true),
-        (Reason::NotFocused, true),
-        (Reason::NotMenuPopup, true),
-        (Reason::Skipped, false),
-        (Reason::Acceptance, false),
-        (Reason::Verdict, false),
-        (Reason::NoReader, false),
-    ] {
-        assert_eq!(reason.tried(), tried, "{reason:?}");
-    }
-}
-
 // The foreground rows.
 
 #[test]

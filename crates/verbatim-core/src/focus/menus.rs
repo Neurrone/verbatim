@@ -133,9 +133,7 @@ async fn start(cx: &mut Cx<Entries>, candidate: &Candidate, run_executed: bool) 
         |cx: &Cx<Entries>, facts| validity::at(cx, Subject::Msaa(candidate), facts, run_executed);
     match judged(cx, candidate.confirmation.facts()) {
         Validity::Refused(reason) => {
-            if reason.tried() {
-                cx.facts_mut().versions.tried_and_refused();
-            }
+            validity::refused(&mut cx.facts_mut(), reason);
             return;
         }
         Validity::Duplicate => return,
@@ -148,9 +146,7 @@ async fn start(cx: &mut Cx<Entries>, candidate: &Candidate, run_executed: bool) 
     };
     let (facts, read) = match answered {
         Answered::Unread(unread) => {
-            if unread.reason().tried() {
-                cx.facts_mut().versions.tried_and_refused();
-            }
+            validity::refused(&mut cx.facts_mut(), unread.reason());
             return;
         }
         Answered::Read { facts, read } => (facts, read),
@@ -158,9 +154,7 @@ async fn start(cx: &mut Cx<Entries>, candidate: &Candidate, run_executed: bool) 
     match validity::read_at(cx, Subject::Msaa(candidate), &facts, run_executed) {
         Settled::Valid(_) => {}
         Settled::Refused(reason) => {
-            if reason.tried() {
-                cx.facts_mut().versions.tried_and_refused();
-            }
+            validity::refused(&mut cx.facts_mut(), reason);
             return;
         }
         Settled::Duplicate => return,
@@ -202,21 +196,13 @@ pub(crate) async fn check(mut cx: Cx<Entries>, check: MenuCheck) {
             return;
         }
         outcome => {
-            // A check answered not there, or whose reader ended, tried the
-            // focus and found it gone: the readers' last focus's fence ends.
-            let mut facts = cx.facts_mut();
-            if matches!(outcome, Outcome::NotThere | Outcome::ReaderEnded) {
-                facts.versions.tried_and_refused();
-            }
-            facts.focus_read_failed();
+            validity::failed_read(&mut cx.facts_mut(), &outcome);
             return;
         }
     };
     let (facts, read) = match answered {
         Answered::Unread(unread) => {
-            if unread.reason().tried() {
-                cx.facts_mut().versions.tried_and_refused();
-            }
+            validity::refused(&mut cx.facts_mut(), unread.reason());
             return;
         }
         Answered::Read { facts, read } => (facts, read),
@@ -225,9 +211,7 @@ pub(crate) async fn check(mut cx: Cx<Entries>, check: MenuCheck) {
     match validity::read_at(&cx, Subject::MenuCheck(ids.as_ref()), &facts, false) {
         Settled::Valid(_) => {}
         Settled::Refused(reason) => {
-            if reason.tried() {
-                cx.facts_mut().versions.tried_and_refused();
-            }
+            validity::refused(&mut cx.facts_mut(), reason);
             return;
         }
         Settled::Duplicate => return,

@@ -371,43 +371,6 @@ fn the_startup_read_keeps_its_entrys_fence() {
     assert_eq!(since(&state), Some(Some(state.arrivals.fence())));
 }
 
-/// The re-take taken silently keeps its entry's fence; a re-take answered
-/// not there clears it.
-#[test]
-fn the_retake_keeps_its_fence_and_one_not_there_clears_it() {
-    let mut state = started();
-    state.arrivals.key_joined(verbatim_model::KeySeq::new(3));
-    feed_at(&mut state, 1_000, Input::ReaderEnded(OUTPOST));
-    ready_at(&mut state, 1_100, REPLACEMENT);
-    let read = minted_anew(focus_read(None));
-    feed_at(
-        &mut state,
-        1_200,
-        answer(
-            REPLACEMENT,
-            3,
-            Reply::Candidate(CandidateAnswer::focused(read)),
-        ),
-    );
-    assert_eq!(since(&state), Some(Some(state.arrivals.fence())));
-    let second = Instance {
-        reader: Reader::Outpost(APP),
-        generation: GENERATION + 2,
-    };
-    feed_at(&mut state, 2_000, Input::ReaderEnded(REPLACEMENT));
-    ready_at(&mut state, 2_100, second);
-    feed_at(
-        &mut state,
-        2_200,
-        crate::entries::tests::answer_outcome(
-            second,
-            5,
-            verbatim_model::request::Outcome::NotThere,
-        ),
-    );
-    assert_eq!(since(&state), Some(None));
-}
-
 /// The Run dialog read through MSAA: the edit "Open" focused in the
 /// dialog "Run", a window object of top-level window 4.
 fn run_dialog() -> FocusRead {
