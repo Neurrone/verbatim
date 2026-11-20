@@ -85,38 +85,34 @@ impl Liveness {
 /// outposts"): one application's outposts that fail while serving it, or
 /// the spares that fail while they wait. The first failure is replaced at
 /// once; each further one waits twice as long as the one before, from
-/// the first of its backoff (the supervisor's `Timings::backoff_first`) up
-/// to its limit (`Timings::backoff_limit`). Nothing is ever given up. The
-/// count starts again once what failed had stayed up for
-/// the time it must stay up (`STAYED_UP`), and, for an application, when it comes
-/// to the foreground, which also ends a wait that runs
-/// ([`foreground`](Self::foreground)).
+/// the first of its backoff up to its limit (both in
+/// [`BACKOFF`](super::BACKOFF)). Nothing is ever given up. The count
+/// starts again once what failed had stayed up for the time it must stay
+/// up, and, for an application, when it comes to the foreground
+/// ([`foreground`](Self::foreground)). The wait's end is kept by its
+/// owner: an application's record stage, or the spares'.
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Backoff {
     /// The failures counted since the count last started again.
     failures: u32,
-    /// When the replacement is given or started, while a wait runs, on
-    /// the run's shared clock.
-    due_us: Option<u64>,
 }
 
 impl Backoff {
-    /// Records, at `now_us`, a failure of an outpost that had been up for
-    /// `up`, and returns how long its replacement waits: none for the first
-    /// failure since the count started again, then `first`, doubling up to
-    /// `limit`; the wait runs until [`due`](Self::due). A failure of one
-    /// that had stayed up for `stayed_up` starts the count again.
+    /// Records a failure of an outpost that had been up for `up`, and
+    /// returns how long its replacement waits: none for the first failure
+    /// since the count started again, then `first`, doubling up to
+    /// `limit`. A failure of one that had stayed up for `stayed_up` starts
+    /// the count again.
     pub fn failed(
         &mut self,
         up: Duration,
-        now_us: u64,
         (first, limit, stayed_up): (Duration, Duration, Duration),
     ) -> Duration {
         if up >= stayed_up {
             self.failures = 0;
         }
         self.failures = self.failures.saturating_add(1);
-        let wait = match self.failures {
+        match self.failures {
             1 => Duration::ZERO,
             failures => {
                 // 2^(failures - 2) times `first`, stopped at `limit` before
@@ -124,33 +120,12 @@ impl Backoff {
                 let doublings = failures.saturating_sub(2).min(31);
                 first.saturating_mul(1 << doublings).min(limit)
             }
-        };
-        self.due_us = (!wait.is_zero()).then(|| after_us(now_us, wait));
-        wait
-    }
-
-    /// When the replacement is given or started, while a wait runs, on
-    /// the run's shared clock.
-    #[must_use]
-    pub fn due(&self) -> Option<u64> {
-        self.due_us
-    }
-
-    /// Whether the wait that ran has ended at `now_us`: once it says so,
-    /// no wait runs.
-    pub fn ended(&mut self, now_us: u64) -> bool {
-        let ended = self.due_us.is_some_and(|due| now_us >= due);
-        if ended {
-            self.due_us = None;
         }
-        ended
     }
 
-    /// The application came to the foreground: the count starts again,
-    /// and a wait that runs ends now. Returns whether one ran.
-    pub fn foreground(&mut self) -> bool {
+    /// The application came to the foreground: the count starts again.
+    pub fn foreground(&mut self) {
         self.failures = 0;
-        self.due_us.take().is_some()
     }
 }
 
@@ -167,9 +142,11 @@ pub struct Spares {
     kept: bool,
     /// The spares waiting, oldest first, each with whether it is ready.
     waiting: VecDeque<(OutpostId, bool)>,
-    /// The failures of spares while they waited, and the wait one's
-    /// replacement has before it starts.
+    /// The failures of spares while they waited.
     backoff: Backoff,
+    /// When the next spare may start, while a failure's wait runs, on the
+    /// run's shared clock.
+    due_us: Option<u64>,
 }
 
 impl Spares {
@@ -185,8 +162,10 @@ impl Spares {
         if !self.kept {
             return 0;
         }
-        if self.backoff.due().is_some() && !self.backoff.ended(now_us) {
-            return 0;
+        match self.due_us {
+            Some(due_us) if now_us < due_us => return 0,
+            Some(_) => self.due_us = None,
+            None => {}
         }
         count.saturating_sub(self.waiting.len())
     }
@@ -195,7 +174,7 @@ impl Spares {
     /// the run's shared clock.
     #[must_use]
     pub fn due(&self) -> Option<u64> {
-        self.backoff.due()
+        self.due_us
     }
 
     /// Lists a spare just started, at the back.
@@ -247,7 +226,9 @@ impl Spares {
         now_us: u64,
         times: (Duration, Duration, Duration),
     ) -> Duration {
-        self.backoff.failed(up, now_us, times)
+        let wait = self.backoff.failed(up, times);
+        self.due_us = (!wait.is_zero()).then(|| after_us(now_us, wait));
+        wait
     }
 }
 
@@ -257,8 +238,8 @@ mod tests {
 
     /// The supervisor's limits: a ping every 3 s, 3 missed.
     const LIMITS: WedgeLimits = WedgeLimits {
-        ping_interval: Duration::from_secs(3),
-        missed_pongs: 3,
+        ping_interval: super::super::PING_INTERVAL,
+        missed_pongs: super::super::MISSED_PONGS,
     };
 
     /// A start on the shared clock, in microseconds.
@@ -283,77 +264,48 @@ mod tests {
         );
     }
 
-    /// The backoff's times as the supervisor sets them: 1 s first, 30 s
-    /// at most, starting again after 60 s up.
-    const TIMES: (Duration, Duration, Duration) = (
-        Duration::from_secs(1),
-        Duration::from_secs(30),
-        Duration::from_secs(60),
-    );
+    /// The backoff's times: 1 s first, 30 s at most, starting again after
+    /// 60 s up.
+    const TIMES: (Duration, Duration, Duration) = super::super::BACKOFF;
 
     #[test]
     fn repeated_failures_wait_one_two_four_seconds_up_to_thirty_and_never_give_up() {
-        let now = START;
         let mut backoff = Backoff::default();
         let young = Duration::from_secs(1);
         let waits: Vec<u64> = (0..9)
-            .map(|_| backoff.failed(young, now, TIMES).as_secs())
+            .map(|_| backoff.failed(young, TIMES).as_secs())
             .collect();
         assert_eq!(waits, [0, 1, 2, 4, 8, 16, 30, 30, 30]);
         for _ in 0..100 {
-            assert_eq!(backoff.failed(young, now, TIMES), Duration::from_secs(30));
+            assert_eq!(backoff.failed(young, TIMES), Duration::from_secs(30));
         }
-        assert_eq!(backoff.due(), Some(now + 30 * SECOND));
-    }
-
-    #[test]
-    fn a_wait_runs_until_it_is_due() {
-        let now = START;
-        let mut backoff = Backoff::default();
-        let young = Duration::from_secs(1);
-        assert_eq!(backoff.failed(young, now, TIMES), Duration::ZERO);
-        assert_eq!(backoff.due(), None, "the first is replaced at once");
-        assert_eq!(backoff.failed(young, now, TIMES), Duration::from_secs(1));
-        let due = now + SECOND;
-        assert_eq!(backoff.due(), Some(due));
-        let just_before = due - 1;
-        assert!(!backoff.ended(just_before));
-        assert!(backoff.ended(due));
-        assert_eq!(backoff.due(), None);
-        assert!(!backoff.ended(due), "ended once");
     }
 
     #[test]
     fn the_count_starts_again_after_a_minute_up() {
-        let now = START;
         let mut backoff = Backoff::default();
         let young = Duration::from_secs(59);
-        assert_eq!(backoff.failed(young, now, TIMES), Duration::ZERO);
-        assert_eq!(backoff.failed(young, now, TIMES), Duration::from_secs(1));
-        assert_eq!(backoff.failed(young, now, TIMES), Duration::from_secs(2));
+        assert_eq!(backoff.failed(young, TIMES), Duration::ZERO);
+        assert_eq!(backoff.failed(young, TIMES), Duration::from_secs(1));
+        assert_eq!(backoff.failed(young, TIMES), Duration::from_secs(2));
         // One that stayed up a minute fails as the first.
         assert_eq!(
-            backoff.failed(Duration::from_secs(60), now, TIMES),
+            backoff.failed(Duration::from_secs(60), TIMES),
             Duration::ZERO
         );
-        assert_eq!(backoff.due(), None);
-        assert_eq!(backoff.failed(young, now, TIMES), Duration::from_secs(1));
+        assert_eq!(backoff.failed(young, TIMES), Duration::from_secs(1));
     }
 
     #[test]
-    fn the_foreground_starts_the_count_again_and_ends_a_wait_that_runs() {
-        let now = START;
+    fn the_foreground_starts_the_count_again() {
         let mut backoff = Backoff::default();
         let young = Duration::from_secs(1);
         for _ in 0..3 {
-            let _ = backoff.failed(young, now, TIMES);
+            let _ = backoff.failed(young, TIMES);
         }
-        assert_eq!(backoff.due(), Some(now + 2 * SECOND));
-        assert!(backoff.foreground(), "a wait ran");
-        assert_eq!(backoff.due(), None);
-        assert!(!backoff.foreground(), "none runs now");
-        assert_eq!(backoff.failed(young, now, TIMES), Duration::ZERO);
-        assert_eq!(backoff.failed(young, now, TIMES), Duration::from_secs(1));
+        backoff.foreground();
+        assert_eq!(backoff.failed(young, TIMES), Duration::ZERO);
+        assert_eq!(backoff.failed(young, TIMES), Duration::from_secs(1));
     }
 
     #[test]

@@ -29,10 +29,12 @@ The message layer, the launch arguments and the held processes are
   (`Executables::both`), telling the roles apart by the listener's first
   argument, `--listener`. Both take the `OutpostOptions` every outpost
   gets.
-- `Timings` holds the ping interval (3 seconds), the pings the listener
-  and a spare may miss (three) and the spares' backoff's first wait and
-  limit (1 and 30 seconds). `Timings::default` is Verbatim's; `new` and
-  `with_executables` use it unchanged, since a stand-in judged by a
+- The ping interval (3 seconds), the pings the listener and a spare may
+  miss (three) and the spares' backoff (1 second first, 30 at most,
+  counted again after a minute up) are Core's, written once in its
+  generation record (`verbatim_core::supervisor::PING_INTERVAL`,
+  `MISSED_PONGS` and `BACKOFF`), which judges an application's outposts
+  by the same times. Tests run by them too, since a stand-in judged by a
   shorter ping interval is ended as stuck when its start is slow; a test
   of the spares' backoff moves the clock it is judged by instead
   (`set_backoff_clock`). No setting reaches them.

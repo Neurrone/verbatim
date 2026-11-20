@@ -48,7 +48,7 @@ use super::process::{self, Launched, Role};
 use super::relay::{COMPLETIONS_PER_WAIT, CommandPipes, Inbox, Mailbox, Relay, Source, Taken};
 use super::retire::{Ending, ShutdownSummary, retire};
 use super::writer::{Outgoing, ToChild, WriterHandle};
-use super::{EndReason, EventSink, OutpostMessage, SPARES, Sealed, Timings, Undelivered, Writers};
+use super::{EndReason, EventSink, OutpostMessage, SPARES, Sealed, Undelivered, Writers};
 use verbatim_core::supervisor::Received;
 use verbatim_process::arguments::ListenerArguments;
 use verbatim_process::held::{IgnoredProcesses, NotHeld, Target};
@@ -140,8 +140,6 @@ pub(super) struct Setup {
     pub(super) executables: Executables,
     pub(super) options: verbatim_process::arguments::OutpostOptions,
     pub(super) shutdown_limit: Duration,
-    /// The periods and limits it runs by.
-    pub(super) timings: Timings,
     pub(super) events_tx: EventSink,
     pub(super) writers: Writers,
     pub(super) own_tx: Mailbox<OwnerEvent>,
@@ -350,8 +348,6 @@ struct Owner {
     executables: Executables,
     /// What every outpost is launched with.
     options: verbatim_process::arguments::OutpostOptions,
-    /// The periods and limits it runs by.
-    timings: Timings,
     outbox: Outbox,
     writers: Writers,
     own_tx: Mailbox<OwnerEvent>,
@@ -422,7 +418,6 @@ pub(super) fn start(setup: Setup) -> io::Result<()> {
         executables,
         options,
         shutdown_limit,
-        timings,
         events_tx,
         writers,
         own_tx,
@@ -436,7 +431,6 @@ pub(super) fn start(setup: Setup) -> io::Result<()> {
         executables,
         options,
         shutdown_limit,
-        timings,
         retiring: 0,
         summary: ShutdownSummary::default(),
         shutting_down: None,
@@ -476,21 +470,20 @@ fn next_due(due: Instant, now: Instant, interval: Duration) -> Instant {
     let next = due + interval;
     if next > now { next } else { now + interval }
 }
+/// The limits a child is judged stuck by.
+const WEDGE_LIMITS: WedgeLimits = WedgeLimits {
+    ping_interval: verbatim_core::supervisor::PING_INTERVAL,
+    missed_pongs: verbatim_core::supervisor::MISSED_PONGS,
+};
+
 impl Owner {
-    /// The limits a child is judged stuck by.
-    fn wedge_limits(&self) -> WedgeLimits {
-        WedgeLimits {
-            ping_interval: self.timings.ping_interval,
-            missed_pongs: self.timings.missed_pongs,
-        }
-    }
     /// The relay's loop: waits on the port until the heartbeat is due or
     /// the spares' backoff ends, and handles what the wait took, in the
     /// port's order. Returns once Verbatim's exit has ended every child
     /// and every pipe has finished.
     fn run(&mut self, events: &Inbox<OwnerEvent>) {
         let start = Instant::now();
-        let ping_interval = self.timings.ping_interval;
+        let ping_interval = verbatim_core::supervisor::PING_INTERVAL;
         let mut heartbeat_due = start + ping_interval;
         let mut completions = Completions::with_capacity(COMPLETIONS_PER_WAIT);
         loop {
@@ -1038,8 +1031,11 @@ impl Owner {
     /// `up` as an error, the evidence to find its cause from, and replaces
     /// it, at once or after its backoff: spares are always replaced.
     fn spare_failed(&mut self, why: &str, up: Duration) {
-        let backoff = self.timings.backoff();
-        let wait = self.spares.failed(up, (self.backoff_clock)(), backoff);
+        let wait = self.spares.failed(
+            up,
+            (self.backoff_clock)(),
+            verbatim_core::supervisor::BACKOFF,
+        );
         tracing::error!(
             why,
             backoff_ms = wait.as_millis(),
@@ -1718,7 +1714,7 @@ impl Owner {
         }
         let ping = CoreToOutpost::ping();
         let at_us = now_us();
-        let limits = self.wedge_limits();
+        let limits = WEDGE_LIMITS;
         let exited: Vec<Pid> = self
             .apps
             .iter()
@@ -1760,7 +1756,7 @@ impl Owner {
     /// Pings every spare waiting and ends any that has missed its pings, as
     /// a spare's failure, at `now_us` on the run's shared clock.
     fn spare_heartbeat(&mut self, now_us: u64, ping: &CoreToOutpost) {
-        let limits = self.wedge_limits();
+        let limits = WEDGE_LIMITS;
         let mut wedged = Vec::new();
         for (&outpost, spare) in &self.spare_children {
             let Some(child) = spare.child.running() else {

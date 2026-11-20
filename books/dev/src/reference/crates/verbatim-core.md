@@ -111,7 +111,10 @@ guide maps those behaviors onto the crate's types and modules.
   `policy` decides when a child is wedged (`Liveness::wedged` under
   `WedgeLimits`, by its pongs alone, for the listener and the spares; an
   application's outpost is judged by Core's record), how long a failed outpost's
-  replacement waits (`Backoff`, which Core's record and the spares use),
+  replacement waits (`Backoff`, which Core's record and the spares use,
+  each keeping its own wait's end, by `BACKOFF`'s times, written once
+  with the ping interval and the pongs that may be missed,
+  `PING_INTERVAL` and `MISSED_PONGS`, which the supervisor reads),
   and which spares are kept and given (`Spares`). Every time these take
   is in microseconds on the run's shared clock. `EndReason` is why a
   generation ended; `Received` is when verbatim.exe took in a request it

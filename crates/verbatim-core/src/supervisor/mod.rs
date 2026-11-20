@@ -11,6 +11,8 @@
 pub mod policy;
 pub(crate) mod record;
 
+pub use record::{BACKOFF, MISSED_PONGS, PING_INTERVAL};
+
 /// Why an outpost generation ended.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EndReason {

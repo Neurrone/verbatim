@@ -19,9 +19,17 @@ use verbatim_model::Pid;
 
 use super::policy::Backoff;
 
-/// How long a generation lives with no pong: three ping intervals of 3
-/// seconds (`verbatim-supervisor`'s `Timings`).
-pub(crate) const LIVENESS_US: u64 = 9_000_000;
+/// How often the supervisor pings every child: 3 seconds.
+pub const PING_INTERVAL: Duration = Duration::from_secs(3);
+
+/// How many ping intervals may pass with no pong before a child is ended:
+/// three, nine seconds.
+pub const MISSED_PONGS: u32 = 3;
+
+/// How long a generation lives with no pong: [`MISSED_PONGS`] ping
+/// intervals.
+pub(crate) const LIVENESS_US: u64 =
+    PING_INTERVAL.saturating_mul(MISSED_PONGS).as_secs() * 1_000_000;
 
 /// How many workers abandoned to calls that never returned, other than
 /// those parked on a window judged hung, end an outpost: each hung window
@@ -29,11 +37,12 @@ pub(crate) const LIVENESS_US: u64 = 9_000_000;
 /// refused before its first call, but any other abandonment can repeat.
 pub(crate) const ABANDONED_WORKER_LIMIT: usize = 8;
 
-/// The backoff's three times: the second failure's wait, the longest
-/// wait, and how long an outpost must have stayed up for its failure to
-/// count as the first again (`verbatim-supervisor`'s `Timings` and
-/// `STAYED_UP`).
-pub(crate) const BACKOFF: (Duration, Duration, Duration) = (
+/// The backoff's three times, for an application's outposts and the
+/// spares alike: the second failure's wait, the longest wait, and how long
+/// an outpost must have stayed up for its failure to count as the first
+/// again (a minute, twenty heartbeats, long past the start and first focus
+/// in which a failure that repeats shows itself).
+pub const BACKOFF: (Duration, Duration, Duration) = (
     Duration::from_secs(1),
     Duration::from_secs(30),
     Duration::from_mins(1),
@@ -151,7 +160,7 @@ impl Record {
     /// replaced at once on its first failure, else after its backoff.
     pub(crate) fn failed(&mut self, process: Pid, up: Duration, now_us: u64) -> Option<Replaced> {
         let application = self.applications.get_mut(&process)?;
-        let wait = application.backoff.failed(up, now_us, BACKOFF);
+        let wait = application.backoff.failed(up, BACKOFF);
         if wait.is_zero() {
             application.stage = Stage::Launching;
             Some(Replaced::AtOnce)

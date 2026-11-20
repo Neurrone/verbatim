@@ -73,54 +73,6 @@ pub use writer::QueueError;
 /// (`books/dev/src/reference/adr/0001-focus.md`, "Spare outposts").
 pub const SPARES: usize = 2;
 
-/// The supervisor's periods and limits. Verbatim runs with
-/// [`Timings::default`]; the
-/// tests' supervisor ([`Supervisor::with_executables`]) runs with the
-/// default too, since a stand-in judged by a shorter ping interval is
-/// ended as stuck when its start is slow. No setting in the settings file
-/// reaches them.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Timings {
-    /// How often every child is pinged: 3 seconds.
-    pub ping_interval: Duration,
-    /// How many ping intervals may pass without a pong before a child is
-    /// ended: three intervals, nine seconds.
-    pub missed_pongs: u32,
-    /// How long the replacement of a spare's second failure in a row
-    /// waits: a second. Each failure after it waits twice as long as the
-    /// one before, up to [`backoff_limit`](Self::backoff_limit)
-    /// (`books/dev/src/reference/adr/0001-focus.md`, "Spare outposts"). The first failure
-    /// is replaced at once. An application's outposts are spaced by Core's
-    /// own backoff.
-    pub backoff_first: Duration,
-    /// The longest a failed spare's replacement waits: 30 seconds.
-    pub backoff_limit: Duration,
-}
-
-impl Default for Timings {
-    fn default() -> Self {
-        Self {
-            ping_interval: Duration::from_secs(3),
-            missed_pongs: 3,
-            backoff_first: Duration::from_secs(1),
-            backoff_limit: Duration::from_secs(30),
-        }
-    }
-}
-
-impl Timings {
-    /// The backoff's three times, as [`policy::Backoff::failed`] takes
-    /// them.
-    fn backoff(&self) -> (Duration, Duration, Duration) {
-        (self.backoff_first, self.backoff_limit, STAYED_UP)
-    }
-}
-
-/// How long a spare must have been up for its failure to
-/// count as the first again: a minute, twenty heartbeats, long past the
-/// start and first focus in which a failure that repeats shows itself.
-const STAYED_UP: Duration = Duration::from_mins(1);
-
 /// Where the supervisor delivers its [`OutpostMessage`]s. Only the relay
 /// delivers through it, so a sink that puts each message in one queue gives
 /// the app every outpost's messages in the order they reached the
@@ -452,7 +404,10 @@ impl Supervisor {
     /// outpost is ever started for them. The first listener is launched
     /// with `report_background_progress_bars`, the setting loaded before
     /// Core's first configuration command ([`Self::configure_listener`]).
-    /// Every period and limit is [`Timings::default`].
+    /// Every period and limit is Core's
+    /// ([`verbatim_core::supervisor::PING_INTERVAL`],
+    /// [`verbatim_core::supervisor::MISSED_PONGS`] and
+    /// [`verbatim_core::supervisor::BACKOFF`]).
     ///
     /// # Errors
     ///
@@ -470,7 +425,6 @@ impl Supervisor {
             options,
             executables,
             retire::SHUTDOWN_LIMIT,
-            Timings::default(),
             (ignored, report_background_progress_bars),
         )
     }
@@ -478,7 +432,7 @@ impl Supervisor {
     /// [`Supervisor::new`], launching each role from its executable in
     /// `executables` and giving
     /// each `shutdown_limit` to exit after the shutdown message before it is
-    /// killed, running by [`Timings::default`], ignoring the processes
+    /// killed, ignoring the processes
     /// `ignored` holds, and launching the first listener with
     /// `report_background_progress_bars`. For tests that launch stand-ins for the outpost and listener
     /// binaries ([`Executables::both`]); Verbatim uses
@@ -501,19 +455,17 @@ impl Supervisor {
             options,
             executables,
             shutdown_limit,
-            Timings::default(),
             (ignored, report_background_progress_bars),
         )
     }
 
-    /// The supervisor of `executables`, running by `timings`, as
+    /// The supervisor of `executables`, as
     /// [`Supervisor::new`] and [`Supervisor::with_executables`] start it.
     fn start(
         events: impl Into<EventSink>,
         options: verbatim_process::arguments::OutpostOptions,
         executables: Executables,
         shutdown_limit: Duration,
-        timings: Timings,
         (ignored, report_background_progress_bars): (Arc<IgnoredProcesses>, bool),
     ) -> io::Result<Self> {
         // The launch's log directory was prepared by the app at startup,
@@ -526,7 +478,6 @@ impl Supervisor {
             executables,
             options,
             shutdown_limit,
-            timings,
             events_tx: events,
             writers: Arc::clone(&writers),
             own_tx: owner_tx.clone(),

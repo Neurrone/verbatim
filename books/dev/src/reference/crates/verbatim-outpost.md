@@ -193,7 +193,8 @@ exited, that is its end. Otherwise the application keeps its record, held
 facts, and any idle query, and gets the next spare or a new outpost: the
 first failure at once, further ones after a backoff (`policy::Backoff`) of
 1, 2, 4, 8, 16, then 30 seconds, counted again once an outpost stayed up a
-minute (`STAYED_UP`) or the application comes to the foreground. The
+minute or the application comes to the foreground
+(`verbatim_core::supervisor::BACKOFF`). The
 requests out to the failed generation are answered "reader ended", and
 those waiting for the application go to its next one. Spares' failures
 are replaced with their own backoff.
