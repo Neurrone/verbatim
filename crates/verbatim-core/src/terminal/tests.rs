@@ -1115,11 +1115,14 @@ fn report_new_output_toggles_with_verbatim_5() {
     // Each press speaks its new value, then reports the settings, with the
     // toggle changed and nothing else, for the shell to save.
     let press = |state: &mut SrState, playback: &mut Playback, key: u64, on: bool| {
-        // The event queue's own effects, such as its next wake, aside.
-        let mut effects: Vec<Effect> = reduce(state, &mut crate::Runtime::default(), &toggle(key))
-            .into_iter()
-            .filter(|effect| !matches!(effect, Effect::Queue(_)))
-            .collect();
+        let mut effects = reduce(state, &mut crate::Runtime::default(), &toggle(key));
+        // The event queue's next wake, which the press leaves as it was.
+        assert_eq!(
+            effects.pop(),
+            Some(Effect::Queue(verbatim_model::request::QueueEffect::WakeAt(
+                Some(500_500)
+            )))
+        );
         assert_eq!(
             effects.pop(),
             Some(Effect::SettingsChanged(ReaderSettings {
