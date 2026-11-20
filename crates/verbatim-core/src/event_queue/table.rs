@@ -50,8 +50,14 @@ pub(crate) enum Owner {
 pub(crate) enum Stage {
     /// Waiting for its reader to be able to take it.
     Waiting,
-    /// Sent to this instance of its reader.
-    Out(Instance),
+    /// Sent to an instance of its reader.
+    Out {
+        /// The instance.
+        to: Instance,
+        /// When it was sent to an outpost carrying "probe first", whose
+        /// probe's answer Core records when it ends.
+        probing: Option<u64>,
+    },
 }
 
 /// A request waiting or out.
@@ -70,9 +76,6 @@ pub(crate) struct Live {
     pub(crate) owner: Owner,
     /// Where it is.
     pub(crate) stage: Stage,
-    /// When it was sent to an outpost carrying "probe first", whose
-    /// probe's answer Core records when it ends.
-    pub(crate) probing: Option<u64>,
 }
 
 impl Live {
@@ -89,12 +92,15 @@ impl Live {
         now_us: u64,
     ) -> Order {
         let verdict = backend.for_request(&self.window.judged(), now_us);
-        self.probing = match (instance.reader, verdict) {
+        let probing = match (instance.reader, verdict) {
             (Reader::Outpost(_), WindowVerdict::ProbeFirst) => Some(now_us),
             (Reader::Outpost(_), WindowVerdict::Uia | WindowVerdict::Msaa)
             | (Reader::Listener, _) => None,
         };
-        self.stage = Stage::Out(instance);
+        self.stage = Stage::Out {
+            to: instance,
+            probing,
+        };
         Order::Send(
             instance,
             Ask {
@@ -261,7 +267,9 @@ impl Table {
         orders: &mut Vec<Order>,
     ) -> Option<Ended> {
         let live = self.live.remove(&number)?;
-        if let (Stage::Out(instance), Ending::NoLongerAwaited(reason)) = (live.stage, &ending) {
+        if let (Stage::Out { to: instance, .. }, Ending::NoLongerAwaited(reason)) =
+            (live.stage, &ending)
+        {
             orders.push(Order::Cancel(
                 instance,
                 verbatim_model::request::Cancel {
@@ -275,7 +283,10 @@ impl Table {
             owner: live.owner,
             ending,
             window: live.window,
-            probing: live.probing,
+            probing: match live.stage {
+                Stage::Out { probing, .. } => probing,
+                Stage::Waiting => None,
+            },
         })
     }
 
@@ -291,7 +302,7 @@ impl Table {
         if self
             .live
             .get(&number)
-            .is_some_and(|live| live.stage == Stage::Out(from))
+            .is_some_and(|live| matches!(live.stage, Stage::Out { to, .. } if to == from))
         {
             return self
                 .end(number, Ending::Answered(outcome), &mut Vec::new())
@@ -310,7 +321,7 @@ impl Table {
         let out = self
             .live
             .get(&number)
-            .is_some_and(|live| matches!(live.stage, Stage::Out(_)));
+            .is_some_and(|live| matches!(live.stage, Stage::Out { .. }));
         if !out {
             return None;
         }
@@ -329,7 +340,7 @@ impl Table {
         let out = self
             .live
             .get(&number)
-            .is_some_and(|live| matches!(live.stage, Stage::Out(_)));
+            .is_some_and(|live| matches!(live.stage, Stage::Out { .. }));
         if !out {
             return None;
         }
@@ -359,7 +370,9 @@ impl Table {
     pub(crate) fn out_on(&self, window: WindowHandle) -> Vec<RequestNumber> {
         self.live
             .iter()
-            .filter(|(_, live)| matches!(live.stage, Stage::Out(_)) && live.window.handle == window)
+            .filter(|(_, live)| {
+                matches!(live.stage, Stage::Out { .. }) && live.window.handle == window
+            })
             .map(|(number, _)| *number)
             .collect()
     }
@@ -381,7 +394,7 @@ impl Table {
         let out: Vec<RequestNumber> = self
             .live
             .iter()
-            .filter(|(_, live)| live.stage == Stage::Out(instance))
+            .filter(|(_, live)| matches!(live.stage, Stage::Out { to, .. } if to == instance))
             .map(|(number, _)| *number)
             .collect();
         out.into_iter()
@@ -465,7 +478,7 @@ impl Table {
         let mut windows: Vec<WindowHandle> = self
             .live
             .values()
-            .filter(|live| matches!(live.stage, Stage::Out(_)))
+            .filter(|live| matches!(live.stage, Stage::Out { .. }))
             .map(|live| live.window.handle)
             .chain(self.recovery.values().map(|window| window.handle))
             .collect();

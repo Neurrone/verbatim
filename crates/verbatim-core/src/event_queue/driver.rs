@@ -117,7 +117,6 @@ impl<L: Logic> Shared<L> {
                 request: beginning.request,
                 owner: beginning.owner,
                 stage: Stage::Waiting,
-                probing: None,
             },
             ready,
             &state.queue.backend,

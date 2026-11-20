@@ -139,9 +139,9 @@ The end-to-end harness's hooks (private `harness` module):
   on its port and checks its own conditions: Core's event queue idle
   (`SrState::queue_idle`: no entry at the front or waiting, none to be
   appended later, no request waiting or out, no window watched for
-  recovery, no stroke in Core's line, no delay of Core's own due), no
-  outpost still starting, no lock key's announcement still to come
-  (`SrState::announces_toggle_key`), and no terminal's quiet-period timer armed, since what waits
+  recovery, no stroke in Core's line, no lock key's announcement still
+  to come, no delay of Core's own due), no outpost still starting, and
+  no terminal's quiet-period timer armed, since what waits
   for it is spoken when it ends. If they hold, the waiters are answered once
   everything queued so far has reached the speech manager; if not, the
   round runs again once they clear. A wait that runs out answers with

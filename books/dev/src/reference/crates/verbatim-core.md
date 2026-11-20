@@ -17,7 +17,8 @@ guide maps those behaviors onto the crate's types and modules.
   is what makes end-to-end latency timelines possible, and the number of
   the user input that caused it, if one did (below, "Key numbers").
 - `SrState::announces_toggle_key`: whether a lock key's announcement is
-  still to come, which the shell's idle conditions read.
+  still to come, which `queue_idle` takes in and the shell's marks of
+  handled input wait behind.
 - `SNAP_RESULTS_ACTIVITY`: the activity id of the shell's window-snap
   results notification, the one UIA notification spoken from an
   application without the focus; the supervisor starts an outpost for no

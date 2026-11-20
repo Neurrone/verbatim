@@ -1424,16 +1424,14 @@ impl ReducerThread<'_> {
 
     /// The reducer's own conditions for the idle barrier: no outpost is
     /// starting (one still starting has a request waiting for it, as a
-    /// replacement for a crashed one does), no lock key's announcement is
-    /// still to come, and no
-    /// terminal's quiet-period timer is armed, since what waits for it is
-    /// spoken when it ends; and Core's event queue is idle
-    /// (`SrState::queue_idle`: no entry, no request waiting or out, no
-    /// window watched for recovery, no stroke in line, no delay of its own
-    /// due).
+    /// replacement for a crashed one does), and no terminal's
+    /// quiet-period timer is armed, since what waits for it is spoken when
+    /// it ends; and Core's event queue is idle (`SrState::queue_idle`: no
+    /// entry, no request waiting or out, no window watched for recovery,
+    /// no stroke in line, no lock key's announcement still to come, no
+    /// delay of its own due).
     fn idle_conditions_clear(&self) -> bool {
         self.state.queue_idle()
-            && !self.state.announces_toggle_key()
             && self.state.terminal_timer_due().is_none()
             && self.live.starting() == 0
     }

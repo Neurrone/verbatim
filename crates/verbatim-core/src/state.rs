@@ -751,11 +751,15 @@ impl SrState {
     /// (`docs/design/readers-tell-core-asks-build1.md`, "The test
     /// harness's idle"): the queue empty, with nothing to be appended
     /// later; no request waiting for its outpost or out, and no window
-    /// watched for recovery; no stroke in Core's line, so no key held;
-    /// and no delay of Core's own due (the return from another desktop).
+    /// watched for recovery; no stroke in Core's line, so no key held; no
+    /// lock key's new state still to be announced; and no delay of Core's
+    /// own due (the return from another desktop).
     #[must_use]
     pub fn queue_idle(&self) -> bool {
-        self.queue.idle() && self.strokes.is_empty() && crate::input_desktop::due(self).is_none()
+        self.queue.idle()
+            && self.strokes.is_empty()
+            && !self.announces_toggle_key()
+            && crate::input_desktop::due(self).is_none()
     }
 
     /// The number of the oldest key whose entry is still in Core's event
