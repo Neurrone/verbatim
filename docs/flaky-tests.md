@@ -2,7 +2,7 @@
 
 The one list of tests and scenarios known to fail intermittently, or consistently, for a known reason. Check it before debugging a failure, and before rerunning or running a baseline: a failure that matches an entry is already understood. Leave a listed scenario out of a related-scenario batch, as `CLAUDE.md` says.
 
-Each entry gives the exact name, how it fails, how often and where, the cause when known, and when the fix is expected. Failure counts are from the dates given, on the development machine ("locally") or GitHub's runner. When a fix lands, delete the entry; history lives in git. When a new failure is explained, add an entry here and link to the work that owns the fix. Every entry is fixed, names the build of the simplification phase that reaches its cause, or has its test taken out of GitHub's runs with the reason and what would let it run there again (Dickson, 2026-11-20); a local-only scenario gives the same reason beside its `local_only` flag in `crates/verbatim-e2e/src/registry.rs`.
+Each entry gives the exact name, how it fails, how often and where, the cause when known, and when the fix is expected. Failure counts are from the dates given, on the development machine ("locally") or GitHub's runner. When a fix lands, delete the entry; history lives in git. When a new failure is explained, add an entry here and link to the work that owns the fix. Every entry is fixed, names the build of the simplification phase that reaches its cause, or has its test taken out of GitHub's runs with the reason and what would let it run there again (Dickson, 2026-11-20); a local-only scenario gives the same reason in its entry's `.local_only("reason")` in `crates/verbatim-e2e/src/registry.rs`.
 
 ## Settings' suggestions list replaced as it opens
 
@@ -62,7 +62,7 @@ Each entry gives the exact name, how it fails, how often and where, the cause wh
 
 ## Scenarios local-only for the runner's image
 
-These are `local_only` in the registry, each with its reason beside the flag; the `e2e` job leaves them out of its groups (`cargo xtask e2e-plan`). The suggestions pair is under "Settings' suggestions list replaced as it opens" above.
+These are `.local_only` in the registry, each with its reason; the `e2e` job leaves them out of its groups (`cargo xtask e2e-plan`). The suggestions pair is under "Settings' suggestions list replaced as it opens" above.
 
 - The `notepad_` scenarios: the runner is said to have classic Notepad, a Win32 edit control, not Windows 11 Notepad; the claim rests on commit messages, not on an artifact. A dispatched run reads the runner's Notepad version, and the reason is corrected or confirmed from it. Editing is also covered in the harness's Windows Forms text box.
 - `settings_combo_box_expanded`: the runner's Settings opens its Date and time page with the focus on "Location Settings link", where this machine's opens it on "Region button", which the scenario's opening speech asserts. It runs on GitHub again when the runner's Settings opens on "Region button"; choosing the expectation from what the application focused is ruled out (`books/dev/src/reference/testing.md`, "One target, one code path").

@@ -1,5 +1,6 @@
 //! The end-to-end suite's one test binary: a test per scenario registered
-//! in `crates/verbatim-e2e/src/registry.rs`, each calling
+//! in `crates/verbatim-e2e/src/registry.rs`, built from the registry's
+//! entries, so that the registry is the one list of the scenarios, each calling
 //! `registry::run_named` with its own name, and the session check every
 //! scenario depends on. A scenario's test has the scenario's name, so
 //! `cargo test -p verbatim-e2e --test e2e -- --ignored --exact <name>
@@ -34,161 +35,6 @@ use libtest_mimic::{Arguments, Failed, Trial};
 use verbatim_e2e::AgentClient;
 use verbatim_e2e::command_line;
 use verbatim_e2e::run_summary::RunSummary;
-
-/// The names of the scenarios listed, each of whose tests is ignored for
-/// the reason given first.
-macro_rules! scenario_tests {
-    ($reason:literal: $($name:ident)*) => {
-        &[$(stringify!($name)),*]
-    };
-}
-
-// The disabled scenarios (`registry::DISABLED`, each with its reason) have
-// no test here.
-const LIVE: &[&str] = scenario_tests! {
-    "live: drives a real Verbatim through a running agent; the end-to-end job runs it with --ignored (books/dev/src/how-to/e2e.md)":
-    menu_and_settings_dialog
-    second_application_and_verbatim_menu
-    rapid_tabbing_in_settings
-    object_navigation_in_settings
-    switch_to_onecore
-    crash_recovery
-    verbatim_lifecycle
-    quit_inside_a_modal_dialog
-    quit_inside_the_verbatim_menu
-    quit_inside_the_remove_theme_confirmation
-    quit_inside_a_file_dialog
-    speak_time_and_date
-    toast
-    foreground_progress_bar
-    event_recorder_records_mockapp
-    background_progress_bar
-    background_progress_bar_off
-    msaa_flood_then_focus
-    stale_focus_behind_a_caret_key
-    read_only_field_typing
-    twin_item_at_a_deleted_items_ids
-    controlled_list_selections
-    table_cells
-    alt_tab_switcher
-    return_from_a_held_application
-    menu_end_over_a_hung_window
-    owned_dialog_across_processes
-    lock_key_announcements
-    quick_link_menu
-    explorer_folder_window
-    settings_dialog_keys
-    settings_search_suggestions
-    settings_search_suggestions_reentered
-    settings_system_page
-    settings_combo_box_expanded
-    notepad_editing
-    text_box_editing
-    notepad_selection_keys
-    notepad_selection_then_control
-    text_box_selection_keys
-    notepad_caret_keys
-    text_box_caret_keys
-    notepad_document_keys
-    text_box_document_keys
-    notepad_page_keys
-    text_box_page_keys
-    notepad_paragraph_keys
-    text_box_paragraph_keys
-    notepad_select_all_count
-    text_box_select_all_count
-    text_box_password
-    wpf_password
-    notepad_review_cursor
-    text_box_review_cursor
-    notepad_say_all
-    notepad_word_selection
-    text_box_word_selection
-    notepad_typed_words
-    text_box_typed_words
-    notepad_review_words
-    text_box_review_words
-    text_box_say_all
-    spelling_errors
-    notepad_spelling_errors
-    theme_panel
-    terminal_settings_page
-    windows_terminal_commands
-    conhost_commands
-    windows_terminal_flood
-    conhost_flood
-    windows_terminal_control_flood
-    conhost_control_flood
-    windows_terminal_line_key_flood
-    conhost_line_key_flood
-    windows_terminal_leave_flood
-    conhost_leave_flood
-    windows_terminal_close_tab
-    windows_terminal_scrollback_overflow_during_group
-    conhost_scrollback_overflow_during_group
-    windows_terminal_editing
-    conhost_editing
-    windows_terminal_review_grid
-    conhost_review_grid
-    windows_terminal_review_stays_on_line
-    conhost_review_stays_on_line
-    review_dead_object
-    windows_terminal_progress
-    conhost_progress
-    windows_terminal_typing
-    conhost_typing
-    windows_terminal_long_lines
-    conhost_long_lines
-    windows_terminal_full_screen
-    conhost_full_screen
-    windows_terminal_marker_list
-    conhost_marker_list
-    windows_terminal_pager_history
-    conhost_pager_history
-    windows_terminal_status_bar
-    conhost_status_bar
-    windows_terminal_two_windows
-    conhost_two_windows
-    windows_terminal_tabs
-    object_navigation_over_uia
-    system_information_tree
-};
-
-// The demonstrations are ignored too, so the suite never runs them; `cargo
-// xtask demo` runs one with `--include-ignored`, and the suite's commands
-// also deselect them with `--skip demo_`.
-const DEMONSTRATIONS: &[&str] = scenario_tests! {
-    "a demonstration, recorded by cargo xtask demo":
-    demo_notepad_editing
-    demo_review_cursor
-    demo_say_all
-    demo_terminal_session
-    demo_settings_dialog_keys
-};
-
-// The measure set, the measurement workloads of
-// `docs/design/communication.md` section 11: ignored, run by name or with
-// `cargo xtask measure`, never by the suite, whose runs
-// deselect them with `--skip measure_` (books/dev/src/how-to/e2e.md).
-const MEASURE_SET: &[&str] = scenario_tests! {
-    "a measurement workload, run by name (books/dev/src/how-to/e2e.md)":
-    measure_focus_windows_terminal
-    measure_focus_windows_terminal_tabs
-    measure_focus_text_box
-    measure_focus_new_application
-    measure_focus_return
-    measure_focus_return_retitled
-    measure_focus_flood
-    measure_keys_text_box
-    measure_keys_notepad
-    measure_keys_conhost
-    measure_keys_windows_terminal
-    measure_stale_caret_text_box
-    measure_stale_caret_notepad
-    measure_stale_caret_conhost
-    measure_held_repeat_text_box
-    measure_speech_real
-};
 
 /// The agent reports an interactive session on the default desktop: the
 /// precondition every scenario depends on, not itself a scenario. A screen
@@ -264,10 +110,9 @@ fn main() -> ExitCode {
     let (filters, rest) = command_line::split_filters(args.get(1..).unwrap_or_default());
     let arguments = Arguments::from_iter(args.iter().take(1).cloned().chain(rest));
     let summary = Arc::new(Mutex::new(RunSummary::default()));
-    let mut trials: Vec<Trial> = [LIVE, DEMONSTRATIONS, MEASURE_SET]
-        .into_iter()
-        .flatten()
-        .map(|name| scenario_trial(name, &summary))
+    let mut trials: Vec<Trial> = verbatim_e2e::registry::SCENARIOS
+        .iter()
+        .map(|def| scenario_trial(def.name, &summary))
         .collect();
     trials.push(
         Trial::test("agent_reports_an_interactive_window_station", || {

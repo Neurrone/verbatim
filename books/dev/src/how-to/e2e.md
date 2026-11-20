@@ -356,21 +356,22 @@ Windows Terminal its image ships.
 
 ## Local-only scenarios
 
-Some scenarios are local-only, marked `local_only` in the registry, because
+Some scenarios are local-only, marked `.local_only("reason")` in the registry, because
 they cannot hold on GitHub's Windows Server runner: the `notepad_`
 scenarios, `settings_search_suggestions`,
 `settings_search_suggestions_reentered`, `settings_combo_box_expanded`,
 `settings_system_page`, `explorer_folder_window`,
 `windows_terminal_two_windows`, `windows_terminal_long_lines`,
 `windows_terminal_close_tab`, `text_box_caret_keys` and `toast`. Each entry gives its reason
-beside the flag, with what would let it run there again, and
+in the method, with what would let it run there again, and
 [the known failures](https://github.com/Neurrone/verbatim/blob/main/docs/flaky-tests.md)
 say the same for each.
 
-The registry's `local_only` flag is the one place this is recorded. A
+The registry's `.local_only` is the one place this is recorded, and an
+entry cannot be marked without its reason. A
 local-only scenario is part of the suite: every local run and every
 remote run includes it. CI's `e2e` job leaves them out of
-its groups (`cargo xtask e2e-plan` and `e2e-group` read the flag) and sets
+its groups (`cargo xtask e2e-plan` and `e2e-group` read it) and sets
 `VERBATIM_E2E_SKIP_LOCAL_ONLY=1`, so one that ran there anyway would fail
 rather than report a pass. The skip comes from that setting alone, never
 from detecting the machine, so a local run cannot silently lose a
@@ -432,11 +433,12 @@ that ran it. Refresh it when the scenarios' durations change, such as
 after making them faster.
 
 The plan reads the suite from the source, since the Linux job builds
-neither the registry crate nor the test binary: the test names in
-`crates/verbatim-e2e/tests/e2e.rs`, less the scenarios
-`crates/verbatim-e2e/src/registry.rs` places in the `Demo` or `Measure`
-group or marks `local_only`; a test outside the registry, the agent's
-session check, is in the suite. Each group then runs
+neither the registry crate nor the test binary: the entries of
+`crates/verbatim-e2e/src/registry.rs` that its `suite!` constructor
+makes, less those marked `.local_only`, which the test binary builds its
+tests from, and the one test the binary adds outside the registry, the
+agent's session check. Each group then runs
+
 `cargo xtask e2e-group <index>/<count>`, which takes the scenarios from
 the test binary's own listing and the real registry, fails naming the
 difference when they are not the plan's, so a scenario is never dropped

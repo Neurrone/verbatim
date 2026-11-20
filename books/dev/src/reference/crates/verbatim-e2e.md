@@ -13,8 +13,9 @@ this guide describes the code.
 
 ## Running, skipping, and failing
 
-- The suite is one test binary, `crates/verbatim-e2e/tests/e2e.rs`, with
-  a test per scenario named after it, each calling
+- The suite is one test binary, `crates/verbatim-e2e/tests/e2e.rs`, which
+  builds a test from each entry of `registry::SCENARIOS`, named after it,
+  so the registry is the one list of the scenarios, each calling
   `registry::run_named` with that name. The binary has its own `main`
   (`harness = false`), with `libtest-mimic` taking libtest's command line,
   so that after every test it prints the end-of-run summary
@@ -27,9 +28,7 @@ this guide describes the code.
   named after it, with a spawned thread's default 2 MiB stack, and ends
   each failure with its panic's message, a scenario's whole report. One binary rather than one per
   scenario keeps the build small, since each test binary links the whole
-  harness. A unit test in `registry.rs`, which `cargo xtask ci` runs,
-  reads `tests/e2e.rs` as text and fails, naming each, when a registered
-  scenario has no test there or a test there has no registered scenario.
+  harness.
 - Every live test is ignored, so a
   workspace test run (and `cargo xtask ci`) lists them as ignored rather
   than reporting them as passed.
@@ -39,10 +38,11 @@ this guide describes the code.
   the precondition check that the agent runs in an interactive session on
   the `Default` input desktop, is a plain ignored test outside the
   registry and fails the same way.
-- A local-only scenario is marked by `ScenarioDef::local_only` alone, with
-  its reason in a comment beside the flag; CI's
-  `e2e` job leaves them out of its groups (`cargo xtask e2e-plan` reads
-  the flag). A run with `SKIP_LOCAL_ONLY_ENV` (`VERBATIM_E2E_SKIP_LOCAL_ONLY`) set to `1`
+- A local-only scenario is marked by its entry's `.local_only("reason")`
+  alone, which cannot be written without the reason; the field,
+  `ScenarioDef::local_only`, holds it. It is the one record of a scenario
+  taken off GitHub's runs. CI's `e2e` job leaves them out of its groups
+  (`cargo xtask e2e-plan` reads the method). A run with `SKIP_LOCAL_ONLY_ENV` (`VERBATIM_E2E_SKIP_LOCAL_ONLY`) set to `1`
   that runs one anyway fails. `skips` validates the variable: unset,
   empty, `0`, or `1`, anything else an error. Nothing detects the machine.
 - Demonstrations (the Demo group, `demo_` names) run only through
@@ -343,8 +343,9 @@ shorter (`compare::QuietPeriod`).
   form, and checks the entry is a `###` heading of that file; it fails on
   a call whose file or entry is not a string literal, and does not see a
   call made through a wrapper.
-- `ScenarioDef::comparable`: `Comparable::Yes`, or `Comparable::No` with
-  why. Compare mode refuses the latter with the reason.
+- `ScenarioDef::speech`: compare mode runs only a scenario whose speech
+  source is `Speech::Capture`, and refuses any other with its source
+  (`Speech::not_comparable`).
 - The run (`registry::run_compare`). It hears the desktop as an ordinary
   step, runs setup, the body and the end of the speech, the teardown and
   the cleanup, writes the timeline, the report, the foreground record and
@@ -674,7 +675,22 @@ Verbatim's run.
 ## The registry
 
 `ScenarioDef` is one named, grouped scenario: `name` (its test, its name on `cargo xtask e2e`, artifacts directory, and video name),
-`group`, `settings` (a change to the fixed settings), `local_only`, `comparable`, `document`, and `setup`, `body` and `teardown`.
+`group`, `speech` (where its expected speech comes from), `settings` (a change to the fixed settings), `local_only` (the reason it runs only off GitHub's runner), `document`, and `setup`, `body` and `teardown`.
+An entry is one line, a constructor with its defaults: `suite!(module,
+speech)` for a scenario named after its module, whose `setup`, `body` and
+`teardown` it runs, `suite!("name", module::{setup, body, teardown},
+speech)` for one of several in a module, `demo!(module, &[scenarios])` and
+`measure!("name", module::{...})`, each followed by the methods for what
+it changes, `.local_only("reason")`, `.settings(f)` and `.document(f)`.
+The speech source (`Speech`) is required: `Capture`, the scenario's
+committed NVDA capture; `Own("why")`, Verbatim's own GUI and lifecycle;
+`SourceDerived("NVDA file lines")`, speech a capture cannot record, such
+as tones or a flood's middle; `Measurement` for the measure set; and
+`Demonstration(&[scenarios])`, the suite's scenarios whose steps a
+demonstration shows, which a unit test checks are in the suite.
+`cargo xtask e2e-plan` reads the constructors from the source, since its
+Linux job builds neither this crate nor the test binary.
+
 `ScenarioState` is what setup hands the body and teardown: nothing, a
 target's pid, a window title, names, or a `Window` (the launch's pid, the
 window's title, how Verbatim announces the terminal's text area,

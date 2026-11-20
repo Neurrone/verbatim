@@ -52,7 +52,6 @@ use verbatim_e2e::agent_client::AgentClient;
 use verbatim_e2e::nvda::{
     POLL_INTERVAL, QuietWait, Settling, Transcript, TranscriptEvent, session_port,
 };
-use verbatim_e2e::registry::Comparable;
 use verbatim_e2e::{artifacts, compare as compare_mode};
 use verbatim_model::UtteranceEnding;
 
@@ -669,7 +668,7 @@ fn compare(args: &[String]) -> io::Result<Option<String>> {
     let options = parse_compare_args(args)?;
     let def = verbatim_e2e::registry::find(&options.scenario)
         .ok_or_else(|| io::Error::other(format!("no scenario named {:?}", options.scenario)))?;
-    if let Comparable::No(why) = def.comparable {
+    if let Some(why) = def.speech.not_comparable() {
         return Err(io::Error::other(format!(
             "{} cannot be compared with NVDA: {why}",
             def.name

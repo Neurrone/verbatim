@@ -151,8 +151,7 @@ fn list_tests() -> Result<Vec<String>, String> {
 /// not a demonstration, not in the measure set, and not local-only. A test
 /// the registry does not hold is.
 fn in_suite(name: &str) -> bool {
-    registry::find(name)
-        .is_none_or(|def| !def.local_only && !matches!(def.group, Group::Demo | Group::Measure))
+    registry::find(name).is_none_or(|def| def.local_only.is_none() && def.group == Group::Suite)
 }
 
 #[cfg(test)]
@@ -172,7 +171,7 @@ mod tests {
             .map(|def| plan::Entry {
                 name: def.name.to_string(),
                 group: format!("{:?}", def.group),
-                local_only: def.local_only,
+                local_only: def.local_only.is_some(),
             })
             .collect();
         assert_eq!(planned, registered);

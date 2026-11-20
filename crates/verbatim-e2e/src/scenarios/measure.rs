@@ -32,6 +32,7 @@ use std::fmt::Write as _;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write as _};
 
+pub(crate) use super::no_setup;
 use super::terminal::{self, PROMPT};
 use super::text_box::{self, BOX_NAME};
 use crate::artifacts;

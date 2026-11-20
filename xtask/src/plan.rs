@@ -4,15 +4,13 @@
 //! It runs on every host, since the `plan` job runs it on Linux, where
 //! xtask builds neither the registry crate nor the test binary.
 //!
-//! The suite is read from the source: the test names in
-//! `crates/verbatim-e2e/tests/e2e.rs` (each `scenario_tests!` block's names
-//! and each test its `main` adds by a `Trial::test("<name>"` literal), less those the registry,
-//! `crates/verbatim-e2e/src/registry.rs`, places in the `Demo` or `Measure`
-//! group or marks `local_only`. A test the registry does not hold, such as
-//! the agent's session check, is in the suite. Each Windows group checks
-//! this reading against the test binary's own listing and the real
-//! registry (`xtask/src/group.rs`), so a scenario is never dropped
-//! silently.
+//! The suite is read from the source of the registry,
+//! `crates/verbatim-e2e/src/registry.rs`, whose entries the test binary
+//! builds its tests from: each `suite!` entry not marked `.local_only`, and
+//! the agent's session check ([`SESSION_CHECK`]), the one test the binary
+//! adds outside the registry. Each Windows group checks this reading
+//! against the test binary's own listing and the real registry
+//! (`xtask/src/group.rs`), so a scenario is never dropped silently.
 //!
 //! Each scenario's estimate is its median in `xtask/e2e-durations.txt`,
 //! or [`DEFAULT_SECONDS`] when the table lacks it; a table entry naming no
@@ -57,11 +55,15 @@ pub const COVERAGE_SLOWDOWN: f64 = 1.25;
 pub struct Entry {
     /// The scenario's name.
     pub name: String,
-    /// Its group's variant name, such as `Text`.
+    /// Its group's variant name: `Suite`, `Demo` or `Measure`.
     pub group: String,
-    /// Whether it is marked `local_only`.
+    /// Whether it is marked `.local_only`.
     pub local_only: bool,
 }
+
+/// The test the binary adds outside the registry: the agent's session
+/// check, which is in the suite.
+pub const SESSION_CHECK: &str = "agent_reports_an_interactive_window_station";
 
 /// Runs the command with its arguments after `e2e-plan`.
 pub fn run(args: &[String]) -> ExitCode {
@@ -129,10 +131,7 @@ pub fn read_suite() -> Result<Vec<String>, String> {
     let read = |path: &str| {
         std::fs::read_to_string(root.join(path)).map_err(|error| format!("{path}: {error}"))
     };
-    suite_from_source(
-        &read("crates/verbatim-e2e/src/registry.rs")?,
-        &read("crates/verbatim-e2e/tests/e2e.rs")?,
-    )
+    suite_from_source(&read("crates/verbatim-e2e/src/registry.rs")?)
 }
 
 /// Parses the table: `#` comments, blank lines, and lines of seconds then
@@ -167,58 +166,57 @@ pub fn parse_durations(text: &str) -> Result<HashMap<String, f64>, String> {
 }
 
 /// The entries of the registry's `SCENARIOS` array, read from its source:
-/// each `ScenarioDef {` block's `name`, `group` and `local_only` fields.
+/// each entry starts a line with its constructor, `suite!(`, `demo!(` or
+/// `measure!(`, which gives its group, followed by its name, a module's
+/// name or a string literal; it is local-only when its text, up to the
+/// next entry, calls `.local_only(`. Comment lines are skipped.
 ///
 /// # Errors
 ///
-/// Returns an error naming the entry when one lacks a field, or when the
-/// array is not found.
+/// Returns an error naming the line when an entry's name cannot be read,
+/// or when the array is not found or holds no entry.
 pub fn registry_entries(source: &str) -> Result<Vec<Entry>, String> {
+    const GROUPS: [(&str, &str); 3] = [
+        ("suite!(", "Suite"),
+        ("demo!(", "Demo"),
+        ("measure!(", "Measure"),
+    ];
     let start = source
         .find("pub const SCENARIOS: &[ScenarioDef] = &[")
         .ok_or("registry.rs: no SCENARIOS array")?;
-    let mut entries = Vec::new();
-    let (mut name, mut group, mut local_only) = (None, None, None);
-    let mut inside = false;
+    let mut entries: Vec<Entry> = Vec::new();
     for line in source[start..].lines().skip(1) {
         let line = line.trim();
         if line == "];" {
             break;
         }
-        if line == "ScenarioDef {" {
-            inside = true;
+        if line.starts_with("//") {
             continue;
         }
-        if !inside {
-            continue;
-        }
-        if let Some(value) = line.strip_prefix("name: \"") {
-            name = value.strip_suffix("\",").map(str::to_string);
-        } else if let Some(value) = line.strip_prefix("group: Group::") {
-            group = value.strip_suffix(',').map(str::to_string);
-        } else if let Some(value) = line.strip_prefix("local_only: ") {
-            local_only = match value {
-                "true," => Some(true),
-                "false," => Some(false),
-                _ => None,
-            };
-        } else if line == "}," {
-            let (Some(name), Some(group), Some(local_only)) =
-                (name.take(), group.take(), local_only.take())
-            else {
-                return Err(format!(
-                    "registry.rs: the entry after {:?} lacks a name, group or local_only line this reading understands",
-                    entries
-                        .last()
-                        .map_or("the start", |entry: &Entry| entry.name.as_str())
-                ));
-            };
+        let constructor = GROUPS
+            .iter()
+            .find_map(|(prefix, group)| line.strip_prefix(prefix).map(|rest| (rest, *group)));
+        if let Some((rest, group)) = constructor {
+            let name = rest
+                .split([',', ')'])
+                .next()
+                .map(|name| name.trim().trim_matches('"'))
+                .filter(|name| {
+                    !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                })
+                .ok_or_else(|| {
+                    format!("registry.rs: no scenario name this reading understands in {line:?}")
+                })?;
             entries.push(Entry {
-                name,
-                group,
-                local_only,
+                name: name.to_string(),
+                group: group.to_string(),
+                local_only: false,
             });
-            inside = false;
+        }
+        if line.contains(".local_only(")
+            && let Some(entry) = entries.last_mut()
+        {
+            entry.local_only = true;
         }
     }
     if entries.is_empty() {
@@ -229,61 +227,20 @@ pub fn registry_entries(source: &str) -> Result<Vec<Entry>, String> {
     Ok(entries)
 }
 
-/// The test names of the tests file, in its order: each `scenario_tests!`
-/// block's names, a block starting on a line ending `scenario_tests! {` and
-/// ending on `}` or `};`, and each `Trial::test("<name>"` literal, which
-/// names a test outside the blocks, such as the session check.
-fn test_names(source: &str) -> Vec<String> {
-    const TRIAL: &str = "Trial::test(\"";
-    let mut names = Vec::new();
-    let mut in_block = false;
-    for line in source.lines() {
-        let word = line.trim();
-        if in_block {
-            if word == "}" || word == "};" {
-                in_block = false;
-            } else if !word.is_empty()
-                && word
-                    .chars()
-                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
-            {
-                names.push(word.to_string());
-            }
-        } else if line.ends_with("scenario_tests! {") {
-            in_block = true;
-        } else if let Some(start) = line.find(TRIAL)
-            && let Some((name, _)) = line[start + TRIAL.len()..].split_once('"')
-        {
-            names.push(name.to_string());
-        }
-    }
-    names
-}
-
-/// The suite from the registry's and the tests file's source: every test,
-/// less the demonstrations, the measure set and the local-only scenarios.
+/// The suite from the registry's source: every entry of the `Suite` group
+/// not marked local-only, and [`SESSION_CHECK`].
 ///
 /// # Errors
 ///
-/// Returns [`registry_entries`]'s error, or one when the tests file names
-/// no test.
-pub fn suite_from_source(registry: &str, tests: &str) -> Result<Vec<String>, String> {
-    let entries = registry_entries(registry)?;
-    let names = test_names(tests);
-    if names.is_empty() {
-        return Err("tests/e2e.rs: no test this reading understands".into());
-    }
-    Ok(names
+/// Returns [`registry_entries`]'s error.
+pub fn suite_from_source(registry: &str) -> Result<Vec<String>, String> {
+    let mut suite: Vec<String> = registry_entries(registry)?
         .into_iter()
-        .filter(|name| {
-            entries
-                .iter()
-                .find(|entry| &entry.name == name)
-                .is_none_or(|entry| {
-                    !entry.local_only && entry.group != "Demo" && entry.group != "Measure"
-                })
-        })
-        .collect())
+        .filter(|entry| !entry.local_only && entry.group == "Suite")
+        .map(|entry| entry.name)
+        .collect();
+    suite.push(SESSION_CHECK.to_string());
+    Ok(suite)
 }
 
 /// The table's estimate for `name`, or [`DEFAULT_SECONDS`].
@@ -476,64 +433,41 @@ mod tests {
     }
 
     #[test]
-    fn the_suite_is_read_from_the_registry_and_the_tests_file() {
+    fn the_suite_is_read_from_the_registry() {
         let registry = r#"
 pub const SCENARIOS: &[ScenarioDef] = &[
-    ScenarioDef {
-        name: "kept",
-        group: Group::Suite,
-        settings: None,
-        local_only: false,
-        comparable: Comparable::No(
-            "a reason",
-        ),
-    },
-    ScenarioDef {
-        name: "only_here",
-        group: Group::Suite,
-        local_only: true,
-    },
-    ScenarioDef {
-        name: "demo_kind",
-        group: Group::Demo,
-        local_only: false,
-    },
-    ScenarioDef {
-        name: "measure_kind",
-        group: Group::Measure,
-        local_only: false,
-    },
+    suite!(kept, Own("a reason")),
+    suite!("named", module::{setup, body, teardown}, Capture),
+    // suite!(commented_out, Capture),
+    suite!(only_here, Capture)
+        .document(only_here::document)
+        .local_only("a reason"),
+    demo!(demo_kind, &["kept"]),
+    measure!("measure_kind", measure::{setup, body, teardown}),
 ];
 "#;
-        let tests = r#"
-const LIVE: &[&str] = scenario_tests! {
-    "a reason":
-    kept
-    only_here
-};
-
-const OTHERS: &[&str] = scenario_tests! {
-    "another":
-    demo_kind
-    measure_kind
-};
-
-fn scenario_trial(name: &'static str) -> Trial {
-    Trial::test(name, move || run(name))
-}
-
-fn main() {
-    trials.push(
-        Trial::test("outside_the_registry", || {
-            on_test_thread("outside_the_registry", check)
-        })
-        .with_ignored_flag(true),
-    );
-}
-"#;
         assert_eq!(
-            suite_from_source(registry, tests),
-            Ok(names(&["kept", "outside_the_registry"]))
+            suite_from_source(registry),
+            Ok(names(&["kept", "named", SESSION_CHECK]))
+        );
+        assert_eq!(
+            registry_entries(registry).map(|entries| entries
+                .into_iter()
+                .map(|entry| (entry.name, entry.group, entry.local_only))
+                .collect::<Vec<_>>()),
+            Ok(vec![
+                ("kept".to_string(), "Suite".to_string(), false),
+                ("named".to_string(), "Suite".to_string(), false),
+                ("only_here".to_string(), "Suite".to_string(), true),
+                ("demo_kind".to_string(), "Demo".to_string(), false),
+                ("measure_kind".to_string(), "Measure".to_string(), false),
+            ])
+        );
+        assert!(
+            registry_entries(
+                "pub const SCENARIOS: &[ScenarioDef] = &[\n    suite!(Not a name, Capture),\n];"
+            )
+            .is_err()
         );
     }
 }
