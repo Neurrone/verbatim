@@ -3,7 +3,7 @@
 //! exactly how much audio has played.
 
 use std::alloc::{GlobalAlloc, Layout, System};
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::ops::ControlFlow;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver};
@@ -100,6 +100,24 @@ struct DeviceState {
     wait_limits: Vec<Duration>,
     /// How many times the mixer has opened the device.
     opens: u32,
+}
+
+impl DeviceState {
+    /// What a failed wait reports of the device: everything but the
+    /// written samples themselves, which are counted.
+    fn describe(&self) -> String {
+        format!(
+            "queued {}, written {} frames, stops {}, waits {}, in a wait {}, woken {}, held {}, opens {}",
+            self.queued,
+            self.written.len(),
+            self.stops,
+            self.waits,
+            self.in_wait,
+            self.woken,
+            self.held,
+            self.opens
+        )
+    }
 }
 
 /// A device that plays only when the test says so.
@@ -353,6 +371,8 @@ struct Harness {
     sounds: Lane,
     control: SourceControl,
     events: Receiver<PlaybackEvent>,
+    /// Every event [`next`](Self::next) has taken, for its failure message.
+    received: RefCell<Vec<PlaybackEvent>>,
     earcons: Lane,
     earcon_events: Receiver<PlaybackEvent>,
     probe: SpeechLane,
@@ -405,6 +425,7 @@ fn harness_on(device: ManualDevice, tap: Option<Box<dyn AudioTap>>) -> Harness {
         sounds,
         control,
         events,
+        received: RefCell::default(),
         earcons,
         earcon_events,
         probe,
@@ -455,10 +476,19 @@ impl Harness {
         trace
     }
 
+    /// The next speech event. Fails at [`WAIT`] with the device's state
+    /// and every event taken before, so the failure says how far playback
+    /// got.
     fn next(&self) -> PlaybackEvent {
-        self.events
-            .recv_timeout(WAIT)
-            .expect("a playback event arrives")
+        let event = self.events.recv_timeout(WAIT).unwrap_or_else(|error| {
+            let device = self.device.state.0.lock().unwrap().describe();
+            panic!(
+                "a playback event arrives: {error:?}; device: {device}; events so far: {:?}",
+                self.received.borrow()
+            )
+        });
+        self.received.borrow_mut().push(event.clone());
+        event
     }
 
     /// Returns once the delivery thread has delivered everything the mixer
@@ -494,17 +524,26 @@ impl Harness {
 }
 
 /// Plays `frames` one at a time, each only once the mixer has written it
-/// (a device cannot play what it has not been given), and stops early once
-/// the mixer has done all it could and written nothing more.
+/// (a device cannot play what it has not been given), woken by each
+/// write. Fails at [`WAIT`] for a frame the mixer never wrote, with the
+/// device's state.
 fn play(device: &ManualDevice, frames: u32) {
-    for _ in 0..frames {
-        if device.state.0.lock().unwrap().queued == 0 {
-            device.settle();
-            if device.state.0.lock().unwrap().queued == 0 {
-                return;
-            }
+    for frame in 1..=frames {
+        let (state, condvar) = &*device.state;
+        let state = state.lock().unwrap();
+        let (mut state, wait) = condvar
+            .wait_timeout_while(state, WAIT, |state| state.queued == 0)
+            .unwrap();
+        if wait.timed_out() {
+            // Described, then let go, so the harness's drop finds the lock
+            // unpoisoned.
+            let device = state.describe();
+            drop(state);
+            panic!("the mixer writes frame {frame} of {frames} to play within {WAIT:?}; device: {device}");
         }
-        device.play(1);
+        state.queued -= 1;
+        state.woken = true;
+        condvar.notify_all();
     }
 }
 
@@ -807,7 +846,6 @@ fn a_failed_utterance_is_reported_failed_and_its_unheard_audio_dropped() {
     );
     // What the device had queued was taken back, and nothing more of the
     // utterance is written: there is nothing left to play.
-    harness.play(20);
     harness.nothing_more();
     assert_eq!(harness.device.state.0.lock().unwrap().queued, 0);
     assert_eq!(harness.device.written(), [SPOKEN; 10]);
@@ -1360,7 +1398,7 @@ fn exercise(harness: &mut Harness, first: u64) {
     harness.control.pause(true);
     harness.device.settle();
     harness.control.pause(false);
-    harness.play(20);
+    harness.play(17);
     assert_eq!(
         harness.next(),
         ended(first + 2, held, UtteranceEnding::Completed)
