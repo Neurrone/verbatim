@@ -244,6 +244,18 @@ fn inject_inputs(inputs: &[INPUT]) -> io::Result<()> {
 mod tests {
     use super::*;
 
+    /// The combination of `modifiers`, in order, and `key`, each resolved by
+    /// its name.
+    fn combo(modifiers: &[&str], key: &str) -> ParsedCombo {
+        ParsedCombo {
+            modifiers: modifiers
+                .iter()
+                .map(|name| vk_from_name(name).expect("a key name"))
+                .collect(),
+            key: vk_from_name(key).expect("a key name"),
+        }
+    }
+
     #[test]
     fn a_gesture_is_pressed_with_the_verbatim_modifier_as_insert() {
         assert_eq!(gesture_keys("kb:verbatim+v").as_deref(), Ok("insert+v"));
@@ -258,99 +270,58 @@ mod tests {
         );
     }
 
+    /// Each entry's parse: a bare key, modifiers in their order, the screen
+    /// readers' modifiers, and each way an entry is refused, naming the
+    /// part refused.
     #[test]
-    fn bare_key_has_no_modifiers() {
-        let combo = parse_combo("enter").expect("parses");
-        assert_eq!(combo.modifiers, [] as [verbatim_input::keys::KeyName; 0]);
-        assert_eq!(combo.key, vk_from_name("enter").unwrap());
-    }
-
-    #[test]
-    fn single_modifier_splits_correctly() {
-        let combo = parse_combo("shift+tab").expect("parses");
-        assert_eq!(combo.modifiers, vec![vk_from_name("shift").unwrap()]);
-        assert_eq!(combo.key, vk_from_name("tab").unwrap());
-    }
-
-    #[test]
-    fn multiple_modifiers_preserve_order() {
-        let combo = parse_combo("control+alt+delete").expect("parses");
-        assert_eq!(
-            combo.modifiers,
-            vec![
-                vk_from_name("control").unwrap(),
-                vk_from_name("alt").unwrap()
-            ]
-        );
-        assert_eq!(combo.key, vk_from_name("delete").unwrap());
-    }
-
-    /// The combination of `modifiers`, in order, and `key`, each resolved by
-    /// its name.
-    fn combo(modifiers: &[&str], key: &str) -> ParsedCombo {
-        ParsedCombo {
-            modifiers: modifiers
-                .iter()
-                .map(|name| vk_from_name(name).expect("a key name"))
-                .collect(),
-            key: vk_from_name(key).expect("a key name"),
+    fn a_combination_is_parsed_into_its_modifiers_in_order_and_its_key() {
+        let unknown = || Err("unknown key name: \"hyperspace\"".to_owned());
+        let rows: [(&str, Result<ParsedCombo, String>); 11] = [
+            ("enter", Ok(combo(&[], "enter"))),
+            ("shift+tab", Ok(combo(&["shift"], "tab"))),
+            (
+                "control+alt+delete",
+                Ok(combo(&["control", "alt"], "delete")),
+            ),
+            ("insert+t", Ok(combo(&["insert"], "t"))),
+            ("capslock+t", Ok(combo(&["capslock"], "t"))),
+            (
+                "numpadinsert+numpad5",
+                Ok(combo(&["numpadinsert"], "numpad5")),
+            ),
+            ("hyperspace", unknown()),
+            ("shift+hyperspace", unknown()),
+            // "tab" is a real key name but never a valid modifier position.
+            (
+                "tab+enter",
+                Err("not a recognized modifier name: \"tab\"".to_owned()),
+            ),
+            ("", Err("empty key name in combination: \"\"".to_owned())),
+            (
+                "shift+",
+                Err("empty key name in combination: \"shift+\"".to_owned()),
+            ),
+        ];
+        for (entry, expected) in rows {
+            assert_eq!(parse_combo(entry), expected, "{entry:?}");
         }
     }
 
+    /// A batch resolves every entry in order, or is refused whole for one
+    /// bad entry; a key to hold is one key by its name.
     #[test]
-    fn screen_reader_modifiers_are_accepted() {
-        assert_eq!(parse_combo("insert+t"), Ok(combo(&["insert"], "t")));
-        assert_eq!(parse_combo("capslock+t"), Ok(combo(&["capslock"], "t")));
+    fn a_batch_parses_whole_or_not_at_all_and_a_held_key_is_one_key() {
+        let keys = |entries: &[&str]| -> Vec<String> {
+            entries.iter().map(|entry| (*entry).to_owned()).collect()
+        };
         assert_eq!(
-            parse_combo("numpadinsert+numpad5"),
-            Ok(combo(&["numpadinsert"], "numpad5"))
+            parse_all(&keys(&["downarrow", "shift+tab"])),
+            Ok(vec![combo(&[], "downarrow"), combo(&["shift"], "tab")])
         );
-    }
-
-    #[test]
-    fn unknown_key_name_is_rejected() {
         assert_eq!(
-            parse_combo("hyperspace"),
+            parse_all(&keys(&["enter", "hyperspace"])),
             Err("unknown key name: \"hyperspace\"".to_owned())
         );
-        assert_eq!(
-            parse_combo("shift+hyperspace"),
-            Err("unknown key name: \"hyperspace\"".to_owned())
-        );
-    }
-
-    #[test]
-    fn unknown_modifier_name_is_rejected() {
-        // "tab" is a real key name but never a valid modifier position.
-        assert_eq!(
-            parse_combo("tab+enter"),
-            Err("not a recognized modifier name: \"tab\"".to_owned())
-        );
-    }
-
-    #[test]
-    fn empty_entry_is_rejected() {
-        assert_eq!(
-            parse_combo(""),
-            Err("empty key name in combination: \"\"".to_owned())
-        );
-        assert_eq!(
-            parse_combo("shift+"),
-            Err("empty key name in combination: \"shift+\"".to_owned())
-        );
-    }
-
-    #[test]
-    fn parse_all_rejects_whole_batch_on_one_bad_entry() {
-        let keys = vec!["enter".to_owned(), "hyperspace".to_owned()];
-        assert_eq!(
-            parse_all(&keys),
-            Err("unknown key name: \"hyperspace\"".to_owned())
-        );
-    }
-
-    #[test]
-    fn a_key_to_hold_is_one_key_by_its_name() {
         assert_eq!(parse_key("control"), Ok(vk_from_name("control").unwrap()));
         assert_eq!(
             parse_key("control+tab"),
@@ -362,15 +333,6 @@ mod tests {
         assert_eq!(
             parse_key("hyperspace"),
             Err("unknown key name: \"hyperspace\"".to_owned())
-        );
-    }
-
-    #[test]
-    fn parse_all_resolves_every_entry_in_order() {
-        let keys = vec!["downarrow".to_owned(), "shift+tab".to_owned()];
-        assert_eq!(
-            parse_all(&keys),
-            Ok(vec![combo(&[], "downarrow"), combo(&["shift"], "tab")])
         );
     }
 }

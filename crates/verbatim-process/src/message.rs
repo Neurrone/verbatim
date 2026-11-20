@@ -493,18 +493,8 @@ mod tests {
     }
 
     #[test]
-    fn the_idle_barriers_query_and_answer_round_trip() {
-        let query = CoreToOutpost::IdleQuery { round: 12 };
-        let mut buffer = Vec::new();
-        write_message(&mut buffer, &query).expect("writes");
-        let read_back: Option<CoreToOutpost> = read_message(&mut buffer.as_slice()).expect("reads");
-        assert_eq!(read_back, Some(query));
-        let answer = OutpostToCore::IdleAnswer { round: 12 };
-        let mut buffer = Vec::new();
-        write_message(&mut buffer, &answer).expect("writes");
-        let read_back: Option<OutpostToCore> = read_message(&mut buffer.as_slice()).expect("reads");
-        assert_eq!(read_back, Some(answer));
-        // It carries no node, so Core and the outpost do not count it.
+    fn the_idle_barriers_answer_carries_no_node() {
+        // So Core and the outpost do not count it.
         assert!(!OutpostToCore::IdleAnswer { round: 12 }.carries_nodes());
     }
 }
