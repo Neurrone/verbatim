@@ -102,9 +102,13 @@ fn a_later_foreground_report_reads_nothing() {
     );
 }
 
+/// The re-take keeps its read's own fence, not a key's that joined while
+/// it was out.
 #[test]
 fn the_committed_focus_read_again_after_its_outpost_ends_is_taken_silently() {
     let mut state = started();
+    state.arrivals.key_joined(verbatim_model::KeySeq::new(3));
+    let fence = state.arrivals.fence();
     assert_eq!(
         feed_at(&mut state, 1_000, Input::ReaderEnded(OUTPOST)),
         NOTHING
@@ -114,6 +118,7 @@ fn the_committed_focus_read_again_after_its_outpost_ends_is_taken_silently() {
         ready_at(&mut state, 1_100, REPLACEMENT),
         ["send Outpost(Pid(40)) CurrentFocus"]
     );
+    state.arrivals.key_joined(verbatim_model::KeySeq::new(4));
     let read = minted_anew(focus_read(None));
     assert_eq!(
         feed_at(
@@ -134,6 +139,7 @@ fn the_committed_focus_read_again_after_its_outpost_ends_is_taken_silently() {
         panic!("the re-take is committed as a reader's focus");
     };
     assert_eq!(focus.context.snapshot.id, new_id);
+    assert_eq!(since(&state), Some(Some(fence)));
 }
 
 /// The edit field "Body" committed by the startup read: the hook holds
