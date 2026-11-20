@@ -167,7 +167,7 @@ Leaf-crate group:
 | settings R4 | a sound's gain computed in two crates; the earcon mapping both ways | `theme_panel.rs` 627-632, 927-941; speech `theme.rs` 197-203 | 20 / 0 | 0 | no |
 | settings R5 | modifier keys and layout declared twice | config `lib.rs` 98-152; `verbatim-input/src/state.rs` 49-80; `scripts.rs` 22-38 | 40 / 0 | 0 | no |
 | settings R6 | `ConfigValue` mirrors `SettingValue`; an out-of-range number dropped silently | config `lib.rs` 214-223; app `speech_settings.rs` 34-38, 59-61 | 25 / 0 | 0 | no |
-| settings R7 | GUI lifecycle facts held twice | `lifecycle.rs` 64-80; gui `lib.rs` 242-262, 464-479 | 15 / 0 | 0 | no |
+| settings R7 | GUI lifecycle facts held twice | `lifecycle.rs` 64-80; gui `lib.rs` 242-262, 464-479 | moved to build 10: folding the page objects into the pure `Lifecycle` is not the 15 lines recorded, and build 10 rebuilds those pages from one table of rows | 0 | no |
 | settings R8 | bounded settings clamped at every reader | model `settings.rs` 87-126 and five readers | about 0 net (newtypes) | 20 / 0 | no |
 | settings R9 | the settings dialog's key enums tested twice across the bridge | gui `lib.rs` 802-838 | 0 | 41 / 0 | no |
 | settings R10 | three atomic writes; `persist` returns an error it never has | config `lib.rs` 571-578; `themes.rs` 652-659; `package.rs` 98-110 | 20 / 0 | 0 | no |
