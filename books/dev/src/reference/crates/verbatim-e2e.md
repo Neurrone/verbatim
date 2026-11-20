@@ -748,7 +748,9 @@ under `src/scenarios/` documents exactly what it asserts.
   the setup found), `settings_dialog_keys`, `theme_panel` (a role changed to a
   sound is then heard as that sound), and `terminal_settings_page` (its
   applied change found in Core with Verbatim+5).
-- Shell: `crash_recovery` (each ended by its process
+- Shell: `second_application_and_verbatim_menu` (the Windows Forms text
+  box as a second application, Verbatim's menu, and back, the text box's
+  outpost the same process), `crash_recovery` (each ended by its process
   id: the synthesizer host, the next announcement heard in full from the
   host Verbatim starts in its place; an application's outpost, once Core
   reports its end and is idle, nothing more said, and the review cursor

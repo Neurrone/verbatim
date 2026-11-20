@@ -107,22 +107,6 @@ pub(crate) fn text_box_body(scenario: &mut Scenario, _state: &mut ScenarioState)
     press(scenario, "control+rightarrow", &["beta"]);
     press(scenario, "downarrow", &["delta epsilon"]);
 
-    // Focus leaves for Verbatim's menu and comes back: the text area says
-    // the line the caret is on, the second.
-    // Verbatim's menu has no counterpart in NVDA, whose own menu speaks
-    // otherwise, so both steps are declared differences.
-    super::open_verbatim_menu(scenario);
-    scenario.deviates_from_nvda(
-        "docs/parity/focus-announcement.md",
-        "Focus announcement content and property order",
-    );
-    scenario.send_keys(&["escape"]).expect("sends escape");
-    scenario.deviates_from_nvda(
-        "docs/parity/focus-announcement.md",
-        "Focus announcement content and property order",
-    );
-    super::text_box::expect_announced(scenario, NAME, super::text_box::BOX_NAME, "delta epsilon");
-
     // End puts the caret on the line break, which is named. Shift+Home
     // selects back to the start of the line; Shift+Right Arrow then
     // unselects its first character, the text first, in NVDA's word order.
@@ -219,22 +203,6 @@ pub(crate) fn notepad_body(scenario: &mut Scenario, _state: &mut ScenarioState) 
     press(scenario, "rightarrow", &["l"]);
     press(scenario, "control+rightarrow", &["beta"]);
     press(scenario, "downarrow", &["delta epsilon"]);
-
-    // Focus leaves for Verbatim's menu and comes back: the text area says
-    // the line the caret is on, the second.
-    // Verbatim's menu has no counterpart in NVDA, whose own menu speaks
-    // otherwise, so both steps are declared differences.
-    super::open_verbatim_menu(scenario);
-    scenario.deviates_from_nvda(
-        "docs/parity/focus-announcement.md",
-        "Focus announcement content and property order",
-    );
-    scenario.send_keys(&["escape"]).expect("sends escape");
-    scenario.deviates_from_nvda(
-        "docs/parity/focus-announcement.md",
-        "Focus announcement content and property order",
-    );
-    super::expect_notepad_in_front(scenario, NAME, "delta epsilon");
 
     // End puts the caret on the line break, which is named. Shift+Home
     // selects back to the start of the line; Shift+Right Arrow then

@@ -107,14 +107,15 @@ use crate::scenarios::{
     quick_link_menu, quit_inside_a_file_dialog, quit_inside_a_modal_dialog,
     quit_inside_the_remove_theme_confirmation, quit_inside_the_verbatim_menu,
     rapid_tabbing_in_settings, read_only_field_typing, return_from_a_held_application,
-    review_cursor, review_dead_object, review_words, selection_keys, settings_combo_box_expanded,
-    settings_dialog_keys, settings_search_suggestions_reentered, speak_time_and_date,
-    spelling_errors, stale_focus_behind_a_caret_key, switch_to_onecore, system_information_tree,
-    table_cells, terminal_commands, terminal_editing, terminal_flood, terminal_key_timing,
-    terminal_lists, terminal_overflow, terminal_pager, terminal_progress, terminal_review_grid,
-    terminal_screens, terminal_settings_page, terminal_status_bar, terminal_typing,
-    terminal_windows, text_box_say_all, theme_panel, toast, twin_item_at_a_deleted_items_ids,
-    typed_words, verbatim_lifecycle,
+    review_cursor, review_dead_object, review_words, second_application_and_verbatim_menu,
+    selection_keys, settings_combo_box_expanded, settings_dialog_keys,
+    settings_search_suggestions_reentered, speak_time_and_date, spelling_errors,
+    stale_focus_behind_a_caret_key, switch_to_onecore, system_information_tree, table_cells,
+    terminal_commands, terminal_editing, terminal_flood, terminal_key_timing, terminal_lists,
+    terminal_overflow, terminal_pager, terminal_progress, terminal_review_grid, terminal_screens,
+    terminal_settings_page, terminal_status_bar, terminal_typing, terminal_windows,
+    text_box_say_all, theme_panel, toast, twin_item_at_a_deleted_items_ids, typed_words,
+    verbatim_lifecycle,
 };
 use crate::speech::{FailurePoint, SpeechFailure};
 
@@ -400,6 +401,7 @@ use Speech::{Capture, Own, SourceDerived};
 /// Every registered scenario, in a fixed, stable order.
 pub const SCENARIOS: &[ScenarioDef] = &[
     suite!(menu_and_settings_dialog, Own(OWN_GUI)),
+    suite!(second_application_and_verbatim_menu, Own("it reads Verbatim's status and opens Verbatim's own menu")),
     suite!(rapid_tabbing_in_settings, Own("it takes speech until Verbatim is idle (take_until_idle) and drives Verbatim's own settings dialog")),
     suite!(switch_to_onecore, Own("it reads Verbatim's status and drives Verbatim's own settings dialog")),
     suite!(crash_recovery, Own("it ends Verbatim's synthesizer host, an outpost and its focus listener")),

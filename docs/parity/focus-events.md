@@ -192,7 +192,7 @@ event against the foreground window when it processes it
 ([Event handling](../nvda/events.md), [Speech](../nvda/speech.md)).
 
 Verbatim: **matched (unverified)**, but for the limit below; the
-`rapid_tabbing_in_settings` and `text_box_editing`
+`rapid_tabbing_in_settings` and `second_application_and_verbatim_menu`
 scenarios cover it.
 
 - Every focus and foreground event of every application reaches Core
