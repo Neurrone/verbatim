@@ -77,14 +77,6 @@ Each entry gives the exact name, how it fails, how often and where, the cause wh
   - Cause, likely but not shown: as for the `call_counts` tests above.
 - Fix, for all three: build 6 runs the load recipe once, at most 20 runs (calls F12). If they pass, this entry goes, and with it `mockapp::call_counts` from `SERIAL_TESTS` and `mockapp::focus_reports` from `ALONE_TESTS` (`xtask/src/main.rs`) with their notes in `.config/nextest.toml`; if one fails, its failure message is recorded here. Until then `cargo xtask ci` runs `call_counts` alone and `focus_reports` with nothing beside it.
 
-## The mixer's allocation test under load
-
-- `verbatim-audio`'s `mixer` test `the_audio_thread_allocates_and_frees_nothing_while_it_plays`
-  - How: timed out waiting for a playback event, "a playback event arrives: Timeout", in its warm-up's first utterance (`exercise` in `crates/verbatim-audio/tests/mixer.rs`).
-  - How often: 1 of 640 runs with eight copies running at once on the 12-core development machine (2026-11-02); never seen alone, and never on GitHub, where `cargo xtask ci` runs the mixer tests one at a time (`SERIAL_TESTS`).
-  - Cause: not yet named. The harness's `play` judged from outside that the mixer had nothing more to write and returned early; it now waits for each frame it plays to be written, and a timeout in `Harness::next` reports the device's state and every event received before it, so a failure shows whether the harness or the mixer stopped.
-  - Fix: one measurement, eight copies at once, at most 20 runs. A lost wake in the mixer is a product fix in `crates/verbatim-audio/src/mixer`; if it does not recur, the entry is deleted.
-
 ## Scenarios local-only for the runner's image
 
 These are `local_only` in the registry, each with its reason beside the flag; the `e2e` job leaves them out of its groups (`cargo xtask e2e-plan`). The suggestions pair is under "Settings' suggestions list replaced as it opens" above.

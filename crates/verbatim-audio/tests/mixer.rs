@@ -1418,8 +1418,14 @@ fn the_audio_thread_allocates_and_frees_nothing_while_it_plays() {
         "verbatim-mixer-allocates-nothing-{}",
         std::process::id()
     ));
+    // No live process shares this id, so a folder already named with it was
+    // left by an earlier process that was ended before its guard ran.
+    if dir.exists() {
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
     std::fs::create_dir(&dir).unwrap();
-    let recorder = WavRecorder::create(&dir.join("audio.wav")).expect("the recording starts");
+    let scratch = RemovedOnDrop(dir);
+    let recorder = WavRecorder::create(&scratch.0.join("audio.wav")).expect("the recording starts");
     let mut harness = harness_on(ManualDevice::reserved(1 << 16), Some(Box::new(recorder)));
 
     exercise(&mut harness, 1);
@@ -1437,5 +1443,17 @@ fn the_audio_thread_allocates_and_frees_nothing_while_it_plays() {
     assert_eq!(harness.device.allocations(), before);
 
     drop(harness);
-    std::fs::remove_dir_all(dir).unwrap();
+    drop(scratch);
+}
+
+/// A folder removed when the test ends, passing or panicking, so a failed
+/// run leaves nothing for a later process with the same id to meet.
+struct RemovedOnDrop(std::path::PathBuf);
+
+impl Drop for RemovedOnDrop {
+    fn drop(&mut self) {
+        // A failure here would hide the test's own panic during unwinding;
+        // the next run with this id removes what is left.
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
 }
