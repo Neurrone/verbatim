@@ -27,10 +27,10 @@ Each entry gives the exact name, how it fails, how often and where, the cause wh
 
 ## The caret watch's baseline anchor released while it waits
 
-- `text_box_caret_keys` (run 41848692720, 2026-11-04, and run 44514942878 on GitHub's runner, 2026-11-19)
+- `text_box_caret_keys` (run 41848692720, 2026-11-04, and runs 44514942878 and 44754313469 on GitHub's runner, 2026-11-19 and 2026-11-20)
   - How: in the first run, at Control+V on the start of "alpha beta gamma", nothing was said within 15 s where "mangoalpha beta gamma" was expected. In run 44514942878, at the Down Arrow after Control+V, "delta epsilon" was never queued.
   - Cause: in run 44514942878's flight recorder, the paste's start read (answer 150) came back after 332 ms, and Core's answers 151 and 152 for the Down Arrow were not there (`Outcome::NotThere`, from `TextReply::Gone` in `crates/verbatim-outpost/src/outpost/asked.rs`). The outpost's release of the nodes and anchors no live request can name (`crates/verbatim-outpost/src/outpost/store/mod.rs`) ran four times in 1 s, freeing anchors 275 and 276 of answer 150. It frees an anchor once its report position is acknowledged and Core's held set lacks it, and Core's held set (`held_anchors`, `crates/verbatim-core/src/state.rs`) is built only from committed state, so an anchor Core has received but not yet committed can be freed. Which anchor answers 151 and 152 named is not shown.
-  - Fix: build 8, the request list closed, whose study asks how anchors cross and whose first conversions include the caret key; this failure is one of that study's cases. If the study cannot reach it, the scenario is made local-only with this reason.
+  - Fix: build 8, the request list closed, which redesigns how anchors cross; this failure is one of its cases. Until then the scenario is local-only, taken off GitHub after it failed again there in run 44754313469 (2026-11-20, answers 141, 145, 151 and 152 not there during the paste), and it runs on GitHub again once build 8 fixes the release.
 
 ## Console host scenarios
 

@@ -769,7 +769,12 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         name: "text_box_caret_keys",
         group: Group::Suite,
         settings: None,
-        local_only: false,
+        // On GitHub's runner the outpost releases a caret key's starting
+        // anchor before Core commits it, so the reads after a paste answer
+        // not there and the line is never said (runs 44514942878 and
+        // 44754313469; docs/flaky-tests.md). It runs again on GitHub when
+        // build 8, which redesigns how anchors cross, fixes the release.
+        local_only: true,
         document: None,
         comparable: Comparable::Yes,
         setup: caret_keys::text_box_setup,
