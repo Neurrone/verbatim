@@ -14,19 +14,24 @@
 use verbatim_model::request::{
     FocusNode, NodeRead, ObjectRef, Purpose, ReadObject, RelationFound, RelationQuery,
 };
-use verbatim_model::{Backend, NodeId, NodeSnapshot, OutpostId, Role, SpeechPriority, State};
+use verbatim_model::{Backend, NodeId, NodeSnapshot, Role, SpeechPriority, State};
 
 use super::{Announcement, Kind, msaa_passes};
 use crate::changes::ChangeRead;
 use crate::entries::Entries;
+use crate::event_queue::RequestWindow;
 use crate::event_queue::{Cx, OTHER_DUE_US, Outcome, Reader};
 use crate::focus::FOCUS_SET;
+use verbatim_model::request::MsaaIds;
 
-/// The function of an MSAA alert entry.
-pub(crate) async fn run(mut cx: Cx<Entries>, announcement: Announcement) {
-    let Kind::Alert { ids, window, moved } = announcement.kind else {
-        return;
-    };
+/// The function of an MSAA alert entry, naming `ids` in `window`, moved
+/// behind the pending entries once when `moved`.
+pub(crate) async fn run(
+    mut cx: Cx<Entries>,
+    announcement: Announcement,
+    (ids, window): (MsaaIds, RequestWindow),
+    moved: bool,
+) {
     let tell = &announcement.tell;
     if !moved && focus_pending_behind(&cx) {
         let mut moved = announcement.clone();
@@ -45,7 +50,7 @@ pub(crate) async fn run(mut cx: Cx<Entries>, announcement: Announcement) {
     // focus first, met by NVDA's equality, then its ancestors.
     let generation = cx
         .instance(Reader::Outpost(window.process))
-        .map(|instance| OutpostId(instance.generation));
+        .map(verbatim_model::request::Instance::outpost_id);
     let line: Vec<NodeId> = cx
         .facts()
         .versions

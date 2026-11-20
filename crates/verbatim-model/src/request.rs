@@ -40,6 +40,14 @@ pub struct Instance {
     pub generation: u64,
 }
 
+impl Instance {
+    /// The id its nodes carry: an outpost's generation.
+    #[must_use]
+    pub const fn outpost_id(self) -> crate::OutpostId {
+        crate::OutpostId(self.generation)
+    }
+}
+
 /// Core's number for one request, unique for the run, by which its answer
 /// is routed and a late answer dropped.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]

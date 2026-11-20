@@ -742,7 +742,7 @@ impl Logic for Entries {
         said: &mut Vec<Said>,
     ) -> Vec<Entry> {
         if let crate::event_queue::Reader::Outpost(process) = instance.reader {
-            let outpost = verbatim_model::OutpostId(instance.generation);
+            let outpost = instance.outpost_id();
             facts.follows.outpost_ended(process, outpost);
             // The focused terminal and the models of the generation's
             // terminals go with it (Table 1, column I).

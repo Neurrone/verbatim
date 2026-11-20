@@ -26,8 +26,7 @@ use verbatim_model::property::RuntimeId;
 use verbatim_model::request::{MsaaIds, Reply, Request as Wire};
 use verbatim_model::tell::{ElementToken, Event, EventObject};
 use verbatim_model::{
-    NodeId, OutpostId, SelectionRead, SelectionReadReply, TextFailure, TextOp, TextProvider,
-    TextReply,
+    NodeId, SelectionRead, SelectionReadReply, TextFailure, TextOp, TextProvider, TextReply,
 };
 
 use crate::changes::MsaaChange;
@@ -166,7 +165,7 @@ fn target(cx: &Cx<Entries>, tell: &CaretTell) -> Option<Kept> {
     }?;
     let live = cx
         .instance(Reader::Outpost(kept.window.process))
-        .is_some_and(|instance| Some(OutpostId(instance.generation)) == kept.node.outpost());
+        .is_some_and(|instance| Some(instance.outpost_id()) == kept.node.outpost());
     live.then_some(kept)
 }
 

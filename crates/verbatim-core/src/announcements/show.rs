@@ -10,20 +10,24 @@
 use verbatim_model::request::{FocusNode, ObjectRef, Purpose, ReadObject};
 use verbatim_model::{Backend, Role, SpeechPriority};
 
-use super::{Announcement, Kind, msaa_passes};
+use super::{Announcement, msaa_passes};
 use crate::changes::ChangeRead;
 use crate::entries::{Entries, window_facts};
+use crate::event_queue::RequestWindow;
 use crate::event_queue::{Cx, OTHER_DUE_US, Outcome};
 use crate::focus::FOCUS_SET;
+use verbatim_model::request::MsaaIds;
 
 /// The tooltip class, whose shows are read.
 const TOOLTIP_CLASS: &str = "tooltips_class32";
 
-/// The function of a show entry.
-pub(crate) async fn run(mut cx: Cx<Entries>, announcement: Announcement) {
-    let Kind::Show { ids, window } = announcement.kind else {
-        return;
-    };
+/// The function of a show entry, naming `ids` in `window`.
+pub(crate) async fn run(
+    mut cx: Cx<Entries>,
+    announcement: Announcement,
+    ids: MsaaIds,
+    window: RequestWindow,
+) {
     let tell = &announcement.tell;
     if window_facts(tell).is_none_or(|facts| facts.window.class != TOOLTIP_CLASS)
         || !msaa_passes(&cx, tell, &window)

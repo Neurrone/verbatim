@@ -171,7 +171,17 @@ fn a_most_recent_notification_cuts_speech_and_another_is_queued() {
     let judged = |processing| {
         let tell = notification(APP, processing, "");
         let announcement = Announcement::of_tell(1, tell).unwrap();
-        match super::notification::judged(&state, &announcement, Some(APP)) {
+        let super::Kind::Notification {
+            text,
+            processing,
+            activity,
+            ..
+        } = &announcement.kind
+        else {
+            panic!("a notification: {announcement:?}");
+        };
+        let notification = (text.as_str(), *processing, activity.as_str());
+        match super::notification::judged(&state, &announcement.tell, notification, Some(APP)) {
             Some(verbatim_model::Effect::Speak(utterance, _)) => utterance.priority,
             other => panic!("{other:?}"),
         }

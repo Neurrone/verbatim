@@ -15,19 +15,25 @@ use verbatim_model::{
     Effect, NotificationProcessing, Pid, SpeechPriority, Utterance, UtteranceSegment,
 };
 
-use super::{Announcement, Kind};
 use crate::entries::Entries;
 use crate::event_queue::Cx;
 use crate::reduce::SNAP_RESULTS_ACTIVITY;
 use crate::state::SrState;
+use verbatim_model::tell::Event;
 
 /// The application File Explorer's module speaks the snap results from.
 const EXPLORER: &str = "explorer";
 
-/// The function of a notification entry, which asks nothing.
-pub(crate) fn run(cx: &mut Cx<Entries>, announcement: &Announcement) {
+/// The function of a notification entry, which asks nothing: `tell`
+/// carrying `notification`, its text, how it asks to be processed and its
+/// activity id.
+pub(crate) fn run(
+    cx: &mut Cx<Entries>,
+    tell: &Event,
+    notification: (&str, NotificationProcessing, &str),
+) {
     let focus_process = focus_process(cx);
-    let said = judged(&cx.facts(), announcement, focus_process);
+    let said = judged(&cx.facts(), tell, notification, focus_process);
     if let Some(said) = said {
         cx.emit(said);
     }
@@ -43,23 +49,14 @@ fn focus_process(cx: &Cx<Entries>) -> Option<Pid> {
         .or_else(|| cx.foreground().map(|front| front.process))
 }
 
-/// What `announcement`, a notification, says, judged against the
-/// committed focus's application `focus_process`.
+/// What `tell`, carrying `notification` ([`run`]), says, judged against
+/// the committed focus's application `focus_process`.
 pub(crate) fn judged(
     state: &SrState,
-    announcement: &Announcement,
+    tell: &Event,
+    (text, processing, activity): (&str, NotificationProcessing, &str),
     focus_process: Option<Pid>,
 ) -> Option<Effect> {
-    let Kind::Notification {
-        text,
-        processing,
-        activity,
-        ..
-    } = &announcement.kind
-    else {
-        return None;
-    };
-    let tell = &announcement.tell;
     let snap = activity == SNAP_RESULTS_ACTIVITY && tell.application == EXPLORER;
     let windowed = matches!(tell.window, TellWindow::Found(_));
     if !snap && (!windowed || Some(tell.process) != focus_process) {
@@ -86,7 +83,7 @@ pub(crate) fn judged(
         Utterance {
             trace_id: tell.trace_id,
             priority,
-            segments: vec![UtteranceSegment::text(text.clone())],
+            segments: vec![UtteranceSegment::text(text.to_owned())],
             source: None,
             say_all: false,
             validity: None,

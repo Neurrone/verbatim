@@ -24,16 +24,11 @@ pub(crate) fn node_set(state: &SrState, base: &[PropertyId]) -> Vec<PropertyId> 
 /// does. One `LVM_GETITEMCOUNT` more for a list view item's focus with the
 /// setting off.
 pub(crate) fn focus_set(state: &SrState, base: &[PropertyId]) -> Vec<PropertyId> {
-    base.iter()
-        .copied()
-        .filter(|id| {
-            matches!(id, PropertyId::PositionInSet | PropertyId::SetSize)
-                || id
-                    .entry()
-                    .detail
-                    .is_none_or(|detail| state.reported.node.contains(detail))
-        })
-        .collect()
+    set_keeping(
+        state,
+        base,
+        &[PropertyId::PositionInSet, PropertyId::SetSize],
+    )
 }
 
 /// The property set of a listener read whose walk a completion judges
@@ -46,10 +41,15 @@ pub(crate) fn focus_set(state: &SrState, base: &[PropertyId]) -> Vec<PropertyId>
 /// listener reads it with every element of the walk in any case, so this
 /// adds no call.
 pub(crate) fn walk_set(state: &SrState, base: &[PropertyId]) -> Vec<PropertyId> {
+    set_keeping(state, base, &[PropertyId::Description])
+}
+
+/// [`node_set`], with the properties of `kept` kept whatever the settings.
+fn set_keeping(state: &SrState, base: &[PropertyId], kept: &[PropertyId]) -> Vec<PropertyId> {
     base.iter()
         .copied()
         .filter(|id| {
-            *id == PropertyId::Description
+            kept.contains(id)
                 || id
                     .entry()
                     .detail
@@ -65,21 +65,14 @@ pub(crate) fn focus_details(state: &SrState) -> TextDetails {
     state.reported.text
 }
 
-/// Why a text read is made, which decides what it fetches.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum TextReason {
-    /// For a caret key: its unit as the key moved the caret.
-    CaretKey,
-}
-
-/// What a text read of `unit` for `reason` fetches beyond the text: the
+/// What a caret key's text read of `unit` fetches beyond the text: the
 /// details the settings report, less spelling and grammar errors for a
-/// paragraph read for a caret key, which NVDA leaves out for speed, as it
-/// does for a table cell, a unit Verbatim's text has not.
-pub(crate) fn text_details(state: &SrState, unit: TextUnit, reason: TextReason) -> TextDetails {
+/// paragraph, which NVDA leaves out for speed, as it does for a table
+/// cell, a unit Verbatim's text has not.
+pub(crate) fn text_details(state: &SrState, unit: TextUnit) -> TextDetails {
     let reported = state.reported.text;
-    match (unit, reason) {
-        (TextUnit::Paragraph, TextReason::CaretKey) => TextDetails {
+    match unit {
+        TextUnit::Paragraph => TextDetails {
             spelling_errors: false,
             grammar_errors: false,
             ..reported
@@ -93,7 +86,7 @@ mod tests {
     use verbatim_model::property::{NodeDetail, NodeDetailSet, PropertyId};
     use verbatim_model::{FormatSet, ReportedDetails, TextDetails, TextUnit};
 
-    use super::{TextReason, node_set, text_details, walk_set};
+    use super::{node_set, text_details, walk_set};
     use crate::state::SrState;
 
     fn state(reported: ReportedDetails) -> SrState {
@@ -217,14 +210,10 @@ mod tests {
             TextUnit::Line,
             TextUnit::Sentence,
         ] {
-            assert_eq!(
-                text_details(&state, unit, TextReason::CaretKey),
-                reported.text,
-                "{unit:?}"
-            );
+            assert_eq!(text_details(&state, unit), reported.text, "{unit:?}");
         }
         assert_eq!(
-            text_details(&state, TextUnit::Paragraph, TextReason::CaretKey),
+            text_details(&state, TextUnit::Paragraph),
             TextDetails {
                 formats: FormatSet::NONE,
                 spelling_errors: false,

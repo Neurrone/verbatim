@@ -190,16 +190,26 @@ impl Announcement {
 
     /// The function its kind runs at its turn.
     pub(crate) fn run(cx: Cx<Entries>, announcement: Self) -> Function {
-        match announcement.kind {
-            Kind::Notification { .. } => Box::pin(async move {
+        match announcement.kind.clone() {
+            Kind::Notification {
+                text,
+                processing,
+                activity,
+                ..
+            } => Box::pin(async move {
                 let mut cx = cx;
-                notification::run(&mut cx, &announcement);
+                let notification = (text.as_str(), processing, activity.as_str());
+                notification::run(&mut cx, &announcement.tell, notification);
             }),
-            Kind::Toast(_) => Box::pin(toast::run(cx, announcement)),
-            Kind::UiaSelection(..) => Box::pin(selection::run(cx, announcement)),
-            Kind::Alert { .. } => Box::pin(alert::run(cx, announcement)),
-            Kind::Show { .. } => Box::pin(show::run(cx, announcement)),
-            Kind::DesktopName { .. } => Box::pin(desktop_name::run(cx, announcement)),
+            Kind::Toast(kept) => Box::pin(toast::run(cx, announcement, kept)),
+            Kind::UiaSelection(kept, at_arrival) => {
+                Box::pin(selection::run(cx, announcement, kept, at_arrival))
+            }
+            Kind::Alert { ids, window, moved } => {
+                Box::pin(alert::run(cx, announcement, (ids, window), moved))
+            }
+            Kind::Show { ids, window } => Box::pin(show::run(cx, announcement, ids, window)),
+            Kind::DesktopName { ids } => Box::pin(desktop_name::run(cx, announcement, ids)),
         }
     }
 

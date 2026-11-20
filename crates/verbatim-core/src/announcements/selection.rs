@@ -39,11 +39,9 @@ use verbatim_model::request::{
     CompleteUia, CompletionFor, ObjectRead, ObjectRef, Purpose, ReadObject, RelationFound, Reply,
     Request as Wire, RouteEnd,
 };
-use verbatim_model::{
-    Backend, NodeId, OutpostId, PropertyChange, Role, State, StateSet, WindowHandle,
-};
+use verbatim_model::{Backend, NodeId, PropertyChange, Role, State, StateSet, WindowHandle};
 
-use super::{Announcement, Kind, accepted, native, text};
+use super::{Announcement, Kept, accepted, native, text};
 use crate::changes::AtArrival;
 use crate::entries::Entries;
 use crate::entries::window_facts;
@@ -120,11 +118,14 @@ impl Request for NodeProperties {
     }
 }
 
-/// The function of a UI Automation selection entry.
-pub(crate) async fn run(mut cx: Cx<Entries>, announcement: Announcement) {
-    let Kind::UiaSelection(kept, at_arrival) = &announcement.kind else {
-        return;
-    };
+/// The function of a UI Automation selection entry, its element `kept` by
+/// the listener, the committed focus or not as it joined (`at_arrival`).
+pub(crate) async fn run(
+    mut cx: Cx<Entries>,
+    announcement: Announcement,
+    kept: Kept,
+    at_arrival: AtArrival,
+) {
     let tell = &announcement.tell;
     let Some(window) = announcement.window() else {
         return;
@@ -149,7 +150,7 @@ pub(crate) async fn run(mut cx: Cx<Entries>, announcement: Announcement) {
     selected(
         &mut cx,
         &announcement,
-        (kept, *at_arrival, window, &committed),
+        (&kept, at_arrival, window, &committed),
         due_us,
     )
     .await;
@@ -211,7 +212,7 @@ async fn selected(
     };
     let generation = cx
         .instance(Reader::Outpost(window.process))
-        .map(|instance| OutpostId(instance.generation));
+        .map(verbatim_model::request::Instance::outpost_id);
     let known = Known::of(&cx.facts(), generation);
     if let RouteEnd::Known(met) = &route.end
         && !known.sent.contains(met)

@@ -252,7 +252,7 @@ pub(crate) fn reader_ended(
             }
         }
         Reader::Outpost(_) => {
-            let outpost = verbatim_model::OutpostId(instance.generation);
+            let outpost = instance.outpost_id();
             let super::versions::ReaderEnd::Retake = state.versions.outpost_ended(outpost) else {
                 return None;
             };

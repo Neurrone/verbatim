@@ -22,8 +22,8 @@
 
 use verbatim_model::request::{CancelReason, CaretBinding, Reply, Request as Wire};
 use verbatim_model::{
-    CaretKey, CaretMotion, KeySeq, NodeId, OutpostId, SentenceMove, SentenceMoved, Started,
-    StartingRead, StartingUnit, TextDetails, TextFailure, TextOp, TextProvider, TextReply, TraceId,
+    CaretKey, CaretMotion, KeySeq, NodeId, SentenceMove, SentenceMoved, Started, StartingRead,
+    StartingUnit, TextDetails, TextFailure, TextOp, TextProvider, TextReply, TraceId,
     UtteranceSegment, Watch, WatchFinalRead, Watched, WatchedRead,
 };
 
@@ -992,11 +992,7 @@ fn stop_say_all(cx: &mut Cx<Entries>) {
 /// What `press`'s text reads fetch beyond the text: what the settings
 /// report for its unit, read for a caret key ([`crate::details`]).
 fn key_details(cx: &Cx<Entries>, press: &CaretPress) -> TextDetails {
-    crate::details::text_details(
-        &cx.facts(),
-        press.key.motion.unit(),
-        crate::details::TextReason::CaretKey,
-    )
+    crate::details::text_details(&cx.facts(), press.key.motion.unit())
 }
 
 /// Whether a key, command, braille gesture or key Core sends joined behind
@@ -1015,7 +1011,7 @@ fn counts_behind(cx: &Cx<Entries>) -> bool {
 /// the one running.
 fn held_node(cx: &Cx<Entries>, binding: &CaretBinding) -> bool {
     cx.instance(Reader::Outpost(binding.window.process))
-        .is_some_and(|instance| Some(OutpostId(instance.generation)) == binding.node.outpost())
+        .is_some_and(|instance| Some(instance.outpost_id()) == binding.node.outpost())
 }
 
 /// Whether `node` is the committed focus, whose `Follow` registers its

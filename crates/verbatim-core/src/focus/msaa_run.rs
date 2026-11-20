@@ -18,7 +18,7 @@ use verbatim_model::request::{
     CandidateAnswer, CandidateFacts, CandidateKind, Depth, FocusRead, HiddenRoot, Identity,
     MsaaIds, MsaaRun, Reply, Request as Wire, RunCandidate,
 };
-use verbatim_model::{NodeId, OutpostId, Pid, TextAnchor};
+use verbatim_model::{NodeId, Pid, TextAnchor};
 
 use super::FOCUS_SET;
 use super::execute::{Known, Origin, execute};
@@ -240,7 +240,7 @@ impl<D: ReadDepth> RunRequest<D> {
 pub(crate) fn known_for(cx: &Cx<Entries>, process: Pid) -> Known {
     let generation = cx
         .instance(Reader::Outpost(process))
-        .map(|instance| OutpostId(instance.generation));
+        .map(verbatim_model::request::Instance::outpost_id);
     Known::of(&cx.facts(), generation)
 }
 

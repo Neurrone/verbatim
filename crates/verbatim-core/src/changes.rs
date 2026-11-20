@@ -395,7 +395,7 @@ pub(crate) async fn msaa(mut cx: Cx<Entries>, change: MsaaChange) {
     };
     let generation = cx
         .instance(Reader::Outpost(process))
-        .map(|instance| OutpostId(instance.generation));
+        .map(verbatim_model::request::Instance::outpost_id);
     let Some(kept) = held(&cx.facts(), generation) else {
         return;
     };

@@ -7,7 +7,6 @@
 
 use std::iter;
 
-use verbatim_model::OutpostId;
 use verbatim_model::request::{
     CompleteUia, CompletionFor, FocusRead, HiddenRoot, ObjectRead, ObjectRef, Purpose, ReadObject,
     Reply, Request as Wire, RouteEnd,
@@ -141,7 +140,7 @@ pub(crate) async fn run(mut cx: Cx<Entries>, focus: UiaFocus) {
     };
     let generation = cx
         .instance(Reader::Outpost(window.process))
-        .map(|instance| OutpostId(instance.generation));
+        .map(verbatim_model::request::Instance::outpost_id);
     let known = Known::of(&cx.facts(), generation);
     if let RouteEnd::Known(met) = &route.end
         && !known.sent.contains(met)

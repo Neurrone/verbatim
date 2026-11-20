@@ -10,7 +10,7 @@
 use verbatim_model::request::{ObjectRef, Purpose, ReadObject};
 use verbatim_model::{Backend, NodeId, SpeechPriority, ToastId};
 
-use super::{Announcement, Kind, native};
+use super::{Announcement, Kept, native};
 use crate::entries::{Entries, window_facts};
 use crate::event_queue::{Cx, OTHER_DUE_US, Outcome};
 use crate::focus::FOCUS_SET;
@@ -23,11 +23,8 @@ const TOAST_WINDOW: &str = "Windows.UI.Core.CoreWindow";
 /// How long after a toast the same toast is dropped as a repeat.
 const REPEAT_US: u64 = 1_000_000;
 
-/// The function of a toast entry.
-pub(crate) async fn run(mut cx: Cx<Entries>, announcement: Announcement) {
-    let Kind::Toast(kept) = &announcement.kind else {
-        return;
-    };
+/// The function of a toast entry, its element `kept` by the listener.
+pub(crate) async fn run(mut cx: Cx<Entries>, announcement: Announcement, kept: Kept) {
     let tell = &announcement.tell;
     let Some(facts) = window_facts(tell) else {
         return;

@@ -8,19 +8,17 @@
 use verbatim_model::property::{PropertyId, PropertyValue};
 use verbatim_model::request::{ObjectRef, Purpose, ReadObject};
 
-use super::{Announcement, Kind};
+use super::Announcement;
 use crate::entries::Entries;
 use crate::event_queue::{Cx, OTHER_DUE_US, Outcome};
 use crate::focus::uia_focus::ListenerRead;
+use verbatim_model::request::MsaaIds;
 
 /// How long after its read a name no focus said is said alone.
 const NAME_DUE_US: u64 = 250_000;
 
-/// The function of a desktop name entry.
-pub(crate) async fn run(mut cx: Cx<Entries>, announcement: Announcement) {
-    let Kind::DesktopName { ids } = announcement.kind else {
-        return;
-    };
+/// The function of a desktop name entry, naming `ids`.
+pub(crate) async fn run(mut cx: Cx<Entries>, announcement: Announcement, ids: MsaaIds) {
     let Some(window) = announcement.window() else {
         return;
     };
