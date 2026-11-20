@@ -32,13 +32,6 @@ Each entry gives the exact name, how it fails, how often and where, the cause wh
   - Cause: in run 44514942878's flight recorder, the paste's start read (answer 150) came back after 332 ms, and Core's answers 151 and 152 for the Down Arrow were not there (`Outcome::NotThere`, from `TextReply::Gone` in `crates/verbatim-outpost/src/outpost/asked.rs`). The outpost's release of the nodes and anchors no live request can name (`crates/verbatim-outpost/src/outpost/store/mod.rs`) ran four times in 1 s, freeing anchors 275 and 276 of answer 150. It frees an anchor once its report position is acknowledged and Core's held set lacks it, and Core's held set (`held_anchors`, `crates/verbatim-core/src/state.rs`) is built only from committed state, so an anchor Core has received but not yet committed can be freed. Which anchor answers 151 and 152 named is not shown.
   - Fix: build 8, the request list closed, whose study asks how anchors cross and whose first conversions include the caret key; this failure is one of that study's cases. If the study cannot reach it, the scenario is made local-only with this reason.
 
-## Windows Terminal raises no TextChanged for a typed character
-
-- Scenarios: `windows_terminal_typing`, locally (about 5 percent of runs, recorded 2026-10-31); it has never failed this way on GitHub's runner.
-- How: the typed character is not echoed; only caret moves are raised.
-- Cause: not yet named. Core reads a terminal on text-changed and console update events, not on caret events, so a lost text-changed event leaves a typed character unread; whether Windows Terminal or UI Automation loses it is not shown, and the terminal read path has been rewritten since (89c36cc8).
-- Fix: one measurement of at most 20 runs of `windows_terminal_typing` at today's code, with `verbatim-event-record` recording Windows Terminal's events as an independent UI Automation client. A missed echo with no TextChanged in the recording is Windows Terminal's, a parity note; one with the TextChanged recorded is Verbatim's, for build 9. If no echo is missed, the entry is deleted.
-
 ## Console host scenarios
 
 - `conhost_leave_flood`, on the development VM only; it passes on GitHub's runner and stays there.
@@ -49,10 +42,6 @@ Each entry gives the exact name, how it fails, how often and where, the cause wh
   - How: the test console panicked with "the console's window took its client's title" (`crates/verbatim-test-console/src/lib.rs`) after its 10 s wait for the console window's name change, before the test read anything.
   - Cause: not yet named. The panic now names every name the console host's windows took during the wait and each process in the console's job with its image and whether it is running, so the next failure says whether the shell started and what title the window had.
   - Fix: a measurement of 20 runs of the test alone, then the next failure's message read. The wait is not lengthened.
-- `conhost_typing`, locally
-  - How: missed a typed "o" in 2 of 6 runs on the base build (no artifact kept).
-  - Cause: not yet named.
-  - Fix: one measurement of at most 20 runs of `conhost_typing` at today's code, as for `windows_terminal_typing` above; if no character is missed, the bullet is deleted.
 
 ## Terminal scenarios, single failures on GitHub's runner
 
