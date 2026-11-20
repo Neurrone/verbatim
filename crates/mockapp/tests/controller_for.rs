@@ -384,8 +384,9 @@ fn a_stale_selection_after_a_replacement_reports_nothing_and_an_ordinary_one_the
 }
 
 /// The first suggestion Settings selects as its list opens, in the order
-/// the flight recorders of `settings_search_suggestions` and
-/// `settings_search_suggestions_reentered` (2026-11-19) show: the item's
+/// the flight recorders of the two search scenarios (2026-11-19;
+/// `settings_search_suggestions`, since merged into
+/// `settings_search_suggestions_reentered`) show: the item's
 /// element selected event carries no name in its cache, since Settings
 /// has not set it yet, the listener's check runs then, and Settings has
 /// set the name by the time Core's read of the item runs. The item is

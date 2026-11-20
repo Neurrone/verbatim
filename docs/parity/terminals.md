@@ -280,8 +280,8 @@ Verbatim: **matched (verified)**.
   as output. Different (Dickson, 2026-10-09): NVDA reads a focused
   terminal's caret line in the console host, but in Windows Terminal says
   no line for a window or tab with nothing written yet, not recognising
-  the terminal's focus, a bug not copied. `windows_terminal_two_windows`,
-  `windows_terminal_tabs` asserts "blank"
+  the terminal's focus, a bug not copied. `windows_terminal_two_windows` and
+  `windows_terminal_tabs` assert "blank"
   for the second window and the second tab, and every Windows Terminal
   scenario for its first window. The two-window scenarios switch windows
   by bringing them to the front.

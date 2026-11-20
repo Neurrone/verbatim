@@ -282,7 +282,8 @@ had no children and its current selection had no name and no position,
 before all 22 items appeared together with a `ChildrenBulkAdded`
 structure change; read then, the item would be said as "list item".
 No such reading was seen with Verbatim running: 20 runs of
-`settings_search_suggestions` each said "Sound settings 1 of 22", so
+the search scenario (`settings_search_suggestions`, since merged into
+`settings_search_suggestions_reentered`) each said "Sound settings 1 of 22", so
 nothing in Verbatim waits for the list to fill (Dickson, 2026-11-03).
 For each arrow NVDA queues the search box's line ("A caret key that
 moves nothing" in [text](text.md)) and cuts it off with the suggestion
@@ -328,9 +329,9 @@ NVDA speaks a description change. The item status is not followed:
 NVDA's own handling of it is in app modules only.
 
 As its suggestions open, Settings' search box raised its ControllerFor
-change twice, 45 to 60 ms apart, in both runs of
-`settings_search_suggestions` and `settings_search_suggestions_reentered`
-on 2026-11-19 (their flight recorders: two Suggestions changes, each
+change twice, 45 to 60 ms apart, in both runs of the two search
+scenarios on 2026-11-19 (`settings_search_suggestions`, since merged into
+`settings_search_suggestions_reentered`, and the latter) (their flight recorders: two Suggestions changes, each
 read open), and Verbatim plays the suggestions-opened indication for
 each, as NVDA does: `event_controllerForChange` plays it whenever the
 field is the focus and `controllerFor` names elements

@@ -133,7 +133,7 @@ pub struct OutpostCrash {
 impl std::fmt::Display for OutpostCrash {
     /// `pid 1234, code 0xC0000005, dump <path>`, with `unknown` for an
     /// unread code and `none` for a missing dump: the form a summary line
-    /// holds and [`parse_outpost_crash`] reads back.
+    /// holds.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "pid {}, code ", self.pid)?;
         match self.exit_code {

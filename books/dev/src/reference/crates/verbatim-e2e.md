@@ -314,8 +314,8 @@ shorter (`compare::QuietPeriod`).
   next step's as one unit naming both inputs. `take_until`,
   `take_until_idle` and `take_all_queued` cannot keep their promises
   without Verbatim and fail as a harness error. An optional utterance is
-  left out of the texts recorded. `take_comparison` hands the steps to
-  the registry.
+  left out of the texts recorded. `take_steps` hands the steps to
+  the registry, in every mode.
 - The scenario. `Scenario::compare_with` does what `Scenario::launch_with`
   does up to opening the document, building and staging included, then
   connects to the transcript in the agent's session, before minimizing,
@@ -835,7 +835,7 @@ under `src/scenarios/` documents exactly what it asserts.
   (`windows_terminal`, below), its settings folder deleted, its
   `WindowsTerminal.exe` started directly, never `wt.exe`, with
   `-w new --size 120,30 new-tab --title <title> --suppressApplicationTitle`,
-  through `Scenario::launch_owning_window`, which fails unless the
+  through `Scenario::launch` with `owns_window`, which fails unless the
   launched process owns the window. Each window is brought forward only
   once its shell has written its process id. Every shell, in both
   terminals, runs with `-NonInteractive`: with Verbatim running, Windows'
