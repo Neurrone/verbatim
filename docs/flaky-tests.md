@@ -64,19 +64,6 @@ Each entry gives the exact name, how it fails, how often and where, the cause wh
 - Cause: not yet named. In run 44344991044, `not-responding-wait-chains.txt` shows both `dwm.exe`'s and the new `explorer.exe`'s window threads blocked, with no cycle; the wait chain does not show what Explorer waits on. A link to the Desktop Window Manager rests on two runs and one wait chain. The harness does not wait for the manager (Dickson, 2026-10-26).
 - Fix: it runs on GitHub again after a local reproduction (on 2026-11-09 it failed 6 of 6 runs straight after a batch of other scenarios) whose kernel wait or wait chain names what Explorer's thread waits on, followed by a fix in Verbatim if the wait is Verbatim's, or after Dickson rules to keep it there.
 
-## Mockapp tests under `cargo xtask ci`
-
-- `call_counts::uia_focus_chains_stop_below_the_process_boundary`
-  - How: recorded as failing intermittently under `cargo xtask ci`, with no failure message kept; the only failures on record came while the test was being rewritten (2026-10-29 and 2026-10-30). On 2026-11-03, at 29237e17, it passed 456 of 456 runs, alone, with its binary, as copies at once and under busy processes.
-  - Cause: not found, since it does not reproduce.
-- `call_counts::msaa_form_focus_costs_exactly`, `call_counts::msaa_tree_view_costs_exactly` and `call_counts::uia_combo_box_costs_exactly`, under load
-  - How: `msaa_form_focus_costs_exactly` failed 7 of 20 runs with four copies of it running at once (2026-11-03): an extra window-title entry at the top of its chain; under twelve busy processes the other two failed as well. Alone they pass.
-  - Cause, likely but not shown: the MSAA walk passed its bound under load, and the title was doubled when it did. The outpost's walk bound (b94fa1d8, 2026-11-07) and the listener's (115d825f, 2026-11-08) are removed.
-- `focus_reports::an_msaa_client_area_reached_by_a_walk_carries_its_window_and_its_content_none` and `focus_reports::an_msaa_ancestor_reached_with_no_identity_string_is_its_windows_client`, under load
-  - How: both failed in 1 of 4 runs of the whole unit-test suite under cargo-nextest, many tests at once while another build compiled (2026-11-03): the window's title, and in the second the window's client area, above the dialog at the top of the chain.
-  - Cause, likely but not shown: as for the `call_counts` tests above.
-- Fix, for all three: build 6 runs the load recipe once, at most 20 runs (calls F12). If they pass, this entry goes, and with it `mockapp::call_counts` from `SERIAL_TESTS` and `mockapp::focus_reports` from `ALONE_TESTS` (`xtask/src/main.rs`) with their notes in `.config/nextest.toml`; if one fails, its failure message is recorded here. Until then `cargo xtask ci` runs `call_counts` alone and `focus_reports` with nothing beside it.
-
 ## Scenarios local-only for the runner's image
 
 These are `local_only` in the registry, each with its reason beside the flag; the `e2e` job leaves them out of its groups (`cargo xtask e2e-plan`). The suggestions pair is under "Settings' suggestions list replaced as it opens" above.

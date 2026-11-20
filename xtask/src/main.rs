@@ -597,21 +597,17 @@ fn args(list: &[&str]) -> Vec<String> {
 /// filter; `.config/nextest.toml` says why each is here.
 const SERIAL_TESTS: &str = concat!(
     "binary_id(verbatim-synth-host::hosting) | binary_id(verbatim-synth-host::protocol)",
-    " | binary_id(verbatim-audio::mixer) | binary_id(mockapp::call_counts)",
+    " | binary_id(verbatim-audio::mixer)",
     " | binary_id(verbatim-agent) | binary_id(verbatim-ia2)",
     " | binary_id(verbatim-listener) | binary_id(verbatim-win32)",
     " | (binary_id(mockapp::remote_ops)",
     " & test(a_windows_forms_menu_item_is_checked_from_the_remote_read))",
 );
 
-/// The tests that run with nothing beside them but each other, many at
-/// once, as a cargo-nextest filter; `.config/nextest.toml` says why.
-const ALONE_TESTS: &str = "binary_id(mockapp::focus_reports)";
-
 /// The filter of the unit tests that run many at once: every test but
-/// [`SERIAL_TESTS`] and [`ALONE_TESTS`].
+/// [`SERIAL_TESTS`].
 fn unit_test_filter() -> String {
-    format!("not ({SERIAL_TESTS} | {ALONE_TESTS})")
+    format!("not ({SERIAL_TESTS})")
 }
 
 /// One cargo-nextest run of the workspace's tests as a step: cargo's
@@ -634,9 +630,8 @@ fn nextest_step(name: &'static str, command: &[&str], filter: &str, serial: bool
 /// depend on it, or commands that select different packages build
 /// dependencies apart again (`books/dev/src/how-to/setup.md`, "The workspace-hack
 /// crate"). The unit tests run under cargo-nextest, many at once, but for
-/// [`ALONE_TESTS`], which run after them with nothing else beside them,
-/// and [`SERIAL_TESTS`], which run last, one at a time; then the doctests,
-/// which nextest does not run.
+/// [`SERIAL_TESTS`], which run after them, one at a time; then the
+/// doctests, which nextest does not run.
 fn windows_steps() -> Vec<Step> {
     vec![
         ("workspace-hack", args(&["hakari", "generate", "--diff"])),
@@ -660,12 +655,6 @@ fn windows_steps() -> Vec<Step> {
             "unit tests",
             &["nextest", "run"],
             &unit_test_filter(),
-            false,
-        ),
-        nextest_step(
-            "unit tests that run with nothing else",
-            &["nextest", "run"],
-            ALONE_TESTS,
             false,
         ),
         nextest_step(

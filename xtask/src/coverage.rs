@@ -48,7 +48,7 @@ use std::process::{Command, ExitCode};
 use crate::LINUX_CRATES;
 use crate::tiers::{TIERS, Tier, WORKSPACE_HACK};
 #[cfg(windows)]
-use crate::{ALONE_TESTS, SERIAL_TESTS, nextest_step, unit_test_filter};
+use crate::{SERIAL_TESTS, nextest_step, unit_test_filter};
 use crate::{Step, args};
 
 /// The cargo-llvm-cov release this command runs, the one GitHub Actions
@@ -117,8 +117,7 @@ const COVERED_NEXTEST: &[&str] = &["llvm-cov", "nextest", "--no-report"];
 /// ci`'s, limited to the level's package, then the fault tests, last
 /// because their `faults` build replaces binaries, such as `mockapp.exe`,
 /// whose file names do not change with a feature, and so would leave an
-/// earlier level's profiles with no binary to match. The tests that run
-/// with nothing else are all mockapp's.
+/// earlier level's profiles with no binary to match.
 #[cfg(windows)]
 fn levels() -> Vec<Level> {
     let level = |scope: &str, filter: &str| format!("({scope}) & ({filter})");
@@ -149,12 +148,6 @@ fn levels() -> Vec<Level> {
                     "mockapp tests",
                     COVERED_NEXTEST,
                     &level(mockapp, &unit_test_filter()),
-                    false,
-                ),
-                nextest_step(
-                    "mockapp tests that run with nothing else",
-                    COVERED_NEXTEST,
-                    &level(mockapp, ALONE_TESTS),
                     false,
                 ),
                 nextest_step(

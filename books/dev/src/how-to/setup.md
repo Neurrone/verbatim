@@ -119,12 +119,10 @@ GitHub's `ci-linux` run is their check.
 On Windows the unit tests run under cargo-nextest, which runs every test
 as a process of its own, as many at once as the machine has processors,
 and reports a failed test once, with no retry (`.config/nextest.toml`).
-Two sets are left out of that run and run after it
-(`.config/nextest.toml` names each test and why): mockapp's
-`focus_reports`, with nothing else beside it, and the tests that run one
-at a time, the synthesizer host's `hosting` and `protocol`, which use the
-real Windows speech platform, `verbatim-audio`'s `mixer` and mockapp's
-`call_counts`, which fail under load, and the unit tests of
+One set is left out of that run and run after it, one at a time
+(`.config/nextest.toml` names each test and why): the synthesizer host's
+`hosting` and `protocol`, which use the real Windows speech platform,
+`verbatim-audio`'s `mixer`, which failed under load, and the unit tests of
 `verbatim-agent`, `verbatim-ia2`, `verbatim-listener` and `verbatim-win32`,
 which make windows on the desktop the run was started from. The doctests,
 which nextest does not run, come last, as `cargo test --workspace --doc`.
@@ -134,9 +132,9 @@ list their tests and run each one: mockapp's through its own runner
 (`crates/mockapp/tests/common/harness.rs`), which under nextest makes a
 desktop for each test, and the rest through `libtest-mimic`, which runs
 their tests one after another on the main thread under `cargo test`. On
-the 12-processor development machine, with nothing to rebuild, the three
-nextest steps take about 70 seconds (about 30 for the concurrent run, 8
-for `focus_reports`, 33 one at a time) and the doctests 9, where the
+the 12-processor development machine, with nothing to rebuild, the two
+nextest steps take about 60 seconds (about 40 for the concurrent run, 20
+one at a time) and the doctests 9, where the
 unit tests took 216 seconds one binary after another; the longest single
 tests take 10 to 12 seconds (`remote_ops`'s stalled provider, the
 outpost's corpus conversion, Core's generated cases, the synthesizer

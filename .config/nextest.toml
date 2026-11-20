@@ -1,25 +1,14 @@
 # cargo-nextest's settings, for `cargo xtask ci`'s unit tests
 # (`books/dev/src/how-to/setup.md`, "What cargo xtask ci runs"). nextest runs every
-# test as a process of its own, many at once. Two sets are left out of that
-# run, by filters in `xtask/src/main.rs`, and run after it by invocations
-# of their own.
-#
-# With nothing beside them, many at once (`ALONE_TESTS`):
-#
-# - mockapp's `focus_reports`: under the whole run's load, its MSAA walks
-#   reported the window's title above the chain (`docs/flaky-tests.md`,
-#   "Mockapp tests under `cargo xtask ci`"). Alone it passes, as it did
-#   under its own runner.
-#
-# One at a time (`SERIAL_TESTS`):
+# test as a process of its own, many at once. One set is left out of that
+# run, by a filter in `xtask/src/main.rs`, and run after it, one at a time
+# (`SERIAL_TESTS`):
 #
 # - `verbatim-synth-host`'s `hosting` and `protocol`, which activate the
 #   real Windows speech platform and time its answers.
 # - `verbatim-audio`'s `mixer`, whose real audio thread missed a playback
 #   event under load (`docs/flaky-tests.md`, "The mixer's allocation test
 #   under load").
-# - mockapp's `call_counts`, whose exact counts fail under load through
-#   the same doubled window title (`docs/flaky-tests.md`).
 # - mockapp's `remote_ops::a_windows_forms_menu_item_is_checked_from_the_remote_read`,
 #   which starts a Windows PowerShell hosting Windows Forms: under the
 #   whole run's load, that cold start passed the test's 15 s wait for the
