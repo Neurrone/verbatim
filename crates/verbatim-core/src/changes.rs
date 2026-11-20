@@ -43,7 +43,7 @@ use crate::entries::{Entries, window_facts};
 use crate::event_queue::{Cx, OTHER_DUE_US, Outcome, Reader, Request, RequestWindow};
 use crate::focus::acceptance;
 use crate::focus::backend::{Judged, Judgement};
-use crate::focus::versions::{Kept, ReadBy};
+use crate::focus::versions::{Focus, ReadBy};
 use crate::state::SrState;
 
 /// An MSAA change tell, parsed: the ids its event named and the window its
@@ -129,8 +129,8 @@ pub(crate) fn arrived(
 ) {
     let committed = facts
         .versions
-        .committed_read()
-        .is_some_and(|kept| node_of(kept, &change.runtime_id).is_some());
+        .live()
+        .is_some_and(|focus| node_of(focus, &change.runtime_id).is_some());
     change.at_arrival = AtArrival::of(committed || in_flight(front) == Some(&change.runtime_id));
 }
 
@@ -138,7 +138,7 @@ pub(crate) fn arrived(
 /// runtime id is `runtime_id`: on the line when it is the committed focus.
 pub(crate) fn selection_arrived(facts: &SrState, runtime_id: &RuntimeId) -> AtArrival {
     AtArrival::of(matches!(
-        facts.versions.committed_read().map(|kept| &kept.read_by),
+        facts.versions.live().map(|focus| &focus.kept.read_by),
         Some(ReadBy::Uia { runtime_id: focus, .. }) if focus == runtime_id
     ))
 }
@@ -217,15 +217,18 @@ impl Changed {
 /// names: the committed focus; for a value change its parent too, a
 /// slider that focuses its thumb speaking its own; for a state change
 /// every ancestor but the simple children.
-fn candidates(kept: &Kept, changed: Option<Changed>) -> Vec<NodeId> {
-    let ancestors = kept.ancestors.iter();
-    std::iter::once(kept.node)
+fn candidates(focus: &Focus, changed: Option<Changed>) -> Vec<NodeId> {
+    let ancestors = focus.line.iter().rev();
+    std::iter::once(focus.context.snapshot.id)
         .chain(match changed {
             Some(Changed::Name | Changed::Description) => Vec::new(),
-            Some(Changed::Value) => ancestors.take(1).map(|ancestor| ancestor.node).collect(),
+            Some(Changed::Value) => ancestors
+                .take(1)
+                .map(|ancestor| ancestor.snapshot.id)
+                .collect(),
             Some(Changed::States) | None => ancestors
                 .filter(|ancestor| !ancestor.simple_child)
-                .map(|ancestor| ancestor.node)
+                .map(|ancestor| ancestor.snapshot.id)
                 .collect(),
         })
         .collect()
@@ -310,12 +313,15 @@ impl Request for ChildCountRead {
 }
 
 /// The committed focus, when it is a reader's focus held by `generation`
-/// of its outpost: what Core keeps of it.
-fn held(facts: &SrState, generation: Option<OutpostId>) -> Option<Kept> {
+/// of its outpost.
+fn held(facts: &SrState, generation: Option<OutpostId>) -> Option<Focus> {
     facts
         .versions
-        .committed_read()
-        .filter(|kept| generation.is_some_and(|generation| kept.node.outpost() == Some(generation)))
+        .live()
+        .filter(|focus| {
+            generation
+                .is_some_and(|generation| focus.context.snapshot.id.outpost() == Some(generation))
+        })
         .cloned()
 }
 
@@ -339,13 +345,13 @@ fn passes(cx: &Cx<Entries>, change: &MsaaChange) -> bool {
 /// (Table 17, column G); `true` when `change` is one. One a caret tell's
 /// answer took as counted no longer waits.
 fn sets_text_changed(facts: &mut SrState, change: &MsaaChange) -> bool {
-    let crate::focus::versions::Committed::Read(committed) = &mut facts.versions.committed else {
+    let Some(committed) = facts.versions.live_mut() else {
         return false;
     };
     if !crate::caret_tell::sets_text_changed(committed, change) {
         return false;
     }
-    crate::text_facts::value_changed(committed);
+    crate::text_facts::value_changed(&mut committed.kept);
     true
 }
 
@@ -356,9 +362,9 @@ pub(crate) fn observe_text_change(cx: &mut Cx<Entries>, change: &MsaaChange) {
     let node = cx
         .facts()
         .versions
-        .committed_read()
-        .filter(|kept| crate::caret_tell::edit_text_change(kept, change))
-        .map(|kept| kept.node);
+        .live()
+        .filter(|focus| crate::caret_tell::edit_text_change(&focus.kept, change))
+        .map(|focus| focus.context.snapshot.id);
     if let Some(node_id) = node {
         cx.emit(verbatim_model::Observed::effect(
             change.tell.trace_id,
@@ -388,17 +394,18 @@ pub(crate) async fn msaa(mut cx: Cx<Entries>, change: MsaaChange) {
     let Some(process) = cx
         .facts()
         .versions
-        .committed_read()
-        .map(|kept| kept.window.process)
+        .live()
+        .map(|focus| focus.kept.asked.process)
     else {
         return;
     };
     let generation = cx
         .instance(Reader::Outpost(process))
         .map(verbatim_model::request::Instance::outpost_id);
-    let Some(kept) = held(&cx.facts(), generation) else {
+    let Some(focus) = held(&cx.facts(), generation) else {
         return;
     };
+    let (kept, focus_node) = (&focus.kept, focus.context.snapshot.id);
     let trace_id = change.tell.trace_id;
     let changed = Changed::of(change.tell.kind);
     // A change outside the windows of the committed focus and its
@@ -407,7 +414,7 @@ pub(crate) async fn msaa(mut cx: Cx<Entries>, change: MsaaChange) {
     if changed.is_some() && !kept.place.holds_window(change.ids.window) {
         return;
     }
-    let nodes = candidates(&kept, changed);
+    let nodes = candidates(&focus, changed);
     // An MSAA object controls nothing, so a plain selection's item is
     // only ever one of the nodes, whose states alone are judged; neither
     // read goes further for an object that is none of them.
@@ -419,7 +426,7 @@ pub(crate) async fn msaa(mut cx: Cx<Entries>, change: MsaaChange) {
         None => (
             vec![PropertyId::States],
             RelationQuery::Selection {
-                focus: kept.node,
+                focus: focus_node,
                 nodes: nodes.clone(),
             },
         ),
@@ -482,7 +489,7 @@ pub(crate) async fn msaa(mut cx: Cx<Entries>, change: MsaaChange) {
             speak_change(&mut cx, trace_id, node, &property, child_count);
         }
         (None, Some(RelationFound::Controlled | RelationFound::InsideControlled)) => {
-            controlled_selection(&mut cx, trace_id, kept.node, (read.object, Backend::Msaa));
+            controlled_selection(&mut cx, trace_id, focus_node, (read.object, Backend::Msaa));
         }
         _ => {}
     }
@@ -520,9 +527,10 @@ pub(crate) fn controlled_selection(
 /// committed focus, a tree item, judged against the states last spoken of
 /// it: Core then asks its number of children.
 fn newly_expanded_tree_item(facts: &SrState, node: NodeId, states: StateSet) -> bool {
-    facts.focus.object().is_some_and(|focus| {
-        focus.snapshot.id == node
-            && focus.snapshot.role == Role::TreeItem
+    facts.versions.focus().is_some_and(|focus| {
+        let snapshot = &focus.context.snapshot;
+        snapshot.id == node
+            && snapshot.role == Role::TreeItem
             && states.contains(State::Expanded)
             && focus
                 .spoken_states(node)
@@ -547,14 +555,16 @@ pub(crate) fn speak_change(
 
 /// The node of the committed focus, or of one of its ancestors, whose
 /// runtime id is `runtime_id`.
-pub(crate) fn node_of(kept: &Kept, runtime_id: &RuntimeId) -> Option<NodeId> {
-    if matches!(&kept.read_by, ReadBy::Uia { runtime_id: focus, .. } if focus == runtime_id) {
-        return Some(kept.node);
+pub(crate) fn node_of(focus: &Focus, runtime_id: &RuntimeId) -> Option<NodeId> {
+    if matches!(&focus.kept.read_by, ReadBy::Uia { runtime_id: id, .. } if id == runtime_id) {
+        return Some(focus.context.snapshot.id);
     }
-    kept.ancestors
+    focus
+        .line
         .iter()
+        .rev()
         .find(|ancestor| ancestor.runtime_id.as_ref() == Some(runtime_id))
-        .map(|ancestor| ancestor.node)
+        .map(|ancestor| ancestor.snapshot.id)
 }
 
 /// What a UI Automation property change carries, as today's announcement
@@ -573,10 +583,10 @@ fn uia_change(property: PropertyId, value: Option<&PropertyValue>) -> Option<Pro
 /// The node of the committed focus, or of one of its ancestors, that a UI
 /// Automation property change `change` is on, with what Core keeps of the
 /// committed focus; `None` for a change on anything else.
-fn uia_target(facts: &SrState, change: &UiaChange) -> Option<(Kept, NodeId)> {
-    let kept = facts.versions.committed_read()?;
-    let node = node_of(kept, &change.runtime_id)?;
-    Some((kept.clone(), node))
+fn uia_target(facts: &SrState, change: &UiaChange) -> Option<(Focus, NodeId)> {
+    let focus = facts.versions.live()?;
+    let node = node_of(focus, &change.runtime_id)?;
+    Some((focus.clone(), node))
 }
 
 /// Judges a UI Automation property change on the committed focus, or on
@@ -678,7 +688,8 @@ pub(crate) async fn uia_entry(mut cx: Cx<Entries>, change: UiaChange) {
         return;
     }
     let target = uia_target(&cx.facts(), &change);
-    let Some((kept, node)) = target.filter(|(kept, node)| *node == kept.node) else {
+    let Some((focus, node)) = target.filter(|(focus, node)| *node == focus.context.snapshot.id)
+    else {
         // A suggestions change on anything but the committed focus plays
         // the suggestions-closed indication with no read, for a
         // suggestions field alone, the opening's test applying only to the
@@ -694,7 +705,7 @@ pub(crate) async fn uia_entry(mut cx: Cx<Entries>, change: UiaChange) {
         return;
     }
     let read = crate::announcements::selection::NodeProperties {
-        window: kept.window,
+        window: focus.kept.asked,
         node,
         set: vec![asked],
     };

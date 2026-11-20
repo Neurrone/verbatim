@@ -913,13 +913,15 @@ fn output_utterance(
         priority: SpeechPriority::Queued,
         segments,
         source: state
-            .focus
-            .object()
+            .versions
+            .focus()
+            .map(|focus| &focus.context)
             .map(|focus| crate::reduce::source_of(&focus.snapshot)),
         say_all: false,
         validity: state
-            .focus
-            .object()
+            .versions
+            .focus()
+            .map(|focus| &focus.context)
             .map(|focus| focus.snapshot.id)
             .map(|node| FocusValidity {
                 node,
@@ -1118,8 +1120,9 @@ pub(crate) fn utterance_cancelled(
 pub(crate) fn focus_moved(state: &mut SrState, node: NodeId, left: bool) {
     if left
         || state
-            .focus
-            .object()
+            .versions
+            .focus()
+            .map(|focus| &focus.context)
             .is_none_or(|focus| focus.snapshot.id != node)
     {
         state.terminal = TerminalSpeechState::default();
@@ -1173,8 +1176,9 @@ pub(crate) fn toggle(state: &mut SrState, trace_id: TraceId) -> Vec<Effect> {
 /// speech's validity.
 fn focus_window(state: &SrState, node: NodeId) -> Option<verbatim_model::WindowIdentity> {
     state
-        .focus
-        .object()
+        .versions
+        .focus()
+        .map(|focus| &focus.context)
         .filter(|focus| focus.snapshot.id == node)
         .and_then(|focus| verbatim_model::WindowIdentity::of(&focus.snapshot))
 }

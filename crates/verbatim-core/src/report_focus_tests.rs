@@ -126,7 +126,7 @@ fn it_reads_the_committed_node_live_and_speaks_it_with_its_line() {
         ["Label(\"Body\") Role(EditableText)", "Text(\"one two\")"]
     );
     // The answer is only spoken: the committed focus stays the button.
-    assert_eq!(state.focus.object().unwrap().snapshot.id, node(2));
+    assert_eq!(state.versions.focus().unwrap().context.snapshot.id, node(2));
 }
 
 #[test]

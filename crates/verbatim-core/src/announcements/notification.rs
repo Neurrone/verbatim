@@ -44,8 +44,8 @@ pub(crate) fn run(
 fn focus_process(cx: &Cx<Entries>) -> Option<Pid> {
     cx.facts()
         .versions
-        .committed_read()
-        .map(|kept| kept.window.process)
+        .live()
+        .map(|focus| focus.kept.asked.process)
         .or_else(|| cx.foreground().map(|front| front.process))
 }
 

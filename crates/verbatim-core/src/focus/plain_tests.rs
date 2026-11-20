@@ -174,22 +174,25 @@ fn plain_node(generation: u64) -> NodeId {
 #[test]
 fn a_menu_end_over_a_ghost_speaks_the_plain_window_with_no_sound_and_watches_hungwin() {
     let mut state = plain_committed();
-    let Committed::Read(kept) = &state.versions.committed else {
+    let Committed::Read(focus) = &state.versions.committed else {
         panic!("the plain object is committed");
     };
-    assert_eq!(kept.node, plain_node(1));
-    assert_eq!(kept.read_by, ReadBy::Plain);
+    assert_eq!(focus.context.snapshot.id, plain_node(1));
+    assert_eq!(focus.kept.read_by, ReadBy::Plain);
     // It names hungwin's process, never the ghost's own.
-    assert_eq!(kept.source, APP);
-    assert_eq!(kept.window.process, APP);
-    assert_eq!(kept.place.top_level, GHOST);
-    assert_eq!(kept.place.root_owner, GHOST);
+    assert_eq!(focus.context.source, APP);
+    assert_eq!(focus.kept.asked.process, APP);
+    assert_eq!(focus.kept.place.top_level, GHOST);
+    assert_eq!(focus.kept.place.root_owner, GHOST);
     assert_eq!(
         state.versions.last.as_ref().map(|last| &last.read_by),
         Some(&ReadBy::Plain)
     );
     assert_eq!(
-        state.focus.object().map(|focus| focus.snapshot.id),
+        state
+            .versions
+            .focus()
+            .map(|focus| focus.context.snapshot.id),
         Some(plain_node(1))
     );
     assert_eq!(
@@ -870,7 +873,7 @@ fn activate_on_the_plain_window_says_no_action() {
 #[test]
 fn a_request_from_outside_the_queue_on_the_plain_node_is_answered_with_nothing_sent() {
     let mut state = plain_committed();
-    let window = state.versions.committed_kept().unwrap().window;
+    let window = state.versions.focus().unwrap().kept.asked;
     let effects = feed(
         &mut state.state,
         &mut state.runtime,
@@ -1038,12 +1041,12 @@ fn another_applications_ghost_in_front_is_named_by_its_own_application() {
         effects(&mut state, 52_000, hung_focus(2, other)),
         ["stop", "Label(\"otherwin (Not Responding)\") Role(Window)"]
     );
-    let Committed::Read(kept) = &state.versions.committed else {
+    let Committed::Read(focus) = &state.versions.committed else {
         panic!("the plain object is committed");
     };
-    assert_eq!(kept.source, Pid(60));
-    assert_eq!(kept.window.process, Pid(60));
-    assert_eq!(kept.window.thread, 61);
+    assert_eq!(focus.context.source, Pid(60));
+    assert_eq!(focus.kept.asked.process, Pid(60));
+    assert_eq!(focus.kept.asked.thread, 61);
     assert!(!watched(&mut state));
 }
 
@@ -1118,11 +1121,11 @@ fn an_end_whose_check_finds_no_window_in_front_focuses_the_desktop() {
             effects(&mut state, 52_000, hung_focus(2, desktop())),
             ["stop", DESKTOP_SPOKEN]
         );
-        let Committed::Read(kept) = &state.versions.committed else {
+        let Committed::Read(focus) = &state.versions.committed else {
             panic!("the plain desktop is committed");
         };
-        assert_eq!(kept.read_by, ReadBy::Plain);
-        assert_eq!(kept.place.top_level, WindowHandle(65_552));
+        assert_eq!(focus.kept.read_by, ReadBy::Plain);
+        assert_eq!(focus.kept.place.top_level, WindowHandle(65_552));
         assert!(!watched(&mut state));
     }
 }

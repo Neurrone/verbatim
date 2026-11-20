@@ -95,7 +95,7 @@ pub(crate) fn speak(trace_id: TraceId, segments: Vec<UtteranceSegment>) -> Effec
 /// The focus whose caret keys are watched for evidence: alive, with a
 /// caret Core knows or a role that may have text ([`caret_key`]'s test).
 pub(crate) fn text_focus(state: &SrState) -> Option<NodeId> {
-    let focus = state.live_focus()?;
+    let focus = state.versions.live().map(|focus| &focus.context)?;
     let node = focus.snapshot.id;
     (focus.caret.is_some() || may_have_text(focus.snapshot.role)).then_some(node)
 }
@@ -171,8 +171,9 @@ pub(crate) fn before_of_caret(
 ) -> BeforeRead {
     let line = &caret.line;
     let grid = state
-        .focus
-        .object()
+        .versions
+        .focus()
+        .map(|focus| &focus.context)
         .is_some_and(|focus| focus.snapshot.id == node && is_grid(focus.snapshot.role));
     let line_break = state
         .focus_caret(node)
@@ -237,8 +238,9 @@ pub(crate) fn focus_first_words(
         };
     }
     let grid = state
-        .focus
-        .object()
+        .versions
+        .focus()
+        .map(|focus| &focus.context)
         .is_some_and(|focus| is_grid(focus.snapshot.role));
     let mut reported = TextAttributes::default();
     unit_segments(line, Some(unit), (key.motion.unit(), grid), &mut reported)
@@ -253,8 +255,9 @@ pub(crate) fn unit_with(
     reported: &mut TextAttributes,
 ) -> Vec<UtteranceSegment> {
     let grid = state
-        .focus
-        .object()
+        .versions
+        .focus()
+        .map(|focus| &focus.context)
         .is_some_and(|focus| focus.snapshot.id == node && is_grid(focus.snapshot.role));
     unit_segments(line, Some(unit), (motion.unit(), grid), reported)
 }
@@ -264,13 +267,17 @@ pub(crate) fn unit_with(
 /// its press (ADR 0001, "The formatting last reported goes with the focus
 /// object").
 pub(crate) fn focus_record(state: &SrState) -> Option<(NodeId, Option<TraceId>, TextAttributes)> {
-    state.focus.object().map(|focus| {
-        (
-            focus.snapshot.id,
-            focus.trace_id,
-            focus.reported_format.clone(),
-        )
-    })
+    state
+        .versions
+        .focus()
+        .map(|focus| &focus.context)
+        .map(|focus| {
+            (
+                focus.snapshot.id,
+                focus.trace_id,
+                focus.reported_format.clone(),
+            )
+        })
 }
 
 /// Writes `reported`, the memory a key bound to the focus record
@@ -282,8 +289,9 @@ pub(crate) fn formatting_back(
     reported: TextAttributes,
 ) {
     if let Some(focus) = state
-        .focus
-        .object_mut()
+        .versions
+        .focus_mut()
+        .map(|focus| &mut focus.context)
         .filter(|focus| focus.snapshot.id == node && focus.trace_id == record)
     {
         focus.reported_format = reported;
@@ -352,8 +360,9 @@ fn deleted_segments(deleted: &str, motion: CaretMotion) -> Vec<UtteranceSegment>
 /// kept on the focus object: nothing yet for a node other than the focus.
 fn reported_format(state: &SrState, node: NodeId) -> TextAttributes {
     state
-        .focus
-        .object()
+        .versions
+        .focus()
+        .map(|focus| &focus.context)
         .filter(|focus| focus.snapshot.id == node)
         .map(|focus| focus.reported_format.clone())
         .unwrap_or_default()
@@ -364,8 +373,9 @@ fn reported_format(state: &SrState, node: NodeId) -> TextAttributes {
 /// keeps nothing, as its object is gone.
 fn keep_reported_format(state: &mut SrState, node: NodeId, reported: TextAttributes) {
     if let Some(focus) = state
-        .focus
-        .object_mut()
+        .versions
+        .focus_mut()
+        .map(|focus| &mut focus.context)
         .filter(|focus| focus.snapshot.id == node)
     {
         focus.reported_format = reported;
@@ -546,13 +556,18 @@ fn selection_text(change: &SelectionChange) -> SelectionText {
 /// is only looked at for the kind of line break the text uses: the caret
 /// stays the newest known, and the review cursor stays with it.
 pub(crate) fn update_caret(state: &mut SrState, node: NodeId, caret: verbatim_model::CaretReport) {
-    if !state.focus_matches(node) {
+    if state
+        .versions
+        .live()
+        .is_none_or(|focus| focus.context.snapshot.id != node)
+    {
         return;
     }
     let read_at_us = caret.read_at_us;
     if let Some(known) = state
-        .focus
-        .object_mut()
+        .versions
+        .focus_mut()
+        .map(|focus| &mut focus.context)
         .and_then(|focus| focus.caret.as_mut())
         .filter(|known| known.read_at_us > read_at_us)
     {
@@ -573,11 +588,15 @@ pub(crate) fn update_caret(state: &mut SrState, node: NodeId, caret: verbatim_mo
 /// (`docs/design/readers-tell-core-asks-build1.md`, "Selection and the
 /// caret's text facts").
 pub(crate) fn take_caret(state: &mut SrState, node: NodeId, caret: verbatim_model::CaretReport) {
-    if !state.focus_matches(node) {
+    if state
+        .versions
+        .live()
+        .is_none_or(|focus| focus.context.snapshot.id != node)
+    {
         return;
     }
     follow_caret(state, node);
-    let Some(focus) = state.focus.object_mut() else {
+    let Some(focus) = state.versions.focus_mut().map(|focus| &mut focus.context) else {
         return;
     };
     let line = Arc::new(caret.line);
@@ -700,8 +719,9 @@ fn selected_segments(text: String) -> Option<Vec<UtteranceSegment>> {
 /// any object without text speaks its value.
 fn focus_value(state: &SrState, trace_id: TraceId, node: NodeId) -> Vec<Effect> {
     let Some(value) = state
-        .focus
-        .object()
+        .versions
+        .focus()
+        .map(|focus| &focus.context)
         .and_then(|focus| focus.snapshot.value.clone())
         .filter(|value| !value.is_empty())
     else {
@@ -727,8 +747,9 @@ fn focus_line(state: &mut SrState, trace_id: TraceId, node: NodeId) -> Vec<Effec
 fn caret_line(state: &mut SrState, node: NodeId) -> Option<Vec<UtteranceSegment>> {
     let caret = state.focus_caret(node)?;
     let grid = state
-        .focus
-        .object()
+        .versions
+        .focus()
+        .map(|focus| &focus.context)
         .is_some_and(|focus| is_grid(focus.snapshot.role));
     let mut reported = reported_format(state, node);
     let segments = line_segments(&caret.line, grid, &mut reported);
@@ -905,7 +926,12 @@ fn focus_speech(
     node: NodeId,
     segments: Vec<UtteranceSegment>,
 ) -> Vec<Effect> {
-    let Some(focus) = state.live_focus().filter(|focus| focus.snapshot.id == node) else {
+    let Some(focus) = state
+        .versions
+        .live()
+        .map(|focus| &focus.context)
+        .filter(|focus| focus.snapshot.id == node)
+    else {
         return Vec::new();
     };
     vec![Effect::Speak(
@@ -932,7 +958,9 @@ fn focus_speech(
 /// Control+Break (`docs/parity/terminals.md`, "New terminal output").
 pub(crate) fn clearing_key(state: &mut SrState) {
     let terminal = state
-        .live_focus()
+        .versions
+        .live()
+        .map(|focus| &focus.context)
         .is_some_and(|focus| focus.snapshot.role == Role::Terminal);
     if terminal {
         state.typed_word.clear();
@@ -949,7 +977,7 @@ pub(crate) fn character_typed(state: &mut SrState, trace_id: TraceId, typed: &st
     let mut effects = crate::say_all::stop(state);
     // A caret key still watched is not answered by the caret the typing
     // moves: the typing's key press has marked it (`crate::keys::caret_key`).
-    let Some(focus) = state.live_focus() else {
+    let Some(focus) = state.versions.live().map(|focus| &focus.context) else {
         return effects;
     };
     if focus.snapshot.role == Role::Terminal {
@@ -977,7 +1005,7 @@ pub(crate) fn character_typed(state: &mut SrState, trace_id: TraceId, typed: &st
 /// [`character_typed`] echoes there.
 pub(crate) fn control_typed(state: &mut SrState, trace_id: TraceId) -> Vec<Effect> {
     let mut effects = crate::say_all::stop(state);
-    let Some(focus) = state.live_focus() else {
+    let Some(focus) = state.versions.live().map(|focus| &focus.context) else {
         return effects;
     };
     if focus.snapshot.role == Role::Terminal && !state.settings.speak_terminal_passwords {
@@ -991,7 +1019,7 @@ pub(crate) fn control_typed(state: &mut SrState, trace_id: TraceId) -> Vec<Effec
 /// Whether the focus echoes typed characters and typed words, by the
 /// settings; `None` with no live focus.
 fn echoes(state: &SrState) -> Option<(bool, bool)> {
-    let focus = state.live_focus()?;
+    let focus = state.versions.live().map(|focus| &focus.context)?;
     let editable = is_editable(&focus.snapshot);
     let protected = focus.snapshot.states.contains(State::Protected);
     let applies = |mode: TypingEcho| match mode {
@@ -1019,7 +1047,9 @@ pub(crate) fn echo(state: &mut SrState, trace_id: TraceId, typed: &str) -> Vec<E
         return Vec::new();
     };
     let protected = state
-        .live_focus()
+        .versions
+        .live()
+        .map(|focus| &focus.context)
         .is_some_and(|focus| focus.snapshot.states.contains(State::Protected));
     let mut effects = Vec::new();
     for character in verbatim_text::graphemes(typed)

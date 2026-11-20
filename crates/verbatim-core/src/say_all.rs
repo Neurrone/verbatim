@@ -130,8 +130,9 @@ pub(crate) fn start(
         .map(|navigator| navigator.object.role)
         .or_else(|| {
             state
-                .focus
-                .object()
+                .versions
+                .focus()
+                .map(|focus| &focus.context)
                 .filter(|focus| focus.snapshot.id == node)
                 .map(|focus| focus.snapshot.role)
         })

@@ -376,8 +376,8 @@ fn named(
     if *held_child <= 0 {
         return None;
     }
-    let kept = view.versions.caret_target()?;
-    let snapshot = committed.filter(|snapshot| snapshot.id == kept.node)?;
+    view.versions.caret_target()?;
+    let snapshot = committed?;
     Some(UnlessSame {
         ids: *ids,
         identity: Identity {
@@ -915,8 +915,8 @@ fn last_is_msaa_menu(last: Option<&LastFocus>) -> bool {
 /// Whether `focus` is a menu opening on the committed focus's runtime id.
 fn opens_on_committed(versions: &Versions, focus: &UiaFocus) -> bool {
     focus.tell.kind == EventKind::UiaMenuOpened
-        && versions.committed_read().is_some_and(|kept| {
-            matches!(&kept.read_by, ReadBy::Uia { runtime_id, .. } if *runtime_id == focus.runtime_id)
+        && versions.live().is_some_and(|committed| {
+            matches!(&committed.kept.read_by, ReadBy::Uia { runtime_id, .. } if *runtime_id == focus.runtime_id)
         })
 }
 

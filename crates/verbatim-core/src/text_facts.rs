@@ -18,7 +18,7 @@ use verbatim_model::{
     EditSelection, NodeId, OutpostId, TextAnchor, TextOp, TextPoint, TextProvider, TextThrough,
 };
 
-use crate::focus::versions::{Committed, Kept, ReadBy};
+use crate::focus::versions::{Focus, Kept, ReadBy};
 use crate::state::SrState;
 
 /// Table 17's state for the committed focus: T1 to T4 are the four
@@ -42,22 +42,24 @@ pub(crate) fn provider(kept: &Kept) -> TextProvider {
     }
 }
 
-/// Whether `kept` is editable text with automatic selection detection,
+/// Whether `focus` is editable text with automatic selection detection,
 /// whose value changes set the text-changed flag: every text control
 /// Verbatim reads detects selection changes automatically, and a terminal
 /// has no selection baseline (design, "The hook and Core's stroke line";
 /// "Terminals").
-pub(crate) fn detects_selection(kept: &Kept) -> bool {
-    crate::editing::may_have_text(kept.role) && !crate::editing::is_grid(kept.role)
+pub(crate) fn detects_selection(focus: &Focus) -> bool {
+    let role = focus.context.snapshot.role;
+    crate::editing::may_have_text(role) && !crate::editing::is_grid(role)
 }
 
 /// The committed focus's record, when its reader lives and its node is
 /// `node`.
 fn committed_on(state: &mut SrState, node: NodeId) -> Option<&mut Kept> {
-    match &mut state.versions.committed {
-        Committed::Read(kept) if kept.node == node => Some(kept),
-        _ => None,
-    }
+    state
+        .versions
+        .live_mut()
+        .filter(|focus| focus.context.snapshot.id == node)
+        .map(|focus| &mut focus.kept)
 }
 
 /// Core's own move or selection on `node` minted `baseline` (Table 17,
@@ -77,7 +79,11 @@ pub(crate) fn minted(state: &mut SrState, node: NodeId, baseline: TextAnchor) {
 /// `EditableText`, so its caret event says nothing
 /// (`NVDAObjects/__init__.py` 1424 to 1429).
 pub(crate) fn no_text(state: &mut SrState, node: NodeId) {
-    if state.focus_matches(node) {
+    if state
+        .versions
+        .live()
+        .is_some_and(|focus| focus.context.snapshot.id == node)
+    {
         state.forget_caret();
     }
     if let Some(kept) = committed_on(state, node) {
@@ -95,9 +101,9 @@ pub(crate) fn value_changed(kept: &mut Kept) {
 
 /// The committed focus's outpost generation `outpost` ended (column H):
 /// its baseline's anchor ended with it; the flag is the focus's and stays.
-pub(crate) fn outpost_ended(kept: &mut Kept, outpost: OutpostId) {
-    if kept.node.outpost() == Some(outpost) {
-        kept.selection.baseline = None;
+pub(crate) fn outpost_ended(focus: &mut Focus, outpost: OutpostId) {
+    if focus.context.snapshot.id.outpost() == Some(outpost) {
+        focus.kept.selection.baseline = None;
     }
 }
 
@@ -129,12 +135,12 @@ pub(crate) fn focus_answered(facts: &mut SelectionFacts, caret: &FocusCaret) {
 /// The selection baseline the committed focus's text facts hold, with
 /// the node whose text it is in.
 pub(crate) fn held(state: &SrState) -> Option<(NodeId, TextAnchor)> {
-    let Committed::Read(kept) = &state.versions.committed else {
-        return None;
-    };
-    kept.selection
+    let focus = state.versions.live()?;
+    focus
+        .kept
+        .selection
         .baseline
-        .map(|baseline| (kept.node, baseline))
+        .map(|baseline| (focus.context.snapshot.id, baseline))
 }
 
 /// The node `request` is about and every text anchor it names, which stay

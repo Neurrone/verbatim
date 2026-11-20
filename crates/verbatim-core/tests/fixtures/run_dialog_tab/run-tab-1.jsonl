@@ -1,0 +1,10 @@
+NVDA alpha-58022,732d1ce2 in session 2
+{"label":"launch rundll32.exe shell32.dll,#61","step":0}
+{"label":"front rundll32.exe \"Run\"","step":1}
+{"kind":"event","ms":90,"step":1,"text":"cancel"}
+{"kind":"speech","ms":104,"step":1,"tag":"Normal","text":"Run  dialog  Run DLL"}
+{"kind":"speech","ms":105,"step":1,"tag":"Normal","text":"Open:  combo box  collapsed"}
+{"kind":"speech","ms":109,"step":1,"tag":"Normal","text":"edit  Alt plus  oselected notepad"}
+{"label":"tab","step":2}
+{"kind":"event","ms":10,"step":2,"text":"cancel"}
+{"kind":"speech","ms":21,"step":2,"tag":"Normal","text":"OK  button"}

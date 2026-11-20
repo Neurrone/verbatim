@@ -35,7 +35,6 @@ use crate::entries::{Entries, Entry};
 use crate::event_queue::{Cx, OTHER_DUE_US, Outcome, Reader, Request, RequestWindow};
 use crate::focus::msaa_run::{FactsOnly, RunRequest};
 use crate::focus::validity::{Pending, Within, pending_behind_front};
-use crate::focus::versions::Committed;
 use crate::keys::strokes::StrokeStatus;
 use crate::state::SrState;
 
@@ -78,21 +77,20 @@ pub(crate) struct CaretPress {
 /// the hook's view publishes it: `None` with nothing committed, a focus
 /// whose reader ended, Core's own focus, or a focus that cannot have text.
 pub(crate) fn binding(state: &SrState) -> Option<CaretBinding> {
-    let Committed::Read(kept) = &state.versions.committed else {
-        return None;
-    };
-    if !editing::may_have_text(kept.role) && state.focus_caret(kept.node).is_none() {
+    let focus = state.versions.live()?;
+    let (node, role) = (focus.context.snapshot.id, focus.context.snapshot.role);
+    if !editing::may_have_text(role) && state.focus_caret(node).is_none() {
         return None;
     }
     let (record, formatting) = match editing::focus_record(state) {
-        Some((node, record, formatting)) if node == kept.node => (record, formatting),
+        Some((recorded, record, formatting)) if recorded == node => (record, formatting),
         _ => (None, verbatim_model::TextAttributes::default()),
     };
     Some(CaretBinding {
-        node: kept.node,
-        window: kept.window.node_window(),
-        role: kept.role,
-        provider: crate::text_facts::provider(kept),
+        node,
+        window: focus.kept.asked.node_window(),
+        role,
+        provider: crate::text_facts::provider(&focus.kept),
         record,
         formatting,
     })
@@ -1017,7 +1015,10 @@ fn held_node(cx: &Cx<Entries>, binding: &CaretBinding) -> bool {
 /// Whether `node` is the committed focus, whose `Follow` registers its
 /// events.
 fn committed(state: &SrState, node: NodeId) -> bool {
-    matches!(&state.versions.committed, Committed::Read(kept) if kept.node == node)
+    state
+        .versions
+        .live()
+        .is_some_and(|focus| focus.context.snapshot.id == node)
 }
 
 /// Whether the key is Alt+Up or Alt+Down, a sentence key.

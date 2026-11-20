@@ -103,14 +103,14 @@ pub(crate) async fn run(mut cx: Cx<Entries>, trace_id: TraceId, repeat: u8) {
         let facts = cx.facts();
         match &facts.versions.committed {
             Committed::Nothing => Target::Nothing,
-            Committed::Read(kept) => Target::Read(
+            Committed::Read(focus) => Target::Read(
                 FocusProperties {
-                    process: kept.source,
-                    window: kept.window,
-                    node: kept.node,
+                    process: focus.context.source,
+                    window: focus.kept.asked,
+                    node: focus.context.snapshot.id,
                     set: report_set(&facts),
                 },
-                kept.read_by.backend(),
+                focus.kept.read_by.backend(),
             ),
             Committed::Ended(_) | Committed::Own => Target::Unread,
         }

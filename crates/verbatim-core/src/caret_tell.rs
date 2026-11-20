@@ -33,7 +33,7 @@ use crate::changes::MsaaChange;
 use crate::entries::{Entries, Entry, request_window, window_facts};
 use crate::event_queue::{Cx, OTHER_DUE_US, Outcome, Reader, Request, RequestWindow};
 use crate::focus::acceptance;
-use crate::focus::versions::{Committed, Kept, ReadBy};
+use crate::focus::versions::{Focus, Kept, ReadBy};
 use crate::keys::entry::Fence;
 
 /// The object a caret tell is for.
@@ -150,23 +150,22 @@ impl Request for SelectionReadRequest {
 /// caret's, when the readers' last focus is the committed focus (Table 3,
 /// column G); a UI Automation tell's, when its runtime id is the
 /// committed focus's.
-fn target(cx: &Cx<Entries>, tell: &CaretTell) -> Option<Kept> {
-    let kept = {
+fn target(cx: &Cx<Entries>, tell: &CaretTell) -> Option<Focus> {
+    let focus = {
         let facts = cx.facts();
         match &tell.target {
             Target::System(_) => facts.versions.caret_target().cloned(),
-            Target::Uia(runtime_id) => match &facts.versions.committed {
-                Committed::Read(kept) if matches!(&kept.read_by, ReadBy::Uia { runtime_id: focus, .. } if focus == runtime_id) => {
-                    Some((**kept).clone())
-                }
-                _ => None,
-            },
+            Target::Uia(runtime_id) => facts
+                .versions
+                .live()
+                .filter(|focus| matches!(&focus.kept.read_by, ReadBy::Uia { runtime_id: id, .. } if id == runtime_id))
+                .cloned(),
         }
     }?;
     let live = cx
-        .instance(Reader::Outpost(kept.window.process))
-        .is_some_and(|instance| Some(instance.outpost_id()) == kept.node.outpost());
-    live.then_some(kept)
+        .instance(Reader::Outpost(focus.kept.asked.process))
+        .is_some_and(|instance| Some(instance.outpost_id()) == focus.context.snapshot.id.outpost());
+    live.then_some(focus)
 }
 
 /// Whether `change` is an MSAA value change of the committed focus
@@ -187,17 +186,20 @@ pub(crate) fn edit_text_change(kept: &Kept, change: &MsaaChange) -> bool {
 }
 
 /// Whether `change`, an MSAA change at its turn, is a value change of the
-/// committed focus `kept` that sets its text-changed flag (Table 17,
-/// column G): `kept` is editable text with automatic selection detection
+/// committed focus `focus` that sets its text-changed flag (Table 17,
+/// column G): `focus` is editable text with automatic selection detection
 /// read through an edit control's messages.
-pub(crate) fn sets_text_changed(kept: &Kept, change: &MsaaChange) -> bool {
-    edit_text_change(kept, change) && crate::text_facts::detects_selection(kept)
+pub(crate) fn sets_text_changed(focus: &Focus, change: &MsaaChange) -> bool {
+    edit_text_change(&focus.kept, change) && crate::text_facts::detects_selection(focus)
 }
 
 /// Whether the committed focus is a console host's terminal, whose caret
 /// event is its caret.
 fn console_terminal_committed(state: &crate::state::SrState) -> bool {
-    matches!(&state.versions.committed, Committed::Read(kept) if kept.console_terminal)
+    state
+        .versions
+        .live()
+        .is_some_and(|focus| focus.kept.console_terminal)
 }
 
 /// Whether `entry` is a system caret tell, dropped at its arrival while
@@ -226,13 +228,14 @@ pub(crate) async fn run(mut cx: Cx<Entries>, tell: CaretTell) {
     {
         return;
     }
-    let Some(kept) = target(&cx, &tell) else {
+    let Some(focus) = target(&cx, &tell) else {
         return;
     };
-    let provider = crate::text_facts::provider(&kept);
+    let (kept, node) = (&focus.kept, focus.context.snapshot.id);
+    let provider = crate::text_facts::provider(kept);
     let request = SelectionReadRequest {
-        window: kept.window,
-        node: kept.node,
+        window: kept.asked,
+        node,
         read: SelectionRead {
             provider,
             baseline: kept.selection.baseline,
@@ -244,7 +247,7 @@ pub(crate) async fn run(mut cx: Cx<Entries>, tell: CaretTell) {
         Outcome::Result(Ok(read)) => read,
         // The node has no text: no caret and no selection, nothing said.
         Outcome::Result(Err(TextFailure::NoText)) => {
-            crate::text_facts::no_text(&mut cx.facts_mut(), kept.node);
+            crate::text_facts::no_text(&mut cx.facts_mut(), node);
             return;
         }
         // A read that fails says nothing and keeps the baseline and the
@@ -262,17 +265,18 @@ pub(crate) async fn run(mut cx: Cx<Entries>, tell: CaretTell) {
         | Outcome::ReaderEnded
         | Outcome::NoLongerAwaited(_) => return,
     };
-    answered(&mut cx, &tell, (&kept, provider), read);
+    answered(&mut cx, &tell, (&focus, provider), read);
 }
 
-/// Judges the caret tell's answer `read` on the committed focus `kept`
+/// Judges the caret tell's answer `read` on the committed focus `focus`
 /// (Table 17, columns D and E).
 fn answered(
     cx: &mut Cx<Entries>,
     tell: &CaretTell,
-    (kept, provider): (&Kept, TextProvider),
+    (focus, provider): (&Focus, TextProvider),
     read: SelectionReadReply,
 ) {
+    let (kept, node) = (&focus.kept, focus.context.snapshot.id);
     if let Some(offsets) = read.edit_selection
         && crate::text_facts::edit_selection_repeated(&mut cx.facts_mut(), offsets)
     {
@@ -283,7 +287,7 @@ fn answered(
         (tell.tell.process, kept.read_by.backend()),
         None,
         verbatim_model::NormalizedEvent::CaretMoved {
-            node_id: kept.node,
+            node_id: node,
             caret: read.caret.clone(),
             selection_changes: read
                 .difference
@@ -293,11 +297,11 @@ fn answered(
         },
     ));
     let collapsed = read.caret.selection.is_none();
-    crate::editing::take_caret(&mut cx.facts_mut(), kept.node, read.caret);
+    crate::editing::take_caret(&mut cx.facts_mut(), node, read.caret);
     let Some(difference) = read.difference else {
         // No baseline to compare with: nothing said, the next one minted,
         // the flag kept (column E).
-        crate::text_facts::minted(&mut cx.facts_mut(), kept.node, read.baseline);
+        crate::text_facts::minted(&mut cx.facts_mut(), node, read.baseline);
         return;
     };
     // In an edit control, a value change of the focus waiting now makes
@@ -319,12 +323,14 @@ fn answered(
     let value_waiting = !counted.is_empty();
     let general = {
         let mut facts = cx.facts_mut();
-        let Committed::Read(committed) = &mut facts.versions.committed else {
+        let Some(committed) = facts
+            .versions
+            .live_mut()
+            .filter(|committed| committed.context.snapshot.id == node)
+            .map(|committed| &mut committed.kept)
+        else {
             return;
         };
-        if committed.node != kept.node {
-            return;
-        }
         let general = committed.selection.text_changed || value_waiting;
         committed.selection.text_changed = false;
         committed.selection.baseline = Some(read.baseline);

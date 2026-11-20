@@ -19,7 +19,7 @@ use crate::entries::tests::{
     APP, GENERATION, Held, LISTENER, NOTHING, OUTPOST, answer_outcome, feed_at, ready,
 };
 use crate::event_queue::{Input, Instance};
-use crate::focus::versions::Kept;
+use crate::focus::versions::Focus;
 
 /// The window the followed node is in.
 const NODE_WINDOW: WindowHandle = WindowHandle(11);
@@ -84,12 +84,12 @@ fn follows_nothing(number: u64) -> String {
 /// A UI Automation node of `role` of APP's ready generation, in
 /// [`NODE_WINDOW`], named to its outpost as the committed focus's node:
 /// the follows of `held` name it.
-fn followed(held: &mut Held, role: Role) -> Kept {
-    let mut kept = crate::focus::versions::tests::kept(10);
-    kept.node = NodeId::new(1).with_outpost(OutpostId(GENERATION));
-    assert_eq!(kept.place.window, NODE_WINDOW);
+fn followed(held: &mut Held, role: Role) -> Focus {
+    let mut focus = crate::focus::versions::tests::focus(10);
+    focus.context.snapshot.id = NodeId::new(1).with_outpost(OutpostId(GENERATION));
+    assert_eq!(focus.kept.place.window, NODE_WINDOW);
     let node = NodeSnapshot {
-        id: kept.node,
+        id: focus.context.snapshot.id,
         backend: Backend::Uia,
         role,
         name: None,
@@ -100,9 +100,9 @@ fn followed(held: &mut Held, role: Role) -> Kept {
     let _ = held
         .state
         .follows
-        .committed(Some((&kept, &node, None)), false);
+        .committed(Some((&focus.kept, &node, None)), false);
     assert!(held.state.follows.named(APP).is_some());
-    kept
+    focus
 }
 
 /// A ready Core whose focused terminal, APP's node in [`NODE_WINDOW`], is
@@ -110,12 +110,12 @@ fn followed(held: &mut Held, role: Role) -> Kept {
 /// send.
 fn terminal_followed() -> Held {
     let mut state = ready();
-    let kept = followed(&mut state, Role::Terminal);
+    let focus = followed(&mut state, Role::Terminal);
     crate::terminal::reading::committed(
         &mut state.state,
         Some(crate::terminal::reading::Terminal {
-            node: kept.node,
-            window: kept.window,
+            node: focus.context.snapshot.id,
+            window: focus.kept.asked,
             console: false,
         }),
         Vec::new(),

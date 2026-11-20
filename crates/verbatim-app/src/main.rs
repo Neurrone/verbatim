@@ -1310,7 +1310,7 @@ impl ReducerThread<'_> {
                 let (focus, ancestors, navigator) = self.state.focus_report();
                 let _ = reply.send(FocusReport {
                     focus: focus.cloned(),
-                    ancestors: ancestors.to_vec(),
+                    ancestors,
                     navigator: navigator.cloned(),
                 });
             }

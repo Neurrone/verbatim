@@ -29,7 +29,7 @@ These are defined in `books/dev/src/reference/glossary.md`:
 - **Check thread:** the listener's thread, one per application whose UI Automation events it hears, that makes NVDA's delivery-time calls before the tell is sent.
 - **Core's inbox:** where everything arrives on Core's thread, in arrival order; what NVDA handles outside its queue is handled there at once.
 - **Event queue:** Core's one ordered queue of events, keys, commands and the entries Core makes itself; only its front entry may have a request out.
-- **Committed focus:** the focus Core has executed, NVDA's focus object.
+- **Committed focus:** the focus Core has executed, NVDA's focus object: one record of what Core spoke of it, what it keeps of its answer, and its line of ancestors, against which the next focus is joined and spoken.
 - **Readers' last focus:** the newest focus a reader read that Core executed, NVDA's last queued focus; empty at startup and after the foreground leaves for an unrelated top-level window.
 - **Ancestors Core already knows:** the committed focus and its ancestors, sent with a focus request while the readers' last focus is set, except what an ended outpost generation read; a reader's walk up the ancestor chain stops at the first of them it reaches. A walk that met one the committed focus's line no longer holds when its answer arrives is not completed: the application's focus is read afresh.
 - **Due time:** when Core stops waiting for a request: 13 seconds for a focus read's whole chain, 11 for any other, from when Core decides to ask.

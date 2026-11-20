@@ -17,7 +17,9 @@ use verbatim_model::{
 
 use crate::foreground::Foreground;
 
-/// The focused node and what the reducer knows about where it sits.
+/// The spoken part of the committed focus
+/// ([`crate::focus::versions::Focus`]): its node as last read, and what
+/// Core spoke of it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct FocusContext {
     /// The application the focus belongs to.
@@ -30,17 +32,6 @@ pub(crate) struct FocusContext {
     /// with what it carries. Changes are compared with
     /// [`spoken`](Self::spoken), not with this.
     pub(crate) snapshot: NodeSnapshot,
-    /// The focused node's ancestors, outermost first, as the `FocusChanged`
-    /// event carried them. The next focus change diffs its own ancestry
-    /// against these and the focus itself to announce only newly entered
-    /// containers (NVDA's focus-ancestry behavior); empty when the outpost's
-    /// walk found nothing or timed out.
-    ///
-    /// The chain is the part of the state that grows with the application,
-    /// so it is shared rather than owned: cloning the state, as the flight
-    /// recorder does at each checkpoint, copies a pointer, not the chain.
-    /// A focus change replaces the whole chain, never edits it.
-    pub(crate) ancestors: Arc<[NodeSnapshot]>,
     /// The focused node reported itself focused when it became the focus,
     /// so a later state set without the focused state, from an outpost's
     /// UI Automation change, means the focus had left it when the change
@@ -113,26 +104,6 @@ impl FocusContext {
     /// The spoken record, to change in place.
     pub(crate) fn spoken(&mut self) -> &mut SpokenRecord {
         &mut self.spoken
-    }
-
-    /// The states last spoken of `node`, the focus or one of its ancestors,
-    /// or its reading's when nothing was recorded for an ancestor; `None`
-    /// for a node not in the focus line.
-    pub(crate) fn spoken_states(&self, node: NodeId) -> Option<StateSet> {
-        if node == self.snapshot.id {
-            return Some(self.spoken.states);
-        }
-        self.spoken
-            .ancestors
-            .iter()
-            .find(|(id, _)| *id == node)
-            .map(|(_, states)| *states)
-            .or_else(|| {
-                self.ancestors
-                    .iter()
-                    .find(|ancestor| ancestor.id == node)
-                    .map(|ancestor| ancestor.states)
-            })
     }
 }
 
@@ -500,8 +471,6 @@ pub struct LastToast {
 /// recorded window replays from its start.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SrState {
-    /// Core's focus object (`crate::focus::object`).
-    pub(crate) focus: crate::focus::object::FocusState,
     /// The foreground record: the foreground object and the entered
     /// window, under the keys the state held before the record existed.
     #[serde(flatten)]
@@ -666,8 +635,9 @@ impl SrState {
         let Some(focus) = crate::editing::text_focus(self) else {
             return verbatim_model::FocusTextKind::None;
         };
-        let terminal = self.live_focus().is_some_and(|live| {
-            live.snapshot.id == focus && crate::editing::is_grid(live.snapshot.role)
+        let terminal = self.versions.live().is_some_and(|live| {
+            let live = &live.context.snapshot;
+            live.id == focus && crate::editing::is_grid(live.role)
         });
         if terminal {
             verbatim_model::FocusTextKind::Terminal
@@ -852,8 +822,9 @@ impl SrState {
 
     /// The caret of `node`'s text, while it is the focus's.
     pub(crate) fn focus_caret(&self, node: NodeId) -> Option<&CaretContext> {
-        self.focus
-            .object()
+        self.versions
+            .focus()
+            .map(|focus| &focus.context)
             .filter(|focus| focus.snapshot.id == node)
             .and_then(|focus| focus.caret.as_ref())
     }
@@ -861,9 +832,9 @@ impl SrState {
     /// The caret Core holds on the focus, its offset in its line.
     #[must_use]
     pub fn focus_caret_offset(&self) -> Option<u32> {
-        self.focus
-            .object()
-            .and_then(|focus| focus.caret.as_ref())
+        self.versions
+            .focus()
+            .and_then(|focus| focus.context.caret.as_ref())
             .map(|caret| caret.line.offset)
     }
 
@@ -872,15 +843,15 @@ impl SrState {
     /// 17, column C). NVDA: `editableText.py` 421 to 424.
     pub(crate) fn focus_read_failed(&mut self) {
         self.forget_caret();
-        if let crate::focus::versions::Committed::Read(kept) = &mut self.versions.committed {
-            kept.selection = crate::text_facts::SelectionFacts::default();
+        if let Some(focus) = self.versions.live_mut() {
+            focus.kept.selection = crate::text_facts::SelectionFacts::default();
         }
     }
 
     /// Forgets the focus's caret.
     pub(crate) fn forget_caret(&mut self) {
-        if let Some(focus) = self.focus.object_mut() {
-            focus.caret = None;
+        if let Some(focus) = self.versions.focus_mut() {
+            focus.context.caret = None;
         }
     }
 
@@ -888,8 +859,9 @@ impl SrState {
     /// anything is focused and its outpost is still running.
     #[must_use]
     pub fn focused(&self) -> Option<(Pid, &NodeSnapshot)> {
-        self.live_focus()
-            .map(|focus| (focus.source, &focus.snapshot))
+        self.versions
+            .live()
+            .map(|focus| (focus.context.source, &focus.context.snapshot))
     }
 
     /// The focused node as last announced, its ancestors outermost first,
@@ -901,14 +873,19 @@ impl SrState {
         &self,
     ) -> (
         Option<&NodeSnapshot>,
-        &[NodeSnapshot],
+        Vec<NodeSnapshot>,
         Option<&NodeSnapshot>,
     ) {
+        let focus = self.versions.focus();
         (
-            self.focus.object().map(|focus| &focus.snapshot),
-            self.focus
-                .object()
-                .map_or(&[][..], |focus| &focus.ancestors[..]),
+            focus.map(|focus| &focus.context.snapshot),
+            focus.map_or_else(Vec::new, |focus| {
+                focus
+                    .line
+                    .iter()
+                    .map(|entry| entry.snapshot.clone())
+                    .collect()
+            }),
             self.navigator.as_ref().map(|navigator| &navigator.object),
         )
     }
@@ -933,7 +910,7 @@ impl SrState {
     /// The application the focus belongs to; `None` before any focus.
     #[must_use]
     pub fn focus_source(&self) -> Option<Pid> {
-        self.focus.object().map(|focus| focus.source)
+        self.versions.focus().map(|focus| focus.context.source)
     }
 
     /// When the focus object, the newest focus the reducer took, was
@@ -941,9 +918,9 @@ impl SrState {
     /// clock; `None` before any, or when its observation is not known.
     #[must_use]
     pub fn latest_focus_observed_at(&self) -> Option<u64> {
-        self.focus
-            .object()
-            .map(|focus| focus.observed_at_us)
+        self.versions
+            .focus()
+            .map(|focus| focus.context.observed_at_us)
             .filter(|&observed| observed != 0)
     }
 
@@ -963,10 +940,10 @@ impl SrState {
                 held.entry(outpost).or_default().insert(id);
             }
         };
-        if let Some(focus) = self.live_focus() {
-            insert(focus.snapshot.id);
-            for ancestor in focus.ancestors.iter() {
-                insert(ancestor.id);
+        if let Some(focus) = self.versions.live() {
+            insert(focus.context.snapshot.id);
+            for entry in focus.line.iter() {
+                insert(entry.snapshot.id);
             }
         }
         if let Some(navigator) = &self.navigator {
@@ -1038,7 +1015,7 @@ impl SrState {
                 held.entry(outpost).or_default().insert(position.anchor);
             }
         };
-        if let Some(focus) = self.focus.object()
+        if let Some(focus) = self.versions.focus().map(|focus| &focus.context)
             && let Some(caret) = &focus.caret
         {
             let node = focus.snapshot.id;
@@ -1116,41 +1093,15 @@ impl SrState {
         mark
     }
 
-    /// Whether the focus object is the committed focus whose outpost
-    /// ended: its data stays, so a replacement outpost's report of the
-    /// same focus can be taken silently (`docs/parity/focus-events.md`,
-    /// "Recovery after an outpost is replaced"), but its ids name nothing
-    /// any more. The one fact of it is the committed focus's version
-    /// ([`Committed::Ended`](crate::focus::versions::Committed::Ended)),
-    /// matched by node, so a focus executed in the replacement's
-    /// generation, whose version is committed after it executes, lives.
+    /// Whether the committed focus's outpost ended: its data stays, so a
+    /// replacement outpost's report of the same focus can be taken
+    /// silently (`docs/parity/focus-events.md`, "Recovery after an outpost
+    /// is replaced"), but its ids name nothing any more.
     pub(crate) fn focus_ended(&self) -> bool {
-        let crate::focus::versions::Committed::Ended(kept) = &self.versions.committed else {
-            return false;
-        };
-        self.focus
-            .object()
-            .is_some_and(|focus| focus.snapshot.id == kept.node)
-    }
-
-    /// The focus object while its outpost lives: none once the committed
-    /// focus's outpost ended ([`SrState::focus_ended`]).
-    pub(crate) fn live_focus(&self) -> Option<&FocusContext> {
-        self.focus.object().filter(|_| !self.focus_ended())
-    }
-
-    /// [`SrState::live_focus`], to change in place.
-    pub(crate) fn live_focus_mut(&mut self) -> Option<&mut FocusContext> {
-        if self.focus_ended() {
-            return None;
-        }
-        self.focus.object_mut()
-    }
-
-    /// Whether the focused node is exactly `node_id` and still alive.
-    pub(crate) fn focus_matches(&self, node_id: NodeId) -> bool {
-        self.live_focus()
-            .is_some_and(|focus| focus.snapshot.id == node_id)
+        matches!(
+            self.versions.committed,
+            crate::focus::versions::Committed::Ended(_)
+        )
     }
 
     /// Removes every terminal model `which` picks: the one way a model

@@ -6,7 +6,8 @@ use verbatim_model::{
 };
 
 use super::*;
-use crate::focus::versions::tests::kept;
+use crate::focus::versions::Focus;
+use crate::focus::versions::tests::focus as committed;
 
 fn snapshot(id: NodeId, role: Role, class: Option<&str>) -> NodeSnapshot {
     NodeSnapshot {
@@ -24,25 +25,25 @@ fn snapshot(id: NodeId, role: Role, class: Option<&str>) -> NodeSnapshot {
 }
 
 /// A UI Automation focus of `process`, generation 7, in window 11.
-fn uia(process: Pid) -> Kept {
-    let mut kept = kept(10);
-    kept.window.process = process;
-    kept
+fn uia(process: Pid) -> Focus {
+    let mut focus = committed(10);
+    focus.kept.asked.process = process;
+    focus
 }
 
-fn msaa() -> Kept {
-    let mut kept = kept(10);
-    kept.read_by = ReadBy::Msaa {
+fn msaa() -> Focus {
+    let mut focus = committed(10);
+    focus.kept.read_by = ReadBy::Msaa {
         event: None,
         held_child: 0,
     };
-    kept
+    focus
 }
 
 fn naming(process: Pid, node: NodeId, group: FollowGroup) -> FollowRequest {
     FollowRequest {
         process,
-        window: kept(10).window,
+        window: committed(10).kept.asked,
         follow: Follow {
             node: Some(Followed {
                 node,
@@ -56,7 +57,7 @@ fn naming(process: Pid, node: NodeId, group: FollowGroup) -> FollowRequest {
 fn nothing(process: Pid) -> FollowRequest {
     FollowRequest {
         process,
-        window: kept(10).window,
+        window: committed(10).kept.asked,
         follow: Follow { node: None },
     }
 }
@@ -64,10 +65,10 @@ fn nothing(process: Pid) -> FollowRequest {
 const APP: Pid = Pid(40);
 const OTHER: Pid = Pid(50);
 
-/// Commits `kept` as a button with no parent.
-fn commit(follows: &mut Follows, kept: &Kept) -> Vec<FollowRequest> {
-    let node = snapshot(kept.node, Role::Button, None);
-    follows.committed(Some((kept, &node, None)), false)
+/// Commits `focus` as a button with no parent.
+fn commit(follows: &mut Follows, focus: &Focus) -> Vec<FollowRequest> {
+    let node = snapshot(focus.context.snapshot.id, Role::Button, None);
+    follows.committed(Some((&focus.kept, &node, None)), false)
 }
 
 /// A UI Automation focus of `APP` committed: its node named.
@@ -76,7 +77,7 @@ fn named() -> Follows {
     let focus = uia(APP);
     assert_eq!(
         commit(&mut follows, &focus),
-        [naming(APP, focus.node, FollowGroup::Base)]
+        [naming(APP, focus.context.snapshot.id, FollowGroup::Base)]
     );
     follows
 }
@@ -86,7 +87,7 @@ fn nothing_named_then_a_commit_of_a_uia_node_names_it() {
     let follows = named();
     assert_eq!(
         follows.named(APP).map(|named| named.followed.node),
-        Some(uia(APP).node)
+        Some(uia(APP).context.snapshot.id)
     );
 }
 
@@ -102,10 +103,10 @@ fn nothing_named_then_a_commit_with_no_uia_element_sends_nothing() {
 fn a_node_named_then_a_new_node_of_its_outpost_names_the_new_one() {
     let mut follows = named();
     let mut focus = uia(APP);
-    focus.node = NodeId::new(9).with_outpost(OutpostId(7));
+    focus.context.snapshot.id = NodeId::new(9).with_outpost(OutpostId(7));
     assert_eq!(
         commit(&mut follows, &focus),
-        [naming(APP, focus.node, FollowGroup::Base)]
+        [naming(APP, focus.context.snapshot.id, FollowGroup::Base)]
     );
 }
 
@@ -118,8 +119,8 @@ fn a_node_named_then_another_applications_focus_names_nothing_to_the_old_outpost
         [
             nothing(APP),
             FollowRequest {
-                window: focus.window,
-                ..naming(OTHER, focus.node, FollowGroup::Base)
+                window: focus.kept.asked,
+                ..naming(OTHER, focus.context.snapshot.id, FollowGroup::Base)
             }
         ]
     );
@@ -139,10 +140,13 @@ fn a_node_named_then_a_focus_with_no_uia_element_or_cores_own_names_nothing() {
 fn an_unexecuted_completion_names_what_core_names_there() {
     let follows = named();
     assert_eq!(
-        follows.unexecuted(APP, kept(10).window),
-        naming(APP, uia(APP).node, FollowGroup::Base)
+        follows.unexecuted(APP, committed(10).kept.asked),
+        naming(APP, uia(APP).context.snapshot.id, FollowGroup::Base)
     );
-    assert_eq!(follows.unexecuted(OTHER, kept(10).window), nothing(OTHER));
+    assert_eq!(
+        follows.unexecuted(OTHER, committed(10).kept.asked),
+        nothing(OTHER)
+    );
 }
 
 /// The named node's window destroyed (column E): it is named no more, and
@@ -154,7 +158,7 @@ fn the_named_nodes_window_destroyed_names_nothing_and_sends_nothing_named() {
     assert_eq!(follows.window_destroyed(WindowHandle(99)), []);
     assert!(follows.named(APP).is_some());
     assert_eq!(
-        follows.window_destroyed(uia(APP).place.window),
+        follows.window_destroyed(uia(APP).kept.place.window),
         [nothing(APP)]
     );
     assert_eq!(follows.named(APP), None);
@@ -197,10 +201,10 @@ fn the_group_follows_the_role_the_class_and_a_console_window() {
     ];
     for (role, class, console, group) in cases {
         let mut follows = Follows::default();
-        let node = snapshot(focus.node, role, class);
+        let node = snapshot(focus.context.snapshot.id, role, class);
         assert_eq!(
-            follows.committed(Some((&focus, &node, None)), console),
-            [naming(APP, focus.node, group)],
+            follows.committed(Some((&focus.kept, &node, None)), console),
+            [naming(APP, focus.context.snapshot.id, group)],
             "{role:?} of class {class:?}, a console host's: {console}"
         );
     }
@@ -209,14 +213,14 @@ fn the_group_follows_the_role_the_class_and_a_console_window() {
 #[test]
 fn a_slider_that_focuses_its_thumb_is_followed_as_the_extra_object() {
     let focus = uia(APP);
-    let thumb = snapshot(focus.node, Role::Button, None);
+    let thumb = snapshot(focus.context.snapshot.id, Role::Button, None);
     let slider = snapshot(
         NodeId::new(5).with_outpost(OutpostId(7)),
         Role::Slider,
         Some("SensitiveSlider"),
     );
     let mut follows = Follows::default();
-    let sent = follows.committed(Some((&focus, &thumb, Some(&slider))), false);
+    let sent = follows.committed(Some((&focus.kept, &thumb, Some(&slider))), false);
     assert_eq!(
         sent.first()
             .and_then(|request| request.follow.node.as_ref())
@@ -225,7 +229,7 @@ fn a_slider_that_focuses_its_thumb_is_followed_as_the_extra_object() {
     );
     let plain = snapshot(slider.id, Role::Slider, None);
     let mut follows = Follows::default();
-    let sent = follows.committed(Some((&focus, &thumb, Some(&plain))), false);
+    let sent = follows.committed(Some((&focus.kept, &thumb, Some(&plain))), false);
     assert_eq!(
         sent.first()
             .and_then(|request| request.follow.node.as_ref())

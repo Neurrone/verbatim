@@ -49,7 +49,7 @@ use crate::event_queue::{Cx, OTHER_DUE_US, Outcome, Reader, Request, RequestWind
 use crate::focus::FOCUS_SET;
 use crate::focus::execute::Known;
 use crate::focus::uia_focus::ListenerRead;
-use crate::focus::versions::Kept as CommittedFocus;
+use crate::focus::versions::Focus as CommittedFocus;
 
 /// The item's outpost completing the listener's read of a selected item.
 #[derive(Debug)]
@@ -133,7 +133,7 @@ pub(crate) async fn run(
     if !native(tell) {
         return;
     }
-    let Some(committed) = cx.facts().versions.committed_read().cloned() else {
+    let Some(committed) = cx.facts().versions.live().cloned() else {
         return;
     };
     let due_us = cx.due_in(OTHER_DUE_US);
@@ -231,7 +231,7 @@ async fn selected(
             set: crate::details::node_set(&cx.facts(), FOCUS_SET),
             known: known.sent.clone(),
             completes: CompletionFor::SelectionItem {
-                focus: committed.node,
+                focus: committed.context.snapshot.id,
             },
             details: crate::details::focus_details(&cx.facts()),
         },
@@ -243,8 +243,8 @@ async fn selected(
     if cx
         .facts()
         .versions
-        .committed_read()
-        .is_none_or(|now| now.node != committed.node)
+        .live()
+        .is_none_or(|now| now.context.snapshot.id != committed.context.snapshot.id)
     {
         return;
     }
@@ -253,7 +253,7 @@ async fn selected(
             crate::changes::controlled_selection(
                 cx,
                 trace_id,
-                committed.node,
+                committed.context.snapshot.id,
                 (item.object, Backend::Uia),
             );
         }
@@ -261,7 +261,7 @@ async fn selected(
             && !focused(&item)
             && read_role(&item) == Some(Role::ListItem) =>
         {
-            if committed.value_from_selection {
+            if committed.kept.value_from_selection {
                 combo_box_value(cx, trace_id, committed, due_us).await;
             } else {
                 core_window_value(cx, trace_id, committed, due_us).await;
@@ -279,8 +279,8 @@ fn in_combo_box_list_window(
     tell: &verbatim_model::tell::Event,
     committed: &CommittedFocus,
 ) -> bool {
-    committed.role == Role::ComboBox
-        && tell.process == committed.source
+    committed.context.snapshot.role == Role::ComboBox
+        && tell.process == committed.context.source
         && window_facts(tell).is_some_and(|facts| facts.window.class == "ComboLBox")
 }
 
@@ -294,8 +294,8 @@ async fn combo_box_list(
     due_us: u64,
 ) -> Option<WindowHandle> {
     let read = NodeProperties {
-        window: combo_box.window,
-        node: combo_box.node,
+        window: combo_box.kept.asked,
+        node: combo_box.context.snapshot.id,
         set: vec![PropertyId::ComboBoxList],
     };
     let Outcome::Result(values) = cx.ask(read, due_us).await else {
@@ -321,8 +321,8 @@ async fn core_window_value(
     due_us: u64,
 ) {
     let read = NodeProperties {
-        window: combo_box.window,
-        node: combo_box.node,
+        window: combo_box.kept.asked,
+        node: combo_box.context.snapshot.id,
         set: vec![
             PropertyId::HasValuePattern,
             PropertyId::WindowClass,
@@ -346,7 +346,7 @@ async fn core_window_value(
     crate::changes::speak_change(
         cx,
         trace_id,
-        combo_box.node,
+        combo_box.context.snapshot.id,
         &PropertyChange::Value(value),
         None,
     );
@@ -364,8 +364,8 @@ async fn combo_box_value(
     due_us: u64,
 ) {
     let read = NodeProperties {
-        window: combo_box.window,
-        node: combo_box.node,
+        window: combo_box.kept.asked,
+        node: combo_box.context.snapshot.id,
         set: vec![PropertyId::Value],
     };
     let Outcome::Result(values) = cx.ask(read, due_us).await else {
@@ -380,7 +380,7 @@ async fn combo_box_value(
     crate::changes::speak_change(
         cx,
         trace_id,
-        combo_box.node,
+        combo_box.context.snapshot.id,
         &PropertyChange::Value(value),
         None,
     );

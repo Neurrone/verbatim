@@ -133,8 +133,9 @@ pub(crate) fn begin(state: &mut SrState, press: ReviewPress) -> Next {
         ReviewText::Caret => seed(press, node, TextPoint::Caret),
         ReviewText::Unknown => {
             let has_caret = state
-                .focus
-                .object()
+                .versions
+                .focus()
+                .map(|focus| &focus.context)
                 .is_some_and(|focus| focus.snapshot.id == node && focus.caret.is_some());
             if has_caret || may_have_text(navigator.object.role) {
                 seed(press, node, TextPoint::Caret)

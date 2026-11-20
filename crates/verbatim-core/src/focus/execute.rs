@@ -1,34 +1,75 @@
 //! A focus answer executed (design, "Focus and foreground"): its nodes
-//! become the snapshots today's announcement code speaks, the focus is
-//! executed through that code against the committed focus, and what Core
-//! keeps of the answer is kept with the committed focus
-//! ([`super::versions::Kept`]). The announcement code and the reducer's
-//! focus context are shared with the old focus path until the old types
-//! are deleted.
+//! become the snapshots the announcement code speaks, joined above the
+//! place the walk met to the committed focus's line, the focus is
+//! executed through that code against the committed focus, and the
+//! committed focus becomes it, one record
+//! ([`super::versions::Focus`]).
 
 use std::sync::Arc;
 
+use serde::{Deserialize, Serialize};
 use verbatim_model::property::{PropertyId, PropertyValue, PropertyValues};
-use verbatim_model::request::{FocusAncestor, FocusCaret, FocusNode, FocusRead, KnownAncestor};
+use verbatim_model::request::{FocusCaret, FocusNode, FocusRead, KnownAncestor};
 use verbatim_model::tell::{AcceptanceFacts, Event, Relation};
 use verbatim_model::{
     Backend, EarlierElement, Effect, FocusText, NodeDetails, NodeSnapshot, ObjectKey, Pid, Role,
     StateSet, TraceId, WindowFacts, WindowHandle,
 };
 
-use super::versions::{Kept, KeptAncestor, Place, ReadBy};
+use super::versions::{Kept, LineEntry, Place, ReadBy};
 use crate::entries::Entries;
 use crate::entries::window_facts;
 use crate::event_queue::Cx;
 use crate::event_queue::RequestWindow;
-use crate::focus::object::Report;
 use crate::foreground::ForegroundFact;
 use crate::keys::entry::Fence;
 use crate::state::SrState;
 
+/// A focus as Core executes it: the parts of a focus the focus handling
+/// reads, owned.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct Report {
+    pub(crate) trace_id: TraceId,
+    pub(crate) source: Pid,
+    /// When its reader observed it, in microseconds; 0 when not known.
+    pub(crate) observed_at_us: u64,
+    pub(crate) window: Option<WindowFacts>,
+    pub(crate) node: NodeSnapshot,
+    pub(crate) whole_window: bool,
+    /// Its ancestors as Core takes them, outermost first.
+    pub(crate) ancestors: Arc<[LineEntry]>,
+    pub(crate) text: Option<FocusText>,
+    pub(crate) earlier: Option<EarlierElement>,
+    /// The top-level window its read named, which stands for the entry
+    /// just below the desktop when it carries no window facts, as a focus
+    /// Core read itself does.
+    pub(crate) top_level: Option<WindowHandle>,
+}
+
+/// How executing a focus writes the committed focus: the one parameter by
+/// which [`crate::reduce::execute_report`] and
+/// [`crate::reduce::take_silently`] write the record.
+#[derive(Clone, Debug)]
+pub(crate) enum Commit {
+    /// A reader's focus answer: the committed focus becomes it, with what
+    /// Core keeps of the answer, `kept`, and the readers' last focus with
+    /// the speech fence `fence` ([`super::versions::Versions::execute`]).
+    New {
+        /// What Core keeps of the answer.
+        kept: Kept,
+        /// The speech fence of the entry that read it.
+        fence: Fence,
+    },
+    /// The committed focus spoken again, as a UI Automation menu opening
+    /// on it does: only what Core spoke of it is replaced; its variant,
+    /// what Core keeps of its answer, its line, the readers' last focus
+    /// and the postponed dialog are left as they are.
+    InPlace,
+}
+
 /// The ancestors Core already knows, as a focus request sent them: each
-/// with the place, in the committed focus's kept ancestors, of the
-/// ancestor it names, so that the answer's meeting point is found again.
+/// with the place, in the committed focus's line, of the ancestor it
+/// names, so that the answer's meeting point is found again.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Known {
     /// The list as sent.
@@ -171,59 +212,6 @@ fn window_of(
     }
 }
 
-/// The answer's ancestors, nearest first, joined with the committed
-/// focus's above the one the walk met: each snapshot, and what Core keeps
-/// of it. `None` when a node cannot be found, a reader's fault.
-fn chain(
-    state: &SrState,
-    ancestors: &[FocusAncestor],
-    met: Option<u32>,
-    known: &Known,
-    backend: Backend,
-) -> Option<(Vec<NodeSnapshot>, Vec<KeptAncestor>)> {
-    let mut snapshots = Vec::new();
-    let mut kept = Vec::new();
-    for ancestor in ancestors {
-        snapshots.push(snapshot(
-            &ancestor.node,
-            node_backend(&ancestor.node, backend),
-        )?);
-        kept.push(KeptAncestor {
-            node: ancestor.node.read.node?,
-            runtime_id: ancestor.node.runtime_id.clone(),
-            window: own_window(&ancestor.node.read.values),
-            simple_child: ancestor.simple_child,
-        });
-    }
-    if let Some(met) = met {
-        let place = *known.places.get(usize::try_from(met).ok()?)?;
-        let committed = state.versions.committed_kept()?;
-        let context = state.focus.object()?;
-        // Place 0 is the committed focus itself, which the walk met as an
-        // ancestor of the focus inside it.
-        let above_from = if let Some(above_from) = place.checked_sub(1) {
-            above_from
-        } else {
-            let itself = &context.snapshot;
-            if itself.id != committed.node {
-                return None;
-            }
-            snapshots.push(itself.clone());
-            kept.push(committed.as_ancestor());
-            0
-        };
-        for above in committed.ancestors.get(above_from..)? {
-            let node = context
-                .ancestors
-                .iter()
-                .find(|snapshot| snapshot.id == above.node)?;
-            snapshots.push(node.clone());
-            kept.push(above.clone());
-        }
-    }
-    Some((snapshots, kept))
-}
-
 /// Where a focus answer came from: the trace it runs under, the
 /// application it belongs to, when the event was heard, the window facts
 /// today's announcement code reads, and the window its read named.
@@ -317,7 +305,10 @@ struct Ready {
 }
 
 /// `read` made ready to execute, or `None` when its nodes were not minted
-/// or its meeting point is not held, a reader's fault.
+/// or its meeting point is not one Core sent, a reader's fault. Its
+/// entries are its ancestors, joined where the walk met a place Core sent
+/// to the committed focus's own line above that place, the committed focus
+/// itself at place 0: one line, nothing looked up in another record.
 fn ready(
     state: &SrState,
     origin: &Origin,
@@ -330,13 +321,26 @@ fn ready(
     node.details
         .parent_automation_id
         .clone_from(&origin.parent_automation_id);
-    let (nearest_first, mut kept_ancestors) =
-        chain(state, &read.ancestors, read.met, known, backend)?;
+    // Nearest first, as the walk read them.
+    let mut ancestors = Vec::new();
+    for ancestor in &read.ancestors {
+        ancestors.push(LineEntry {
+            snapshot: snapshot(&ancestor.node, node_backend(&ancestor.node, backend))?,
+            runtime_id: ancestor.node.runtime_id.clone(),
+            simple_child: ancestor.simple_child,
+        });
+    }
+    if let Some(met) = read.met {
+        let place = *known.places.get(usize::try_from(met).ok()?)?;
+        let committed = state.versions.focus()?;
+        let line =
+            std::iter::once(committed.as_entry()).chain(committed.line.iter().rev().cloned());
+        ancestors.extend(line.skip(place));
+    }
     let read_foreground = match &read.foreground {
         Some(foreground) => Some(snapshot(foreground, node_backend(foreground, backend))?),
         None => None,
     };
-    let mut ancestors = nearest_first;
     // A focus in a window Verbatim's hidden frame owns takes the frame,
     // which the answer read as its foreground, as its outermost ancestor,
     // so that it enters the frame and says its title. The frame is a
@@ -354,20 +358,17 @@ fn ready(
     if origin.frame_owned
         && let Some(frame) = &read_foreground
         && frame.id != node.id
-        && !ancestors.iter().any(|ancestor| ancestor.id == frame.id)
+        && !ancestors
+            .iter()
+            .any(|ancestor| ancestor.snapshot.id == frame.id)
     {
         let mut frame = frame.clone();
         frame.details.top_level_client = frame.role == Role::Pane;
-        kept_ancestors.push(KeptAncestor {
-            node: frame.id,
+        ancestors.push(LineEntry {
+            snapshot: frame,
             runtime_id: None,
-            window: read
-                .foreground
-                .as_ref()
-                .and_then(|frame| own_window(&frame.read.values)),
             simple_child: false,
         });
-        ancestors.push(frame);
     }
     ancestors.reverse();
     // An item whose containers an application's rule drops has none, in
@@ -376,45 +377,43 @@ fn ready(
     // none of them ([`crate::applications::drops_ancestry`]).
     if crate::applications::drops_ancestry(origin.window.as_ref(), &node) {
         ancestors.clear();
-        kept_ancestors.clear();
     }
     // The top ancestor stands for the foreground object only when the
     // answer could not read it.
-    let foreground = read_foreground.or_else(|| ancestors.first().cloned());
+    let foreground = read_foreground.or_else(|| ancestors.first().map(|top| top.snapshot.clone()));
+    let place = Place {
+        window: read.focus.read.window.handle,
+        top_level: origin.asked.top_level,
+        root_owner: origin.asked.root_owner,
+        ancestor_windows: ancestors
+            .iter()
+            .rev()
+            .filter_map(|ancestor| ancestor.snapshot.details.window)
+            .collect(),
+    };
+    let console_terminal = node.role == Role::Terminal && in_console(origin, &ancestors);
+    let mut selection = crate::text_facts::SelectionFacts::default();
+    crate::text_facts::focus_answered(&mut selection, &read.caret);
+    let kept = Kept {
+        read_by,
+        place,
+        asked: origin.asked,
+        foreground: read.foreground.as_ref().and_then(|node| node.read.node),
+        value_from_selection: read.value_from_selection,
+        selection,
+        console_terminal,
+    };
     let report = Report {
         trace_id: origin.trace_id,
         source: origin.source,
         observed_at_us: origin.observed_at_us,
         window: origin.window.clone(),
         whole_window: origin.whole_window,
-        node: node.clone(),
+        node,
         ancestors: Arc::from(ancestors),
         text: Some(focus_text(&read.caret)),
         earlier: read.runtime_id_reused.then_some(EarlierElement::Gone),
         top_level: Some(origin.asked.top_level),
-    };
-    let place = Place {
-        window: read.focus.read.window.handle,
-        top_level: origin.asked.top_level,
-        root_owner: origin.asked.root_owner,
-        ancestor_windows: kept_ancestors
-            .iter()
-            .filter_map(|ancestor| ancestor.window)
-            .collect(),
-    };
-    let kept = Kept {
-        source: origin.source,
-        node: node.id,
-        read_by,
-        place,
-        window: origin.asked,
-        ancestors: kept_ancestors.into(),
-        foreground: read.foreground.as_ref().and_then(|node| node.read.node),
-        value_from_selection: read.value_from_selection,
-        role: node.role,
-        own_window: own_window(&read.focus.read.values),
-        selection: crate::text_facts::SelectionFacts::default(),
-        console_terminal: node.role == Role::Terminal && in_console(origin, &report.ancestors),
     };
     Some(Ready {
         report,
@@ -426,7 +425,7 @@ fn ready(
 /// Whether a focus of `origin` with `ancestors`, outermost first, is in a
 /// console window: its tell's window is one, or, for a focus Core read
 /// itself, its nearest ancestor with a window of its own is.
-fn in_console(origin: &Origin, ancestors: &[NodeSnapshot]) -> bool {
+fn in_console(origin: &Origin, ancestors: &[LineEntry]) -> bool {
     let console = Some(super::follow::CONSOLE_WINDOW_CLASS);
     if let Some(window) = &origin.window {
         return Some(window.class.as_str()) == console;
@@ -434,6 +433,7 @@ fn in_console(origin: &Origin, ancestors: &[NodeSnapshot]) -> bool {
     ancestors
         .iter()
         .rev()
+        .map(|ancestor| &ancestor.snapshot)
         .find(|ancestor| ancestor.details.window.is_some())
         .is_some_and(|ancestor| ancestor.details.class_name.as_deref() == console)
 }
@@ -470,7 +470,7 @@ fn ignored(state: &SrState, origin: &Origin) -> bool {
 /// `initAutoSelectDetection` sets its baseline (`editableText.py` 417 to
 /// 427; Dickson, 2026-11-17) (Table 17,
 /// columns A to C). A focus whose nodes the reader did not mint, or whose
-/// meeting point Core does not hold, ends unspoken: a reader's fault.
+/// meeting point is not one Core sent, ends unspoken: a reader's fault.
 pub(crate) fn execute(
     state: &mut SrState,
     origin: &Origin,
@@ -481,7 +481,7 @@ pub(crate) fn execute(
     if ignored(state, origin) {
         return Executed::default();
     }
-    let Some(mut ready) = ready(state, origin, read, known, read_by) else {
+    let Some(ready) = ready(state, origin, read, known, read_by) else {
         return Executed::default();
     };
     // A reused runtime id: the element the node held before is gone, so
@@ -489,7 +489,7 @@ pub(crate) fn execute(
     // focus's text is taken afresh, as a new object's is (build 1's
     // design, "The outpost in this build").
     if read.runtime_id_reused {
-        let node = ready.kept.node;
+        let node = ready.report.node.id;
         if state.focus_caret(node).is_some() {
             state.forget_caret();
         }
@@ -501,7 +501,17 @@ pub(crate) fn execute(
     // said (design, "The ancestors spoken at execution").
     let left = state.versions.last.is_none();
     let mut said = vec![observed(&ready.report)];
-    said.extend(crate::reduce::execute_report(state, &ready.report, left));
+    let (terminal, follows) = commit(state, &ready);
+    let new = Commit::New {
+        kept: ready.kept,
+        fence: origin.fence,
+    };
+    said.extend(crate::reduce::execute_report(
+        state,
+        &ready.report,
+        left,
+        new,
+    ));
     if read.met.is_none()
         && let Some(foreground) = &ready.foreground
     {
@@ -512,8 +522,7 @@ pub(crate) fn execute(
     if !matches!(read.caret, FocusCaret::Read(_)) {
         state.forget_caret();
     }
-    crate::text_facts::focus_answered(&mut ready.kept.selection, &read.caret);
-    commit(state, origin, ready);
+    crate::terminal::reading::committed(state, terminal, follows, origin.observed_at_us);
     Executed {
         said,
         committed: true,
@@ -530,7 +539,11 @@ fn observed(report: &Report) -> Effect {
         verbatim_model::NormalizedEvent::FocusChanged {
             node: report.node.clone(),
             whole_window: report.whole_window,
-            ancestors: report.ancestors.to_vec(),
+            ancestors: report
+                .ancestors
+                .iter()
+                .map(|ancestor| ancestor.snapshot.clone())
+                .collect(),
             text: report.text.clone().map(Box::new),
             earlier: report.earlier,
         },
@@ -564,30 +577,32 @@ impl Executed {
     }
 }
 
-/// Commits `ready`: both versions of the focus become it (Table 10,
-/// columns A and B). The focused terminal's state follows the commit: a
-/// terminal committed is baselining, its `Follow` and baseline wanted in
-/// order, and every `Follow` of the commit is wanted with them.
-fn commit(state: &mut SrState, origin: &Origin, ready: Ready) {
-    let follows = state.follows.committed(
-        Some((
-            &ready.kept,
-            &ready.report.node,
-            ready.report.ancestors.last(),
-        )),
-        ready.kept.console_terminal,
-    );
-    let terminal = matches!(ready.kept.read_by, ReadBy::Uia { .. })
+/// What committing `ready` starts (Table 10, columns A and B): the
+/// focused terminal, when it is one, and every `Follow` of the commit, which
+/// [`crate::terminal::reading::committed`] wants in order once the
+/// committed focus is written, a terminal's baseline after its `Follow`.
+fn commit(
+    state: &mut SrState,
+    ready: &Ready,
+) -> (
+    Option<crate::terminal::reading::Terminal>,
+    Vec<(RequestWindow, verbatim_model::request::Request)>,
+) {
+    let (kept, node) = (&ready.kept, &ready.report.node);
+    let parent = ready.report.ancestors.last().map(|parent| &parent.snapshot);
+    let follows = state
+        .follows
+        .committed(Some((kept, node, parent)), kept.console_terminal);
+    let terminal = matches!(kept.read_by, ReadBy::Uia { .. })
         .then(|| {
             crate::terminal::reading::terminal_of(
-                ready.report.node.role,
-                ready.kept.node,
-                ready.kept.window,
-                ready.kept.console_terminal,
+                node.role,
+                node.id,
+                kept.asked,
+                kept.console_terminal,
             )
         })
         .flatten();
-    state.versions.execute(ready.kept, origin.fence);
     let follows = follows
         .into_iter()
         .map(|follow| {
@@ -597,34 +612,31 @@ fn commit(state: &mut SrState, origin: &Origin, ready: Ready) {
             )
         })
         .collect();
-    crate::terminal::reading::committed(state, terminal, follows, origin.observed_at_us);
+    (terminal, follows)
 }
 
 /// Executes the committed focus again, as a UI Automation menu opening on
 /// it does (design, "Focus and foreground"; NVDA:
-/// `UIAHandler/__init__.py` 856 to 868), under `trace_id`. Nothing with
-/// nothing committed.
+/// `UIAHandler/__init__.py` 856 to 868), under `trace_id`: only what Core
+/// spoke of it is written ([`Commit::InPlace`]). Nothing with nothing
+/// committed.
 pub(crate) fn again(state: &mut SrState, trace_id: TraceId) -> Vec<Effect> {
-    let Some(focus) = state.focus.object() else {
+    let Some(focus) = state.versions.focus() else {
         return Vec::new();
     };
     let report = Report {
         trace_id,
-        source: focus.source,
+        source: focus.context.source,
         observed_at_us: 0,
-        window: focus.window.clone(),
+        window: focus.context.window.clone(),
         whole_window: false,
-        node: focus.snapshot.clone(),
-        ancestors: Arc::clone(&focus.ancestors),
+        node: focus.context.snapshot.clone(),
+        ancestors: Arc::clone(&focus.line),
         text: None,
         earlier: None,
-
-        top_level: state
-            .versions
-            .committed_kept()
-            .map(|kept| kept.place.top_level),
+        top_level: Some(focus.kept.place.top_level),
     };
-    crate::reduce::execute_report(state, &report, false)
+    crate::reduce::execute_report(state, &report, false, Commit::InPlace)
 }
 
 /// Judges a re-take's `read` against the focus Core holds: one that reads
@@ -642,35 +654,29 @@ pub(crate) fn retake(
         return Executed::default();
     }
     let known = Known::default();
-    let Some(ready) = ready(state, origin, read, &known, read_by.clone()) else {
+    let Some(mut ready) = ready(state, origin, read, &known, read_by.clone()) else {
         return Executed::default();
     };
-    let same = state.versions.last.is_some()
-        && state.focus.object().is_some_and(|focus| {
-            crate::reduce::same_reading(focus, &ready.report.node, &ready.report.ancestors)
-        });
-    if same {
-        crate::reduce::take_silently(state, &ready.report);
-        // The text-changed flag is the focus's and survives its reader's
-        // replacement; the old baseline's anchor ended with its generation,
-        // and the answer minted one in the new generation (Table 17,
-        // column J).
-        let mut ready = ready;
-        ready.kept.selection = crate::text_facts::SelectionFacts {
-            baseline: match &read.caret {
-                FocusCaret::Read(caret) => Some(caret.baseline),
-                FocusCaret::NoText | FocusCaret::NotRead => None,
-            },
-            text_changed: state
-                .versions
-                .committed_kept()
-                .is_some_and(|kept| kept.selection.text_changed),
-        };
-        commit(state, origin, ready);
-        return Executed {
-            said: Vec::new(),
-            committed: true,
-        };
+    let Some(old) = state.versions.focus().filter(|focus| {
+        state.versions.last.is_some()
+            && crate::reduce::same_reading(focus, &ready.report.node, &ready.report.ancestors)
+    }) else {
+        return execute(state, origin, read, &known, read_by);
+    };
+    // The text-changed flag is the focus's and survives its reader's
+    // replacement, so it is taken from the old record before the new one
+    // is written; the old baseline's anchor ended with its generation, and
+    // the answer minted one in the new generation (Table 17, column J).
+    ready.kept.selection.text_changed = old.kept.selection.text_changed;
+    let (terminal, follows) = commit(state, &ready);
+    let new = Commit::New {
+        kept: ready.kept,
+        fence: origin.fence,
+    };
+    crate::reduce::take_silently(state, &ready.report, new);
+    crate::terminal::reading::committed(state, terminal, follows, origin.observed_at_us);
+    Executed {
+        said: Vec::new(),
+        committed: true,
     }
-    execute(state, origin, read, &known, read_by)
 }

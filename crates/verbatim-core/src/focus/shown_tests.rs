@@ -577,9 +577,9 @@ fn a_typed_key_or_a_command_reads_the_dialog_first_under_the_older_fence() {
         assert_eq!(held.state.versions.postponed, None);
         let focus = held
             .state
-            .focus
-            .object()
-            .map(|focus| focus.snapshot.name.clone());
+            .versions
+            .focus()
+            .map(|focus| focus.context.snapshot.name.clone());
         assert_eq!(focus, Some(Some("File name:".to_owned())));
         if tail.is_some() {
             assert!(held.state.queue.front_for_tests().is_none());

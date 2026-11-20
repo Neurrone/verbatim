@@ -237,8 +237,9 @@ fn baseline(held: &Held) -> Option<TextAnchor> {
 fn text_changed(held: &Held) -> bool {
     held.state
         .versions
-        .committed_read()
+        .live()
         .expect("a focus is committed")
+        .kept
         .selection
         .text_changed
 }
@@ -681,11 +682,12 @@ fn a_generation_end_drops_the_baseline_and_keeps_the_flag() {
     with_baseline(&mut held, system_caret(), TextProvider::EditMessages, 2);
     let _ = step(&mut held, 1_500, value_change());
     let _ = step(&mut held, 2_000, Input::ReaderEnded(OUTPOST));
-    let kept = held
+    let kept = &held
         .state
         .versions
-        .committed_kept()
-        .expect("the ended focus is kept");
+        .focus()
+        .expect("the ended focus is kept")
+        .kept;
     assert_eq!(kept.selection.baseline, None);
     assert!(kept.selection.text_changed);
 }

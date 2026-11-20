@@ -121,7 +121,7 @@ fn a_switch_away_cuts_speech_and_commits_the_sleeping_focus_following_nothing() 
         ["cut", "send Outpost(Pid(40)) Follow None"]
     );
     assert_eq!(held.state.versions.committed, Committed::Own);
-    assert!(held.state.focus.object().is_none());
+    assert!(held.state.versions.focus().is_none());
     assert_eq!(held.state.desktop.input, InputDesktop::Other);
     assert_eq!(held.state.desktop.switches_away, 1);
     // No ancestor is known of the sleeping focus.

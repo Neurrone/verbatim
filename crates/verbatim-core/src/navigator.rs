@@ -22,7 +22,6 @@ use verbatim_model::{
 use crate::editing::{self, NavigatorText};
 use crate::entries::Entries;
 use crate::event_queue::{Cx, OTHER_DUE_US, Outcome, Reader, Request, RequestWindow};
-use crate::focus::versions::Committed;
 use crate::keys::entry::ReviewPress;
 use crate::reduce::{self, Reason};
 use crate::state::{Navigator, NavigatorRead, SrState};
@@ -49,8 +48,8 @@ pub(crate) fn found(state: &SrState) -> Found {
     let Some(navigator) = state.navigator.as_ref() else {
         return Found::Nothing;
     };
-    let window = match &state.versions.committed {
-        Committed::Read(kept) if kept.node == navigator.object.id => Some(kept.window),
+    let window = match state.versions.live() {
+        Some(focus) if focus.context.snapshot.id == navigator.object.id => Some(focus.kept.asked),
         _ => navigator.window,
     };
     match window {
@@ -340,7 +339,10 @@ pub(crate) async fn report_object(mut cx: Cx<Entries>, press: ReviewPress) {
         let mut facts = cx.facts_mut();
         // The navigator is the focus's own object when it is the focus's
         // reading, not a copy a navigation fetched of the same node.
-        let of_focus = match (facts.focus.object(), facts.navigator.as_ref()) {
+        let of_focus = match (
+            facts.versions.focus().map(|focus| &focus.context),
+            facts.navigator.as_ref(),
+        ) {
             (Some(focus), Some(navigator)) => focus.snapshot == navigator.object,
             _ => false,
         };
@@ -396,16 +398,10 @@ pub(crate) async fn report_object(mut cx: Cx<Entries>, press: ReviewPress) {
 pub(crate) async fn to_focus(mut cx: Cx<Entries>, trace_id: TraceId) {
     let (object, window) = {
         let facts = cx.facts();
-        let Some(focus) = facts.live_focus() else {
+        let Some(focus) = facts.versions.live() else {
             return;
         };
-        let Committed::Read(kept) = &facts.versions.committed else {
-            return;
-        };
-        if kept.node != focus.snapshot.id {
-            return;
-        }
-        (focus.snapshot.clone(), kept.window)
+        (focus.context.snapshot.clone(), focus.kept.asked)
     };
     let said = {
         let mut facts = cx.facts_mut();

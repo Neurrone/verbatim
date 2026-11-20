@@ -54,11 +54,14 @@ pub(crate) async fn run(
     let line: Vec<NodeId> = cx
         .facts()
         .versions
-        .committed_read()
-        .filter(|kept| generation.is_some_and(|generation| kept.node.outpost() == Some(generation)))
-        .map(|kept| {
-            std::iter::once(kept.node)
-                .chain(kept.ancestors.iter().map(|ancestor| ancestor.node))
+        .live()
+        .filter(|focus| {
+            generation
+                .is_some_and(|generation| focus.context.snapshot.id.outpost() == Some(generation))
+        })
+        .map(|focus| {
+            std::iter::once(focus.context.snapshot.id)
+                .chain(focus.line.iter().rev().map(|ancestor| ancestor.snapshot.id))
                 .collect()
         })
         .unwrap_or_default();

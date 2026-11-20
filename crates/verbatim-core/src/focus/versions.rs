@@ -6,9 +6,8 @@
 //! and the system caret's target judge. Core can also commit a focus
 //! itself, which no reader read.
 //!
-//! The committed focus's node and its spoken record stay in the reducer's
-//! focus context, shared with today's announcement code; what Core keeps
-//! with it from the focus answer is [`Kept`], beside it here.
+//! The committed focus is one record, [`Focus`]: what Core spoke of it,
+//! what it keeps of its focus answer, and its line.
 
 use std::sync::Arc;
 
@@ -16,9 +15,10 @@ use serde::{Deserialize, Serialize};
 use verbatim_model::property::RuntimeId;
 use verbatim_model::request::{KnownAncestor, MsaaIds};
 use verbatim_model::tell::ElementToken;
-use verbatim_model::{Issuer, NodeId, OutpostId, Pid, Role, WindowHandle};
+use verbatim_model::{Issuer, NodeId, NodeSnapshot, OutpostId, Role, StateSet, WindowHandle};
 
 use crate::keys::entry::Fence;
+use crate::state::FocusContext;
 
 /// How a reader's focus is named, which the duplicate tests compare.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -116,43 +116,32 @@ pub(crate) struct LastFocus {
 }
 
 impl LastFocus {
-    /// Whether it names the focus Core keeps as `kept`, whatever its fence.
-    pub(crate) fn names(&self, kept: &Kept) -> bool {
-        (&self.read_by, &self.place, self.role) == (&kept.read_by, &kept.place, kept.role)
+    /// Whether it names the committed focus `focus`, whatever its fence.
+    pub(crate) fn names(&self, focus: &Focus) -> bool {
+        (&self.read_by, &self.place, self.role)
+            == (
+                &focus.kept.read_by,
+                &focus.kept.place,
+                focus.context.snapshot.role,
+            )
     }
 }
 
 /// What Core keeps with a committed focus a reader read, each from its
-/// focus answer (design, "Focus and foreground").
+/// focus answer (design, "Focus and foreground"), beside what it spoke.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Kept {
-    /// The application it belongs to.
-    pub(crate) source: Pid,
-    /// Its node, whose issuer, an outpost generation or Core's plain
-    /// reader, holds it.
-    pub(crate) node: NodeId,
     /// How it was read.
     pub(crate) read_by: ReadBy,
     /// Where it is.
     pub(crate) place: Place,
     /// The window the read that found it named, which a re-take of its
     /// application names.
-    pub(crate) window: crate::event_queue::RequestWindow,
-    /// Its ancestors as the next focus read's walk meets them, nearest
-    /// first: each node, its runtime id for a UI Automation node, and its
-    /// own window for a window object. The part that grows with the
-    /// application, so shared: a checkpoint, which every entry that asks
-    /// takes, copies a pointer, not the chain.
-    pub(crate) ancestors: Arc<[KeptAncestor]>,
+    pub(crate) asked: crate::event_queue::RequestWindow,
     /// The foreground window it entered under, when it could be read.
     pub(crate) foreground: Option<NodeId>,
     /// Whether its value comes from its selection.
     pub(crate) value_from_selection: bool,
-    /// Its role, as the answer read it.
-    pub(crate) role: Role,
-    /// Its own window, for a window object: by it the next focus read's
-    /// walk meets the focus itself, as an ancestor of a focus inside it.
-    pub(crate) own_window: Option<WindowHandle>,
     /// Its selection baseline and text-changed flag (Table 17).
     pub(crate) selection: crate::text_facts::SelectionFacts,
     /// Whether it is a console host's terminal: a terminal whose tell's
@@ -164,33 +153,54 @@ pub(crate) struct Kept {
     pub(crate) console_terminal: bool,
 }
 
-/// One ancestor of a committed focus, as Core keeps it.
+/// One entry of a committed focus's line: an ancestor as Core spoke from
+/// it, and the two facts its snapshot lacks.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct KeptAncestor {
-    /// The node.
-    pub(crate) node: NodeId,
+pub(crate) struct LineEntry {
+    /// The ancestor: its node, and its own window for a window object, by
+    /// which the next focus read's walk meets it.
+    pub(crate) snapshot: NodeSnapshot,
     /// Its runtime id, for a UI Automation node.
     pub(crate) runtime_id: Option<RuntimeId>,
-    /// Its own window, for a window object.
-    pub(crate) window: Option<WindowHandle>,
     /// Whether it is a simple child, never spoken as a state change's
     /// ancestor.
     pub(crate) simple_child: bool,
 }
 
-impl Kept {
+impl crate::focus_rules::EnteredKey for LineEntry {
+    fn object_key(&self) -> verbatim_model::ObjectKey {
+        verbatim_model::ObjectKey::of(&self.snapshot)
+    }
+}
+
+/// A reader's committed focus, one record (ADR 0003, "The two versions of
+/// the focus"): what Core spoke of it, what it keeps of its focus answer,
+/// and its line, against which the next focus is joined and spoken and
+/// from which the next focus request's known ancestors come.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct Focus {
+    /// What Core spoke of it.
+    pub(crate) context: FocusContext,
+    /// What Core keeps of its focus answer.
+    pub(crate) kept: Kept,
+    /// Its ancestors, outermost first. The part that grows with the
+    /// application, so shared: a checkpoint, which every entry that asks
+    /// takes, copies a pointer, not the line.
+    pub(crate) line: Arc<[LineEntry]>,
+}
+
+impl Focus {
     /// The focus itself as the next focus read's walk meets it, an
-    /// ancestor of a focus inside it: NVDA's walk meets the old focus as it meets
-    /// the old focus's ancestors (`docs/parity/focus-context.md`).
-    pub(crate) fn as_ancestor(&self) -> KeptAncestor {
-        KeptAncestor {
-            node: self.node,
-            runtime_id: match &self.read_by {
+    /// ancestor of a focus inside it: NVDA's walk meets the old focus as it
+    /// meets the old focus's ancestors (`docs/parity/focus-context.md`).
+    pub(crate) fn as_entry(&self) -> LineEntry {
+        LineEntry {
+            snapshot: self.context.snapshot.clone(),
+            runtime_id: match &self.kept.read_by {
                 ReadBy::Uia { runtime_id, .. } => Some(runtime_id.clone()),
                 ReadBy::Msaa { .. } | ReadBy::Plain => None,
             },
-            window: self.own_window,
-            simple_child: matches!(self.read_by, ReadBy::Msaa { held_child, .. } if held_child != 0),
+            simple_child: matches!(self.kept.read_by, ReadBy::Msaa { held_child, .. } if held_child != 0),
         }
     }
 
@@ -198,11 +208,33 @@ impl Kept {
     /// entry of speech fence `since`.
     pub(crate) fn last(&self, since: Fence) -> LastFocus {
         LastFocus {
-            read_by: self.read_by.clone(),
-            place: self.place.clone(),
-            role: self.role,
+            read_by: self.kept.read_by.clone(),
+            place: self.kept.place.clone(),
+            role: self.context.snapshot.role,
             since: Some(since),
         }
+    }
+
+    /// The states last spoken of `node`, the focus or one of its ancestors,
+    /// or its reading's when nothing was recorded for an ancestor; `None`
+    /// for a node not in the focus line.
+    pub(crate) fn spoken_states(&self, node: NodeId) -> Option<StateSet> {
+        let context = &self.context;
+        if node == context.snapshot.id {
+            return Some(context.spoken.states);
+        }
+        context
+            .spoken
+            .ancestors
+            .iter()
+            .find(|(id, _)| *id == node)
+            .map(|(_, states)| *states)
+            .or_else(|| {
+                self.line
+                    .iter()
+                    .find(|entry| entry.snapshot.id == node)
+                    .map(|entry| entry.snapshot.states)
+            })
     }
 }
 
@@ -212,13 +244,14 @@ pub(crate) enum Committed {
     /// Nothing committed yet: startup.
     #[default]
     Nothing,
-    /// A reader's focus, with what Core keeps of it.
-    Read(Box<Kept>),
+    /// A reader's focus whose reader lives.
+    Read(Box<Focus>),
     /// A reader's focus whose reader ended: its data kept for the silent
     /// re-take, its ids dead.
-    Ended(Box<Kept>),
-    /// A focus Core committed itself, such as the sleeping focus while
-    /// the secure desktop is up.
+    Ended(Box<Focus>),
+    /// The sleeping focus Core committed itself while the secure desktop is
+    /// up, which no reader read: commands find no focus object, and the
+    /// next focus is spoken from the top, its window's title included.
     Own,
 }
 
@@ -248,9 +281,9 @@ pub(crate) enum ReaderEnd {
 impl Versions {
     /// A reader's focus executes (column B), for an entry of speech fence
     /// `since`: both versions become it.
-    pub(crate) fn execute(&mut self, kept: Kept, since: Fence) {
-        self.last = Some(kept.last(since));
-        self.committed = Committed::Read(Box::new(kept));
+    pub(crate) fn execute(&mut self, focus: Focus, since: Fence) {
+        self.last = Some(focus.last(since));
+        self.committed = Committed::Read(Box::new(focus));
         self.postponed = None;
     }
 
@@ -277,8 +310,8 @@ impl Versions {
     /// nothing is related, so a set last focus is emptied.
     pub(crate) fn foreground_marker(&mut self, window: WindowHandle, root_owner: WindowHandle) {
         let unrelated = self
-            .committed_place()
-            .is_none_or(|place| place.unrelated(window, root_owner));
+            .focus()
+            .is_none_or(|focus| focus.kept.place.unrelated(window, root_owner));
         if unrelated {
             self.last = None;
         }
@@ -288,11 +321,11 @@ impl Versions {
     /// `outpost`, ended (column F).
     pub(crate) fn outpost_ended(&mut self, outpost: OutpostId) -> ReaderEnd {
         match std::mem::take(&mut self.committed) {
-            Committed::Read(mut kept) | Committed::Ended(mut kept)
-                if kept.node.issuer() == Issuer::Outpost(outpost) =>
+            Committed::Read(mut focus) | Committed::Ended(mut focus)
+                if focus.context.snapshot.id.issuer() == Issuer::Outpost(outpost) =>
             {
-                crate::text_facts::outpost_ended(&mut kept, outpost);
-                self.committed = Committed::Ended(kept);
+                crate::text_facts::outpost_ended(&mut focus, outpost);
+                self.committed = Committed::Ended(focus);
                 ReaderEnd::Retake
             }
             other => {
@@ -302,26 +335,36 @@ impl Versions {
         }
     }
 
-    /// What Core keeps of the committed focus when it is a reader's focus
-    /// whose reader lives.
-    pub(crate) fn committed_read(&self) -> Option<&Kept> {
+    /// The committed focus when it is a reader's focus, whose reader lives
+    /// or ended.
+    pub(crate) fn focus(&self) -> Option<&Focus> {
         match &self.committed {
-            Committed::Read(kept) => Some(kept),
+            Committed::Read(focus) | Committed::Ended(focus) => Some(focus),
+            Committed::Own | Committed::Nothing => None,
+        }
+    }
+
+    /// [`Versions::focus`], to change in place.
+    pub(crate) fn focus_mut(&mut self) -> Option<&mut Focus> {
+        match &mut self.committed {
+            Committed::Read(focus) | Committed::Ended(focus) => Some(focus),
+            Committed::Own | Committed::Nothing => None,
+        }
+    }
+
+    /// The committed focus when it is a reader's focus whose reader lives.
+    pub(crate) fn live(&self) -> Option<&Focus> {
+        match &self.committed {
+            Committed::Read(focus) => Some(focus),
             Committed::Ended(_) | Committed::Own | Committed::Nothing => None,
         }
     }
 
-    /// The committed focus's place, `None` with nothing committed or an
-    /// own focus.
-    pub(crate) fn committed_place(&self) -> Option<&Place> {
-        self.committed_kept().map(|kept| &kept.place)
-    }
-
-    /// What Core keeps of the committed focus when it is a reader's focus.
-    pub(crate) fn committed_kept(&self) -> Option<&Kept> {
-        match &self.committed {
-            Committed::Read(kept) | Committed::Ended(kept) => Some(kept),
-            Committed::Own | Committed::Nothing => None,
+    /// [`Versions::live`], to change in place.
+    pub(crate) fn live_mut(&mut self) -> Option<&mut Focus> {
+        match &mut self.committed {
+            Committed::Read(focus) => Some(focus),
+            Committed::Ended(_) | Committed::Own | Committed::Nothing => None,
         }
     }
 
@@ -344,8 +387,8 @@ impl Versions {
 
     /// [`Versions::known_ancestors`], each with the place of the ancestor
     /// it names in the committed focus's line, the focus itself at 0 and
-    /// its kept ancestors after it nearest first, by which an answer's
-    /// meeting point is found again.
+    /// its ancestors after it nearest first, by which an answer's meeting
+    /// point is found again.
     pub(crate) fn known_with_places(
         &self,
         asked: Option<OutpostId>,
@@ -355,26 +398,26 @@ impl Versions {
         }
         // A reader's focus is met itself; of a focus whose generation
         // ended, only what another generation minted is met.
-        let (kept, ended) = match &self.committed {
-            Committed::Read(kept) => (kept, None),
-            Committed::Ended(kept) => (kept, Some(kept.node.issuer())),
+        let (focus, ended) = match &self.committed {
+            Committed::Read(focus) => (focus, None),
+            Committed::Ended(focus) => (focus, Some(focus.context.snapshot.id.issuer())),
             Committed::Own | Committed::Nothing => return Vec::new(),
         };
         let mut known = Vec::new();
-        let focus = kept.as_ancestor();
-        let line = std::iter::once(&focus).chain(kept.ancestors.iter());
-        for (place, ancestor) in line.enumerate() {
-            let minted_by = ancestor.node.issuer();
+        let itself = focus.as_entry();
+        let line = std::iter::once(&itself).chain(focus.line.iter().rev());
+        for (place, entry) in line.enumerate() {
+            let minted_by = entry.snapshot.id.issuer();
             if Some(minted_by) == ended {
                 continue;
             }
             if asked.map(Issuer::Outpost) == Some(minted_by) {
-                known.push((place, KnownAncestor::Node(ancestor.node)));
+                known.push((place, KnownAncestor::Node(entry.snapshot.id)));
             }
-            if let Some(runtime_id) = &ancestor.runtime_id {
+            if let Some(runtime_id) = &entry.runtime_id {
                 known.push((place, KnownAncestor::Uia(runtime_id.clone())));
             }
-            if let Some(window) = ancestor.window {
+            if let Some(window) = entry.snapshot.details.window {
                 known.push((place, KnownAncestor::Window(window)));
             }
         }
@@ -384,12 +427,9 @@ impl Versions {
     /// Whether a system caret tell has a target (column G): the readers'
     /// last focus is set and is the committed focus, a reader's focus
     /// whose reader lives. The console terminal's drop is the caret rule's.
-    pub(crate) fn caret_target(&self) -> Option<&Kept> {
+    pub(crate) fn caret_target(&self) -> Option<&Focus> {
         let last = self.last.as_ref()?;
-        match &self.committed {
-            Committed::Read(kept) if last.names(kept) => Some(kept),
-            _ => None,
-        }
+        self.live().filter(|focus| last.names(focus))
     }
 }
 

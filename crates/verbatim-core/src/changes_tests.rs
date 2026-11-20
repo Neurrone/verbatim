@@ -115,7 +115,14 @@ fn a_name_change_on_the_focus_is_asked_of_its_outpost_and_spoken() {
         ["Label(\"Save\")"]
     );
     assert_eq!(
-        state.focus.object().unwrap().snapshot.name.as_deref(),
+        state
+            .versions
+            .focus()
+            .unwrap()
+            .context
+            .snapshot
+            .name
+            .as_deref(),
         Some("Save")
     );
 }
@@ -256,7 +263,7 @@ fn a_plain_selection_of_an_item_the_focus_controls_is_spoken_as_a_focus() {
         ),
         ["Label(\"Paris\")"]
     );
-    assert_eq!(state.focus.object().unwrap().snapshot.id, node(2));
+    assert_eq!(state.versions.focus().unwrap().context.snapshot.id, node(2));
 }
 
 #[test]
@@ -832,7 +839,7 @@ fn a_controlled_selection_moves_the_navigator_to_the_item() {
         ),
         ["Label(\"Paris\") Role(ListItem) State(Selected)"]
     );
-    assert_eq!(state.focus.object().unwrap().snapshot.id, node(2));
+    assert_eq!(state.versions.focus().unwrap().context.snapshot.id, node(2));
 }
 
 /// The facts of a window outside the foreground window, which acceptance

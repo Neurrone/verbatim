@@ -2,17 +2,21 @@
 //! (Table 3, row "Startup"), the re-take after a reader's replacement
 //! (column F) and the read after a hung window answers again (Table 18,
 //! column B).
+use verbatim_model::property::{PropertyAnswer, PropertyId, PropertyValue};
 use verbatim_model::request::CandidateAnswer;
 
-use verbatim_model::request::{FocusCaret, FocusCaretRead, FocusRead, Reply, Request as Wire};
+use verbatim_model::request::{
+    FocusCaret, FocusCaretRead, FocusRead, KnownAncestor, Reply, Request as Wire,
+};
 use verbatim_model::tell::{ElementToken, Read};
 use verbatim_model::{
-    CaretReport, NodeId, OutpostId, Pid, TextAnchor, TextChunk, TextUnit, TraceId, WindowHandle,
+    CaretReport, NodeId, OutpostId, Pid, Role, TextAnchor, TextChunk, TextUnit, TraceId,
+    WindowHandle,
 };
 
 use crate::entries::tests::{
     APP, GENERATION, Held, LISTENER, NOTHING, OUTPOST, SPOKEN_FOLLOWED, answer, asked_completion,
-    entry, feed_at, focus_read, node, ready, ready_at, uia_tell,
+    entry, feed_at, focus_read, held, msaa_tell, node, ready, ready_at, uia_tell, values,
 };
 use crate::event_queue::{Foreground, Input, Instance, Reader};
 use crate::focus::versions::{Committed, ReadBy};
@@ -71,9 +75,9 @@ fn started() -> Held {
 #[test]
 fn the_first_foreground_report_reads_the_focus_and_speaks_it_as_a_switch() {
     let state = started();
-    assert_eq!(state.focus.object().unwrap().snapshot.id, node(2));
+    assert_eq!(state.versions.focus().unwrap().context.snapshot.id, node(2));
     assert_eq!(
-        state.focus.object().unwrap().trace_id,
+        state.versions.focus().unwrap().context.trace_id,
         Some(TraceId::from_raw(11))
     );
     let Some(ReadBy::Uia { token, .. }) = state.versions.last.as_ref().map(|last| &last.read_by)
@@ -125,11 +129,11 @@ fn the_committed_focus_read_again_after_its_outpost_ends_is_taken_silently() {
         ["send Outpost(Pid(40)) Follow"]
     );
     let new_id = NodeId::in_outpost(OutpostId(GENERATION + 1), 2);
-    assert_eq!(state.focus.object().unwrap().snapshot.id, new_id);
-    let Committed::Read(kept) = &state.versions.committed else {
+    assert_eq!(state.versions.focus().unwrap().context.snapshot.id, new_id);
+    let Committed::Read(focus) = &state.versions.committed else {
         panic!("the re-take is committed as a reader's focus");
     };
-    assert_eq!(kept.node, new_id);
+    assert_eq!(focus.context.snapshot.id, new_id);
 }
 
 /// The edit field "Body" committed by the startup read: the hook holds
@@ -288,8 +292,8 @@ fn a_recovered_window_reads_the_focus_and_a_uia_focus_on_the_last_runtime_id_is_
 #[test]
 fn the_silent_retake_mints_the_baseline_in_the_new_generation_and_keeps_the_flag() {
     let mut state = started();
-    if let Committed::Read(kept) = &mut state.versions.committed {
-        kept.selection.text_changed = true;
+    if let Committed::Read(focus) = &mut state.versions.committed {
+        focus.kept.selection.text_changed = true;
     }
     let _ = feed_at(&mut state, 1_000, Input::ReaderEnded(OUTPOST));
     let _ = ready_at(&mut state, 1_100, REPLACEMENT);
@@ -325,11 +329,11 @@ fn the_silent_retake_mints_the_baseline_in_the_new_generation_and_keeps_the_flag
         ),
         ["send Outpost(Pid(40)) Follow"]
     );
-    let Committed::Read(kept) = &state.versions.committed else {
+    let Committed::Read(focus) = &state.versions.committed else {
         panic!("the re-take is committed as a reader's focus");
     };
     assert_eq!(
-        kept.selection,
+        focus.kept.selection,
         crate::text_facts::SelectionFacts {
             baseline: Some(TextAnchor(90)),
             text_changed: true,
@@ -402,4 +406,52 @@ fn the_retake_keeps_its_fence_and_one_not_there_clears_it() {
         ),
     );
     assert_eq!(since(&state), Some(None));
+}
+
+/// The Run dialog read through MSAA: the edit "Open" focused in the
+/// dialog "Run", a window object of top-level window 4.
+fn run_dialog() -> FocusRead {
+    let mut read = focus_read(Some(held(-4)));
+    read.focus.read.values = values("Open", Role::EditableText);
+    let dialog = &mut read.ancestors[0].node.read.values;
+    *dialog = values("Run", Role::Dialog);
+    dialog.0.push(PropertyAnswer {
+        id: PropertyId::NativeWindow,
+        value: Some(PropertyValue::Window(WindowHandle(4))),
+    });
+    read
+}
+
+/// A re-take keeps the old generation's dialog entry, met by its window;
+/// the next Tab's MSAA read meets the dialog by that window, and the
+/// button alone is said, as NVDA's capture at the pinned build says it in
+/// the Run dialog (`tests/fixtures/run_dialog_tab/run-tab-1.jsonl`, "OK
+/// button").
+#[test]
+fn a_tab_after_a_retake_that_kept_the_old_dialog_entry_says_the_button() {
+    let focused = |read| Reply::Candidate(CandidateAnswer::focused(read));
+    let mut state = ready();
+    feed_at(&mut state, 500, Input::Foreground(IN_FRONT));
+    feed_at(&mut state, 600, answer(OUTPOST, 1, focused(run_dialog())));
+    feed_at(&mut state, 1_000, Input::ReaderEnded(OUTPOST));
+    ready_at(&mut state, 1_100, REPLACEMENT);
+    let retaken = focused(minted_anew(run_dialog()));
+    assert_eq!(
+        feed_at(&mut state, 1_200, answer(REPLACEMENT, 2, retaken)),
+        NOTHING
+    );
+    feed_at(&mut state, 2_000, entry(msaa_tell(-5)));
+    let Some(Wire::MsaaRun(run)) = state.queue.table_for_tests().into_iter().next() else {
+        panic!("the Tab's MSAA run is out");
+    };
+    let dialog = KnownAncestor::Window(WindowHandle(4));
+    let met = run.known.iter().position(|known| *known == dialog).unwrap();
+    let mut ok = minted_anew(focus_read(Some(held(-5))));
+    ok.focus.read.node = Some(NodeId::in_outpost(OutpostId(GENERATION + 1), 3));
+    ok.ancestors.clear();
+    ok.met = Some(u32::try_from(met).unwrap());
+    assert_eq!(
+        feed_at(&mut state, 2_100, answer(REPLACEMENT, 3, focused(ok))),
+        ["Label(\"OK\") Role(Button)"]
+    );
 }

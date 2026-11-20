@@ -19,12 +19,7 @@ use crate::event_queue::Cx;
 /// the focus `read`, when its ancestors include the committed focus by
 /// runtime id.
 pub(crate) fn judge_ahead(cx: &mut Cx<Entries>, read: &FocusRead) {
-    let committed = match cx
-        .facts()
-        .versions
-        .committed_read()
-        .map(|kept| &kept.read_by)
-    {
+    let committed = match cx.facts().versions.live().map(|focus| &focus.kept.read_by) {
         Some(ReadBy::Uia { runtime_id, .. }) => runtime_id.clone(),
         Some(ReadBy::Msaa { .. } | ReadBy::Plain) | None => return,
     };

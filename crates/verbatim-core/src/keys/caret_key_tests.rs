@@ -1345,7 +1345,10 @@ fn a_keys_formatting_memory_goes_back_to_its_record() {
             "Character(\"i\")".to_owned()
         ]]
     );
-    assert_eq!(held.state.focus.object().unwrap().reported_format, italic());
+    assert_eq!(
+        held.state.versions.focus().unwrap().context.reported_format,
+        italic()
+    );
 }
 
 /// A key whose focus record is no longer the committed focus, a later
@@ -1359,7 +1362,7 @@ fn a_keys_formatting_memory_is_not_written_to_a_later_focus_record() {
         line("line 01", 7, 0),
         unit(TextUnit::Character, "l", 8),
     );
-    held.state.focus.object_mut().unwrap().trace_id = Some(TraceId::from_raw(99));
+    held.state.versions.focus_mut().unwrap().context.trace_id = Some(TraceId::from_raw(99));
     let ended = step(
         &mut held,
         20_000,
@@ -1373,7 +1376,7 @@ fn a_keys_formatting_memory_is_not_written_to_a_later_focus_record() {
         ]]
     );
     assert_eq!(
-        held.state.focus.object().unwrap().reported_format,
+        held.state.versions.focus().unwrap().context.reported_format,
         verbatim_model::TextAttributes::default()
     );
 }

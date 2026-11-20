@@ -8,7 +8,6 @@ use verbatim_model::request::{Reply, Request as Wire};
 use verbatim_model::{NodeId, Pid, Role, TextFailure, TextOp, TextReply};
 
 use crate::event_queue::{Reader, Request, RequestWindow};
-use crate::focus::versions::Committed;
 use crate::state::SrState;
 
 /// One text request on `node`, of its application's outpost, naming the
@@ -111,17 +110,18 @@ impl CaretTarget {
     /// that may have text by its role, or that Core holds a caret on, has
     /// a caret.
     pub(crate) fn of(state: &SrState) -> Self {
-        let Committed::Read(kept) = &state.versions.committed else {
+        let Some(focus) = state.versions.live() else {
             return Self::NoCaret;
         };
-        if !crate::editing::may_have_text(kept.role) && state.focus_caret(kept.node).is_none() {
+        let (node, role) = (focus.context.snapshot.id, focus.context.snapshot.role);
+        if !crate::editing::may_have_text(role) && state.focus_caret(node).is_none() {
             return Self::NoText;
         }
         Self::Text(TextNode {
-            process: kept.source,
-            window: kept.window,
-            node: kept.node,
-            role: kept.role,
+            process: focus.context.source,
+            window: focus.kept.asked,
+            node,
+            role,
         })
     }
 }

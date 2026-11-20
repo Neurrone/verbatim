@@ -244,7 +244,9 @@ pub(crate) fn reader_ended(
             match &state.versions.committed {
                 // A plain focus has no reader that ended; asking hungwin
                 // again would only find it hung once more.
-                Committed::Read(kept) | Committed::Ended(kept) if kept.read_by == ReadBy::Plain => {
+                Committed::Read(focus) | Committed::Ended(focus)
+                    if focus.kept.read_by == ReadBy::Plain =>
+                {
                     return None;
                 }
                 Committed::Read(_) | Committed::Ended(_) => foreground?.window(),
@@ -256,10 +258,12 @@ pub(crate) fn reader_ended(
             let super::versions::ReaderEnd::Retake = state.versions.outpost_ended(outpost) else {
                 return None;
             };
-            let kept = state.versions.committed_kept()?;
+            let focus = state.versions.focus()?;
             match foreground {
-                Some(foreground) if foreground.process == kept.source => foreground.window(),
-                Some(_) | None => kept.window,
+                Some(foreground) if foreground.process == focus.context.source => {
+                    foreground.window()
+                }
+                Some(_) | None => focus.kept.asked,
             }
         }
     };

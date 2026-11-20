@@ -421,12 +421,15 @@ fn a_uia_focus_is_read_in_two_requests_and_executed() {
         ),
         SPOKEN_FOLLOWED
     );
-    assert_eq!(state.focus.object().unwrap().snapshot.id, node(2));
-    let Committed::Read(kept) = &state.versions.committed else {
+    assert_eq!(state.versions.focus().unwrap().context.snapshot.id, node(2));
+    let Committed::Read(focus) = &state.versions.committed else {
         panic!("a reader's focus is committed");
     };
-    assert_eq!(kept.node, node(2));
-    assert_eq!(kept.node.outpost(), Some(OutpostId(GENERATION)));
+    assert_eq!(focus.context.snapshot.id, node(2));
+    assert_eq!(
+        focus.context.snapshot.id.outpost(),
+        Some(OutpostId(GENERATION))
+    );
     assert_eq!(
         state.versions.last.as_ref().map(|last| &last.read_by),
         Some(&ReadBy::Uia {
@@ -484,7 +487,7 @@ fn a_refused_completion_ends_the_focus_unspoken() {
         // Naming nothing, which removes the completion's registration.
         ["send Outpost(Pid(40)) Follow"]
     );
-    assert!(state.focus.object().is_none());
+    assert!(state.versions.focus().is_none());
     assert_eq!(state.versions.committed, Committed::Nothing);
     assert!(state.queue.front_for_tests().is_none());
 }
@@ -575,12 +578,13 @@ fn a_focus_inside_the_committed_focus_meets_it_and_says_only_itself() {
             "send Outpost(Pid(40)) Follow"
         ]
     );
-    let committed = state.versions.committed_read().unwrap();
+    let committed = state.versions.live().unwrap();
     assert_eq!(
         committed
-            .ancestors
+            .line
             .iter()
-            .map(|ancestor| ancestor.node)
+            .rev()
+            .map(|ancestor| ancestor.snapshot.id)
             .collect::<Vec<_>>(),
         [node(2), node(1)]
     );
@@ -1373,7 +1377,7 @@ fn a_focus_whose_top_level_window_is_an_ignored_processs_is_dropped_at_its_answe
         ["send Outpost(Pid(40)) Follow"]
     );
     assert_eq!(state.versions.last, None);
-    assert!(state.focus.object().is_none());
+    assert!(state.versions.focus().is_none());
 }
 
 #[test]
@@ -1384,11 +1388,14 @@ fn an_executed_focus_runs_under_its_tells_trace_and_takes_its_top_ancestor_as_fo
         3_000,
         answer(OUTPOST, 2, Reply::Focus(Box::new(focus_read(None)))),
     );
-    let focus = state.focus.object().unwrap();
-    assert_eq!(focus.trace_id, Some(verbatim_model::TraceId::from_raw(7)));
+    let focus = state.versions.focus().unwrap();
+    assert_eq!(
+        focus.context.trace_id,
+        Some(verbatim_model::TraceId::from_raw(7))
+    );
     // The walk met no ancestor Core knew and the answer read no
     // foreground object: the top ancestor, the frame, stands for it.
-    let frame = focus.ancestors.first().unwrap();
+    let frame = &focus.line.first().unwrap().snapshot;
     assert_eq!(frame.id, node(1));
     assert_eq!(
         state.foreground.object(),
@@ -1442,7 +1449,7 @@ fn a_failed_focus_read_clears_cores_caret_baseline() {
         3_000,
         answer(OUTPOST, 2, Reply::Focus(Box::new(focus_read(None)))),
     );
-    state.focus.object_mut().unwrap().caret = Some(crate::state::CaretContext {
+    state.versions.focus_mut().unwrap().context.caret = Some(crate::state::CaretContext {
         line: std::sync::Arc::new(verbatim_model::TextChunk {
             unit: verbatim_model::TextUnit::Line,
             text: "text".to_owned(),
@@ -1467,7 +1474,7 @@ fn a_failed_focus_read_clears_cores_caret_baseline() {
         ),
         NOTHING
     );
-    assert_eq!(state.focus.object().unwrap().caret, None);
+    assert_eq!(state.versions.focus().unwrap().context.caret, None);
 }
 
 /// A focus on one of the shell's staging windows is taken like any other,
@@ -1504,7 +1511,7 @@ fn a_focus_on_a_shell_staging_window_is_taken_and_says_nothing() {
             ["send Outpost(Pid(40)) Follow"],
             "{class}"
         );
-        assert_eq!(state.focus.object().unwrap().snapshot.id, node(2));
+        assert_eq!(state.versions.focus().unwrap().context.snapshot.id, node(2));
         assert_eq!(state.navigator.as_ref().unwrap().object.id, node(2));
     }
 }

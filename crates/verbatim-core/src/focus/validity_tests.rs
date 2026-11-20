@@ -381,7 +381,7 @@ fn a_uia_focus_on_the_last_focuss_element_still_focused_is_a_duplicate() {
 
 #[test]
 fn the_menu_opening_on_the_committed_element_takes_acceptance_then_executes_it_again() {
-    let committed = crate::focus::versions::tests::kept(4);
+    let committed = crate::focus::versions::tests::focus(4);
     let both = Versions {
         last: Some(committed.last(Fence::default())),
         committed: Committed::Read(Box::new(committed)),
@@ -514,8 +514,8 @@ fn a_candidate_on_the_desktop_window_is_refused_as_having_no_reader() {
 /// the readers' last focus, executed for an entry of fence 3, with its
 /// reading.
 fn committed_item() -> (Versions, NodeSnapshot) {
-    let mut kept = super::super::versions::tests::kept(4);
-    kept.read_by = ReadBy::Msaa {
+    let mut focus = super::super::versions::tests::focus(4);
+    focus.kept.read_by = ReadBy::Msaa {
         event: Some(MsaaIds {
             window: WindowHandle(5),
             object: -4,
@@ -524,7 +524,7 @@ fn committed_item() -> (Versions, NodeSnapshot) {
         held_child: 2,
     };
     let snapshot = NodeSnapshot {
-        id: kept.node,
+        id: focus.context.snapshot.id,
         backend: verbatim_model::Backend::Msaa,
         role: Role::ListItem,
         name: Some("Copy".to_owned()),
@@ -536,8 +536,9 @@ fn committed_item() -> (Versions, NodeSnapshot) {
             ..verbatim_model::NodeDetails::default()
         },
     };
+    focus.context.snapshot = snapshot.clone();
     let mut versions = Versions::default();
-    versions.execute(kept, fence(3));
+    versions.execute(focus, fence(3));
     (versions, snapshot)
 }
 

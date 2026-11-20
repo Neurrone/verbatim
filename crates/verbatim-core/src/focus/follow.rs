@@ -138,21 +138,21 @@ impl Follows {
         let named = committed.and_then(|(kept, node, parent)| {
             // Only an outpost's UI Automation node is followed; a plain
             // window, which no reader holds, has nothing to follow.
-            let generation = kept.node.outpost()?;
+            let generation = node.id.outpost()?;
             matches!(kept.read_by, ReadBy::Uia { .. }).then(|| {
                 let extra = parent
                     .filter(|parent| crate::focus_rules::is_sensitive_slider(parent))
                     .map(|parent| parent.id);
                 (
-                    kept.window.process,
+                    kept.asked.process,
                     Named {
                         generation,
                         followed: Followed {
-                            node: kept.node,
+                            node: node.id,
                             group: group(node, console),
                             extra,
                         },
-                        window: kept.window,
+                        window: kept.asked,
                         node_window: kept.place.window,
                     },
                 )

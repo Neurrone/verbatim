@@ -370,7 +370,7 @@ fn a_menu_start_on_anything_but_a_menu_popup_says_nothing() {
         ),
         NOTHING
     );
-    assert!(state.focus.object().is_none());
+    assert!(state.versions.focus().is_none());
 }
 
 /// A focus run asked, a menu start waiting behind it, and the run's

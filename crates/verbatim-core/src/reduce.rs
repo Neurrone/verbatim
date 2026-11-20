@@ -23,7 +23,8 @@ use verbatim_model::{
     Backend, FocusNow, FocusText, FocusValidity, ObjectKey, WindowHandle, WindowIdentity,
 };
 
-use crate::focus::object::Report;
+use crate::focus::execute::{Commit, Report};
+use crate::focus::versions::{Focus, LineEntry};
 use crate::focus_rules::{
     ChangeKind, ChangeTarget, change_target, is_sensitive_slider, lowest_common_ancestor,
 };
@@ -178,7 +179,10 @@ pub(crate) fn activation_completed(
 /// reviewing it reads what the object is now, as NVDA reads it live. The
 /// review position is kept where it is still inside the text.
 fn sync_navigator_with_focus(state: &mut SrState) {
-    let (Some(focus), Some(navigator)) = (state.focus.object(), state.navigator.as_mut()) else {
+    let (Some(focus), Some(navigator)) = (
+        state.versions.focus().map(|focus| &focus.context),
+        state.navigator.as_mut(),
+    ) else {
         return;
     };
     if navigator.object.id != focus.snapshot.id || navigator.object == focus.snapshot {
@@ -199,7 +203,7 @@ struct FocusReport<'a> {
     /// Whether it is a whole-window focus.
     whole_window: bool,
     /// Its ancestors, outermost first, complete to the desktop.
-    ancestors: &'a [NodeSnapshot],
+    ancestors: &'a [LineEntry],
     /// What the outpost's caret read found, for a focus that may have text.
     text: Option<&'a FocusText>,
     /// What its reader read of the element it held before under its node.
@@ -234,12 +238,13 @@ impl Report {
 /// Takes `owned`'s focus silently in place of a focus that reads the same:
 /// its new ids are taken, the navigator moved only if there is none, and
 /// the caret baseline kept (the silent re-take, `crate::focus::retake`).
-pub(crate) fn take_silently(state: &mut SrState, owned: &Report) {
+/// The committed focus is written as `commit` says.
+pub(crate) fn take_silently(state: &mut SrState, owned: &Report, commit: Commit) {
     let report = &owned.view();
     let window = owned.window.as_ref();
     let found = state
-        .focus
-        .object()
+        .versions
+        .focus()
         .cloned()
         .map(|focus| Line { focus, left: false });
     let line = focus_ancestry(
@@ -252,9 +257,9 @@ pub(crate) fn take_silently(state: &mut SrState, owned: &Report) {
         (owned.trace_id, owned.source),
         window,
         report,
-        (previous, Arc::clone(&line.ancestors)),
+        (previous, &line.ancestors),
     );
-    state.focus.execute(new_focus);
+    write(state, commit, new_focus, line.ancestors);
     if state.navigator.is_none() {
         state.navigator = Some(Navigator::on(report.node.clone(), None));
     }
@@ -288,13 +293,21 @@ pub(crate) fn take_silently(state: &mut SrState, owned: &Report) {
 ///   title when its line does not already speak it ([`window_title`]).
 /// - A report judged left is executed as a focus from another top-level
 ///   window is (the left mark, `crate::focus::versions`).
-pub(crate) fn execute_report(state: &mut SrState, owned: &Report, left: bool) -> Vec<Effect> {
+///
+/// The committed focus is written as `commit` says before anything after
+/// the join reads it, so the rest sees the focus it executed.
+pub(crate) fn execute_report(
+    state: &mut SrState,
+    owned: &Report,
+    left: bool,
+    commit: Commit,
+) -> Vec<Effect> {
     let report = &owned.view();
     let window = owned.window.as_ref();
     let (trace_id, source) = (owned.trace_id, owned.source);
     let found = state
-        .focus
-        .object()
+        .versions
+        .focus()
         .cloned()
         .map(|focus| Line { focus, left });
     let line = focus_ancestry(
@@ -320,7 +333,7 @@ pub(crate) fn execute_report(state: &mut SrState, owned: &Report, left: bool) ->
         (trace_id, source),
         window,
         report,
-        (previous, Arc::clone(&line.ancestors)),
+        (previous, &line.ancestors),
     );
     if let Some(focus) = previous
         && state.focus_ended()
@@ -328,7 +341,7 @@ pub(crate) fn execute_report(state: &mut SrState, owned: &Report, left: bool) ->
     {
         // The silent re-read: the replacement outpost reports the focus the
         // user already heard, so take its ids without speaking.
-        state.focus.execute(new_focus);
+        write(state, commit, new_focus, line.ancestors);
         if state.navigator.is_none() {
             state.navigator = Some(Navigator::on(report.node.clone(), None));
         }
@@ -349,10 +362,14 @@ pub(crate) fn execute_report(state: &mut SrState, owned: &Report, left: bool) ->
     // focus now is.
     let foreground_changed = line.cut;
     let line_met = line.met.is_some();
-    let entered: Vec<&NodeSnapshot> = line.entered.iter().collect();
+    let entered: Vec<&NodeSnapshot> = line.entered.iter().map(|entry| &entry.snapshot).collect();
     let mut effects = vec![Effect::DropExpiredSpeech(FocusNow {
         focus: ObjectKey::of(report.node),
-        ancestors: new_focus.ancestors.iter().map(ObjectKey::of).collect(),
+        ancestors: line
+            .ancestors
+            .iter()
+            .map(|ancestor| ObjectKey::of(&ancestor.snapshot))
+            .collect(),
         foreground: state.foreground.object(),
         menu_item_of_focus: menu_item_of_focus(previous, report.node),
     })];
@@ -364,7 +381,7 @@ pub(crate) fn execute_report(state: &mut SrState, owned: &Report, left: bool) ->
         (foreground_changed, previous_left),
         &mut effects,
     );
-    state.focus.execute(new_focus);
+    write(state, commit, new_focus, line.ancestors);
     state.navigator = Some(navigator);
     // A nameless whole-window focus, and any focus in the shell's staging
     // windows, say nothing; speech was cut above if the foreground window
@@ -396,28 +413,50 @@ pub(crate) fn execute_report(state: &mut SrState, owned: &Report, left: bool) ->
     effects
 }
 
-/// The focus `report` becomes when taken, or stands for while it waits as
-/// the queued report: its node under `ancestors`, its line joined with
-/// `previous`, the line it is planned against, not left.
+/// What Core speaks of `report`'s focus when it is taken: its node under
+/// `ancestors`, its line joined with `previous`, the line it is planned
+/// against, not left.
 fn focus_context(
     (trace_id, source): (TraceId, Pid),
     window: Option<&WindowFacts>,
     report: &FocusReport<'_>,
-    (previous, ancestors): (Option<&FocusContext>, Arc<[NodeSnapshot]>),
+    (previous, ancestors): (Option<&Focus>, &[LineEntry]),
 ) -> FocusContext {
     FocusContext {
         source,
         window: window.cloned(),
         snapshot: report.node.clone(),
-        spoken: spoken_record(previous, report, &ancestors),
-        ancestors,
+        spoken: spoken_record(previous, report, ancestors),
         reported_focused: report.node.states.contains(State::Focused),
         trace_id: Some(trace_id),
         observed_at_us: report.observed_at_us,
         reported_format: verbatim_model::TextAttributes::default(),
         caret: previous
+            .map(|previous| &previous.context)
             .filter(|previous| previous.snapshot.id == report.node.id)
             .and_then(|previous| previous.caret.clone()),
+    }
+}
+
+/// Writes the committed focus as `commit` says, with `context` what Core
+/// spoke of it and `line` its line: a reader's new focus becomes the
+/// committed focus, or the committed focus spoken again takes `context`
+/// alone ([`Commit`]).
+fn write(state: &mut SrState, commit: Commit, context: FocusContext, line: Arc<[LineEntry]>) {
+    match commit {
+        Commit::New { kept, fence } => {
+            let focus = Focus {
+                context,
+                kept,
+                line,
+            };
+            state.versions.execute(focus, fence);
+        }
+        Commit::InPlace => {
+            if let Some(focus) = state.versions.focus_mut() {
+                focus.context = context;
+            }
+        }
     }
 }
 
@@ -430,7 +469,7 @@ fn focus_context(
 /// before, and a window owned across processes meets its owner both ways.
 #[derive(Clone, Debug)]
 struct Line {
-    focus: FocusContext,
+    focus: Focus,
     left: bool,
 }
 
@@ -464,7 +503,10 @@ fn enter_window(
     entered_window(state, Some(window), report, previous_left)?;
     state.foreground.apply(ForegroundFact::EnteredBy(
         window.top_level,
-        report.ancestors.first().map(ObjectKey::of),
+        report
+            .ancestors
+            .first()
+            .map(|top| ObjectKey::of(&top.snapshot)),
     ));
     // Program Manager and the taskbar are entered with no title, as NVDA
     // takes no foreground event for them.
@@ -496,11 +538,12 @@ fn entered_window(
 /// chain with no entry for the window, add nothing.
 fn window_title<'a>(
     top_level: WindowHandle,
-    ancestors: &'a [NodeSnapshot],
+    ancestors: &'a [LineEntry],
     entered: &[&NodeSnapshot],
 ) -> Option<&'a NodeSnapshot> {
     let entry = ancestors
         .iter()
+        .map(|ancestor| &ancestor.snapshot)
         .find(|ancestor| ancestor.details.window == Some(top_level))?;
     let spoken = entered.iter().any(|container| {
         container.id == entry.id
@@ -517,12 +560,13 @@ fn window_title<'a>(
 /// previous focus included, or else its reading, from which an entered
 /// container is spoken.
 fn spoken_record(
-    previous: Option<&FocusContext>,
+    previous: Option<&Focus>,
     report: &FocusReport<'_>,
-    ancestors: &[NodeSnapshot],
+    ancestors: &[LineEntry],
 ) -> SpokenRecord {
     let entries = ancestors
         .iter()
+        .map(|ancestor| &ancestor.snapshot)
         .map(|ancestor| {
             let spoken = previous.and_then(|previous| previous.spoken_states(ancestor.id));
             (ancestor.id, spoken.unwrap_or(ancestor.states))
@@ -657,17 +701,17 @@ fn focus_speech(
 /// hold `node`, an MSAA popup menu, as when an application focuses a
 /// submenu's first item and then the submenu itself (`docs/nvda/speech.md`,
 /// "Expired focus speech").
-fn menu_item_of_focus(previous: Option<&FocusContext>, node: &NodeSnapshot) -> Option<NodeId> {
+fn menu_item_of_focus(previous: Option<&Focus>, node: &NodeSnapshot) -> Option<NodeId> {
     let previous = previous?;
-    let item = &previous.snapshot;
+    let item = &previous.context.snapshot;
     (item.backend == Backend::Msaa
         && item.role == Role::MenuItem
         && node.backend == Backend::Msaa
         && node.role == Role::Menu
         && previous
-            .ancestors
+            .line
             .iter()
-            .any(|ancestor| ancestor.id == node.id))
+            .any(|ancestor| ancestor.snapshot.id == node.id))
     .then_some(item.id)
 }
 
@@ -688,29 +732,23 @@ fn has_text(text: Option<&str>) -> bool {
 /// replacement outpost issues new ones (`docs/parity/focus-events.md`,
 /// "Recovery after an outpost is replaced"); a report of the ended
 /// generation itself, waiting when it ended, is no replacement's.
-fn reads_the_same(focus: &FocusContext, node: &NodeSnapshot, ancestors: &[NodeSnapshot]) -> bool {
-    focus.snapshot.id.outpost() != node.id.outpost() && same_reading(focus, node, ancestors)
+fn reads_the_same(focus: &Focus, node: &NodeSnapshot, ancestors: &[LineEntry]) -> bool {
+    focus.context.snapshot.id.outpost() != node.id.outpost() && same_reading(focus, node, ancestors)
 }
 
 /// Whether `node`, under `ancestors`, reads the same as the focus `focus`
 /// Core holds: role, name, value, and states, and the ancestors' names and
 /// roles, whatever their ids.
-pub(crate) fn same_reading(
-    focus: &FocusContext,
-    node: &NodeSnapshot,
-    ancestors: &[NodeSnapshot],
-) -> bool {
-    let kept = &focus.snapshot;
+pub(crate) fn same_reading(focus: &Focus, node: &NodeSnapshot, ancestors: &[LineEntry]) -> bool {
+    let kept = &focus.context.snapshot;
     kept.role == node.role
         && kept.name == node.name
         && kept.value == node.value
         && kept.states == node.states
-        && focus.ancestors.len() == ancestors.len()
-        && focus
-            .ancestors
-            .iter()
-            .zip(ancestors)
-            .all(|(old, new)| old.role == new.role && old.name == new.name)
+        && focus.line.len() == ancestors.len()
+        && focus.line.iter().zip(ancestors).all(|(old, new)| {
+            old.snapshot.role == new.snapshot.role && old.snapshot.name == new.snapshot.name
+        })
 }
 
 /// A state change of `node_id`, spoken on the focus or an ancestor
@@ -815,17 +853,18 @@ fn states_event(
 /// change"), which an outpost reads for when the window is the focus of a
 /// report Core refused.
 fn change_on(state: &SrState, kind: ChangeKind, node_id: NodeId) -> Option<ChangeTarget> {
-    let focus = state.live_focus()?;
+    let focus = state.versions.live()?;
     let foreground = state.foreground.object();
     change_target(
         kind,
         node_id,
-        focus.snapshot.id,
-        focus.ancestors.iter().map(|ancestor| ancestor.id),
+        focus.context.snapshot.id,
+        focus.line.iter().map(|ancestor| ancestor.snapshot.id),
         |id| {
             !foreground.is_some_and(|object| {
-                focus.ancestors.iter().any(|ancestor| {
-                    ancestor.id == id && ObjectKey::of(ancestor).is_same_object(&object)
+                focus.line.iter().any(|ancestor| {
+                    ancestor.snapshot.id == id
+                        && ObjectKey::of(&ancestor.snapshot).is_same_object(&object)
                 })
             })
         },
@@ -844,12 +883,13 @@ fn slider_value_changed(
     node_id: NodeId,
     value: Option<String>,
 ) -> Vec<Effect> {
-    let Some(focus) = state.live_focus_mut() else {
+    let Some(focus) = state.versions.live_mut() else {
         return Vec::new();
     };
     let Some(parent) = focus
-        .ancestors
+        .line
         .last()
+        .map(|parent| &parent.snapshot)
         .filter(|parent| parent.id == node_id && is_sensitive_slider(parent))
     else {
         return Vec::new();
@@ -857,14 +897,12 @@ fn slider_value_changed(
     if parent.value == value {
         return Vec::new();
     }
-    let mut updated = parent.clone();
-    updated.value.clone_from(&value);
-    let source = source_of(&updated);
-    let mut ancestors = focus.ancestors.to_vec();
-    if let Some(last) = ancestors.last_mut() {
-        *last = updated;
+    let source = source_of(parent);
+    let mut line = focus.line.to_vec();
+    if let Some(last) = line.last_mut() {
+        last.snapshot.value.clone_from(&value);
     }
-    focus.ancestors = Arc::from(ancestors);
+    focus.line = Arc::from(line);
     let Some(text) = value else {
         return Vec::new();
     };
@@ -894,7 +932,7 @@ fn reduce_name_changed(
     if change_on(state, ChangeKind::Name, node_id) != Some(ChangeTarget::Focus) {
         return Vec::new();
     }
-    let Some(focus) = state.focus.object_mut() else {
+    let Some(focus) = state.versions.focus_mut().map(|focus| &mut focus.context) else {
         return Vec::new();
     };
     let spoken = focus.spoken();
@@ -1010,8 +1048,9 @@ pub(crate) fn navigator_utterance(
 /// (`docs/parity/changes-and-selection.md`, "Name change on the focus").
 pub(crate) fn focus_read_spoken(state: &mut SrState, object: &NodeSnapshot) {
     if let Some(focus) = state
-        .focus
-        .object_mut()
+        .versions
+        .focus_mut()
+        .map(|focus| &mut focus.context)
         .filter(|focus| focus.snapshot.id == object.id)
     {
         let ancestors = Arc::clone(&focus.spoken().ancestors);
@@ -1021,8 +1060,9 @@ pub(crate) fn focus_read_spoken(state: &mut SrState, object: &NodeSnapshot) {
 
 pub(crate) fn focus_spoken_now(state: &mut SrState, object: &NodeSnapshot) {
     if let Some(focus) = state
-        .focus
-        .object_mut()
+        .versions
+        .focus_mut()
+        .map(|focus| &mut focus.context)
         .filter(|focus| focus.snapshot == *object)
     {
         let ancestors = Arc::clone(&focus.spoken().ancestors);
@@ -1251,8 +1291,9 @@ pub(crate) fn reduce_controlled_selection(
     (node, window): (&NodeSnapshot, crate::event_queue::RequestWindow),
 ) -> Vec<Effect> {
     if state
-        .live_focus()
-        .is_none_or(|focus| focus.snapshot.id != controller)
+        .versions
+        .live()
+        .is_none_or(|focus| focus.context.snapshot.id != controller)
     {
         return Vec::new();
     }
@@ -1293,7 +1334,7 @@ fn reduce_value_changed(
     if change_on(state, ChangeKind::Value, node_id) != Some(ChangeTarget::Focus) {
         return slider_value_changed(state, trace_id, node_id, value);
     }
-    let Some(focus) = state.focus.object_mut() else {
+    let Some(focus) = state.versions.focus_mut().map(|focus| &mut focus.context) else {
         return Vec::new();
     };
     let spoken = focus.spoken();
@@ -1388,7 +1429,7 @@ fn reduce_states_changed(
     if change_on(state, ChangeKind::States, node_id) != Some(ChangeTarget::Focus) {
         return Vec::new();
     }
-    let Some(focus) = state.focus.object_mut() else {
+    let Some(focus) = state.versions.focus_mut().map(|focus| &mut focus.context) else {
         return Vec::new();
     };
     let role = focus.snapshot.role;
@@ -1488,32 +1529,32 @@ fn reduce_ancestor_states_changed(
     node_id: NodeId,
     new_states: StateSet,
 ) -> Vec<Effect> {
-    let Some(focus) = state.live_focus_mut() else {
+    let Some(focus) = state.versions.live_mut() else {
         return Vec::new();
     };
     let Some(index) = focus
-        .ancestors
+        .line
         .iter()
-        .position(|ancestor| ancestor.id == node_id)
+        .position(|ancestor| ancestor.snapshot.id == node_id)
     else {
         return Vec::new();
     };
-    let Some(ancestor) = focus.ancestors.get(index) else {
+    let Some(ancestor) = focus.line.get(index).map(|ancestor| &ancestor.snapshot) else {
         return Vec::new();
     };
     let (role, source) = (ancestor.role, source_of(ancestor));
     let old_states = focus.spoken_states(node_id).unwrap_or(ancestor.states);
     if ancestor.states != new_states {
-        let mut ancestors = focus.ancestors.to_vec();
-        if let Some(ancestor) = ancestors.get_mut(index) {
-            ancestor.states = new_states;
+        let mut line = focus.line.to_vec();
+        if let Some(ancestor) = line.get_mut(index) {
+            ancestor.snapshot.states = new_states;
         }
-        focus.ancestors = Arc::from(ancestors);
+        focus.line = Arc::from(line);
     }
     if old_states == new_states {
         return Vec::new();
     }
-    let spoken = focus.spoken();
+    let spoken = focus.context.spoken();
     if let Some(entry) = spoken.ancestors.iter().position(|(id, _)| *id == node_id) {
         let mut entries = spoken.ancestors.to_vec();
         if let Some((_, states)) = entries.get_mut(entry) {
@@ -1550,7 +1591,12 @@ fn reduce_ancestor_states_changed(
 /// change the suggestions-closed one, the focus test applying only to an
 /// opening (`docs/parity/changes-and-selection.md`, "Suggestions appearing and going away").
 fn reduce_suggestions(state: &SrState, node_id: NodeId, open: bool) -> Vec<Effect> {
-    if open && state.focus_matches(node_id) {
+    if open
+        && state
+            .versions
+            .live()
+            .is_some_and(|focus| focus.context.snapshot.id == node_id)
+    {
         vec![Effect::PlayEarcon(Earcon::SuggestionsOpened)]
     } else {
         vec![Effect::PlayEarcon(Earcon::SuggestionsClosed)]
@@ -1566,7 +1612,7 @@ fn reduce_description_changed(
     if change_on(state, ChangeKind::Description, node_id) != Some(ChangeTarget::Focus) {
         return Vec::new();
     }
-    let Some(focus) = state.focus.object_mut() else {
+    let Some(focus) = state.versions.focus_mut().map(|focus| &mut focus.context) else {
         return Vec::new();
     };
     let spoken = focus.spoken();
@@ -1643,11 +1689,11 @@ struct JoinedAncestry<'a> {
     /// The focus's ancestors as Core keeps them, outermost first: the
     /// previous focus ancestry up to the lowest common ancestor, then the
     /// new chain's entries below it.
-    ancestors: Arc<[NodeSnapshot]>,
+    ancestors: Arc<[LineEntry]>,
     /// The entered ancestors: the new chain's entries below the lowest
     /// common ancestor, outermost first, the containers the focus has newly
     /// entered.
-    entered: &'a [NodeSnapshot],
+    entered: &'a [LineEntry],
     /// The two ancestries differ just below the desktop, sharing no entry:
     /// the focus is in a new foreground window, and speech is cut.
     cut: bool,
@@ -1715,26 +1761,27 @@ fn focus_ancestry<'a>(
         };
     }
     let previous = &line.focus;
-    let old_line = || {
-        previous
-            .ancestors
-            .iter()
-            .chain(std::iter::once(&previous.snapshot))
+    let itself = previous.as_entry();
+    let new_focus = LineEntry {
+        snapshot: report.node.clone(),
+        runtime_id: None,
+        simple_child: false,
     };
     // A new element under the previous focus's node, the one it stood for
     // gone, is not that focus: the lines meet above it, if anywhere.
-    let met = if report.replaces(&previous.snapshot) {
-        previous.ancestors.split_last().and_then(|(last, above)| {
-            lowest_common_ancestor((above, last), (report.ancestors, report.node))
+    let met = if report.replaces(&previous.context.snapshot) {
+        previous.line.split_last().and_then(|(last, above)| {
+            lowest_common_ancestor((above, last), (report.ancestors, &new_focus))
         })
     } else {
-        lowest_common_ancestor(
-            (&previous.ancestors, &previous.snapshot),
-            (report.ancestors, report.node),
-        )
+        lowest_common_ancestor((&previous.line, &itself), (report.ancestors, &new_focus))
     };
     let Some((at_old, at_new)) = met else {
-        let old_top = ancestry_top(&previous.snapshot, previous.window.as_ref(), previous_top);
+        let old_top = ancestry_top(
+            &previous.context.snapshot,
+            previous.context.window.as_ref(),
+            previous_top,
+        );
         let new_top = ancestry_top(report.node, window, top_level);
         let cut = old_top.is_none() || old_top != new_top;
         return JoinedAncestry {
@@ -1757,7 +1804,14 @@ fn focus_ancestry<'a>(
         .get(at_new.saturating_add(1)..)
         .unwrap_or_default();
     JoinedAncestry {
-        ancestors: old_line().take(kept).chain(entered).cloned().collect(),
+        ancestors: previous
+            .line
+            .iter()
+            .chain(std::iter::once(&itself))
+            .take(kept)
+            .chain(entered)
+            .cloned()
+            .collect(),
         entered,
         cut: false,
         met: Some(at_new),
@@ -1787,8 +1841,8 @@ fn ancestry_top(
 fn committed_top(state: &SrState) -> Option<WindowHandle> {
     state
         .versions
-        .committed_kept()
-        .map(|kept| kept.place.top_level)
+        .focus()
+        .map(|focus| focus.kept.place.top_level)
 }
 
 /// Whether a focus ancestor adds context worth speaking when focus first

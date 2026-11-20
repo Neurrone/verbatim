@@ -432,6 +432,31 @@ code is in `reduce.rs` unless named.
   afresh; for one gone the lines meet above it, a new element, and for
   one that only lost the focus they meet at it, as UI Automation compares
   two elements by runtime id.
+- The committed focus (`focus/versions.rs`; ADR 0003, "The two versions
+  of the focus"): one record, `Versions::committed`, a `Committed` that is
+  `Nothing` at startup, `Read(Box<Focus>)` for a reader's focus whose
+  reader lives, `Ended(Box<Focus>)` once its outpost generation ended,
+  its data kept for the silent re-take and its ids dead, or `Own`, the
+  sleeping focus, which carries nothing. A `Focus` is what Core spoke of
+  it (`context`, a `FocusContext`), what Core keeps of its focus answer
+  (`kept`, a `Kept`: how it was read, its place, the window its read
+  named, the foreground it entered under, its selection facts and whether
+  it is a console host's terminal) and its line (`line`, `LineEntry`s
+  outermost first, each an ancestor's snapshot with its runtime id and
+  simple-child mark). The line is what the next focus is joined to and
+  spoken against, and what the next focus request's known ancestors come
+  from (`Versions::known_with_places`). `execute::ready` builds an
+  answer's entries from its ancestors and, above the place the walk met,
+  the committed focus's own line, the committed focus itself at place 0;
+  an answer whose meeting point names no place Core sent ends unspoken.
+  `reduce::execute_report` and `reduce::take_silently` write the record
+  as their `Commit` says: `Commit::New` for an executed focus or a silent
+  re-take, through `Versions::execute`, and `Commit::InPlace` for
+  `execute::again`, a UI Automation menu opening on the committed focus,
+  which replaces only what Core spoke of it. Rules read it through
+  `Versions::focus` (`Read` or `Ended`), `Versions::live` (`Read`) and
+  `Versions::caret_target`; the readers' last focus (`LastFocus`) is a
+  separate fact.
 - The window in front. `SrState::hook_foreground()`
   (`verbatim_model::HookForeground`) is decided from the event queue's
   foreground record, the window the focus listener last reported
@@ -526,8 +551,8 @@ code is in `reduce.rs` unless named.
   arrival order"): a background event
   observed before the newest applied foreground change is dropped.
 - Changes (`docs/parity/changes-and-selection.md`). Each focus keeps two
-  things: the reading Core holds (`FocusContext::snapshot` and
-  `ancestors`), which review reads and a repeat updates, and what Core
+  things: the reading Core holds (`FocusContext::snapshot` and the line's
+  snapshots), which review reads and a repeat updates, and what Core
   last spoke of it (`FocusContext::spoken`, a `SpokenRecord`): the
   focus's name, value, description and states, and each ancestor's
   states. A repeat never moves the record. A focus taken moves it, and
@@ -786,7 +811,7 @@ and the entry ends.
 The identity check (`docs/parity/focus-events.md`, "Duplicate focus
 suppression"): the readers' last focus keeps the speech fence of the
 entry that executed it (`LastFocus::since`), set by
-`Versions::execute(kept, since)` from `Origin::fence`, which every path
+`Versions::execute(focus, since)` from `Origin::fence`, which every path
 names explicitly (a run's or menu start's executed candidate's own fence,
 any other entry's own); a candidate tried and refused, not there or whose
 reader ended clears it (`Reason::tried`, `Versions::tried_and_refused`).
@@ -911,8 +936,8 @@ supervisor's launch copy follow Core's setting.
 ### Caret tells and Core's text facts
 
 (`docs/design/readers-tell-core-asks-build1.md`, "Selection and the
-caret's text facts", "Held anchors", Table 17.) The committed focus's
-record (`Kept`) carries its `SelectionFacts` (`text_facts.rs`): the
+caret's text facts", "Held anchors", Table 17.) What Core keeps of the
+committed focus (`Kept`) carries its `SelectionFacts` (`text_facts.rs`): the
 selection baseline, an anchor its outpost generation holds, and the
 text-changed flag. A caret tell (`caret_tell.rs`), the system caret's
 for the readers' last focus or a UI Automation text-selection change of
@@ -956,9 +981,9 @@ waiting caret key was bound to.
 the lock state", Table 8; `input_desktop.rs`.) The listener's desktop
 switch tell is handled at once in the inbox, never queued
 (`entries::route`). A switch to an input desktop Verbatim cannot open
-cuts speech, commits the sleeping focus (`Versions::commit_own` with no
-source, the focus context emptied so that the next focus is spoken from
-the top with its window's title), sends `Follow` naming nothing to every
+cuts speech, commits the sleeping focus (`Versions::commit_own`, which
+carries nothing, so that the next focus is spoken from the top with its
+window's title), sends `Follow` naming nothing to every
 outpost followed, as Core's own requests outside the queue
 (`event_queue::Input::Send`), drops the strokes Core holds, and counts
 the switch in the hook's view (`HookForeground::desktop_switches`), on

@@ -360,7 +360,7 @@ async fn walk(cx: &mut Cx<Entries>, candidates: Vec<Candidate>) {
         }
         let depth = validity::with_view(cx, false, |view| {
             let facts = cx.facts();
-            let committed = facts.focus.object().map(|focus| &focus.snapshot);
+            let committed = facts.versions.focus().map(|focus| &focus.context.snapshot);
             validity::depth(Subject::Msaa(candidate), view, committed)
         });
         let Some((answer, known)) = read_in_full(cx, candidate, depth, due_us).await else {
