@@ -315,30 +315,6 @@ impl Timeline {
             })
     }
 
-    /// Every utterance recorded so far, in arrival order — the substring of
-    /// the timeline that [`SpeechCollector`](crate::speech::SpeechCollector)
-    /// matches its matchers against.
-    #[must_use]
-    pub fn utterances(&self) -> Vec<String> {
-        let entries = self.entries.lock().unwrap_or_else(PoisonError::into_inner);
-        entries
-            .iter()
-            .filter_map(|entry| match &entry.kind {
-                TimelineKind::Utterance(text, _) => Some(text.clone()),
-                TimelineKind::Gesture(_)
-                | TimelineKind::Keys(_)
-                | TimelineKind::Text(_)
-                | TimelineKind::AudioStarted(_)
-                | TimelineKind::Ended(..)
-                | TimelineKind::Paused(_)
-                | TimelineKind::NvdaEvent(_)
-                | TimelineKind::Note(_)
-                | TimelineKind::Deviation { .. }
-                | TimelineKind::Action { .. } => None,
-            })
-            .collect()
-    }
-
     /// Renders every entry recorded so far, one per line and in time order,
     /// each tagged by kind and prefixed with elapsed time since the first
     /// entry (for example `+634ms speech "Settings... menu item"`): the
@@ -570,38 +546,22 @@ mod tests {
     }
 
     #[test]
-    fn utterances_filters_out_gestures_and_keys() {
-        let timeline = Timeline::new();
-        timeline.push_gesture("kb:verbatim+v");
-        timeline.push_utterance("one", None);
-        timeline.push_keys(&["tab"]);
-        timeline.push_utterance("two", None);
-
-        assert_eq!(
-            timeline.utterances(),
-            vec!["one".to_owned(), "two".to_owned()]
-        );
-    }
-
-    #[test]
-    fn audio_start_followups_render_tagged_and_never_count_as_utterances() {
+    fn audio_start_followups_render_tagged() {
         let timeline = Timeline::new();
         timeline.push_utterance("one", None);
         timeline.push_audio_started("one");
 
-        assert_eq!(timeline.utterances(), vec!["one".to_owned()]);
         let rendered = timeline.render();
         assert!(rendered.contains(r#"speech "one""#));
         assert!(rendered.contains(r#"audio "one""#));
     }
 
     #[test]
-    fn typed_text_renders_tagged_and_never_counts_as_an_utterance() {
+    fn typed_text_renders_tagged() {
         let timeline = Timeline::new();
         timeline.push_text("echo hello");
         timeline.push_utterance("hello", None);
 
-        assert_eq!(timeline.utterances(), vec!["hello".to_owned()]);
         assert!(timeline.render().contains(r#"text "echo hello""#));
     }
 
@@ -647,13 +607,5 @@ mod tests {
                 r#"cancelled "> apple""#,
             ]
         );
-    }
-
-    #[test]
-    fn clones_share_the_same_underlying_log() {
-        let timeline = Timeline::new();
-        let clone = timeline.clone();
-        clone.push_utterance("from the clone", None);
-        assert_eq!(timeline.utterances(), vec!["from the clone".to_owned()]);
     }
 }

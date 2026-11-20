@@ -238,8 +238,8 @@ played at once for an event, which reads as `sound:` and its indication
   waits for each utterance to end. `take_all_queued` returns everything
   collected or unmatched once Verbatim is idle after the given input,
   with every frame that has reached the harness since, each counted as
-  matched without its content being asserted. `take_collected()` returns
-  only what collect-only mode has already collected, waiting for nothing.
+  matched without its content being asserted. The collector's mode is
+  one value: asserting, collecting only, or comparing with NVDA.
 
 A failed assertion unwinds with a `SpeechFailure`, without the panic
 hook, carrying its message and its `FailurePoint`: the failing step's

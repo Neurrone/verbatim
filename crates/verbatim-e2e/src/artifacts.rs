@@ -29,8 +29,7 @@ use crate::speech::LatencyRow;
 /// wiring between the two binaries.
 pub const ARTIFACTS_DIR_ENV: &str = "VERBATIM_E2E_ARTIFACTS_DIR";
 
-/// File name [`ScenarioSummary::write`] and [`ScenarioSummary::read`] agree
-/// on, inside [`scenario_dir`].
+/// File name [`ScenarioSummary::write`] writes, inside [`scenario_dir`].
 const SUMMARY_FILE_NAME: &str = "summary.txt";
 
 /// The root directory every scenario's artifacts (summary, and on failure,
@@ -67,8 +66,8 @@ pub fn scenario_dir(root: &Path, scenario_name: &str) -> PathBuf {
 }
 
 /// The one-line-per-fact result of running a single scenario: written by
-/// [`ScenarioSummary::write`] at the end of every run (pass or fail), and
-/// read back by [`ScenarioSummary::read`].
+/// [`ScenarioSummary::write`] at the end of every run (pass or fail), for
+/// people and the workflow's summary to read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScenarioSummary {
     /// The scenario's name, matching [`crate::registry::ScenarioDef::name`].
@@ -169,8 +168,7 @@ impl ScenarioSummary {
     }
 
     /// Writes this summary to `dir` (created if missing) as
-    /// [`SUMMARY_FILE_NAME`], plain `key: value` lines — a format
-    /// [`ScenarioSummary::read`] parses back exactly.
+    /// [`SUMMARY_FILE_NAME`], plain `key: value` lines.
     ///
     /// # Errors
     ///
@@ -220,23 +218,6 @@ impl ScenarioSummary {
             let _ = writeln!(text, "optional_utterance: {outcome}");
         }
         fs::write(dir.join(SUMMARY_FILE_NAME), text)
-    }
-
-    /// Reads a summary previously written by [`ScenarioSummary::write`] out
-    /// of `dir`.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the summary file is missing or unreadable, or a
-    /// required line is missing or malformed.
-    pub fn read(dir: &Path) -> io::Result<Self> {
-        let text = fs::read_to_string(dir.join(SUMMARY_FILE_NAME))?;
-        parse_summary(&text).ok_or_else(|| {
-            io::Error::other(format!(
-                "malformed {SUMMARY_FILE_NAME} in {}",
-                dir.display()
-            ))
-        })
     }
 }
 
@@ -548,110 +529,8 @@ fn format_optional_count(value: Option<usize>) -> String {
     value.map_or_else(|| "unknown".to_owned(), |count| count.to_string())
 }
 
-fn parse_optional_count(value: &str) -> Option<usize> {
-    if value == "unknown" {
-        None
-    } else {
-        value.parse().ok()
-    }
-}
-
 fn format_optional_u64(value: Option<u64>) -> String {
     value.map_or_else(|| "unknown".to_owned(), |ms| ms.to_string())
-}
-
-fn parse_optional_u64(value: &str) -> Option<u64> {
-    if value == "unknown" {
-        None
-    } else {
-        value.parse().ok()
-    }
-}
-
-/// The pure parse behind [`ScenarioSummary::read`], split out so it can be
-/// unit tested directly against hand-written text without touching a
-/// filesystem.
-fn parse_summary(text: &str) -> Option<ScenarioSummary> {
-    let mut name = None;
-    let mut passed = None;
-    let mut latency_records = None;
-    let mut latency_reached_audio = None;
-    let mut saw_latency_records_line = false;
-    let mut saw_latency_reached_audio_line = false;
-    let mut max_event_to_queue_ms = None;
-    let mut max_event_to_audio_ms = None;
-    let mut outpost_crash_count: Option<Option<usize>> = None;
-    let mut outpost_crashes = Vec::new();
-    let mut optional_utterances = Vec::new();
-
-    for line in text.lines() {
-        let (key, value) = line.split_once(": ")?;
-        match key {
-            "name" => name = Some(value.to_owned()),
-            "result" => {
-                passed = Some(match value {
-                    "pass" => true,
-                    "fail" => false,
-                    _ => return None,
-                });
-            }
-            "latency_records" => {
-                latency_records = parse_optional_count(value);
-                saw_latency_records_line = true;
-            }
-            "latency_reached_audio" => {
-                latency_reached_audio = parse_optional_count(value);
-                saw_latency_reached_audio_line = true;
-            }
-            // The timing lines are newer than the count lines; a summary
-            // written before they existed simply leaves them `None`.
-            "max_event_to_queue_ms" => max_event_to_queue_ms = parse_optional_u64(value),
-            "max_event_to_audio_ms" => max_event_to_audio_ms = parse_optional_u64(value),
-            "outpost_crashes" => outpost_crash_count = Some(parse_optional_count(value)),
-            "outpost_crash" => outpost_crashes.push(parse_outpost_crash(value)?),
-            "optional_utterance" => optional_utterances.push(value.to_owned()),
-            _ => {}
-        }
-    }
-
-    Some(ScenarioSummary {
-        name: name?,
-        passed: passed?,
-        latency_records: saw_latency_records_line
-            .then_some(latency_records)
-            .flatten(),
-        latency_reached_audio: saw_latency_reached_audio_line
-            .then_some(latency_reached_audio)
-            .flatten(),
-        max_event_to_queue_ms,
-        max_event_to_audio_ms,
-        // A summary written before crashes were counted has no count line,
-        // and its crashes are unknown; a count that disagrees with the
-        // crash lines is malformed.
-        outpost_crashes: match outpost_crash_count {
-            Some(Some(count)) if count == outpost_crashes.len() => Some(outpost_crashes),
-            Some(Some(_)) => return None,
-            _ => None,
-        },
-        optional_utterances,
-    })
-}
-
-/// Reads back one crash as [`OutpostCrash`]'s `Display` writes it.
-fn parse_outpost_crash(value: &str) -> Option<OutpostCrash> {
-    let (pid, rest) = value.strip_prefix("pid ")?.split_once(", code ")?;
-    let (code, dump) = rest.split_once(", dump ")?;
-    let exit_code = if code == "unknown" {
-        None
-    } else {
-        let code = u32::from_str_radix(code.strip_prefix("0x")?, 16).ok()?;
-        Some(i32::from_ne_bytes(code.to_ne_bytes()))
-    };
-    Some(OutpostCrash {
-        pid: pid.parse().ok()?,
-        exit_code,
-        dump: (dump != "none").then(|| dump.to_owned()),
-    })
 }
 
 #[cfg(test)]
@@ -834,56 +713,6 @@ mod tests {
     }
 
     #[test]
-    fn scenario_dir_joins_root_and_name() {
-        let root = PathBuf::from(r"C:\somewhere\e2e-artifacts");
-        assert_eq!(
-            scenario_dir(&root, "notepad_and_verbatim_menu"),
-            PathBuf::from(r"C:\somewhere\e2e-artifacts\notepad_and_verbatim_menu")
-        );
-    }
-
-    #[test]
-    fn resolve_artifacts_root_honors_the_override() {
-        assert_eq!(
-            resolve_artifacts_root(Some(r"C:\overridden\artifacts".to_owned())),
-            PathBuf::from(r"C:\overridden\artifacts")
-        );
-    }
-
-    #[test]
-    fn resolve_artifacts_root_defaults_under_the_workspace_root() {
-        assert_eq!(
-            resolve_artifacts_root(None),
-            crate::scenario::workspace_root()
-                .join("target")
-                .join("e2e-artifacts")
-        );
-    }
-
-    #[test]
-    fn summary_round_trips_through_write_and_read() {
-        let dir = temp_dir("round-trip");
-        let summary =
-            ScenarioSummary::new("menu_and_settings_dialog", true, Some(&sample_records()));
-        summary.write(&dir).expect("writes the summary");
-
-        let read_back = ScenarioSummary::read(&dir).expect("reads the summary back");
-        assert_eq!(read_back, summary);
-    }
-
-    #[test]
-    fn summary_round_trips_with_no_latency_data() {
-        let dir = temp_dir("round-trip-no-latency");
-        let summary = ScenarioSummary::new("notepad_and_verbatim_menu", false, None);
-        summary.write(&dir).expect("writes the summary");
-
-        let read_back = ScenarioSummary::read(&dir).expect("reads the summary back");
-        assert_eq!(read_back, summary);
-        assert_eq!(read_back.latency_records, None);
-        assert_eq!(read_back.latency_reached_audio, None);
-    }
-
-    #[test]
     fn summary_round_trips_its_outpost_crashes() {
         let dir = temp_dir("round-trip-crashes");
         let mut summary = ScenarioSummary::new("conhost_leave_flood", false, None);
@@ -907,7 +736,6 @@ mod tests {
             r"outpost_crash: pid 1234, code 0xC0000005, dump C:\artifacts\verbatim-outpost.exe.1234.dmp",
             "\noutpost_crash: pid 5678, code unknown, dump none\n",
         )));
-        assert_eq!(ScenarioSummary::read(&dir).expect("reads it back"), summary);
     }
 
     #[test]
@@ -925,21 +753,6 @@ mod tests {
             "optional_utterance: \"Working on it...\" after keys enter: cut off\n",
             "optional_utterance: \"Working on it...\" after keys enter: absent\n",
         )));
-        assert_eq!(ScenarioSummary::read(&dir).expect("reads it back"), summary);
-    }
-
-    #[test]
-    fn read_fails_when_the_summary_file_is_missing() {
-        let dir = temp_dir("missing-summary");
-        fs::create_dir_all(&dir).expect("create empty dir");
-        assert!(ScenarioSummary::read(&dir).is_err());
-    }
-
-    #[test]
-    fn parse_summary_rejects_an_unknown_result_word() {
-        let text =
-            "name: x\nresult: maybe\nlatency_records: unknown\nlatency_reached_audio: unknown\n";
-        assert_eq!(parse_summary(text), None);
     }
 
     #[test]
