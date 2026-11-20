@@ -7,7 +7,7 @@
 use std::collections::VecDeque;
 
 use verbatim_model::property::{PropertyAnswer, RuntimeId};
-use verbatim_model::request::{FocusNode, HeldIds, NodeRead, NodeWindow, ObjectClass, Probe};
+use verbatim_model::request::{FocusNode, HeldIds, NodeRead, NodeWindow, Probe};
 use verbatim_model::tell::{
     AcceptanceFacts, Checked, ElementToken, EventObject, Payload, Relation, WindowFacet,
 };
@@ -157,7 +157,6 @@ fn last_msaa(object: i32, child: i32) -> LastFocus {
             root_owner: WindowHandle(4),
             ancestor_windows: Vec::new().into(),
         },
-        class: ObjectClass::Plain,
         role: Role::Button,
         since: None,
     }
@@ -429,7 +428,7 @@ fn an_msaa_focus_needs_its_focused_state_and_the_facts_decide() {
     );
     {
         let answer = |facts: Option<&CandidateFacts>| msaa_answer(&candidate, &none, facts);
-        assert_eq!(answer(None), Validity::NeedsRead(Need::FocusedState));
+        assert_eq!(answer(None), Validity::NeedsRead);
         assert_eq!(answer(Some(&found(Some(true)))), Validity::Valid(How::Read));
         assert_eq!(
             answer(Some(&found(Some(false)))),
@@ -453,10 +452,7 @@ fn an_msaa_duplicate_and_the_repeated_item_are_judged_with_no_read() {
     let other = versions(Some(last_msaa(-5, 0)));
     {
         assert_eq!(msaa_answer(&list, &duplicate, None), Validity::Duplicate);
-        assert_eq!(
-            msaa_answer(&list, &other, None),
-            Validity::NeedsRead(Need::FocusedState)
-        );
+        assert_eq!(msaa_answer(&list, &other, None), Validity::NeedsRead);
     }
     // A child above 0 with equal ids is never a duplicate by the test:
     // File Explorer's second focus on an item has no rule of its own.
@@ -467,7 +463,7 @@ fn an_msaa_duplicate_and_the_repeated_item_are_judged_with_no_read() {
             &item,
             None
         ),
-        Validity::NeedsRead(Need::FocusedState)
+        Validity::NeedsRead
     );
 }
 
@@ -588,7 +584,7 @@ fn a_focus_with_no_key_since_names_the_committed_items_ids_and_identity() {
     );
     // Core's own focus committed over it.
     let mut own = state.clone();
-    own.commit_own(false);
+    own.commit_own();
     assert_eq!(
         depth(Subject::Msaa(&list), &view(&own, &cache), Some(&snapshot)),
         TurnDepth::FullIfFocused
@@ -650,13 +646,13 @@ fn the_object_named_is_a_duplicate_unless_refused_before_the_duplicate_test() {
     let (state, _) = committed_item();
     let cache = BackendCache::default();
     let list = focus(-4);
-    assert_eq!(judge_same(&list, &view(&state, &cache)), None);
+    assert_eq!(before_duplicate(&list, &view(&state, &cache)), None);
     let mut hidden = focus(-4);
     if let TellWindow::Found(facts) = &mut hidden.tell.window {
         facts.hidden_frame = true;
     }
     assert_eq!(
-        judge_same(&hidden, &view(&state, &cache)),
+        before_duplicate(&hidden, &view(&state, &cache)),
         Some(Reason::HiddenFrame)
     );
 }
@@ -738,10 +734,7 @@ fn a_menu_start_needs_its_role_and_only_a_menu_popup_is_valid() {
         role: Some(role),
     };
     {
-        assert_eq!(
-            msaa_answer(&start, &none, None),
-            Validity::NeedsRead(Need::MenuRole)
-        );
+        assert_eq!(msaa_answer(&start, &none, None), Validity::NeedsRead);
         assert_eq!(
             msaa_answer(&start, &none, Some(&role(Role::Menu))),
             Validity::Valid(How::Read)
@@ -824,7 +817,6 @@ fn read_of(msaa: Option<HeldIds>, runtime_id: Option<RuntimeId>) -> FocusRead {
         met: None,
         foreground: None,
         value_from_selection: false,
-        class: ObjectClass::Plain,
         runtime_id_reused: false,
         caret: verbatim_model::request::FocusCaret::NoText,
     }
@@ -877,7 +869,7 @@ fn valid_counts_a_needed_read_is_unconfirmed_and_the_rest_do_not_count() {
     assert_eq!(pending(Validity::Valid(How::Read), trace), Pending::Counts);
     assert_eq!(pending(Validity::Valid(How::Again), trace), Pending::Counts);
     assert_eq!(
-        pending(Validity::NeedsRead(Need::FocusedState), trace),
+        pending(Validity::NeedsRead, trace),
         Pending::Unconfirmed(trace)
     );
     assert_eq!(pending(Validity::Duplicate, trace), Pending::No);
@@ -939,10 +931,7 @@ fn a_duplicate_behind_a_newer_unconfirmed_candidate_leaves_the_run_unconfirmed()
     let run = vec![older, newest];
     assert_eq!(
         walked(&run, &state),
-        Some((
-            Validity::NeedsRead(Need::FocusedState),
-            TraceId::from_raw(2)
-        ))
+        Some((Validity::NeedsRead, TraceId::from_raw(2)))
     );
     assert_eq!(
         behind(run, &state, None),

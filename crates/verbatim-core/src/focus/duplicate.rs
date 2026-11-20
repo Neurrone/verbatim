@@ -5,7 +5,7 @@
 //! focus.
 
 use verbatim_model::property::RuntimeId;
-use verbatim_model::request::{MsaaIds, ObjectClass};
+use verbatim_model::request::MsaaIds;
 use verbatim_model::tell::{Checked, Read};
 
 use super::versions::{LastFocus, ReadBy};
@@ -18,8 +18,7 @@ use super::versions::{LastFocus, ReadBy};
 /// by child 0, is a duplicate when repeated, and a list's focus the
 /// outpost redirected to its focused item, which carries the item's ids,
 /// never is. A focus read through `accFocus`
-/// names no event ids, so nothing is its duplicate. The class verdict may
-/// change the test; no class read yet changes it.
+/// names no event ids, so nothing is its duplicate.
 pub(super) fn msaa_duplicate(last: Option<&LastFocus>, ids: &MsaaIds) -> bool {
     let Some(last) = last else {
         return false;
@@ -28,16 +27,14 @@ pub(super) fn msaa_duplicate(last: Option<&LastFocus>, ids: &MsaaIds) -> bool {
         ReadBy::Msaa {
             event: Some(earlier),
             held_child,
-        } => match last.class {
-            ObjectClass::Plain => earlier == ids && *held_child <= 0,
-        },
+        } => earlier == ids && *held_child <= 0,
         ReadBy::Msaa { event: None, .. } | ReadBy::Uia { .. } | ReadBy::Plain => false,
     }
 }
 
 /// Whether a UI Automation focus on `runtime_id`, whose check found
-/// `checked`, is a duplicate of `last`: a UI Automation object whose class
-/// allows no duplicate, equal runtime ids, and the earlier element still
+/// `checked`, is a duplicate of `last`: a UI Automation object, equal
+/// runtime ids, and the earlier element still
 /// has the keyboard focus, by the answer the check carried for the token
 /// that is the readers' last focus. A failed read, or the listener no
 /// longer holding the earlier element, is not a duplicate.
@@ -56,11 +53,7 @@ pub(super) fn uia_duplicate(
     else {
         return false;
     };
-    let allows_duplicate = match last.class {
-        ObjectClass::Plain => false,
-    };
-    !allows_duplicate
-        && earlier == runtime_id
+    earlier == runtime_id
         && checked.is_some_and(|checked| {
             checked
                 .kept
@@ -104,7 +97,6 @@ mod tests {
         LastFocus {
             read_by: ReadBy::Msaa { event, held_child },
             place: place(3),
-            class: ObjectClass::Plain,
             role: verbatim_model::Role::Button,
             since: None,
         }
@@ -117,7 +109,6 @@ mod tests {
                 token: token.map(ElementToken),
             },
             place: place(3),
-            class: ObjectClass::Plain,
             role: verbatim_model::Role::Button,
             since: None,
         }

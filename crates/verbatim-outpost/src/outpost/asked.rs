@@ -35,9 +35,8 @@ use verbatim_model::property::{
 use verbatim_model::request::{
     Answer, Ask, CandidateAnswer, CandidateFacts, CandidateKind, Depth, FindScope, FocusAncestor,
     FocusCaret, FocusDepth, FocusNode, FocusRead, HeldIds, HiddenRoot, KnownAncestor, MsaaIds,
-    MsaaRun, NodeRead, NodeWindow, ObjectClass, ObjectRead, ObjectRef, Outcome, Probe, Purpose,
-    ReadObject, Refusal, RelationFound, RelationQuery, Reply, Request, RouteEnd, RunCandidate,
-    WindowVerdict,
+    MsaaRun, NodeRead, NodeWindow, ObjectRead, ObjectRef, Outcome, Probe, Purpose, ReadObject,
+    Refusal, RelationFound, RelationQuery, Reply, Request, RouteEnd, RunCandidate, WindowVerdict,
 };
 use verbatim_model::{
     Backend, NodeDetails, NodeId, NodeSnapshot, Pid, QueryKind, Role, State, StateSet, TextDetails,
@@ -500,9 +499,10 @@ fn read_apart(
                         }),
                     PropertyId::ComboBoxList => combo_box.as_ref().and_then(|element| {
                         let read = element.read();
-                        let class = verbatim_reader_rules::class::normalize_class_name(
+                        let class = verbatim_model::class::normalize(
                             &verbatim_win32::window::window_class_name(read.hwnd),
-                        );
+                        )
+                        .to_owned();
                         if !read.is_net_framework_win_forms(&class) {
                             return None;
                         }
@@ -1085,9 +1085,6 @@ pub(super) fn focus_read(
                 .store
                 .key_of(ancestor.id)
                 .is_some_and(|(_, _, child)| child != verbatim_ia2::CHILDID_SELF),
-            dialog_text: (ancestor.role == Role::Dialog)
-                .then(|| ancestor.details.description.clone())
-                .flatten(),
         })
         .collect();
     FocusRead {
@@ -1099,7 +1096,6 @@ pub(super) fn focus_read(
             .foreground
             .map(|window| focus_node(window, window.details.window.map(hwnd_of))),
         value_from_selection: focus.value_from_selection,
-        class: ObjectClass::Plain,
         runtime_id_reused: focus.runtime_id_reused,
         caret: caret_of(context, focus.node, focus.details),
     }

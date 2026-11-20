@@ -1,9 +1,8 @@
 //! What the shell's threads learn, and what the reducer says of it
 //! (architecture section 2, "Only the reducer speaks"): the lifecycle
-//! sounds, the error sound, an application that stopped responding, a lock
-//! key's new state, the time and date, the clipboard's result, a shell
-//! item that has gone, the theme page's previews, and the fake focus after
-//! a menu or the Alt+Tab switcher closes. The shell
+//! sounds, the error sound, a lock key's new state, the time and date, the
+//! clipboard's result, a shell item that has gone, and the theme page's
+//! previews. The shell
 //! reads each fact (a key's state, the clock, the clipboard) and the
 //! reducer decides what is said and how, so all speech is ordered,
 //! cancellable and recorded in one place. The scripts of the gestures that

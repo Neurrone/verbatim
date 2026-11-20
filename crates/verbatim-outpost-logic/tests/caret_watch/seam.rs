@@ -32,9 +32,8 @@ use verbatim_model::protocol::{OutpostToCore, UiaSnapshotFact};
 use verbatim_model::request::{
     Answer, Ask, CandidateAnswer, CaretBinding, FocusAncestor, FocusCaret, FocusCaretRead,
     FocusNode, FocusRead, ForegroundReport, HeldIds, Instance, MsaaIds, NodeRead, NodeWindow,
-    ObjectClass, ObjectRead, Outcome, Press as WirePress, PressAction, Probe, ProcessFact,
-    QueueEffect, QueueInput, Reader, Reply, Request as Wire, Route, RouteEnd, RouteStep,
-    WindowVerdict,
+    ObjectRead, Outcome, Press as WirePress, PressAction, Probe, ProcessFact, QueueEffect,
+    QueueInput, Reader, Reply, Request as Wire, Route, RouteEnd, RouteStep, WindowVerdict,
 };
 use verbatim_model::stroke::{HeldStroke, SentTransition, Stroke};
 use verbatim_model::tell::{
@@ -809,12 +808,10 @@ fn focus_read(node: NodeId, window: NodeWindow, values: PropertyValues) -> Focus
                 runtime_id: None,
             },
             simple_child: false,
-            dialog_text: None,
         }],
         met: None,
         foreground: None,
         value_from_selection: false,
-        class: ObjectClass::Plain,
         runtime_id_reused: false,
         caret: FocusCaret::NotRead,
     }

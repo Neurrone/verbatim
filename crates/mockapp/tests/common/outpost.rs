@@ -1606,6 +1606,14 @@ pub fn role_of(node: &FocusNode) -> Role {
     role_in(&node.read.values)
 }
 
+/// The description a focus answer's node was read with: a dialog's text.
+pub fn description_of(node: &FocusNode) -> Option<&str> {
+    match value(&node.read.values, PropertyId::Description) {
+        Some(PropertyValue::Text(text)) => Some(text),
+        _ => None,
+    }
+}
+
 /// The name among `values`.
 pub fn name_in(values: &PropertyValues) -> Option<&str> {
     match value(values, PropertyId::Name) {

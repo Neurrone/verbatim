@@ -1,35 +1,33 @@
 # verbatim-reader-rules
 
 What both of Verbatim's readers, an outpost and the focus listener, apply
-before reading a window: NVDA's class verdict and the class name
-normalization it is judged on, the kept verdicts on a window's provider,
+before reading a window: NVDA's class verdict, the kept verdicts on a window's provider,
 NVDA's limit on a thread's events, and a window's handle that is never 0.
 NVDA's acceptance test is Core's (`crates/verbatim-core/src/focus/acceptance.rs`),
 since Core judges every tell. A rule both readers apply is defined here once, because the two
 readers' crates may not depend on each other and no test could tie two
 copies (decision D14, "Where the rules run"). It is a logic crate: pure,
 in the GPL tier, with no Windows dependency, so it builds and is tested on
-Linux. It depends on nothing of Verbatim's.
+Linux. It depends on `verbatim-model` alone, whose `class` module holds
+NVDA's class lists and the class name normalization the verdict is
+judged on.
 
 Public API:
 
 - `class` — window classes as NVDA judges them.
-  `normalize_class_name(raw)` is a class name as NVDA normalizes it
-  before matching any class-based rule: a Windows Forms name cut down to
-  the control class it wraps, an `ATL:` prefix dropped, and the result
-  looked up in NVDA's class map. `is_progress_bar_class(normalized)` is
+  `is_progress_bar_class(normalized)` is
   whether a normalised name is one NVDA recognises as a progress bar.
   `WindowClasses::new(raw, root)` holds a
-  window's raw class, the normalized one and its root ancestor's; the
+  window's raw class, the one `verbatim_model::class::normalize` gives
+  and its root ancestor's; the
   caller reads the names (`verbatim_win32::window::window_classes`).
   `class_verdict(&classes)` is the verdict NVDA's class lists give
   (`ClassVerdict::Uia`, `NonUia`, or `Unknown` when only the probe can
   decide): the good list and the Windows 11 shell rule first, then the
   bad list. The focus listener skips a read by it; every outpost's
   arbitrator gives the same verdict through `classify_with`, which takes
-  the arbitrator's own lists, built from `GOOD_UIA_CLASSES` and
-  `BAD_UIA_CLASSES` with its configured additions. `SHELL_ROOT_CLASSES`
-  are the shell's top-level windows. `post_probe_check`, `PostProbeCheck`,
+  the arbitrator's own lists, built from the model's `GOOD` and `BAD`
+  with its configured additions. `post_probe_check`, `PostProbeCheck`,
   `provider_usable` and `has_windows_forms_class` are NVDA's checks of a
   window with a provider before it is used, the outposts' arbitrator's
   whole test. `listener_provider(classes, raw_provider)` is the focus

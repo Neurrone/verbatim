@@ -23,11 +23,8 @@ guide maps those behaviors onto the crate's types and modules.
   application without the focus; the supervisor starts an outpost for no
   other notification.
 - `focus_rules`: the focus rules the reducer applies after an event is
-  read, each defined once (`docs/parity/focus-events.md`,
-  `docs/parity/changes-and-selection.md` and
-  `docs/parity/focus-context.md`). The rules ported from NVDA that the
-  readers make, the acceptance test and NVDA's foreground tests, are in
-  `verbatim-reader-rules`, since ported code stays in the GPL-tier crates.
+  read, each defined once (`docs/parity/changes-and-selection.md` and
+  `docs/parity/focus-context.md`).
   - `ChangeKind`, `ChangeTarget` and `change_target`: a name,
     description, or value change is spoken on the focus, a state change
     on the focus or an ancestor whose state changes are spoken.
@@ -47,12 +44,6 @@ guide maps those behaviors onto the crate's types and modules.
     the two entries, or `None` when the lines share no object; the reducer
     keeps the previous line to that entry and enters the new entries below
     it. Neither allocates.
-  - The module also exports items no code in the workspace calls:
-    `ForegroundRelation`, `HeldNode`, `RepeatEvidence` with
-    `repeats_focus`, `change_candidates`, `SelectionTarget` with
-    `selection_target` and `is_selection_container`, and
-    `already_entered_ancestors`.
-- `is_selection_container(role)`: re-exported from `focus_rules`.
 - `SrState`, the reducer's state:
   - `new()`.
   - `focused()`, the live focus and its application; `focus_source()`, the

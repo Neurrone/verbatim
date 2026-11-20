@@ -204,7 +204,7 @@ pub(crate) fn key_trace(input: &Input) -> Option<TraceId> {
 /// title"): it gives the keyboard
 /// hook's view of the foreground and, unless the window is one of
 /// Verbatim's own, attention and the record's front, and it applies to the
-/// last queued focus, the left mark's one home (`crate::focus_queue`): the
+/// last queued focus, the left mark's one home (`crate::focus::versions`): the
 /// reports Core judges after it that were observed after it find that focus
 /// left for its window when the window is unrelated to it. It speaks
 /// nothing, cuts nothing, sets no ordering stamp, and changes no node,
@@ -255,7 +255,7 @@ fn command_arrived(state: &mut SrState, input: &Input) -> Vec<Effect> {
 }
 
 /// An input that waited behind focus reports, handled in its turn
-/// (`crate::focus_queue`): a key, key command or script acts on the focus
+/// (`crate::focus::versions`): a key, key command or script acts on the focus
 /// executed before it, behind a held key if one waits then, its effects
 /// under its own trace; a menu's or the switcher's end judges the focus
 /// taken since it.
@@ -410,7 +410,7 @@ pub(crate) fn take_silently(state: &mut SrState, owned: &Report) {
 ///   not the entered window or that is judged left, says the window's
 ///   title when its line does not already speak it ([`window_title`]).
 /// - A report judged left is executed as a focus from another top-level
-///   window is (the left mark, `crate::focus_queue`).
+///   window is (the left mark, `crate::focus::versions`).
 pub(crate) fn execute_report(state: &mut SrState, owned: &Report, left: bool) -> Vec<Effect> {
     let report = &owned.view();
     let window = owned.window.as_ref();
@@ -547,7 +547,7 @@ fn focus_context(
 /// The focus line a report is planned or executed against, owned so the
 /// plan can write the state: a focus, and the report's verdict, whether a
 /// foreground change left the last queued focus for a window other than
-/// the report's before it (`crate::focus_queue`). A report from the window
+/// the report's before it (`crate::focus::versions`). A report from the window
 /// the focus was left for is not judged left, so its line is compared with
 /// the focus's as it is, as NVDA compares its focus line with the one
 /// before, and a window owned across processes meets its owner both ways.
@@ -662,7 +662,7 @@ fn spoken_record(
 /// is cut off when `cut` says so or say-all was reading. When the focus
 /// was `left`, what is kept of its node is reset as for another node: the
 /// terminal's speech state and its caret, as the same switch with no stall
-/// leaves them (the left mark, `crate::focus_queue`).
+/// leaves them (the left mark, `crate::focus::versions`).
 fn end_text_activity(
     state: &mut SrState,
     node: NodeId,

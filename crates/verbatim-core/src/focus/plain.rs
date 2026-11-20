@@ -35,8 +35,8 @@ use serde::{Deserialize, Serialize};
 use verbatim_model::property::{PropertyAnswer, PropertyId, PropertyValue, PropertyValues};
 use verbatim_model::request::{
     DesktopFront, FocusCaret, FocusNode, FocusRead, Front, GhostFront, NodeRead, NodeWindow,
-    ObjectClass, ObjectRead, ObjectRef, Outcome as WireOutcome, Refusal, RelationFound,
-    RelationQuery, Reply, Request as Wire,
+    ObjectRead, ObjectRef, Outcome as WireOutcome, Refusal, RelationFound, RelationQuery, Reply,
+    Request as Wire,
 };
 use verbatim_model::{
     Issuer, NodeId, Pid, Role, State, StateSet, TextReply, WindowFacts, WindowHandle,
@@ -491,7 +491,6 @@ fn commit(
         met: None,
         foreground: Some(focus),
         value_from_selection: false,
-        class: ObjectClass::Plain,
         runtime_id_reused: false,
         caret: FocusCaret::NoText,
     };

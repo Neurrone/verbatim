@@ -267,7 +267,7 @@ fn a_last_focus_held_by_child_0_has_no_identity_check() {
 fn an_own_focus_committed_leaves_the_fence_and_names_no_identity() {
     let mut held = spoken_copy(3);
     let fence = since(&held);
-    held.state.versions.commit_own(false);
+    held.state.versions.commit_own();
     assert_eq!(since(&held), fence);
     feed_at(&mut held, 3_000, entry(item_tell(3_000)));
     assert_eq!(depth_out(&held), Depth::FullIfFocused);

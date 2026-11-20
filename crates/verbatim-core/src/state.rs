@@ -605,10 +605,8 @@ pub struct SrState {
     /// The selection offsets of the last caret tell's answer read through
     /// an edit control's messages, which the next one is compared with
     /// (`crate::text_facts::edit_selection_repeated`).
-    #[serde(default)]
     pub(crate) edit_selection: Option<verbatim_model::EditSelection>,
     /// The input desktop and the lock state (`crate::input_desktop`).
-    #[serde(default)]
     pub(crate) desktop: crate::input_desktop::Desktop,
     /// The event queue (`crate::entries`): its entries, its requests and
     /// the front entry's checkpoint, plain data. Empty while a step of the

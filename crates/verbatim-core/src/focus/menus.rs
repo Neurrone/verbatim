@@ -31,7 +31,7 @@ use super::msaa_run::{FullIfFocused, known_for, read_full};
 use super::plain::HungRead;
 use super::retake::{CurrentFocusRead, Focused, read_by};
 use super::validity::{self, Answered, Pending, Settled, Subject, Validity, View, Within};
-use super::versions::{Committed, ReadBy};
+use super::versions::Committed;
 use crate::entries::{Candidate, Entries, Entry};
 use crate::event_queue::{Cx, FOCUS_DUE_US, Item, Outcome};
 use crate::state::SrState;
@@ -138,7 +138,7 @@ async fn start(cx: &mut Cx<Entries>, candidate: &Candidate, run_executed: bool) 
             return;
         }
         Validity::Duplicate => return,
-        Validity::Valid(_) | Validity::NeedsRead(_) => {}
+        Validity::Valid(_) | Validity::NeedsRead => {}
     }
     let known = known_for(cx, candidate.tell.process);
     let due_us = cx.due_in(FOCUS_DUE_US);
@@ -164,22 +164,7 @@ async fn start(cx: &mut Cx<Entries>, candidate: &Candidate, run_executed: bool) 
         }
         Settled::Duplicate => return,
     }
-    let Some(held) = read.msaa else {
-        return;
-    };
-    let read_by = ReadBy::Msaa {
-        event: Some(held.event),
-        held_child: held.held_child,
-    };
-    let origin = Origin::of_tell(
-        &candidate.tell,
-        candidate.window,
-        cx.foreground(),
-        candidate.fence,
-    );
-    let executed = execute(&mut cx.facts_mut(), &origin, &read, &known, read_by);
-    let fence = crate::entries::front_fence(cx);
-    executed.deliver(cx, fence);
+    super::msaa_run::executed(cx, candidate, &read, &known);
 }
 
 /// The function of a check entry: the foreground application's focus read

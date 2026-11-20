@@ -13,16 +13,8 @@
 //!
 //! What an entry is and what its function does are the [`Logic`]'s; the
 //! queue holds only what crosses features: the front, the waiting entries,
-//! the requests and the one judge of their endings ([`Logic::ends`]). Built beside the reducer: nothing feeds it
-//! yet.
+//! the requests and the one judge of their endings ([`Logic::ends`]).
 
-#![cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "built beside the reducer; the focus rules switch over to it in a later step of build 1"
-    )
-)]
 // A borrow of the shared state held across an await would be taken again
 // by the driver when the function's request ends.
 #![deny(clippy::await_holding_refcell_ref)]
@@ -44,9 +36,9 @@ use std::future::Future;
 use std::pin::Pin;
 
 use serde::{Deserialize, Serialize};
-use verbatim_model::{Pid, WindowHandle};
+use verbatim_model::{Backend, Pid, WindowHandle};
 
-use crate::focus::backend::{Backend, BackendCache, JudgedWindow, WindowKey};
+use crate::focus::backend::{BackendCache, JudgedWindow, WindowKey};
 
 pub(crate) use driver::{Core, Cx, Queue, ReplayMismatch, State};
 pub(crate) use inbox::{CoreRequest, Effect, Input, Timed};

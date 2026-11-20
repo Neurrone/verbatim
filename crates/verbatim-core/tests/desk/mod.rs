@@ -16,8 +16,8 @@ use verbatim_model::property::{
 };
 use verbatim_model::request::{
     Answer, FocusAncestor, FocusCaret, FocusNode, FocusRead, Instance, NodeRead, NodeWindow,
-    ObjectClass, ObjectRead, Outcome, ProcessFact, QueueEffect, QueueInput, Reader, Reply,
-    Request as Wire, RequestNumber, Route, RouteEnd, RouteStep,
+    ObjectRead, Outcome, ProcessFact, QueueEffect, QueueInput, Reader, Reply, Request as Wire,
+    RequestNumber, Route, RouteEnd, RouteStep,
 };
 use verbatim_model::tell::{
     AcceptanceFacts, Checked, ElementToken, Event, EventObject, Payload, Read, Relation,
@@ -365,13 +365,11 @@ pub fn focus_read_of(app: App, focus: &NodeSnapshot, ancestors: &[NodeSnapshot])
             .map(|ancestor| FocusAncestor {
                 node: focus_node(app, ancestor),
                 simple_child: false,
-                dialog_text: None,
             })
             .collect(),
         met: None,
         foreground: Some(frame_of(app)),
         value_from_selection: false,
-        class: ObjectClass::Plain,
         runtime_id_reused: false,
         caret: FocusCaret::NoText,
     }

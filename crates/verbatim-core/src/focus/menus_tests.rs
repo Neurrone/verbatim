@@ -435,7 +435,6 @@ fn a_menu_opening_behind_a_run_whose_newest_is_a_duplicate_is_kept() {
             root_owner: WindowHandle(4),
             ancestor_windows: Vec::new().into(),
         },
-        class: verbatim_model::request::ObjectClass::Plain,
         role: verbatim_model::Role::EditableText,
         since: None,
     });

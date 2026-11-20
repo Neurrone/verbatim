@@ -35,9 +35,9 @@ except the Explorer shell rule above, which is core policy.
 
 ### The class lists the per-window verdict reads
 
-The per-window verdict above is judged from the window's class, normalized first. These are NVDA's lists at the pin, written here so that Core can apply them to the class each event carries.
+The per-window verdict above is judged from the window's class, normalized first. These are NVDA's lists at the pin, written here so that Core and both readers apply them, from one copy in `verbatim-model`, to a window's class.
 
-Normalizing a class name (`Window.normalizeWindowClassName`, `NVDAObjects/window/__init__.py` 338 to 362): a name found in NVDA's class map is replaced by its target; otherwise a Windows Forms name of the form `WindowsForms` followed by digits, a dot, the inner name, `.app.` and anything after, or an `ATL:` name, is reduced to its inner name, which is then looked up in the map; otherwise the name is kept (25 to 26). The map (444 to 490), by target:
+Normalizing a class name (`Window.normalizeWindowClassName`, `NVDAObjects/window/__init__.py` 338 to 362): a name found in NVDA's class map is replaced by its target; otherwise a Windows Forms name of the form `WindowsForms` followed by any number of digits, none included, a dot, the inner name up to the last `.app.`, and anything after, or an `ATL:` name, is reduced to its inner name, which is then looked up in the map; an empty inner name, or any other name, is kept (25 to 26). The map (444 to 490), by target:
 
 - To `Edit`: `EDIT`, `TTntEdit.UnicodeClass`, `TMaskEdit`, `TTntMemo.UnicodeClass`, `TRichViewEdit`, `TInEdit.UnicodeClass`, `TInEdit`, `TEdit`, `TFilenameEdit`, `TSpinEdit`, `ThunderRT6TextBox`, `TMemo`, `TPasswordEdit`, `THppEdit.UnicodeClass`, `TUnicodeTextEdit.UnicodeClass`, `TTextEdit`, `TPropInspEdit`, `TFilterbarEdit.UnicodeClass`, `EditControl`, `TNavigableTntMemo.UnicodeClass`, `TNavigableTntEdit.UnicodeClass`, `TAltEdit.UnicodeClass`, `TAltEdit`, `TDefEdit`, `TAccessibleEdit`, `TNumEdit`.
 - To `RichEdit20`: `TRichEdit`, `WFMAINRE`, `RichEdit20A`, `RichEdit20W`, `TChatRichEdit`, `TskRichEdit.UnicodeClass`, `RichEdit20WPT`, `TChatRichEdit.UnicodeClass`, `TMyRichEdit`, `TExRichEdit`, `RichTextWndClass`, `TSRichEdit`, `TRxRichEdit`, `TAccessibleRichEdit`.

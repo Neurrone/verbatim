@@ -43,7 +43,7 @@ use verbatim_uia_rops::Path;
 use crate::text::edit::EditText;
 use crate::text::uia::{TextSupport, UiaPos, UiaText};
 use crate::text::{self, NodeTextCopy, Slot, TextError, TextSource as _};
-use verbatim_reader_rules::class::normalize_class_name;
+use verbatim_model::class::normalize;
 use verbatim_win32::window::window_class_name;
 
 use verbatim_outpost_logic::{WatchProgram, WatchWork};
@@ -290,7 +290,7 @@ fn edit_version(hwnd: isize, object: i32, child: i32) -> Option<u8> {
     if object != OBJID_CLIENT.0 || child != CHILDID_SELF {
         return None;
     }
-    verbatim_ia2::edit::edit_api_version(&normalize_class_name(&window_class_name(hwnd)))
+    verbatim_ia2::edit::edit_api_version(normalize(&window_class_name(hwnd)))
 }
 
 /// A UIA node's text, its patterns fetched once and kept, its reads

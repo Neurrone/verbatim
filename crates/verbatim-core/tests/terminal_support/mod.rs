@@ -19,8 +19,8 @@ use verbatim_model::property::{
 };
 use verbatim_model::request::{
     Answer, Ask, CaretBinding, FocusCaret, FocusNode, FocusRead, ForegroundReport, Instance,
-    NodeRead, NodeWindow, ObjectClass, Outcome, Press, PressAction, QueueEffect, QueueInput,
-    Reader, Refusal, Reply, Request as Wire,
+    NodeRead, NodeWindow, Outcome, Press, PressAction, QueueEffect, QueueInput, Reader, Refusal,
+    Reply, Request as Wire,
 };
 use verbatim_model::tell::{Event, EventObject, Payload, TellWindow};
 use verbatim_model::{
@@ -349,7 +349,6 @@ fn focus_read(depth: u64, console: bool) -> FocusRead {
                 ])),
             },
             simple_child: false,
-            dialog_text: None,
         })
         .chain(console.then(console_window))
         .collect();
@@ -376,7 +375,6 @@ fn focus_read(depth: u64, console: bool) -> FocusRead {
         met: None,
         foreground: None,
         value_from_selection: false,
-        class: ObjectClass::Plain,
         runtime_id_reused: false,
         caret: FocusCaret::NotRead,
     }
@@ -412,7 +410,6 @@ fn console_window() -> verbatim_model::request::FocusAncestor {
             runtime_id: Some(RuntimeId(vec![42, 99_999])),
         },
         simple_child: false,
-        dialog_text: None,
     }
 }
 

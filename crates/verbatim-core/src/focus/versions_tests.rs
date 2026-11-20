@@ -2,7 +2,7 @@
 //! against columns B to H.
 
 use verbatim_model::property::RuntimeId;
-use verbatim_model::request::{KnownAncestor, ObjectClass};
+use verbatim_model::request::KnownAncestor;
 use verbatim_model::tell::ElementToken;
 use verbatim_model::{NodeId, OutpostId, Pid, WindowHandle};
 
@@ -38,20 +38,17 @@ pub(crate) fn kept(top_level: u64) -> Kept {
                 runtime_id: Some(RuntimeId(vec![42, 2])),
                 window: None,
                 simple_child: false,
-                dialog_text: None,
             },
             KeptAncestor {
                 node: NodeId::new(3).with_outpost(OUTPOST),
                 runtime_id: Some(RuntimeId(vec![42, 3])),
                 window: Some(WindowHandle(top_level)),
                 simple_child: false,
-                dialog_text: None,
             },
         ]
         .into(),
         foreground: None,
         value_from_selection: false,
-        class: ObjectClass::Plain,
         role: verbatim_model::Role::Button,
         own_window: None,
         selection: crate::text_facts::SelectionFacts::default(),
@@ -77,8 +74,8 @@ fn at_startup_nothing_is_known_and_nothing_is_related() {
 #[test]
 fn at_startup_core_commits_its_own_focus_and_the_last_stays_empty() {
     let mut versions = Versions::default();
-    versions.commit_own(true);
-    assert_eq!(versions.committed, Committed::Own { source: None });
+    versions.commit_own();
+    assert_eq!(versions.committed, Committed::Own);
     assert_eq!(versions.last, None);
 }
 
@@ -175,36 +172,10 @@ fn a_marker_with_the_reader_ended_empties_the_last() {
 }
 
 #[test]
-fn core_commits_its_own_focus_over_a_reader_focus() {
-    let mut versions = normal();
-    versions.commit_own(false);
-    assert_eq!(
-        versions.committed,
-        Committed::Own {
-            source: Some(Box::new(kept(10)))
-        }
-    );
-    assert_eq!(versions.last, Some(kept(10).last(Fence::default())));
-    // Its source's ancestors are known; the caret has no target.
-    assert_eq!(versions.known_ancestors(None).len(), 3);
-    assert!(versions.caret_target().is_none());
-    // A newer own focus replaces it, keeping the source.
-    versions.commit_own(false);
-    assert_eq!(
-        versions.committed,
-        Committed::Own {
-            source: Some(Box::new(kept(10)))
-        }
-    );
-    // Its reader ending does nothing.
-    assert_eq!(versions.outpost_ended(OUTPOST), ReaderEnd::Nothing);
-}
-
-#[test]
 fn the_sleeping_focus_has_no_ancestors_and_relates_to_nothing() {
     let mut versions = normal();
-    versions.commit_own(true);
-    assert_eq!(versions.committed, Committed::Own { source: None });
+    versions.commit_own();
+    assert_eq!(versions.committed, Committed::Own);
     assert_eq!(versions.known_ancestors(Some(OUTPOST)), Vec::new());
     versions.foreground_marker(WindowHandle(10), WindowHandle(10));
     assert_eq!(versions.last, None);
@@ -249,7 +220,6 @@ fn an_ended_generations_focus_keeps_known_what_another_generation_minted() {
         runtime_id: Some(RuntimeId(vec![42, 99])),
         window: Some(WindowHandle(99)),
         simple_child: false,
-        dialog_text: None,
     });
     dialog.ancestors = ancestors.into();
     let mut versions = Versions::default();

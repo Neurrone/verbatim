@@ -202,7 +202,10 @@ fn a_slow_dialog_text_is_reported_with_the_focus() {
                 focused.read.ancestors
             )
         });
-    assert_eq!(dialog.dialog_text.as_deref(), Some(QUESTION));
+    assert_eq!(
+        common::outpost::description_of(&dialog.node),
+        Some(QUESTION)
+    );
     // Three calls: the dialog window's element, the walk down the route to
     // the focus, and one program reading the focus's states with the
     // dialog's children. The old report made two, but never registered

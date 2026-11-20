@@ -389,7 +389,6 @@ fn paris_read(ancestor: Option<(&str, Role)>) -> Reply {
                     runtime_id: Some(RuntimeId(vec![42, 6])),
                 },
                 simple_child: false,
-                dialog_text: None,
             },
         );
     }

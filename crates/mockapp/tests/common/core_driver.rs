@@ -489,11 +489,10 @@ impl CoreDriver {
             object: event.id_object,
             child: event.id_child,
         };
-        let listed = verbatim_reader_rules::class::is_progress_bar_class(
-            &verbatim_reader_rules::class::normalize_class_name(
+        let listed =
+            verbatim_reader_rules::class::is_progress_bar_class(verbatim_model::class::normalize(
                 &verbatim_win32::window::window_class_name(event.hwnd),
-            ),
-        );
+            ));
         let verdict = self
             .bars
             .iter()

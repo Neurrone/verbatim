@@ -3771,7 +3771,7 @@ fn a_dialog_the_listener_read_has_its_text_on_its_first_report() {
             .iter()
             .map(|ancestor| (
                 common::outpost::role_of(&ancestor.node),
-                ancestor.dialog_text.as_deref()
+                common::outpost::description_of(&ancestor.node)
             ))
             .collect::<Vec<_>>(),
         [(Role::Dialog, Some(QUESTION))],

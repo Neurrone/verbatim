@@ -47,6 +47,7 @@
 )]
 
 mod calls;
+pub mod class;
 mod event;
 pub mod event_kind;
 mod gesture;

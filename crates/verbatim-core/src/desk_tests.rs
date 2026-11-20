@@ -10,8 +10,8 @@ use verbatim_model::property::{
     PropertyAnswer, PropertyId, PropertyValue, PropertyValues, RuntimeId,
 };
 use verbatim_model::request::{
-    FocusAncestor, FocusCaret, FocusNode, FocusRead, NodeRead, NodeWindow, ObjectClass, ObjectRead,
-    Reply, Request as Wire, Route, RouteEnd, RouteStep, WindowVerdict,
+    FocusAncestor, FocusCaret, FocusNode, FocusRead, NodeRead, NodeWindow, ObjectRead, Reply,
+    Request as Wire, Route, RouteEnd, RouteStep, WindowVerdict,
 };
 use verbatim_model::tell::{
     AcceptanceFacts, Checked, ElementToken, Event, EventObject, Payload, Read, Relation,
@@ -360,13 +360,11 @@ pub(crate) fn focus_read_of(
             .map(|ancestor| FocusAncestor {
                 node: focus_node(app, ancestor),
                 simple_child: false,
-                dialog_text: None,
             })
             .collect(),
         met: None,
         foreground: Some(frame_of(app)),
         value_from_selection: false,
-        class: ObjectClass::Plain,
         runtime_id_reused: false,
         caret: FocusCaret::NoText,
     }

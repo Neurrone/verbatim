@@ -1,5 +1,5 @@
 //! Window class names as NVDA compares them: normalized
-//! (`verbatim_reader_rules::class::normalize_class_name`), so that a
+//! (`verbatim_model::class::normalize`), so that a
 //! control wrapped by Windows Forms or ATL, or a third-party class
 //! compatible with a standard one, is handled as the control it is. Every
 //! class-based rule in this crate, such as the `SysTreeView32` and
@@ -11,7 +11,5 @@
 /// window. A local call, safe even against a hung window.
 #[must_use]
 pub fn normalized_class_of(hwnd: isize) -> String {
-    verbatim_reader_rules::class::normalize_class_name(&verbatim_win32::window::window_class_name(
-        hwnd,
-    ))
+    verbatim_model::class::normalize(&verbatim_win32::window::window_class_name(hwnd)).to_owned()
 }

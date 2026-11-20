@@ -749,8 +749,6 @@ pub struct FocusAncestor {
     /// Whether it is a simple child, never spoken as a state change's
     /// ancestor.
     pub simple_child: bool,
-    /// Its dialog text, when it is a dialog the walk read.
-    pub dialog_text: Option<String>,
 }
 
 /// A focus answer: what Core keeps with the committed focus, each carried
@@ -775,8 +773,6 @@ pub struct FocusRead {
     pub foreground: Option<FocusNode>,
     /// Whether its value comes from its selection.
     pub value_from_selection: bool,
-    /// Its class verdict.
-    pub class: ObjectClass,
     /// Whether the event's runtime id named another element before: the
     /// node keeps its id, and Core forgets what it kept of the earlier
     /// element's text.

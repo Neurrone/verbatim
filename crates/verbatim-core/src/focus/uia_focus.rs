@@ -105,7 +105,7 @@ pub(crate) async fn run(mut cx: Cx<Entries>, focus: UiaFocus) {
             return;
         }
         Validity::Valid(How::Read) => {}
-        Validity::Duplicate | Validity::Refused(_) | Validity::NeedsRead(_) => return,
+        Validity::Duplicate | Validity::Refused(_) | Validity::NeedsRead => return,
     }
     // Valid, the focus's walk found its nearest window.
     let Some(window) = request_window(&focus.tell) else {

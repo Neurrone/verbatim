@@ -201,7 +201,6 @@ pub(crate) struct Queue<E, F> {
     /// ends.
     pub(super) timers: Vec<(u64, E)>,
     /// The outpost generation record (Table 5).
-    #[serde(default)]
     pub(crate) record: crate::supervisor::record::Record,
 }
 
@@ -475,6 +474,7 @@ impl<L: Logic> Core<L> {
 
     /// The state as a dump writes it: each entry, the answers the front
     /// has had and its request.
+    #[cfg(test)]
     pub(crate) fn dump(&self) -> String {
         format!("{self:?}")
     }
@@ -494,6 +494,7 @@ impl<L: Logic> Core<L> {
     }
 
     /// The one time Core waits for, which the shell's timer is set to.
+    #[cfg(test)]
     pub(crate) fn next_due(&self) -> Option<u64> {
         let shared = self.shared.borrow();
         let state = &shared.state;
@@ -817,13 +818,9 @@ impl<R: Request> Typed<R> {
 
 /// An outcome without a result, as an outcome of any request.
 pub(super) fn widen<T>(outcome: Outcome<Infallible>) -> Outcome<T> {
-    match outcome {
-        Outcome::Result(never) => match never {},
-        Outcome::Refused(refused) => Outcome::Refused(refused),
-        Outcome::NotThere => Outcome::NotThere,
-        Outcome::NotResponding => Outcome::NotResponding,
-        Outcome::ReaderEnded => Outcome::ReaderEnded,
-        Outcome::NoLongerAwaited(reason) => Outcome::NoLongerAwaited(reason),
+    match outcome.split() {
+        Ok(never) => match never {},
+        Err(other) => other,
     }
 }
 

@@ -61,14 +61,10 @@ pub(crate) async fn ask<R, T>(cx: &mut Cx<Entries>, request: R, due_us: u64) -> 
 where
     R: Request<Reply = Hidden<T>>,
 {
-    let dialog = match cx.ask(request, due_us).await {
-        Outcome::Result(Hidden::Read(read)) => return Some(Outcome::Result(read)),
-        Outcome::Result(Hidden::Dialog(dialog)) => dialog,
-        Outcome::Refused(refused) => return Some(Outcome::Refused(refused)),
-        Outcome::NotThere => return Some(Outcome::NotThere),
-        Outcome::NotResponding => return Some(Outcome::NotResponding),
-        Outcome::ReaderEnded => return Some(Outcome::ReaderEnded),
-        Outcome::NoLongerAwaited(reason) => return Some(Outcome::NoLongerAwaited(reason)),
+    let dialog = match cx.ask(request, due_us).await.split() {
+        Ok(Hidden::Read(read)) => return Some(Outcome::Result(read)),
+        Ok(Hidden::Dialog(dialog)) => dialog,
+        Err(other) => return Some(other),
     };
     let fence = front_fence(cx);
     let mut facts = cx.facts_mut();

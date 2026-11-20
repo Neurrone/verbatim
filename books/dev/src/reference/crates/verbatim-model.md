@@ -62,6 +62,17 @@ recorder unchanged. What the reducer does with each type is in
   (architecture section 5).
 - `Backend`: `Uia` or `Msaa`, which client stack sourced a node or event;
   diagnostics only above the outpost.
+- `class`: NVDA's window class lists and its class name normalization,
+  written from `docs/parity/backends.md` ("The class lists the
+  per-window verdict reads") for Core and both readers. `normalize(class)`
+  replaces a name found in the class map (`CLASS_MAP`) by its target;
+  otherwise a Windows Forms name (`WindowsForms`, any digits, a dot, the
+  inner name up to the last `.app.`) or an `ATL:` name is reduced to its
+  inner name and looked up in the map; otherwise the name is kept.
+  `by_class(class, root_class)` is the verdict the lists give: a
+  normalized class in `GOOD` is UI Automation, then a window under one of
+  `SHELL_ROOTS` other than the Start button, then a normalized class in
+  `BAD` is MSAA, otherwise none.
 - `Role`, `State`, `StateSet`: the role vocabulary, with a counterpart for
   every role both backends' NVDA tables map that Verbatim speaks
   (`Role::ALL` lists them; `Role::Terminal` is NVDA's terminal role), the

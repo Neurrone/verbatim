@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use verbatim_model::property::RuntimeId;
-use verbatim_model::request::{KnownAncestor, MsaaIds, ObjectClass};
+use verbatim_model::request::{KnownAncestor, MsaaIds};
 use verbatim_model::tell::ElementToken;
 use verbatim_model::{Issuer, NodeId, OutpostId, Pid, Role, WindowHandle};
 
@@ -104,8 +104,6 @@ pub(crate) struct LastFocus {
     pub(crate) read_by: ReadBy,
     /// Where it is.
     pub(crate) place: Place,
-    /// Its class verdict, which may change the duplicate test.
-    pub(crate) class: ObjectClass,
     /// Its role, which the menu-start rule judges.
     pub(crate) role: Role,
     /// The speech fence of the entry that executed it, while no key has
@@ -120,8 +118,7 @@ pub(crate) struct LastFocus {
 impl LastFocus {
     /// Whether it names the focus Core keeps as `kept`, whatever its fence.
     pub(crate) fn names(&self, kept: &Kept) -> bool {
-        (&self.read_by, &self.place, self.class, self.role)
-            == (&kept.read_by, &kept.place, kept.class, kept.role)
+        (&self.read_by, &self.place, self.role) == (&kept.read_by, &kept.place, kept.role)
     }
 }
 
@@ -151,15 +148,12 @@ pub(crate) struct Kept {
     pub(crate) foreground: Option<NodeId>,
     /// Whether its value comes from its selection.
     pub(crate) value_from_selection: bool,
-    /// Its class verdict.
-    pub(crate) class: ObjectClass,
     /// Its role, as the answer read it.
     pub(crate) role: Role,
     /// Its own window, for a window object: by it the next focus read's
     /// walk meets the focus itself, as an ancestor of a focus inside it.
     pub(crate) own_window: Option<WindowHandle>,
     /// Its selection baseline and text-changed flag (Table 17).
-    #[serde(default)]
     pub(crate) selection: crate::text_facts::SelectionFacts,
     /// Whether it is a console host's terminal: a terminal whose tell's
     /// window, or, for a focus Core read itself, whose nearest ancestor
@@ -167,7 +161,6 @@ pub(crate) struct Kept {
     /// event is its caret, so the system caret's tells are dropped while
     /// it is committed (`docs/design/readers-tell-core-asks-build1.md`,
     /// "Terminals in this build").
-    #[serde(default)]
     pub(crate) console_terminal: bool,
 }
 
@@ -183,16 +176,13 @@ pub(crate) struct KeptAncestor {
     /// Whether it is a simple child, never spoken as a state change's
     /// ancestor.
     pub(crate) simple_child: bool,
-    /// Its dialog text, when it is a dialog the walk read.
-    pub(crate) dialog_text: Option<String>,
 }
 
 impl Kept {
     /// The focus itself as the next focus read's walk meets it, an
-    /// ancestor of a focus inside it, with `dialog_text`, its dialog text
-    /// when it is a dialog: NVDA's walk meets the old focus as it meets
+    /// ancestor of a focus inside it: NVDA's walk meets the old focus as it meets
     /// the old focus's ancestors (`docs/parity/focus-context.md`).
-    pub(crate) fn as_ancestor(&self, dialog_text: Option<String>) -> KeptAncestor {
+    pub(crate) fn as_ancestor(&self) -> KeptAncestor {
         KeptAncestor {
             node: self.node,
             runtime_id: match &self.read_by {
@@ -201,7 +191,6 @@ impl Kept {
             },
             window: self.own_window,
             simple_child: matches!(self.read_by, ReadBy::Msaa { held_child, .. } if held_child != 0),
-            dialog_text,
         }
     }
 
@@ -211,7 +200,6 @@ impl Kept {
         LastFocus {
             read_by: self.read_by.clone(),
             place: self.place.clone(),
-            class: self.class,
             role: self.role,
             since: Some(since),
         }
@@ -230,13 +218,8 @@ pub(crate) enum Committed {
     /// re-take, its ids dead.
     Ended(Box<Kept>),
     /// A focus Core committed itself, such as the sleeping focus while
-    /// the secure desktop is up, with the reader's focus it stands over,
-    /// if any.
-    Own {
-        /// The reader's focus it was committed over, whose ancestors stand
-        /// for its own; `None` for a sourceless focus.
-        source: Option<Box<Kept>>,
-    },
+    /// the secure desktop is up.
+    Own,
 }
 
 /// The two versions of the focus.
@@ -272,18 +255,9 @@ impl Versions {
     }
 
     /// Core commits its own focus (column C): the committed focus becomes
-    /// it, standing over the reader's focus committed until now, if any;
-    /// the readers' last focus is unchanged. A newer own focus keeps the
-    /// source of the one it replaces.
-    pub(crate) fn commit_own(&mut self, sourceless: bool) {
-        let source = match std::mem::take(&mut self.committed) {
-            Committed::Read(kept) | Committed::Ended(kept) => Some(kept),
-            Committed::Own { source } => source,
-            Committed::Nothing => None,
-        };
-        self.committed = Committed::Own {
-            source: source.filter(|_| !sourceless),
-        };
+    /// it; the readers' last focus is unchanged.
+    pub(crate) fn commit_own(&mut self) {
+        self.committed = Committed::Own;
         self.postponed = None;
     }
 
@@ -299,8 +273,8 @@ impl Versions {
     /// A foreground marker for `window`, of root owner `root_owner`,
     /// reaches the front (columns D and E): the readers' last focus is
     /// emptied when the window is a top-level window unrelated to the
-    /// committed focus then. With nothing committed, or Core's sourceless
-    /// focus, nothing is related, so a set last focus is emptied.
+    /// committed focus then. With nothing committed, or Core's own focus,
+    /// nothing is related, so a set last focus is emptied.
     pub(crate) fn foreground_marker(&mut self, window: WindowHandle, root_owner: WindowHandle) {
         let unrelated = self
             .committed_place()
@@ -333,23 +307,21 @@ impl Versions {
     pub(crate) fn committed_read(&self) -> Option<&Kept> {
         match &self.committed {
             Committed::Read(kept) => Some(kept),
-            Committed::Ended(_) | Committed::Own { .. } | Committed::Nothing => None,
+            Committed::Ended(_) | Committed::Own | Committed::Nothing => None,
         }
     }
 
-    /// The committed focus's place, `None` with nothing committed or a
-    /// sourceless own focus.
+    /// The committed focus's place, `None` with nothing committed or an
+    /// own focus.
     pub(crate) fn committed_place(&self) -> Option<&Place> {
         self.committed_kept().map(|kept| &kept.place)
     }
 
-    /// What Core keeps of the committed focus, or of the reader's focus an
-    /// own focus stands over.
+    /// What Core keeps of the committed focus when it is a reader's focus.
     pub(crate) fn committed_kept(&self) -> Option<&Kept> {
         match &self.committed {
             Committed::Read(kept) | Committed::Ended(kept) => Some(kept),
-            Committed::Own { source } => source.as_deref(),
-            Committed::Nothing => None,
+            Committed::Own | Committed::Nothing => None,
         }
     }
 
@@ -360,9 +332,9 @@ impl Versions {
     /// ended generation, whose ids name nothing, but the ancestors another
     /// generation minted stay known, as NVDA's old focus line keeps every
     /// object when the old focus's application exits
-    /// (`docs/parity/focus-context.md`); for an own focus, its source's;
-    /// none for a sourceless one. The listener mints no node, so `asked` is
+    /// (`docs/parity/focus-context.md`); none for an own focus. The listener mints no node, so `asked` is
     /// `None` for it.
+    #[cfg(test)]
     pub(crate) fn known_ancestors(&self, asked: Option<OutpostId>) -> Vec<KnownAncestor> {
         self.known_with_places(asked)
             .into_iter()
@@ -381,23 +353,17 @@ impl Versions {
         if self.last.is_none() {
             return Vec::new();
         }
-        // A reader's focus is met itself; an own focus stands over its
-        // source, which no walk meets as the focus; of a focus whose
-        // generation ended, only what another generation minted is met.
-        let (kept, itself, ended) = match &self.committed {
-            Committed::Read(kept) => (kept, true, None),
-            Committed::Ended(kept) => (kept, true, Some(kept.node.issuer())),
-            Committed::Own {
-                source: Some(source),
-            } => (source, false, None),
-            Committed::Own { source: None } | Committed::Nothing => {
-                return Vec::new();
-            }
+        // A reader's focus is met itself; of a focus whose generation
+        // ended, only what another generation minted is met.
+        let (kept, ended) = match &self.committed {
+            Committed::Read(kept) => (kept, None),
+            Committed::Ended(kept) => (kept, Some(kept.node.issuer())),
+            Committed::Own | Committed::Nothing => return Vec::new(),
         };
         let mut known = Vec::new();
-        let focus = kept.as_ancestor(None);
+        let focus = kept.as_ancestor();
         let line = std::iter::once(&focus).chain(kept.ancestors.iter());
-        for (place, ancestor) in line.enumerate().skip(usize::from(!itself)) {
+        for (place, ancestor) in line.enumerate() {
             let minted_by = ancestor.node.issuer();
             if Some(minted_by) == ended {
                 continue;

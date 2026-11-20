@@ -104,6 +104,7 @@ fn group(node: &NodeSnapshot, console: bool) -> FollowGroup {
 
 impl Follows {
     /// What Core names to `process`'s outpost, if anything.
+    #[cfg(test)]
     pub(crate) fn named(&self, process: Pid) -> Option<&Named> {
         self.named.get(&process)
     }

@@ -8,9 +8,8 @@ use verbatim_model::property::{
 };
 use verbatim_model::request::{
     Answer, Ask, CandidateAnswer, CandidateFacts, CompleteUia, Depth, FocusAncestor, FocusCaret,
-    FocusNode, FocusRead, HeldIds, KnownAncestor, NodeRead, ObjectClass, ObjectRead,
-    Outcome as WireOutcome, Refusal, Reply, Request as Wire, RequestNumber, Route, RouteEnd,
-    RouteStep,
+    FocusNode, FocusRead, HeldIds, KnownAncestor, NodeRead, ObjectRead, Outcome as WireOutcome,
+    Refusal, Reply, Request as Wire, RequestNumber, Route, RouteEnd, RouteStep,
 };
 use verbatim_model::tell::{
     AcceptanceFacts, Checked, ElementToken, Payload, Read, Relation, WindowFacet,
@@ -167,12 +166,10 @@ pub(crate) fn focus_read(msaa: Option<HeldIds>) -> FocusRead {
                 runtime_id: None,
             },
             simple_child: false,
-            dialog_text: None,
         }],
         met: None,
         foreground: None,
         value_from_selection: false,
-        class: ObjectClass::Plain,
         runtime_id_reused: false,
         caret: FocusCaret::NotRead,
     }
@@ -779,7 +776,6 @@ fn an_msaa_duplicate_of_the_readers_last_focus_ends_the_run_with_no_read() {
             root_owner: WindowHandle(4),
             ancestor_windows: Vec::new().into(),
         },
-        class: ObjectClass::Plain,
         role: verbatim_model::Role::Button,
         since: None,
     });
@@ -1345,7 +1341,6 @@ fn a_focus_moving_in_the_hidden_frames_popup_menu_says_the_frames_title_once() {
     exit.ancestors.push(FocusAncestor {
         node: frame_menu_read(3, "Context", Role::Menu, 0, false).focus,
         simple_child: false,
-        dialog_text: None,
     });
     assert_eq!(
         feed_at(

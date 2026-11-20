@@ -368,7 +368,9 @@ async fn walk(cx: &mut Cx<Entries>, candidates: Vec<Candidate>) {
         };
         let (facts, read) = match answer {
             TurnAnswer::SameAsNamed => {
-                match validity::with_view(cx, false, |view| validity::judge_same(candidate, view)) {
+                match validity::with_view(cx, false, |view| {
+                    validity::before_duplicate(candidate, view)
+                }) {
                     // The object named, which a duplicate ends the run as.
                     None => cx.facts_mut().run_executed = true,
                     Some(reason) => {
@@ -396,7 +398,9 @@ async fn walk(cx: &mut Cx<Entries>, candidates: Vec<Candidate>) {
                 return;
             }
             Settled::Valid(_) => {
-                executed(cx, candidate, &read, &known);
+                if executed(cx, candidate, &read, &known) {
+                    cx.facts_mut().run_executed = true;
+                }
                 return;
             }
         }
@@ -404,11 +408,16 @@ async fn walk(cx: &mut Cx<Entries>, candidates: Vec<Candidate>) {
 }
 
 /// Executes the valid focus `read` of `candidate`, for the candidate's own
-/// speech fence. An MSAA answer without the ids it was read by is the
-/// outpost's fault, and ends unspoken.
-fn executed(cx: &mut Cx<Entries>, candidate: &Candidate, read: &FocusRead, known: &Known) {
+/// speech fence, and says whether it did. An MSAA answer without the ids
+/// it was read by is the outpost's fault, and ends unspoken.
+pub(crate) fn executed(
+    cx: &mut Cx<Entries>,
+    candidate: &Candidate,
+    read: &FocusRead,
+    known: &Known,
+) -> bool {
     let Some(held) = read.msaa else {
-        return;
+        return false;
     };
     let read_by = ReadBy::Msaa {
         event: Some(held.event),
@@ -420,12 +429,8 @@ fn executed(cx: &mut Cx<Entries>, candidate: &Candidate, read: &FocusRead, known
         cx.foreground(),
         candidate.fence,
     );
-    let executed = {
-        let mut facts_mut = cx.facts_mut();
-        let executed = execute(&mut facts_mut, &origin, read, known, read_by);
-        facts_mut.run_executed = true;
-        executed
-    };
+    let executed = execute(&mut cx.facts_mut(), &origin, read, known, read_by);
     let fence = crate::entries::front_fence(cx);
     executed.deliver(cx, fence);
+    true
 }

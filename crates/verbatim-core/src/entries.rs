@@ -9,19 +9,7 @@
 //! front entry's paused function sits beside it in a [`Runtime`], owned
 //! by whoever runs the reducer, never cloned or written to a dump, and
 //! rebuilt from the front's checkpoint when it is missing ([`feed`]). The queue's functions share
-//! the reducer's state, the focus announcement code included, until the
-//! old types are deleted.
-//!
-//! Built beside the reducer's focus path: nothing in the shell feeds it
-//! yet.
-
-#![cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "built beside the reducer; the shell feeds the queue in a later step of build 1"
-    )
-)]
+//! the reducer's state, the focus announcement code included.
 
 use std::fmt;
 
@@ -42,12 +30,13 @@ use crate::event_queue::{
     OTHER_DUE_US, Outcome, Place, Reader, Refused, ReplayMismatch, RequestWindow, State, Timed,
 };
 use crate::focus::acceptance::{self, Accepted};
-use crate::focus::backend::{BackendCache, by_class};
+use crate::focus::backend::BackendCache;
 use crate::focus::menus::MenuCheck;
 use crate::focus::retake::CurrentFocus;
 use crate::focus::versions::ReadBy;
 use crate::keys::entry::{Fence, PressEntry};
 use crate::state::SrState;
+use verbatim_model::class::by_class;
 use verbatim_model::request::CancelReason;
 
 /// The trace of the queue input being handled, which an entry Core makes

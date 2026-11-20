@@ -16,7 +16,6 @@ use verbatim_model::{
     StateSet, TraceId, WindowFacts, WindowHandle,
 };
 
-use super::follow::FollowRequest;
 use super::versions::{Kept, KeptAncestor, Place, ReadBy};
 use crate::entries::Entries;
 use crate::entries::window_facts;
@@ -194,7 +193,6 @@ fn chain(
             runtime_id: ancestor.node.runtime_id.clone(),
             window: own_window(&ancestor.node.read.values),
             simple_child: ancestor.simple_child,
-            dialog_text: ancestor.dialog_text.clone(),
         });
     }
     if let Some(met) = met {
@@ -210,11 +208,8 @@ fn chain(
             if itself.id != committed.node {
                 return None;
             }
-            let dialog_text = (itself.role == Role::Dialog)
-                .then(|| itself.details.description.clone())
-                .flatten();
             snapshots.push(itself.clone());
-            kept.push(committed.as_ancestor(dialog_text));
+            kept.push(committed.as_ancestor());
             0
         };
         for above in committed.ancestors.get(above_from..)? {
@@ -371,7 +366,6 @@ fn ready(
                 .as_ref()
                 .and_then(|frame| own_window(&frame.read.values)),
             simple_child: false,
-            dialog_text: None,
         });
         ancestors.push(frame);
     }
@@ -417,7 +411,6 @@ fn ready(
         ancestors: kept_ancestors.into(),
         foreground: read.foreground.as_ref().and_then(|node| node.read.node),
         value_from_selection: read.value_from_selection,
-        class: read.class,
         role: node.role,
         own_window: own_window(&read.focus.read.values),
         selection: crate::text_facts::SelectionFacts::default(),
@@ -522,10 +515,9 @@ pub(crate) fn execute(
         state.forget_caret();
     }
     crate::text_facts::focus_answered(&mut ready.kept.selection, &read.caret);
-    let follows = commit(state, origin, ready);
+    commit(state, origin, ready);
     Executed {
         said,
-        follows,
         committed: true,
     }
 }
@@ -548,23 +540,21 @@ fn observed(report: &Report) -> Effect {
     )
 }
 
-/// What executing a focus answer did: what it said, the `Follow`s its
-/// commit sends, and whether it committed the focus.
+/// What executing a focus answer did: what it said, and whether it
+/// committed the focus.
 #[derive(Debug, Default)]
 pub(crate) struct Executed {
     /// What it said.
     pub(crate) said: Vec<Effect>,
-    /// The `Follow`s the commit sends.
-    pub(crate) follows: Vec<FollowRequest>,
     /// Whether the focus was committed.
     pub(crate) committed: bool,
 }
 
 impl Executed {
     /// Emits what it said, each utterance stamped with `fence`, and sends
-    /// its `Follow`s, with a terminal's baseline after them
-    /// (`docs/design/readers-tell-core-asks-build3.md`, "The focused
-    /// terminal's life"). Every caller passes its entry's fence
+    /// the requests the commit wanted, a terminal's baseline after its
+    /// `Follow`s (`docs/design/readers-tell-core-asks-build3.md`, "The
+    /// focused terminal's life"). Every caller passes its entry's fence
     /// ([`crate::entries::front_fence`]) but the read at a press while a
     /// dialog is postponed, which passes the postponing entry's
     /// (`super::shown`).
@@ -573,18 +563,15 @@ impl Executed {
             crate::keys::entry::stamp(fence, &mut said);
             cx.emit_stamped(said);
         }
-        super::follow::send(cx, self.follows);
         cx.send_wanted();
     }
 }
 
-/// Commits `ready`: both versions of the focus become it, and the
-/// `Follow`s the commit sends are returned (Table 10, columns A and B).
-/// The focused terminal's state follows the commit: a terminal committed
-/// is baselining, its `Follow` and baseline wanted in order, and every
-/// `Follow` of the commit is wanted with them, so none is returned to
-/// send.
-fn commit(state: &mut SrState, origin: &Origin, ready: Ready) -> Vec<FollowRequest> {
+/// Commits `ready`: both versions of the focus become it (Table 10,
+/// columns A and B). The focused terminal's state follows the commit: a
+/// terminal committed is baselining, its `Follow` and baseline wanted in
+/// order, and every `Follow` of the commit is wanted with them.
+fn commit(state: &mut SrState, origin: &Origin, ready: Ready) {
     let follows = state.follows.committed(
         Some((
             &ready.kept,
@@ -614,7 +601,6 @@ fn commit(state: &mut SrState, origin: &Origin, ready: Ready) -> Vec<FollowReque
         })
         .collect();
     crate::terminal::reading::committed(state, terminal, follows, origin.observed_at_us);
-    Vec::new()
 }
 
 /// Executes the committed focus again, as a UI Automation menu opening on
@@ -644,18 +630,6 @@ pub(crate) fn again(state: &mut SrState, trace_id: TraceId) -> Vec<Effect> {
     crate::reduce::execute_report(state, &report, false)
 }
 
-/// How a re-take's answer ended (design, "Focus and foreground", the
-/// re-take after a reader's replacement).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Retaken {
-    /// It read the same as the focus Core holds, and was taken silently.
-    Silently,
-    /// It differed, and was executed.
-    Executed,
-    /// It was dropped: an ignored process's, or a reader's fault.
-    Dropped,
-}
-
 /// Judges a re-take's `read` against the focus Core holds: one that reads
 /// the same is taken silently with its new ids, the navigator moved only
 /// if there is none and the caret baseline kept; a different one is
@@ -666,13 +640,13 @@ pub(crate) fn retake(
     origin: &Origin,
     read: &FocusRead,
     read_by: ReadBy,
-) -> (Retaken, Executed) {
+) -> Executed {
     if ignored(state, origin) {
-        return (Retaken::Dropped, Executed::default());
+        return Executed::default();
     }
     let known = Known::default();
     let Some(ready) = ready(state, origin, read, &known, read_by.clone()) else {
-        return (Retaken::Dropped, Executed::default());
+        return Executed::default();
     };
     let same = state.versions.last.is_some()
         && state.focus.object().is_some_and(|focus| {
@@ -695,18 +669,11 @@ pub(crate) fn retake(
                 .committed_kept()
                 .is_some_and(|kept| kept.selection.text_changed),
         };
-        let follows = commit(state, origin, ready);
-        return (
-            Retaken::Silently,
-            Executed {
-                said: Vec::new(),
-                follows,
-                committed: true,
-            },
-        );
+        commit(state, origin, ready);
+        return Executed {
+            said: Vec::new(),
+            committed: true,
+        };
     }
-    (
-        Retaken::Executed,
-        execute(state, origin, read, &known, read_by),
-    )
+    execute(state, origin, read, &known, read_by)
 }

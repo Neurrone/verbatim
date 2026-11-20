@@ -2210,6 +2210,7 @@ dependencies = [
 name = "verbatim-reader-rules"
 version = "0.1.0"
 dependencies = [
+ "verbatim-model",
  "workspace-hack",
 ]
 

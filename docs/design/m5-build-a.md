@@ -154,7 +154,7 @@ Legality per use is checked at load:
 
 ### 5.3 The rules
 
-`WindowRule`, `EventRule` and `NodeRule`, each with its id, its matcher and its typed actions as the rules page lists them. One addition decided here: a window rule's `class` and `root-class`, like `window-class`, are the classes after NVDA's built-in normalization (`verbatim_reader_rules::class::normalize_class_name`), because NVDA's app modules judge the normalized class, Task Manager's included (`appModules/taskmgr.py` 39 and 40). A `normalize-class` rule matches that class and is applied once, before every other window rule and every node rule, so everything after sees its result. Node rules gain the action `containers = "none"`, applied to a focus only: the focus is reported with no containers, so none is spoken (Dickson, 2026-11-09); the rules page gains it.
+`WindowRule`, `EventRule` and `NodeRule`, each with its id, its matcher and its typed actions as the rules page lists them. One addition decided here: a window rule's `class` and `root-class`, like `window-class`, are the classes after NVDA's built-in normalization (`verbatim_model::class::normalize`), because NVDA's app modules judge the normalized class, Task Manager's included (`appModules/taskmgr.py` 39 and 40). A `normalize-class` rule matches that class and is applied once, before every other window rule and every node rule, so everything after sees its result. Node rules gain the action `containers = "none"`, applied to a focus only: the focus is reported with no containers, so none is spoken (Dickson, 2026-11-09); the rules page gains it.
 
 ### 5.4 Refusals
 
@@ -207,7 +207,7 @@ A veto never applies to a foreground change's focus (a whole-window focus), as C
 
 ### 6.4 The class verdict with rules
 
-`verbatim_reader_rules::class::class_verdict` takes the identity's window rules as a second argument and keeps NVDA's order (`UIAHandler/__init__.py` 1220 to 1244): NVDA's good list first; then the module rules' `backend`, the highest layer's matching rule deciding; then NVDA's bad list; then the probe. NVDA checks a module's good verdict before the bad list and its bad verdict after it, which gives the same answers as one module step before the bad list, since the bad list itself says MSAA. `SHELL_ROOT_CLASSES` and `WindowClasses::is_shell` leave `verbatim-reader-rules` for the Explorer built-in (section 7.3). The listener's skip by class (`MSAA_CLASS`) and every outpost's arbitrator call this one function, so under one generation they agree (ADR 0001, "One judge per fact"); under two generations, the outpost judges the listener's skip by the generation the dropped fact names (section 6.3).
+`verbatim_reader_rules::class::class_verdict` takes the identity's window rules as a second argument and keeps NVDA's order (`UIAHandler/__init__.py` 1220 to 1244): NVDA's good list first; then the module rules' `backend`, the highest layer's matching rule deciding; then NVDA's bad list; then the probe. NVDA checks a module's good verdict before the bad list and its bad verdict after it, which gives the same answers as one module step before the bad list, since the bad list itself says MSAA. `verbatim_model::class::SHELL_ROOTS` and `WindowClasses::is_shell` leave the model and `verbatim-reader-rules` for the Explorer built-in (section 7.3). The listener's skip by class (`MSAA_CLASS`) and every outpost's arbitrator call this one function, so under one generation they agree (ADR 0001, "One judge per fact"); under two generations, the outpost judges the listener's skip by the generation the dropped fact names (section 6.3).
 
 ### 6.5 `accept` judged once, in the listener, and carried
 
@@ -259,7 +259,7 @@ The rules that leave Core and `verbatim-reader-rules`:
 
 | Today | Becomes, in `extensions/builtin/explorer/module.toml` (planned) or `taskmgr/` | NVDA |
 |---|---|---|
-| `SHELL_ROOT_CLASSES` and `is_shell` (`verbatim-reader-rules`) | window rule `backend = "uia"`, `match = { root-class = [the four classes], not = { class = "Start" }, windows-build = { at-least = 22000 } }` | `explorer.py` 462 to 480 |
+| `SHELL_ROOTS` (`verbatim-model`) and `is_shell` (`verbatim-reader-rules`) | window rule `backend = "uia"`, `match = { root-class = [the four classes], not = { class = "Start" }, windows-build = { at-least = 22000 } }` | `explorer.py` 462 to 480 |
 | `SHELL_STAGING_CLASSES` (`verbatim-core`) | window rule `silent = ["focus", "foreground"]`, `class = ["ForegroundStaging", "LauncherTipWnd", "ApplicationManager_DesktopShellWindow"]` | Verbatim's parity entry, "The shell's staging windows" |
 | `refuses_focus` (`verbatim-core`) | node rule, `backend = "uia"`, `veto-focus = true`, `match = { any = [{ uia-class-name = "MultitaskingViewFrame", role = "window" }, { uia-class-name = "Windows.UI.Input.InputSite.WindowClass", role = "pane" }] }`, placed in the listener and the outpost | `explorer.py` 34 to 36 and 290 to 302 |
 | `SNAP_RESULTS_ACTIVITY` (`verbatim-core`, three users) | event rule `accept`, `match = { kind = "notification", activity-id = "Windows.Shell.SnapComponent.SnapHotKeyResults" }` | `explorer.py` 519 to 535 and 548 to 550 |

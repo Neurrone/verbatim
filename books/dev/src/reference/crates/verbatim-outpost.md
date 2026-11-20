@@ -249,7 +249,7 @@ the same tables and code, which the arbitrator's own lists are built from.
 
 - `verbatim_win32::window::window_classes(hwnd)` reads a window's
   `WindowClasses` (`verbatim_reader_rules::class`): the raw class, the
-  class normalized as NVDA does (`normalize_class_name`), and the root
+  class normalized as NVDA does (`verbatim_model::class::normalize`), and the root
   ancestor's class.
 - `post_probe_check` (`verbatim-reader-rules`) names NVDA's check before using a provider: a list
   view's Windows Forms origin, or a console's formatted text, read from
@@ -290,10 +290,9 @@ the same tables and code, which the arbitrator's own lists are built from.
   (`Arbitrator::set_observation_clock`), the run's shared clock, which
   `Outpost::set_observation_clock` sets, with the stamps of the outpost's
   own events, for a test that moves that time on.
-- Both class lists, `verbatim_reader_rules::class`'s, are lifted from
-  NVDA and pinned by unit tests there naming their sources (`badUIAWindowClassNames` and `goodUIAWindowClassNames` in
-  `nvda/source/UIAHandler/__init__.py`, and `isGoodUIAWindow` in
-  `nvda/source/appModules/explorer.py`), so an NVDA sync is a diff.
+- Both class lists are `verbatim_model::class`'s, written from
+  `docs/parity/backends.md` ("The class lists the per-window verdict
+  reads").
 
 ### The outpost
 

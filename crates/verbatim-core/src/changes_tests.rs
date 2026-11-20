@@ -494,7 +494,6 @@ fn a_focus_under_the_committed_focus_judges_its_waiting_state_tells_first() {
             runtime_id: Some(RuntimeId(vec![42, 1])),
         },
         simple_child: false,
-        dialog_text: None,
     };
     read.ancestors.insert(0, combo);
     let said = feed_at(
@@ -919,7 +918,6 @@ fn three_read(name: &str, role: Role, states: StateSet, in_cities: bool) -> Repl
                     runtime_id: Some(RuntimeId(vec![42, 6])),
                 },
                 simple_child: false,
-                dialog_text: None,
             },
         );
     }

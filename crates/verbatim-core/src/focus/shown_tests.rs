@@ -7,7 +7,7 @@ use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::{PropertyAnswer, PropertyId, PropertyValue};
 use verbatim_model::request::{
     CandidateAnswer, FocusAncestor, FocusCaret, FocusNode, FocusRead, Front, HeldIds, MsaaIds,
-    NodeRead, NodeWindow, ObjectClass, PressAction, QueueInput, Reply, Request as Wire,
+    NodeRead, NodeWindow, PressAction, QueueInput, Reply, Request as Wire,
 };
 use verbatim_model::tell::{AcceptanceFacts, EventObject, Relation, TellWindow, WindowFacet};
 use verbatim_model::{
@@ -228,7 +228,6 @@ fn read_of(
         met: None,
         foreground: None,
         value_from_selection: false,
-        class: ObjectClass::Plain,
         runtime_id_reused: false,
         caret: FocusCaret::NoText,
     }))
@@ -253,7 +252,6 @@ fn dialog_ancestor(text: Option<&str>) -> FocusAncestor {
     FocusAncestor {
         node,
         simple_child: false,
-        dialog_text: text.map(str::to_owned),
     }
 }
 
@@ -281,7 +279,6 @@ fn owner_button_read() -> Reply {
                 Role::Dialog,
             ),
             simple_child: false,
-            dialog_text: None,
         }],
         (OWNER_BUTTON, -4),
     )
@@ -924,7 +921,6 @@ fn owner_control_read(window: u64, name: &str) -> Reply {
                 Role::Dialog,
             ),
             simple_child: false,
-            dialog_text: None,
         }],
         (window, -4),
     )

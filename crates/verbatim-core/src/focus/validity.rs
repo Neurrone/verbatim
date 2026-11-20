@@ -13,7 +13,7 @@
 //! rows at its turn and while something waits behind it. An answer
 //! needing a read names it ([`Validity::NeedsRead`]); nothing here asks.
 //! Only a read at a candidate's turn can answer that it is the readers'
-//! last focus by its identity ([`judge_same`]), so a pending judgement has
+//! last focus by its identity ([`before_duplicate`]), so a pending judgement has
 //! no identity row: a child id above 0 is never a duplicate there, as in
 //! NVDA's duplicate test.
 
@@ -30,12 +30,13 @@ use verbatim_model::tell::{Event, Read, TellWindow};
 use verbatim_model::{NodeSnapshot, Role, TraceId, WindowHandle};
 
 use super::acceptance;
-use super::backend::{BackendCache, Judged, JudgedWindow, Judgement, WindowKey, by_class};
+use super::backend::{BackendCache, Judged, JudgedWindow, Judgement, WindowKey};
 use super::duplicate::{msaa_duplicate, uia_duplicate};
 use super::msaa_run::{TurnDepth, UnlessSame};
 use super::versions::{LastFocus, ReadBy, Versions};
 use crate::entries::{Candidate, Entries, Entry, UiaFocus};
 use crate::event_queue::{Cx, Item};
+use verbatim_model::class::by_class;
 
 /// File Explorer, by its executable name.
 const FILE_EXPLORER: &str = "explorer";
@@ -114,15 +115,6 @@ impl Reason {
     }
 }
 
-/// The read a candidate needs before it can be judged.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Need {
-    /// Whether it or an ancestor has the focused state.
-    FocusedState,
-    /// Its role: whether it is a menu popup.
-    MenuRole,
-}
-
 /// The one answer about a candidate.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Validity {
@@ -134,7 +126,7 @@ pub(crate) enum Validity {
     /// Refused: a run goes on to its older candidates.
     Refused(Reason),
     /// It cannot be judged without a read.
-    NeedsRead(Need),
+    NeedsRead,
 }
 
 /// An answer about a candidate that needs no read: [`Validity`] without
@@ -318,30 +310,24 @@ pub(crate) fn judge(
     view: &View<'_>,
     facts: Option<&CandidateFacts>,
 ) -> Validity {
-    let settled = match subject {
-        Subject::Uia(focus) => Ok(uia(focus, view)),
-        Subject::Recovered(read) => Ok(recovered(view, read)),
-        Subject::Msaa(candidate) => msaa(candidate, view, facts.ok_or(())),
-        Subject::MenuCheck(ids) => menu_check(ids, view, facts.ok_or(())),
-    };
-    match settled {
+    match settle(subject, view, facts.ok_or(())) {
         Ok(settled) => settled.into(),
-        Err((need, ())) => Validity::NeedsRead(need),
+        Err(()) => Validity::NeedsRead,
     }
 }
 
-/// [`judge`] with the facts an outpost read: the answer is settled, as
-/// facts leave nothing to read, which the types say.
-pub(crate) fn judge_read(subject: Subject<'_>, view: &View<'_>, facts: &CandidateFacts) -> Settled {
-    let settled = match subject {
+/// The rows of [`judge`], with `facts` the outpost read or what stands for
+/// its absence, `M`: an answer settled, or `M` when a read is needed.
+fn settle<M>(
+    subject: Subject<'_>,
+    view: &View<'_>,
+    facts: Result<&CandidateFacts, M>,
+) -> Result<Settled, M> {
+    match subject {
         Subject::Uia(focus) => Ok(uia(focus, view)),
         Subject::Recovered(read) => Ok(recovered(view, read)),
-        Subject::Msaa(candidate) => msaa(candidate, view, Ok::<_, Infallible>(facts)),
-        Subject::MenuCheck(ids) => menu_check(ids, view, Ok::<_, Infallible>(facts)),
-    };
-    match settled {
-        Ok(settled) => settled,
-        Err((_, never)) => match never {},
+        Subject::Msaa(candidate) => msaa(candidate, view, facts),
+        Subject::MenuCheck(ids) => menu_check(ids, view, facts),
     }
 }
 
@@ -405,23 +391,12 @@ fn named(
     })
 }
 
-/// The identity row, at the answer of a read that [`depth`] named the
-/// readers' last focus to and that answered it is that focus
-/// ([`super::msaa_run::TurnAnswer::SameAsNamed`]): `None` for a duplicate,
-/// nothing read or said; or the refusal the rows before the duplicate test
-/// give `candidate` now. The answer is not compared again: the readers'
-/// last focus cannot change while the read is out, as only the front's
-/// function commits.
-pub(crate) fn judge_same(candidate: &Candidate, view: &View<'_>) -> Option<Reason> {
-    before_duplicate(candidate, view)
-}
-
 /// Whether `answer` counts as pending: valid counts, a needed read leaves
 /// it unconfirmed, and a duplicate or a refusal does not count.
 pub(crate) fn pending(answer: Validity, trace: TraceId) -> Pending {
     match answer {
         Validity::Valid(_) => Pending::Counts,
-        Validity::NeedsRead(_) => Pending::Unconfirmed(trace),
+        Validity::NeedsRead => Pending::Unconfirmed(trace),
         Validity::Duplicate | Validity::Refused(_) => Pending::No,
     }
 }
@@ -622,7 +597,7 @@ fn run_pending(candidates: Vec<Candidate>, view: &View<'_>, within: Within) -> P
         match found.answer {
             Validity::Valid(_) => return Pending::Counts,
             Validity::Duplicate | Validity::Refused(_) => return unconfirmed_or_no,
-            Validity::NeedsRead(_) => {
+            Validity::NeedsRead => {
                 let tell = &found.candidate.tell;
                 if Within::raised(within.unconfirmed_before, tell.at_us) {
                     unconfirmed.get_or_insert(tell.trace_id);
@@ -663,7 +638,9 @@ pub(crate) fn at(
     with_view(cx, run_before_valid, |view| judge(subject, view, facts))
 }
 
-/// [`judge_read`] from inside an entry's function.
+/// [`judge`] with the facts an outpost read, from inside an entry's
+/// function: the answer is settled, as facts leave nothing to read, which
+/// the types say.
 pub(crate) fn read_at(
     cx: &Cx<Entries>,
     subject: Subject<'_>,
@@ -671,7 +648,10 @@ pub(crate) fn read_at(
     run_before_valid: bool,
 ) -> Settled {
     with_view(cx, run_before_valid, |view| {
-        judge_read(subject, view, facts)
+        match settle(subject, view, Ok::<_, Infallible>(facts)) {
+            Ok(settled) => settled,
+            Err(never) => match never {},
+        }
     })
 }
 
@@ -789,7 +769,7 @@ fn msaa<M>(
     candidate: &Candidate,
     view: &View<'_>,
     facts: Result<&CandidateFacts, M>,
-) -> Result<Settled, (Need, M)> {
+) -> Result<Settled, M> {
     let tell = &candidate.tell;
     let ids = &candidate.ids;
     let last = view.last();
@@ -818,10 +798,7 @@ fn msaa<M>(
         if view.run_before_valid && last_is_msaa_menu(last) {
             return Ok(Settled::Refused(Reason::OnMenu));
         }
-        let facts = match facts {
-            Ok(facts) => facts,
-            Err(missing) => return Err((Need::MenuRole, missing)),
-        };
+        let facts = facts?;
         if let Some(refused) = refused_by(facts) {
             return Ok(refused);
         }
@@ -836,7 +813,7 @@ fn msaa<M>(
     let facts = match facts {
         Ok(facts) => facts,
         Err(missing) if tell.kind == EventKind::MsaaFocus => {
-            return Err((Need::FocusedState, missing));
+            return Err(missing);
         }
         Err(_) => return Ok(Settled::Valid(How::Read)),
     };
@@ -845,8 +822,12 @@ fn msaa<M>(
 
 /// The rows every MSAA candidate passes before its duplicate test: its
 /// window's verdict, Verbatim's hidden frame, acceptance and the desktop
-/// window. The refusal, if any.
-fn before_duplicate(candidate: &Candidate, view: &View<'_>) -> Option<Reason> {
+/// window. The refusal, if any. It is also the identity row, at the answer
+/// of a read that [`depth`] named the readers' last focus to and that
+/// answered it is that focus
+/// ([`super::msaa_run::TurnAnswer::SameAsNamed`]): `None` is a duplicate,
+/// as the readers' last focus cannot change while the read is out.
+pub(crate) fn before_duplicate(candidate: &Candidate, view: &View<'_>) -> Option<Reason> {
     let tell = &candidate.tell;
     if view.backend.judge(
         Judged::Msaa,
@@ -874,15 +855,11 @@ fn menu_check<M>(
     ids: Option<&MsaaIds>,
     view: &View<'_>,
     facts: Result<&CandidateFacts, M>,
-) -> Result<Settled, (Need, M)> {
+) -> Result<Settled, M> {
     if ids.is_some_and(|ids| msaa_duplicate(view.last(), ids)) {
         return Ok(Settled::Duplicate);
     }
-    let facts = match facts {
-        Ok(facts) => facts,
-        Err(missing) => return Err((Need::FocusedState, missing)),
-    };
-    Ok(refused_by(facts).unwrap_or(Settled::Valid(How::Read)))
+    Ok(refused_by(facts?).unwrap_or(Settled::Valid(How::Read)))
 }
 
 /// The recovered read's one row: a UI Automation answer whose runtime id

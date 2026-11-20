@@ -1585,7 +1585,7 @@ fn value_change_event(
     };
     let at_us = outgoing.now();
     let listed = verbatim_reader_rules::class::is_progress_bar_class(
-        &verbatim_reader_rules::class::normalize_class_name(&class),
+        verbatim_model::class::normalize(&class),
     );
     let (read, window) = if listed {
         let visible = windows.visible(hwnd);

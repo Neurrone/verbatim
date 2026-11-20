@@ -15,8 +15,8 @@ use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::{PropertyValues, RuntimeId};
 use verbatim_model::request::{
     CandidateAnswer, FocusAncestor, FocusCaret, FocusNode, FocusRead, ForegroundReport, HeldIds,
-    MsaaIds, NodeRead, NodeWindow, ObjectClass, ObjectRead, Outcome, QueueInput, Reader, Reply,
-    Request as Wire, Route, RouteEnd, RouteStep,
+    MsaaIds, NodeRead, NodeWindow, ObjectRead, Outcome, QueueInput, Reader, Reply, Request as Wire,
+    Route, RouteEnd, RouteStep,
 };
 use verbatim_model::tell::{
     AcceptanceFacts, Checked, ElementToken, Event, EventObject, Payload, Read, Relation,
@@ -329,13 +329,11 @@ fn focus_read(
             .map(|ancestor| FocusAncestor {
                 node: read_node(app, win, via, ancestor),
                 simple_child: false,
-                dialog_text: None,
             })
             .collect(),
         met: None,
         foreground: foreground.map(|foreground| read_node(app, win, via, foreground)),
         value_from_selection: false,
-        class: ObjectClass::Plain,
         runtime_id_reused: false,
         caret: FocusCaret::NoText,
     }

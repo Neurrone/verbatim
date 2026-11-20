@@ -2,14 +2,6 @@
 //! its own module (`docs/design/readers-tell-core-asks-build1.md`, "How
 //! the code is organised").
 
-#![cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "built beside the reducer; the focus entries switch over to it in a later step of build 1"
-    )
-)]
-
 pub(crate) mod acceptance;
 pub(crate) mod backend;
 pub(crate) mod duplicate;

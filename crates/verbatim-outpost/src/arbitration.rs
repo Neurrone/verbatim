@@ -1,7 +1,7 @@
 //! Per-window backend arbitration (architecture section 4).
 //!
 //! Mirrors NVDA's ladder, cheapest rung first, on the window's class name
-//! normalized as NVDA normalizes it (`verbatim_reader_rules::class::normalize_class_name`): a
+//! normalized as NVDA normalizes it (`verbatim_model::class::normalize`): a
 //! config-overridable "good" class list forces UIA, and so does a Windows 11
 //! shell window, recognized by its root ancestor's class; a "bad" class list
 //! (seeded from NVDA's, where UIA implementations are known to interfere with
@@ -83,10 +83,10 @@ use std::time::{Duration, Instant};
 
 pub use crate::outpost::Verdicts;
 use crate::outpost::{Probe as KeptProbe, Probed, VerdictChange};
+use verbatim_model::class::{BAD, GOOD};
 use verbatim_process::clock::{Clock, ObservationClock};
 use verbatim_reader_rules::class::{
-    BAD_UIA_CLASSES, ClassVerdict, GOOD_UIA_CLASSES, WindowClasses, classify_with,
-    post_probe_check, provider_usable,
+    ClassVerdict, WindowClasses, classify_with, post_probe_check, provider_usable,
 };
 use verbatim_reader_rules::verdicts::NEGATIVE_VERDICT_LIFETIME_US;
 use verbatim_win32::window::window_thread;
@@ -151,8 +151,8 @@ impl Arbitrator {
     /// `extra_good` classes from per-app configuration that force UIA.
     #[must_use]
     pub fn new(extra_good: &[&str]) -> Self {
-        let bad_classes = BAD_UIA_CLASSES.iter().map(|s| (*s).to_owned()).collect();
-        let good_classes = GOOD_UIA_CLASSES
+        let bad_classes = BAD.iter().map(|s| (*s).to_owned()).collect();
+        let good_classes = GOOD
             .iter()
             .chain(extra_good.iter())
             .map(|s| (*s).to_owned())

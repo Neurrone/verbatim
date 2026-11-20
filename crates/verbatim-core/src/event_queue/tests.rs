@@ -23,8 +23,8 @@ use super::{
     Cause, FOCUS_DUE_US, Foreground, Function, HANG_ROUND_US, Instance, Live, Logic, OTHER_DUE_US,
     Reader, RequestWindow,
 };
-use crate::focus::backend::Backend;
 use crate::focus::backend::BackendCache;
+use verbatim_model::Backend;
 
 /// The application of the tests' window.
 const APP: Pid = Pid(1);

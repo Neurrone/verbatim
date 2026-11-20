@@ -112,7 +112,7 @@ pub(crate) async fn run(mut cx: Cx<Entries>, trace_id: TraceId, repeat: u8) {
                 },
                 kept.read_by.backend(),
             ),
-            Committed::Ended(_) | Committed::Own { .. } => Target::Unread,
+            Committed::Ended(_) | Committed::Own => Target::Unread,
         }
     };
     let (request, backend) = match target {

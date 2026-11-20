@@ -248,7 +248,7 @@ pub(crate) fn reader_ended(
                     return None;
                 }
                 Committed::Read(_) | Committed::Ended(_) => foreground?.window(),
-                Committed::Nothing | Committed::Own { .. } => return None,
+                Committed::Nothing | Committed::Own => return None,
             }
         }
         Reader::Outpost(_) => {
@@ -341,7 +341,7 @@ pub(crate) async fn read_current<D: FocusReadDepth<Parsed = Box<FocusRead>>>(
             }
             Why::Recovered if duplicate => Executed::default(),
             Why::Retake | Why::Recovered | Why::Shown => {
-                retake(&mut facts, &origin, &answer, read_by).1
+                retake(&mut facts, &origin, &answer, read_by)
             }
         }
     };

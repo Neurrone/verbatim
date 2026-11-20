@@ -447,8 +447,8 @@ by Core on entering the window: one acquisition; `progress`, an
   client pieces, not the sibling controls.
 - `class` — `normalized_class_of(hwnd)`, a window's class name as NVDA
   normalizes it before matching any class-based rule
-  (`verbatim_reader_rules::class::normalize_class_name`,
-  [verbatim-reader-rules](verbatim-reader-rules.md)): a Windows Forms
+  (`verbatim_model::class::normalize`,
+  [verbatim-model](verbatim-model.md)): a Windows Forms
   name (`WindowsForms10.SysTreeView32.app.0.…`) cut down to the control
   class it wraps, an `ATL:` prefix dropped, and the result looked up in
   NVDA's class map. Every class-based rule in this crate compares the

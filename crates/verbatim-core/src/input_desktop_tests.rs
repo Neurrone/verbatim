@@ -119,10 +119,7 @@ fn a_switch_away_cuts_speech_and_commits_the_sleeping_focus_following_nothing() 
         route(&mut held, 1_000, &switch(false)),
         ["cut", "send Outpost(Pid(40)) Follow None"]
     );
-    assert_eq!(
-        held.state.versions.committed,
-        Committed::Own { source: None }
-    );
+    assert_eq!(held.state.versions.committed, Committed::Own);
     assert!(held.state.focus.object().is_none());
     assert_eq!(held.state.desktop.input, InputDesktop::Other);
     assert_eq!(held.state.desktop.switches_away, 1);
@@ -208,10 +205,7 @@ fn an_outposts_end_on_another_desktop_takes_nothing_again() {
         ),
         Vec::<String>::new()
     );
-    assert_eq!(
-        held.state.versions.committed,
-        Committed::Own { source: None }
-    );
+    assert_eq!(held.state.versions.committed, Committed::Own);
 }
 
 /// Table 8, columns C, D and H: the lock state is recorded, unknown

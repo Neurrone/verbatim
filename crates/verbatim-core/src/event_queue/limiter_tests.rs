@@ -86,7 +86,7 @@ impl Request for HoldRead {
             root_owner: WindowHandle(10),
             process: APP,
             thread: 3,
-            by_class: Some(crate::focus::backend::Backend::Msaa),
+            by_class: Some(verbatim_model::Backend::Msaa),
         }
     }
 
