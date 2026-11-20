@@ -25,8 +25,9 @@ recorded.
 - `crates/mockapp/tests/instruction_limit.rs` pins remote programs'
   instruction counts.
 - An exact count is a ratchet: a change that adds a call fails CI, and a
-  change that removes one lowers the number in the test and here in the
-  same commit. A provider cannot tell its callers apart, so each ratchet
+  change that removes one lowers the number in the test. An entry below
+  names the test that pins its operation and gives the minimum and the
+  reasoning, never the count. A provider cannot tell its callers apart, so each ratchet
   test runs alone in a process on a desktop of its own
   (`books/dev/src/reference/crates/mockapp.md`).
 

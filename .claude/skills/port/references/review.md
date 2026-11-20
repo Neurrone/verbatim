@@ -3,7 +3,9 @@
 The protocol that governs the review, its severity tags and when the loop
 stops is `REVIEW.md` at the repository root; this file lists only what to
 look for. Give this list to the review subagent in phase 9. Review the change as if it
-is subtly wrong despite passing its tests. Look especially for:
+is subtly wrong despite passing its tests. Ask first what the change adds
+to shared machinery and whether each addition can be removed (`CLAUDE.md`,
+standing rules). Then look especially for:
 
 - an omitted stage in the NVDA causal path;
 - a source behavior accidentally mistaken for an implementation detail;
@@ -25,8 +27,8 @@ is subtly wrong despite passing its tests. Look especially for:
 - tests weakened during implementation;
 - undocumented intentional divergence.
 
-And for cost, which the design's costing and the ledger
-(`books/dev/src/reference/performance.md`) fix in advance:
+And for cost, which the design's costing and the call-count tests fix in
+advance:
 
 - a call into the application that the costing did not predict, or one
   made from a process other than the one the design names;
@@ -41,8 +43,8 @@ And for cost, which the design's costing and the ledger
   measurement shows costs;
 - a new wake-up source: a timer, a poll, or a hand-off between threads
   where the producing thread could do the work;
-- a ledger entry or call-count test left unchanged by a change that
-  altered the operation's calls.
+- a call-count test left unchanged by a change that altered the
+  operation's calls, or a document that copies a figure a test pins.
 
 For every suspected defect, give a concrete counterexample, a violated
 invariant, or the missing piece of evidence. Leave out style-only

@@ -177,9 +177,10 @@ that it is silent (see "Test-audio mode" in [the end-to-end guide](e2e.md)), ope
 its menu with `--open-menu`, and move through the menu and
 dialogs with plain keys, which both screen readers let through.
 
-Captures are working material, not kept in the repository: they serve
-exploratory testing, comparing what Verbatim says with what NVDA says,
-and writing the end-to-end and unit tests that pin the behavior down.
+A capture that an expectation cites is committed beside the test that
+cites it (`CLAUDE.md`, standing rules); other captures are working
+material, not kept: they serve exploratory testing and comparing what
+Verbatim says with what NVDA says.
 
 Two traps. NVDA's automatic update check can open an
 "NVDA Update" dialog that takes the foreground, and every key then goes

@@ -48,7 +48,7 @@ subagent is to leave in place.
 
 ## Report structure
 
-Report in this order, with no length limit:
+Report only these, in this order:
 
 1. Outcome: what works and what does not.
 2. Commits made, with hashes.
