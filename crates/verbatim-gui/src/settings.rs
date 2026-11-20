@@ -217,14 +217,14 @@ fn control(descriptor: &SettingDescriptor, value: Option<&SettingValue>) -> ffi:
         .and_then(|value| control_value(descriptor, value));
     if shown.is_none() && value.is_some() {
         tracing::error!(
-            target: "verbatim::gui",
+            target: verbatim_model::DEFECT_TARGET,
             setting = %descriptor.id(),
             ?value,
             "the synthesizer's value does not fit its setting"
         );
     }
     let label = verbatim_i18n::message(descriptor.label_key()).unwrap_or_else(|| {
-        tracing::error!(target: "verbatim::gui", key = descriptor.label_key(), "a setting's label has no message");
+        tracing::error!(target: verbatim_model::DEFECT_TARGET, key = descriptor.label_key(), "a setting's label has no message");
         descriptor.id().to_string()
     });
     let mut control = ffi::SettingControl {
@@ -649,6 +649,50 @@ mod tests {
                 ("Theme", "Verbatim Settings: Theme"),
                 ("Terminal", "Verbatim Settings: Terminal"),
             ]
+        );
+    }
+
+    /// Keeps the target of every event logged while it is the thread's
+    /// subscriber.
+    #[derive(Default)]
+    struct Targets(Mutex<Vec<String>>);
+
+    impl tracing::Subscriber for Targets {
+        fn enabled(&self, _: &tracing::Metadata<'_>) -> bool {
+            true
+        }
+        fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+            tracing::span::Id::from_u64(1)
+        }
+        fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
+        fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
+        fn event(&self, event: &tracing::Event<'_>) {
+            self.0
+                .lock()
+                .unwrap()
+                .push(event.metadata().target().to_owned());
+        }
+        fn enter(&self, _: &tracing::span::Id) {}
+        fn exit(&self, _: &tracing::span::Id) {}
+    }
+
+    /// A driver value that does not fit its setting, and a label with no
+    /// message, are Verbatim's own defects, every driver being Verbatim's:
+    /// both are logged where the end-to-end suite fails a run on them.
+    #[test]
+    fn a_value_that_does_not_fit_and_a_missing_label_are_logged_as_defects() {
+        let descriptor = SettingDescriptor::Choice {
+            id: SettingId::new("voice"),
+            label_key: "setting-no-such-label".into(),
+            options: vec![("hazel".into(), "Microsoft Hazel".into())],
+        };
+        let targets = std::sync::Arc::new(Targets::default());
+        tracing::subscriber::with_default(std::sync::Arc::clone(&targets), || {
+            control(&descriptor, Some(&SettingValue::Number(3)));
+        });
+        assert_eq!(
+            *targets.0.lock().unwrap(),
+            [verbatim_model::DEFECT_TARGET, verbatim_model::DEFECT_TARGET]
         );
     }
 }
