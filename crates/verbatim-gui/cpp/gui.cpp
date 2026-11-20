@@ -113,6 +113,8 @@ struct Shell {
     wxStaticText* picker_status = nullptr;
     // The Remove Theme confirmation while it is shown.
     const NativeQuestion* question = nullptr;
+    // The windows of the message boxes show_message has up, oldest first.
+    std::vector<HWND> message_boxes;
     bool shutting_down = false;
 };
 
@@ -148,6 +150,28 @@ public:
     }
 };
 
+// Whether `window` is a system dialog: of class #32770 and not a window
+// wxWidgets owns.
+bool IsSystemDialog(HWND window) {
+    wchar_t name[16];
+    return ::GetClassNameW(window, name, 16) != 0 && std::wcscmp(name, L"#32770") == 0 &&
+           wxFindWinFromHandle(window) == nullptr;
+}
+
+// The hook show_message sets on its own thread while its box is made, to
+// learn the box's window, which wxMessageBox does not give.
+HHOOK g_message_box_hook = nullptr;
+
+LRESULT CALLBACK RecordMessageBox(int code, WPARAM wParam, LPARAM lParam) {
+    HWND window = reinterpret_cast<HWND>(wParam);
+    if (code == HCBT_ACTIVATE && g_shell != nullptr && IsSystemDialog(window)) {
+        g_shell->message_boxes.push_back(window);
+        ::UnhookWindowsHookEx(g_message_box_hook);
+        g_message_box_hook = nullptr;
+    }
+    return ::CallNextHookEx(nullptr, code, wParam, lParam);
+}
+
 // Ends the native modal loops on the GUI thread, which EndModal cannot: the
 // tracked menu, with EndMenu, and every system dialog, a top-level window
 // of class #32770 that wxWidgets does not own (every wxDialog is a #32770
@@ -165,9 +189,7 @@ void EndNativeModalLoops() {
     ::EnumThreadWindows(
         ::GetCurrentThreadId(),
         [](HWND window, LPARAM) -> BOOL {
-            wchar_t name[16];
-            if (::GetClassNameW(window, name, 16) == 0 || std::wcscmp(name, L"#32770") != 0 ||
-                wxFindWinFromHandle(window) != nullptr) {
+            if (!IsSystemDialog(window)) {
                 return TRUE;
             }
             const NativeQuestion* question = g_shell->question;
@@ -1548,9 +1570,32 @@ void show_message(rust::Str title, rust::Str text) {
     if (g_shell == nullptr || g_shell->shutting_down) {
         return;
     }
+    // The box's window is recorded when it is first activated, and dropped
+    // once it has closed; a box shown from inside this one's loop has
+    // dropped its own by then.
+    const std::size_t before = g_shell->message_boxes.size();
+    g_message_box_hook =
+        ::SetWindowsHookExW(WH_CBT, RecordMessageBox, nullptr, ::GetCurrentThreadId());
     wxMessageBox(wxString::FromUTF8(text.data(), text.size()),
                  wxString::FromUTF8(title.data(), title.size()), wxOK | wxICON_EXCLAMATION,
                  g_shell->frame);
+    if (g_message_box_hook != nullptr) {
+        ::UnhookWindowsHookEx(g_message_box_hook);
+        g_message_box_hook = nullptr;
+    }
+    if (g_shell != nullptr) {
+        g_shell->message_boxes.resize(before);
+    }
+}
+
+std::size_t raise_message_boxes() {
+    if (g_shell == nullptr || g_shell->message_boxes.empty()) {
+        return 0;
+    }
+    for (HWND box : g_shell->message_boxes) {
+        ::SetWindowPos(box, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+    }
+    return reinterpret_cast<std::size_t>(g_shell->message_boxes.back());
 }
 
 void set_speech_control(std::uint32_t generation, std::size_t control, std::int32_t value) {

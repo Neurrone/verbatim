@@ -151,6 +151,13 @@ impl GuiThread {
         unsafe { ffi::show_message(title, text) }
     }
 
+    /// Raises every message box `show_message` has up, oldest first, and
+    /// returns the newest's native window handle, 0 when none is up.
+    pub(crate) fn raise_message_boxes(self) -> usize {
+        // SAFETY: `self` shows this is the GUI thread.
+        unsafe { ffi::raise_message_boxes() }
+    }
+
     /// Removes the tray icon, destroys the dialogs and the frame, and ends
     /// the event loop.
     pub(crate) fn shut_down(self) {
@@ -780,6 +787,10 @@ pub(crate) mod ffi {
         /// Shows an OK-only warning box over the frame, returning once it
         /// is closed.
         unsafe fn show_message(title: &str, text: &str);
+
+        /// Raises every message box `show_message` has up, oldest first,
+        /// and returns the newest's native window handle, 0 when none is.
+        unsafe fn raise_message_boxes() -> usize;
 
         /// Sets a Speech page control to the driver's value: a slider's
         /// value, a choice's selection, or a check box's state as 1 or 0,

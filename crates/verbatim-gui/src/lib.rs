@@ -325,10 +325,7 @@ impl GuiCore {
             ffi::MenuChoice::Settings => self.open_settings(),
             ffi::MenuChoice::Exit => {
                 let exit = self.lifecycle.borrow().request_exit();
-                let _ = self.events.send(match exit {
-                    Exit::Quit => GuiEvent::QuitRequested,
-                    Exit::Blocked => GuiEvent::BlockedByMessageBox,
-                });
+                exit_chosen(exit, self);
             }
             _ => {}
         }
@@ -395,9 +392,7 @@ impl GuiCore {
         let action = self.lifecycle.borrow_mut().request_settings();
         match action {
             OpenSettings::Ignore => {}
-            OpenSettings::Blocked => {
-                let _ = self.events.send(GuiEvent::BlockedByMessageBox);
-            }
+            OpenSettings::Blocked => refuse(self),
             OpenSettings::FocusExisting => self.focus_foreground(ffi::DialogKind::Settings),
             OpenSettings::Create => {
                 // Take the foreground before the dialog exists, so the
@@ -812,4 +807,84 @@ fn route_settings_key(
 /// of [`plan::cycle_index`].
 fn next_category(current: usize, count: usize, forward: bool) -> usize {
     plan::cycle_index(current, count, forward)
+}
+
+/// What the GUI does when it acts on a refusal or the menu's Exit; the
+/// GUI's own core, or a test's recorder of the order.
+trait Act {
+    /// Raises every message box up and focuses the newest.
+    fn focus_message_boxes(&self);
+    /// Raises `event` for the app.
+    fn raise(&self, event: GuiEvent);
+}
+
+impl Act for GuiCore {
+    fn focus_message_boxes(&self) {
+        if let Some(newest) = foreground::hwnd_of(self.gui.raise_message_boxes()) {
+            foreground::force_foreground(newest);
+        }
+    }
+
+    fn raise(&self, event: GuiEvent) {
+        let _ = self.events.send(event);
+    }
+}
+
+/// Refuses an action while a message box is up, as NVDA does: every box
+/// is raised and the newest focused, then Verbatim says why
+/// (`docs/parity/system.md`, "A settings file that fails to load").
+fn refuse(gui: &impl Act) {
+    gui.focus_message_boxes();
+    gui.raise(GuiEvent::BlockedByMessageBox);
+}
+
+/// Carries out the menu's Exit as the lifecycle decided it.
+fn exit_chosen(exit: Exit, gui: &impl Act) {
+    match exit {
+        Exit::Quit => gui.raise(GuiEvent::QuitRequested),
+        Exit::Blocked => refuse(gui),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Records what the GUI did, in order.
+    #[derive(Default)]
+    struct Acts(RefCell<Vec<String>>);
+
+    impl Act for Acts {
+        fn focus_message_boxes(&self) {
+            self.0
+                .borrow_mut()
+                .push("focus the message boxes".to_owned());
+        }
+
+        fn raise(&self, event: GuiEvent) {
+            self.0.borrow_mut().push(format!("{event:?}"));
+        }
+    }
+
+    /// Derived from NVDA's source, not a capture (Dickson, 2026-11-20):
+    /// on a refusal NVDA raises every blocking message box and focuses
+    /// the last opened (`nvda/source/gui/blockAction.py` 25-31, 100-104;
+    /// `gui/message.py` 819-827, the boxes in the order they were shown,
+    /// 771), and only then says why, delayed so that the focus does not
+    /// cut it.
+    #[test]
+    fn exit_refused_under_a_message_box_focuses_the_box_before_saying_why() {
+        let mut lifecycle = Lifecycle::new();
+        lifecycle.message_box_shown();
+        let acts = Acts::default();
+        exit_chosen(lifecycle.request_exit(), &acts);
+        assert_eq!(
+            *acts.0.borrow(),
+            ["focus the message boxes", "BlockedByMessageBox"]
+        );
+        lifecycle.message_box_closed();
+        let acts = Acts::default();
+        exit_chosen(lifecycle.request_exit(), &acts);
+        assert_eq!(*acts.0.borrow(), ["QuitRequested"]);
+    }
 }

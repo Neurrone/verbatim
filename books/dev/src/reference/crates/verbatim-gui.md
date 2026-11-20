@@ -123,7 +123,10 @@ The private modules:
   shell item list are singletons, a second request focusing the open one;
   a list request during an enumeration is dropped; while a modal message
   box (`ShowMessage`) is up, counted since one can open inside another's
-  loop, the settings dialog and Exit are refused and the menu opens, as
+  loop, the settings dialog and Exit are refused, each box raised and
+  the newest focused before the app says why (`refuse`; the C++ layer
+  learns each box's window from a thread hook set while it is made, as
+  `wxMessageBox` does not give it), and the menu opens, as
   NVDA refuses them (`docs/parity/system.md`, "A settings file that fails
   to load"); requests and results after shutdown are ignored; and the
   hidden frame is hidden after a popup

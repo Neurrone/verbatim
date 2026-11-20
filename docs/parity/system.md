@@ -237,8 +237,11 @@ Differences:
   NVDA's source gives any modal message box, decided from that source
   because NVDA's own start-up box cannot be captured taking input
   (Dickson, 2026-11-20). While the box is up, the menu's Settings and
-  Exit are refused, and Verbatim says "Action unavailable while a dialog
-  requires a response"; the menu itself opens, as NVDA's `showGui` is not
+  Exit are refused: every box up is raised and the newest focused, then
+  Verbatim says "Action unavailable while a dialog requires a response",
+  as NVDA's refusal raises its blocking boxes, focuses the last shown and
+  then speaks (`nvda/source/gui/blockAction.py` 25-31 and 100-104;
+  `nvda/source/gui/message.py` 771 and 819-827); the menu itself opens, as NVDA's `showGui` is not
   blocked (`nvda/source/gui/blockAction.py` 55-59;
   `nvda/source/gui/__init__.py` 202, and 214, 223, 264 and 330, the
   resets to defaults, the settings dialogs and Exit, each blocked with
@@ -246,9 +249,10 @@ Differences:
   no Verbatim+Q, so there is nothing more to block. NVDA speaks the
   message at its priority NOW, which interrupts and resumes; Verbatim
   speaks it at Next, after the current utterance, until M6.3 brings that
-  priority. NVDA also raises and focuses the box when it refuses
-  (`blockAction.py` 25-31); Verbatim does not. The block is pinned by
-  the GUI lifecycle's tests (`crates/verbatim-gui/src/lifecycle.rs`).
+  priority. The block is pinned by the GUI lifecycle's tests
+  (`crates/verbatim-gui/src/lifecycle.rs`), and the focus before the
+  message by the GUI's `exit_refused_under_a_message_box_focuses_the_box_before_saying_why`
+  (`crates/verbatim-gui/src/lib.rs`).
 - One bad value fails Verbatim's whole file, where NVDA checks a value
   when it is read; keeping the other values is M8.3's.
 
