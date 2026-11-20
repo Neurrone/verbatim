@@ -372,7 +372,7 @@ pub(crate) fn ready() -> Held {
 }
 
 pub(crate) fn entry(tell: Event) -> Input<Entry> {
-    Input::Entry(Entry::of_tell(LISTENER, tell).unwrap())
+    Input::Entry(Entry::of_tell(LISTENER, tell, false).unwrap())
 }
 
 /// Nothing sent or said.
@@ -913,6 +913,51 @@ fn a_candidate_refused_by_acceptance_is_not_asked() {
     }
     assert_eq!(feed_at(&mut state, 1_000, entry(tell)), NOTHING);
     assert!(state.queue.front_for_tests().is_none());
+}
+
+/// A value change of the focus from a background window, waiting behind
+/// the focus's completion, is judged with "report background progress
+/// bars" as it stood at its arrival (`docs/parity/focus-events.md`, "Event
+/// acceptance"): refused when off then and turned on before its turn,
+/// spoken when on then and turned off since. Derived from NVDA's pinned
+/// source, which judges acceptance as an event is queued: capture C5
+/// cannot be made, its window being about a millisecond (Dickson's ruling
+/// of 2026-11-20 for captures that cannot be made).
+#[test]
+fn a_background_value_change_is_judged_with_the_setting_at_its_arrival() {
+    for (on_at_arrival, said) in [(false, None), (true, Some("Value(\"1:23\")"))] {
+        let mut state = asked_completion();
+        state.settings.report_background_progress_bars = on_at_arrival;
+        let mut tell = msaa_tell(-4);
+        tell.kind = EventKind::UiaPropertyChanged;
+        tell.object = EventObject::Followed {
+            runtime_id: RuntimeId(vec![42, 1]),
+        };
+        let value = Some(PropertyValue::Text("1:23".to_owned()));
+        tell.payload = Payload::PropertyChanged {
+            property: PropertyId::Value,
+            value,
+        };
+        if let TellWindow::Found(facts) = &mut tell.window {
+            (facts.window_to_foreground, facts.root_owner_to_foreground) =
+                (Relation::Outside, Relation::Outside);
+            facts.root_owner_is_foregrounds = false;
+        }
+        let input = QueueInput::Tell {
+            from: OUTPOST,
+            tell: Box::new(tell),
+        };
+        let queued = verbatim_model::Input::Queue {
+            trace_id: TraceId::from_raw(5),
+            at_us: 2_500,
+            input,
+        };
+        let _ = crate::reduce(&mut state.state, &mut state.runtime, &queued);
+        state.settings.report_background_progress_bars = !on_at_arrival;
+        let read = answer(OUTPOST, 2, Reply::Focus(Box::new(focus_read(None))));
+        let spoken: Vec<_> = SPOKEN_FOLLOWED.into_iter().chain(said).collect();
+        assert_eq!(feed_at(&mut state, 3_000, read), spoken, "{on_at_arrival}");
+    }
 }
 
 #[test]

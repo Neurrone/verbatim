@@ -331,8 +331,17 @@ moment NVDA judges it (Dickson, 2026-11-19). A window whose UI
 Automation focus came before Windows named it the foreground, the
 foreground arriving during the check's last calls, is refused, as NVDA
 refuses it; no recording has shown that order. Core judges
-the test at the entry's turn in the event queue, before any request, so
-a background window's event costs no call into its application.
+the test once for each tell, before any request, so a background
+window's event costs no call into its application. An MSAA change and a
+UI Automation change, the two whose answer the background progress bars
+setting enters, are judged as their entry is made at the tell's arrival,
+with the setting as it stands then, and keep that verdict, as NVDA
+judges an event as it queues it: a value change from a background window
+whose setting is turned on or off while it waits is judged as at its
+arrival, and a foreground change does not judge it again (Core's
+`a_background_value_change_is_judged_with_the_setting_at_its_arrival`).
+Every other tell's answer depends on its own facts alone and is judged
+where it is needed.
 
 NVDA's hold for a foreground event's window is matched for MSAA events,
 the ones NVDA's hold defers: while a foreground event's window is not

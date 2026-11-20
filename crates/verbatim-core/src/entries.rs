@@ -29,7 +29,7 @@ use crate::event_queue::{
     Asker, Cause, Core, Cx, Foreground, Function, Input, Live, Logic, MsaaClass, MsaaKey,
     OTHER_DUE_US, Outcome, Place, Reader, ReplayMismatch, RequestWindow, State, Timed,
 };
-use crate::focus::acceptance::{self, Accepted};
+use crate::focus::acceptance::{self, Acceptance, Accepted};
 use crate::focus::backend::BackendCache;
 use crate::focus::follow::FollowRequest;
 use crate::focus::menus::MenuCheck;
@@ -250,8 +250,12 @@ pub(crate) fn request_window(tell: &Event) -> Option<RequestWindow> {
 impl Entry {
     /// The entry `tell`, told by `from`, becomes, `None` for a kind whose
     /// entry a later step of the build adds, and for a tell whose object
-    /// does not fit its kind, a reader's fault.
-    pub(crate) fn of_tell(from: Instance, tell: Event) -> Option<Self> {
+    /// does not fit its kind, a reader's fault. An MSAA change and a UI
+    /// Automation change store their acceptance, judged now with
+    /// background progress bars reported as `background` says at the
+    /// tell's arrival, as NVDA judges an event as it is queued
+    /// (`docs/parity/focus-events.md`, "Event acceptance").
+    pub(crate) fn of_tell(from: Instance, tell: Event, background: bool) -> Option<Self> {
         // A top-level window's show, outside NVDA's show classes, is the
         // read at a postponed dialog's show (`crate::focus::shown`).
         if let Some(read) = crate::focus::shown::of_show(&tell) {
@@ -323,13 +327,8 @@ impl Entry {
                     object: *object,
                     child: *child,
                 };
-                let window = request_window(&tell)?;
-                Some(Self::MsaaChange(Box::new(crate::changes::MsaaChange {
-                    tell,
-                    ids,
-                    window,
-                    fence: Fence::default(),
-                })))
+                crate::changes::msaa_of_tell(tell, ids, background)
+                    .map(|change| Self::MsaaChange(Box::new(change)))
             }
             (EventKind::SystemCaret | EventKind::UiaTextSelectionChanged, _) => {
                 crate::caret_tell::CaretTell::of_tell(tell)
@@ -340,7 +339,7 @@ impl Entry {
                 EventObject::Uia { runtime_id, .. } | EventObject::Followed { runtime_id },
             ) => {
                 let runtime_id = runtime_id.clone();
-                crate::changes::uia_of_tell(tell, runtime_id)
+                crate::changes::uia_of_tell(tell, runtime_id, background)
                     .map(|change| Self::UiaChange(Box::new(change)))
             }
             (
@@ -353,6 +352,17 @@ impl Entry {
             ) => crate::announcements::Announcement::of_tell(from.generation, tell)
                 .map(|announcement| Self::Announcement(Box::new(announcement))),
             _ => None,
+        }
+    }
+
+    /// The acceptance of a single-tell entry's tell: the verdict an MSAA
+    /// change or a UI Automation change stored as it was made, any other
+    /// tell's judged on its own facts.
+    fn accepted(&self) -> Option<Acceptance> {
+        match self {
+            Self::MsaaChange(change) => Some(change.accepted),
+            Self::UiaChange(change) => Some(change.accepted),
+            other => other.tell().map(acceptance::accepted),
         }
     }
 
@@ -425,50 +435,22 @@ impl Entry {
     }
 }
 
-/// Whether `tell` was accepted by something other than the foreground
-/// relation, with background progress bars reported as `facts` says: its
-/// request is not stopped when the foreground changes. A value change
-/// accepted only because background progress bars are reported is among
-/// them, as NVDA stops nothing at a foreground change. The setting is
-/// judged as it stands at the foreground change, not as it stood when the
-/// event was accepted: turned off between the two, an event it alone
-/// accepted is stopped, which differs from NVDA only for a value change of
-/// a focus that is no bar, since NVDA's bar reads the setting as it speaks.
-fn accepted_apart_from_foreground(facts: &SrState, tell: &Event) -> bool {
-    let background = facts.settings.report_background_progress_bars;
-    match acceptance::accept(tell.kind, window_facts(tell), background) {
-        Ok(
-            Accepted::NoWindow
-            | Accepted::BackgroundProgress
-            | Accepted::ShowClass
-            | Accepted::Toast
-            | Accepted::AnyWindow
-            | Accepted::DesktopWindow
-            | Accepted::Topmost,
-        ) => true,
-        Ok(Accepted::CoreWindowActive | Accepted::SameRootOwner | Accepted::InForeground)
-        | Err(_) => false,
-    }
-}
-
 /// Whether `entry`, whose request out names `window`, was accepted by
-/// something other than the foreground relation, judged with `facts`,
-/// which exempts that request from the foreground stop.
-pub(crate) fn exempt_from_foreground(
-    facts: &SrState,
-    entry: &Entry,
-    window: &RequestWindow,
-) -> bool {
+/// something other than the foreground relation, which exempts that
+/// request from the foreground stop.
+pub(crate) fn exempt_from_foreground(entry: &Entry, window: &RequestWindow) -> bool {
     match entry {
         Entry::Run(candidates) => candidates
             .iter()
             .rev()
             .find(|candidate| candidate.window == *window)
-            .is_some_and(|candidate| accepted_apart_from_foreground(facts, &candidate.tell)),
+            .is_some_and(|candidate| {
+                acceptance::accepted(&candidate.tell).is_ok_and(Accepted::exempt_from_foreground)
+            }),
         Entry::Announcement(announcement) => announcement.exempt_from_foreground(),
         other => other
-            .tell()
-            .is_some_and(|tell| accepted_apart_from_foreground(facts, tell)),
+            .accepted()
+            .is_some_and(|accepted| accepted.is_ok_and(Accepted::exempt_from_foreground)),
     }
 }
 
@@ -616,7 +598,7 @@ impl Logic for Entries {
                 (now_us, foreground),
             )
             .then_some(CancelReason::Withdrawn),
-            Cause::Foreground => (!exempt_from_foreground(facts, front, &live.window)
+            Cause::Foreground => (!exempt_from_foreground(front, &live.window)
                 && foreground.is_some_and(|record| !record.holds(&live.window)))
             .then_some(CancelReason::Foreground),
             Cause::Settled => {
@@ -820,7 +802,7 @@ impl Logic for Entries {
             || crate::focus::menus::opening_dropped(facts, ahead, arriving, backend, now)
     }
 
-    fn place(facts: &SrState, entry: &Entry) -> Place {
+    fn place(_facts: &SrState, entry: &Entry) -> Place {
         match entry {
             Entry::Candidate(candidate) => Place::Msaa {
                 key: MsaaKey {
@@ -835,7 +817,7 @@ impl Logic for Entries {
                 } else {
                     MsaaClass::Focus
                 },
-                accepted: acceptance::accept(candidate.tell.kind, candidate.facts(), false).is_ok(),
+                accepted: acceptance::accepted(&candidate.tell).is_ok(),
                 at_us: candidate.tell.at_us,
             },
             Entry::Menu(candidate) => Place::Msaa {
@@ -847,7 +829,7 @@ impl Logic for Entries {
                     thread: candidate.tell.thread,
                 },
                 class: MsaaClass::Menu,
-                accepted: acceptance::accept(candidate.tell.kind, candidate.facts(), false).is_ok(),
+                accepted: acceptance::accepted(&candidate.tell).is_ok(),
                 at_us: candidate.tell.at_us,
             },
             Entry::MsaaChange(change) => Place::Msaa {
@@ -859,12 +841,7 @@ impl Logic for Entries {
                     thread: change.tell.thread,
                 },
                 class: MsaaClass::Other,
-                accepted: acceptance::accept(
-                    change.tell.kind,
-                    window_facts(&change.tell),
-                    facts.settings.report_background_progress_bars,
-                )
-                .is_ok(),
+                accepted: change.accepted.is_ok(),
                 at_us: change.tell.at_us,
             },
             Entry::UiaFocus(_) => Place::Other {
@@ -882,8 +859,7 @@ impl Logic for Entries {
                         thread: caret.tell.thread,
                     },
                     class: MsaaClass::Other,
-                    accepted: acceptance::accept(caret.tell.kind, window_facts(&caret.tell), false)
-                        .is_ok(),
+                    accepted: acceptance::accepted(&caret.tell).is_ok(),
                     at_us: caret.tell.at_us,
                 },
                 crate::caret_tell::Target::Uia(_) => Place::Other {
@@ -1000,8 +976,8 @@ impl Logic for Entries {
         window.is_some_and(|window| {
             !foreground.holds(&window)
                 && !entry
-                    .tell()
-                    .is_some_and(|tell| accepted_apart_from_foreground(facts, tell))
+                    .accepted()
+                    .is_some_and(|accepted| accepted.is_ok_and(Accepted::exempt_from_foreground))
         })
     }
 
@@ -1147,7 +1123,11 @@ pub(crate) fn route(
             }
             Input::Settle
         }
-        QueueInput::Tell { from, tell } => match Entry::of_tell(*from, (**tell).clone()) {
+        QueueInput::Tell { from, tell } => match Entry::of_tell(
+            *from,
+            (**tell).clone(),
+            state.settings.report_background_progress_bars,
+        ) {
             Some(Entry::UiaFocus(mut focus)) => {
                 focus.alt_down = state.alt_down;
                 Input::Entry(Entry::UiaFocus(focus))

@@ -742,15 +742,11 @@ fn is_menu_start(kind: EventKind) -> bool {
 /// The rows for a UI Automation focus or menu opening.
 fn uia(focus: &UiaFocus, view: &View<'_>) -> Settled {
     let tell = &focus.tell;
-    let facts = match &tell.window {
-        TellWindow::Found(facts) => Some(facts.as_ref()),
-        TellWindow::NoWindow | TellWindow::Failed => None,
-    };
     // The menu opening on the committed element is a focus on it
     // (`UIAHandler/__init__.py` 826 to 835): acceptance, then its
     // keyboard-focus answer.
     if opens_on_committed(view.versions, focus) {
-        if acceptance::accept(tell.kind, facts, false).is_err() {
+        if acceptance::accepted(tell).is_err() {
             return Settled::Refused(Reason::Acceptance);
         }
         if keyboard_focus(tell) == Some(Read::Answered(false)) {
@@ -775,7 +771,7 @@ fn uia(focus: &UiaFocus, view: &View<'_>) -> Settled {
     if uia_on_hidden_frame(focus) {
         return Settled::Refused(Reason::HiddenFrame);
     }
-    if acceptance::accept(tell.kind, facts, false).is_err() {
+    if acceptance::accepted(tell).is_err() {
         return Settled::Refused(Reason::Acceptance);
     }
     if overridden != Override::NetUiMenuItem && keyboard_focus(tell) == Some(Read::Answered(false))
@@ -868,7 +864,7 @@ pub(crate) fn before_duplicate(candidate: &Candidate, view: &View<'_>) -> Option
     if msaa_on_hidden_frame(candidate) {
         return Some(Reason::HiddenFrame);
     }
-    if acceptance::accept(tell.kind, candidate.facts(), false).is_err() {
+    if acceptance::accepted(tell).is_err() {
         return Some(Reason::Acceptance);
     }
     if candidate.facts().is_some_and(|facts| facts.desktop) {

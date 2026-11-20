@@ -71,14 +71,14 @@ fn uia_caret(runtime: i32) -> Input<Entry> {
     let mut tell = uia_tell(runtime, Vec::new());
     tell.kind = EventKind::UiaTextSelectionChanged;
     tell.checked = None;
-    Input::Entry(Entry::of_tell(OUTPOST, tell).expect("a caret tell"))
+    Input::Entry(Entry::of_tell(OUTPOST, tell, false).expect("a caret tell"))
 }
 
 /// The system caret's location change in window 5, told by the listener.
 fn system_caret() -> Input<Entry> {
     let mut tell = msaa_tell(-8);
     tell.kind = EventKind::SystemCaret;
-    Input::Entry(Entry::of_tell(LISTENER, tell).expect("a caret tell"))
+    Input::Entry(Entry::of_tell(LISTENER, tell, false).expect("a caret tell"))
 }
 
 /// An MSAA value change of window 5's client object.
@@ -728,7 +728,7 @@ fn a_uia_value_change_of_an_element_with_a_text_pattern_says_nothing() {
     let said = step(
         &mut held,
         1_000,
-        Input::Entry(Entry::of_tell(OUTPOST, tell).expect("a change")),
+        Input::Entry(Entry::of_tell(OUTPOST, tell, false).expect("a change")),
     );
     assert_eq!(said, Step::default());
 }
@@ -776,7 +776,7 @@ fn a_uia_caret_tell_with_nothing_kept_reads_adopting_nothing() {
     tell.object = EventObject::Followed {
         runtime_id: verbatim_model::property::RuntimeId(vec![42, 1]),
     };
-    let entry = Input::Entry(Entry::of_tell(OUTPOST, tell).expect("a caret tell"));
+    let entry = Input::Entry(Entry::of_tell(OUTPOST, tell, false).expect("a caret tell"));
     let asked = step(&mut held, 1_000, entry);
     assert_eq!(
         asked.text,

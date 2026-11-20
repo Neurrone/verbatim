@@ -924,11 +924,21 @@ a value change is judged as a value change, which background progress
 bars reported accepts from any window, as NVDA maps a UI Automation value
 or range value change to its value change event, so the focus's value is
 spoken while the taskbar is in front with the setting on, and every other
-property as a property change. An event accepted only because background
-progress bars are reported is accepted apart from the foreground, so a
-foreground change neither stops its request out nor ends it waiting
-(`accepted_apart_from_foreground`, judged with Core's facts by
-`entries::exempt_from_foreground`). `verbatim_core::accepts` is
+property as a property change. Acceptance is judged once per tell: an
+MSAA change and a UI Automation change store their verdict
+(`MsaaChange::accepted`, `UiaChange::accepted`), judged as `Entry::of_tell`
+makes the entry with the background setting as it stands at the tell's
+arrival (`changes::msaa_of_tell`, `changes::uia_of_tell`); every other
+tell is judged on its own facts by `acceptance::accepted`, with no
+setting. `changes::passes` is the one test of acceptance and the backend
+verdict for MSAA changes and announcements. An event accepted by
+something other than the foreground relation
+(`Accepted::exempt_from_foreground`), one accepted only because
+background progress bars were reported among them, is exempt from the
+foreground stop, so a foreground change neither stops its request out
+nor ends it waiting (`entries::exempt_from_foreground`).
+`AcceptanceFacts::in_foreground` is the one test of the foreground
+relation, for acceptance and for the window facts a focus keeps. `verbatim_core::accepts` is
 the acceptance test's answer alone, public so that the listener judges
 with Core's own function whether to read a value change while background
 progress bars are not reported (Dickson, 2026-11-19). Every

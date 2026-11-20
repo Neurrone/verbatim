@@ -41,7 +41,7 @@ use verbatim_model::{Backend, NodeId, OutpostId, PropertyChange, Role, State, St
 
 use crate::entries::{Entries, window_facts};
 use crate::event_queue::{Cx, OTHER_DUE_US, Outcome, Reader, Request, RequestWindow};
-use crate::focus::acceptance;
+use crate::focus::acceptance::{self, Acceptance};
 use crate::focus::backend::{Judged, Judgement};
 use crate::focus::versions::{Focus, ReadBy};
 use crate::state::SrState;
@@ -58,6 +58,8 @@ pub(crate) struct MsaaChange {
     pub(crate) window: RequestWindow,
     /// Its speech fence, set when it joins the queue.
     pub(crate) fence: crate::keys::entry::Fence,
+    /// Its acceptance, judged as its entry is made.
+    pub(crate) accepted: Acceptance,
 }
 
 /// A UI Automation property change tell, parsed.
@@ -69,6 +71,8 @@ pub(crate) struct UiaChange {
     pub(crate) runtime_id: RuntimeId,
     /// The property.
     pub(crate) property: PropertyId,
+    /// Its acceptance, judged as its entry is made ([`uia_of_tell`]).
+    pub(crate) accepted: Acceptance,
     /// Its speech fence, set when it joins the queue.
     pub(crate) fence: crate::keys::entry::Fence,
     /// Its new value, as the tell carries it.
@@ -325,19 +329,19 @@ fn held(facts: &SrState, generation: Option<OutpostId>) -> Option<Focus> {
         .cloned()
 }
 
-/// Whether `change` passes acceptance and the backend verdict on its
-/// tell's facts.
-fn passes(cx: &Cx<Entries>, change: &MsaaChange) -> bool {
-    let background = cx.facts().settings.report_background_progress_bars;
-    if acceptance::accept(change.tell.kind, window_facts(&change.tell), background).is_err() {
-        return false;
-    }
-    cx.backend().judge(
-        Judged::Msaa,
-        &change.window.judged(),
-        change.tell.at_us,
-        cx.now_us(),
-    ) != Judgement::Drop
+/// Whether an MSAA change or announcement of `tell`, `accepted` as its
+/// verdict and naming `window`, passes acceptance and the backend verdict.
+pub(crate) fn passes(
+    cx: &Cx<Entries>,
+    accepted: Acceptance,
+    tell: &Event,
+    window: &RequestWindow,
+) -> bool {
+    accepted.is_ok()
+        && cx
+            .backend()
+            .judge(Judged::Msaa, &window.judged(), tell.at_us, cx.now_us())
+            != Judgement::Drop
 }
 
 /// A value change of the committed focus, editable text with automatic
@@ -379,7 +383,7 @@ pub(crate) fn observe_text_change(cx: &mut Cx<Entries>, change: &MsaaChange) {
 /// change that sets the text-changed flag. A change of the committed
 /// field's text that passes is the control plane's text change.
 fn judged(cx: &mut Cx<Entries>, change: &MsaaChange) -> bool {
-    if !passes(cx, change) {
+    if !passes(cx, change.accepted, &change.tell, &change.window) {
         return false;
     }
     observe_text_change(cx, change);
@@ -633,30 +637,10 @@ pub(crate) fn uia_changed(facts: &mut SrState, change: &UiaChange) -> Vec<verbat
     }
 }
 
-/// Whether the UI Automation property change `change` passes acceptance
-/// on its tell's facts: the listener's, or those of the followed node's
-/// window an outpost gathered, as NVDA's property-change handler applies
-/// it to every event (`docs/parity/focus-events.md`, "Event acceptance").
-/// A value change, the outpost's tell of a value or range value change,
-/// is judged as a value change, which background progress bars reported
-/// accepts from any window, as NVDA maps both properties to its value
-/// change event; every other property is judged as a property change.
-fn accepted(facts: &SrState, change: &UiaChange) -> bool {
-    let (kind, background) = if change.property == PropertyId::Value {
-        (
-            EventKind::ValueChange,
-            facts.settings.report_background_progress_bars,
-        )
-    } else {
-        (change.tell.kind, false)
-    };
-    acceptance::accept(kind, window_facts(&change.tell), background).is_ok()
-}
-
 /// The function of a UI Automation property change entry, which asks
 /// nothing for a name, value or state change, once it passes acceptance.
 pub(crate) fn uia(cx: &mut Cx<Entries>, change: &UiaChange) {
-    if !accepted(&cx.facts(), change) {
+    if change.accepted.is_err() {
         return;
     }
     let said = uia_changed(&mut cx.facts_mut(), change);
@@ -684,7 +668,7 @@ pub(crate) async fn uia_entry(mut cx: Cx<Entries>, change: UiaChange) {
         PropertyId::Suggestions => PropertyId::Suggestions,
         _ => return uia(&mut cx, &change),
     };
-    if !accepted(&cx.facts(), &change) {
+    if change.accepted.is_err() {
         return;
     }
     let target = uia_target(&cx.facts(), &change);
@@ -730,17 +714,51 @@ pub(crate) async fn uia_entry(mut cx: Cx<Entries>, change: UiaChange) {
     speak_change(&mut cx, change.tell.trace_id, node, &property, None);
 }
 
-/// The UI Automation property change `tell` names, parsed; `None` for a
-/// tell with no property change.
-pub(crate) fn uia_of_tell(tell: Event, runtime_id: RuntimeId) -> Option<UiaChange> {
+/// The MSAA change `tell` names on `ids`, parsed, with its acceptance
+/// judged as it arrives, with background progress bars reported as
+/// `background` says; `None` for a tell with no window to name.
+pub(crate) fn msaa_of_tell(tell: Event, ids: MsaaIds, background: bool) -> Option<MsaaChange> {
+    let window = crate::entries::request_window(&tell)?;
+    let accepted = acceptance::accept(tell.kind, window_facts(&tell), background);
+    Some(MsaaChange {
+        tell,
+        ids,
+        window,
+        fence: crate::keys::entry::Fence::default(),
+        accepted,
+    })
+}
+
+/// The UI Automation property change `tell` names, parsed, with its
+/// acceptance judged as it arrives, with background progress bars
+/// reported as `background` says; `None` for a tell with no
+/// property change. Acceptance is judged on its tell's facts: the
+/// listener's, or those of the followed node's window an outpost gathered,
+/// as NVDA's property-change handler applies it to every event
+/// (`docs/parity/focus-events.md`, "Event acceptance"). A value change,
+/// the outpost's tell of a value or range value change, is judged as a
+/// value change, which background progress bars reported accepts from any
+/// window, as NVDA maps both properties to its value change event; every
+/// other property is judged as a property change.
+pub(crate) fn uia_of_tell(
+    tell: Event,
+    runtime_id: RuntimeId,
+    background: bool,
+) -> Option<UiaChange> {
     let Payload::PropertyChanged { property, value } = &tell.payload else {
         return None;
     };
     let (property, value) = (*property, value.clone());
+    let accepted = if property == PropertyId::Value {
+        acceptance::accept(EventKind::ValueChange, window_facts(&tell), background)
+    } else {
+        acceptance::accepted(&tell)
+    };
     Some(UiaChange {
         tell,
         runtime_id,
         property,
+        accepted,
         value,
         fence: crate::keys::entry::Fence::default(),
         at_arrival: AtArrival::default(),

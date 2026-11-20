@@ -474,7 +474,7 @@ fn a_menu_opening_behind_a_run_whose_newest_is_a_duplicate_is_kept() {
     let candidate = |object: i32, at_us: u64, focused: bool| {
         let mut tell = msaa_tell(object);
         tell.at_us = at_us;
-        let Some(Entry::Candidate(mut candidate)) = Entry::of_tell(LISTENER, tell) else {
+        let Some(Entry::Candidate(mut candidate)) = Entry::of_tell(LISTENER, tell, false) else {
             unreachable!("an MSAA focus is a candidate");
         };
         if focused {

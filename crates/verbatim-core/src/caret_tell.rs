@@ -30,7 +30,7 @@ use verbatim_model::{
 };
 
 use crate::changes::MsaaChange;
-use crate::entries::{Entries, Entry, request_window, window_facts};
+use crate::entries::{Entries, Entry, request_window};
 use crate::event_queue::{Cx, OTHER_DUE_US, Outcome, Reader, Request, RequestWindow};
 use crate::focus::acceptance;
 use crate::focus::versions::{Focus, Kept, ReadBy};
@@ -213,7 +213,7 @@ pub(crate) fn dropped_in_console(state: &crate::state::SrState, entry: &Entry) -
 
 /// The caret tell's function at its turn.
 pub(crate) async fn run(mut cx: Cx<Entries>, tell: CaretTell) {
-    if acceptance::accept(tell.tell.kind, window_facts(&tell.tell), false).is_err() {
+    if acceptance::accepted(&tell.tell).is_err() {
         return;
     }
     // Dropped again at its turn while a console host's terminal is the

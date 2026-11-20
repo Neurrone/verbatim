@@ -121,7 +121,7 @@ fn tell(
         process,
         related,
     )));
-    Input::Entry(Entry::of_tell(LISTENER, event).expect("an entry"))
+    Input::Entry(Entry::of_tell(LISTENER, event, false).expect("an entry"))
 }
 
 /// A show of the top-level `window`, as the listener tells it: the hook's

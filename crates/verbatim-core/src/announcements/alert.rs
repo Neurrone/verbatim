@@ -16,12 +16,13 @@ use verbatim_model::request::{
 };
 use verbatim_model::{Backend, NodeId, NodeSnapshot, Role, SpeechPriority, State};
 
-use super::{Announcement, Kind, msaa_passes};
+use super::{Announcement, Kind};
 use crate::changes::ChangeRead;
 use crate::entries::Entries;
 use crate::event_queue::RequestWindow;
 use crate::event_queue::{Cx, OTHER_DUE_US, Outcome, Reader};
 use crate::focus::FOCUS_SET;
+use crate::focus::acceptance;
 use verbatim_model::request::MsaaIds;
 
 /// The function of an MSAA alert entry, naming `ids` in `window`, moved
@@ -43,7 +44,7 @@ pub(crate) async fn run(
         cx.requeue(crate::entries::Entry::Announcement(Box::new(moved)));
         return;
     }
-    if !msaa_passes(&cx, tell, &window) {
+    if !crate::changes::passes(&cx, acceptance::accepted(tell), tell, &window) {
         return;
     }
     // The committed focus's line, when the alert's outpost holds it: the

@@ -41,12 +41,13 @@ use verbatim_model::request::{
 };
 use verbatim_model::{Backend, NodeId, PropertyChange, Role, State, StateSet, WindowHandle};
 
-use super::{Announcement, Kept, accepted, native, text};
+use super::{Announcement, Kept, native, text};
 use crate::changes::AtArrival;
 use crate::entries::Entries;
 use crate::entries::window_facts;
 use crate::event_queue::{Cx, OTHER_DUE_US, Outcome, Reader, Request, RequestWindow};
 use crate::focus::FOCUS_SET;
+use crate::focus::acceptance;
 use crate::focus::execute::Known;
 use crate::focus::uia_focus::ListenerRead;
 use crate::focus::versions::Focus as CommittedFocus;
@@ -144,7 +145,7 @@ pub(crate) async fn run(
     };
     // The Windows Forms combo box's request takes its list's events
     // whatever the foreground.
-    if !accepted(tell) && list.is_none() {
+    if acceptance::accepted(tell).is_err() && list.is_none() {
         return;
     }
     selected(

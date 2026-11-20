@@ -127,6 +127,18 @@ pub struct AcceptanceFacts {
     pub hidden_frame_owned: bool,
 }
 
+impl AcceptanceFacts {
+    /// Whether the window is in the foreground: its root owner is the
+    /// foreground's, or it or its root owner is the foreground window or
+    /// under it.
+    #[must_use]
+    pub fn in_foreground(&self) -> bool {
+        self.root_owner_is_foregrounds
+            || self.window_to_foreground != Relation::Outside
+            || self.root_owner_to_foreground != Relation::Outside
+    }
+}
+
 /// The window a tell is judged by, parsed at the boundary: found with its
 /// facts, or why there is none. For a UI Automation event it is the
 /// nearest window the check thread's walk found; for a `WinEvent`, the

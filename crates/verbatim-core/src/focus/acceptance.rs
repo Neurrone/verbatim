@@ -8,8 +8,9 @@
 //! and has no application Verbatim supports. UI Automation notifications
 //! are not tested by window, so their caller does not ask.
 
+use serde::{Deserialize, Serialize};
 use verbatim_model::event_kind::EventKind;
-use verbatim_model::tell::{AcceptanceFacts, Relation};
+use verbatim_model::tell::{AcceptanceFacts, Event, Relation};
 
 /// The classes whose shows are accepted.
 const SHOW_CLASSES: [&str; 6] = [
@@ -33,7 +34,7 @@ const TOAST_PARENT: &str = "ToastChildWindowClass";
 const CORE_WINDOW_PREFIX: &str = "Windows.UI.Core";
 
 /// Why an event was accepted, each one of the test's rules.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum Accepted {
     /// It has no window, so nothing can be tested.
     NoWindow,
@@ -51,16 +52,33 @@ pub(crate) enum Accepted {
     /// A core window equal to or under the foreground thread's active
     /// window.
     CoreWindowActive,
-    /// Its root owner is the foreground's root owner.
-    SameRootOwner,
-    /// It, or its root owner, is the foreground window or under it.
+    /// It is in the foreground ([`AcceptanceFacts::in_foreground`]).
     InForeground,
     /// It, or its top-level window, is topmost.
     Topmost,
 }
 
+impl Accepted {
+    /// Whether it was accepted by something other than the foreground
+    /// relation, so that the foreground stop does not reach its entry: a
+    /// value change accepted only because background progress bars are
+    /// reported among them, as NVDA stops nothing at a foreground change.
+    pub(crate) fn exempt_from_foreground(self) -> bool {
+        match self {
+            Self::NoWindow
+            | Self::BackgroundProgress
+            | Self::ShowClass
+            | Self::Toast
+            | Self::AnyWindow
+            | Self::DesktopWindow
+            | Self::Topmost => true,
+            Self::CoreWindowActive | Self::InForeground => false,
+        }
+    }
+}
+
 /// Why an event was refused.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum Refused {
     /// A hide.
     Hide,
@@ -87,6 +105,13 @@ pub fn accepts(
     background_progress: bool,
 ) -> bool {
     accept(kind, facts, background_progress).is_ok()
+}
+
+/// Whether `tell` is accepted on its own facts, with no setting: the
+/// verdict of every tell but an MSAA change and a UI Automation value
+/// change, which their entry stores as it is made.
+pub(crate) fn accepted(tell: &Event) -> Acceptance {
+    accept(tell.kind, crate::entries::window_facts(tell), false)
 }
 
 /// Whether an event of `kind`, whose tell window has `facts` (`None` when
@@ -127,12 +152,7 @@ pub(crate) fn accept(
     {
         return Ok(Accepted::CoreWindowActive);
     }
-    if facts.root_owner_is_foregrounds {
-        return Ok(Accepted::SameRootOwner);
-    }
-    if facts.window_to_foreground != Relation::Outside
-        || facts.root_owner_to_foreground != Relation::Outside
-    {
+    if facts.in_foreground() {
         return Ok(Accepted::InForeground);
     }
     if facts.window_topmost || facts.root_topmost {
@@ -319,7 +339,7 @@ mod tests {
         facts.root_owner_is_foregrounds = true;
         assert_eq!(
             accept(EventKind::MsaaFocus, Some(&facts), false),
-            Ok(Accepted::SameRootOwner)
+            Ok(Accepted::InForeground)
         );
     }
 
@@ -367,8 +387,8 @@ mod tests {
 
     #[test]
     fn the_rules_decide_in_order() {
-        // The desktop window comes before the foreground relation, and a
-        // shared root owner before the relation by `IsChild`.
+        // The desktop window comes before the foreground relation, and the
+        // relation before a topmost window.
         let mut facts = background("#32769");
         facts.desktop = true;
         facts.window_to_foreground = Relation::Equal;
@@ -382,7 +402,7 @@ mod tests {
         facts.window_topmost = true;
         assert_eq!(
             accept(EventKind::MsaaFocus, Some(&facts), false),
-            Ok(Accepted::SameRootOwner)
+            Ok(Accepted::InForeground)
         );
     }
 }

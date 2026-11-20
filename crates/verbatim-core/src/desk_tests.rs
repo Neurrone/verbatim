@@ -554,7 +554,7 @@ impl Desk {
         self.app(app);
         let number = read.focus.read.node.expect("a focus node").number();
         let tell = focus_tell(app, number, self.at_us + 1_000);
-        let (_, sent) = self.step(Input::Entry(Entry::of_tell(LISTENER, tell).unwrap()));
+        let (_, sent) = self.step(Input::Entry(Entry::of_tell(LISTENER, tell, false).unwrap()));
         let [(object, Reader::Listener, Wire::ReadObject(_))] = &sent[..] else {
             panic!("one listener read asked: {sent:?}");
         };
@@ -598,8 +598,10 @@ impl Desk {
             window: TellWindow::NoWindow,
             checked: None,
         };
-        self.step(Input::Entry(Entry::of_tell(app.instance(), tell).unwrap()))
-            .0
+        self.step(Input::Entry(
+            Entry::of_tell(app.instance(), tell, false).unwrap(),
+        ))
+        .0
     }
 
     /// A UI Automation property change of `property` to `value` on node
@@ -618,7 +620,7 @@ impl Desk {
             checked: None,
             ..focus_tell(app, number, self.at_us + 1_000)
         };
-        self.step(Input::Entry(Entry::of_tell(LISTENER, tell).unwrap()))
+        self.step(Input::Entry(Entry::of_tell(LISTENER, tell, false).unwrap()))
             .0
     }
 
@@ -630,7 +632,7 @@ impl Desk {
         if let Some(checked) = tell.checked.as_mut() {
             checked.kept = vec![(ElementToken(number), Read::Answered(true))];
         }
-        self.step(Input::Entry(Entry::of_tell(LISTENER, tell).unwrap()))
+        self.step(Input::Entry(Entry::of_tell(LISTENER, tell, false).unwrap()))
             .0
     }
 

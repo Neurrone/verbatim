@@ -28,7 +28,6 @@ use verbatim_model::{NotificationKind, NotificationProcessing};
 use crate::entries::{Entries, request_window, window_facts};
 use crate::event_queue::{Cx, Function, MsaaClass, MsaaKey, Place, RequestWindow};
 use crate::focus::acceptance::{self, Accepted};
-use crate::focus::backend::{Judged, Judgement};
 use crate::keys::entry::Fence;
 
 /// An announcement's tell, parsed by its kind.
@@ -226,7 +225,7 @@ impl Announcement {
                 thread: self.tell.thread,
             },
             class,
-            accepted: acceptance::accept(self.tell.kind, window_facts(&self.tell), false).is_ok(),
+            accepted: acceptance::accepted(&self.tell).is_ok(),
             at_us: self.tell.at_us,
         };
         match &self.kind {
@@ -266,16 +265,9 @@ impl Announcement {
     pub(crate) fn exempt_from_foreground(&self) -> bool {
         match &self.kind {
             Kind::Notification { .. } | Kind::Toast(_) | Kind::Show { .. } => true,
-            Kind::UiaSelection(..) | Kind::Alert { .. } | Kind::DesktopName { .. } => matches!(
-                acceptance::accept(self.tell.kind, window_facts(&self.tell), false),
-                Ok(Accepted::NoWindow
-                    | Accepted::Toast
-                    | Accepted::DesktopWindow
-                    | Accepted::Topmost
-                    | Accepted::ShowClass
-                    | Accepted::AnyWindow
-                    | Accepted::BackgroundProgress)
-            ),
+            Kind::UiaSelection(..) | Kind::Alert { .. } | Kind::DesktopName { .. } => {
+                acceptance::accepted(&self.tell).is_ok_and(Accepted::exempt_from_foreground)
+            }
         }
     }
 
@@ -306,22 +298,6 @@ fn native(tell: &Event) -> bool {
         .as_ref()
         .and_then(|checked| checked.probe)
         .is_none_or(|probe| probe.provider)
-}
-
-/// Whether `tell` passes acceptance on its tell's facts.
-fn accepted(tell: &Event) -> bool {
-    acceptance::accept(tell.kind, window_facts(tell), false).is_ok()
-}
-
-/// Whether an MSAA announcement passes acceptance and the backend verdict
-/// on its tell's facts.
-fn msaa_passes(cx: &Cx<Entries>, tell: &Event, window: &RequestWindow) -> bool {
-    if !accepted(tell) {
-        return false;
-    }
-    cx.backend()
-        .judge(Judged::Msaa, &window.judged(), tell.at_us, cx.now_us())
-        != Judgement::Drop
 }
 
 /// The text of `value`, a property read, when it is text.

@@ -185,9 +185,6 @@ fn window_of(
     facts: &AcceptanceFacts,
     foreground: Option<crate::event_queue::Foreground>,
 ) -> WindowFacts {
-    let in_foreground = facts.window_to_foreground != Relation::Outside
-        || facts.root_owner_to_foreground != Relation::Outside
-        || facts.root_owner_is_foregrounds;
     let top_level = if facts.hidden_frame_owned {
         facts.root_owner.handle
     } else {
@@ -202,7 +199,7 @@ fn window_of(
             .class
             .starts_with("Windows.UI.Core")
             .then_some(facts.window_to_active != Relation::Outside),
-        in_foreground,
+        in_foreground: facts.in_foreground(),
         foreground_window: facts.foreground,
         class: facts.window.class.clone(),
         application: tell.application.clone(),

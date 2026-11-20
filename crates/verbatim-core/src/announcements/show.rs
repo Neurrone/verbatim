@@ -10,12 +10,13 @@
 use verbatim_model::request::{FocusNode, ObjectRef, Purpose, ReadObject};
 use verbatim_model::{Backend, Role, SpeechPriority};
 
-use super::{Announcement, msaa_passes};
+use super::Announcement;
 use crate::changes::ChangeRead;
 use crate::entries::{Entries, window_facts};
 use crate::event_queue::RequestWindow;
 use crate::event_queue::{Cx, OTHER_DUE_US, Outcome};
 use crate::focus::FOCUS_SET;
+use crate::focus::acceptance;
 use verbatim_model::request::MsaaIds;
 
 /// The tooltip class, whose shows are read.
@@ -30,7 +31,7 @@ pub(crate) async fn run(
 ) {
     let tell = &announcement.tell;
     if window_facts(tell).is_none_or(|facts| facts.window.class != TOOLTIP_CLASS)
-        || !msaa_passes(&cx, tell, &window)
+        || !crate::changes::passes(&cx, acceptance::accepted(tell), tell, &window)
     {
         return;
     }

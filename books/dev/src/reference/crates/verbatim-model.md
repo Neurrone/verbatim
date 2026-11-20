@@ -283,7 +283,9 @@ them yet.
   cached properties, a
   kind's `Payload`, the window it is judged by (`TellWindow`, found with
   its `AcceptanceFacts`, none, or failed; the facts mark Verbatim's
-  hidden frame and a window it owns through its owner chain) and what the
+  hidden frame and a window it owns through its owner chain, and
+  `AcceptanceFacts::in_foreground` is the one test of their relation to
+  the foreground) and what the
   listener's check thread found at delivery (`Checked`).
 - `request`: the shared request list. `Ask` is a request as Core sends it,
   numbered (`RequestNumber`) and naming its window; `Request` holds the

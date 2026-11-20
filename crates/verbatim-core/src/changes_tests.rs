@@ -287,7 +287,7 @@ fn a_uia_state_change_on_the_focus_speaks_the_states_its_tell_carries_with_no_re
         feed_at(
             &mut state,
             4_000,
-            Input::Entry(crate::entries::Entry::of_tell(LISTENER, tell).unwrap())
+            Input::Entry(crate::entries::Entry::of_tell(LISTENER, tell, false).unwrap())
         ),
         ["State(Disabled)"]
     );
@@ -330,7 +330,8 @@ fn a_followed_name_change_on_the_focus_speaks_the_name_its_tell_carries_with_no_
                     followed_change(
                         PropertyId::Name,
                         Some(PropertyValue::Text("Saved".to_owned()))
-                    )
+                    ),
+                    false,
                 )
                 .unwrap()
             )
@@ -352,7 +353,8 @@ fn a_followed_help_text_change_reads_the_focus_s_description_and_speaks_it() {
                     followed_change(
                         PropertyId::Description,
                         Some(PropertyValue::Text("carried".to_owned()))
-                    )
+                    ),
+                    false,
                 )
                 .unwrap()
             )
@@ -396,7 +398,7 @@ fn a_followed_help_text_change_on_an_ancestor_asks_nothing() {
         feed_at(
             &mut state,
             4_000,
-            Input::Entry(crate::entries::Entry::of_tell(OUTPOST, tell).unwrap())
+            Input::Entry(crate::entries::Entry::of_tell(OUTPOST, tell, false).unwrap())
         ),
         NOTHING
     );
@@ -418,7 +420,8 @@ fn a_followed_controller_for_change_reads_whether_suggestions_are_open() {
                 Input::Entry(
                     crate::entries::Entry::of_tell(
                         OUTPOST,
-                        followed_change(PropertyId::Suggestions, None)
+                        followed_change(PropertyId::Suggestions, None),
+                        false,
                     )
                     .unwrap()
                 )
@@ -500,7 +503,7 @@ fn a_focus_under_the_committed_focus_judges_its_waiting_state_tells_first() {
             feed_at(
                 &mut state,
                 4_100,
-                Input::Entry(crate::entries::Entry::of_tell(LISTENER, tell).unwrap())
+                Input::Entry(crate::entries::Entry::of_tell(LISTENER, tell, false).unwrap())
             ),
             NOTHING
         );
@@ -565,7 +568,9 @@ fn a_focus_not_under_the_committed_focus_leaves_its_state_tells_waiting() {
     feed_at(
         &mut state,
         4_100,
-        Input::Entry(crate::entries::Entry::of_tell(LISTENER, uia_states(1, expanded)).unwrap()),
+        Input::Entry(
+            crate::entries::Entry::of_tell(LISTENER, uia_states(1, expanded), false).unwrap(),
+        ),
     );
     feed_at(
         &mut state,
@@ -880,7 +885,7 @@ fn a_uia_property_change_of_a_window_acceptance_refuses_says_nothing() {
             feed_at(
                 &mut state,
                 4_000,
-                Input::Entry(crate::entries::Entry::of_tell(from, tell).unwrap())
+                Input::Entry(crate::entries::Entry::of_tell(from, tell, false).unwrap())
             ),
             NOTHING,
             "followed: {followed}"
@@ -896,7 +901,7 @@ fn followed_states(runtime: i32, states: StateSet) -> Input<crate::entries::Entr
         },
         ..followed_change(PropertyId::States, Some(PropertyValue::States(states)))
     };
-    Input::Entry(crate::entries::Entry::of_tell(OUTPOST, tell).unwrap())
+    Input::Entry(crate::entries::Entry::of_tell(OUTPOST, tell, false).unwrap())
 }
 
 /// The focus on `[42, 3]`, node 3, told and its listener read out
@@ -1103,7 +1108,7 @@ fn a_followed_value_change_of_a_refused_window_is_spoken_only_with_background_ba
         feed_at(
             &mut state,
             4_000,
-            Input::Entry(crate::entries::Entry::of_tell(OUTPOST, tell).unwrap()),
+            Input::Entry(crate::entries::Entry::of_tell(OUTPOST, tell, background).unwrap()),
         )
     };
     assert_eq!(
@@ -1124,20 +1129,17 @@ fn a_followed_value_change_of_a_refused_window_is_spoken_only_with_background_ba
 }
 
 /// An MSAA value change in a window unrelated to the foreground, accepted
-/// only because background progress bars are reported, is accepted apart
-/// from the foreground: with the setting on, a foreground change in
-/// another window neither stops its request out nor ends it waiting, as
-/// NVDA stops nothing at a foreground change; with the setting off it is
-/// stopped and ended, as one accepted by the foreground relation is.
+/// only because background progress bars were reported at its arrival, is
+/// accepted apart from the foreground: with the setting on then, a
+/// foreground change in another window neither stops its request out nor
+/// ends it waiting, as NVDA stops nothing at a foreground change; with the
+/// setting off then it is stopped and ended, as one accepted by the
+/// foreground relation is.
 #[test]
 fn a_value_change_accepted_by_background_bars_reported_goes_on_past_a_foreground_change() {
     use crate::event_queue::{Foreground, Logic};
     let mut tell = msaa_change(EventKind::ValueChange, 5);
     tell.window = TellWindow::Found(Box::new(background_facts()));
-    let entry = crate::entries::Entry::of_tell(LISTENER, tell).unwrap();
-    let crate::entries::Entry::MsaaChange(change) = &entry else {
-        panic!("an MSAA change: {entry:?}");
-    };
     let elsewhere = Foreground {
         window: WindowHandle(70),
         root_owner: WindowHandle(70),
@@ -1148,10 +1150,13 @@ fn a_value_change_accepted_by_background_bars_reported_goes_on_past_a_foreground
         ..Foreground::BLANK
     };
     let judged = |background: bool| {
-        let mut state = crate::state::SrState::new();
-        state.settings.report_background_progress_bars = background;
+        let entry = crate::entries::Entry::of_tell(LISTENER, tell.clone(), background).unwrap();
+        let crate::entries::Entry::MsaaChange(change) = &entry else {
+            panic!("an MSAA change: {entry:?}");
+        };
+        let state = crate::state::SrState::new();
         (
-            crate::entries::exempt_from_foreground(&state, &entry, &change.window),
+            crate::entries::exempt_from_foreground(&entry, &change.window),
             crate::entries::Entries::ends_at_foreground(&state, &entry, &elsewhere),
         )
     };

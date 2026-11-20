@@ -633,7 +633,7 @@ fn suggestions_opening_on_the_focus_and_closing_play_their_indications() {
             ..crate::desk_tests::focus_tell(ONE, 42, desk.at_us + 1_000)
         };
         desk.step(crate::event_queue::Input::Entry(
-            crate::entries::Entry::of_tell(ONE.instance(), tell).unwrap(),
+            crate::entries::Entry::of_tell(ONE.instance(), tell, false).unwrap(),
         ))
         .0
     };
@@ -2653,7 +2653,7 @@ fn a_focus_whose_verdict_lapses_before_the_listener_read_probes_again_at_the_com
         checked.probe = None;
     }
     desk.at_us = probe_began + 500_000;
-    let (_, sent) = desk.step(Input::Entry(Entry::of_tell(LISTENER, tell).unwrap()));
+    let (_, sent) = desk.step(Input::Entry(Entry::of_tell(LISTENER, tell, false).unwrap()));
     let [(object, Reader::Listener, Wire::ReadObject(_))] = sent[..] else {
         panic!("one listener read asked: {sent:?}");
     };
