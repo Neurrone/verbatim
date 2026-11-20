@@ -44,8 +44,8 @@ Public API:
   began, `newest` the latest whether or not its keep has ended, and
   `len` and `evict_oldest` keep a record to a cap.
 - `NewestPerThread`, `EVENTS_PER_THREAD` — NVDA's limit of 10 events per
-  raising thread, walked from the newest: both the outposts' batch and the
-  listener's waiting classic value changes use it.
+  raising thread, walked from the newest: the listener's waiting classic
+  value changes use it.
 - `Window` — a window's handle that is never 0. The protocol and the
   system's calls carry a handle as an `isize`, 0 for none; the logic
   crates parse one where it enters them, `Window::new(handle)` giving

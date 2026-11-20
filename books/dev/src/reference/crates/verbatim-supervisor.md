@@ -184,8 +184,8 @@ How it works:
   and the app drops what it wrote after.
 - The listener is supervised the same way; a replacement's `Ready` makes
   Core ask the attention application for its focus.
-- `process` holds the roles' log names and the local query whether an
-  application is hung; the command lines are
+- `process` holds the roles' log names, an outpost's named for its
+  application's executable; the command lines are
   `verbatim_process::arguments`' `OutpostArguments` and
   `ListenerArguments`, and launching is
   [verbatim-process](verbatim-process.md)'s.

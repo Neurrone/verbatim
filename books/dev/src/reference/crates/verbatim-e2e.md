@@ -327,9 +327,8 @@ shorter (`compare::QuietPeriod`).
   `subscribe_events`, `verbatim_children`, `end_verbatim_process`,
   `send_keys_from_verbatim`, and the checks after the body) is an error.
   A wait on one of Verbatim's events has no NVDA equivalent, so
-  `terminal::expect_prompt_read`, `text_box::paste`,
-  `terminal_flood::watch_for_prompt` and
-  `terminal_flood::watch_for_prompt_output` skip theirs in compare mode,
+  `terminal::expect_prompt_read`, `text_box::paste`
+  and `terminal_flood::watch_for_prompt` skip theirs in compare mode,
   and the quiet period stands in.
 - Declared differences. `Scenario::deviates_from_nvda(file, entry)`,
   called after a step's input, records that the step deliberately differs

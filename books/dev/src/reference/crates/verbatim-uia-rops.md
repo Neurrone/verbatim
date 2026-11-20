@@ -497,8 +497,6 @@ The `CaretAnswer`:
 - `since_place`: where `since` lies against the caret's line, its order
   against the line's start and against its end, so a key's baseline being
   on that line costs no further round trip.
-- `baseline_moved`: with `baseline_selection`, the selection is not a
-  key's baseline's, compared when a read since replaced the node's last.
 - `selection_start` and `start_first`: where the selection starts in the
   caret's line, the caret's own offset, and whether that line is the
   text's first, so a Backspace over the selection can say what comes

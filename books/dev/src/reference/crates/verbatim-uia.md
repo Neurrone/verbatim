@@ -132,8 +132,6 @@ call waits up to `UIA_CONNECTION_TIMEOUT` to connect and
   `SelectionItem`'s select, answering `ActionName::Invoke` for an Invoke
   and no name otherwise; each pattern fetched live, since activation is
   infrequent.
-- `tree(root, request, registry, max_depth, max_nodes)`: a tree dump; the
-  control plane's is `verbatim_uia_rops::tree_dump`.
 - `compare_elements`: UIA's `CompareElements`, counted as one call, for
   the focus listener's log of whether two focus senders are one element.
 - `raw_view_walker`, `control_view_walker`, `root_element`, and

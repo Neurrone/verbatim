@@ -489,10 +489,8 @@ a walk of the window's whole tree would wait on its
 
   An idle round (`idle_round`) reaches the outpost's idle answer,
   which waits while its record is open. `focus_moves_during_the_read`
-  moves the focus window as the outpost reads the focused element, and
-  `listener_forces_uia` has the listener's reader skip no focus by its
-  window's class (`FocusReader::forces_uia`), so it reads one in a window
-  on NVDA's MSAA class list. The listener's reader has no clock: it waits
+  moves the focus window as the outpost reads the focused element. The
+  listener's reader has no clock: it waits
   for every call.
 - `tests/uia_bugs/` is one test binary (`main.rs` declares a module per
   file) holding the tests that reproduce a fault or limitation of UI

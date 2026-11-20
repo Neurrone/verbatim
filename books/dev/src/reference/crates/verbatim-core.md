@@ -16,59 +16,42 @@ guide maps those behaviors onto the crate's types and modules.
   execute. Every `Speak` carries the triggering input's trace id, which
   is what makes end-to-end latency timelines possible, and the number of
   the user input that caused it, if one did (below, "Key numbers").
-- `SrState::holds_inputs_back` and `SrState::announces_toggle_key`: whether
-  a key or command waits in Core's held-key line, and whether a lock key's
-  announcement is still to come, which the shell's idle conditions read.
+- `SrState::announces_toggle_key`: whether a lock key's announcement is
+  still to come, which the shell's idle conditions read.
 - `SNAP_RESULTS_ACTIVITY`: the activity id of the shell's window-snap
   results notification, the one UIA notification spoken from an
   application without the focus; the supervisor starts an outpost for no
   other notification.
-- `focus_rules`: the focus rules the reducer shares with the focus
-  listener and the outposts, each defined once (`books/dev/src/explanation/architecture.md`,
-  section 2, "Where the rules run (D14)"). The reducer applies them after
-  an event is read; the listener and the outposts apply them where a
-  judgment must come before an element is read, against the focus Core
-  holds. The rules ported from NVDA that only the listener and the
-  outposts make, the acceptance test and NVDA's foreground tests, are in
-  [verbatim-outpost](verbatim-outpost.md), since ported code stays in the
-  Windows-specific crates.
-  - `ForegroundRelation`: how a window stands to the foreground window (in
-    it, topmost, or a `Windows.UI.Core` window under the active window),
-    which an outpost reports in an event's window facts, for the
-    attendance of events other than focuses; Core judges a focus by its
-    foreground record's front instead.
-  - `RepeatEvidence` and `repeats_focus(evidence)`: a focus repeats the
-    held one when it names the element of the focus Core holds and that
-    element still has the focus; only Core judges repeats.
-  - `ChangeKind`, `ChangeTarget`, `change_target` and `change_candidates`:
-    a name, description, or value change is spoken on the focus, a state
-    change on the focus or an ancestor whose state changes are spoken.
-    `SelectionTarget`, `selection_target` and `is_selection_container(role)`:
-    a selection of the focus or an ancestor is a change of its states; any
-    other is an item spoken only inside a focused list or tab control of
-    the same outpost.
+- `focus_rules`: the focus rules the reducer applies after an event is
+  read, each defined once (`docs/parity/focus-events.md`,
+  `docs/parity/changes-and-selection.md` and
+  `docs/parity/focus-context.md`). The rules ported from NVDA that the
+  readers make, the acceptance test and NVDA's foreground tests, are in
+  `verbatim-reader-rules`, since ported code stays in the GPL-tier crates.
+  - `ChangeKind`, `ChangeTarget` and `change_target`: a name,
+    description, or value change is spoken on the focus, a state change
+    on the focus or an ancestor whose state changes are spoken.
   - `is_sensitive_slider(node)`: whether a node is a UI Automation slider
     of class `SensitiveSlider`, which gives the focus to its thumb; the
     reducer speaks it entered as a focus and its value changes while it is
-    the focus's parent, and an outpost follows its value changes while it
-    is (`docs/parity/focus-context.md`, "A slider that focuses its thumb").
+    the focus's parent (`docs/parity/focus-context.md`, "A slider that
+    focuses its thumb").
   - `same_object(old, new)` with `EnteredKey`, which gives an entry's
     `ObjectKey`: whether an entry of a previous focus line and one of a
     new line are the same object by `ObjectKey::is_same_object`, one node
     id, or one window's object, of one backend or a stand-in above the
     process boundary, when both are windows.
-    `meeting((previous, previous_focus), (new, new_focus))` gives where a
-    new focus line meets the previous one, as NVDA's `api.setFocusObject`
-    finds it, by `same_object` alone, the indexes of the two entries, or
-    `None` when the lines share no object; the reducer keeps the previous
-    line to that entry and enters the new entries below it.
-    `already_entered_ancestors(previous, new)` counts the new line's entries,
-    outermost first, at or above where it meets `previous`, by which an
-    outpost gathers a newly entered dialog's own text. Neither allocates.
-  - `HeldNode`: one node of a focus line as an outpost records its
-    reports (id, backend, role, name, states, the window a node is, when
-    it is one, and its stand-in mark); `HeldNode::of(snapshot)` builds one
-    from a snapshot.
+    `lowest_common_ancestor((previous, previous_focus), (new, new_focus))`
+    gives where a new focus line meets the previous one, as NVDA's
+    `api.setFocusObject` finds it, by `same_object` alone, the indexes of
+    the two entries, or `None` when the lines share no object; the reducer
+    keeps the previous line to that entry and enters the new entries below
+    it. Neither allocates.
+  - The module also exports items no code in the workspace calls:
+    `ForegroundRelation`, `HeldNode`, `RepeatEvidence` with
+    `repeats_focus`, `change_candidates`, `SelectionTarget` with
+    `selection_target` and `is_selection_container`, and
+    `already_entered_ancestors`.
 - `is_selection_container(role)`: re-exported from `focus_rules`.
 - `SrState`, the reducer's state:
   - `new()`.
@@ -134,11 +117,9 @@ guide maps those behaviors onto the crate's types and modules.
   `docs/design/readers-tell-core-asks-build1.md`) judges every
   application's generation; [verbatim-supervisor](verbatim-supervisor.md)'s
   owner only reports process facts and carries out the record's effects.
-  `policy` decides when a child is wedged (`wedge_decision` under
-  `WedgeLimits`, which counts only the workers parked on windows the
-  outpost did not judge hung, `Parked::other`, the outpost being the one
-  judge of a hung window; and `Liveness` for the listener and the spares,
-  which report no parked workers), how long a failed outpost's
+  `policy` decides when a child is wedged (`Liveness::wedged` under
+  `WedgeLimits`, by its pongs alone, for the listener and the spares; an
+  application's outpost is judged by Core's record), how long a failed outpost's
   replacement waits (`Backoff`, which Core's record and the spares use),
   and which spares are kept and given (`Spares`). Every time these take
   is in microseconds on the run's shared clock. `EndReason` is why a
@@ -340,7 +321,7 @@ holds, so dropping a long segment never recurses once per entry.
 `with_default_bounds(initial)` uses the shell's bounds,
 `DEFAULT_MAX_ENTRIES` (1,024 inputs) and `DEFAULT_MAX_BYTES` (8 MiB, which
 ordinary inputs never reach, so text-bearing inputs are what it caps);
-`record_input(input, effect_count, &state_after)` clones the state only
+`record_input(input, effect_count, &state)` clones the state only
 when a checkpoint is due; `dump_inputs()` gives the recorded inputs,
 oldest first, ready to replay from the checkpoint.
 `RecordedInput::estimated_bytes()` is the entry's inline size plus the
@@ -389,11 +370,13 @@ intentional change to the scripted shapes.
 ## The allocation invariant
 
 `tests/alloc.rs` has its own global allocator counting the bytes each
-thread requests. It asserts that a focus step, a navigation command and
-its completion, caret and review steps, and a terminal read each allocate
-the same against a small state and a large one (a previous focus with 10
-ancestors and with 10,000). It holds because `reduce` changes the state
-in place.
+thread requests. It asserts that caret and review steps and a terminal
+read each allocate the same against a small state and a large one (a
+previous focus with 10 ancestors and with 10,000), because `reduce`
+changes the state in place. A focus step, whose request carries the
+ancestors Core already knows, allocates no more than in proportion to the
+chain: with 10,000 ancestors, at most twice the depths' ratio times what
+it allocates with 1,000, the factor of two being a vector's doubling.
 
 ## Focus, events and objects
 
@@ -454,9 +437,7 @@ code is in `reduce.rs` unless named.
   key and its terminal's model, so the new element's text is taken
   afresh; for one gone the lines meet above it, a new element, and for
   one that only lost the focus they meet at it, as UI Automation compares
-  two elements by runtime id. `HeldNode` carries a window's handle, the
-  backend and the stand-in mark as the snapshot does, so an outpost's own
-  use of the rule, for a dialog's text, judges by `already_entered_ancestors`.
+  two elements by runtime id.
 - The window in front. `SrState::hook_foreground()`
   (`verbatim_model::HookForeground`) is decided from the window the focus
   listener last reported (`Input::Foreground`), one of Verbatim's own
@@ -477,19 +458,13 @@ code is in `reduce.rs` unless named.
 - The foreground change (`Input::Foreground`;
   [ADR 0001: Focus](../adr/0001-focus.md), "The foreground and the
   window title"): the focus listener's report that a window
-  came to the foreground, the only one, applied at one point
-  (`foreground_changed`). It gives the keyboard hook's view and, unless
-  the window is one of Verbatim's own, attention, its process and window,
-  and the record's front, its window, root owner and stamp. It applies
-  to the last queued focus (below), the left mark's one home: Core keeps
-  the change with that focus (`focus_queue::Change`), and a report Core
-  judges after it, observed after it, finds that focus left for the
-  change's window when the window is neither its top-level window nor of
-  its root owner. A change observed before the last queued focus but
-  reaching Core after it applies too, to the reports judged after it
-  (Dickson's limit); a report already judged keeps its verdict. It speaks
-  nothing, cuts nothing, sets no ordering stamp, and changes no node,
-  focus group or navigator.
+  came to the foreground, the only one. The event queue takes it as its
+  foreground (`Core::foreground`, `event_queue/inbox.rs`): it stops the
+  front entry's request when the new foreground no longer holds the
+  request's window, unless the request's own rule exempts it, and ends
+  the waiting entries the change ends (`Logic::ends_at_foreground`). The
+  reducer writes it to the foreground record (`foreground_changed`) for
+  the keyboard hook's view. It speaks nothing and cuts nothing.
 - A report judged left is executed as a focus from another top-level
   window is: no duplicate, a whole-window focus of its window is not
   refused, a replacement outpost's report is not taken silently, its line
@@ -541,65 +516,16 @@ code is in `reduce.rs` unless named.
   entered window, so the return from Verbatim's menu says the title.
 - The foreground record (`foreground.rs`): one `Foreground` with private
   fields, written only by `apply` with one `ForegroundFact` per writer
-  (`Changed`, `Object`, `Entered`, `LineCut`, `Observed`) and
-  read through accessors. It holds the attention record, the front, the
-  entered window, the foreground object, the time of the newest
-  foreground change, the listener's foreground window for the hook, and
-  the ordering stamps (`focus_stamps`), the observation of each report Core accepted into its
-  order, taken, waiting for a live re-read, a duplicate or a refused
-  whole-window focus, with its generation, window and whether it was a
-  whole-window report, which the stale rule reads, kept while a report
-  Core can still accept could be stale by them (`Foreground::stale_floor`,
-  the newest ordinary stamp). When the focus taken was observed, which a
-  menu's end reads, is the focus object's own `observed_at_us` in the
-  focus queue. `SrState` flattens it into the keys it held before.
-- Repeats and staleness (`docs/parity/focus-events.md`, "Duplicate focus
-  suppression" and "Stale focus events"). A focus is judged in this
-  order: an older entry of a focus group whose newer report Core took is
-  dropped (`FocusGroup`, keyed by the report's outpost generation and the
-  group's number); an application's rule; the stale rule, which drops a
-  focus from another outpost generation observed before the ordering
-  stamps (`Foreground::stale`, `observed_at_us`, a tie being no
-  earlier), one that a whole-window report of the focus's own top-level
-  window set left out; two ordinary reports of one window shared by two
-  processes, a frame and its content, follow the rule against each other;
-  the front test (`classify`); then its ordering stamp is written, and
-  once it reaches the queue's front it is judged against the last queued
-  focus: a
-  whole-window focus of its window is refused, and a focus that
-  `repeats_focus` judges a repeat of it, unless the report is judged left
-  or reached Core while the last queued focus still waited for its live
-  re-read, is dropped, its newer reading kept unspoken on the focus object
-  when it is the duplicate's node (`keep_duplicate`: its node and the
-  ancestors it read live, matched as the lines are joined); what Core last spoke of
-  the focus is left as it was, so a change the repeat carried in is
-  spoken when its event comes. A focus dropped by the stale rule is never
-  queued, so the events around it are judged as if it had not happened:
-  focuses A, B, A from two generations in two top-level windows, reaching
-  Core as A, the repeat of A, then B, say nothing after the first A and
-  end on A, where NVDA says B then A.
-- The focus queue (`focus_queue.rs`;
-  [ADR 0001: Focus](../adr/0001-focus.md), "One ordered focus queue"):
-  `FocusState` holds the focus object, the focus last executed, which
-  commands, text, review and held nodes act on; the last queued focus,
-  the newest report decided (`Last`): nothing yet, the focus object
-  (`Executed`), or a report that ended unanswered, never spoken
-  (`Unanswered`); the queue of what is not yet decided (`Queued`): focus
-  reports, and the key commands, scripts and menu or switcher ends that
-  reached Core while reports waited, handled in their turn
-  (`reduce::waited_input`); and the foreground changes that can still
-  apply to a report. Each report is queued as an `Entry` as it reaches Core,
-  `Pending`, and decided at the queue's front (`reduce::run_queue`,
-  `reduce::decide_report`), every report ahead of it decided: judged,
-  planned against the focus object and executed, so its speech expires as
-  NVDA's speech manager expires a focus overtaken, or set aside for its
-  live re-read (`EntryState::Rereading`), which holds every report behind
-  it, in the order they reached Core; once answered it is executed
-  (`Answered`), or it ends unanswered and is the last queued focus
-  (`Unanswered`). The queue counts the inputs it orders, reports,
-  foreground changes and the endings of live re-reads, to know which
-  change reached Core before which report and whether a repeat came while
-  a wait was open; the count starts again whenever nothing waits.
+  (`Changed`, `Object`, `Entered`, `EnteredBy`) and read through
+  accessors. It holds the foreground object, the window the listener last
+  reported in front, which the keyboard hook's view is made from, and the
+  entered window.
+- Repeats (`docs/parity/focus-events.md`, "Duplicate focus
+  suppression"): a focus candidate is judged at its turn against the two
+  versions of the focus (`focus/versions.rs`), the committed focus and
+  the readers' last focus, by the one definition of a candidate's
+  validity (below), whose duplicate tests (`focus/duplicate.rs`) need no
+  read. A duplicate is valid, reads and says nothing, and ends a run.
 - Background speech across a foreground change
   ([ADR 0001: Focus](../adr/0001-focus.md), "One input to Core, in
   arrival order"): a background event
@@ -669,98 +595,27 @@ code is in `reduce.rs` unless named.
   Automation selections merge a waiting entry: each is handled in
   arrival order (ADR 0003, "Flood limiters and the merge").
 - Outpost replacement (`docs/parity/focus-events.md`, "Recovery after an
-  outpost is replaced"). Node ids carry the outpost generation. On
-  `Input::OutpostEnded` the focus and the waiting reports of that
-  generation are marked dead, the reports waiting for its readers' live
-  re-reads end unanswered and the queue runs on, and a navigator or
-  pending navigation there is cleared; a later focus of another
-  generation matching the kept copy (role, name, value, states, ancestors'
-  names and roles), not judged left, takes its new ids silently, and one
-  judged left is announced.
-
-## The ancestry cache
-
-A focus reader, the listener's reading thread for an application or the
-outpost's own reads, keeps an ancestry cache: its last read's ancestors,
-where a later walk stops and reuses the rest. With it it saves the window
-text of each window entry, and before reusing it reads them again
-(`verbatim_reader_rules::ancestry_cache::title_check`, local calls): a
-changed title or a gone window makes the walk read live to the top or the
-process boundary. Each report marks where the ancestors taken from the
-cache begin, `first_cached_ancestor`, the index of its innermost cached
-ancestor among the entries it emits, computed by the outpost after every
-filter and rule (`focus_rules::first_cached_ancestor`), with the focus
-reader that read it.
-
-Core never trusts the cache. `plan_focus` computes, before anything is
-written, the report joined to Core's focus ancestry
-(`focus_rules::lowest_common_ancestor`), the entry the title rule would
-speak, and `focus_rules::needs_live_ancestry`: whether a cached ancestor
-would be spoken, as entered (below the lowest common ancestor) or as the
-title. The line it is joined to is the focus object's, since the plan is
-made only when the report reaches the queue's front. A report that would
-speak a cached ancestor waits at the front for a live re-read, asked with
-the input that let Core decide it, unless its outpost generation has
-ended by then, when no re-read is asked and it ends unanswered, the last
-queued focus, unspoken. Otherwise its focus group's rank is recorded
-as taken, and `Effect::LiveReread` asks its focus reader to read the same
-element again with no cache, carrying what the shell logs (the focus, the
-cache join, the lowest common ancestor and the reason). The answer is a
-report carrying `answers`, its reading and names replacing the report's,
-executed in its turn with the report's verdict; it is judged by no rule
-the report passed, and never needs another live re-read. A duplicate
-report keeps the newer reading of its live ancestors only, never of its
-cached ones; a window above its reader's process boundary, described from
-Windows' state, is always live. A window entry is matched by its handle,
-as the lines are joined.
-
-`live_reread.rs` ends the waiting reports. Live re-reads are counted in
-`SrState::live_re_reads`, which the control protocol's status reply
-carries. A waiting report ends on one path: its answer, executed in its
-turn, or refused by the foreground test when its window has been left;
-its answer of gone (`Input::LiveRereadGone`); its outpost generation's
-end; or, for the listener's, `Input::ListenerReplaced`. One that ends
-unanswered is never spoken and stays the last queued focus, which the
-next report is judged against, while that report's speech is executed
-against the focus spoken before it. An answer to a report no longer
-waiting says nothing. The waiting reports count as work in flight for the
-idle barrier and as applied focuses for the fake focus's skip rule. A
-repeat of its element that reaches Core while it waits is no duplicate
-of it: it is decided as a new report when the wait ends, asking its own
-live re-read or not, because a focus reader answers a live re-read only
-for the read it holds last, and the repeat replaced it. The shell routes the live re-read to
-the listener through the supervisor (`CoreToListener::LiveReread`) or to
-the outpost (`CoreToOutpost::LiveReread`), and answers it gone at once
-when it cannot be sent. Tests: `live_reread/tests.rs`, and the generated
-test `live_reread/generated.rs`, which compares what Core's speech queue
-holds and its focus object with a reference model of NVDA's one focus
-queue, taking the reports in the order they reach Core, with Verbatim's
-recorded decisions and limits, over a generated world of MSAA and UI
-Automation windows, some owned across processes and some shared by a
-frame and its content, whose names and
-titles change while the user is away, with repeated focuses, foreground
-changes with no focus, focuses before their foreground change and
-reports delivered late, its focus readers answering as the real ones do,
-and checks that no live re-read is answered gone for a repeat of its
-element while its window is in front.
+  outpost is replaced"). Node ids carry the outpost generation. The end
+  of a generation arrives as `ReaderEnded` (above, "The outpost
+  generation record"), and a request out to it ends as "ended".
 
 ## Object navigation and review
 
 (`docs/parity/review.md`.) `SrState` carries a navigator object and a
-review cursor that follow focus. A `Command` runs against them:
-report-object announces, spells, then copies on repeated presses; parent,
-sibling and first-child moves emit a navigation `Fetch` whose completion
-moves and announces the navigator; activate emits `Activate`, whose answer
-says what was done; to-focus snaps back; report focus asks a live query
-("Verbatim+Tab", below). With no navigator a command says "No navigator
-object". A review or object-navigation press is an entry of the key line
-(`CurrentKey::Review(Press)`, in `key_line.rs`; see "The key line"), so it
-reads live and runs in press order with keys. An object with text is
-announced by `announce_navigator` and `editing::navigator_text`: name, role
-and states, then its text, read from the known caret or through
-`NavigatorSelection` and `NavigatorLine` follow-ups: a press's follow-up
-reads, `Then::Review`, or, for a focus or Verbatim+Tab's answer, a
-`PendingText` a newer text request supersedes.
+review cursor that follow focus. The navigator's commands are
+event-queue entries (`navigator.rs`): each resolves the navigator object
+at its turn and makes its reads as the queue's requests, naming the
+object's window, so each holds the queue until its last answer.
+Report-object announces, spells, then copies on repeated presses; parent,
+sibling and first-child moves read the neighbour and announce it as the
+navigator; activate says what was done; to-focus snaps back; report focus
+is "Verbatim+Tab", below. With no navigator a command says "No navigator
+object" (`navigator::no_navigator`). A review press is an event-queue
+entry too (`review_text::begin`), so it reads live and runs in press
+order with keys. An object with text is announced with its name, role
+and states, then its text, read from the known caret or by the reads
+`editing::navigator_text_start` asks and `editing::navigator_text_answered`
+takes, each in turn.
 
 ### Verbatim+Tab
 
@@ -770,8 +625,8 @@ reads the committed focus node's properties live in one request
 (`ANNOUNCED_SET`) and speaks the answer only: never taken as Core's
 focus, so Core's focus ancestry, its navigator and the outposts'
 followed chains are unchanged. The first press says the object as its
-announcement does, then its text as the navigator's is read
-(`editing::reported_text`); a second press spells the name, "blank" for
+announcement does, then its text from the answer's summary
+(`TextSummary`: the selection, or the line); a second press spells the name, "blank" for
 none, a third and later with character descriptions. With no committed
 focus the press says "No focus" and asks nothing; any outcome but a
 result says nothing (a request refused unsent or stopped because the
@@ -785,12 +640,12 @@ read for the line, then a move, or an object's announcement and then its
 text). A navigation that finds no neighbour or a dead object says the
 direction's edge and the navigator stays (`docs/parity/review.md`, "Dead
 objects"); `Unanswered` says nothing for the press. A dead object reviews
-as empty flat text, one rule at the boundary (`review_text::press_answer`);
-Report Current Object says nothing.
+as empty flat text, one rule at the boundary (`review_text::answered` and
+`review_text::object_read`); Report Current Object says nothing.
 
 An object with no text interface is reviewed as flat text, its value or
-name, read live by `Query::ReadNode` (`Effect::ReadNode`), in the pure
-`review` module, by the same units as text: grapheme clusters, and words
+name, read live as the queue's request (`review_text::Next::ReadObject`),
+in the pure `review` module, by the same units as text: grapheme clusters, and words
 from `text::words`, chosen from the text since flat text carries no
 language.
 
@@ -798,15 +653,9 @@ language.
 
 Only the reducer speaks (`books/dev/src/explanation/architecture.md`, section 2), so what the
 shell's threads learn comes in as inputs (`shell.rs`): `Input::Started`,
-`ErrorLogged` play their sounds; `ApplicationNotResponding`, an
-outpost's report that a window of the process it watches stopped
-responding, sent once per hang, plays the not-responding sound only if
-that process is attended as `window_is_attended` judges a process with no
-window facts (`process_is_attended`): attention's own process (the
-foreground record's `Attention`), or that of Core's focus while the focus
-is in the attention window, as a Settings page's process is in
-`ApplicationFrameHost`'s frame; so a hang met in the background is never
-sounded, even after the user returns;
+`ErrorLogged` play their sounds (the not-responding sound is the event
+queue's, played for a request's hung window only while its application
+holds attention, `sound_if_attended` in `event_queue/driver.rs`);
 `Exiting` cancels speech, then plays the exit sound, unless a new
 instance replaces this one, and sets `SrState::exiting`, after which
 `reduce` does nothing for any input, so nothing is said after the exit
@@ -960,15 +809,16 @@ caret key's confirmation, and read by the rows as its facts: each
 candidate is read at most once while it waits, and a stored refusal also
 serves its turn, which asks nothing.
 
-The desktop's news (`desktop.rs`, `Input::Desktop`): the user's desktop
-returned asks the application in front for its focus again
-(`Effect::ReadFocus(FocusPurpose::Again)`, NVDA's `_handleUserDesktop`);
-the virtual desktop's name is kept (`SrState::desktop_name`, the newest
-only) until the next focus Core takes, which says it after the
+The desktop's news (`desktop.rs`): the user's input desktop returned
+asks the application in front for its focus again (`retake::returned`,
+NVDA's `_handleUserDesktop`); the virtual desktop's name, an MSAA name
+change on the desktop window that the listener reads
+(`announcements/desktop_name.rs`), is kept (`SrState::desktop_name`, the
+newest only) until the next focus Core takes, which says it after the
 foreground's title and before the entered containers, as NVDA's
 `doPreGainFocus` calls `handlePossibleDesktopNameChange`, or, at its due
-time (`DesktopNews::NameDue`), spoken as a queued message. `tests/shell.rs`
-checks each rule.
+time 250 ms later (`desktop::tick`), spoken as a queued message.
+`tests/shell.rs` checks the name's two rules.
 
 ## Text
 
@@ -995,94 +845,12 @@ report for. The first review command reads the line at the caret, and a
 `NoText` answer makes the object flat text. Any other object is flat text
 without asking.
 
-### The key line
-
-(`books/dev/src/explanation/design/key-holding.md`, "Core"; `src/key_line.rs`.)
-Every caret key goes through `SrState::key_line`, one state: `Idle`, or
-`Busy` with the current key, the keys and commands waiting behind it, and
-the selection changes heard while it runs. The current key is `Reading`,
-a held key whose before read is in flight, or `Watched`, a key that has
-been passed on: `Watched::Field` in a text field, which holds what it is
-judged from (`Before`), and `Watched::Terminal`, which does not. Each has its
-when it was passed, and whether a later key was marked; `FinalReading` is
-a text field's key past its bound whose final read is asked; and
-`MovingBySentence` is a sentence key past its bound with no evidence,
-which moves the caret by sentence itself (`SentenceStep`: the final read,
-a paragraph's read and the move, each under the before read's 150 ms; a
-step past it, or a failed one, ends the key with the caret staying);
-`Review` is a review or object-navigation press whose read is running
-(`Press`: its read, node and the press), which stays current until the
-answer to its last read, a follow-up read replacing its `query`.
-
-An `Input::HeldKey`, a caret key the hook held back because
-`holds_caret_keys` was true, asks the focus's outpost to read the caret,
-`TextOp::ReadCaret` with `ReadPurpose::BeforeFieldKey` or
-`ReadPurpose::BeforeTerminalKey`, which also sets the
-node's note. The answer becomes the focus's caret, its selection changes
-are said, and the key is passed on (`Effect::PassHeldKey`) as the read ended. An `Input::CaretKey`, one the hook did not hold,
-sends the one-way `Effect::KeyNote`, and is judged from the node's last
-read; the note goes first, so it reaches the outpost before anything the
-key does. With no focus whose caret is read the key is passed at once.
-
-The line has one deadline, set by `Effect::BoundHeldKey` and entering as
-`Input::HeldKeyDue`: `HELD_READ_BOUND_MS` (150 ms) after a before read is
-asked, and `KEY_BOUND_MS` (100 ms) after a key is passed on. Evidence
-clears it. A before read past its bound is withdrawn and the key is passed
-on, watched from the last read. A passed-on key past its bound has what waits behind it run and, if it
-is still current, asks one final read (`TextOp::ReadCaret` with
-`ReadPurpose::Final`), becoming `FinalReading`. A sentence key past its
-bound asks the same read and becomes `MovingBySentence`, with what waits
-behind it waiting for the move. A terminal's key has no final read: its
-deadline ends it.
-
-An `Input::EditingChord` in a text field does nothing, the hook having cut
-speech, and its selection changes come from the application's caret
-event; in a terminal it is `Input::CaretKey` with `CaretMotion::Other`,
-judged at its arrival in the line.
-
-A held key that reaches Core while focus reports wait joins the focus
-queue first and is taken in its turn, as NVDA runs its caret script in
-its queue (ADR 0001, "One ordered focus queue").
-
-Keys and commands that arrive while the key is `Reading` or `Watched`
-wait behind it (`WaitingKey`) and run in order. At a key's pass, typed
-keys at the front of what waits run at once, as NVDA's typed keys are not
-held behind a script, timed no earlier than the pass; anything left
-behind marks a later key (`later_key_at_us`). Each waiting key's effects
-carry its own trace (`Effect::ForKey`).
-
-A review command or a script (`Input::Command`, `Input::Script`) pressed
-while the key is `Reading` or `Watched` waits behind the key, at most the
-key's bound. The key ahead says nothing once a later key is marked, and
-the command reads the line the key moved to, where NVDA reads the line
-before it (`books/dev/src/explanation/design/ownership.md`). A review
-press pressed while a key's final read runs replaces that key, as a held
-key does; anything else behind a press waits, and `advance` stops at a
-press as at a held key. A press with nothing behind it has its read's own
-deadline; with something behind it, armed when the first entry joins it or
-when it becomes current with entries waiting, `HELD_READ_BOUND_MS`, past
-which its read is withdrawn and it says nothing, the entries behind it then
-running, so a held key waits at most 150 ms for its own before read. A
-focus that moves the navigator ends a press saying nothing, the entries
-behind it running on the navigator as it then is
-(`docs/design/m42-parity.md`, "Build two").
-
-A focus on another node ends a watched key. In a text field, within the
-bound and with no later key, it first says the before read's unit, or
-Backspace's removed text (`editing::focus_first_words`), and ends; a key
-whose before read is still running says nothing. What the line heard is
-said too, before the focus. An outpost that
-ends leaves a key with no answer, which says nothing but what it heard. At
-exit every key still held is passed on in press order.
-
 ### The caret key on the event queue
 
-(`docs/design/readers-tell-core-asks-build1.md`, Tables 7 and 13; built
-beside the key line until the shell feeds presses to the queue.) A caret
-key's `Press` runs `keys/caret_key.rs` at its turn, on the node it was
-bound to at its press (`CaretBinding`), even when the focus has moved on;
-a key bound to a terminal runs today's handling until terminals' keys
-take the watch. A held key asks its starting read, then sends its stroke
+(`docs/design/readers-tell-core-asks-build1.md`, Tables 7 and 13.) A
+caret key's `Press` runs `keys/caret_key.rs` at its turn, on the node it
+was bound to at its press (`CaretBinding`), even when the focus has moved
+on. A held key asks its starting read, then sends its stroke
 (the pass) and asks the watch, then says its unit by its script; at the
 bound a sentence key in text with a sentence unit moves by sentence from
 its starting point. The key picks its path once at its turn, the edit
@@ -1272,11 +1040,11 @@ The answer updates the caret and speaks, queued:
   (`editing::selection_segments`), 512 characters or more as their count;
   a change in general terms (`content_changed`) speaks the whole new
   selection.
-- A selection no key made arrives as a `CaretMoved`'s selection change
-  and is spoken the same way (`editing::selection_changed`), also when it
-  arrives with a before read. While a key's watch is open for the
-  node, its words are held with the key (`Busy::heard`) and spoken after
-  the key's.
+- A selection no key made arrives as a caret tell, an event-queue entry
+  (`caret_tell.rs`): at its turn on the committed focus, with no focus
+  pending, it asks one caret read naming the selection baseline, and the
+  difference is spoken the same way, in general terms when the text
+  changed.
 
 ### Formatting
 
@@ -1324,7 +1092,7 @@ the line at the caret as the outpost finds it (`TextPoint::Caret`), never
 from Core's copy, because a caret event can reach Core after a review
 command pressed later; say-all from the caret and the caret's location do
 the same. Once moved, a command that answers from the cursor's line first reads
-the line where it is now (one round trip, `review_text::run`); a move goes
+the line where it is now (one round trip, `review_text::begin`); a move goes
 straight to the read that moves, so no press reads twice to move. Moving
 to another line keeps a cell column in a terminal and a remembered
 character column elsewhere, kept across a short line for every text. A
@@ -1374,7 +1142,8 @@ sentence rules, and a terminal always reads by line.
   holds, it says nothing and starts nothing, as NVDA's says nothing where
   it can make no caret position (Dickson, 2026-11-19).
 - It ends after the last piece and stops on any command, caret key, typed
-  text, `Input::SpeechCancelled`, `Input::UtteranceCancelled`, a focus
+  text, a key's cut of speech (`QueueInput::SpeechCut`),
+  `Input::UtteranceCancelled`, a focus
   change, or its outpost's end. `Input::UtteranceFailed` counts as heard
   but moves no cursor.
 
@@ -1440,10 +1209,10 @@ a pipe.
   already read is still spoken, as NVDA speaks the lines its monitor
   read. A cut while holding or with a read out leaves that read
   silent: of reads begun before the cut
-  (`Input::SpeechCancelled::at_ms` against the read's start) only the
+  (`TerminalSpeechState::cut_at_ms` against the read's start) only the
   answers to keys are spoken (`Mark::Silent`).
 - Anything that cuts speech drops the output waiting and handed to
-  speech: `Input::SpeechCancelled`, a step whose effects stop speech or
+  speech: a key's cut (`QueueInput::SpeechCut`), a step whose effects stop speech or
   interrupt, and `Input::UtteranceCancelled`. `Input::UtteranceFailed`
   counts as heard. The output waiting is the focus's: a focus moving to
   another node forgets it, an outpost replaced under the same focus keeps
@@ -1538,14 +1307,14 @@ anchor it minted) and the answers to the requests they make;
   the outpost holds until the answer (`NodesHeld` lets it go); an anchor whose
   row left the memory ends the command silently, marks kept. The memory's rows carry anchors with
   the top bit set (`TERMINAL_ANCHORS`), a range no outpost mints from, with
-  at most 64 places beyond those Core holds. A waiting review is
-  `Review::Text` or `Review::StatusBar` ("Report status bar",
-  `terminal_model::report_status_bar`, reading `review::footer`), or
-  `Message::NoStatusLineFound` outside a modeled terminal.
+  at most 64 places beyond those Core holds. "Report status bar"
+  (`terminal::commands::status_bar`) reads the focused modelled
+  terminal's footer (`review::footer`) after a fresh read, or says
+  `Message::NoStatusLineFound` outside one.
 - Command marks. Enter on a caret line holding input
   (`TerminalReader::caret_line_input`) marks the line (`MarkLine`).
-  Verbatim+Alt+Up and Down Arrow (`review_text::command_mark`,
-  `Review::Mark`) try the marks beyond the review position, nearest
+  Verbatim+Alt+Up and Down Arrow (`review_text::command_mark`, with
+  `terminal::commands::command_mark`) try the marks beyond the review position, nearest
   first, by their line's hash in the memory and above it with
   `TextOp::TerminalFind`, whose matches are placed with `review::placed`;
   a press makes at most `review::MARK_SEARCHES` (3) searches. Output

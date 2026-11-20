@@ -54,8 +54,7 @@ reaction that reached Core after it, and after one that reached Core
 before it, however busy the reducer was, as NVDA queues keys with events
 (`docs/design/communication.md`, section 4.5), and a review or
 object-navigation gesture is reduced and its effects executed by the same
-path as an accessibility event; `Effect::Activate` is executed there alongside
-`Speak` and `Fetch`, and so are
+path as an accessibility event; `Effect::Speak` is executed there, and so are
 `Effect::StopSpeech` and `Effect::DropExpiredSpeech`, through the speech
 manager's `SpeechControl` (`cancel` and `drop_expired`), while
 `Effect::CopyToClipboard` is handed to the clipboard thread. The hook's
@@ -139,8 +138,7 @@ The end-to-end harness's hooks (private `harness` module):
   (`SrState::queue_idle`: no entry at the front or waiting, none to be
   appended later, no request waiting or out, no window watched for
   recovery, no stroke in Core's line, no delay of Core's own due), no
-  outpost request outstanding, no outpost still starting, no key or command waiting in Core's held-key line
-  (`SrState::holds_inputs_back`), no lock key's announcement still to come
+  outpost still starting, no lock key's announcement still to come
   (`SrState::announces_toggle_key`), and no terminal's quiet-period timer armed, since what waits
   for it is spoken when it ends. If they hold, the waiters are answered once
   everything queued so far has reached the speech manager; if not, the
@@ -233,24 +231,17 @@ Milestone M4's text protocol is wired here (`books/dev/src/reference/crates/verb
   (`QueueEffect::ReleaseAtExit`), and each Windows has down
   (`GetAsyncKeyState`) is released with one `SendInput`. `Effect::ForKey`
   is executed on the named key's trace.
-  `Effect::BoundHeldKey` sets or clears the held key's one deadline, for
-  its wait for the key ahead or for the read of its caret, kept beside the
-  reducer thread's other deadlines (`next_deadline`); when it passes, the
-  thread enters `QueueInput::HeldKeyDue` under the key's trace ID.
-  `Effect::Withdraw` sends the outpost of a query Core gave up on, and
-  no longer records, `CoreToOutpost::Cancel`.
+  `QueueEffect::WakeAt` sets or clears the time Core's event queue asked
+  to be woken at, kept beside the reducer thread's other deadlines
+  (`next_deadline`); when it passes, the thread enters `QueueInput::Due`.
+  `QueueEffect::Cancel` sends the reader of a request Core gave up on
+  `CoreToListener::Cancel` or `CoreToOutpost::Cancel`.
   The focused terminal's quiet-period timer is another of those
   deadlines, read from the state after each step
   (`SrState::terminal_timer_due`), never kept here, so a terminal model
   Core dropped leaves no timer; its due time on the shared clock is turned
   into an instant, and once it passes the thread enters
   `QueueInput::TerminalDue` with that due time and a trace ID minted then.
-- `Effect::Fetch`, `Effect::Activate` and `Effect::Text` go to the
-  outpost of the node they name as `Query::Navigate`, `Query::Activate`
-  and `Query::Text`, under the request id `RequestId::reducer` of the
-  reducer's own query number, which the reducer records itself
-  ([verbatim-core](verbatim-core.md), "Core's queries"); a query that
-  cannot be sent is answered at once as failed.
 - The speech pipeline's observer (`speech_events`) is the latency ledger
   plus the marks: every index mark playback reaches becomes
   `QueueInput::MarkReached` posted to the same port, joining Core's event
@@ -331,13 +322,9 @@ Milestone M4's themes and earcons are wired here too
   with `play_earcon_heard`, one record to the mixer that never waits, and
   hands its `EarconHeard` back, on which the main thread waits until it
   has been heard, for at most two seconds; and
-  a window not responding: the outpost's `OutpostToCore::NotResponding`,
-  sent once per hang, is applied as `Input::ApplicationNotResponding`
-  with the application the outpost reports for
-  (`LiveOutposts::application_of`, the console's client for a console
-  host's outpost), and Core plays the sound only if that application is
-  attended. An abandoned query
-  (`QueryOutcome::Abandoned`) plays nothing.
+  a window not responding: a request Core's event queue finds refused or
+  stopped because its window is hung plays the sound only if that
+  window's application holds attention.
 - The build script copies the top-level `sounds` folder next to the
   executables in the cargo target directory, so `target\debug` holds
   everything a run needs, and the end-to-end staging and the VM deploy
@@ -460,21 +447,17 @@ knowing for review:
   handled, whenever either changes, written at once or left for the next
   command as the held anchors are (below), so the outpost can release
   everything else
-  ([verbatim-outpost](verbatim-outpost.md), "Held objects"). On an end the reducer
-  gets `Input::OutpostEnded`, with a trace minted for it, which ends the
-  reducer's own queries of that outpost "gone"; then each of the shell's
-  outstanding queries of it gets a "gone" outcome, and the control plane's
-  event subscribers get `Frame::OutpostEnded`. There is no foreground pid gate: which
+  ([verbatim-outpost](verbatim-outpost.md), "Held objects"). On an end, other
+  than one for its application's exit, which the supervisor reports
+  next, Core's event queue gets `QueueInput::ReaderEnded`, and the control
+  plane's event subscribers get `Frame::OutpostEnded`. There is no foreground pid gate: which
   events are spoken is the reducer's attention model. Events go to the
   reducer and the latency ledger; the control plane's event subscribers
   get the events Core took, its `Effect::Observed` (copied for the
   control plane only while one is subscribed);
-  replies are routed by their request id's asker (`requests::reply_input`):
-  one to a query of the reducer's re-enters it as `Input::Answered` under
-  the reply's trace, a failed outcome logged first; the shell asks no
-  query of its own. The idle condition counts the reducer's outstanding
-  queries, and Core's event queue counts its requests from outside the
-  queue among its own. The thread never waits on a
+  a reader's answer enters Core's event queue as `QueueInput::Answer`,
+  tagged with the instance that sent it. Core's event queue counts its
+  requests from outside the queue among its own for the idle condition. The thread never waits on a
   handoff: speech and control-plane sends never block, and a command for an
   outpost is queued on that outpost's writer, failing at once if the queue
   is full.
@@ -497,13 +480,7 @@ knowing for review:
   (`QueueInput::WithdrawOutside`), its one answer going to a receiver
   dropped. `LiveOutposts` keeps each live
   generation as `Starting` or `Ready`; `mark_ready` consumes the starting
-  one, and `reports_for` records that a console host's outpost serves a
-  console's client.
-  Later outcomes for the same id, and outcomes from any other outpost, are
-  dropped. Core makes the outcome itself when a query cannot be sent
-  ("failed", which a navigation sees as `Unanswered`; only "gone" becomes
-  `FetchResult::Gone`) and when the outpost ends ("gone"), so an old reply or a timed-out request can never satisfy or
-  clear a newer one.
+  one.
 - `latency::LatencyLedger` — the bounded ring of timelines keyed by trace
   ID, bounded both by count (`DEFAULT_CAPACITY`, 256) and by an estimate of
   the bytes they hold (`DEFAULT_MAX_BYTES`, 1 MiB; each timeline counts its
@@ -526,7 +503,7 @@ knowing for review:
   feeds it the same way as an event, so a navigation keypress's trace has
   its outpost stages and calls too. A caret key's trace starts when the
   keyboard hook saw the key (`key_pressed`, from the hook's
-  `pressed_at_us`, sent with the key as `ShellCommand::CaretKey`), and the
+  `pressed_at_us`, sent with the key's press as `QueueInput::Press`), and the
   ledger keeps the reducer's handling of the key (`requested`, any
   reduction before an outpost answered) apart from its handling of the
   answer, so the line names the hook to Core, the request's way to the

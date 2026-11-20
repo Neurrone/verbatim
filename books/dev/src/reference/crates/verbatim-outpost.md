@@ -154,8 +154,7 @@ hung window is never probed. A remote program cannot judge a window
 between its steps, so a current-focus request whose focus has such a window
 above its own (`read::plain_window_above`, local calls by
 `verbatim_uia::raw_view_parent_window`) reads its ancestors by the classic
-walk instead. The outpost's walks have no time limit but their program's
-deadline: a listener read cut at its depth limit
+walk instead. The outpost's walks have no time limit: a listener read cut at its depth limit
 (`AncestorsEnd::PlainFrom`), and a walk cut at its depth limit of 64, are
 completed by plain windows from the outermost element's nearest window,
 included, and no continuation is cut by time. Whether a
@@ -212,8 +211,8 @@ route's walk finishes without it is answered gone
 (`read::resolve_uia_element`), while a walk that fails, a window lookup
 timed out or refused among them, fails the query (`focus_path::find`),
 since a slow application has not shown the element gone. The walk has no
-time budget of its own: the program's deadline bounds it, and a walk
-still under way at the deadline is abandoned with its program. A
+time budget: it runs until it ends, unless Core cancels its request and
+its worker is abandoned. A
 listener's selection is reported with what its event's cache holds
 (`verbatim_uia::ListenerSelection`), since a search of a subtree enters
 any child window another process serves (the study's instance 3). The supervisor's `App` table holds each application's
@@ -271,8 +270,7 @@ the same tables and code, which the arbitrator's own lists are built from.
   events observed from its probe's beginning, stamped with the observation
   of the judgement that probed, until its keep ends. A verdict judges no
   event observed before its probe began; each window keeps its previous
-  verdict for those (`Verdicts::kept_at`), one being enough behind the
-  intake's marker barrier.
+  verdict for those (`Verdicts::kept_at`).
 - A program reads its own copy of the verdicts (`Facts::verdicts`, an
   `Arc` the reducer replaces on change, so a copy costs a reference count).
   Each probe is posted as it returns, as a message of its own
@@ -748,9 +746,7 @@ as NVDA's handlers read them.
   on the worker; a plain
   window and a foreground's client object read from local data are minted
   by window handle (`Nodes::window`, `Nodes::client`), as their MSAA keys.
-  The lines a walk copies are tagged too: the previous focus's chain it may
-  splice from (`read::held_prefix`, `Store::held_prefix`), which keeps only
-  the entries above the outermost one no longer held. Every ordinary message is sent as a
+  Every ordinary message is sent as a
   `store::Recorded`, which only the store makes, listing the nodes and
   anchors it names (`OutpostToCore::named`); each message that carries
   node ids (`OutpostToCore::carries_nodes`) takes the next position as it
@@ -771,7 +767,7 @@ as NVDA's handlers read them.
   and text facts, so no program is given a vanishing node; it then has the
   store let go of the freed anchors' UIA ranges (`Effect::ForgetRanges`).
   The objects are dropped by a release
-  program on a worker, under a deadline, never on the reducer's thread. A
+  program on a worker, never on the reducer's thread. A
   never-carried node of an ended request or an abandoned generation goes
   at the next release. A released node answers `Gone`, a forgotten anchor
   `AnchorLost`. Only the newest list is kept.

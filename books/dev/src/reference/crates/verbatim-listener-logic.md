@@ -107,7 +107,7 @@ Public API:
   and the parent's automation id, which the tell carries among its cached
   properties (`PropertyId::ParentAutomationId`).
 - `check_threads` — the check threads' records (`CheckThreads`), one per
-  application, keyed by its generation, under the listener's one lock:
+  application, keyed by its process id, under the listener's one lock:
   `push` queues an event, starting a thread when there is no record or
   waking an idle one; `take` hands the thread its next event, or has it
   wait, or exit by removing its record once idle for `IDLE_US`
