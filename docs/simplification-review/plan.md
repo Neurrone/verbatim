@@ -91,12 +91,12 @@ Dickson plans one session for all of it (2026-11-20). Its context will be summar
 
 Captures made before the builds (2026-11-20), kept in `target/captures-2026-11-20/` with the scripts that made them until a build commits the ones it cites; NVDA ran at the pin from a copy of Dickson's configuration with eSpeak NG. Made: build 1's corrupt `nvda.ini` (D1), U+0001 in a line and a title with audio (F1), the say-all gap's audio (F7); build 2's recording of Import a Theme; build 5's B10, B12, B13 and F5; build 9's Q1, Q2, Q8, Q10, Q13, Q15, Q16 and Claude Code in screen reader mode. Still to make, by the build named: B9 and F8 (build 5; the focus did not reach File Explorer's item, so find how the end-to-end harness gives it the focus); the four keys pressed while a dialog is hidden (build 2; needs `cargo xtask nvda capture` to accept a hidden window), and the tray, message-box and never-shown cases (build 2; a real application must be found first); Claude Code with screen reader mode off, in the classic renderer (build 9); recordings of fzf, tig and Microsoft Edit (build 9). Not captured: F18, since Verbatim does not yet support elevated windows (Dickson, 2026-11-20: "Don't do an elevated capture since that's not supported yet"); F20 and Q4 (no reachable element known), Q3 (no way known to hang a console that keeps writing); their builds decide from NVDA's source.
 
-The session fills in a row when its build is pushed and its GitHub run is read.
+The session fills in a row when its build is pushed and its GitHub run is read. Lines added by review fixes are tallied in the row, so that creep shows as it happens: build 1, about 150 product lines (the configuration box blocking settings and exit), the whole of its overrun; build 2, the design's round-two fix for a lost Tab announcement added a rule that broke another sequence and was reverted, so none.
 
 | Build | State | Commits | Product lines against budget | Test lines against budget | Records deleted |
 | --- | --- | --- | --- | --- | --- |
 | 1. Defects and tooling | pushed 2026-11-20 (a734622e), GitHub run read: passed | 75f7f106, d628370f, f68618f5, dd6bae83, 2faff85c, c60ae1e3 to a734622e | about 4,700 removed against a floor of 3,950; about 535 new added against 450, over by the review's modal-box fix | about 530 new added against 500 | none: every record build 1 cites is cited by a later build |
-| 2. The dialog read once shown | not started | | | | |
+| 2. The dialog read once shown | design cleared its review in three rounds (a round-two fix reverted); building | | | | |
 | 3. Core: one owner per fact | not started | | | | |
 | 4. The readers | not started | | | | |
 | 5. Remote operations and text | not started | | | | |
