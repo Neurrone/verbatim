@@ -584,10 +584,17 @@ impl<L: Logic> Core<L> {
         {
             let mut shared = self.shared.borrow_mut();
             let state = &mut shared.state;
+            // A waiting entry whose told element the ended listener kept
+            // is dropped.
+            let kept = |entry: &L::Entry| {
+                instance.reader == Reader::Listener
+                    && L::told_token(entry)
+                        .is_some_and(|(listener, _)| listener == instance.generation)
+            };
             state.queue.waiting.retain_mut(|item| match item {
-                Item::One(entry) | Item::Menu { entry, .. } => !L::kept_by(entry, instance),
+                Item::One(entry) | Item::Menu { entry, .. } => !kept(entry),
                 Item::Run(candidates) => {
-                    candidates.retain(|entry| !L::kept_by(entry, instance));
+                    candidates.retain(|entry| !kept(entry));
                     !candidates.is_empty()
                 }
             });

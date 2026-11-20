@@ -279,17 +279,6 @@ impl Announcement {
             | Kind::DesktopName { .. } => None,
         }
     }
-
-    /// Whether the listener of generation `listener` keeps its element.
-    pub(crate) fn kept_by(&self, listener: u64) -> bool {
-        match &self.kind {
-            Kind::Toast(kept) | Kind::UiaSelection(kept, _) => kept.listener == listener,
-            Kind::Notification { .. }
-            | Kind::Alert { .. }
-            | Kind::Show { .. }
-            | Kind::DesktopName { .. } => false,
-        }
-    }
 }
 
 /// Whether `tell`'s window is the desktop window.

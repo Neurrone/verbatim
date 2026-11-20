@@ -31,6 +31,7 @@ use crate::event_queue::{
 };
 use crate::focus::acceptance::{self, Accepted};
 use crate::focus::backend::BackendCache;
+use crate::focus::follow::FollowRequest;
 use crate::focus::menus::MenuCheck;
 use crate::focus::retake::CurrentFocus;
 use crate::focus::versions::ReadBy;
@@ -734,20 +735,6 @@ impl Logic for Entries {
         )))
     }
 
-    fn kept_by(entry: &Entry, instance: Instance) -> bool {
-        match entry {
-            Entry::UiaFocus(focus) => {
-                instance.reader == crate::event_queue::Reader::Listener
-                    && focus.listener == instance.generation
-            }
-            Entry::Announcement(announcement) => {
-                instance.reader == crate::event_queue::Reader::Listener
-                    && announcement.kept_by(instance.generation)
-            }
-            _ => false,
-        }
-    }
-
     fn reader_ended(
         facts: &mut SrState,
         instance: Instance,
@@ -811,13 +798,7 @@ impl Logic for Entries {
             .follows
             .window_destroyed(window)
             .into_iter()
-            .map(|follow| crate::event_queue::CoreRequest {
-                token: None,
-                reader: crate::event_queue::Reader::Outpost(follow.process),
-                window: follow.window,
-                request: Wire::Follow(follow.follow),
-                due_after_us: OTHER_DUE_US,
-            })
+            .map(FollowRequest::own)
             .collect()
     }
 
@@ -1313,13 +1294,7 @@ fn desktop_switched(
     let requests = switched
         .follows
         .into_iter()
-        .map(|follow| crate::event_queue::CoreRequest {
-            token: None,
-            reader: Reader::Outpost(follow.process),
-            window: follow.window,
-            request: Wire::Follow(follow.follow),
-            due_after_us: OTHER_DUE_US,
-        })
+        .map(FollowRequest::own)
         .collect();
     let mut said = switched.said;
     said.extend(run_input(

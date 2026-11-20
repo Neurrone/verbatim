@@ -345,13 +345,6 @@ pub(crate) trait Logic: Sized + 'static {
         None
     }
 
-    /// Whether the waiting `entry` is dropped because `instance`, which
-    /// ended, kept its element.
-    fn kept_by(entry: &Self::Entry, instance: Instance) -> bool {
-        let _ = (entry, instance);
-        false
-    }
-
     /// `instance` ended: what Core's facts keep of it change, what that
     /// says goes into `said`, and the entries returned join the back (the
     /// re-take, asked only with `retake`).

@@ -23,7 +23,7 @@ use verbatim_model::{NodeSnapshot, OutpostId, Pid, Role, WindowHandle};
 use super::versions::{Kept, ReadBy};
 use crate::entries::Entries;
 use crate::event_queue::pairs;
-use crate::event_queue::{Cx, OTHER_DUE_US, Reader, Request, RequestWindow};
+use crate::event_queue::{CoreRequest, Cx, OTHER_DUE_US, Reader, Request, RequestWindow};
 
 /// The class of a console host's window, whose terminal is followed
 /// without its text and caret events.
@@ -60,6 +60,20 @@ pub(crate) struct FollowRequest {
     pub(crate) window: RequestWindow,
     /// The request.
     pub(crate) follow: Follow,
+}
+
+impl FollowRequest {
+    /// The `Follow` as Core's own request, sent in the inbox's order and
+    /// awaited by nothing, under the other requests' due time.
+    pub(crate) fn own(self) -> CoreRequest {
+        CoreRequest {
+            token: None,
+            reader: self.reader(),
+            window: self.window,
+            request: self.wire(),
+            due_after_us: OTHER_DUE_US,
+        }
+    }
 }
 
 impl Request for FollowRequest {
