@@ -15,7 +15,6 @@ use tracing::warn;
 use verbatim_control::protocol::{read_message, write_message};
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use verbatim_input::keys::KeyName;
@@ -39,63 +38,47 @@ static NEXT_INPUT: AtomicU64 = AtomicU64::new(1);
 /// ([`scenario_windows`]).
 static NEXT_CONNECTION: AtomicU64 = AtomicU64::new(1);
 
-/// Ends a connection's watch of its scenario's windows when the connection
-/// ends, however it ends ([`scenario_windows::connection_ended`]).
-struct ConnectionEnd(u64);
+/// One connection's own state, owned by its thread: its number, by which
+/// a scenario's recorded windows belong to it ([`scenario_windows`]), and
+/// the keys it holds down ([`Request::PressKey`]), with each key's name, in
+/// the order they were pressed. Dropped as the connection ends, however it
+/// ends, it releases those keys, the last pressed first, so a test or
+/// capture that failed with a modifier held never leaves it down, and ends
+/// the watch of its scenario's windows
+/// ([`scenario_windows::connection_ended`]).
+struct Connection {
+    id: u64,
+    held: Vec<(String, KeyName)>,
+}
 
-impl Drop for ConnectionEnd {
+impl Drop for Connection {
     fn drop(&mut self) {
-        release_held(self.0);
-        scenario_windows::connection_ended(self.0);
-    }
-}
-
-/// The keys each connection holds down ([`Request::PressKey`]), by
-/// connection, with each key's name, in the order they were pressed.
-static HELD: Mutex<Vec<(u64, String, KeyName)>> = Mutex::new(Vec::new());
-
-fn held() -> MutexGuard<'static, Vec<(u64, String, KeyName)>> {
-    HELD.lock().unwrap_or_else(PoisonError::into_inner)
-}
-
-/// Releases every key `connection` still holds, the last pressed first,
-/// as the connection ends: a test or capture that failed with a modifier
-/// held never leaves it down.
-fn release_held(connection: u64) {
-    let keys: Vec<(String, KeyName)> = {
-        let mut held = held();
-        let (mine, others): (Vec<_>, Vec<_>) =
-            held.drain(..).partition(|(owner, ..)| *owner == connection);
-        *held = others;
-        mine.into_iter().map(|(_, name, key)| (name, key)).collect()
-    };
-    for (name, key) in keys.into_iter().rev() {
-        match verbatim_control::send_keys::inject_transition(key, true, None) {
-            Ok(()) => warn!(
-                key = name,
-                "a key the connection held was released as it ended"
-            ),
-            Err(error) => {
-                warn!(key = name, %error, "a key the connection held could not be released");
+        for (name, key) in self.held.drain(..).rev() {
+            match verbatim_control::send_keys::inject_transition(key, true, None) {
+                Ok(()) => warn!(
+                    key = name,
+                    "a key the connection held was released as it ended"
+                ),
+                Err(error) => {
+                    warn!(key = name, %error, "a key the connection held could not be released");
+                }
             }
         }
+        scenario_windows::connection_ended(self.id);
     }
 }
 
 /// Answers [`Request::PressKey`] and [`Request::ReleaseKey`]: one key's
 /// transition, down or with `up` up, numbered for the harness, refused for
 /// a key the connection already holds, or, to release, does not.
-fn key_transition(connection: u64, id: u64, name: &str, up: bool) -> Frame {
+fn key_transition(held: &mut Vec<(String, KeyName)>, id: u64, name: &str, up: bool) -> Frame {
     let key = match verbatim_control::send_keys::parse_key(name) {
         Ok(key) => key,
         Err(message) => {
             return error_frame(id, &io::Error::new(io::ErrorKind::InvalidInput, message));
         }
     };
-    let mut held = held();
-    let position = held
-        .iter()
-        .position(|(owner, held_name, _)| *owner == connection && held_name == name);
+    let position = held.iter().position(|(held_name, _)| held_name == name);
     match (up, position) {
         (false, Some(_)) => {
             return error_frame(
@@ -109,12 +92,11 @@ fn key_transition(connection: u64, id: u64, name: &str, up: bool) -> Frame {
                 &io::Error::other(format!("{name:?} is not held on this connection")),
             );
         }
-        (false, None) => held.push((connection, name.to_owned(), key)),
+        (false, None) => held.push((name.to_owned(), key)),
         (true, Some(position)) => {
             held.remove(position);
         }
     }
-    drop(held);
     let number = NEXT_INPUT.fetch_add(1, Ordering::Relaxed);
     match verbatim_control::send_keys::inject_transition(key, up, Some(number)) {
         Ok(()) => Frame::Reply {
@@ -168,7 +150,10 @@ fn reject_malformed(writer: &mut TcpStream, error: &io::Error) {
 /// request is not [`Request::Hello`], or [`Request::OpenControlTunnel`]
 /// hands the connection off to [`tunnel::run`].
 fn handle_connection(stream: &TcpStream, pipe_name: &str) {
-    let connection = ConnectionEnd(NEXT_CONNECTION.fetch_add(1, Ordering::Relaxed));
+    let mut connection = Connection {
+        id: NEXT_CONNECTION.fetch_add(1, Ordering::Relaxed),
+        held: Vec::new(),
+    };
     let mut writer = match stream.try_clone() {
         Ok(writer) => writer,
         Err(error) => {
@@ -264,7 +249,7 @@ fn handle_connection(stream: &TcpStream, pipe_name: &str) {
             }
         }
 
-        let frame = dispatch(connection.0, envelope.id, envelope.request);
+        let frame = dispatch(&mut connection, envelope.id, envelope.request);
         if write_message(&mut writer, &frame).is_err() {
             return;
         }
@@ -277,7 +262,7 @@ fn handle_connection(stream: &TcpStream, pipe_name: &str) {
     clippy::too_many_lines,
     reason = "one arm for each request or group of requests, each handing it to its handler"
 )]
-fn dispatch(connection: u64, id: u64, request: Request) -> Frame {
+fn dispatch(connection: &mut Connection, id: u64, request: Request) -> Frame {
     match request {
         Request::Hello { .. } => Frame::Reply {
             to: id,
@@ -384,7 +369,7 @@ fn dispatch(connection: u64, id: u64, request: Request) -> Frame {
         | Request::CloseWindow { .. }
         | Request::WaitForNewWindowsGone { .. }
         | Request::CloseAbandonedWindows { .. }) => {
-            scenario_windows_request(connection, id, request)
+            scenario_windows_request(connection.id, id, request)
         }
         request @ (Request::FocusedElement
         | Request::FocusByAutomationId { .. }
@@ -400,8 +385,8 @@ fn dispatch(connection: u64, id: u64, request: Request) -> Frame {
         Request::ListFiles { path } => list_reply(id, files::list(&path)),
         Request::ListFolders { path } => list_reply(id, files::list_folders(&path)),
         Request::SendKeys { keys } => send_keys(id, &keys),
-        Request::PressKey { key } => key_transition(connection, id, &key, false),
-        Request::ReleaseKey { key } => key_transition(connection, id, &key, true),
+        Request::PressKey { key } => key_transition(&mut connection.held, id, &key, false),
+        Request::ReleaseKey { key } => key_transition(&mut connection.held, id, &key, true),
         Request::TypeText { text } => type_text(id, &text),
         Request::SendKeysPaced { keys, interval_ms } => send_keys_paced(id, &keys, interval_ms),
         Request::TypeTextPaced { text, interval_ms } => type_text_paced(id, &text, interval_ms),
