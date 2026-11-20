@@ -498,10 +498,18 @@ fn a_mark_after_a_full_stop_is_reported_where_the_next_sentence_starts() {
 /// after it is spoken as a letter of the text and switches no voice, on
 /// the plain path and the SSML path alike, and a less-than sign is spoken
 /// as one on both: the text with U+0001 is the text without it, sample
-/// for sample, and the mark between is reported at the same sample.
+/// for sample, the plain path's speech is as long as the unescaped text's,
+/// and the mark between is reported at the same sample, the SSML path's
+/// escaped text's.
 fn a_control_a_and_v_switch_no_voice() {
+    let plain_v = spoken(Case::PlainV).samples();
+    assert_eq!(
+        plain_v.len(),
+        PLAIN_V_SAMPLES,
+        "the plain path speaks the less-than sign as one"
+    );
     assert!(
-        spoken(Case::ControlAV).samples() == spoken(Case::PlainV).samples(),
+        spoken(Case::ControlAV).samples() == plain_v,
         "U+0001 changes nothing that is heard on the plain path"
     );
     let marked = spoken(Case::MarkedControlAV);
@@ -516,6 +524,11 @@ fn a_control_a_and_v_switch_no_voice() {
 
 /// Where the mark after "a < b " is reported.
 const MARK_SAMPLE: usize = 4_128;
+
+/// How many samples the plain path speaks "a < b Vwhisper echo" in: the
+/// text with the less-than sign escaped would be read as the letters of
+/// `&lt;` and give more.
+const PLAIN_V_SAMPLES: usize = 16_439;
 
 fn main() -> std::process::ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
