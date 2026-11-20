@@ -80,8 +80,10 @@ const USER: &str = "dickson";
 
 /// The arguments of the form program `program`, named for `name`, beside
 /// Verbatim in the run's directory: its window's title, [`harness_marker`]
-/// of `name`; the file it writes once the window is shown, in the run's
-/// harness folder for `name`; the user name; and [`PASSWORD`]. Each program
+/// of `name`; the file it writes once the window is shown, in the
+/// run's directory, named for `name` (no harness folder holds it, since
+/// nothing else is written for the form, and a folder exists only once a
+/// file is written into it); the user name; and [`PASSWORD`]. Each program
 /// is described in its source beside `crates/mockapp/forms_menu.cs`, which
 /// mockapp's build script compiles.
 struct Launch {
@@ -93,7 +95,7 @@ struct Launch {
 
 fn launch(scenario: &mut Scenario, program: &str, name: &str) -> Launch {
     let title = harness_marker(name);
-    let ready = format!(r"{}\shown", scenario.harness_folder(name));
+    let ready = scenario.harness_file(name, "shown");
     let program = format!(r"{}\{program}.exe", scenario.run_directory());
     let args = vec![
         title.clone(),
