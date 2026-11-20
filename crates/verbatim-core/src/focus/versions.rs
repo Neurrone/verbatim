@@ -368,6 +368,12 @@ impl Versions {
         }
     }
 
+    /// The committed focus's node, whose reader lives or ended; `None`
+    /// with nothing committed or an own focus.
+    pub(crate) fn committed_node(&self) -> Option<NodeId> {
+        self.focus().map(|focus| focus.context.snapshot.id)
+    }
+
     /// The ancestors Core already knows, sent with a focus request to the
     /// outpost generation `asked` (column H): a reader's committed focus
     /// itself and its ancestors, only while the readers' last focus is set,

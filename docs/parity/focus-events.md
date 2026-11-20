@@ -502,7 +502,7 @@ later Core appends a check entry, unless one noting the same committed
 focus is already due within the limiter's pump window, as NVDA's pump
 keeps one menu event and fakes the focus once; a focus committed between
 the two ends puts the later end in a later pump of NVDA's, which fakes
-the focus again. At its turn, if the committed focus is
+the focus again. At its turn, if the committed focus's node is
 unchanged, Core asks the foreground application's outpost for its focus,
 the outpost reading an MSAA focus's focused state over every ancestor up
 to the desktop as a fact and reading the focus in full only when it has
@@ -521,6 +521,21 @@ takes the foreground window and its thread's focus window. Core's
 `a_focus_now_takes_the_focus_window_before_its_probe`,
 `a_focus_committed_before_the_check_ends_it_with_no_read` and
 `a_menu_end_after_a_run_that_executed_a_focus_makes_no_check`.
+
+- Different, deliberately (Dickson, 2026-11-20): the check compares the
+  committed focus's node (`Versions::committed_node`), not NVDA's focus
+  object, whose identity `_fakeFocus` compares (991 to 994), since
+  matching it would need a count of commits; in the one sequence found
+  both say the focus once. A change to what Core keeps of the same
+  committed focus leaves the check to read, as NVDA's unchanged focus
+  object does. The sequence: an edit is committed; a popup menu opened from it closes with
+  no focus event while the application's focus has moved to a button; a
+  value change of the edit, or a caret tell's answer, rewrites its
+  selection facts within the 50 ms; the check reads the button and says
+  it, as NVDA's fake focus does. Core's
+  `a_value_change_of_the_committed_edit_before_the_check_leaves_it_to_speak_the_moved_focus`,
+  derived from this source reading, since no known application closes a
+  menu so.
 
 ### Attention
 

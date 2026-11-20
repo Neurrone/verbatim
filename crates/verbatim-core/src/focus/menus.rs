@@ -21,8 +21,8 @@
 //! otherwise it is judged and read as a focus (`crate::focus::uia_focus`).
 
 use serde::{Deserialize, Serialize};
-use verbatim_model::TraceId;
 use verbatim_model::event_kind::EventKind;
+use verbatim_model::{NodeId, TraceId};
 
 use super::FOCUS_SET;
 use super::backend::BackendCache;
@@ -31,7 +31,6 @@ use super::msaa_run::{FullIfFocused, known_for, read_full};
 use super::plain::HungRead;
 use super::retake::{CurrentFocusRead, Focused, read_by};
 use super::validity::{self, Answered, Pending, Settled, Subject, Validity, View, Within};
-use super::versions::Committed;
 use crate::entries::{Candidate, Entries, Entry};
 use crate::event_queue::{Cx, FOCUS_DUE_US, Item, Outcome};
 use crate::state::SrState;
@@ -52,11 +51,13 @@ pub(crate) enum CheckedEnd {
     Switch,
 }
 
-/// The check entry: the committed focus as the end noted it.
+/// The check entry: the committed focus's node as the end noted it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct MenuCheck {
-    /// The committed focus when the end reached the front.
-    pub(crate) committed: Committed,
+    /// The committed focus's node when the end reached the front, `None`
+    /// with nothing committed or an own focus: the check compares the
+    /// node, not NVDA's object identity (`docs/parity/focus-events.md`).
+    pub(crate) committed: Option<NodeId>,
     /// The end that made it; ends of one pump that share a check keep the
     /// first one's.
     pub(crate) end: CheckedEnd,
@@ -97,7 +98,7 @@ pub(crate) async fn slot(mut cx: Cx<Entries>, candidate: Candidate, run_executed
     // (`event_queue::PUMP_WINDOW_US`). One that noted another focus will
     // end unasked, as a focus committed between the two ends put this end
     // in a later pump of NVDA's.
-    let committed = cx.facts().versions.committed.clone();
+    let committed = cx.facts().versions.committed_node();
     if cx.timer_due_near(
         CHECK_AFTER_US,
         crate::event_queue::PUMP_WINDOW_US,
@@ -171,7 +172,7 @@ async fn start(cx: &mut Cx<Entries>, candidate: &Candidate, run_executed: bool) 
 /// with its focused state as a fact, in full only when focused, then
 /// judged by the one definition's menu-check rows.
 pub(crate) async fn check(mut cx: Cx<Entries>, check: MenuCheck) {
-    if cx.facts().versions.committed != check.committed {
+    if cx.facts().versions.committed_node() != check.committed {
         return;
     }
     let Some(foreground) = cx.foreground() else {

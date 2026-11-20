@@ -80,7 +80,7 @@ A pending judgement makes no identity read, so there an item's focus is never a 
 
 ### The check after a menu closes
 
-When a menu, popup or switcher closes and the run that followed executed no focus, Core makes an entry 50 ms later, NVDA's fake focus. With the committed focus unchanged, it asks the foreground application for its current focus in full if focused, the outpost reading an MSAA focus's focused state over every ancestor up to the desktop. Core judges the answer by the definition's rows for this check: the MSAA duplicate test by the ids the answer carries, then the focused state. A UI Automation answer carries no ids and is spoken again when it is the focus Core holds, as NVDA's check tests only MSAA objects.
+When a menu, popup or switcher closes and the run that followed executed no focus, Core makes an entry 50 ms later, NVDA's fake focus. With the committed focus's node unchanged, it asks the foreground application for its current focus in full if focused, the outpost reading an MSAA focus's focused state over every ancestor up to the desktop. Core judges the answer by the definition's rows for this check: the MSAA duplicate test by the ids the answer carries, then the focused state. A UI Automation answer carries no ids and is spoken again when it is the focus Core holds, as NVDA's check tests only MSAA objects.
 
 ## UI Automation candidates
 

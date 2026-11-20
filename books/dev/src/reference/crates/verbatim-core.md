@@ -454,9 +454,9 @@ code is in `reduce.rs` unless named.
   re-take, through `Versions::execute`, and `Commit::InPlace` for
   `execute::again`, a UI Automation menu opening on the committed focus,
   which replaces only what Core spoke of it. Rules read it through
-  `Versions::focus` (`Read` or `Ended`), `Versions::live` (`Read`) and
-  `Versions::caret_target`; the readers' last focus (`LastFocus`) is a
-  separate fact.
+  `Versions::focus` (`Read` or `Ended`), `Versions::live` (`Read`),
+  `Versions::caret_target` and `Versions::committed_node`; the readers'
+  last focus (`LastFocus`) is a separate fact.
 - The window in front. `SrState::hook_foreground()`
   (`verbatim_model::HookForeground`) is decided from the event queue's
   foreground record, the window the focus listener last reported
@@ -709,7 +709,7 @@ queue. A menu, popup or switcher end whose run executed no focus makes
 the check entry 50 ms later (`focus::menus`, NVDA's fake focus), one for
 the ends of one pump that noted the same committed focus
 (`event_queue::PUMP_WINDOW_US`): with the
-committed focus unchanged, it asks the foreground application's current
+committed focus's node unchanged (`Versions::committed_node`), it asks the foreground application's current
 focus at depth `FullIfFocused` (`Request::CurrentFocus`), the outpost
 reading an MSAA focus's focused state over every ancestor up to the
 desktop as a fact; the answer is judged by the one definition's

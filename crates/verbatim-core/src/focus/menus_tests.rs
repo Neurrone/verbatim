@@ -5,11 +5,11 @@ use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::{PropertyAnswer, PropertyId, PropertyValue};
 use verbatim_model::request::{CandidateAnswer, Outcome, Reply};
 use verbatim_model::tell::{ElementToken, Read};
-use verbatim_model::{State, StateSet, WindowHandle};
+use verbatim_model::{Role, State, StateSet, WindowHandle};
 
 use crate::entries::tests::{
     APP, Held, LISTENER, NOTHING, OUTPOST, SPOKEN, SPOKEN_FOLLOWED, answer, asked_completion,
-    entry, feed_at, focus_read, held, listener_answer, msaa_tell, ready, uia_tell,
+    entry, feed_at, focus_read, held, listener_answer, msaa_tell, node, ready, uia_tell, values,
 };
 use crate::event_queue::{Foreground, Input};
 
@@ -79,6 +79,38 @@ fn a_menu_end_checks_the_focus_50_ms_later_and_speaks_a_focused_answer() {
     assert_eq!(
         feed_at(&mut state, 52_000, answer(OUTPOST, 2, focused(true))),
         SPOKEN
+    );
+}
+
+/// A popup menu opened from the edit "Field" closes with no focus event
+/// while the application's focus has moved to "OK", and a value change of
+/// the edit sets its text-changed flag within the 50 ms: the check compares
+/// the committed node, which is unchanged, so it reads and the new focus is
+/// spoken (`docs/parity/focus-events.md`, "The focus after a menu or the
+/// switcher closes"). Derived from NVDA's pinned source, as that document
+/// gives it, under Dickson's ruling of 2026-11-20 for captures that cannot
+/// be made: no known application closes a menu so.
+#[test]
+fn a_value_change_of_the_committed_edit_before_the_check_leaves_it_to_speak_the_moved_focus() {
+    let mut state = ready();
+    feed_at(&mut state, 100, Input::Foreground(IN_FRONT));
+    let mut edit = focus_read(Some(held(-6)));
+    edit.focus.read.node = Some(node(3));
+    edit.focus.read.values = values("Field", Role::EditableText);
+    feed_at(
+        &mut state,
+        200,
+        answer(OUTPOST, 1, Reply::Candidate(CandidateAnswer::focused(edit))),
+    );
+    assert_eq!(feed_at(&mut state, 1_000, menu_end()), NOTHING);
+    let mut value_change = msaa_tell(-4);
+    value_change.kind = EventKind::ValueChange;
+    assert_eq!(feed_at(&mut state, 2_000, entry(value_change)), NOTHING);
+    assert!(state.versions.live().unwrap().kept.selection.text_changed);
+    feed_at(&mut state, 51_000, Input::Tick);
+    assert_eq!(
+        feed_at(&mut state, 52_000, answer(OUTPOST, 2, focused(true))),
+        ["Label(\"OK\") Role(Button)"]
     );
 }
 
