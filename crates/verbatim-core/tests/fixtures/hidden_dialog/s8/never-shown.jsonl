@@ -1,0 +1,19 @@
+NVDA alpha-58022,732d1ce2 in session 2
+{"label":"launch powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File <repo>\\target\\captures-2026-11-20\\hidden-dialog-standin.ps1 -Mode never-shown -Folder <repo>\\target\\captures-2026-11-20\\s8-hidden-dialog-standin-output\\never-shown-files -ShowAfterMs 2000","step":0}
+{"label":"wait for <repo>\\target\\captures-2026-11-20\\s8-hidden-dialog-standin-output\\never-shown-files\\ready","step":1}
+{"label":"front powershell.exe \"verbatim-e2e-hidden-owner\"","step":2}
+{"kind":"event","ms":32,"step":2,"text":"cancel"}
+{"kind":"speech","ms":35,"step":2,"tag":"Normal","text":"verbatim-e 2e-hidden-owner  dialog"}
+{"kind":"speech","ms":36,"step":2,"tag":"Normal","text":"Import...  button"}
+{"label":"enter","step":3}
+{"kind":"event","ms":3,"step":3,"text":"cancel"}
+{"kind":"speech","ms":31,"step":3,"tag":"Normal","text":"File name:  edit  blank"}
+{"label":"await front powershell.exe \"verbatim-e2e-hidden-dialog\"","step":4}
+{"kind":"note","step":4,"text":"the capture's window is now \"verbatim-e2e-hidden-dialog\" of powershell.exe (window 83756224), not yet shown"}
+{"label":"escape","step":5}
+{"kind":"note","step":5,"text":"escape was sent while the capture's window was not yet shown; once sent, it was still not shown"}
+{"kind":"event","ms":12,"step":5,"text":"cancel"}
+{"kind":"speech","ms":21,"step":5,"tag":"Normal","text":"verbatim-e 2e-hidden-owner  dialog"}
+{"kind":"speech","ms":25,"step":5,"tag":"Normal","text":"Import...  button"}
+{"label":"await front powershell.exe \"verbatim-e2e-hidden-owner\"","step":6}
+{"kind":"note","step":6,"text":"the capture's window is now \"verbatim-e2e-hidden-owner\" of powershell.exe (window 7995950), shown"}

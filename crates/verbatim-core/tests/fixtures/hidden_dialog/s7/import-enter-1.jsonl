@@ -1,0 +1,15 @@
+NVDA alpha-58022,732d1ce2 in session 2
+{"label":"front verbatim.exe \"Verbatim Settings\"","step":0}
+{"label":"enter","step":1}
+{"kind":"event","ms":4,"step":1,"text":"cancel"}
+{"kind":"speech","ms":1021,"step":1,"tag":"Normal","text":"Import a Theme  dialog  File name:"}
+{"kind":"speech","ms":1022,"step":1,"tag":"Normal","text":"File name:  combo box  collapsed"}
+{"kind":"speech","ms":1025,"step":1,"tag":"Normal","text":"edit  Alt plus  nblank"}
+{"label":"await front verbatim.exe \"Import a Theme\"","step":2}
+{"kind":"note","step":2,"text":"the capture's window is now \"Import a Theme\" of verbatim.exe (window 24839000), shown"}
+{"label":"escape","step":3}
+{"kind":"event","ms":2,"step":3,"text":"cancel"}
+{"kind":"speech","ms":221,"step":3,"tag":"Normal","text":"Verbatim Settings: Theme  dialog"}
+{"kind":"speech","ms":247,"step":3,"tag":"Normal","text":"Import...  button"}
+{"label":"await front verbatim.exe \"Verbatim Settings\"","step":4}
+{"kind":"note","step":4,"text":"the capture's window is now \"Verbatim Settings: Theme\" of verbatim.exe (window 94831786), shown"}

@@ -142,8 +142,10 @@ pub(crate) fn stamp(fence: Fence, said: &mut Effect) {
     }
 }
 
-/// The press's function at its turn.
+/// The press's function at its turn, after the read of a postponed
+/// dialog that it judges against (`crate::focus::shown`).
 pub(crate) async fn run(mut cx: Cx<Entries>, entry: PressEntry) {
+    crate::focus::shown::before_press(&mut cx, &entry).await;
     if let Some(caret) = crate::keys::caret_key::CaretPress::of(&entry) {
         crate::keys::caret_key::run(cx, caret).await;
         return;

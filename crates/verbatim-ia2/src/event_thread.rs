@@ -22,7 +22,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     TranslateMessage, WM_APP, WM_QUIT,
 };
 
-use crate::{SyncMarker, WinEventCallback, WinEventHook, WinEventKind, WindowShownCallback};
+use crate::{SyncMarker, WinEventCallback, WinEventHook, WinEventKind};
 use verbatim_process::scheduling::{ThreadPriority, prioritize_role};
 
 /// The thread message that carries a nudge's two words to the nudge
@@ -46,10 +46,6 @@ pub struct EventHandlers {
     /// Called with each nudge's two words ([`Nudger::nudge`]), for an
     /// owner that nudges the thread.
     pub nudge: Option<Box<dyn Fn(usize, isize)>>,
-    /// Called with the window of every window object's show the hooks
-    /// hear, whatever its class ([`crate::set_window_shown`]), for an
-    /// owner that asks: the focus listener's.
-    pub window_shown: Option<WindowShownCallback>,
 }
 
 /// Makes an [`EventHandlers`], on the event thread.
@@ -310,14 +306,9 @@ fn event_thread_main(
     // SAFETY: `message` is owned here; the call only peeks, removing
     // nothing.
     let _ = unsafe { PeekMessageW(&raw mut message, None, 0, 0, PM_NOREMOVE) };
-    let EventHandlers {
-        win_event,
-        nudge,
-        window_shown,
-    } = make_handlers();
-    // The callbacks, until the hooks are installed with them.
+    let EventHandlers { win_event, nudge } = make_handlers();
+    // The callback, until the hooks are installed with it.
     let mut win_event = Some(win_event);
-    let mut window_shown = window_shown;
     let mut hook = None;
     let _ = id_tx.send(thread_id);
     loop {
@@ -363,13 +354,12 @@ fn event_thread_main(
                                 callback,
                                 Box::new(move |ticket| marked.mark(ticket)),
                             )
-                            .and_then(|(installed, marker)| {
+                            .map(|(installed, marker)| {
                                 hook = Some(installed);
                                 tickets
                                     .lock()
                                     .unwrap_or_else(PoisonError::into_inner)
                                     .marker = Some(marker);
-                                window_shown.take().map_or(Ok(()), crate::set_window_shown)
                             })
                         }
                         None => Err("this thread already has its WinEvent hooks".to_owned()),
@@ -401,8 +391,8 @@ mod tests {
     use std::time::Duration;
     use windows::Win32::UI::Accessibility::NotifyWinEvent;
     use windows::Win32::UI::WindowsAndMessaging::{
-        CreateWindowExW, DestroyWindow, EVENT_OBJECT_NAMECHANGE, EVENT_OBJECT_SHOW,
-        EVENT_OBJECT_VALUECHANGE, OBJID_CLIENT, OBJID_WINDOW, WINDOW_EX_STYLE, WS_OVERLAPPED,
+        CreateWindowExW, DestroyWindow, EVENT_OBJECT_NAMECHANGE, EVENT_OBJECT_VALUECHANGE,
+        OBJID_CLIENT, WINDOW_EX_STYLE, WS_OVERLAPPED,
     };
     use windows::core::w;
 
@@ -430,7 +420,6 @@ mod tests {
             let events = events.clone();
             let changes = changes.clone();
             EventHandlers {
-                window_shown: None,
                 win_event: Box::new(move |event, _class| {
                     if event.thread == test_thread {
                         let _ = events.send(event.kind);
@@ -605,130 +594,5 @@ mod tests {
         );
         // SAFETY: the window made above, on this thread.
         unsafe { DestroyWindow(window) }.expect("the window destroyed");
-    }
-
-    /// What a shows test's event thread heard: the kind of each `WinEvent`
-    /// it told, and each window its second output was called with.
-    #[derive(Debug, PartialEq, Eq)]
-    enum Heard {
-        Told(WinEventKind, isize),
-        Shown(isize),
-    }
-
-    /// An event thread hooking this process's shows as the listener does,
-    /// its tooltips' and its other show classes', with the second output
-    /// for every window object's show: what it hears of the calling
-    /// test's windows goes to `heard`, in order.
-    fn shows_thread(heard: Sender<Heard>) -> EventThread {
-        // SAFETY: GetCurrentThreadId is always sound.
-        let test_thread = unsafe { GetCurrentThreadId() };
-        let make: MakeHandlers = Arc::new(move || {
-            let told = heard.clone();
-            let shown = heard.clone();
-            EventHandlers {
-                win_event: Box::new(move |event, _class| {
-                    if event.thread == test_thread {
-                        let _ = told.send(Heard::Told(event.kind, event.hwnd));
-                    }
-                }),
-                nudge: None,
-                window_shown: Some(Box::new(move |window| {
-                    if verbatim_win32::window::window_thread(window) == test_thread {
-                        let _ = shown.send(Heard::Shown(window));
-                    }
-                })),
-            }
-        });
-        let thread = EventThread::spawn(&[WinEventKind::Show, WinEventKind::OtherShow], make);
-        thread
-            .hook(std::process::id())
-            .expect("the hooks are installed");
-        thread
-    }
-
-    /// A window of this thread's of `class`, with no parent; the caller
-    /// destroys it on the same thread.
-    fn window_of(class: windows::core::PCWSTR) -> windows::Win32::Foundation::HWND {
-        // SAFETY: a window with no parent, made on this thread.
-        unsafe {
-            CreateWindowExW(
-                WINDOW_EX_STYLE::default(),
-                class,
-                w!(""),
-                WS_OVERLAPPED,
-                0,
-                0,
-                0,
-                0,
-                None,
-                None,
-                None,
-                None,
-            )
-        }
-        .expect("a window to raise events from")
-    }
-
-    /// Raises a show of `object` of `window`, then waits for the thread to
-    /// have heard it: what it heard of it, in order.
-    fn show(
-        thread: &EventThread,
-        heard: &Receiver<Heard>,
-        window: windows::Win32::Foundation::HWND,
-        object: i32,
-    ) -> Vec<Heard> {
-        // SAFETY: raising an event for a live window of this thread.
-        unsafe { NotifyWinEvent(EVENT_OBJECT_SHOW, window, object, 0) };
-        thread.nudger().sync();
-        heard.try_iter().collect()
-    }
-
-    /// A tooltip's window object shown is told as a tooltip's show, as
-    /// before, and reaches the second output too: the waiter for its window
-    /// is answered whatever its class, and the tooltip's show is never
-    /// lost to the waiters.
-    #[test]
-    fn a_tooltips_window_show_is_told_and_reaches_the_second_output() {
-        let classes = windows::Win32::UI::Controls::INITCOMMONCONTROLSEX {
-            dwSize: u32::try_from(size_of::<windows::Win32::UI::Controls::INITCOMMONCONTROLSEX>())
-                .expect("a small struct"),
-            dwICC: windows::Win32::UI::Controls::ICC_BAR_CLASSES,
-        };
-        // SAFETY: a fully initialized struct of its own size.
-        let _ = unsafe { windows::Win32::UI::Controls::InitCommonControlsEx(&raw const classes) };
-        let (heard_tx, heard) = unbounded();
-        let thread = shows_thread(heard_tx);
-        let tooltip = window_of(w!("tooltips_class32"));
-        let raw = tooltip.0 as isize;
-        assert_eq!(
-            show(&thread, &heard, tooltip, OBJID_WINDOW.0),
-            [Heard::Shown(raw), Heard::Told(WinEventKind::Show, raw)]
-        );
-        drop(thread);
-        // SAFETY: the window made above, on this thread.
-        unsafe { DestroyWindow(tooltip) }.expect("the window destroyed");
-    }
-
-    /// A window object's show of a class NVDA takes no show from reaches
-    /// the second output alone, every time it is raised; a client object's
-    /// show reaches neither.
-    #[test]
-    fn any_windows_window_object_show_reaches_the_second_output_alone() {
-        let (heard_tx, heard) = unbounded();
-        let thread = shows_thread(heard_tx);
-        let plain = window();
-        let raw = plain.0 as isize;
-        assert_eq!(
-            show(&thread, &heard, plain, OBJID_WINDOW.0),
-            [Heard::Shown(raw)]
-        );
-        assert_eq!(
-            show(&thread, &heard, plain, OBJID_WINDOW.0),
-            [Heard::Shown(raw)]
-        );
-        assert_eq!(show(&thread, &heard, plain, OBJID_CLIENT.0), []);
-        drop(thread);
-        // SAFETY: the window made above, on this thread.
-        unsafe { DestroyWindow(plain) }.expect("the window destroyed");
     }
 }

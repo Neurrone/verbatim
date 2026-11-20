@@ -50,8 +50,9 @@ use windows::Win32::UI::WindowsAndMessaging::{
     EVENT_OBJECT_VALUECHANGE, EVENT_SYSTEM_ALERT, EVENT_SYSTEM_DESKTOPSWITCH,
     EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_MENUEND, EVENT_SYSTEM_MENUPOPUPEND,
     EVENT_SYSTEM_MENUPOPUPSTART, EVENT_SYSTEM_MENUSTART, EVENT_SYSTEM_SWITCHEND, GetDesktopWindow,
-    GetWindowThreadProcessId, HWND_MESSAGE, OBJID_ALERT, OBJID_CARET, OBJID_CLIENT, OBJID_MENU,
-    OBJID_SYSMENU, OBJID_WINDOW, WINDOW_EX_STYLE, WINDOW_STYLE, WINEVENT_OUTOFCONTEXT,
+    GetForegroundWindow, GetWindowThreadProcessId, HWND_MESSAGE, OBJID_ALERT, OBJID_CARET,
+    OBJID_CLIENT, OBJID_MENU, OBJID_SYSMENU, OBJID_WINDOW, WINDOW_EX_STYLE, WINDOW_STYLE,
+    WINEVENT_OUTOFCONTEXT,
 };
 use windows::core::w;
 
@@ -326,13 +327,6 @@ pub struct WinEvent {
 /// is to enqueue the event for handling elsewhere.
 pub type WinEventCallback = Box<dyn Fn(WinEvent, Option<&str>)>;
 
-/// Called on the installing thread with the window of every
-/// `EVENT_OBJECT_SHOW` on (`OBJID_WINDOW`, `CHILDID_SELF`) the hook set
-/// hears, whatever the window's class, before and apart from the
-/// [`WinEventCallback`]'s filters, which keep only NVDA's show classes
-/// ([`set_window_shown`]). It must not block.
-pub type WindowShownCallback = Box<dyn Fn(isize)>;
-
 /// The `WinEvent` id of a sync marker ([`SyncMarker`]): an arbitrary id in
 /// the range Windows sets aside for events defined outside it, by the
 /// Accessibility Interoperability Alliance (`EVENT_AIA_START` to
@@ -405,9 +399,6 @@ pub fn event_clock() -> u32 {
 
 thread_local! {
     static CALLBACK: RefCell<Option<WinEventCallback>> = const { RefCell::new(None) };
-    /// This thread's output for every window object's show, while its hook
-    /// set lives and its owner asked for it ([`set_window_shown`]).
-    static WINDOW_SHOWN: RefCell<Option<WindowShownCallback>> = const { RefCell::new(None) };
     /// The window this thread's sync markers are raised on, and the
     /// callback they are handed to, while its hook set hears them.
     static MARKER_CALLBACK: RefCell<Option<(isize, SyncMarkerCallback)>> =
@@ -738,47 +729,9 @@ impl Drop for WinEventHook {
         }
         DESKTOP_NAME_HOOK.with(|slot| slot.set(0));
         CALLBACK.with(|slot| *slot.borrow_mut() = None);
-        WINDOW_SHOWN.with(|slot| *slot.borrow_mut() = None);
         MARKER_CALLBACK.with(|slot| *slot.borrow_mut() = None);
         KINDS.with(|slot| slot.borrow_mut().clear());
     }
-}
-
-/// Gives the calling thread's hook set a second output, `shown`, called
-/// with the window of every `EVENT_OBJECT_SHOW` on (`OBJID_WINDOW`,
-/// `CHILDID_SELF`) its hooks hear, decided by integer tests with no class
-/// read, before and apart from the event's own filters, which still tell
-/// a show of NVDA's classes as they did. The focus listener alone asks for
-/// it, to answer Core's "tell me when this window is shown" from the hook
-/// it already has (Dickson, 2026-11-19). Dropping the set removes it.
-///
-/// # Errors
-///
-/// Returns an error string if the thread has no set of hooks, or its set
-/// does not hear `EVENT_OBJECT_SHOW`.
-pub fn set_window_shown(shown: WindowShownCallback) -> Result<(), String> {
-    let hears_shows = HOOKS.with(|slot| {
-        slot.borrow().as_ref().map(|set| {
-            set.hooked
-                .iter()
-                .any(|(event, _)| *event == EVENT_OBJECT_SHOW)
-        })
-    });
-    match hears_shows {
-        None => Err("this thread has no set of WinEvent hooks".to_owned()),
-        Some(false) => Err("this thread's hooks do not hear a show".to_owned()),
-        Some(true) => {
-            WINDOW_SHOWN.with(|slot| *slot.borrow_mut() = Some(shown));
-            Ok(())
-        }
-    }
-}
-
-/// The window an event shows, when it is a window object's show:
-/// `EVENT_OBJECT_SHOW` on (`OBJID_WINDOW`, `CHILDID_SELF`).
-fn shown_window(event: u32, hwnd: isize, id_object: i32, id_child: i32) -> Option<isize> {
-    (event == EVENT_OBJECT_SHOW && id_object == OBJID_WINDOW.0 && id_child == CHILDID_SELF)
-        .then_some(hwnd)
 }
 
 /// Narrows the calling thread's set of hooks while it runs: every raw
@@ -903,11 +856,12 @@ const _: () = {
 /// `id_child`) has among `kinds`, if [`is_wanted`] keeps it, `None` for
 /// events we do not want. A window's class is read from Windows with
 /// `class_of`, at most once for the event and only when a filter asks it,
-/// and left in `read` when it was.
+/// and left in `read` when it was; the window in front is read with
+/// `in_front`, only for a window object's show.
 fn wanted_kind(
     (event, hwnd, id_object, id_child): (u32, isize, i32, i32),
     kinds: &[WinEventKind],
-    class_of: impl Fn(isize) -> String,
+    (class_of, in_front): (impl Fn(isize) -> String, impl FnOnce() -> isize),
     read: &mut Option<String>,
 ) -> Option<WinEventKind> {
     // The system caret's show is a caret event, as NVDA handles it, not a
@@ -937,7 +891,42 @@ fn wanted_kind(
     {
         return Some(WinEventKind::OtherShow);
     }
+    // A window object's show of the window in front, as a show the
+    // rewrite below makes its client's: a dialog Core postponed is read
+    // at its show (`books/dev/src/explanation/design/focus.md`, "A dialog
+    // read once it is shown"). The window in front is read as the callback
+    // runs, after the event: a guess, which can only delay speech, since a
+    // show dropped wrongly leaves the dialog for its next foreground report
+    // and one told wrongly asks nothing.
+    if event == EVENT_OBJECT_SHOW
+        && id_object == OBJID_WINDOW.0
+        && id_child == CHILDID_SELF
+        && kinds.contains(&WinEventKind::Show)
+        && in_front() == hwnd
+    {
+        return Some(WinEventKind::Show);
+    }
     kind_among(event, kinds).filter(|&kind| is_wanted(kind, id_object, id_child, &mut class))
+}
+
+/// The object an event of `kind` on (`id_object`, `id_child`) is delivered
+/// on. An event on a window object stands for its client area, as NVDA's
+/// event hook treats it, so a window's foreground report and a focus on
+/// its client area name one object. A window's destruction keeps the
+/// window object, which is how its end is recognized. A console event's
+/// ids are coordinates, counts, or flags, never an object, and are kept as
+/// they are.
+fn object_of(kind: WinEventKind, id_object: i32, id_child: i32) -> i32 {
+    if !matches!(
+        kind,
+        WinEventKind::Destroy | WinEventKind::ConsoleUpdate | WinEventKind::ConsoleCaret
+    ) && id_object == OBJID_WINDOW.0
+        && id_child == CHILDID_SELF
+    {
+        OBJID_CLIENT.0
+    } else {
+        id_object
+    }
 }
 
 /// Maps a raw event id to its [`WinEventKind`] when that kind is among
@@ -1032,15 +1021,6 @@ unsafe extern "system" fn win_event_proc(
         });
         return;
     }
-    // A window object's show goes to the second output first, whatever
-    // its class, and the event's own filters judge it after as before.
-    if let Some(window) = shown_window(event, hwnd.0 as isize, id_object, id_child) {
-        WINDOW_SHOWN.with(|slot| {
-            if let Some(shown) = slot.borrow().as_ref() {
-                shown(window);
-            }
-        });
-    }
     // `time` is on the event clock.
     let raised_ms_ago = event_clock().wrapping_sub(time);
     // The csrss-scoped hook's name changes are the desktop window's alone.
@@ -1056,28 +1036,16 @@ unsafe extern "system" fn win_event_proc(
             wanted_kind(
                 (event, hwnd.0 as isize, id_object, id_child),
                 &kinds.borrow(),
-                crate::window::window_class_name,
+                (crate::window::window_class_name, || {
+                    // SAFETY: `GetForegroundWindow` has no preconditions.
+                    unsafe { GetForegroundWindow() }.0 as isize
+                }),
                 &mut class,
             )
         })
     };
     if let Some(kind) = wanted {
-        // An event on a window object stands for its client area, as NVDA's
-        // event hook treats it, so a window's foreground report and a focus
-        // on its client area name one object. A window's destruction keeps
-        // the window object, which is how its end is recognized.
-        // A console event's ids are coordinates, counts, or flags, never an
-        // object, and are kept as they are.
-        let id_object = if !matches!(
-            kind,
-            WinEventKind::Destroy | WinEventKind::ConsoleUpdate | WinEventKind::ConsoleCaret
-        ) && id_object == OBJID_WINDOW.0
-            && id_child == CHILDID_SELF
-        {
-            OBJID_CLIENT.0
-        } else {
-            id_object
-        };
+        let id_object = object_of(kind, id_object, id_child);
         // Every wanted event's arrival with how long ago it was raised, so
         // a delay before it reached this process shows whatever becomes of
         // it, and its raw event id, which tells apart the events one kind
@@ -1132,7 +1100,7 @@ mod tests {
         wanted_kind(
             (event, 42, id_object, CHILDID_SELF),
             APP_SUBSCRIPTIONS,
-            class_of,
+            (class_of, || 0),
             &mut None,
         )
         .into_iter()
@@ -1148,10 +1116,13 @@ mod tests {
         let kind = wanted_kind(
             (EVENT_SYSTEM_FOREGROUND, 42, OBJID_WINDOW.0, CHILDID_SELF),
             LISTENER_SUBSCRIPTIONS,
-            |_| {
-                reads.set(reads.get() + 1);
-                "Notepad".to_owned()
-            },
+            (
+                |_| {
+                    reads.set(reads.get() + 1);
+                    "Notepad".to_owned()
+                },
+                || 0,
+            ),
             &mut None,
         );
         assert_eq!(kind, Some(WinEventKind::Foreground));
@@ -1195,7 +1166,7 @@ mod tests {
                 wanted_kind(
                     (event, 42, id_object, CHILDID_SELF),
                     LISTENER_SUBSCRIPTIONS,
-                    class_of,
+                    (class_of, || 0),
                     &mut read,
                 ),
                 Some(kind)
@@ -1257,10 +1228,37 @@ mod tests {
             wanted_kind(
                 (EVENT_OBJECT_SHOW, 42, OBJID_CARET.0, CHILDID_SELF),
                 LISTENER_SUBSCRIPTIONS,
-                |_| "Edit".to_owned(),
+                (|_| "Edit".to_owned(), || 0),
                 &mut None,
             ),
             Some(WinEventKind::Caret)
+        );
+    }
+
+    /// A window object's show is kept only while its window is in front,
+    /// whatever its class, and delivered on its client object, as Core
+    /// reads a postponed dialog's show; a tooltip's client show is kept
+    /// whatever is in front.
+    #[test]
+    fn a_window_objects_show_is_kept_only_for_the_window_in_front() {
+        let kind = |object: i32, class: &'static str, front: isize| {
+            wanted_kind(
+                (EVENT_OBJECT_SHOW, 42, object, CHILDID_SELF),
+                LISTENER_SUBSCRIPTIONS,
+                (move |_| class.to_owned(), move || front),
+                &mut None,
+            )
+        };
+        assert_eq!(kind(OBJID_WINDOW.0, "#32770", 42), Some(WinEventKind::Show));
+        assert_eq!(kind(OBJID_WINDOW.0, "#32770", 7), None);
+        assert_eq!(kind(OBJID_CLIENT.0, "#32770", 42), None);
+        assert_eq!(
+            kind(OBJID_CLIENT.0, TOOLTIP_CLASS, 7),
+            Some(WinEventKind::Show)
+        );
+        assert_eq!(
+            object_of(WinEventKind::Show, OBJID_WINDOW.0, CHILDID_SELF),
+            OBJID_CLIENT.0
         );
     }
 
@@ -1273,7 +1271,7 @@ mod tests {
             wanted_kind(
                 (EVENT_OBJECT_SHOW, 42, object, CHILDID_SELF),
                 kinds,
-                move |_| class.to_owned(),
+                (move |_| class.to_owned(), || 0),
                 &mut None,
             )
         };
@@ -1477,7 +1475,7 @@ mod tests {
             wanted_kind(
                 (event, 42, OBJID_CLIENT.0, CHILDID_SELF),
                 LISTENER_SUBSCRIPTIONS,
-                move |_| class.to_owned(),
+                (move |_| class.to_owned(), || 0),
                 &mut None,
             )
         };
@@ -1493,7 +1491,7 @@ mod tests {
             wanted_kind(
                 (EVENT_SYSTEM_MENUSTART, 42, OBJID_CLIENT.0, CHILDID_SELF),
                 APP_SUBSCRIPTIONS,
-                |_| "Notepad".to_owned(),
+                (|_| "Notepad".to_owned(), || 0),
                 &mut None,
             ),
             None
@@ -1510,7 +1508,7 @@ mod tests {
             wanted_kind(
                 (EVENT_SYSTEM_FOREGROUND, 42, OBJID_WINDOW.0, CHILDID_SELF),
                 kinds,
-                move |_| class.to_owned(),
+                (move |_| class.to_owned(), || 0),
                 &mut None,
             )
         };

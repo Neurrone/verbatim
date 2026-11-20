@@ -70,8 +70,7 @@ pub use com::CHILDID_SELF;
 pub use hook::{
     APP_SUBSCRIPTIONS, CONSOLE_SUBSCRIPTIONS, LISTENER_SUBSCRIPTIONS, SyncMarker,
     SyncMarkerCallback, WinEvent, WinEventCallback, WinEventHook, WinEventKind, WindowCache,
-    WindowShownCallback, event_clock, is_shell_foreground_class, set_window_shown, suspend_kinds,
-    tell_kind,
+    event_clock, is_shell_foreground_class, suspend_kinds, tell_kind,
 };
 pub use registry::{
     Facts, Found, Held, Interning, Kept, KeptObject, MsaaKey, NodeIdRegistry, Released,

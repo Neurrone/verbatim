@@ -561,12 +561,17 @@ pub(crate) struct Executed {
 }
 
 impl Executed {
-    /// Emits what it said and sends its `Follow`s, with a terminal's
-    /// baseline after them (`docs/design/readers-tell-core-asks-build3.md`,
-    /// "The focused terminal's life").
-    pub(crate) fn deliver(self, cx: &mut Cx<Entries>) {
-        for said in self.said {
-            cx.emit(said);
+    /// Emits what it said, each utterance stamped with `fence`, and sends
+    /// its `Follow`s, with a terminal's baseline after them
+    /// (`docs/design/readers-tell-core-asks-build3.md`, "The focused
+    /// terminal's life"). Every caller passes its entry's fence
+    /// ([`crate::entries::front_fence`]) but the read at a press while a
+    /// dialog is postponed, which passes the postponing entry's
+    /// (`super::shown`).
+    pub(crate) fn deliver(self, cx: &mut Cx<Entries>, fence: crate::keys::entry::Fence) {
+        for mut said in self.said {
+            crate::keys::entry::stamp(fence, &mut said);
+            cx.emit_stamped(said);
         }
         super::follow::send(cx, self.follows);
         cx.send_wanted();

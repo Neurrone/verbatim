@@ -94,34 +94,22 @@ impl Request for Completion {
 /// the two reads; then execution. Any outcome but a result ends it
 /// unspoken and clears Core's caret baseline.
 pub(crate) async fn run(mut cx: Cx<Entries>, focus: UiaFocus) {
-    let executed = read_and_execute(&mut cx, &focus).await;
-    if let Some(dialog) = focus.ended_wait {
-        super::shown::after_ended_wait(&mut cx, dialog, executed);
-    }
-}
-
-/// The focus judged, read and executed: whether it executed a focus, or
-/// was the readers' last focus.
-#[expect(
-    clippy::too_many_lines,
-    reason = "one chain of two reads, each of their outcomes named"
-)]
-async fn read_and_execute(cx: &mut Cx<Entries>, focus: &UiaFocus) -> bool {
+    let cx = &mut cx;
+    let focus = &focus;
     match validity::at(cx, Subject::Uia(focus), None, false) {
         Validity::Valid(How::Again) => {
             let said = again(&mut cx.facts_mut(), focus.tell.trace_id);
             for said in said {
                 cx.emit(said);
             }
-            return true;
+            return;
         }
         Validity::Valid(How::Read) => {}
-        Validity::Duplicate => return true,
-        Validity::Refused(_) | Validity::NeedsRead(_) => return false,
+        Validity::Duplicate | Validity::Refused(_) | Validity::NeedsRead(_) => return,
     }
     // Valid, the focus's walk found its nearest window.
     let Some(window) = request_window(&focus.tell) else {
-        return false;
+        return;
     };
     let due_us = cx.due_in(FOCUS_DUE_US);
     let walk = Known::of(&cx.facts(), None).sent;
@@ -144,12 +132,12 @@ async fn read_and_execute(cx: &mut Cx<Entries>, focus: &UiaFocus) -> bool {
         outcome => {
             refused_or_not_there(cx, &outcome);
             cx.facts_mut().focus_read_failed();
-            return false;
+            return;
         }
     };
     // A focus read without its route is the listener's fault.
     let Some(route) = object.route else {
-        return false;
+        return;
     };
     let generation = cx
         .instance(Reader::Outpost(window.process))
@@ -165,7 +153,8 @@ async fn read_and_execute(cx: &mut Cx<Entries>, focus: &UiaFocus) -> bool {
         // The listener let the element go with its read, so the
         // application's focus is read afresh against the line as it now
         // is, as NVDA's walk compares with the focus line at the time.
-        return afresh(cx, focus, window, known, due_us).await;
+        afresh(cx, focus, window, known, due_us).await;
+        return;
     }
     let complete = CompleteUia {
         hidden: HiddenRoot::Check,
@@ -178,26 +167,19 @@ async fn read_and_execute(cx: &mut Cx<Entries>, focus: &UiaFocus) -> bool {
         completes: CompletionFor::Focus,
         details: crate::details::focus_details(&cx.facts()),
     };
-    // Completed again once its hidden dialog is shown, from the route the
-    // listener read, against the ancestors that route was read against.
-    let outcome = super::shown::read_shown(cx, due_us, |_, hidden| {
-        let request = Completion {
-            window,
-            complete: CompleteUia {
-                hidden,
-                ..complete.clone()
-            },
-        };
-        (request, ())
-    })
-    .await;
+    let request = Completion { window, complete };
+    // A hidden dialog postponed: its show reads the current focus.
+    let Some(outcome) = super::shown::ask(cx, request, (due_us, HiddenRoot::Check)).await else {
+        unexecuted(cx, window);
+        return;
+    };
     let read = match outcome {
-        Outcome::Result((read, ())) => read,
+        Outcome::Result(read) => read,
         // The outpost ended: its registrations went with it (Table 10,
         // column F).
         Outcome::ReaderEnded => {
             cx.facts_mut().focus_read_failed();
-            return false;
+            return;
         }
         outcome @ (Outcome::Refused(_)
         | Outcome::NotThere
@@ -206,7 +188,7 @@ async fn read_and_execute(cx: &mut Cx<Entries>, focus: &UiaFocus) -> bool {
             refused_or_not_there(cx, &outcome);
             cx.facts_mut().focus_read_failed();
             unexecuted(cx, window);
-            return false;
+            return;
         }
     };
 
@@ -217,12 +199,11 @@ async fn read_and_execute(cx: &mut Cx<Entries>, focus: &UiaFocus) -> bool {
     super::narrow::judge_ahead(cx, &read);
     let origin = origin(focus, window, cx.foreground());
     let executed = execute(&mut cx.facts_mut(), &origin, &read, &known, read_by);
-    let committed = executed.committed;
-    if !committed {
+    if !executed.committed {
         unexecuted(cx, window);
     }
-    executed.deliver(cx);
-    committed
+    let fence = crate::entries::front_fence(cx);
+    executed.deliver(cx, fence);
 }
 
 /// The origin of `focus` read on `window`: its tell's, with Alt as Core's
@@ -251,25 +232,24 @@ async fn afresh(
     window: RequestWindow,
     known: Known,
     due_us: u64,
-) -> bool {
-    let outcome = super::shown::read_shown(cx, due_us, |cx, hidden| {
-        let request = CurrentFocusRead::<super::msaa_run::Full> {
-            window,
-            known: known.sent.clone(),
-            details: crate::details::focus_details(&cx.facts()),
-            set: crate::details::focus_set(&cx.facts(), FOCUS_SET),
-            depth: std::marker::PhantomData,
-            hidden,
-        };
-        (request, ())
-    })
-    .await;
+) {
+    let request = CurrentFocusRead::<super::msaa_run::Full> {
+        window,
+        known: known.sent.clone(),
+        details: crate::details::focus_details(&cx.facts()),
+        set: crate::details::focus_set(&cx.facts(), FOCUS_SET),
+        depth: std::marker::PhantomData,
+        hidden: HiddenRoot::Check,
+    };
+    let Some(outcome) = super::shown::ask(cx, request, (due_us, HiddenRoot::Check)).await else {
+        return;
+    };
     let read = match outcome {
-        Outcome::Result((Focused::Read(read), ())) => read,
-        Outcome::Result((Focused::InFront(front), ())) => {
+        Outcome::Result(Focused::Read(read)) => read,
+        Outcome::Result(Focused::InFront(front)) => {
             let trace = (focus.tell.trace_id, focus.fence);
             super::plain::decide(cx, super::plain::HungRead::Afresh, window, &front, trace);
-            return false;
+            return;
         }
         outcome => {
             refused_or_not_there(cx, &outcome);
@@ -277,17 +257,16 @@ async fn afresh(
                 cx.facts_mut().versions.tried_and_refused();
             }
             cx.facts_mut().focus_read_failed();
-            return false;
+            return;
         }
     };
     let Some(read_by) = read_by(&read) else {
-        return false;
+        return;
     };
     let origin = origin(focus, window, cx.foreground());
     let executed = execute(&mut cx.facts_mut(), &origin, &read, &known, read_by);
-    let committed = executed.committed;
-    executed.deliver(cx);
-    committed
+    let fence = crate::entries::front_fence(cx);
+    executed.deliver(cx, fence);
 }
 
 /// A UI Automation focus read tried at its own turn and answered refused or

@@ -38,8 +38,8 @@ use verbatim_model::{Earcon, Effect as Said, SpeechMark, TraceId, WindowHandle};
 
 use crate::event_queue::Instance;
 use crate::event_queue::{
-    Asker, Core, Cx, Effect, Foreground, Function, Input, Logic, MsaaClass, MsaaKey, OTHER_DUE_US,
-    Outcome, Place, Reader, Refused, ReplayMismatch, RequestWindow, State, Timed,
+    Asker, Cause, Core, Cx, Effect, Foreground, Function, Input, Live, Logic, MsaaClass, MsaaKey,
+    OTHER_DUE_US, Outcome, Place, Reader, Refused, ReplayMismatch, RequestWindow, State, Timed,
 };
 use crate::focus::acceptance::{self, Accepted};
 use crate::focus::backend::{BackendCache, by_class};
@@ -48,6 +48,7 @@ use crate::focus::retake::CurrentFocus;
 use crate::focus::versions::ReadBy;
 use crate::keys::entry::{Fence, PressEntry};
 use crate::state::SrState;
+use verbatim_model::request::CancelReason;
 
 /// The trace of the queue input being handled, which an entry Core makes
 /// itself runs under; the raw 0 before the first.
@@ -76,9 +77,6 @@ pub(crate) struct UiaFocus {
     pub(crate) alt_down: bool,
     /// Its speech fence, set when it joins the queue.
     pub(crate) fence: Fence,
-    /// The hidden dialog whose wait for its show it ended, if any
-    /// (`crate::focus::shown`): kept through a merge, dropped with it.
-    pub(crate) ended_wait: Option<WindowHandle>,
 }
 
 /// An MSAA focus or foreground tell, parsed: a run candidate, with the ids
@@ -97,9 +95,6 @@ pub(crate) struct Candidate {
     pub(crate) fence: Fence,
     /// Whether a caret key's confirmation read its facts while it waited.
     pub(crate) confirmation: crate::focus::validity::Confirmation,
-    /// The hidden dialog whose wait for its show it ended, if any
-    /// (`crate::focus::shown`): kept through a merge, dropped with it.
-    pub(crate) ended_wait: Option<WindowHandle>,
 }
 
 impl Candidate {
@@ -243,6 +238,12 @@ pub(crate) fn window_facts(tell: &Event) -> Option<&AcceptanceFacts> {
     }
 }
 
+/// The speech fence of the front entry, `cx`'s own, as its speech is
+/// stamped ([`Logic::stamp`]); a run's is its newest candidate's.
+pub(crate) fn front_fence(cx: &Cx<Entries>) -> Fence {
+    cx.front().map_or(Fence::default(), |front| front.fence())
+}
+
 /// The window a request about `tell` names, from its window's facts.
 pub(crate) fn request_window(tell: &Event) -> Option<RequestWindow> {
     let facts = window_facts(tell)?;
@@ -261,6 +262,11 @@ impl Entry {
     /// entry a later step of the build adds, and for a tell whose object
     /// does not fit its kind, a reader's fault.
     pub(crate) fn of_tell(from: Instance, tell: Event) -> Option<Self> {
+        // A top-level window's show, outside NVDA's show classes, is the
+        // read at a postponed dialog's show (`crate::focus::shown`).
+        if let Some(read) = crate::focus::shown::of_show(&tell) {
+            return Some(Self::CurrentFocus(Box::new(read)));
+        }
         match (tell.kind, &tell.object) {
             (
                 EventKind::UiaFocus | EventKind::UiaMenuOpened,
@@ -274,7 +280,6 @@ impl Entry {
                     listener: from.generation,
                     alt_down: false,
                     fence: Fence::default(),
-                    ended_wait: None,
                 })))
             }
             (
@@ -303,7 +308,6 @@ impl Entry {
                     window,
                     fence: Fence::default(),
                     confirmation: crate::focus::validity::Confirmation::default(),
-                    ended_wait: None,
                 });
                 Some(match kind {
                     EventKind::MsaaFocus | EventKind::Foreground => Self::Candidate(candidate),
@@ -457,6 +461,75 @@ fn accepted_apart_from_foreground(facts: &SrState, tell: &Event) -> bool {
     }
 }
 
+/// Whether `entry`, whose request out names `window`, was accepted by
+/// something other than the foreground relation, judged with `facts`,
+/// which exempts that request from the foreground stop.
+pub(crate) fn exempt_from_foreground(
+    facts: &SrState,
+    entry: &Entry,
+    window: &RequestWindow,
+) -> bool {
+    match entry {
+        Entry::Run(candidates) => candidates
+            .iter()
+            .rev()
+            .find(|candidate| candidate.window == *window)
+            .is_some_and(|candidate| accepted_apart_from_foreground(facts, &candidate.tell)),
+        Entry::Announcement(announcement) => announcement.exempt_from_foreground(),
+        other => other
+            .tell()
+            .is_some_and(|tell| accepted_apart_from_foreground(facts, tell)),
+    }
+}
+
+/// Whether `arriving`, joining the back, withdraws `request`, the request
+/// out of the front entry `front`: a caret key's stage withdrawn by it, or
+/// say-all's read withdrawn by a key.
+fn withdraws(
+    facts: &SrState,
+    (front, request): (&Entry, &Wire),
+    arriving: &Entry,
+    backend: &BackendCache,
+    (now_us, foreground): (u64, Option<Foreground>),
+) -> bool {
+    if let Some(caret) = crate::keys::caret_key::of_entry(front) {
+        let arrival = match arriving {
+            Entry::Press(_) => crate::keys::caret_key::Arrival::Key,
+            other => {
+                let view = crate::focus::validity::View {
+                    versions: &facts.versions,
+                    in_front: foreground.map(|foreground| foreground.window),
+                    backend,
+                    now_us,
+                    run_before_valid: false,
+                };
+                match crate::focus::validity::judge_alone(other, &view) {
+                    Some((answer, trace, at_us)) => crate::keys::caret_key::Arrival::Focus {
+                        pending: crate::focus::validity::pending(answer, trace),
+                        at_us,
+                    },
+                    None => crate::keys::caret_key::Arrival::Other,
+                }
+            }
+        };
+        return crate::keys::caret_key::withdrawn_by(&caret, request, arrival);
+    }
+    // Any key stops say-all, so a key arriving withdraws its read.
+    matches!((front, arriving), (Entry::SayAllRead(..), Entry::Press(_)))
+}
+
+/// Whether the front entry `front` no longer needs `request`, its request
+/// out: the caret key's or say-all's.
+fn unneeded(facts: &SrState, front: &Entry, request: &Wire) -> bool {
+    if let Some(caret) = crate::keys::caret_key::of_entry(front) {
+        return crate::keys::caret_key::unneeded(facts, &caret, request);
+    }
+    match front {
+        Entry::SayAllRead(run, _) => crate::say_all::read_unneeded(facts, *run),
+        _ => false,
+    }
+}
+
 /// The queue's logic over the reducer's state.
 #[derive(Debug)]
 pub(crate) struct Entries;
@@ -530,6 +603,7 @@ impl Logic for Entries {
                 cx.facts_mut()
                     .versions
                     .foreground_marker(window, root_owner);
+                crate::focus::shown::marker(&mut cx, window);
             }),
         }
     }
@@ -538,42 +612,28 @@ impl Logic for Entries {
         matches!(entry, Entry::TerminalSpeech(_))
     }
 
-    fn exempt_from_foreground(facts: &SrState, entry: &Entry, window: &RequestWindow) -> bool {
-        match entry {
-            Entry::Run(candidates) => candidates
-                .iter()
-                .rev()
-                .find(|candidate| candidate.window == *window)
-                .is_some_and(|candidate| accepted_apart_from_foreground(facts, &candidate.tell)),
-            Entry::Announcement(announcement) => announcement.exempt_from_foreground(),
-            other => other
-                .tell()
-                .is_some_and(|tell| accepted_apart_from_foreground(facts, tell)),
-        }
-    }
-
-    fn own_foreground_rule(request: &Wire) -> bool {
-        crate::focus::shown::waits(request)
-    }
-
-    fn stops(
+    fn ends(
         facts: &SrState,
-        (front, request): (&Entry, &Wire),
-        waiting: &std::collections::VecDeque<crate::event_queue::Item<Entry>>,
-        backend: &BackendCache,
-        (now_us, foreground): (u64, Option<Foreground>),
-    ) -> Option<verbatim_model::request::CancelReason> {
-        crate::focus::shown::stops(
-            facts,
-            (request, front.fence()),
-            waiting,
-            backend,
-            (now_us, foreground),
-        )
-    }
-
-    fn merged(removed: &Entry, into: &mut Entry) {
-        crate::focus::shown::merged(removed, into);
+        (front, live): (&Entry, &Live),
+        cause: Cause<'_, Entry>,
+        (backend, now_us, foreground): (&BackendCache, u64, Option<Foreground>),
+    ) -> Option<CancelReason> {
+        match cause {
+            Cause::Arrived(arriving) => withdraws(
+                facts,
+                (front, &live.request),
+                arriving,
+                backend,
+                (now_us, foreground),
+            )
+            .then_some(CancelReason::Withdrawn),
+            Cause::Foreground(record) => (!exempt_from_foreground(facts, front, &live.window)
+                && !record.holds(&live.window))
+            .then_some(CancelReason::Foreground),
+            Cause::Settled => {
+                unneeded(facts, front, &live.request).then_some(CancelReason::Withdrawn)
+            }
+        }
     }
 
     fn arrival(facts: &mut SrState, front: Option<(&Entry, Option<&Wire>)>, entry: &mut Entry) {
@@ -617,54 +677,11 @@ impl Logic for Entries {
         crate::keys::entry::stamp(entry.fence(), said);
     }
 
-    fn withdraws(
-        facts: &SrState,
-        (front, request): (&Entry, &Wire),
-        arriving: &Entry,
-        backend: &BackendCache,
-        (now_us, foreground): (u64, Option<Foreground>),
-    ) -> bool {
-        if let Some(caret) = crate::keys::caret_key::of_entry(front) {
-            let arrival = match arriving {
-                Entry::Press(_) => crate::keys::caret_key::Arrival::Key,
-                other => {
-                    let view = crate::focus::validity::View {
-                        versions: &facts.versions,
-                        in_front: foreground.map(|foreground| foreground.window),
-                        backend,
-                        now_us,
-                        run_before_valid: false,
-                    };
-                    match crate::focus::validity::judge_alone(other, &view) {
-                        Some((answer, trace, at_us)) => crate::keys::caret_key::Arrival::Focus {
-                            pending: crate::focus::validity::pending(answer, trace),
-                            at_us,
-                        },
-                        None => crate::keys::caret_key::Arrival::Other,
-                    }
-                }
-            };
-            return crate::keys::caret_key::withdrawn_by(&caret, request, arrival);
-        }
-        // Any key stops say-all, so a key arriving withdraws its read.
-        matches!((front, arriving), (Entry::SayAllRead(..), Entry::Press(_)))
-    }
-
     fn joining(facts: &mut SrState) -> Vec<Entry> {
         crate::say_all::joining(facts)
             .map(|run| Entry::SayAllRead(run, Fence::default()))
             .into_iter()
             .collect()
-    }
-
-    fn unneeded(facts: &SrState, front: &Entry, request: &Wire) -> bool {
-        if let Some(caret) = crate::keys::caret_key::of_entry(front) {
-            return crate::keys::caret_key::unneeded(facts, &caret, request);
-        }
-        match front {
-            Entry::SayAllRead(run, _) => crate::say_all::read_unneeded(facts, *run),
-            _ => false,
-        }
     }
 
     fn ended_at_foreground(facts: &mut SrState, entry: &Entry, said: &mut Vec<Said>) {
@@ -793,6 +810,14 @@ impl Logic for Entries {
         window: WindowHandle,
     ) -> Vec<crate::event_queue::CoreRequest> {
         facts.plain.window_destroyed(window);
+        // A postponed dialog destroyed is said no more.
+        if facts
+            .versions
+            .postponed
+            .is_some_and(|postponed| postponed.dialog.handle == window)
+        {
+            facts.versions.postponed = None;
+        }
         // Its answer goes to Core alone, which no terminal rule reads.
         facts
             .follows
@@ -1325,8 +1350,8 @@ pub(crate) fn unsettled(state: &SrState) -> bool {
             .is_some_and(|say_all| say_all.run.read == crate::say_all::QueueRead::Wanted)
         || state
             .queue
-            .asking()
-            .is_some_and(|(front, request)| <Entries as Logic>::unneeded(state, front, request))
+            .front_ends::<Entries>(state, Cause::Settled)
+            .is_some()
 }
 
 /// Settles the queue under `trace_id` after Core's facts changed outside

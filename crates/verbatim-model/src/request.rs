@@ -331,15 +331,6 @@ pub enum Request {
         /// The item chosen.
         item: crate::ShellItem,
     },
-    /// The listener answers [`Reply::Shown`] once the top-level window
-    /// `window` is visible: at once when it is, else at its window
-    /// object's show; "not there" when it is no window or is destroyed
-    /// first. Core asks it after a focus read answered
-    /// [`Reply::HiddenDialog`], so that the dialog is read once shown.
-    AwaitShown {
-        /// The hidden dialog's top-level window.
-        window: WindowHandle,
-    },
 }
 
 /// The events a followed node's registration takes.
@@ -652,9 +643,9 @@ pub struct MsaaRun {
 pub enum HiddenRoot {
     /// The outpost checks, and answers a hidden dialog unread.
     Check,
-    /// The outpost reads as it is, hidden or not: a read Core waits for no
-    /// show on (a caret key's confirmation, a menu start, a selection's
-    /// item), or one a key ended Core's wait for.
+    /// The outpost reads as it is, hidden or not: a read that postpones
+    /// no dialog (a caret key's confirmation, a menu start, a selection's
+    /// item), or the read at a press while a dialog is postponed.
     ReadAnyway,
 }
 
@@ -870,8 +861,6 @@ pub enum Reply {
     /// when the window's top-level window is hidden and its client object's
     /// role is a dialog's: that window's facts, and nothing read.
     HiddenDialog(NodeWindow),
-    /// The answer to [`Request::AwaitShown`]: the window is shown.
-    Shown,
 }
 
 /// Why a reader refused a request.
@@ -976,8 +965,7 @@ impl Ask {
             }
             Request::DumpTree { .. }
             | Request::ShellItems { .. }
-            | Request::ShellItemPosition { .. }
-            | Request::AwaitShown { .. } => {}
+            | Request::ShellItemPosition { .. } => {}
         }
     }
 }
@@ -1052,8 +1040,7 @@ impl Answer {
                 | Reply::Tree(_)
                 | Reply::ShellItems(_)
                 | Reply::ShellItemPosition(_)
-                | Reply::HiddenDialog(_)
-                | Reply::Shown => {}
+                | Reply::HiddenDialog(_) => {}
             }
         }
         (nodes, anchors)
@@ -1117,8 +1104,7 @@ impl Answer {
             | Reply::CandidateSame
             | Reply::ShellItems(_)
             | Reply::ShellItemPosition(_)
-            | Reply::HiddenDialog(_)
-            | Reply::Shown => {}
+            | Reply::HiddenDialog(_) => {}
         }
     }
 }
@@ -1150,9 +1136,6 @@ pub enum CancelReason {
     DueTime,
     /// Its entry no longer needs it.
     Withdrawn,
-    /// A wait for a hidden dialog's show ended because the user is
-    /// elsewhere: the foreground, a menu or a focus outside the dialog.
-    LeftHiddenDialog,
 }
 
 impl CancelReason {

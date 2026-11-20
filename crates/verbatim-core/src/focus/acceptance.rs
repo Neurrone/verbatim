@@ -21,6 +21,11 @@ const SHOW_CLASSES: [&str; 6] = [
     "TTrayAlert",
 ];
 
+/// Whether `class` is one of the classes whose shows are accepted.
+pub(crate) fn show_class(class: &str) -> bool {
+    SHOW_CLASSES.contains(&class)
+}
+
 /// The parent class of a toast's window.
 const TOAST_PARENT: &str = "ToastChildWindowClass";
 
@@ -101,7 +106,7 @@ pub(crate) fn accept(
         }
         EventKind::Hide => return Err(Refused::Hide),
         EventKind::Show => {
-            return if SHOW_CLASSES.contains(&facts.window.class.as_str()) {
+            return if show_class(&facts.window.class) {
                 Ok(Accepted::ShowClass)
             } else {
                 Err(Refused::ShowClass)

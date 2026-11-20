@@ -155,18 +155,21 @@ impl Logic for Limited {
         })
     }
 
-    fn exempt_from_foreground(_: &Option<i32>, _: &Entry, _: &RequestWindow) -> bool {
-        false
-    }
-
-    fn withdraws(
+    fn ends(
         _: &Option<i32>,
-        _: (&Entry, &verbatim_model::request::Request),
-        _: &Entry,
-        _: &crate::focus::backend::BackendCache,
-        _: (u64, Option<crate::event_queue::Foreground>),
-    ) -> bool {
-        false
+        (_, live): (&Entry, &crate::event_queue::Live),
+        cause: crate::event_queue::Cause<'_, Entry>,
+        _: (
+            &crate::focus::backend::BackendCache,
+            u64,
+            Option<crate::event_queue::Foreground>,
+        ),
+    ) -> Option<verbatim_model::request::CancelReason> {
+        match cause {
+            crate::event_queue::Cause::Foreground(record) => (!record.holds(&live.window))
+                .then_some(verbatim_model::request::CancelReason::Foreground),
+            crate::event_queue::Cause::Arrived(_) | crate::event_queue::Cause::Settled => None,
+        }
     }
 
     fn recovered(_: &mut Option<i32>, _: &RequestWindow) -> Option<Entry> {

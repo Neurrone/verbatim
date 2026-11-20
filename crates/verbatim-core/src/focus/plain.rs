@@ -305,8 +305,7 @@ fn subject(request: &Wire) -> Option<(NodeId, Asked<'_>)> {
         | Wire::CurrentFocus { .. }
         | Wire::DumpTree { .. }
         | Wire::ShellItems { .. }
-        | Wire::ShellItemPosition { .. }
-        | Wire::AwaitShown { .. } => None,
+        | Wire::ShellItemPosition { .. } => None,
     }
 }
 
@@ -389,12 +388,12 @@ pub(crate) fn decide(
     match (front, read.reads_like_nvda(), read.reads_the_desktop()) {
         (Front::Desktop(desktop), _, true) => {
             let executed = commit_desktop(&mut cx.facts_mut(), desktop, (trace_id, fence));
-            executed.deliver(cx);
+            executed.deliver(cx, fence);
         }
         (Front::Ghost(ghost), true, _) => {
             let executed = commit_ghost(&mut cx.facts_mut(), ghost, (trace_id, fence));
             cx.watch_if_attended(&stood_for(ghost, window));
-            executed.deliver(cx);
+            executed.deliver(cx, fence);
         }
         (Front::Responsive | Front::Gone, true, _) => cx.facts_mut().focus_read_failed(),
         (Front::Desktop(_), _, false)

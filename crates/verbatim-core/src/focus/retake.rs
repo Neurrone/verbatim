@@ -39,6 +39,9 @@ pub(crate) enum Why {
     Recovered,
     /// The read after the user's input desktop returned.
     Returned,
+    /// The show of a top-level window, read when it is the postponed
+    /// dialog in front (`super::shown`).
+    Shown,
 }
 
 /// An entry reading an application's current focus.
@@ -115,7 +118,7 @@ pub(crate) struct CurrentFocusRead<D: FocusReadDepth> {
     /// NVDA's fake focus, in full only when focused.
     pub(crate) depth: std::marker::PhantomData<D>,
     /// Whether the outpost checks for a hidden dialog first, or reads as
-    /// it is after a key ended the wait for its show (`super::shown`).
+    /// it is at a press while the dialog is postponed (`super::shown`).
     pub(crate) hidden: HiddenRoot,
 }
 
@@ -251,38 +254,42 @@ pub(crate) fn reader_ended(
     })
 }
 
-/// The function of a current-focus entry. A failed read clears Core's
-/// caret baseline.
+/// The function of a current-focus entry. The show's entry reads only
+/// while the postponed dialog it names is in front.
 pub(crate) async fn run(mut cx: Cx<Entries>, entry: CurrentFocus) {
+    if entry.why == Why::Shown && !super::shown::shown_due(&cx, entry.window.handle) {
+        return;
+    }
+    read_current(&mut cx, &entry, HiddenRoot::Check).await;
+}
+
+/// Reads the current focus `read` names, checking for a hidden dialog or
+/// reading as it is by `hidden`, and judges its answer by its reason: the
+/// one place that decides a current-focus read's outcomes. Its speech
+/// carries `read`'s fence. A failed read clears Core's caret baseline.
+pub(crate) async fn read_current(cx: &mut Cx<Entries>, read: &CurrentFocus, hidden: HiddenRoot) {
     let due_us = cx.due_in(FOCUS_DUE_US);
-    let outcome = super::shown::read_shown(&mut cx, due_us, |cx, hidden| {
-        let request = CurrentFocusRead::<super::msaa_run::Full> {
-            window: entry.window,
-            known: Vec::new(),
-            details: crate::details::focus_details(&cx.facts()),
-            set: crate::details::focus_set(&cx.facts(), FOCUS_SET),
-            depth: std::marker::PhantomData,
-            hidden,
-        };
-        (request, ())
-    })
-    .await;
-    let read = match outcome {
-        Outcome::Result((Focused::Read(read), ())) => read,
-        Outcome::Result((Focused::InFront(front), ())) => {
-            let read = match entry.why {
+    let request = CurrentFocusRead::<super::msaa_run::Full> {
+        window: read.window,
+        known: Vec::new(),
+        details: crate::details::focus_details(&cx.facts()),
+        set: crate::details::focus_set(&cx.facts(), FOCUS_SET),
+        depth: std::marker::PhantomData,
+        hidden,
+    };
+    let Some(outcome) = super::shown::ask(cx, request, (due_us, hidden)).await else {
+        return;
+    };
+    let answer = match outcome {
+        Outcome::Result(Focused::Read(answer)) => answer,
+        Outcome::Result(Focused::InFront(front)) => {
+            let hung = match read.why {
                 Why::Startup => super::plain::HungRead::Startup,
-                Why::Retake => super::plain::HungRead::Retake,
+                Why::Retake | Why::Shown => super::plain::HungRead::Retake,
                 Why::Recovered => super::plain::HungRead::Recovered,
                 Why::Returned => super::plain::HungRead::Returned,
             };
-            super::plain::decide(
-                &mut cx,
-                read,
-                entry.window,
-                &front,
-                (entry.trace_id, entry.fence),
-            );
+            super::plain::decide(cx, hung, read.window, &front, (read.trace_id, read.fence));
             return;
         }
         outcome => {
@@ -296,24 +303,30 @@ pub(crate) async fn run(mut cx: Cx<Entries>, entry: CurrentFocus) {
             return;
         }
     };
-    let Some(read_by) = read_by(&read) else {
+    let Some(read_by) = read_by(&answer) else {
         return;
     };
-    let duplicate = entry.why == Why::Recovered
-        && super::validity::at(&cx, super::validity::Subject::Recovered(&read), None, false)
-            == super::validity::Validity::Duplicate;
-    let origin = Origin::of_read(entry.trace_id, entry.window, entry.fence);
+    let duplicate = read.why == Why::Recovered
+        && super::validity::at(
+            cx,
+            super::validity::Subject::Recovered(&answer),
+            None,
+            false,
+        ) == super::validity::Validity::Duplicate;
+    let origin = Origin::of_read(read.trace_id, read.window, read.fence);
     let executed = {
         let mut facts = cx.facts_mut();
-        match entry.why {
+        match read.why {
             Why::Startup | Why::Returned => {
-                execute(&mut facts, &origin, &read, &Known::default(), read_by)
+                execute(&mut facts, &origin, &answer, &Known::default(), read_by)
             }
             Why::Recovered if duplicate => Executed::default(),
-            Why::Retake | Why::Recovered => retake(&mut facts, &origin, &read, read_by).1,
+            Why::Retake | Why::Recovered | Why::Shown => {
+                retake(&mut facts, &origin, &answer, read_by).1
+            }
         }
     };
-    executed.deliver(&mut cx);
+    executed.deliver(cx, read.fence);
 }
 
 #[cfg(test)]

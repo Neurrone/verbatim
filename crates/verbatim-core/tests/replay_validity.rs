@@ -30,10 +30,10 @@ mod desk;
 use desk::{App, Desk, LISTENER, ONE, TWO, focus_read_of, focus_tell};
 use verbatim_core::{SrState, dump, replay};
 use verbatim_model::event_kind::EventKind;
-use verbatim_model::property::{PropertyId, PropertyValue};
 use verbatim_model::request::{
     CandidateAnswer, CandidateFacts, CaretBinding, FocusCaret, FocusCaretRead, FocusRead,
-    ForegroundReport, HeldIds, MsaaIds, Outcome, Press, PressAction, QueueInput, Reply,
+    ForegroundReport, HeldIds, MsaaIds, Outcome, Press, PressAction, QueueEffect, QueueInput,
+    Reply, Request,
 };
 use verbatim_model::stroke::{HeldStroke, Stroke};
 use verbatim_model::tell::{Event, EventObject, Relation, TellWindow};
@@ -1085,126 +1085,87 @@ fn regenerate() {
     }
 }
 
-/// The flight recorder's dump of run 1 of the dialog-shown build's
-/// recordings of the real Import a Theme dialog (2026-11-19,
-/// `fixtures/dialog_shown_import`), Enter on the Theme page's "Import..."
-/// button with Verbatim at c1ade8dc: the dialog comes to the foreground
-/// hidden, its read is answered hidden, the listener tells the show, and
-/// the read made again speaks the dialog with its text, then the field.
-/// Its answers are the real outposts' and the listener's.
-fn import_contents() -> dump::DumpContents {
-    let file = fs::File::open(fixture_path("dialog_shown_import")).expect("fixture file exists");
-    dump::read_dump(&mut BufReader::new(file)).expect("fixture parses")
-}
-
-/// The recorded run, replayed, speaks what it spoke: the settings dialog's
-/// way to the Import button, then the Import dialog with its text, read
-/// once shown, then the File name field.
+/// The flight recorder's dump of `quit_inside_a_file_dialog` under
+/// postponement (`fixtures/dialog_shown_import`), Enter on the Theme
+/// page's "Import..." button: the dialog comes to the foreground hidden,
+/// its reads postpone it, and the listener tells its show as a client
+/// object's show of its top-level `#32770` window, the hook's rewrite of
+/// the window object's. Its answers are the real outposts' and the
+/// listener's.
 #[test]
-fn the_recorded_import_dialog_is_said_with_its_text_once_shown() {
-    let contents = import_contents();
+#[ignore = "awaits the flight dump of quit_inside_a_file_dialog recorded under postponement"]
+fn the_recorded_import_dialog_is_said_with_its_text_at_its_show() {
+    let file = fs::File::open(fixture_path("dialog_shown_import")).expect("fixture file exists");
+    let contents = dump::read_dump(&mut BufReader::new(file)).expect("fixture parses");
     assert!(!contents.truncated, "the committed fixture is complete");
     let inputs: Vec<_> = contents.inputs.iter().map(|r| r.input.clone()).collect();
-    let first = replay(&contents.base, &inputs);
-    assert_eq!(
-        first,
-        replay(&contents.base, &inputs),
-        "replay is deterministic"
-    );
-    let said = speech(&first);
-    let at = said
+    let effects = replay(&contents.base, &inputs);
+    assert_eq!(effects, replay(&contents.base, &inputs), "deterministic");
+    let show = inputs
         .iter()
-        .position(|line| {
-            line.first()
-                .is_some_and(|label| label.contains("Import a Theme"))
+        .position(|input| {
+            let verbatim_model::Input::Queue {
+                input: QueueInput::Tell { tell, .. },
+                ..
+            } = input
+            else {
+                return false;
+            };
+            let TellWindow::Found(facts) = &tell.window else {
+                return false;
+            };
+            tell.kind == EventKind::Show
+                && matches!(
+                    tell.object,
+                    EventObject::Msaa {
+                        object: -4,
+                        child: 0,
+                        ..
+                    }
+                )
+                && facts.window.handle == facts.root.handle
+                && facts.window.class == "#32770"
         })
-        .expect("the dialog is said");
+        .expect("the listener told the dialog's show");
+    // The show's read, the first current-focus read Core sends from it.
+    let number = effects[show..]
+        .iter()
+        .flatten()
+        .find_map(|effect| match effect {
+            Effect::Queue(QueueEffect::Send { ask, .. })
+                if matches!(ask.request, Request::CurrentFocus { .. }) =>
+            {
+                Some(ask.number)
+            }
+            _ => None,
+        })
+        .expect("the show reads the focus");
+    let answered = inputs
+        .iter()
+        .position(|input| {
+            matches!(input, verbatim_model::Input::Queue {
+                input: QueueInput::Answer { answer, .. },
+                ..
+            } if answer.number == number)
+        })
+        .expect("the read is answered");
     // NVDA's capture: "Import a Theme  dialog  File name:", "File name:
     // combo box  collapsed", "edit  Alt plus  n", "blank".
     assert_eq!(
-        said[at..],
-        [
-            vec![
-                "Label(\"Import a Theme\")".to_owned(),
-                "Role(Dialog)".to_owned(),
-                "Description(\"File name:\")".to_owned(),
+        speech(&effects[answered..=answered]),
+        said(&[
+            &[
+                "Label(\"Import a Theme\")",
+                "Role(Dialog)",
+                "Description(\"File name:\")"
             ],
-            vec![
-                "Label(\"File name:\")".to_owned(),
-                "Role(ComboBox)".to_owned(),
-                "State(Collapsed)".to_owned(),
+            &[
+                "Label(\"File name:\")",
+                "Role(ComboBox)",
+                "State(Collapsed)"
             ],
-            vec![
-                "Role(EditableText)".to_owned(),
-                "Shortcut(\"Alt+n\")".to_owned()
-            ],
-            vec!["Message(Blank)".to_owned()],
-        ]
-    );
-}
-
-/// The reads after the show, as the outpost's log of the recording showed
-/// them: the dialog's own, from its foreground, which met no known
-/// ancestor and gave its text; then the field's focus, answered as the
-/// File name Edit, its nearest ancestor the `ComboBox` "File name:", never
-/// the `ComboBoxEx32` or the `ComboBox` as the focus.
-#[test]
-fn the_read_after_the_show_answers_the_field_inside_its_combo_box() {
-    let contents = import_contents();
-    let shown = contents
-        .inputs
-        .iter()
-        .position(|recorded| {
-            matches!(
-                &recorded.input,
-                verbatim_model::Input::Queue {
-                    input: QueueInput::Answer { answer, .. },
-                    ..
-                } if answer.outcome == Outcome::Result(Reply::Shown)
-            )
-        })
-        .expect("the listener told the show");
-    let reads: Vec<_> = contents.inputs[shown..]
-        .iter()
-        .filter_map(|recorded| match &recorded.input {
-            verbatim_model::Input::Queue {
-                input: QueueInput::Answer { answer, .. },
-                ..
-            } => match &answer.outcome {
-                Outcome::Result(Reply::Candidate(candidate)) => candidate.read.clone(),
-                _ => None,
-            },
-            _ => None,
-        })
-        .collect();
-    let role = |values: &verbatim_model::property::PropertyValues| {
-        values
-            .answer(PropertyId::Role)
-            .and_then(|answer| answer.value.clone())
-    };
-    let name = |values: &verbatim_model::property::PropertyValues| {
-        values
-            .answer(PropertyId::Name)
-            .and_then(|answer| answer.value.clone())
-    };
-    assert_eq!(
-        reads
-            .iter()
-            .map(|read| role(&read.focus.read.values))
-            .collect::<Vec<_>>(),
-        [
-            Some(PropertyValue::Role(Role::Dialog)),
-            Some(PropertyValue::Role(Role::EditableText))
-        ]
-    );
-    let read = &reads[1];
-    let nearest = &read.ancestors[0].node.read.values;
-    assert_eq!(
-        (role(&read.focus.read.values), role(nearest), name(nearest)),
-        (
-            Some(PropertyValue::Role(Role::EditableText)),
-            Some(PropertyValue::Role(Role::ComboBox)),
-            Some(PropertyValue::Text("File name:".to_owned()))
-        )
+            &["Role(EditableText)", "Shortcut(\"Alt+n\")"],
+            &["Message(Blank)"],
+        ])
     );
 }

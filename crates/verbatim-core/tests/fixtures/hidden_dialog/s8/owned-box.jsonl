@@ -1,0 +1,26 @@
+NVDA alpha-58022,732d1ce2 in session 2
+{"label":"launch powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File <repo>\\target\\captures-2026-11-20\\hidden-dialog-standin.ps1 -Mode owned-box -Folder <repo>\\target\\captures-2026-11-20\\s8-hidden-dialog-standin-output\\owned-box-files -ShowAfterMs 500","step":0}
+{"label":"wait for <repo>\\target\\captures-2026-11-20\\s8-hidden-dialog-standin-output\\owned-box-files\\ready","step":1}
+{"label":"front powershell.exe \"verbatim-e2e-hidden-owner\"","step":2}
+{"kind":"event","ms":25,"step":2,"text":"cancel"}
+{"kind":"speech","ms":28,"step":2,"tag":"Normal","text":"verbatim-e 2e-hidden-owner  dialog"}
+{"kind":"speech","ms":30,"step":2,"tag":"Normal","text":"Import...  button"}
+{"label":"enter","step":3}
+{"kind":"event","ms":3,"step":3,"text":"cancel"}
+{"kind":"speech","ms":52,"step":3,"tag":"Normal","text":"verbatim-e 2e-confirm  dialog  Replace it?"}
+{"kind":"speech","ms":57,"step":3,"tag":"Normal","text":"OK  button"}
+{"label":"await front powershell.exe \"verbatim-e2e-confirm\"","step":4}
+{"kind":"note","step":4,"text":"the capture's window is now \"verbatim-e2e-confirm\" of powershell.exe (window 722284), shown"}
+{"label":"enter","step":5}
+{"kind":"event","ms":3,"step":5,"text":"cancel"}
+{"kind":"speech","ms":31,"step":5,"tag":"Normal","text":"verbatim-e 2e-hidden-dialog  dialog"}
+{"kind":"speech","ms":36,"step":5,"tag":"Normal","text":"File name:  edit  blank"}
+{"label":"wait for <repo>\\target\\captures-2026-11-20\\s8-hidden-dialog-standin-output\\owned-box-files\\shown","step":6}
+{"label":"await front powershell.exe \"verbatim-e2e-hidden-dialog\"","step":7}
+{"kind":"note","step":7,"text":"the capture's window is now \"verbatim-e2e-hidden-dialog\" of powershell.exe (window 76284430), shown"}
+{"label":"escape","step":8}
+{"kind":"event","ms":17,"step":8,"text":"cancel"}
+{"kind":"speech","ms":31,"step":8,"tag":"Normal","text":"verbatim-e 2e-hidden-owner  dialog"}
+{"kind":"speech","ms":34,"step":8,"tag":"Normal","text":"Import...  button"}
+{"label":"await front powershell.exe \"verbatim-e2e-hidden-owner\"","step":9}
+{"kind":"note","step":9,"text":"the capture's window is now \"verbatim-e2e-hidden-owner\" of powershell.exe (window 95093630), shown"}

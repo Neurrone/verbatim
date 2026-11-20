@@ -816,64 +816,8 @@ fn a_top_level_client_reached_from_a_windowless_object_is_said_by_its_title() {
     app.quit();
 }
 
-/// mockapp's stand-in for a dialog shown after its focus answers its
-/// command, which its owner's window thread once never did, waiting for the
-/// dialog's handle while the dialog it owns sent it messages, and shows the
-/// dialog, hidden until then, after its delay: its window object's show is
-/// heard. The foreground and the field's focus it raises while hidden are
-/// not asserted here: no mockapp test may need the foreground, which
-/// Windows need not grant on the test's own desktop (`common/harness.rs`).
-/// Their order was checked against the recording of Import a Theme
-/// (2026-11-19), and its differences recorded as deliberate in mockapp's
-/// guide.
-fn the_dialog_shown_late_answers_and_shows_its_hidden_dialog() {
-    common::init_com();
-    let title = common::unique_title("mockapp-msaa-shown-late");
-    let mut app = common::spawn_visible("counts.json", "msaa", &title);
-    let _ = common::find_window(&title);
-    let shown = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-    let sink = std::sync::Arc::clone(&shown);
-    let hook = verbatim_ia2::WinEventHook::install(
-        app.pid(),
-        &[WinEventKind::Show],
-        Box::new(|_: verbatim_ia2::WinEvent, _: Option<&str>| {}),
-    )
-    .expect("a hook of mockapp's shows");
-    // Every window object's show, whatever its class.
-    verbatim_ia2::set_window_shown(Box::new(move |window| {
-        sink.lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .push(window);
-    }))
-    .expect("the hook hears shows");
-    let answer = app.send_answered("open-dialog-shown-late 50");
-    let dialog: isize = answer
-        .strip_prefix("open-dialog-shown-late ")
-        .and_then(|handle| handle.parse().ok())
-        .unwrap_or_else(|| panic!("mockapp said {answer:?}, not its dialog"));
-    assert_eq!(
-        verbatim_win32::window::window_class_name(dialog),
-        "#32770",
-        "a dialog of the system's class"
-    );
-    common::pump_until(|| {
-        shown
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .contains(&dialog)
-            .then_some(())
-    });
-    drop(hook);
-    assert!(verbatim_win32::window::window_is_visible(dialog));
-    app.quit();
-}
-
 fn main() {
     harness::run_isolated(&[
-        (
-            "the_dialog_shown_late_answers_and_shows_its_hidden_dialog",
-            the_dialog_shown_late_answers_and_shows_its_hidden_dialog,
-        ),
         (
             "a_description_change_on_the_focus_is_spoken",
             a_description_change_on_the_focus_is_spoken,

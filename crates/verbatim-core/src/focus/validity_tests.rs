@@ -84,7 +84,6 @@ fn uia(tell: Event) -> UiaFocus {
         listener: 1,
         alt_down: false,
         fence: Fence::default(),
-        ended_wait: None,
     }
 }
 
@@ -135,7 +134,6 @@ fn candidate(kind: EventKind, (object, child): (i32, i32), at_us: u64, trace: u6
         window,
         fence: Fence::default(),
         confirmation: Confirmation::Unread,
-        ended_wait: None,
     }
 }
 
@@ -169,6 +167,7 @@ fn versions(last: Option<LastFocus>) -> Versions {
     Versions {
         committed: Committed::Nothing,
         last,
+        postponed: None,
     }
 }
 
@@ -387,6 +386,7 @@ fn the_menu_opening_on_the_committed_element_takes_acceptance_then_executes_it_a
     let both = Versions {
         last: Some(committed.last(Fence::default())),
         committed: Committed::Read(Box::new(committed)),
+        postponed: None,
     };
     let cache = BackendCache::default();
     let opening = |checked, related: bool| {

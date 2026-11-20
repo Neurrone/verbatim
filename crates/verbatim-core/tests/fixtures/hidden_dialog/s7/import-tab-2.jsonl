@@ -1,0 +1,20 @@
+NVDA alpha-58022,732d1ce2 in session 2
+{"label":"front verbatim.exe \"Verbatim Settings\"","step":0}
+{"label":"enter","step":1}
+{"label":"await front verbatim.exe \"Import a Theme\"","step":2}
+{"kind":"note","step":2,"text":"the capture's window is now \"Import a Theme\" of verbatim.exe (window 27395308), not yet shown"}
+{"label":"tab","step":3}
+{"kind":"note","step":3,"text":"tab was sent while the capture's window was not yet shown; once sent, it was still not shown"}
+{"kind":"event","ms":-49,"step":3,"text":"cancel"}
+{"kind":"speech","ms":736,"step":3,"tag":"Normal","text":"Import a Theme  dialog  File name:"}
+{"kind":"speech","ms":737,"step":3,"tag":"Normal","text":"File name:  combo box  collapsed"}
+{"kind":"speech","ms":740,"step":3,"tag":"Normal","text":"edit  Alt plus  nblank"}
+{"kind":"speech","ms":804,"step":3,"tag":"Normal","text":"Files of type:  combo box  Theme packages ( star  dot zip)  collapsed  Alt plus  t"}
+{"label":"await front verbatim.exe \"Import a Theme\"","step":4}
+{"kind":"note","step":4,"text":"the capture's window is now \"Import a Theme\" of verbatim.exe (window 27395308), shown"}
+{"label":"escape","step":5}
+{"kind":"event","ms":96,"step":5,"text":"cancel"}
+{"kind":"speech","ms":211,"step":5,"tag":"Normal","text":"Verbatim Settings: Theme  dialog"}
+{"kind":"speech","ms":213,"step":5,"tag":"Normal","text":"Import...  button"}
+{"label":"await front verbatim.exe \"Verbatim Settings\"","step":6}
+{"kind":"note","step":6,"text":"the capture's window is now \"Verbatim Settings: Theme\" of verbatim.exe (window 94831786), shown"}

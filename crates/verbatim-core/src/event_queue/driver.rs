@@ -70,13 +70,6 @@ pub(crate) struct Shared<L: Logic> {
     /// its answer, delivered as soon as the step lets them: after the
     /// front's function pauses in its ask, or as the step settles.
     at_once: Vec<(RequestNumber, WireOutcome)>,
-    /// The front's requests whose own ending held as they began
-    /// ([`Logic::stops`]), each with its reason, never sent and ended as
-    /// the step lets them, as the plain reader's answers are: so the
-    /// ending is recorded in the checkpoint as the request's, and a
-    /// rebuilt function, which judges nothing of the queue again, takes it
-    /// from there.
-    stopped_at_once: Vec<(RequestNumber, verbatim_model::request::CancelReason)>,
     /// Whether the paused function is being rebuilt from its checkpoint,
     /// when every ending, the plain reader's included, comes from the
     /// checkpoint's record and nothing is delivered at once.
@@ -109,14 +102,7 @@ impl<L: Logic> Shared<L> {
             Some(_) => Route::Plain,
             None => Route::Reader(beginning.reader),
         };
-        let stopped = self.stops_as_it_begins(&beginning);
-        let ready = self
-            .state
-            .queue
-            .readers
-            .get(&beginning.reader)
-            .copied()
-            .filter(|_| stopped.is_none());
+        let ready = self.state.queue.readers.get(&beginning.reader).copied();
         let now_us = self.state.queue.now_us;
         let mut orders = Vec::new();
         let state = &mut self.state;
@@ -139,31 +125,7 @@ impl<L: Logic> Shared<L> {
         if let Some(outcome) = plain {
             self.at_once.push((number, outcome));
         }
-        if let Some(reason) = stopped {
-            self.stopped_at_once.push((number, reason));
-        }
         number
-    }
-
-    /// Why the front's request about to begin, `beginning`, stops at once:
-    /// its own ending holds already ([`Logic::stops`]). Not judged while
-    /// the function is rebuilt, whose endings come from its checkpoint.
-    fn stops_as_it_begins(
-        &self,
-        beginning: &Beginning,
-    ) -> Option<verbatim_model::request::CancelReason> {
-        if beginning.owner != Owner::Queue || self.rebuilding {
-            return None;
-        }
-        let queue = &self.state.queue;
-        let front = queue.front.as_ref()?;
-        L::stops(
-            &self.state.facts,
-            (&front.entry, &beginning.request),
-            &queue.waiting,
-            &queue.backend,
-            (queue.now_us, queue.foreground),
-        )
     }
 
     /// Whether `window`'s application holds attention.
@@ -333,11 +295,18 @@ impl<E, F> Queue<E, F> {
         }
     }
 
-    /// The front entry and its request, while it has one out.
-    pub(crate) fn asking(&self) -> Option<(&E, &verbatim_model::request::Request)> {
+    /// Why the front's request out ends now, judged for `cause` with
+    /// `facts` by the one judge ([`Logic::ends`]), with its number.
+    pub(crate) fn front_ends<L: Logic<Entry = E, Facts = F>>(
+        &self,
+        facts: &F,
+        cause: super::Cause<'_, E>,
+    ) -> Option<(RequestNumber, verbatim_model::request::CancelReason)> {
         let front = self.front.as_ref()?;
-        let live = self.table.live(front.asked?)?;
-        Some((&front.entry, &live.request))
+        let number = front.asked?;
+        let live = self.table.live(number)?;
+        let at = (&self.backend, self.now_us, self.foreground);
+        L::ends(facts, (&front.entry, live), cause, at).map(|reason| (number, reason))
     }
 
     /// The time of the last input handled.
@@ -496,7 +465,6 @@ impl<L: Logic> Core<L> {
                 parked: false,
                 unanswered: 0,
                 at_once: Vec::new(),
-                stopped_at_once: Vec::new(),
                 rebuilding: false,
             })),
             task: None,
@@ -612,7 +580,6 @@ impl<L: Logic> Core<L> {
             let mut shared = fresh.shared.borrow_mut();
             shared.effects.clear();
             shared.at_once.clear();
-            shared.stopped_at_once.clear();
             shared.rebuilding = false;
             shared.state = State::default();
         }
@@ -724,9 +691,8 @@ impl<L: Logic> Core<L> {
         self.poll();
     }
 
-    /// Delivers the endings Core's plain reader gave at once, and those of
-    /// the requests stopped as they began, unless the function is being
-    /// rebuilt; returns whether any was delivered.
+    /// Delivers the endings Core's plain reader gave at once, unless the
+    /// function is being rebuilt; returns whether any was delivered.
     pub(super) fn answer_at_once(&mut self) -> bool {
         let mut delivered = false;
         loop {
@@ -735,19 +701,11 @@ impl<L: Logic> Core<L> {
                 if shared.rebuilding {
                     return delivered;
                 }
-                if !shared.at_once.is_empty() {
-                    let (number, outcome) = shared.at_once.remove(0);
-                    shared.state.queue.table.answered_at_once(number, outcome)
-                } else if !shared.stopped_at_once.is_empty() {
-                    let (number, reason) = shared.stopped_at_once.remove(0);
-                    shared
-                        .state
-                        .queue
-                        .table
-                        .stop(number, reason, &mut Vec::new())
-                } else {
+                if shared.at_once.is_empty() {
                     return delivered;
                 }
+                let (number, outcome) = shared.at_once.remove(0);
+                shared.state.queue.table.answered_at_once(number, outcome)
             };
             if let Some(ended) = ended {
                 delivered = true;
@@ -923,6 +881,14 @@ impl<L: Logic> Cx<L> {
     /// Core's facts, to change.
     pub(crate) fn facts_mut(&mut self) -> RefMut<'_, L::Facts> {
         RefMut::map(self.shared.borrow_mut(), |shared| &mut shared.state.facts)
+    }
+
+    /// The front entry, this function's own.
+    pub(crate) fn front(&self) -> Option<Ref<'_, L::Entry>> {
+        Ref::filter_map(self.shared.borrow(), |shared| {
+            shared.state.queue.front.as_ref().map(|front| &front.entry)
+        })
+        .ok()
     }
 
     /// The entries waiting behind this one, in arrival order.

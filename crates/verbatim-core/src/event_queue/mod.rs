@@ -13,7 +13,7 @@
 //!
 //! What an entry is and what its function does are the [`Logic`]'s; the
 //! queue holds only what crosses features: the front, the waiting entries,
-//! the requests and their stops. Built beside the reducer: nothing feeds it
+//! the requests and the one judge of their endings ([`Logic::ends`]). Built beside the reducer: nothing feeds it
 //! yet.
 
 #![cfg_attr(
@@ -50,11 +50,9 @@ use crate::focus::backend::{Backend, BackendCache, JudgedWindow, WindowKey};
 
 pub(crate) use driver::{Core, Cx, Queue, ReplayMismatch, State};
 pub(crate) use inbox::{CoreRequest, Effect, Input, Timed};
-#[cfg(test)]
-pub(crate) use limiter::arrive;
 pub(crate) use limiter::{Item, MsaaClass, MsaaKey, PUMP_WINDOW_US, Place};
 pub(crate) use request::{Outcome, Refused, Request};
-pub(crate) use table::Asker;
+pub(crate) use table::{Asker, Live};
 
 /// A focus read's due time: 13 seconds from the moment Core decides to
 /// ask, for its whole chain of requests (ADR 0003, "A frozen window").
@@ -193,6 +191,17 @@ impl Foreground {
     }
 }
 
+/// What the front's request is judged for ([`Logic::ends`]).
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum Cause<'a, E> {
+    /// `entry` arrived at the back, before the limiter places it.
+    Arrived(&'a E),
+    /// The foreground record changed to this.
+    Foreground(&'a Foreground),
+    /// The queue settled after Core's facts changed outside it.
+    Settled,
+}
+
 /// An entry's function, as the driver runs it.
 pub(crate) type Function = Pin<Box<dyn Future<Output = ()>>>;
 
@@ -225,54 +234,17 @@ pub(crate) trait Logic: Sized + 'static {
         false
     }
 
-    /// Whether `entry`, whose request out names `window`, was accepted by
-    /// something other than the foreground relation, judged with `facts`,
-    /// which exempts that request from the foreground stop.
-    fn exempt_from_foreground(
+    /// Why the front's request out ends now, `front` being the front
+    /// entry with its request, judged for `cause` with Core's facts, the
+    /// backend verdicts at `now_us` and the foreground record: the one
+    /// judge of a request ending before its answer. `None` while it is
+    /// still awaited.
+    fn ends(
         facts: &Self::Facts,
-        entry: &Self::Entry,
-        window: &RequestWindow,
-    ) -> bool;
-
-    /// Whether `request`, the front's request out, has a foreground rule of
-    /// its own ([`Logic::stops`]), in place of the stop when the foreground
-    /// moves outside its window's tree and owner chain.
-    fn own_foreground_rule(request: &verbatim_model::request::Request) -> bool {
-        let _ = request;
-        false
-    }
-
-    /// Why `request`, the request out of the front entry `front`, stops
-    /// now, judged with the entries waiting behind it, `waiting`, after an
-    /// entry joined the back or the foreground changed, at `now_us` with
-    /// the foreground record; `None` while it is still awaited.
-    fn stops(
-        facts: &Self::Facts,
-        front: (&Self::Entry, &verbatim_model::request::Request),
-        waiting: &std::collections::VecDeque<Item<Self::Entry>>,
-        backend: &BackendCache,
-        now_us: (u64, Option<Foreground>),
-    ) -> Option<verbatim_model::request::CancelReason> {
-        let _ = (facts, front, waiting, backend, now_us);
-        None
-    }
-
-    /// `removed`, a waiting entry merged into `into`, the newer entry
-    /// that takes its place: what `into` keeps of it.
-    fn merged(removed: &Self::Entry, into: &mut Self::Entry) {
-        let _ = (removed, into);
-    }
-
-    /// Whether `arriving`, joining the back, withdraws `request`, the
-    /// request out of the front entry `front`, judged with the backend
-    /// verdicts at `now_us` and the foreground record `foreground`.
-    fn withdraws(
-        facts: &Self::Facts,
-        front: (&Self::Entry, &verbatim_model::request::Request),
-        arriving: &Self::Entry,
-        backend: &BackendCache,
-        now_us: (u64, Option<Foreground>),
-    ) -> bool;
+        front: (&Self::Entry, &Live),
+        cause: Cause<'_, Self::Entry>,
+        at: (&BackendCache, u64, Option<Foreground>),
+    ) -> Option<verbatim_model::request::CancelReason>;
 
     /// The entry appended when `window`, in the recovery set, answers
     /// again; what Core's facts keep of the window may change, as a
@@ -387,18 +359,6 @@ pub(crate) trait Logic: Sized + 'static {
     fn joining(facts: &mut Self::Facts) -> Vec<Self::Entry> {
         let _ = facts;
         Vec::new()
-    }
-
-    /// Whether the front entry `front` no longer needs `request`, its
-    /// request out: Core withdraws it, as when say-all stopped while its
-    /// read was out.
-    fn unneeded(
-        facts: &Self::Facts,
-        front: &Self::Entry,
-        request: &verbatim_model::request::Request,
-    ) -> bool {
-        let _ = (facts, front, request);
-        false
     }
 
     /// The waiting `entry` ended because the foreground changed

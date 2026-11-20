@@ -217,26 +217,9 @@ impl<L: Logic> Core<L> {
             let Some(application) = queue.record.applications.remove(&process) else {
                 return;
             };
-            let mut ended = queue
+            let ended = queue
                 .table
                 .answer_all(Reader::Outpost(process), &WireOutcome::NotThere);
-            // The listener's wait for a window of the application to be
-            // shown ends not there, and is cancelled, since the listener
-            // has no exit of its own to end it.
-            let mut orders = Vec::new();
-            ended.extend(queue.table.answer_cancelling(
-                |live| {
-                    live.window.process == process
-                        && matches!(
-                            live.request,
-                            verbatim_model::request::Request::AwaitShown { .. }
-                        )
-                },
-                &WireOutcome::NotThere,
-                verbatim_model::request::CancelReason::Withdrawn,
-                &mut orders,
-            ));
-            Self::order(&mut shared, orders);
             (application, ended)
         };
         for ended in ended {

@@ -23,6 +23,7 @@
 use serde::{Deserialize, Serialize};
 use verbatim_model::TraceId;
 use verbatim_model::event_kind::EventKind;
+use verbatim_model::request::HiddenRoot;
 
 use super::FOCUS_SET;
 use super::backend::BackendCache;
@@ -178,7 +179,8 @@ async fn start(cx: &mut Cx<Entries>, candidate: &Candidate, run_executed: bool) 
         candidate.fence,
     );
     let executed = execute(&mut cx.facts_mut(), &origin, &read, &known, read_by);
-    executed.deliver(cx);
+    let fence = crate::entries::front_fence(cx);
+    executed.deliver(cx, fence);
 }
 
 /// The function of a check entry: the foreground application's focus read
@@ -193,22 +195,22 @@ pub(crate) async fn check(mut cx: Cx<Entries>, check: MenuCheck) {
     };
     let window = foreground.window();
     let due_us = cx.due_in(FOCUS_DUE_US);
-    let outcome = super::shown::read_shown(&mut cx, due_us, |cx, hidden| {
-        let known = known_for(cx, window.process);
-        let request = CurrentFocusRead::<FullIfFocused> {
-            window,
-            known: known.sent.clone(),
-            details: crate::details::focus_details(&cx.facts()),
-            set: crate::details::focus_set(&cx.facts(), FOCUS_SET),
-            depth: std::marker::PhantomData,
-            hidden,
-        };
-        (request, known)
-    })
-    .await;
-    let (answered, known) = match outcome {
-        Outcome::Result((Focused::Read(answered), known)) => (answered, known),
-        Outcome::Result((Focused::InFront(front), _)) => {
+    let known = known_for(&cx, window.process);
+    let request = CurrentFocusRead::<FullIfFocused> {
+        window,
+        known: known.sent.clone(),
+        details: crate::details::focus_details(&cx.facts()),
+        set: crate::details::focus_set(&cx.facts(), FOCUS_SET),
+        depth: std::marker::PhantomData,
+        hidden: HiddenRoot::Check,
+    };
+    let checked = (due_us, HiddenRoot::Check);
+    let Some(outcome) = super::shown::ask(&mut cx, request, checked).await else {
+        return;
+    };
+    let answered = match outcome {
+        Outcome::Result(Focused::Read(answered)) => answered,
+        Outcome::Result(Focused::InFront(front)) => {
             let read = match check.end {
                 CheckedEnd::MenuOrPopup => HungRead::MenuCheck,
                 CheckedEnd::Switch => HungRead::SwitchCheck,
@@ -252,7 +254,8 @@ pub(crate) async fn check(mut cx: Cx<Entries>, check: MenuCheck) {
     };
     let origin = Origin::of_read(check.trace_id, window, check.fence);
     let executed = execute(&mut cx.facts_mut(), &origin, &read, &known, read_by);
-    executed.deliver(&mut cx);
+    let fence = crate::entries::front_fence(&cx);
+    executed.deliver(&mut cx, fence);
 }
 
 /// Whether the UI Automation menu opening `arriving` is dropped at its

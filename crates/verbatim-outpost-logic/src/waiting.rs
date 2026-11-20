@@ -50,8 +50,7 @@ fn ids_window(request: &Request) -> Option<WindowHandle> {
         | Request::CurrentFocus { .. }
         | Request::DumpTree { .. }
         | Request::ShellItems { .. }
-        | Request::ShellItemPosition { .. }
-        | Request::AwaitShown { .. } => None,
+        | Request::ShellItemPosition { .. } => None,
     }
 }
 

@@ -247,6 +247,9 @@ pub(crate) struct Versions {
     /// The readers' last focus; empty at startup and after the foreground
     /// left for an unrelated top-level window.
     pub(crate) last: Option<LastFocus>,
+    /// The postponed dialog, read again at its show (`super::shown`);
+    /// every commit ends it.
+    pub(crate) postponed: Option<super::shown::Postponed>,
 }
 
 /// What the committed focus's reader ending does (Table 3, column F).
@@ -265,6 +268,7 @@ impl Versions {
     pub(crate) fn execute(&mut self, kept: Kept, since: Fence) {
         self.last = Some(kept.last(since));
         self.committed = Committed::Read(Box::new(kept));
+        self.postponed = None;
     }
 
     /// Core commits its own focus (column C): the committed focus becomes
@@ -280,6 +284,7 @@ impl Versions {
         self.committed = Committed::Own {
             source: source.filter(|_| !sourceless),
         };
+        self.postponed = None;
     }
 
     /// A focus read was tried at its own turn and answered refused or not

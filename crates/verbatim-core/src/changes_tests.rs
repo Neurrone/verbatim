@@ -1115,7 +1115,7 @@ fn a_value_change_accepted_by_background_bars_reported_goes_on_past_a_foreground
         let mut state = crate::state::SrState::new();
         state.settings.report_background_progress_bars = background;
         (
-            crate::entries::Entries::exempt_from_foreground(&state, &entry, &change.window),
+            crate::entries::exempt_from_foreground(&state, &entry, &change.window),
             crate::entries::Entries::ends_at_foreground(&state, &entry, &elsewhere),
         )
     };

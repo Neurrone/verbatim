@@ -20,8 +20,8 @@ use super::limiter::{MsaaKey, Place};
 use super::request::{Outcome, Request};
 use super::table::Asker;
 use super::{
-    FOCUS_DUE_US, Foreground, Function, HANG_ROUND_US, Instance, Logic, OTHER_DUE_US, Reader,
-    RequestWindow,
+    Cause, FOCUS_DUE_US, Foreground, Function, HANG_ROUND_US, Instance, Live, Logic, OTHER_DUE_US,
+    Reader, RequestWindow,
 };
 use crate::focus::backend::Backend;
 use crate::focus::backend::BackendCache;
@@ -218,18 +218,24 @@ impl Logic for Test {
         })
     }
 
-    fn exempt_from_foreground(_: &u32, entry: &Entry, _: &RequestWindow) -> bool {
-        matches!(entry, Entry::Read { exempt: true, .. })
-    }
-
-    fn withdraws(
-        _: &u32,
-        (front, _): (&Entry, &verbatim_model::request::Request),
-        arriving: &Entry,
-        _: &BackendCache,
-        _: (u64, Option<Foreground>),
-    ) -> bool {
-        matches!(front, Entry::Read { .. }) && *arriving == Entry::Key
+    /// A key arriving withdraws a read; a foreground outside the read's
+    /// window ends it unless it is exempt; settling withdraws it once the
+    /// facts are [`UNNEEDED`].
+    fn ends(
+        facts: &u32,
+        (front, live): (&Entry, &Live),
+        cause: Cause<'_, Entry>,
+        _: (&BackendCache, u64, Option<Foreground>),
+    ) -> Option<CancelReason> {
+        match cause {
+            Cause::Arrived(arriving) => (matches!(front, Entry::Read { .. })
+                && *arriving == Entry::Key)
+                .then_some(CancelReason::Withdrawn),
+            Cause::Foreground(record) => (!matches!(front, Entry::Read { exempt: true, .. })
+                && !record.holds(&live.window))
+            .then_some(CancelReason::Foreground),
+            Cause::Settled => (*facts == UNNEEDED).then_some(CancelReason::Withdrawn),
+        }
     }
 
     fn recovered(_: &mut u32, window: &RequestWindow) -> Option<Entry> {
@@ -694,16 +700,38 @@ fn a_request_out_ends_reader_ended_when_its_reader_ends() {
     );
 }
 
+/// The facts of the tests' logic when no read is needed any more.
+const UNNEEDED: u32 = u32::MAX;
+
+/// The one judge, called for each of its causes where it arises: an
+/// entry's arrival, the foreground report, and the queue settling after
+/// the facts changed outside it, the foreground even in the read's own
+/// application.
 #[test]
-fn a_request_out_stops_when_the_foreground_leaves_its_window_even_in_its_own_application() {
-    let mut core = core_with_read_out();
-    assert_eq!(
-        feed(&mut core, 2_000, Input::Foreground(SAME_APP_ELSEWHERE)),
-        [
-            cancel(1, CancelReason::Foreground),
-            said("NoLongerAwaited(Foreground)")
-        ]
-    );
+fn the_one_judge_ends_the_front_for_each_cause() {
+    type Of = fn(&mut Core<Test>) -> Input<Entry>;
+    let unneeded = |core: &mut Core<Test>| {
+        *core.cx_for_tests().facts_mut() = UNNEEDED;
+        Input::Settle
+    };
+    let causes: [(Of, CancelReason); 3] = [
+        (|_| Input::Entry(Entry::Key), CancelReason::Withdrawn),
+        (
+            |_| Input::Foreground(SAME_APP_ELSEWHERE),
+            CancelReason::Foreground,
+        ),
+        (unneeded, CancelReason::Withdrawn),
+    ];
+    for (cause, reason) in causes {
+        let mut core = core_with_read_out();
+        let input = cause(&mut core);
+        let effects = feed(&mut core, 2_000, input);
+        assert_eq!(effects.first(), Some(&cancel(1, reason)), "{effects:?}");
+        assert_eq!(
+            effects.get(1),
+            Some(&said(&format!("NoLongerAwaited({reason:?})")))
+        );
+    }
 }
 
 #[test]
@@ -728,19 +756,6 @@ fn an_exempt_entrys_request_out_stays_when_the_foreground_changes() {
     assert_eq!(
         feed(&mut core, 3_000, answer(OUTPOST, 1, result())),
         [said_result()]
-    );
-}
-
-#[test]
-fn a_request_out_withdrawn_by_its_entry_is_cancelled_with_no_sound() {
-    let mut core = core_with_read_out();
-    assert_eq!(
-        feed(&mut core, 2_000, Input::Entry(Entry::Key)),
-        [
-            cancel(1, CancelReason::Withdrawn),
-            said("NoLongerAwaited(Withdrawn)"),
-            said("key after 0 results, 0 waiting")
-        ]
     );
 }
 
@@ -1487,18 +1502,19 @@ impl Logic for Probing {
         })
     }
 
-    fn exempt_from_foreground((): &(), _: &Withdraws, _: &RequestWindow) -> bool {
-        false
-    }
-
-    fn withdraws(
+    fn ends(
         (): &(),
-        _: (&Withdraws, &verbatim_model::request::Request),
-        arriving: &Withdraws,
-        _: &BackendCache,
-        _: (u64, Option<Foreground>),
-    ) -> bool {
-        *arriving
+        (_, live): (&Withdraws, &Live),
+        cause: Cause<'_, Withdraws>,
+        _: (&BackendCache, u64, Option<Foreground>),
+    ) -> Option<CancelReason> {
+        match cause {
+            Cause::Arrived(arriving) => arriving.then_some(CancelReason::Withdrawn),
+            Cause::Foreground(record) => {
+                (!record.holds(&live.window)).then_some(CancelReason::Foreground)
+            }
+            Cause::Settled => None,
+        }
     }
 
     fn recovered((): &mut (), _: &RequestWindow) -> Option<Withdraws> {

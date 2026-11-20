@@ -1,0 +1,18 @@
+NVDA alpha-58022,732d1ce2 in session 2
+{"label":"launch powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File <repo>\\target\\captures-2026-11-20\\hidden-dialog-standin.ps1 -Mode tray -Folder <repo>\\target\\captures-2026-11-20\\s8-hidden-dialog-standin-output\\tray-files -ShowAfterMs 2000","step":0}
+{"label":"wait for <repo>\\target\\captures-2026-11-20\\s8-hidden-dialog-standin-output\\tray-files\\ready","step":1}
+{"label":"front powershell.exe \"verbatim-e2e-tray-launcher\"","step":2}
+{"kind":"event","ms":36,"step":2,"text":"cancel"}
+{"kind":"speech","ms":38,"step":2,"tag":"Normal","text":"verbatim-e 2e-tray-launcher  dialog"}
+{"kind":"speech","ms":39,"step":2,"tag":"Normal","text":"Import...  button"}
+{"label":"enter","step":3}
+{"kind":"event","ms":3,"step":3,"text":"cancel"}
+{"kind":"speech","ms":42,"step":3,"tag":"Normal","text":"File name:  edit  blank"}
+{"kind":"event","ms":45,"step":3,"text":"cancel"}
+{"kind":"speech","ms":46,"step":3,"tag":"Normal","text":"Context  menu"}
+{"label":"await front powershell.exe \"verbatim-e2e-tray-dialog\"","step":4}
+{"kind":"note","step":4,"text":"the capture's window is now \"verbatim-e2e-tray-dialog\" of powershell.exe (window 92734584), not yet shown"}
+{"label":"escape","step":5}
+{"kind":"note","step":5,"text":"escape was sent while the capture's window was not yet shown; once sent, it was still not shown"}
+{"kind":"event","ms":2,"step":5,"text":"cancel"}
+{"kind":"speech","ms":114,"step":5,"tag":"Normal","text":"File name:  edit  blank"}

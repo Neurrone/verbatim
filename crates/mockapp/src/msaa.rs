@@ -249,9 +249,7 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
         | Command::WindowFocus
         | Command::PopupMenu
         | Command::MenuSelect(_)
-        | Command::MenuClose
-        | Command::OpenDialogShownLate(..)
-        | Command::TrayMenuOverHiddenDialog => {
+        | Command::MenuClose => {
             return Err("applied by the window".into());
         }
         Command::FailWindowElement => {

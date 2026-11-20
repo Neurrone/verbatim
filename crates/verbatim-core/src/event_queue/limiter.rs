@@ -177,12 +177,8 @@ pub(crate) fn arrive<L: Logic>(
 ) {
     match L::place(facts, &entry) {
         Place::Other { merges, .. } => {
-            let mut entry = entry;
-            if merges
-                && let Some(removed) =
-                    merge_away::<L>(facts, waiting, |waiting| L::merges(facts, waiting, &entry))
-            {
-                L::merged(&removed, &mut entry);
+            if merges {
+                merge_away::<L>(facts, waiting, |waiting| L::merges(facts, waiting, &entry));
             }
             waiting.push_back(Item::One(entry));
         }
@@ -214,12 +210,9 @@ pub(crate) fn arrive<L: Logic>(
                             Item::Run(_) | Item::Menu { .. } => true,
                         });
                     }
-                    let mut entry = entry;
-                    if let Some(removed) = merge_away::<L>(facts, waiting, |waiting| {
+                    merge_away::<L>(facts, waiting, |waiting| {
                         msaa::<L>(facts, waiting).is_some_and(|(other, _, _)| other == key)
-                    }) {
-                        L::merged(&removed, &mut entry);
-                    }
+                    });
                     waiting.push_back(Item::One(entry));
                 }
             }
@@ -231,12 +224,12 @@ pub(crate) fn arrive<L: Logic>(
 /// Removes the newest waiting single entry that `same` finds, searching
 /// from the back and stopping at a focus-kind item, which is itself
 /// reached: a focus tell merges a waiting one of its element, but nothing
-/// merges past one. The entry removed, if any.
+/// merges past one.
 fn merge_away<L: Logic>(
     facts: &L::Facts,
     waiting: &mut VecDeque<Item<L::Entry>>,
     same: impl Fn(&L::Entry) -> bool,
-) -> Option<L::Entry> {
+) {
     let mut found = None;
     for (place, item) in waiting.iter().enumerate().rev() {
         if let Item::One(entry) = item
@@ -249,9 +242,8 @@ fn merge_away<L: Logic>(
             break;
         }
     }
-    match found.and_then(|place| waiting.remove(place)) {
-        Some(Item::One(entry)) => Some(entry),
-        Some(Item::Run(_) | Item::Menu { .. }) | None => None,
+    if let Some(place) = found {
+        waiting.remove(place);
     }
 }
 
@@ -266,23 +258,16 @@ fn join_run<L: Logic>(
     class: MsaaClass,
     entry: L::Entry,
 ) {
-    let mut entry = entry;
     for item in waiting.iter_mut() {
         if let Item::Run(candidates) = item {
-            let (removed, kept): (Vec<_>, Vec<_>) = std::mem::take(candidates)
-                .into_iter()
-                .partition(|candidate| {
-                    msaa::<L>(facts, candidate).is_some_and(|(other, other_class, _)| {
-                        other == key
-                            || (class == MsaaClass::Foreground
-                                && other_class == MsaaClass::Focus
-                                && other.same_object(&key))
-                    })
-                });
-            *candidates = kept;
-            for removed in &removed {
-                L::merged(removed, &mut entry);
-            }
+            candidates.retain(|candidate| {
+                !msaa::<L>(facts, candidate).is_some_and(|(other, other_class, _)| {
+                    other == key
+                        || (class == MsaaClass::Foreground
+                            && other_class == MsaaClass::Focus
+                            && other.same_object(&key))
+                })
+            });
         }
     }
     waiting.retain(|item| !matches!(item, Item::Run(candidates) if candidates.is_empty()));
@@ -307,8 +292,7 @@ fn join_run<L: Logic>(
 type Counted = (usize, Option<usize>, MsaaKey, MsaaClass);
 
 /// NVDA's caps on the waiting MSAA entries of one pump window: the newest
-/// four run candidates kept, what a capped one carries handed to the
-/// newest kept in its run ([`Logic::merged`]); the newest ten other MSAA entries of each
+/// four run candidates kept; the newest ten other MSAA entries of each
 /// raising thread kept, foreground tells counted among them, entries on
 /// the logic's exempt ids kept but counted. A foreground tell is dropped
 /// only when neither cap keeps it, as NVDA keeps a copy in each cache. The
@@ -406,12 +390,7 @@ fn limit<L: Logic>(facts: &L::Facts, waiting: &mut VecDeque<Item<L::Entry>>) {
                 if let Some(Item::Run(run)) = waiting.get_mut(place)
                     && inner < run.len()
                 {
-                    // What a capped candidate carries goes to the newest
-                    // kept in its run, as a merge keeps it.
-                    let removed = run.remove(inner);
-                    if let Some(newest) = run.last_mut() {
-                        L::merged(&removed, newest);
-                    }
+                    run.remove(inner);
                 }
             }
             None => {

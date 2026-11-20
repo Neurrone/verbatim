@@ -14,7 +14,7 @@ use super::driver::{Beginning, Core, State, outcome_of, widen};
 use super::limiter::{self, Item};
 use super::request::Outcome;
 use super::table::{Asker, Dropped, Ended, Ending, Owner};
-use super::{Foreground, Instance, Logic, Reader, RequestWindow};
+use super::{Cause, Foreground, Instance, Logic, Reader, RequestWindow};
 
 /// An input to Core, in the inbox's arrival order.
 #[derive(Clone, Debug, PartialEq)]
@@ -88,8 +88,8 @@ pub(crate) enum Input<E> {
     /// once, each awaiting no answer: its ending changes nothing in Core.
     Send(Vec<CoreRequest>),
     /// Core's facts changed outside the queue: the entries they want join
-    /// the back, and the front's request is withdrawn when it is no longer
-    /// needed ([`Logic::joining`], [`Logic::unneeded`]).
+    /// the back, and the front's request ends when the one judge says the
+    /// settled queue ends it ([`Logic::joining`], [`Logic::ends`]).
     Settle,
     /// A timer came due.
     Tick,
@@ -269,11 +269,10 @@ impl<L: Logic> Core<L> {
                 }
             }
             Input::Tick => self.tick(),
-            // Settled by the step's end, as every input is. Core's facts changed outside the queue, a key's cut of
-            // speech among them, which may end the front's wait.
-            Input::Settle => self.stop_if_ended(),
-            // A `Ready` not admitted was logged by `admit_ready`.
-            Input::ReaderReady(_) => {}
+            // Core's facts changed outside the queue: settled by the step's
+            // end, as every input is. A `Ready` not admitted was logged by
+            // `admit_ready`.
+            Input::Settle | Input::ReaderReady(_) => {}
         }
         loop {
             self.take_next();
@@ -380,24 +379,15 @@ impl<L: Logic> Core<L> {
         }
     }
 
-    /// `entry` joins the back; it withdraws the front's request when the
-    /// logic says so.
+    /// `entry` joins the back; the front's request ends when the one judge
+    /// says its arrival ends it, judged before the limiter can merge it.
     fn arrive(&mut self, entry: L::Entry) {
-        let withdrawn = {
+        let ended = {
             let shared = self.shared.borrow();
             let state = &shared.state;
-            state.queue.front.as_ref().and_then(|front| {
-                let number = front.asked?;
-                let live = state.queue.table.live(number)?;
-                L::withdraws(
-                    &state.facts,
-                    (&front.entry, &live.request),
-                    &entry,
-                    &state.queue.backend,
-                    (state.queue.now_us, state.queue.foreground),
-                )
-                .then_some(number)
-            })
+            state
+                .queue
+                .front_ends::<L>(&state.facts, Cause::Arrived(&entry))
         };
         {
             let mut shared = self.shared.borrow_mut();
@@ -417,42 +407,15 @@ impl<L: Logic> Core<L> {
                 join::<L>(state, entry);
             }
         }
-        if let Some(number) = withdrawn {
-            self.stop(number, CancelReason::Withdrawn);
-        } else {
-            self.stop_if_ended();
-        }
-    }
-
-    /// Stops the front's request when the logic finds its own ending holds
-    /// now, judged with the entries waiting behind it ([`Logic::stops`]):
-    /// after an entry joined the back and after the foreground changed.
-    fn stop_if_ended(&mut self) {
-        let stopped = {
-            let shared = self.shared.borrow();
-            let state = &shared.state;
-            state.queue.front.as_ref().and_then(|front| {
-                let number = front.asked?;
-                let live = state.queue.table.live(number)?;
-                L::stops(
-                    &state.facts,
-                    (&front.entry, &live.request),
-                    &state.queue.waiting,
-                    &state.queue.backend,
-                    (state.queue.now_us, state.queue.foreground),
-                )
-                .map(|reason| (number, reason))
-            })
-        };
-        if let Some((number, reason)) = stopped {
+        if let Some((number, reason)) = ended {
             self.stop(number, reason);
         }
     }
 
     /// The entries Core's facts want join the back, and the front's
-    /// request is withdrawn when its entry no longer needs it.
+    /// request ends when the one judge says the settled queue ends it.
     pub(super) fn settle(&mut self) {
-        let unneeded = {
+        let ended = {
             let mut shared = self.shared.borrow_mut();
             let wanted = L::wanted(&mut shared.state.facts);
             Self::begin_core(&mut shared, wanted);
@@ -460,14 +423,10 @@ impl<L: Logic> Core<L> {
             for entry in L::joining(&mut state.facts) {
                 join::<L>(state, entry);
             }
-            state.queue.front.as_ref().and_then(|front| {
-                let number = front.asked?;
-                let live = state.queue.table.live(number)?;
-                L::unneeded(&state.facts, &front.entry, &live.request).then_some(number)
-            })
+            state.queue.front_ends::<L>(&state.facts, Cause::Settled)
         };
-        if let Some(number) = unneeded {
-            self.stop(number, CancelReason::Withdrawn);
+        if let Some((number, reason)) = ended {
+            self.stop(number, reason);
         }
     }
 
@@ -584,9 +543,9 @@ impl<L: Logic> Core<L> {
         }
     }
 
-    /// The listener's foreground report: the front's request stops when its
-    /// window is outside the new foreground window's tree and owner chain,
-    /// unless its entry is exempt; a waiting request is never sent. Requests
+    /// The listener's foreground report: the front's request ends when the
+    /// one judge says the new record ends it; a waiting request is never
+    /// sent. Requests
     /// outside the queue are untouched. Recovering windows of applications
     /// that lost attention leave the set.
     fn foreground(&mut self, foreground: Foreground) {
@@ -605,17 +564,12 @@ impl<L: Logic> Core<L> {
                 .table
                 .unwatch_unless(|window| foreground.attends(window));
             let state = &shared.state;
-            state.queue.front.as_ref().and_then(|front| {
-                let number = front.asked?;
-                let live = state.queue.table.live(number)?;
-                (!L::own_foreground_rule(&live.request)
-                    && !L::exempt_from_foreground(&state.facts, &front.entry, &live.window)
-                    && !foreground.holds(&live.window))
-                .then_some(number)
-            })
+            state
+                .queue
+                .front_ends::<L>(&state.facts, Cause::Foreground(&foreground))
         };
-        if let Some(number) = stopped {
-            self.stop(number, CancelReason::Foreground);
+        if let Some((number, reason)) = stopped {
+            self.stop(number, reason);
         }
         let mut shared = self.shared.borrow_mut();
         let state = &mut shared.state;
@@ -648,8 +602,6 @@ impl<L: Logic> Core<L> {
             join::<L>(state, marker);
         }
         shared.effects.extend(said.into_iter().map(Effect::Said));
-        drop(shared);
-        self.stop_if_ended();
     }
 
     /// `instance` ended: its requests out end "reader ended", its late ones

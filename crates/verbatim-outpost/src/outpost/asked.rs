@@ -161,8 +161,6 @@ pub(super) fn answer(context: &RequestContext<'_>, client: &mut Client, ask: &As
                 None => Outcome::NotThere,
             }
         }
-        // The listener's alone: an outpost holds no hook that hears a show.
-        Request::AwaitShown { .. } => Outcome::Refused(Refusal::Unsupported),
         Request::Follow(follow) => super::followed::follow(context, client, follow),
         Request::DumpTree { locations } => match read::dump_tree(context, client, *locations) {
             Ok(dumped) => Outcome::Result(Reply::Tree(Box::new(dumped))),
@@ -208,8 +206,7 @@ pub(super) fn node_details(request: &Request) -> NodeDetailSet {
         | Request::Activate { .. }
         | Request::Follow(_)
         | Request::ShellItems { .. }
-        | Request::ShellItemPosition { .. }
-        | Request::AwaitShown { .. } => NodeDetailSet::NONE,
+        | Request::ShellItemPosition { .. } => NodeDetailSet::NONE,
     }
 }
 

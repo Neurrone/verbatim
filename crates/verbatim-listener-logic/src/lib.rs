@@ -17,8 +17,6 @@
 //!   Core of it: NVDA's local drops, the window a tell names and its
 //!   facts, and the foreground hold.
 //! - [`focus`]: the reading threads' and the progress path's vocabulary.
-//! - [`shown`]: Core's requests to be told when a hidden dialog is shown,
-//!   kept on the `WinEvent` thread.
 
 // Non-test code never panics, overflows or truncates silently: arithmetic
 // is checked or saturating, indexing goes through `get`, and casts through
@@ -63,5 +61,4 @@ pub mod focus;
 pub mod foreground;
 pub mod kept;
 pub mod schedule;
-pub mod shown;
 pub mod tell;
