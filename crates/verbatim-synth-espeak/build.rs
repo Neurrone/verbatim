@@ -31,7 +31,7 @@ mod artifact_dir;
 
 /// Bumped whenever the recipe changes, so a shared build made by an older
 /// recipe is redone rather than reused.
-const RECIPE: u32 = 1;
+const RECIPE: u32 = 2;
 
 /// The libraries this crate links, each with the folder of the `CMake`
 /// build tree it is made in.
@@ -214,6 +214,13 @@ fn build(source: &Path, out: &Path) -> PathBuf {
         // fallback data path; the driver always passes its own.
         .define("CMAKE_INSTALL_PREFIX", "/espeak-ng")
         .build_target("data");
+    // MSVC 19.52 rejects eSpeak NG's `#if __has_include_next(...)` (C7780);
+    // the forced header defines the macro as 0, the answer for MSVC.
+    if std::env::var("CARGO_CFG_TARGET_ENV").is_ok_and(|env| env == "msvc") {
+        let compat = Path::new(env!("CARGO_MANIFEST_DIR")).join("msvc-compat.h");
+        println!("cargo:rerun-if-changed={}", compat.display());
+        config.cflag(format!("/FI{}", compat.display()));
+    }
     // The cmake crate asks Visual Studio for its x64-hosted toolset even on
     // an ARM64 host, which ARM64 machines may not have installed. Only the
     // Visual Studio generators take a toolset.
