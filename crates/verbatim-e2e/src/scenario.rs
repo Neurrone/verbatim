@@ -3816,15 +3816,18 @@ pub fn stage_directory() -> PathBuf {
 
 /// The executables a run needs side by side: the app finds the outpost, the
 /// listener and the synthesizer host next to itself, and a scenario reading
-/// scripted text
-/// launches `mockapp` from the run's directory
-/// ([`Scenario::run_directory`]).
-const STAGED_BINARIES: [&str; 5] = [
+/// scripted text launches `mockapp`, and one reading a Windows Forms or WPF
+/// window the program mockapp's build script compiles for it, from the
+/// run's directory ([`Scenario::run_directory`]).
+const STAGED_BINARIES: [&str; 8] = [
     "verbatim.exe",
     "verbatim-outpost.exe",
     "verbatim-listener.exe",
     "verbatim-synth-host.exe",
     "mockapp.exe",
+    "text_box_form.exe",
+    "forms_password.exe",
+    "wpf_password.exe",
 ];
 
 /// Staged when present, so that `VERBATIM_E2E_VERBATIM_EXE` can name a
@@ -4987,7 +4990,9 @@ mod tests {
             .expect("seed verbatim-listener.exe");
         fs::write(source_dir.join("verbatim-synth-host.exe"), b"host v1")
             .expect("seed verbatim-synth-host.exe");
-        fs::write(source_dir.join("mockapp.exe"), b"mockapp v1").expect("seed mockapp.exe");
+        for name in &STAGED_BINARIES[4..] {
+            fs::write(source_dir.join(name), name).expect("seed a harness program");
+        }
         fs::create_dir_all(source_dir.join(ESPEAK_DATA).join("voices"))
             .expect("seed the eSpeak NG data directory");
         fs::write(

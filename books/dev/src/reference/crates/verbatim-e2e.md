@@ -784,7 +784,10 @@ under `src/scenarios/` documents exactly what it asserts.
 
 - `scenarios/text_box.rs`: the harness's Windows Forms text box, a window
   whose whole client area is one multi-line Win32 edit control, shown by
-  Windows PowerShell from a script the scenario writes. It does not wrap,
+  `text_box_form.exe`, which mockapp's build script compiles
+  ([mockapp](mockapp.md), "The Windows Forms and WPF programs"), as it
+  does `forms_password.exe` and `wpf_password.exe` for
+  `scenarios/password.rs`. It does not wrap,
   its caret starts at the start of the text, and it is announced by the
   window's title, the box's name with "edit multi line", and the caret's
   line.

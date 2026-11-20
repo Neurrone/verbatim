@@ -364,6 +364,27 @@ counted and bracketed by `window::announce_call`'s two lines;
 call does (`hits::held`). The tests compile `src/hits.rs` into their shared module, so the
 method list and message numbers cannot drift apart.
 
+## The Windows Forms and WPF programs
+
+Beside mockapp, its `build.rs` compiles four small C# programs, each a
+real Windows Forms or WPF window, with the C# compiler of the .NET
+Framework 4.8.1 every Windows 11 has, for the target's architecture
+(`Framework64` or `FrameworkArm64`). Each takes its window's title and
+what it holds as arguments, says it is shown (on its standard output, or
+by writing the file it is given), and exits when its window is closed.
+Hosted in a Windows PowerShell script instead, a window waited on the
+cold start of the .NET Framework, PowerShell and the window's framework,
+which on GitHub's runners passed the tests' waits.
+
+- `forms_menu.cs`, a menu bar with one checked menu item, built into
+  `OUT_DIR` and named to mockapp's tests as `MOCKAPP_FORMS_MENU` (below).
+- `text_box_form.cs`, `forms_password.cs` and `wpf_password.cs`, the
+  end-to-end suite's Windows Forms text box, Windows Forms password form
+  and WPF password window, built next to the executables (as
+  `verbatim-app`'s build puts the sounds there), from where the suite
+  stages them with `mockapp.exe` and launches them from the run's
+  directory ([verbatim-e2e](verbatim-e2e.md), "Shared setups").
+
 ## Implementation notes
 
 - **Threading.** The window thread joins a single-threaded apartment

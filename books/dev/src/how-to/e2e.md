@@ -321,9 +321,8 @@ Nothing else a run starts can reach your Windows Terminal either. Windows
 gives a console program started from a process without a console a new
 console, and hands that console to the default terminal application,
 which opens it in your Windows Terminal. So every program the agent
-starts without a console title, Verbatim, mockapp, ffmpeg, and the
-Windows PowerShell that shows the Windows Forms text box among them, and
-every console program the harness itself runs, is started with no console
+starts without a console title, Verbatim, mockapp and ffmpeg among them,
+and every console program the harness itself runs, is started with no console
 window (`CREATE_NO_WINDOW`); the console host scenarios start
 `conhost.exe` explicitly. Every scenario fails if a window of a Windows
 Terminal process the agent did not launch appears while it runs.

@@ -75,115 +75,47 @@ fn press_without_description(scenario: &mut Scenario, keys: &str, heard: &[&str]
     scenario.speech().expect(heard);
 }
 
-/// The Windows Forms script: a "User name" text box holding "dickson" and
-/// a "Password" text box with the system's password character holding
-/// [`PASSWORD`], in a form titled `title`, which writes the file `ready`
-/// from its Shown event, once Windows Forms has finished showing it and
-/// put the focus on the first box.
-fn forms_script(title: &str, ready: &str) -> String {
-    let title = title.replace('\'', "''");
-    let ready = ready.replace('\'', "''");
-    format!(
-        "Add-Type -AssemblyName System.Windows.Forms\r\n\
-         Add-Type -AssemblyName System.Drawing\r\n\
-         [System.Windows.Forms.Application]::EnableVisualStyles()\r\n\
-         $form = New-Object System.Windows.Forms.Form\r\n\
-         $form.Text = '{title}'\r\n\
-         $form.ClientSize = New-Object System.Drawing.Size(600, 200)\r\n\
-         $form.StartPosition = 'CenterScreen'\r\n\
-         $user = New-Object System.Windows.Forms.TextBox\r\n\
-         $user.AccessibleName = 'User name'\r\n\
-         $user.Text = 'dickson'\r\n\
-         $user.Location = New-Object System.Drawing.Point(20, 20)\r\n\
-         $user.Width = 400\r\n\
-         $pass = New-Object System.Windows.Forms.TextBox\r\n\
-         $pass.AccessibleName = 'Password'\r\n\
-         $pass.UseSystemPasswordChar = $true\r\n\
-         $pass.Text = '{PASSWORD}'\r\n\
-         $pass.Location = New-Object System.Drawing.Point(20, 80)\r\n\
-         $pass.Width = 400\r\n\
-         $form.Controls.Add($user)\r\n\
-         $form.Controls.Add($pass)\r\n\
-         $form.Add_Shown({{ [IO.File]::WriteAllText('{ready}', '') }})\r\n\
-         [void]$form.ShowDialog()\r\n"
-    )
-}
+/// The user name both forms hold, in the box before the password.
+const USER: &str = "dickson";
 
-/// The WPF script: a "User name" text box holding "dickson" and a
-/// "Password" `PasswordBox` holding [`PASSWORD`], in a window titled
-/// `title`, which puts the focus on the text box and writes the file
-/// `ready` once its content has been rendered.
-fn wpf_script(title: &str, ready: &str) -> String {
-    let title = title.replace('\'', "''");
-    let ready = ready.replace('\'', "''");
-    format!(
-        "Add-Type -AssemblyName PresentationFramework\r\n\
-         $window = New-Object System.Windows.Window\r\n\
-         $window.Title = '{title}'\r\n\
-         $window.Width = 600\r\n\
-         $window.Height = 250\r\n\
-         $window.WindowStartupLocation = 'CenterScreen'\r\n\
-         $panel = New-Object System.Windows.Controls.StackPanel\r\n\
-         $user = New-Object System.Windows.Controls.TextBox\r\n\
-         [System.Windows.Automation.AutomationProperties]::SetName($user, 'User name')\r\n\
-         $user.Text = 'dickson'\r\n\
-         $user.Margin = '20'\r\n\
-         $pass = New-Object System.Windows.Controls.PasswordBox\r\n\
-         [System.Windows.Automation.AutomationProperties]::SetName($pass, 'Password')\r\n\
-         $pass.Password = '{PASSWORD}'\r\n\
-         $pass.Margin = '20'\r\n\
-         [void]$panel.Children.Add($user)\r\n\
-         [void]$panel.Children.Add($pass)\r\n\
-         $window.Content = $panel\r\n\
-         $window.Add_ContentRendered({{ [void]$user.Focus(); [IO.File]::WriteAllText('{ready}', '') }})\r\n\
-         [void]$window.ShowDialog()\r\n"
-    )
-}
-
-/// A form's script written into the run folder named for `name`: the
-/// window's title, [`harness_marker`] of `name`; the arguments that run
-/// the script in Windows PowerShell, with `sta` for WPF; and the file the
-/// script writes once the window is shown.
+/// The arguments of the form program `program`, named for `name`, beside
+/// Verbatim in the run's directory: its window's title, [`harness_marker`]
+/// of `name`; the file it writes once the window is shown, in the run's
+/// harness folder for `name`; the user name; and [`PASSWORD`]. Each program
+/// is described in its source beside `crates/mockapp/forms_menu.cs`, which
+/// mockapp's build script compiles.
 struct Launch {
+    program: String,
     title: String,
     args: Vec<String>,
     ready: String,
 }
 
-fn write_script(
-    scenario: &mut Scenario,
-    name: &str,
-    script: fn(&str, &str) -> String,
-    sta: bool,
-) -> io::Result<Launch> {
+fn launch(scenario: &mut Scenario, program: &str, name: &str) -> Launch {
     let title = harness_marker(name);
-    let directory = scenario.harness_folder(name);
-    let script_path = format!(r"{directory}\form.ps1");
-    let ready = format!(r"{directory}\shown");
-    scenario.write_agent_file(&script_path, script(&title, &ready).as_bytes())?;
-    let mut args = vec!["-NoProfile"];
-    if sta {
-        args.push("-STA");
+    let ready = format!(r"{}\shown", scenario.harness_folder(name));
+    let program = format!(r"{}\{program}.exe", scenario.run_directory());
+    let args = vec![
+        title.clone(),
+        ready.clone(),
+        USER.to_owned(),
+        PASSWORD.to_owned(),
+    ];
+    Launch {
+        program,
+        title,
+        args,
+        ready,
     }
-    args.extend([
-        "-ExecutionPolicy",
-        "Bypass",
-        "-WindowStyle",
-        "Hidden",
-        "-File",
-        &script_path,
-    ]);
-    let args: Vec<String> = args.into_iter().map(str::to_owned).collect();
-    Ok(Launch { title, args, ready })
 }
 
-/// Opens the Windows Forms form, brought forward once the script says it
-/// is shown. The window closes at cleanup, and Windows PowerShell, which
-/// owns it, exits then.
+/// Opens the Windows Forms form, `forms_password.exe`, brought forward
+/// once it says it is shown, with the focus on its first box. The window
+/// closes at cleanup, and the program exits then.
 pub(crate) fn text_box_setup(scenario: &mut Scenario) -> io::Result<ScenarioState> {
-    let launch = write_script(scenario, FORMS_NAME, forms_script, false)?;
+    let launch = launch(scenario, "forms_password", FORMS_NAME);
     scenario.launch_titled_once(
-        "powershell.exe",
+        &launch.program,
         &launch.args,
         &launch.title,
         true,
@@ -192,15 +124,15 @@ pub(crate) fn text_box_setup(scenario: &mut Scenario) -> io::Result<ScenarioStat
     Ok(ScenarioState::None)
 }
 
-/// Opens the WPF window, brought forward once the script says it is shown
-/// and the window has answered UI Automation: WPF's thread can stay busy
-/// for seconds after the window has rendered, and a window that does not
+/// Opens the WPF window, `wpf_password.exe`, brought forward once it says
+/// it has rendered its content and put the focus on its text box, and the
+/// window has answered UI Automation: WPF's thread can stay busy for
+/// seconds after the window has rendered, and a window that does not
 /// answer UI Automation in time is read through MSAA, as NVDA reads it
-/// then. The window closes at cleanup, and Windows PowerShell, which owns
-/// it, exits then.
+/// then. The window closes at cleanup, and the program exits then.
 pub(crate) fn wpf_setup(scenario: &mut Scenario) -> io::Result<ScenarioState> {
-    let launch = write_script(scenario, WPF_NAME, wpf_script, true)?;
-    scenario.launch_answering_uia("powershell.exe", &launch.args, &launch.title, &launch.ready)?;
+    let launch = launch(scenario, "wpf_password", WPF_NAME);
+    scenario.launch_answering_uia(&launch.program, &launch.args, &launch.title, &launch.ready)?;
     Ok(ScenarioState::None)
 }
 

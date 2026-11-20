@@ -299,8 +299,7 @@ Public API:
   so their pids name no other process meanwhile, and answers their pids in
   `Launched`'s `ignored`. A
   launch without a `console_title` is started with `CREATE_NO_WINDOW`: a
-  console program, such as Verbatim, mockapp, ffmpeg, or the Windows
-  PowerShell that shows the harness's Windows Forms text box, gets a
+  console program, such as Verbatim, mockapp or ffmpeg, gets a
   console with no window (and a windowless console host process in its
   job), so Windows never hands its console to the default terminal
   application, which on a development machine is the user's own Windows

@@ -86,6 +86,9 @@ const STAGED: &[&str] = &[
     "verbatim-listener.exe",
     "verbatim-synth-host.exe",
     "mockapp.exe",
+    "text_box_form.exe",
+    "forms_password.exe",
+    "wpf_password.exe",
     "espeak-ng-data",
     "sounds",
 ];
@@ -676,7 +679,7 @@ mod tests {
         assert_eq!(
             run_options(&args, false).err(),
             Some(format!(
-                "{} lacks what a run stages: verbatim.exe, verbatim-outpost.exe, verbatim-listener.exe, verbatim-synth-host.exe, mockapp.exe, espeak-ng-data, sounds",
+                "{} lacks what a run stages: verbatim.exe, verbatim-outpost.exe, verbatim-listener.exe, verbatim-synth-host.exe, mockapp.exe, text_box_form.exe, forms_password.exe, wpf_password.exe, espeak-ng-data, sounds",
                 folder.display()
             ))
         );
@@ -696,7 +699,7 @@ mod tests {
         assert_eq!(
             result.err(),
             Some(format!(
-                "{} lacks what a run stages: verbatim-outpost.exe, verbatim-listener.exe, verbatim-synth-host.exe, espeak-ng-data",
+                "{} lacks what a run stages: verbatim-outpost.exe, verbatim-listener.exe, verbatim-synth-host.exe, text_box_form.exe, forms_password.exe, wpf_password.exe, espeak-ng-data",
                 folder.display()
             ))
         );

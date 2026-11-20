@@ -48,8 +48,8 @@ const SENTENCES: [&[&str]; 2] = [
 ///
 /// # Errors
 ///
-/// Returns an error if a file cannot be written, Windows PowerShell cannot
-/// be started, or its window does not take the foreground.
+/// Returns an error if a file cannot be written, the text box's program
+/// cannot be started, or its window does not take the foreground.
 pub(crate) fn open_story(scenario: &mut Scenario) -> io::Result<()> {
     let story: Vec<String> = SENTENCES
         .iter()

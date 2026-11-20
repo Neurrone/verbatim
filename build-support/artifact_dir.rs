@@ -1,7 +1,7 @@
 //! Where cargo puts this build's executables, for a build script that
 //! places files beside them. Included with `#[path]` by the build scripts
-//! of `verbatim-app`, `verbatim-gui` and `verbatim-synth-espeak`, which
-//! share no build dependency.
+//! of `verbatim-app`, `verbatim-gui`, `verbatim-synth-espeak` and
+//! `mockapp`, which share no build dependency.
 //!
 //! Cargo tells a build script only its `OUT_DIR`, which lies under the
 //! build directory, `<build-dir>/[<triple>/]<profile>/build/` followed by
