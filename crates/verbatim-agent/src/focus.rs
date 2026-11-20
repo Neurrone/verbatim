@@ -942,6 +942,78 @@ fn focused_switcher_list(
     Ok(None)
 }
 
+/// The most elements [`switcher_raw_view`] describes.
+const RAW_VIEW_ELEMENTS: usize = 200;
+
+/// The switcher's window, class `XamlExplorerHostIslandWindow`, and every
+/// element under it in the raw view, up to [`RAW_VIEW_ELEMENTS`], one per
+/// line, indented by depth, with its control type, name, automation id,
+/// class and whether it has the keyboard focus; or why it could not be
+/// read. For [`switcher_items`]'s failure, so the failure shows where the
+/// list is when no item of it has the focus.
+fn switcher_raw_view(automation: &IUIAutomation, walker: &IUIAutomationTreeWalker) -> String {
+    use windows::Win32::UI::WindowsAndMessaging::FindWindowW;
+    use windows::core::w;
+
+    /// Appends `element`'s line and its descendants' to `lines`.
+    fn describe(
+        walker: &IUIAutomationTreeWalker,
+        element: &IUIAutomationElement,
+        depth: usize,
+        lines: &mut Vec<String>,
+    ) {
+        /// A property's value, or the error that kept it from being read.
+        fn shown<T: std::fmt::Debug>(read: windows::core::Result<T>) -> String {
+            read.map_or_else(
+                |error| format!("unread ({error})"),
+                |value| format!("{value:?}"),
+            )
+        }
+        if lines.len() >= RAW_VIEW_ELEMENTS {
+            return;
+        }
+        // SAFETY: plain COM calls on a live interface, each below.
+        let kind = shown(unsafe { element.CurrentControlType() }.map(|kind| kind.0));
+        // SAFETY: as above.
+        let name = shown(unsafe { element.CurrentName() });
+        // SAFETY: as above.
+        let id = shown(unsafe { element.CurrentAutomationId() });
+        // SAFETY: as above.
+        let class = shown(unsafe { element.CurrentClassName() });
+        // SAFETY: as above.
+        let focused =
+            shown(unsafe { element.CurrentHasKeyboardFocus() }.map(windows::core::BOOL::as_bool));
+        lines.push(format!(
+            "{}type {kind} name {name} id {id} class {class} focused {focused}",
+            "  ".repeat(depth)
+        ));
+        // SAFETY: as above.
+        let mut child = unsafe { walker.GetFirstChildElement(element) }.ok();
+        while let Some(current) = child {
+            if lines.len() >= RAW_VIEW_ELEMENTS {
+                return;
+            }
+            describe(walker, &current, depth + 1, lines);
+            // SAFETY: as above.
+            child = unsafe { walker.GetNextSiblingElement(&current) }.ok();
+        }
+    }
+
+    // SAFETY: a class name, no title; answers an error when no top-level
+    // window has the class.
+    let Ok(window) = (unsafe { FindWindowW(w!("XamlExplorerHostIslandWindow"), None) }) else {
+        return "no window of class XamlExplorerHostIslandWindow".to_owned();
+    };
+    // SAFETY: plain COM call on a live interface.
+    let root = match unsafe { automation.ElementFromHandle(window) } {
+        Ok(root) => root,
+        Err(error) => return format!("its element not read: {error}"),
+    };
+    let mut lines = Vec::new();
+    describe(walker, &root, 0, &mut lines);
+    format!("\n{}", lines.join("\n"))
+}
+
 /// [`switcher_items`]'s UI Automation calls.
 fn switcher_items_through_uia(timeout: Duration) -> io::Result<Vec<SwitcherItem>> {
     use windows::Win32::UI::Accessibility::{
@@ -972,12 +1044,13 @@ fn switcher_items_through_uia(timeout: Duration) -> io::Result<Vec<SwitcherItem>
         timeout,
     );
     drop(registered);
-    let list = list?.ok_or_else(|| {
-        io::Error::other(format!(
+    let Some(list) = list? else {
+        return Err(io::Error::other(format!(
             "no item of the switcher's list of running applications had the focus within \
-             {timeout:?}; the focus was {seen}"
-        ))
-    })?;
+             {timeout:?}; the focus was {seen}; the switcher's raw view: {}",
+            switcher_raw_view(&automation, &walker)
+        )));
+    };
     // SAFETY: as above.
     let every = unsafe { automation.CreateTrueCondition() }.map_err(io::Error::other)?;
     // SAFETY: as above.
