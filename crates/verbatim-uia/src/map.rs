@@ -411,19 +411,11 @@ pub fn ignores_notifications(class_name: Option<&str>, automation_id: Option<&st
 /// Whether a window opened may be a Windows toast, by the part of NVDA's
 /// rule its event's cache answers (`NVDAObjects/UIA/__init__.py` 1282 to
 /// 1287): control type window and automation id containing `ToastView`. The
-/// rest is [`is_toast_window_class`], of its nearest window.
+/// rest, its nearest window's class, is judged by Core.
 #[must_use]
 pub fn is_toast_candidate(control_type: Option<i32>, automation_id: Option<&str>) -> bool {
     control_type == Some(UIA_WindowControlTypeId.0)
         && automation_id.is_some_and(|id| id.contains("ToastView"))
-}
-
-/// Whether `class`, the class of a toast candidate's nearest window, is the
-/// one NVDA's rule names. The element itself is XAML, with no window of its
-/// own, so NVDA's window handle for it is its nearest window's.
-#[must_use]
-pub fn is_toast_window_class(class: &str) -> bool {
-    class == "Windows.UI.Core.CoreWindow"
 }
 
 /// Whether an element of UIA class `class_name` reports no value. The
@@ -514,9 +506,6 @@ mod tests {
             Some("ToastView")
         ));
         assert!(!is_toast_candidate(None, Some("ToastView")));
-        assert!(is_toast_window_class("Windows.UI.Core.CoreWindow"));
-        assert!(!is_toast_window_class("ApplicationFrameWindow"));
-        assert!(!is_toast_window_class(""));
     }
 
     /// The exact state set holding `states` and nothing else.
