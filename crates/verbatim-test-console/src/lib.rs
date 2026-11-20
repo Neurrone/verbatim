@@ -14,19 +14,20 @@ use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-use windows::Win32::Foundation::{GENERIC_ALL, HANDLE, HWND};
+use windows::Win32::Foundation::{GENERIC_ALL, HANDLE, HWND, STILL_ACTIVE};
 use windows::Win32::System::JobObjects::{
     AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-    JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
-    SetInformationJobObject,
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectBasicProcessIdList,
+    JobObjectExtendedLimitInformation, QueryInformationJobObject, SetInformationJobObject,
 };
 use windows::Win32::System::StationsAndDesktops::{
     CloseDesktop, CreateDesktopW, DESKTOP_CONTROL_FLAGS, GetProcessWindowStation,
     GetUserObjectInformationW, HDESK, SetThreadDesktop, UOI_NAME,
 };
 use windows::Win32::System::Threading::{
-    CREATE_SUSPENDED, CreateProcessW, DETACHED_PROCESS, PROCESS_INFORMATION, ResumeThread,
-    STARTF_USESHOWWINDOW, STARTUPINFOW,
+    CREATE_SUSPENDED, CreateProcessW, DETACHED_PROCESS, GetExitCodeProcess, OpenProcess,
+    PROCESS_INFORMATION, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
+    QueryFullProcessImageNameW, ResumeThread, STARTF_USESHOWWINDOW, STARTUPINFOW,
 };
 use windows::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook, UnhookWinEvent};
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -151,10 +152,13 @@ thread_local! {
     /// once its name changed to it.
     static TITLE: RefCell<String> = const { RefCell::new(String::new()) };
     static RENAMED: Cell<isize> = const { Cell::new(0) };
+    /// Every name a window of the console host took while it was waited
+    /// for, for the failure message.
+    static NAMES: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
 }
 
-/// The `WinEvent` callback: notes the window whose name changed to the
-/// title waited for.
+/// The `WinEvent` callback: notes every name a window took, and the
+/// window whose name changed to the title waited for.
 unsafe extern "system" fn renamed(
     _: HWINEVENTHOOK,
     _: u32,
@@ -172,9 +176,84 @@ unsafe extern "system" fn renamed(
     // length.
     let length = unsafe { GetWindowTextW(hwnd, &mut text) };
     let text = String::from_utf16_lossy(&text[..usize::try_from(length).unwrap_or(0)]);
+    NAMES.with(|names| names.borrow_mut().push(text.clone()));
     if TITLE.with(|title| *title.borrow() == text) {
         RENAMED.with(|renamed| renamed.set(hwnd.0 as isize));
     }
+}
+
+/// Each process in `job`, the console host and its client, with its image
+/// and whether it is running or the code it exited with, for a failure
+/// message.
+fn job_processes(job: &OwnedHandle) -> String {
+    /// The list's header and room for more processes than the job holds.
+    #[repr(C)]
+    struct ProcessIds {
+        assigned: u32,
+        listed: u32,
+        ids: [usize; 16],
+    }
+    let mut list = ProcessIds {
+        assigned: 0,
+        listed: 0,
+        ids: [0; 16],
+    };
+    // SAFETY: `list` has the layout the class names, with room for 16
+    // ids, and its size is given.
+    let listed = unsafe {
+        QueryInformationJobObject(
+            Some(HANDLE(job.as_raw_handle())),
+            JobObjectBasicProcessIdList,
+            (&raw mut list).cast(),
+            u32::try_from(size_of::<ProcessIds>()).unwrap_or(0),
+            None,
+        )
+    };
+    if let Err(error) = listed {
+        return format!("not listed: {error}");
+    }
+    let count = usize::try_from(list.listed)
+        .unwrap_or(0)
+        .min(list.ids.len());
+    list.ids[..count]
+        .iter()
+        .map(|&id| {
+            let id = u32::try_from(id).unwrap_or(0);
+            // SAFETY: a query of a process by id, no handle inherited.
+            let process = match unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, id) }
+            {
+                // SAFETY: just returned, owned here.
+                Ok(handle) => unsafe { OwnedHandle::from_raw_handle(handle.0) },
+                Err(error) => return format!("{id} (not opened: {error})"),
+            };
+            let mut image = [0u16; 260];
+            let mut length = u32::try_from(image.len()).unwrap_or(0);
+            // SAFETY: the buffer and its length outlive the call, which
+            // writes at most that length.
+            let image = match unsafe {
+                QueryFullProcessImageNameW(
+                    HANDLE(process.as_raw_handle()),
+                    PROCESS_NAME_WIN32,
+                    PWSTR(image.as_mut_ptr()),
+                    &raw mut length,
+                )
+            } {
+                Ok(()) => String::from_utf16_lossy(&image[..usize::try_from(length).unwrap_or(0)]),
+                Err(error) => format!("image not read: {error}"),
+            };
+            let mut code = 0u32;
+            // SAFETY: an open process handle and a local the call writes.
+            let state =
+                match unsafe { GetExitCodeProcess(HANDLE(process.as_raw_handle()), &raw mut code) }
+                {
+                    Ok(()) if code == STILL_ACTIVE.0.cast_unsigned() => "running".to_owned(),
+                    Ok(()) => format!("exited with {code:#x}"),
+                    Err(error) => format!("state not read: {error}"),
+                };
+            format!("{id} {image} {state}")
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// A console host the test starts, `conhost.exe` running PowerShell in
@@ -251,6 +330,7 @@ impl Console {
         let title = format!("verbatim-console-test-{}", std::process::id());
         TITLE.with(|cell| cell.borrow_mut().clone_from(&title));
         RENAMED.with(|renamed| renamed.set(0));
+        NAMES.with(|names| names.borrow_mut().clear());
         // SAFETY: an unnamed job with no security attributes.
         let job = unsafe { CreateJobObjectW(None, PCWSTR::null()) }.expect("a job");
         // SAFETY: just returned, owned by nothing else.
@@ -332,7 +412,10 @@ impl Console {
             let left = deadline.saturating_duration_since(Instant::now());
             assert!(
                 !left.is_zero(),
-                "the console's window took its client's title"
+                "the console's window took its client's title {title:?} within {WAIT:?}; \
+                 the console host's windows took the names {:?}; the job's processes: {}",
+                NAMES.with(|names| names.borrow().clone()),
+                job_processes(&job)
             );
             // SAFETY: no handles; wakes for a message or at the deadline.
             unsafe {
