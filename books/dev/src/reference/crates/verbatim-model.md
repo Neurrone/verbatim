@@ -17,7 +17,8 @@ recorder unchanged. What the reducer does with each type is in
   observe events mint; a reducer takes every trace id with the input that
   caused the work. `from_raw(u64)` gives a fixed id, for tests and samples.
 - `OutpostId`, `NodeId`, `Issuer`, `Pid`: small identity types. An
-  `OutpostId` names one outpost process generation and is never reused. A
+  `OutpostId` names one outpost process generation and is never reused
+  (`Instance::outpost_id` gives a request's instance's). A
   `NodeId` is its issuer plus a number that issuer gave: the issuer is an
   outpost generation (`Issuer::Outpost`) or Core's plain reader
   (`Issuer::Plain`, by the generation of the plain window it holds), so a
@@ -127,31 +128,29 @@ recorder unchanged. What the reducer does with each type is in
   speech (`books/dev/src/explanation/design/ownership.md`). Only the keyboard hook's
   thread mints one (`KeySeq::after`), a review rule since the type is in
   this platform-neutral crate; tests construct them with `KeySeq::new`.
-  Every user input carries it as `key_seq`.
+  Every press carries it as `key_seq`.
   `KeySeq::NONE_YET` (zero) is the hook's start and what every key field
   of an input from an old flight dump reads as (`KeySeq::none_yet`, the
   fields' serde default).
 - `Input` and `Effect`: the reducer's contract. `Input::trace_id` is the
   trace an input carries, for those that carry one: the trace the shell
-  executes the input's effects under and Core's key stamp looks up.
+  executes the input's effects under.
   - Inputs are `Queue` (an input to Core's event queue, ADR 0003, a `QueueInput`
     below, with the trace it runs under and its time on the run's shared
-    clock),
-    `Command` (a `ReviewCommand`, its key number, a press-repeat count and
-    when the hook saw it), `Script` (the menu, the time, or the shell's
-    lists, as a `Script`, with the same), `ToggleKeyPressed` (a lock key
-    reached the operating system, with its key number and press time),
-    timer ticks, the key and speech inputs under "The text protocol",
+    clock; every key and command arrives this way, as a press),
+    `ToggleKeyPressed` (a lock key reached the operating system, with its
+    press time), timer ticks, the speech inputs under "The text protocol",
     `Settings` and `Reported` (the reader settings, and the details the
     active theme reports, from which Core chooses each read's details),
     `Progress` (a bar's change from the listener), and what the
     shell's threads learn, since only the reducer speaks: `Started`,
     `Exiting { replaced }`, `ErrorLogged`, `LockKeyToggled` (a `LockKey`
-    and its state), `ClockRead`, `ClipboardCopied`, `ShellItemGone`,
+    and its state), `ClockRead` (with the gesture's key number),
+    `ClipboardCopied`, `ShellItemGone`,
     `ShellItemUnclickable`, `PreviewSpeech` and `PreviewEarcon`.
-  - Effects are `Speak` (an utterance and the number of the user input
-    that caused it, which Core stamps as its last step; every
-    construction gives `None`); `StopSpeech`; `Queue` (what Core's event
+  - Effects are `Speak` (an utterance and the number of the key that
+    caused it: an event-queue entry's fence, or the number the time's
+    read and a terminal's output handed on carry); `StopSpeech`; `Queue` (what Core's event
     queue asks of the shell, a `QueueEffect` below); `DropExpiredSpeech` (carrying a `FocusNow`); `PlayEarcon`;
     `CopyToClipboard` (routed through the shell's clipboard helper, its
     result back as `Input::ClipboardCopied`); `KeepDisplayOn` (while
@@ -160,8 +159,8 @@ recorder unchanged. What the reducer does with each type is in
     report_background_progress_bars }` (at every `Input::Settings`,
     whatever its value, which the shell passes to the supervisor for the
     listener); `ForKey` (an effect on behalf of
-    another key's trace); `ReadClock { repeat }` (read the time and date
-    into `Input::ClockRead`); `Show(GuiRequest)` (the menu, or the list of
+    another key's trace); `ReadClock { repeat, key }` (read the time and
+    date into `Input::ClockRead`, with the gesture's key number); `Show(GuiRequest)` (the menu, or the list of
     a `ShellItemKind`'s items); and `Observed` (an event Core took, with
     its trace, process, backend and window facts, for the control plane's
     event stream). A lock key's read and the terminal's quiet-period timer
@@ -331,7 +330,9 @@ them yet.
   diagnostic detail. `Cancel` carries a `CancelReason`: foreground, hung,
   due time or withdrawn; only the first abandons a running call.
 - The event queue's inputs and effects (`QueueInput`, `QueueEffect`). A
-  key or command arrives as a `Press`, its action chosen at the press; a
+  key or command arrives as a `Press`, its action chosen at the press
+  (`PressAction`: a command, a script, a caret key, text typed, a
+  clearing key, an editing chord or a control character); a
   caret key's `PressAction::CaretKey` carries the `HeldStroke` the hook
   held, if it held one, and the `CaretBinding` it was bound to: the
   committed focus's node, window, role and `TextProvider`;
@@ -653,29 +654,13 @@ beside the op's own reply, so no answer of them fails to decode.
 
 ### Inputs from the shell
 
-- `Input::CaretKey { trace_id, key_seq, key, pressed_at_ms }`: a caret key the
-  hook passed to the application, with its key number and when it saw
-  it, in Unix milliseconds (0 when unknown). A `CaretKey` is a `CaretMotion` (character, word,
-  line, paragraph, sentence, or page; the line's start or end; top or
-  bottom; Backspace and Delete, alone or with Control; Control+A; Enter
-  in a text field, `NewLine`; or `Other`, any other key that types no
-  text) and whether Shift extends
-  the selection; `CaretMotion::unit` is the unit spoken after it.
-  [verbatim-input](verbatim-input.md)'s `caret_bindings` maps gestures to
-  these.
-- `Input::EditingChord { trace_id, key_seq, pressed_at_ms }`: an editing
-  chord (Control+Z, Control+Y, Control+X, Control+V or Escape) the hook
-  passed to the application.
-- `Input::HeldKey`, with the same fields: a caret key the hook held back.
-- `Input::CharacterTyped { trace_id, key_seq, text, at_ms }`: text typed into the
-  focused application, one character or an input method's committed
-  composition, a tab as a tab and Enter as a carriage return.
-- `Input::ControlTyped { trace_id, key_seq, at_ms }`: a control character
-  other than a tab, a carriage return, Backspace's and Control+Backspace's
-  typed into the focused application (Escape, Control+C, Control+Enter),
-  which ends the word being typed.
-- `Input::ClearingKey { trace_id, key_seq, at_ms }`: Escape, Control+C, Control+D,
-  or Control+Break passed to the focused application.
+- A caret key is a `CaretKey`: a `CaretMotion` (character, word, line,
+  paragraph, sentence, or page; the line's start or end; top or bottom;
+  Backspace and Delete, alone or with Control; Control+A; Enter in a text
+  field, `NewLine`; or `Other`, any other key that types no text) and
+  whether Shift extends the selection; `CaretMotion::unit` is the unit
+  spoken after it. [verbatim-input](verbatim-input.md)'s `caret_bindings`
+  maps gestures to these.
 - `Input::UtteranceCancelled { marks, at_ms }`,
   `Input::UtteranceFailed { marks }`: what the speech pipeline reports of
   the marks the reducer placed.

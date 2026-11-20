@@ -108,14 +108,12 @@ ends its outpost: `Frames` drops that outpost's later frames at once,
 handing on only its end, and the relay drops every frame from an outpost
 it has already ended. Messages go through the `EventSink` given to `new` (a
 channel converts into one; `EventSink::new` takes a delivering function,
-and `EventSink::posting(poster, wrap, unwrap)` posts each message to a
-completion port's queue, as the app's reducer takes it, mapping an item
-given back while the queue is open to `Refused` and one given back after
-to `Gone`). `Undelivered` says why one was not: `Gone`, or `Refused`, when
-the relay keeps it and everything after it and delivers them again in order
-at its next send and at every heartbeat
-(`crates/verbatim-supervisor/tests/target_gone.rs`, and, through the port
-queue's fault point, `crates/verbatim-supervisor/tests/fault_paths.rs`).
+and `EventSink::posting(poster, wrap)` posts each message to a
+completion port's queue, as the app's reducer takes it, logging and
+dropping one the port refuses while the queue is open, which only a
+system out of memory does, and mapping one given back after to `Gone`).
+`Undelivered` says why one was not: `Gone`, the app having gone, after
+which the relay drops what it sends.
 With the `faults` feature, `refuse_shutdown_wake()` arms the mailbox's
 fault point, `RelayWake`, to refuse the wake of `shutdown`'s message once,
 since its subject is private to the crate ([verbatim-faults](verbatim-faults.md));

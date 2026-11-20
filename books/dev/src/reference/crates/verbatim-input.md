@@ -24,7 +24,7 @@ Public API:
   `numpaddivide`, `numpadmultiply`, and `period` are ordinary untwinned
   keys.
 - `DecisionConfig`, `DecisionMachine`, `KeyInput`, `KeySource`,
-  `HoldPermit`, `Decision`, `Verdict`, `PressReport`, `RaisedGesture`,
+  `HoldPermit`, `Decision`, `Act`, `Verdict`, `PressReport`, `RaisedGesture`,
   `EmittedGesture` — the pure state machine, which owns its `GestureMap`,
   given at construction, and reads no clock, trace id or shared state.
   It decides each key transition whole; the hook gathers its inputs,
@@ -40,18 +40,26 @@ Public API:
   focus also has text (for Enter, a field's other than a terminal's, which
   the hook judges); and `may_mask`, whether that view lets keys be
   held in the window it names, read without checking the window is still
-  in front. A `Decision` carries the `verdict` (`Pass`,
-  `Swallow`, `Hold(place)` or `Defer(place)`), the gesture raised if any
-  (a `RaisedGesture`, which the hook stamps with a trace id as it reports
-  it, `stamped(trace_id)`, making an `EmittedGesture`), `speech`, the
-  transition's effect on speech, if any, `observed`, an observed gesture
-  the key completed (milestone M4's caret keys), `typing`, what a press
-  that reaches the application reports (the text it types, which the hook
-  translates, or, typing none, that it may have edited the text), and
-  `toggle`, a lock key passed to the operating system, whose new state is
-  announced, and `mask`, the places in line of a mask's press and release
-  (below). For `Own` input it gives no speech effect, observed gesture
-  or typing. `passed_on(place)` takes the line of keys held back up to a
+  in front. A `Decision` carries `speech`, the transition's effect on
+  speech, if any, and one `Act`, a variant for each combination that can
+  occur: `Swallowed`, raising nothing; `Gesture`, swallowed, raising a
+  bound gesture (a `RaisedGesture`, which the hook stamps with a trace id
+  as it reports it, `stamped(trace_id)`, making an `EmittedGesture`) with
+  the places in line of its `mask`'s press and release (below); `Held`, a
+  caret key's press held back, with the observed gesture, the `CaretKey`
+  the map gives it and its place; `Reaches`, passed now or deferred to a
+  place, with the `observed` gesture the key completed if any (milestone
+  M4's caret keys), `typing`, what a press that reaches the application
+  reports (the text it types, which the hook translates, or, typing none,
+  that it may have edited the text), and `toggle`, a lock key passed to
+  the operating system, whose new state is announced; and `Shared`, the
+  Verbatim key's own transition passed in share mode, now or deferred.
+  `verdict()` (`Pass`, `Swallow`, `Hold(place)` or `Defer(place)`),
+  `emitted()`, `observed()`, `typing()`, `toggle()` and `mask()` read
+  those views. For `Own` input it gives no speech effect, observed
+  gesture or typing. `alt_down()` says whether either Alt key is down, as
+  the transitions decided left it, which the hook reports to Core.
+  `passed_on(place)` takes the line of keys held back up to a
   key Core passed on, and changes nothing else; `desktop_switched()`
   forgets every key down, the modifiers among them, and the line, after a
   switch away from the user's input desktop whose releases never came; `has_outstanding()` and
@@ -61,17 +69,27 @@ Public API:
   by default.
 - `KeySpeechEffect` — what a key press does to speech: `Cancel` (current
   and queued speech) or `TogglePause` (Shift on its own).
-- `GestureMap` — the bound-gesture set, a `BTreeSet`, which the decision
-  machine owns: nothing changes the bindings while Verbatim runs.
+- `GestureMap` — the gestures the hook consults, which the decision
+  machine owns: nothing changes the bindings while Verbatim runs. It is
+  built from the one gesture table (`Tables::gesture_map`).
   `with_observed(gestures)` adds gestures that are observed rather than
   bound: the key is passed to the application as usual, and the
-  `Decision` reports the gesture in `observed`, so the reducer can speak
+  `Decision` reports the gesture as observed, so the reducer can speak
   what the application did with it. A gesture both bound and observed is
-  bound. `with_held(gestures)` adds observed gestures that are also held,
-  the caret keys, and `holds(gesture)` says whether one is.
-  `with_held_only(gestures)` adds gestures held like them but observed
+  bound. `with_held(pairs)` adds observed gestures that are also held,
+  the caret keys, each with its `CaretKey`, and `holds(gesture)` gives
+  the caret key of one that is, which a held key's report carries.
+  `with_held_only(pairs)` adds gestures held like them but observed
   only when held, Enter's: not held, the key is reported as an unobserved
   key, the text it types (`holds_only(gesture)`).
+- `Tables` — the one gesture table: the caret and selection keys with
+  their `CaretKey`, the clearing keys, the editing chords, the menu's
+  gesture (given by the app, `for_layout(layout, show_menu)`), the
+  layout's scripts and the lock keys, looked up on the hook thread for
+  what a gesture or an observed key is to the reducer. `gesture_map()`
+  builds the hook's map from it: the menu gesture and the scripts bound,
+  the clearing keys, editing chords and selection keys observed, Enter
+  held only and the other caret keys held.
 - `scripts` — the M3 script vocabulary. `KeyboardLayout` (`Desktop` or
   `Laptop`, `verbatim-model`'s, which the configuration stores) and `ScriptAction`
   (every M3 command: object navigation, review-cursor text reading, speak
@@ -81,19 +99,10 @@ Public API:
   numpad bindings as well, which NVDA binds for every layout. `toggle` —
   `ToggleKey` (Caps Lock, Num Lock, Scroll Lock) and the unbound gesture a
   lock key reaching the operating system is reported as, for its new state
-  to be announced. `GestureMap` is a plain
-  membership set, not generic over the bound action, so `bindings_for`
-  returns gesture-and-action pairs the application adapts itself: build the
-  hook's `GestureMap` from the gestures with `gesture_map_for(bindings)`,
-  and keep a separate lookup (the same pairs, or a `HashMap` built from
-  them) on the application side to resolve an emitted gesture to its action.
-  `verbatim-app` activates a layout this way, though it
-  builds the hook's map itself, with the menu gesture added, rather than
-  through `gesture_map_for`: it reads `Settings.keyboard.layout` once at
-  startup, maps it to this crate's `KeyboardLayout`, and calls
-  `bindings_for` for both the hook's map and the lookup its hook
-  callbacks make (`key_reports`). Rebinding
-  at runtime, for example on a layout change, is not implemented; a new
+  to be announced. `verbatim-app` reads `Settings.keyboard.layout` once at
+  startup and builds `Tables` for it, from which both the hook's map and
+  the lookup its hook callbacks make (`key_reports`) come. Rebinding at
+  runtime, for example on a layout change, is not implemented; a new
   layout takes effect on the next start.
 - M4's commands (`docs/parity/review.md`, with NVDA's keys). Every layout: Verbatim+Alt+Home and Verbatim+Alt+End (the
   review cursor to the selection's start and end), numpad Plus (say all
@@ -135,12 +144,12 @@ Public API:
   selection); Alt with Up and Down Arrow, NVDA's sentence keys; and Enter
   and the numpad's Enter, NVDA's new-line script's keys
   (`CaretMotion::NewLine`), which have no Shift form among the selection
-  keys. They are observed and held, never bound: the shell adds them to
-  the hook's map with `with_held`, Enter's with `with_held_only`, and
-  turns each reported gesture into
-  `Input::CaretKey`, or, while the focus has text, the machine holds them
-  back until the caret has been read and the shell turns each into
-  `Input::HeldKey` (`books/dev/src/explanation/design/key-holding.md`).
+  keys. They are observed and held, never bound: the table's map holds
+  them with `with_held`, Enter's with `with_held_only`, and the shell
+  posts each reported gesture as a caret key's press, or, while the focus
+  has text, the machine holds them back until the caret has been read and
+  the shell posts each as a held caret key's press, with its stroke
+  (`books/dev/src/explanation/design/key-holding.md`).
 - `selection_bindings()` — the selection keys, the Shift forms of the
   moves and Control+A, as `(GestureId, CaretKey)` pairs with `select`
   set. They are observed, never held nor bound: each passes at once,
@@ -149,11 +158,11 @@ Public API:
 - `clearing_keys()` — the keys that end or clear the command line being
   typed: Escape, Control+C, Control+D, and Control+Break, both as NVDA
   binds it (Control+Pause) and as Windows reports it (the `break` key,
-  virtual key 3). Observed like the caret keys; the shell turns each into
-  `Input::ClearingKey`.
+  virtual key 3). Observed like the caret keys; the shell posts each as a
+  clearing key's press.
 - `editing_chords()` — the closed list of Control+Z, Control+Y, Control+X,
-  Control+V and Escape, observed like the caret keys; the shell turns each
-  into `Input::EditingChord`.
+  Control+V and Escape, observed like the caret keys; the shell posts each
+  as an editing chord's press.
 - `harness` — the number an end-to-end test harness puts on each key it
   injects, so Verbatim can say when it has handled that key: evidence for
   "nothing more was said" that is not a period of silence. The agent
@@ -181,11 +190,10 @@ rules):
   unbound companion key falls through to the application as a bare
   keypress — NVDA behavior, so an unrecognized chord is not eaten.
 - One record of the keys down: every key the machine has seen go down and
-  not come up, with two facts. `reached`: a press of it has reached the
-  application, or is deferred to reach it, since it went down or since its
-  last held press, which Core sends with its own release.
-  `swallowed_gesture`: a press of it completed a bound gesture or was the
-  Verbatim modifier's, and was swallowed. A release is swallowed while
+  not come up, with whether a press of it has reached the application, or
+  is deferred to reach it, since it went down or since its last held
+  press, which Core sends with its own release (`reached`). A release is
+  swallowed while
   `reached` is false, so an application never sees the release of a key
   whose press it never saw, and delivered once it is true, so a key one of
   whose presses reached the application is seen to come up, where NVDA
@@ -202,13 +210,12 @@ rules):
   waited for once a later one arrives. Every short sequence of keys,
   pass-ons, permit changes and pauses past the multi-press timeout, up to
   four steps over both Verbatim keys and every modifier, with each
-  layout's bindings, is checked by `tests/hold_sequences.rs` against
-  invariants that need no model (no release before its press, no key
-  left down, no acting modifier released before its mask, the line
-  matching the places given out) and a small reference model of which
-  transitions pass, are held or deferred, or are swallowed, and when a
-  mask is due, taking each press's meaning from the machine, since the
-  unit tests state gesture naming, counting and the double tap, except where the permit falls to `None` while
+  layout's map, built by `Tables`, is checked by `tests/hold_sequences.rs`
+  against invariants that need no model (no release before its press, no
+  key left down, no acting modifier released before its mask, the line
+  matching the places given out); the unit tests and the walk's examples
+  state each verdict, gesture naming, counting and the double tap. The
+  walk leaves out sequences where the permit falls to `None` while
   a deferred press or a mask waits, whose release then passes at once
   (`books/dev/src/explanation/design/key-holding.md`, "Limitations", "The hook's hold
   decision").
@@ -260,15 +267,13 @@ rules):
   a `repeat` count — 0 for the first press, 1 for the second, 2 for the
   third, saturating rather than overflowing. Pressing the same bound
   gesture again within `multi_press_timeout` (500 ms) of its previous
-  genuine press increments the count; a different gesture or the window
-  elapsing resets it to 0. Consumers dispatch on it: report-current
-  (report, spell, copy), Verbatim+F12 (time, date), Verbatim+F11 (tray
-  list, taskbar list). Auto-repeat — holding the gesture's key, which
-  re-fires key-downs with no intervening key-up — does not advance the
-  count, and every auto-repeated emission carries the same count as the
-  genuine press that started the hold; NVDA counts auto-repeat as presses,
-  so this is a deliberate difference. The machine detects auto-repeat as a
-  key-down of a key whose `swallowed_gesture` is set. Any key
+  press increments the count; a different gesture or the window elapsing
+  resets it to 0. Consumers dispatch on it: report-current (report,
+  spell, copy), Verbatim+F12 (time, date), Verbatim+F11 (tray list,
+  taskbar list). An auto-repeat — holding the gesture's key, which
+  re-fires key-downs with no intervening key-up — counts as a further
+  press, measured from the one before, as NVDA counts it, for every
+  command (`docs/parity/input.md`, "Script repeat counting"). Any key
   other than a modifier that completes no bound gesture ends the streak,
   as NVDA forgets its last script when an unbound gesture comes between.
   A test's gestures are pressed as keys, so they are counted as a

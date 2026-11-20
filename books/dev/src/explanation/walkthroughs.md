@@ -164,7 +164,7 @@ while focus is in Notepad's text area.
    too slow, and never drops a key.
 2. **The report becomes a press, still on the hook thread.**
    The report callback (`crates/verbatim-app/src/key_reports.rs`) looks
-   the gesture up in the layout's table (`verbatim_input::bindings_for`),
+   the gesture up in the layout's gesture table (`verbatim_input::Tables`),
    finds `ScriptAction::MoveToNextSibling`, maps it to
    `ReviewCommand::NextSibling` (`ScriptAction::review_command`), and posts
    it to Core's thread as a press for the event queue

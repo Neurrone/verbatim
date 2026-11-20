@@ -49,8 +49,11 @@ the press causes is never the speech it cancels. `reports` is a
 `KeyReportFn` that receives, after the speech effect, everything a key
 caused, as `KeyReport`s, in the order decided:
 
+- `Alt { down }`, first, when the key changes whether either Alt key is
+  down, as the decision machine's modifiers say (`alt_down`), so a tell
+  Core takes after it reads Alt's state.
 - `Observed`, the observed gesture the key completed (a caret key,
-  `Decision::observed`), its number and `pressed_at_us`, the Unix time in
+  `Act::Reaches`'s `observed`), its number and `pressed_at_us`, the Unix time in
   microseconds when the hook procedure ran, on the clock outposts stamp
   observations with (the latency log starts a caret key's line there).
   The application gets the key only once the hook returns, so an
@@ -60,7 +63,8 @@ caused, as `KeyReport`s, in the order decided:
   Unix time it could fall after the application handled the key.
 - `Held` and `Deferred`, below.
 - `Typed`, the text the key types, with a trace id minted when it was
-  observed and its number (the source of `Input::CharacterTyped`).
+  observed and its number (the source of a typed key's press,
+  `PressAction::Typed`).
 - `Passed`, any other key-down passed to the application that types no
   text and is neither observed, a modifier, a lock key, nor a key Windows
   gives a meaning outside the text (Pause, Print Screen, Sleep, and the
@@ -72,7 +76,7 @@ caused, as `KeyReport`s, in the order decided:
   key's gesture (`ToggleKey::gesture`, repeat 0) when a Caps Lock, Num
   Lock or Scroll Lock press passes to the operating system, so its new
   state can be announced (not for the Verbatim key passed in share mode,
-  `Decision::shared_modifier`, whose fate the screen reader behind
+  `Act::Shared`, whose fate the screen reader behind
   Verbatim decides), with its number.
 - `Handled(n)`, when the last key event of an end-to-end harness's
   numbered key stroke (`verbatim_input::harness`, read from
@@ -137,13 +141,14 @@ it needs an interactive desktop and is never run in CI.
 The machine decides which keys are held and deferred
 (`books/dev/src/explanation/design/key-holding.md`; the rules are in
 [verbatim-input](verbatim-input.md)); the hook gathers the permit and
-carries out the verdicts. The held keys are the gesture map's
-(`GestureMap::with_held`, the caret table without the selection keys,
-`verbatim_input::caret_bindings`, and `GestureMap::with_held_only`,
-Enter and the numpad's Enter, observed only when held). A `Hold(place)` is swallowed and
-reported as `KeyReport::Held`, with its press time and the stroke it came
-from (`HeldStroke`: virtual key, scan code, extended flag, place), after
-its effect on speech as before. A `Defer(place)` is swallowed and
+carries out the verdicts. The held keys are the gesture map's, built by
+`verbatim_input::Tables` (`GestureMap::with_held`, the caret table
+without the selection keys, and `GestureMap::with_held_only`, Enter and
+the numpad's Enter, observed only when held). An `Act::Held` is
+swallowed and reported as `KeyReport::Held`, with the caret key the map
+gives it, its press time and the stroke it came from (the model's
+`Stroke`: virtual key, scan code, extended flag, place), after its
+effect on speech as before. A `Defer(place)` is swallowed and
 reported as `KeyReport::Deferred` (its stroke and whether it is a press),
 after the reports it makes as before (a typed character is still
 reported `Typed`, translated with the deferred modifiers ahead of it,
@@ -217,7 +222,7 @@ desktop they run on.
 
 ## Typed text (the `typed` module)
 
-`Input::CharacterTyped` comes from the hook's translation of each key,
+A typed key's text (`KeyReport::Typed`) comes from the hook's translation of each key,
 not from the application's own text changes, because
 that is the source that is correct for dead keys and never wrong for input
 methods, and the one the reducer's password rule for terminals needs

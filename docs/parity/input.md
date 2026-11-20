@@ -60,7 +60,7 @@ skips it (`canModifiersPerformAction` and
 `KeyboardInputGesture.executeScript`, `nvda/source/keyboardHandler.py`;
 NVDA issue 3472). Verbatim: **matched**, the same three cases, for each
 bound gesture the user presses, auto-repeats included
-(`verbatim-input`'s `Decision::mask`). Different, with nothing heard of
+(`verbatim-input`'s `Act::Gesture` mask). Different, with nothing heard of
 it: Verbatim counts only modifiers whose press reached the application,
 where NVDA counts any Alt or Windows key down, since a modifier whose
 press Verbatim swallowed has its release swallowed too and cannot act in

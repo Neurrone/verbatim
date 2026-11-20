@@ -350,7 +350,7 @@ The measure set, the end-to-end registry's `measure` group (`books/dev/src/how-t
 - Step 5, the relay on its port: the supervisor's owner became the relay thread, reading the listener's pipe and finishing every child's pended writes; verbatim.exe's listener reader and per-child writer threads went.
 - Step 6, the children's side: `ChildIo`, inline writes in the listener and every outpost, one I/O thread each; the children's outbound threads and separate pipe-reading threads went; the menu-end grace became a threadpool timer.
 - Step 6a, the idle barrier through every child (section 6.7), built before step 7 because step 7 changed who reads the outposts' pipes and so what the old channel-length count counted.
-- Step 7, the relay reads the outposts' pipes and the reducer waits on its own port (decision 3); verbatim.exe's per-outpost reader threads and the channel between the hook and the reducer went. What the relay sends the app and the app's port refuses is kept, with everything sent after it, in the relay's outbox and delivered again in order, so a refused `Ended` is never lost.
+- Step 7, the relay reads the outposts' pipes and the reducer waits on its own port (decision 3); verbatim.exe's per-outpost reader threads and the channel between the hook and the reducer went. What the relay sends the app and the app's port refuses, which only a system out of memory does, is logged and dropped.
 - Step 8, review keys straight to the reducer: built by the input build, which removed the gesture router (`books/dev/src/explanation/design/ownership.md`).
 - Step 9, the host protocol of section 7.
 - Step 10, the speech manager without its queue thread: not adopted, since it is not needed (section 8).

@@ -217,8 +217,8 @@ pub enum KeyReport {
         /// As [`KeyReport::Observed`]'s.
         pressed_at_us: u64,
     },
-    /// The key types `text` into the focused application: the source of
-    /// `Input::CharacterTyped`. A tab is a tab character and Enter a
+    /// The key types `text` into the focused application: the source of a
+    /// typed key's press (`PressAction::Typed`). A tab is a tab character and Enter a
     /// carriage return; a dead key types nothing until the key after it.
     Typed {
         /// Minted when the key was observed.

@@ -38,7 +38,8 @@ enters it as `QueueInput::LockKeyRead`, which Core says ("caps lock on")
 and which takes the key from the front. The
 time gesture's `Effect::ReadClock` is read on the reducer thread, as
 `GetTimeFormatEx` and `GetDateFormatEx` word it, and applied as
-`Input::ClockRead` with the trace the effect ran under, after the current
+`Input::ClockRead` with the trace the effect ran under and the gesture's
+key number the effect carries, after the current
 input's effects (`follow_ups`), so one input is reduced at a time;
 `Effect::Show` posts the menu or a shell list to the GUI, dropped with a
 warning before the GUI is up. The reducer thread
@@ -58,9 +59,10 @@ path as an accessibility event; `Effect::Speak` is executed there, and so are
 `Effect::StopSpeech` and `Effect::DropExpiredSpeech`, through the speech
 manager's `SpeechControl` (`cancel` and `drop_expired`), while
 `Effect::CopyToClipboard` is handed to the clipboard thread. The hook's
-gesture map and `key_reports`' gesture-to-script table come from
-`verbatim_input::bindings_for` for the configured keyboard layout, so the
-active review and navigation bindings follow `settings.toml`'s
+gesture map and `key_reports`' lookups come from one table,
+`verbatim_input::Tables`, made for the configured keyboard layout with the
+menu's gesture (`Tables::gesture_map` builds the map), so the active
+review and navigation bindings follow `settings.toml`'s
 `keyboard.layout`.
 
 The keyboard hook's two callbacks are the `key_reports` module, which
@@ -68,8 +70,8 @@ runs on the hook thread and is checked by `cargo xtask ci`'s hook rule
 (`xtask/src/ownership.rs`): the speech effect calls `cancel_through` with
 the key's number and posts `QueueInput::SpeechCut` with the same number, or posts the
 pause's toggle; the report callback notes the key in the latency ledger and turns
-each `KeyReport` into its `ShellCommand`s, by lookups in tables made when
-the hook starts (`key_reports::Tables`), and posts them to the reducer's
+each `KeyReport` into its `ShellCommand`s, by lookups in the gesture
+table made when the hook starts (`verbatim_input::Tables`), and posts them to the reducer's
 port in the order the hook decided them. Both callbacks post through one
 function, `key_reports::Ports`, over the reducer's port and the speech
 queue's: a post a port refuses while its taker is still there, which
@@ -81,23 +83,27 @@ both made; one whose port has closed is dropped. While posts succeed this
 adds one check of an empty queue, and no timer, lock or message; a kept
 post waits for the next key. Unit tests refuse a post through the
 `KeyPostRefused` fault point ([verbatim-faults](verbatim-faults.md)) and
-check each port takes every post once, in the hook's order. An observed caret key becomes
-`Input::CaretKey`; a clearing key `Input::ClearingKey`, then, unless it
-is Escape, `Input::CaretKey` with `CaretMotion::Other`; an editing chord
-`Input::EditingChord`, after `Input::ClearingKey` for Escape; Verbatim+V `Input::Script`
-with `Script::ShowMenu`; the time and tray-list bindings `Input::Script`
-with `Script::ReportTime` and `Script::ShellList`; a review or
-object-navigation binding `Input::Command`; a lock key's gesture
-`Input::ToggleKeyPressed`; an unbound gesture nothing; `Handled` the
-harness mark `ShellCommand::InputHandled` and `Barrier` the idle waiter
-`ShellCommand::AwaitIdle`. Every user input carries its key number. The
-reducer thread logs each `Command` and `Script` it applies, since the
-hook thread writes no log. The speech queue's inbox is a completion
+check each port takes every post once, in the hook's order. Each key
+becomes a press of Core's event queue (`QueueInput::Press`), with its
+number: an observed caret key a `PressAction::CaretKey`, a held one with
+its stroke and the caret key its report carries; a clearing key
+`PressAction::Clearing`, then, unless it is Escape, a caret key with
+`CaretMotion::Other`; an editing chord `PressAction::EditingChord`, after
+`PressAction::Clearing` for Escape; a key passed that types no text a
+caret key with `CaretMotion::Other`; typed text `PressAction::Typed`, and a
+control character `PressAction::Control`; Verbatim+V `PressAction::Script`
+with `Script::ShowMenu`; the time and tray-list bindings
+`PressAction::Script` with `Script::ReportTime` and `Script::ShellList`;
+a review or object-navigation binding `PressAction::Command`. A lock
+key's gesture is `Input::ToggleKeyPressed`; an unbound gesture nothing;
+`Handled` the harness mark `ShellCommand::InputHandled` and `Barrier` the
+idle waiter `ShellCommand::AwaitIdle`. The speech queue's inbox is a completion
 port too (`PortInbox` and `PortTaker` over `port_queue::<QueueItem>`), so
 the hook's cancel takes no lock; a unit test refuses an utterance's post
 through the `SpeechPostRefused` fault point and checks that it ends
 failed with its marks. The supervisor's sink is
-`EventSink::posting` over the reducer's port.
+`EventSink::posting` over the reducer's port, which logs and drops a
+message the port refuses.
 
 The end-to-end harness's hooks (private `harness` module):
 
@@ -193,22 +199,20 @@ Milestone M4's text protocol is wired here (`books/dev/src/reference/crates/verb
   one 2-second bound, so a change made just before Exit is saved; only a
   synthesizer host that has stopped answering can hold a commit past the
   bound, and that loss is logged.
-- The hook's gesture map holds the caret keys
-  (`GestureMap::with_held` over `caret_bindings()` but Enter's, and
-  `with_held_only` over Enter's, `CaretMotion::NewLine`) and observes the
-  selection keys (`with_observed` over `selection_bindings()`): they reach the
-  application, and each one the hook reports becomes `Input::CaretKey`
+- The hook's gesture map (`Tables::gesture_map`) holds the caret keys
+  but Enter's, and Enter's only when held (`CaretMotion::NewLine`), each
+  with its caret key, and observes the selection keys: they reach the
+  application, and each one the hook reports becomes a caret key's press
   through the same table, with the time the hook stamped it. It observes
-  the clearing keys too (`clearing_keys()`), each of which becomes
-  `Input::ClearingKey` and then, like any other key the hook reports as
-  passed without typing text, `Input::CaretKey` with `CaretMotion::Other`,
-  and the editing chords (`editing_chords()`), each of which becomes
-  `Input::EditingChord`, Escape after its `Input::ClearingKey`.
-  Each text a key types becomes
-  `Input::CharacterTyped` (the hook's translation,
-  [verbatim-input-windows](verbatim-input-windows.md)), each control
-  character a key types, after the key's other reports, a press of
-  `PressAction::Control`, which Core turns into `Input::ControlTyped`, and each key that
+  the clearing keys too, each of which becomes a press of
+  `PressAction::Clearing` and then, like any other key the hook reports
+  as passed without typing text, a caret key with `CaretMotion::Other`,
+  and the editing chords, each of which becomes a press of
+  `PressAction::EditingChord`, Escape after its clearing key's.
+  Each text a key types becomes a press of `PressAction::Typed` (the
+  hook's translation, [verbatim-input-windows](verbatim-input-windows.md)),
+  each control character a key types, after the key's other reports, a
+  press of `PressAction::Control`, and each key that
   cancels speech also sends `QueueInput::SpeechCut`, as does a gesture
   injected through the control plane, so say-all stops. All of these go
   straight from the hook thread to the reducer thread's port, each one
@@ -627,7 +631,7 @@ knowing for review:
   (`GuiCommand::OpenShellItemList`), each waiting behind a held caret key
   as a review command does; a quick second press speaks the date or lists
   the taskbar instead: `verbatim-input` counts quick presses on each
-  emitted gesture, carried on `Input::Script` to Core, whose
+  emitted gesture, carried on `PressAction::Script` to Core, whose
   `shell_list_kind` maps it to the listed surface. The list dialog's items, and the position of the item
   a click button acts on, come through `AppShellItemsHost`, which posts
   `ShellCommand::ShellItems` with the dialog's `ShellAsk` to the reducer

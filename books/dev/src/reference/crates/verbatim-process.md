@@ -135,10 +135,7 @@ Public API:
   posters remain, or `Closed` at that end, so a caller with a deadline of
   its own never takes a wait that ran out for the queue's end.
   Items still on the port when everything is dropped are
-  dropped with it. `send` carries the fault point `PortRefusesPost`,
-  with the item as subject, which gives the item back as a refused
-  packet does; it is compiled only into this crate's tests and under its
-  `faults` feature ([verbatim-faults](verbatim-faults.md)).
+  dropped with it.
 - `scheduling` (`docs/design/communication.md`, section 6.1) —
   `prioritize_current_thread(priority)` runs the calling thread at a
   `ThreadPriority` (`Normal`, `AboveNormal`, `Highest`, `TimeCritical`);

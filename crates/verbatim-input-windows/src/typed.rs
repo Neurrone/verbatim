@@ -1,4 +1,4 @@
-//! The text a key types: the source of `Input::CharacterTyped`
+//! The text a key types: the source of a typed key's press
 //! (`books/dev/src/reference/crates/verbatim-input-windows.md`, "Typed text").
 //!
 //! The hook translates each key it passes to the application with

@@ -628,7 +628,8 @@ result says nothing (a request refused unsent or stopped because the
 window is hung has already played the not-responding sound in the queue,
 if the window is attended). Each press waits its turn, so two presses
 give two announcements, and a press ahead of a focus reads the old
-focus.
+focus. Over an ended focus or the sleeping focus it says nothing
+([ADR 0001](../adr/0001-focus.md), "Report focus").
 
 A press's answer ends it, or a follow-up read replaces its read (a line
 read for the line, then a move, or an object's announcement and then its
@@ -661,13 +662,14 @@ waited on; `LockKeyToggled`
 second press), `ClipboardCopied` (`Phrase::CopiedToClipboard` or
 `Message::UnableToCopy`) and `PreviewSpeech` speak, interrupting;
 `ShellItemGone` and `ShellItemUnclickable` speak queued; `PreviewEarcon`
-plays its event. Each speaks under its input's trace, so a later key press
-fences a copy's confirmation off.
+plays its event. Each speaks under its input's trace; the time's speech
+carries the gesture's key number, and the others none (below, "Key
+numbers").
 
 The scripts of the gestures that are not review commands
-(`Input::Script`) ask the shell: `Script::ReportTime` emits
-`Effect::ReadClock { repeat }`, answered by `ClockRead` under the
-gesture's trace; `Script::ShowMenu` emits `Effect::Show(GuiRequest::Menu)`
+(`PressAction::Script`) ask the shell: `Script::ReportTime` emits
+`Effect::ReadClock { repeat, key }`, answered by `ClockRead` with the
+same key number; `Script::ShowMenu` emits `Effect::Show(GuiRequest::Menu)`
 and `Script::ShellList` `Effect::Show(GuiRequest::ShellList(kind))`, the
 system tray on a first press and the taskbar on a quick second
 (`shell_list_kind`). A lock key's press (`Input::ToggleKeyPressed`) adds
@@ -972,19 +974,21 @@ while the sleeping focus is committed. The lock state is recorded from
 
 ## Key numbers
 
-(`books/dev/src/explanation/design/ownership.md`.) Every user input carries the number the keyboard hook's thread
-gave it (`verbatim_model::KeySeq`), as `key_seq` on all seven:
-`CaretKey`, `HeldKey`, `CharacterTyped`, `ClearingKey`, `EditingChord`, `Command`,
-`Script` and `ToggleKeyPressed`. `reduce` records the input's trace and
-number in `SrState::key_origins` (`keys.rs`, the newest 1,024 pairs)
-before dispatching it, and as its last step stamps every `Effect::Speak`,
-inside `Effect::ForKey` included, with the number of the trace of the
-innermost `ForKey` around it, or else of the input's trace
-(`Input::trace_id`), failing that of the utterance's own trace. An answer
-to a key's request comes back under the key's trace, so its speech
-carries the key's number; speech of an input no key caused carries none.
-The table is part of the state, so a flight recorder checkpoint carries
-it. `KeySeq::NONE_YET` is not recorded.
+(`books/dev/src/explanation/design/ownership.md`.) Every key arrives
+numbered by the keyboard hook's thread (`verbatim_model::KeySeq`), as a
+press's `key_seq`. A press runs at its turn as an event-queue entry
+(`keys/entry.rs`): a caret key its own entry, a command with its own
+function that function, and every other action its handling directly,
+the four toggles, the scripts (`shell::script`), text typed, a control
+character and a clearing key. Speech an entry says carries the entry's
+fence (`keys::entry::stamp`). Two kinds of speech said outside an entry
+carry a key's number too: the time, whose `Effect::ReadClock` and
+`Input::ClockRead` carry the gesture's number; and terminal output handed
+to speech by an input handled at once (an utterance's end or failure),
+which carries the number the terminal's speech state took from the
+speech entry that queued it (`TerminalSpeechState::key`), none for output
+the quiet-period timer read. A lock key's announcement, and speech no key
+caused, carry none.
 
 ### Caret keys
 
@@ -1054,7 +1058,7 @@ commands and say-all read no formatting.
 
 ### Typing echo
 
-`Input::CharacterTyped` is echoed by the settings: a finished word first,
+Text typed (`PressAction::Typed`, `editing::character_typed`) is echoed by the settings: a finished word first,
 when a character that is not a word grapheme ends it
 (`verbatim_text::is_word_grapheme`), then each printable character, each
 in its own queued utterance. "Only in edit controls" means a focus that is
@@ -1067,8 +1071,8 @@ passwords are spoken, typing is held until its
 `NormalizedEvent::TextChanged` arrives, and Enter drops what was held.
 The word is forgotten when a caret key's script speaks (not Enter's, whose
 carriage return ends it after when the caret moved), and when the focus changes; a held
-Backspace drops its last character at its end; `Input::ControlTyped`, a
-control character the hook reports (Control+C, Control+Enter; never
+Backspace drops its last character at its end; a control character the
+hook reports (`PressAction::Control`) (Control+C, Control+Enter; never
 Escape), ends it and speaks it, spelling nothing (`editing::control_typed`).
 Interrupting speech for typing is the hook's
 ([verbatim-input](verbatim-input.md)).

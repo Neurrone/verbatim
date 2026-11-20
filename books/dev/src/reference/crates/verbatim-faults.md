@@ -10,8 +10,7 @@ carry none.
 
 Public API:
 
-- `Fault` — each point, and the subject it passes: `PortRefusesPost`
-  (the item a port queue's `Poster::send` posts), `RelayWake` (the item
+- `Fault` — each point, and the subject it passes: `RelayWake` (the item
   the relay's mailbox sends), `KeyPostRefused` (the keyboard hook's post),
   `SpeechPostRefused` (the id of an utterance the app's speech inbox posts),
   `ThreadStart` (a reading thread's `(name, pid, generation)`, a worker's
@@ -62,8 +61,8 @@ than the selector's never matches. Tests that arm points run one at a time
 in their binary, or select subjects no other test of the binary makes.
 
 Where the points are and who turns them on: the crates whose points
-another crate's tests reach have a `faults` feature, `verbatim-process`,
-`verbatim-supervisor`, `verbatim-outpost` and `verbatim-uia`, and mockapp's
+another crate's tests reach have a `faults` feature, `verbatim-supervisor`,
+`verbatim-outpost` and `verbatim-uia`, and mockapp's
 `faults` feature turns on optional normal dependencies on the last two,
 since a feature cannot name a dev-dependency. Nothing turns a `faults`
 feature on but `cargo xtask faults`, which `cargo xtask ci` runs as its
@@ -92,8 +91,8 @@ The rules the failure paths follow, each with its reason:
 
 - A fault point stands immediately before each hand-off whose failure path held a defect, so a test runs the production failure path. The points compile only into tests, behind a Cargo feature that only `cargo xtask faults` turns on, absent from release builds and the end-to-end build; the fault tests are built in `target/debug` beside the shipped build and rewrite only `mockapp.exe` (Dickson, 2026-10-31).
 - An outpost whose worker cannot start, at its start or as a replacement, keeps running: the generation stays without a worker, each program is answered as failed, each dispatch tries once to start one, and the shell keeps its garbage until a worker starts (Dickson, 2026-10-31).
-- A post a port refuses is kept and posted again ahead of the next one, by the relay's outbox and on the hook thread, with no timer. Reason: a refusal comes only from a system out of memory, and a timed retry would wake on a clock with no evidence.
+- A post a port refuses is kept and posted again ahead of the next one on the keyboard hook's thread alone, with no timer; the app's sink logs and drops a message of the relay's that its port refuses. Reason: a refusal comes only from a system out of memory, and a timed retry would wake on a clock with no evidence; a key's cancel and its cut must both be made, where the relay's messages had a second mechanism for a refusal no one sees (Dickson's confirmed default, 2026-11-20).
 - A wake is decided by reading the state under the lock that holds it, never from a flag another thread sets: the relay's mailbox, the cancel token and the harness's readiness keep their facts under one lock, and every audio device notice wakes the audio thread, which decides from its pass. Reason: two setters of separate flags can each miss the other's. A mark that could stay set wrongly, the GUI's `switching`, clears through a `Responder` whose drop answers.
 - The debug-build lock check, which fails a call into an application made while one of the outpost's locks is held, is described in [verbatim-win32](verbatim-win32.md), `held_locks`.
 
-Limits: a message the app's port refuses, or a mailbox wake the relay's port refuses, waits up to a ping interval, 3 s; a key's post a port refuses waits for the next key, with no time limit, and a harness's `AwaitIdle` then fails at its timeout naming the input; both happen only when the system is out of memory. A fault point stands for the operation's failure, not for the system's state behind it. The synthesizer switch's responder cannot answer while the synth thread holds the request in a driver call that never returns.
+Limits: a message the app's port refuses is lost, and logged; a mailbox wake the relay's port refuses waits up to a ping interval, 3 s; a key's post a port refuses waits for the next key, with no time limit, and a harness's `AwaitIdle` then fails at its timeout naming the input; each happens only when the system is out of memory. A fault point stands for the operation's failure, not for the system's state behind it. The synthesizer switch's responder cannot answer while the synth thread holds the request in a driver call that never returns.

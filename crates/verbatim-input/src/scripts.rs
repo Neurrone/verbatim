@@ -12,9 +12,7 @@
 //! table — it stays bound the way it already is today, outside M3's
 //! object-navigation vocabulary.
 //!
-//! [`crate::GestureMap`] is a plain membership set, not generic over the
-//! bound action, so this module hands the application data it can adapt: a
-//! list of gesture and action pairs, rather than a ready-built router.
+//! The one gesture table, [`crate::Tables`], is built from these lists.
 
 pub use verbatim_model::KeyboardLayout;
 use verbatim_model::{CaretKey, CaretMotion, GestureId, ReviewCommand};
@@ -342,11 +340,11 @@ pub fn bindings_for(layout: KeyboardLayout) -> Vec<(GestureId, ScriptAction)> {
 /// never bound: the hook holds each while Core's view lets keys be held,
 /// and reports it so the reducer can read the caret, send it and speak the
 /// result (`docs/nvda/editable-text-and-terminals.md`). Build the hook's
-/// map with [`GestureMap::with_held`] over these gestures but Enter, and
-/// [`GestureMap::with_held_only`] over Enter's
-/// ([`CaretMotion::NewLine`]), which is held only in a text field other
-/// than a terminal and is otherwise typed text; the shell turns a reported
-/// gesture into `Input::CaretKey` through the same table. The selection
+/// map holds these gestures but Enter ([`crate::Tables::gesture_map`]),
+/// and Enter's only when held ([`CaretMotion::NewLine`]), which is held
+/// only in a text field other than a terminal and is otherwise typed text;
+/// the shell posts a reported gesture as a caret key's press through the
+/// same table. The selection
 /// keys are [`selection_bindings`].
 ///
 /// # Panics
@@ -378,8 +376,8 @@ pub fn caret_bindings() -> Vec<(GestureId, CaretKey)> {
 /// ends say-all at its turn (`docs/design/readers-tell-core-asks-build1.md`,
 /// "The hook and Core's stroke line": NVDA binds them only in controls
 /// that do not detect selection changes, which Verbatim does not read).
-/// Build the hook's map with [`GestureMap::with_observed`] over these
-/// gestures.
+/// The hook's map observes these gestures
+/// ([`crate::GestureMap::with_observed`]).
 ///
 /// # Panics
 ///
@@ -466,8 +464,8 @@ const NEW_LINES: &[(&str, CaretMotion)] = &[
 /// The keys that end or clear the command line being typed: Escape,
 /// Control+C, Control+D, and Control+Break, both as NVDA names it
 /// (Control+Pause) and as Windows reports it (its own key, `break`). Observed like the caret keys, never bound: the hook
-/// passes each to the application and reports it, and the shell turns it
-/// into `Input::ClearingKey`.
+/// passes each to the application and reports it, and the shell posts it
+/// as a clearing key's press.
 ///
 /// # Panics
 ///
@@ -495,8 +493,8 @@ pub fn clearing_keys() -> Vec<GestureId> {
 /// NVDA binds no script to them, so in a text field they say nothing for
 /// the key (`docs/design/caret-selection-rework.md`). Observed like the
 /// caret keys, never bound: the hook passes each to the application and
-/// reports it with its gesture, and the shell turns it into
-/// `Input::EditingChord`.
+/// reports it with its gesture, and the shell posts it as an editing
+/// chord's press.
 ///
 /// # Panics
 ///
