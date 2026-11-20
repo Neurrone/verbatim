@@ -7,10 +7,9 @@
 # With nothing beside them, many at once (`ALONE_TESTS`):
 #
 # - mockapp's `focus_reports`: under the whole run's load, its MSAA walks
-#   passed their 500 ms bound and reported the window's title above the
-#   chain, the defect in `docs/roadmap.md`, "The window title is doubled
-#   when an MSAA walk passes its bound". Alone it passes, as it did under
-#   its own runner.
+#   reported the window's title above the chain (`docs/flaky-tests.md`,
+#   "Mockapp tests under `cargo xtask ci`"). Alone it passes, as it did
+#   under its own runner.
 #
 # One at a time (`SERIAL_TESTS`):
 #
@@ -21,6 +20,11 @@
 #   under load").
 # - mockapp's `call_counts`, whose exact counts fail under load through
 #   the same doubled window title (`docs/flaky-tests.md`).
+# - mockapp's `remote_ops::a_windows_forms_menu_item_is_checked_from_the_remote_read`,
+#   which starts a Windows PowerShell hosting Windows Forms: under the
+#   whole run's load, that cold start passed the test's 15 s wait for the
+#   window to be shown (runs 44138509561 and 44414430624); its passing
+#   runs there took 11.5 s on x64.
 # - The unit tests of `verbatim-agent`, `verbatim-ia2`, `verbatim-listener`
 #   and `verbatim-win32`, which make windows of their own on the desktop
 #   the run was started from, which may be in use.

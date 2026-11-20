@@ -611,6 +611,8 @@ const SERIAL_TESTS: &str = concat!(
     " | binary_id(verbatim-audio::mixer) | binary_id(mockapp::call_counts)",
     " | binary_id(verbatim-agent) | binary_id(verbatim-ia2)",
     " | binary_id(verbatim-listener) | binary_id(verbatim-win32)",
+    " | (binary_id(mockapp::remote_ops)",
+    " & test(a_windows_forms_menu_item_is_checked_from_the_remote_read))",
 );
 
 /// The tests that run with nothing beside them but each other, many at
