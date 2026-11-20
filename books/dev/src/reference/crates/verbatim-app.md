@@ -641,7 +641,11 @@ knowing for review:
   (`Input::ShellItemGone`) when the list dialog finds its chosen item
   gone, and of `GuiEvent::ShellItemUnclickable`
   (`Input::ShellItemUnclickable`) when it finds the item with no point to
-  click; the reducer says either queued. When the loop exits — Exit item,
+  click; the reducer says either queued. It tells it of
+  `GuiEvent::BlockedByMessageBox` (`Input::BlockedByMessageBox`) when the
+  menu's Settings or Exit is refused while a modal message box is up, and
+  the reducer says NVDA's "Action unavailable while a dialog requires a
+  response". When the loop exits — Exit item,
   control-plane quit, or a replacing instance's `WM_QUIT` — teardown drops
   the hooks and shuts the outposts and the listener down cleanly through
   `Supervisor::shutdown`, killing through its job only a child that has

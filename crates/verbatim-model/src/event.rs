@@ -859,6 +859,12 @@ pub enum Input {
         /// The item's name, as the list showed it.
         name: String,
     },
+    /// The settings dialog or Exit was asked for from the GUI while a
+    /// modal message box is up, and refused.
+    BlockedByMessageBox {
+        /// Trace ID minted when the GUI refused it.
+        trace_id: TraceId,
+    },
     /// The settings dialog's theme page previews an indication spoken: a
     /// sample, in the theme's words.
     PreviewSpeech {
@@ -1063,6 +1069,7 @@ impl Input {
             | Self::ClipboardCopied { trace_id, .. }
             | Self::ShellItemGone { trace_id, .. }
             | Self::ShellItemUnclickable { trace_id, .. }
+            | Self::BlockedByMessageBox { trace_id }
             | Self::PreviewSpeech { trace_id, .. }
             | Self::Progress { trace_id, .. }
             | Self::Queue { trace_id, .. } => Some(*trace_id),

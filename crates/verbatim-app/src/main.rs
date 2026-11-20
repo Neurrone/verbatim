@@ -2287,6 +2287,12 @@ fn gui_event_loop(
                 };
                 let _ = command_tx.send(ShellCommand::Input(Box::new(input)));
             }
+            GuiEvent::BlockedByMessageBox => {
+                let input = Input::BlockedByMessageBox {
+                    trace_id: TraceId::mint(),
+                };
+                let _ = command_tx.send(ShellCommand::Input(Box::new(input)));
+            }
             GuiEvent::ShellItemUnclickable(name) => {
                 let input = Input::ShellItemUnclickable {
                     trace_id: TraceId::mint(),

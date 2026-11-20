@@ -497,6 +497,9 @@ pub fn message_text(message: verbatim_model::Message) -> String {
         Message::TerminalLineCut => i18n_embed_fl::fl!(loader, "message-terminal-line-cut"),
         Message::SelectionRemoved => i18n_embed_fl::fl!(loader, "message-selection-removed"),
         Message::UnableToCopy => i18n_embed_fl::fl!(loader, "clipboard-copy-failed"),
+        Message::DialogRequiresResponse => {
+            i18n_embed_fl::fl!(loader, "message-dialog-requires-response")
+        }
     }
 }
 
@@ -1821,6 +1824,10 @@ mod tests {
         assert_eq!(
             message_text(verbatim_model::Message::NoStatusLineFound),
             "No status line found"
+        );
+        assert_eq!(
+            message_text(verbatim_model::Message::DialogRequiresResponse),
+            "Action unavailable while a dialog requires a response"
         );
         assert_eq!(
             message_text(verbatim_model::Message::CannotSelect),

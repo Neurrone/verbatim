@@ -48,7 +48,7 @@ pub use terminal_panel::{TerminalChange, TerminalHost};
 pub use theme_panel::ThemeHost;
 
 use bridge::{GuiThread, ffi};
-use lifecycle::{Frame, Lifecycle, OpenSettings, OpenShellList};
+use lifecycle::{Exit, Frame, Lifecycle, OpenSettings, OpenShellList};
 use list_dialog::{ButtonVerdict, ListDialogButtons};
 use settings::{ControlChange, SpeechControls};
 use terminal_panel::TerminalPanel;
@@ -92,6 +92,9 @@ pub enum GuiEvent {
     /// an empty one, which the list cannot leave out since it reads no
     /// rectangles, so nothing was clicked; the app says so.
     ShellItemUnclickable(String),
+    /// The settings dialog or Exit was asked for while a modal message box
+    /// is up, and refused; the app says so.
+    BlockedByMessageBox,
 }
 
 /// A message for the GUI thread: a command from the app, or the outcome of
@@ -305,8 +308,9 @@ impl GuiCore {
             GuiCommand::Shutdown => self.shut_down(),
             GuiCommand::ShowMessage { title, text } => {
                 self.pre_popup();
+                self.lifecycle.borrow_mut().message_box_shown();
                 self.gui.show_message(&title, &text);
-                let after = self.lifecycle.borrow().frame_after_popup();
+                let after = self.lifecycle.borrow_mut().message_box_closed();
                 self.post_popup(after);
             }
         }
@@ -320,7 +324,11 @@ impl GuiCore {
         match choice {
             ffi::MenuChoice::Settings => self.open_settings(),
             ffi::MenuChoice::Exit => {
-                let _ = self.events.send(GuiEvent::QuitRequested);
+                let exit = self.lifecycle.borrow().request_exit();
+                let _ = self.events.send(match exit {
+                    Exit::Quit => GuiEvent::QuitRequested,
+                    Exit::Blocked => GuiEvent::BlockedByMessageBox,
+                });
             }
             _ => {}
         }
@@ -387,6 +395,9 @@ impl GuiCore {
         let action = self.lifecycle.borrow_mut().request_settings();
         match action {
             OpenSettings::Ignore => {}
+            OpenSettings::Blocked => {
+                let _ = self.events.send(GuiEvent::BlockedByMessageBox);
+            }
             OpenSettings::FocusExisting => self.focus_foreground(ffi::DialogKind::Settings),
             OpenSettings::Create => {
                 // Take the foreground before the dialog exists, so the

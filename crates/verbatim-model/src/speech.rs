@@ -374,6 +374,10 @@ pub enum Message {
     /// status line found". Provisional until the general status bar of
     /// milestone M5.
     NoStatusLineFound,
+    /// The settings dialog or Exit was refused while a modal message box
+    /// is up — NVDA's "Action unavailable while a dialog requires a
+    /// response".
+    DialogRequiresResponse,
 }
 
 /// One segment of an utterance, with an optional language override.

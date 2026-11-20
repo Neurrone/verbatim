@@ -242,6 +242,7 @@ message-start-marked = Start marked
 message-no-start-marker = No start marker set
 message-no-status-bar-information = no status bar information
 message-no-status-line-found = No status line found
+message-dialog-requires-response = Action unavailable while a dialog requires a response
 message-press-twice-to-copy = Press twice to copy or reset the start marker
 message-caret-moves-review = caret moves review cursor on
 message-caret-does-not-move-review = caret moves review cursor off

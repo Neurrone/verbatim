@@ -56,6 +56,7 @@ pub(crate) fn reduce(state: &mut SrState, input: &Input) -> Vec<Effect> {
         Input::ShellItemUnclickable { trace_id, name } => {
             shell_item_not_clicked(*trace_id, Phrase::ShellItemUnclickable(name.to_owned()))
         }
+        Input::BlockedByMessageBox { trace_id } => blocked_by_message_box(*trace_id),
         Input::PreviewSpeech { trace_id, segments } => preview_speech(*trace_id, segments),
         Input::PreviewEarcon(earcon) => vec![Effect::PlayEarcon(*earcon)],
         Input::Progress { change, .. } => crate::reduce::reduce_bar_change(state, change),
@@ -202,6 +203,20 @@ fn shell_item_not_clicked(trace_id: TraceId, phrase: Phrase) -> Vec<Effect> {
         trace_id,
         SpeechPriority::Queued,
         vec![UtteranceSegment::new(SegmentContent::Phrase(phrase))],
+    )]
+}
+
+/// The settings dialog or Exit was refused while a modal message box is
+/// up: NVDA's message, which it speaks at its priority NOW
+/// (`docs/parity/system.md`, "A settings file that fails to load"); Next
+/// until M6.3 brings the interrupting priority that resumes.
+fn blocked_by_message_box(trace_id: TraceId) -> Vec<Effect> {
+    vec![utterance(
+        trace_id,
+        SpeechPriority::Next,
+        vec![UtteranceSegment::new(SegmentContent::Message(
+            Message::DialogRequiresResponse,
+        ))],
     )]
 }
 

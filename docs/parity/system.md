@@ -218,15 +218,39 @@ is up a message box titled "Configuration File Error" says "Your
 configuration file contains errors. Your configuration has been reset
 to factory defaults. More details about the errors can be found in the
 log file." (`nvda/source/config/__init__.py` 536-562, `nvda/source/core.py`
-156-169). Verbatim: **matched**: `settings.toml` is kept as
-`settings.toml.corrupted.bak` and the defaults are used, the error is
-logged as a warning, and the GUI shows the same box in NVDA's words,
-spoken "Configuration File Error dialog", the text, then "OK button", as
-NVDA speaks it (`crates/verbatim-i18n/tests/captures/configuration-file-error.txt`,
-a capture at NVDA alpha-58022). A rename that fails leaves the file, which
-the first saved change overwrites, as NVDA's does. One difference: one
-bad value fails Verbatim's whole file, where NVDA checks a value when it
-is read; keeping the other values is M8.3's.
+156-169). NVDA shows its start-up box before it takes any input: two
+captures on 2026-11-20 recorded no response to Insert+T, Insert+N,
+Insert+Control+G or Insert+Q while it was open.
+
+Verbatim: **matched**, with the differences below. `settings.toml` is
+kept as `settings.toml.corrupted.bak` and the defaults are used, the
+error is logged as a warning, and the GUI shows the same box in NVDA's
+words, spoken "Configuration File Error dialog", the text, then "OK
+button", as NVDA speaks it
+(`crates/verbatim-i18n/tests/captures/configuration-file-error.txt`, a
+capture at NVDA alpha-58022). A rename that fails leaves the file, which
+the first saved change overwrites, as NVDA's does.
+
+Differences:
+
+- Verbatim takes input while the box is open, so it follows the rule
+  NVDA's source gives any modal message box, decided from that source
+  because NVDA's own start-up box cannot be captured taking input
+  (Dickson, 2026-11-20). While the box is up, the menu's Settings and
+  Exit are refused, and Verbatim says "Action unavailable while a dialog
+  requires a response"; the menu itself opens, as NVDA's `showGui` is not
+  blocked (`nvda/source/gui/blockAction.py` 55-59;
+  `nvda/source/gui/__init__.py` 202, and 214, 223, 264 and 330, the
+  resets to defaults, the settings dialogs and Exit, each blocked with
+  `Context.MODAL_DIALOG_OPEN`). Verbatim offers no reset to defaults and
+  no Verbatim+Q, so there is nothing more to block. NVDA speaks the
+  message at its priority NOW, which interrupts and resumes; Verbatim
+  speaks it at Next, after the current utterance, until M6.3 brings that
+  priority. NVDA also raises and focuses the box when it refuses
+  (`blockAction.py` 25-31); Verbatim does not. The block is pinned by
+  the GUI lifecycle's tests (`crates/verbatim-gui/src/lifecycle.rs`).
+- One bad value fails Verbatim's whole file, where NVDA checks a value
+  when it is read; keeping the other values is M8.3's.
 
 ### Settings GUI generated from driver descriptors
 

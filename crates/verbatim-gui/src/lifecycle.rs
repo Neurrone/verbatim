@@ -1,7 +1,8 @@
 //! The lifecycle of the GUI's menu and dialogs as one state machine, with
 //! no widget code: whether the menu is up, which dialogs are open, whether
-//! a shell item enumeration is in flight, whether shutdown has begun, and
-//! what each request or close means for the hidden frame.
+//! a shell item enumeration is in flight, how many modal message boxes are
+//! up, whether shutdown has begun, and what each request or close means for
+//! the hidden frame.
 //!
 //! The rules:
 //!
@@ -12,6 +13,11 @@
 //! - A shell item list request while an enumeration is in flight is
 //!   dropped rather than queued; one that arrives after shutdown began is
 //!   ignored, as are enumeration results that arrive after it.
+//! - While a modal message box is up (the Configuration File Error box),
+//!   opening the settings dialog and the menu's Exit are refused, and
+//!   Verbatim says "Action unavailable while a dialog requires a response";
+//!   the menu itself still opens. This is NVDA's rule for its modal message
+//!   boxes (`docs/parity/system.md`, "A settings file that fails to load").
 //! - The hidden frame is shown around every popup (NVDA's `prePopup`) and
 //!   hidden again (`postPopup`) once the menu has closed and no dialog
 //!   still needs it as its visible owner: hiding an owner can take its
@@ -36,8 +42,19 @@ pub(crate) enum OpenSettings {
     Create,
     /// The dialog is open: raise and focus it.
     FocusExisting,
+    /// A modal message box is up: open nothing, and say why.
+    Blocked,
     /// Shutdown has begun: do nothing.
     Ignore,
+}
+
+/// What the menu's Exit should do.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Exit {
+    /// Ask the app to exit.
+    Quit,
+    /// A modal message box is up: stay, and say why.
+    Blocked,
 }
 
 /// What a request for the shell item list should do.
@@ -76,6 +93,9 @@ pub(crate) struct Lifecycle {
     menu_open: bool,
     settings_open: bool,
     shell_list: ShellList,
+    /// The modal message boxes up, counted because one can be shown from
+    /// inside another's modal loop.
+    message_boxes: u32,
     shutting_down: bool,
 }
 
@@ -107,12 +127,39 @@ impl Lifecycle {
     pub(crate) fn request_settings(&mut self) -> OpenSettings {
         if self.shutting_down {
             OpenSettings::Ignore
+        } else if self.message_boxes > 0 {
+            OpenSettings::Blocked
         } else if self.settings_open {
             OpenSettings::FocusExisting
         } else {
             self.settings_open = true;
             OpenSettings::Create
         }
+    }
+
+    /// Decides the menu's Exit.
+    pub(crate) fn request_exit(&self) -> Exit {
+        if self.message_boxes > 0 {
+            Exit::Blocked
+        } else {
+            Exit::Quit
+        }
+    }
+
+    /// Records that a modal message box is about to be shown.
+    pub(crate) fn message_box_shown(&mut self) {
+        self.message_boxes += 1;
+    }
+
+    /// Records that a modal message box shown through
+    /// [`message_box_shown`](Self::message_box_shown) closed, and says what
+    /// to do with the frame.
+    pub(crate) fn message_box_closed(&mut self) -> Frame {
+        self.message_boxes = self
+            .message_boxes
+            .checked_sub(1)
+            .expect("only a box recorded as shown closes");
+        self.frame_after_popup()
     }
 
     /// Decides a request for the shell item list. An `Enumerate` answer
@@ -157,14 +204,20 @@ impl Lifecycle {
     /// What to do with the frame once a popup, the menu or a dialog, is
     /// gone.
     pub(crate) fn frame_after_popup(&self) -> Frame {
-        if self.menu_open || self.settings_open || self.shell_list == ShellList::Open {
+        if self.menu_open
+            || self.settings_open
+            || self.shell_list == ShellList::Open
+            || self.message_boxes > 0
+        {
             Frame::Keep
         } else {
             Frame::Hide
         }
     }
 
-    /// Records that shutdown began: every later request is ignored.
+    /// Records that shutdown began: every later request is ignored. A
+    /// message box still up is closed by the shutdown and records its own
+    /// close.
     pub(crate) fn shut_down(&mut self) {
         self.shutting_down = true;
         self.menu_open = false;
@@ -270,6 +323,48 @@ mod tests {
         lifecycle.request_shell_list();
         assert!(lifecycle.request_menu());
         assert_eq!(lifecycle.menu_closed(), Frame::Hide);
+    }
+
+    /// Derived from NVDA's source, not a capture: NVDA's own start-up
+    /// Configuration File Error box takes no input at all, so the rule
+    /// cannot be captured (Dickson, 2026-11-20). While a modal message box
+    /// is up NVDA refuses its settings dialogs and Exit with "Action
+    /// unavailable while a dialog requires a response"
+    /// (`nvda/source/gui/blockAction.py` 55-59; `gui/__init__.py` 264 and
+    /// 330, decorated with `Context.MODAL_DIALOG_OPEN`), and opens its menu
+    /// (`showGui`, `gui/__init__.py` 202, undecorated).
+    #[test]
+    fn a_message_box_blocks_settings_and_exit_but_not_the_menu() {
+        let mut lifecycle = Lifecycle::new();
+        lifecycle.message_box_shown();
+        assert!(lifecycle.request_menu(), "the menu opens over the box");
+        assert_eq!(lifecycle.request_settings(), OpenSettings::Blocked);
+        assert_eq!(lifecycle.request_exit(), Exit::Blocked);
+        assert_eq!(
+            lifecycle.menu_closed(),
+            Frame::Keep,
+            "the menu closing must not hide the box's owner"
+        );
+        assert_eq!(lifecycle.message_box_closed(), Frame::Hide);
+        assert_eq!(lifecycle.request_settings(), OpenSettings::Create);
+        assert_eq!(lifecycle.request_exit(), Exit::Quit);
+    }
+
+    /// Source-derived as the test above: NVDA's settings dialog is not
+    /// even focused while a box is up, the block coming before the dialog
+    /// is looked for (`gui/__init__.py` 264-268), and a box shown from
+    /// inside another's loop leaves the block on until both have closed.
+    #[test]
+    fn a_message_box_blocks_focusing_an_open_settings_dialog_until_every_box_closes() {
+        let mut lifecycle = Lifecycle::new();
+        assert_eq!(lifecycle.request_settings(), OpenSettings::Create);
+        lifecycle.message_box_shown();
+        lifecycle.message_box_shown();
+        assert_eq!(lifecycle.request_settings(), OpenSettings::Blocked);
+        assert_eq!(lifecycle.message_box_closed(), Frame::Keep);
+        assert_eq!(lifecycle.request_exit(), Exit::Blocked);
+        assert_eq!(lifecycle.message_box_closed(), Frame::Keep);
+        assert_eq!(lifecycle.request_settings(), OpenSettings::FocusExisting);
     }
 
     #[test]

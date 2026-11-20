@@ -9,10 +9,12 @@ decision.
 
 Public API:
 
-- `GuiCommand` (`ShowMenu`, `OpenSettings`,
+- `GuiCommand` (`ShowMessage`, `ShowMenu`, `OpenSettings`,
   `OpenShellItemList(ShellItemKind)`, `Shutdown`) and `GuiEvent`
-  (`QuitRequested`, and `ShellItemGone` with the name of a tray icon or
-  taskbar button the list dialog found gone, which the app speaks) — the
+  (`QuitRequested`; `ShellItemGone` and `ShellItemUnclickable` with the
+  name of a tray icon or taskbar button the list dialog could not click,
+  which the app speaks; and `BlockedByMessageBox`, the settings dialog or
+  Exit refused while a modal message box is up, which the app says) — the
   two seams to the application. The GUI never exits the process; Exit
   raises `QuitRequested` and the app decides.
 - `GuiHandle::send(command)` — cloneable, callable from any thread;
@@ -119,10 +121,14 @@ The private modules:
 - `lifecycle` — the menu's and dialogs' lifecycle as one tested state
   machine: the menu is popped once at a time; the settings dialog and the
   shell item list are singletons, a second request focusing the open one;
-  a list request during an enumeration is dropped; requests and results
-  after shutdown are ignored; and the hidden frame is hidden after a popup
-  only once neither the menu nor an open dialog needs it as its visible
-  owner.
+  a list request during an enumeration is dropped; while a modal message
+  box (`ShowMessage`) is up, counted since one can open inside another's
+  loop, the settings dialog and Exit are refused and the menu opens, as
+  NVDA refuses them (`docs/parity/system.md`, "A settings file that fails
+  to load"); requests and results after shutdown are ignored; and the
+  hidden frame is hidden after a popup
+  only once neither the menu, an open dialog nor a message box needs it
+  as its visible owner.
 - `settings` — the settings dialog's model, pure apart from reading the
   host: the categories (Speech, Theme, then Terminal), the Speech page
   generated

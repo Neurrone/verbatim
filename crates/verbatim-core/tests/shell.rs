@@ -223,6 +223,22 @@ fn a_shell_item_unclickable_is_said_queued() {
     );
 }
 
+/// Source-derived (`nvda/source/gui/blockAction.py` 55-59 and 104,
+/// the message, at `ui.delayedMessage`'s priority NOW, `ui.py` 183);
+/// see the GUI lifecycle's test of the block itself.
+#[test]
+fn an_action_blocked_by_a_message_box_is_said_next() {
+    let trace_id = TraceId::from_raw(7);
+    assert_eq!(
+        effects_of(&Input::BlockedByMessageBox { trace_id }),
+        [said(
+            trace_id,
+            SpeechPriority::Next,
+            SegmentContent::Message(Message::DialogRequiresResponse),
+        )]
+    );
+}
+
 #[test]
 fn the_theme_pages_previews_are_spoken_interrupting_or_played() {
     let trace_id = TraceId::from_raw(6);
