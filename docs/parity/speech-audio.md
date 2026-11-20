@@ -297,8 +297,9 @@ Verbatim: **not yet (M8.2)**, built with punctuation and symbol levels
 question, Dickson's (2026-10-15): the rule dates from 2006 and a
 pronunciation problem in ViaVoice, and whether current synthesizers
 (eSpeak NG, OneCore) still need it is not known, so it is checked with
-them before it is built. Until then, compare mode
-shows a difference on any spoken name with a digit after a letter.
+them before it is built. Compare mode does not show the gap: NVDA's
+transcript records its speech before its dictionaries apply, so a name
+with a digit after a letter reads the same on both sides.
 
 ### Automatic language switching
 

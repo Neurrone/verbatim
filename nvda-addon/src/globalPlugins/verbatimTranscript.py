@@ -25,11 +25,15 @@ answer is `{"Reply": {"to": n, "payload": ...}}` or
 
 An entry is `{"seq": n, "ms": t, "event": ...}`, where `ms` counts
 milliseconds since the `Hello`, and the event is
-`{"Speech": {"text": "...", "priority": "Normal"}}` for a queued speech
-sequence or the string `"Cancel"` when speech is cancelled. Speech text is
-flattened the way NVDA's own system-test spy does it: the string items of
-the sequence joined and stripped, so commands such as pitch changes and
-index marks are dropped.
+`{"Speech": {"text": "...", "priority": "Normal"}}` for a speech
+sequence NVDA speaks or the string `"Cancel"` when speech is cancelled.
+The sequence is recorded as `speech.speak` receives it (`pre_speech`),
+before its speech dictionaries and symbol processing are applied, so a
+comparison sees what NVDA means to say rather than how its default
+dictionary and symbols reword it for the synthesizer. Its text is the
+string items of the sequence joined with a space and stripped, so commands
+such as pitch changes and index marks are dropped, and two strings such
+as "p" and "1 of 17" stay two words.
 """
 
 import collections
@@ -42,7 +46,7 @@ import time
 import buildVersion
 import globalPluginHandler
 from logHandler import log
-from speech.extensions import pre_speechQueued, speechCanceled
+from speech.extensions import pre_speech, speechCanceled
 
 PROTOCOL_VERSION = 1
 #: The port is this plus the session id; see `_sessionId`.
@@ -96,10 +100,10 @@ class _Recorder:
 			self._entries.append({"seq": self._nextSeq, "ms": ms, "event": event})
 			self._nextSeq += 1
 
-	def onSpeechQueued(self, speechSequence, priority, **kwargs):
+	def onSpeech(self, speechSequence, priority, **kwargs):
 		if not self.recording:
 			return
-		text = "".join(item for item in speechSequence if isinstance(item, str)).strip()
+		text = " ".join(item for item in speechSequence if isinstance(item, str)).strip()
 		self._append({"Speech": {"text": text, "priority": _PRIORITY_NAMES.get(int(priority), str(priority))}})
 
 	def onSpeechCanceled(self, **kwargs):
@@ -195,7 +199,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 	def __init__(self):
 		super().__init__()
 		self._recorder = _Recorder()
-		pre_speechQueued.register(self._recorder.onSpeechQueued)
+		pre_speech.register(self._recorder.onSpeech)
 		speechCanceled.register(self._recorder.onSpeechCanceled)
 		self._server = None
 		sessionId = _sessionId()
@@ -207,7 +211,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 		self._server.start()
 
 	def terminate(self):
-		pre_speechQueued.unregister(self._recorder.onSpeechQueued)
+		pre_speech.unregister(self._recorder.onSpeech)
 		speechCanceled.unregister(self._recorder.onSpeechCanceled)
 		if self._server is not None:
 			self._server.stop()

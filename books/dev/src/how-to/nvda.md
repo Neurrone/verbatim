@@ -32,11 +32,18 @@ Install the committed package,
 `nvda-addon/verbatimTranscript.nvda-addon`, like any NVDA add-on. Open
 the file from File Explorer, or choose "Install from external source" in
 NVDA's Add-on Store, confirm the installation, and restart NVDA when it
-asks. The add-on targets NVDA 2026.1 and later.
+asks. The add-on targets NVDA 2026.1 and later. After a change to its
+source, `cargo xtask nvda build` writes the package again; install it the
+same way into the NVDA a comparison runs, whose add-on replaces the older
+version on the restart. An NVDA running from a copied configuration
+(`--config-path`) installs it into that configuration, so install it from
+that NVDA.
 
 The add-on does not change what NVDA says or how it sounds. It only
-registers listeners on two of NVDA's speech extension points, the ones
-NVDA's own Remote Access feature uses. It listens on 127.0.0.1 only, on
+registers listeners on two of NVDA's speech extension points: speech as
+`speech.speak` receives it, before NVDA's speech dictionaries and symbol
+processing reword it for the synthesizer, so a comparison sees what NVDA
+means to say, and its cancels. It listens on 127.0.0.1 only, on
 port 44100 plus the Windows session id of the NVDA that loaded it, so an
 NVDA in a Remote Desktop session and another on the console each get
 their own port. It accepts one client at a time. It records nothing until
@@ -347,7 +354,7 @@ as the spelling-error sound before "spelling error h", and the rest of
 the utterance kept; on each side, cancels and empty entries are dropped,
 the utterances are joined with single spaces, and every run of white
 space becomes one space, since the add-on records NVDA's speech sequence
-parts, joined with double spaces, rather than where an utterance ends, so
+parts, joined with spaces, rather than where an utterance ends, so
 neither boundaries nor spacing are evidence of a difference in what is
 heard. The verdicts are:
 
